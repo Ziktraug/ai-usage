@@ -1,8 +1,9 @@
 import { Effect } from 'effect';
+import { harnessLabel } from '../harness-metadata';
 import { historyPath, LocalHistoryStorage } from '../local-history';
 import { base, dominant, safeJSON } from '../text';
 import type { Row } from '../types';
-import { normalizeUsageRow } from '../usage-normalization';
+import { actualCost, normalizeUsageRow } from '../usage-row';
 
 type Agg = {
   tin: number;
@@ -18,6 +19,22 @@ type Agg = {
   model: Map<string, number>;
 };
 
+type SessionRow = {
+  id: string;
+  title: string | null;
+  directory: string | null;
+  summary_additions: number | null;
+  summary_deletions: number | null;
+};
+
+type CountRow = { session_id: string; n: number };
+type MessageRow = { session_id: string; data: string };
+
+const SESSION_SQL = 'SELECT id, title, directory, summary_additions, summary_deletions FROM session';
+const TOOL_COUNT_SQL =
+  "SELECT session_id, count(*) n FROM part WHERE json_extract(data,'$.type')='tool' GROUP BY session_id";
+const MESSAGE_SQL = 'SELECT session_id, data FROM message';
+
 export const collectOpenCode = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
   const dbPath = historyPath(storage, '.local', 'share', 'opencode', 'opencode.db');
@@ -32,9 +49,7 @@ export const collectOpenCode = Effect.gen(function* () {
     storage.openDatabase(dbPath),
     (db) =>
       Effect.gen(function* () {
-        for (const row of yield* db.all(
-          'SELECT id, title, directory, summary_additions, summary_deletions FROM session',
-        )) {
+        for (const row of yield* db.all<SessionRow>(SESSION_SQL)) {
           meta.set(row.id, {
             title: row.title || '',
             dir: row.directory || '',
@@ -43,18 +58,16 @@ export const collectOpenCode = Effect.gen(function* () {
           });
         }
 
-        for (const row of yield* db.all(
-          "SELECT session_id, count(*) n FROM part WHERE json_extract(data,'$.type')='tool' GROUP BY session_id",
-        )) {
+        for (const row of yield* db.all<CountRow>(TOOL_COUNT_SQL)) {
           toolCount.set(row.session_id, row.n);
         }
 
-        for (const row of yield* db.all('SELECT session_id, data FROM message')) {
+        for (const row of yield* db.all<MessageRow>(MESSAGE_SQL)) {
           const data = safeJSON(row.data);
           if (data?.role === 'user') turnCount.set(row.session_id, (turnCount.get(row.session_id) || 0) + 1);
         }
 
-        for (const row of yield* db.all('SELECT session_id, data FROM message')) {
+        for (const row of yield* db.all<MessageRow>(MESSAGE_SQL)) {
           const data = safeJSON(row.data);
           if (data?.role !== 'assistant') continue;
           const tokens = data.tokens;
@@ -130,14 +143,14 @@ export const collectOpenCode = Effect.gen(function* () {
       normalizeUsageRow({
         date: current.start,
         endDate: current.end,
-        harness: 'OpenCode',
+        harness: harnessLabel('opencode'),
         provider: provLabel(providerId, current.cost),
         name: title || (sessionMeta?.title ? 'ACP session' : '') || sid.slice(0, 10),
         model: `${providerId}/${model}`,
         pricingModel: model,
         project: base(sessionMeta?.dir),
         tokens,
-        costActual: current.cost,
+        cost: actualCost(current.cost),
         calls: current.calls,
         turns: turnCount.get(sid) || 0,
         tools: toolCount.get(sid) || 0,

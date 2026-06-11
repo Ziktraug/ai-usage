@@ -1,8 +1,15 @@
 import { Effect } from 'effect';
+import { harnessLabel } from '../harness-metadata';
 import { historyPath, LocalHistoryStorage } from '../local-history';
 import { safeJSON, usablePrompt } from '../text';
 import type { Row } from '../types';
-import { normalizeUsageRow } from '../usage-normalization';
+import { actualCost, normalizeUsageRow } from '../usage-row';
+
+type KeyValueRow = { key: string; value: string };
+
+const COMPOSER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'";
+const TOKEN_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"inputTokens\"%'";
+const USER_BUBBLE_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"type\":1%'";
 
 export const collectCursor = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
@@ -25,7 +32,7 @@ export const collectCursor = Effect.gen(function* () {
     storage.openDatabase(dbPath),
     (db) =>
       Effect.gen(function* () {
-        for (const row of yield* db.all("SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'")) {
+        for (const row of yield* db.all<KeyValueRow>(COMPOSER_SQL)) {
           const id = row.key.slice('composerData:'.length);
           const data = safeJSON(row.value);
           if (!data) continue;
@@ -38,9 +45,7 @@ export const collectCursor = Effect.gen(function* () {
           });
         }
 
-        for (const row of yield* db.all(
-          "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"inputTokens\"%'",
-        )) {
+        for (const row of yield* db.all<KeyValueRow>(TOKEN_SQL)) {
           const parts = String(row.key).split(':');
           const composerId = parts[1];
           const data = safeJSON(row.value);
@@ -64,9 +69,7 @@ export const collectCursor = Effect.gen(function* () {
         }
 
         const wantedComposerIds = new Set(agg.keys());
-        for (const row of yield* db.all(
-          "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"type\":1%'",
-        )) {
+        for (const row of yield* db.all<KeyValueRow>(USER_BUBBLE_SQL)) {
           const composerId = String(row.key).split(':')[1];
           if (!composerId || !wantedComposerIds.has(composerId)) continue;
           const data = safeJSON(row.value);
@@ -95,13 +98,13 @@ export const collectCursor = Effect.gen(function* () {
       normalizeUsageRow({
         date: composer?.created ? new Date(composer.created) : null,
         endDate: null,
-        harness: 'Cursor',
+        harness: harnessLabel('cursor'),
         provider: 'Cursor sub',
         name: composer?.name || name?.first || `cursor ${composerId.slice(0, 8)}`,
         model,
         project: '',
         tokens,
-        costActual: 0,
+        cost: actualCost(0),
         calls: current.calls,
         turns: name?.turns || 0,
         tools: 0,

@@ -1,4 +1,11 @@
 import type { Row } from './types';
+import {
+  usageRowCacheReadTokens,
+  usageRowFreshTokens,
+  usageRowIsRecent,
+  usageRowLineDelta,
+  usageRowPricedCost,
+} from './usage-row';
 
 export interface AnalyticsGroup {
   key: string;
@@ -111,18 +118,20 @@ const groupBy = (rows: Row[], keyFn: (row: Row) => string, totalCost: number): A
       };
       groups.set(key, group);
     }
+    const lineDelta = usageRowLineDelta(row);
+    const pricedCost = usageRowPricedCost(row);
     group.sessions++;
-    group.fresh += row.tokIn + row.tokOut + row.tokCw;
+    group.fresh += usageRowFreshTokens(row);
     group.inp += row.tokIn;
-    group.cache += row.tokCr;
-    group.linesA += row.linesAdded || 0;
-    group.linesD += row.linesDeleted || 0;
+    group.cache += usageRowCacheReadTokens(row);
+    group.linesA += lineDelta.added;
+    group.linesD += lineDelta.deleted;
     group.turns += row.turns;
     group.tools += row.tools;
-    if (row.costKnown) {
+    if (pricedCost != null) {
       group.priced++;
-      group.costs.push(row.costApprox);
-      group.costSum += row.costApprox;
+      group.costs.push(pricedCost);
+      group.costSum += pricedCost;
     } else {
       group.unpriced++;
     }
@@ -132,25 +141,27 @@ const groupBy = (rows: Row[], keyFn: (row: Row) => string, totalCost: number): A
 };
 
 export const calculateAnalytics = (rows: Row[], now = Date.now()): AnalyticsSummary => {
-  const totalCost = rows.reduce((total, row) => total + row.costApprox, 0);
-  const priced = rows.filter((row) => row.costKnown);
-  const pricedCosts = priced.map((row) => row.costApprox);
-  const linesA = rows.reduce((total, row) => total + (row.linesAdded || 0), 0);
-  const linesD = rows.reduce((total, row) => total + (row.linesDeleted || 0), 0);
+  const pricedCosts = rows.flatMap((row) => {
+    const cost = usageRowPricedCost(row);
+    return cost == null ? [] : [cost];
+  });
+  const totalCost = pricedCosts.reduce((total, cost) => total + cost, 0);
+  const lines = rows.map(usageRowLineDelta);
+  const linesA = lines.reduce((total, line) => total + line.added, 0);
+  const linesD = lines.reduce((total, line) => total + line.deleted, 0);
   const lineCount = linesA + linesD;
   const turns = rows.reduce((total, row) => total + row.turns, 0);
   const tools = rows.reduce((total, row) => total + row.tools, 0);
   const durationRows = rows.filter((row) => row.durationMs && row.durationMs > 0);
   const durationMs = durationRows.reduce((total, row) => total + (row.durationMs || 0), 0);
-  const recentCutoff = now - 5 * 60_000;
-  const recentSessions = rows.filter((row) => (row.endDate?.getTime() ?? 0) >= recentCutoff).length;
+  const recentSessions = rows.filter((row) => usageRowIsRecent(row, now)).length;
 
   return {
     sessionCount: rows.length,
     totalCost,
-    pricedCount: priced.length,
-    unpricedCount: rows.length - priced.length,
-    meanCost: totalCost / (priced.length || 1),
+    pricedCount: pricedCosts.length,
+    unpricedCount: rows.length - pricedCosts.length,
+    meanCost: totalCost / (pricedCosts.length || 1),
     medianCost: median(pricedCosts),
     linesA,
     linesD,

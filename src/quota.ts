@@ -1,15 +1,14 @@
 import { Effect } from 'effect';
-import { findLatestCodexRateLimits, hasCodexHistory } from './codex-history';
+import { type CodexQuotaWindow, findLatestCodexQuotaSnapshot, hasCodexHistory } from './codex-history';
 import { clr } from './render/colors';
 import { fmtDate, pad } from './render/format';
 
 export const renderQuota = Effect.gen(function* () {
   if (!(yield* hasCodexHistory)) return 'No Codex data found at ~/.codex/sessions';
 
-  const latest = yield* findLatestCodexRateLimits();
+  const latest = yield* findLatestCodexQuotaSnapshot();
   if (!latest) return 'No quota (rate_limits) snapshot found in recent Codex sessions.';
 
-  const { rateLimits, ts } = latest;
   const bar = (pct: number) => {
     const n = Math.round(Math.min(100, pct) / 5);
     const style = pct >= 90 ? clr.redB : pct >= 70 ? clr.yellow : clr.green;
@@ -17,21 +16,22 @@ export const renderQuota = Effect.gen(function* () {
   };
   const lines = [
     clr.bold('═══ Codex subscription quota ═══'),
-    `  plan: ${clr.cyan(rateLimits.plan_type ?? 'unknown')}   ${clr.dim(`snapshot ${fmtDate(ts)}`)}`,
+    `  plan: ${clr.cyan(latest.planType)}   ${clr.dim(`snapshot ${fmtDate(latest.ts)}`)}`,
   ];
-  const win = (label: string, window: any) => {
+  const win = (label: string, window: CodexQuotaWindow | null) => {
     if (!window) return;
-    const mins = window.window_minutes;
-    const span = mins >= 1440 ? `${Math.round(mins / 1440)}d` : `${Math.round(mins / 60)}h`;
-    const resets = window.resets_at ? new Date(window.resets_at * 1000) : null;
+    const span =
+      window.windowMinutes >= 1440
+        ? `${Math.round(window.windowMinutes / 1440)}d`
+        : `${Math.round(window.windowMinutes / 60)}h`;
     lines.push(
-      `  ${pad(`${label} (${span})`, 12)} ${bar(window.used_percent)} ${clr.bold(`${window.used_percent.toFixed(0)}%`)}` +
-        (resets ? clr.dim(`  resets ${fmtDate(resets)}`) : ''),
+      `  ${pad(`${label} (${span})`, 12)} ${bar(window.usedPercent)} ${clr.bold(`${window.usedPercent.toFixed(0)}%`)}` +
+        (window.resetsAt ? clr.dim(`  resets ${fmtDate(window.resetsAt)}`) : ''),
     );
   };
-  win('5-hour', rateLimits.primary);
-  win('weekly', rateLimits.secondary);
-  if (rateLimits.credits != null) lines.push(`  credits: ${rateLimits.credits}`);
+  win('5-hour', latest.primary);
+  win('weekly', latest.secondary);
+  if (latest.credits != null) lines.push(`  credits: ${latest.credits}`);
   lines.push(
     clr.dim(
       '\n  From the newest local token_count.rate_limits event (Codex CLI/VSCode). Claude/OpenCode/Cursor expose no local quota.',

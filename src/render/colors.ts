@@ -1,4 +1,6 @@
+import { type HarnessColor, harnessMetadataForLabel } from '../harness-metadata';
 import type { Row } from '../types';
+import { usageRowPricedCost } from '../usage-row';
 
 let colorEnabled = true;
 
@@ -27,14 +29,22 @@ export const clr = {
   cyanB: sgr('1;36'),
 };
 
-export const harnessColor = (h: string) =>
-  h === 'Claude Code' ? clr.magenta : h === 'Codex' ? clr.cyan : h === 'OpenCode' ? clr.green : clr.blue;
+const harnessColorFn = (color: HarnessColor) =>
+  ({
+    magenta: clr.magenta,
+    cyan: clr.cyan,
+    green: clr.green,
+    blue: clr.blue,
+  })[color];
+
+export const harnessColor = (h: string) => harnessColorFn(harnessMetadataForLabel(h)?.color ?? 'blue');
 
 export const provColor = (p: string) => (/API/.test(p) ? clr.yellow : clr.green);
 
 export const costStyle = (row: Row) => {
-  if (!row.costKnown) return clr.grey;
-  if (row.costApprox >= 20) return clr.redB;
-  if (row.costApprox >= 5) return clr.yellow;
+  const cost = usageRowPricedCost(row);
+  if (cost == null) return clr.grey;
+  if (cost >= 20) return clr.redB;
+  if (cost >= 5) return clr.yellow;
   return id;
 };

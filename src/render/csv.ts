@@ -25,6 +25,7 @@ export const renderCSV = (rows: Row[]) => {
     'lines_added',
     'lines_deleted',
     'subagent',
+    'partial',
   ];
   const body = rows.map((r) =>
     [
@@ -49,6 +50,7 @@ export const renderCSV = (rows: Row[]) => {
       r.linesAdded ?? '',
       r.linesDeleted ?? '',
       r.subagent ?? false,
+      r.partial ?? false,
     ]
       .map((x) => csvEscape(String(x)))
       .join(','),
