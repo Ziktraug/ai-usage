@@ -1,0 +1,22 @@
+{
+  "name": "@ai-usage/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./analytics": "./src/analytics.ts",
+    "./harness-metadata": "./src/harness-metadata.ts",
+    "./pricing": "./src/pricing.ts",
+    "./report-data": "./src/report-data.ts",
+    "./types": "./src/types.ts",
+    "./usage-row": "./src/usage-row.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

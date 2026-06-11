@@ -28,31 +28,31 @@ bun install
 Default report:
 
 ```sh
-bun src/main.ts
+bun run start
 ```
 
 Limit the displayed session table:
 
 ```sh
-bun src/main.ts --limit 20
+bun run start -- --limit 20
 ```
 
 Filter by recent activity:
 
 ```sh
-bun src/main.ts --since 30d
+bun run start -- --since 30d
 ```
 
 Filter by harness:
 
 ```sh
-bun src/main.ts --harness codex
+bun run start -- --harness codex
 ```
 
 Show Codex subscription quota from the newest local rate-limit snapshot:
 
 ```sh
-bun src/main.ts quota
+bun run quota
 ```
 
 ## Output formats
@@ -60,13 +60,20 @@ bun src/main.ts quota
 JSON:
 
 ```sh
-bun src/main.ts --json
+bun run start -- --json
 ```
 
 CSV:
 
 ```sh
-bun src/main.ts --csv
+bun run start -- --csv
+```
+
+HTML app report:
+
+```sh
+bun run build
+bun run start -- --html > report.html
 ```
 
 ## Useful options
@@ -80,6 +87,13 @@ bun src/main.ts --csv
 - `--wide`: add duration, turns, tool calls, and line delta columns
 - `--no-cursor`: skip Cursor
 - `--no-color` / `--color`: control ANSI color output
+
+## Project layout
+
+- `packages/usage-core`: shared row types, pricing, normalization, report preparation, and analytics
+- `packages/local-collectors`: local filesystem/SQLite collectors for Claude, Codex, OpenCode, and Cursor
+- `apps/cli`: terminal CLI, quota command, table/CSV/JSON/HTML renderers
+- `apps/report`: Solid + TanStack Router + Panda CSS + Ark UI report app built as a single HTML file through Vite
 
 ## Development
 
@@ -101,6 +115,12 @@ Format:
 bun run format
 ```
 
+Run the report app in development with demo data:
+
+```sh
+bun run dev:report
+```
+
 ## Notes
 
-`$API` is an approximate cost using the editable pricing table in `src/pricing.ts`. Subscription products bill differently, and models without public pricing are marked as unknown in the report.
+`$API` is an approximate cost using the editable pricing table in `packages/usage-core/src/pricing.ts`. Subscription products bill differently, and models without public pricing are marked as unknown in the report.
