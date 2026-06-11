@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { normalizeUsageRow } from './usage-normalization';
+import { approximateApiCost, normalizeUsageRow, usageRowActiveDate, usageRowSessionLabel } from './usage-row';
 
-describe('usage normalization', () => {
+describe('usage row', () => {
   test('constructs report rows with pricing, defaults, and derived duration', () => {
     const row = normalizeUsageRow({
       date: new Date('2026-01-01T00:00:00.000Z'),
@@ -12,7 +12,7 @@ describe('usage normalization', () => {
       model: 'gpt-5.3-codex',
       project: 'ai-usage',
       tokens: { in: 1_000_000, out: 1_000_000, cr: 0, cw: 0 },
-      costActual: 'approx',
+      cost: approximateApiCost,
       calls: 1,
     });
 
@@ -22,5 +22,24 @@ describe('usage normalization', () => {
     expect(row.durationMs).toBe(120_000);
     expect(row.turns).toBe(0);
     expect(row.linesAdded).toBeNull();
+  });
+
+  test('owns active date and marker labels', () => {
+    const row = normalizeUsageRow({
+      date: new Date('2026-01-01T00:00:00.000Z'),
+      endDate: new Date('2026-01-01T00:02:00.000Z'),
+      harness: 'Cursor',
+      provider: 'Cursor sub',
+      name: 'fixture',
+      model: 'cursor',
+      tokens: { in: 1, out: 1, cr: 0, cw: 0 },
+      cost: { _tag: 'ActualCost', amount: 0 },
+      calls: 1,
+      partial: true,
+      subagent: true,
+    });
+
+    expect(usageRowActiveDate(row)?.toISOString()).toBe('2026-01-01T00:02:00.000Z');
+    expect(usageRowSessionLabel(row)).toBe('fixture ~ ↳');
   });
 });

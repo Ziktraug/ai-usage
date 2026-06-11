@@ -11,7 +11,7 @@ export interface LocalHistoryDirEntry {
 }
 
 export interface LocalHistoryDatabase {
-  all(sql: string): Effect.Effect<any[], LocalHistoryError>;
+  all<T extends Record<string, any> = Record<string, any>>(sql: string): Effect.Effect<T[], LocalHistoryError>;
   close: Effect.Effect<void>;
 }
 
@@ -61,9 +61,9 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
       try: () => {
         const db = new Database(dbPath, { readonly: true });
         return {
-          all: (sql: string) =>
+          all: <T extends Record<string, any> = Record<string, any>>(sql: string) =>
             Effect.try({
-              try: () => db.query(sql).all() as any[],
+              try: () => db.query(sql).all() as T[],
               catch: localHistoryError('sqlite.all', { path: dbPath, sql }),
             }),
           close: Effect.try({

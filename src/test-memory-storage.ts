@@ -6,6 +6,7 @@ import type { LocalHistoryDatabase, LocalHistoryDirEntry, LocalHistoryStorage } 
 export class TestMemoryStorage implements LocalHistoryStorage {
   readonly home: string;
   private readonly files = new Map<string, string>();
+  private readonly databases = new Map<string, Map<string, Record<string, any>[]>>();
 
   constructor(home = '/home/test') {
     this.home = home;
@@ -15,10 +16,18 @@ export class TestMemoryStorage implements LocalHistoryStorage {
     this.files.set(path.join(this.home, relativePath), content);
   }
 
+  writeDatabaseRows(relativePath: string, sql: string, rows: Record<string, any>[]) {
+    const dbPath = path.join(this.home, relativePath);
+    const database = this.databases.get(dbPath) ?? new Map<string, Record<string, any>[]>();
+    database.set(sql, rows);
+    this.databases.set(dbPath, database);
+  }
+
   exists(filePath: string) {
     return Effect.succeed(
       this.files.has(filePath) ||
-        [...this.files.keys()].some((storedPath) =>
+        this.databases.has(filePath) ||
+        [...this.files.keys(), ...this.databases.keys()].some((storedPath) =>
           storedPath.startsWith(filePath.endsWith(path.sep) ? filePath : `${filePath}${path.sep}`),
         ),
     );
@@ -41,7 +50,7 @@ export class TestMemoryStorage implements LocalHistoryStorage {
   readDir(dirPath: string): Effect.Effect<LocalHistoryDirEntry[], LocalHistoryError> {
     const prefix = dirPath.endsWith(path.sep) ? dirPath : `${dirPath}${path.sep}`;
     const entries = new Map<string, boolean>();
-    for (const filePath of this.files.keys()) {
+    for (const filePath of [...this.files.keys(), ...this.databases.keys()]) {
       if (!filePath.startsWith(prefix)) continue;
       const rest = filePath.slice(prefix.length);
       const [name, ...remaining] = rest.split(path.sep);
@@ -56,12 +65,33 @@ export class TestMemoryStorage implements LocalHistoryStorage {
   }
 
   openDatabase(dbPath: string): Effect.Effect<LocalHistoryDatabase, LocalHistoryError> {
-    return Effect.fail(
-      new LocalHistoryError({
-        operation: 'openDatabase',
-        path: dbPath,
-        cause: new Error('TestMemoryStorage does not implement SQLite fixtures'),
-      }),
-    );
+    const database = this.databases.get(dbPath);
+    if (!database) {
+      return Effect.fail(
+        new LocalHistoryError({
+          operation: 'openDatabase',
+          path: dbPath,
+          cause: new Error(`Missing fixture database: ${dbPath}`),
+        }),
+      );
+    }
+
+    return Effect.succeed({
+      all: <T extends Record<string, any> = Record<string, any>>(sql: string) => {
+        const rows = database.get(sql);
+        if (!rows) {
+          return Effect.fail(
+            new LocalHistoryError({
+              operation: 'sqlite.all',
+              path: dbPath,
+              sql,
+              cause: new Error(`Missing fixture rows for SQL: ${sql}`),
+            }),
+          );
+        }
+        return Effect.succeed(rows as T[]);
+      },
+      close: Effect.succeed(undefined),
+    });
   }
 }

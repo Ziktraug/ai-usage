@@ -7,15 +7,16 @@ import {
   walkFiles,
 } from './local-history';
 import { safeJSON, usablePrompt } from './text';
+import type { TokenCounts } from './usage-row';
 
-export interface CodexSession {
+interface CodexSession {
   id: string | null;
   parent: string | null;
   start: Date | null;
   end: Date | null;
   cwd: string | null;
   model: string;
-  sub: boolean;
+  subscription: boolean;
   firstUser: string | null;
   turns: number;
   tools: number;
@@ -25,7 +26,35 @@ export interface CodexSession {
   tout: number;
 }
 
-export interface CodexRateLimitSnapshot {
+export interface CodexUsageSession {
+  start: Date | null;
+  end: Date | null;
+  cwd: string | null;
+  model: string;
+  subscription: boolean;
+  name: string;
+  tokens: TokenCounts;
+  calls: number;
+  turns: number;
+  tools: number;
+  hasSubagents: boolean;
+}
+
+export interface CodexQuotaWindow {
+  windowMinutes: number;
+  usedPercent: number;
+  resetsAt: Date | null;
+}
+
+export interface CodexQuotaSnapshot {
+  ts: Date;
+  planType: string;
+  primary: CodexQuotaWindow | null;
+  secondary: CodexQuotaWindow | null;
+  credits: number | null;
+}
+
+interface RawCodexRateLimitSnapshot {
   ts: Date;
   rateLimits: any;
 }
@@ -46,7 +75,7 @@ export const listCodexSessionFiles: Effect.Effect<string[], LocalHistoryError, L
   },
 );
 
-export const readCodexThreadNames: Effect.Effect<
+const readCodexThreadNames: Effect.Effect<
   Map<string, string>,
   LocalHistoryError,
   LocalHistoryStorageService
@@ -70,7 +99,7 @@ const emptySession = (): CodexSession => ({
   end: null,
   cwd: null,
   model: 'codex',
-  sub: false,
+  subscription: false,
   firstUser: null,
   turns: 0,
   tools: 0,
@@ -80,8 +109,8 @@ const emptySession = (): CodexSession => ({
   tout: 0,
 });
 
-export const readCodexSessions: Effect.Effect<CodexSession[], LocalHistoryError, LocalHistoryStorageService> =
-  Effect.gen(function* () {
+const readCodexSessions: Effect.Effect<CodexSession[], LocalHistoryError, LocalHistoryStorageService> = Effect.gen(
+  function* () {
     const storage = yield* LocalHistoryStorage;
     const sessions: CodexSession[] = [];
 
@@ -115,7 +144,7 @@ export const readCodexSessions: Effect.Effect<CodexSession[], LocalHistoryError,
           if (text && !session.firstUser) session.firstUser = usablePrompt(String(text).slice(0, 200));
         }
         if (payload.type === 'token_count') {
-          if (payload.rate_limits) session.sub = true;
+          if (payload.rate_limits) session.subscription = true;
           const usage = payload.info?.total_token_usage;
           const total = usage?.total_tokens;
           if (Number.isInteger(total) && total > session.maxTotal) {
@@ -132,14 +161,73 @@ export const readCodexSessions: Effect.Effect<CodexSession[], LocalHistoryError,
     }
 
     return sessions;
+  },
+);
+
+const sum = (sessions: CodexSession[], pick: (session: CodexSession) => number) =>
+  sessions.reduce((total, session) => total + pick(session), 0);
+
+export const readCodexUsageSessions: Effect.Effect<CodexUsageSession[], LocalHistoryError, LocalHistoryStorageService> =
+  Effect.gen(function* () {
+    const names = yield* readCodexThreadNames;
+    const sessions = yield* readCodexSessions;
+    const byId = new Map<string, CodexSession>();
+    for (const session of sessions) {
+      if (session.id) byId.set(session.id, session);
+    }
+
+    const children = new Map<string, CodexSession[]>();
+    const childIds = new Set<string>();
+    for (const session of sessions) {
+      if (session.id && session.parent && byId.has(session.parent)) {
+        childIds.add(session.id);
+        const siblings = children.get(session.parent) ?? [];
+        siblings.push(session);
+        children.set(session.parent, siblings);
+      }
+    }
+
+    const usageSessions: CodexUsageSession[] = [];
+    for (const session of sessions) {
+      if (session.id && childIds.has(session.id)) continue;
+      const kids = (session.id && children.get(session.id)) || [];
+      const tokens = {
+        in: session.tin + sum(kids, (kid) => kid.tin),
+        out: session.tout + sum(kids, (kid) => kid.tout),
+        cr: session.tcr + sum(kids, (kid) => kid.tcr),
+        cw: 0,
+      };
+      const end = [session, ...kids].reduce<Date | null>(
+        (latest, current) => (current.end && (!latest || current.end > latest) ? current.end : latest),
+        null,
+      );
+      usageSessions.push({
+        start: session.start,
+        end,
+        cwd: session.cwd,
+        model: session.model,
+        subscription: session.subscription || kids.some((kid) => kid.subscription),
+        name:
+          (session.id && names.get(session.id)) ||
+          session.firstUser ||
+          (session.id ? `codex ${session.id.slice(0, 8)}` : 'codex'),
+        tokens,
+        calls: 1 + kids.length,
+        turns: session.turns + sum(kids, (kid) => kid.turns),
+        tools: session.tools + sum(kids, (kid) => kid.tools),
+        hasSubagents: kids.length > 0,
+      });
+    }
+
+    return usageSessions;
   });
 
-export const findLatestCodexRateLimits = (
+const findLatestRawCodexRateLimits = (
   recentFileLimit = 40,
-): Effect.Effect<CodexRateLimitSnapshot | null, LocalHistoryError, LocalHistoryStorageService> =>
+): Effect.Effect<RawCodexRateLimitSnapshot | null, LocalHistoryError, LocalHistoryStorageService> =>
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
-    let latest: CodexRateLimitSnapshot | null = null;
+    let latest: RawCodexRateLimitSnapshot | null = null;
     const files = (yield* listCodexSessionFiles).sort();
 
     for (const filePath of files.slice(-recentFileLimit).reverse()) {
@@ -155,4 +243,28 @@ export const findLatestCodexRateLimits = (
     }
 
     return latest;
+  });
+
+const normalizeQuotaWindow = (window: any): CodexQuotaWindow | null => {
+  if (!window) return null;
+  const windowMinutes = Number(window.window_minutes ?? 0);
+  const usedPercent = Number(window.used_percent ?? 0);
+  const resetsAt = Number.isFinite(window.resets_at) ? new Date(window.resets_at * 1000) : null;
+  return { windowMinutes, usedPercent, resetsAt };
+};
+
+export const findLatestCodexQuotaSnapshot = (
+  recentFileLimit = 40,
+): Effect.Effect<CodexQuotaSnapshot | null, LocalHistoryError, LocalHistoryStorageService> =>
+  Effect.gen(function* () {
+    const latest = yield* findLatestRawCodexRateLimits(recentFileLimit);
+    if (!latest) return null;
+    const { rateLimits, ts } = latest;
+    return {
+      ts,
+      planType: String(rateLimits.plan_type ?? 'unknown'),
+      primary: normalizeQuotaWindow(rateLimits.primary),
+      secondary: normalizeQuotaWindow(rateLimits.secondary),
+      credits: rateLimits.credits == null ? null : Number(rateLimits.credits),
+    };
   });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
-import { findLatestCodexRateLimits, readCodexSessions } from './codex-history';
+import { findLatestCodexQuotaSnapshot, readCodexUsageSessions } from './codex-history';
 import { collectCodex } from './collectors/codex';
 import { LocalHistoryStorage } from './local-history';
 import { TestMemoryStorage } from './test-memory-storage';
@@ -98,9 +98,20 @@ describe('Codex local history', () => {
       ),
     );
 
-    expect(runWithStorage(readCodexSessions, storage)).toHaveLength(2);
-    const quota = runWithStorage(findLatestCodexRateLimits(), storage);
-    expect(quota?.rateLimits.plan_type).toBe('pro');
+    const sessions = runWithStorage(readCodexUsageSessions, storage);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.name).toBe('Fixture thread');
+    expect(sessions[0]?.tokens.in).toBe(14);
+    expect(sessions[0]?.tokens.cr).toBe(3);
+    expect(sessions[0]?.tokens.out).toBe(22);
+    expect(sessions[0]?.calls).toBe(2);
+    expect(sessions[0]?.turns).toBe(2);
+    expect(sessions[0]?.hasSubagents).toBe(true);
+
+    const quota = runWithStorage(findLatestCodexQuotaSnapshot(), storage);
+    expect(quota?.planType).toBe('pro');
+    expect(quota?.primary?.usedPercent).toBe(50);
+    expect(quota?.primary?.windowMinutes).toBe(300);
 
     const rows = runWithStorage(collectCodex, storage);
     expect(rows).toHaveLength(1);

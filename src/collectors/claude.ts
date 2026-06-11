@@ -1,9 +1,10 @@
 import path from 'node:path';
 import { Effect } from 'effect';
+import { harnessLabel } from '../harness-metadata';
 import { historyPath, LocalHistoryStorage, walkFiles } from '../local-history';
 import { base, dominant, safeJSON, usablePrompt } from '../text';
 import type { Row } from '../types';
-import { normalizeUsageRow, tokenTotal } from '../usage-normalization';
+import { actualCost, approximateApiCost, normalizeUsageRow, tokenTotal } from '../usage-row';
 
 export const collectClaude = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
@@ -99,13 +100,13 @@ export const collectClaude = Effect.gen(function* () {
       normalizeUsageRow({
         date: start,
         endDate: end,
-        harness: 'Claude Code',
+        harness: harnessLabel('claude'),
         provider,
         name,
         model,
         project: base(cwd),
         tokens,
-        costActual: provider === 'Claude API' ? 'approx' : 0,
+        cost: provider === 'Claude API' ? approximateApiCost : actualCost(0),
         calls,
         turns,
         tools,

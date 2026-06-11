@@ -1,7 +1,8 @@
+import { Effect } from 'effect';
 import { CliArgumentError } from './errors';
+import { type HarnessKey, harnessKeyList, harnessLabelList, isHarnessKey } from './harness-metadata';
 
 export type SortKey = 'date' | 'tokens' | 'cost';
-export type HarnessKey = 'claude' | 'codex' | 'opencode' | 'cursor';
 
 export interface Args {
   since: Date | null;
@@ -17,49 +18,52 @@ export interface Args {
   sort: SortKey;
 }
 
-export type CliCommand = { _tag: 'Help' } | { _tag: 'Quota' } | { _tag: 'Report'; args: Args };
+export type CliCommand = { _tag: 'Help' } | { _tag: 'Quota'; color: boolean | null } | { _tag: 'Report'; args: Args };
 
-const parseDuration = (v: string): Date => {
+const cliArgumentError = (message: string) => new CliArgumentError({ message });
+
+const parseDuration = (v: string): Effect.Effect<Date, CliArgumentError> => {
   const m = /^(\d+)([hdw])$/.exec(v);
-  if (!m) throw new CliArgumentError({ message: '--since expects e.g. 24h, 30d, 12w' });
+  if (!m) return Effect.fail(cliArgumentError('--since expects e.g. 24h, 30d, 12w'));
   const mult = { h: 3600e3, d: 86400e3, w: 604800e3 }[m[2] as 'h' | 'd' | 'w'];
-  return new Date(Date.now() - Number(m[1]) * mult);
+  return Effect.succeed(new Date(Date.now() - Number(m[1]) * mult));
 };
 
-const parseRequiredValue = (rest: string[], name: string) => {
+const parseRequiredValue = (rest: string[], name: string): Effect.Effect<string, CliArgumentError> => {
   const value = rest.shift();
-  if (!value || value.startsWith('--')) throw new CliArgumentError({ message: `${name} expects a value` });
-  return value;
+  return !value || value.startsWith('--')
+    ? Effect.fail(cliArgumentError(`${name} expects a value`))
+    : Effect.succeed(value);
 };
 
-const parsePositiveInt = (value: string, name: string) => {
+const parsePositiveInt = (value: string, name: string): Effect.Effect<number, CliArgumentError> => {
   const n = Number.parseInt(value, 10);
-  if (!Number.isInteger(n) || n < 1 || String(n) !== value) {
-    throw new CliArgumentError({ message: `${name} expects a positive integer` });
-  }
-  return n;
+  return !Number.isInteger(n) || n < 1 || String(n) !== value
+    ? Effect.fail(cliArgumentError(`${name} expects a positive integer`))
+    : Effect.succeed(n);
 };
 
-const parseSort = (value: string): SortKey => {
-  if (value === 'date' || value === 'tokens' || value === 'cost') return value;
-  throw new CliArgumentError({ message: '--sort expects one of: date, tokens, cost' });
+const parseSort = (value: string): Effect.Effect<SortKey, CliArgumentError> => {
+  if (value === 'date' || value === 'tokens' || value === 'cost') return Effect.succeed(value);
+  return Effect.fail(cliArgumentError('--sort expects one of: date, tokens, cost'));
 };
 
-const parseHarness = (value: string): HarnessKey => {
+const parseHarness = (value: string): Effect.Effect<HarnessKey, CliArgumentError> => {
   const h = value.toLowerCase();
-  if (h === 'claude' || h === 'codex' || h === 'opencode' || h === 'cursor') return h;
-  throw new CliArgumentError({ message: '--harness expects one of: claude, codex, opencode, cursor' });
+  return isHarnessKey(h)
+    ? Effect.succeed(h)
+    : Effect.fail(cliArgumentError(`--harness expects one of: ${harnessKeyList}`));
 };
 
 export const helpText =
-  `ai-usage — per-session token usage across Claude Code / Codex / OpenCode / Cursor\n\n` +
-  `Usage: bun ai-usage.ts [report] [options]   |   bun ai-usage.ts quota\n\n` +
+  `ai-usage — per-session token usage across ${harnessLabelList}\n\n` +
+  `Usage: bun ai-usage.ts [report] [options]   |   bun ai-usage.ts quota [--color|--no-color]\n\n` +
   `Subcommands:\n` +
   `  report (default)       per-session table + data analysis\n` +
   `  quota                  Codex subscription quota (5h / 7d usage)\n\n` +
   `Options:\n` +
   `  --since <30d|12w|24h>  only sessions active since\n` +
-  `  --harness <name>       claude|codex|opencode|cursor\n` +
+  `  --harness <name>       ${harnessKeyList}\n` +
   `  --project <name>       filter by project dir basename (substring)\n` +
   `  --min-tokens <n>       hide sessions below n total tokens (default 1)\n` +
   `  --limit <n>            show only n table rows (analysis covers all)\n` +
@@ -69,47 +73,69 @@ export const helpText =
   `  --no-color / --color   disable / force ANSI colors (default: auto)\n` +
   `  --json | --csv         machine-readable output (full metadata)\n`;
 
-export const parseArgs = (argv: string[]): Args => {
-  const args: Args = {
-    since: null,
-    harness: null,
-    project: null,
-    limit: null,
-    minTokens: 1,
-    json: false,
-    csv: false,
-    cursor: true,
-    color: null,
-    wide: false,
-    sort: 'date',
-  };
-  const rest = [...argv];
-  while (rest.length) {
-    const arg = rest.shift()!;
-    if (arg === '--since') args.since = parseDuration(parseRequiredValue(rest, '--since'));
-    else if (arg === '--harness') args.harness = parseHarness(parseRequiredValue(rest, '--harness'));
-    else if (arg === '--project') args.project = parseRequiredValue(rest, '--project').toLowerCase();
-    else if (arg === '--limit') args.limit = parsePositiveInt(parseRequiredValue(rest, '--limit'), '--limit');
-    else if (arg === '--min-tokens')
-      args.minTokens = parsePositiveInt(parseRequiredValue(rest, '--min-tokens'), '--min-tokens');
-    else if (arg === '--json') args.json = true;
-    else if (arg === '--csv') args.csv = true;
-    else if (arg === '--no-cursor') args.cursor = false;
-    else if (arg === '--no-color') args.color = false;
-    else if (arg === '--color') args.color = true;
-    else if (arg === '--wide') args.wide = true;
-    else if (arg === '--sort') args.sort = parseSort(parseRequiredValue(rest, '--sort'));
-    else if (arg === '-h' || arg === '--help') throw new CliArgumentError({ message: 'Help is a command-level flag' });
-    else throw new CliArgumentError({ message: `Unknown option: ${arg}` });
-  }
-  return args;
-};
+export const parseArgs = (argv: string[]): Effect.Effect<Args, CliArgumentError> =>
+  Effect.gen(function* () {
+    const args: Args = {
+      since: null,
+      harness: null,
+      project: null,
+      limit: null,
+      minTokens: 1,
+      json: false,
+      csv: false,
+      cursor: true,
+      color: null,
+      wide: false,
+      sort: 'date',
+    };
+    const rest = [...argv];
+    while (rest.length) {
+      const arg = rest.shift()!;
+      if (arg === '--since') args.since = yield* parseDuration(yield* parseRequiredValue(rest, '--since'));
+      else if (arg === '--harness') args.harness = yield* parseHarness(yield* parseRequiredValue(rest, '--harness'));
+      else if (arg === '--project') args.project = (yield* parseRequiredValue(rest, '--project')).toLowerCase();
+      else if (arg === '--limit')
+        args.limit = yield* parsePositiveInt(yield* parseRequiredValue(rest, '--limit'), '--limit');
+      else if (arg === '--min-tokens')
+        args.minTokens = yield* parsePositiveInt(yield* parseRequiredValue(rest, '--min-tokens'), '--min-tokens');
+      else if (arg === '--json') args.json = true;
+      else if (arg === '--csv') args.csv = true;
+      else if (arg === '--no-cursor') args.cursor = false;
+      else if (arg === '--no-color') args.color = false;
+      else if (arg === '--color') args.color = true;
+      else if (arg === '--wide') args.wide = true;
+      else if (arg === '--sort') args.sort = yield* parseSort(yield* parseRequiredValue(rest, '--sort'));
+      else if (arg === '-h' || arg === '--help')
+        return yield* Effect.fail(cliArgumentError('Help is a command-level flag'));
+      else return yield* Effect.fail(cliArgumentError(`Unknown option: ${arg}`));
+    }
+    return args;
+  });
 
-export const parseCommand = (argv: string[]): CliCommand => {
-  const rest = [...argv];
-  if (rest.includes('-h') || rest.includes('--help')) return { _tag: 'Help' };
-  const command = rest[0];
-  if (command === 'quota') return { _tag: 'Quota' };
-  if (command === 'report') rest.shift();
-  return { _tag: 'Report', args: parseArgs(rest) };
-};
+const parseQuotaArgs = (argv: string[]): Effect.Effect<{ color: boolean | null }, CliArgumentError> =>
+  Effect.gen(function* () {
+    let color: boolean | null = null;
+    const rest = [...argv];
+    while (rest.length) {
+      const arg = rest.shift()!;
+      if (arg === '--no-color') color = false;
+      else if (arg === '--color') color = true;
+      else if (arg === '-h' || arg === '--help')
+        return yield* Effect.fail(cliArgumentError('Help is a command-level flag'));
+      else return yield* Effect.fail(cliArgumentError(`Unknown option for quota: ${arg}`));
+    }
+    return { color };
+  });
+
+export const parseCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgumentError> =>
+  Effect.gen(function* () {
+    const rest = [...argv];
+    if (rest.includes('-h') || rest.includes('--help')) return { _tag: 'Help' };
+    const command = rest[0];
+    if (command === 'quota') {
+      rest.shift();
+      return { _tag: 'Quota', ...(yield* parseQuotaArgs(rest)) };
+    }
+    if (command === 'report') rest.shift();
+    return { _tag: 'Report', args: yield* parseArgs(rest) };
+  });
