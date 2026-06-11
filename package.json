@@ -1,0 +1,22 @@
+{
+  "name": "ai-usage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "ai-usage": "./src/main.ts"
+  },
+  "scripts": {
+    "start": "bun src/main.ts",
+    "quota": "bun src/main.ts quota",
+    "check": "bunx tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.8.0"
+  }
+}
