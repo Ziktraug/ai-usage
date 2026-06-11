@@ -1,21 +1,23 @@
 import path from 'node:path';
-import { createLocalHistoryStorage, historyPath, walkFiles } from '../local-history';
+import { Effect } from 'effect';
+import { historyPath, LocalHistoryStorage, walkFiles } from '../local-history';
 import { base, dominant, safeJSON, usablePrompt } from '../text';
 import type { Row } from '../types';
 import { normalizeUsageRow, tokenTotal } from '../usage-normalization';
 
-export const collectClaude = (storage = createLocalHistoryStorage()): Row[] => {
+export const collectClaude = Effect.gen(function* () {
+  const storage = yield* LocalHistoryStorage;
   const dir = historyPath(storage, '.claude', 'projects');
-  if (!storage.exists(dir)) return [];
+  if (!(yield* storage.exists(dir))) return [];
 
   let provider = 'Claude sub';
   const cfg = historyPath(storage, '.claude.json');
-  if (storage.exists(cfg)) {
-    const json = safeJSON(storage.readText(cfg));
+  if (yield* storage.exists(cfg)) {
+    const json = safeJSON(yield* storage.readText(cfg));
     if (json?.hasApiKey) provider = 'Claude API';
   }
 
-  const files = walkFiles(storage, dir, (fileName) => fileName.endsWith('.jsonl'));
+  const files = yield* walkFiles(storage, dir, (fileName) => fileName.endsWith('.jsonl'));
   const rows: Row[] = [];
   const seen = new Set<string>();
 
@@ -34,7 +36,7 @@ export const collectClaude = (storage = createLocalHistoryStorage()): Row[] => {
     const tokens = { in: 0, out: 0, cr: 0, cw: 0 };
     const byModel = new Map<string, number>();
 
-    for (const line of storage.readText(filePath).split('\n')) {
+    for (const line of (yield* storage.readText(filePath)).split('\n')) {
       if (!line) continue;
       const event = safeJSON(line);
       if (!event) continue;
@@ -115,4 +117,4 @@ export const collectClaude = (storage = createLocalHistoryStorage()): Row[] => {
   }
 
   return rows;
-};
+});

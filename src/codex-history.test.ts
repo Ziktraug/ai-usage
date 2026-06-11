@@ -1,9 +1,13 @@
 import { describe, expect, test } from 'bun:test';
+import { Effect } from 'effect';
 import { findLatestCodexRateLimits, readCodexSessions } from './codex-history';
 import { collectCodex } from './collectors/codex';
+import { LocalHistoryStorage } from './local-history';
 import { TestMemoryStorage } from './test-memory-storage';
 
 const jsonl = (...events: unknown[]) => `${events.map((event) => JSON.stringify(event)).join('\n')}\n`;
+const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, storage: TestMemoryStorage) =>
+  Effect.runSync(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
 
 describe('Codex local history', () => {
   test('parses sessions, child sessions, names, and quota snapshots through fixture storage', () => {
@@ -94,11 +98,11 @@ describe('Codex local history', () => {
       ),
     );
 
-    expect(readCodexSessions(storage)).toHaveLength(2);
-    const quota = findLatestCodexRateLimits(storage);
+    expect(runWithStorage(readCodexSessions, storage)).toHaveLength(2);
+    const quota = runWithStorage(findLatestCodexRateLimits(), storage);
     expect(quota?.rateLimits.plan_type).toBe('pro');
 
-    const rows = collectCodex(storage);
+    const rows = runWithStorage(collectCodex, storage);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.name).toBe('Fixture thread');
     expect(rows[0]?.provider).toBe('Codex sub');
