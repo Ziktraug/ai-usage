@@ -1,5 +1,5 @@
+import { Effect } from 'effect';
 import { type CodexSession, hasCodexHistory, readCodexSessions, readCodexThreadNames } from '../codex-history';
-import { createLocalHistoryStorage } from '../local-history';
 import { base } from '../text';
 import type { Row } from '../types';
 import { normalizeUsageRow } from '../usage-normalization';
@@ -7,11 +7,11 @@ import { normalizeUsageRow } from '../usage-normalization';
 const sum = (sessions: CodexSession[], pick: (session: CodexSession) => number) =>
   sessions.reduce((total, session) => total + pick(session), 0);
 
-export const collectCodex = (storage = createLocalHistoryStorage()): Row[] => {
-  if (!hasCodexHistory(storage)) return [];
+export const collectCodex = Effect.gen(function* () {
+  if (!(yield* hasCodexHistory)) return [];
 
-  const names = readCodexThreadNames(storage);
-  const sessions = readCodexSessions(storage);
+  const names = yield* readCodexThreadNames;
+  const sessions = yield* readCodexSessions;
   const byId = new Map<string, CodexSession>();
   for (const session of sessions) {
     if (session.id) byId.set(session.id, session);
@@ -69,4 +69,4 @@ export const collectCodex = (storage = createLocalHistoryStorage()): Row[] => {
   }
 
   return rows;
-};
+});

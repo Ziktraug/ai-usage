@@ -1,12 +1,15 @@
 #!/usr/bin/env bun
-import { parseArgs } from './cli';
+import { Console, Effect, Layer } from 'effect';
+import { type Args, helpText, parseCommand } from './cli';
 import { collectClaude, collectCodex, collectCursor, collectOpenCode } from './collectors';
-import { createLocalHistoryStorage } from './local-history';
+import { CliArgumentError, formatAppError, type LocalHistoryError } from './errors';
+import { LocalHistoryStorageLive, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
 import { renderQuota } from './quota';
 import { renderAnalytics } from './render/analytics';
 import { clr, setColor } from './render/colors';
 import { renderCSV } from './render/csv';
 import { renderTable } from './render/table';
+import { CliRuntime, CliRuntimeLive } from './runtime';
 import type { Row } from './types';
 
 const compareRows = (sort: 'date' | 'tokens' | 'cost') =>
@@ -16,55 +19,51 @@ const compareRows = (sort: 'date' | 'tokens' | 'cost') =>
     cost: (a: Row, b: Row) => b.costApprox - a.costApprox,
   })[sort];
 
-export const main = () => {
-  try {
-    const argv = process.argv.slice(2);
-    const storage = createLocalHistoryStorage();
-    if (argv[0] === 'quota') {
-      setColor(argv.includes('--no-color') ? false : !!process.stdout.isTTY || argv.includes('--color'));
-      renderQuota(storage);
-      return;
-    }
-    if (argv[0] === 'report') argv.shift();
-    const args = parseArgs(argv);
-    setColor(args.color === null ? !!process.stdout.isTTY : args.color);
+const parseCommandEffect = (argv: string[]) =>
+  Effect.try({
+    try: () => parseCommand(argv),
+    catch: (cause) =>
+      cause instanceof CliArgumentError
+        ? cause
+        : new CliArgumentError({ message: cause instanceof Error ? cause.message : String(cause) }),
+  });
 
-    let rows: Row[] = [];
+const collectRows = (args: Args) =>
+  Effect.gen(function* () {
+    const collectorEffects: Array<Effect.Effect<Row[], LocalHistoryError, LocalHistoryStorageService>> = [];
     const want = (h: string) => !args.harness || args.harness === h;
-    if (want('claude')) rows.push(...collectClaude(storage));
-    if (want('codex')) rows.push(...collectCodex(storage));
-    if (want('opencode')) rows.push(...collectOpenCode(storage));
-    if (want('cursor') && args.cursor) rows.push(...collectCursor(storage));
+    if (want('claude')) collectorEffects.push(collectClaude);
+    if (want('codex')) collectorEffects.push(collectCodex);
+    if (want('opencode')) collectorEffects.push(collectOpenCode);
+    if (want('cursor') && args.cursor) collectorEffects.push(collectCursor);
+    return (yield* Effect.all(collectorEffects, { concurrency: 'unbounded' })).flat();
+  });
 
-    rows = rows.filter((r) => {
-      const total = r.tokIn + r.tokOut + r.tokCr + r.tokCw;
-      const activeAt = r.endDate ?? r.date;
-      if (total < args.minTokens) return false;
-      if (args.since && (!activeAt || activeAt < args.since)) return false;
-      if (args.project && !r.project.toLowerCase().includes(args.project)) return false;
-      return true;
-    });
+const renderReport = (args: Args) =>
+  Effect.gen(function* () {
+    const rows = (yield* collectRows(args))
+      .filter((row) => {
+        const total = row.tokIn + row.tokOut + row.tokCr + row.tokCw;
+        const activeAt = row.endDate ?? row.date;
+        if (total < args.minTokens) return false;
+        if (args.since && (!activeAt || activeAt < args.since)) return false;
+        if (args.project && !row.project.toLowerCase().includes(args.project)) return false;
+        return true;
+      })
+      .sort(compareRows(args.sort));
 
-    rows.sort(compareRows(args.sort));
+    if (args.json) return JSON.stringify(rows, null, 2);
+    if (args.csv) return renderCSV(rows);
 
     const tableRows = args.limit ? rows.slice(0, args.limit) : rows;
-
-    if (args.json) {
-      console.log(JSON.stringify(rows, null, 2));
-      return;
-    }
-    if (args.csv) {
-      console.log(renderCSV(rows));
-      return;
-    }
-    console.log(renderTable(tableRows, args.wide));
+    const output = [renderTable(tableRows, args.wide)];
     if (args.limit && rows.length > tableRows.length) {
-      console.log(
+      output.push(
         clr.dim(`  … ${rows.length - tableRows.length} more rows (analytics below cover all ${rows.length})`),
       );
     }
-    console.log(renderAnalytics(rows));
-    console.log(
+    output.push(renderAnalytics(rows));
+    output.push(
       clr.dim(
         '\nNotes: Codex tokens are cumulative observed counters (proxy, not billing); Codex durations span the rollout file (resumed sessions look long, not active time).' +
           ' Cursor rows marked ~ are partial (counts stored server-side); ↳ = contains sub-agents.' +
@@ -72,10 +71,39 @@ export const main = () => {
           ' $API = hypothetical cost at current API rates (subscriptions bill differently); ? = no public rate.',
       ),
     );
-  } catch (err) {
-    console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
-  }
-};
+    return output.join('\n');
+  });
 
-main();
+export const app = Effect.gen(function* () {
+  const runtime = yield* CliRuntime;
+  const command = yield* parseCommandEffect(runtime.argv);
+
+  if (command._tag === 'Help') {
+    yield* Console.log(helpText);
+    return;
+  }
+
+  if (command._tag === 'Quota') {
+    yield* Effect.sync(() =>
+      setColor(runtime.argv.includes('--no-color') ? false : runtime.stdoutIsTTY || runtime.argv.includes('--color')),
+    );
+    yield* Console.log(yield* renderQuota);
+    return;
+  }
+
+  yield* Effect.sync(() => setColor(command.args.color === null ? runtime.stdoutIsTTY : command.args.color));
+  yield* Console.log(yield* renderReport(command.args));
+});
+
+const formatDefect = (defect: unknown) => (defect instanceof Error ? defect.message : String(defect));
+
+const runnable = app.pipe(
+  Effect.as(0),
+  Effect.catchAll((error) => Console.error(`Error: ${formatAppError(error)}`).pipe(Effect.as(1))),
+  Effect.catchAllDefect((defect) => Console.error(`Error: ${formatDefect(defect)}`).pipe(Effect.as(1))),
+  Effect.provide(Layer.mergeAll(LocalHistoryStorageLive, CliRuntimeLive)),
+);
+
+Effect.runPromise(runnable).then((code) => {
+  if (code !== 0) process.exit(code);
+});

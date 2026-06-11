@@ -1,4 +1,5 @@
-import { createLocalHistoryStorage, historyPath } from '../local-history';
+import { Effect } from 'effect';
+import { historyPath, LocalHistoryStorage } from '../local-history';
 import { base, dominant, safeJSON } from '../text';
 import type { Row } from '../types';
 import { normalizeUsageRow } from '../usage-normalization';
@@ -17,88 +18,93 @@ type Agg = {
   model: Map<string, number>;
 };
 
-export const collectOpenCode = (storage = createLocalHistoryStorage()): Row[] => {
+export const collectOpenCode = Effect.gen(function* () {
+  const storage = yield* LocalHistoryStorage;
   const dbPath = historyPath(storage, '.local', 'share', 'opencode', 'opencode.db');
-  if (!storage.exists(dbPath)) return [];
+  if (!(yield* storage.exists(dbPath))) return [];
 
   const meta = new Map<string, { title: string; dir: string; add: number; del: number }>();
   const toolCount = new Map<string, number>();
   const turnCount = new Map<string, number>();
   const agg = new Map<string, Agg>();
-  const db = storage.openDatabase(dbPath);
 
-  try {
-    for (const row of db.all('SELECT id, title, directory, summary_additions, summary_deletions FROM session')) {
-      meta.set(row.id, {
-        title: row.title || '',
-        dir: row.directory || '',
-        add: row.summary_additions || 0,
-        del: row.summary_deletions || 0,
-      });
-    }
+  yield* Effect.acquireUseRelease(
+    storage.openDatabase(dbPath),
+    (db) =>
+      Effect.gen(function* () {
+        for (const row of yield* db.all(
+          'SELECT id, title, directory, summary_additions, summary_deletions FROM session',
+        )) {
+          meta.set(row.id, {
+            title: row.title || '',
+            dir: row.directory || '',
+            add: row.summary_additions || 0,
+            del: row.summary_deletions || 0,
+          });
+        }
 
-    for (const row of db.all(
-      "SELECT session_id, count(*) n FROM part WHERE json_extract(data,'$.type')='tool' GROUP BY session_id",
-    )) {
-      toolCount.set(row.session_id, row.n);
-    }
+        for (const row of yield* db.all(
+          "SELECT session_id, count(*) n FROM part WHERE json_extract(data,'$.type')='tool' GROUP BY session_id",
+        )) {
+          toolCount.set(row.session_id, row.n);
+        }
 
-    for (const row of db.all('SELECT session_id, data FROM message')) {
-      const data = safeJSON(row.data);
-      if (data?.role === 'user') turnCount.set(row.session_id, (turnCount.get(row.session_id) || 0) + 1);
-    }
+        for (const row of yield* db.all('SELECT session_id, data FROM message')) {
+          const data = safeJSON(row.data);
+          if (data?.role === 'user') turnCount.set(row.session_id, (turnCount.get(row.session_id) || 0) + 1);
+        }
 
-    for (const row of db.all('SELECT session_id, data FROM message')) {
-      const data = safeJSON(row.data);
-      if (data?.role !== 'assistant') continue;
-      const tokens = data.tokens;
-      if (!tokens) continue;
-      let current = agg.get(row.session_id);
-      if (!current) {
-        current = {
-          tin: 0,
-          tout: 0,
-          tcr: 0,
-          tcw: 0,
-          reason: 0,
-          cost: 0,
-          calls: 0,
-          start: null,
-          end: null,
-          prov: new Map(),
-          model: new Map(),
-        };
-        agg.set(row.session_id, current);
-      }
-      const input = tokens.input || 0;
-      const output = tokens.output || 0;
-      const cacheRead = tokens.cache?.read || 0;
-      const cacheWrite = tokens.cache?.write || 0;
-      const reasoning = tokens.reasoning || 0;
-      current.tin += input;
-      current.tout += output;
-      current.tcr += cacheRead;
-      current.tcw += cacheWrite;
-      current.reason += reasoning;
-      current.cost += data.cost || 0;
-      current.calls++;
-      const created = data.time?.created;
-      if (created) {
-        const date = new Date(created);
-        if (!current.start || date < current.start) current.start = date;
-      }
-      const completed = data.time?.completed || data.time?.created;
-      if (completed) {
-        const date = new Date(completed);
-        if (!current.end || date > current.end) current.end = date;
-      }
-      const total = input + output + cacheRead + cacheWrite;
-      current.prov.set(data.providerID || '?', (current.prov.get(data.providerID || '?') || 0) + total);
-      current.model.set(data.modelID || '?', (current.model.get(data.modelID || '?') || 0) + total);
-    }
-  } finally {
-    db.close();
-  }
+        for (const row of yield* db.all('SELECT session_id, data FROM message')) {
+          const data = safeJSON(row.data);
+          if (data?.role !== 'assistant') continue;
+          const tokens = data.tokens;
+          if (!tokens) continue;
+          let current = agg.get(row.session_id);
+          if (!current) {
+            current = {
+              tin: 0,
+              tout: 0,
+              tcr: 0,
+              tcw: 0,
+              reason: 0,
+              cost: 0,
+              calls: 0,
+              start: null,
+              end: null,
+              prov: new Map(),
+              model: new Map(),
+            };
+            agg.set(row.session_id, current);
+          }
+          const input = tokens.input || 0;
+          const output = tokens.output || 0;
+          const cacheRead = tokens.cache?.read || 0;
+          const cacheWrite = tokens.cache?.write || 0;
+          const reasoning = tokens.reasoning || 0;
+          current.tin += input;
+          current.tout += output;
+          current.tcr += cacheRead;
+          current.tcw += cacheWrite;
+          current.reason += reasoning;
+          current.cost += data.cost || 0;
+          current.calls++;
+          const created = data.time?.created;
+          if (created) {
+            const date = new Date(created);
+            if (!current.start || date < current.start) current.start = date;
+          }
+          const completed = data.time?.completed || data.time?.created;
+          if (completed) {
+            const date = new Date(completed);
+            if (!current.end || date > current.end) current.end = date;
+          }
+          const total = input + output + cacheRead + cacheWrite;
+          current.prov.set(data.providerID || '?', (current.prov.get(data.providerID || '?') || 0) + total);
+          current.model.set(data.modelID || '?', (current.model.get(data.modelID || '?') || 0) + total);
+        }
+      }),
+    (db) => db.close,
+  );
 
   const provLabel = (providerId: string, cost: number) => {
     if (providerId === 'openai') return cost > 0 ? 'OpenAI API' : 'Codex sub (OC)';
@@ -141,4 +147,4 @@ export const collectOpenCode = (storage = createLocalHistoryStorage()): Row[] =>
     );
   }
   return rows;
-};
+});
