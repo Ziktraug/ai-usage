@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
+    "lib": ["DOM", "DOM.Iterable", "ES2023"],
+    "types": ["vite/client", "bun"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts", "panda.config.ts", "styled-system"]
+}

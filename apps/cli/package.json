@@ -1,0 +1,23 @@
+{
+  "name": "@ai-usage/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "ai-usage": "./src/main.ts"
+  },
+  "dependencies": {
+    "@ai-usage/core": "workspace:*",
+    "@ai-usage/local-collectors": "workspace:*",
+    "effect": "^3.21.3"
+  },
+  "scripts": {
+    "start": "bun src/main.ts",
+    "quota": "bun src/main.ts quota",
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@ai-usage/report",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@ai-usage/core": "workspace:*",
+    "@ark-ui/solid": "^5.27.0",
+    "@tanstack/solid-router": "^1.136.0",
+    "solid-js": "^1.9.0"
+  },
+  "devDependencies": {
+    "@pandacss/dev": "^1.4.0",
+    "vite": "^7.2.0",
+    "vite-plugin-singlefile": "^2.3.0",
+    "vite-plugin-solid": "^2.11.0"
+  },
+  "scripts": {
+    "dev": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && vite --host 127.0.0.1",
+    "build": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit && vite build",
+    "check": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@ai-usage/local-collectors",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./codex-history": "./src/codex-history.ts",
+    "./errors": "./src/errors.ts",
+    "./local-history": "./src/local-history.ts"
+  },
+  "dependencies": {
+    "@ai-usage/core": "workspace:*",
+    "effect": "^3.21.3"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}
