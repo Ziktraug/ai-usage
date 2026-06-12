@@ -4,6 +4,7 @@ import type { Row } from '@ai-usage/core/types';
 import { actualCost, approximateApiCost, normalizeUsageRow, tokenTotal } from '@ai-usage/core/usage-row';
 import { Effect } from 'effect';
 import { historyPath, LocalHistoryStorage, walkFiles } from '../local-history';
+import { withProjectPath } from '../rtk-enrichment';
 import { base, dominant, safeJSON, usablePrompt } from '../text';
 
 export const collectClaude = Effect.gen(function* () {
@@ -97,23 +98,26 @@ export const collectClaude = Effect.gen(function* () {
       `${sidechain ? 'subagent ' : ''}${path.basename(filePath, '.jsonl').slice(0, 8)}`;
 
     rows.push(
-      normalizeUsageRow({
-        date: start,
-        endDate: end,
-        harness: harnessLabel('claude'),
-        provider,
-        name,
-        model,
-        project: base(cwd),
-        tokens,
-        cost: provider === 'Claude API' ? approximateApiCost : actualCost(0),
-        calls,
-        turns,
-        tools,
-        linesAdded: null,
-        linesDeleted: null,
-        subagent: sidechain,
-      }),
+      withProjectPath(
+        normalizeUsageRow({
+          date: start,
+          endDate: end,
+          harness: harnessLabel('claude'),
+          provider,
+          name,
+          model,
+          project: base(cwd),
+          tokens,
+          cost: provider === 'Claude API' ? approximateApiCost : actualCost(0),
+          calls,
+          turns,
+          tools,
+          linesAdded: null,
+          linesDeleted: null,
+          subagent: sidechain,
+        }),
+        cwd,
+      ),
     );
   }
 

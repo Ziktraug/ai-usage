@@ -22,6 +22,12 @@ const fmtDelta = (r: Row) => {
   return `+${fmtNum(delta.added)}/-${fmtNum(delta.deleted)}`;
 };
 
+const fmtRtkSaved = (r: Row) => {
+  if (!r.rtkSavedTokens || !r.rtkInputTokens) return '';
+  const pct = (r.rtkSavedTokens / r.rtkInputTokens) * 100;
+  return `${pct.toFixed(pct >= 10 ? 0 : 1)}%`;
+};
+
 export const renderTable = (rows: Row[], wide = false) => {
   const cols: Col[] = [
     {
@@ -62,6 +68,7 @@ export const renderTable = (rows: Row[], wide = false) => {
           },
         ]),
     { h: '$API', f: fmtCost, w: 8, r: true, c: (r) => costStyle(r) },
+    { h: 'RTK', f: fmtRtkSaved, w: 8, r: true, c: () => clr.green },
     ...(wide
       ? ([
           {

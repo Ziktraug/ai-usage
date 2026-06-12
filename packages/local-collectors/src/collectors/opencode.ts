@@ -3,6 +3,7 @@ import type { Row } from '@ai-usage/core/types';
 import { actualCost, normalizeUsageRow } from '@ai-usage/core/usage-row';
 import { Effect } from 'effect';
 import { historyPath, LocalHistoryStorage } from '../local-history';
+import { withProjectPath } from '../rtk-enrichment';
 import { base, dominant, safeJSON } from '../text';
 
 type Agg = {
@@ -140,23 +141,26 @@ export const collectOpenCode = Effect.gen(function* () {
     };
     const title = sessionMeta?.title && !/^ACP Session /i.test(sessionMeta.title) ? sessionMeta.title : '';
     rows.push(
-      normalizeUsageRow({
-        date: current.start,
-        endDate: current.end,
-        harness: harnessLabel('opencode'),
-        provider: provLabel(providerId, current.cost),
-        name: title || (sessionMeta?.title ? 'ACP session' : '') || sid.slice(0, 10),
-        model: `${providerId}/${model}`,
-        pricingModel: model,
-        project: base(sessionMeta?.dir),
-        tokens,
-        cost: actualCost(current.cost),
-        calls: current.calls,
-        turns: turnCount.get(sid) || 0,
-        tools: toolCount.get(sid) || 0,
-        linesAdded: sessionMeta?.add ?? null,
-        linesDeleted: sessionMeta?.del ?? null,
-      }),
+      withProjectPath(
+        normalizeUsageRow({
+          date: current.start,
+          endDate: current.end,
+          harness: harnessLabel('opencode'),
+          provider: provLabel(providerId, current.cost),
+          name: title || (sessionMeta?.title ? 'ACP session' : '') || sid.slice(0, 10),
+          model: `${providerId}/${model}`,
+          pricingModel: model,
+          project: base(sessionMeta?.dir),
+          tokens,
+          cost: actualCost(current.cost),
+          calls: current.calls,
+          turns: turnCount.get(sid) || 0,
+          tools: toolCount.get(sid) || 0,
+          linesAdded: sessionMeta?.add ?? null,
+          linesDeleted: sessionMeta?.del ?? null,
+        }),
+        sessionMeta?.dir,
+      ),
     );
   }
   return rows;

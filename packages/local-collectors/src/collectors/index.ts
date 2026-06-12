@@ -3,6 +3,7 @@ import type { Row } from '@ai-usage/core/types';
 import { Effect } from 'effect';
 import type { LocalHistoryError } from '../errors';
 import type { LocalHistoryStorage as LocalHistoryStorageService } from '../local-history';
+import { enrichCollectorRowsWithRtkSavings, stripCollectorMetadata } from '../rtk-enrichment';
 import { collectClaude } from './claude';
 import { collectCodex } from './codex';
 import { collectCursor } from './cursor';
@@ -33,5 +34,7 @@ export const selectedHarnessAdapters = (selection: HarnessSelection) => {
 export const collectSelectedHarnessRows = (selection: HarnessSelection) =>
   Effect.gen(function* () {
     const effects = selectedHarnessAdapters(selection).map((adapter) => adapter.collect);
-    return (yield* Effect.all(effects, { concurrency: 'unbounded' })).flat();
+    const rows = (yield* Effect.all(effects, { concurrency: 'unbounded' })).flat();
+    const enrichedRows = yield* enrichCollectorRowsWithRtkSavings(rows);
+    return enrichedRows.map(stripCollectorMetadata);
   });

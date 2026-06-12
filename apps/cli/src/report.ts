@@ -19,6 +19,7 @@ const renderReportNotes = () => {
     ...reportHarnessNotes(),
     '↳ = contains sub-agents.',
     `Tracked lines: ${lineHarnesses} only (${nonLineHarnesses} expose none locally).`,
+    'RTK = saved-token percentage from RTK commands matched by project path and session time window.',
     '$API = hypothetical cost at current API rates (subscriptions bill differently); ? = no public rate.',
   ];
 
