@@ -3,7 +3,7 @@ import type { ReportOptions, SortKey } from '@ai-usage/core/report-data';
 import { Effect } from 'effect';
 import { CliArgumentError } from './errors';
 
-export type OutputFormat = 'table' | 'json' | 'csv' | 'html';
+export type OutputFormat = 'table' | 'json' | 'csv' | 'html' | 'payload';
 
 export interface Args extends ReportOptions {
   harness: HarnessKey | null;
@@ -44,7 +44,8 @@ const parseSort = (value: string): Effect.Effect<SortKey, CliArgumentError> => {
 };
 
 const setOutputFormat = (args: Args, format: Exclude<OutputFormat, 'table'>): Effect.Effect<void, CliArgumentError> => {
-  if (args.format !== 'table') return Effect.fail(cliArgumentError('--json, --csv, and --html are mutually exclusive'));
+  if (args.format !== 'table')
+    return Effect.fail(cliArgumentError('--json, --csv, --html, and --payload-json are mutually exclusive'));
   args.format = format;
   return Effect.void;
 };
@@ -72,7 +73,8 @@ export const helpText =
   `  --wide                 add Dur / Turns / Tools / ±Lines columns\n` +
   `  --no-cursor            skip Cursor (local data is partial)\n` +
   `  --no-color / --color   disable / force ANSI colors (default: auto)\n` +
-  `  --json | --csv | --html\n`;
+  `  --json | --csv | --html\n` +
+  `  --payload-json         full report payload JSON (consumed by the report dev server)\n`;
 
 export const parseArgs = (argv: string[]): Effect.Effect<Args, CliArgumentError> =>
   Effect.gen(function* () {
@@ -101,6 +103,7 @@ export const parseArgs = (argv: string[]): Effect.Effect<Args, CliArgumentError>
       else if (arg === '--json') yield* setOutputFormat(args, 'json');
       else if (arg === '--csv') yield* setOutputFormat(args, 'csv');
       else if (arg === '--html') yield* setOutputFormat(args, 'html');
+      else if (arg === '--payload-json') yield* setOutputFormat(args, 'payload');
       else if (arg === '--no-cursor') args.cursor = false;
       else if (arg === '--no-color') args.color = false;
       else if (arg === '--color') args.color = true;

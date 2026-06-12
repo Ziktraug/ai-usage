@@ -62,6 +62,17 @@ describe('Usage row report lifecycle', () => {
     expect(report.rows.map((item) => item.name)).toEqual(['kept higher cost', 'kept lower cost']);
   });
 
+  test('payload format emits the full report payload as JSON for the dev server', () => {
+    const output = renderUsageReport([row('a'), row('b')], args({ format: 'payload', limit: 1 }));
+    const payload = JSON.parse(output);
+
+    expect(payload.rows).toHaveLength(2);
+    expect(payload.tableRows).toHaveLength(1);
+    expect(payload.filters.limit).toBe(1);
+    expect(typeof payload.generatedAt).toBe('string');
+    expect(payload.analytics.sessionCount).toBe(2);
+  });
+
   test('limit affects table rows while analytics rows remain complete', () => {
     const report = prepareUsageReport([row('a'), row('b')], args({ limit: 1 }));
 

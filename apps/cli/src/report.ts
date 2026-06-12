@@ -41,6 +41,7 @@ export const renderUsageReport = (rows: Row[], args: Args) => {
   if (args.format === 'json') return JSON.stringify(report.rows, null, 2);
   if (args.format === 'csv') return renderCSV(report.rows);
   if (args.format === 'html') return renderReportAppHTML(createUsageReportPayload(report, args));
+  if (args.format === 'payload') return JSON.stringify(createUsageReportPayload(report, args));
 
   return renderTerminalReport(report, args);
 };

@@ -16,7 +16,7 @@
     "vite-plugin-solid": "^2.11.0"
   },
   "scripts": {
-    "dev": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && vite --host 127.0.0.1",
+    "dev": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && vite --host 127.0.0.1 --open",
     "build": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit && vite build",
     "check": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit",
     "test": "bun test",

@@ -1,24 +1,32 @@
 import type { AnalyticsGroup } from '@ai-usage/core/analytics';
 import type { SerializedRow } from '@ai-usage/core/report-data';
 import { Tabs } from '@ark-ui/solid/tabs';
-import { createEffect, createMemo, createSignal, For, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import { css, cx } from '../styled-system/css';
 import {
   type DateRangeMode,
   dateBoundsForRange,
+  parseLocalDate,
   rowMatchesDateBounds,
   rowsDateSpan,
   startOfDay,
   toDateInputValue,
 } from './date-range';
-import { readReportPayload } from './report-data';
+import { isDemoReportPayload, readReportPayload } from './report-data';
 
 const payload = readReportPayload();
 
 const fmtNum = (n: number) => new Intl.NumberFormat('en', { maximumFractionDigits: 0 }).format(n);
-const fmtMoney = (n: number | null | undefined) => (n == null ? '-' : `$${n.toFixed(2)}`);
+const fmtMoney = (n: number | null | undefined) => (n == null ? '—' : `$${n.toFixed(2)}`);
 const fmtPct = (n: number) => `${n.toFixed(n >= 10 ? 0 : 1)}%`;
-const fmtMaybeNum = (n: number | null | undefined) => (n == null ? '-' : fmtNum(n));
+const fmtMaybeNum = (n: number | null | undefined) => (n == null ? '—' : fmtNum(n));
+const fmtCompact = (n: number) => {
+  if (Math.abs(n) >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (Math.abs(n) >= 1e5) return `${Math.round(n / 1e3)}k`;
+  return fmtNum(n);
+};
+const UNKNOWN_PRICE_HINT = 'No pricing data for this model';
 const fmtDate = (value: string | null) =>
   value
     ? new Intl.DateTimeFormat('en', {
@@ -27,7 +35,7 @@ const fmtDate = (value: string | null) =>
         hour: '2-digit',
         minute: '2-digit',
       }).format(new Date(value))
-    : '-';
+    : '—';
 const fmtDateOnly = (value: string | Date | null) =>
   value
     ? new Intl.DateTimeFormat('en', {
@@ -35,14 +43,21 @@ const fmtDateOnly = (value: string | Date | null) =>
         day: '2-digit',
         year: 'numeric',
       }).format(value instanceof Date ? value : new Date(value))
-    : '-';
+    : '—';
 
 const fmtDuration = (ms: number | null) => {
-  if (!ms || ms <= 0) return '-';
+  if (!ms || ms <= 0) return '—';
   const minutes = Math.round(ms / 60000);
   if (minutes < 90) return `${minutes}m`;
   return `${(ms / 3600000).toFixed(1)}h`;
 };
+
+// Harnesses report the same upstream model under different ids
+// (gpt-5.5 vs openai/gpt-5.5); group on the bare id so one model is one line.
+const normalizeModelKey = (model: string) => model.slice(model.lastIndexOf('/') + 1);
+
+// "(OC)" is collector shorthand for sessions proxied through OpenCode.
+const providerLabel = (provider: string) => provider.replace(/\s*\(OC\)\s*$/, ' · via OpenCode');
 
 const shiftCalendarDays = (date: Date, days: number) => {
   const copy = new Date(date);
@@ -52,196 +67,224 @@ const shiftCalendarDays = (date: Date, days: number) => {
 
 const page = css({
   minHeight: '100vh',
-  boxSizing: 'border-box',
   bg: 'canvas',
   color: 'ink',
-  fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  '& *': {
-    boxSizing: 'border-box',
-  },
-  '& *::before': {
-    boxSizing: 'border-box',
-  },
-  '& *::after': {
-    boxSizing: 'border-box',
-  },
+  fontFamily: 'sans',
 });
 
 const shell = css({
-  maxWidth: '1440px',
-  boxSizing: 'border-box',
+  maxWidth: '1380px',
   mx: 'auto',
-  px: { base: '16px', md: '28px' },
-  py: { base: '18px', md: '28px' },
+  px: { base: '20px', md: '36px' },
+  py: { base: '24px', md: '32px' },
 });
 
 const header = css({
   display: 'grid',
-  gridTemplateColumns: { base: '1fr', lg: 'minmax(0, 1fr) auto' },
+  gap: '20px',
+  pb: '16px',
+});
+
+const headerTop = css({
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'flex-start',
   gap: '16px',
-  alignItems: 'end',
-  pb: '18px',
-  borderBottom: '1px solid token(colors.line)',
 });
 
 const titleBlock = css({
   display: 'grid',
-  gap: '6px',
+  gap: '8px',
+});
+
+const eyebrowRow = css({
+  display: 'flex',
+  alignItems: 'center',
+  gap: '10px',
 });
 
 const eyebrow = css({
-  color: 'muted',
-  fontSize: '13px',
-  fontWeight: 650,
-  textTransform: 'uppercase',
-  letterSpacing: '0',
+  textStyle: 'eyebrow',
+  color: 'accent',
+});
+
+const demoBadge = css({
+  textStyle: 'label',
+  display: 'inline-flex',
+  alignItems: 'center',
+  h: '20px',
+  px: '8px',
+  borderRadius: 'full',
+  bg: 'accentSoft',
+  color: 'accent',
 });
 
 const title = css({
-  fontSize: { base: '28px', md: '36px' },
-  lineHeight: '1.05',
-  fontWeight: 760,
+  fontSize: { base: '26px', md: '30px' },
+  lineHeight: '1.1',
+  fontWeight: 650,
+  letterSpacing: '-0.02em',
 });
 
 const meta = css({
   color: 'muted',
-  fontSize: '14px',
+  fontSize: '13px',
   overflowWrap: 'anywhere',
+});
+
+const themeToggleButton = css({
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  w: '36px',
+  h: '36px',
+  flexShrink: 0,
+  border: '1px solid token(colors.lineStrong)',
+  borderRadius: 'sm',
+  bg: 'surface',
+  color: 'muted',
+  cursor: 'pointer',
+  transition: 'color 0.15s, border-color 0.15s',
+  _hover: {
+    color: 'accent',
+    borderColor: 'accent',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
 });
 
 const filterSummary = css({
   display: 'flex',
   flexWrap: 'wrap',
-  gap: '6px 10px',
+  gap: '8px 12px',
   alignItems: 'center',
   color: 'muted',
-  fontSize: '13px',
-  pt: '12px',
+  fontSize: '12px',
+  pt: '14px',
 });
 
 const summaryPill = css({
+  textStyle: 'numeric',
   display: 'inline-flex',
   alignItems: 'center',
-  minH: '24px',
-  px: '8px',
+  h: '22px',
+  px: '10px',
   border: '1px solid token(colors.line)',
-  borderRadius: '8px',
+  borderRadius: 'full',
   bg: 'surface',
   color: 'ink',
-  fontWeight: 700,
+  fontSize: '11px',
+  fontWeight: 600,
 });
 
-const controls = css({
-  display: 'grid',
-  gridTemplateColumns: {
-    base: '1fr',
-    md: 'repeat(2, minmax(180px, 1fr))',
-    xl: 'minmax(220px, 360px) minmax(148px, 180px) minmax(148px, 180px) repeat(2, 140px) auto',
-  },
+// Sticky so the filters stay reachable while scanning the session table.
+// Static on small screens, where the stacked controls would cover too much.
+const toolbar = css({
+  position: { base: 'static', md: 'sticky' },
+  top: '0',
+  zIndex: 20,
+  display: 'flex',
+  flexWrap: 'wrap',
   gap: '10px',
   alignItems: 'center',
+  py: '12px',
+  bg: 'canvas',
+  borderBottom: '1px solid token(colors.line)',
 });
 
-const searchInput = css({
-  width: '100%',
-  h: '40px',
+const field = css({
+  h: '36px',
   px: '12px',
-  border: '1px solid token(colors.line)',
-  borderRadius: '8px',
+  border: '1px solid token(colors.lineStrong)',
+  borderRadius: 'sm',
   bg: 'surface',
   color: 'ink',
-  fontSize: '14px',
+  fontSize: '13px',
   outline: 'none',
+  transition: 'border-color 0.15s, box-shadow 0.15s',
+  _placeholder: {
+    color: 'faint',
+  },
   _focusVisible: {
-    borderColor: 'teal',
-    boxShadow: '0 0 0 3px rgba(13, 105, 134, 0.16)',
+    borderColor: 'accent',
+    boxShadow: '0 0 0 3px token(colors.focusRing)',
   },
 });
 
-const selectInput = css({
-  h: '40px',
-  minW: '0',
-  width: '100%',
-  px: '10px',
-  border: '1px solid token(colors.line)',
-  borderRadius: '8px',
-  bg: 'surface',
-  color: 'ink',
-  fontSize: '14px',
-});
-
-const dateInput = css({
-  width: '100%',
-  h: '40px',
-  px: '10px',
-  border: '1px solid token(colors.line)',
-  borderRadius: '8px',
-  bg: 'surface',
-  color: 'ink',
-  fontSize: '14px',
-});
+const searchInput = cx(field, css({ flex: '1 1 240px', minW: '180px' }));
+const selectInput = cx(field, css({ flex: '0 1 180px', minW: '150px' }));
+const dateInput = cx(field, css({ flex: '0 1 150px', minW: '140px' }));
 
 const commandButton = css({
-  h: '40px',
-  px: '12px',
-  border: '1px solid token(colors.line)',
-  borderRadius: '8px',
+  h: '36px',
+  px: '16px',
+  ml: 'auto',
+  border: '1px solid token(colors.ink)',
+  borderRadius: 'sm',
   bg: 'ink',
-  color: 'surface',
-  fontSize: '14px',
-  fontWeight: 720,
+  color: 'canvas',
+  fontSize: '13px',
+  fontWeight: 600,
   cursor: 'pointer',
   whiteSpace: 'nowrap',
+  transition: 'background-color 0.15s, border-color 0.15s',
   _hover: {
-    bg: '#24322c',
+    bg: 'inkHover',
+    borderColor: 'inkHover',
   },
   _focusVisible: {
-    outline: '2px solid token(colors.teal)',
+    outline: '2px solid token(colors.accent)',
     outlineOffset: '2px',
   },
 });
 
 const metricGrid = css({
   display: 'grid',
-  gridTemplateColumns: { base: '1fr', sm: '1fr 1fr', lg: 'repeat(6, minmax(0, 1fr))' },
+  gridTemplateColumns: {
+    base: 'repeat(2, minmax(0, 1fr))',
+    md: 'repeat(4, minmax(0, 1fr))',
+    xl: 'repeat(7, minmax(0, 1fr))',
+  },
   gap: '10px',
-  my: '18px',
+  my: '20px',
 });
 
 const metricTile = css({
-  minH: '94px',
-  p: '14px',
+  minH: '88px',
+  p: '14px 16px',
   border: '1px solid token(colors.line)',
-  borderRadius: '8px',
+  borderRadius: 'md',
   bg: 'surface',
+  boxShadow: 'card',
   display: 'grid',
   alignContent: 'space-between',
   gap: '10px',
 });
 
 const metricLabel = css({
+  textStyle: 'label',
   color: 'muted',
-  fontSize: '12px',
-  fontWeight: 700,
-  textTransform: 'uppercase',
-  letterSpacing: '0',
 });
 
 const metricValue = css({
-  fontSize: { base: '22px', md: '26px' },
+  textStyle: 'numeric',
+  fontSize: { base: '20px', md: '23px' },
   lineHeight: '1',
-  fontWeight: 760,
+  fontWeight: 600,
 });
 
 const tabsRoot = css({
   display: 'grid',
-  gap: '14px',
+  gap: '16px',
 });
 
+// Wrap instead of overflow so no tab is ever hidden on narrow screens.
 const tabsList = css({
   display: 'flex',
-  gap: '4px',
-  overflowX: 'auto',
+  flexWrap: 'wrap',
+  gap: '0 20px',
   borderBottom: '1px solid token(colors.line)',
 });
 
@@ -249,21 +292,26 @@ const tabTrigger = css({
   appearance: 'none',
   border: '0',
   borderBottom: '2px solid transparent',
+  mb: '-1px',
   bg: 'transparent',
   color: 'muted',
-  px: '12px',
+  px: '2px',
   py: '10px',
-  fontSize: '14px',
-  fontWeight: 700,
+  fontSize: '13px',
+  fontWeight: 600,
   cursor: 'pointer',
   whiteSpace: 'nowrap',
+  transition: 'color 0.15s, border-color 0.15s',
+  _hover: {
+    color: 'ink',
+  },
   '&[data-selected]': {
     color: 'ink',
-    borderColor: 'mint',
+    borderColor: 'accent',
   },
   _focusVisible: {
-    outline: '2px solid token(colors.teal)',
-    outlineOffset: '2px',
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '-2px',
   },
 });
 
@@ -272,114 +320,343 @@ const section = css({
   gap: '14px',
 });
 
+// Internal scroll keeps the page short; the sticky header keeps columns
+// labelled while scanning all rows.
 const tableWrap = css({
-  overflowX: 'auto',
+  overflow: 'auto',
+  maxH: 'calc(100dvh - 240px)',
+  minH: '320px',
   border: '1px solid token(colors.line)',
-  borderRadius: '8px',
+  borderRadius: 'md',
   bg: 'surface',
+  boxShadow: 'card',
 });
 
 const table = css({
   width: '100%',
-  borderCollapse: 'collapse',
+  // Collapsed borders do not travel with sticky cells; keep them separate.
+  borderCollapse: 'separate',
+  borderSpacing: 0,
   minW: '1040px',
   tableLayout: 'fixed',
   fontSize: '13px',
   '& th': {
+    position: 'sticky',
+    top: 0,
+    zIndex: 2,
+    bg: 'surface',
+    textStyle: 'label',
     color: 'muted',
-    fontSize: '11px',
-    fontWeight: 750,
-    textTransform: 'uppercase',
-    letterSpacing: '0',
     textAlign: 'left',
     py: '10px',
     px: '12px',
     borderBottom: '1px solid token(colors.line)',
-    bg: '#f8faf7',
   },
   '& td': {
     py: '10px',
     px: '12px',
     borderBottom: '1px solid token(colors.line)',
-    verticalAlign: 'top',
+    verticalAlign: 'middle',
   },
   '& tr:last-child td': {
     borderBottom: '0',
   },
+});
+
+// Only session rows are interactive; the projects table reuses `table`
+// without these affordances.
+const sessionsTable = css({
   '& tbody tr': {
     cursor: 'pointer',
+    transition: 'background-color 0.1s',
+  },
+  '& tbody tr:hover td': {
+    bg: 'surfaceMuted',
+  },
+  '& tbody tr:focus-visible': {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '-2px',
   },
   '& tbody tr[data-selected="true"] td': {
-    bg: '#eef6f2',
+    bg: 'accentTint',
+  },
+  '& tbody tr[data-selected="true"] td:first-child': {
+    boxShadow: 'inset 2px 0 0 token(colors.accent)',
   },
 });
 
 const right = css({ textAlign: 'right' });
 const muted = css({ color: 'muted' });
-const strongCell = css({ fontWeight: 700, overflowWrap: 'anywhere' });
-const mono = css({ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' });
+const strongCell = css({ fontWeight: 600, overflowWrap: 'anywhere' });
+const numCell = css({
+  textStyle: 'numeric',
+  textAlign: 'right',
+  fontSize: '12px',
+});
+const dateCell = css({
+  fontFamily: 'mono',
+  fontSize: '12px',
+  lineHeight: '1.4',
+  color: 'muted',
+});
+const sessionCell = css({ fontWeight: 600, overflowWrap: 'break-word' });
+
+// Session labels can be entire pasted prompts; clamp them so one row stays a
+// row (the expanded detail shows the full text).
+const sessionTitleClamp = css({
+  lineClamp: 2,
+});
+const modelCell = css({
+  fontFamily: 'mono',
+  fontSize: '12px',
+  fontWeight: 500,
+  overflowWrap: 'anywhere',
+});
 
 const sortButton = css({
   appearance: 'none',
   display: 'inline-flex',
-  gap: '4px',
+  gap: '5px',
   alignItems: 'center',
   border: '0',
   p: '0',
   bg: 'transparent',
   color: 'inherit',
   font: 'inherit',
-  fontWeight: 750,
+  letterSpacing: 'inherit',
   textTransform: 'inherit',
   cursor: 'pointer',
+  _hover: {
+    color: 'ink',
+  },
   _focusVisible: {
-    outline: '2px solid token(colors.teal)',
+    outline: '2px solid token(colors.accent)',
     outlineOffset: '2px',
   },
 });
 
-const detailButton = css({
+const sortArrow = css({
+  color: 'accent',
+  fontSize: '10px',
+  lineHeight: '1',
+});
+
+const ghostButton = css({
   appearance: 'none',
   border: '1px solid token(colors.line)',
-  borderRadius: '8px',
+  borderRadius: 'sm',
   bg: 'surface',
-  color: 'ink',
-  px: '9px',
-  py: '6px',
+  color: 'muted',
+  px: '12px',
+  py: '5px',
   fontSize: '12px',
-  fontWeight: 720,
+  fontWeight: 600,
   cursor: 'pointer',
+  transition: 'border-color 0.15s, color 0.15s',
   _hover: {
-    borderColor: 'mint',
+    borderColor: 'accent',
+    color: 'accent',
   },
   _focusVisible: {
-    outline: '2px solid token(colors.teal)',
+    outline: '2px solid token(colors.accent)',
     outlineOffset: '2px',
   },
 });
 
-const pill = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  minH: '22px',
-  px: '8px',
-  borderRadius: '999px',
-  bg: '#eef6f2',
-  color: 'mint',
-  fontSize: '12px',
-  fontWeight: 720,
+// Non-modal inspector: it overlays the right edge, the table stays
+// interactive so clicking other rows just swaps its content.
+const drawer = css({
+  position: 'fixed',
+  top: '0',
+  right: '0',
+  bottom: '0',
+  w: { base: '100%', sm: '440px' },
+  maxW: '100vw',
+  display: 'flex',
+  flexDirection: 'column',
+  bg: 'surface',
+  borderLeft: '1px solid token(colors.line)',
+  boxShadow: 'overlay',
+  zIndex: 40,
+  animation: 'drawerIn 0.18s ease-out',
 });
 
-const groupGrid = css({
-  display: 'grid',
-  gridTemplateColumns: { base: '1fr', xl: 'minmax(0, 1fr) minmax(0, 1fr)' },
-  gap: '12px',
+const drawerTop = css({
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: '10px',
+  p: '12px 16px',
+  borderBottom: '1px solid token(colors.line)',
 });
+
+const drawerBody = css({
+  display: 'grid',
+  gap: '14px',
+  alignContent: 'start',
+  p: '16px 18px',
+  overflowY: 'auto',
+});
+
+const drawerTitle = css({
+  fontSize: '15px',
+  fontWeight: 650,
+  lineHeight: '1.35',
+  overflowWrap: 'anywhere',
+});
+
+const drawerGrid = css({
+  display: 'grid',
+  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+  gap: '14px 12px',
+});
+
+const drawerClose = css({
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  w: '30px',
+  h: '30px',
+  flexShrink: 0,
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'transparent',
+  color: 'muted',
+  fontSize: '14px',
+  lineHeight: '1',
+  cursor: 'pointer',
+  transition: 'color 0.15s, border-color 0.15s',
+  _hover: {
+    color: 'accent',
+    borderColor: 'accent',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+});
+
+const emptyActions = css({
+  display: 'grid',
+  gap: '12px',
+  justifyItems: 'center',
+});
+
+const chartSpacing = css({ mb: '20px' });
+
+// Same shell as groupHeader, but the legend drops below the title on narrow
+// screens instead of crushing it.
+const chartHeader = css({
+  display: 'grid',
+  gridTemplateColumns: { base: '1fr', sm: 'minmax(0, 1fr) auto' },
+  gap: '10px',
+  alignItems: 'center',
+  p: '14px 16px',
+  borderBottom: '1px solid token(colors.line)',
+});
+
+const chartBody = css({
+  display: 'grid',
+  gap: '8px',
+  p: '14px 16px',
+});
+
+const chartPlot = css({
+  display: 'flex',
+  alignItems: 'flex-end',
+  gap: '2px',
+  h: '140px',
+});
+
+const chartCol = css({
+  flex: '1 1 0',
+  minW: '2px',
+  h: '100%',
+  display: 'flex',
+  flexDirection: 'column',
+  justifyContent: 'flex-end',
+  gap: '1px',
+  _hover: {
+    opacity: 0.8,
+  },
+});
+
+const chartSeg = css({
+  w: '100%',
+  borderRadius: '1px',
+});
+
+const chartAxis = css({
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: '8px',
+  color: 'faint',
+  fontSize: '11px',
+  fontFamily: 'mono',
+});
+
+const chartLegend = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '6px',
+  justifyContent: { base: 'flex-start', sm: 'flex-end' },
+});
+
+const badge = css({
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '6px',
+  h: '22px',
+  px: '9px',
+  borderRadius: 'full',
+  fontSize: '11px',
+  fontWeight: 600,
+  whiteSpace: 'nowrap',
+  _before: {
+    content: '""',
+    w: '6px',
+    h: '6px',
+    borderRadius: 'full',
+    bg: 'currentColor',
+  },
+});
+
+const badgeTones: Record<string, string> = {
+  claude: css({ bg: 'harness.claude.bg', color: 'harness.claude.fg' }),
+  codex: css({ bg: 'harness.codex.bg', color: 'harness.codex.fg' }),
+  cursor: css({ bg: 'harness.cursor.bg', color: 'harness.cursor.fg' }),
+  opencode: css({ bg: 'harness.opencode.bg', color: 'harness.opencode.fg' }),
+  gemini: css({ bg: 'harness.gemini.bg', color: 'harness.gemini.fg' }),
+};
+
+const badgeNeutral = css({ bg: 'surfaceMuted', color: 'muted' });
+
+// Harness labels are display strings ("Claude Code", "Codex"); tone keys match
+// on the first word so new label variants keep their family color.
+const harnessFamily = (name: string) => {
+  const lower = name.toLowerCase();
+  return badgeTones[lower] ? lower : (lower.split(/[\s-]/)[0] ?? '');
+};
+
+const badgeToneFor = (name: string) => badgeTones[harnessFamily(name)] ?? badgeNeutral;
+
+// Solid fills reusing the badge foreground colors, for chart segments and
+// per-harness distribution bars.
+const harnessFillTones: Record<string, string> = {
+  claude: css({ bg: 'harness.claude.fg' }),
+  codex: css({ bg: 'harness.codex.fg' }),
+  cursor: css({ bg: 'harness.cursor.fg' }),
+  opencode: css({ bg: 'harness.opencode.fg' }),
+  gemini: css({ bg: 'harness.gemini.fg' }),
+};
+
+const harnessFillFor = (name: string) => harnessFillTones[harnessFamily(name)];
 
 const groupPanel = css({
   border: '1px solid token(colors.line)',
-  borderRadius: '8px',
+  borderRadius: 'md',
   bg: 'surface',
+  boxShadow: 'card',
   overflow: 'hidden',
 });
 
@@ -388,14 +665,20 @@ const groupHeader = css({
   gridTemplateColumns: 'minmax(0, 1fr) auto',
   gap: '10px',
   alignItems: 'center',
-  p: '12px',
+  p: '14px 16px',
   borderBottom: '1px solid token(colors.line)',
 });
 
 const groupTitle = css({
-  fontSize: '15px',
-  fontWeight: 760,
+  fontSize: '14px',
+  fontWeight: 650,
   overflowWrap: 'anywhere',
+});
+
+const groupCount = css({
+  textStyle: 'numeric',
+  fontSize: '11px',
+  color: 'faint',
 });
 
 const groupRows = css({
@@ -404,79 +687,101 @@ const groupRows = css({
 
 const groupRow = css({
   display: 'grid',
-  gridTemplateColumns: 'minmax(0, 1fr) 80px',
-  gap: '12px',
+  gridTemplateColumns: 'minmax(0, 1fr) 96px',
+  gap: '14px',
   alignItems: 'center',
-  px: '12px',
-  py: '10px',
+  px: '16px',
+  py: '12px',
   borderBottom: '1px solid token(colors.line)',
   _last: {
     borderBottom: '0',
   },
 });
 
+const groupSub = css({
+  color: 'muted',
+  fontSize: '12px',
+  mt: '2px',
+});
+
+const groupValue = css({
+  textStyle: 'numeric',
+  fontSize: '13px',
+  fontWeight: 600,
+});
+
+const groupPct = css({
+  textStyle: 'numeric',
+  fontSize: '11px',
+  color: 'muted',
+  mt: '2px',
+});
+
 const barTrack = css({
-  h: '8px',
-  borderRadius: '999px',
-  bg: '#e3ebe6',
+  h: '6px',
+  mt: '8px',
+  borderRadius: 'full',
+  bg: 'track',
   overflow: 'hidden',
 });
 
+// Color is applied separately so harness tones can replace the accent
+// without two atomic `bg` classes fighting over cascade order.
 const barFill = css({
   h: '100%',
-  borderRadius: '999px',
-  bg: 'mint',
+  borderRadius: 'full',
 });
+
+const accentFill = css({ bg: 'accent' });
 
 const empty = css({
   minH: '160px',
   display: 'grid',
   placeItems: 'center',
   color: 'muted',
-  border: '1px solid token(colors.line)',
-  borderRadius: '8px',
+  fontSize: '13px',
+  border: '1px dashed token(colors.lineStrong)',
+  borderRadius: 'md',
+});
+
+const unavailablePanel = css({
+  mt: '20px',
+  minH: '180px',
+  display: 'grid',
+  alignContent: 'center',
+  gap: '8px',
+  border: '1px dashed token(colors.lineStrong)',
+  borderRadius: 'md',
   bg: 'surface',
+  p: '22px',
 });
 
-const detailPanel = css({
-  display: 'grid',
-  gap: '12px',
-  border: '1px solid token(colors.line)',
-  borderRadius: '8px',
-  bg: 'surface',
-  p: '14px',
+const unavailableTitle = css({
+  fontSize: '16px',
+  fontWeight: 650,
 });
 
-const detailHeader = css({
-  display: 'grid',
-  gridTemplateColumns: { base: '1fr', md: 'minmax(0, 1fr) auto' },
-  gap: '10px',
-  alignItems: 'start',
-});
-
-const detailGrid = css({
-  display: 'grid',
-  gridTemplateColumns: { base: '1fr', sm: 'repeat(2, minmax(0, 1fr))', md: 'repeat(4, minmax(0, 1fr))' },
-  gap: '10px',
+const unavailableText = css({
+  color: 'muted',
+  fontSize: '13px',
+  maxW: '620px',
 });
 
 const detailItem = css({
   display: 'grid',
-  gap: '4px',
+  gap: '5px',
   minW: '0',
 });
 
 const detailLabel = css({
+  textStyle: 'label',
   color: 'muted',
-  fontSize: '11px',
-  fontWeight: 750,
-  textTransform: 'uppercase',
-  letterSpacing: '0',
 });
 
 const detailValue = css({
-  fontSize: '14px',
-  fontWeight: 700,
+  textStyle: 'numeric',
+  fontSize: '13px',
+  fontWeight: 500,
   overflowWrap: 'anywhere',
 });
 
@@ -487,7 +792,7 @@ const projectTable = css({
 type Metric = {
   label: string;
   value: string;
-  tone: 'mint' | 'teal' | 'amber' | 'rose';
+  hint?: string;
 };
 
 type TableSortKey = 'date' | 'fresh' | 'cache' | 'cost' | 'duration' | 'session';
@@ -505,25 +810,95 @@ type ProjectGroup = {
   linesDeleted: number;
 };
 
-const toneClass: Record<Metric['tone'], string> = {
-  mint: css({ borderTop: '3px solid token(colors.mint)' }),
-  teal: css({ borderTop: '3px solid token(colors.teal)' }),
-  amber: css({ borderTop: '3px solid token(colors.amber)' }),
-  rose: css({ borderTop: '3px solid token(colors.rose)' }),
-};
-
 const MetricTile = (props: Metric) => (
-  <div class={cx(metricTile, toneClass[props.tone])}>
+  <div class={metricTile} title={props.hint}>
     <div class={metricLabel}>{props.label}</div>
     <div class={metricValue}>{props.value}</div>
   </div>
 );
 
+const HarnessBadge = (props: { name: string }) => <span class={cx(badge, badgeToneFor(props.name))}>{props.name}</span>;
+
+const THEME_STORAGE_KEY = 'ai-usage-theme';
+const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+
+const storedTheme = (): 'light' | 'dark' | null => {
+  try {
+    const value = localStorage.getItem(THEME_STORAGE_KEY);
+    return value === 'light' || value === 'dark' ? value : null;
+  } catch {
+    return null;
+  }
+};
+
+const SunIcon = () => (
+  <svg
+    width="15"
+    height="15"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    aria-hidden="true"
+  >
+    <circle cx="12" cy="12" r="4.4" />
+    <path d="M12 2.2v2.6M12 19.2v2.6M21.8 12h-2.6M4.8 12H2.2M18.9 5.1l-1.8 1.8M6.9 17.1l-1.8 1.8M18.9 18.9l-1.8-1.8M6.9 6.9 5.1 5.1" />
+  </svg>
+);
+
+const MoonIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M20.6 14.4A8.7 8.7 0 0 1 9.6 3.4a8.7 8.7 0 1 0 11 11Z" />
+  </svg>
+);
+
+// Two-state toggle: follow the OS by default, pin the opposite scheme on
+// click. A pin that lands back on the OS value clears to auto, so the report
+// keeps tracking system changes unless the user actually diverges from them.
+const ThemeToggle = () => {
+  const [theme, setTheme] = createSignal<'light' | 'dark'>(storedTheme() ?? (prefersDark.matches ? 'dark' : 'light'));
+  const handleSystemChange = (event: MediaQueryListEvent) => {
+    if (!storedTheme()) setTheme(event.matches ? 'dark' : 'light');
+  };
+  prefersDark.addEventListener('change', handleSystemChange);
+  onCleanup(() => prefersDark.removeEventListener('change', handleSystemChange));
+
+  const toggle = () => {
+    const next = theme() === 'dark' ? 'light' : 'dark';
+    const followsSystem = next === (prefersDark.matches ? 'dark' : 'light');
+    setTheme(next);
+    try {
+      if (followsSystem) localStorage.removeItem(THEME_STORAGE_KEY);
+      else localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      // Without storage the pin still applies for the lifetime of the page.
+    }
+    if (followsSystem) delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = next;
+    document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', followsSystem ? 'light dark' : next);
+  };
+
+  return (
+    <button
+      class={themeToggleButton}
+      type="button"
+      onClick={toggle}
+      aria-label={theme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+    >
+      <Show when={theme() === 'dark'} fallback={<SunIcon />}>
+        <MoonIcon />
+      </Show>
+    </button>
+  );
+};
+
 const rowKey = (row: SerializedRow) =>
   [row.activeDate ?? row.date ?? '', row.harness, row.provider, row.model, row.project, row.sessionLabel].join('|');
 
 const matchesRow = (row: SerializedRow, query: string, harness: string) => {
-  const haystack = `${row.sessionLabel} ${row.project} ${row.model} ${row.provider} ${row.harness}`.toLowerCase();
+  const haystack =
+    `${row.sessionLabel} ${row.project} ${row.model} ${row.provider} ${providerLabel(row.provider)} ${row.harness}`.toLowerCase();
   return haystack.includes(query) && (harness === 'all' || row.harness === harness);
 };
 
@@ -638,6 +1013,8 @@ const rowsSummary = (rows: SerializedRow[]) => {
     sessionCount: rows.length,
     totalCost,
     meanCost: totalCost / (priced.length || 1),
+    actualCost: rows.reduce((sum, row) => sum + (row.costActual ?? 0), 0),
+    unknownActual: rows.filter((row) => row.costActual == null).length,
     fresh: rows.reduce((sum, row) => sum + row.freshTokens, 0),
     turns: rows.reduce((sum, row) => sum + row.turns, 0),
     tools: rows.reduce((sum, row) => sum + row.tools, 0),
@@ -727,9 +1104,63 @@ const SortHeader = (props: {
   <button class={cx(sortButton, props.class)} type="button" onClick={() => props.onSort(props.column)}>
     <span>{props.label}</span>
     <Show when={props.current === props.column}>
-      <span>{props.direction === 'asc' ? 'up' : 'down'}</span>
+      <span class={sortArrow} aria-hidden="true">
+        {props.direction === 'asc' ? '↑' : '↓'}
+      </span>
     </Show>
   </button>
+);
+
+const DetailItem = (props: { label: string; value: string; hint?: string }) => (
+  <div class={detailItem} title={props.hint}>
+    <div class={detailLabel}>{props.label}</div>
+    <div class={detailValue}>{props.value}</div>
+  </div>
+);
+
+const SessionDrawer = (props: { row: SerializedRow; onClose: () => void }) => (
+  <aside class={drawer} aria-label="Session details">
+    <div class={drawerTop}>
+      <HarnessBadge name={props.row.harness} />
+      <button class={drawerClose} type="button" aria-label="Close session details" onClick={() => props.onClose()}>
+        ✕
+      </button>
+    </div>
+    <div class={drawerBody}>
+      <div>
+        <div class={drawerTitle}>{props.row.sessionLabel}</div>
+        <div class={muted}>
+          {providerLabel(props.row.provider)} · {props.row.model}
+        </div>
+      </div>
+      <div class={drawerGrid}>
+        <DetailItem label="Started" value={fmtDate(props.row.date)} />
+        <DetailItem label="Ended" value={fmtDate(props.row.endDate)} />
+        <DetailItem label="Input" value={fmtNum(props.row.tokIn)} />
+        <DetailItem label="Output" value={fmtNum(props.row.tokOut)} />
+        <DetailItem label="Cache read" value={fmtNum(props.row.tokCr)} />
+        <DetailItem label="Cache write" value={fmtNum(props.row.tokCw)} />
+        <DetailItem label="Total tokens" value={fmtNum(props.row.tokenTotal)} />
+        <DetailItem
+          label="API value"
+          value={props.row.costKnown ? fmtMoney(props.row.costApprox) : '—'}
+          hint={props.row.costKnown ? 'Estimated cost at standard API prices' : UNKNOWN_PRICE_HINT}
+        />
+        <DetailItem
+          label="Actual cost"
+          value={fmtMoney(props.row.costActual)}
+          hint="Out-of-pocket spend — $0.00 means covered by a subscription"
+        />
+        <DetailItem label="Calls" value={fmtNum(props.row.calls)} />
+        <DetailItem label="Turns" value={fmtNum(props.row.turns)} />
+        <DetailItem label="Tools" value={fmtNum(props.row.tools)} />
+        <DetailItem label="Duration" value={fmtDuration(props.row.durationMs)} />
+        <DetailItem label="Lines" value={lineDeltaLabel(props.row)} />
+        <DetailItem label="Subagent" value={props.row.subagent ? 'Yes' : 'No'} />
+        <DetailItem label="Partial" value={props.row.partial ? 'Yes' : 'No'} />
+      </div>
+    </div>
+  </aside>
 );
 
 const SessionTable = (props: {
@@ -739,13 +1170,26 @@ const SessionTable = (props: {
   sortDirection: SortDirection;
   onSort: (column: TableSortKey) => void;
   onSelect: (row: SerializedRow) => void;
+  onClearFilters: () => void;
 }) => (
-  <Show when={props.rows.length} fallback={<div class={empty}>No sessions</div>}>
+  <Show
+    when={props.rows.length}
+    fallback={
+      <div class={empty}>
+        <div class={emptyActions}>
+          <span>No sessions match the current filters</span>
+          <button class={ghostButton} type="button" onClick={() => props.onClearFilters()}>
+            Clear filters
+          </button>
+        </div>
+      </div>
+    }
+  >
     <div class={tableWrap}>
-      <table class={table}>
+      <table class={cx(table, sessionsTable)}>
         <thead>
           <tr>
-            <th style={{ width: '112px' }}>
+            <th style={{ width: '104px' }}>
               <SortHeader
                 label="Date"
                 column="date"
@@ -754,11 +1198,15 @@ const SessionTable = (props: {
                 onSort={props.onSort}
               />
             </th>
-            <th style={{ width: '92px' }}>Harness</th>
-            <th style={{ width: '150px' }}>Provider</th>
-            <th style={{ width: '190px' }}>Model</th>
-            <th style={{ width: '160px' }}>Project</th>
-            <th style={{ width: '92px' }} class={right}>
+            <th style={{ width: '100px' }}>Harness</th>
+            <th style={{ width: '124px' }}>Provider</th>
+            <th style={{ width: '168px' }}>Model</th>
+            <th style={{ width: '120px' }}>Project</th>
+            <th
+              style={{ width: '84px' }}
+              class={right}
+              title="Tokens processed without cache (input + output + cache writes)"
+            >
               <SortHeader
                 label="Fresh"
                 column="fresh"
@@ -768,7 +1216,7 @@ const SessionTable = (props: {
                 class={right}
               />
             </th>
-            <th style={{ width: '92px' }} class={right}>
+            <th style={{ width: '84px' }} class={right} title="Cache-read tokens">
               <SortHeader
                 label="Cache"
                 column="cache"
@@ -778,7 +1226,7 @@ const SessionTable = (props: {
                 class={right}
               />
             </th>
-            <th style={{ width: '82px' }} class={right}>
+            <th style={{ width: '76px' }} class={right} title="Estimated cost at standard API prices">
               <SortHeader
                 label="$API"
                 column="cost"
@@ -788,7 +1236,7 @@ const SessionTable = (props: {
                 class={right}
               />
             </th>
-            <th style={{ width: '82px' }} class={right}>
+            <th style={{ width: '68px' }} class={right} title="Wall-clock session duration">
               <SortHeader
                 label="Span"
                 column="duration"
@@ -807,29 +1255,42 @@ const SessionTable = (props: {
                 onSort={props.onSort}
               />
             </th>
-            <th style={{ width: '78px' }}>Inspect</th>
           </tr>
         </thead>
         <tbody>
           <For each={props.rows}>
             {(row) => (
-              <tr data-selected={String(props.selectedKey === rowKey(row))} onClick={() => props.onSelect(row)}>
-                <td class={muted}>{fmtDate(row.activeDate)}</td>
+              <tr
+                data-selected={String(props.selectedKey === rowKey(row))}
+                tabIndex={0}
+                onClick={() => props.onSelect(row)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  props.onSelect(row);
+                }}
+              >
+                <td class={dateCell}>{fmtDate(row.activeDate)}</td>
                 <td>
-                  <span class={pill}>{row.harness}</span>
+                  <HarnessBadge name={row.harness} />
                 </td>
-                <td>{row.provider}</td>
-                <td class={cx(strongCell, mono)}>{row.model}</td>
-                <td>{row.project || '-'}</td>
-                <td class={right}>{fmtNum(row.freshTokens)}</td>
-                <td class={right}>{fmtNum(row.tokCr)}</td>
-                <td class={right}>{row.costKnown ? fmtMoney(row.costApprox) : '?'}</td>
-                <td class={right}>{fmtDuration(row.durationMs)}</td>
-                <td class={strongCell}>{row.sessionLabel}</td>
-                <td>
-                  <button class={detailButton} type="button" onClick={() => props.onSelect(row)}>
-                    Details
-                  </button>
+                <td>{providerLabel(row.provider)}</td>
+                <td class={modelCell}>{row.model}</td>
+                <td>{row.project || '—'}</td>
+                <td class={numCell} title={fmtNum(row.freshTokens)}>
+                  {fmtCompact(row.freshTokens)}
+                </td>
+                <td class={numCell} title={fmtNum(row.tokCr)}>
+                  {fmtCompact(row.tokCr)}
+                </td>
+                <td class={numCell}>
+                  <Show when={row.costKnown} fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>}>
+                    {fmtMoney(row.costApprox)}
+                  </Show>
+                </td>
+                <td class={numCell}>{fmtDuration(row.durationMs)}</td>
+                <td class={sessionCell}>
+                  <div class={sessionTitleClamp}>{row.sessionLabel}</div>
                 </td>
               </tr>
             )}
@@ -840,56 +1301,15 @@ const SessionTable = (props: {
   </Show>
 );
 
-const DetailItem = (props: { label: string; value: string }) => (
-  <div class={detailItem}>
-    <div class={detailLabel}>{props.label}</div>
-    <div class={detailValue}>{props.value}</div>
-  </div>
-);
-
-const SessionDetail = (props: { row: SerializedRow | undefined }) => (
-  <Show when={props.row}>
-    {(row) => (
-      <aside class={detailPanel}>
-        <div class={detailHeader}>
-          <div>
-            <div class={groupTitle}>{row().sessionLabel}</div>
-            <div class={muted}>
-              {row().provider} · {row().model}
-            </div>
-          </div>
-          <span class={pill}>{row().harness}</span>
-        </div>
-        <div class={detailGrid}>
-          <DetailItem label="Started" value={fmtDate(row().date)} />
-          <DetailItem label="Ended" value={fmtDate(row().endDate)} />
-          <DetailItem label="Input" value={fmtNum(row().tokIn)} />
-          <DetailItem label="Output" value={fmtNum(row().tokOut)} />
-          <DetailItem label="Cache read" value={fmtNum(row().tokCr)} />
-          <DetailItem label="Cache write" value={fmtNum(row().tokCw)} />
-          <DetailItem label="Total tokens" value={fmtNum(row().tokenTotal)} />
-          <DetailItem label="$API" value={row().costKnown ? fmtMoney(row().costApprox) : '?'} />
-          <DetailItem label="Actual cost" value={fmtMoney(row().costActual)} />
-          <DetailItem label="Calls" value={fmtNum(row().calls)} />
-          <DetailItem label="Turns" value={fmtNum(row().turns)} />
-          <DetailItem label="Tools" value={fmtNum(row().tools)} />
-          <DetailItem label="Duration" value={fmtDuration(row().durationMs)} />
-          <DetailItem label="Lines" value={lineDeltaLabel(row())} />
-          <DetailItem label="Subagent" value={row().subagent ? 'Yes' : 'No'} />
-          <DetailItem label="Partial" value={row().partial ? 'Yes' : 'No'} />
-        </div>
-      </aside>
-    )}
-  </Show>
-);
-
-const GroupPanel = (props: { title: string; groups: AnalyticsGroup[] }) => {
+const GroupPanel = (props: { title: string; groups: AnalyticsGroup[]; countLabel: string; harnessTones?: boolean }) => {
   const maxCost = createMemo(() => Math.max(1, ...props.groups.map((group) => group.costSum)));
   return (
     <div class={groupPanel}>
       <div class={groupHeader}>
         <div class={groupTitle}>{props.title}</div>
-        <div class={muted}>{props.groups.length}</div>
+        <div class={groupCount} title={`${props.groups.length} ${props.countLabel}`}>
+          {props.groups.length} {props.countLabel}
+        </div>
       </div>
       <div class={groupRows}>
         <For each={props.groups}>
@@ -897,22 +1317,123 @@ const GroupPanel = (props: { title: string; groups: AnalyticsGroup[] }) => {
             <div class={groupRow}>
               <div>
                 <div class={strongCell}>{group.key}</div>
-                <div class={muted}>
-                  {group.sessions} sess · {fmtNum(group.fresh)} fresh · {fmtPct(group.cacheHitPct)} cache
+                <div class={groupSub} title={`${fmtNum(group.fresh)} fresh tokens`}>
+                  {group.sessions} sess · {fmtCompact(group.fresh)} fresh · {fmtPct(group.cacheHitPct)} cache
                 </div>
                 <div class={barTrack}>
-                  <div class={barFill} style={{ width: `${Math.max(3, (group.costSum / maxCost()) * 100)}%` }} />
+                  <div
+                    class={cx(barFill, (props.harnessTones ? harnessFillFor(group.harness) : undefined) ?? accentFill)}
+                    style={{ width: `${Math.max(3, (group.costSum / maxCost()) * 100)}%` }}
+                  />
                 </div>
               </div>
               <div class={right}>
-                <div class={strongCell}>{group.priced ? fmtMoney(group.costSum) : '-'}</div>
-                <div class={muted}>{fmtPct(group.costPercent)}</div>
+                <div class={groupValue}>
+                  <Show when={group.priced} fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>}>
+                    {fmtMoney(group.costSum)}
+                  </Show>
+                </div>
+                <div class={groupPct}>{fmtPct(group.costPercent)}</div>
               </div>
             </div>
           )}
         </For>
       </div>
     </div>
+  );
+};
+
+const DAY_MS = 86_400_000;
+
+type TimelinePart = { harness: string; cost: number };
+type TimelineBucket = { date: Date; total: number; parts: TimelinePart[] };
+
+const timelineBucketTitle = (bucket: TimelineBucket, weekly: boolean) =>
+  [
+    `${weekly ? 'Week of ' : ''}${fmtDateOnly(bucket.date)} — ${fmtMoney(bucket.total)}`,
+    ...bucket.parts.map((part) => `${part.harness} ${fmtMoney(part.cost)}`),
+  ].join('\n');
+
+const CostTimeline = (props: { rows: SerializedRow[] }) => {
+  const data = createMemo(() => {
+    const priced = props.rows.filter((row) => row.costKnown && (row.activeDate ?? row.date));
+    if (!priced.length) return null;
+    const times = priced.map((row) => new Date(row.activeDate ?? row.date ?? 0).getTime());
+    const minDay = startOfDay(new Date(Math.min(...times)));
+    const maxDay = startOfDay(new Date(Math.max(...times)));
+    const dayCount = Math.round((maxDay.getTime() - minDay.getTime()) / DAY_MS) + 1;
+    // Weekly buckets past ~4 months keep the bars readable (and the DOM small).
+    const weekly = dayCount > 120;
+    const bucketStart = (date: Date) => {
+      const day = startOfDay(date);
+      return weekly ? shiftCalendarDays(day, -((day.getDay() + 6) % 7)) : day;
+    };
+
+    const buckets = new Map<string, TimelineBucket & { byHarness: Map<string, number> }>();
+    for (let cursor = bucketStart(minDay); cursor <= maxDay; cursor = shiftCalendarDays(cursor, weekly ? 7 : 1)) {
+      buckets.set(toDateInputValue(cursor), { date: cursor, total: 0, parts: [], byHarness: new Map() });
+    }
+    const harnessTotals = new Map<string, number>();
+    for (const row of priced) {
+      const bucket = buckets.get(toDateInputValue(bucketStart(new Date(row.activeDate ?? row.date ?? 0))));
+      if (!bucket) continue;
+      bucket.total += row.costApprox;
+      bucket.byHarness.set(row.harness, (bucket.byHarness.get(row.harness) ?? 0) + row.costApprox);
+      harnessTotals.set(row.harness, (harnessTotals.get(row.harness) ?? 0) + row.costApprox);
+    }
+    const harnesses = [...harnessTotals.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
+    const list = [...buckets.values()].map((bucket) => ({
+      date: bucket.date,
+      total: bucket.total,
+      parts: harnesses
+        .map((name) => ({ harness: name, cost: bucket.byHarness.get(name) ?? 0 }))
+        .filter((part) => part.cost > 0),
+    }));
+    const maxTotal = Math.max(...list.map((bucket) => bucket.total));
+    if (maxTotal <= 0) return null;
+    return { list, maxTotal, weekly, harnesses };
+  });
+
+  return (
+    <Show when={data()}>
+      {(chart) => (
+        <section class={cx(groupPanel, chartSpacing)} aria-label="Cost over time">
+          <div class={chartHeader}>
+            <div>
+              <div class={groupTitle}>Cost over time</div>
+              <div class={groupSub}>
+                API value per {chart().weekly ? 'week' : 'day'} · peak {fmtMoney(chart().maxTotal)}
+              </div>
+            </div>
+            <div class={chartLegend}>
+              <For each={chart().harnesses}>{(name) => <HarnessBadge name={name} />}</For>
+            </div>
+          </div>
+          <div class={chartBody}>
+            <div class={chartPlot}>
+              <For each={chart().list}>
+                {(bucket) => (
+                  <div class={chartCol} title={timelineBucketTitle(bucket, chart().weekly)}>
+                    <For each={bucket.parts}>
+                      {(part) => (
+                        <div
+                          class={cx(chartSeg, harnessFillFor(part.harness) ?? accentFill)}
+                          style={{ height: `${(part.cost / chart().maxTotal) * 100}%` }}
+                        />
+                      )}
+                    </For>
+                  </div>
+                )}
+              </For>
+            </div>
+            <div class={chartAxis}>
+              <span>{fmtDateOnly(chart().list[0]?.date ?? null)}</span>
+              <span>{fmtDateOnly(chart().list[chart().list.length - 1]?.date ?? null)}</span>
+            </div>
+          </div>
+        </section>
+      )}
+    </Show>
   );
 };
 
@@ -985,16 +1506,29 @@ const ProjectSummary = (props: { rows: SerializedRow[] }) => (
           <For each={projectGroups(props.rows)}>
             {(project) => (
               <tr>
-                <td class={strongCell}>{project.key}</td>
-                <td class={right}>{fmtNum(project.sessions)}</td>
-                <td class={right}>{fmtNum(project.fresh)}</td>
-                <td class={right}>{fmtNum(project.cache)}</td>
-                <td class={right}>{project.priced ? fmtMoney(project.cost) : '-'}</td>
-                <td class={right}>
+                <td
+                  class={strongCell}
+                  title={project.key === '(unknown)' ? 'Sessions without a detected project directory' : undefined}
+                >
+                  {project.key}
+                </td>
+                <td class={numCell}>{fmtNum(project.sessions)}</td>
+                <td class={numCell} title={fmtNum(project.fresh)}>
+                  {fmtCompact(project.fresh)}
+                </td>
+                <td class={numCell} title={fmtNum(project.cache)}>
+                  {fmtCompact(project.cache)}
+                </td>
+                <td class={numCell}>
+                  <Show when={project.priced} fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>}>
+                    {fmtMoney(project.cost)}
+                  </Show>
+                </td>
+                <td class={numCell}>
                   +{fmtNum(project.linesAdded)}/-{fmtNum(project.linesDeleted)}
                 </td>
-                <td class={right}>{fmtNum(project.turns)}</td>
-                <td class={right}>{fmtNum(project.tools)}</td>
+                <td class={numCell}>{fmtNum(project.turns)}</td>
+                <td class={numCell}>{fmtNum(project.tools)}</td>
               </tr>
             )}
           </For>
@@ -1005,6 +1539,7 @@ const ProjectSummary = (props: { rows: SerializedRow[] }) => (
 );
 
 export const Dashboard = () => {
+  const isDemo = isDemoReportPayload();
   const [query, setQuery] = createSignal('');
   const [harness, setHarness] = createSignal('all');
   const generatedAt = new Date(payload.generatedAt);
@@ -1024,26 +1559,39 @@ export const Dashboard = () => {
   const filteredRows = createMemo(() =>
     payload.rows.filter(matchesCurrentFilters).sort(compareRows(sortKey(), sortDirection())),
   );
-  const displayRows = createMemo(() => filteredRows());
+  // The drawer closes by itself when its row leaves the filtered set.
+  const selectedRow = createMemo(() => filteredRows().find((row) => rowKey(row) === selectedKey()) ?? null);
+  createEffect(() => {
+    if (!selectedRow()) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSelectedKey(null);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    onCleanup(() => document.removeEventListener('keydown', onKeyDown));
+  });
   const visibleSummary = createMemo(() => rowsSummary(filteredRows()));
-  const modelGroups = createMemo(() => analyticsGroups(filteredRows(), (row) => row.model));
-  const providerGroups = createMemo(() => analyticsGroups(filteredRows(), (row) => row.provider));
+  const modelGroups = createMemo(() => analyticsGroups(filteredRows(), (row) => normalizeModelKey(row.model)));
+  const providerGroups = createMemo(() => analyticsGroups(filteredRows(), (row) => providerLabel(row.provider)));
   const harnessGroups = createMemo(() => analyticsGroups(filteredRows(), (row) => row.harness));
   const dateRangeLabel = createMemo(() => {
     if (dateRange() === 'all') return 'all dates';
     if (dateRange() === 'today') return 'today';
     if (dateRange() === '7d') return 'last 7 days';
     if (dateRange() === '30d') return 'last 30 days';
-    return `${customFrom() || 'start'} to ${customTo() || 'end'}`;
+    const from = customFrom() ? fmtDateOnly(parseLocalDate(customFrom())) : 'start';
+    const to = customTo() ? fmtDateOnly(parseLocalDate(customTo(), true)) : 'end';
+    return `${from} – ${to}`;
   });
   const filteredDateSpan = createMemo(() => rowsDateSpan(filteredRows()));
   const hiddenCount = createMemo(() => payload.rows.length - filteredRows().length);
   const exportRows = createMemo(() => filteredRows());
-  const selectedRow = createMemo(() => displayRows().find((row) => rowKey(row) === selectedKey()) ?? displayRows()[0]);
-  createEffect(() => {
-    const current = selectedRow();
-    setSelectedKey(current ? rowKey(current) : null);
-  });
+  const toggleSelected = (row: SerializedRow) =>
+    setSelectedKey((current) => (current === rowKey(row) ? null : rowKey(row)));
+  const clearFilters = () => {
+    setQuery('');
+    setHarness('all');
+    setDateRange('all');
+  };
   const handleSort = (column: TableSortKey) => {
     if (sortKey() === column) {
       setSortDirection(sortDirection() === 'asc' ? 'desc' : 'asc');
@@ -1055,12 +1603,23 @@ export const Dashboard = () => {
   const metrics = createMemo<Metric[]>(() => {
     const a = visibleSummary();
     return [
-      { label: 'Sessions', value: fmtNum(a.sessionCount), tone: 'mint' },
-      { label: '$API', value: fmtMoney(a.totalCost), tone: 'teal' },
-      { label: 'Mean', value: fmtMoney(a.meanCost), tone: 'amber' },
-      { label: 'Fresh', value: fmtNum(a.fresh), tone: 'mint' },
-      { label: 'Turns', value: fmtNum(a.turns), tone: 'rose' },
-      { label: 'Tools', value: fmtNum(a.tools), tone: 'teal' },
+      { label: 'Sessions', value: fmtNum(a.sessionCount), hint: 'Sessions in the current filter' },
+      {
+        label: 'API value',
+        value: fmtMoney(a.totalCost),
+        hint: 'Estimated cost at standard API prices, including usage covered by subscriptions',
+      },
+      {
+        label: 'Actual cost',
+        value: fmtMoney(a.actualCost),
+        hint: `Out-of-pocket spend reported by harnesses; subscription usage counts as $0${
+          a.unknownActual ? ` (${fmtNum(a.unknownActual)} sessions unknown)` : ''
+        }`,
+      },
+      { label: 'Mean / sess', value: fmtMoney(a.meanCost), hint: 'Mean API value per priced session' },
+      { label: 'Fresh tokens', value: fmtCompact(a.fresh), hint: `Tokens processed without cache: ${fmtNum(a.fresh)}` },
+      { label: 'Turns', value: fmtNum(a.turns), hint: 'Assistant turns across the filtered sessions' },
+      { label: 'Tool calls', value: fmtNum(a.tools), hint: 'Tool invocations across the filtered sessions' },
     ];
   });
 
@@ -1068,15 +1627,28 @@ export const Dashboard = () => {
     <main class={page}>
       <div class={shell}>
         <header class={header}>
-          <div class={titleBlock}>
-            <div class={eyebrow}>ai-usage</div>
-            <h1 class={title}>Usage report</h1>
-            <div class={meta}>
-              Generated {fmtDate(payload.generatedAt)} · {fmtNum(filteredRows().length)} of{' '}
-              {fmtNum(payload.rows.length)} sessions · {dateRangeLabel()}
+          <div class={headerTop}>
+            <div class={titleBlock}>
+              <div class={eyebrowRow}>
+                <div class={eyebrow}>ai-usage</div>
+                <Show when={isDemoReportPayload()}>
+                  <span class={demoBadge}>Demo data</span>
+                </Show>
+              </div>
+              <h1 class={title}>Usage report</h1>
+              <div class={meta}>
+                <Show when={!isDemo} fallback="Report payload unavailable">
+                  Generated {fmtDate(payload.generatedAt)} · {fmtNum(filteredRows().length)} of{' '}
+                  {fmtNum(payload.rows.length)} sessions · {dateRangeLabel()}
+                </Show>
+              </div>
             </div>
+            <ThemeToggle />
           </div>
-          <div class={controls}>
+        </header>
+
+        <Show when={!isDemo}>
+          <div class={toolbar}>
             <input
               class={searchInput}
               value={query()}
@@ -1120,74 +1692,90 @@ export const Dashboard = () => {
               Export CSV
             </button>
           </div>
-        </header>
+        </Show>
 
-        <div class={filterSummary}>
-          <span class={summaryPill}>
-            {fmtNum(filteredRows().length)} / {fmtNum(payload.rows.length)} sessions
-          </span>
-          <span class={summaryPill}>{dateRangeLabel()}</span>
-          <Show when={filteredDateSpan()}>
-            {(span) => (
-              <span>
-                {fmtDateOnly(span().from)} to {fmtDateOnly(span().to)}
-              </span>
-            )}
+        <Show
+          when={!isDemo}
+          fallback={
+            <section class={unavailablePanel}>
+              <div class={unavailableTitle}>Real report data is not loaded</div>
+              <div class={unavailableText}>
+                The CLI payload was not injected into this page, so usage metrics are hidden instead of showing demo
+                fixture data.
+              </div>
+            </section>
+          }
+        >
+          <div class={filterSummary}>
+            <span class={summaryPill}>
+              {fmtNum(filteredRows().length)} / {fmtNum(payload.rows.length)} sessions
+            </span>
+            <span class={summaryPill}>{dateRangeLabel()}</span>
+            <Show when={filteredDateSpan()}>
+              {(span) => (
+                <span title="First and last session in the current filter">
+                  data {fmtDateOnly(span().from)} – {fmtDateOnly(span().to)}
+                </span>
+              )}
+            </Show>
+            <Show when={hiddenCount() > 0}>
+              <span>{fmtNum(hiddenCount())} hidden by filters</span>
+            </Show>
+          </div>
+
+          <div class={metricGrid}>
+            <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>
+          </div>
+
+          <CostTimeline rows={filteredRows()} />
+
+          <Tabs.Root defaultValue="sessions" class={tabsRoot}>
+            <Tabs.List class={tabsList}>
+              <Tabs.Trigger value="sessions" class={tabTrigger}>
+                Sessions
+              </Tabs.Trigger>
+              <Tabs.Trigger value="models" class={tabTrigger}>
+                Models
+              </Tabs.Trigger>
+              <Tabs.Trigger value="providers" class={tabTrigger}>
+                Providers
+              </Tabs.Trigger>
+              <Tabs.Trigger value="harnesses" class={tabTrigger}>
+                Harnesses
+              </Tabs.Trigger>
+              <Tabs.Trigger value="projects" class={tabTrigger}>
+                Projects
+              </Tabs.Trigger>
+            </Tabs.List>
+            <Tabs.Content value="sessions" class={section}>
+              <SessionTable
+                rows={filteredRows()}
+                selectedKey={selectedKey()}
+                sortKey={sortKey()}
+                sortDirection={sortDirection()}
+                onSort={handleSort}
+                onSelect={toggleSelected}
+                onClearFilters={clearFilters}
+              />
+            </Tabs.Content>
+            <Tabs.Content value="models" class={section}>
+              <GroupPanel title="By model" groups={modelGroups()} countLabel="models" />
+            </Tabs.Content>
+            <Tabs.Content value="providers" class={section}>
+              <GroupPanel title="By provider" groups={providerGroups()} countLabel="providers" harnessTones />
+            </Tabs.Content>
+            <Tabs.Content value="harnesses" class={section}>
+              <GroupPanel title="By harness" groups={harnessGroups()} countLabel="harnesses" harnessTones />
+            </Tabs.Content>
+            <Tabs.Content value="projects" class={section}>
+              <ProjectSummary rows={filteredRows()} />
+            </Tabs.Content>
+          </Tabs.Root>
+
+          <Show when={selectedRow()}>
+            {(row) => <SessionDrawer row={row()} onClose={() => setSelectedKey(null)} />}
           </Show>
-          <Show when={hiddenCount() > 0}>
-            <span>{fmtNum(hiddenCount())} hidden by filters</span>
-          </Show>
-        </div>
-
-        <div class={metricGrid}>
-          <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>
-        </div>
-
-        <Tabs.Root defaultValue="sessions" class={tabsRoot}>
-          <Tabs.List class={tabsList}>
-            <Tabs.Trigger value="sessions" class={tabTrigger}>
-              Sessions
-            </Tabs.Trigger>
-            <Tabs.Trigger value="models" class={tabTrigger}>
-              Models
-            </Tabs.Trigger>
-            <Tabs.Trigger value="providers" class={tabTrigger}>
-              Providers
-            </Tabs.Trigger>
-            <Tabs.Trigger value="harnesses" class={tabTrigger}>
-              Harnesses
-            </Tabs.Trigger>
-            <Tabs.Trigger value="projects" class={tabTrigger}>
-              Projects
-            </Tabs.Trigger>
-          </Tabs.List>
-          <Tabs.Content value="sessions" class={section}>
-            <SessionTable
-              rows={displayRows()}
-              selectedKey={selectedKey()}
-              sortKey={sortKey()}
-              sortDirection={sortDirection()}
-              onSort={handleSort}
-              onSelect={(row) => setSelectedKey(rowKey(row))}
-            />
-            <SessionDetail row={selectedRow()} />
-          </Tabs.Content>
-          <Tabs.Content value="models" class={section}>
-            <div class={groupGrid}>
-              <GroupPanel title="By model" groups={modelGroups()} />
-              <GroupPanel title="Cost per model" groups={modelGroups().slice(0, 10)} />
-            </div>
-          </Tabs.Content>
-          <Tabs.Content value="providers" class={section}>
-            <GroupPanel title="By provider" groups={providerGroups()} />
-          </Tabs.Content>
-          <Tabs.Content value="harnesses" class={section}>
-            <GroupPanel title="By harness" groups={harnessGroups()} />
-          </Tabs.Content>
-          <Tabs.Content value="projects" class={section}>
-            <ProjectSummary rows={filteredRows()} />
-          </Tabs.Content>
-        </Tabs.Root>
+        </Show>
       </div>
     </main>
   );

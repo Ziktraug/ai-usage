@@ -33,7 +33,12 @@ describe('CLI command parsing', () => {
       args: { format: 'html' },
     });
 
+    expect(Effect.runSync(parseCommand(['--payload-json']))).toMatchObject({
+      _tag: 'Report',
+      args: { format: 'payload' },
+    });
+
     const error = Effect.runSync(Effect.flip(parseCommand(['--csv', '--html'])));
-    expect(error.message).toBe('--json, --csv, and --html are mutually exclusive');
+    expect(error.message).toBe('--json, --csv, --html, and --payload-json are mutually exclusive');
   });
 });

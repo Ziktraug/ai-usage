@@ -12,14 +12,12 @@
     "ai-usage": "./apps/cli/src/main.ts"
   },
   "scripts": {
-    "start": "turbo run start --filter=@ai-usage/cli --",
-    "quota": "turbo run quota --filter=@ai-usage/cli",
-    "dev:report": "turbo run dev --filter=@ai-usage/report",
+    "cli": "bun apps/cli/src/main.ts",
+    "dev": "bun run --cwd apps/report dev",
+    "html": "bun apps/cli/src/html.ts",
     "build": "turbo run build",
     "check": "turbo run check",
-    "test": "turbo run test",
-    "lint": "turbo run lint",
-    "format": "turbo run format"
+    "test": "turbo run test"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",

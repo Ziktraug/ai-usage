@@ -28,31 +28,31 @@ bun install
 Default report:
 
 ```sh
-bun run start
+bun run cli
 ```
 
 Limit the displayed session table:
 
 ```sh
-bun run start -- --limit 20
+bun run cli -- --limit 20
 ```
 
 Filter by recent activity:
 
 ```sh
-bun run start -- --since 30d
+bun run cli -- --since 30d
 ```
 
 Filter by harness:
 
 ```sh
-bun run start -- --harness codex
+bun run cli -- --harness codex
 ```
 
 Show Codex subscription quota from the newest local rate-limit snapshot:
 
 ```sh
-bun run quota
+bun run cli -- quota
 ```
 
 ## Output formats
@@ -60,20 +60,27 @@ bun run quota
 JSON:
 
 ```sh
-bun run start -- --json
+bun run cli -- --json
 ```
 
 CSV:
 
 ```sh
-bun run start -- --csv
+bun run cli -- --csv
 ```
 
 HTML app report:
 
 ```sh
-bun run build
-bun run start -- --html > report.html
+bun run html export
+```
+
+This writes a dated single-file report to `ai-usage-reports/`, which is ignored by git.
+
+Pass normal report filters through the export command:
+
+```sh
+bun run html export --since 30d --limit 20
 ```
 
 ## Useful options
@@ -106,19 +113,19 @@ bun run check
 Lint:
 
 ```sh
-bun run lint
+bunx biome check .
 ```
 
 Format:
 
 ```sh
-bun run format
+bunx biome format --write .
 ```
 
-Run the report app in development with demo data:
+Run the report app in development:
 
 ```sh
-bun run dev:report
+bun run dev
 ```
 
 ## Notes
