@@ -2,33 +2,47 @@ import type { AnalyticsGroup } from '@ai-usage/core/analytics';
 import type { SerializedRow } from '@ai-usage/core/report-data';
 import { Slider } from '@ark-ui/solid/slider';
 import { Tabs } from '@ark-ui/solid/tabs';
+import { useNavigate, useSearch } from '@tanstack/solid-router';
 import {
+  type Column,
   type ColumnDef,
   createSolidTable,
   flexRender,
   getCoreRowModel,
   getSortedRowModel,
-  type Header,
   type OnChangeFn,
   type RowData,
   type SortingState,
-  type Table,
   type Updater,
   type VisibilityState,
 } from '@tanstack/solid-table';
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
 import { css, cx } from '../styled-system/css';
 import {
   clampNumber,
+  type DateBounds,
   dateFromIndex,
   dateRangePresets,
+  normalizeDateIndexRange,
   rowMatchesDateBounds,
   rowTime,
   shiftCalendarDays,
   startOfDay,
+  type TimeRangePreset,
   toDateInputValue,
 } from './date-range';
 import { createDateRangeController, type DateRangeController } from './date-range-controller';
+import {
+  type DashboardSearch,
+  dashboardSearchDefaultsFor,
+  type FieldFilterKey,
+  type FieldFilters,
+  isDashboardTab,
+  isSessionColumnId,
+  type SearchableColumnDiffId,
+  type SessionColumnId,
+  sortingStateFromSearch,
+} from './dashboard-search';
 import { isDemoReportPayload, readReportPayload } from './report-data';
 
 declare module '@tanstack/solid-table' {
@@ -49,7 +63,20 @@ declare module '@tanstack/solid-table' {
 
 const payload = readReportPayload();
 
-const fmtNum = (n: number) => new Intl.NumberFormat('en', { maximumFractionDigits: 0 }).format(n);
+const numberFormatter = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
+const dateTimeFormatter = new Intl.DateTimeFormat('en', {
+  month: 'short',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+const dateOnlyFormatter = new Intl.DateTimeFormat('en', {
+  month: 'short',
+  day: '2-digit',
+  year: 'numeric',
+});
+
+const fmtNum = (n: number) => numberFormatter.format(n);
 const fmtMoney = (n: number | null | undefined) => (n == null ? '—' : `$${n.toFixed(2)}`);
 const fmtPct = (n: number) => `${n.toFixed(n >= 10 ? 0 : 1)}%`;
 const fmtMaybeNum = (n: number | null | undefined) => (n == null ? '—' : fmtNum(n));
@@ -60,23 +87,9 @@ const fmtCompact = (n: number) => {
   return fmtNum(n);
 };
 const UNKNOWN_PRICE_HINT = 'No pricing data for this model';
-const fmtDate = (value: string | null) =>
-  value
-    ? new Intl.DateTimeFormat('en', {
-        month: 'short',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-      }).format(new Date(value))
-    : '—';
+const fmtDate = (value: string | null) => (value ? dateTimeFormatter.format(new Date(value)) : '—');
 const fmtDateOnly = (value: string | Date | null) =>
-  value
-    ? new Intl.DateTimeFormat('en', {
-        month: 'short',
-        day: '2-digit',
-        year: 'numeric',
-      }).format(value instanceof Date ? value : new Date(value))
-    : '—';
+  value ? dateOnlyFormatter.format(value instanceof Date ? value : new Date(value)) : '—';
 
 const fmtDuration = (ms: number | null) => {
   if (!ms || ms <= 0) return '—';
@@ -91,6 +104,57 @@ const normalizeModelKey = (model: string) => model.slice(model.lastIndexOf('/') 
 
 // "(OC)" is collector shorthand for sessions proxied through OpenCode.
 const providerLabel = (provider: string) => provider.replace(/\s*\(OC\)\s*$/, ' · via OpenCode');
+
+type DashboardRow = SerializedRow & {
+  activeTime: number | null;
+  modelKey: string;
+  projectKey: string;
+  providerDisplay: string;
+  rowId: string;
+  searchText: string;
+  sortDate: number;
+  sortHarness: string;
+  sortModel: string;
+  sortProject: string;
+  sortProvider: string;
+  sortSession: string;
+};
+
+const timeFromRowDate = (row: SerializedRow) => {
+  const value = row.activeDate ?? row.date;
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+};
+
+const buildRowId = (row: SerializedRow) =>
+  [row.activeDate ?? row.date ?? '', row.harness, row.provider, row.model, row.project, row.sessionLabel].join('|');
+
+const enrichReportRow = (row: SerializedRow): DashboardRow => {
+  const activeTime = timeFromRowDate(row);
+  const modelKey = normalizeModelKey(row.model);
+  const projectKey = row.project || '(unknown)';
+  const providerDisplay = providerLabel(row.provider);
+
+  return {
+    ...row,
+    activeTime,
+    modelKey,
+    projectKey,
+    providerDisplay,
+    rowId: buildRowId(row),
+    searchText:
+      `${row.sessionLabel} ${row.project} ${row.model} ${row.provider} ${providerDisplay} ${row.harness}`.toLowerCase(),
+    sortDate: activeTime ?? 0,
+    sortHarness: row.harness.toLowerCase(),
+    sortModel: modelKey.toLowerCase(),
+    sortProject: projectKey.toLowerCase(),
+    sortProvider: providerDisplay.toLowerCase(),
+    sortSession: row.sessionLabel.toLowerCase(),
+  };
+};
+
+const reportRows = payload.rows.map(enrichReportRow);
 
 const page = css({
   minHeight: '100vh',
@@ -650,84 +714,45 @@ const tableControlMeta = css({
   fontSize: '12px',
 });
 
-const columnMenu = css({
-  position: 'relative',
-  justifySelf: 'end',
-  '&[open] summary': {
-    borderColor: 'accent',
-    color: 'accent',
-  },
-});
-
-const columnMenuButton = css({
-  appearance: 'none',
-  display: 'inline-flex',
+const columnChooser = css({
+  display: 'flex',
+  flex: '1 1 520px',
+  flexWrap: 'wrap',
+  gap: '6px',
   alignItems: 'center',
-  gap: '8px',
-  h: '32px',
-  px: '12px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'surface',
-  color: 'muted',
-  fontSize: '12px',
-  fontWeight: 600,
-  cursor: 'pointer',
-  listStyle: 'none',
-  transition: 'border-color 0.15s, color 0.15s',
-  _hover: {
-    borderColor: 'accent',
-    color: 'accent',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-  '&::-webkit-details-marker': {
-    display: 'none',
-  },
-});
-
-const columnMenuPanel = css({
-  position: 'absolute',
-  right: 0,
-  top: 'calc(100% + 6px)',
-  zIndex: 30,
-  w: '260px',
-  maxH: 'min(420px, calc(100dvh - 160px))',
-  display: 'grid',
-  gap: '4px',
+  justifyContent: { base: 'flex-start', md: 'flex-end' },
+  minW: 0,
   p: '8px',
-  overflowY: 'auto',
   border: '1px solid token(colors.line)',
   borderRadius: 'md',
   bg: 'surface',
-  boxShadow: 'overlay',
 });
 
-const columnMenuHeader = css({
-  display: 'flex',
+const columnChooserHeader = css({
+  display: 'inline-flex',
   alignItems: 'center',
-  justifyContent: 'space-between',
   gap: '8px',
-  px: '4px',
-  pb: '6px',
-  borderBottom: '1px solid token(colors.line)',
+  pr: '4px',
 });
 
 const columnToggle = css({
-  display: 'grid',
-  gridTemplateColumns: '16px minmax(0, 1fr)',
-  gap: '8px',
+  display: 'inline-grid',
+  gridTemplateColumns: '14px minmax(0, max-content)',
+  gap: '6px',
   alignItems: 'center',
-  px: '6px',
-  py: '6px',
+  maxW: '180px',
+  minH: '28px',
+  px: '8px',
+  border: '1px solid token(colors.line)',
   borderRadius: 'sm',
+  bg: 'canvas',
   color: 'ink',
   fontSize: '12px',
   cursor: 'pointer',
+  transition: 'border-color 0.15s, background-color 0.15s',
   _hover: {
     bg: 'surfaceMuted',
+    borderColor: 'lineStrong',
   },
 });
 
@@ -1188,8 +1213,6 @@ type Metric = {
   hint?: string;
 };
 
-type FieldFilterKey = 'provider' | 'model' | 'project';
-type FieldFilters = Partial<Record<FieldFilterKey, string>>;
 type RangeDragPointerEvent = PointerEvent & { currentTarget: HTMLButtonElement };
 type ProjectGroup = {
   key: string;
@@ -1203,13 +1226,23 @@ type ProjectGroup = {
   linesAdded: number;
   linesDeleted: number;
 };
+type ReportSummary = {
+  actualCost: number;
+  fresh: number;
+  meanCost: number;
+  rtkInput: number;
+  rtkOutput: number;
+  rtkSaved: number;
+  sessionCount: number;
+  tools: number;
+  totalCost: number;
+  turns: number;
+  unknownActual: number;
+};
+type MutableAnalyticsGroup = AnalyticsGroup & { costs: number[] };
 
 const applyTableUpdate = <T,>(updater: Updater<T>, current: T) =>
   typeof updater === 'function' ? (updater as (old: T) => T)(current) : updater;
-
-const defaultSortingFor = (sort: 'date' | 'tokens' | 'cost'): SortingState => [
-  { id: sort === 'tokens' ? 'fresh' : sort, desc: true },
-];
 
 const MetricTile = (props: Metric) => (
   <div class={metricTile} title={props.hint}>
@@ -1310,25 +1343,33 @@ const ThemeToggle = () => {
   );
 };
 
-const rowKey = (row: SerializedRow) =>
-  [row.activeDate ?? row.date ?? '', row.harness, row.provider, row.model, row.project, row.sessionLabel].join('|');
+const rowKey = (row: DashboardRow) => row.rowId;
 
-const fieldValueForRow = (row: SerializedRow, key: FieldFilterKey) => {
-  if (key === 'provider') return providerLabel(row.provider);
-  if (key === 'model') return normalizeModelKey(row.model);
-  return row.project || '(unknown)';
+const fieldValueForRow = (row: DashboardRow, key: FieldFilterKey) => {
+  if (key === 'provider') return row.providerDisplay;
+  if (key === 'model') return row.modelKey;
+  return row.projectKey;
 };
 
-const matchesFieldFilters = (row: SerializedRow, filters: FieldFilters) =>
-  (Object.entries(filters) as [FieldFilterKey, string][]).every(([key, value]) => fieldValueForRow(row, key) === value);
-
-const matchesRow = (row: SerializedRow, query: string, harness: string, filters: FieldFilters) => {
-  const haystack =
-    `${row.sessionLabel} ${row.project} ${row.model} ${row.provider} ${providerLabel(row.provider)} ${row.harness}`.toLowerCase();
-  return (
-    haystack.includes(query) && (harness === 'all' || row.harness === harness) && matchesFieldFilters(row, filters)
-  );
+type FilterSnapshot = {
+  fieldEntries: [FieldFilterKey, string][];
+  harness: string;
+  query: string;
 };
+
+const createFilterSnapshot = (query: string, harness: string, filters: FieldFilters): FilterSnapshot => ({
+  fieldEntries: Object.entries(filters) as [FieldFilterKey, string][],
+  harness,
+  query: query.trim().toLowerCase(),
+});
+
+const matchesFilterSnapshot = (row: DashboardRow, filters: FilterSnapshot) =>
+  row.searchText.includes(filters.query) &&
+  (filters.harness === 'all' || row.harness === filters.harness) &&
+  filters.fieldEntries.every(([key, value]) => fieldValueForRow(row, key) === value);
+
+const matchesFilterSnapshotAndDate = (row: DashboardRow, filters: FilterSnapshot, bounds: DateBounds) =>
+  matchesFilterSnapshot(row, filters) && rowMatchesDateBounds(row, bounds);
 
 const csvEscape = (value: string) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value);
 
@@ -1358,6 +1399,11 @@ const reportRowsToCSV = (rows: SerializedRow[]) => {
     'lines_added',
     'lines_deleted',
     'line_delta',
+    'rtk_saved_tokens',
+    'rtk_input_tokens',
+    'rtk_output_tokens',
+    'rtk_savings_pct',
+    'rtk_command_count',
     'subagent',
     'partial',
   ];
@@ -1387,6 +1433,11 @@ const reportRowsToCSV = (rows: SerializedRow[]) => {
       row.linesAdded ?? '',
       row.linesDeleted ?? '',
       row.lineDelta ?? '',
+      row.rtkSavedTokens ?? '',
+      row.rtkInputTokens ?? '',
+      row.rtkOutputTokens ?? '',
+      rtkSavingsPct(row)?.toFixed(2) ?? '',
+      row.rtkCommandCount ?? '',
       row.subagent ?? false,
       row.partial ?? false,
     ]
@@ -1406,12 +1457,12 @@ const downloadCSV = (rows: SerializedRow[]) => {
   URL.revokeObjectURL(url);
 };
 
-const sortValueForRow = (row: SerializedRow, columnId: string): number | string => {
-  if (columnId === 'date') return new Date(row.activeDate ?? row.date ?? 0).getTime();
-  if (columnId === 'harness') return row.harness.toLowerCase();
-  if (columnId === 'provider') return providerLabel(row.provider).toLowerCase();
-  if (columnId === 'model') return normalizeModelKey(row.model).toLowerCase();
-  if (columnId === 'project') return (row.project || '(unknown)').toLowerCase();
+const sortValueForRow = (row: DashboardRow, columnId: string): number | string => {
+  if (columnId === 'date') return row.sortDate;
+  if (columnId === 'harness') return row.sortHarness;
+  if (columnId === 'provider') return row.sortProvider;
+  if (columnId === 'model') return row.sortModel;
+  if (columnId === 'project') return row.sortProject;
   if (columnId === 'tokIn') return row.tokIn;
   if (columnId === 'tokOut') return row.tokOut;
   if (columnId === 'cache') return row.tokCr;
@@ -1425,12 +1476,13 @@ const sortValueForRow = (row: SerializedRow, columnId: string): number | string 
   if (columnId === 'turns') return row.turns;
   if (columnId === 'tools') return row.tools;
   if (columnId === 'lines') return row.lineDelta ?? 0;
+  if (columnId === 'rtkSaved') return rtkSavingsPct(row) ?? 0;
   if (columnId === 'subagent') return row.subagent ? 1 : 0;
   if (columnId === 'partial') return row.partial ? 1 : 0;
-  return row.sessionLabel.toLowerCase();
+  return row.sortSession;
 };
 
-const compareRows = (sorting: SortingState) => (a: SerializedRow, b: SerializedRow) => {
+const compareRows = (sorting: SortingState) => (a: DashboardRow, b: DashboardRow) => {
   for (const sort of sorting) {
     const av = sortValueForRow(a, sort.id);
     const bv = sortValueForRow(b, sort.id);
@@ -1452,7 +1504,28 @@ const lineDeltaLabel = (row: SerializedRow) => {
   return `+${fmtMaybeNum(row.linesAdded)}/-${fmtMaybeNum(row.linesDeleted)}`;
 };
 
-const sessionColumns: ColumnDef<SerializedRow>[] = [
+const rtkSavingsPct = (row: SerializedRow) =>
+  row.rtkSavedTokens && row.rtkInputTokens ? (row.rtkSavedTokens / row.rtkInputTokens) * 100 : null;
+
+const rtkSavedLabel = (row: SerializedRow) => {
+  const pct = rtkSavingsPct(row);
+  return pct == null ? '—' : fmtPct(pct);
+};
+const rtkSavedTitle = (row: SerializedRow) =>
+  row.rtkSavedTokens
+    ? [
+        `${fmtPct(rtkSavingsPct(row) ?? 0)} RTK savings`,
+        `${fmtNum(row.rtkSavedTokens)} tokens saved`,
+        `${fmtNum(row.rtkCommandCount ?? 0)} matched RTK commands`,
+        `${fmtNum(row.rtkInputTokens ?? 0)} input tokens before filtering`,
+        `${fmtNum(row.rtkOutputTokens ?? 0)} output tokens after filtering`,
+        'Matched by project path and session time window',
+      ].join('\n')
+    : 'No matched RTK token savings';
+
+type SessionColumnDef = ColumnDef<DashboardRow> & { id: SessionColumnId };
+
+const sessionColumns: SessionColumnDef[] = [
   {
     id: 'date',
     header: 'Date',
@@ -1479,7 +1552,7 @@ const sessionColumns: ColumnDef<SerializedRow>[] = [
     accessorFn: (row) => sortValueForRow(row, 'provider'),
     cell: (info) => {
       const row = info.row.original;
-      const label = providerLabel(row.provider);
+      const label = row.providerDisplay;
       return (
         <button
           class={filterTextButton}
@@ -1506,10 +1579,10 @@ const sessionColumns: ColumnDef<SerializedRow>[] = [
         <button
           class={filterTextButton}
           type="button"
-          title={`Filter by ${normalizeModelKey(row.model)}`}
+          title={`Filter by ${row.modelKey}`}
           onClick={(event) => {
             event.stopPropagation();
-            info.table.options.meta?.onFieldFilter?.('model', normalizeModelKey(row.model));
+            info.table.options.meta?.onFieldFilter?.('model', row.modelKey);
           }}
         >
           {row.model}
@@ -1524,7 +1597,7 @@ const sessionColumns: ColumnDef<SerializedRow>[] = [
     accessorFn: (row) => sortValueForRow(row, 'project'),
     cell: (info) => {
       const row = info.row.original;
-      const label = row.project || '(unknown)';
+      const label = row.projectKey;
       return (
         <button
           class={filterTextButton}
@@ -1607,6 +1680,20 @@ const sessionColumns: ColumnDef<SerializedRow>[] = [
     cell: (info) => fmtCompact(info.row.original.tokenTotal),
     sortDescFirst: true,
     meta: { label: 'Total tokens', widthPx: 90, cellClass: numCell, headerClass: right, defaultVisible: false },
+  },
+  {
+    id: 'rtkSaved',
+    header: 'RTK',
+    accessorFn: (row) => rtkSavingsPct(row) ?? 0,
+    cell: (info) => <span title={rtkSavedTitle(info.row.original)}>{rtkSavedLabel(info.row.original)}</span>,
+    sortDescFirst: true,
+    meta: {
+      label: 'RTK savings',
+      title: 'RTK saved-token percentage; hover a cell for matched command details',
+      widthPx: 86,
+      cellClass: numCell,
+      headerClass: right,
+    },
   },
   {
     id: 'cost',
@@ -1716,6 +1803,39 @@ const sessionColumns: ColumnDef<SerializedRow>[] = [
 const defaultColumnVisibility = Object.fromEntries(
   sessionColumns.filter((column) => column.meta?.defaultVisible === false).map((column) => [column.id, false]),
 ) as VisibilityState;
+const dashboardSearchDefaults = dashboardSearchDefaultsFor(payload.filters.sort);
+
+const isSessionColumnVisible = (visibility: VisibilityState, columnId: string) => visibility[columnId] !== false;
+
+const visibleSessionColumns = (visibility: VisibilityState) =>
+  sessionColumns.filter((column) => isSessionColumnVisible(visibility, column.id));
+
+const columnVisibilityFromDiff = (columnDiff: SearchableColumnDiffId[]): VisibilityState => {
+  const visibility = { ...defaultColumnVisibility };
+  for (const columnId of columnDiff) {
+    visibility[columnId] = defaultColumnVisibility[columnId] === false;
+  }
+  return visibility;
+};
+
+const columnDiffFromVisibility = (visibility: VisibilityState): SearchableColumnDiffId[] =>
+  sessionColumns.flatMap((column) => {
+    if (column.enableHiding === false) return [];
+    const defaultVisible = isSessionColumnVisible(defaultColumnVisibility, column.id);
+    const currentVisible = isSessionColumnVisible(visibility, column.id);
+    return defaultVisible === currentVisible ? [] : [column.id as SearchableColumnDiffId];
+  });
+
+const sortFromSortingState = (sorting: SortingState) => {
+  const sort = sorting[0];
+  if (!sort || !isSessionColumnId(sort.id)) return dashboardSearchDefaults.sort;
+  return { id: sort.id, desc: sort.desc };
+};
+
+const sessionColumnLabel = (column: SessionColumnDef) => column.meta?.label ?? column.id;
+
+const sessionColumnHeader = (column: SessionColumnDef) =>
+  typeof column.header === 'string' ? column.header : sessionColumnLabel(column);
 
 const median = (values: number[]) => {
   if (!values.length) return 0;
@@ -1724,78 +1844,56 @@ const median = (values: number[]) => {
   return sorted.length % 2 ? (sorted[middle] ?? 0) : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
 };
 
-const rowsSummary = (rows: SerializedRow[]) => {
-  const priced = rows.filter((row) => row.costKnown);
-  const totalCost = priced.reduce((sum, row) => sum + row.costApprox, 0);
-  return {
-    sessionCount: rows.length,
-    totalCost,
-    meanCost: totalCost / (priced.length || 1),
-    actualCost: rows.reduce((sum, row) => sum + (row.costActual ?? 0), 0),
-    unknownActual: rows.filter((row) => row.costActual == null).length,
-    fresh: rows.reduce((sum, row) => sum + row.freshTokens, 0),
-    turns: rows.reduce((sum, row) => sum + row.turns, 0),
-    tools: rows.reduce((sum, row) => sum + row.tools, 0),
-  };
-};
+const createAnalyticsGroup = (key: string, row: DashboardRow): MutableAnalyticsGroup => ({
+  key,
+  harness: row.harness,
+  provider: row.provider,
+  sessions: 0,
+  priced: 0,
+  unpriced: 0,
+  fresh: 0,
+  inp: 0,
+  cache: 0,
+  cacheHitPct: 0,
+  costSum: 0,
+  costPerSession: null,
+  medianCost: null,
+  linesA: 0,
+  linesD: 0,
+  lineCount: 0,
+  costPer100Lines: null,
+  costPercent: 0,
+  turns: 0,
+  tools: 0,
+  costs: [],
+});
 
-const analyticsGroups = (rows: SerializedRow[], keyFn: (row: SerializedRow) => string): AnalyticsGroup[] => {
-  const totalCost = rows.filter((row) => row.costKnown).reduce((sum, row) => sum + row.costApprox, 0);
-  const groups = new Map<
-    string,
-    AnalyticsGroup & {
-      costs: number[];
-    }
-  >();
-
-  for (const row of rows) {
-    const key = keyFn(row);
-    let group = groups.get(key);
-    if (!group) {
-      group = {
-        key,
-        harness: row.harness,
-        provider: row.provider,
-        sessions: 0,
-        priced: 0,
-        unpriced: 0,
-        fresh: 0,
-        inp: 0,
-        cache: 0,
-        cacheHitPct: 0,
-        costSum: 0,
-        costPerSession: null,
-        medianCost: null,
-        linesA: 0,
-        linesD: 0,
-        lineCount: 0,
-        costPer100Lines: null,
-        costPercent: 0,
-        turns: 0,
-        tools: 0,
-        costs: [],
-      };
-      groups.set(key, group);
-    }
-
-    group.sessions++;
-    group.fresh += row.freshTokens;
-    group.inp += row.tokIn;
-    group.cache += row.tokCr;
-    group.linesA += row.linesAdded ?? 0;
-    group.linesD += row.linesDeleted ?? 0;
-    group.turns += row.turns;
-    group.tools += row.tools;
-    if (row.costKnown) {
-      group.priced++;
-      group.costSum += row.costApprox;
-      group.costs.push(row.costApprox);
-    } else {
-      group.unpriced++;
-    }
+const addAnalyticsRow = (groups: Map<string, MutableAnalyticsGroup>, key: string, row: DashboardRow) => {
+  let group = groups.get(key);
+  if (!group) {
+    group = createAnalyticsGroup(key, row);
+    groups.set(key, group);
   }
 
-  return [...groups.values()]
+  group.sessions++;
+  group.fresh += row.freshTokens;
+  group.inp += row.tokIn;
+  group.cache += row.tokCr;
+  group.linesA += row.linesAdded ?? 0;
+  group.linesD += row.linesDeleted ?? 0;
+  group.turns += row.turns;
+  group.tools += row.tools;
+  if (row.costKnown) {
+    group.priced++;
+    group.costSum += row.costApprox;
+    group.costs.push(row.costApprox);
+  } else {
+    group.unpriced++;
+  }
+};
+
+const finalizeAnalyticsGroups = (groups: Map<string, MutableAnalyticsGroup>, totalCost: number): AnalyticsGroup[] =>
+  [...groups.values()]
     .map((group) => {
       const lineCount = group.linesA + group.linesD;
       return {
@@ -1809,27 +1907,119 @@ const analyticsGroups = (rows: SerializedRow[], keyFn: (row: SerializedRow) => s
       };
     })
     .sort((a, b) => b.costSum - a.costSum);
+
+const createProjectGroup = (key: string): ProjectGroup => ({
+  key,
+  sessions: 0,
+  fresh: 0,
+  cache: 0,
+  cost: 0,
+  priced: 0,
+  turns: 0,
+  tools: 0,
+  linesAdded: 0,
+  linesDeleted: 0,
+});
+
+const addProjectRow = (groups: Map<string, ProjectGroup>, row: DashboardRow) => {
+  let group = groups.get(row.projectKey);
+  if (!group) {
+    group = createProjectGroup(row.projectKey);
+    groups.set(row.projectKey, group);
+  }
+
+  group.sessions++;
+  group.fresh += row.freshTokens;
+  group.cache += row.tokCr;
+  group.turns += row.turns;
+  group.tools += row.tools;
+  group.linesAdded += row.linesAdded ?? 0;
+  group.linesDeleted += row.linesDeleted ?? 0;
+  if (row.costKnown) {
+    group.cost += row.costApprox;
+    group.priced++;
+  }
 };
 
-const SortHeader = (props: { header: Header<SerializedRow, unknown> }) => {
-  const column = () => props.header.column;
-  const meta = () => column().columnDef.meta;
-  const sortDirection = () => column().getIsSorted();
+const createReportSummary = (): ReportSummary => ({
+  actualCost: 0,
+  fresh: 0,
+  meanCost: 0,
+  rtkInput: 0,
+  rtkOutput: 0,
+  rtkSaved: 0,
+  sessionCount: 0,
+  tools: 0,
+  totalCost: 0,
+  turns: 0,
+  unknownActual: 0,
+});
+
+const buildReportSummary = (rows: DashboardRow[], acceptsRow: (row: DashboardRow) => boolean) => {
+  const summary = createReportSummary();
+  let pricedCount = 0;
+
+  for (const row of rows) {
+    if (!acceptsRow(row)) continue;
+    summary.sessionCount++;
+    if (row.costKnown) {
+      summary.totalCost += row.costApprox;
+      pricedCount++;
+    }
+    summary.actualCost += row.costActual ?? 0;
+    if (row.costActual == null) summary.unknownActual++;
+    summary.fresh += row.freshTokens;
+    summary.rtkSaved += row.rtkSavedTokens ?? 0;
+    summary.rtkInput += row.rtkInputTokens ?? 0;
+    summary.rtkOutput += row.rtkOutputTokens ?? 0;
+    summary.turns += row.turns;
+    summary.tools += row.tools;
+  }
+
+  summary.meanCost = summary.totalCost / (pricedCount || 1);
+  return summary;
+};
+
+const buildAnalyticsGroups = (
+  rows: DashboardRow[],
+  acceptsRow: (row: DashboardRow) => boolean,
+  keyForRow: (row: DashboardRow) => string,
+  totalCost: number,
+) => {
+  const groups = new Map<string, MutableAnalyticsGroup>();
+
+  for (const row of rows) {
+    if (!acceptsRow(row)) continue;
+    addAnalyticsRow(groups, keyForRow(row), row);
+  }
+
+  return finalizeAnalyticsGroups(groups, totalCost);
+};
+
+const buildProjectGroups = (rows: DashboardRow[], acceptsRow: (row: DashboardRow) => boolean) => {
+  const projects = new Map<string, ProjectGroup>();
+
+  for (const row of rows) {
+    if (!acceptsRow(row)) continue;
+    addProjectRow(projects, row);
+  }
+
+  return [...projects.values()].sort((a, b) => b.cost - a.cost || b.fresh - a.fresh);
+};
+
+const SortHeader = (props: { column: Column<DashboardRow, unknown>; label: string }) => {
+  const meta = () => props.column.columnDef.meta;
+  const sortDirection = () => props.column.getIsSorted();
 
   return (
-    <Show
-      when={column().getCanSort()}
-      fallback={
-        <span class={meta()?.headerClass}>{flexRender(column().columnDef.header, props.header.getContext())}</span>
-      }
-    >
+    <Show when={props.column.getCanSort()} fallback={<span class={meta()?.headerClass}>{props.label}</span>}>
       <button
         class={cx(sortButton, meta()?.headerClass)}
         type="button"
         title={meta()?.title}
-        onClick={(event) => column().getToggleSortingHandler()?.(event)}
+        onClick={(event) => props.column.getToggleSortingHandler()?.(event)}
       >
-        <span>{flexRender(column().columnDef.header, props.header.getContext())}</span>
+        <span>{props.label}</span>
         <Show when={sortDirection()}>
           {(direction) => (
             <span class={sortArrow} aria-hidden="true">
@@ -1842,42 +2032,41 @@ const SortHeader = (props: { header: Header<SerializedRow, unknown> }) => {
   );
 };
 
-const ColumnVisibilityControl = (props: { table: Table<SerializedRow> }) => {
-  const hideableColumns = () => props.table.getAllLeafColumns().filter((column) => column.getCanHide());
-  const visibleCount = () => props.table.getVisibleLeafColumns().length;
+const ColumnVisibilityControl = (props: {
+  columnVisibility: VisibilityState;
+  onColumnVisibilityChange: OnChangeFn<VisibilityState>;
+}) => {
+  const hideableColumns = () => sessionColumns.filter((column) => column.enableHiding !== false);
+  const visibleCount = () => visibleSessionColumns(props.columnVisibility).length;
+  const setColumnVisible = (id: string, visible: boolean) =>
+    props.onColumnVisibilityChange((current) => ({ ...current, [id]: visible }));
 
   return (
-    <details class={columnMenu}>
-      <summary class={columnMenuButton}>
-        Columns
-        <span class={muted}>{visibleCount()}</span>
-      </summary>
-      <div class={columnMenuPanel}>
-        <div class={columnMenuHeader}>
-          <span class={muted}>{visibleCount()} visible</span>
-          <button
-            class={ghostButton}
-            type="button"
-            onClick={() => props.table.setColumnVisibility(defaultColumnVisibility)}
-          >
-            Reset
-          </button>
-        </div>
-        <For each={hideableColumns()}>
-          {(column) => (
-            <label class={columnToggle}>
-              <input
-                class={columnToggleInput}
-                type="checkbox"
-                checked={column.getIsVisible()}
-                onChange={(event) => column.toggleVisibility(event.currentTarget.checked)}
-              />
-              <span class={columnToggleText}>{column.columnDef.meta?.label ?? column.id}</span>
-            </label>
-          )}
-        </For>
+    <div class={columnChooser}>
+      <div class={columnChooserHeader}>
+        <span class={muted}>{visibleCount()} columns</span>
+        <button
+          class={ghostButton}
+          type="button"
+          onClick={() => props.onColumnVisibilityChange(defaultColumnVisibility)}
+        >
+          Reset
+        </button>
       </div>
-    </details>
+      <For each={hideableColumns()}>
+        {(column) => (
+          <label class={columnToggle}>
+            <input
+              class={columnToggleInput}
+              type="checkbox"
+              checked={isSessionColumnVisible(props.columnVisibility, column.id)}
+              onChange={(event) => setColumnVisible(column.id, event.currentTarget.checked)}
+            />
+            <span class={columnToggleText}>{sessionColumnLabel(column)}</span>
+          </label>
+        )}
+      </For>
+    </div>
   );
 };
 
@@ -1888,7 +2077,7 @@ const DetailItem = (props: { label: string; value: string; hint?: string }) => (
   </div>
 );
 
-const SessionDrawer = (props: { row: SerializedRow; onClose: () => void }) => (
+const SessionDrawer = (props: { row: DashboardRow; onClose: () => void }) => (
   <aside class={drawer} aria-label="Session details">
     <div class={drawerTop}>
       <HarnessBadge name={props.row.harness} />
@@ -1900,7 +2089,7 @@ const SessionDrawer = (props: { row: SerializedRow; onClose: () => void }) => (
       <div>
         <div class={drawerTitle}>{props.row.sessionLabel}</div>
         <div class={muted}>
-          {providerLabel(props.row.provider)} · {props.row.model}
+          {props.row.providerDisplay} · {props.row.model}
         </div>
       </div>
       <div class={drawerGrid}>
@@ -1911,6 +2100,7 @@ const SessionDrawer = (props: { row: SerializedRow; onClose: () => void }) => (
         <DetailItem label="Cache read" value={fmtNum(props.row.tokCr)} />
         <DetailItem label="Cache write" value={fmtNum(props.row.tokCw)} />
         <DetailItem label="Total tokens" value={fmtNum(props.row.tokenTotal)} />
+        <DetailItem label="RTK savings" value={rtkSavedLabel(props.row)} hint={rtkSavedTitle(props.row)} />
         <DetailItem
           label="API value"
           value={props.row.costKnown ? fmtMoney(props.row.costApprox) : '—'}
@@ -1934,18 +2124,18 @@ const SessionDrawer = (props: { row: SerializedRow; onClose: () => void }) => (
 );
 
 const SessionTable = (props: {
-  rows: SerializedRow[];
+  rows: DashboardRow[];
   selectedKey: string | null;
   sorting: SortingState;
   columnVisibility: VisibilityState;
   onSortingChange: OnChangeFn<SortingState>;
   onColumnVisibilityChange: OnChangeFn<VisibilityState>;
-  onSelect: (row: SerializedRow) => void;
+  onSelect: (row: DashboardRow) => void;
   onHarnessFilter: (value: string) => void;
   onFieldFilter: (key: FieldFilterKey, value: string) => void;
   onClearFilters: () => void;
 }) => {
-  const sessionTable = createSolidTable<SerializedRow>({
+  const sessionTable = createSolidTable<DashboardRow>({
     get data() {
       return props.rows;
     },
@@ -1968,11 +2158,63 @@ const SessionTable = (props: {
     onColumnVisibilityChange: props.onColumnVisibilityChange,
     onSortingChange: props.onSortingChange,
   });
+  const visibleColumns = createMemo(() =>
+    visibleSessionColumns(props.columnVisibility)
+      .map((columnDef) => ({ columnDef, tableColumn: sessionTable.getColumn(columnDef.id) }))
+      .filter((column): column is { columnDef: SessionColumnDef; tableColumn: Column<DashboardRow, unknown> } =>
+        Boolean(column.tableColumn),
+      ),
+  );
+  const visibleColumnIds = createMemo<Set<string>>(() => new Set(visibleColumns().map(({ columnDef }) => columnDef.id)));
   const tableMinWidth = () =>
     Math.max(
       1040,
-      sessionTable.getVisibleLeafColumns().reduce((sum, column) => sum + (column.columnDef.meta?.widthPx ?? 140), 0),
+      visibleColumns().reduce((sum, { columnDef }) => sum + (columnDef.meta?.widthPx ?? 140), 0),
     );
+  let tableViewportEl: HTMLDivElement | undefined;
+  const rowHeight = 43;
+  const overscanRows = 8;
+  const [tableViewport, setTableViewport] = createSignal({ height: 520, scrollTop: 0 });
+  const updateTableViewport = () => {
+    const next = {
+      height: tableViewportEl?.clientHeight ?? 520,
+      scrollTop: tableViewportEl?.scrollTop ?? 0,
+    };
+    setTableViewport((current) =>
+      current.height === next.height && current.scrollTop === next.scrollTop ? current : next,
+    );
+  };
+  const rowModelRows = createMemo(() => {
+    props.rows;
+    props.sorting;
+    return sessionTable.getRowModel().rows;
+  });
+  const visibleColumnCount = () => visibleColumns().length;
+  const virtualRows = createMemo(() => {
+    const rows = rowModelRows();
+    const viewport = tableViewport();
+    const start = Math.max(0, Math.floor(viewport.scrollTop / rowHeight) - overscanRows);
+    const end = Math.min(rows.length, start + Math.ceil(viewport.height / rowHeight) + overscanRows * 2);
+    return {
+      bottomHeight: Math.max(0, rows.length - end) * rowHeight,
+      rows: rows.slice(start, end),
+      topHeight: start * rowHeight,
+    };
+  });
+
+  onMount(() => {
+    updateTableViewport();
+    const observer = new ResizeObserver(updateTableViewport);
+    if (tableViewportEl) observer.observe(tableViewportEl);
+    onCleanup(() => observer.disconnect());
+  });
+
+  createEffect(() => {
+    props.rows;
+    props.sorting;
+    if (tableViewportEl) tableViewportEl.scrollTop = 0;
+    updateTableViewport();
+  });
 
   return (
     <Show
@@ -1990,36 +2232,40 @@ const SessionTable = (props: {
     >
       <div class={tableControls}>
         <div class={tableControlMeta}>
-          {fmtNum(sessionTable.getRowModel().rows.length)} rows · {sessionTable.getVisibleLeafColumns().length} columns
+          {fmtNum(rowModelRows().length)} rows · {visibleColumns().length} columns
         </div>
-        <ColumnVisibilityControl table={sessionTable} />
+        <ColumnVisibilityControl
+          columnVisibility={props.columnVisibility}
+          onColumnVisibilityChange={props.onColumnVisibilityChange}
+        />
       </div>
-      <div class={tableWrap}>
+      <div class={tableWrap} ref={tableViewportEl} onScroll={updateTableViewport}>
         <table class={cx(table, sessionsTable)} style={{ 'min-width': `${tableMinWidth()}px` }}>
           <thead>
-            <For each={sessionTable.getHeaderGroups()}>
-              {(headerGroup) => (
-                <tr>
-                  <For each={headerGroup.headers}>
-                    {(header) => (
-                      <th
-                        colSpan={header.colSpan}
-                        class={header.column.columnDef.meta?.headerClass}
-                        title={header.column.columnDef.meta?.title}
-                        style={{ width: `${header.column.columnDef.meta?.widthPx ?? 140}px` }}
-                      >
-                        <Show when={!header.isPlaceholder}>
-                          <SortHeader header={header} />
-                        </Show>
-                      </th>
-                    )}
-                  </For>
-                </tr>
-              )}
-            </For>
+            <tr>
+              <For each={visibleColumns()}>
+                {({ columnDef, tableColumn }) => (
+                  <th
+                    class={columnDef.meta?.headerClass}
+                    title={columnDef.meta?.title}
+                    style={{ width: `${columnDef.meta?.widthPx ?? 140}px` }}
+                  >
+                    <SortHeader column={tableColumn} label={sessionColumnHeader(columnDef)} />
+                  </th>
+                )}
+              </For>
+            </tr>
           </thead>
           <tbody>
-            <For each={sessionTable.getRowModel().rows}>
+            <Show when={virtualRows().topHeight > 0}>
+              <tr>
+                <td
+                  colSpan={visibleColumnCount()}
+                  style={{ height: `${virtualRows().topHeight}px`, padding: '0', border: '0' }}
+                />
+              </tr>
+            </Show>
+            <For each={virtualRows().rows}>
               {(tableRow) => (
                 <tr
                   data-selected={String(props.selectedKey === tableRow.id)}
@@ -2032,7 +2278,7 @@ const SessionTable = (props: {
                     props.onSelect(tableRow.original);
                   }}
                 >
-                  <For each={tableRow.getVisibleCells()}>
+                  <For each={tableRow.getAllCells().filter((cell) => visibleColumnIds().has(cell.column.id))}>
                     {(cell) => (
                       <td class={cell.column.columnDef.meta?.cellClass}>
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -2042,6 +2288,14 @@ const SessionTable = (props: {
                 </tr>
               )}
             </For>
+            <Show when={virtualRows().bottomHeight > 0}>
+              <tr>
+                <td
+                  colSpan={visibleColumnCount()}
+                  style={{ height: `${virtualRows().bottomHeight}px`, padding: '0', border: '0' }}
+                />
+              </tr>
+            </Show>
           </tbody>
         </table>
       </div>
@@ -2112,13 +2366,24 @@ const timelineBucketTitle = (bucket: TimelineBucket, weekly: boolean, valueMode:
     ...bucket.parts.map((part) => `${part.harness} ${fmtMoney(part.cost)}`),
   ].join('\n');
 
-const TimeRangeControl = (props: { rows: SerializedRow[]; dateRange: DateRangeController }) => {
+const TimeRangeControl = (props: {
+  rows: DashboardRow[];
+  dateRange: DateRangeController;
+  onDateRangeCommit: () => void;
+}) => {
+  const [chartDomain, setChartDomain] = createSignal(props.dateRange.domain());
+  const syncChartDomain = () => setChartDomain(props.dateRange.domain());
+  createEffect(() => {
+    props.rows;
+    setChartDomain(untrack(() => props.dateRange.domain()));
+  });
+
   const data = createMemo(() => {
-    const domain = props.dateRange.domain();
+    const domain = chartDomain();
     if (!domain) return null;
     const dated = props.rows
       .map((row) => ({ row, time: rowTime(row) }))
-      .filter((item): item is { row: SerializedRow; time: number } => item.time != null);
+      .filter((item): item is { row: DashboardRow; time: number } => item.time != null);
     const dayCount = domain.maxIndex + 1;
     // Weekly buckets past ~4 months keep the bars readable (and the DOM small).
     const weekly = dayCount > 120;
@@ -2190,10 +2455,43 @@ const TimeRangeControl = (props: { rows: SerializedRow[]; dateRange: DateRangeCo
     maxIndex: number;
   } | null = null;
 
-  const applySliderValue = (value: number[]) => {
+  const indexesForValue = (value: number[]): [number, number] | null => {
     const chart = data();
-    if (!chart) return;
-    props.dateRange.setIndexes(value[0] ?? 0, value[1] ?? 0);
+    if (!chart) return null;
+    return normalizeDateIndexRange(value, chart.maxIndex);
+  };
+
+  const previewSliderValue = (value: number[]) => {
+    const nextIndexes = indexesForValue(value);
+    if (!nextIndexes) return;
+    props.dateRange.setIndexes(nextIndexes[0], nextIndexes[1]);
+  };
+
+  const commitIndexes = (value?: number[]) => {
+    if (value) {
+      const nextIndexes = indexesForValue(value);
+      if (nextIndexes) props.dateRange.setIndexes(nextIndexes[0], nextIndexes[1]);
+    }
+    syncChartDomain();
+    props.onDateRangeCommit();
+  };
+
+  const applyPreset = (mode: TimeRangePreset) => {
+    props.dateRange.setPreset(mode);
+    syncChartDomain();
+    props.onDateRangeCommit();
+  };
+
+  const applyFromInput = (from: string) => {
+    props.dateRange.setFromInput(from);
+    syncChartDomain();
+    props.onDateRangeCommit();
+  };
+
+  const applyToInput = (to: string) => {
+    props.dateRange.setToInput(to);
+    syncChartDomain();
+    props.onDateRangeCommit();
   };
 
   const startSelectionDrag = (event: RangeDragPointerEvent, chart: NonNullable<ReturnType<typeof data>>) => {
@@ -2230,6 +2528,7 @@ const TimeRangeControl = (props: { rows: SerializedRow[]; dateRange: DateRangeCo
   const endSelectionDrag = (event: RangeDragPointerEvent) => {
     if (!selectionDrag || selectionDrag.pointerId !== event.pointerId) return;
     selectionDrag = null;
+    commitIndexes();
     setDraggingSelection(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId))
       event.currentTarget.releasePointerCapture(event.pointerId);
@@ -2263,7 +2562,7 @@ const TimeRangeControl = (props: { rows: SerializedRow[]; dateRange: DateRangeCo
                     class={presetButton}
                     type="button"
                     data-active={String(props.dateRange.mode() === preset.mode)}
-                    onClick={() => props.dateRange.setPreset(preset.mode)}
+                    onClick={() => applyPreset(preset.mode)}
                   >
                     {preset.label}
                   </button>
@@ -2281,7 +2580,7 @@ const TimeRangeControl = (props: { rows: SerializedRow[]; dateRange: DateRangeCo
                 value={props.dateRange.inputValues().from}
                 min={toDateInputValue(chart().minDay)}
                 max={toDateInputValue(chart().maxDay)}
-                onInput={(event) => props.dateRange.setFromInput(event.currentTarget.value)}
+                onInput={(event) => applyFromInput(event.currentTarget.value)}
               />
             </label>
             <label class={dateFieldGroup}>
@@ -2292,7 +2591,7 @@ const TimeRangeControl = (props: { rows: SerializedRow[]; dateRange: DateRangeCo
                 value={props.dateRange.inputValues().to}
                 min={toDateInputValue(chart().minDay)}
                 max={toDateInputValue(chart().maxDay)}
-                onInput={(event) => props.dateRange.setToInput(event.currentTarget.value)}
+                onInput={(event) => applyToInput(event.currentTarget.value)}
               />
             </label>
             <div class={chartLegend}>
@@ -2309,7 +2608,8 @@ const TimeRangeControl = (props: { rows: SerializedRow[]; dateRange: DateRangeCo
             thumbSize={{ width: 32, height: 64 }}
             aria-label={['Start date', 'End date']}
             getAriaValueText={(details) => fmtDateOnly(dateFromIndex(chart().minDay, details.value))}
-            onValueChange={(details) => applySliderValue(details.value)}
+            onValueChange={(details) => previewSliderValue(details.value)}
+            onValueChangeEnd={(details) => commitIndexes(details.value)}
           >
             <Slider.Control class={timeSliderControl}>
               <Slider.Track class={timeSliderTrack}>
@@ -2372,43 +2672,8 @@ const TimeRangeControl = (props: { rows: SerializedRow[]; dateRange: DateRangeCo
   );
 };
 
-const projectGroups = (rows: SerializedRow[]) => {
-  const groups = new Map<string, ProjectGroup>();
-  for (const row of rows) {
-    const key = row.project || '(unknown)';
-    let group = groups.get(key);
-    if (!group) {
-      group = {
-        key,
-        sessions: 0,
-        fresh: 0,
-        cache: 0,
-        cost: 0,
-        priced: 0,
-        turns: 0,
-        tools: 0,
-        linesAdded: 0,
-        linesDeleted: 0,
-      };
-      groups.set(key, group);
-    }
-    group.sessions++;
-    group.fresh += row.freshTokens;
-    group.cache += row.tokCr;
-    group.turns += row.turns;
-    group.tools += row.tools;
-    group.linesAdded += row.linesAdded ?? 0;
-    group.linesDeleted += row.linesDeleted ?? 0;
-    if (row.costKnown) {
-      group.cost += row.costApprox;
-      group.priced++;
-    }
-  }
-  return [...groups.values()].sort((a, b) => b.cost - a.cost || b.fresh - a.fresh);
-};
-
-const ProjectSummary = (props: { rows: SerializedRow[]; onProjectFilter: (value: string) => void }) => (
-  <Show when={projectGroups(props.rows).length} fallback={<div class={empty}>No projects</div>}>
+const ProjectSummary = (props: { groups: ProjectGroup[]; onProjectFilter: (value: string) => void }) => (
+  <Show when={props.groups.length} fallback={<div class={empty}>No projects</div>}>
     <div class={tableWrap}>
       <table class={cx(table, projectTable)}>
         <thead>
@@ -2438,7 +2703,7 @@ const ProjectSummary = (props: { rows: SerializedRow[]; onProjectFilter: (value:
           </tr>
         </thead>
         <tbody>
-          <For each={projectGroups(props.rows)}>
+          <For each={props.groups}>
             {(project) => (
               <tr>
                 <td
@@ -2494,29 +2759,68 @@ const FilterPill = (props: { label: string; value: string; onClear: () => void }
 
 export const Dashboard = () => {
   const isDemo = isDemoReportPayload();
-  const [query, setQuery] = createSignal('');
-  const [harness, setHarness] = createSignal('all');
-  const [fieldFilters, setFieldFilters] = createSignal<FieldFilters>({});
+  const search = useSearch({ from: '/' });
+  const navigate = useNavigate({ from: '/' });
+  const updateSearch = (updater: (current: DashboardSearch) => DashboardSearch) =>
+    void navigate({ search: updater(search()), replace: true });
+  const query = () => search().q;
+  const harness = () => search().harness;
+  const fieldFilters = () => search().filters;
+  const sorting = createMemo(() => sortingStateFromSearch(search().sort));
+  const columnVisibility = createMemo(() => columnVisibilityFromDiff(search().cols));
   const generatedAt = new Date(payload.generatedAt);
-  const [sorting, setSorting] = createSignal<SortingState>(defaultSortingFor(payload.filters.sort));
-  const [columnVisibility, setColumnVisibility] = createSignal<VisibilityState>(defaultColumnVisibility);
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
-  const harnesses = createMemo(() => ['all', ...new Set(payload.rows.map((row) => row.harness))]);
-  const matchesNonDateFilters = (row: SerializedRow) =>
-    matchesRow(row, query().trim().toLowerCase(), harness(), fieldFilters());
-  const timelineRows = createMemo(() => payload.rows.filter(matchesNonDateFilters));
+  const harnesses = createMemo(() => ['all', ...new Set(reportRows.map((row) => row.harness))]);
+  const filterSnapshot = createMemo(() => createFilterSnapshot(query(), harness(), fieldFilters()));
+  const timelineRows = createMemo(() => {
+    const filters = filterSnapshot();
+    return reportRows.filter((row) => matchesFilterSnapshot(row, filters));
+  });
+  const initialRange = search().range;
   const dateRange = createDateRangeController({
     generatedAt,
     rows: timelineRows,
     defaultFrom: toDateInputValue(startOfDay(shiftCalendarDays(generatedAt, -6))),
     defaultTo: toDateInputValue(generatedAt),
     formatDate: fmtDateOnly,
+    initialMode: initialRange.mode,
+    ...(initialRange.from ? { initialFrom: initialRange.from } : {}),
+    ...(initialRange.to ? { initialTo: initialRange.to } : {}),
   });
-  const matchesDateRange = (row: SerializedRow) => rowMatchesDateBounds(row, dateRange.bounds());
-  const matchesCurrentFilters = (row: SerializedRow) => matchesNonDateFilters(row) && matchesDateRange(row);
-  const filteredRows = createMemo(() => payload.rows.filter(matchesCurrentFilters));
+  const [tableDateBounds, setTableDateBounds] = createSignal<DateBounds>(dateRange.bounds());
+  const searchRangeFromDateRange = (): DashboardSearch['range'] => {
+    const mode = dateRange.mode();
+    if (mode !== 'custom') return { mode };
+    const values = dateRange.inputValues();
+    return {
+      mode,
+      ...(values.from ? { from: values.from } : {}),
+      ...(values.to ? { to: values.to } : {}),
+    };
+  };
+  const commitTableDateRange = () => {
+    setTableDateBounds(dateRange.bounds());
+    updateSearch((current) => ({ ...current, range: searchRangeFromDateRange() }));
+  };
+  createEffect(() => {
+    const range = search().range;
+    untrack(() => {
+      const values = dateRange.inputValues();
+      const matchesRange =
+        dateRange.mode() === range.mode &&
+        (range.mode !== 'custom' || (values.from === (range.from ?? '') && values.to === (range.to ?? '')));
+      if (!matchesRange) dateRange.setRange(range.mode, range.from, range.to);
+      setTableDateBounds(dateRange.bounds());
+    });
+  });
+  const tableFilteredRows = createMemo(() => {
+    const filters = filterSnapshot();
+    const bounds = tableDateBounds();
+    return reportRows.filter((row) => matchesFilterSnapshotAndDate(row, filters, bounds));
+  });
+  const tableRows = tableFilteredRows;
   // The drawer closes by itself when its row leaves the filtered set.
-  const selectedRow = createMemo(() => filteredRows().find((row) => rowKey(row) === selectedKey()) ?? null);
+  const selectedRow = createMemo(() => tableFilteredRows().find((row) => rowKey(row) === selectedKey()) ?? null);
   createEffect(() => {
     if (!selectedRow()) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2525,14 +2829,64 @@ export const Dashboard = () => {
     document.addEventListener('keydown', onKeyDown);
     onCleanup(() => document.removeEventListener('keydown', onKeyDown));
   });
-  const visibleSummary = createMemo(() => rowsSummary(filteredRows()));
-  const modelGroups = createMemo(() => analyticsGroups(filteredRows(), (row) => normalizeModelKey(row.model)));
-  const providerGroups = createMemo(() => analyticsGroups(filteredRows(), (row) => providerLabel(row.provider)));
-  const harnessGroups = createMemo(() => analyticsGroups(filteredRows(), (row) => row.harness));
-  const hiddenCount = createMemo(() => payload.rows.length - filteredRows().length);
-  const exportRows = createMemo(() => [...filteredRows()].sort(compareRows(sorting())));
-  const toggleSelected = (row: SerializedRow) =>
+  const visibleSummary = createMemo(() => {
+    const filters = filterSnapshot();
+    const bounds = dateRange.bounds();
+    return buildReportSummary(reportRows, (row) => matchesFilterSnapshotAndDate(row, filters, bounds));
+  });
+  const modelGroups = createMemo(() => {
+    if (search().tab !== 'models') return [];
+    const filters = filterSnapshot();
+    const bounds = dateRange.bounds();
+    return buildAnalyticsGroups(
+      reportRows,
+      (row) => matchesFilterSnapshotAndDate(row, filters, bounds),
+      (row) => row.modelKey,
+      visibleSummary().totalCost,
+    );
+  });
+  const providerGroups = createMemo(() => {
+    if (search().tab !== 'providers') return [];
+    const filters = filterSnapshot();
+    const bounds = dateRange.bounds();
+    return buildAnalyticsGroups(
+      reportRows,
+      (row) => matchesFilterSnapshotAndDate(row, filters, bounds),
+      (row) => row.providerDisplay,
+      visibleSummary().totalCost,
+    );
+  });
+  const harnessGroups = createMemo(() => {
+    if (search().tab !== 'harnesses') return [];
+    const filters = filterSnapshot();
+    const bounds = dateRange.bounds();
+    return buildAnalyticsGroups(
+      reportRows,
+      (row) => matchesFilterSnapshotAndDate(row, filters, bounds),
+      (row) => row.harness,
+      visibleSummary().totalCost,
+    );
+  });
+  const projectGroupRows = createMemo(() => {
+    if (search().tab !== 'projects') return [];
+    const filters = filterSnapshot();
+    const bounds = dateRange.bounds();
+    return buildProjectGroups(reportRows, (row) => matchesFilterSnapshotAndDate(row, filters, bounds));
+  });
+  const hiddenCount = createMemo(() => reportRows.length - visibleSummary().sessionCount);
+  const exportRows = () => {
+    const filters = filterSnapshot();
+    const bounds = dateRange.bounds();
+    return reportRows
+      .filter((row) => matchesFilterSnapshotAndDate(row, filters, bounds))
+      .sort(compareRows(sorting()));
+  };
+  const toggleSelected = (row: DashboardRow) =>
     setSelectedKey((current) => (current === rowKey(row) ? null : rowKey(row)));
+  const setQuery = (q: string) => updateSearch((current) => ({ ...current, q }));
+  const setHarness = (nextHarness: string) => updateSearch((current) => ({ ...current, harness: nextHarness }));
+  const setFieldFilters = (updater: Updater<FieldFilters>) =>
+    updateSearch((current) => ({ ...current, filters: applyTableUpdate(updater, current.filters) }));
   const setFieldFilter = (key: FieldFilterKey, value: string) =>
     setFieldFilters((current) => ({ ...current, [key]: value }));
   const clearFieldFilter = (key: FieldFilterKey) =>
@@ -2542,15 +2896,24 @@ export const Dashboard = () => {
       return next;
     });
   const clearFilters = () => {
-    setQuery('');
-    setHarness('all');
-    setFieldFilters({});
     dateRange.clear();
+    setTableDateBounds(dateRange.bounds());
+    updateSearch((current) => ({ ...current, filters: {}, harness: 'all', q: '', range: { mode: 'all' } }));
   };
   const handleSortingChange: OnChangeFn<SortingState> = (updater) =>
-    setSorting((current) => applyTableUpdate(updater, current));
+    updateSearch((current) => ({
+      ...current,
+      sort: sortFromSortingState(applyTableUpdate(updater, sortingStateFromSearch(current.sort))),
+    }));
   const handleColumnVisibilityChange: OnChangeFn<VisibilityState> = (updater) =>
-    setColumnVisibility((current) => applyTableUpdate(updater, current));
+    updateSearch((current) => {
+      const nextVisibility = applyTableUpdate(updater, columnVisibilityFromDiff(current.cols));
+      return { ...current, cols: columnDiffFromVisibility(nextVisibility) };
+    });
+  const setTab = (tab: string) => {
+    if (!isDashboardTab(tab)) return;
+    updateSearch((current) => ({ ...current, tab }));
+  };
   const metrics = createMemo<Metric[]>(() => {
     const a = visibleSummary();
     return [
@@ -2569,6 +2932,19 @@ export const Dashboard = () => {
       },
       { label: 'Mean / sess', value: fmtMoney(a.meanCost), hint: 'Mean API value per priced session' },
       { label: 'Fresh tokens', value: fmtCompact(a.fresh), hint: `Tokens processed without cache: ${fmtNum(a.fresh)}` },
+      ...(a.rtkSaved
+        ? [
+            {
+              label: 'RTK savings',
+              value: fmtPct(a.rtkInput ? (a.rtkSaved / a.rtkInput) * 100 : 0),
+              hint: [
+                `${fmtNum(a.rtkSaved)} tokens saved in matched sessions`,
+                `${fmtNum(a.rtkInput)} RTK input tokens before filtering`,
+                `${fmtNum(a.rtkOutput)} RTK output tokens after filtering`,
+              ].join('\n'),
+            },
+          ]
+        : []),
       { label: 'Turns', value: fmtNum(a.turns), hint: 'Assistant turns across the filtered sessions' },
       { label: 'Tool calls', value: fmtNum(a.tools), hint: 'Tool invocations across the filtered sessions' },
     ];
@@ -2589,8 +2965,8 @@ export const Dashboard = () => {
               <h1 class={title}>Usage report</h1>
               <div class={meta}>
                 <Show when={!isDemo} fallback="Report payload unavailable">
-                  Generated {fmtDate(payload.generatedAt)} · {fmtNum(filteredRows().length)} of{' '}
-                  {fmtNum(payload.rows.length)} sessions
+                  Generated {fmtDate(payload.generatedAt)} · {fmtNum(visibleSummary().sessionCount)} of{' '}
+                  {fmtNum(reportRows.length)} sessions
                 </Show>
               </div>
             </div>
@@ -2629,11 +3005,11 @@ export const Dashboard = () => {
             </section>
           }
         >
-          <TimeRangeControl rows={timelineRows()} dateRange={dateRange} />
+          <TimeRangeControl rows={timelineRows()} dateRange={dateRange} onDateRangeCommit={commitTableDateRange} />
 
           <div class={filterSummary}>
             <span class={summaryPill}>
-              {fmtNum(filteredRows().length)} / {fmtNum(payload.rows.length)} sessions
+              {fmtNum(visibleSummary().sessionCount)} / {fmtNum(reportRows.length)} sessions
             </span>
             <Show when={hiddenCount() > 0}>
               <span>{fmtNum(hiddenCount())} hidden by filters</span>
@@ -2654,7 +3030,13 @@ export const Dashboard = () => {
             <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>
           </div>
 
-          <Tabs.Root defaultValue="sessions" class={tabsRoot}>
+          <Tabs.Root
+            value={search().tab}
+            class={tabsRoot}
+            lazyMount
+            unmountOnExit
+            onValueChange={(details) => setTab(details.value)}
+          >
             <Tabs.List class={tabsList}>
               <Tabs.Trigger value="sessions" class={tabTrigger}>
                 Sessions
@@ -2674,7 +3056,7 @@ export const Dashboard = () => {
             </Tabs.List>
             <Tabs.Content value="sessions" class={section}>
               <SessionTable
-                rows={filteredRows()}
+                rows={tableRows()}
                 selectedKey={selectedKey()}
                 sorting={sorting()}
                 columnVisibility={columnVisibility()}
@@ -2713,7 +3095,10 @@ export const Dashboard = () => {
               />
             </Tabs.Content>
             <Tabs.Content value="projects" class={section}>
-              <ProjectSummary rows={filteredRows()} onProjectFilter={(value) => setFieldFilter('project', value)} />
+              <ProjectSummary
+                groups={projectGroupRows()}
+                onProjectFilter={(value) => setFieldFilter('project', value)}
+              />
             </Tabs.Content>
           </Tabs.Root>
 
