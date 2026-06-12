@@ -29,8 +29,18 @@ export const app = Effect.gen(function* () {
     harness: command.args.harness,
     includeCursor: command.args.cursor,
   });
-  yield* Console.log(renderUsageReport(rows, command.args));
+  yield* writeStdout(`${renderUsageReport(rows, command.args)}\n`);
 });
+
+// Multi-megabyte outputs (e.g. --payload-json) get truncated when stdout is a
+// pipe and the runtime exits before the async stream drains, so completion is
+// gated on the write callback for the actual payload chunk before the explicit
+// process.exit below. (Bun.write(Bun.stdout, …) busy-spins on a backed-up pipe
+// once process.stdout has been touched, so the node stream is used throughout.)
+const writeStdout = (text: string) =>
+  Effect.async<void>((resume) => {
+    process.stdout.write(text, () => resume(Effect.void));
+  });
 
 const formatDefect = (defect: unknown) => (defect instanceof Error ? defect.message : String(defect));
 
@@ -42,5 +52,5 @@ const runnable = app.pipe(
 );
 
 Effect.runPromise(runnable).then((code) => {
-  if (code !== 0) process.exit(code);
+  process.exit(code);
 });

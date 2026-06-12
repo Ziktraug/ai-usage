@@ -2,3 +2,4 @@ node_modules
 dist
 styled-system
 .turbo
+ai-usage-reports/

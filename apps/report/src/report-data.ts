@@ -144,3 +144,5 @@ const demoPayload: UsageReportPayload = {
 
 export const readReportPayload = () =>
   (typeof window === 'undefined' ? undefined : window.__AI_USAGE_REPORT__) ?? demoPayload;
+
+export const isDemoReportPayload = () => typeof window === 'undefined' || !window.__AI_USAGE_REPORT__;

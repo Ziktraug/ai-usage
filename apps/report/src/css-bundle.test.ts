@@ -13,7 +13,9 @@ describe('report app CSS bundle', () => {
 
     const html = readFileSync(htmlPath, 'utf8');
     expect(html).toContain('--colors-canvas');
-    expect(html).toContain('--colors-mint');
+    expect(html).toContain('--colors-accent');
+    expect(html).toContain('[data-theme=dark]');
+    expect(html).toContain('prefers-color-scheme: dark');
     expect(html).not.toContain('@layer reset,base,tokens,recipes,utilities;</style>');
   }, 30_000);
 });
