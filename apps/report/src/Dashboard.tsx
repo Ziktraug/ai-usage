@@ -1,18 +1,51 @@
 import type { AnalyticsGroup } from '@ai-usage/core/analytics';
 import type { SerializedRow } from '@ai-usage/core/report-data';
+import { Slider } from '@ark-ui/solid/slider';
 import { Tabs } from '@ark-ui/solid/tabs';
+import {
+  type ColumnDef,
+  createSolidTable,
+  flexRender,
+  getCoreRowModel,
+  getSortedRowModel,
+  type Header,
+  type OnChangeFn,
+  type RowData,
+  type SortingState,
+  type Table,
+  type Updater,
+  type VisibilityState,
+} from '@tanstack/solid-table';
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import { css, cx } from '../styled-system/css';
 import {
-  type DateRangeMode,
-  dateBoundsForRange,
-  parseLocalDate,
+  clampNumber,
+  dateFromIndex,
+  dateRangePresets,
   rowMatchesDateBounds,
-  rowsDateSpan,
+  rowTime,
+  shiftCalendarDays,
   startOfDay,
   toDateInputValue,
 } from './date-range';
+import { createDateRangeController, type DateRangeController } from './date-range-controller';
 import { isDemoReportPayload, readReportPayload } from './report-data';
+
+declare module '@tanstack/solid-table' {
+  interface ColumnMeta<TData extends RowData, TValue> {
+    cellClass?: string;
+    defaultVisible?: boolean;
+    headerClass?: string;
+    label: string;
+    title?: string;
+    widthPx: number;
+  }
+
+  interface TableMeta<TData extends RowData> {
+    onFieldFilter?: (key: FieldFilterKey, value: string) => void;
+    onHarnessFilter?: (value: string) => void;
+  }
+}
 
 const payload = readReportPayload();
 
@@ -58,12 +91,6 @@ const normalizeModelKey = (model: string) => model.slice(model.lastIndexOf('/') 
 
 // "(OC)" is collector shorthand for sessions proxied through OpenCode.
 const providerLabel = (provider: string) => provider.replace(/\s*\(OC\)\s*$/, ' · via OpenCode');
-
-const shiftCalendarDays = (date: Date, days: number) => {
-  const copy = new Date(date);
-  copy.setDate(copy.getDate() + days);
-  return copy;
-};
 
 const page = css({
   minHeight: '100vh',
@@ -217,6 +244,284 @@ const searchInput = cx(field, css({ flex: '1 1 240px', minW: '180px' }));
 const selectInput = cx(field, css({ flex: '0 1 180px', minW: '150px' }));
 const dateInput = cx(field, css({ flex: '0 1 150px', minW: '140px' }));
 
+const timeRangePanel = css({
+  display: 'grid',
+  gap: '14px',
+  mt: '14px',
+  p: '14px 16px 16px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'md',
+  bg: 'surface',
+  boxShadow: 'card',
+});
+
+const timeRangeHeader = css({
+  display: 'grid',
+  gridTemplateColumns: { base: '1fr', md: 'minmax(0, 1fr) auto' },
+  gap: '12px',
+  alignItems: 'start',
+});
+
+const timeRangeTitle = css({
+  fontSize: '14px',
+  fontWeight: 650,
+});
+
+const timeRangeMeta = css({
+  color: 'muted',
+  fontSize: '12px',
+  mt: '2px',
+});
+
+const presetGroup = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '6px',
+  justifyContent: { base: 'flex-start', md: 'flex-end' },
+  minW: 0,
+  m: 0,
+  p: 0,
+  border: 0,
+});
+
+const presetButton = css({
+  appearance: 'none',
+  h: '30px',
+  px: '10px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surface',
+  color: 'muted',
+  fontSize: '12px',
+  fontWeight: 600,
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+  transition: 'border-color 0.15s, color 0.15s, background-color 0.15s',
+  _hover: {
+    borderColor: 'accent',
+    color: 'accent',
+  },
+  '&[data-active="true"]': {
+    bg: 'accentSoft',
+    borderColor: 'accent',
+    color: 'accent',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+});
+
+const dateEditRow = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '10px',
+  alignItems: 'end',
+});
+
+const dateFieldGroup = css({
+  display: 'grid',
+  gap: '4px',
+});
+
+const inlineFieldLabel = css({
+  textStyle: 'label',
+  color: 'muted',
+});
+
+const timeSliderRoot = css({
+  display: 'grid',
+  gap: '8px',
+});
+
+const timeSliderControl = css({
+  position: 'relative',
+  h: '128px',
+});
+
+const timeSliderTrack = css({
+  position: 'relative',
+  h: '128px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surfaceMuted',
+  overflow: 'hidden',
+  cursor: 'ew-resize',
+  boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.32)',
+  _focusWithin: {
+    boxShadow: '0 0 0 3px token(colors.focusRing)',
+  },
+});
+
+const timeSliderBars = css({
+  position: 'absolute',
+  inset: '8px 8px 22px',
+  display: 'flex',
+  alignItems: 'flex-end',
+  gap: '2px',
+  pointerEvents: 'none',
+  zIndex: 2,
+});
+
+const timeBucket = css({
+  flex: '1 1 0',
+  minW: '2px',
+  h: '100%',
+  display: 'flex',
+  flexDirection: 'column',
+  justifyContent: 'flex-end',
+  gap: '1px',
+});
+
+const timeBucketSegment = css({
+  w: '100%',
+  minH: '1px',
+  borderRadius: '1px',
+});
+
+const timeSliderRange = css({
+  position: 'absolute',
+  top: 0,
+  bottom: 0,
+  zIndex: 1,
+  bg: 'focusRing',
+  borderLeft: '2px solid token(colors.accent)',
+  borderRight: '2px solid token(colors.accent)',
+  pointerEvents: 'none',
+});
+
+const timeSliderRangeDrag = css({
+  appearance: 'none',
+  position: 'absolute',
+  top: 0,
+  bottom: 0,
+  left: 'var(--slider-range-start)',
+  right: 'var(--slider-range-end)',
+  zIndex: 3,
+  border: '0',
+  p: 0,
+  bg: 'transparent',
+  cursor: 'grab',
+  touchAction: 'none',
+  _hover: {
+    bg: 'rgba(177, 78, 18, 0.08)',
+  },
+  '&[data-dragging="true"]': {
+    cursor: 'grabbing',
+    bg: 'rgba(177, 78, 18, 0.12)',
+  },
+  _before: {
+    content: '""',
+    position: 'absolute',
+    top: '12px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    w: '46px',
+    h: '22px',
+    border: '1px solid token(colors.lineStrong)',
+    borderRadius: 'full',
+    bg: 'surface',
+    boxShadow: 'card',
+    opacity: 0.9,
+  },
+  _after: {
+    content: '""',
+    position: 'absolute',
+    top: '21px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    w: '20px',
+    h: '4px',
+    borderTop: '1px solid token(colors.accent)',
+    borderBottom: '1px solid token(colors.accent)',
+  },
+});
+
+const timeSliderThumb = css({
+  top: '32px',
+  zIndex: 4,
+  w: '32px',
+  h: '64px',
+  border: '0',
+  borderRadius: 'full',
+  bg: 'transparent',
+  cursor: 'ew-resize',
+  _before: {
+    content: '""',
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    w: '18px',
+    h: '52px',
+    border: '2px solid token(colors.accent)',
+    borderRadius: 'full',
+    bg: 'surface',
+    boxShadow: 'overlay',
+  },
+  _after: {
+    content: '""',
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    w: '5px',
+    h: '28px',
+    borderLeft: '1px solid token(colors.accent)',
+    borderRight: '1px solid token(colors.accent)',
+    opacity: 0.75,
+  },
+  _hover: {
+    _before: {
+      boxShadow: '0 0 0 4px token(colors.focusRing), token(shadows.overlay)',
+    },
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.ink)',
+    outlineOffset: '-2px',
+  },
+});
+
+const timeAxis = css({
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: '8px',
+  color: 'faint',
+  fontSize: '11px',
+  fontFamily: 'mono',
+});
+
+const activeFilters = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '8px',
+  alignItems: 'center',
+});
+
+const activeFilterButton = css({
+  appearance: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  h: '24px',
+  px: '10px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'full',
+  bg: 'surface',
+  color: 'ink',
+  fontSize: '11px',
+  fontWeight: 600,
+  cursor: 'pointer',
+  transition: 'border-color 0.15s, color 0.15s',
+  _hover: {
+    borderColor: 'accent',
+    color: 'accent',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+});
+
 const commandButton = css({
   h: '36px',
   px: '16px',
@@ -332,6 +637,110 @@ const tableWrap = css({
   boxShadow: 'card',
 });
 
+const tableControls = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '10px',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+});
+
+const tableControlMeta = css({
+  color: 'muted',
+  fontSize: '12px',
+});
+
+const columnMenu = css({
+  position: 'relative',
+  justifySelf: 'end',
+  '&[open] summary': {
+    borderColor: 'accent',
+    color: 'accent',
+  },
+});
+
+const columnMenuButton = css({
+  appearance: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '8px',
+  h: '32px',
+  px: '12px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surface',
+  color: 'muted',
+  fontSize: '12px',
+  fontWeight: 600,
+  cursor: 'pointer',
+  listStyle: 'none',
+  transition: 'border-color 0.15s, color 0.15s',
+  _hover: {
+    borderColor: 'accent',
+    color: 'accent',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+  '&::-webkit-details-marker': {
+    display: 'none',
+  },
+});
+
+const columnMenuPanel = css({
+  position: 'absolute',
+  right: 0,
+  top: 'calc(100% + 6px)',
+  zIndex: 30,
+  w: '260px',
+  maxH: 'min(420px, calc(100dvh - 160px))',
+  display: 'grid',
+  gap: '4px',
+  p: '8px',
+  overflowY: 'auto',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'md',
+  bg: 'surface',
+  boxShadow: 'overlay',
+});
+
+const columnMenuHeader = css({
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '8px',
+  px: '4px',
+  pb: '6px',
+  borderBottom: '1px solid token(colors.line)',
+});
+
+const columnToggle = css({
+  display: 'grid',
+  gridTemplateColumns: '16px minmax(0, 1fr)',
+  gap: '8px',
+  alignItems: 'center',
+  px: '6px',
+  py: '6px',
+  borderRadius: 'sm',
+  color: 'ink',
+  fontSize: '12px',
+  cursor: 'pointer',
+  _hover: {
+    bg: 'surfaceMuted',
+  },
+});
+
+const columnToggleInput = css({
+  accentColor: 'token(colors.accent)',
+});
+
+const columnToggleText = css({
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+});
+
 const table = css({
   width: '100%',
   // Collapsed borders do not travel with sticky cells; keep them separate.
@@ -388,6 +797,29 @@ const sessionsTable = css({
 const right = css({ textAlign: 'right' });
 const muted = css({ color: 'muted' });
 const strongCell = css({ fontWeight: 600, overflowWrap: 'anywhere' });
+const filterTextButton = css({
+  appearance: 'none',
+  display: 'inline',
+  maxW: '100%',
+  border: '0',
+  p: '0',
+  bg: 'transparent',
+  color: 'inherit',
+  font: 'inherit',
+  textAlign: 'left',
+  overflowWrap: 'anywhere',
+  cursor: 'pointer',
+  _hover: {
+    color: 'accent',
+    textDecoration: 'underline',
+    textUnderlineOffset: '2px',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+});
+const groupKeyButton = cx(filterTextButton, css({ fontWeight: 600 }));
 const numCell = css({
   textStyle: 'numeric',
   textAlign: 'right',
@@ -542,59 +974,6 @@ const emptyActions = css({
   justifyItems: 'center',
 });
 
-const chartSpacing = css({ mb: '20px' });
-
-// Same shell as groupHeader, but the legend drops below the title on narrow
-// screens instead of crushing it.
-const chartHeader = css({
-  display: 'grid',
-  gridTemplateColumns: { base: '1fr', sm: 'minmax(0, 1fr) auto' },
-  gap: '10px',
-  alignItems: 'center',
-  p: '14px 16px',
-  borderBottom: '1px solid token(colors.line)',
-});
-
-const chartBody = css({
-  display: 'grid',
-  gap: '8px',
-  p: '14px 16px',
-});
-
-const chartPlot = css({
-  display: 'flex',
-  alignItems: 'flex-end',
-  gap: '2px',
-  h: '140px',
-});
-
-const chartCol = css({
-  flex: '1 1 0',
-  minW: '2px',
-  h: '100%',
-  display: 'flex',
-  flexDirection: 'column',
-  justifyContent: 'flex-end',
-  gap: '1px',
-  _hover: {
-    opacity: 0.8,
-  },
-});
-
-const chartSeg = css({
-  w: '100%',
-  borderRadius: '1px',
-});
-
-const chartAxis = css({
-  display: 'flex',
-  justifyContent: 'space-between',
-  gap: '8px',
-  color: 'faint',
-  fontSize: '11px',
-  fontFamily: 'mono',
-});
-
 const chartLegend = css({
   display: 'flex',
   flexWrap: 'wrap',
@@ -618,6 +997,20 @@ const badge = css({
     h: '6px',
     borderRadius: 'full',
     bg: 'currentColor',
+  },
+});
+
+const badgeButton = css({
+  appearance: 'none',
+  border: '0',
+  cursor: 'pointer',
+  transition: 'box-shadow 0.15s, transform 0.15s',
+  _hover: {
+    boxShadow: '0 0 0 1px token(colors.accent)',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
   },
 });
 
@@ -795,8 +1188,9 @@ type Metric = {
   hint?: string;
 };
 
-type TableSortKey = 'date' | 'fresh' | 'cache' | 'cost' | 'duration' | 'session';
-type SortDirection = 'asc' | 'desc';
+type FieldFilterKey = 'provider' | 'model' | 'project';
+type FieldFilters = Partial<Record<FieldFilterKey, string>>;
+type RangeDragPointerEvent = PointerEvent & { currentTarget: HTMLButtonElement };
 type ProjectGroup = {
   key: string;
   sessions: number;
@@ -810,6 +1204,13 @@ type ProjectGroup = {
   linesDeleted: number;
 };
 
+const applyTableUpdate = <T,>(updater: Updater<T>, current: T) =>
+  typeof updater === 'function' ? (updater as (old: T) => T)(current) : updater;
+
+const defaultSortingFor = (sort: 'date' | 'tokens' | 'cost'): SortingState => [
+  { id: sort === 'tokens' ? 'fresh' : sort, desc: true },
+];
+
 const MetricTile = (props: Metric) => (
   <div class={metricTile} title={props.hint}>
     <div class={metricLabel}>{props.label}</div>
@@ -817,7 +1218,23 @@ const MetricTile = (props: Metric) => (
   </div>
 );
 
-const HarnessBadge = (props: { name: string }) => <span class={cx(badge, badgeToneFor(props.name))}>{props.name}</span>;
+const HarnessBadge = (props: { name: string; onClick?: () => void }) => {
+  const className = () => cx(badge, badgeToneFor(props.name), props.onClick ? badgeButton : undefined);
+  if (!props.onClick) return <span class={className()}>{props.name}</span>;
+  return (
+    <button
+      class={className()}
+      type="button"
+      title={`Filter by ${props.name}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        props.onClick?.();
+      }}
+    >
+      {props.name}
+    </button>
+  );
+};
 
 const THEME_STORAGE_KEY = 'ai-usage-theme';
 const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
@@ -896,10 +1313,21 @@ const ThemeToggle = () => {
 const rowKey = (row: SerializedRow) =>
   [row.activeDate ?? row.date ?? '', row.harness, row.provider, row.model, row.project, row.sessionLabel].join('|');
 
-const matchesRow = (row: SerializedRow, query: string, harness: string) => {
+const fieldValueForRow = (row: SerializedRow, key: FieldFilterKey) => {
+  if (key === 'provider') return providerLabel(row.provider);
+  if (key === 'model') return normalizeModelKey(row.model);
+  return row.project || '(unknown)';
+};
+
+const matchesFieldFilters = (row: SerializedRow, filters: FieldFilters) =>
+  (Object.entries(filters) as [FieldFilterKey, string][]).every(([key, value]) => fieldValueForRow(row, key) === value);
+
+const matchesRow = (row: SerializedRow, query: string, harness: string, filters: FieldFilters) => {
   const haystack =
     `${row.sessionLabel} ${row.project} ${row.model} ${row.provider} ${providerLabel(row.provider)} ${row.harness}`.toLowerCase();
-  return haystack.includes(query) && (harness === 'all' || row.harness === harness);
+  return (
+    haystack.includes(query) && (harness === 'all' || row.harness === harness) && matchesFieldFilters(row, filters)
+  );
 };
 
 const csvEscape = (value: string) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value);
@@ -978,26 +1406,316 @@ const downloadCSV = (rows: SerializedRow[]) => {
   URL.revokeObjectURL(url);
 };
 
-const compareRows = (key: TableSortKey, direction: SortDirection) => (a: SerializedRow, b: SerializedRow) => {
-  const sign = direction === 'asc' ? 1 : -1;
-  const read = (row: SerializedRow): number | string => {
-    if (key === 'date') return new Date(row.activeDate ?? row.date ?? 0).getTime();
-    if (key === 'fresh') return row.freshTokens;
-    if (key === 'cache') return row.tokCr;
-    if (key === 'cost') return row.costKnown ? row.costApprox : -1;
-    if (key === 'duration') return row.durationMs ?? 0;
-    return row.sessionLabel.toLowerCase();
-  };
-  const av = read(a);
-  const bv = read(b);
-  if (typeof av === 'string' || typeof bv === 'string') return String(av).localeCompare(String(bv)) * sign;
-  return (av - bv) * sign;
+const sortValueForRow = (row: SerializedRow, columnId: string): number | string => {
+  if (columnId === 'date') return new Date(row.activeDate ?? row.date ?? 0).getTime();
+  if (columnId === 'harness') return row.harness.toLowerCase();
+  if (columnId === 'provider') return providerLabel(row.provider).toLowerCase();
+  if (columnId === 'model') return normalizeModelKey(row.model).toLowerCase();
+  if (columnId === 'project') return (row.project || '(unknown)').toLowerCase();
+  if (columnId === 'tokIn') return row.tokIn;
+  if (columnId === 'tokOut') return row.tokOut;
+  if (columnId === 'cache') return row.tokCr;
+  if (columnId === 'tokCw') return row.tokCw;
+  if (columnId === 'fresh') return row.freshTokens;
+  if (columnId === 'total') return row.tokenTotal;
+  if (columnId === 'cost') return row.costKnown ? row.costApprox : Number.NEGATIVE_INFINITY;
+  if (columnId === 'actual') return row.costActual ?? Number.NEGATIVE_INFINITY;
+  if (columnId === 'duration') return row.durationMs ?? 0;
+  if (columnId === 'calls') return row.calls;
+  if (columnId === 'turns') return row.turns;
+  if (columnId === 'tools') return row.tools;
+  if (columnId === 'lines') return row.lineDelta ?? 0;
+  if (columnId === 'subagent') return row.subagent ? 1 : 0;
+  if (columnId === 'partial') return row.partial ? 1 : 0;
+  return row.sessionLabel.toLowerCase();
+};
+
+const compareRows = (sorting: SortingState) => (a: SerializedRow, b: SerializedRow) => {
+  for (const sort of sorting) {
+    const av = sortValueForRow(a, sort.id);
+    const bv = sortValueForRow(b, sort.id);
+    const result =
+      typeof av === 'string' || typeof bv === 'string'
+        ? String(av).localeCompare(String(bv))
+        : av === bv
+          ? 0
+          : av > bv
+            ? 1
+            : -1;
+    if (result !== 0) return sort.desc ? -result : result;
+  }
+  return 0;
 };
 
 const lineDeltaLabel = (row: SerializedRow) => {
   if (row.lineDelta == null || row.lineDelta === 0) return '-';
   return `+${fmtMaybeNum(row.linesAdded)}/-${fmtMaybeNum(row.linesDeleted)}`;
 };
+
+const sessionColumns: ColumnDef<SerializedRow>[] = [
+  {
+    id: 'date',
+    header: 'Date',
+    accessorFn: (row) => sortValueForRow(row, 'date'),
+    cell: (info) => fmtDate(info.row.original.activeDate),
+    sortDescFirst: true,
+    meta: { label: 'Date', widthPx: 104, cellClass: dateCell },
+  },
+  {
+    id: 'harness',
+    header: 'Harness',
+    accessorFn: (row) => sortValueForRow(row, 'harness'),
+    cell: (info) => (
+      <HarnessBadge
+        name={info.row.original.harness}
+        onClick={() => info.table.options.meta?.onHarnessFilter?.(info.row.original.harness)}
+      />
+    ),
+    meta: { label: 'Harness', widthPx: 100 },
+  },
+  {
+    id: 'provider',
+    header: 'Provider',
+    accessorFn: (row) => sortValueForRow(row, 'provider'),
+    cell: (info) => {
+      const row = info.row.original;
+      const label = providerLabel(row.provider);
+      return (
+        <button
+          class={filterTextButton}
+          type="button"
+          title={`Filter by ${label}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            info.table.options.meta?.onFieldFilter?.('provider', label);
+          }}
+        >
+          {label}
+        </button>
+      );
+    },
+    meta: { label: 'Provider', widthPx: 124 },
+  },
+  {
+    id: 'model',
+    header: 'Model',
+    accessorFn: (row) => sortValueForRow(row, 'model'),
+    cell: (info) => {
+      const row = info.row.original;
+      return (
+        <button
+          class={filterTextButton}
+          type="button"
+          title={`Filter by ${normalizeModelKey(row.model)}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            info.table.options.meta?.onFieldFilter?.('model', normalizeModelKey(row.model));
+          }}
+        >
+          {row.model}
+        </button>
+      );
+    },
+    meta: { label: 'Model', widthPx: 168, cellClass: modelCell },
+  },
+  {
+    id: 'project',
+    header: 'Project',
+    accessorFn: (row) => sortValueForRow(row, 'project'),
+    cell: (info) => {
+      const row = info.row.original;
+      const label = row.project || '(unknown)';
+      return (
+        <button
+          class={filterTextButton}
+          type="button"
+          title={`Filter by ${label}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            info.table.options.meta?.onFieldFilter?.('project', label);
+          }}
+        >
+          {row.project || '—'}
+        </button>
+      );
+    },
+    meta: { label: 'Project', widthPx: 120 },
+  },
+  {
+    id: 'tokIn',
+    header: 'Input',
+    accessorFn: (row) => row.tokIn,
+    cell: (info) => fmtCompact(info.row.original.tokIn),
+    sortDescFirst: true,
+    meta: { label: 'Input tokens', widthPx: 90, cellClass: numCell, headerClass: right, defaultVisible: false },
+  },
+  {
+    id: 'tokOut',
+    header: 'Output',
+    accessorFn: (row) => row.tokOut,
+    cell: (info) => fmtCompact(info.row.original.tokOut),
+    sortDescFirst: true,
+    meta: { label: 'Output tokens', widthPx: 94, cellClass: numCell, headerClass: right, defaultVisible: false },
+  },
+  {
+    id: 'cache',
+    header: 'Cache',
+    accessorFn: (row) => row.tokCr,
+    cell: (info) => fmtCompact(info.row.original.tokCr),
+    sortDescFirst: true,
+    meta: {
+      label: 'Cache read',
+      title: 'Cache-read tokens',
+      widthPx: 84,
+      cellClass: numCell,
+      headerClass: right,
+    },
+  },
+  {
+    id: 'tokCw',
+    header: 'Write',
+    accessorFn: (row) => row.tokCw,
+    cell: (info) => fmtCompact(info.row.original.tokCw),
+    sortDescFirst: true,
+    meta: {
+      label: 'Cache write',
+      title: 'Cache-write tokens',
+      widthPx: 84,
+      cellClass: numCell,
+      headerClass: right,
+      defaultVisible: false,
+    },
+  },
+  {
+    id: 'fresh',
+    header: 'Fresh',
+    accessorFn: (row) => row.freshTokens,
+    cell: (info) => fmtCompact(info.row.original.freshTokens),
+    sortDescFirst: true,
+    meta: {
+      label: 'Fresh tokens',
+      title: 'Tokens processed without cache (input + output + cache writes)',
+      widthPx: 84,
+      cellClass: numCell,
+      headerClass: right,
+    },
+  },
+  {
+    id: 'total',
+    header: 'Total',
+    accessorFn: (row) => row.tokenTotal,
+    cell: (info) => fmtCompact(info.row.original.tokenTotal),
+    sortDescFirst: true,
+    meta: { label: 'Total tokens', widthPx: 90, cellClass: numCell, headerClass: right, defaultVisible: false },
+  },
+  {
+    id: 'cost',
+    header: '$API',
+    accessorFn: (row) => sortValueForRow(row, 'cost'),
+    cell: (info) => (
+      <Show when={info.row.original.costKnown} fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>}>
+        {fmtMoney(info.row.original.costApprox)}
+      </Show>
+    ),
+    sortDescFirst: true,
+    meta: {
+      label: 'API value',
+      title: 'Estimated cost at standard API prices',
+      widthPx: 76,
+      cellClass: numCell,
+      headerClass: right,
+    },
+  },
+  {
+    id: 'actual',
+    header: '$Actual',
+    accessorFn: (row) => sortValueForRow(row, 'actual'),
+    cell: (info) => fmtMoney(info.row.original.costActual),
+    sortDescFirst: true,
+    meta: {
+      label: 'Actual cost',
+      title: 'Out-of-pocket spend reported by harnesses',
+      widthPx: 88,
+      cellClass: numCell,
+      headerClass: right,
+      defaultVisible: false,
+    },
+  },
+  {
+    id: 'duration',
+    header: 'Span',
+    accessorFn: (row) => row.durationMs ?? 0,
+    cell: (info) => fmtDuration(info.row.original.durationMs),
+    sortDescFirst: true,
+    meta: {
+      label: 'Duration',
+      title: 'Wall-clock session duration',
+      widthPx: 68,
+      cellClass: numCell,
+      headerClass: right,
+    },
+  },
+  {
+    id: 'calls',
+    header: 'Calls',
+    accessorFn: (row) => row.calls,
+    cell: (info) => fmtNum(info.row.original.calls),
+    sortDescFirst: true,
+    meta: { label: 'Calls', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
+  },
+  {
+    id: 'turns',
+    header: 'Turns',
+    accessorFn: (row) => row.turns,
+    cell: (info) => fmtNum(info.row.original.turns),
+    sortDescFirst: true,
+    meta: { label: 'Turns', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
+  },
+  {
+    id: 'tools',
+    header: 'Tools',
+    accessorFn: (row) => row.tools,
+    cell: (info) => fmtNum(info.row.original.tools),
+    sortDescFirst: true,
+    meta: { label: 'Tools', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
+  },
+  {
+    id: 'lines',
+    header: 'Lines',
+    accessorFn: (row) => row.lineDelta ?? 0,
+    cell: (info) => lineDeltaLabel(info.row.original),
+    sortDescFirst: true,
+    meta: { label: 'Lines changed', widthPx: 96, cellClass: numCell, headerClass: right, defaultVisible: false },
+  },
+  {
+    id: 'subagent',
+    header: 'Sub',
+    accessorFn: (row) => (row.subagent ? 1 : 0),
+    cell: (info) => (info.row.original.subagent ? 'Yes' : 'No'),
+    sortDescFirst: true,
+    meta: { label: 'Subagent', widthPx: 72, defaultVisible: false },
+  },
+  {
+    id: 'partial',
+    header: 'Partial',
+    accessorFn: (row) => (row.partial ? 1 : 0),
+    cell: (info) => (info.row.original.partial ? 'Yes' : 'No'),
+    sortDescFirst: true,
+    meta: { label: 'Partial', widthPx: 82, defaultVisible: false },
+  },
+  {
+    id: 'session',
+    header: 'Session',
+    accessorFn: (row) => row.sessionLabel.toLowerCase(),
+    cell: (info) => <div class={sessionTitleClamp}>{info.row.original.sessionLabel}</div>,
+    enableHiding: false,
+    meta: { label: 'Session', widthPx: 300, cellClass: sessionCell },
+  },
+];
+
+const defaultColumnVisibility = Object.fromEntries(
+  sessionColumns.filter((column) => column.meta?.defaultVisible === false).map((column) => [column.id, false]),
+) as VisibilityState;
 
 const median = (values: number[]) => {
   if (!values.length) return 0;
@@ -1093,23 +1811,75 @@ const analyticsGroups = (rows: SerializedRow[], keyFn: (row: SerializedRow) => s
     .sort((a, b) => b.costSum - a.costSum);
 };
 
-const SortHeader = (props: {
-  label: string;
-  column: TableSortKey;
-  current: TableSortKey;
-  direction: SortDirection;
-  onSort: (column: TableSortKey) => void;
-  class?: string;
-}) => (
-  <button class={cx(sortButton, props.class)} type="button" onClick={() => props.onSort(props.column)}>
-    <span>{props.label}</span>
-    <Show when={props.current === props.column}>
-      <span class={sortArrow} aria-hidden="true">
-        {props.direction === 'asc' ? '↑' : '↓'}
-      </span>
+const SortHeader = (props: { header: Header<SerializedRow, unknown> }) => {
+  const column = () => props.header.column;
+  const meta = () => column().columnDef.meta;
+  const sortDirection = () => column().getIsSorted();
+
+  return (
+    <Show
+      when={column().getCanSort()}
+      fallback={
+        <span class={meta()?.headerClass}>{flexRender(column().columnDef.header, props.header.getContext())}</span>
+      }
+    >
+      <button
+        class={cx(sortButton, meta()?.headerClass)}
+        type="button"
+        title={meta()?.title}
+        onClick={(event) => column().getToggleSortingHandler()?.(event)}
+      >
+        <span>{flexRender(column().columnDef.header, props.header.getContext())}</span>
+        <Show when={sortDirection()}>
+          {(direction) => (
+            <span class={sortArrow} aria-hidden="true">
+              {direction() === 'asc' ? '↑' : '↓'}
+            </span>
+          )}
+        </Show>
+      </button>
     </Show>
-  </button>
-);
+  );
+};
+
+const ColumnVisibilityControl = (props: { table: Table<SerializedRow> }) => {
+  const hideableColumns = () => props.table.getAllLeafColumns().filter((column) => column.getCanHide());
+  const visibleCount = () => props.table.getVisibleLeafColumns().length;
+
+  return (
+    <details class={columnMenu}>
+      <summary class={columnMenuButton}>
+        Columns
+        <span class={muted}>{visibleCount()}</span>
+      </summary>
+      <div class={columnMenuPanel}>
+        <div class={columnMenuHeader}>
+          <span class={muted}>{visibleCount()} visible</span>
+          <button
+            class={ghostButton}
+            type="button"
+            onClick={() => props.table.setColumnVisibility(defaultColumnVisibility)}
+          >
+            Reset
+          </button>
+        </div>
+        <For each={hideableColumns()}>
+          {(column) => (
+            <label class={columnToggle}>
+              <input
+                class={columnToggleInput}
+                type="checkbox"
+                checked={column.getIsVisible()}
+                onChange={(event) => column.toggleVisibility(event.currentTarget.checked)}
+              />
+              <span class={columnToggleText}>{column.columnDef.meta?.label ?? column.id}</span>
+            </label>
+          )}
+        </For>
+      </div>
+    </details>
+  );
+};
 
 const DetailItem = (props: { label: string; value: string; hint?: string }) => (
   <div class={detailItem} title={props.hint}>
@@ -1166,142 +1936,126 @@ const SessionDrawer = (props: { row: SerializedRow; onClose: () => void }) => (
 const SessionTable = (props: {
   rows: SerializedRow[];
   selectedKey: string | null;
-  sortKey: TableSortKey;
-  sortDirection: SortDirection;
-  onSort: (column: TableSortKey) => void;
+  sorting: SortingState;
+  columnVisibility: VisibilityState;
+  onSortingChange: OnChangeFn<SortingState>;
+  onColumnVisibilityChange: OnChangeFn<VisibilityState>;
   onSelect: (row: SerializedRow) => void;
+  onHarnessFilter: (value: string) => void;
+  onFieldFilter: (key: FieldFilterKey, value: string) => void;
   onClearFilters: () => void;
-}) => (
-  <Show
-    when={props.rows.length}
-    fallback={
-      <div class={empty}>
-        <div class={emptyActions}>
-          <span>No sessions match the current filters</span>
-          <button class={ghostButton} type="button" onClick={() => props.onClearFilters()}>
-            Clear filters
-          </button>
-        </div>
-      </div>
-    }
-  >
-    <div class={tableWrap}>
-      <table class={cx(table, sessionsTable)}>
-        <thead>
-          <tr>
-            <th style={{ width: '104px' }}>
-              <SortHeader
-                label="Date"
-                column="date"
-                current={props.sortKey}
-                direction={props.sortDirection}
-                onSort={props.onSort}
-              />
-            </th>
-            <th style={{ width: '100px' }}>Harness</th>
-            <th style={{ width: '124px' }}>Provider</th>
-            <th style={{ width: '168px' }}>Model</th>
-            <th style={{ width: '120px' }}>Project</th>
-            <th
-              style={{ width: '84px' }}
-              class={right}
-              title="Tokens processed without cache (input + output + cache writes)"
-            >
-              <SortHeader
-                label="Fresh"
-                column="fresh"
-                current={props.sortKey}
-                direction={props.sortDirection}
-                onSort={props.onSort}
-                class={right}
-              />
-            </th>
-            <th style={{ width: '84px' }} class={right} title="Cache-read tokens">
-              <SortHeader
-                label="Cache"
-                column="cache"
-                current={props.sortKey}
-                direction={props.sortDirection}
-                onSort={props.onSort}
-                class={right}
-              />
-            </th>
-            <th style={{ width: '76px' }} class={right} title="Estimated cost at standard API prices">
-              <SortHeader
-                label="$API"
-                column="cost"
-                current={props.sortKey}
-                direction={props.sortDirection}
-                onSort={props.onSort}
-                class={right}
-              />
-            </th>
-            <th style={{ width: '68px' }} class={right} title="Wall-clock session duration">
-              <SortHeader
-                label="Span"
-                column="duration"
-                current={props.sortKey}
-                direction={props.sortDirection}
-                onSort={props.onSort}
-                class={right}
-              />
-            </th>
-            <th>
-              <SortHeader
-                label="Session"
-                column="session"
-                current={props.sortKey}
-                direction={props.sortDirection}
-                onSort={props.onSort}
-              />
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <For each={props.rows}>
-            {(row) => (
-              <tr
-                data-selected={String(props.selectedKey === rowKey(row))}
-                tabIndex={0}
-                onClick={() => props.onSelect(row)}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Enter' && event.key !== ' ') return;
-                  event.preventDefault();
-                  props.onSelect(row);
-                }}
-              >
-                <td class={dateCell}>{fmtDate(row.activeDate)}</td>
-                <td>
-                  <HarnessBadge name={row.harness} />
-                </td>
-                <td>{providerLabel(row.provider)}</td>
-                <td class={modelCell}>{row.model}</td>
-                <td>{row.project || '—'}</td>
-                <td class={numCell} title={fmtNum(row.freshTokens)}>
-                  {fmtCompact(row.freshTokens)}
-                </td>
-                <td class={numCell} title={fmtNum(row.tokCr)}>
-                  {fmtCompact(row.tokCr)}
-                </td>
-                <td class={numCell}>
-                  <Show when={row.costKnown} fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>}>
-                    {fmtMoney(row.costApprox)}
-                  </Show>
-                </td>
-                <td class={numCell}>{fmtDuration(row.durationMs)}</td>
-                <td class={sessionCell}>
-                  <div class={sessionTitleClamp}>{row.sessionLabel}</div>
-                </td>
-              </tr>
-            )}
-          </For>
-        </tbody>
-      </table>
-    </div>
-  </Show>
-);
+}) => {
+  const sessionTable = createSolidTable<SerializedRow>({
+    get data() {
+      return props.rows;
+    },
+    columns: sessionColumns,
+    get state() {
+      return {
+        sorting: props.sorting,
+        columnVisibility: props.columnVisibility,
+      };
+    },
+    enableMultiSort: false,
+    enableSortingRemoval: false,
+    getCoreRowModel: getCoreRowModel(),
+    getRowId: (row) => rowKey(row),
+    getSortedRowModel: getSortedRowModel(),
+    meta: {
+      onFieldFilter: props.onFieldFilter,
+      onHarnessFilter: props.onHarnessFilter,
+    },
+    onColumnVisibilityChange: props.onColumnVisibilityChange,
+    onSortingChange: props.onSortingChange,
+  });
+  const tableMinWidth = () =>
+    Math.max(
+      1040,
+      sessionTable.getVisibleLeafColumns().reduce((sum, column) => sum + (column.columnDef.meta?.widthPx ?? 140), 0),
+    );
 
-const GroupPanel = (props: { title: string; groups: AnalyticsGroup[]; countLabel: string; harnessTones?: boolean }) => {
+  return (
+    <Show
+      when={props.rows.length}
+      fallback={
+        <div class={empty}>
+          <div class={emptyActions}>
+            <span>No sessions match the current filters</span>
+            <button class={ghostButton} type="button" onClick={() => props.onClearFilters()}>
+              Clear filters
+            </button>
+          </div>
+        </div>
+      }
+    >
+      <div class={tableControls}>
+        <div class={tableControlMeta}>
+          {fmtNum(sessionTable.getRowModel().rows.length)} rows · {sessionTable.getVisibleLeafColumns().length} columns
+        </div>
+        <ColumnVisibilityControl table={sessionTable} />
+      </div>
+      <div class={tableWrap}>
+        <table class={cx(table, sessionsTable)} style={{ 'min-width': `${tableMinWidth()}px` }}>
+          <thead>
+            <For each={sessionTable.getHeaderGroups()}>
+              {(headerGroup) => (
+                <tr>
+                  <For each={headerGroup.headers}>
+                    {(header) => (
+                      <th
+                        colSpan={header.colSpan}
+                        class={header.column.columnDef.meta?.headerClass}
+                        title={header.column.columnDef.meta?.title}
+                        style={{ width: `${header.column.columnDef.meta?.widthPx ?? 140}px` }}
+                      >
+                        <Show when={!header.isPlaceholder}>
+                          <SortHeader header={header} />
+                        </Show>
+                      </th>
+                    )}
+                  </For>
+                </tr>
+              )}
+            </For>
+          </thead>
+          <tbody>
+            <For each={sessionTable.getRowModel().rows}>
+              {(tableRow) => (
+                <tr
+                  data-selected={String(props.selectedKey === tableRow.id)}
+                  tabIndex={0}
+                  onClick={() => props.onSelect(tableRow.original)}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    props.onSelect(tableRow.original);
+                  }}
+                >
+                  <For each={tableRow.getVisibleCells()}>
+                    {(cell) => (
+                      <td class={cell.column.columnDef.meta?.cellClass}>
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    )}
+                  </For>
+                </tr>
+              )}
+            </For>
+          </tbody>
+        </table>
+      </div>
+    </Show>
+  );
+};
+
+const GroupPanel = (props: {
+  title: string;
+  groups: AnalyticsGroup[];
+  countLabel: string;
+  harnessTones?: boolean;
+  onFilter?: (value: string) => void;
+}) => {
   const maxCost = createMemo(() => Math.max(1, ...props.groups.map((group) => group.costSum)));
   return (
     <div class={groupPanel}>
@@ -1316,7 +2070,11 @@ const GroupPanel = (props: { title: string; groups: AnalyticsGroup[]; countLabel
           {(group) => (
             <div class={groupRow}>
               <div>
-                <div class={strongCell}>{group.key}</div>
+                <Show when={props.onFilter} fallback={<div class={strongCell}>{group.key}</div>}>
+                  <button class={groupKeyButton} type="button" onClick={() => props.onFilter?.(group.key)}>
+                    {group.key}
+                  </button>
+                </Show>
                 <div class={groupSub} title={`${fmtNum(group.fresh)} fresh tokens`}>
                   {group.sessions} sess · {fmtCompact(group.fresh)} fresh · {fmtPct(group.cacheHitPct)} cache
                 </div>
@@ -1343,25 +2101,25 @@ const GroupPanel = (props: { title: string; groups: AnalyticsGroup[]; countLabel
   );
 };
 
-const DAY_MS = 86_400_000;
-
 type TimelinePart = { harness: string; cost: number };
-type TimelineBucket = { date: Date; total: number; parts: TimelinePart[] };
+type TimelineBucket = { date: Date; endDate: Date; total: number; sessions: number; parts: TimelinePart[] };
 
-const timelineBucketTitle = (bucket: TimelineBucket, weekly: boolean) =>
+const timelineBucketTitle = (bucket: TimelineBucket, weekly: boolean, valueMode: 'cost' | 'sessions') =>
   [
-    `${weekly ? 'Week of ' : ''}${fmtDateOnly(bucket.date)} — ${fmtMoney(bucket.total)}`,
+    `${weekly ? 'Week of ' : ''}${fmtDateOnly(bucket.date)} — ${
+      valueMode === 'cost' ? fmtMoney(bucket.total) : `${fmtNum(bucket.sessions)} sessions`
+    }`,
     ...bucket.parts.map((part) => `${part.harness} ${fmtMoney(part.cost)}`),
   ].join('\n');
 
-const CostTimeline = (props: { rows: SerializedRow[] }) => {
+const TimeRangeControl = (props: { rows: SerializedRow[]; dateRange: DateRangeController }) => {
   const data = createMemo(() => {
-    const priced = props.rows.filter((row) => row.costKnown && (row.activeDate ?? row.date));
-    if (!priced.length) return null;
-    const times = priced.map((row) => new Date(row.activeDate ?? row.date ?? 0).getTime());
-    const minDay = startOfDay(new Date(Math.min(...times)));
-    const maxDay = startOfDay(new Date(Math.max(...times)));
-    const dayCount = Math.round((maxDay.getTime() - minDay.getTime()) / DAY_MS) + 1;
+    const domain = props.dateRange.domain();
+    if (!domain) return null;
+    const dated = props.rows
+      .map((row) => ({ row, time: rowTime(row) }))
+      .filter((item): item is { row: SerializedRow; time: number } => item.time != null);
+    const dayCount = domain.maxIndex + 1;
     // Weekly buckets past ~4 months keep the bars readable (and the DOM small).
     const weekly = dayCount > 120;
     const bucketStart = (date: Date) => {
@@ -1370,67 +2128,244 @@ const CostTimeline = (props: { rows: SerializedRow[] }) => {
     };
 
     const buckets = new Map<string, TimelineBucket & { byHarness: Map<string, number> }>();
-    for (let cursor = bucketStart(minDay); cursor <= maxDay; cursor = shiftCalendarDays(cursor, weekly ? 7 : 1)) {
-      buckets.set(toDateInputValue(cursor), { date: cursor, total: 0, parts: [], byHarness: new Map() });
+    for (
+      let cursor = bucketStart(domain.minDay);
+      cursor <= domain.maxDay;
+      cursor = shiftCalendarDays(cursor, weekly ? 7 : 1)
+    ) {
+      buckets.set(toDateInputValue(cursor), {
+        date: cursor,
+        endDate: weekly ? shiftCalendarDays(cursor, 6) : cursor,
+        total: 0,
+        sessions: 0,
+        parts: [],
+        byHarness: new Map(),
+      });
     }
     const harnessTotals = new Map<string, number>();
-    for (const row of priced) {
-      const bucket = buckets.get(toDateInputValue(bucketStart(new Date(row.activeDate ?? row.date ?? 0))));
+    for (const { row, time } of dated) {
+      const bucket = buckets.get(toDateInputValue(bucketStart(new Date(time))));
       if (!bucket) continue;
-      bucket.total += row.costApprox;
-      bucket.byHarness.set(row.harness, (bucket.byHarness.get(row.harness) ?? 0) + row.costApprox);
-      harnessTotals.set(row.harness, (harnessTotals.get(row.harness) ?? 0) + row.costApprox);
+      bucket.sessions++;
+      if (row.costKnown) {
+        bucket.total += row.costApprox;
+        bucket.byHarness.set(row.harness, (bucket.byHarness.get(row.harness) ?? 0) + row.costApprox);
+        harnessTotals.set(row.harness, (harnessTotals.get(row.harness) ?? 0) + row.costApprox);
+      }
     }
     const harnesses = [...harnessTotals.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
     const list = [...buckets.values()].map((bucket) => ({
       date: bucket.date,
+      endDate: bucket.endDate > domain.maxDay ? domain.maxDay : bucket.endDate,
       total: bucket.total,
+      sessions: bucket.sessions,
       parts: harnesses
         .map((name) => ({ harness: name, cost: bucket.byHarness.get(name) ?? 0 }))
         .filter((part) => part.cost > 0),
     }));
     const maxTotal = Math.max(...list.map((bucket) => bucket.total));
-    if (maxTotal <= 0) return null;
-    return { list, maxTotal, weekly, harnesses };
+    const maxSessions = Math.max(...list.map((bucket) => bucket.sessions));
+    const valueMode: 'cost' | 'sessions' = maxTotal > 0 ? 'cost' : 'sessions';
+    const maxValue = valueMode === 'cost' ? maxTotal : maxSessions;
+    if (maxValue <= 0) return null;
+    return {
+      list,
+      maxValue,
+      valueMode,
+      weekly,
+      harnesses,
+      minDay: domain.minDay,
+      maxDay: domain.maxDay,
+      maxIndex: domain.maxIndex,
+    };
   });
 
+  const [draggingSelection, setDraggingSelection] = createSignal(false);
+  let selectionDrag: {
+    pointerId: number;
+    startX: number;
+    startFrom: number;
+    startTo: number;
+    trackWidth: number;
+    maxIndex: number;
+  } | null = null;
+
+  const applySliderValue = (value: number[]) => {
+    const chart = data();
+    if (!chart) return;
+    props.dateRange.setIndexes(value[0] ?? 0, value[1] ?? 0);
+  };
+
+  const startSelectionDrag = (event: RangeDragPointerEvent, chart: NonNullable<ReturnType<typeof data>>) => {
+    if (event.button !== 0) return;
+    const trackRect = event.currentTarget.parentElement?.getBoundingClientRect();
+    if (!trackRect?.width || chart.maxIndex <= 0) return;
+    const [startFrom, startTo] = props.dateRange.selectedIndexes();
+    selectionDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startFrom,
+      startTo,
+      trackWidth: trackRect.width,
+      maxIndex: chart.maxIndex,
+    };
+    setDraggingSelection(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const moveSelectionDrag = (event: RangeDragPointerEvent) => {
+    if (!selectionDrag || selectionDrag.pointerId !== event.pointerId) return;
+    const span = selectionDrag.startTo - selectionDrag.startFrom;
+    const delta = Math.round(
+      ((event.clientX - selectionDrag.startX) / selectionDrag.trackWidth) * selectionDrag.maxIndex,
+    );
+    const from = clampNumber(selectionDrag.startFrom + delta, 0, Math.max(0, selectionDrag.maxIndex - span));
+    props.dateRange.setIndexes(from, from + span);
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const endSelectionDrag = (event: RangeDragPointerEvent) => {
+    if (!selectionDrag || selectionDrag.pointerId !== event.pointerId) return;
+    selectionDrag = null;
+    setDraggingSelection(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
   return (
-    <Show when={data()}>
+    <Show
+      when={data()}
+      fallback={
+        <section class={timeRangePanel} aria-label="Date range">
+          <div>
+            <div class={timeRangeTitle}>Time range</div>
+            <div class={timeRangeMeta}>No dated sessions match the current filters</div>
+          </div>
+        </section>
+      }
+    >
       {(chart) => (
-        <section class={cx(groupPanel, chartSpacing)} aria-label="Cost over time">
-          <div class={chartHeader}>
+        <section class={timeRangePanel} aria-label="Date range">
+          <div class={timeRangeHeader}>
             <div>
-              <div class={groupTitle}>Cost over time</div>
-              <div class={groupSub}>
-                API value per {chart().weekly ? 'week' : 'day'} · peak {fmtMoney(chart().maxTotal)}
-              </div>
+              <div class={timeRangeTitle}>Time range</div>
+              <div class={timeRangeMeta}>{props.dateRange.label()}</div>
             </div>
+            <fieldset class={presetGroup} aria-label="Date presets">
+              <For each={dateRangePresets}>
+                {(preset) => (
+                  <button
+                    class={presetButton}
+                    type="button"
+                    data-active={String(props.dateRange.mode() === preset.mode)}
+                    onClick={() => props.dateRange.setPreset(preset.mode)}
+                  >
+                    {preset.label}
+                  </button>
+                )}
+              </For>
+            </fieldset>
+          </div>
+
+          <div class={dateEditRow}>
+            <label class={dateFieldGroup}>
+              <span class={inlineFieldLabel}>From</span>
+              <input
+                class={dateInput}
+                type="date"
+                value={props.dateRange.inputValues().from}
+                min={toDateInputValue(chart().minDay)}
+                max={toDateInputValue(chart().maxDay)}
+                onInput={(event) => props.dateRange.setFromInput(event.currentTarget.value)}
+              />
+            </label>
+            <label class={dateFieldGroup}>
+              <span class={inlineFieldLabel}>To</span>
+              <input
+                class={dateInput}
+                type="date"
+                value={props.dateRange.inputValues().to}
+                min={toDateInputValue(chart().minDay)}
+                max={toDateInputValue(chart().maxDay)}
+                onInput={(event) => props.dateRange.setToInput(event.currentTarget.value)}
+              />
+            </label>
             <div class={chartLegend}>
               <For each={chart().harnesses}>{(name) => <HarnessBadge name={name} />}</For>
             </div>
           </div>
-          <div class={chartBody}>
-            <div class={chartPlot}>
-              <For each={chart().list}>
-                {(bucket) => (
-                  <div class={chartCol} title={timelineBucketTitle(bucket, chart().weekly)}>
-                    <For each={bucket.parts}>
-                      {(part) => (
-                        <div
-                          class={cx(chartSeg, harnessFillFor(part.harness) ?? accentFill)}
-                          style={{ height: `${(part.cost / chart().maxTotal) * 100}%` }}
-                        />
-                      )}
-                    </For>
-                  </div>
-                )}
-              </For>
+
+          <Slider.Root
+            class={timeSliderRoot}
+            min={0}
+            max={chart().maxIndex}
+            step={1}
+            value={props.dateRange.selectedIndexes()}
+            thumbSize={{ width: 32, height: 64 }}
+            aria-label={['Start date', 'End date']}
+            getAriaValueText={(details) => fmtDateOnly(dateFromIndex(chart().minDay, details.value))}
+            onValueChange={(details) => applySliderValue(details.value)}
+          >
+            <Slider.Control class={timeSliderControl}>
+              <Slider.Track class={timeSliderTrack}>
+                <Slider.Range class={timeSliderRange} />
+                <div class={timeSliderBars} aria-hidden="true">
+                  <For each={chart().list}>
+                    {(bucket) => (
+                      <div class={timeBucket} title={timelineBucketTitle(bucket, chart().weekly, chart().valueMode)}>
+                        <Show
+                          when={chart().valueMode === 'cost'}
+                          fallback={
+                            <div
+                              class={cx(timeBucketSegment, accentFill)}
+                              style={{ height: `${Math.max(2, (bucket.sessions / chart().maxValue) * 100)}%` }}
+                            />
+                          }
+                        >
+                          <For each={bucket.parts}>
+                            {(part) => (
+                              <div
+                                class={cx(timeBucketSegment, harnessFillFor(part.harness) ?? accentFill)}
+                                style={{ height: `${Math.max(2, (part.cost / chart().maxValue) * 100)}%` }}
+                              />
+                            )}
+                          </For>
+                        </Show>
+                      </div>
+                    )}
+                  </For>
+                </div>
+                <button
+                  class={timeSliderRangeDrag}
+                  type="button"
+                  tabIndex={-1}
+                  aria-label="Drag selected date range"
+                  title="Drag selected range"
+                  data-dragging={String(draggingSelection())}
+                  onPointerDown={(event) => startSelectionDrag(event, chart())}
+                  onPointerMove={moveSelectionDrag}
+                  onPointerUp={endSelectionDrag}
+                  onPointerCancel={endSelectionDrag}
+                  onLostPointerCapture={endSelectionDrag}
+                />
+              </Slider.Track>
+              <Slider.Thumb index={0} class={timeSliderThumb}>
+                <Slider.HiddenInput />
+              </Slider.Thumb>
+              <Slider.Thumb index={1} class={timeSliderThumb}>
+                <Slider.HiddenInput />
+              </Slider.Thumb>
+            </Slider.Control>
+            <div class={timeAxis}>
+              <span>{fmtDateOnly(chart().minDay)}</span>
+              <span>{fmtDateOnly(chart().maxDay)}</span>
             </div>
-            <div class={chartAxis}>
-              <span>{fmtDateOnly(chart().list[0]?.date ?? null)}</span>
-              <span>{fmtDateOnly(chart().list[chart().list.length - 1]?.date ?? null)}</span>
-            </div>
-          </div>
+          </Slider.Root>
         </section>
       )}
     </Show>
@@ -1472,7 +2407,7 @@ const projectGroups = (rows: SerializedRow[]) => {
   return [...groups.values()].sort((a, b) => b.cost - a.cost || b.fresh - a.fresh);
 };
 
-const ProjectSummary = (props: { rows: SerializedRow[] }) => (
+const ProjectSummary = (props: { rows: SerializedRow[]; onProjectFilter: (value: string) => void }) => (
   <Show when={projectGroups(props.rows).length} fallback={<div class={empty}>No projects</div>}>
     <div class={tableWrap}>
       <table class={cx(table, projectTable)}>
@@ -1510,7 +2445,9 @@ const ProjectSummary = (props: { rows: SerializedRow[] }) => (
                   class={strongCell}
                   title={project.key === '(unknown)' ? 'Sessions without a detected project directory' : undefined}
                 >
-                  {project.key}
+                  <button class={groupKeyButton} type="button" onClick={() => props.onProjectFilter(project.key)}>
+                    {project.key}
+                  </button>
                 </td>
                 <td class={numCell}>{fmtNum(project.sessions)}</td>
                 <td class={numCell} title={fmtNum(project.fresh)}>
@@ -1538,27 +2475,46 @@ const ProjectSummary = (props: { rows: SerializedRow[] }) => (
   </Show>
 );
 
+const fieldFilterLabels: Record<FieldFilterKey, string> = {
+  provider: 'Provider',
+  model: 'Model',
+  project: 'Project',
+};
+
+const FilterPill = (props: { label: string; value: string; onClear: () => void }) => (
+  <button
+    class={activeFilterButton}
+    type="button"
+    title={`Clear ${props.label} filter`}
+    onClick={() => props.onClear()}
+  >
+    {props.label}: {props.value} ×
+  </button>
+);
+
 export const Dashboard = () => {
   const isDemo = isDemoReportPayload();
   const [query, setQuery] = createSignal('');
   const [harness, setHarness] = createSignal('all');
+  const [fieldFilters, setFieldFilters] = createSignal<FieldFilters>({});
   const generatedAt = new Date(payload.generatedAt);
-  const [dateRange, setDateRange] = createSignal<DateRangeMode>('all');
-  const [customFrom, setCustomFrom] = createSignal(toDateInputValue(startOfDay(shiftCalendarDays(generatedAt, -6))));
-  const [customTo, setCustomTo] = createSignal(toDateInputValue(generatedAt));
-  const [sortKey, setSortKey] = createSignal<TableSortKey>(
-    payload.filters.sort === 'tokens' ? 'fresh' : payload.filters.sort,
-  );
-  const [sortDirection, setSortDirection] = createSignal<SortDirection>('desc');
+  const [sorting, setSorting] = createSignal<SortingState>(defaultSortingFor(payload.filters.sort));
+  const [columnVisibility, setColumnVisibility] = createSignal<VisibilityState>(defaultColumnVisibility);
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
   const harnesses = createMemo(() => ['all', ...new Set(payload.rows.map((row) => row.harness))]);
-  const dateBounds = createMemo(() => dateBoundsForRange(dateRange(), generatedAt, customFrom(), customTo()));
-  const matchesDateRange = (row: SerializedRow) => rowMatchesDateBounds(row, dateBounds());
-  const matchesCurrentFilters = (row: SerializedRow) =>
-    matchesRow(row, query().trim().toLowerCase(), harness()) && matchesDateRange(row);
-  const filteredRows = createMemo(() =>
-    payload.rows.filter(matchesCurrentFilters).sort(compareRows(sortKey(), sortDirection())),
-  );
+  const matchesNonDateFilters = (row: SerializedRow) =>
+    matchesRow(row, query().trim().toLowerCase(), harness(), fieldFilters());
+  const timelineRows = createMemo(() => payload.rows.filter(matchesNonDateFilters));
+  const dateRange = createDateRangeController({
+    generatedAt,
+    rows: timelineRows,
+    defaultFrom: toDateInputValue(startOfDay(shiftCalendarDays(generatedAt, -6))),
+    defaultTo: toDateInputValue(generatedAt),
+    formatDate: fmtDateOnly,
+  });
+  const matchesDateRange = (row: SerializedRow) => rowMatchesDateBounds(row, dateRange.bounds());
+  const matchesCurrentFilters = (row: SerializedRow) => matchesNonDateFilters(row) && matchesDateRange(row);
+  const filteredRows = createMemo(() => payload.rows.filter(matchesCurrentFilters));
   // The drawer closes by itself when its row leaves the filtered set.
   const selectedRow = createMemo(() => filteredRows().find((row) => rowKey(row) === selectedKey()) ?? null);
   createEffect(() => {
@@ -1573,33 +2529,28 @@ export const Dashboard = () => {
   const modelGroups = createMemo(() => analyticsGroups(filteredRows(), (row) => normalizeModelKey(row.model)));
   const providerGroups = createMemo(() => analyticsGroups(filteredRows(), (row) => providerLabel(row.provider)));
   const harnessGroups = createMemo(() => analyticsGroups(filteredRows(), (row) => row.harness));
-  const dateRangeLabel = createMemo(() => {
-    if (dateRange() === 'all') return 'all dates';
-    if (dateRange() === 'today') return 'today';
-    if (dateRange() === '7d') return 'last 7 days';
-    if (dateRange() === '30d') return 'last 30 days';
-    const from = customFrom() ? fmtDateOnly(parseLocalDate(customFrom())) : 'start';
-    const to = customTo() ? fmtDateOnly(parseLocalDate(customTo(), true)) : 'end';
-    return `${from} – ${to}`;
-  });
-  const filteredDateSpan = createMemo(() => rowsDateSpan(filteredRows()));
   const hiddenCount = createMemo(() => payload.rows.length - filteredRows().length);
-  const exportRows = createMemo(() => filteredRows());
+  const exportRows = createMemo(() => [...filteredRows()].sort(compareRows(sorting())));
   const toggleSelected = (row: SerializedRow) =>
     setSelectedKey((current) => (current === rowKey(row) ? null : rowKey(row)));
+  const setFieldFilter = (key: FieldFilterKey, value: string) =>
+    setFieldFilters((current) => ({ ...current, [key]: value }));
+  const clearFieldFilter = (key: FieldFilterKey) =>
+    setFieldFilters((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
   const clearFilters = () => {
     setQuery('');
     setHarness('all');
-    setDateRange('all');
+    setFieldFilters({});
+    dateRange.clear();
   };
-  const handleSort = (column: TableSortKey) => {
-    if (sortKey() === column) {
-      setSortDirection(sortDirection() === 'asc' ? 'desc' : 'asc');
-      return;
-    }
-    setSortKey(column);
-    setSortDirection(column === 'session' ? 'asc' : 'desc');
-  };
+  const handleSortingChange: OnChangeFn<SortingState> = (updater) =>
+    setSorting((current) => applyTableUpdate(updater, current));
+  const handleColumnVisibilityChange: OnChangeFn<VisibilityState> = (updater) =>
+    setColumnVisibility((current) => applyTableUpdate(updater, current));
   const metrics = createMemo<Metric[]>(() => {
     const a = visibleSummary();
     return [
@@ -1639,7 +2590,7 @@ export const Dashboard = () => {
               <div class={meta}>
                 <Show when={!isDemo} fallback="Report payload unavailable">
                   Generated {fmtDate(payload.generatedAt)} · {fmtNum(filteredRows().length)} of{' '}
-                  {fmtNum(payload.rows.length)} sessions · {dateRangeLabel()}
+                  {fmtNum(payload.rows.length)} sessions
                 </Show>
               </div>
             </div>
@@ -1660,34 +2611,6 @@ export const Dashboard = () => {
                 {(item) => <option value={item}>{item === 'all' ? 'All harnesses' : item}</option>}
               </For>
             </select>
-            <select
-              class={selectInput}
-              value={dateRange()}
-              aria-label="Date range"
-              onChange={(event) => setDateRange(event.currentTarget.value as DateRangeMode)}
-            >
-              <option value="all">All dates</option>
-              <option value="today">Today</option>
-              <option value="7d">Last 7 days</option>
-              <option value="30d">Last 30 days</option>
-              <option value="custom">Custom range</option>
-            </select>
-            <Show when={dateRange() === 'custom'}>
-              <input
-                class={dateInput}
-                type="date"
-                value={customFrom()}
-                aria-label="From date"
-                onInput={(event) => setCustomFrom(event.currentTarget.value)}
-              />
-              <input
-                class={dateInput}
-                type="date"
-                value={customTo()}
-                aria-label="To date"
-                onInput={(event) => setCustomTo(event.currentTarget.value)}
-              />
-            </Show>
             <button class={commandButton} type="button" onClick={() => downloadCSV(exportRows())}>
               Export CSV
             </button>
@@ -1706,28 +2629,30 @@ export const Dashboard = () => {
             </section>
           }
         >
+          <TimeRangeControl rows={timelineRows()} dateRange={dateRange} />
+
           <div class={filterSummary}>
             <span class={summaryPill}>
               {fmtNum(filteredRows().length)} / {fmtNum(payload.rows.length)} sessions
             </span>
-            <span class={summaryPill}>{dateRangeLabel()}</span>
-            <Show when={filteredDateSpan()}>
-              {(span) => (
-                <span title="First and last session in the current filter">
-                  data {fmtDateOnly(span().from)} – {fmtDateOnly(span().to)}
-                </span>
-              )}
-            </Show>
             <Show when={hiddenCount() > 0}>
               <span>{fmtNum(hiddenCount())} hidden by filters</span>
             </Show>
+            <div class={activeFilters}>
+              <Show when={harness() !== 'all'}>
+                <FilterPill label="Harness" value={harness()} onClear={() => setHarness('all')} />
+              </Show>
+              <For each={Object.entries(fieldFilters()) as [FieldFilterKey, string][]}>
+                {([key, value]) => (
+                  <FilterPill label={fieldFilterLabels[key]} value={value} onClear={() => clearFieldFilter(key)} />
+                )}
+              </For>
+            </div>
           </div>
 
           <div class={metricGrid}>
             <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>
           </div>
-
-          <CostTimeline rows={filteredRows()} />
 
           <Tabs.Root defaultValue="sessions" class={tabsRoot}>
             <Tabs.List class={tabsList}>
@@ -1751,24 +2676,44 @@ export const Dashboard = () => {
               <SessionTable
                 rows={filteredRows()}
                 selectedKey={selectedKey()}
-                sortKey={sortKey()}
-                sortDirection={sortDirection()}
-                onSort={handleSort}
+                sorting={sorting()}
+                columnVisibility={columnVisibility()}
+                onSortingChange={handleSortingChange}
+                onColumnVisibilityChange={handleColumnVisibilityChange}
                 onSelect={toggleSelected}
+                onHarnessFilter={setHarness}
+                onFieldFilter={setFieldFilter}
                 onClearFilters={clearFilters}
               />
             </Tabs.Content>
             <Tabs.Content value="models" class={section}>
-              <GroupPanel title="By model" groups={modelGroups()} countLabel="models" />
+              <GroupPanel
+                title="By model"
+                groups={modelGroups()}
+                countLabel="models"
+                onFilter={(value) => setFieldFilter('model', value)}
+              />
             </Tabs.Content>
             <Tabs.Content value="providers" class={section}>
-              <GroupPanel title="By provider" groups={providerGroups()} countLabel="providers" harnessTones />
+              <GroupPanel
+                title="By provider"
+                groups={providerGroups()}
+                countLabel="providers"
+                harnessTones
+                onFilter={(value) => setFieldFilter('provider', value)}
+              />
             </Tabs.Content>
             <Tabs.Content value="harnesses" class={section}>
-              <GroupPanel title="By harness" groups={harnessGroups()} countLabel="harnesses" harnessTones />
+              <GroupPanel
+                title="By harness"
+                groups={harnessGroups()}
+                countLabel="harnesses"
+                harnessTones
+                onFilter={setHarness}
+              />
             </Tabs.Content>
             <Tabs.Content value="projects" class={section}>
-              <ProjectSummary rows={filteredRows()} />
+              <ProjectSummary rows={filteredRows()} onProjectFilter={(value) => setFieldFilter('project', value)} />
             </Tabs.Content>
           </Tabs.Root>
 
