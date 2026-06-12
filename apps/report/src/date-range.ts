@@ -79,7 +79,12 @@ export const dateBoundsForRange = (
   };
 };
 
+type TimedSerializedRow = SerializedRow & { activeTime?: number | null };
+
 export const rowTime = (row: SerializedRow) => {
+  const cachedTime = (row as TimedSerializedRow).activeTime;
+  if (cachedTime !== undefined) return cachedTime;
+
   const value = row.activeDate ?? row.date;
   if (!value) return null;
   const time = new Date(value).getTime();

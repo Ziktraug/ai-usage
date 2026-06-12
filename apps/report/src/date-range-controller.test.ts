@@ -70,4 +70,32 @@ describe('date range controller', () => {
       dispose();
     });
   });
+
+  test('can start from and replace a URL-backed custom range', () => {
+    createRoot((dispose) => {
+      const controller = createDateRangeController({
+        generatedAt: new Date(2026, 5, 12, 12),
+        rows: () => [rowAt('2026-06-01T12:00:00.000Z'), rowAt('2026-06-10T12:00:00.000Z')],
+        defaultFrom: '2026-06-06',
+        defaultTo: '2026-06-12',
+        formatDate,
+        initialFrom: '2026-06-02',
+        initialMode: 'custom',
+        initialTo: '2026-06-04',
+      });
+
+      expect(controller.mode()).toBe('custom');
+      expect(controller.inputValues()).toEqual({ from: '2026-06-02', to: '2026-06-04' });
+
+      controller.setRange('30d');
+
+      expect(controller.mode()).toBe('30d');
+
+      controller.setRange('custom', '2026-06-07', '2026-06-09');
+
+      expect(controller.inputValues()).toEqual({ from: '2026-06-07', to: '2026-06-09' });
+
+      dispose();
+    });
+  });
 });
