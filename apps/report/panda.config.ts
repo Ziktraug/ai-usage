@@ -48,6 +48,14 @@ export default defineConfig({
           from: { transform: 'translateX(24px)', opacity: '0' },
           to: { transform: 'translateX(0)', opacity: '1' },
         },
+        sheetIn: {
+          from: { transform: 'translateY(24px)', opacity: '0' },
+          to: { transform: 'translateY(0)', opacity: '1' },
+        },
+        fadeIn: {
+          from: { opacity: '0', transform: 'translateY(-4px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
       },
       tokens: {
         fonts: {
@@ -114,6 +122,18 @@ export default defineConfig({
           accentSoft: dual('#F5E6D8', '#3A2410'),
           accentTint: dual('#F8F0E5', '#251B10'),
           focusRing: dual('rgba(177, 78, 18, 0.28)', 'rgba(224, 131, 60, 0.35)'),
+
+          // Categorical series palette for charts (model migration, etc.).
+          // c1 echoes the copper accent; the rest stay muted enough to sit on
+          // paper/graphite surfaces in both schemes.
+          chart: {
+            c1: dual('#B14E12', '#E0833C'),
+            c2: dual('#0E7569', '#46C3AC'),
+            c3: dual('#6A47C8', '#AC92F2'),
+            c4: dual('#2061B4', '#7FA9E8'),
+            c5: dual('#647722', '#A9BB5E'),
+            c6: dual('#0F6FA8', '#5FB5E2'),
+          },
 
           // Harness badge pairs, recalibrated per scheme.
           harness: {

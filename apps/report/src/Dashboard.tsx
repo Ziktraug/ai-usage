@@ -1,5 +1,6 @@
 import type { AnalyticsGroup } from '@ai-usage/core/analytics';
 import type { SerializedRow } from '@ai-usage/core/report-data';
+import { Popover } from '@ark-ui/solid/popover';
 import { Slider } from '@ark-ui/solid/slider';
 import { Tabs } from '@ark-ui/solid/tabs';
 import { useNavigate, useSearch } from '@tanstack/solid-router';
@@ -19,20 +20,6 @@ import {
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
 import { css, cx } from '../styled-system/css';
 import {
-  clampNumber,
-  type DateBounds,
-  dateFromIndex,
-  dateRangePresets,
-  normalizeDateIndexRange,
-  rowMatchesDateBounds,
-  rowTime,
-  shiftCalendarDays,
-  startOfDay,
-  type TimeRangePreset,
-  toDateInputValue,
-} from './date-range';
-import { createDateRangeController, type DateRangeController } from './date-range-controller';
-import {
   type DashboardSearch,
   dashboardSearchDefaultsFor,
   type FieldFilterKey,
@@ -43,7 +30,46 @@ import {
   type SessionColumnId,
   sortingStateFromSearch,
 } from './dashboard-search';
+import {
+  clampNumber,
+  DAY_MS,
+  type DateBounds,
+  dateFromIndex,
+  dateIndexFrom,
+  dateRangePresets,
+  endOfDay,
+  normalizeDateIndexRange,
+  rowMatchesDateBounds,
+  rowTime,
+  shiftCalendarDays,
+  startOfDay,
+  type TimeRangePreset,
+  toDateInputValue,
+} from './date-range';
+import { createDateRangeController, type DateRangeController } from './date-range-controller';
+import { Overview } from './Overview';
 import { isDemoReportPayload, readReportPayload } from './report-data';
+import {
+  accentFill,
+  buildReportSummary,
+  type DashboardRow,
+  enrichReportRow,
+  fmtCompact,
+  fmtDate,
+  fmtDateOnly,
+  fmtDuration,
+  fmtMaybeNum,
+  fmtMoney,
+  fmtNum,
+  fmtPct,
+  HarnessBadge,
+  harnessFillFor,
+  median,
+  rowKey,
+  SegmentBar,
+  tokenSegmentClasses,
+  UNKNOWN_PRICE_HINT,
+} from './shared';
 
 declare module '@tanstack/solid-table' {
   interface ColumnMeta<TData extends RowData, TValue> {
@@ -58,101 +84,11 @@ declare module '@tanstack/solid-table' {
   interface TableMeta<TData extends RowData> {
     onFieldFilter?: (key: FieldFilterKey, value: string) => void;
     onHarnessFilter?: (value: string) => void;
+    searchQuery?: string;
   }
 }
 
 const payload = readReportPayload();
-
-const numberFormatter = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
-const dateTimeFormatter = new Intl.DateTimeFormat('en', {
-  month: 'short',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-});
-const dateOnlyFormatter = new Intl.DateTimeFormat('en', {
-  month: 'short',
-  day: '2-digit',
-  year: 'numeric',
-});
-
-const fmtNum = (n: number) => numberFormatter.format(n);
-const fmtMoney = (n: number | null | undefined) => (n == null ? '—' : `$${n.toFixed(2)}`);
-const fmtPct = (n: number) => `${n.toFixed(n >= 10 ? 0 : 1)}%`;
-const fmtMaybeNum = (n: number | null | undefined) => (n == null ? '—' : fmtNum(n));
-const fmtCompact = (n: number) => {
-  if (Math.abs(n) >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
-  if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-  if (Math.abs(n) >= 1e5) return `${Math.round(n / 1e3)}k`;
-  return fmtNum(n);
-};
-const UNKNOWN_PRICE_HINT = 'No pricing data for this model';
-const fmtDate = (value: string | null) => (value ? dateTimeFormatter.format(new Date(value)) : '—');
-const fmtDateOnly = (value: string | Date | null) =>
-  value ? dateOnlyFormatter.format(value instanceof Date ? value : new Date(value)) : '—';
-
-const fmtDuration = (ms: number | null) => {
-  if (!ms || ms <= 0) return '—';
-  const minutes = Math.round(ms / 60000);
-  if (minutes < 90) return `${minutes}m`;
-  return `${(ms / 3600000).toFixed(1)}h`;
-};
-
-// Harnesses report the same upstream model under different ids
-// (gpt-5.5 vs openai/gpt-5.5); group on the bare id so one model is one line.
-const normalizeModelKey = (model: string) => model.slice(model.lastIndexOf('/') + 1);
-
-// "(OC)" is collector shorthand for sessions proxied through OpenCode.
-const providerLabel = (provider: string) => provider.replace(/\s*\(OC\)\s*$/, ' · via OpenCode');
-
-type DashboardRow = SerializedRow & {
-  activeTime: number | null;
-  modelKey: string;
-  projectKey: string;
-  providerDisplay: string;
-  rowId: string;
-  searchText: string;
-  sortDate: number;
-  sortHarness: string;
-  sortModel: string;
-  sortProject: string;
-  sortProvider: string;
-  sortSession: string;
-};
-
-const timeFromRowDate = (row: SerializedRow) => {
-  const value = row.activeDate ?? row.date;
-  if (!value) return null;
-  const time = new Date(value).getTime();
-  return Number.isFinite(time) ? time : null;
-};
-
-const buildRowId = (row: SerializedRow) =>
-  [row.activeDate ?? row.date ?? '', row.harness, row.provider, row.model, row.project, row.sessionLabel].join('|');
-
-const enrichReportRow = (row: SerializedRow): DashboardRow => {
-  const activeTime = timeFromRowDate(row);
-  const modelKey = normalizeModelKey(row.model);
-  const projectKey = row.project || '(unknown)';
-  const providerDisplay = providerLabel(row.provider);
-
-  return {
-    ...row,
-    activeTime,
-    modelKey,
-    projectKey,
-    providerDisplay,
-    rowId: buildRowId(row),
-    searchText:
-      `${row.sessionLabel} ${row.project} ${row.model} ${row.provider} ${providerDisplay} ${row.harness}`.toLowerCase(),
-    sortDate: activeTime ?? 0,
-    sortHarness: row.harness.toLowerCase(),
-    sortModel: modelKey.toLowerCase(),
-    sortProject: projectKey.toLowerCase(),
-    sortProvider: providerDisplay.toLowerCase(),
-    sortSession: row.sessionLabel.toLowerCase(),
-  };
-};
 
 const reportRows = payload.rows.map(enrichReportRow);
 
@@ -244,6 +180,7 @@ const themeToggleButton = css({
     outline: '2px solid token(colors.accent)',
     outlineOffset: '2px',
   },
+  _print: { display: 'none' },
 });
 
 const filterSummary = css({
@@ -283,6 +220,7 @@ const toolbar = css({
   py: '12px',
   bg: 'canvas',
   borderBottom: '1px solid token(colors.line)',
+  _print: { display: 'none' },
 });
 
 const field = css({
@@ -443,14 +381,39 @@ const timeBucketSegment = css({
   borderRadius: '1px',
 });
 
+// The selection stays transparent: bars keep their full color inside it and
+// the regions outside are veiled instead (timeSliderDim*), so the histogram
+// is always readable — even when the whole domain is selected.
 const timeSliderRange = css({
   position: 'absolute',
   top: 0,
   bottom: 0,
-  zIndex: 1,
-  bg: 'focusRing',
+  zIndex: 3,
   borderLeft: '2px solid token(colors.accent)',
   borderRight: '2px solid token(colors.accent)',
+  pointerEvents: 'none',
+});
+
+const timeSliderDim = css({
+  position: 'absolute',
+  top: 0,
+  bottom: 0,
+  zIndex: 3,
+  bg: 'canvas',
+  opacity: 0.62,
+  pointerEvents: 'none',
+});
+
+const timeSliderDimLeft = cx(timeSliderDim, css({ left: 0, w: 'var(--slider-range-start)' }));
+const timeSliderDimRight = cx(timeSliderDim, css({ right: 0, w: 'var(--slider-range-end)' }));
+
+const monthGridline = css({
+  position: 'absolute',
+  top: 0,
+  bottom: 0,
+  w: '1px',
+  bg: 'line',
+  zIndex: 1,
   pointerEvents: 'none',
 });
 
@@ -547,12 +510,21 @@ const timeSliderThumb = css({
 });
 
 const timeAxis = css({
+  position: 'relative',
   display: 'flex',
   justifyContent: 'space-between',
   gap: '8px',
   color: 'faint',
   fontSize: '11px',
   fontFamily: 'mono',
+});
+
+const timeAxisTick = css({
+  position: 'absolute',
+  top: 0,
+  transform: 'translateX(-50%)',
+  color: 'faint',
+  whiteSpace: 'nowrap',
 });
 
 const activeFilters = css({
@@ -644,6 +616,18 @@ const metricValue = css({
   fontWeight: 600,
 });
 
+const metricDelta = css({
+  textStyle: 'numeric',
+  mt: '7px',
+  fontSize: '11px',
+  color: 'muted',
+});
+
+const metricDeltaArrow = css({
+  color: 'accent',
+  fontSize: '9px',
+});
+
 const tabsRoot = css({
   display: 'grid',
   gap: '16px',
@@ -690,7 +674,8 @@ const section = css({
 });
 
 // Internal scroll keeps the page short; the sticky header keeps columns
-// labelled while scanning all rows.
+// labelled while scanning all rows. Scroll shadows signal the inner scroll
+// region so the wheel hand-off from the page does not feel like a trap.
 const tableWrap = css({
   overflow: 'auto',
   maxH: 'calc(100dvh - 240px)',
@@ -699,6 +684,15 @@ const tableWrap = css({
   borderRadius: 'md',
   bg: 'surface',
   boxShadow: 'card',
+  backgroundImage: `linear-gradient(to bottom, token(colors.surface) 30%, transparent),
+    linear-gradient(to top, token(colors.surface) 30%, transparent),
+    linear-gradient(to bottom, token(colors.lineStrong), transparent),
+    linear-gradient(to top, token(colors.lineStrong), transparent)`,
+  backgroundPosition: 'top, bottom, top, bottom',
+  backgroundRepeat: 'no-repeat',
+  backgroundSize: '100% 36px, 100% 36px, 100% 10px, 100% 10px',
+  backgroundAttachment: 'local, local, scroll, scroll',
+  _print: { maxH: 'none', overflow: 'visible', boxShadow: 'none' },
 });
 
 const tableControls = css({
@@ -706,33 +700,38 @@ const tableControls = css({
   flexWrap: 'wrap',
   gap: '10px',
   alignItems: 'center',
-  justifyContent: 'space-between',
+  justifyContent: 'flex-end',
+  _print: { display: 'none' },
 });
 
-const tableControlMeta = css({
+// Zag mirrors the content's computed z-index into the positioner variable,
+// so the stacking level is declared here on the content.
+const columnPopoverContent = css({
+  zIndex: 50,
+  display: 'grid',
+  gap: '10px',
+  w: 'min(560px, calc(100vw - 32px))',
+  p: '12px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'md',
+  bg: 'surface',
+  boxShadow: 'overlay',
+  animation: 'fadeIn 0.12s ease-out',
+});
+
+const columnPopoverHeader = css({
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: '8px',
   color: 'muted',
   fontSize: '12px',
 });
 
-const columnChooser = css({
-  display: 'flex',
-  flex: '1 1 520px',
-  flexWrap: 'wrap',
+const columnPopoverGrid = css({
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
   gap: '6px',
-  alignItems: 'center',
-  justifyContent: { base: 'flex-start', md: 'flex-end' },
-  minW: 0,
-  p: '8px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surface',
-});
-
-const columnChooserHeader = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: '8px',
-  pr: '4px',
 });
 
 const columnToggle = css({
@@ -798,14 +797,39 @@ const table = css({
 });
 
 // Only session rows are interactive; the projects table reuses `table`
-// without these affordances.
+// without these affordances. The trailing chevron and inset edge teach that
+// rows open the session inspector.
 const sessionsTable = css({
-  '& tbody tr': {
+  // [data-selected] scopes the affordances to real rows, never the
+  // virtualization spacer rows.
+  '& tbody tr[data-selected]': {
     cursor: 'pointer',
     transition: 'background-color 0.1s',
   },
-  '& tbody tr:hover td': {
+  '& tbody tr[data-selected]:hover td': {
     bg: 'surfaceMuted',
+  },
+  '& tbody tr[data-selected]:hover td:first-child': {
+    boxShadow: 'inset 2px 0 0 token(colors.lineStrong)',
+  },
+  '& tbody tr[data-selected] td:last-child': {
+    position: 'relative',
+    pr: '26px',
+  },
+  '& tbody tr[data-selected] td:last-child::after': {
+    content: '"›"',
+    position: 'absolute',
+    right: '10px',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    color: 'faint',
+    fontSize: '14px',
+    opacity: 0,
+    transition: 'opacity 0.1s',
+  },
+  '& tbody tr[data-selected]:hover td:last-child::after': {
+    opacity: 1,
+    color: 'accent',
   },
   '& tbody tr:focus-visible': {
     outline: '2px solid token(colors.accent)',
@@ -863,6 +887,43 @@ const sessionCell = css({ fontWeight: 600, overflowWrap: 'break-word' });
 const sessionTitleClamp = css({
   lineClamp: 2,
 });
+
+const highlightMark = css({
+  bg: 'accentSoft',
+  color: 'inherit',
+  borderRadius: '2px',
+});
+
+// Marks the filter query inside session titles so a match explains itself.
+const HighlightedText = (props: { text: string; query: string }) => {
+  const segments = createMemo(() => {
+    const query = props.query.trim().toLowerCase();
+    if (!query) return null;
+    const lower = props.text.toLowerCase();
+    if (!lower.includes(query)) return null;
+    const parts: { match: boolean; text: string }[] = [];
+    let index = 0;
+    while (index < props.text.length) {
+      const found = lower.indexOf(query, index);
+      if (found === -1) {
+        parts.push({ match: false, text: props.text.slice(index) });
+        break;
+      }
+      if (found > index) parts.push({ match: false, text: props.text.slice(index, found) });
+      parts.push({ match: true, text: props.text.slice(found, found + query.length) });
+      index = found + query.length;
+    }
+    return parts;
+  });
+
+  return (
+    <Show when={segments()} fallback={props.text}>
+      {(parts) => (
+        <For each={parts()}>{(part) => (part.match ? <mark class={highlightMark}>{part.text}</mark> : part.text)}</For>
+      )}
+    </Show>
+  );
+};
 const modelCell = css({
   fontFamily: 'mono',
   fontSize: '12px',
@@ -921,21 +982,27 @@ const ghostButton = css({
 });
 
 // Non-modal inspector: it overlays the right edge, the table stays
-// interactive so clicking other rows just swaps its content.
+// interactive so clicking other rows just swaps its content. On small
+// screens it becomes a bottom sheet instead of covering the whole page.
 const drawer = css({
   position: 'fixed',
-  top: '0',
   right: '0',
   bottom: '0',
+  top: { base: 'auto', sm: '0' },
+  left: { base: '0', sm: 'auto' },
   w: { base: '100%', sm: '440px' },
   maxW: '100vw',
+  maxH: { base: '78dvh', sm: 'none' },
   display: 'flex',
   flexDirection: 'column',
   bg: 'surface',
-  borderLeft: '1px solid token(colors.line)',
+  borderLeft: { base: '0', sm: '1px solid token(colors.line)' },
+  borderTop: { base: '1px solid token(colors.line)', sm: '0' },
+  roundedTop: { base: 'md', sm: '0' },
   boxShadow: 'overlay',
   zIndex: 40,
-  animation: 'drawerIn 0.18s ease-out',
+  animation: { base: 'sheetIn 0.2s ease-out', sm: 'drawerIn 0.18s ease-out' },
+  _print: { display: 'none' },
 });
 
 const drawerTop = css({
@@ -991,6 +1058,66 @@ const drawerClose = css({
     outline: '2px solid token(colors.accent)',
     outlineOffset: '2px',
   },
+  _disabled: {
+    opacity: 0.4,
+    cursor: 'default',
+    _hover: {
+      color: 'muted',
+      borderColor: 'line',
+    },
+  },
+});
+
+const drawerNav = css({
+  display: 'flex',
+  alignItems: 'center',
+  gap: '6px',
+});
+
+const drawerPosition = css({
+  textStyle: 'numeric',
+  color: 'faint',
+  fontSize: '11px',
+  mr: '4px',
+});
+
+const drawerLegend = css({
+  display: 'grid',
+  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+  gap: '4px 12px',
+  color: 'muted',
+  fontSize: '11px',
+});
+
+const drawerLegendItem = css({
+  display: 'flex',
+  alignItems: 'center',
+  gap: '6px',
+  minW: 0,
+});
+
+const drawerLegendSwatch = css({
+  w: '8px',
+  h: '8px',
+  borderRadius: '2px',
+  flexShrink: 0,
+});
+
+const drawerLegendValue = css({
+  textStyle: 'numeric',
+  color: 'ink',
+  ml: 'auto',
+});
+
+const drawerCompare = css({
+  color: 'muted',
+  fontSize: '12px',
+});
+
+const drawerActions = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '8px',
 });
 
 const emptyActions = css({
@@ -1005,70 +1132,6 @@ const chartLegend = css({
   gap: '6px',
   justifyContent: { base: 'flex-start', sm: 'flex-end' },
 });
-
-const badge = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: '6px',
-  h: '22px',
-  px: '9px',
-  borderRadius: 'full',
-  fontSize: '11px',
-  fontWeight: 600,
-  whiteSpace: 'nowrap',
-  _before: {
-    content: '""',
-    w: '6px',
-    h: '6px',
-    borderRadius: 'full',
-    bg: 'currentColor',
-  },
-});
-
-const badgeButton = css({
-  appearance: 'none',
-  border: '0',
-  cursor: 'pointer',
-  transition: 'box-shadow 0.15s, transform 0.15s',
-  _hover: {
-    boxShadow: '0 0 0 1px token(colors.accent)',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-});
-
-const badgeTones: Record<string, string> = {
-  claude: css({ bg: 'harness.claude.bg', color: 'harness.claude.fg' }),
-  codex: css({ bg: 'harness.codex.bg', color: 'harness.codex.fg' }),
-  cursor: css({ bg: 'harness.cursor.bg', color: 'harness.cursor.fg' }),
-  opencode: css({ bg: 'harness.opencode.bg', color: 'harness.opencode.fg' }),
-  gemini: css({ bg: 'harness.gemini.bg', color: 'harness.gemini.fg' }),
-};
-
-const badgeNeutral = css({ bg: 'surfaceMuted', color: 'muted' });
-
-// Harness labels are display strings ("Claude Code", "Codex"); tone keys match
-// on the first word so new label variants keep their family color.
-const harnessFamily = (name: string) => {
-  const lower = name.toLowerCase();
-  return badgeTones[lower] ? lower : (lower.split(/[\s-]/)[0] ?? '');
-};
-
-const badgeToneFor = (name: string) => badgeTones[harnessFamily(name)] ?? badgeNeutral;
-
-// Solid fills reusing the badge foreground colors, for chart segments and
-// per-harness distribution bars.
-const harnessFillTones: Record<string, string> = {
-  claude: css({ bg: 'harness.claude.fg' }),
-  codex: css({ bg: 'harness.codex.fg' }),
-  cursor: css({ bg: 'harness.cursor.fg' }),
-  opencode: css({ bg: 'harness.opencode.fg' }),
-  gemini: css({ bg: 'harness.gemini.fg' }),
-};
-
-const harnessFillFor = (name: string) => harnessFillTones[harnessFamily(name)];
 
 const groupPanel = css({
   border: '1px solid token(colors.line)',
@@ -1150,8 +1213,6 @@ const barFill = css({
   borderRadius: 'full',
 });
 
-const accentFill = css({ bg: 'accent' });
-
 const empty = css({
   minH: '160px',
   display: 'grid',
@@ -1207,10 +1268,13 @@ const projectTable = css({
   minW: '780px',
 });
 
+type MetricDelta = { pct: number; hint: string };
+
 type Metric = {
   label: string;
   value: string;
   hint?: string;
+  delta?: MetricDelta | null;
 };
 
 type RangeDragPointerEvent = PointerEvent & { currentTarget: HTMLButtonElement };
@@ -1226,48 +1290,41 @@ type ProjectGroup = {
   linesAdded: number;
   linesDeleted: number;
 };
-type ReportSummary = {
-  actualCost: number;
-  fresh: number;
-  meanCost: number;
-  rtkInput: number;
-  rtkOutput: number;
-  rtkSaved: number;
-  sessionCount: number;
-  tools: number;
-  totalCost: number;
-  turns: number;
-  unknownActual: number;
-};
 type MutableAnalyticsGroup = AnalyticsGroup & { costs: number[] };
 
 const applyTableUpdate = <T,>(updater: Updater<T>, current: T) =>
   typeof updater === 'function' ? (updater as (old: T) => T)(current) : updater;
 
+// Past ~4× the percentage stops being readable ("▲ 4632%"); switch to the
+// multiplication factor instead.
+const fmtDeltaPct = (pct: number) => {
+  if (pct >= 400) {
+    const factor = pct / 100 + 1;
+    return `×${factor >= 10 ? Math.round(factor) : factor.toFixed(1)}`;
+  }
+  return fmtPct(Math.abs(pct));
+};
+
+// Period deltas read as context, not judgement: cost going up is not "bad",
+// so the arrow stays in the accent and the number in muted ink.
 const MetricTile = (props: Metric) => (
   <div class={metricTile} title={props.hint}>
     <div class={metricLabel}>{props.label}</div>
-    <div class={metricValue}>{props.value}</div>
+    <div>
+      <div class={metricValue}>{props.value}</div>
+      <Show when={props.delta}>
+        {(delta) => (
+          <div class={metricDelta} title={delta().hint}>
+            <span class={metricDeltaArrow} aria-hidden="true">
+              {delta().pct >= 0 ? '▲' : '▼'}
+            </span>{' '}
+            {fmtDeltaPct(delta().pct)}
+          </div>
+        )}
+      </Show>
+    </div>
   </div>
 );
-
-const HarnessBadge = (props: { name: string; onClick?: () => void }) => {
-  const className = () => cx(badge, badgeToneFor(props.name), props.onClick ? badgeButton : undefined);
-  if (!props.onClick) return <span class={className()}>{props.name}</span>;
-  return (
-    <button
-      class={className()}
-      type="button"
-      title={`Filter by ${props.name}`}
-      onClick={(event) => {
-        event.stopPropagation();
-        props.onClick?.();
-      }}
-    >
-      {props.name}
-    </button>
-  );
-};
 
 const THEME_STORAGE_KEY = 'ai-usage-theme';
 const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
@@ -1342,8 +1399,6 @@ const ThemeToggle = () => {
     </button>
   );
 };
-
-const rowKey = (row: DashboardRow) => row.rowId;
 
 const fieldValueForRow = (row: DashboardRow, key: FieldFilterKey) => {
   if (key === 'provider') return row.providerDisplay;
@@ -1791,7 +1846,11 @@ const sessionColumns: SessionColumnDef[] = [
     id: 'session',
     header: 'Session',
     accessorFn: (row) => row.sessionLabel.toLowerCase(),
-    cell: (info) => <div class={sessionTitleClamp}>{info.row.original.sessionLabel}</div>,
+    cell: (info) => (
+      <div class={sessionTitleClamp}>
+        <HighlightedText text={info.row.original.sessionLabel} query={info.table.options.meta?.searchQuery ?? ''} />
+      </div>
+    ),
     enableHiding: false,
     meta: { label: 'Session', widthPx: 300, cellClass: sessionCell },
   },
@@ -1833,13 +1892,6 @@ const sessionColumnLabel = (column: SessionColumnDef) => column.meta?.label ?? c
 
 const sessionColumnHeader = (column: SessionColumnDef) =>
   typeof column.header === 'string' ? column.header : sessionColumnLabel(column);
-
-const median = (values: number[]) => {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? (sorted[middle] ?? 0) : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
-};
 
 const createAnalyticsGroup = (key: string, row: DashboardRow): MutableAnalyticsGroup => ({
   key,
@@ -1938,45 +1990,6 @@ const addProjectRow = (groups: Map<string, ProjectGroup>, row: DashboardRow) => 
   }
 };
 
-const createReportSummary = (): ReportSummary => ({
-  actualCost: 0,
-  fresh: 0,
-  meanCost: 0,
-  rtkInput: 0,
-  rtkOutput: 0,
-  rtkSaved: 0,
-  sessionCount: 0,
-  tools: 0,
-  totalCost: 0,
-  turns: 0,
-  unknownActual: 0,
-});
-
-const buildReportSummary = (rows: DashboardRow[], acceptsRow: (row: DashboardRow) => boolean) => {
-  const summary = createReportSummary();
-  let pricedCount = 0;
-
-  for (const row of rows) {
-    if (!acceptsRow(row)) continue;
-    summary.sessionCount++;
-    if (row.costKnown) {
-      summary.totalCost += row.costApprox;
-      pricedCount++;
-    }
-    summary.actualCost += row.costActual ?? 0;
-    if (row.costActual == null) summary.unknownActual++;
-    summary.fresh += row.freshTokens;
-    summary.rtkSaved += row.rtkSavedTokens ?? 0;
-    summary.rtkInput += row.rtkInputTokens ?? 0;
-    summary.rtkOutput += row.rtkOutputTokens ?? 0;
-    summary.turns += row.turns;
-    summary.tools += row.tools;
-  }
-
-  summary.meanCost = summary.totalCost / (pricedCount || 1);
-  return summary;
-};
-
 const buildAnalyticsGroups = (
   rows: DashboardRow[],
   acceptsRow: (row: DashboardRow) => boolean,
@@ -2029,41 +2042,56 @@ const SortHeader = (props: { column: Column<DashboardRow, unknown>; label: strin
   );
 };
 
+// Folded into a popover: column tuning is an occasional task, so it should
+// not permanently cost two rows of prime space above the table.
 const ColumnVisibilityControl = (props: {
   columnVisibility: VisibilityState;
+  hiddenColumnIds?: string[];
   onColumnVisibilityChange: OnChangeFn<VisibilityState>;
 }) => {
-  const hideableColumns = () => sessionColumns.filter((column) => column.enableHiding !== false);
-  const visibleCount = () => visibleSessionColumns(props.columnVisibility).length;
+  const hideableColumns = () =>
+    sessionColumns.filter((column) => column.enableHiding !== false && !props.hiddenColumnIds?.includes(column.id));
+  const visibleCount = () =>
+    visibleSessionColumns(props.columnVisibility).filter((column) => !props.hiddenColumnIds?.includes(column.id))
+      .length;
   const setColumnVisible = (id: string, visible: boolean) =>
     props.onColumnVisibilityChange((current) => ({ ...current, [id]: visible }));
 
   return (
-    <div class={columnChooser}>
-      <div class={columnChooserHeader}>
-        <span class={muted}>{visibleCount()} columns</span>
-        <button
-          class={ghostButton}
-          type="button"
-          onClick={() => props.onColumnVisibilityChange(defaultColumnVisibility)}
-        >
-          Reset
-        </button>
-      </div>
-      <For each={hideableColumns()}>
-        {(column) => (
-          <label class={columnToggle}>
-            <input
-              class={columnToggleInput}
-              type="checkbox"
-              checked={isSessionColumnVisible(props.columnVisibility, column.id)}
-              onChange={(event) => setColumnVisible(column.id, event.currentTarget.checked)}
-            />
-            <span class={columnToggleText}>{sessionColumnLabel(column)}</span>
-          </label>
-        )}
-      </For>
-    </div>
+    <Popover.Root lazyMount unmountOnExit>
+      <Popover.Trigger class={ghostButton}>Columns · {visibleCount()} ▾</Popover.Trigger>
+      <Popover.Positioner>
+        <Popover.Content class={columnPopoverContent} aria-label="Choose table columns">
+          <div class={columnPopoverHeader}>
+            <span>
+              {visibleCount()} of {sessionColumns.length} columns shown
+            </span>
+            <button
+              class={ghostButton}
+              type="button"
+              onClick={() => props.onColumnVisibilityChange(defaultColumnVisibility)}
+            >
+              Reset
+            </button>
+          </div>
+          <div class={columnPopoverGrid}>
+            <For each={hideableColumns()}>
+              {(column) => (
+                <label class={columnToggle}>
+                  <input
+                    class={columnToggleInput}
+                    type="checkbox"
+                    checked={isSessionColumnVisible(props.columnVisibility, column.id)}
+                    onChange={(event) => setColumnVisible(column.id, event.currentTarget.checked)}
+                  />
+                  <span class={columnToggleText}>{sessionColumnLabel(column)}</span>
+                </label>
+              )}
+            </For>
+          </div>
+        </Popover.Content>
+      </Popover.Positioner>
+    </Popover.Root>
   );
 };
 
@@ -2074,55 +2102,158 @@ const DetailItem = (props: { label: string; value: string; hint?: string }) => (
   </div>
 );
 
-const SessionDrawer = (props: { row: DashboardRow; onClose: () => void }) => (
-  <aside class={drawer} aria-label="Session details">
-    <div class={drawerTop}>
-      <HarnessBadge name={props.row.harness} />
-      <button class={drawerClose} type="button" aria-label="Close session details" onClick={() => props.onClose()}>
-        ✕
-      </button>
-    </div>
-    <div class={drawerBody}>
-      <div>
-        <div class={drawerTitle}>{props.row.sessionLabel}</div>
-        <div class={muted}>
-          {props.row.providerDisplay} · {props.row.model}
+const fmtRatio = (ratio: number) => (ratio >= 10 ? `${Math.round(ratio)}×` : `${ratio.toFixed(1)}×`);
+
+const SessionDrawer = (props: {
+  row: DashboardRow;
+  rows: DashboardRow[];
+  onClose: () => void;
+  onNavigate: (delta: number) => void;
+  onFieldFilter: (key: FieldFilterKey, value: string) => void;
+}) => {
+  let closeButton: HTMLButtonElement | undefined;
+  // Move focus in on open and hand it back on close, so keyboard users are
+  // not stranded; the inspector itself stays non-modal.
+  onMount(() => {
+    const previous = document.activeElement;
+    closeButton?.focus();
+    onCleanup(() => {
+      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+    });
+  });
+
+  const position = createMemo(() => props.rows.findIndex((row) => rowKey(row) === rowKey(props.row)));
+  const medianCost = createMemo(() =>
+    median(props.rows.filter((row) => row.costKnown && row.costApprox > 0).map((row) => row.costApprox)),
+  );
+  const medianDuration = createMemo(() =>
+    median(props.rows.map((row) => row.durationMs ?? 0).filter((duration) => duration > 0)),
+  );
+  const costRatio = () =>
+    props.row.costKnown && props.row.costApprox > 0 && medianCost() > 0 ? props.row.costApprox / medianCost() : null;
+  const durationRatio = () =>
+    (props.row.durationMs ?? 0) > 0 && medianDuration() > 0 ? (props.row.durationMs ?? 0) / medianDuration() : null;
+
+  const anatomySegments = () => [
+    { label: 'Cache read', value: props.row.tokCr, class: tokenSegmentClasses.cacheRead },
+    { label: 'Cache write', value: props.row.tokCw, class: tokenSegmentClasses.cacheWrite },
+    { label: 'Input', value: props.row.tokIn, class: tokenSegmentClasses.input },
+    { label: 'Output', value: props.row.tokOut, class: tokenSegmentClasses.output },
+  ];
+
+  return (
+    <aside class={drawer} role="dialog" aria-label="Session details">
+      <div class={drawerTop}>
+        <HarnessBadge name={props.row.harness} />
+        <div class={drawerNav}>
+          <span class={drawerPosition}>
+            {fmtNum(position() + 1)} / {fmtNum(props.rows.length)}
+          </span>
+          <button
+            class={drawerClose}
+            type="button"
+            aria-label="Previous session (k)"
+            title="Previous session (k)"
+            disabled={position() <= 0}
+            onClick={() => props.onNavigate(-1)}
+          >
+            ↑
+          </button>
+          <button
+            class={drawerClose}
+            type="button"
+            aria-label="Next session (j)"
+            title="Next session (j)"
+            disabled={position() >= props.rows.length - 1}
+            onClick={() => props.onNavigate(1)}
+          >
+            ↓
+          </button>
+          <button
+            ref={closeButton}
+            class={drawerClose}
+            type="button"
+            aria-label="Close session details"
+            onClick={() => props.onClose()}
+          >
+            ✕
+          </button>
         </div>
       </div>
-      <div class={drawerGrid}>
-        <DetailItem label="Started" value={fmtDate(props.row.date)} />
-        <DetailItem label="Ended" value={fmtDate(props.row.endDate)} />
-        <DetailItem label="Input" value={fmtNum(props.row.tokIn)} />
-        <DetailItem label="Output" value={fmtNum(props.row.tokOut)} />
-        <DetailItem label="Cache read" value={fmtNum(props.row.tokCr)} />
-        <DetailItem label="Cache write" value={fmtNum(props.row.tokCw)} />
-        <DetailItem label="Total tokens" value={fmtNum(props.row.tokenTotal)} />
-        <DetailItem label="RTK savings" value={rtkSavedLabel(props.row)} hint={rtkSavedTitle(props.row)} />
-        <DetailItem
-          label="API value"
-          value={props.row.costKnown ? fmtMoney(props.row.costApprox) : '—'}
-          hint={props.row.costKnown ? 'Estimated cost at standard API prices' : UNKNOWN_PRICE_HINT}
-        />
-        <DetailItem
-          label="Actual cost"
-          value={fmtMoney(props.row.costActual)}
-          hint="Out-of-pocket spend — $0.00 means covered by a subscription"
-        />
-        <DetailItem label="Calls" value={fmtNum(props.row.calls)} />
-        <DetailItem label="Turns" value={fmtNum(props.row.turns)} />
-        <DetailItem label="Tools" value={fmtNum(props.row.tools)} />
-        <DetailItem label="Duration" value={fmtDuration(props.row.durationMs)} />
-        <DetailItem label="Lines" value={lineDeltaLabel(props.row)} />
-        <DetailItem label="Subagent" value={props.row.subagent ? 'Yes' : 'No'} />
-        <DetailItem label="Partial" value={props.row.partial ? 'Yes' : 'No'} />
+      <div class={drawerBody}>
+        <div>
+          <div class={drawerTitle}>{props.row.sessionLabel}</div>
+          <div class={muted}>
+            {props.row.providerDisplay} · {props.row.model}
+          </div>
+        </div>
+        <div>
+          <SegmentBar segments={anatomySegments()} ariaLabel="Token anatomy" />
+          <div class={drawerLegend} style={{ 'margin-top': '8px' }}>
+            <For each={anatomySegments()}>
+              {(segment) => (
+                <div class={drawerLegendItem} title={`${segment.label}: ${fmtNum(segment.value)} tokens`}>
+                  <span class={cx(drawerLegendSwatch, segment.class)} />
+                  <span>{segment.label}</span>
+                  <span class={drawerLegendValue}>{fmtCompact(segment.value)}</span>
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
+        <Show when={costRatio() != null || durationRatio() != null}>
+          <div class={drawerCompare} title="Compared with the median session in the current view">
+            <Show when={costRatio() != null}>≈ {fmtRatio(costRatio() ?? 0)} median cost</Show>
+            <Show when={costRatio() != null && durationRatio() != null}> · </Show>
+            <Show when={durationRatio() != null}>{fmtRatio(durationRatio() ?? 0)} median duration</Show>
+          </div>
+        </Show>
+        <div class={drawerGrid}>
+          <DetailItem label="Started" value={fmtDate(props.row.date)} />
+          <DetailItem label="Ended" value={fmtDate(props.row.endDate)} />
+          <DetailItem label="Total tokens" value={fmtNum(props.row.tokenTotal)} />
+          <DetailItem label="RTK savings" value={rtkSavedLabel(props.row)} hint={rtkSavedTitle(props.row)} />
+          <DetailItem
+            label="API value"
+            value={props.row.costKnown ? fmtMoney(props.row.costApprox) : '—'}
+            hint={props.row.costKnown ? 'Estimated cost at standard API prices' : UNKNOWN_PRICE_HINT}
+          />
+          <DetailItem
+            label="Actual cost"
+            value={fmtMoney(props.row.costActual)}
+            hint="Out-of-pocket spend — $0.00 means covered by a subscription"
+          />
+          <DetailItem label="Calls" value={fmtNum(props.row.calls)} />
+          <DetailItem label="Turns" value={fmtNum(props.row.turns)} />
+          <DetailItem label="Tools" value={fmtNum(props.row.tools)} />
+          <DetailItem label="Duration" value={fmtDuration(props.row.durationMs)} />
+          <DetailItem label="Lines" value={lineDeltaLabel(props.row)} />
+          <DetailItem label="Subagent" value={props.row.subagent ? 'Yes' : 'No'} />
+          <Show when={props.row.partial}>
+            <DetailItem label="Partial" value="Yes" hint="Local history did not cover the whole session" />
+          </Show>
+        </div>
+        <div class={drawerActions}>
+          <button
+            class={ghostButton}
+            type="button"
+            onClick={() => props.onFieldFilter('project', props.row.projectKey)}
+          >
+            Filter project: {props.row.projectKey}
+          </button>
+          <button class={ghostButton} type="button" onClick={() => props.onFieldFilter('model', props.row.modelKey)}>
+            Filter model: {props.row.modelKey}
+          </button>
+        </div>
       </div>
-    </div>
-  </aside>
-);
+    </aside>
+  );
+};
 
 const SessionTable = (props: {
   rows: DashboardRow[];
   selectedKey: string | null;
+  searchQuery: string;
   sorting: SortingState;
   columnVisibility: VisibilityState;
   onSortingChange: OnChangeFn<SortingState>;
@@ -2132,6 +2263,14 @@ const SessionTable = (props: {
   onFieldFilter: (key: FieldFilterKey, value: string) => void;
   onClearFilters: () => void;
 }) => {
+  // A column whose every visible row reads "—" is dead weight; RTK savings
+  // only earns its slot when the filtered set actually carries RTK data.
+  // Folding this into the visibility state keeps headers and cells in sync.
+  const hasRtkData = createMemo(() => props.rows.some((row) => row.rtkSavedTokens));
+  const effectiveVisibility = createMemo(() =>
+    hasRtkData() ? props.columnVisibility : { ...props.columnVisibility, rtkSaved: false },
+  );
+  const dataHiddenColumnIds = () => (hasRtkData() ? [] : ['rtkSaved']);
   const sessionTable = createSolidTable<DashboardRow>({
     get data() {
       return props.rows;
@@ -2140,7 +2279,7 @@ const SessionTable = (props: {
     get state() {
       return {
         sorting: props.sorting,
-        columnVisibility: props.columnVisibility,
+        columnVisibility: effectiveVisibility(),
       };
     },
     enableMultiSort: false,
@@ -2151,12 +2290,15 @@ const SessionTable = (props: {
     meta: {
       onFieldFilter: props.onFieldFilter,
       onHarnessFilter: props.onHarnessFilter,
+      get searchQuery() {
+        return props.searchQuery;
+      },
     },
     onColumnVisibilityChange: props.onColumnVisibilityChange,
     onSortingChange: props.onSortingChange,
   });
   const visibleColumns = createMemo(() =>
-    visibleSessionColumns(props.columnVisibility)
+    visibleSessionColumns(effectiveVisibility())
       .map((columnDef) => ({ columnDef, tableColumn: sessionTable.getColumn(columnDef.id) }))
       .filter((column): column is { columnDef: SessionColumnDef; tableColumn: Column<DashboardRow, unknown> } =>
         Boolean(column.tableColumn),
@@ -2227,11 +2369,9 @@ const SessionTable = (props: {
       }
     >
       <div class={tableControls}>
-        <div class={tableControlMeta}>
-          {fmtNum(rowModelRows().length)} rows · {visibleColumns().length} columns
-        </div>
         <ColumnVisibilityControl
           columnVisibility={props.columnVisibility}
+          hiddenColumnIds={dataHiddenColumnIds()}
           onColumnVisibilityChange={props.onColumnVisibilityChange}
         />
       </div>
@@ -2362,9 +2502,36 @@ const timelineBucketTitle = (bucket: TimelineBucket, weekly: boolean, valueMode:
     ...bucket.parts.map((part) => `${part.harness} ${fmtMoney(part.cost)}`),
   ].join('\n');
 
+const monthTickFormatter = new Intl.DateTimeFormat('en', { month: 'short' });
+
+// Month boundaries anchor the brush; the two endpoint labels only give the
+// extremes, which is not enough to aim a selection on a long domain.
+const monthTicksFor = (chart: { minDay: Date; maxDay: Date; maxIndex: number }) => {
+  if (chart.maxIndex < 28) return [];
+  const monthStep = chart.maxIndex > 430 ? 3 : 1;
+  const ticks: { pct: number; label: string }[] = [];
+  const cursor = new Date(chart.minDay.getFullYear(), chart.minDay.getMonth() + 1, 1);
+  while (cursor <= chart.maxDay) {
+    if (cursor.getMonth() % monthStep === 0) {
+      const pct = (dateIndexFrom(cursor, chart.minDay) / chart.maxIndex) * 100;
+      if (pct >= 2 && pct <= 98) {
+        const label =
+          cursor.getMonth() === 0
+            ? `${monthTickFormatter.format(cursor)} ’${String(cursor.getFullYear()).slice(-2)}`
+            : monthTickFormatter.format(cursor);
+        ticks.push({ pct, label });
+      }
+    }
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+  return ticks;
+};
+
 const TimeRangeControl = (props: {
   rows: DashboardRow[];
   dateRange: DateRangeController;
+  activeHarness: string;
+  onHarnessFilter: (value: string) => void;
   onDateRangeCommit: () => void;
 }) => {
   const [chartDomain, setChartDomain] = createSignal(props.dateRange.domain());
@@ -2591,7 +2758,16 @@ const TimeRangeControl = (props: {
               />
             </label>
             <div class={chartLegend}>
-              <For each={chart().harnesses}>{(name) => <HarnessBadge name={name} />}</For>
+              <For each={chart().harnesses}>
+                {(name) => (
+                  <HarnessBadge
+                    name={name}
+                    active={props.activeHarness === name}
+                    title={props.activeHarness === name ? `Clear ${name} filter` : `Filter by ${name}`}
+                    onClick={() => props.onHarnessFilter(name)}
+                  />
+                )}
+              </For>
             </div>
           </div>
 
@@ -2609,6 +2785,9 @@ const TimeRangeControl = (props: {
           >
             <Slider.Control class={timeSliderControl}>
               <Slider.Track class={timeSliderTrack}>
+                <For each={monthTicksFor(chart())}>
+                  {(tick) => <div class={monthGridline} style={{ left: `${tick.pct}%` }} aria-hidden="true" />}
+                </For>
                 <Slider.Range class={timeSliderRange} />
                 <div class={timeSliderBars} aria-hidden="true">
                   <For each={chart().list}>
@@ -2636,6 +2815,8 @@ const TimeRangeControl = (props: {
                     )}
                   </For>
                 </div>
+                <div class={timeSliderDimLeft} aria-hidden="true" />
+                <div class={timeSliderDimRight} aria-hidden="true" />
                 <button
                   class={timeSliderRangeDrag}
                   type="button"
@@ -2659,6 +2840,13 @@ const TimeRangeControl = (props: {
             </Slider.Control>
             <div class={timeAxis}>
               <span>{fmtDateOnly(chart().minDay)}</span>
+              <For each={monthTicksFor(chart()).filter((tick) => tick.pct >= 7 && tick.pct <= 93)}>
+                {(tick) => (
+                  <span class={timeAxisTick} style={{ left: `${tick.pct}%` }}>
+                    {tick.label}
+                  </span>
+                )}
+              </For>
               <span>{fmtDateOnly(chart().maxDay)}</span>
             </div>
           </Slider.Root>
@@ -2766,6 +2954,7 @@ export const Dashboard = () => {
   const columnVisibility = createMemo(() => columnVisibilityFromDiff(search().cols));
   const generatedAt = new Date(payload.generatedAt);
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
+  let searchInputEl: HTMLInputElement | undefined;
   const harnesses = createMemo(() => ['all', ...new Set(reportRows.map((row) => row.harness))]);
   const filterSnapshot = createMemo(() => createFilterSnapshot(query(), harness(), fieldFilters()));
   const timelineRows = createMemo(() => {
@@ -2814,12 +3003,45 @@ export const Dashboard = () => {
     return timelineRows().filter((row) => rowMatchesDateBounds(row, bounds));
   });
   const tableRows = tableFilteredRows;
+  // Rows in the table's current sort order — shared by CSV export and the
+  // drawer's previous/next navigation so both walk the list the user sees.
+  const sortedRows = createMemo(() => [...tableFilteredRows()].sort(compareRows(sorting())));
   // The drawer closes by itself when its row leaves the filtered set.
   const selectedRow = createMemo(() => tableFilteredRows().find((row) => rowKey(row) === selectedKey()) ?? null);
+  const navigateSelected = (delta: number) => {
+    const rows = sortedRows();
+    const key = selectedKey();
+    const index = rows.findIndex((row) => rowKey(row) === key);
+    if (index === -1) return;
+    const next = rows[index + delta];
+    if (next) setSelectedKey(rowKey(next));
+  };
   createEffect(() => {
     if (!selectedRow()) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setSelectedKey(null);
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target && (/^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName) || target.isContentEditable)) return;
+      if (event.key === 'Escape') {
+        setSelectedKey(null);
+      } else if (event.key === 'j' || event.key === 'ArrowDown') {
+        event.preventDefault();
+        navigateSelected(1);
+      } else if (event.key === 'k' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        navigateSelected(-1);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    onCleanup(() => document.removeEventListener('keydown', onKeyDown));
+  });
+  // "/" jumps to the filter input, mirroring the CLI feel of the report.
+  onMount(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target && (/^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName) || target.isContentEditable)) return;
+      event.preventDefault();
+      searchInputEl?.focus();
     };
     document.addEventListener('keydown', onKeyDown);
     onCleanup(() => document.removeEventListener('keydown', onKeyDown));
@@ -2864,16 +3086,29 @@ export const Dashboard = () => {
     return buildProjectGroups(timelineRows(), (row) => rowMatchesDateBounds(row, bounds));
   });
   const hiddenCount = createMemo(() => reportRows.length - visibleSummary().sessionCount);
-  const exportRows = () => {
+  // Usage in the equally-long window right before the selected one; null when
+  // the range is open-ended ("All") or the previous window is empty.
+  const previousSummary = createMemo(() => {
     const bounds = dateRange.bounds();
-    return timelineRows()
-      .filter((row) => rowMatchesDateBounds(row, bounds))
-      .sort(compareRows(sorting()));
-  };
+    if (!bounds.from) return null;
+    const from = bounds.from.getTime();
+    const to = (bounds.to ?? endOfDay(generatedAt)).getTime();
+    const span = Math.max(DAY_MS, to - from);
+    const previousBounds: DateBounds = { from: new Date(from - span), to: new Date(from - 1) };
+    const summary = buildReportSummary(timelineRows(), (row) => rowMatchesDateBounds(row, previousBounds));
+    return summary.sessionCount > 0 ? summary : null;
+  });
+  const exportRows = () => sortedRows();
   const toggleSelected = (row: DashboardRow) =>
     setSelectedKey((current) => (current === rowKey(row) ? null : rowKey(row)));
   const setQuery = (q: string) => updateSearch((current) => ({ ...current, q }));
   const setHarness = (nextHarness: string) => updateSearch((current) => ({ ...current, harness: nextHarness }));
+  const toggleHarness = (name: string) => setHarness(harness() === name ? 'all' : name);
+  const focusDay = (day: Date) => {
+    const value = toDateInputValue(day);
+    dateRange.setCustom(value, value);
+    commitTableDateRange();
+  };
   const setFieldFilters = (updater: Updater<FieldFilters>) =>
     updateSearch((current) => ({ ...current, filters: applyTableUpdate(updater, current.filters) }));
   const setFieldFilter = (key: FieldFilterKey, value: string) =>
@@ -2903,14 +3138,28 @@ export const Dashboard = () => {
     if (!isDashboardTab(tab)) return;
     updateSearch((current) => ({ ...current, tab }));
   };
+  const deltaVs = (current: number, previous: number | undefined, fmt: (n: number) => string): MetricDelta | null => {
+    if (previous == null || previous <= 0) return null;
+    return {
+      pct: ((current - previous) / previous) * 100,
+      hint: `Previous period of equal length: ${fmt(previous)}`,
+    };
+  };
   const metrics = createMemo<Metric[]>(() => {
     const a = visibleSummary();
+    const prev = previousSummary() ?? undefined;
     return [
-      { label: 'Sessions', value: fmtNum(a.sessionCount), hint: 'Sessions in the current filter' },
+      {
+        label: 'Sessions',
+        value: fmtNum(a.sessionCount),
+        hint: 'Sessions in the current filter',
+        delta: deltaVs(a.sessionCount, prev?.sessionCount, fmtNum),
+      },
       {
         label: 'API value',
         value: fmtMoney(a.totalCost),
         hint: 'Estimated cost at standard API prices, including usage covered by subscriptions',
+        delta: deltaVs(a.totalCost, prev?.totalCost, fmtMoney),
       },
       {
         label: 'Actual cost',
@@ -2918,9 +3167,15 @@ export const Dashboard = () => {
         hint: `Out-of-pocket spend reported by harnesses; subscription usage counts as $0${
           a.unknownActual ? ` (${fmtNum(a.unknownActual)} sessions unknown)` : ''
         }`,
+        delta: deltaVs(a.actualCost, prev?.actualCost, fmtMoney),
       },
       { label: 'Mean / sess', value: fmtMoney(a.meanCost), hint: 'Mean API value per priced session' },
-      { label: 'Fresh tokens', value: fmtCompact(a.fresh), hint: `Tokens processed without cache: ${fmtNum(a.fresh)}` },
+      {
+        label: 'Fresh tokens',
+        value: fmtCompact(a.fresh),
+        hint: `Tokens processed without cache: ${fmtNum(a.fresh)}`,
+        delta: deltaVs(a.fresh, prev?.fresh, fmtCompact),
+      },
       ...(a.rtkSaved
         ? [
             {
@@ -2934,8 +3189,18 @@ export const Dashboard = () => {
             },
           ]
         : []),
-      { label: 'Turns', value: fmtNum(a.turns), hint: 'Assistant turns across the filtered sessions' },
-      { label: 'Tool calls', value: fmtNum(a.tools), hint: 'Tool invocations across the filtered sessions' },
+      {
+        label: 'Turns',
+        value: fmtNum(a.turns),
+        hint: 'Assistant turns across the filtered sessions',
+        delta: deltaVs(a.turns, prev?.turns, fmtNum),
+      },
+      {
+        label: 'Tool calls',
+        value: fmtNum(a.tools),
+        hint: 'Tool invocations across the filtered sessions',
+        delta: deltaVs(a.tools, prev?.tools, fmtNum),
+      },
     ];
   });
 
@@ -2954,8 +3219,7 @@ export const Dashboard = () => {
               <h1 class={title}>Usage report</h1>
               <div class={meta}>
                 <Show when={!isDemo} fallback="Report payload unavailable">
-                  Generated {fmtDate(payload.generatedAt)} · {fmtNum(visibleSummary().sessionCount)} of{' '}
-                  {fmtNum(reportRows.length)} sessions
+                  Generated {fmtDate(payload.generatedAt)}
                 </Show>
               </div>
             </div>
@@ -2966,10 +3230,12 @@ export const Dashboard = () => {
         <Show when={!isDemo}>
           <div class={toolbar}>
             <input
+              ref={searchInputEl}
               class={searchInput}
               value={query()}
               onInput={(event) => setQuery(event.currentTarget.value)}
-              placeholder="Filter sessions"
+              placeholder="Filter by title, project, model…  ( / )"
+              aria-label="Filter sessions by title, project, model, provider, or harness"
             />
             <select class={selectInput} value={harness()} onChange={(event) => setHarness(event.currentTarget.value)}>
               <For each={harnesses()}>
@@ -2994,10 +3260,16 @@ export const Dashboard = () => {
             </section>
           }
         >
-          <TimeRangeControl rows={timelineRows()} dateRange={dateRange} onDateRangeCommit={commitTableDateRange} />
+          <TimeRangeControl
+            rows={timelineRows()}
+            dateRange={dateRange}
+            activeHarness={harness()}
+            onHarnessFilter={toggleHarness}
+            onDateRangeCommit={commitTableDateRange}
+          />
 
           <div class={filterSummary}>
-            <span class={summaryPill}>
+            <span class={summaryPill} aria-live="polite">
               {fmtNum(visibleSummary().sessionCount)} / {fmtNum(reportRows.length)} sessions
             </span>
             <Show when={hiddenCount() > 0}>
@@ -3027,6 +3299,9 @@ export const Dashboard = () => {
             onValueChange={(details) => setTab(details.value)}
           >
             <Tabs.List class={tabsList}>
+              <Tabs.Trigger value="overview" class={tabTrigger}>
+                Overview
+              </Tabs.Trigger>
               <Tabs.Trigger value="sessions" class={tabTrigger}>
                 Sessions
               </Tabs.Trigger>
@@ -3043,10 +3318,21 @@ export const Dashboard = () => {
                 Projects
               </Tabs.Trigger>
             </Tabs.List>
+            <Tabs.Content value="overview" class={section}>
+              <Overview
+                rows={tableRows()}
+                timelineRows={timelineRows()}
+                summary={visibleSummary()}
+                rangeLabel={dateRange.label()}
+                onSelectSession={(row) => setSelectedKey(rowKey(row))}
+                onSelectDay={focusDay}
+              />
+            </Tabs.Content>
             <Tabs.Content value="sessions" class={section}>
               <SessionTable
                 rows={tableRows()}
                 selectedKey={selectedKey()}
+                searchQuery={query()}
                 sorting={sorting()}
                 columnVisibility={columnVisibility()}
                 onSortingChange={handleSortingChange}
@@ -3062,6 +3348,7 @@ export const Dashboard = () => {
                 title="By model"
                 groups={modelGroups()}
                 countLabel="models"
+                harnessTones
                 onFilter={(value) => setFieldFilter('model', value)}
               />
             </Tabs.Content>
@@ -3092,7 +3379,15 @@ export const Dashboard = () => {
           </Tabs.Root>
 
           <Show when={selectedRow()}>
-            {(row) => <SessionDrawer row={row()} onClose={() => setSelectedKey(null)} />}
+            {(row) => (
+              <SessionDrawer
+                row={row()}
+                rows={sortedRows()}
+                onClose={() => setSelectedKey(null)}
+                onNavigate={navigateSelected}
+                onFieldFilter={setFieldFilter}
+              />
+            )}
           </Show>
         </Show>
       </div>

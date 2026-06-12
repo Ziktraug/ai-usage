@@ -5,7 +5,7 @@ export const fieldFilterKeys = ['provider', 'model', 'project'] as const;
 export type FieldFilterKey = (typeof fieldFilterKeys)[number];
 export type FieldFilters = Partial<Record<FieldFilterKey, string>>;
 
-export const dashboardTabs = ['sessions', 'models', 'providers', 'harnesses', 'projects'] as const;
+export const dashboardTabs = ['overview', 'sessions', 'models', 'providers', 'harnesses', 'projects'] as const;
 export type DashboardTab = (typeof dashboardTabs)[number];
 
 export const sessionColumnIds = [
@@ -110,7 +110,7 @@ export const dashboardSearchDefaultsFor = (sort: ReportSort): DashboardSearch =>
   q: '',
   range: { mode: 'all' },
   sort: defaultDashboardSortFor(sort),
-  tab: 'sessions',
+  tab: 'overview',
 });
 
 const parseFilters = (value: unknown): FieldFilters => {
@@ -128,9 +128,7 @@ const parseRange = (value: unknown, fallback: DashboardDateRangeSearch): Dashboa
   if (!isRecord(value)) return fallback;
 
   const mode =
-    typeof value.mode === 'string' && dateRangeModeSet.has(value.mode)
-      ? (value.mode as DateRangeMode)
-      : fallback.mode;
+    typeof value.mode === 'string' && dateRangeModeSet.has(value.mode) ? (value.mode as DateRangeMode) : fallback.mode;
   if (mode !== 'custom') return { mode };
 
   const from = validDateInput(value.from);
