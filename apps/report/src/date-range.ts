@@ -1,8 +1,16 @@
 import type { SerializedRow } from '@ai-usage/core/report-data';
 
 export type DateRangeMode = 'all' | 'today' | '7d' | '30d' | 'custom';
+export type TimeRangePreset = Exclude<DateRangeMode, 'custom'>;
 
-const DAY_MS = 86_400_000;
+export const DAY_MS = 86_400_000;
+
+export const dateRangePresets: { mode: TimeRangePreset; label: string }[] = [
+  { mode: 'all', label: 'All' },
+  { mode: 'today', label: 'Today' },
+  { mode: '7d', label: '7d' },
+  { mode: '30d', label: '30d' },
+];
 
 export interface DateBounds {
   from: Date | null;
@@ -35,6 +43,25 @@ export const endOfDay = (date: Date) => {
 };
 
 export const rollingDaysAgo = (date: Date, days: number) => new Date(date.getTime() - days * DAY_MS);
+
+export const shiftCalendarDays = (date: Date, days: number) => {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + days);
+  return copy;
+};
+
+export const clampNumber = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+export const dateIndexFrom = (date: Date, minDay: Date) =>
+  Math.round((startOfDay(date).getTime() - minDay.getTime()) / DAY_MS);
+
+export const dateFromIndex = (minDay: Date, index: number) => shiftCalendarDays(minDay, index);
+
+export const normalizeDateIndexRange = (value: number[], max: number): [number, number] => {
+  const first = clampNumber(Math.round(value[0] ?? 0), 0, max);
+  const second = clampNumber(Math.round(value[1] ?? first), 0, max);
+  return first <= second ? [first, second] : [second, first];
+};
 
 export const dateBoundsForRange = (
   mode: DateRangeMode,

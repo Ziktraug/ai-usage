@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import type { SerializedRow } from '@ai-usage/core/report-data';
-import { dateBoundsForRange, rowMatchesDateBounds } from './date-range';
+import {
+  dateBoundsForRange,
+  dateFromIndex,
+  dateIndexFrom,
+  normalizeDateIndexRange,
+  rowMatchesDateBounds,
+} from './date-range';
 
 const rowAt = (activeDate: string): SerializedRow => ({
   date: activeDate,
@@ -39,5 +45,13 @@ describe('date range filters', () => {
     expect(bounds.to).toBeNull();
     expect(rowMatchesDateBounds(rowAt('2026-05-12T23:19:24.681Z'), bounds)).toBe(false);
     expect(rowMatchesDateBounds(rowAt('2026-05-12T23:19:24.682Z'), bounds)).toBe(true);
+  });
+
+  test('normalizes date indexes for timeline controls', () => {
+    const minDay = new Date(2026, 5, 1);
+
+    expect(dateIndexFrom(new Date(2026, 5, 4), minDay)).toBe(3);
+    expect(dateFromIndex(minDay, 3)).toEqual(new Date(2026, 5, 4));
+    expect(normalizeDateIndexRange([8.4, -2], 10)).toEqual([0, 8]);
   });
 });
