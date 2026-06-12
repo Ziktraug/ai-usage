@@ -1,4 +1,12 @@
-import { createRootRoute, createRoute, createRouter, RouterProvider, stripSearchParams } from '@tanstack/solid-router';
+import {
+  createBrowserHistory,
+  createHashHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+  stripSearchParams,
+} from '@tanstack/solid-router';
 import { Dashboard } from './Dashboard';
 import { type DashboardSearch, dashboardSearchDefaultsFor, validateDashboardSearch } from './dashboard-search';
 import { readReportPayload } from './report-data';
@@ -19,7 +27,12 @@ const dashboardRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([dashboardRoute]);
 
-export const router = createRouter({ routeTree });
+// Browser history breaks on file:// exports: the pathname is the full file path,
+// so "/" never matches and TanStack Router renders its default "Not Found".
+const history =
+  typeof window !== 'undefined' && window.location.protocol === 'file:' ? createHashHistory() : createBrowserHistory();
+
+export const router = createRouter({ routeTree, history });
 
 declare module '@tanstack/solid-router' {
   interface Register {
