@@ -27,6 +27,7 @@ export interface DateRangeController {
   inputValues: Accessor<{ from: string; to: string }>;
   label: Accessor<string>;
   selectedIndexes: Accessor<[number, number]>;
+  setRange: (mode: DateRangeMode, from?: string, to?: string) => void;
   setPreset: (mode: TimeRangePreset) => void;
   setCustom: (from: string, to: string) => void;
   setFromInput: (from: string) => void;
@@ -42,32 +43,124 @@ export const createDateRangeController = (options: {
   defaultFrom: string;
   defaultTo: string;
   formatDate: (value: Date | string | null) => string;
+  initialFrom?: string;
+  initialMode?: DateRangeMode;
+  initialTo?: string;
 }): DateRangeController => {
-  const [mode, setMode] = createSignal<DateRangeMode>('all');
-  const [customFrom, setCustomFrom] = createSignal(options.defaultFrom);
-  const [customTo, setCustomTo] = createSignal(options.defaultTo);
+  const [mode, setMode] = createSignal<DateRangeMode>(options.initialMode ?? 'all');
+  const [customFrom, setCustomFrom] = createSignal(options.initialFrom ?? options.defaultFrom);
+  const [customTo, setCustomTo] = createSignal(options.initialTo ?? options.defaultTo);
 
-  const bounds = () => dateBoundsForRange(mode(), options.generatedAt, customFrom(), customTo());
+  let boundsCache:
+    | {
+        customFrom: string;
+        customTo: string;
+        mode: DateRangeMode;
+        value: DateBounds;
+      }
+    | null = null;
+  const bounds = () => {
+    const currentMode = mode();
+    const currentFrom = customFrom();
+    const currentTo = customTo();
+    if (
+      boundsCache &&
+      boundsCache.mode === currentMode &&
+      boundsCache.customFrom === currentFrom &&
+      boundsCache.customTo === currentTo
+    )
+      return boundsCache.value;
 
+    const value = dateBoundsForRange(currentMode, options.generatedAt, currentFrom, currentTo);
+    boundsCache = {
+      customFrom: currentFrom,
+      customTo: currentTo,
+      mode: currentMode,
+      value,
+    };
+    return value;
+  };
+
+  const finiteTime = (date: Date | null) => {
+    const time = date?.getTime();
+    return time != null && Number.isFinite(time) ? time : null;
+  };
+
+  let rowSpanCache:
+    | {
+        maxTime: number | null;
+        minTime: number | null;
+        rows: SerializedRow[];
+      }
+    | null = null;
+  const rowTimeSpan = () => {
+    const rows = options.rows();
+    if (rowSpanCache?.rows === rows) return rowSpanCache;
+
+    let minTime = Number.POSITIVE_INFINITY;
+    let maxTime = Number.NEGATIVE_INFINITY;
+    for (const row of rows) {
+      const time = rowTime(row);
+      if (time == null) continue;
+      minTime = Math.min(minTime, time);
+      maxTime = Math.max(maxTime, time);
+    }
+
+    rowSpanCache = Number.isFinite(minTime)
+      ? { rows, minTime, maxTime }
+      : { rows, minTime: null, maxTime: null };
+    return rowSpanCache;
+  };
+
+  let domainCache:
+    | {
+        boundsFrom: number | null;
+        boundsTo: number | null;
+        rows: SerializedRow[];
+        value: DateRangeDomain | null;
+      }
+    | null = null;
   const domain = (): DateRangeDomain | null => {
-    const datedTimes = options
-      .rows()
-      .map(rowTime)
-      .filter((time): time is number => time != null);
-    if (!datedTimes.length) return null;
+    const rowSpan = rowTimeSpan();
+    const rows = rowSpan.rows;
+    const currentBounds = bounds();
+    const boundsFrom = finiteTime(currentBounds.from);
+    const boundsTo = finiteTime(currentBounds.to);
+    if (
+      domainCache &&
+      domainCache.rows === rows &&
+      domainCache.boundsFrom === boundsFrom &&
+      domainCache.boundsTo === boundsTo
+    )
+      return domainCache.value;
 
-    const boundTimes = [bounds().from?.getTime(), bounds().to?.getTime()].filter(
-      (time): time is number => time != null && Number.isFinite(time),
-    );
-    const times = [...datedTimes, ...boundTimes];
+    if (rowSpan.minTime == null || rowSpan.maxTime == null) {
+      domainCache = {
+        boundsFrom,
+        boundsTo,
+        rows,
+        value: null,
+      };
+      return null;
+    }
+
+    const boundTimes = [boundsFrom, boundsTo].filter((time): time is number => time != null);
+    const times = [rowSpan.minTime, rowSpan.maxTime, ...boundTimes];
     const minDay = startOfDay(new Date(Math.min(...times)));
     const maxDay = startOfDay(new Date(Math.max(...times)));
 
-    return {
+    const value = {
       minDay,
       maxDay,
       maxIndex: Math.max(0, dateIndexFrom(maxDay, minDay)),
     };
+    domainCache = {
+      boundsFrom,
+      boundsTo,
+      rows,
+      value,
+    };
+    return value;
   };
 
   const selectedIndexes = (): [number, number] => {
@@ -106,6 +199,13 @@ export const createDateRangeController = (options: {
     setCustomTo(to);
   };
 
+  const setRange = (nextMode: DateRangeMode, from?: string, to?: string) => {
+    setMode(nextMode);
+    if (nextMode !== 'custom') return;
+    setCustomFrom(from ?? '');
+    setCustomTo(to ?? '');
+  };
+
   const setIndexes = (from: number, to: number) => {
     const currentDomain = domain();
     if (!currentDomain) return;
@@ -137,6 +237,7 @@ export const createDateRangeController = (options: {
     inputValues,
     label,
     selectedIndexes,
+    setRange,
     setPreset: setMode,
     setCustom,
     setFromInput,
