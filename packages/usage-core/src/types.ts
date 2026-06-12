@@ -21,6 +21,10 @@ export interface Row {
   tools: number;
   linesAdded: number | null;
   linesDeleted: number | null;
+  rtkSavedTokens?: number;
+  rtkInputTokens?: number;
+  rtkOutputTokens?: number;
+  rtkCommandCount?: number;
   subagent?: boolean;
   partial?: boolean;
 }

@@ -1,6 +1,8 @@
 import type { Row } from '@ai-usage/core/types';
 
 const csvEscape = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+const rtkSavingsPct = (row: Row) =>
+  row.rtkSavedTokens && row.rtkInputTokens ? (row.rtkSavedTokens / row.rtkInputTokens) * 100 : null;
 
 export const renderCSV = (rows: Row[]) => {
   const head = [
@@ -24,6 +26,11 @@ export const renderCSV = (rows: Row[]) => {
     'tools',
     'lines_added',
     'lines_deleted',
+    'rtk_saved_tokens',
+    'rtk_input_tokens',
+    'rtk_output_tokens',
+    'rtk_savings_pct',
+    'rtk_command_count',
     'subagent',
     'partial',
   ];
@@ -49,6 +56,11 @@ export const renderCSV = (rows: Row[]) => {
       r.tools,
       r.linesAdded ?? '',
       r.linesDeleted ?? '',
+      r.rtkSavedTokens ?? '',
+      r.rtkInputTokens ?? '',
+      r.rtkOutputTokens ?? '',
+      rtkSavingsPct(r)?.toFixed(2) ?? '',
+      r.rtkCommandCount ?? '',
       r.subagent ?? false,
       r.partial ?? false,
     ]
