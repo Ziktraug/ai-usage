@@ -1368,9 +1368,6 @@ const matchesFilterSnapshot = (row: DashboardRow, filters: FilterSnapshot) =>
   (filters.harness === 'all' || row.harness === filters.harness) &&
   filters.fieldEntries.every(([key, value]) => fieldValueForRow(row, key) === value);
 
-const matchesFilterSnapshotAndDate = (row: DashboardRow, filters: FilterSnapshot, bounds: DateBounds) =>
-  matchesFilterSnapshot(row, filters) && rowMatchesDateBounds(row, bounds);
-
 const csvEscape = (value: string) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value);
 
 const reportRowsToCSV = (rows: SerializedRow[]) => {
@@ -2165,7 +2162,6 @@ const SessionTable = (props: {
         Boolean(column.tableColumn),
       ),
   );
-  const visibleColumnIds = createMemo<Set<string>>(() => new Set(visibleColumns().map(({ columnDef }) => columnDef.id)));
   const tableMinWidth = () =>
     Math.max(
       1040,
@@ -2278,7 +2274,7 @@ const SessionTable = (props: {
                     props.onSelect(tableRow.original);
                   }}
                 >
-                  <For each={tableRow.getAllCells().filter((cell) => visibleColumnIds().has(cell.column.id))}>
+                  <For each={tableRow.getVisibleCells()}>
                     {(cell) => (
                       <td class={cell.column.columnDef.meta?.cellClass}>
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -2814,9 +2810,8 @@ export const Dashboard = () => {
     });
   });
   const tableFilteredRows = createMemo(() => {
-    const filters = filterSnapshot();
     const bounds = tableDateBounds();
-    return reportRows.filter((row) => matchesFilterSnapshotAndDate(row, filters, bounds));
+    return timelineRows().filter((row) => rowMatchesDateBounds(row, bounds));
   });
   const tableRows = tableFilteredRows;
   // The drawer closes by itself when its row leaves the filtered set.
@@ -2830,55 +2825,49 @@ export const Dashboard = () => {
     onCleanup(() => document.removeEventListener('keydown', onKeyDown));
   });
   const visibleSummary = createMemo(() => {
-    const filters = filterSnapshot();
     const bounds = dateRange.bounds();
-    return buildReportSummary(reportRows, (row) => matchesFilterSnapshotAndDate(row, filters, bounds));
+    return buildReportSummary(timelineRows(), (row) => rowMatchesDateBounds(row, bounds));
   });
   const modelGroups = createMemo(() => {
     if (search().tab !== 'models') return [];
-    const filters = filterSnapshot();
     const bounds = dateRange.bounds();
     return buildAnalyticsGroups(
-      reportRows,
-      (row) => matchesFilterSnapshotAndDate(row, filters, bounds),
+      timelineRows(),
+      (row) => rowMatchesDateBounds(row, bounds),
       (row) => row.modelKey,
       visibleSummary().totalCost,
     );
   });
   const providerGroups = createMemo(() => {
     if (search().tab !== 'providers') return [];
-    const filters = filterSnapshot();
     const bounds = dateRange.bounds();
     return buildAnalyticsGroups(
-      reportRows,
-      (row) => matchesFilterSnapshotAndDate(row, filters, bounds),
+      timelineRows(),
+      (row) => rowMatchesDateBounds(row, bounds),
       (row) => row.providerDisplay,
       visibleSummary().totalCost,
     );
   });
   const harnessGroups = createMemo(() => {
     if (search().tab !== 'harnesses') return [];
-    const filters = filterSnapshot();
     const bounds = dateRange.bounds();
     return buildAnalyticsGroups(
-      reportRows,
-      (row) => matchesFilterSnapshotAndDate(row, filters, bounds),
+      timelineRows(),
+      (row) => rowMatchesDateBounds(row, bounds),
       (row) => row.harness,
       visibleSummary().totalCost,
     );
   });
   const projectGroupRows = createMemo(() => {
     if (search().tab !== 'projects') return [];
-    const filters = filterSnapshot();
     const bounds = dateRange.bounds();
-    return buildProjectGroups(reportRows, (row) => matchesFilterSnapshotAndDate(row, filters, bounds));
+    return buildProjectGroups(timelineRows(), (row) => rowMatchesDateBounds(row, bounds));
   });
   const hiddenCount = createMemo(() => reportRows.length - visibleSummary().sessionCount);
   const exportRows = () => {
-    const filters = filterSnapshot();
     const bounds = dateRange.bounds();
-    return reportRows
-      .filter((row) => matchesFilterSnapshotAndDate(row, filters, bounds))
+    return timelineRows()
+      .filter((row) => rowMatchesDateBounds(row, bounds))
       .sort(compareRows(sorting()));
   };
   const toggleSelected = (row: DashboardRow) =>
