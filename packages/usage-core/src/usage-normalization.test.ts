@@ -43,6 +43,25 @@ describe('usage row', () => {
     expect(row.costActual).toBe(row.costApprox);
   });
 
+  test('prices DeepSeek V4 Flash from public API rates', () => {
+    const row = normalizeUsageRow({
+      date: new Date('2026-01-01T00:00:00.000Z'),
+      endDate: new Date('2026-01-01T00:02:00.000Z'),
+      harness: 'OpenCode',
+      provider: 'DeepSeek API',
+      name: 'fixture',
+      model: 'deepseek/deepseek-v4-flash',
+      pricingModel: 'deepseek-v4-flash',
+      tokens: { in: 1_000_000, out: 1_000_000, cr: 1_000_000, cw: 1_000_000 },
+      cost: approximateApiCost,
+      calls: 1,
+    });
+
+    expect(row.costKnown).toBe(true);
+    expect(row.costApprox).toBeCloseTo(0.5628, 5);
+    expect(row.costActual).toBe(row.costApprox);
+  });
+
   test('owns active date and marker labels', () => {
     const row = normalizeUsageRow({
       date: new Date('2026-01-01T00:00:00.000Z'),
