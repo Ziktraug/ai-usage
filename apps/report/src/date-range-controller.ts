@@ -38,7 +38,7 @@ export interface DateRangeController {
 }
 
 export const createDateRangeController = (options: {
-  generatedAt: Date;
+  generatedAt: Date | Accessor<Date>;
   rows: Accessor<SerializedRow[]>;
   defaultFrom: string;
   defaultTo: string;
@@ -47,34 +47,38 @@ export const createDateRangeController = (options: {
   initialMode?: DateRangeMode;
   initialTo?: string;
 }): DateRangeController => {
+  const generatedAt = () => (typeof options.generatedAt === 'function' ? options.generatedAt() : options.generatedAt);
   const [mode, setMode] = createSignal<DateRangeMode>(options.initialMode ?? 'all');
   const [customFrom, setCustomFrom] = createSignal(options.initialFrom ?? options.defaultFrom);
   const [customTo, setCustomTo] = createSignal(options.initialTo ?? options.defaultTo);
 
-  let boundsCache:
-    | {
-        customFrom: string;
-        customTo: string;
-        mode: DateRangeMode;
-        value: DateBounds;
-      }
-    | null = null;
+  let boundsCache: {
+    customFrom: string;
+    customTo: string;
+    generatedAtTime: number;
+    mode: DateRangeMode;
+    value: DateBounds;
+  } | null = null;
   const bounds = () => {
     const currentMode = mode();
     const currentFrom = customFrom();
     const currentTo = customTo();
+    const currentGeneratedAt = generatedAt();
+    const generatedAtTime = currentGeneratedAt.getTime();
     if (
       boundsCache &&
       boundsCache.mode === currentMode &&
       boundsCache.customFrom === currentFrom &&
-      boundsCache.customTo === currentTo
+      boundsCache.customTo === currentTo &&
+      boundsCache.generatedAtTime === generatedAtTime
     )
       return boundsCache.value;
 
-    const value = dateBoundsForRange(currentMode, options.generatedAt, currentFrom, currentTo);
+    const value = dateBoundsForRange(currentMode, currentGeneratedAt, currentFrom, currentTo);
     boundsCache = {
       customFrom: currentFrom,
       customTo: currentTo,
+      generatedAtTime,
       mode: currentMode,
       value,
     };
@@ -86,13 +90,11 @@ export const createDateRangeController = (options: {
     return time != null && Number.isFinite(time) ? time : null;
   };
 
-  let rowSpanCache:
-    | {
-        maxTime: number | null;
-        minTime: number | null;
-        rows: SerializedRow[];
-      }
-    | null = null;
+  let rowSpanCache: {
+    maxTime: number | null;
+    minTime: number | null;
+    rows: SerializedRow[];
+  } | null = null;
   const rowTimeSpan = () => {
     const rows = options.rows();
     if (rowSpanCache?.rows === rows) return rowSpanCache;
@@ -106,20 +108,16 @@ export const createDateRangeController = (options: {
       maxTime = Math.max(maxTime, time);
     }
 
-    rowSpanCache = Number.isFinite(minTime)
-      ? { rows, minTime, maxTime }
-      : { rows, minTime: null, maxTime: null };
+    rowSpanCache = Number.isFinite(minTime) ? { rows, minTime, maxTime } : { rows, minTime: null, maxTime: null };
     return rowSpanCache;
   };
 
-  let domainCache:
-    | {
-        boundsFrom: number | null;
-        boundsTo: number | null;
-        rows: SerializedRow[];
-        value: DateRangeDomain | null;
-      }
-    | null = null;
+  let domainCache: {
+    boundsFrom: number | null;
+    boundsTo: number | null;
+    rows: SerializedRow[];
+    value: DateRangeDomain | null;
+  } | null = null;
   const domain = (): DateRangeDomain | null => {
     const rowSpan = rowTimeSpan();
     const rows = rowSpan.rows;
