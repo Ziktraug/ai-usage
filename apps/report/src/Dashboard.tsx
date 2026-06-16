@@ -2945,8 +2945,11 @@ export const Dashboard = () => {
   const isDemo = isDemoReportPayload();
   const search = useSearch({ from: '/' });
   const navigate = useNavigate({ from: '/' });
-  const updateSearch = (updater: (current: DashboardSearch) => DashboardSearch) =>
-    void navigate({ search: updater(search()), replace: true });
+  const updateSearch = (updater: (current: DashboardSearch) => DashboardSearch, options?: { replace?: boolean }) =>
+    void navigate({
+      search: updater(search()),
+      ...(options?.replace == null ? {} : { replace: options.replace }),
+    });
   const query = () => search().q;
   const harness = () => search().harness;
   const fieldFilters = () => search().filters;
@@ -3101,7 +3104,15 @@ export const Dashboard = () => {
   const exportRows = () => sortedRows();
   const toggleSelected = (row: DashboardRow) =>
     setSelectedKey((current) => (current === rowKey(row) ? null : rowKey(row)));
-  const setQuery = (q: string) => updateSearch((current) => ({ ...current, q }));
+  let activeQueryEdit = false;
+  const commitQueryEdit = () => {
+    activeQueryEdit = false;
+  };
+  const setQuery = (q: string) => {
+    const replace = activeQueryEdit;
+    activeQueryEdit = true;
+    updateSearch((current) => ({ ...current, q }), { replace });
+  };
   const setHarness = (nextHarness: string) => updateSearch((current) => ({ ...current, harness: nextHarness }));
   const toggleHarness = (name: string) => setHarness(harness() === name ? 'all' : name);
   const focusDay = (day: Date) => {
@@ -3234,6 +3245,10 @@ export const Dashboard = () => {
               class={searchInput}
               value={query()}
               onInput={(event) => setQuery(event.currentTarget.value)}
+              onBlur={commitQueryEdit}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') commitQueryEdit();
+              }}
               placeholder="Filter by title, project, model…  ( / )"
               aria-label="Filter sessions by title, project, model, provider, or harness"
             />
