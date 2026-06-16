@@ -583,14 +583,15 @@ const commandButton = css({
 const refreshStatus = css({
   display: 'inline-flex',
   alignItems: 'center',
-  gap: '6px',
+  gap: '8px',
   h: '36px',
-  px: '10px',
+  px: '12px',
   border: '1px solid token(colors.line)',
   borderRadius: 'sm',
   bg: 'surface',
   color: 'muted',
   fontSize: '12px',
+  lineHeight: 1,
   whiteSpace: 'nowrap',
 });
 
@@ -616,15 +617,25 @@ const refreshDotError = css({ bg: 'accent' });
 const refreshDotStatic = css({ bg: 'transparent', border: '1px solid token(colors.faint)' });
 const refreshDotPaused = css({ bg: 'transparent', border: '1px solid currentColor', opacity: 0.8 });
 
-const refreshLabel = css({ textStyle: 'numeric' });
+const refreshLabel = css({
+  textStyle: 'numeric',
+  display: 'inline-flex',
+  alignItems: 'center',
+  h: '100%',
+});
 
 const refreshButton = css({
   appearance: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  h: '100%',
+  p: 0,
   border: '0',
   bg: 'transparent',
   color: 'accent',
   fontSize: '12px',
   fontWeight: 650,
+  lineHeight: 1,
   cursor: 'pointer',
   _disabled: {
     color: 'faint',
