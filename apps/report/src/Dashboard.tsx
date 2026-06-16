@@ -3,6 +3,7 @@ import type { SerializedRow, UsageReportPayload } from '@ai-usage/core/report-da
 import { Popover } from '@ark-ui/solid/popover';
 import { Slider } from '@ark-ui/solid/slider';
 import { Tabs } from '@ark-ui/solid/tabs';
+import { Tooltip } from '@ark-ui/solid/tooltip';
 import { useNavigate, useSearch } from '@tanstack/solid-router';
 import {
   type Column,
@@ -643,6 +644,10 @@ const refreshButton = css({
   minW: '44px',
   justifyContent: 'center',
   cursor: 'pointer',
+  transition: 'color 0.15s',
+  _hover: {
+    color: 'ink',
+  },
   _disabled: {
     color: 'faint',
     cursor: 'not-allowed',
@@ -650,6 +655,55 @@ const refreshButton = css({
   _focusVisible: {
     outline: '2px solid token(colors.accent)',
     outlineOffset: '2px',
+  },
+});
+
+const refreshIconButton = css({
+  appearance: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  w: '22px',
+  h: '22px',
+  p: 0,
+  border: '0',
+  borderRadius: 'xs',
+  bg: 'transparent',
+  color: 'faint',
+  fontFamily: 'mono',
+  fontSize: '11px',
+  fontWeight: 650,
+  lineHeight: 1,
+  cursor: 'pointer',
+  transition: 'color 0.15s, background-color 0.15s',
+  _hover: {
+    bg: 'surfaceMuted',
+    color: 'accent',
+  },
+  _disabled: {
+    bg: 'transparent',
+    color: 'faint',
+    cursor: 'not-allowed',
+    opacity: 0.55,
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+});
+
+const refreshTooltip = css({
+  p: '8px 12px',
+  borderRadius: 'sm',
+  bg: 'ink',
+  color: 'canvas',
+  fontSize: '12px',
+  lineHeight: 1.5,
+  whiteSpace: 'pre',
+  boxShadow: 'overlay',
+  zIndex: 50,
+  _open: {
+    animation: 'fadeIn 0.12s ease-out',
   },
 });
 
@@ -3133,7 +3187,7 @@ const RefreshStatus = (props: {
     if (currentStatus === 'delayed' || currentStatus === 'error') return `${statusLabel()} · retry ${countdown()}`;
     return `Next ${countdown()}`;
   });
-  const title = createMemo(() => {
+  const tooltipLines = createMemo(() => {
     const lines = [`Status: ${statusLabel()}`, `Generated: ${fmtDate(props.generatedAt)}`];
     if (props.canRefresh) lines.push(`Interval: ${formatRefreshCountdown(props.refreshIntervalMs)}`);
     else lines.push('Auto-refresh unavailable for static snapshots');
@@ -3143,33 +3197,45 @@ const RefreshStatus = (props: {
       lines.push(`Last successful refresh: ${formatRefreshAge(now() - props.lastSuccessfulRefreshAt)}`);
     }
     if (props.lastRefreshError) lines.push(`Last error: ${props.lastRefreshError}`);
-    return lines.join('\n');
+    return lines;
   });
 
   return (
-    <div
-      class={cx(refreshStatus, status() === 'delayed' || status() === 'error' ? refreshStatusError : undefined)}
-      title={title()}
-    >
-      <span
-        class={cx(refreshRing, refreshRingClass[status()])}
-        role="status"
-        aria-live="polite"
-        aria-label={`Data refresh status: ${primaryLabel()}`}
-        style={{ '--refresh-progress': String(remainingRatio()) }}
-      />
-      <button
-        class={refreshButton}
-        type="button"
-        disabled={!props.canRefresh || props.refreshing}
-        onClick={props.onRefresh}
+    <Tooltip.Root openDelay={400} positioning={{ placement: 'bottom' }}>
+      <Tooltip.Trigger
+        class={cx(refreshStatus, status() === 'delayed' || status() === 'error' ? refreshStatusError : undefined)}
       >
-        Refresh
-      </button>
-      <button class={refreshButton} type="button" disabled={!props.canRefresh} onClick={props.onTogglePause}>
-        {props.refreshPaused ? 'Resume' : 'Pause'}
-      </button>
-    </div>
+        <span
+          class={cx(refreshRing, refreshRingClass[status()])}
+          role="status"
+          aria-live="polite"
+          aria-label={`Data refresh status: ${primaryLabel()}`}
+          style={{ '--refresh-progress': String(remainingRatio()) }}
+        />
+        <button
+          class={refreshButton}
+          type="button"
+          disabled={!props.canRefresh || props.refreshing}
+          onClick={props.onRefresh}
+        >
+          Refresh
+        </button>
+        <button
+          class={refreshIconButton}
+          type="button"
+          disabled={!props.canRefresh}
+          aria-label={props.refreshPaused ? 'Resume auto-refresh' : 'Pause auto-refresh'}
+          onClick={props.onTogglePause}
+        >
+          {props.refreshPaused ? '>' : '||'}
+        </button>
+      </Tooltip.Trigger>
+      <Tooltip.Positioner>
+        <Tooltip.Content class={refreshTooltip}>
+          <For each={tooltipLines()}>{(line) => <div>{line}</div>}</For>
+        </Tooltip.Content>
+      </Tooltip.Positioner>
+    </Tooltip.Root>
   );
 };
 
