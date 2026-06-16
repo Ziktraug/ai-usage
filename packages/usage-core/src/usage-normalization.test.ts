@@ -24,6 +24,25 @@ describe('usage row', () => {
     expect(row.linesAdded).toBeNull();
   });
 
+  test('prices OpenCode Go GLM models from public Z.AI rates', () => {
+    const row = normalizeUsageRow({
+      date: new Date('2026-01-01T00:00:00.000Z'),
+      endDate: new Date('2026-01-01T00:02:00.000Z'),
+      harness: 'OpenCode',
+      provider: 'opencode-go',
+      name: 'fixture',
+      model: 'opencode-go/glm-5.1',
+      pricingModel: 'glm-5.1',
+      tokens: { in: 1_000_000, out: 1_000_000, cr: 1_000_000, cw: 1_000_000 },
+      cost: approximateApiCost,
+      calls: 1,
+    });
+
+    expect(row.costKnown).toBe(true);
+    expect(row.costApprox).toBeCloseTo(6.06, 5);
+    expect(row.costActual).toBe(row.costApprox);
+  });
+
   test('owns active date and marker labels', () => {
     const row = normalizeUsageRow({
       date: new Date('2026-01-01T00:00:00.000Z'),
