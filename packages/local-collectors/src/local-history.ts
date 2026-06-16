@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Context, Effect, Layer } from 'effect';
 import { LocalHistoryError } from './errors';
 
@@ -59,7 +60,9 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
   openDatabase: (dbPath) =>
     Effect.try({
       try: () => {
-        const db = new Database(dbPath, { readonly: true });
+        const dbUrl = pathToFileURL(dbPath);
+        dbUrl.searchParams.set('mode', 'ro');
+        const db = new Database(dbUrl.href);
         return {
           all: <T extends Record<string, any> = Record<string, any>>(sql: string) =>
             Effect.try({
