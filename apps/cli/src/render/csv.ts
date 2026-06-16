@@ -1,14 +1,18 @@
-import type { Row } from '@ai-usage/core/types';
+import { sourceLabel } from '@ai-usage/core/snapshot';
+import type { Row, SourcedRow } from '@ai-usage/core/types';
 
 const csvEscape = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
 const rtkSavingsPct = (row: Row) =>
   row.rtkSavedTokens && row.rtkInputTokens ? (row.rtkSavedTokens / row.rtkInputTokens) * 100 : null;
+const sourceMachineId = (row: Row) => (row as Partial<SourcedRow>).source?.machineId ?? '';
 
 export const renderCSV = (rows: Row[]) => {
   const head = [
     'date',
     'end_date',
     'harness',
+    'machine',
+    'machine_id',
     'provider',
     'session',
     'model',
@@ -40,6 +44,8 @@ export const renderCSV = (rows: Row[]) => {
       r.date?.toISOString() ?? '',
       r.endDate?.toISOString() ?? '',
       r.harness,
+      sourceLabel(r),
+      sourceMachineId(r),
       r.provider,
       r.name,
       r.model,

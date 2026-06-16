@@ -3,6 +3,7 @@ import { Effect } from 'effect';
 import { collectClaude } from './collectors/claude';
 import { collectCursor } from './collectors/cursor';
 import { collectOpenCode } from './collectors/opencode';
+import { collectCursorCommitAttribution, CURSOR_COMMIT_ATTRIBUTION_SQL } from './facets';
 import { LocalHistoryStorage } from './local-history';
 import { TestMemoryStorage } from './test-memory-storage';
 
@@ -10,12 +11,14 @@ const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, 
   Effect.runSync(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
 
 const OPENCODE_DB = '.local/share/opencode/opencode.db';
+const OPENCODE_STABLE_DB = '.local/share/opencode/opencode-stable.db';
 const OPENCODE_SESSION_SQL = 'SELECT id, title, directory, summary_additions, summary_deletions FROM session';
 const OPENCODE_TOOL_SQL =
   "SELECT session_id, count(*) n FROM part WHERE json_extract(data,'$.type')='tool' GROUP BY session_id";
 const OPENCODE_MESSAGE_SQL = 'SELECT session_id, data FROM message';
 
-const CURSOR_DB = 'Library/Application Support/Cursor/User/globalStorage/state.vscdb';
+const CURSOR_DB = '.config/Cursor/User/globalStorage/state.vscdb';
+const CURSOR_AI_TRACKING_DB = '.cursor/ai-tracking/ai-code-tracking.db';
 const CURSOR_COMPOSER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'";
 const CURSOR_TOKEN_SQL =
   "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"inputTokens\"%'";
@@ -132,6 +135,69 @@ describe('DB-backed Harness collectors', () => {
     expect(rows[0]?.linesAdded).toBe(12);
   });
 
+  test('collects OpenCode sessions from stable.db without duplicating live.db sessions', () => {
+    const storage = new TestMemoryStorage();
+
+    const liveSession = {
+      id: 'live-1',
+      title: 'Live session',
+      directory: '/work/ai-usage',
+      summary_additions: 5,
+      summary_deletions: 1,
+    };
+    const stableSession = {
+      id: 'stable-1',
+      title: 'Stable session',
+      directory: '/work/other',
+      summary_additions: 3,
+      summary_deletions: 0,
+    };
+
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SESSION_SQL, [liveSession]);
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TOOL_SQL, [{ session_id: 'live-1', n: 1 }]);
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_MESSAGE_SQL, [
+      { session_id: 'live-1', data: JSON.stringify({ role: 'user' }) },
+      {
+        session_id: 'live-1',
+        data: JSON.stringify({
+          role: 'assistant',
+          providerID: 'anthropic',
+          modelID: 'claude-4',
+          cost: 0.05,
+          tokens: { input: 50, output: 10, cache: { read: 5, write: 1 } },
+          time: { created: '2026-02-01T00:00:00.000Z', completed: '2026-02-01T00:01:00.000Z' },
+        }),
+      },
+    ]);
+
+    storage.writeDatabaseRows(OPENCODE_STABLE_DB, OPENCODE_SESSION_SQL, [stableSession]);
+    storage.writeDatabaseRows(OPENCODE_STABLE_DB, OPENCODE_TOOL_SQL, [{ session_id: 'stable-1', n: 3 }]);
+    storage.writeDatabaseRows(OPENCODE_STABLE_DB, OPENCODE_MESSAGE_SQL, [
+      { session_id: 'stable-1', data: JSON.stringify({ role: 'user' }) },
+      {
+        session_id: 'stable-1',
+        data: JSON.stringify({
+          role: 'assistant',
+          providerID: 'openai',
+          modelID: 'gpt-5',
+          cost: 0,
+          tokens: { input: 200, output: 40, reasoning: 10 },
+          time: { created: '2026-01-01T00:00:00.000Z', completed: '2026-01-01T00:02:00.000Z' },
+        }),
+      },
+    ]);
+
+    const rows = runWithStorage(collectOpenCode, storage);
+
+    expect(rows).toHaveLength(2);
+    const liveRow = rows.find((r) => r.name === 'Live session');
+    const stableRow = rows.find((r) => r.name === 'Stable session');
+    expect(liveRow).toBeDefined();
+    expect(stableRow).toBeDefined();
+    expect(liveRow?.provider).toBe('Anthropic API');
+    expect(stableRow?.provider).toBe('Codex sub (OC)');
+  });
+
   test('collects Cursor partial Usage rows through SQLite fixture storage', () => {
     const storage = new TestMemoryStorage();
     storage.writeDatabaseRows(CURSOR_DB, CURSOR_COMPOSER_SQL, [
@@ -207,5 +273,38 @@ describe('DB-backed Harness collectors', () => {
     expect(rows[0]?.turns).toBe(2);
     expect(rows[0]?.linesAdded).toBe(9);
     expect(rows[0]?.date?.toISOString()).toBe('2026-03-10T00:00:00.000Z');
+  });
+
+  test('collects Cursor commit attribution as a separate facet', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeDatabaseRows(CURSOR_AI_TRACKING_DB, CURSOR_COMMIT_ATTRIBUTION_SQL, [
+      {
+        commitHash: 'abc123',
+        branchName: 'main',
+        scoredAt: Date.parse('2026-03-10T00:00:00.000Z'),
+        linesAdded: 10,
+        linesDeleted: 2,
+        tabLinesAdded: 1,
+        tabLinesDeleted: 0,
+        composerLinesAdded: 3,
+        composerLinesDeleted: 1,
+        humanLinesAdded: 4,
+        humanLinesDeleted: 1,
+        blankLinesAdded: 2,
+        blankLinesDeleted: 0,
+        commitMessage: 'add cursor facet',
+        commitDate: 'Tue Mar 10 01:00:00 2026 +0100',
+        v1AiPercentage: '33.33',
+        v2AiPercentage: '41.67',
+      },
+    ]);
+
+    const rows = runWithStorage(collectCursorCommitAttribution, storage);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.commitHash).toBe('abc123');
+    expect(rows[0]?.composerLinesAdded).toBe(3);
+    expect(rows[0]?.v2AiPercentage).toBe(41.67);
+    expect(rows[0]?.scoredAt).toBe('2026-03-10T00:00:00.000Z');
   });
 });

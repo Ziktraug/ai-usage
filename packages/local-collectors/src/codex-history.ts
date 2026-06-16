@@ -2,11 +2,11 @@ import type { TokenCounts } from '@ai-usage/core/usage-row';
 import { Effect } from 'effect';
 import type { LocalHistoryError } from './errors';
 import {
-  historyPath,
   LocalHistoryStorage,
   type LocalHistoryStorage as LocalHistoryStorageService,
   walkFiles,
 } from './local-history';
+import { resolvePaths } from './platform-paths';
 import { safeJSON, usablePrompt } from './text';
 
 interface CodexSession {
@@ -27,6 +27,7 @@ interface CodexSession {
 }
 
 export interface CodexUsageSession {
+  id: string | null;
   start: Date | null;
   end: Date | null;
   cwd: string | null;
@@ -59,7 +60,10 @@ interface RawCodexRateLimitSnapshot {
   rateLimits: any;
 }
 
-export const codexSessionsDir = (storage: LocalHistoryStorageService) => historyPath(storage, '.codex', 'sessions');
+export const codexSessionsDir = (storage: LocalHistoryStorageService) => {
+  const paths = resolvePaths(storage);
+  return paths.codex.sessionsDir;
+};
 
 export const hasCodexHistory: Effect.Effect<boolean, LocalHistoryError, LocalHistoryStorageService> = Effect.gen(
   function* () {
@@ -81,8 +85,9 @@ const readCodexThreadNames: Effect.Effect<
   LocalHistoryStorageService
 > = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
+  const paths = resolvePaths(storage);
   const names = new Map<string, string>();
-  const indexPath = historyPath(storage, '.codex', 'session_index.jsonl');
+  const indexPath = paths.codex.sessionIndexFile;
   if (!(yield* storage.exists(indexPath))) return names;
 
   for (const line of (yield* storage.readText(indexPath)).split('\n')) {
@@ -202,6 +207,7 @@ export const readCodexUsageSessions: Effect.Effect<CodexUsageSession[], LocalHis
         null,
       );
       usageSessions.push({
+        id: session.id,
         start: session.start,
         end,
         cwd: session.cwd,

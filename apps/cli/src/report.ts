@@ -37,13 +37,13 @@ const renderTerminalReport = (report: PreparedUsageReport, args: Args) => {
   return output.join('\n');
 };
 
-export const renderUsageReport = (rows: Row[], args: Args) => {
+export const renderUsageReport = (rows: Row[], args: Args, facets?: Record<string, unknown>) => {
   const report = prepareUsageReport(rows, args);
 
   if (args.format === 'json') return JSON.stringify(report.rows, null, 2);
   if (args.format === 'csv') return renderCSV(report.rows);
-  if (args.format === 'html') return renderReportAppHTML(createUsageReportPayload(report, args));
-  if (args.format === 'payload') return JSON.stringify(createUsageReportPayload(report, args));
+  if (args.format === 'html') return renderReportAppHTML(createUsageReportPayload(report, args, new Date(), facets));
+  if (args.format === 'payload') return JSON.stringify(createUsageReportPayload(report, args, new Date(), facets));
 
   return renderTerminalReport(report, args);
 };

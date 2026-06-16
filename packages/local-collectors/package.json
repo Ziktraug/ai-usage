@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./codex-history": "./src/codex-history.ts",
     "./errors": "./src/errors.ts",
-    "./local-history": "./src/local-history.ts"
+    "./local-history": "./src/local-history.ts",
+    "./machine-config": "./src/machine-config.ts"
   },
   "dependencies": {
     "@ai-usage/core": "workspace:*",
