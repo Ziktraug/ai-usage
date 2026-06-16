@@ -68,10 +68,10 @@ export const collectCursor = Effect.gen(function* () {
           current.calls++;
         }
 
-        const wantedComposerIds = new Set(agg.keys());
+        const namedComposerIds = new Set(comp.keys());
         for (const row of yield* db.all<KeyValueRow>(USER_BUBBLE_SQL)) {
           const composerId = String(row.key).split(':')[1];
-          if (!composerId || !wantedComposerIds.has(composerId)) continue;
+          if (!composerId || !namedComposerIds.has(composerId)) continue;
           const data = safeJSON(row.value);
           if (data?.type !== 1) continue;
           const current = naming.get(composerId) ?? { turns: 0, first: null };
@@ -111,6 +111,34 @@ export const collectCursor = Effect.gen(function* () {
         linesAdded: composer?.add ?? null,
         linesDeleted: composer?.del ?? null,
         partial: true,
+      }),
+    );
+  }
+
+  // Cursor stopped persisting per-bubble token counts around Feb 2026, so recent
+  // composers carry no usable tokens. Surface them as usage-unavailable rows (like
+  // the Claude prompt-history fallback) so the timeline still reflects the sessions.
+  for (const [composerId, composer] of comp) {
+    if (agg.has(composerId)) continue;
+    const name = naming.get(composerId);
+    if (!name || name.turns === 0) continue;
+    rows.push(
+      normalizeUsageRow({
+        date: composer.created ? new Date(composer.created) : null,
+        endDate: null,
+        harness: harnessLabel('cursor'),
+        provider: 'Cursor sub',
+        name: composer.name || name.first || `cursor ${composerId.slice(0, 8)}`,
+        model: 'usage unavailable',
+        project: '',
+        tokens: { in: 0, out: 0, cr: 0, cw: 0 },
+        cost: actualCost(null),
+        calls: 0,
+        turns: name.turns,
+        tools: 0,
+        linesAdded: composer.add ?? null,
+        linesDeleted: composer.del ?? null,
+        usageUnavailable: true,
       }),
     );
   }
