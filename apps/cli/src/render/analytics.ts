@@ -26,13 +26,14 @@ const analyticsTable = (
   ];
   out.push(clr.dim(cols.map((col) => pad(col.h, col.w, col.r)).join('  ')));
   for (const group of groups) {
+    const unavailableOnly = group.usageUnavailable === group.sessions;
     const cells: string[] = [];
     cells.push(clr.cyan(pad(trunc(group.key, keyWidth), keyWidth)));
     if (showHarness) cells.push(harnessColor(group.harness)(pad(trunc(group.harness, 12), 12)));
     cells.push(pad(String(group.sessions), 5, true));
-    cells.push(pad(fmtNum(group.fresh), 8, true));
-    cells.push(clr.dim(pad(`${group.cacheHitPct.toFixed(0)}%`, 6, true)));
-    const costText = (group.priced ? `$${group.costSum.toFixed(2)}` : '–') + (group.unpriced ? '*' : '');
+    cells.push(pad(unavailableOnly ? 'n/a' : fmtNum(group.fresh), 8, true));
+    cells.push(clr.dim(pad(unavailableOnly ? 'n/a' : `${group.cacheHitPct.toFixed(0)}%`, 6, true)));
+    const costText = unavailableOnly ? 'n/a' : (group.priced ? `$${group.costSum.toFixed(2)}` : '–') + (group.unpriced ? '*' : '');
     const costStyle = !group.priced
       ? clr.grey
       : group.costSum >= 100
@@ -41,8 +42,8 @@ const analyticsTable = (
           ? clr.yellow
           : id;
     cells.push(costStyle(pad(costText, 10, true)));
-    cells.push(pad(group.costPerSession == null ? '–' : `$${group.costPerSession.toFixed(2)}`, 8, true));
-    cells.push(pad(group.medianCost == null ? '–' : `$${group.medianCost.toFixed(2)}`, 8, true));
+    cells.push(pad(unavailableOnly || group.costPerSession == null ? '–' : `$${group.costPerSession.toFixed(2)}`, 8, true));
+    cells.push(pad(unavailableOnly || group.medianCost == null ? '–' : `$${group.medianCost.toFixed(2)}`, 8, true));
     cells.push(clr.green(pad(group.lineCount ? `+${fmtNum(group.linesA)}/-${fmtNum(group.linesD)}` : '–', 12, true)));
     cells.push(pad(group.costPer100Lines == null ? '–' : `$${group.costPer100Lines.toFixed(2)}`, 8, true));
     cells.push(clr.dim(pad(`${group.costPercent.toFixed(1)}%`, 6, true)));
@@ -86,6 +87,10 @@ export const renderAnalytics = (rows: Row[]) => {
   out.push(analyticsTable('By provider — cost & usage', analytics.byProvider, 'Provider', 20, false));
   out.push(analyticsTable('By harness — cost & usage', analytics.byHarness, 'Harness', 14, false));
   if (analytics.unpricedCount)
-    out.push(clr.dim(`  * $API sums priced sessions only; $/sess & median exclude unpriced (no public rate).`));
+    out.push(
+      clr.dim(
+        `  * $API sums priced sessions only; n/a = usage counters unavailable; $/sess & median exclude unpriced/unavailable sessions.`,
+      ),
+    );
   return out.join('\n');
 };

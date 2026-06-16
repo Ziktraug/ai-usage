@@ -37,9 +37,10 @@ describe('usage row', () => {
       calls: 1,
       partial: true,
       subagent: true,
+      usageUnavailable: true,
     });
 
     expect(usageRowActiveDate(row)?.toISOString()).toBe('2026-01-01T00:02:00.000Z');
-    expect(usageRowSessionLabel(row)).toBe('fixture ~ ↳');
+    expect(usageRowSessionLabel(row)).toBe('fixture ~ ↳ (usage unavailable)');
   });
 });

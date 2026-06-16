@@ -39,17 +39,31 @@ describe('analytics calculation', () => {
           linesAdded: null,
           linesDeleted: null,
         }),
+        row({
+          model: 'usage unavailable',
+          provider: 'Claude sub',
+          costActual: null,
+          costKnown: false,
+          costApprox: 0,
+          tokIn: 0,
+          tokOut: 0,
+          tokCr: 0,
+          linesAdded: null,
+          linesDeleted: null,
+          usageUnavailable: true,
+        }),
       ],
       new Date('2026-01-01T00:03:00.000Z').getTime(),
     );
 
-    expect(analytics.sessionCount).toBe(2);
-    expect(analytics.unpricedCount).toBe(1);
+    expect(analytics.sessionCount).toBe(3);
+    expect(analytics.unpricedCount).toBe(2);
     expect(analytics.totalCost).toBe(2);
     expect(analytics.linesA).toBe(20);
     expect(analytics.linesD).toBe(0);
     expect(analytics.byModel[0]?.key).toBe('gpt-5.3-codex');
     expect(analytics.byModel[0]?.cacheHitPct).toBeCloseTo(33.333, 2);
-    expect(analytics.recentSessions).toBe(2);
+    expect(analytics.byModel.find((group) => group.key === 'usage unavailable')?.usageUnavailable).toBe(1);
+    expect(analytics.recentSessions).toBe(3);
   });
 });

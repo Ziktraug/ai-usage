@@ -33,6 +33,7 @@ export const renderCSV = (rows: Row[]) => {
     'rtk_command_count',
     'subagent',
     'partial',
+    'usage_unavailable',
   ];
   const body = rows.map((r) =>
     [
@@ -63,6 +64,7 @@ export const renderCSV = (rows: Row[]) => {
       r.rtkCommandCount ?? '',
       r.subagent ?? false,
       r.partial ?? false,
+      r.usageUnavailable ?? false,
     ]
       .map((x) => csvEscape(String(x)))
       .join(','),

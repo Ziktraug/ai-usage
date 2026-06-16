@@ -14,6 +14,7 @@ export interface AnalyticsGroup {
   sessions: number;
   priced: number;
   unpriced: number;
+  usageUnavailable: number;
   fresh: number;
   inp: number;
   cache: number;
@@ -76,6 +77,7 @@ const finishGroup = (group: GroupDraft, totalCost: number): AnalyticsGroup => {
     sessions: group.sessions,
     priced: group.priced,
     unpriced: group.unpriced,
+    usageUnavailable: group.usageUnavailable,
     fresh: group.fresh,
     inp: group.inp,
     cache: group.cache,
@@ -106,6 +108,7 @@ const groupBy = (rows: Row[], keyFn: (row: Row) => string, totalCost: number): A
         sessions: 0,
         priced: 0,
         unpriced: 0,
+        usageUnavailable: 0,
         fresh: 0,
         inp: 0,
         cache: 0,
@@ -121,6 +124,7 @@ const groupBy = (rows: Row[], keyFn: (row: Row) => string, totalCost: number): A
     const lineDelta = usageRowLineDelta(row);
     const pricedCost = usageRowPricedCost(row);
     group.sessions++;
+    if (row.usageUnavailable) group.usageUnavailable++;
     group.fresh += usageRowFreshTokens(row);
     group.inp += row.tokIn;
     group.cache += usageRowCacheReadTokens(row);

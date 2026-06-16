@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
+import { collectClaude } from './collectors/claude';
 import { collectCursor } from './collectors/cursor';
 import { collectOpenCode } from './collectors/opencode';
 import { LocalHistoryStorage } from './local-history';
@@ -20,7 +21,77 @@ const CURSOR_TOKEN_SQL =
   "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"inputTokens\"%'";
 const CURSOR_USER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"type\":1%'";
 
+const jsonl = (...events: unknown[]) => `${events.map((event) => JSON.stringify(event)).join('\n')}\n`;
+
 describe('DB-backed Harness collectors', () => {
+  test('collects Claude prompt-history fallbacks when detailed usage files are missing', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.claude/projects/-work-ai-usage/existing-session.jsonl',
+      jsonl({
+        type: 'assistant',
+        timestamp: '2026-04-25T08:00:00.000Z',
+        cwd: '/work/ai-usage',
+        requestId: 'request-1',
+        message: {
+          id: 'message-1',
+          model: 'claude-sonnet-4-6',
+          usage: {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: 2,
+            cache_creation_input_tokens: 1,
+          },
+        },
+      }),
+    );
+    storage.writeText(
+      '.claude/history.jsonl',
+      jsonl(
+        {
+          timestamp: Date.parse('2026-04-24T07:17:43.816Z'),
+          project: '/work/ai-usage',
+          sessionId: 'missing-session',
+          display: 'fait moi un plan pour traiter tous ces findings',
+        },
+        {
+          timestamp: Date.parse('2026-04-24T08:33:07.361Z'),
+          project: '/work/ai-usage',
+          sessionId: 'missing-session',
+          display: 'On a une regression',
+        },
+        {
+          timestamp: Date.parse('2026-04-24T09:00:00.000Z'),
+          project: '/work/ai-usage',
+          sessionId: 'clear-only',
+          display: '/clear',
+        },
+        {
+          timestamp: Date.parse('2026-04-25T08:01:00.000Z'),
+          project: '/work/ai-usage',
+          sessionId: 'existing-session',
+          display: 'existing detailed session',
+        },
+      ),
+    );
+
+    const rows = runWithStorage(collectClaude, storage);
+    const unavailable = rows.find((row) => row.usageUnavailable);
+
+    expect(rows).toHaveLength(2);
+    expect(rows.some((row) => row.name === 'existing detailed session')).toBe(false);
+    expect(rows.some((row) => row.name === '/clear')).toBe(false);
+    expect(unavailable?.harness).toBe('Claude Code');
+    expect(unavailable?.name).toBe('fait moi un plan pour traiter tous ces findings');
+    expect(unavailable?.project).toBe('ai-usage');
+    expect(unavailable?.tokIn).toBe(0);
+    expect(unavailable?.costActual).toBeNull();
+    expect(unavailable?.costKnown).toBe(false);
+    expect(unavailable?.turns).toBe(2);
+    expect(unavailable?.date?.toISOString()).toBe('2026-04-24T07:17:43.816Z');
+    expect(unavailable?.endDate?.toISOString()).toBe('2026-04-24T08:33:07.361Z');
+  });
+
   test('collects OpenCode Usage rows through SQLite fixture storage', () => {
     const storage = new TestMemoryStorage();
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SESSION_SQL, [

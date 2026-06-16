@@ -53,7 +53,7 @@ export const compareUsageRows = (sort: SortKey) =>
 export const filterUsageRows = (rows: Row[], options: ReportOptions) =>
   rows.filter((row) => {
     const activeAt = usageRowActiveDate(row);
-    if (usageRowTokenTotal(row) < options.minTokens) return false;
+    if (usageRowTokenTotal(row) < options.minTokens && !row.usageUnavailable) return false;
     if (options.since && (!activeAt || activeAt < options.since)) return false;
     if (options.project && !row.project.toLowerCase().includes(options.project)) return false;
     return true;

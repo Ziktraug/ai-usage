@@ -1458,6 +1458,7 @@ const reportRowsToCSV = (rows: SerializedRow[]) => {
     'rtk_command_count',
     'subagent',
     'partial',
+    'usage_unavailable',
   ];
   const body = rows.map((row) =>
     [
@@ -1492,6 +1493,7 @@ const reportRowsToCSV = (rows: SerializedRow[]) => {
       row.rtkCommandCount ?? '',
       row.subagent ?? false,
       row.partial ?? false,
+      row.usageUnavailable ?? false,
     ]
       .map((item) => csvEscape(String(item)))
       .join(','),
@@ -1576,6 +1578,17 @@ const rtkSavedTitle = (row: SerializedRow) =>
     : 'No matched RTK token savings';
 
 type SessionColumnDef = ColumnDef<DashboardRow> & { id: SessionColumnId };
+
+const USAGE_UNAVAILABLE_HINT = 'Session found in prompt history; detailed local token counters are missing';
+const unavailableCell = css({ color: 'muted', fontStyle: 'italic' });
+const UsageUnavailableCell = () => (
+  <span class={unavailableCell} title={USAGE_UNAVAILABLE_HINT}>
+    n/a
+  </span>
+);
+const tokenCell = (row: DashboardRow, value: number) =>
+  row.usageUnavailable ? <UsageUnavailableCell /> : fmtCompact(value);
+const countCell = (row: DashboardRow, value: number) => (row.usageUnavailable ? <UsageUnavailableCell /> : fmtNum(value));
 
 const sessionColumns: SessionColumnDef[] = [
   {
@@ -1670,7 +1683,7 @@ const sessionColumns: SessionColumnDef[] = [
     id: 'tokIn',
     header: 'Input',
     accessorFn: (row) => row.tokIn,
-    cell: (info) => fmtCompact(info.row.original.tokIn),
+    cell: (info) => tokenCell(info.row.original, info.row.original.tokIn),
     sortDescFirst: true,
     meta: { label: 'Input tokens', widthPx: 90, cellClass: numCell, headerClass: right, defaultVisible: false },
   },
@@ -1678,7 +1691,7 @@ const sessionColumns: SessionColumnDef[] = [
     id: 'tokOut',
     header: 'Output',
     accessorFn: (row) => row.tokOut,
-    cell: (info) => fmtCompact(info.row.original.tokOut),
+    cell: (info) => tokenCell(info.row.original, info.row.original.tokOut),
     sortDescFirst: true,
     meta: { label: 'Output tokens', widthPx: 94, cellClass: numCell, headerClass: right, defaultVisible: false },
   },
@@ -1686,7 +1699,7 @@ const sessionColumns: SessionColumnDef[] = [
     id: 'cache',
     header: 'Cache',
     accessorFn: (row) => row.tokCr,
-    cell: (info) => fmtCompact(info.row.original.tokCr),
+    cell: (info) => tokenCell(info.row.original, info.row.original.tokCr),
     sortDescFirst: true,
     meta: {
       label: 'Cache read',
@@ -1700,7 +1713,7 @@ const sessionColumns: SessionColumnDef[] = [
     id: 'tokCw',
     header: 'Write',
     accessorFn: (row) => row.tokCw,
-    cell: (info) => fmtCompact(info.row.original.tokCw),
+    cell: (info) => tokenCell(info.row.original, info.row.original.tokCw),
     sortDescFirst: true,
     meta: {
       label: 'Cache write',
@@ -1715,7 +1728,7 @@ const sessionColumns: SessionColumnDef[] = [
     id: 'fresh',
     header: 'Fresh',
     accessorFn: (row) => row.freshTokens,
-    cell: (info) => fmtCompact(info.row.original.freshTokens),
+    cell: (info) => tokenCell(info.row.original, info.row.original.freshTokens),
     sortDescFirst: true,
     meta: {
       label: 'Fresh tokens',
@@ -1729,7 +1742,7 @@ const sessionColumns: SessionColumnDef[] = [
     id: 'total',
     header: 'Total',
     accessorFn: (row) => row.tokenTotal,
-    cell: (info) => fmtCompact(info.row.original.tokenTotal),
+    cell: (info) => tokenCell(info.row.original, info.row.original.tokenTotal),
     sortDescFirst: true,
     meta: { label: 'Total tokens', widthPx: 90, cellClass: numCell, headerClass: right, defaultVisible: false },
   },
@@ -1752,8 +1765,10 @@ const sessionColumns: SessionColumnDef[] = [
     header: '$API',
     accessorFn: (row) => sortValueForRow(row, 'cost'),
     cell: (info) => (
-      <Show when={info.row.original.costKnown} fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>}>
-        {fmtMoney(info.row.original.costApprox)}
+      <Show when={!info.row.original.usageUnavailable} fallback={<UsageUnavailableCell />}>
+        <Show when={info.row.original.costKnown} fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>}>
+          {fmtMoney(info.row.original.costApprox)}
+        </Show>
       </Show>
     ),
     sortDescFirst: true,
@@ -1769,7 +1784,7 @@ const sessionColumns: SessionColumnDef[] = [
     id: 'actual',
     header: '$Actual',
     accessorFn: (row) => sortValueForRow(row, 'actual'),
-    cell: (info) => fmtMoney(info.row.original.costActual),
+    cell: (info) => (info.row.original.usageUnavailable ? <UsageUnavailableCell /> : fmtMoney(info.row.original.costActual)),
     sortDescFirst: true,
     meta: {
       label: 'Actual cost',
@@ -1798,7 +1813,7 @@ const sessionColumns: SessionColumnDef[] = [
     id: 'calls',
     header: 'Calls',
     accessorFn: (row) => row.calls,
-    cell: (info) => fmtNum(info.row.original.calls),
+    cell: (info) => countCell(info.row.original, info.row.original.calls),
     sortDescFirst: true,
     meta: { label: 'Calls', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
   },
@@ -1814,7 +1829,7 @@ const sessionColumns: SessionColumnDef[] = [
     id: 'tools',
     header: 'Tools',
     accessorFn: (row) => row.tools,
-    cell: (info) => fmtNum(info.row.original.tools),
+    cell: (info) => countCell(info.row.original, info.row.original.tools),
     sortDescFirst: true,
     meta: { label: 'Tools', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
   },
@@ -1900,6 +1915,7 @@ const createAnalyticsGroup = (key: string, row: DashboardRow): MutableAnalyticsG
   sessions: 0,
   priced: 0,
   unpriced: 0,
+  usageUnavailable: 0,
   fresh: 0,
   inp: 0,
   cache: 0,
@@ -1925,6 +1941,7 @@ const addAnalyticsRow = (groups: Map<string, MutableAnalyticsGroup>, key: string
   }
 
   group.sessions++;
+  if (row.usageUnavailable) group.usageUnavailable++;
   group.fresh += row.freshTokens;
   group.inp += row.tokIn;
   group.cache += row.tokCr;
@@ -2232,6 +2249,13 @@ const SessionDrawer = (props: {
           <Show when={props.row.partial}>
             <DetailItem label="Partial" value="Yes" hint="Local history did not cover the whole session" />
           </Show>
+          <Show when={props.row.usageUnavailable}>
+            <DetailItem
+              label="Usage data"
+              value="Unavailable"
+              hint="Session came from prompt history, but detailed local token counters are missing"
+            />
+          </Show>
         </div>
         <div class={drawerActions}>
           <button
@@ -2439,6 +2463,14 @@ const SessionTable = (props: {
   );
 };
 
+const analyticsGroupUnavailableOnly = (group: AnalyticsGroup) => group.usageUnavailable === group.sessions;
+const groupFreshLabel = (group: AnalyticsGroup) =>
+  analyticsGroupUnavailableOnly(group) ? 'n/a fresh' : `${fmtCompact(group.fresh)} fresh`;
+const groupFreshTitle = (group: AnalyticsGroup) =>
+  analyticsGroupUnavailableOnly(group) ? USAGE_UNAVAILABLE_HINT : `${fmtNum(group.fresh)} fresh tokens`;
+const groupCacheLabel = (group: AnalyticsGroup) =>
+  analyticsGroupUnavailableOnly(group) ? 'n/a cache' : `${fmtPct(group.cacheHitPct)} cache`;
+
 const GroupPanel = (props: {
   title: string;
   groups: AnalyticsGroup[];
@@ -2465,20 +2497,26 @@ const GroupPanel = (props: {
                     {group.key}
                   </button>
                 </Show>
-                <div class={groupSub} title={`${fmtNum(group.fresh)} fresh tokens`}>
-                  {group.sessions} sess · {fmtCompact(group.fresh)} fresh · {fmtPct(group.cacheHitPct)} cache
+                <div class={groupSub} title={groupFreshTitle(group)}>
+                  {group.sessions} sess · {groupFreshLabel(group)} · {groupCacheLabel(group)}
                 </div>
                 <div class={barTrack}>
                   <div
                     class={cx(barFill, (props.harnessTones ? harnessFillFor(group.harness) : undefined) ?? accentFill)}
-                    style={{ width: `${Math.max(3, (group.costSum / maxCost()) * 100)}%` }}
+                    style={{
+                      width: analyticsGroupUnavailableOnly(group)
+                        ? '0%'
+                        : `${Math.max(3, (group.costSum / maxCost()) * 100)}%`,
+                    }}
                   />
                 </div>
               </div>
               <div class={right}>
                 <div class={groupValue}>
-                  <Show when={group.priced} fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>}>
-                    {fmtMoney(group.costSum)}
+                  <Show when={!analyticsGroupUnavailableOnly(group)} fallback={<UsageUnavailableCell />}>
+                    <Show when={group.priced} fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>}>
+                      {fmtMoney(group.costSum)}
+                    </Show>
                   </Show>
                 </div>
                 <div class={groupPct}>{fmtPct(group.costPercent)}</div>

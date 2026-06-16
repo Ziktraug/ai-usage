@@ -27,4 +27,5 @@ export interface Row {
   rtkCommandCount?: number;
   subagent?: boolean;
   partial?: boolean;
+  usageUnavailable?: boolean;
 }
