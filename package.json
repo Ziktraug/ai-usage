@@ -14,6 +14,7 @@
   "scripts": {
     "cli": "bun apps/cli/src/main.ts",
     "dev": "bun run --cwd apps/report dev",
+    "preview": "bun run --cwd apps/report preview",
     "html": "bun apps/cli/src/html.ts",
     "build": "turbo run build",
     "check": "turbo run check",

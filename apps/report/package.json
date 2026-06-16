@@ -13,7 +13,6 @@
   "devDependencies": {
     "@pandacss/dev": "^1.11.3",
     "vite": "^8.0.16",
-    "vite-plugin-singlefile": "^2.3.3",
     "vite-plugin-solid": "^2.11.12"
   },
   "scripts": {
@@ -21,6 +20,7 @@
     "build": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit && vite build",
     "check": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit",
     "test": "bun test",
+    "preview": "bun serve.ts --host 127.0.0.1",
     "lint": "biome check .",
     "format": "biome format --write ."
   }
