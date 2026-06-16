@@ -1,4 +1,5 @@
 import type { AnalyticsGroup } from '@ai-usage/core/analytics';
+import { inlineAssetsIntoHTML, serializeForInlineScript } from '@ai-usage/core/html-export';
 import type { SerializedRow, UsageReportPayload } from '@ai-usage/core/report-data';
 import { Popover } from '@ark-ui/solid/popover';
 import { Slider } from '@ark-ui/solid/slider';
@@ -49,7 +50,13 @@ import {
 } from './date-range';
 import { createDateRangeController, type DateRangeController } from './date-range-controller';
 import { Overview } from './Overview';
-import { fetchReportPayload, isDemoReportPayload, readReportPayload } from './report-data';
+import {
+  type CursorCommitAttributionFacet,
+  cursorCommitAttributionFacet,
+  fetchReportPayload,
+  isDemoReportPayload,
+  readReportPayload,
+} from './report-data';
 import {
   accentFill,
   buildReportSummary,
@@ -1557,6 +1564,8 @@ const reportRowsToCSV = (rows: SerializedRow[]) => {
     'end_date',
     'active_date',
     'harness',
+    'machine',
+    'machine_id',
     'provider',
     'session',
     'model',
@@ -1592,6 +1601,8 @@ const reportRowsToCSV = (rows: SerializedRow[]) => {
       row.endDate ?? '',
       row.activeDate ?? '',
       row.harness,
+      row.source?.machineLabel ?? '',
+      row.source?.machineId ?? '',
       row.provider,
       row.name,
       row.model,
@@ -1637,9 +1648,46 @@ const downloadCSV = (rows: SerializedRow[], generatedAt: string) => {
   URL.revokeObjectURL(url);
 };
 
+const downloadHTML = async (payload: UsageReportPayload) => {
+  const response = await fetch(location.href, { cache: 'no-store' });
+  const html = await response.text();
+  const payloadScript = `<script>window.__AI_USAGE_REPORT__=${serializeForInlineScript(JSON.stringify(payload))};</script>`;
+  const fetchAssetContent = async (src: string): Promise<string> => {
+    try {
+      const url = new URL(src, location.href).href;
+      const res = await fetch(url, { cache: 'no-store' });
+      return res.ok ? await res.text() : '';
+    } catch {
+      return '';
+    }
+  };
+  const assetCache = new Map<string, string>();
+  const readAssetContent = (src: string): string => assetCache.get(src) ?? '';
+  const scriptSrcs = [...html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)].map((m) => m[1]!);
+  const linkHrefs = [...html.matchAll(/<link\b[^>]*\brel=["']stylesheet["'][^>]*\bhref=["']([^"']+)["']/gi)].map(
+    (m) => m[1]!,
+  );
+  const assetUrls = [...new Set([...scriptSrcs, ...linkHrefs])];
+  await Promise.all(
+    assetUrls.map(async (src) => {
+      const content = await fetchAssetContent(src);
+      if (content) assetCache.set(src, content);
+    }),
+  );
+  const selfContained = inlineAssetsIntoHTML(html, readAssetContent, payloadScript);
+  const blob = new Blob([selfContained], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `ai-usage-report-${payload.generatedAt.slice(0, 10)}.html`;
+  link.click();
+  URL.revokeObjectURL(url);
+};
+
 const sortValueForRow = (row: DashboardRow, columnId: string): number | string => {
   if (columnId === 'date') return row.sortDate;
   if (columnId === 'harness') return row.sortHarness;
+  if (columnId === 'machine') return row.sortMachine;
   if (columnId === 'provider') return row.sortProvider;
   if (columnId === 'model') return row.sortModel;
   if (columnId === 'project') return row.sortProject;
@@ -1714,7 +1762,8 @@ const UsageUnavailableCell = () => (
 );
 const tokenCell = (row: DashboardRow, value: number) =>
   row.usageUnavailable ? <UsageUnavailableCell /> : fmtCompact(value);
-const countCell = (row: DashboardRow, value: number) => (row.usageUnavailable ? <UsageUnavailableCell /> : fmtNum(value));
+const countCell = (row: DashboardRow, value: number) =>
+  row.usageUnavailable ? <UsageUnavailableCell /> : fmtNum(value);
 
 const sessionColumns: SessionColumnDef[] = [
   {
@@ -1736,6 +1785,13 @@ const sessionColumns: SessionColumnDef[] = [
       />
     ),
     meta: { label: 'Harness', widthPx: 100 },
+  },
+  {
+    id: 'machine',
+    header: 'Machine',
+    accessorFn: (row) => sortValueForRow(row, 'machine'),
+    cell: (info) => info.row.original.source?.machineLabel || '—',
+    meta: { label: 'Machine', widthPx: 120 },
   },
   {
     id: 'provider',
@@ -1910,7 +1966,8 @@ const sessionColumns: SessionColumnDef[] = [
     id: 'actual',
     header: '$Actual',
     accessorFn: (row) => sortValueForRow(row, 'actual'),
-    cell: (info) => (info.row.original.usageUnavailable ? <UsageUnavailableCell /> : fmtMoney(info.row.original.costActual)),
+    cell: (info) =>
+      info.row.original.usageUnavailable ? <UsageUnavailableCell /> : fmtMoney(info.row.original.costActual),
     sortDescFirst: true,
     meta: {
       label: 'Actual cost',
@@ -3088,6 +3145,110 @@ const ProjectSummary = (props: { groups: ProjectGroup[]; onProjectFilter: (value
   </Show>
 );
 
+const cursorAiLineTotal = (row: CursorCommitAttributionFacet) =>
+  row.composerLinesAdded + row.composerLinesDeleted + row.tabLinesAdded + row.tabLinesDeleted;
+
+const uniqueCursorCommits = (rows: CursorCommitAttributionFacet[]) => new Set(rows.map((row) => row.commitHash)).size;
+
+const CursorAttributionPanel = (props: { rows: CursorCommitAttributionFacet[] }) => {
+  const totals = createMemo(() =>
+    props.rows.reduce(
+      (acc, row) => ({
+        aiLines: acc.aiLines + cursorAiLineTotal(row),
+        blankLines: acc.blankLines + row.blankLinesAdded + row.blankLinesDeleted,
+        humanLines: acc.humanLines + row.humanLinesAdded + row.humanLinesDeleted,
+        totalLines: acc.totalLines + row.linesAdded + row.linesDeleted,
+      }),
+      { aiLines: 0, blankLines: 0, humanLines: 0, totalLines: 0 },
+    ),
+  );
+  const aiPct = () => (totals().totalLines ? (totals().aiLines / totals().totalLines) * 100 : 0);
+
+  return (
+    <Show
+      when={props.rows.length}
+      fallback={<div class={empty}>No Cursor commit attribution data in this payload</div>}
+    >
+      <div class={metricGrid}>
+        <MetricTile
+          label="Scored commits"
+          value={fmtNum(uniqueCursorCommits(props.rows))}
+          hint="Unique commit hashes scored by Cursor"
+        />
+        <MetricTile
+          label="Branch rows"
+          value={fmtNum(props.rows.length)}
+          hint="Cursor stores attribution per branch, so commits can repeat"
+        />
+        <MetricTile
+          label="AI line share"
+          value={fmtPct(aiPct())}
+          hint="Composer + Tab lines over scored added/deleted lines"
+        />
+        <MetricTile
+          label="Human lines"
+          value={fmtNum(totals().humanLines)}
+          hint="Lines Cursor classified as human-authored"
+        />
+      </div>
+
+      <div class={tableWrap}>
+        <table class={table} style={{ 'min-width': '1120px' }}>
+          <thead>
+            <tr>
+              <th>Commit</th>
+              <th style={{ width: '150px' }}>Branch</th>
+              <th style={{ width: '110px' }} class={right}>
+                AI %
+              </th>
+              <th style={{ width: '120px' }} class={right}>
+                Composer
+              </th>
+              <th style={{ width: '100px' }} class={right}>
+                Tab
+              </th>
+              <th style={{ width: '110px' }} class={right}>
+                Human
+              </th>
+              <th style={{ width: '130px' }} class={right}>
+                Total +/-
+              </th>
+              <th style={{ width: '150px' }}>Scored</th>
+            </tr>
+          </thead>
+          <tbody>
+            <For each={props.rows}>
+              {(row) => (
+                <tr>
+                  <td class={strongCell} title={row.commitHash}>
+                    <div>{row.commitMessage || row.commitHash.slice(0, 10)}</div>
+                    <div class={meta}>{row.commitHash.slice(0, 10)}</div>
+                  </td>
+                  <td>{row.branchName}</td>
+                  <td class={numCell}>{row.v2AiPercentage == null ? '—' : fmtPct(row.v2AiPercentage)}</td>
+                  <td class={numCell}>
+                    +{fmtNum(row.composerLinesAdded)}/-{fmtNum(row.composerLinesDeleted)}
+                  </td>
+                  <td class={numCell}>
+                    +{fmtNum(row.tabLinesAdded)}/-{fmtNum(row.tabLinesDeleted)}
+                  </td>
+                  <td class={numCell}>
+                    +{fmtNum(row.humanLinesAdded)}/-{fmtNum(row.humanLinesDeleted)}
+                  </td>
+                  <td class={numCell}>
+                    +{fmtNum(row.linesAdded)}/-{fmtNum(row.linesDeleted)}
+                  </td>
+                  <td>{fmtDate(row.scoredAt)}</td>
+                </tr>
+              )}
+            </For>
+          </tbody>
+        </table>
+      </div>
+    </Show>
+  );
+};
+
 const fieldFilterLabels: Record<FieldFilterKey, string> = {
   provider: 'Provider',
   model: 'Model',
@@ -3267,6 +3428,7 @@ export const Dashboard = () => {
   const reportRows = createMemo(() => payload().rows.map(enrichReportRow));
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
   let searchInputEl: HTMLInputElement | undefined;
+  const cursorCommitRows = createMemo(() => cursorCommitAttributionFacet(payload()));
   const harnesses = createMemo(() => ['all', ...new Set(reportRows().map((row) => row.harness))]);
   const filterSnapshot = createMemo(() => createFilterSnapshot(query(), harness(), fieldFilters()));
   const timelineRows = createMemo(() => {
@@ -3616,6 +3778,11 @@ export const Dashboard = () => {
             >
               Export CSV
             </button>
+            <Show when={!import.meta.env.DEV}>
+              <button class={ghostButton} type="button" onClick={() => void downloadHTML(payload())}>
+                Export HTML
+              </button>
+            </Show>
           </div>
         </Show>
 
@@ -3688,6 +3855,9 @@ export const Dashboard = () => {
               <Tabs.Trigger value="projects" class={tabTrigger}>
                 Projects
               </Tabs.Trigger>
+              <Tabs.Trigger value="cursor-ai" class={tabTrigger}>
+                Cursor AI
+              </Tabs.Trigger>
             </Tabs.List>
             <Tabs.Content value="overview" class={section}>
               <Overview
@@ -3746,6 +3916,9 @@ export const Dashboard = () => {
                 groups={projectGroupRows()}
                 onProjectFilter={(value) => setFieldFilter('project', value)}
               />
+            </Tabs.Content>
+            <Tabs.Content value="cursor-ai" class={section}>
+              <CursorAttributionPanel rows={cursorCommitRows()} />
             </Tabs.Content>
           </Tabs.Root>
 
