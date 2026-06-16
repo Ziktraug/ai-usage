@@ -1,5 +1,5 @@
 import type { AnalyticsGroup } from '@ai-usage/core/analytics';
-import type { SerializedRow } from '@ai-usage/core/report-data';
+import type { SerializedRow, UsageReportPayload } from '@ai-usage/core/report-data';
 import { Popover } from '@ark-ui/solid/popover';
 import { Slider } from '@ark-ui/solid/slider';
 import { Tabs } from '@ark-ui/solid/tabs';
@@ -48,7 +48,7 @@ import {
 } from './date-range';
 import { createDateRangeController, type DateRangeController } from './date-range-controller';
 import { Overview } from './Overview';
-import { isDemoReportPayload, readReportPayload } from './report-data';
+import { fetchReportPayload, isDemoReportPayload, readReportPayload } from './report-data';
 import {
   accentFill,
   buildReportSummary,
@@ -88,9 +88,8 @@ declare module '@tanstack/solid-table' {
   }
 }
 
-const payload = readReportPayload();
-
-const reportRows = payload.rows.map(enrichReportRow);
+const initialPayload = readReportPayload();
+const REFRESH_INTERVAL_MS = 60_000;
 
 const page = css({
   minHeight: '100vh',
@@ -574,6 +573,62 @@ const commandButton = css({
   _hover: {
     bg: 'inkHover',
     borderColor: 'inkHover',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+});
+
+const refreshStatus = css({
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '6px',
+  h: '36px',
+  px: '10px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surface',
+  color: 'muted',
+  fontSize: '12px',
+  whiteSpace: 'nowrap',
+});
+
+const refreshStatusError = css({
+  borderColor: 'accent',
+  color: 'accent',
+});
+
+const refreshDot = css({
+  display: 'inline-flex',
+  w: '9px',
+  h: '9px',
+  borderRadius: 'full',
+  flexShrink: 0,
+  transition: 'background-color 0.15s, border-color 0.15s, opacity 0.15s',
+});
+
+const refreshDotIdle = css({ bg: 'chart.c4' });
+const refreshDotRefreshing = css({ bg: 'chart.c6' });
+const refreshDotSuccess = css({ bg: 'chart.c2' });
+const refreshDotDelayed = css({ bg: 'chart.c5' });
+const refreshDotError = css({ bg: 'accent' });
+const refreshDotStatic = css({ bg: 'transparent', border: '1px solid token(colors.faint)' });
+const refreshDotPaused = css({ bg: 'transparent', border: '1px solid currentColor', opacity: 0.8 });
+
+const refreshLabel = css({ textStyle: 'numeric' });
+
+const refreshButton = css({
+  appearance: 'none',
+  border: '0',
+  bg: 'transparent',
+  color: 'accent',
+  fontSize: '12px',
+  fontWeight: 650,
+  cursor: 'pointer',
+  _disabled: {
+    color: 'faint',
+    cursor: 'not-allowed',
   },
   _focusVisible: {
     outline: '2px solid token(colors.accent)',
@@ -1501,12 +1556,12 @@ const reportRowsToCSV = (rows: SerializedRow[]) => {
   return [head.join(','), ...body].join('\n');
 };
 
-const downloadCSV = (rows: SerializedRow[]) => {
+const downloadCSV = (rows: SerializedRow[], generatedAt: string) => {
   const blob = new Blob([reportRowsToCSV(rows)], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `ai-usage-report-${payload.generatedAt.slice(0, 10)}.csv`;
+  link.download = `ai-usage-report-${generatedAt.slice(0, 10)}.csv`;
   link.click();
   URL.revokeObjectURL(url);
 };
@@ -1874,7 +1929,7 @@ const sessionColumns: SessionColumnDef[] = [
 const defaultColumnVisibility = Object.fromEntries(
   sessionColumns.filter((column) => column.meta?.defaultVisible === false).map((column) => [column.id, false]),
 ) as VisibilityState;
-const dashboardSearchDefaults = dashboardSearchDefaultsFor(payload.filters.sort);
+const dashboardSearchDefaults = dashboardSearchDefaultsFor(initialPayload.filters.sort);
 
 const isSessionColumnVisible = (visibility: VisibilityState, columnId: string) => visibility[columnId] !== false;
 
@@ -2979,8 +3034,132 @@ const FilterPill = (props: { label: string; value: string; onClear: () => void }
   </button>
 );
 
+const formatRefreshCountdown = (ms: number) => {
+  const seconds = Math.max(0, Math.ceil(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`;
+};
+
+const formatRefreshAge = (ms: number) => {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.floor(minutes / 60)}h ago`;
+};
+
+type RefreshStatusKind = 'idle' | 'refreshing' | 'success' | 'delayed' | 'error' | 'paused' | 'static';
+
+const refreshStatusLabels: Record<RefreshStatusKind, string> = {
+  delayed: 'Delayed',
+  error: 'Error',
+  idle: 'Ready',
+  paused: 'Paused',
+  refreshing: 'Refreshing',
+  static: 'Static',
+  success: 'Live',
+};
+
+const refreshDotClass: Record<RefreshStatusKind, string> = {
+  delayed: refreshDotDelayed,
+  error: refreshDotError,
+  idle: refreshDotIdle,
+  paused: refreshDotPaused,
+  refreshing: refreshDotRefreshing,
+  static: refreshDotStatic,
+  success: refreshDotSuccess,
+};
+
+const RefreshStatus = (props: {
+  canRefresh: boolean;
+  generatedAt: string;
+  lastRefreshError: string | null;
+  lastSuccessfulRefreshAt: number | null;
+  nextRefreshAt: number | null;
+  onTogglePause: () => void;
+  refreshErrorCount: number;
+  refreshIntervalMs: number;
+  refreshPaused: boolean;
+  refreshing: boolean;
+  onRefresh: () => void;
+}) => {
+  const [now, setNow] = createSignal(Date.now());
+  onMount(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    onCleanup(() => window.clearInterval(timer));
+  });
+  const countdown = createMemo(() => {
+    const next = props.nextRefreshAt;
+    if (!next) return 'paused';
+    return formatRefreshCountdown(next - now());
+  });
+  const status = createMemo<RefreshStatusKind>(() => {
+    if (!props.canRefresh) return 'static';
+    if (props.refreshPaused) return 'paused';
+    if (props.refreshing) return 'refreshing';
+    if (props.refreshErrorCount >= 2) return 'error';
+    if (props.refreshErrorCount === 1) return 'delayed';
+    return props.lastSuccessfulRefreshAt == null ? 'idle' : 'success';
+  });
+  const statusLabel = () => refreshStatusLabels[status()];
+  const primaryLabel = createMemo(() => {
+    const currentStatus = status();
+    if (currentStatus === 'static') return 'Static';
+    if (currentStatus === 'paused') return 'Paused';
+    if (currentStatus === 'refreshing') return 'Refreshing';
+    if (currentStatus === 'delayed' || currentStatus === 'error') return `${statusLabel()} · retry ${countdown()}`;
+    return `Next ${countdown()}`;
+  });
+  const title = createMemo(() => {
+    const lines = [`Status: ${statusLabel()}`, `Generated: ${fmtDate(props.generatedAt)}`];
+    if (props.canRefresh) lines.push(`Interval: ${formatRefreshCountdown(props.refreshIntervalMs)}`);
+    else lines.push('Auto-refresh unavailable for static snapshots');
+    if (props.canRefresh && !props.refreshPaused) lines.push(`Next refresh: ${countdown()}`);
+    if (props.refreshPaused) lines.push('Auto-refresh is paused');
+    if (props.lastSuccessfulRefreshAt != null) {
+      lines.push(`Last successful refresh: ${formatRefreshAge(now() - props.lastSuccessfulRefreshAt)}`);
+    }
+    if (props.lastRefreshError) lines.push(`Last error: ${props.lastRefreshError}`);
+    return lines.join('\n');
+  });
+
+  return (
+    <div
+      class={cx(refreshStatus, status() === 'delayed' || status() === 'error' ? refreshStatusError : undefined)}
+      title={title()}
+    >
+      <span class={cx(refreshDot, refreshDotClass[status()])} aria-hidden="true" />
+      <span class={refreshLabel} role="status" aria-live="polite" aria-label={`Data refresh status: ${statusLabel()}`}>
+        {primaryLabel()}
+      </span>
+      <button
+        class={refreshButton}
+        type="button"
+        disabled={!props.canRefresh || props.refreshing}
+        onClick={props.onRefresh}
+      >
+        Refresh
+      </button>
+      <button class={refreshButton} type="button" disabled={!props.canRefresh} onClick={props.onTogglePause}>
+        {props.refreshPaused ? 'Resume' : 'Pause'}
+      </button>
+    </div>
+  );
+};
+
 export const Dashboard = () => {
+  const [payload, setPayload] = createSignal<UsageReportPayload>(initialPayload);
   const isDemo = isDemoReportPayload();
+  const canRefresh = !isDemo && typeof window !== 'undefined' && ['http:', 'https:'].includes(window.location.protocol);
+  const [refreshing, setRefreshing] = createSignal(false);
+  const [lastRefreshError, setLastRefreshError] = createSignal<string | null>(null);
+  const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = createSignal<number | null>(null);
+  const [refreshErrorCount, setRefreshErrorCount] = createSignal(0);
+  const [refreshPaused, setRefreshPaused] = createSignal(false);
+  const [nextRefreshAt, setNextRefreshAt] = createSignal<number | null>(
+    canRefresh ? Date.now() + REFRESH_INTERVAL_MS : null,
+  );
   const search = useSearch({ from: '/' });
   const navigate = useNavigate({ from: '/' });
   const updateSearch = (updater: (current: DashboardSearch) => DashboardSearch, options?: { replace?: boolean }) =>
@@ -2993,21 +3172,22 @@ export const Dashboard = () => {
   const fieldFilters = () => search().filters;
   const sorting = createMemo(() => sortingStateFromSearch(search().sort));
   const columnVisibility = createMemo(() => columnVisibilityFromDiff(search().cols));
-  const generatedAt = new Date(payload.generatedAt);
+  const generatedAt = createMemo(() => new Date(payload().generatedAt));
+  const reportRows = createMemo(() => payload().rows.map(enrichReportRow));
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
   let searchInputEl: HTMLInputElement | undefined;
-  const harnesses = createMemo(() => ['all', ...new Set(reportRows.map((row) => row.harness))]);
+  const harnesses = createMemo(() => ['all', ...new Set(reportRows().map((row) => row.harness))]);
   const filterSnapshot = createMemo(() => createFilterSnapshot(query(), harness(), fieldFilters()));
   const timelineRows = createMemo(() => {
     const filters = filterSnapshot();
-    return reportRows.filter((row) => matchesFilterSnapshot(row, filters));
+    return reportRows().filter((row) => matchesFilterSnapshot(row, filters));
   });
   const initialRange = search().range;
   const dateRange = createDateRangeController({
     generatedAt,
     rows: timelineRows,
-    defaultFrom: toDateInputValue(startOfDay(shiftCalendarDays(generatedAt, -6))),
-    defaultTo: toDateInputValue(generatedAt),
+    defaultFrom: toDateInputValue(startOfDay(shiftCalendarDays(generatedAt(), -6))),
+    defaultTo: toDateInputValue(generatedAt()),
     formatDate: fmtDateOnly,
     initialMode: initialRange.mode,
     ...(initialRange.from ? { initialFrom: initialRange.from } : {}),
@@ -3126,20 +3306,50 @@ export const Dashboard = () => {
     const bounds = dateRange.bounds();
     return buildProjectGroups(timelineRows(), (row) => rowMatchesDateBounds(row, bounds));
   });
-  const hiddenCount = createMemo(() => reportRows.length - visibleSummary().sessionCount);
+  const hiddenCount = createMemo(() => reportRows().length - visibleSummary().sessionCount);
   // Usage in the equally-long window right before the selected one; null when
   // the range is open-ended ("All") or the previous window is empty.
   const previousSummary = createMemo(() => {
     const bounds = dateRange.bounds();
     if (!bounds.from) return null;
     const from = bounds.from.getTime();
-    const to = (bounds.to ?? endOfDay(generatedAt)).getTime();
+    const to = (bounds.to ?? endOfDay(generatedAt())).getTime();
     const span = Math.max(DAY_MS, to - from);
     const previousBounds: DateBounds = { from: new Date(from - span), to: new Date(from - 1) };
     const summary = buildReportSummary(timelineRows(), (row) => rowMatchesDateBounds(row, previousBounds));
     return summary.sessionCount > 0 ? summary : null;
   });
   const exportRows = () => sortedRows();
+  const refreshPayload = async (force = false) => {
+    if (!canRefresh || refreshing()) return;
+    setRefreshing(true);
+    try {
+      setPayload(await fetchReportPayload({ force }));
+      setLastRefreshError(null);
+      setLastSuccessfulRefreshAt(Date.now());
+      setRefreshErrorCount(0);
+      setNextRefreshAt(Date.now() + REFRESH_INTERVAL_MS);
+    } catch (error) {
+      setLastRefreshError(error instanceof Error ? error.message : 'Failed to refresh report payload');
+      setRefreshErrorCount((count) => count + 1);
+      setNextRefreshAt(Date.now() + REFRESH_INTERVAL_MS);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+  const toggleRefreshPause = () => {
+    setRefreshPaused((paused) => {
+      if (paused) setNextRefreshAt(Date.now() + REFRESH_INTERVAL_MS);
+      return !paused;
+    });
+  };
+  createEffect(() => {
+    if (!canRefresh || refreshPaused() || refreshing()) return;
+    const next = nextRefreshAt();
+    if (next == null) return;
+    const timer = window.setTimeout(() => void refreshPayload(), Math.max(0, next - Date.now()));
+    onCleanup(() => window.clearTimeout(timer));
+  });
   const toggleSelected = (row: DashboardRow) =>
     setSelectedKey((current) => (current === rowKey(row) ? null : rowKey(row)));
   let activeQueryEdit = false;
@@ -3268,7 +3478,7 @@ export const Dashboard = () => {
               <h1 class={title}>Usage report</h1>
               <div class={meta}>
                 <Show when={!isDemo} fallback="Report payload unavailable">
-                  Generated {fmtDate(payload.generatedAt)}
+                  Generated {fmtDate(payload().generatedAt)}
                 </Show>
               </div>
             </div>
@@ -3295,7 +3505,24 @@ export const Dashboard = () => {
                 {(item) => <option value={item}>{item === 'all' ? 'All harnesses' : item}</option>}
               </For>
             </select>
-            <button class={commandButton} type="button" onClick={() => downloadCSV(exportRows())}>
+            <RefreshStatus
+              canRefresh={canRefresh}
+              generatedAt={payload().generatedAt}
+              lastRefreshError={lastRefreshError()}
+              lastSuccessfulRefreshAt={lastSuccessfulRefreshAt()}
+              nextRefreshAt={nextRefreshAt()}
+              onTogglePause={toggleRefreshPause}
+              refreshErrorCount={refreshErrorCount()}
+              refreshIntervalMs={REFRESH_INTERVAL_MS}
+              refreshPaused={refreshPaused()}
+              refreshing={refreshing()}
+              onRefresh={() => void refreshPayload(true)}
+            />
+            <button
+              class={commandButton}
+              type="button"
+              onClick={() => downloadCSV(exportRows(), payload().generatedAt)}
+            >
               Export CSV
             </button>
           </div>
@@ -3323,7 +3550,7 @@ export const Dashboard = () => {
 
           <div class={filterSummary}>
             <span class={summaryPill} aria-live="polite">
-              {fmtNum(visibleSummary().sessionCount)} / {fmtNum(reportRows.length)} sessions
+              {fmtNum(visibleSummary().sessionCount)} / {fmtNum(reportRows().length)} sessions
             </span>
             <Show when={hiddenCount() > 0}>
               <span>{fmtNum(hiddenCount())} hidden by filters</span>

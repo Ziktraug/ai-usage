@@ -9,6 +9,7 @@ import solid from 'vite-plugin-solid';
 const execFileAsync = promisify(execFile);
 const cliEntry = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../cli/src/main.ts');
 const PAYLOAD_TTL_MS = 60_000;
+const PAYLOAD_ENDPOINT = '/__ai_usage_report_payload';
 
 // Keep in sync with serializeForInlineScript in apps/cli/src/render/html.ts.
 const escapeForInlineScript = (json: string) =>
@@ -27,7 +28,8 @@ const realUsagePayload = (): Plugin => {
   let cache: { at: number; script: string } | null = null;
   let inflight: Promise<void> | null = null;
 
-  const refresh = () => {
+  const refresh = (force = false) => {
+    if (force) cache = null;
     inflight ??= execFileAsync('bun', [cliEntry, '--payload-json'], { maxBuffer: 64 * 1024 * 1024 })
       .then(({ stdout }) => {
         cache = { at: Date.now(), script: escapeForInlineScript(stdout.trim()) };
@@ -47,7 +49,21 @@ const realUsagePayload = (): Plugin => {
   return {
     name: 'ai-usage:real-dev-payload',
     apply: 'serve',
-    configureServer() {
+    configureServer(server) {
+      server.middlewares.use(PAYLOAD_ENDPOINT, async (req, res) => {
+        const url = new URL(req.url ?? '', `http://${req.headers.host ?? 'localhost'}`);
+        const force = url.searchParams.get('force') === '1';
+        if (!cache || force || Date.now() - cache.at > PAYLOAD_TTL_MS) await refresh(force);
+        if (!cache) {
+          res.statusCode = 503;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ error: 'usage payload unavailable' }));
+          return;
+        }
+        res.setHeader('content-type', 'application/json');
+        res.setHeader('cache-control', 'no-store');
+        res.end(cache.script);
+      });
       void refresh();
     },
     transformIndexHtml: {
