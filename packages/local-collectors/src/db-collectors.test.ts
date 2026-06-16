@@ -168,4 +168,44 @@ describe('DB-backed Harness collectors', () => {
     expect(rows[0]?.turns).toBe(1);
     expect(rows[0]?.linesDeleted).toBe(2);
   });
+
+  test('surfaces token-less Cursor composers as usage-unavailable rows', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_COMPOSER_SQL, [
+      {
+        key: 'composerData:tokenless',
+        value: JSON.stringify({
+          name: 'Refactor agent loop',
+          modelConfig: { modelName: 'gpt-5.3' },
+          createdAt: Date.parse('2026-03-10T00:00:00.000Z'),
+          totalLinesAdded: 9,
+          totalLinesRemoved: 4,
+        }),
+      },
+    ]);
+    // Recent Cursor bubbles keep the inputTokens field but always at 0.
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_TOKEN_SQL, [
+      {
+        key: 'bubbleId:tokenless:assistant-1',
+        value: JSON.stringify({ tokenCount: { inputTokens: 0, outputTokens: 0 } }),
+      },
+    ]);
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_USER_SQL, [
+      { key: 'bubbleId:tokenless:user-1', value: JSON.stringify({ type: 1, text: 'Refactor the agent loop' }) },
+      { key: 'bubbleId:tokenless:user-2', value: JSON.stringify({ type: 1, text: 'And add a test' }) },
+    ]);
+
+    const rows = runWithStorage(collectCursor, storage);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.harness).toBe('Cursor');
+    expect(rows[0]?.name).toBe('Refactor agent loop');
+    expect(rows[0]?.usageUnavailable).toBe(true);
+    expect(rows[0]?.tokIn).toBe(0);
+    expect(rows[0]?.costActual).toBeNull();
+    expect(rows[0]?.costKnown).toBe(false);
+    expect(rows[0]?.turns).toBe(2);
+    expect(rows[0]?.linesAdded).toBe(9);
+    expect(rows[0]?.date?.toISOString()).toBe('2026-03-10T00:00:00.000Z');
+  });
 });
