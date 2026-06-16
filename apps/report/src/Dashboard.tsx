@@ -600,29 +600,33 @@ const refreshStatusError = css({
   color: 'accent',
 });
 
-const refreshDot = css({
-  display: 'inline-flex',
-  w: '9px',
-  h: '9px',
-  borderRadius: 'full',
-  flexShrink: 0,
-  transition: 'background-color 0.15s, border-color 0.15s, opacity 0.15s',
-});
-
-const refreshDotIdle = css({ bg: 'chart.c4' });
-const refreshDotRefreshing = css({ bg: 'chart.c6' });
-const refreshDotSuccess = css({ bg: 'chart.c2' });
-const refreshDotDelayed = css({ bg: 'chart.c5' });
-const refreshDotError = css({ bg: 'accent' });
-const refreshDotStatic = css({ bg: 'transparent', border: '1px solid token(colors.faint)' });
-const refreshDotPaused = css({ bg: 'transparent', border: '1px solid currentColor', opacity: 0.8 });
-
-const refreshLabel = css({
-  textStyle: 'numeric',
+const refreshRing = css({
   display: 'inline-flex',
   alignItems: 'center',
-  h: '100%',
+  justifyContent: 'center',
+  w: '16px',
+  h: '16px',
+  borderRadius: 'full',
+  color: 'chart.c2',
+  flexShrink: 0,
+  bg: 'conic-gradient(currentColor calc(var(--refresh-progress) * 1turn), token(colors.track) 0)',
+  transition: 'background 0.15s, color 0.15s, opacity 0.15s',
+  _after: {
+    content: '""',
+    w: '10px',
+    h: '10px',
+    borderRadius: 'full',
+    bg: 'surface',
+  },
 });
+
+const refreshRingIdle = css({ color: 'chart.c4' });
+const refreshRingRefreshing = css({ color: 'chart.c6' });
+const refreshRingSuccess = css({ color: 'chart.c2' });
+const refreshRingDelayed = css({ color: 'chart.c5' });
+const refreshRingError = css({ color: 'accent' });
+const refreshRingStatic = css({ bg: 'transparent', border: '1px solid token(colors.faint)' });
+const refreshRingPaused = css({ bg: 'transparent', border: '1px solid currentColor', opacity: 0.8 });
 
 const refreshButton = css({
   appearance: 'none',
@@ -636,6 +640,8 @@ const refreshButton = css({
   fontSize: '12px',
   fontWeight: 650,
   lineHeight: 1,
+  minW: '44px',
+  justifyContent: 'center',
   cursor: 'pointer',
   _disabled: {
     color: 'faint',
@@ -3072,14 +3078,14 @@ const refreshStatusLabels: Record<RefreshStatusKind, string> = {
   success: 'Live',
 };
 
-const refreshDotClass: Record<RefreshStatusKind, string> = {
-  delayed: refreshDotDelayed,
-  error: refreshDotError,
-  idle: refreshDotIdle,
-  paused: refreshDotPaused,
-  refreshing: refreshDotRefreshing,
-  static: refreshDotStatic,
-  success: refreshDotSuccess,
+const refreshRingClass: Record<RefreshStatusKind, string> = {
+  delayed: refreshRingDelayed,
+  error: refreshRingError,
+  idle: refreshRingIdle,
+  paused: refreshRingPaused,
+  refreshing: refreshRingRefreshing,
+  static: refreshRingStatic,
+  success: refreshRingSuccess,
 };
 
 const RefreshStatus = (props: {
@@ -3104,6 +3110,11 @@ const RefreshStatus = (props: {
     const next = props.nextRefreshAt;
     if (!next) return 'paused';
     return formatRefreshCountdown(next - now());
+  });
+  const remainingRatio = createMemo(() => {
+    if (!props.canRefresh || props.refreshPaused || props.nextRefreshAt == null) return 0;
+    if (props.refreshing) return 1;
+    return Math.max(0, Math.min(1, (props.nextRefreshAt - now()) / props.refreshIntervalMs));
   });
   const status = createMemo<RefreshStatusKind>(() => {
     if (!props.canRefresh) return 'static';
@@ -3140,10 +3151,13 @@ const RefreshStatus = (props: {
       class={cx(refreshStatus, status() === 'delayed' || status() === 'error' ? refreshStatusError : undefined)}
       title={title()}
     >
-      <span class={cx(refreshDot, refreshDotClass[status()])} aria-hidden="true" />
-      <span class={refreshLabel} role="status" aria-live="polite" aria-label={`Data refresh status: ${statusLabel()}`}>
-        {primaryLabel()}
-      </span>
+      <span
+        class={cx(refreshRing, refreshRingClass[status()])}
+        role="status"
+        aria-live="polite"
+        aria-label={`Data refresh status: ${primaryLabel()}`}
+        style={{ '--refresh-progress': String(remainingRatio()) }}
+      />
       <button
         class={refreshButton}
         type="button"
