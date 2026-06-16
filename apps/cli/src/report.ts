@@ -18,6 +18,7 @@ const renderReportNotes = () => {
   const notes = [
     ...reportHarnessNotes(),
     '↳ = contains sub-agents.',
+    'usage unavailable = session found in prompt history, but detailed local token counters are missing.',
     `Tracked lines: ${lineHarnesses} only (${nonLineHarnesses} expose none locally).`,
     'RTK = saved-token percentage from RTK commands matched by project path and session time window.',
     '$API = hypothetical cost at current API rates (subscriptions bill differently); ? = no public rate.',

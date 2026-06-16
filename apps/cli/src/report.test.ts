@@ -47,6 +47,14 @@ describe('Usage row report lifecycle', () => {
       [
         row('old', { endDate: new Date('2025-12-31T00:00:00.000Z') }),
         row('tiny', { tokIn: 0, tokOut: 0 }),
+        row('unavailable', {
+          endDate: new Date('2026-01-02T00:00:00.000Z'),
+          tokIn: 0,
+          tokOut: 0,
+          usageUnavailable: true,
+          costKnown: false,
+          costActual: null,
+        }),
         row('other project', { project: 'other', endDate: new Date('2026-01-02T00:00:00.000Z') }),
         row('kept lower cost', { endDate: new Date('2026-01-02T00:00:00.000Z'), costApprox: 1 }),
         row('kept higher cost', { endDate: new Date('2026-01-03T00:00:00.000Z'), costApprox: 5 }),
@@ -59,7 +67,7 @@ describe('Usage row report lifecycle', () => {
       }),
     );
 
-    expect(report.rows.map((item) => item.name)).toEqual(['kept higher cost', 'kept lower cost']);
+    expect(report.rows.map((item) => item.name)).toEqual(['kept higher cost', 'kept lower cost', 'unavailable']);
   });
 
   test('payload format emits the full report payload as JSON for the dev server', () => {
@@ -80,5 +88,40 @@ describe('Usage row report lifecycle', () => {
     expect(report.rows).toHaveLength(2);
     expect(report.omittedRows).toBe(1);
     expect(renderUsageReport([row('a'), row('b')], args({ limit: 1 }))).toContain('analytics below cover all 2');
+  });
+
+  test('terminal table displays the active date used by filters and sort', () => {
+    const output = renderUsageReport(
+      [
+        row('cross-midnight', {
+          date: new Date('2026-04-23T23:55:00.000Z'),
+          endDate: new Date('2026-04-24T00:05:00.000Z'),
+        }),
+      ],
+      args(),
+    );
+
+    expect(output).toContain('2026-04-24 00:05');
+    expect(output).not.toContain('2026-04-23 23:55');
+  });
+
+  test('terminal table labels unavailable usage rows', () => {
+    const output = renderUsageReport(
+      [
+        row('history-only', {
+          tokIn: 0,
+          tokOut: 0,
+          tokCr: 0,
+          tokCw: 0,
+          costActual: null,
+          costKnown: false,
+          usageUnavailable: true,
+        }),
+      ],
+      args(),
+    );
+
+    expect(output).toContain('n/a');
+    expect(output).toContain('history-only (usage unavailable)');
   });
 });

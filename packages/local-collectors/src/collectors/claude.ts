@@ -3,14 +3,74 @@ import { harnessLabel } from '@ai-usage/core/harness-metadata';
 import type { Row } from '@ai-usage/core/types';
 import { actualCost, approximateApiCost, normalizeUsageRow, tokenTotal } from '@ai-usage/core/usage-row';
 import { Effect } from 'effect';
+import type { LocalHistoryError } from '../errors';
 import { historyPath, LocalHistoryStorage, walkFiles } from '../local-history';
 import { withProjectPath } from '../rtk-enrichment';
 import { base, dominant, safeJSON, usablePrompt } from '../text';
 
+type ClaudeHistoryFallback = {
+  sessionId: string;
+  start: Date;
+  end: Date;
+  project: string | null;
+  firstPrompt: string | null;
+  turns: number;
+};
+
+const HOUSEKEEPING_COMMANDS = new Set(['/clear', '/model', '/effort', '/usage', '/rate-limit-options', '/resume']);
+
+const isUsageBearingHistoryEntry = (text: string | null) => {
+  if (!text) return false;
+  const cleaned = text.trim();
+  return cleaned.length > 0 && !HOUSEKEEPING_COMMANDS.has(cleaned);
+};
+
+const readClaudeHistoryFallbacks = (
+  storage: LocalHistoryStorage,
+  existingSessionIds: Set<string>,
+): Effect.Effect<ClaudeHistoryFallback[], LocalHistoryError> =>
+  Effect.gen(function* () {
+    const historyFile = historyPath(storage, '.claude', 'history.jsonl');
+    if (!(yield* storage.exists(historyFile))) return [];
+
+    const sessions = new Map<string, ClaudeHistoryFallback>();
+    for (const line of (yield* storage.readText(historyFile)).split('\n')) {
+      if (!line) continue;
+      const event = safeJSON(line);
+      const sessionId = typeof event?.sessionId === 'string' ? event.sessionId : null;
+      if (!sessionId || existingSessionIds.has(sessionId)) continue;
+      const timestamp = Number(event.timestamp);
+      const date = new Date(timestamp);
+      if (!Number.isFinite(date.getTime())) continue;
+
+      const display = typeof event.display === 'string' ? event.display : null;
+      const prompt = usablePrompt(display);
+      const usageBearing = isUsageBearingHistoryEntry(prompt);
+      const current = sessions.get(sessionId) ?? {
+        sessionId,
+        start: date,
+        end: date,
+        project: typeof event.project === 'string' ? event.project : null,
+        firstPrompt: null,
+        turns: 0,
+      };
+
+      if (date < current.start) current.start = date;
+      if (date > current.end) current.end = date;
+      if (!current.project && typeof event.project === 'string') current.project = event.project;
+      if (usageBearing) {
+        current.turns++;
+        if (!current.firstPrompt) current.firstPrompt = prompt;
+      }
+      sessions.set(sessionId, current);
+    }
+
+    return [...sessions.values()].filter((session) => session.turns > 0);
+  });
+
 export const collectClaude = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
   const dir = historyPath(storage, '.claude', 'projects');
-  if (!(yield* storage.exists(dir))) return [];
 
   let provider = 'Claude sub';
   const cfg = historyPath(storage, '.claude.json');
@@ -21,6 +81,7 @@ export const collectClaude = Effect.gen(function* () {
 
   const files = yield* walkFiles(storage, dir, (fileName) => fileName.endsWith('.jsonl'));
   const rows: Row[] = [];
+  const existingSessionIds = new Set(files.map((filePath) => path.basename(filePath, '.jsonl')));
   const seen = new Set<string>();
 
   for (const filePath of files) {
@@ -117,6 +178,31 @@ export const collectClaude = Effect.gen(function* () {
           subagent: sidechain,
         }),
         cwd,
+      ),
+    );
+  }
+
+  for (const session of yield* readClaudeHistoryFallbacks(storage, existingSessionIds)) {
+    rows.push(
+      withProjectPath(
+        normalizeUsageRow({
+          date: session.start,
+          endDate: session.end,
+          harness: harnessLabel('claude'),
+          provider,
+          name: session.firstPrompt || `claude ${session.sessionId.slice(0, 8)}`,
+          model: 'usage unavailable',
+          project: base(session.project),
+          tokens: { in: 0, out: 0, cr: 0, cw: 0 },
+          cost: actualCost(null),
+          calls: 0,
+          turns: session.turns,
+          tools: 0,
+          linesAdded: null,
+          linesDeleted: null,
+          usageUnavailable: true,
+        }),
+        session.project,
       ),
     );
   }

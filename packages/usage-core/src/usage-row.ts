@@ -29,6 +29,7 @@ export interface UsageRowInput {
   linesDeleted?: number | null;
   subagent?: boolean;
   partial?: boolean;
+  usageUnavailable?: boolean;
 }
 
 export interface UsageRowLineDelta {
@@ -72,6 +73,7 @@ export const normalizeUsageRow = (input: UsageRowInput): Row => {
     linesDeleted: input.linesDeleted ?? null,
     ...(input.subagent === undefined ? {} : { subagent: input.subagent }),
     ...(input.partial === undefined ? {} : { partial: input.partial }),
+    ...(input.usageUnavailable === undefined ? {} : { usageUnavailable: input.usageUnavailable }),
   };
 };
 
@@ -104,9 +106,15 @@ export const usageRowPricedCost = (row: Row) => (row.costKnown ? row.costApprox 
 export const usageRowMarkers = (row: Row) => ({
   partial: row.partial ?? false,
   subagent: row.subagent ?? false,
+  usageUnavailable: row.usageUnavailable ?? false,
 });
 
 export const usageRowSessionLabel = (row: Row) => {
   const markers = usageRowMarkers(row);
-  return row.name + (markers.partial ? ' ~' : '') + (markers.subagent ? ' ↳' : '');
+  return (
+    row.name +
+    (markers.partial ? ' ~' : '') +
+    (markers.subagent ? ' ↳' : '') +
+    (markers.usageUnavailable ? ' (usage unavailable)' : '')
+  );
 };
