@@ -16,6 +16,7 @@ interface ProjectSource {
   harness: string;
   harnessKey: string;
   sourcePath: string;
+  gitRemote: string;
   sessions: number;
   tokens: number;
 }
@@ -34,6 +35,7 @@ const collectProjectSources = (rows: Row[]): ProjectSource[] => {
       harness: row.harness,
       harnessKey: source?.harnessKey ?? row.harness.toLowerCase(),
       sourcePath: source?.sourcePath ?? '',
+      gitRemote: '',
       sessions: 0,
       tokens: 0,
     };
@@ -43,10 +45,47 @@ const collectProjectSources = (rows: Row[]): ProjectSource[] => {
     current.tokens += usageRowTokenTotal(row);
     summaries.set(key, current);
   }
-  return [...summaries.values()].sort(
+  const result = [...summaries.values()].sort(
     (a, b) =>
       a.project.localeCompare(b.project) || a.machine.localeCompare(b.machine) || a.harness.localeCompare(b.harness),
   );
+  enrichGitRemotes(result);
+  return result;
+};
+
+const enrichGitRemotes = (sources: ProjectSource[]) => {
+  const cache = new Map<string, string>();
+  for (const source of sources) {
+    if (!source.sourcePath) continue;
+    const cached = cache.get(source.sourcePath);
+    if (cached !== undefined) {
+      source.gitRemote = cached;
+      continue;
+    }
+    const gitRemote = readGitRemoteUrl(source.sourcePath);
+    cache.set(source.sourcePath, gitRemote);
+    source.gitRemote = gitRemote;
+  }
+};
+
+const readGitRemoteUrl = (projectPath: string): string => {
+  try {
+    const configPath = path.join(projectPath, '.git', 'config');
+    if (!fs.existsSync(configPath)) return '';
+    const text = fs.readFileSync(configPath, 'utf8');
+    const match = text.match(/^\[remote\s+"origin"\]\s*\n\s*url\s*=\s*(.+)$/m);
+    return match ? extractRepoName(match[1]!.trim()) : '';
+  } catch {
+    return '';
+  }
+};
+
+const extractRepoName = (url: string): string => {
+  const httpsMatch = url.match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/);
+  if (httpsMatch) return httpsMatch[1]!;
+  const sshMatch = url.match(/git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/);
+  if (sshMatch) return sshMatch[1]!;
+  return url;
 };
 
 const collectAllRows = (snapshotFiles: string[], local: boolean) =>
@@ -112,7 +151,7 @@ const setupHTML = (sources: ProjectSource[], aliases: ProjectAliasEntry[]) => {
 <table id="sources-table">
   <thead><tr>
     <th><input type="checkbox" id="select-all"></th>
-    <th>Project</th><th>Machine</th><th>Harness</th><th class="num">Sessions</th><th class="num">Tokens</th><th>Path</th>
+    <th>Project</th><th>Machine</th><th>Harness</th><th class="num">Sessions</th><th class="num">Tokens</th><th>Path</th><th>Git Remote</th>
   </tr></thead>
   <tbody id="sources-body"></tbody>
 </table>
@@ -152,7 +191,8 @@ function renderSources() {
       '<td>'+s.harness+'</td>' +
       '<td class="num">'+fmtNum(s.sessions)+'</td>' +
       '<td class="num">'+fmtNum(s.tokens)+'</td>' +
-      '<td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">'+(s.sourcePath||'—')+'</td>';
+      '<td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">'+(s.sourcePath||'—')+'</td>' +
+      '<td>'+(s.gitRemote||'—')+'</td>';
     tbody.appendChild(tr);
   }
   updateCount();
@@ -198,21 +238,46 @@ function renderAliases() {
 }
 
 function renderSuggestions() {
+  sugEl.innerHTML = '';
+  const groups = [];
+  const seen = new Set();
+
+  const byRemote = new Map();
+  for (let i = 0; i < sources.length; i++) {
+    const remote = sources[i].gitRemote;
+    if (!remote) continue;
+    if (!byRemote.has(remote)) byRemote.set(remote, []);
+    byRemote.get(remote).push(i);
+  }
+  for (const [remote, idxs] of byRemote) {
+    if (idxs.length < 2) continue;
+    const key = 'remote:' + remote;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    groups.push({ label: remote + ' (git, ' + idxs.length + ' sources)', idxs, name: remote.split('/').pop() || remote });
+  }
+
   const byBasename = new Map();
   for (let i = 0; i < sources.length; i++) {
     const base = sources[i].project.toLowerCase().replace(/[-_].*$/, '');
     if (!byBasename.has(base)) byBasename.set(base, []);
     byBasename.get(base).push(i);
   }
-  sugEl.innerHTML = '';
   for (const [base, idxs] of byBasename) {
     if (idxs.length < 2) continue;
+    const key = 'base:' + base;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    groups.push({ label: base + ' (basename, ' + idxs.length + ' sources)', idxs, name: base });
+  }
+
+  for (const group of groups) {
     const span = document.createElement('span');
     span.className = 'suggestion';
-    span.textContent = base + ' (' + idxs.length + ' sources)';
+    span.textContent = group.label;
     span.onclick = () => {
-      for (const idx of idxs) selected.add(idx);
-      nameInput.value = base;
+      for (const idx of group.idxs) selected.add(idx);
+      nameInput.value = group.name;
       renderSources();
     };
     sugEl.appendChild(span);
