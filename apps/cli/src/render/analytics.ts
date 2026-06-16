@@ -33,7 +33,9 @@ const analyticsTable = (
     cells.push(pad(String(group.sessions), 5, true));
     cells.push(pad(unavailableOnly ? 'n/a' : fmtNum(group.fresh), 8, true));
     cells.push(clr.dim(pad(unavailableOnly ? 'n/a' : `${group.cacheHitPct.toFixed(0)}%`, 6, true)));
-    const costText = unavailableOnly ? 'n/a' : (group.priced ? `$${group.costSum.toFixed(2)}` : '–') + (group.unpriced ? '*' : '');
+    const costText = unavailableOnly
+      ? 'n/a'
+      : (group.priced ? `$${group.costSum.toFixed(2)}` : '–') + (group.unpriced ? '*' : '');
     const costStyle = !group.priced
       ? clr.grey
       : group.costSum >= 100
@@ -42,7 +44,9 @@ const analyticsTable = (
           ? clr.yellow
           : id;
     cells.push(costStyle(pad(costText, 10, true)));
-    cells.push(pad(unavailableOnly || group.costPerSession == null ? '–' : `$${group.costPerSession.toFixed(2)}`, 8, true));
+    cells.push(
+      pad(unavailableOnly || group.costPerSession == null ? '–' : `$${group.costPerSession.toFixed(2)}`, 8, true),
+    );
     cells.push(pad(unavailableOnly || group.medianCost == null ? '–' : `$${group.medianCost.toFixed(2)}`, 8, true));
     cells.push(clr.green(pad(group.lineCount ? `+${fmtNum(group.linesA)}/-${fmtNum(group.linesD)}` : '–', 12, true)));
     cells.push(pad(group.costPer100Lines == null ? '–' : `$${group.costPer100Lines.toFixed(2)}`, 8, true));

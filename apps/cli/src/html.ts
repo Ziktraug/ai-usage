@@ -21,7 +21,10 @@ Examples:
 Creates a dated single-file HTML report in ./ai-usage-reports/.`;
 
 const timestampForFilename = (date: Date) =>
-  date.toISOString().replace(/\.\d{3}Z$/, 'Z').replace(/:/g, '-');
+  date
+    .toISOString()
+    .replace(/\.\d{3}Z$/, 'Z')
+    .replace(/:/g, '-');
 
 const run = async () => {
   const [command, ...reportArgs] = Bun.argv.slice(2);

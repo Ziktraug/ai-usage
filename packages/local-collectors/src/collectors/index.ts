@@ -3,7 +3,7 @@ import type { Row } from '@ai-usage/core/types';
 import { Effect } from 'effect';
 import type { LocalHistoryError } from '../errors';
 import type { LocalHistoryStorage as LocalHistoryStorageService } from '../local-history';
-import { enrichCollectorRowsWithRtkSavings, stripCollectorMetadata } from '../rtk-enrichment';
+import { enrichCollectorRowsWithRtkSavings, stripCollectorMetadata, stripProjectPath } from '../rtk-enrichment';
 import { collectClaude } from './claude';
 import { collectCodex } from './codex';
 import { collectCursor } from './cursor';
@@ -17,6 +17,7 @@ export interface HarnessAdapter {
 export interface HarnessSelection {
   harness: HarnessKey | null;
   includeCursor: boolean;
+  keepSource?: boolean;
 }
 
 export const HARNESS_ADAPTERS: Record<HarnessKey, HarnessAdapter> = {
@@ -36,5 +37,5 @@ export const collectSelectedHarnessRows = (selection: HarnessSelection) =>
     const effects = selectedHarnessAdapters(selection).map((adapter) => adapter.collect);
     const rows = (yield* Effect.all(effects, { concurrency: 'unbounded' })).flat();
     const enrichedRows = yield* enrichCollectorRowsWithRtkSavings(rows);
-    return enrichedRows.map(stripCollectorMetadata);
+    return enrichedRows.map(selection.keepSource ? stripProjectPath : stripCollectorMetadata);
   });

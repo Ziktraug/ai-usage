@@ -1,5 +1,11 @@
+import { sourceLabel } from '@ai-usage/core/snapshot';
 import type { Row } from '@ai-usage/core/types';
-import { usageRowActiveDate, usageRowLineDelta, usageRowPricedCost, usageRowSessionLabel } from '@ai-usage/core/usage-row';
+import {
+  usageRowActiveDate,
+  usageRowLineDelta,
+  usageRowPricedCost,
+  usageRowSessionLabel,
+} from '@ai-usage/core/usage-row';
 import { clr, costStyle, harnessColor, id, provColor } from './colors';
 import { fmtDate, fmtDur, fmtNum, pad, trunc } from './format';
 
@@ -70,6 +76,17 @@ export const renderTable = (rows: Row[], wide = false) => {
             c: () => clr.dim,
           },
         ]),
+    ...(wide
+      ? [
+          {
+            h: 'Machine',
+            f: (r: Row) => sourceLabel(r),
+            w: 12,
+            r: false,
+            c: () => clr.dim,
+          },
+        ]
+      : []),
     { h: '$API', f: fmtCost, w: 8, r: true, c: (r) => costStyle(r) },
     { h: 'RTK', f: fmtRtkSaved, w: 8, r: true, c: () => clr.green },
     ...(wide

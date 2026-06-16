@@ -1,6 +1,26 @@
 import { calculateAnalytics } from '@ai-usage/core/analytics';
 import type { SerializedRow, UsageReportPayload } from '@ai-usage/core/report-data';
 
+export interface CursorCommitAttributionFacet {
+  commitHash: string;
+  branchName: string;
+  scoredAt: string | null;
+  commitMessage: string | null;
+  commitDate: string | null;
+  linesAdded: number;
+  linesDeleted: number;
+  tabLinesAdded: number;
+  tabLinesDeleted: number;
+  composerLinesAdded: number;
+  composerLinesDeleted: number;
+  humanLinesAdded: number;
+  humanLinesDeleted: number;
+  blankLinesAdded: number;
+  blankLinesDeleted: number;
+  v1AiPercentage: number | null;
+  v2AiPercentage: number | null;
+}
+
 declare global {
   interface Window {
     __AI_USAGE_REPORT__?: UsageReportPayload;
@@ -140,6 +160,42 @@ const demoPayload: UsageReportPayload = {
   tableRows: demoRows,
   omittedRows: 0,
   analytics: calculateAnalytics(demoRowsForAnalytics(), new Date('2026-06-11T12:00:00.000Z').getTime()),
+  facets: {
+    cursor: {
+      commitAttribution: [
+        {
+          commitHash: 'da59e06cc4c9627584edec0f8dc06f7e4cdd199d',
+          branchName: 'main',
+          scoredAt: '2026-03-13T08:28:49.536Z',
+          commitMessage: 'tanstack init',
+          commitDate: 'Fri Mar 6 09:32:20 2026 +0100',
+          linesAdded: 671,
+          linesDeleted: 1,
+          tabLinesAdded: 18,
+          tabLinesDeleted: 0,
+          composerLinesAdded: 0,
+          composerLinesDeleted: 0,
+          humanLinesAdded: 101,
+          humanLinesDeleted: 0,
+          blankLinesAdded: 249,
+          blankLinesDeleted: 0,
+          v1AiPercentage: 2.68,
+          v2AiPercentage: 76.12,
+        },
+      ],
+    },
+  },
+};
+
+const isCursorCommitAttribution = (value: unknown): value is CursorCommitAttributionFacet => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.commitHash === 'string' &&
+    typeof record.branchName === 'string' &&
+    typeof record.linesAdded === 'number' &&
+    typeof record.linesDeleted === 'number'
+  );
 };
 
 export const readReportPayload = () =>
@@ -154,4 +210,12 @@ export const fetchReportPayload = async (options?: { force?: boolean }) => {
   const payload = (await response.json()) as UsageReportPayload;
   window.__AI_USAGE_REPORT__ = payload;
   return payload;
+};
+
+export const cursorCommitAttributionFacet = (payload: UsageReportPayload): CursorCommitAttributionFacet[] => {
+  const cursor = payload.facets?.cursor;
+  if (typeof cursor !== 'object' || cursor === null || Array.isArray(cursor)) return [];
+  const commitAttribution = (cursor as Record<string, unknown>).commitAttribution;
+  if (!Array.isArray(commitAttribution)) return [];
+  return commitAttribution.filter(isCursorCommitAttribution);
 };

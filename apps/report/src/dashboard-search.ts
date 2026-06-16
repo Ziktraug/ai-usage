@@ -5,12 +5,21 @@ export const fieldFilterKeys = ['provider', 'model', 'project'] as const;
 export type FieldFilterKey = (typeof fieldFilterKeys)[number];
 export type FieldFilters = Partial<Record<FieldFilterKey, string>>;
 
-export const dashboardTabs = ['overview', 'sessions', 'models', 'providers', 'harnesses', 'projects'] as const;
+export const dashboardTabs = [
+  'overview',
+  'sessions',
+  'models',
+  'providers',
+  'harnesses',
+  'projects',
+  'cursor-ai',
+] as const;
 export type DashboardTab = (typeof dashboardTabs)[number];
 
 export const sessionColumnIds = [
   'date',
   'harness',
+  'machine',
   'provider',
   'model',
   'project',

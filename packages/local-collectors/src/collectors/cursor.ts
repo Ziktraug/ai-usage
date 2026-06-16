@@ -2,7 +2,9 @@ import { harnessLabel } from '@ai-usage/core/harness-metadata';
 import type { Row } from '@ai-usage/core/types';
 import { actualCost, normalizeUsageRow } from '@ai-usage/core/usage-row';
 import { Effect } from 'effect';
-import { historyPath, LocalHistoryStorage } from '../local-history';
+import { LocalHistoryStorage } from '../local-history';
+import { resolvePaths } from '../platform-paths';
+import { withSource } from '../rtk-enrichment';
 import { safeJSON, usablePrompt } from '../text';
 
 type KeyValueRow = { key: string; value: string };
@@ -13,16 +15,9 @@ const USER_BUBBLE_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bub
 
 export const collectCursor = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
-  const dbPath = historyPath(
-    storage,
-    'Library',
-    'Application Support',
-    'Cursor',
-    'User',
-    'globalStorage',
-    'state.vscdb',
-  );
-  if (!(yield* storage.exists(dbPath))) return [];
+  const paths = resolvePaths(storage);
+  const dbPath = paths.cursor.stateVscdb;
+  if (!(yield* storage.exists(dbPath).pipe(Effect.catchAll(() => Effect.succeed(false))))) return [];
 
   const comp = new Map<string, { name: string; model: string; created: number; add: number; del: number }>();
   const agg = new Map<string, { in: number; out: number; cr: number; cw: number; calls: number }>();
@@ -95,23 +90,26 @@ export const collectCursor = Effect.gen(function* () {
       cw: current.cw,
     };
     rows.push(
-      normalizeUsageRow({
-        date: composer?.created ? new Date(composer.created) : null,
-        endDate: null,
-        harness: harnessLabel('cursor'),
-        provider: 'Cursor sub',
-        name: composer?.name || name?.first || `cursor ${composerId.slice(0, 8)}`,
-        model,
-        project: '',
-        tokens,
-        cost: actualCost(0),
-        calls: current.calls,
-        turns: name?.turns || 0,
-        tools: 0,
-        linesAdded: composer?.add ?? null,
-        linesDeleted: composer?.del ?? null,
-        partial: true,
-      }),
+      withSource(
+        normalizeUsageRow({
+          date: composer?.created ? new Date(composer.created) : null,
+          endDate: null,
+          harness: harnessLabel('cursor'),
+          provider: 'Cursor sub',
+          name: composer?.name || name?.first || `cursor ${composerId.slice(0, 8)}`,
+          model,
+          project: '',
+          tokens,
+          cost: actualCost(0),
+          calls: current.calls,
+          turns: name?.turns || 0,
+          tools: 0,
+          linesAdded: composer?.add ?? null,
+          linesDeleted: composer?.del ?? null,
+          partial: true,
+        }),
+        { harnessKey: 'cursor', sourceSessionId: composerId },
+      ),
     );
   }
 
@@ -123,23 +121,26 @@ export const collectCursor = Effect.gen(function* () {
     const name = naming.get(composerId);
     if (!name || name.turns === 0) continue;
     rows.push(
-      normalizeUsageRow({
-        date: composer.created ? new Date(composer.created) : null,
-        endDate: null,
-        harness: harnessLabel('cursor'),
-        provider: 'Cursor sub',
-        name: composer.name || name.first || `cursor ${composerId.slice(0, 8)}`,
-        model: 'usage unavailable',
-        project: '',
-        tokens: { in: 0, out: 0, cr: 0, cw: 0 },
-        cost: actualCost(null),
-        calls: 0,
-        turns: name.turns,
-        tools: 0,
-        linesAdded: composer.add ?? null,
-        linesDeleted: composer.del ?? null,
-        usageUnavailable: true,
-      }),
+      withSource(
+        normalizeUsageRow({
+          date: composer.created ? new Date(composer.created) : null,
+          endDate: null,
+          harness: harnessLabel('cursor'),
+          provider: 'Cursor sub',
+          name: composer.name || name.first || `cursor ${composerId.slice(0, 8)}`,
+          model: 'usage unavailable',
+          project: '',
+          tokens: { in: 0, out: 0, cr: 0, cw: 0 },
+          cost: actualCost(null),
+          calls: 0,
+          turns: name.turns,
+          tools: 0,
+          linesAdded: composer.add ?? null,
+          linesDeleted: composer.del ?? null,
+          usageUnavailable: true,
+        }),
+        { harnessKey: 'cursor', sourceSessionId: composerId },
+      ),
     );
   }
   return rows;

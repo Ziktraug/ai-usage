@@ -1,6 +1,6 @@
 # ai-usage
 
-Unified local AI usage report for the coding tools installed on this machine.
+Unified local AI usage report for the coding tools installed on this machine — and across multiple machines via portable snapshots.
 
 The CLI reads local history files and databases written by each tool, then reports per-session token usage, estimated cost, and aggregate analytics — in the terminal or as an interactive single-file HTML app. It never calls provider APIs; everything is computed from local data.
 
@@ -61,6 +61,99 @@ Show Codex subscription quota (5h / 7d windows) from the newest local rate-limit
 bun run cli -- quota
 ```
 
+## Multi-machine usage
+
+If you work across multiple machines (e.g. a Mac and a Linux PC), you can merge their usage into one report.
+
+### 1. Export a snapshot on the other machine
+
+```sh
+bun run cli -- snapshot --out ~/Desktop/mac-usage.json
+```
+
+Transfer the file to this machine (AirDrop, scp, Syncthing, USB...).
+
+The first export creates a stable machine identity in `~/.config/ai-usage/machine.json`. Rename it for friendlier labels:
+
+```sh
+bun run cli -- machine                 # show current id + label
+bun run cli -- machine set-label "MacBook Pro"
+```
+
+### 2. Merge snapshots into a report
+
+```sh
+# Merge a remote snapshot with this machine's local history
+bun run cli -- merge ./mac-usage.json --local
+
+# All normal report options work on merged data
+bun run cli -- merge ./mac-usage.json --local --since 30d --project exalibur --html
+```
+
+Duplicate sessions (same machine, same harness, same session ID) are deduplicated automatically. The newest snapshot wins.
+
+### 3. Merge over LAN (no file transfer)
+
+Instead of copying snapshot files, run a snapshot server on the other machine and merge directly.
+
+On the Mac:
+
+```sh
+# Serve snapshot over LAN (token required when binding outside localhost)
+bun run cli -- serve --host 0.0.0.0 --token mysecret
+```
+
+On the PC:
+
+```sh
+# Fetch and merge in one command
+bun run cli -- merge --remote http://macbook.local:3847/snapshot --token mysecret --local
+```
+
+The server collects a fresh snapshot on each request, so you always get the latest data. For localhost-only access (same machine, different terminal), omit `--host` and `--token`:
+
+```sh
+bun run cli -- serve
+# Then in another terminal:
+bun run cli -- merge --remote http://localhost:3847/snapshot --local
+```
+
+### 3. See where sessions come from
+
+Merged reports include a `Machine` column (CLI `--wide`, CSV, and HTML dashboard). CSV also includes `machine_id` for scripting.
+
+### 4. Group project folders across machines
+
+The same project often lives at different paths on different machines. Project aliases let you merge them under one name.
+
+Create `~/.config/ai-usage/config.json`:
+
+```json
+{
+  "projectAliases": [
+    { "name": "exalibur", "match": ["*/exalibur", "*/exalibur-*"] }
+  ]
+}
+```
+
+Or use the local setup UI:
+
+```sh
+bun run cli -- setup ./mac-usage.json --local --port 3456
+```
+
+Then open `http://localhost:3456` in a browser. The UI shows all detected project sources, suggests merges for matching basenames, and saves aliases directly to your config.
+
+Once configured, aliases apply before filtering and analytics, so `--project exalibur` matches the grouped project. Config stays local to your machine and is never read from the repo.
+
+### 5. Discover project sources
+
+See all project folders across machines to decide which ones to alias:
+
+```sh
+bun run cli -- projects list --paths ./mac-usage.json --local
+```
+
 ## Output formats
 
 The default output is a terminal table with an analytics summary. The same report can be emitted in other formats:
@@ -108,15 +201,19 @@ All exploration state (active view, filters, range, sorting, visible columns) is
 - `--min-tokens <n>`: hide tiny sessions (default 1)
 - `--limit <n>`: limit only the displayed table; analytics still cover all filtered rows
 - `--sort date|tokens|cost`: choose table sort
-- `--wide`: add duration, turns, tool calls, and line delta columns
+- `--wide`: add Machine, duration, turns, tool calls, and line delta columns
 - `--no-cursor`: skip Cursor
 - `--no-color` / `--color`: control ANSI color output (default: auto)
 - `--json` / `--csv` / `--html`: pick an output format (mutually exclusive)
 
+`merge` accepts the same report options and adds `--local` to include the current machine's local history, `--remote <url>` to fetch a snapshot from a serve instance, and `--token <secret>` for authentication.
+
+Merged CSV/JSON/HTML payloads include row provenance (`source.machineLabel`, `source.machineId`, harness key, and source session ID) when available. The terminal table shows `Machine` in `--wide` mode.
+
 ## Project layout
 
-- `packages/usage-core` (`@ai-usage/core`): shared row types, pricing, normalization, report preparation, and analytics
-- `packages/local-collectors`: Effect-based local filesystem/SQLite collectors for Claude, Codex, OpenCode, and Cursor, plus RTK savings enrichment
+- `packages/usage-core` (`@ai-usage/core`): shared row types, pricing, normalization, report preparation, project aliases, and analytics
+- `packages/local-collectors`: Effect-based local filesystem/SQLite collectors for Claude, Codex, OpenCode, and Cursor, plus RTK savings enrichment, machine identity, and user config
 - `apps/cli`: terminal CLI, `quota` command, and table/CSV/JSON/HTML renderers
 - `apps/report`: Solid + TanStack Router + TanStack Table + Panda CSS + Ark UI report app, built as a single HTML file through Vite
 

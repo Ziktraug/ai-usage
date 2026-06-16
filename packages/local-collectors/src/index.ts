@@ -1,4 +1,7 @@
 export * from './codex-history';
 export * from './collectors';
 export * from './errors';
+export * from './facets';
 export * from './local-history';
+export * from './machine-config';
+export * from './platform-paths';

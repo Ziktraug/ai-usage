@@ -41,4 +41,71 @@ describe('CLI command parsing', () => {
     const error = Effect.runSync(Effect.flip(parseCommand(['--csv', '--html'])));
     expect(error.message).toBe('--json, --csv, --html, and --payload-json are mutually exclusive');
   });
+
+  test('parses snapshot export command', () => {
+    expect(Effect.runSync(parseCommand(['snapshot', '--out', 'usage.json', '--harness', 'codex']))).toEqual({
+      _tag: 'Snapshot',
+      args: { out: 'usage.json', harness: 'codex', cursor: true },
+    });
+  });
+
+  test('parses merge command with files and local rows', () => {
+    expect(Effect.runSync(parseCommand(['merge', 'mac.json', '--local', '--html', '--since', '30d']))).toMatchObject({
+      _tag: 'Merge',
+      args: { files: ['mac.json'], local: true, format: 'html' },
+    });
+  });
+
+  test('parses machine commands', () => {
+    expect(Effect.runSync(parseCommand(['machine']))).toEqual({ _tag: 'Machine' });
+    expect(Effect.runSync(parseCommand(['machine', 'set-label', 'MacBook Pro']))).toEqual({
+      _tag: 'MachineSetLabel',
+      label: 'MacBook Pro',
+    });
+  });
+
+  test('parses project source discovery', () => {
+    expect(Effect.runSync(parseCommand(['projects', 'list', '--paths', 'mac.json', '--local']))).toEqual({
+      _tag: 'ProjectsList',
+      args: { files: ['mac.json'], local: true, paths: true },
+    });
+  });
+
+  test('parses setup web command', () => {
+    expect(Effect.runSync(parseCommand(['setup', '--local', '--port', '8080']))).toEqual({
+      _tag: 'Setup',
+      args: { files: [], local: true, port: 8080 },
+    });
+  });
+
+  test('parses serve command with defaults', () => {
+    expect(Effect.runSync(parseCommand(['serve']))).toEqual({
+      _tag: 'Serve',
+      args: { host: 'localhost', port: 3847, token: null, harness: null, cursor: true },
+    });
+  });
+
+  test('parses serve command with LAN options', () => {
+    expect(Effect.runSync(parseCommand(['serve', '--host', '0.0.0.0', '--port', '9999', '--token', 's3cret']))).toEqual({
+      _tag: 'Serve',
+      args: { host: '0.0.0.0', port: 9999, token: 's3cret', harness: null, cursor: true },
+    });
+  });
+
+  test('serve rejects LAN binding without token', () => {
+    const error = Effect.runSync(Effect.flip(parseCommand(['serve', '--host', '0.0.0.0'])));
+    expect(error.message).toBe('serve requires --token when binding outside localhost');
+  });
+
+  test('parses merge --remote', () => {
+    expect(Effect.runSync(parseCommand(['merge', '--remote', 'http://mac:3847/snapshot', '--token', 'abc', '--local']))).toMatchObject({
+      _tag: 'Merge',
+      args: { remote: ['http://mac:3847/snapshot'], token: 'abc', local: true },
+    });
+  });
+
+  test('merge rejects no input', () => {
+    const error = Effect.runSync(Effect.flip(parseCommand(['merge'])));
+    expect(error.message).toBe('merge expects files, --remote, or --local');
+  });
 });

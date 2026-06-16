@@ -71,7 +71,9 @@ describe('Usage row report lifecycle', () => {
   });
 
   test('payload format emits the full report payload as JSON for the dev server', () => {
-    const output = renderUsageReport([row('a'), row('b')], args({ format: 'payload', limit: 1 }));
+    const output = renderUsageReport([row('a'), row('b')], args({ format: 'payload', limit: 1 }), {
+      cursor: { commitAttribution: [{ commitHash: 'abc123' }] },
+    });
     const payload = JSON.parse(output);
 
     expect(payload.rows).toHaveLength(2);
@@ -79,6 +81,7 @@ describe('Usage row report lifecycle', () => {
     expect(payload.filters.limit).toBe(1);
     expect(typeof payload.generatedAt).toBe('string');
     expect(payload.analytics.sessionCount).toBe(2);
+    expect(payload.facets.cursor.commitAttribution[0].commitHash).toBe('abc123');
   });
 
   test('limit affects table rows while analytics rows remain complete', () => {

@@ -1,0 +1,336 @@
+#!/usr/bin/env bun
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type { ProjectAliasEntry } from '@ai-usage/core/project-alias';
+import { createUsageSnapshot, mergeUsageSnapshots, parseUsageSnapshot } from '@ai-usage/core/snapshot';
+import type { Row, SourcedRow } from '@ai-usage/core/types';
+import { usageRowTokenTotal } from '@ai-usage/core/usage-row';
+import { collectSelectedHarnessRows, ensureMachineConfig, readAiUsageConfig } from '@ai-usage/local-collectors';
+import { Console, Effect } from 'effect';
+
+interface ProjectSource {
+  project: string;
+  machine: string;
+  machineId: string;
+  harness: string;
+  harnessKey: string;
+  sourcePath: string;
+  sessions: number;
+  tokens: number;
+}
+
+const projectFromRow = (row: Row) =>
+  row.project || path.basename((row as Partial<SourcedRow>).source?.sourcePath ?? '') || '(unknown)';
+
+const collectProjectSources = (rows: Row[]): ProjectSource[] => {
+  const summaries = new Map<string, ProjectSource>();
+  for (const row of rows) {
+    const source = (row as Partial<SourcedRow>).source;
+    const summary: ProjectSource = {
+      project: projectFromRow(row),
+      machine: source?.machineLabel ?? 'Unknown machine',
+      machineId: source?.machineId ?? '',
+      harness: row.harness,
+      harnessKey: source?.harnessKey ?? row.harness.toLowerCase(),
+      sourcePath: source?.sourcePath ?? '',
+      sessions: 0,
+      tokens: 0,
+    };
+    const key = [summary.project, summary.machine, summary.harness, summary.sourcePath].join('|');
+    const current = summaries.get(key) ?? summary;
+    current.sessions++;
+    current.tokens += usageRowTokenTotal(row);
+    summaries.set(key, current);
+  }
+  return [...summaries.values()].sort(
+    (a, b) =>
+      a.project.localeCompare(b.project) || a.machine.localeCompare(b.machine) || a.harness.localeCompare(b.harness),
+  );
+};
+
+const collectAllRows = (snapshotFiles: string[], local: boolean) =>
+  Effect.gen(function* () {
+    const snapshots = [];
+    for (const file of snapshotFiles) {
+      snapshots.push(parseUsageSnapshot(fs.readFileSync(file, 'utf8')));
+    }
+    if (local) {
+      const machine = yield* ensureMachineConfig;
+      const rows = yield* collectSelectedHarnessRows({ harness: null, includeCursor: true, keepSource: true });
+      snapshots.push(createUsageSnapshot({ machine, rows }));
+    }
+    return mergeUsageSnapshots(snapshots).rows;
+  });
+
+const setupHTML = (sources: ProjectSource[], aliases: ProjectAliasEntry[]) => {
+  const sourcesJson = JSON.stringify(sources);
+  const aliasesJson = JSON.stringify(aliases);
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ai-usage setup</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; max-width: 960px; margin: 0 auto; padding: 24px; }
+  h1 { margin-bottom: 16px; font-size: 20px; }
+  h2 { margin: 24px 0 8px; font-size: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #444; white-space: nowrap; }
+  th { font-weight: 600; position: sticky; top: 0; background: Canvas; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .actions { position: sticky; top: 0; background: Canvas; padding: 12px 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button, input { font: inherit; }
+  button { cursor: pointer; padding: 4px 12px; border-radius: 4px; border: 1px solid ButtonText; background: ButtonFace; }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  input { padding: 4px 8px; border-radius: 4px; border: 1px solid #888; }
+  .saved { color: #4caf50; font-weight: 600; }
+  .alias-list { margin-top: 12px; }
+  .alias-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #333; }
+  .alias-name { font-weight: 600; min-width: 120px; }
+  .alias-patterns { color: #999; font-size: 12px; }
+  .alias-delete { cursor: pointer; color: #e57373; border: none; background: none; font-size: 18px; }
+  .row-selected { background: rgba(100, 149, 237, 0.15); }
+  .suggestion { color: #999; font-size: 12px; padding: 4px 8px; background: rgba(255,255,255,0.05); border-radius: 4px; margin-right: 4px; }
+  .suggestion:hover { background: rgba(255,255,255,0.1); cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>ai-usage project setup</h1>
+<div class="actions" id="toolbar">
+  <span id="selected-count">0 selected</span>
+  <label>Alias name: <input id="alias-name" type="text" placeholder="my-project"></label>
+  <button id="merge-btn" disabled>Merge into alias</button>
+  <span id="save-status"></span>
+</div>
+<h2>Sources</h2>
+<div style="overflow-x:auto; max-height:60vh;">
+<table id="sources-table">
+  <thead><tr>
+    <th><input type="checkbox" id="select-all"></th>
+    <th>Project</th><th>Machine</th><th>Harness</th><th class="num">Sessions</th><th class="num">Tokens</th><th>Path</th>
+  </tr></thead>
+  <tbody id="sources-body"></tbody>
+</table>
+</div>
+<h2>Suggestions</h2>
+<div id="suggestions"></div>
+<h2>Current aliases</h2>
+<div id="aliases-list" class="alias-list"></div>
+
+<script>
+const sources = ${sourcesJson};
+const initialAliases = ${aliasesJson};
+let aliases = JSON.parse(JSON.stringify(initialAliases));
+let selected = new Set();
+
+const tbody = document.getElementById('sources-body');
+const nameInput = document.getElementById('alias-name');
+const mergeBtn = document.getElementById('merge-btn');
+const countEl = document.getElementById('selected-count');
+const statusEl = document.getElementById('save-status');
+const sugEl = document.getElementById('suggestions');
+const aliasListEl = document.getElementById('aliases-list');
+const selectAllEl = document.getElementById('select-all');
+
+const fmtNum = n => { if (n >= 1e6) return (n/1e6).toFixed(1)+'M'; if (n >= 1e3) return (n/1e3).toFixed(1)+'K'; return String(n); };
+
+function renderSources() {
+  tbody.innerHTML = '';
+  for (let i = 0; i < sources.length; i++) {
+    const s = sources[i];
+    const tr = document.createElement('tr');
+    if (selected.has(i)) tr.classList.add('row-selected');
+    tr.innerHTML =
+      '<td><input type="checkbox" data-idx="'+i+'" '+(selected.has(i)?'checked':'')+'></td>' +
+      '<td>'+s.project+'</td>' +
+      '<td>'+s.machine+'</td>' +
+      '<td>'+s.harness+'</td>' +
+      '<td class="num">'+fmtNum(s.sessions)+'</td>' +
+      '<td class="num">'+fmtNum(s.tokens)+'</td>' +
+      '<td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">'+(s.sourcePath||'—')+'</td>';
+    tbody.appendChild(tr);
+  }
+  updateCount();
+}
+
+function updateCount() {
+  countEl.textContent = selected.size + ' selected';
+  mergeBtn.disabled = selected.size === 0;
+  selectAllEl.checked = selected.size === sources.length && sources.length > 0;
+}
+
+function effectiveProject(source) {
+  for (const alias of aliases) {
+    for (const pattern of alias.match) {
+      const regex = globToRegex(pattern);
+      if (regex.test(source.sourcePath) || regex.test(source.project)) return alias.name;
+    }
+  }
+  return source.project;
+}
+
+function globToRegex(glob) {
+  const parts = glob.split('*');
+  const escaped = parts.map(p => p.replace(/[^a-zA-Z0-9_/ -]/g, '\\\\$&'));
+  return new RegExp('^' + escaped.join('.*') + '$', 'i');
+}
+
+function renderAliases() {
+  aliasListEl.innerHTML = '';
+  if (!aliases.length) {
+    aliasListEl.textContent = 'No aliases configured.';
+    return;
+  }
+  for (const alias of aliases) {
+    const div = document.createElement('div');
+    div.className = 'alias-item';
+    div.innerHTML =
+      '<span class="alias-name">'+alias.name+'</span>' +
+      '<span class="alias-patterns">'+alias.match.join(', ')+'</span>' +
+      '<button class="alias-delete" data-name="'+alias.name+'" title="Remove alias">&times;</button>';
+    aliasListEl.appendChild(div);
+  }
+}
+
+function renderSuggestions() {
+  const byBasename = new Map();
+  for (let i = 0; i < sources.length; i++) {
+    const base = sources[i].project.toLowerCase().replace(/[-_].*$/, '');
+    if (!byBasename.has(base)) byBasename.set(base, []);
+    byBasename.get(base).push(i);
+  }
+  sugEl.innerHTML = '';
+  for (const [base, idxs] of byBasename) {
+    if (idxs.length < 2) continue;
+    const span = document.createElement('span');
+    span.className = 'suggestion';
+    span.textContent = base + ' (' + idxs.length + ' sources)';
+    span.onclick = () => {
+      for (const idx of idxs) selected.add(idx);
+      nameInput.value = base;
+      renderSources();
+    };
+    sugEl.appendChild(span);
+  }
+  if (!sugEl.children.length) sugEl.textContent = 'No obvious suggestions found. Select sources manually.';
+}
+
+tbody.addEventListener('change', (e) => {
+  const cb = e.target;
+  if (!cb.dataset.idx) return;
+  const idx = Number(cb.dataset.idx);
+  if (cb.checked) selected.add(idx); else selected.delete(idx);
+  renderSources();
+});
+
+selectAllEl.addEventListener('change', () => {
+  if (selectAllEl.checked) { for (let i = 0; i < sources.length; i++) selected.add(i); }
+  else selected.clear();
+  renderSources();
+});
+
+mergeBtn.addEventListener('click', async () => {
+  const name = nameInput.value.trim();
+  if (!name) { alert('Enter an alias name'); return; }
+  const matchedSources = [...selected].map(i => sources[i]);
+  const paths = [...new Set(matchedSources.map(s => s.sourcePath).filter(Boolean))];
+  const basenames = [...new Set(matchedSources.map(s => s.project))];
+  const match = [...paths, ...basenames.map(b => '*/' + b)];
+  const existing = aliases.find(a => a.name === name);
+  if (existing) { existing.match = [...new Set([...existing.match, ...match])]; }
+  else aliases.push({ name, match });
+  nameInput.value = '';
+  selected.clear();
+  await saveAliases();
+  renderSources();
+  renderAliases();
+  renderSuggestions();
+});
+
+aliasListEl.addEventListener('click', async (e) => {
+  if (!e.target.classList.contains('alias-delete')) return;
+  const name = e.target.dataset.name;
+  aliases = aliases.filter(a => a.name !== name);
+  await saveAliases();
+  renderAliases();
+  renderSuggestions();
+});
+
+async function saveAliases() {
+  statusEl.textContent = 'Saving…';
+  statusEl.className = '';
+  try {
+    const res = await fetch('/api/aliases', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(aliases) });
+    if (!res.ok) throw new Error(res.statusText);
+    statusEl.textContent = 'Saved';
+    statusEl.className = 'saved';
+  } catch (err) {
+    statusEl.textContent = 'Error: ' + err.message;
+  }
+  setTimeout(() => { statusEl.textContent = ''; statusEl.className = ''; }, 2000);
+}
+
+renderSources();
+renderAliases();
+renderSuggestions();
+</script>
+</body>
+</html>`;
+};
+
+export const runSetupServer = (snapshotFiles: string[], local: boolean, port: number) =>
+  Effect.gen(function* () {
+    const rows = yield* collectAllRows(snapshotFiles, local);
+    const config = yield* readAiUsageConfig;
+    const sources = collectProjectSources(rows);
+    const aliases = config.projectAliases ?? [];
+    const html = setupHTML(sources, aliases);
+    const configDir = path.join(os.homedir(), '.config', 'ai-usage');
+    const configPath = path.join(configDir, 'config.json');
+
+    const writeAliasesSync = (newAliases: ProjectAliasEntry[]) => {
+      const newConfig = { ...config, projectAliases: newAliases };
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(configPath, `${JSON.stringify(newConfig, null, 2)}\n`, 'utf8');
+      Object.assign(config, newConfig);
+    };
+
+    const server = Bun.serve({
+      port,
+      async fetch(req) {
+        const url = new URL(req.url);
+
+        if (url.pathname === '/' || url.pathname === '/index.html') {
+          return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+        }
+
+        if (url.pathname === '/api/aliases' && req.method === 'PUT') {
+          try {
+            const body = (await req.json()) as ProjectAliasEntry[];
+            writeAliasesSync(body);
+            return new Response('ok', { status: 200 });
+          } catch (err) {
+            return new Response(JSON.stringify({ error: String(err) }), {
+              status: 400,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+        }
+
+        if (url.pathname === '/api/sources') {
+          return new Response(JSON.stringify(sources), { headers: { 'content-type': 'application/json' } });
+        }
+
+        return new Response('not found', { status: 404 });
+      },
+    });
+
+    yield* Console.log(`Setup UI: http://localhost:${server.port}`);
+    yield* Console.log('Press Ctrl+C to stop.');
+    yield* Effect.never;
+  });

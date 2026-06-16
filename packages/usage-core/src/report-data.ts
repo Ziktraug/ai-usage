@@ -1,5 +1,5 @@
 import { type AnalyticsSummary, calculateAnalytics } from './analytics';
-import type { Row } from './types';
+import type { Row, SourcedRow, UsageRowSource } from './types';
 import { usageRowActiveDate, usageRowLineDelta, usageRowSessionLabel, usageRowTokenTotal } from './usage-row';
 
 export type SortKey = 'date' | 'tokens' | 'cost';
@@ -26,6 +26,7 @@ export interface SerializedRow extends Omit<Row, 'date' | 'endDate'> {
   tokenTotal: number;
   freshTokens: number;
   lineDelta: number | null;
+  source?: UsageRowSource;
 }
 
 export interface UsageReportPayload {
@@ -41,6 +42,7 @@ export interface UsageReportPayload {
   tableRows: SerializedRow[];
   omittedRows: number;
   analytics: AnalyticsSummary;
+  facets?: Record<string, unknown>;
 }
 
 export const compareUsageRows = (sort: SortKey) =>
@@ -72,6 +74,7 @@ export const prepareUsageReport = (rows: Row[], options: ReportOptions): Prepare
 export const serializeUsageRow = (row: Row): SerializedRow => {
   const lineDelta = usageRowLineDelta(row);
   const tokenTotal = usageRowTokenTotal(row);
+  const source = (row as Partial<SourcedRow>).source;
   return {
     ...row,
     date: row.date?.toISOString() ?? null,
@@ -81,6 +84,7 @@ export const serializeUsageRow = (row: Row): SerializedRow => {
     tokenTotal,
     freshTokens: row.tokIn + row.tokOut + row.tokCw,
     lineDelta: lineDelta.present ? lineDelta.total : null,
+    ...(source ? { source } : {}),
   };
 };
 
@@ -88,6 +92,7 @@ export const createUsageReportPayload = (
   report: PreparedUsageReport,
   options: ReportOptions,
   generatedAt = new Date(),
+  facets?: Record<string, unknown>,
 ): UsageReportPayload => ({
   generatedAt: generatedAt.toISOString(),
   filters: {
@@ -101,4 +106,5 @@ export const createUsageReportPayload = (
   tableRows: report.tableRows.map(serializeUsageRow),
   omittedRows: report.omittedRows,
   analytics: calculateAnalytics(report.rows, generatedAt.getTime()),
+  ...(facets && Object.keys(facets).length ? { facets } : {}),
 });

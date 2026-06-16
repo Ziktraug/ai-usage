@@ -1,9 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  dashboardSearchDefaultsFor,
-  sortingStateFromSearch,
-  validateDashboardSearch,
-} from './dashboard-search';
+import { dashboardSearchDefaultsFor, sortingStateFromSearch, validateDashboardSearch } from './dashboard-search';
 
 describe('dashboard search params', () => {
   test('fills defaults when params are absent', () => {

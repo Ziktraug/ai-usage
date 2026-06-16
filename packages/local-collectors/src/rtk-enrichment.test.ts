@@ -10,7 +10,7 @@ import {
 } from './rtk-enrichment';
 import { TestMemoryStorage } from './test-memory-storage';
 
-const RTK_DB = 'Library/Application Support/rtk/history.db';
+const RTK_DB = '.local/share/rtk/history.db';
 
 const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, storage: TestMemoryStorage) =>
   Effect.runSync(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));

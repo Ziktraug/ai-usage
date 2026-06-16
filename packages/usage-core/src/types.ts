@@ -1,5 +1,13 @@
 export type Rates = { in: number; out: number; cr: number; cw: number };
 
+export interface UsageRowSource {
+  harnessKey: string;
+  sourceSessionId: string | null;
+  sourcePath?: string | null;
+  machineId?: string;
+  machineLabel?: string;
+}
+
 export interface Row {
   date: Date | null;
   endDate: Date | null;
@@ -29,3 +37,7 @@ export interface Row {
   partial?: boolean;
   usageUnavailable?: boolean;
 }
+
+export type SourcedRow = Row & {
+  source: UsageRowSource;
+};

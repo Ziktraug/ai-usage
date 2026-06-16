@@ -1,15 +1,13 @@
 import path from 'node:path';
-import type { Row } from '@ai-usage/core/types';
+import type { Row, UsageRowSource } from '@ai-usage/core/types';
 import { Effect } from 'effect';
 import type { LocalHistoryError } from './errors';
-import {
-  historyPath,
-  LocalHistoryStorage,
-  type LocalHistoryStorage as LocalHistoryStorageService,
-} from './local-history';
+import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
+import { resolvePaths } from './platform-paths';
 
 export type CollectorRow = Row & {
   readonly projectPath?: string | null;
+  readonly source?: UsageRowSource;
 };
 
 type RtkCommandRow = {
@@ -35,7 +33,20 @@ const MATCH_PADDING_MS = 2 * 60_000;
 export const withProjectPath = (row: Row, projectPath: string | null | undefined): CollectorRow =>
   projectPath ? { ...row, projectPath } : row;
 
+export const withSource = (row: CollectorRow, source: UsageRowSource): CollectorRow => ({
+  ...row,
+  source: {
+    ...source,
+    ...(row.projectPath && source.sourcePath === undefined ? { sourcePath: row.projectPath } : {}),
+  },
+});
+
 export const stripCollectorMetadata = (row: CollectorRow): Row => {
+  const { projectPath: _projectPath, source: _source, ...publicRow } = row;
+  return publicRow;
+};
+
+export const stripProjectPath = (row: CollectorRow): Row => {
   const { projectPath: _projectPath, ...publicRow } = row;
   return publicRow;
 };
@@ -90,7 +101,8 @@ export const enrichCollectorRowsWithRtkSavings = (
   Effect.gen(function* () {
     if (!rows.length) return rows;
     const storage = yield* LocalHistoryStorage;
-    const dbPath = historyPath(storage, 'Library', 'Application Support', 'rtk', 'history.db');
+    const paths = resolvePaths(storage);
+    const dbPath = paths.rtk.historyDb;
     if (!(yield* storage.exists(dbPath).pipe(Effect.catchAll(() => Effect.succeed(false))))) return rows;
 
     const candidates = candidatesForRows(rows);

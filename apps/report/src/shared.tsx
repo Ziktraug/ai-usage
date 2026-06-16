@@ -59,6 +59,7 @@ export type DashboardRow = SerializedRow & {
   searchText: string;
   sortDate: number;
   sortHarness: string;
+  sortMachine: string;
   sortModel: string;
   sortProject: string;
   sortProvider: string;
@@ -80,6 +81,7 @@ export const enrichReportRow = (row: SerializedRow): DashboardRow => {
   const modelKey = normalizeModelKey(row.model);
   const projectKey = row.project || '(unknown)';
   const providerDisplay = providerLabel(row.provider);
+  const machineLabel = row.source?.machineLabel ?? '';
 
   return {
     ...row,
@@ -89,9 +91,10 @@ export const enrichReportRow = (row: SerializedRow): DashboardRow => {
     providerDisplay,
     rowId: buildRowId(row),
     searchText:
-      `${row.sessionLabel} ${row.project} ${row.model} ${row.provider} ${providerDisplay} ${row.harness}`.toLowerCase(),
+      `${row.sessionLabel} ${row.project} ${row.model} ${row.provider} ${providerDisplay} ${row.harness} ${machineLabel}`.toLowerCase(),
     sortDate: activeTime ?? 0,
     sortHarness: row.harness.toLowerCase(),
+    sortMachine: machineLabel.toLowerCase(),
     sortModel: modelKey.toLowerCase(),
     sortProject: projectKey.toLowerCase(),
     sortProvider: providerDisplay.toLowerCase(),
