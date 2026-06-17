@@ -9,6 +9,7 @@ import {
   segmentBarPart,
   segmentBarTrack,
   tokenSegmentClasses,
+  unavailableCell,
 } from '@ai-usage/design-system';
 import { cx } from '@ai-usage/design-system/css';
 
@@ -36,6 +37,7 @@ export const fmtCompact = (n: number) => {
   return fmtNum(n);
 };
 export const UNKNOWN_PRICE_HINT = 'No pricing data for this model';
+export const USAGE_UNAVAILABLE_HINT = 'Session found in prompt history; detailed local token counters are missing';
 export const fmtDate = (value: string | null) => (value ? dateTimeFormatter.format(new Date(value)) : '—');
 export const fmtDateOnly = (value: string | Date | null) =>
   value ? dateOnlyFormatter.format(value instanceof Date ? value : new Date(value)) : '—';
@@ -195,6 +197,12 @@ export const buildReportSummary = (rows: DashboardRow[], acceptsRow: (row: Dashb
 };
 
 export type BarSegment = { label: string; value: number; class: string; title?: string };
+
+export const UsageUnavailableCell = () => (
+  <span class={unavailableCell} title={USAGE_UNAVAILABLE_HINT}>
+    n/a
+  </span>
+);
 
 // Proportional horizontal bar: token anatomy in the drawer and the overview.
 export const SegmentBar = (props: { segments: BarSegment[]; ariaLabel?: string }) => {
