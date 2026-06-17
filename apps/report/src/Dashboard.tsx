@@ -52,15 +52,9 @@ import {
   groupValue,
   header,
   headerTop,
-  highlightMark,
   inlineFieldLabel,
   meta,
-  metricDelta,
-  metricDeltaArrow,
   metricGrid,
-  metricLabel,
-  metricTile,
-  metricValue,
   modelCell,
   monthGridline,
   muted,
@@ -102,7 +96,6 @@ import {
   tabsList,
   tabsRoot,
   tabTrigger,
-  themeToggleButton,
   timeAxis,
   timeAxisTick,
   timeBucket,
@@ -149,6 +142,7 @@ import {
   type VisibilityState,
 } from '@tanstack/solid-table';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
+import { type Metric, type MetricDelta, MetricTile } from './dashboard-metrics';
 import {
   type DashboardSearch,
   dashboardSearchDefaultsFor,
@@ -160,6 +154,7 @@ import {
   type SessionColumnId,
   sortingStateFromSearch,
 } from './dashboard-search';
+import { ThemeToggle } from './dashboard-theme';
 import {
   clampNumber,
   DAY_MS,
@@ -177,6 +172,7 @@ import {
   toDateInputValue,
 } from './date-range';
 import { createDateRangeController, type DateRangeController } from './date-range-controller';
+import { HighlightedText } from './highlighted-text';
 import { Overview } from './Overview';
 import {
   type CursorCommitAttributionFacet,
@@ -227,46 +223,6 @@ declare module '@tanstack/solid-table' {
 const initialPayload = readReportPayload();
 const REFRESH_INTERVAL_MS = 60_000;
 
-// Marks the filter query inside session titles so a match explains itself.
-const HighlightedText = (props: { text: string; query: string }) => {
-  const segments = createMemo(() => {
-    const query = props.query.trim().toLowerCase();
-    if (!query) return null;
-    const lower = props.text.toLowerCase();
-    if (!lower.includes(query)) return null;
-    const parts: { match: boolean; text: string }[] = [];
-    let index = 0;
-    while (index < props.text.length) {
-      const found = lower.indexOf(query, index);
-      if (found === -1) {
-        parts.push({ match: false, text: props.text.slice(index) });
-        break;
-      }
-      if (found > index) parts.push({ match: false, text: props.text.slice(index, found) });
-      parts.push({ match: true, text: props.text.slice(found, found + query.length) });
-      index = found + query.length;
-    }
-    return parts;
-  });
-
-  return (
-    <Show when={segments()} fallback={props.text}>
-      {(parts) => (
-        <For each={parts()}>{(part) => (part.match ? <mark class={highlightMark}>{part.text}</mark> : part.text)}</For>
-      )}
-    </Show>
-  );
-};
-
-type MetricDelta = { pct: number; hint: string };
-
-type Metric = {
-  label: string;
-  value: string;
-  hint?: string;
-  delta?: MetricDelta | null;
-};
-
 type RangeDragPointerEvent = PointerEvent & { currentTarget: HTMLButtonElement };
 type ProjectGroup = {
   key: string;
@@ -284,111 +240,6 @@ type MutableAnalyticsGroup = AnalyticsGroup & { costs: number[] };
 
 const applyTableUpdate = <T,>(updater: Updater<T>, current: T) =>
   typeof updater === 'function' ? (updater as (old: T) => T)(current) : updater;
-
-// Past ~4× the percentage stops being readable ("▲ 4632%"); switch to the
-// multiplication factor instead.
-const fmtDeltaPct = (pct: number) => {
-  if (pct >= 400) {
-    const factor = pct / 100 + 1;
-    return `×${factor >= 10 ? Math.round(factor) : factor.toFixed(1)}`;
-  }
-  return fmtPct(Math.abs(pct));
-};
-
-// Period deltas read as context, not judgement: cost going up is not "bad",
-// so the arrow stays in the accent and the number in muted ink.
-const MetricTile = (props: Metric) => (
-  <div class={metricTile} title={props.hint}>
-    <div class={metricLabel}>{props.label}</div>
-    <div>
-      <div class={metricValue}>{props.value}</div>
-      <Show when={props.delta}>
-        {(delta) => (
-          <div class={metricDelta} title={delta().hint}>
-            <span class={metricDeltaArrow} aria-hidden="true">
-              {delta().pct >= 0 ? '▲' : '▼'}
-            </span>{' '}
-            {fmtDeltaPct(delta().pct)}
-          </div>
-        )}
-      </Show>
-    </div>
-  </div>
-);
-
-const THEME_STORAGE_KEY = 'ai-usage-theme';
-const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
-
-const storedTheme = (): 'light' | 'dark' | null => {
-  try {
-    const value = localStorage.getItem(THEME_STORAGE_KEY);
-    return value === 'light' || value === 'dark' ? value : null;
-  } catch {
-    return null;
-  }
-};
-
-const SunIcon = () => (
-  <svg
-    width="15"
-    height="15"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="2"
-    stroke-linecap="round"
-    aria-hidden="true"
-  >
-    <circle cx="12" cy="12" r="4.4" />
-    <path d="M12 2.2v2.6M12 19.2v2.6M21.8 12h-2.6M4.8 12H2.2M18.9 5.1l-1.8 1.8M6.9 17.1l-1.8 1.8M18.9 18.9l-1.8-1.8M6.9 6.9 5.1 5.1" />
-  </svg>
-);
-
-const MoonIcon = () => (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-    <path d="M20.6 14.4A8.7 8.7 0 0 1 9.6 3.4a8.7 8.7 0 1 0 11 11Z" />
-  </svg>
-);
-
-// Two-state toggle: follow the OS by default, pin the opposite scheme on
-// click. A pin that lands back on the OS value clears to auto, so the report
-// keeps tracking system changes unless the user actually diverges from them.
-const ThemeToggle = () => {
-  const [theme, setTheme] = createSignal<'light' | 'dark'>(storedTheme() ?? (prefersDark.matches ? 'dark' : 'light'));
-  const handleSystemChange = (event: MediaQueryListEvent) => {
-    if (!storedTheme()) setTheme(event.matches ? 'dark' : 'light');
-  };
-  prefersDark.addEventListener('change', handleSystemChange);
-  onCleanup(() => prefersDark.removeEventListener('change', handleSystemChange));
-
-  const toggle = () => {
-    const next = theme() === 'dark' ? 'light' : 'dark';
-    const followsSystem = next === (prefersDark.matches ? 'dark' : 'light');
-    setTheme(next);
-    try {
-      if (followsSystem) localStorage.removeItem(THEME_STORAGE_KEY);
-      else localStorage.setItem(THEME_STORAGE_KEY, next);
-    } catch {
-      // Without storage the pin still applies for the lifetime of the page.
-    }
-    if (followsSystem) delete document.documentElement.dataset.theme;
-    else document.documentElement.dataset.theme = next;
-    document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', followsSystem ? 'light dark' : next);
-  };
-
-  return (
-    <button
-      class={themeToggleButton}
-      type="button"
-      onClick={toggle}
-      aria-label={theme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-    >
-      <Show when={theme() === 'dark'} fallback={<SunIcon />}>
-        <MoonIcon />
-      </Show>
-    </button>
-  );
-};
 
 const fieldValueForRow = (row: DashboardRow, key: FieldFilterKey) => {
   if (key === 'provider') return row.providerDisplay;
