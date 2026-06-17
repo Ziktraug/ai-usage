@@ -1,4 +1,5 @@
 import { css } from '@ai-usage/design-system/css';
+import { Show } from 'solid-js';
 
 export const metricGrid = css({
   display: 'grid',
@@ -46,3 +47,29 @@ export const metricDeltaArrow = css({
   color: 'accent',
   fontSize: '9px',
 });
+
+export type MetricTileProps = {
+  label: string;
+  value: string;
+  hint?: string;
+  delta?: { label: string; hint?: string; positive?: boolean } | null;
+};
+
+export const MetricTile = (props: MetricTileProps) => (
+  <div class={metricTile} title={props.hint}>
+    <div class={metricLabel}>{props.label}</div>
+    <div>
+      <div class={metricValue}>{props.value}</div>
+      <Show when={props.delta}>
+        {(delta) => (
+          <div class={metricDelta} title={delta().hint}>
+            <span class={metricDeltaArrow} aria-hidden="true">
+              {delta().positive === false ? '▼' : '▲'}
+            </span>{' '}
+            {delta().label}
+          </div>
+        )}
+      </Show>
+    </div>
+  </div>
+);
