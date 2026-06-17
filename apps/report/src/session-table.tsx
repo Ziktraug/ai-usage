@@ -1,3 +1,4 @@
+import { cx } from '@ai-usage/design-system/css';
 import {
   columnToggle,
   columnToggleInput,
@@ -14,8 +15,7 @@ import {
   table,
   tableControls,
   tableWrap,
-} from '@ai-usage/design-system';
-import { cx } from '@ai-usage/design-system/css';
+} from '@ai-usage/design-system/report';
 import { Popover } from '@ark-ui/solid/popover';
 import type { Column, OnChangeFn, SortingState, VisibilityState } from '@tanstack/solid-table';
 import { createSolidTable, flexRender, getCoreRowModel, getSortedRowModel } from '@tanstack/solid-table';

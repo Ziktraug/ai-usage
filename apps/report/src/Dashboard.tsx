@@ -26,7 +26,7 @@ import {
   unavailablePanel,
   unavailableText,
   unavailableTitle,
-} from '@ai-usage/design-system';
+} from '@ai-usage/design-system/report';
 import { Tabs } from '@ark-ui/solid/tabs';
 import { useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';

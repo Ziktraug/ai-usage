@@ -1,3 +1,4 @@
+import { cx } from '@ai-usage/design-system/css';
 import {
   empty,
   groupKeyButton,
@@ -7,8 +8,7 @@ import {
   strongCell,
   table,
   tableWrap,
-} from '@ai-usage/design-system';
-import { cx } from '@ai-usage/design-system/css';
+} from '@ai-usage/design-system/report';
 import { For, Show } from 'solid-js';
 import type { ProjectGroup } from './dashboard-analytics';
 import { fmtCompact, fmtMoney, fmtNum, UNKNOWN_PRICE_HINT } from './shared';

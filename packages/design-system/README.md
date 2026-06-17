@@ -1,0 +1,49 @@
+# @ai-usage/design-system
+
+Shared Solid/Panda design primitives for ai-usage apps.
+
+## Public API
+
+Use the root export for reusable primitives that are not tied to the report app:
+
+```ts
+import { HarnessBadge, MetricTile, SegmentBar, aiUsagePreset } from '@ai-usage/design-system';
+```
+
+Use the report namespace for styles and slots that encode the current report UI:
+
+```ts
+import { page, shell, tableWrap } from '@ai-usage/design-system/report';
+```
+
+This keeps app-specific vocabulary out of the default API while still allowing
+the report app to share its extracted styles.
+
+## Panda consumer contract
+
+This package is source-first inside the monorepo. A consuming app must run Panda
+codegen/cssgen before typechecking/building and must include the design-system
+source in its Panda scan:
+
+```ts
+import { aiUsagePreset } from '@ai-usage/design-system/preset';
+import { defineConfig } from '@pandacss/dev';
+
+export default defineConfig({
+  include: ['./src/**/*.{ts,tsx}', '../../packages/design-system/src/**/*.{ts,tsx}'],
+  importMap: '@ai-usage/design-system',
+  jsxFramework: 'solid',
+  outdir: 'styled-system',
+  presets: ['@pandacss/preset-panda', aiUsagePreset],
+});
+```
+
+The package exports `@ai-usage/design-system/css` and
+`@ai-usage/design-system/styles.css` from generated Panda output. Those files
+exist after `bun run build` or `bun run check` in this package. Workspace apps
+should depend on this package's `build` task before their own check/build task.
+
+## Dependency contract
+
+Consumers provide `solid-js`. The design-system package keeps Solid as a peer
+dependency because it exports Solid JSX components such as `HarnessBadge`.

@@ -1,4 +1,4 @@
-import { activeFilterButton } from '@ai-usage/design-system';
+import { activeFilterButton } from '@ai-usage/design-system/report';
 import type { FieldFilterKey, FieldFilters } from './dashboard-search';
 import type { DashboardRow } from './shared';
 

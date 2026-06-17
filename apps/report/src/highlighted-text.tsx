@@ -1,4 +1,4 @@
-import { highlightMark } from '@ai-usage/design-system';
+import { highlightMark } from '@ai-usage/design-system/report';
 import { createMemo, For, Show } from 'solid-js';
 
 // Marks the filter query inside session titles so a match explains itself.

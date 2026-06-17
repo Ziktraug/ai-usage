@@ -1,4 +1,5 @@
 import type { AnalyticsGroup } from '@ai-usage/core/analytics';
+import { cx } from '@ai-usage/design-system/css';
 import {
   barFill,
   barTrack,
@@ -14,8 +15,7 @@ import {
   groupValue,
   right,
   strongCell,
-} from '@ai-usage/design-system';
-import { cx } from '@ai-usage/design-system/css';
+} from '@ai-usage/design-system/report';
 import { createMemo, For, Show } from 'solid-js';
 import {
   accentFill,

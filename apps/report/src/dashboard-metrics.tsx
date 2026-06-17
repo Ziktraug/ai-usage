@@ -1,4 +1,4 @@
-import { metricDelta, metricDeltaArrow, metricLabel, metricTile, metricValue } from '@ai-usage/design-system';
+import { metricDelta, metricDeltaArrow, metricLabel, metricTile, metricValue } from '@ai-usage/design-system/report';
 import { Show } from 'solid-js';
 import { fmtPct } from './shared';
 

@@ -1,3 +1,4 @@
+import { cx } from '@ai-usage/design-system/css';
 import {
   detailItem,
   detailLabel,
@@ -18,8 +19,7 @@ import {
   drawerTop,
   ghostButton,
   muted,
-} from '@ai-usage/design-system';
-import { cx } from '@ai-usage/design-system/css';
+} from '@ai-usage/design-system/report';
 import { createMemo, For, onCleanup, onMount, Show } from 'solid-js';
 import type { FieldFilterKey } from './dashboard-search';
 import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from './dashboard-sort';

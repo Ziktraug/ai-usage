@@ -1,3 +1,4 @@
+import { cx } from '@ai-usage/design-system/css';
 import {
   accentFill,
   chartLegend,
@@ -25,8 +26,7 @@ import {
   timeSliderRoot,
   timeSliderThumb,
   timeSliderTrack,
-} from '@ai-usage/design-system';
-import { cx } from '@ai-usage/design-system/css';
+} from '@ai-usage/design-system/report';
 import { Slider } from '@ark-ui/solid/slider';
 import { createEffect, createMemo, createSignal, For, Show, untrack } from 'solid-js';
 import {

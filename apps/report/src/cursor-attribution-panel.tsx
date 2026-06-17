@@ -1,4 +1,4 @@
-import { empty, meta, metricGrid, numCell, right, strongCell, table, tableWrap } from '@ai-usage/design-system';
+import { empty, meta, metricGrid, numCell, right, strongCell, table, tableWrap } from '@ai-usage/design-system/report';
 import { createMemo, For, Show } from 'solid-js';
 import { MetricTile } from './dashboard-metrics';
 import type { CursorCommitAttributionFacet } from './report-data';
