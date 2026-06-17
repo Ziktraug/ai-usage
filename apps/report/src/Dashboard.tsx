@@ -5,38 +5,15 @@ import {
   barFill,
   barTrack,
   chartLegend,
-  columnToggle,
-  columnToggleInput,
-  columnToggleText,
   commandButton,
-  dateCell,
   dateEditRow,
   dateFieldGroup,
   dateInput,
   demoBadge,
-  detailItem,
-  detailLabel,
-  detailValue,
-  drawer,
-  drawerActions,
-  drawerBody,
-  drawerClose,
-  drawerCompare,
-  drawerGrid,
-  drawerLegend,
-  drawerLegendItem,
-  drawerLegendSwatch,
-  drawerLegendValue,
-  drawerNav,
-  drawerPosition,
-  drawerTitle,
-  drawerTop,
   empty,
-  emptyActions,
   eyebrow,
   eyebrowRow,
   filterSummary,
-  filterTextButton,
   ghostButton,
   groupCount,
   groupHeader,
@@ -53,14 +30,9 @@ import {
   inlineFieldLabel,
   meta,
   metricGrid,
-  modelCell,
   monthGridline,
-  muted,
   numCell,
   page,
-  popoverContent,
-  popoverGrid,
-  popoverHeader,
   presetButton,
   presetGroup,
   projectTable,
@@ -80,16 +52,10 @@ import {
   searchInput,
   section,
   selectInput,
-  sessionCell,
-  sessionsTable,
-  sessionTitleClamp,
   shell,
-  sortArrow,
-  sortButton,
   strongCell,
   summaryPill,
   table,
-  tableControls,
   tableWrap,
   tabsList,
   tabsRoot,
@@ -120,25 +86,13 @@ import {
   unavailableTitle,
 } from '@ai-usage/design-system';
 import { cx } from '@ai-usage/design-system/css';
-import { Popover } from '@ark-ui/solid/popover';
 import { Slider } from '@ark-ui/solid/slider';
 import { Tabs } from '@ark-ui/solid/tabs';
 import { Tooltip } from '@ark-ui/solid/tooltip';
 import { useNavigate, useSearch } from '@tanstack/solid-router';
-import {
-  type Column,
-  type ColumnDef,
-  createSolidTable,
-  flexRender,
-  getCoreRowModel,
-  getSortedRowModel,
-  type OnChangeFn,
-  type RowData,
-  type SortingState,
-  type Updater,
-  type VisibilityState,
-} from '@tanstack/solid-table';
+import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
+import { buildAnalyticsGroups, buildProjectGroups, type ProjectGroup } from './dashboard-analytics';
 import { downloadCSV, downloadHTML } from './dashboard-export';
 import { createFilterSnapshot, FilterPill, fieldFilterLabels, matchesFilterSnapshot } from './dashboard-filters';
 import { type Metric, type MetricDelta, MetricTile } from './dashboard-metrics';
@@ -148,19 +102,9 @@ import {
   type FieldFilterKey,
   type FieldFilters,
   isDashboardTab,
-  isSessionColumnId,
-  type SearchableColumnDiffId,
-  type SessionColumnId,
   sortingStateFromSearch,
 } from './dashboard-search';
-import {
-  compareRows,
-  lineDeltaLabel,
-  rtkSavedLabel,
-  rtkSavedTitle,
-  rtkSavingsPct,
-  sortValueForRow,
-} from './dashboard-sort';
+import { compareRows } from './dashboard-sort';
 import { ThemeToggle } from './dashboard-theme';
 import {
   clampNumber,
@@ -179,7 +123,6 @@ import {
   toDateInputValue,
 } from './date-range';
 import { createDateRangeController, type DateRangeController } from './date-range-controller';
-import { HighlightedText } from './highlighted-text';
 import { Overview } from './Overview';
 import {
   type CursorCommitAttributionFacet,
@@ -188,6 +131,9 @@ import {
   isDemoReportPayload,
   readReportPayload,
 } from './report-data';
+import { columnDiffFromVisibility, columnVisibilityFromDiff, sortFromSortingState } from './session-columns';
+import { SessionDrawer } from './session-drawer';
+import { SessionTable } from './session-table';
 import {
   accentFill,
   buildReportSummary,
@@ -196,944 +142,23 @@ import {
   fmtCompact,
   fmtDate,
   fmtDateOnly,
-  fmtDuration,
   fmtMoney,
   fmtNum,
   fmtPct,
   HarnessBadge,
   harnessFillFor,
-  median,
   rowKey,
-  SegmentBar,
-  tokenSegmentClasses,
   UNKNOWN_PRICE_HINT,
   USAGE_UNAVAILABLE_HINT,
   UsageUnavailableCell,
 } from './shared';
 import { applyTableUpdate } from './table-utils';
 
-declare module '@tanstack/solid-table' {
-  interface ColumnMeta<TData extends RowData, TValue> {
-    cellClass?: string;
-    defaultVisible?: boolean;
-    headerClass?: string;
-    label: string;
-    title?: string;
-    widthPx: number;
-  }
-
-  interface TableMeta<TData extends RowData> {
-    onFieldFilter?: (key: FieldFilterKey, value: string) => void;
-    onHarnessFilter?: (value: string) => void;
-    searchQuery?: string;
-  }
-}
-
 const initialPayload = readReportPayload();
 const REFRESH_INTERVAL_MS = 60_000;
-
-type RangeDragPointerEvent = PointerEvent & { currentTarget: HTMLButtonElement };
-type ProjectGroup = {
-  key: string;
-  sessions: number;
-  fresh: number;
-  cache: number;
-  cost: number;
-  priced: number;
-  turns: number;
-  tools: number;
-  linesAdded: number;
-  linesDeleted: number;
-};
-type MutableAnalyticsGroup = AnalyticsGroup & { costs: number[] };
-
-type SessionColumnDef = ColumnDef<DashboardRow> & { id: SessionColumnId };
-
-const tokenCell = (row: DashboardRow, value: number) =>
-  row.usageUnavailable ? <UsageUnavailableCell /> : fmtCompact(value);
-const countCell = (row: DashboardRow, value: number) =>
-  row.usageUnavailable ? <UsageUnavailableCell /> : fmtNum(value);
-
-const sessionColumns: SessionColumnDef[] = [
-  {
-    id: 'date',
-    header: 'Date',
-    accessorFn: (row) => sortValueForRow(row, 'date'),
-    cell: (info) => fmtDate(info.row.original.activeDate),
-    sortDescFirst: true,
-    meta: { label: 'Date', widthPx: 104, cellClass: dateCell },
-  },
-  {
-    id: 'harness',
-    header: 'Harness',
-    accessorFn: (row) => sortValueForRow(row, 'harness'),
-    cell: (info) => (
-      <HarnessBadge
-        name={info.row.original.harness}
-        onClick={() => info.table.options.meta?.onHarnessFilter?.(info.row.original.harness)}
-      />
-    ),
-    meta: { label: 'Harness', widthPx: 100 },
-  },
-  {
-    id: 'machine',
-    header: 'Machine',
-    accessorFn: (row) => sortValueForRow(row, 'machine'),
-    cell: (info) => info.row.original.source?.machineLabel || '—',
-    meta: { label: 'Machine', widthPx: 120 },
-  },
-  {
-    id: 'provider',
-    header: 'Provider',
-    accessorFn: (row) => sortValueForRow(row, 'provider'),
-    cell: (info) => {
-      const row = info.row.original;
-      const label = row.providerDisplay;
-      return (
-        <button
-          class={filterTextButton}
-          type="button"
-          title={`Filter by ${label}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            info.table.options.meta?.onFieldFilter?.('provider', label);
-          }}
-        >
-          {label}
-        </button>
-      );
-    },
-    meta: { label: 'Provider', widthPx: 124 },
-  },
-  {
-    id: 'model',
-    header: 'Model',
-    accessorFn: (row) => sortValueForRow(row, 'model'),
-    cell: (info) => {
-      const row = info.row.original;
-      return (
-        <button
-          class={filterTextButton}
-          type="button"
-          title={`Filter by ${row.modelKey}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            info.table.options.meta?.onFieldFilter?.('model', row.modelKey);
-          }}
-        >
-          {row.model}
-        </button>
-      );
-    },
-    meta: { label: 'Model', widthPx: 168, cellClass: modelCell },
-  },
-  {
-    id: 'project',
-    header: 'Project',
-    accessorFn: (row) => sortValueForRow(row, 'project'),
-    cell: (info) => {
-      const row = info.row.original;
-      const label = row.projectKey;
-      return (
-        <button
-          class={filterTextButton}
-          type="button"
-          title={`Filter by ${label}`}
-          onClick={(event) => {
-            event.stopPropagation();
-            info.table.options.meta?.onFieldFilter?.('project', label);
-          }}
-        >
-          {row.project || '—'}
-        </button>
-      );
-    },
-    meta: { label: 'Project', widthPx: 120 },
-  },
-  {
-    id: 'tokIn',
-    header: 'Input',
-    accessorFn: (row) => row.tokIn,
-    cell: (info) => tokenCell(info.row.original, info.row.original.tokIn),
-    sortDescFirst: true,
-    meta: { label: 'Input tokens', widthPx: 90, cellClass: numCell, headerClass: right, defaultVisible: false },
-  },
-  {
-    id: 'tokOut',
-    header: 'Output',
-    accessorFn: (row) => row.tokOut,
-    cell: (info) => tokenCell(info.row.original, info.row.original.tokOut),
-    sortDescFirst: true,
-    meta: { label: 'Output tokens', widthPx: 94, cellClass: numCell, headerClass: right, defaultVisible: false },
-  },
-  {
-    id: 'cache',
-    header: 'Cache',
-    accessorFn: (row) => row.tokCr,
-    cell: (info) => tokenCell(info.row.original, info.row.original.tokCr),
-    sortDescFirst: true,
-    meta: {
-      label: 'Cache read',
-      title: 'Cache-read tokens',
-      widthPx: 84,
-      cellClass: numCell,
-      headerClass: right,
-    },
-  },
-  {
-    id: 'tokCw',
-    header: 'Write',
-    accessorFn: (row) => row.tokCw,
-    cell: (info) => tokenCell(info.row.original, info.row.original.tokCw),
-    sortDescFirst: true,
-    meta: {
-      label: 'Cache write',
-      title: 'Cache-write tokens',
-      widthPx: 84,
-      cellClass: numCell,
-      headerClass: right,
-      defaultVisible: false,
-    },
-  },
-  {
-    id: 'fresh',
-    header: 'Fresh',
-    accessorFn: (row) => row.freshTokens,
-    cell: (info) => tokenCell(info.row.original, info.row.original.freshTokens),
-    sortDescFirst: true,
-    meta: {
-      label: 'Fresh tokens',
-      title: 'Tokens processed without cache (input + output + cache writes)',
-      widthPx: 84,
-      cellClass: numCell,
-      headerClass: right,
-    },
-  },
-  {
-    id: 'total',
-    header: 'Total',
-    accessorFn: (row) => row.tokenTotal,
-    cell: (info) => tokenCell(info.row.original, info.row.original.tokenTotal),
-    sortDescFirst: true,
-    meta: { label: 'Total tokens', widthPx: 90, cellClass: numCell, headerClass: right, defaultVisible: false },
-  },
-  {
-    id: 'rtkSaved',
-    header: 'RTK',
-    accessorFn: (row) => rtkSavingsPct(row) ?? 0,
-    cell: (info) => <span title={rtkSavedTitle(info.row.original)}>{rtkSavedLabel(info.row.original)}</span>,
-    sortDescFirst: true,
-    meta: {
-      label: 'RTK savings',
-      title: 'RTK saved-token percentage; hover a cell for matched command details',
-      widthPx: 86,
-      cellClass: numCell,
-      headerClass: right,
-    },
-  },
-  {
-    id: 'cost',
-    header: '$API',
-    accessorFn: (row) => sortValueForRow(row, 'cost'),
-    cell: (info) => (
-      <Show when={!info.row.original.usageUnavailable} fallback={<UsageUnavailableCell />}>
-        <Show when={info.row.original.costKnown} fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>}>
-          {fmtMoney(info.row.original.costApprox)}
-        </Show>
-      </Show>
-    ),
-    sortDescFirst: true,
-    meta: {
-      label: 'API value',
-      title: 'Estimated cost at standard API prices',
-      widthPx: 76,
-      cellClass: numCell,
-      headerClass: right,
-    },
-  },
-  {
-    id: 'actual',
-    header: '$Actual',
-    accessorFn: (row) => sortValueForRow(row, 'actual'),
-    cell: (info) =>
-      info.row.original.usageUnavailable ? <UsageUnavailableCell /> : fmtMoney(info.row.original.costActual),
-    sortDescFirst: true,
-    meta: {
-      label: 'Actual cost',
-      title: 'Out-of-pocket spend reported by harnesses',
-      widthPx: 88,
-      cellClass: numCell,
-      headerClass: right,
-      defaultVisible: false,
-    },
-  },
-  {
-    id: 'duration',
-    header: 'Span',
-    accessorFn: (row) => row.durationMs ?? 0,
-    cell: (info) => fmtDuration(info.row.original.durationMs),
-    sortDescFirst: true,
-    meta: {
-      label: 'Duration',
-      title: 'Wall-clock session duration',
-      widthPx: 68,
-      cellClass: numCell,
-      headerClass: right,
-    },
-  },
-  {
-    id: 'calls',
-    header: 'Calls',
-    accessorFn: (row) => row.calls,
-    cell: (info) => countCell(info.row.original, info.row.original.calls),
-    sortDescFirst: true,
-    meta: { label: 'Calls', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
-  },
-  {
-    id: 'turns',
-    header: 'Turns',
-    accessorFn: (row) => row.turns,
-    cell: (info) => fmtNum(info.row.original.turns),
-    sortDescFirst: true,
-    meta: { label: 'Turns', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
-  },
-  {
-    id: 'tools',
-    header: 'Tools',
-    accessorFn: (row) => row.tools,
-    cell: (info) => countCell(info.row.original, info.row.original.tools),
-    sortDescFirst: true,
-    meta: { label: 'Tools', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
-  },
-  {
-    id: 'lines',
-    header: 'Lines',
-    accessorFn: (row) => row.lineDelta ?? 0,
-    cell: (info) => lineDeltaLabel(info.row.original),
-    sortDescFirst: true,
-    meta: { label: 'Lines changed', widthPx: 96, cellClass: numCell, headerClass: right, defaultVisible: false },
-  },
-  {
-    id: 'subagent',
-    header: 'Sub',
-    accessorFn: (row) => (row.subagent ? 1 : 0),
-    cell: (info) => (info.row.original.subagent ? 'Yes' : 'No'),
-    sortDescFirst: true,
-    meta: { label: 'Subagent', widthPx: 72, defaultVisible: false },
-  },
-  {
-    id: 'partial',
-    header: 'Partial',
-    accessorFn: (row) => (row.partial ? 1 : 0),
-    cell: (info) => (info.row.original.partial ? 'Yes' : 'No'),
-    sortDescFirst: true,
-    meta: { label: 'Partial', widthPx: 82, defaultVisible: false },
-  },
-  {
-    id: 'session',
-    header: 'Session',
-    accessorFn: (row) => row.sessionLabel.toLowerCase(),
-    cell: (info) => (
-      <div class={sessionTitleClamp}>
-        <HighlightedText text={info.row.original.sessionLabel} query={info.table.options.meta?.searchQuery ?? ''} />
-      </div>
-    ),
-    enableHiding: false,
-    meta: { label: 'Session', widthPx: 300, cellClass: sessionCell },
-  },
-];
-
-const defaultColumnVisibility = Object.fromEntries(
-  sessionColumns.filter((column) => column.meta?.defaultVisible === false).map((column) => [column.id, false]),
-) as VisibilityState;
 const dashboardSearchDefaults = dashboardSearchDefaultsFor(initialPayload.filters.sort);
 
-const isSessionColumnVisible = (visibility: VisibilityState, columnId: string) => visibility[columnId] !== false;
-
-const visibleSessionColumns = (visibility: VisibilityState) =>
-  sessionColumns.filter((column) => isSessionColumnVisible(visibility, column.id));
-
-const columnVisibilityFromDiff = (columnDiff: SearchableColumnDiffId[]): VisibilityState => {
-  const visibility = { ...defaultColumnVisibility };
-  for (const columnId of columnDiff) {
-    visibility[columnId] = defaultColumnVisibility[columnId] === false;
-  }
-  return visibility;
-};
-
-const columnDiffFromVisibility = (visibility: VisibilityState): SearchableColumnDiffId[] =>
-  sessionColumns.flatMap((column) => {
-    if (column.enableHiding === false) return [];
-    const defaultVisible = isSessionColumnVisible(defaultColumnVisibility, column.id);
-    const currentVisible = isSessionColumnVisible(visibility, column.id);
-    return defaultVisible === currentVisible ? [] : [column.id as SearchableColumnDiffId];
-  });
-
-const sortFromSortingState = (sorting: SortingState) => {
-  const sort = sorting[0];
-  if (!sort || !isSessionColumnId(sort.id)) return dashboardSearchDefaults.sort;
-  return { id: sort.id, desc: sort.desc };
-};
-
-const sessionColumnLabel = (column: SessionColumnDef) => column.meta?.label ?? column.id;
-
-const sessionColumnHeader = (column: SessionColumnDef) =>
-  typeof column.header === 'string' ? column.header : sessionColumnLabel(column);
-
-const createAnalyticsGroup = (key: string, row: DashboardRow): MutableAnalyticsGroup => ({
-  key,
-  harness: row.harness,
-  provider: row.provider,
-  sessions: 0,
-  priced: 0,
-  unpriced: 0,
-  usageUnavailable: 0,
-  fresh: 0,
-  inp: 0,
-  cache: 0,
-  cacheHitPct: 0,
-  costSum: 0,
-  costPerSession: null,
-  medianCost: null,
-  linesA: 0,
-  linesD: 0,
-  lineCount: 0,
-  costPer100Lines: null,
-  costPercent: 0,
-  turns: 0,
-  tools: 0,
-  costs: [],
-});
-
-const addAnalyticsRow = (groups: Map<string, MutableAnalyticsGroup>, key: string, row: DashboardRow) => {
-  let group = groups.get(key);
-  if (!group) {
-    group = createAnalyticsGroup(key, row);
-    groups.set(key, group);
-  }
-
-  group.sessions++;
-  if (row.usageUnavailable) group.usageUnavailable++;
-  group.fresh += row.freshTokens;
-  group.inp += row.tokIn;
-  group.cache += row.tokCr;
-  group.linesA += row.linesAdded ?? 0;
-  group.linesD += row.linesDeleted ?? 0;
-  group.turns += row.turns;
-  group.tools += row.tools;
-  if (row.costKnown) {
-    group.priced++;
-    group.costSum += row.costApprox;
-    group.costs.push(row.costApprox);
-  } else {
-    group.unpriced++;
-  }
-};
-
-const finalizeAnalyticsGroups = (groups: Map<string, MutableAnalyticsGroup>, totalCost: number): AnalyticsGroup[] =>
-  [...groups.values()]
-    .map((group) => {
-      const lineCount = group.linesA + group.linesD;
-      return {
-        ...group,
-        cacheHitPct: group.inp + group.cache > 0 ? (group.cache / (group.inp + group.cache)) * 100 : 0,
-        costPerSession: group.priced ? group.costSum / group.priced : null,
-        medianCost: group.priced ? median(group.costs) : null,
-        lineCount,
-        costPer100Lines: lineCount && group.priced ? (group.costSum / lineCount) * 100 : null,
-        costPercent: totalCost > 0 ? (group.costSum / totalCost) * 100 : 0,
-      };
-    })
-    .sort((a, b) => b.costSum - a.costSum);
-
-const createProjectGroup = (key: string): ProjectGroup => ({
-  key,
-  sessions: 0,
-  fresh: 0,
-  cache: 0,
-  cost: 0,
-  priced: 0,
-  turns: 0,
-  tools: 0,
-  linesAdded: 0,
-  linesDeleted: 0,
-});
-
-const addProjectRow = (groups: Map<string, ProjectGroup>, row: DashboardRow) => {
-  let group = groups.get(row.projectKey);
-  if (!group) {
-    group = createProjectGroup(row.projectKey);
-    groups.set(row.projectKey, group);
-  }
-
-  group.sessions++;
-  group.fresh += row.freshTokens;
-  group.cache += row.tokCr;
-  group.turns += row.turns;
-  group.tools += row.tools;
-  group.linesAdded += row.linesAdded ?? 0;
-  group.linesDeleted += row.linesDeleted ?? 0;
-  if (row.costKnown) {
-    group.cost += row.costApprox;
-    group.priced++;
-  }
-};
-
-const buildAnalyticsGroups = (
-  rows: DashboardRow[],
-  acceptsRow: (row: DashboardRow) => boolean,
-  keyForRow: (row: DashboardRow) => string,
-  totalCost: number,
-) => {
-  const groups = new Map<string, MutableAnalyticsGroup>();
-
-  for (const row of rows) {
-    if (!acceptsRow(row)) continue;
-    addAnalyticsRow(groups, keyForRow(row), row);
-  }
-
-  return finalizeAnalyticsGroups(groups, totalCost);
-};
-
-const buildProjectGroups = (rows: DashboardRow[], acceptsRow: (row: DashboardRow) => boolean) => {
-  const projects = new Map<string, ProjectGroup>();
-
-  for (const row of rows) {
-    if (!acceptsRow(row)) continue;
-    addProjectRow(projects, row);
-  }
-
-  return [...projects.values()].sort((a, b) => b.cost - a.cost || b.fresh - a.fresh);
-};
-
-const SortHeader = (props: { column: Column<DashboardRow, unknown>; label: string }) => {
-  const meta = () => props.column.columnDef.meta;
-  const sortDirection = () => props.column.getIsSorted();
-
-  return (
-    <Show when={props.column.getCanSort()} fallback={<span class={meta()?.headerClass}>{props.label}</span>}>
-      <button
-        class={cx(sortButton, meta()?.headerClass)}
-        type="button"
-        title={meta()?.title}
-        onClick={(event) => props.column.getToggleSortingHandler()?.(event)}
-      >
-        <span>{props.label}</span>
-        <Show when={sortDirection()}>
-          {(direction) => (
-            <span class={sortArrow} aria-hidden="true">
-              {direction() === 'asc' ? '↑' : '↓'}
-            </span>
-          )}
-        </Show>
-      </button>
-    </Show>
-  );
-};
-
-// Folded into a popover: column tuning is an occasional task, so it should
-// not permanently cost two rows of prime space above the table.
-const ColumnVisibilityControl = (props: {
-  columnVisibility: VisibilityState;
-  hiddenColumnIds?: string[];
-  onColumnVisibilityChange: OnChangeFn<VisibilityState>;
-}) => {
-  const hideableColumns = () =>
-    sessionColumns.filter((column) => column.enableHiding !== false && !props.hiddenColumnIds?.includes(column.id));
-  const visibleCount = () =>
-    visibleSessionColumns(props.columnVisibility).filter((column) => !props.hiddenColumnIds?.includes(column.id))
-      .length;
-  const setColumnVisible = (id: string, visible: boolean) =>
-    props.onColumnVisibilityChange((current) => ({ ...current, [id]: visible }));
-
-  return (
-    <Popover.Root lazyMount unmountOnExit>
-      <Popover.Trigger class={ghostButton}>Columns · {visibleCount()} ▾</Popover.Trigger>
-      <Popover.Positioner>
-        <Popover.Content class={popoverContent} aria-label="Choose table columns">
-          <div class={popoverHeader}>
-            <span>
-              {visibleCount()} of {sessionColumns.length} columns shown
-            </span>
-            <button
-              class={ghostButton}
-              type="button"
-              onClick={() => props.onColumnVisibilityChange(defaultColumnVisibility)}
-            >
-              Reset
-            </button>
-          </div>
-          <div class={popoverGrid}>
-            <For each={hideableColumns()}>
-              {(column) => (
-                <label class={columnToggle}>
-                  <input
-                    class={columnToggleInput}
-                    type="checkbox"
-                    checked={isSessionColumnVisible(props.columnVisibility, column.id)}
-                    onChange={(event) => setColumnVisible(column.id, event.currentTarget.checked)}
-                  />
-                  <span class={columnToggleText}>{sessionColumnLabel(column)}</span>
-                </label>
-              )}
-            </For>
-          </div>
-        </Popover.Content>
-      </Popover.Positioner>
-    </Popover.Root>
-  );
-};
-
-const DetailItem = (props: { label: string; value: string; hint?: string }) => (
-  <div class={detailItem} title={props.hint}>
-    <div class={detailLabel}>{props.label}</div>
-    <div class={detailValue}>{props.value}</div>
-  </div>
-);
-
-const fmtRatio = (ratio: number) => (ratio >= 10 ? `${Math.round(ratio)}×` : `${ratio.toFixed(1)}×`);
-
-const SessionDrawer = (props: {
-  row: DashboardRow;
-  rows: DashboardRow[];
-  onClose: () => void;
-  onNavigate: (delta: number) => void;
-  onFieldFilter: (key: FieldFilterKey, value: string) => void;
-}) => {
-  let closeButton: HTMLButtonElement | undefined;
-  // Move focus in on open and hand it back on close, so keyboard users are
-  // not stranded; the inspector itself stays non-modal.
-  onMount(() => {
-    const previous = document.activeElement;
-    closeButton?.focus();
-    onCleanup(() => {
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
-    });
-  });
-
-  const position = createMemo(() => props.rows.findIndex((row) => rowKey(row) === rowKey(props.row)));
-  const medianCost = createMemo(() =>
-    median(props.rows.filter((row) => row.costKnown && row.costApprox > 0).map((row) => row.costApprox)),
-  );
-  const medianDuration = createMemo(() =>
-    median(props.rows.map((row) => row.durationMs ?? 0).filter((duration) => duration > 0)),
-  );
-  const costRatio = () =>
-    props.row.costKnown && props.row.costApprox > 0 && medianCost() > 0 ? props.row.costApprox / medianCost() : null;
-  const durationRatio = () =>
-    (props.row.durationMs ?? 0) > 0 && medianDuration() > 0 ? (props.row.durationMs ?? 0) / medianDuration() : null;
-
-  const anatomySegments = () => [
-    { label: 'Cache read', value: props.row.tokCr, class: tokenSegmentClasses.cacheRead },
-    { label: 'Cache write', value: props.row.tokCw, class: tokenSegmentClasses.cacheWrite },
-    { label: 'Input', value: props.row.tokIn, class: tokenSegmentClasses.input },
-    { label: 'Output', value: props.row.tokOut, class: tokenSegmentClasses.output },
-  ];
-
-  return (
-    <aside class={drawer} role="dialog" aria-label="Session details">
-      <div class={drawerTop}>
-        <HarnessBadge name={props.row.harness} />
-        <div class={drawerNav}>
-          <span class={drawerPosition}>
-            {fmtNum(position() + 1)} / {fmtNum(props.rows.length)}
-          </span>
-          <button
-            class={drawerClose}
-            type="button"
-            aria-label="Previous session (k)"
-            title="Previous session (k)"
-            disabled={position() <= 0}
-            onClick={() => props.onNavigate(-1)}
-          >
-            ↑
-          </button>
-          <button
-            class={drawerClose}
-            type="button"
-            aria-label="Next session (j)"
-            title="Next session (j)"
-            disabled={position() >= props.rows.length - 1}
-            onClick={() => props.onNavigate(1)}
-          >
-            ↓
-          </button>
-          <button
-            ref={closeButton}
-            class={drawerClose}
-            type="button"
-            aria-label="Close session details"
-            onClick={() => props.onClose()}
-          >
-            ✕
-          </button>
-        </div>
-      </div>
-      <div class={drawerBody}>
-        <div>
-          <div class={drawerTitle}>{props.row.sessionLabel}</div>
-          <div class={muted}>
-            {props.row.providerDisplay} · {props.row.model}
-          </div>
-        </div>
-        <div>
-          <SegmentBar segments={anatomySegments()} ariaLabel="Token anatomy" />
-          <div class={drawerLegend} style={{ 'margin-top': '8px' }}>
-            <For each={anatomySegments()}>
-              {(segment) => (
-                <div class={drawerLegendItem} title={`${segment.label}: ${fmtNum(segment.value)} tokens`}>
-                  <span class={cx(drawerLegendSwatch, segment.class)} />
-                  <span>{segment.label}</span>
-                  <span class={drawerLegendValue}>{fmtCompact(segment.value)}</span>
-                </div>
-              )}
-            </For>
-          </div>
-        </div>
-        <Show when={costRatio() != null || durationRatio() != null}>
-          <div class={drawerCompare} title="Compared with the median session in the current view">
-            <Show when={costRatio() != null}>≈ {fmtRatio(costRatio() ?? 0)} median cost</Show>
-            <Show when={costRatio() != null && durationRatio() != null}> · </Show>
-            <Show when={durationRatio() != null}>{fmtRatio(durationRatio() ?? 0)} median duration</Show>
-          </div>
-        </Show>
-        <div class={drawerGrid}>
-          <DetailItem label="Started" value={fmtDate(props.row.date)} />
-          <DetailItem label="Ended" value={fmtDate(props.row.endDate)} />
-          <DetailItem label="Total tokens" value={fmtNum(props.row.tokenTotal)} />
-          <DetailItem label="RTK savings" value={rtkSavedLabel(props.row)} hint={rtkSavedTitle(props.row)} />
-          <DetailItem
-            label="API value"
-            value={props.row.costKnown ? fmtMoney(props.row.costApprox) : '—'}
-            hint={props.row.costKnown ? 'Estimated cost at standard API prices' : UNKNOWN_PRICE_HINT}
-          />
-          <DetailItem
-            label="Actual cost"
-            value={fmtMoney(props.row.costActual)}
-            hint="Out-of-pocket spend — $0.00 means covered by a subscription"
-          />
-          <DetailItem label="Calls" value={fmtNum(props.row.calls)} />
-          <DetailItem label="Turns" value={fmtNum(props.row.turns)} />
-          <DetailItem label="Tools" value={fmtNum(props.row.tools)} />
-          <DetailItem label="Duration" value={fmtDuration(props.row.durationMs)} />
-          <DetailItem label="Lines" value={lineDeltaLabel(props.row)} />
-          <DetailItem label="Subagent" value={props.row.subagent ? 'Yes' : 'No'} />
-          <Show when={props.row.partial}>
-            <DetailItem label="Partial" value="Yes" hint="Local history did not cover the whole session" />
-          </Show>
-          <Show when={props.row.usageUnavailable}>
-            <DetailItem
-              label="Usage data"
-              value="Unavailable"
-              hint="Session came from prompt history, but detailed local token counters are missing"
-            />
-          </Show>
-        </div>
-        <div class={drawerActions}>
-          <button
-            class={ghostButton}
-            type="button"
-            onClick={() => props.onFieldFilter('project', props.row.projectKey)}
-          >
-            Filter project: {props.row.projectKey}
-          </button>
-          <button class={ghostButton} type="button" onClick={() => props.onFieldFilter('model', props.row.modelKey)}>
-            Filter model: {props.row.modelKey}
-          </button>
-        </div>
-      </div>
-    </aside>
-  );
-};
-
-const SessionTable = (props: {
-  rows: DashboardRow[];
-  selectedKey: string | null;
-  searchQuery: string;
-  sorting: SortingState;
-  columnVisibility: VisibilityState;
-  onSortingChange: OnChangeFn<SortingState>;
-  onColumnVisibilityChange: OnChangeFn<VisibilityState>;
-  onSelect: (row: DashboardRow) => void;
-  onHarnessFilter: (value: string) => void;
-  onFieldFilter: (key: FieldFilterKey, value: string) => void;
-  onClearFilters: () => void;
-}) => {
-  // A column whose every visible row reads "—" is dead weight; RTK savings
-  // only earns its slot when the filtered set actually carries RTK data.
-  // Folding this into the visibility state keeps headers and cells in sync.
-  const hasRtkData = createMemo(() => props.rows.some((row) => row.rtkSavedTokens));
-  const effectiveVisibility = createMemo(() =>
-    hasRtkData() ? props.columnVisibility : { ...props.columnVisibility, rtkSaved: false },
-  );
-  const dataHiddenColumnIds = () => (hasRtkData() ? [] : ['rtkSaved']);
-  const sessionTable = createSolidTable<DashboardRow>({
-    get data() {
-      return props.rows;
-    },
-    columns: sessionColumns,
-    get state() {
-      return {
-        sorting: props.sorting,
-        columnVisibility: effectiveVisibility(),
-      };
-    },
-    enableMultiSort: false,
-    enableSortingRemoval: false,
-    getCoreRowModel: getCoreRowModel(),
-    getRowId: (row) => rowKey(row),
-    getSortedRowModel: getSortedRowModel(),
-    meta: {
-      onFieldFilter: props.onFieldFilter,
-      onHarnessFilter: props.onHarnessFilter,
-      get searchQuery() {
-        return props.searchQuery;
-      },
-    },
-    onColumnVisibilityChange: props.onColumnVisibilityChange,
-    onSortingChange: props.onSortingChange,
-  });
-  const visibleColumns = createMemo(() =>
-    visibleSessionColumns(effectiveVisibility())
-      .map((columnDef) => ({ columnDef, tableColumn: sessionTable.getColumn(columnDef.id) }))
-      .filter((column): column is { columnDef: SessionColumnDef; tableColumn: Column<DashboardRow, unknown> } =>
-        Boolean(column.tableColumn),
-      ),
-  );
-  const tableMinWidth = () =>
-    Math.max(
-      1040,
-      visibleColumns().reduce((sum, { columnDef }) => sum + (columnDef.meta?.widthPx ?? 140), 0),
-    );
-  let tableViewportEl: HTMLDivElement | undefined;
-  const rowHeight = 43;
-  const overscanRows = 8;
-  const [tableViewport, setTableViewport] = createSignal({ height: 520, scrollTop: 0 });
-  const updateTableViewport = () => {
-    const next = {
-      height: tableViewportEl?.clientHeight ?? 520,
-      scrollTop: tableViewportEl?.scrollTop ?? 0,
-    };
-    setTableViewport((current) =>
-      current.height === next.height && current.scrollTop === next.scrollTop ? current : next,
-    );
-  };
-  const rowModelRows = createMemo(() => {
-    props.rows;
-    props.sorting;
-    return sessionTable.getRowModel().rows;
-  });
-  const visibleColumnCount = () => visibleColumns().length;
-  const virtualRows = createMemo(() => {
-    const rows = rowModelRows();
-    const viewport = tableViewport();
-    const start = Math.max(0, Math.floor(viewport.scrollTop / rowHeight) - overscanRows);
-    const end = Math.min(rows.length, start + Math.ceil(viewport.height / rowHeight) + overscanRows * 2);
-    return {
-      bottomHeight: Math.max(0, rows.length - end) * rowHeight,
-      rows: rows.slice(start, end),
-      topHeight: start * rowHeight,
-    };
-  });
-
-  onMount(() => {
-    updateTableViewport();
-    const observer = new ResizeObserver(updateTableViewport);
-    if (tableViewportEl) observer.observe(tableViewportEl);
-    onCleanup(() => observer.disconnect());
-  });
-
-  createEffect(() => {
-    props.rows;
-    props.sorting;
-    if (tableViewportEl) tableViewportEl.scrollTop = 0;
-    updateTableViewport();
-  });
-
-  return (
-    <Show
-      when={props.rows.length}
-      fallback={
-        <div class={empty}>
-          <div class={emptyActions}>
-            <span>No sessions match the current filters</span>
-            <button class={ghostButton} type="button" onClick={() => props.onClearFilters()}>
-              Clear filters
-            </button>
-          </div>
-        </div>
-      }
-    >
-      <div class={tableControls}>
-        <ColumnVisibilityControl
-          columnVisibility={props.columnVisibility}
-          hiddenColumnIds={dataHiddenColumnIds()}
-          onColumnVisibilityChange={props.onColumnVisibilityChange}
-        />
-      </div>
-      <div class={tableWrap} ref={tableViewportEl} onScroll={updateTableViewport}>
-        <table class={cx(table, sessionsTable)} style={{ 'min-width': `${tableMinWidth()}px` }}>
-          <thead>
-            <tr>
-              <For each={visibleColumns()}>
-                {({ columnDef, tableColumn }) => (
-                  <th
-                    class={columnDef.meta?.headerClass}
-                    title={columnDef.meta?.title}
-                    style={{ width: `${columnDef.meta?.widthPx ?? 140}px` }}
-                  >
-                    <SortHeader column={tableColumn} label={sessionColumnHeader(columnDef)} />
-                  </th>
-                )}
-              </For>
-            </tr>
-          </thead>
-          <tbody>
-            <Show when={virtualRows().topHeight > 0}>
-              <tr>
-                <td
-                  colSpan={visibleColumnCount()}
-                  style={{ height: `${virtualRows().topHeight}px`, padding: '0', border: '0' }}
-                />
-              </tr>
-            </Show>
-            <For each={virtualRows().rows}>
-              {(tableRow) => (
-                <tr
-                  data-selected={String(props.selectedKey === tableRow.id)}
-                  tabIndex={0}
-                  onClick={() => props.onSelect(tableRow.original)}
-                  onKeyDown={(event) => {
-                    if (event.target !== event.currentTarget) return;
-                    if (event.key !== 'Enter' && event.key !== ' ') return;
-                    event.preventDefault();
-                    props.onSelect(tableRow.original);
-                  }}
-                >
-                  <For each={tableRow.getVisibleCells()}>
-                    {(cell) => (
-                      <td class={cell.column.columnDef.meta?.cellClass}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    )}
-                  </For>
-                </tr>
-              )}
-            </For>
-            <Show when={virtualRows().bottomHeight > 0}>
-              <tr>
-                <td
-                  colSpan={visibleColumnCount()}
-                  style={{ height: `${virtualRows().bottomHeight}px`, padding: '0', border: '0' }}
-                />
-              </tr>
-            </Show>
-          </tbody>
-        </table>
-      </div>
-    </Show>
-  );
-};
+type RangeDragPointerEvent = PointerEvent & { currentTarget: HTMLButtonElement };
 
 const analyticsGroupUnavailableOnly = (group: AnalyticsGroup) => group.usageUnavailable === group.sessions;
 const groupFreshLabel = (group: AnalyticsGroup) =>
@@ -2111,7 +1136,10 @@ export const Dashboard = () => {
   const handleSortingChange: OnChangeFn<SortingState> = (updater) =>
     updateSearch((current) => ({
       ...current,
-      sort: sortFromSortingState(applyTableUpdate(updater, sortingStateFromSearch(current.sort))),
+      sort: sortFromSortingState(
+        applyTableUpdate(updater, sortingStateFromSearch(current.sort)),
+        dashboardSearchDefaults.sort,
+      ),
     }));
   const handleColumnVisibilityChange: OnChangeFn<VisibilityState> = (updater) =>
     updateSearch((current) => {
