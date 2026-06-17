@@ -28,6 +28,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@ai-usage/core": "workspace:*",
+        "@ai-usage/design-system": "workspace:*",
         "@ark-ui/solid": "^5.37.1",
         "@tanstack/solid-router": "^1.170.15",
         "@tanstack/solid-table": "^8.21.3",
@@ -37,6 +38,17 @@
         "@pandacss/dev": "^1.11.3",
         "vite": "^8.0.16",
         "vite-plugin-solid": "^2.11.12",
+      },
+    },
+    "packages/design-system": {
+      "name": "@ai-usage/design-system",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@pandacss/dev": "^1.11.3",
+        "solid-js": "^1.9.13",
+      },
+      "peerDependencies": {
+        "solid-js": "^1.9.13",
       },
     },
     "packages/local-collectors": {
@@ -56,6 +68,8 @@
     "@ai-usage/cli": ["@ai-usage/cli@workspace:apps/cli"],
 
     "@ai-usage/core": ["@ai-usage/core@workspace:packages/usage-core"],
+
+    "@ai-usage/design-system": ["@ai-usage/design-system@workspace:packages/design-system"],
 
     "@ai-usage/local-collectors": ["@ai-usage/local-collectors@workspace:packages/local-collectors"],
 

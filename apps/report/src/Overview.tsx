@@ -1,8 +1,77 @@
-import { createEffect, createMemo, For, type JSX, Show } from 'solid-js';
-import { css, cx } from '../styled-system/css';
-import { DAY_MS, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
+import { cx } from '@ai-usage/design-system/css';
 import {
   accentFill,
+  anatomyHeadline,
+  anatomyLegend,
+  anatomyLegendItem,
+  anatomyLegendSwatch,
+  anatomyLegendValue,
+  chartAxis,
+  chartFillClasses,
+  chartLegendItem,
+  chartLegendList,
+  chartLegendPct,
+  chartLegendSwatch,
+  chartSwatchClasses,
+  emptyPanel,
+  HarnessBadge,
+  harnessSvgFillFor,
+  heatBody,
+  heatCell,
+  heatCellToday,
+  heatCellZero,
+  heatGrid,
+  heatLegend,
+  heatLegendCell,
+  heatMonths,
+  heatScroll,
+  heatWeekColumn,
+  heatWeekdays,
+  heroLabel,
+  heroLegend,
+  heroLegendValue,
+  heroMultiple,
+  heroPanel,
+  heroSide,
+  heroText,
+  heroValue,
+  inkFill,
+  migrationArea,
+  migrationSvgWrap,
+  otherFillClass,
+  otherSwatchClass,
+  overviewGrid,
+  panel,
+  panelHeader,
+  panelSub,
+  panelTitle,
+  punchCell,
+  punchDayLabel,
+  punchDot,
+  punchGrid,
+  punchHourLabel,
+  recordCard,
+  recordLabel,
+  recordSub,
+  recordsGrid,
+  recordValue,
+  rtkNote,
+  scatterAxisText,
+  scatterGridline,
+  scatterLegend,
+  scatterPoint,
+  scatterWrap,
+  tokenSegmentClasses,
+  topList,
+  topMoney,
+  topRank,
+  topRow,
+  topTitle,
+  twoColumns,
+} from '@ai-usage/design-system/report';
+import { createEffect, createMemo, For, type JSX, Show } from 'solid-js';
+import { DAY_MS, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
+import {
   type DashboardRow,
   fmtCompact,
   fmtDateOnly,
@@ -10,14 +79,11 @@ import {
   fmtMoney,
   fmtNum,
   fmtPct,
-  HarnessBadge,
-  harnessSvgFillFor,
   type ReportSummary,
   SegmentBar,
-  tokenSegmentClasses,
 } from './shared';
 
-type OverviewProps = {
+export type OverviewProps = {
   rows: DashboardRow[];
   timelineRows: DashboardRow[];
   summary: ReportSummary;
@@ -25,55 +91,6 @@ type OverviewProps = {
   onSelectSession: (row: DashboardRow) => void;
   onSelectDay: (day: Date) => void;
 };
-
-const overviewGrid = css({
-  display: 'grid',
-  gap: '14px',
-});
-
-const twoColumns = css({
-  display: 'grid',
-  gridTemplateColumns: { base: '1fr', lg: 'repeat(2, minmax(0, 1fr))' },
-  gap: '14px',
-  alignItems: 'stretch',
-});
-
-const panel = css({
-  display: 'grid',
-  gap: '14px',
-  alignContent: 'start',
-  p: '16px 18px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surface',
-  boxShadow: 'card',
-  minW: 0,
-});
-
-const panelHeader = css({
-  display: 'grid',
-  gap: '2px',
-});
-
-const panelTitle = css({
-  fontSize: '14px',
-  fontWeight: 650,
-});
-
-const panelSub = css({
-  color: 'muted',
-  fontSize: '12px',
-});
-
-const emptyPanel = css({
-  minH: '160px',
-  display: 'grid',
-  placeItems: 'center',
-  color: 'muted',
-  fontSize: '13px',
-  border: '1px dashed token(colors.lineStrong)',
-  borderRadius: 'md',
-});
 
 const Panel = (props: { title: string; sub?: string; children: JSX.Element }) => (
   <section class={panel}>
@@ -90,72 +107,6 @@ const Panel = (props: { title: string; sub?: string; children: JSX.Element }) =>
 // ---------------------------------------------------------------------------
 // Hero — subscription leverage. The single most telling number in the data:
 // what this usage would have cost at API rates versus what was actually paid.
-
-const heroPanel = css({
-  display: 'grid',
-  gridTemplateColumns: { base: '1fr', md: 'minmax(0, 1.2fr) minmax(0, 1fr)' },
-  gap: '18px 32px',
-  alignItems: 'center',
-  p: '20px 22px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surface',
-  boxShadow: 'card',
-});
-
-const heroLabel = css({
-  textStyle: 'eyebrow',
-  color: 'accent',
-});
-
-const heroValue = css({
-  textStyle: 'numeric',
-  fontSize: { base: '30px', md: '38px' },
-  lineHeight: '1.05',
-  fontWeight: 650,
-  mt: '8px',
-});
-
-const heroText = css({
-  color: 'muted',
-  fontSize: '13px',
-  mt: '6px',
-});
-
-const heroSide = css({
-  display: 'grid',
-  gap: '10px',
-});
-
-const heroMultiple = css({
-  textStyle: 'numeric',
-  display: 'inline-flex',
-  alignItems: 'center',
-  h: '24px',
-  px: '10px',
-  borderRadius: 'full',
-  bg: 'accentSoft',
-  color: 'accent',
-  fontSize: '12px',
-  fontWeight: 650,
-  justifySelf: 'start',
-});
-
-const heroLegend = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '4px 16px',
-  color: 'muted',
-  fontSize: '11px',
-});
-
-const heroLegendValue = css({
-  textStyle: 'numeric',
-  color: 'ink',
-  ml: '5px',
-});
-
-const inkFill = css({ bg: 'ink' });
 
 const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
   const data = createMemo(() => {
@@ -220,91 +171,6 @@ const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
 // Calendar heatmap — the contribution-graph view of agentic activity. Always
 // spans the full filtered history (not the brushed range) so it doubles as a
 // date navigator: clicking a day focuses the dashboard on it.
-
-const heatBody = css({
-  display: 'flex',
-  gap: '8px',
-  minW: 0,
-});
-
-const heatWeekdays = css({
-  display: 'grid',
-  gridTemplateRows: 'repeat(7, 12px)',
-  gap: '3px',
-  pt: '19px',
-  color: 'faint',
-  fontSize: '9px',
-  fontFamily: 'mono',
-  textAlign: 'right',
-});
-
-const heatScroll = css({
-  overflowX: 'auto',
-  pb: '4px',
-});
-
-const heatMonths = css({
-  display: 'grid',
-  gridAutoFlow: 'column',
-  gridAutoColumns: '12px',
-  gap: '3px',
-  h: '16px',
-  color: 'faint',
-  fontSize: '10px',
-  fontFamily: 'mono',
-  whiteSpace: 'nowrap',
-});
-
-const heatGrid = css({
-  display: 'grid',
-  gridAutoFlow: 'column',
-  gridAutoColumns: '12px',
-  gap: '3px',
-});
-
-const heatWeekColumn = css({
-  display: 'grid',
-  gridTemplateRows: 'repeat(7, 12px)',
-  gap: '3px',
-});
-
-const heatCell = css({
-  w: '12px',
-  h: '12px',
-  p: 0,
-  border: '0',
-  borderRadius: '3px',
-  cursor: 'pointer',
-  transition: 'transform 0.1s',
-  _hover: {
-    transform: 'scale(1.25)',
-  },
-  _focusVisible: {
-    outline: '1px solid token(colors.accent)',
-    outlineOffset: '1px',
-  },
-});
-
-const heatCellZero = css({ bg: 'track' });
-
-const heatCellToday = css({
-  outline: '1px solid token(colors.accent)',
-  outlineOffset: '1px',
-});
-
-const heatLegend = css({
-  display: 'flex',
-  alignItems: 'center',
-  gap: '4px',
-  color: 'faint',
-  fontSize: '10px',
-});
-
-const heatLegendCell = css({
-  w: '10px',
-  h: '10px',
-  borderRadius: '3px',
-});
 
 const HEAT_OPACITY = [0.28, 0.52, 0.76, 1];
 
@@ -456,75 +322,6 @@ const CalendarHeatmap = (props: { rows: DashboardRow[]; onSelectDay: (day: Date)
 // Model migration — normalized stacked area of API value share per bucket.
 // This is where opus→fable and gpt-5.4→5.5 transitions become visible.
 
-const chartFillClasses = [
-  css({ fill: 'chart.c1' }),
-  css({ fill: 'chart.c2' }),
-  css({ fill: 'chart.c3' }),
-  css({ fill: 'chart.c4' }),
-  css({ fill: 'chart.c5' }),
-];
-
-const chartSwatchClasses = [
-  css({ bg: 'chart.c1' }),
-  css({ bg: 'chart.c2' }),
-  css({ bg: 'chart.c3' }),
-  css({ bg: 'chart.c4' }),
-  css({ bg: 'chart.c5' }),
-];
-
-const otherFillClass = css({ fill: 'lineStrong' });
-const otherSwatchClass = css({ bg: 'lineStrong' });
-
-const migrationSvgWrap = css({
-  h: '150px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'surfaceMuted',
-  overflow: 'hidden',
-});
-
-const migrationArea = css({
-  opacity: 0.88,
-  transition: 'opacity 0.15s',
-  _hover: { opacity: 1 },
-});
-
-const chartAxis = css({
-  display: 'flex',
-  justifyContent: 'space-between',
-  gap: '8px',
-  color: 'faint',
-  fontSize: '11px',
-  fontFamily: 'mono',
-});
-
-const chartLegendList = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '6px 14px',
-  color: 'muted',
-  fontSize: '11px',
-});
-
-const chartLegendItem = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: '6px',
-  minW: 0,
-});
-
-const chartLegendSwatch = css({
-  w: '8px',
-  h: '8px',
-  borderRadius: '2px',
-  flexShrink: 0,
-});
-
-const chartLegendPct = css({
-  textStyle: 'numeric',
-  color: 'faint',
-});
-
 type MigrationSeries = { key: string; total: number; fillClass: string; swatchClass: string };
 
 const ModelMigration = (props: { rows: DashboardRow[] }) => {
@@ -669,60 +466,6 @@ const ModelMigration = (props: { rows: DashboardRow[] }) => {
 // showing the proportion makes the cache-hit superpower legible. The RTK
 // aggregate lives here too instead of a mostly-empty table column.
 
-const anatomyLegend = css({
-  display: 'grid',
-  gridTemplateColumns: { base: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(4, minmax(0, 1fr))' },
-  gap: '6px 12px',
-  color: 'muted',
-  fontSize: '11px',
-});
-
-const anatomyLegendItem = css({
-  display: 'flex',
-  alignItems: 'center',
-  gap: '6px',
-  minW: 0,
-});
-
-const anatomyLegendSwatch = css({
-  w: '8px',
-  h: '8px',
-  borderRadius: '2px',
-  flexShrink: 0,
-});
-
-const anatomyLegendValue = css({
-  textStyle: 'numeric',
-  color: 'ink',
-  ml: 'auto',
-});
-
-const anatomyHeadline = css({
-  fontSize: '13px',
-  color: 'muted',
-  '& strong': {
-    textStyle: 'numeric',
-    color: 'ink',
-    fontWeight: 650,
-  },
-});
-
-const rtkNote = css({
-  display: 'grid',
-  gap: '2px',
-  p: '10px 12px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'accentTint',
-  fontSize: '12px',
-  color: 'muted',
-  '& strong': {
-    textStyle: 'numeric',
-    color: 'ink',
-    fontWeight: 650,
-  },
-});
-
 const TokenAnatomy = (props: { summary: ReportSummary }) => {
   const segments = createMemo(() => [
     { label: 'Cache read', value: props.summary.cacheRead, class: tokenSegmentClasses.cacheRead },
@@ -769,41 +512,6 @@ const TokenAnatomy = (props: { summary: ReportSummary }) => {
 // ---------------------------------------------------------------------------
 // Session shape — duration × cost scatter on log scales. Micro-questions,
 // working sessions and marathons separate into visible clusters.
-
-const scatterWrap = css({
-  position: 'relative',
-  h: '240px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'surfaceMuted',
-  overflow: 'hidden',
-});
-
-const scatterGridline = css({
-  stroke: 'token(colors.line)',
-  strokeWidth: '1',
-});
-
-const scatterAxisText = css({
-  fill: 'token(colors.faint)',
-  fontSize: '10px',
-  fontFamily: 'mono',
-});
-
-const scatterPoint = css({
-  fillOpacity: 0.7,
-  cursor: 'pointer',
-  transition: 'fill-opacity 0.1s',
-  _hover: {
-    fillOpacity: 1,
-  },
-});
-
-const scatterLegend = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '6px',
-});
 
 const DURATION_TICKS = [
   { value: 60_000, label: '1m' },
@@ -931,39 +639,6 @@ const SessionShape = (props: { rows: DashboardRow[]; onSelectSession: (row: Dash
 // Punchcard — hour × weekday density. Nightly auto-review bots and weekend
 // streaks show up immediately.
 
-const punchGrid = css({
-  display: 'grid',
-  gridTemplateColumns: '34px repeat(24, minmax(10px, 1fr))',
-  gap: '2px',
-  alignItems: 'center',
-});
-
-const punchDayLabel = css({
-  color: 'faint',
-  fontSize: '9px',
-  fontFamily: 'mono',
-  textAlign: 'right',
-  pr: '6px',
-});
-
-const punchCell = css({
-  position: 'relative',
-  h: '18px',
-  display: 'grid',
-  placeItems: 'center',
-});
-
-const punchDot = css({
-  borderRadius: 'full',
-});
-
-const punchHourLabel = css({
-  color: 'faint',
-  fontSize: '9px',
-  fontFamily: 'mono',
-  textAlign: 'center',
-});
-
 const PUNCH_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 const Punchcard = (props: { rows: DashboardRow[] }) => {
@@ -1028,53 +703,6 @@ const Punchcard = (props: { rows: DashboardRow[] }) => {
 
 // ---------------------------------------------------------------------------
 // Records — small bragging rights, sober clothes.
-
-const recordsGrid = css({
-  display: 'grid',
-  gridTemplateColumns: { base: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' },
-  gap: '10px',
-});
-
-const recordCard = css({
-  appearance: 'none',
-  textAlign: 'left',
-  minH: '92px',
-  p: '14px 16px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surface',
-  boxShadow: 'card',
-  display: 'grid',
-  alignContent: 'space-between',
-  gap: '8px',
-  minW: 0,
-  cursor: 'pointer',
-  transition: 'border-color 0.15s',
-  _hover: {
-    borderColor: 'accent',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-});
-
-const recordLabel = css({
-  textStyle: 'label',
-  color: 'muted',
-});
-
-const recordValue = css({
-  textStyle: 'numeric',
-  fontSize: '20px',
-  fontWeight: 600,
-});
-
-const recordSub = css({
-  color: 'muted',
-  fontSize: '11px',
-  lineClamp: 1,
-});
 
 const Records = (props: {
   rows: DashboardRow[];
@@ -1188,55 +816,6 @@ const Records = (props: {
 // ---------------------------------------------------------------------------
 // Top sessions — the five most expensive sessions, by name. Session titles
 // carry a lot of qualitative signal; surface them.
-
-const topList = css({
-  display: 'grid',
-});
-
-const topRow = css({
-  appearance: 'none',
-  display: 'grid',
-  gridTemplateColumns: '24px minmax(0, 1fr) auto auto',
-  gap: '12px',
-  alignItems: 'center',
-  textAlign: 'left',
-  px: '4px',
-  py: '10px',
-  border: '0',
-  borderBottom: '1px solid token(colors.line)',
-  bg: 'transparent',
-  cursor: 'pointer',
-  transition: 'background-color 0.1s',
-  _hover: {
-    bg: 'surfaceMuted',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '-2px',
-  },
-  _last: {
-    borderBottom: '0',
-  },
-});
-
-const topRank = css({
-  textStyle: 'numeric',
-  color: 'faint',
-  fontSize: '12px',
-});
-
-const topTitle = css({
-  fontSize: '13px',
-  fontWeight: 600,
-  lineClamp: 1,
-  overflowWrap: 'anywhere',
-});
-
-const topMoney = css({
-  textStyle: 'numeric',
-  fontSize: '13px',
-  fontWeight: 600,
-});
 
 const TopSessions = (props: { rows: DashboardRow[]; onSelectSession: (row: DashboardRow) => void }) => {
   const top = createMemo(() =>
