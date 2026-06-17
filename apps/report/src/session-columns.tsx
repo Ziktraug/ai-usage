@@ -6,7 +6,7 @@ import {
   right,
   sessionCell,
   sessionTitleClamp,
-} from '@ai-usage/design-system';
+} from '@ai-usage/design-system/report';
 import type { ColumnDef, RowData, SortingState, VisibilityState } from '@tanstack/solid-table';
 import { Show } from 'solid-js';
 import {

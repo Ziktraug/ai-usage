@@ -1,3 +1,4 @@
+import { cx } from '@ai-usage/design-system/css';
 import {
   accentFill,
   anatomyHeadline,
@@ -67,8 +68,7 @@ import {
   topRow,
   topTitle,
   twoColumns,
-} from '@ai-usage/design-system';
-import { cx } from '@ai-usage/design-system/css';
+} from '@ai-usage/design-system/report';
 import { createEffect, createMemo, For, type JSX, Show } from 'solid-js';
 import { DAY_MS, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
 import {

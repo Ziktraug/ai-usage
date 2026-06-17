@@ -1,4 +1,5 @@
 import type { SerializedRow } from '@ai-usage/core/report-data';
+import { cx } from '@ai-usage/design-system/css';
 import {
   accentFill,
   badgeToneFor,
@@ -10,8 +11,7 @@ import {
   segmentBarTrack,
   tokenSegmentClasses,
   unavailableCell,
-} from '@ai-usage/design-system';
-import { cx } from '@ai-usage/design-system/css';
+} from '@ai-usage/design-system/report';
 
 const numberFormatter = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
 const dateTimeFormatter = new Intl.DateTimeFormat('en', {

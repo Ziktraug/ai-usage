@@ -1,3 +1,4 @@
+import { cx } from '@ai-usage/design-system/css';
 import {
   refreshButton,
   refreshIconButton,
@@ -12,8 +13,7 @@ import {
   refreshStatus,
   refreshStatusError,
   tooltipContent,
-} from '@ai-usage/design-system';
-import { cx } from '@ai-usage/design-system/css';
+} from '@ai-usage/design-system/report';
 import { Tooltip } from '@ark-ui/solid/tooltip';
 import { createMemo, createSignal, For, onCleanup, onMount } from 'solid-js';
 import { fmtDate } from './shared';

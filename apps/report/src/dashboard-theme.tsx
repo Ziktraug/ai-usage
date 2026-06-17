@@ -1,4 +1,4 @@
-import { themeToggleButton } from '@ai-usage/design-system';
+import { themeToggleButton } from '@ai-usage/design-system/report';
 import { createSignal, onCleanup, Show } from 'solid-js';
 
 const THEME_STORAGE_KEY = 'ai-usage-theme';
