@@ -1,0 +1,34 @@
+{
+  "name": "@ai-usage/design-system",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./preset": {
+      "types": "./src/preset.ts",
+      "import": "./src/preset.ts"
+    },
+    "./css": {
+      "types": "./styled-system/css/index.d.ts",
+      "import": "./styled-system/css/index.mjs"
+    },
+    "./styles.css": "./styled-system/styles.css"
+  },
+  "dependencies": {
+    "@ark-ui/solid": "^5.37.1",
+    "solid-js": "^1.9.13"
+  },
+  "devDependencies": {
+    "@pandacss/dev": "^1.11.3"
+  },
+  "scripts": {
+    "build": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit",
+    "check": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}
