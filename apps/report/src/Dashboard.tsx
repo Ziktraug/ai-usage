@@ -1,6 +1,135 @@
 import type { AnalyticsGroup } from '@ai-usage/core/analytics';
 import { inlineAssetsIntoHTML, serializeForInlineScript } from '@ai-usage/core/html-export';
 import type { SerializedRow, UsageReportPayload } from '@ai-usage/core/report-data';
+import {
+  activeFilterButton,
+  activeFilters,
+  barFill,
+  barTrack,
+  chartLegend,
+  columnToggle,
+  columnToggleInput,
+  columnToggleText,
+  commandButton,
+  dateCell,
+  dateEditRow,
+  dateFieldGroup,
+  dateInput,
+  demoBadge,
+  detailItem,
+  detailLabel,
+  detailValue,
+  drawer,
+  drawerActions,
+  drawerBody,
+  drawerClose,
+  drawerCompare,
+  drawerGrid,
+  drawerLegend,
+  drawerLegendItem,
+  drawerLegendSwatch,
+  drawerLegendValue,
+  drawerNav,
+  drawerPosition,
+  drawerTitle,
+  drawerTop,
+  empty,
+  emptyActions,
+  eyebrow,
+  eyebrowRow,
+  filterSummary,
+  filterTextButton,
+  ghostButton,
+  groupCount,
+  groupHeader,
+  groupKeyButton,
+  groupPanel,
+  groupPct,
+  groupRow,
+  groupRows,
+  groupSub,
+  groupTitle,
+  groupValue,
+  header,
+  headerTop,
+  highlightMark,
+  inlineFieldLabel,
+  meta,
+  metricDelta,
+  metricDeltaArrow,
+  metricGrid,
+  metricLabel,
+  metricTile,
+  metricValue,
+  modelCell,
+  monthGridline,
+  muted,
+  numCell,
+  page,
+  popoverContent,
+  popoverGrid,
+  popoverHeader,
+  presetButton,
+  presetGroup,
+  projectTable,
+  refreshButton,
+  refreshIconButton,
+  refreshRing,
+  refreshRingDelayed,
+  refreshRingError,
+  refreshRingIdle,
+  refreshRingPaused,
+  refreshRingRefreshing,
+  refreshRingStatic,
+  refreshRingSuccess,
+  refreshStatus,
+  refreshStatusError,
+  right,
+  searchInput,
+  section,
+  selectInput,
+  sessionCell,
+  sessionsTable,
+  sessionTitleClamp,
+  shell,
+  sortArrow,
+  sortButton,
+  strongCell,
+  summaryPill,
+  table,
+  tableControls,
+  tableWrap,
+  tabsList,
+  tabsRoot,
+  tabTrigger,
+  themeToggleButton,
+  timeAxis,
+  timeAxisTick,
+  timeBucket,
+  timeBucketSegment,
+  timeRangeHeader,
+  timeRangeMeta,
+  timeRangePanel,
+  timeRangeTitle,
+  timeSliderBars,
+  timeSliderControl,
+  timeSliderDimLeft,
+  timeSliderDimRight,
+  timeSliderRange,
+  timeSliderRangeDrag,
+  timeSliderRoot,
+  timeSliderThumb,
+  timeSliderTrack,
+  title,
+  titleBlock,
+  toolbar,
+  tooltipContent,
+  unavailableCell,
+  unavailablePanel,
+  unavailableText,
+  unavailableTitle,
+} from '@ai-usage/design-system';
+import { cx } from '@ai-usage/design-system/css';
 import { Popover } from '@ark-ui/solid/popover';
 import { Slider } from '@ark-ui/solid/slider';
 import { Tabs } from '@ark-ui/solid/tabs';
@@ -20,7 +149,6 @@ import {
   type VisibilityState,
 } from '@tanstack/solid-table';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
-import { css, cx } from '../styled-system/css';
 import {
   type DashboardSearch,
   dashboardSearchDefaultsFor,
@@ -99,934 +227,6 @@ declare module '@tanstack/solid-table' {
 const initialPayload = readReportPayload();
 const REFRESH_INTERVAL_MS = 60_000;
 
-const page = css({
-  minHeight: '100vh',
-  bg: 'canvas',
-  color: 'ink',
-  fontFamily: 'sans',
-});
-
-const shell = css({
-  maxWidth: '1380px',
-  mx: 'auto',
-  px: { base: '20px', md: '36px' },
-  py: { base: '24px', md: '32px' },
-});
-
-const header = css({
-  display: 'grid',
-  gap: '20px',
-  pb: '16px',
-});
-
-const headerTop = css({
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'flex-start',
-  gap: '16px',
-});
-
-const titleBlock = css({
-  display: 'grid',
-  gap: '8px',
-});
-
-const eyebrowRow = css({
-  display: 'flex',
-  alignItems: 'center',
-  gap: '10px',
-});
-
-const eyebrow = css({
-  textStyle: 'eyebrow',
-  color: 'accent',
-});
-
-const demoBadge = css({
-  textStyle: 'label',
-  display: 'inline-flex',
-  alignItems: 'center',
-  h: '20px',
-  px: '8px',
-  borderRadius: 'full',
-  bg: 'accentSoft',
-  color: 'accent',
-});
-
-const title = css({
-  fontSize: { base: '26px', md: '30px' },
-  lineHeight: '1.1',
-  fontWeight: 650,
-  letterSpacing: '-0.02em',
-});
-
-const meta = css({
-  color: 'muted',
-  fontSize: '13px',
-  overflowWrap: 'anywhere',
-});
-
-const themeToggleButton = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  w: '36px',
-  h: '36px',
-  flexShrink: 0,
-  border: '1px solid token(colors.lineStrong)',
-  borderRadius: 'sm',
-  bg: 'surface',
-  color: 'muted',
-  cursor: 'pointer',
-  transition: 'color 0.15s, border-color 0.15s',
-  _hover: {
-    color: 'accent',
-    borderColor: 'accent',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-  _print: { display: 'none' },
-});
-
-const filterSummary = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '8px 12px',
-  alignItems: 'center',
-  color: 'muted',
-  fontSize: '12px',
-  pt: '14px',
-});
-
-const summaryPill = css({
-  textStyle: 'numeric',
-  display: 'inline-flex',
-  alignItems: 'center',
-  h: '22px',
-  px: '10px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'full',
-  bg: 'surface',
-  color: 'ink',
-  fontSize: '11px',
-  fontWeight: 600,
-});
-
-// Sticky so the filters stay reachable while scanning the session table.
-// Static on small screens, where the stacked controls would cover too much.
-const toolbar = css({
-  position: { base: 'static', md: 'sticky' },
-  top: '0',
-  zIndex: 20,
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '10px',
-  alignItems: 'center',
-  py: '12px',
-  bg: 'canvas',
-  borderBottom: '1px solid token(colors.line)',
-  _print: { display: 'none' },
-});
-
-const field = css({
-  h: '36px',
-  px: '12px',
-  border: '1px solid token(colors.lineStrong)',
-  borderRadius: 'sm',
-  bg: 'surface',
-  color: 'ink',
-  fontSize: '13px',
-  outline: 'none',
-  transition: 'border-color 0.15s, box-shadow 0.15s',
-  _placeholder: {
-    color: 'faint',
-  },
-  _focusVisible: {
-    borderColor: 'accent',
-    boxShadow: '0 0 0 3px token(colors.focusRing)',
-  },
-});
-
-const searchInput = cx(field, css({ flex: '1 1 240px', minW: '180px' }));
-const selectInput = cx(field, css({ flex: '0 1 180px', minW: '150px' }));
-const dateInput = cx(field, css({ flex: '0 1 150px', minW: '140px' }));
-
-const timeRangePanel = css({
-  display: 'grid',
-  gap: '14px',
-  mt: '14px',
-  p: '14px 16px 16px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surface',
-  boxShadow: 'card',
-});
-
-const timeRangeHeader = css({
-  display: 'grid',
-  gridTemplateColumns: { base: '1fr', md: 'minmax(0, 1fr) auto' },
-  gap: '12px',
-  alignItems: 'start',
-});
-
-const timeRangeTitle = css({
-  fontSize: '14px',
-  fontWeight: 650,
-});
-
-const timeRangeMeta = css({
-  color: 'muted',
-  fontSize: '12px',
-  mt: '2px',
-});
-
-const presetGroup = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '6px',
-  justifyContent: { base: 'flex-start', md: 'flex-end' },
-  minW: 0,
-  m: 0,
-  p: 0,
-  border: 0,
-});
-
-const presetButton = css({
-  appearance: 'none',
-  h: '30px',
-  px: '10px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'surface',
-  color: 'muted',
-  fontSize: '12px',
-  fontWeight: 600,
-  cursor: 'pointer',
-  whiteSpace: 'nowrap',
-  transition: 'border-color 0.15s, color 0.15s, background-color 0.15s',
-  _hover: {
-    borderColor: 'accent',
-    color: 'accent',
-  },
-  '&[data-active="true"]': {
-    bg: 'accentSoft',
-    borderColor: 'accent',
-    color: 'accent',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-});
-
-const dateEditRow = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '10px',
-  alignItems: 'end',
-});
-
-const dateFieldGroup = css({
-  display: 'grid',
-  gap: '4px',
-});
-
-const inlineFieldLabel = css({
-  textStyle: 'label',
-  color: 'muted',
-});
-
-const timeSliderRoot = css({
-  display: 'grid',
-  gap: '8px',
-});
-
-const timeSliderControl = css({
-  position: 'relative',
-  h: '128px',
-});
-
-const timeSliderTrack = css({
-  position: 'relative',
-  h: '128px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'surfaceMuted',
-  overflow: 'hidden',
-  cursor: 'ew-resize',
-  boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.32)',
-  _focusWithin: {
-    boxShadow: '0 0 0 3px token(colors.focusRing)',
-  },
-});
-
-const timeSliderBars = css({
-  position: 'absolute',
-  inset: '8px 8px 22px',
-  display: 'flex',
-  alignItems: 'flex-end',
-  gap: '2px',
-  pointerEvents: 'none',
-  zIndex: 2,
-});
-
-const timeBucket = css({
-  flex: '1 1 0',
-  minW: '2px',
-  h: '100%',
-  display: 'flex',
-  flexDirection: 'column',
-  justifyContent: 'flex-end',
-  gap: '1px',
-});
-
-const timeBucketSegment = css({
-  w: '100%',
-  minH: '1px',
-  borderRadius: '1px',
-});
-
-// The selection stays transparent: bars keep their full color inside it and
-// the regions outside are veiled instead (timeSliderDim*), so the histogram
-// is always readable — even when the whole domain is selected.
-const timeSliderRange = css({
-  position: 'absolute',
-  top: 0,
-  bottom: 0,
-  zIndex: 3,
-  borderLeft: '2px solid token(colors.accent)',
-  borderRight: '2px solid token(colors.accent)',
-  pointerEvents: 'none',
-});
-
-const timeSliderDim = css({
-  position: 'absolute',
-  top: 0,
-  bottom: 0,
-  zIndex: 3,
-  bg: 'canvas',
-  opacity: 0.62,
-  pointerEvents: 'none',
-});
-
-const timeSliderDimLeft = cx(timeSliderDim, css({ left: 0, w: 'var(--slider-range-start)' }));
-const timeSliderDimRight = cx(timeSliderDim, css({ right: 0, w: 'var(--slider-range-end)' }));
-
-const monthGridline = css({
-  position: 'absolute',
-  top: 0,
-  bottom: 0,
-  w: '1px',
-  bg: 'line',
-  zIndex: 1,
-  pointerEvents: 'none',
-});
-
-const timeSliderRangeDrag = css({
-  appearance: 'none',
-  position: 'absolute',
-  top: 0,
-  bottom: 0,
-  left: 'var(--slider-range-start)',
-  right: 'var(--slider-range-end)',
-  zIndex: 3,
-  border: '0',
-  p: 0,
-  bg: 'transparent',
-  cursor: 'grab',
-  touchAction: 'none',
-  _hover: {
-    bg: 'rgba(177, 78, 18, 0.08)',
-  },
-  '&[data-dragging="true"]': {
-    cursor: 'grabbing',
-    bg: 'rgba(177, 78, 18, 0.12)',
-  },
-  _before: {
-    content: '""',
-    position: 'absolute',
-    top: '12px',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    w: '46px',
-    h: '22px',
-    border: '1px solid token(colors.lineStrong)',
-    borderRadius: 'full',
-    bg: 'surface',
-    boxShadow: 'card',
-    opacity: 0.9,
-  },
-  _after: {
-    content: '""',
-    position: 'absolute',
-    top: '21px',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    w: '20px',
-    h: '4px',
-    borderTop: '1px solid token(colors.accent)',
-    borderBottom: '1px solid token(colors.accent)',
-  },
-});
-
-const timeSliderThumb = css({
-  top: '32px',
-  zIndex: 4,
-  w: '32px',
-  h: '64px',
-  border: '0',
-  borderRadius: 'full',
-  bg: 'transparent',
-  cursor: 'ew-resize',
-  _before: {
-    content: '""',
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
-    w: '18px',
-    h: '52px',
-    border: '2px solid token(colors.accent)',
-    borderRadius: 'full',
-    bg: 'surface',
-    boxShadow: 'overlay',
-  },
-  _after: {
-    content: '""',
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
-    w: '5px',
-    h: '28px',
-    borderLeft: '1px solid token(colors.accent)',
-    borderRight: '1px solid token(colors.accent)',
-    opacity: 0.75,
-  },
-  _hover: {
-    _before: {
-      boxShadow: '0 0 0 4px token(colors.focusRing), token(shadows.overlay)',
-    },
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.ink)',
-    outlineOffset: '-2px',
-  },
-});
-
-const timeAxis = css({
-  position: 'relative',
-  display: 'flex',
-  justifyContent: 'space-between',
-  gap: '8px',
-  color: 'faint',
-  fontSize: '11px',
-  fontFamily: 'mono',
-});
-
-const timeAxisTick = css({
-  position: 'absolute',
-  top: 0,
-  transform: 'translateX(-50%)',
-  color: 'faint',
-  whiteSpace: 'nowrap',
-});
-
-const activeFilters = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '8px',
-  alignItems: 'center',
-});
-
-const activeFilterButton = css({
-  appearance: 'none',
-  display: 'inline-flex',
-  alignItems: 'center',
-  h: '24px',
-  px: '10px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'full',
-  bg: 'surface',
-  color: 'ink',
-  fontSize: '11px',
-  fontWeight: 600,
-  cursor: 'pointer',
-  transition: 'border-color 0.15s, color 0.15s',
-  _hover: {
-    borderColor: 'accent',
-    color: 'accent',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-});
-
-const commandButton = css({
-  h: '36px',
-  px: '16px',
-  ml: 'auto',
-  border: '1px solid token(colors.ink)',
-  borderRadius: 'sm',
-  bg: 'ink',
-  color: 'canvas',
-  fontSize: '13px',
-  fontWeight: 600,
-  cursor: 'pointer',
-  whiteSpace: 'nowrap',
-  transition: 'background-color 0.15s, border-color 0.15s',
-  _hover: {
-    bg: 'inkHover',
-    borderColor: 'inkHover',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-});
-
-const refreshStatus = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: '8px',
-  h: '36px',
-  px: '12px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'surface',
-  color: 'muted',
-  fontSize: '12px',
-  lineHeight: 1,
-  whiteSpace: 'nowrap',
-});
-
-const refreshStatusError = css({
-  borderColor: 'accent',
-  color: 'accent',
-});
-
-const refreshRing = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  w: '16px',
-  h: '16px',
-  borderRadius: 'full',
-  color: 'chart.c2',
-  flexShrink: 0,
-  bg: 'conic-gradient(currentColor calc(var(--refresh-progress) * 1turn), token(colors.track) 0)',
-  transition: 'background 0.15s, color 0.15s, opacity 0.15s',
-  _after: {
-    content: '""',
-    w: '10px',
-    h: '10px',
-    borderRadius: 'full',
-    bg: 'surface',
-  },
-});
-
-const refreshRingIdle = css({ color: 'chart.c4' });
-const refreshRingRefreshing = css({ color: 'chart.c6' });
-const refreshRingSuccess = css({ color: 'chart.c2' });
-const refreshRingDelayed = css({ color: 'chart.c5' });
-const refreshRingError = css({ color: 'accent' });
-const refreshRingStatic = css({ bg: 'transparent', border: '1px solid token(colors.faint)' });
-const refreshRingPaused = css({ bg: 'transparent', border: '1px solid currentColor', opacity: 0.8 });
-
-const refreshButton = css({
-  appearance: 'none',
-  display: 'inline-flex',
-  alignItems: 'center',
-  h: '100%',
-  p: 0,
-  border: '0',
-  bg: 'transparent',
-  color: 'accent',
-  fontSize: '12px',
-  fontWeight: 650,
-  lineHeight: 1,
-  minW: '44px',
-  justifyContent: 'center',
-  cursor: 'pointer',
-  transition: 'color 0.15s',
-  _hover: {
-    color: 'ink',
-  },
-  _disabled: {
-    color: 'faint',
-    cursor: 'not-allowed',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-});
-
-const refreshIconButton = css({
-  appearance: 'none',
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  w: '22px',
-  h: '22px',
-  p: 0,
-  border: '0',
-  borderRadius: 'xs',
-  bg: 'transparent',
-  color: 'faint',
-  fontFamily: 'mono',
-  fontSize: '11px',
-  fontWeight: 650,
-  lineHeight: 1,
-  cursor: 'pointer',
-  transition: 'color 0.15s, background-color 0.15s',
-  _hover: {
-    bg: 'surfaceMuted',
-    color: 'accent',
-  },
-  _disabled: {
-    bg: 'transparent',
-    color: 'faint',
-    cursor: 'not-allowed',
-    opacity: 0.55,
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-});
-
-const refreshTooltip = css({
-  p: '8px 12px',
-  borderRadius: 'sm',
-  bg: 'ink',
-  color: 'canvas',
-  fontSize: '12px',
-  lineHeight: 1.5,
-  whiteSpace: 'pre',
-  boxShadow: 'overlay',
-  zIndex: 50,
-  _open: {
-    animation: 'fadeIn 0.12s ease-out',
-  },
-});
-
-const metricGrid = css({
-  display: 'grid',
-  gridTemplateColumns: {
-    base: 'repeat(2, minmax(0, 1fr))',
-    md: 'repeat(4, minmax(0, 1fr))',
-    xl: 'repeat(7, minmax(0, 1fr))',
-  },
-  gap: '10px',
-  my: '20px',
-});
-
-const metricTile = css({
-  minH: '88px',
-  p: '14px 16px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surface',
-  boxShadow: 'card',
-  display: 'grid',
-  alignContent: 'space-between',
-  gap: '10px',
-});
-
-const metricLabel = css({
-  textStyle: 'label',
-  color: 'muted',
-});
-
-const metricValue = css({
-  textStyle: 'numeric',
-  fontSize: { base: '20px', md: '23px' },
-  lineHeight: '1',
-  fontWeight: 600,
-});
-
-const metricDelta = css({
-  textStyle: 'numeric',
-  mt: '7px',
-  fontSize: '11px',
-  color: 'muted',
-});
-
-const metricDeltaArrow = css({
-  color: 'accent',
-  fontSize: '9px',
-});
-
-const tabsRoot = css({
-  display: 'grid',
-  gap: '16px',
-});
-
-// Wrap instead of overflow so no tab is ever hidden on narrow screens.
-const tabsList = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '0 20px',
-  borderBottom: '1px solid token(colors.line)',
-});
-
-const tabTrigger = css({
-  appearance: 'none',
-  border: '0',
-  borderBottom: '2px solid transparent',
-  mb: '-1px',
-  bg: 'transparent',
-  color: 'muted',
-  px: '2px',
-  py: '10px',
-  fontSize: '13px',
-  fontWeight: 600,
-  cursor: 'pointer',
-  whiteSpace: 'nowrap',
-  transition: 'color 0.15s, border-color 0.15s',
-  _hover: {
-    color: 'ink',
-  },
-  '&[data-selected]': {
-    color: 'ink',
-    borderColor: 'accent',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '-2px',
-  },
-});
-
-const section = css({
-  display: 'grid',
-  gap: '14px',
-});
-
-// Internal scroll keeps the page short; the sticky header keeps columns
-// labelled while scanning all rows. Scroll shadows signal the inner scroll
-// region so the wheel hand-off from the page does not feel like a trap.
-const tableWrap = css({
-  overflow: 'auto',
-  maxH: 'calc(100dvh - 240px)',
-  minH: '320px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surface',
-  boxShadow: 'card',
-  backgroundImage: `linear-gradient(to bottom, token(colors.surface) 30%, transparent),
-    linear-gradient(to top, token(colors.surface) 30%, transparent),
-    linear-gradient(to bottom, token(colors.lineStrong), transparent),
-    linear-gradient(to top, token(colors.lineStrong), transparent)`,
-  backgroundPosition: 'top, bottom, top, bottom',
-  backgroundRepeat: 'no-repeat',
-  backgroundSize: '100% 36px, 100% 36px, 100% 10px, 100% 10px',
-  backgroundAttachment: 'local, local, scroll, scroll',
-  _print: { maxH: 'none', overflow: 'visible', boxShadow: 'none' },
-});
-
-const tableControls = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '10px',
-  alignItems: 'center',
-  justifyContent: 'flex-end',
-  _print: { display: 'none' },
-});
-
-// Zag mirrors the content's computed z-index into the positioner variable,
-// so the stacking level is declared here on the content.
-const columnPopoverContent = css({
-  zIndex: 50,
-  display: 'grid',
-  gap: '10px',
-  w: 'min(560px, calc(100vw - 32px))',
-  p: '12px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surface',
-  boxShadow: 'overlay',
-  animation: 'fadeIn 0.12s ease-out',
-});
-
-const columnPopoverHeader = css({
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  gap: '8px',
-  color: 'muted',
-  fontSize: '12px',
-});
-
-const columnPopoverGrid = css({
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
-  gap: '6px',
-});
-
-const columnToggle = css({
-  display: 'inline-grid',
-  gridTemplateColumns: '14px minmax(0, max-content)',
-  gap: '6px',
-  alignItems: 'center',
-  maxW: '180px',
-  minH: '28px',
-  px: '8px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'canvas',
-  color: 'ink',
-  fontSize: '12px',
-  cursor: 'pointer',
-  transition: 'border-color 0.15s, background-color 0.15s',
-  _hover: {
-    bg: 'surfaceMuted',
-    borderColor: 'lineStrong',
-  },
-});
-
-const columnToggleInput = css({
-  accentColor: 'token(colors.accent)',
-});
-
-const columnToggleText = css({
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-});
-
-const table = css({
-  width: '100%',
-  // Collapsed borders do not travel with sticky cells; keep them separate.
-  borderCollapse: 'separate',
-  borderSpacing: 0,
-  minW: '1040px',
-  tableLayout: 'fixed',
-  fontSize: '13px',
-  '& th': {
-    position: 'sticky',
-    top: 0,
-    zIndex: 2,
-    bg: 'surface',
-    textStyle: 'label',
-    color: 'muted',
-    textAlign: 'left',
-    py: '10px',
-    px: '12px',
-    borderBottom: '1px solid token(colors.line)',
-  },
-  '& td': {
-    py: '10px',
-    px: '12px',
-    borderBottom: '1px solid token(colors.line)',
-    verticalAlign: 'middle',
-  },
-  '& tr:last-child td': {
-    borderBottom: '0',
-  },
-});
-
-// Only session rows are interactive; the projects table reuses `table`
-// without these affordances. The trailing chevron and inset edge teach that
-// rows open the session inspector.
-const sessionsTable = css({
-  // [data-selected] scopes the affordances to real rows, never the
-  // virtualization spacer rows.
-  '& tbody tr[data-selected]': {
-    cursor: 'pointer',
-    transition: 'background-color 0.1s',
-  },
-  '& tbody tr[data-selected]:hover td': {
-    bg: 'surfaceMuted',
-  },
-  '& tbody tr[data-selected]:hover td:first-child': {
-    boxShadow: 'inset 2px 0 0 token(colors.lineStrong)',
-  },
-  '& tbody tr[data-selected] td:last-child': {
-    position: 'relative',
-    pr: '26px',
-  },
-  '& tbody tr[data-selected] td:last-child::after': {
-    content: '"›"',
-    position: 'absolute',
-    right: '10px',
-    top: '50%',
-    transform: 'translateY(-50%)',
-    color: 'faint',
-    fontSize: '14px',
-    opacity: 0,
-    transition: 'opacity 0.1s',
-  },
-  '& tbody tr[data-selected]:hover td:last-child::after': {
-    opacity: 1,
-    color: 'accent',
-  },
-  '& tbody tr:focus-visible': {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '-2px',
-  },
-  '& tbody tr[data-selected="true"] td': {
-    bg: 'accentTint',
-  },
-  '& tbody tr[data-selected="true"] td:first-child': {
-    boxShadow: 'inset 2px 0 0 token(colors.accent)',
-  },
-});
-
-const right = css({ textAlign: 'right' });
-const muted = css({ color: 'muted' });
-const strongCell = css({ fontWeight: 600, overflowWrap: 'anywhere' });
-const filterTextButton = css({
-  appearance: 'none',
-  display: 'inline',
-  maxW: '100%',
-  border: '0',
-  p: '0',
-  bg: 'transparent',
-  color: 'inherit',
-  font: 'inherit',
-  textAlign: 'left',
-  overflowWrap: 'anywhere',
-  cursor: 'pointer',
-  _hover: {
-    color: 'accent',
-    textDecoration: 'underline',
-    textUnderlineOffset: '2px',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-});
-const groupKeyButton = cx(filterTextButton, css({ fontWeight: 600 }));
-const numCell = css({
-  textStyle: 'numeric',
-  textAlign: 'right',
-  fontSize: '12px',
-});
-const dateCell = css({
-  fontFamily: 'mono',
-  fontSize: '12px',
-  lineHeight: '1.4',
-  color: 'muted',
-});
-const sessionCell = css({ fontWeight: 600, overflowWrap: 'break-word' });
-
-// Session labels can be entire pasted prompts; clamp them so one row stays a
-// row (the expanded detail shows the full text).
-const sessionTitleClamp = css({
-  lineClamp: 2,
-});
-
-const highlightMark = css({
-  bg: 'accentSoft',
-  color: 'inherit',
-  borderRadius: '2px',
-});
-
 // Marks the filter query inside session titles so a match explains itself.
 const HighlightedText = (props: { text: string; query: string }) => {
   const segments = createMemo(() => {
@@ -1057,349 +257,6 @@ const HighlightedText = (props: { text: string; query: string }) => {
     </Show>
   );
 };
-const modelCell = css({
-  fontFamily: 'mono',
-  fontSize: '12px',
-  fontWeight: 500,
-  overflowWrap: 'anywhere',
-});
-
-const sortButton = css({
-  appearance: 'none',
-  display: 'inline-flex',
-  gap: '5px',
-  alignItems: 'center',
-  border: '0',
-  p: '0',
-  bg: 'transparent',
-  color: 'inherit',
-  font: 'inherit',
-  letterSpacing: 'inherit',
-  textTransform: 'inherit',
-  cursor: 'pointer',
-  _hover: {
-    color: 'ink',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-});
-
-const sortArrow = css({
-  color: 'accent',
-  fontSize: '10px',
-  lineHeight: '1',
-});
-
-const ghostButton = css({
-  appearance: 'none',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'surface',
-  color: 'muted',
-  px: '12px',
-  py: '5px',
-  fontSize: '12px',
-  fontWeight: 600,
-  cursor: 'pointer',
-  transition: 'border-color 0.15s, color 0.15s',
-  _hover: {
-    borderColor: 'accent',
-    color: 'accent',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-});
-
-// Non-modal inspector: it overlays the right edge, the table stays
-// interactive so clicking other rows just swaps its content. On small
-// screens it becomes a bottom sheet instead of covering the whole page.
-const drawer = css({
-  position: 'fixed',
-  right: '0',
-  bottom: '0',
-  top: { base: 'auto', sm: '0' },
-  left: { base: '0', sm: 'auto' },
-  w: { base: '100%', sm: '440px' },
-  maxW: '100vw',
-  maxH: { base: '78dvh', sm: 'none' },
-  display: 'flex',
-  flexDirection: 'column',
-  bg: 'surface',
-  borderLeft: { base: '0', sm: '1px solid token(colors.line)' },
-  borderTop: { base: '1px solid token(colors.line)', sm: '0' },
-  roundedTop: { base: 'md', sm: '0' },
-  boxShadow: 'overlay',
-  zIndex: 40,
-  animation: { base: 'sheetIn 0.2s ease-out', sm: 'drawerIn 0.18s ease-out' },
-  _print: { display: 'none' },
-});
-
-const drawerTop = css({
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  gap: '10px',
-  p: '12px 16px',
-  borderBottom: '1px solid token(colors.line)',
-});
-
-const drawerBody = css({
-  display: 'grid',
-  gap: '14px',
-  alignContent: 'start',
-  p: '16px 18px',
-  overflowY: 'auto',
-});
-
-const drawerTitle = css({
-  fontSize: '15px',
-  fontWeight: 650,
-  lineHeight: '1.35',
-  overflowWrap: 'anywhere',
-});
-
-const drawerGrid = css({
-  display: 'grid',
-  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-  gap: '14px 12px',
-});
-
-const drawerClose = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  w: '30px',
-  h: '30px',
-  flexShrink: 0,
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'transparent',
-  color: 'muted',
-  fontSize: '14px',
-  lineHeight: '1',
-  cursor: 'pointer',
-  transition: 'color 0.15s, border-color 0.15s',
-  _hover: {
-    color: 'accent',
-    borderColor: 'accent',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-  _disabled: {
-    opacity: 0.4,
-    cursor: 'default',
-    _hover: {
-      color: 'muted',
-      borderColor: 'line',
-    },
-  },
-});
-
-const drawerNav = css({
-  display: 'flex',
-  alignItems: 'center',
-  gap: '6px',
-});
-
-const drawerPosition = css({
-  textStyle: 'numeric',
-  color: 'faint',
-  fontSize: '11px',
-  mr: '4px',
-});
-
-const drawerLegend = css({
-  display: 'grid',
-  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-  gap: '4px 12px',
-  color: 'muted',
-  fontSize: '11px',
-});
-
-const drawerLegendItem = css({
-  display: 'flex',
-  alignItems: 'center',
-  gap: '6px',
-  minW: 0,
-});
-
-const drawerLegendSwatch = css({
-  w: '8px',
-  h: '8px',
-  borderRadius: '2px',
-  flexShrink: 0,
-});
-
-const drawerLegendValue = css({
-  textStyle: 'numeric',
-  color: 'ink',
-  ml: 'auto',
-});
-
-const drawerCompare = css({
-  color: 'muted',
-  fontSize: '12px',
-});
-
-const drawerActions = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '8px',
-});
-
-const emptyActions = css({
-  display: 'grid',
-  gap: '12px',
-  justifyItems: 'center',
-});
-
-const chartLegend = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '6px',
-  justifyContent: { base: 'flex-start', sm: 'flex-end' },
-});
-
-const groupPanel = css({
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surface',
-  boxShadow: 'card',
-  overflow: 'hidden',
-});
-
-const groupHeader = css({
-  display: 'grid',
-  gridTemplateColumns: 'minmax(0, 1fr) auto',
-  gap: '10px',
-  alignItems: 'center',
-  p: '14px 16px',
-  borderBottom: '1px solid token(colors.line)',
-});
-
-const groupTitle = css({
-  fontSize: '14px',
-  fontWeight: 650,
-  overflowWrap: 'anywhere',
-});
-
-const groupCount = css({
-  textStyle: 'numeric',
-  fontSize: '11px',
-  color: 'faint',
-});
-
-const groupRows = css({
-  display: 'grid',
-});
-
-const groupRow = css({
-  display: 'grid',
-  gridTemplateColumns: 'minmax(0, 1fr) 96px',
-  gap: '14px',
-  alignItems: 'center',
-  px: '16px',
-  py: '12px',
-  borderBottom: '1px solid token(colors.line)',
-  _last: {
-    borderBottom: '0',
-  },
-});
-
-const groupSub = css({
-  color: 'muted',
-  fontSize: '12px',
-  mt: '2px',
-});
-
-const groupValue = css({
-  textStyle: 'numeric',
-  fontSize: '13px',
-  fontWeight: 600,
-});
-
-const groupPct = css({
-  textStyle: 'numeric',
-  fontSize: '11px',
-  color: 'muted',
-  mt: '2px',
-});
-
-const barTrack = css({
-  h: '6px',
-  mt: '8px',
-  borderRadius: 'full',
-  bg: 'track',
-  overflow: 'hidden',
-});
-
-// Color is applied separately so harness tones can replace the accent
-// without two atomic `bg` classes fighting over cascade order.
-const barFill = css({
-  h: '100%',
-  borderRadius: 'full',
-});
-
-const empty = css({
-  minH: '160px',
-  display: 'grid',
-  placeItems: 'center',
-  color: 'muted',
-  fontSize: '13px',
-  border: '1px dashed token(colors.lineStrong)',
-  borderRadius: 'md',
-});
-
-const unavailablePanel = css({
-  mt: '20px',
-  minH: '180px',
-  display: 'grid',
-  alignContent: 'center',
-  gap: '8px',
-  border: '1px dashed token(colors.lineStrong)',
-  borderRadius: 'md',
-  bg: 'surface',
-  p: '22px',
-});
-
-const unavailableTitle = css({
-  fontSize: '16px',
-  fontWeight: 650,
-});
-
-const unavailableText = css({
-  color: 'muted',
-  fontSize: '13px',
-  maxW: '620px',
-});
-
-const detailItem = css({
-  display: 'grid',
-  gap: '5px',
-  minW: '0',
-});
-
-const detailLabel = css({
-  textStyle: 'label',
-  color: 'muted',
-});
-
-const detailValue = css({
-  textStyle: 'numeric',
-  fontSize: '13px',
-  fontWeight: 500,
-  overflowWrap: 'anywhere',
-});
-
-const projectTable = css({
-  minW: '780px',
-});
 
 type MetricDelta = { pct: number; hint: string };
 
@@ -1754,7 +611,6 @@ const rtkSavedTitle = (row: SerializedRow) =>
 type SessionColumnDef = ColumnDef<DashboardRow> & { id: SessionColumnId };
 
 const USAGE_UNAVAILABLE_HINT = 'Session found in prompt history; detailed local token counters are missing';
-const unavailableCell = css({ color: 'muted', fontStyle: 'italic' });
 const UsageUnavailableCell = () => (
   <span class={unavailableCell} title={USAGE_UNAVAILABLE_HINT}>
     n/a
@@ -2261,8 +1117,8 @@ const ColumnVisibilityControl = (props: {
     <Popover.Root lazyMount unmountOnExit>
       <Popover.Trigger class={ghostButton}>Columns · {visibleCount()} ▾</Popover.Trigger>
       <Popover.Positioner>
-        <Popover.Content class={columnPopoverContent} aria-label="Choose table columns">
-          <div class={columnPopoverHeader}>
+        <Popover.Content class={popoverContent} aria-label="Choose table columns">
+          <div class={popoverHeader}>
             <span>
               {visibleCount()} of {sessionColumns.length} columns shown
             </span>
@@ -2274,7 +1130,7 @@ const ColumnVisibilityControl = (props: {
               Reset
             </button>
           </div>
-          <div class={columnPopoverGrid}>
+          <div class={popoverGrid}>
             <For each={hideableColumns()}>
               {(column) => (
                 <label class={columnToggle}>
@@ -3392,7 +2248,7 @@ const RefreshStatus = (props: {
         </button>
       </Tooltip.Trigger>
       <Tooltip.Positioner>
-        <Tooltip.Content class={refreshTooltip}>
+        <Tooltip.Content class={tooltipContent}>
           <For each={tooltipLines()}>{(line) => <div>{line}</div>}</For>
         </Tooltip.Content>
       </Tooltip.Positioner>

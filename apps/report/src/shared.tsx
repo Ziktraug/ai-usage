@@ -1,5 +1,16 @@
 import type { SerializedRow } from '@ai-usage/core/report-data';
-import { css, cx } from '../styled-system/css';
+import {
+  accentFill,
+  badgeToneFor,
+  HarnessBadge,
+  harnessFamily,
+  harnessFillFor,
+  harnessSvgFillFor,
+  segmentBarPart,
+  segmentBarTrack,
+  tokenSegmentClasses,
+} from '@ai-usage/design-system';
+import { cx } from '@ai-usage/design-system/css';
 
 const numberFormatter = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
 const dateTimeFormatter = new Intl.DateTimeFormat('en', {
@@ -104,112 +115,15 @@ export const enrichReportRow = (row: SerializedRow): DashboardRow => {
 
 export const rowKey = (row: DashboardRow) => row.rowId;
 
-const badge = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: '6px',
-  h: '22px',
-  px: '9px',
-  borderRadius: 'full',
-  fontSize: '11px',
-  fontWeight: 600,
-  whiteSpace: 'nowrap',
-  _before: {
-    content: '""',
-    w: '6px',
-    h: '6px',
-    borderRadius: 'full',
-    bg: 'currentColor',
-  },
-});
-
-const badgeButton = css({
-  appearance: 'none',
-  border: '0',
-  cursor: 'pointer',
-  transition: 'box-shadow 0.15s, transform 0.15s',
-  _hover: {
-    boxShadow: '0 0 0 1px token(colors.accent)',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-});
-
-const badgeActive = css({
-  boxShadow: '0 0 0 1.5px token(colors.accent)',
-});
-
-const badgeTones: Record<string, string> = {
-  claude: css({ bg: 'harness.claude.bg', color: 'harness.claude.fg' }),
-  codex: css({ bg: 'harness.codex.bg', color: 'harness.codex.fg' }),
-  cursor: css({ bg: 'harness.cursor.bg', color: 'harness.cursor.fg' }),
-  opencode: css({ bg: 'harness.opencode.bg', color: 'harness.opencode.fg' }),
-  gemini: css({ bg: 'harness.gemini.bg', color: 'harness.gemini.fg' }),
-};
-
-const badgeNeutral = css({ bg: 'surfaceMuted', color: 'muted' });
-
-// Harness labels are display strings ("Claude Code", "Codex"); tone keys match
-// on the first word so new label variants keep their family color.
-export const harnessFamily = (name: string) => {
-  const lower = name.toLowerCase();
-  return badgeTones[lower] ? lower : (lower.split(/[\s-]/)[0] ?? '');
-};
-
-export const badgeToneFor = (name: string) => badgeTones[harnessFamily(name)] ?? badgeNeutral;
-
-// Solid fills reusing the badge foreground colors, for chart segments and
-// per-harness distribution bars.
-const harnessFillTones: Record<string, string> = {
-  claude: css({ bg: 'harness.claude.fg' }),
-  codex: css({ bg: 'harness.codex.fg' }),
-  cursor: css({ bg: 'harness.cursor.fg' }),
-  opencode: css({ bg: 'harness.opencode.fg' }),
-  gemini: css({ bg: 'harness.gemini.fg' }),
-};
-
-export const harnessFillFor = (name: string) => harnessFillTones[harnessFamily(name)];
-
-// SVG counterparts of the harness fills (scatter plot points).
-const harnessSvgFillTones: Record<string, string> = {
-  claude: css({ fill: 'harness.claude.fg' }),
-  codex: css({ fill: 'harness.codex.fg' }),
-  cursor: css({ fill: 'harness.cursor.fg' }),
-  opencode: css({ fill: 'harness.opencode.fg' }),
-  gemini: css({ fill: 'harness.gemini.fg' }),
-};
-
-const harnessSvgFillNeutral = css({ fill: 'muted' });
-
-export const harnessSvgFillFor = (name: string) => harnessSvgFillTones[harnessFamily(name)] ?? harnessSvgFillNeutral;
-
-export const accentFill = css({ bg: 'accent' });
-
-export const HarnessBadge = (props: { name: string; onClick?: () => void; active?: boolean; title?: string }) => {
-  const className = () =>
-    cx(
-      badge,
-      badgeToneFor(props.name),
-      props.onClick ? badgeButton : undefined,
-      props.active ? badgeActive : undefined,
-    );
-  if (!props.onClick) return <span class={className()}>{props.name}</span>;
-  return (
-    <button
-      class={className()}
-      type="button"
-      title={props.title ?? `Filter by ${props.name}`}
-      aria-pressed={props.active === undefined ? undefined : props.active}
-      onClick={(event) => {
-        event.stopPropagation();
-        props.onClick?.();
-      }}
-    >
-      {props.name}
-    </button>
-  );
+// Re-export design-system primitives used by the app.
+export {
+  accentFill,
+  badgeToneFor,
+  HarnessBadge,
+  harnessFamily,
+  harnessFillFor,
+  harnessSvgFillFor,
+  tokenSegmentClasses,
 };
 
 export type ReportSummary = {
@@ -280,19 +194,6 @@ export const buildReportSummary = (rows: DashboardRow[], acceptsRow: (row: Dashb
   return summary;
 };
 
-const segmentBarTrack = css({
-  display: 'flex',
-  h: '10px',
-  borderRadius: 'full',
-  bg: 'track',
-  overflow: 'hidden',
-});
-
-const segmentBarPart = css({
-  h: '100%',
-  minW: '0',
-});
-
 export type BarSegment = { label: string; value: number; class: string; title?: string };
 
 // Proportional horizontal bar: token anatomy in the drawer and the overview.
@@ -311,13 +212,4 @@ export const SegmentBar = (props: { segments: BarSegment[]; ariaLabel?: string }
         ))}
     </div>
   );
-};
-
-// Opacity ladder over the copper accent keeps the anatomy readable in both
-// schemes without minting four new tokens.
-export const tokenSegmentClasses = {
-  cacheRead: cx(accentFill, css({ opacity: 0.22 })),
-  cacheWrite: cx(accentFill, css({ opacity: 0.42 })),
-  input: cx(accentFill, css({ opacity: 0.68 })),
-  output: accentFill,
 };
