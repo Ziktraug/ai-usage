@@ -36,3 +36,22 @@ export const tokenSegmentClasses = {
   input: cx(accentFill, css({ opacity: 0.68 })),
   output: accentFill,
 };
+
+export type BarSegment = { label: string; value: number; class: string; title?: string };
+
+export const SegmentBar = (props: { segments: BarSegment[]; ariaLabel?: string }) => {
+  const total = () => props.segments.reduce((sum, segment) => sum + segment.value, 0);
+  return (
+    <div class={segmentBarTrack} role="img" aria-label={props.ariaLabel}>
+      {props.segments
+        .filter((segment) => segment.value > 0)
+        .map((segment) => (
+          <div
+            class={cx(segmentBarPart, segment.class)}
+            style={{ width: `${(segment.value / Math.max(1, total())) * 100}%` }}
+            title={segment.title ?? `${segment.label}: ${segment.value}`}
+          />
+        ))}
+    </div>
+  );
+};

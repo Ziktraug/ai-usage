@@ -42,6 +42,8 @@ The package exports `@ai-usage/design-system/css` and
 `@ai-usage/design-system/styles.css` from generated Panda output. Those files
 exist after `bun run build` or `bun run check` in this package. Workspace apps
 should depend on this package's `build` task before their own check/build task.
+Direct app scripts should also run the design-system build first if they import
+`@ai-usage/design-system/css` without going through Turbo.
 
 ## Dependency contract
 

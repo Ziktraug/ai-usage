@@ -9,6 +9,14 @@
       "dependsOn": ["^build"],
       "outputs": []
     },
+    "@ai-usage/design-system#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["styled-system/**"]
+    },
+    "@ai-usage/design-system#check": {
+      "dependsOn": ["^build"],
+      "outputs": ["styled-system/**"]
+    },
     "test": {
       "dependsOn": ["^build"],
       "outputs": []
