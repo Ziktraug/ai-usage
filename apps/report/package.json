@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@ai-usage/core": "workspace:*",
+    "@ai-usage/design-system": "workspace:*",
     "@ark-ui/solid": "^5.37.1",
     "@tanstack/solid-router": "^1.170.15",
     "@tanstack/solid-table": "^8.21.3",
@@ -16,10 +17,10 @@
     "vite-plugin-solid": "^2.11.12"
   },
   "scripts": {
-    "dev": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && vite --host 127.0.0.1 --open",
-    "build": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit && vite build",
-    "check": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit",
-    "test": "bun test",
+    "dev": "bun run --cwd ../../packages/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && vite --host 127.0.0.1 --open",
+    "build": "bun run --cwd ../../packages/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit && vite build",
+    "check": "bun run --cwd ../../packages/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit",
+    "test": "bun run --cwd ../../packages/design-system build && bun test",
     "preview": "bun serve.ts --host 127.0.0.1",
     "lint": "biome check .",
     "format": "biome format --write ."
