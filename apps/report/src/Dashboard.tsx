@@ -1,8 +1,6 @@
 import type { AnalyticsGroup } from '@ai-usage/core/analytics';
-import { inlineAssetsIntoHTML, serializeForInlineScript } from '@ai-usage/core/html-export';
-import type { SerializedRow, UsageReportPayload } from '@ai-usage/core/report-data';
+import type { UsageReportPayload } from '@ai-usage/core/report-data';
 import {
-  activeFilterButton,
   activeFilters,
   barFill,
   barTrack,
@@ -117,7 +115,6 @@ import {
   titleBlock,
   toolbar,
   tooltipContent,
-  unavailableCell,
   unavailablePanel,
   unavailableText,
   unavailableTitle,
@@ -142,6 +139,8 @@ import {
   type VisibilityState,
 } from '@tanstack/solid-table';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
+import { downloadCSV, downloadHTML } from './dashboard-export';
+import { createFilterSnapshot, FilterPill, fieldFilterLabels, matchesFilterSnapshot } from './dashboard-filters';
 import { type Metric, type MetricDelta, MetricTile } from './dashboard-metrics';
 import {
   type DashboardSearch,
@@ -154,6 +153,14 @@ import {
   type SessionColumnId,
   sortingStateFromSearch,
 } from './dashboard-search';
+import {
+  compareRows,
+  lineDeltaLabel,
+  rtkSavedLabel,
+  rtkSavedTitle,
+  rtkSavingsPct,
+  sortValueForRow,
+} from './dashboard-sort';
 import { ThemeToggle } from './dashboard-theme';
 import {
   clampNumber,
@@ -190,7 +197,6 @@ import {
   fmtDate,
   fmtDateOnly,
   fmtDuration,
-  fmtMaybeNum,
   fmtMoney,
   fmtNum,
   fmtPct,
@@ -201,7 +207,10 @@ import {
   SegmentBar,
   tokenSegmentClasses,
   UNKNOWN_PRICE_HINT,
+  USAGE_UNAVAILABLE_HINT,
+  UsageUnavailableCell,
 } from './shared';
+import { applyTableUpdate } from './table-utils';
 
 declare module '@tanstack/solid-table' {
   interface ColumnMeta<TData extends RowData, TValue> {
@@ -238,235 +247,8 @@ type ProjectGroup = {
 };
 type MutableAnalyticsGroup = AnalyticsGroup & { costs: number[] };
 
-const applyTableUpdate = <T,>(updater: Updater<T>, current: T) =>
-  typeof updater === 'function' ? (updater as (old: T) => T)(current) : updater;
-
-const fieldValueForRow = (row: DashboardRow, key: FieldFilterKey) => {
-  if (key === 'provider') return row.providerDisplay;
-  if (key === 'model') return row.modelKey;
-  return row.projectKey;
-};
-
-type FilterSnapshot = {
-  fieldEntries: [FieldFilterKey, string][];
-  harness: string;
-  query: string;
-};
-
-const createFilterSnapshot = (query: string, harness: string, filters: FieldFilters): FilterSnapshot => ({
-  fieldEntries: Object.entries(filters) as [FieldFilterKey, string][],
-  harness,
-  query: query.trim().toLowerCase(),
-});
-
-const matchesFilterSnapshot = (row: DashboardRow, filters: FilterSnapshot) =>
-  row.searchText.includes(filters.query) &&
-  (filters.harness === 'all' || row.harness === filters.harness) &&
-  filters.fieldEntries.every(([key, value]) => fieldValueForRow(row, key) === value);
-
-const csvEscape = (value: string) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value);
-
-const reportRowsToCSV = (rows: SerializedRow[]) => {
-  const head = [
-    'date',
-    'end_date',
-    'active_date',
-    'harness',
-    'machine',
-    'machine_id',
-    'provider',
-    'session',
-    'model',
-    'project',
-    'input',
-    'output',
-    'cache_read',
-    'cache_write',
-    'fresh_tokens',
-    'total_tokens',
-    'cost_actual',
-    'cost_approx_api',
-    'cost_known',
-    'calls',
-    'duration_ms',
-    'turns',
-    'tools',
-    'lines_added',
-    'lines_deleted',
-    'line_delta',
-    'rtk_saved_tokens',
-    'rtk_input_tokens',
-    'rtk_output_tokens',
-    'rtk_savings_pct',
-    'rtk_command_count',
-    'subagent',
-    'partial',
-    'usage_unavailable',
-  ];
-  const body = rows.map((row) =>
-    [
-      row.date ?? '',
-      row.endDate ?? '',
-      row.activeDate ?? '',
-      row.harness,
-      row.source?.machineLabel ?? '',
-      row.source?.machineId ?? '',
-      row.provider,
-      row.name,
-      row.model,
-      row.project,
-      row.tokIn,
-      row.tokOut,
-      row.tokCr,
-      row.tokCw,
-      row.freshTokens,
-      row.tokenTotal,
-      row.costActual ?? '',
-      row.costApprox.toFixed(4),
-      row.costKnown,
-      row.calls,
-      row.durationMs ?? '',
-      row.turns,
-      row.tools,
-      row.linesAdded ?? '',
-      row.linesDeleted ?? '',
-      row.lineDelta ?? '',
-      row.rtkSavedTokens ?? '',
-      row.rtkInputTokens ?? '',
-      row.rtkOutputTokens ?? '',
-      rtkSavingsPct(row)?.toFixed(2) ?? '',
-      row.rtkCommandCount ?? '',
-      row.subagent ?? false,
-      row.partial ?? false,
-      row.usageUnavailable ?? false,
-    ]
-      .map((item) => csvEscape(String(item)))
-      .join(','),
-  );
-  return [head.join(','), ...body].join('\n');
-};
-
-const downloadCSV = (rows: SerializedRow[], generatedAt: string) => {
-  const blob = new Blob([reportRowsToCSV(rows)], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `ai-usage-report-${generatedAt.slice(0, 10)}.csv`;
-  link.click();
-  URL.revokeObjectURL(url);
-};
-
-const downloadHTML = async (payload: UsageReportPayload) => {
-  const response = await fetch(location.href, { cache: 'no-store' });
-  const html = await response.text();
-  const payloadScript = `<script>window.__AI_USAGE_REPORT__=${serializeForInlineScript(JSON.stringify(payload))};</script>`;
-  const fetchAssetContent = async (src: string): Promise<string> => {
-    try {
-      const url = new URL(src, location.href).href;
-      const res = await fetch(url, { cache: 'no-store' });
-      return res.ok ? await res.text() : '';
-    } catch {
-      return '';
-    }
-  };
-  const assetCache = new Map<string, string>();
-  const readAssetContent = (src: string): string => assetCache.get(src) ?? '';
-  const scriptSrcs = [...html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)].map((m) => m[1]!);
-  const linkHrefs = [...html.matchAll(/<link\b[^>]*\brel=["']stylesheet["'][^>]*\bhref=["']([^"']+)["']/gi)].map(
-    (m) => m[1]!,
-  );
-  const assetUrls = [...new Set([...scriptSrcs, ...linkHrefs])];
-  await Promise.all(
-    assetUrls.map(async (src) => {
-      const content = await fetchAssetContent(src);
-      if (content) assetCache.set(src, content);
-    }),
-  );
-  const selfContained = inlineAssetsIntoHTML(html, readAssetContent, payloadScript);
-  const blob = new Blob([selfContained], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `ai-usage-report-${payload.generatedAt.slice(0, 10)}.html`;
-  link.click();
-  URL.revokeObjectURL(url);
-};
-
-const sortValueForRow = (row: DashboardRow, columnId: string): number | string => {
-  if (columnId === 'date') return row.sortDate;
-  if (columnId === 'harness') return row.sortHarness;
-  if (columnId === 'machine') return row.sortMachine;
-  if (columnId === 'provider') return row.sortProvider;
-  if (columnId === 'model') return row.sortModel;
-  if (columnId === 'project') return row.sortProject;
-  if (columnId === 'tokIn') return row.tokIn;
-  if (columnId === 'tokOut') return row.tokOut;
-  if (columnId === 'cache') return row.tokCr;
-  if (columnId === 'tokCw') return row.tokCw;
-  if (columnId === 'fresh') return row.freshTokens;
-  if (columnId === 'total') return row.tokenTotal;
-  if (columnId === 'cost') return row.costKnown ? row.costApprox : Number.NEGATIVE_INFINITY;
-  if (columnId === 'actual') return row.costActual ?? Number.NEGATIVE_INFINITY;
-  if (columnId === 'duration') return row.durationMs ?? 0;
-  if (columnId === 'calls') return row.calls;
-  if (columnId === 'turns') return row.turns;
-  if (columnId === 'tools') return row.tools;
-  if (columnId === 'lines') return row.lineDelta ?? 0;
-  if (columnId === 'rtkSaved') return rtkSavingsPct(row) ?? 0;
-  if (columnId === 'subagent') return row.subagent ? 1 : 0;
-  if (columnId === 'partial') return row.partial ? 1 : 0;
-  return row.sortSession;
-};
-
-const compareRows = (sorting: SortingState) => (a: DashboardRow, b: DashboardRow) => {
-  for (const sort of sorting) {
-    const av = sortValueForRow(a, sort.id);
-    const bv = sortValueForRow(b, sort.id);
-    const result =
-      typeof av === 'string' || typeof bv === 'string'
-        ? String(av).localeCompare(String(bv))
-        : av === bv
-          ? 0
-          : av > bv
-            ? 1
-            : -1;
-    if (result !== 0) return sort.desc ? -result : result;
-  }
-  return 0;
-};
-
-const lineDeltaLabel = (row: SerializedRow) => {
-  if (row.lineDelta == null || row.lineDelta === 0) return '-';
-  return `+${fmtMaybeNum(row.linesAdded)}/-${fmtMaybeNum(row.linesDeleted)}`;
-};
-
-const rtkSavingsPct = (row: SerializedRow) =>
-  row.rtkSavedTokens && row.rtkInputTokens ? (row.rtkSavedTokens / row.rtkInputTokens) * 100 : null;
-
-const rtkSavedLabel = (row: SerializedRow) => {
-  const pct = rtkSavingsPct(row);
-  return pct == null ? '—' : fmtPct(pct);
-};
-const rtkSavedTitle = (row: SerializedRow) =>
-  row.rtkSavedTokens
-    ? [
-        `${fmtPct(rtkSavingsPct(row) ?? 0)} RTK savings`,
-        `${fmtNum(row.rtkSavedTokens)} tokens saved`,
-        `${fmtNum(row.rtkCommandCount ?? 0)} matched RTK commands`,
-        `${fmtNum(row.rtkInputTokens ?? 0)} input tokens before filtering`,
-        `${fmtNum(row.rtkOutputTokens ?? 0)} output tokens after filtering`,
-        'Matched by project path and session time window',
-      ].join('\n')
-    : 'No matched RTK token savings';
-
 type SessionColumnDef = ColumnDef<DashboardRow> & { id: SessionColumnId };
 
-const USAGE_UNAVAILABLE_HINT = 'Session found in prompt history; detailed local token counters are missing';
-const UsageUnavailableCell = () => (
-  <span class={unavailableCell} title={USAGE_UNAVAILABLE_HINT}>
-    n/a
-  </span>
-);
 const tokenCell = (row: DashboardRow, value: number) =>
   row.usageUnavailable ? <UsageUnavailableCell /> : fmtCompact(value);
 const countCell = (row: DashboardRow, value: number) =>
@@ -1955,23 +1737,6 @@ const CursorAttributionPanel = (props: { rows: CursorCommitAttributionFacet[] })
     </Show>
   );
 };
-
-const fieldFilterLabels: Record<FieldFilterKey, string> = {
-  provider: 'Provider',
-  model: 'Model',
-  project: 'Project',
-};
-
-const FilterPill = (props: { label: string; value: string; onClear: () => void }) => (
-  <button
-    class={activeFilterButton}
-    type="button"
-    title={`Clear ${props.label} filter`}
-    onClick={() => props.onClear()}
-  >
-    {props.label}: {props.value} ×
-  </button>
-);
 
 const formatRefreshCountdown = (ms: number) => {
   const seconds = Math.max(0, Math.ceil(ms / 1000));
