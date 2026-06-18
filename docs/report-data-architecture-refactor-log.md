@@ -184,4 +184,4 @@ Checks:
 
 Commit:
 
-- Pending.
+- `0b34d4b test(reporting): cover shared payload boundary`
