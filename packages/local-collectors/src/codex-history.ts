@@ -1,5 +1,6 @@
-import type { TokenCounts } from '@ai-usage/core/usage-row';
+import { actualCost, approximateApiCost } from '@ai-usage/core/usage-row';
 import { Effect } from 'effect';
+import type { CollectedSession } from './collected-session';
 import type { LocalHistoryError } from './errors';
 import {
   historyPath,
@@ -8,7 +9,7 @@ import {
   walkFiles,
 } from './local-history';
 import { firstExisting, resolvePaths } from './platform-paths';
-import { safeJSON, usablePrompt } from './text';
+import { base, safeJSON, usablePrompt } from './text';
 
 interface CodexSession {
   id: string | null;
@@ -41,23 +42,6 @@ interface CodexThreadMetadata {
   model: string | null;
   start: Date | null;
   end: Date | null;
-}
-
-export interface CodexUsageSession {
-  id: string | null;
-  start: Date | null;
-  end: Date | null;
-  cwd: string | null;
-  model: string;
-  subscription: boolean;
-  name: string;
-  tokens: TokenCounts;
-  calls: number;
-  turns: number;
-  tools: number;
-  hasSubagents: boolean;
-  isSubagent: boolean;
-  usageUnavailable: boolean;
 }
 
 export interface CodexQuotaWindow {
@@ -341,7 +325,7 @@ const readCodexSessions: Effect.Effect<CodexSession[], LocalHistoryError, LocalH
   },
 );
 
-export const readCodexUsageSessions: Effect.Effect<CodexUsageSession[], LocalHistoryError, LocalHistoryStorageService> =
+export const readCodexUsageSessions: Effect.Effect<CollectedSession[], LocalHistoryError, LocalHistoryStorageService> =
   Effect.gen(function* () {
     const names = yield* readCodexThreadNames;
     const metadata = yield* readCodexThreadMetadata;
@@ -362,7 +346,7 @@ export const readCodexUsageSessions: Effect.Effect<CodexUsageSession[], LocalHis
       }
     }
 
-    const usageSessions: CodexUsageSession[] = [];
+    const usageSessions: CollectedSession[] = [];
     for (const session of sessions) {
       const kids = (session.id && children.get(session.id)) || [];
       const meta = session.id ? metadata.get(session.id) : undefined;
@@ -374,20 +358,28 @@ export const readCodexUsageSessions: Effect.Effect<CodexUsageSession[], LocalHis
       };
       const isSubagent = (session.id ? childIds.has(session.id) : false) || session.threadSource === 'subagent';
       const parentSession = session.parent ? byId.get(session.parent) : undefined;
+      const subscription = session.subscription || Boolean(parentSession?.subscription);
       usageSessions.push({
-        id: session.id,
-        start: session.start,
-        end: session.end,
-        cwd: session.cwd,
+        source: {
+          harnessKey: 'codex',
+          sourceSessionId: session.id,
+          sourcePath: session.cwd,
+        },
+        projectPath: session.cwd,
+        date: session.start,
+        endDate: session.end,
+        provider: subscription ? 'Codex sub' : 'Codex API',
         model: session.model,
-        subscription: session.subscription || Boolean(parentSession?.subscription),
         name: codexSessionName(session, session.id ? names.get(session.id) : undefined, meta),
+        project: base(session.cwd),
         tokens,
+        cost: subscription ? actualCost(0) : approximateApiCost,
         calls: 1,
         turns: session.turns,
         tools: session.tools,
-        hasSubagents: kids.length > 0,
-        isSubagent,
+        linesAdded: null,
+        linesDeleted: null,
+        subagent: isSubagent || kids.length > 0,
         usageUnavailable: !session.hasTokenUsage,
       });
     }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readReportPayload } from './report-data';
+import { readReportPayload } from './report-runtime';
 
 describe('report payload bootstrap', () => {
   test('provides a development payload when no CLI data is injected', () => {

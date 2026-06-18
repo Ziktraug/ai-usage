@@ -1,10 +1,10 @@
-import { harnessLabel } from '@ai-usage/core/harness-metadata';
-import type { Row } from '@ai-usage/core/types';
-import { actualCost, normalizeUsageRow } from '@ai-usage/core/usage-row';
+import { actualCost } from '@ai-usage/core/usage-row';
 import { Effect } from 'effect';
+import { type CollectedSession, sessionToUsageRow } from '../collected-session';
+import { type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
 import { LocalHistoryStorage } from '../local-history';
 import { resolvePathCandidates } from '../platform-paths';
-import { withProjectPath, withSource } from '../rtk-enrichment';
+import type { CollectorRow } from '../rtk-enrichment';
 import { base, dominant, safeJSON } from '../text';
 
 type Agg = {
@@ -32,6 +32,11 @@ type SessionRow = {
 type CountRow = { session_id: string; n: number };
 type MessageRow = { session_id: string; data: string };
 
+export interface OpenCodeCollectionResult {
+  rows: CollectorRow[];
+  warnings: LocalHistoryWarning[];
+}
+
 const SESSION_SQL = 'SELECT id, title, directory, summary_additions, summary_deletions FROM session';
 const TOOL_COUNT_SQL =
   "SELECT session_id, count(*) n FROM part WHERE json_extract(data,'$.type')='tool' GROUP BY session_id";
@@ -41,7 +46,7 @@ const collectFromDb = (
   dbPath: string,
   storage: import('../local-history').LocalHistoryStorage,
   seen: Set<string>,
-): Effect.Effect<Row[], import('../errors').LocalHistoryError, never> =>
+): Effect.Effect<CollectorRow[], import('../errors').LocalHistoryError, never> =>
   Effect.gen(function* () {
     if (!(yield* storage.exists(dbPath).pipe(Effect.catchAll(() => Effect.succeed(false))))) return [];
 
@@ -132,7 +137,7 @@ const collectFromDb = (
       return providerId;
     };
 
-    const rows: Row[] = [];
+    const sessions: CollectedSession[] = [];
     for (const [sid, current] of agg) {
       if (seen.has(sid)) continue;
       seen.add(sid);
@@ -146,49 +151,82 @@ const collectFromDb = (
         cw: current.tcw,
       };
       const title = sessionMeta?.title && !/^ACP Session /i.test(sessionMeta.title) ? sessionMeta.title : '';
-      rows.push(
-        withSource(
-          withProjectPath(
-            normalizeUsageRow({
-              date: current.start,
-              endDate: current.end,
-              harness: harnessLabel('opencode'),
-              provider: provLabel(providerId, current.cost),
-              name: title || (sessionMeta?.title ? 'ACP session' : '') || sid.slice(0, 10),
-              model: `${providerId}/${model}`,
-              pricingModel: model,
-              project: base(sessionMeta?.dir),
-              tokens,
-              cost: actualCost(current.cost),
-              calls: current.calls,
-              turns: turnCount.get(sid) || 0,
-              tools: toolCount.get(sid) || 0,
-              linesAdded: sessionMeta?.add ?? null,
-              linesDeleted: sessionMeta?.del ?? null,
-            }),
-            sessionMeta?.dir,
-          ),
-          { harnessKey: 'opencode', sourceSessionId: sid, sourcePath: sessionMeta?.dir ?? null },
-        ),
-      );
+      sessions.push({
+        source: { harnessKey: 'opencode', sourceSessionId: sid, sourcePath: sessionMeta?.dir ?? null },
+        projectPath: sessionMeta?.dir ?? null,
+        date: current.start,
+        endDate: current.end,
+        provider: provLabel(providerId, current.cost),
+        name: title || (sessionMeta?.title ? 'ACP session' : '') || sid.slice(0, 10),
+        model: `${providerId}/${model}`,
+        pricingModel: model,
+        project: base(sessionMeta?.dir),
+        tokens,
+        cost: actualCost(current.cost),
+        calls: current.calls,
+        turns: turnCount.get(sid) || 0,
+        tools: toolCount.get(sid) || 0,
+        linesAdded: sessionMeta?.add ?? null,
+        linesDeleted: sessionMeta?.del ?? null,
+      });
     }
-    return rows;
+    return sessions.map(sessionToUsageRow);
   });
 
 export const collectOpenCode = Effect.gen(function* () {
+  const result = yield* collectOpenCodeResult;
+  return result.rows;
+});
+
+export const collectOpenCodeResult: Effect.Effect<
+  OpenCodeCollectionResult,
+  never,
+  import('../local-history').LocalHistoryStorage
+> = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
   const paths = resolvePathCandidates(storage).opencode;
   const seen = new Set<string>();
+  const warnings: LocalHistoryWarning[] = [];
 
-  const liveRows: Row[] = [];
+  const liveRows: CollectorRow[] = [];
   for (const dbPath of paths.liveDb) {
-    liveRows.push(...(yield* collectFromDb(dbPath, storage, seen).pipe(Effect.catchAll(() => Effect.succeed([])))));
+    const result = yield* collectFromDb(dbPath, storage, seen).pipe(
+      Effect.match({
+        onFailure: (error) => ({ _tag: 'failure' as const, error }),
+        onSuccess: (rows) => ({ _tag: 'success' as const, rows }),
+      }),
+    );
+    if (result._tag === 'failure') {
+      warnings.push(
+        localHistoryWarningFromError(result.error, {
+          harness: 'opencode',
+          message: 'Failed to read OpenCode live database',
+        }),
+      );
+    } else {
+      liveRows.push(...result.rows);
+    }
   }
 
-  const stableRows: Row[] = [];
+  const stableRows: CollectorRow[] = [];
   for (const dbPath of paths.stableDb) {
-    stableRows.push(...(yield* collectFromDb(dbPath, storage, seen).pipe(Effect.catchAll(() => Effect.succeed([])))));
+    const result = yield* collectFromDb(dbPath, storage, seen).pipe(
+      Effect.match({
+        onFailure: (error) => ({ _tag: 'failure' as const, error }),
+        onSuccess: (rows) => ({ _tag: 'success' as const, rows }),
+      }),
+    );
+    if (result._tag === 'failure') {
+      warnings.push(
+        localHistoryWarningFromError(result.error, {
+          harness: 'opencode',
+          message: 'Failed to read OpenCode stable database',
+        }),
+      );
+    } else {
+      stableRows.push(...result.rows);
+    }
   }
 
-  return [...liveRows, ...stableRows];
+  return { rows: [...liveRows, ...stableRows], warnings };
 });

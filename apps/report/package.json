@@ -21,10 +21,10 @@
     "vite-plugin-solid": "^2.11.12"
   },
   "scripts": {
-    "dev": "bun run --cwd ../../packages/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && vite --host 127.0.0.1 --open",
-    "build": "bun run --cwd ../../packages/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit && rm -rf dist .output && vite build",
-    "check": "bun run --cwd ../../packages/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit",
-    "test": "bun run --cwd ../../packages/design-system build && bun test",
+    "dev": "bun --filter @ai-usage/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && vite --host 127.0.0.1 --open",
+    "build": "bun --filter @ai-usage/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit && rm -rf dist .output && vite build",
+    "check": "bun --filter @ai-usage/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit",
+    "test": "bun --filter @ai-usage/design-system build && bun test",
     "preview": "vite preview --host 127.0.0.1",
     "start": "node .output/server/index.mjs",
     "lint": "biome check .",

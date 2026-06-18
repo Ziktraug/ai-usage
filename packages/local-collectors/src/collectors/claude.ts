@@ -1,12 +1,10 @@
 import path from 'node:path';
-import { harnessLabel } from '@ai-usage/core/harness-metadata';
-import type { Row } from '@ai-usage/core/types';
-import { actualCost, approximateApiCost, normalizeUsageRow, tokenTotal } from '@ai-usage/core/usage-row';
+import { actualCost, approximateApiCost, tokenTotal } from '@ai-usage/core/usage-row';
 import { Effect } from 'effect';
+import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import type { LocalHistoryError } from '../errors';
 import { LocalHistoryStorage, walkFiles } from '../local-history';
 import { resolvePaths } from '../platform-paths';
-import { withProjectPath, withSource } from '../rtk-enrichment';
 import { base, dominant, safeJSON, usablePrompt } from '../text';
 
 type ClaudeHistoryFallback = {
@@ -83,7 +81,7 @@ export const collectClaude = Effect.gen(function* () {
   }
 
   const files = yield* walkFiles(storage, dir, (fileName) => fileName.endsWith('.jsonl'));
-  const rows: Row[] = [];
+  const sessions: CollectedSession[] = [];
   const existingSessionIds = new Set(files.map((filePath) => path.basename(filePath, '.jsonl')));
   const seen = new Set<string>();
 
@@ -162,60 +160,46 @@ export const collectClaude = Effect.gen(function* () {
       firstPrompt ||
       `${sidechain ? 'subagent ' : ''}${sourceSessionId.slice(0, 8)}`;
 
-    rows.push(
-      withSource(
-        withProjectPath(
-          normalizeUsageRow({
-            date: start,
-            endDate: end,
-            harness: harnessLabel('claude'),
-            provider,
-            name,
-            model,
-            project: base(cwd),
-            tokens,
-            cost: provider === 'Claude API' ? approximateApiCost : actualCost(0),
-            calls,
-            turns,
-            tools,
-            linesAdded: null,
-            linesDeleted: null,
-            subagent: sidechain,
-          }),
-          cwd,
-        ),
-        { harnessKey: 'claude', sourceSessionId, sourcePath: cwd },
-      ),
-    );
+    sessions.push({
+      source: { harnessKey: 'claude', sourceSessionId, sourcePath: cwd },
+      projectPath: cwd,
+      date: start,
+      endDate: end,
+      provider,
+      name,
+      model,
+      project: base(cwd),
+      tokens,
+      cost: provider === 'Claude API' ? approximateApiCost : actualCost(0),
+      calls,
+      turns,
+      tools,
+      linesAdded: null,
+      linesDeleted: null,
+      subagent: sidechain,
+    });
   }
 
   for (const session of yield* readClaudeHistoryFallbacks(storage, existingSessionIds, paths)) {
-    rows.push(
-      withSource(
-        withProjectPath(
-          normalizeUsageRow({
-            date: session.start,
-            endDate: session.end,
-            harness: harnessLabel('claude'),
-            provider,
-            name: session.firstPrompt || `claude ${session.sessionId.slice(0, 8)}`,
-            model: 'usage unavailable',
-            project: base(session.project),
-            tokens: { in: 0, out: 0, cr: 0, cw: 0 },
-            cost: actualCost(null),
-            calls: 0,
-            turns: session.turns,
-            tools: 0,
-            linesAdded: null,
-            linesDeleted: null,
-            usageUnavailable: true,
-          }),
-          session.project,
-        ),
-        { harnessKey: 'claude', sourceSessionId: session.sessionId, sourcePath: session.project },
-      ),
-    );
+    sessions.push({
+      source: { harnessKey: 'claude', sourceSessionId: session.sessionId, sourcePath: session.project },
+      projectPath: session.project,
+      date: session.start,
+      endDate: session.end,
+      provider,
+      name: session.firstPrompt || `claude ${session.sessionId.slice(0, 8)}`,
+      model: 'usage unavailable',
+      project: base(session.project),
+      tokens: { in: 0, out: 0, cr: 0, cw: 0 },
+      cost: actualCost(null),
+      calls: 0,
+      turns: session.turns,
+      tools: 0,
+      linesAdded: null,
+      linesDeleted: null,
+      usageUnavailable: true,
+    });
   }
 
-  return rows;
+  return sessions.map(sessionToUsageRow);
 });

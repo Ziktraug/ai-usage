@@ -17,6 +17,14 @@
       "dependsOn": ["^build"],
       "outputs": ["styled-system/**"]
     },
+    "@ai-usage/report#build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".output/**", "styled-system/**"]
+    },
+    "@ai-usage/report#check": {
+      "dependsOn": ["^build"],
+      "outputs": ["styled-system/**"]
+    },
     "test": {
       "dependsOn": ["^build"],
       "outputs": []

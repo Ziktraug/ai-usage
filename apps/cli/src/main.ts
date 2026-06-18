@@ -2,25 +2,25 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { applyProjectAliases } from '@ai-usage/core/project-alias';
-import { createUsageSnapshot, mergeUsageSnapshots, parseUsageSnapshot } from '@ai-usage/core/snapshot';
-import type { Row, SourcedRow } from '@ai-usage/core/types';
-import { usageRowTokenTotal } from '@ai-usage/core/usage-row';
-import { collectHarnessFacets, collectSelectedHarnessRows } from '@ai-usage/local-collectors';
+import type { UsageReportWarning } from '@ai-usage/core/report-data';
+import { parseUsageSnapshot } from '@ai-usage/core/snapshot';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
+import { ensureMachineConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import {
-  ensureMachineConfig,
-  readMergedAiUsageConfig,
-  writeMachineConfig,
-} from '@ai-usage/local-collectors/machine-config';
-import { collectLocalReportRows, createLocalReportPayload } from '@ai-usage/reporting';
+  collectLocalReportRowsWithWarnings,
+  createLocalReportPayload,
+  createLocalUsageSnapshot,
+  createMergedUsageReport,
+  listProjectSourcesWithWarnings,
+  type ProjectSource,
+} from '@ai-usage/reporting';
 import { Console, Effect, Layer } from 'effect';
-import { helpText, parseCommand } from './cli';
+import { type Args, helpText, parseCommand } from './cli';
 import { CliArgumentError, formatAppError } from './errors';
 import { renderQuota } from './quota';
 import { setColor } from './render/colors';
 import { fmtNum, pad, trunc } from './render/format';
-import { renderUsagePayloadForCli, renderUsageReportForCli } from './report';
+import { renderUsagePayloadForCli, renderUsageReportForCli, renderWarnings, renderWarningsForStderr } from './report';
 import { CliRuntime, CliRuntimeLive } from './runtime';
 import { runServe } from './serve';
 import { runSetupServer } from './setup';
@@ -55,19 +55,13 @@ export const app = Effect.gen(function* () {
   }
 
   if (command._tag === 'Snapshot') {
-    const machine = yield* ensureMachineConfig;
-    const config = yield* readMergedAiUsageConfig;
-    const rows = yield* collectSelectedHarnessRows({
+    const snapshot = yield* createLocalUsageSnapshot({
       harness: command.args.harness,
       includeCursor: command.args.cursor,
-      keepSource: true,
-      ...(config.cursor ? { cursorCsv: config.cursor } : {}),
+      includeFacets: true,
     });
-    const facets = yield* collectHarnessFacets({
-      includeCursor: command.args.cursor && (!command.args.harness || command.args.harness === 'cursor'),
-    });
-    const snapshot = createUsageSnapshot({ machine, rows, facets });
     yield* writeFile(command.args.out, `${JSON.stringify(snapshot, null, 2)}\n`);
+    yield* writeWarningsStderr(snapshot.warnings);
     yield* Console.log(`Wrote ${command.args.out}`);
     return;
   }
@@ -81,21 +75,19 @@ export const app = Effect.gen(function* () {
     for (const url of command.args.remote) {
       snapshots.push(yield* fetchRemoteSnapshot(url, command.args.token));
     }
-    if (command.args.local) {
-      const machine = yield* ensureMachineConfig;
-      const config = yield* readMergedAiUsageConfig;
-      const rows = yield* collectSelectedHarnessRows({
-        harness: command.args.harness,
-        includeCursor: command.args.cursor,
-        keepSource: true,
-        ...(config.cursor ? { cursorCsv: config.cursor } : {}),
-      });
-      snapshots.push(createUsageSnapshot({ machine, rows }));
-    }
-    const merged = mergeUsageSnapshots(snapshots);
-    const config = yield* readMergedAiUsageConfig;
-    const rows = applyProjectAliases(merged.rows, config.projectAliases ?? []);
-    const output = yield* Effect.promise(() => renderUsageReportForCli(rows, command.args));
+    const merged = yield* createMergedUsageReport({
+      snapshots,
+      includeLocal: command.args.local,
+      harness: command.args.harness,
+      includeCursor: command.args.cursor,
+      options: command.args,
+    });
+    const output = yield* Effect.promise(() =>
+      command.args.format === 'html' || command.args.format === 'payload'
+        ? renderUsagePayloadForCli(merged.payload, command.args)
+        : renderUsageReportForCli(merged.rows, command.args, undefined, merged.payload.warnings),
+    );
+    yield* writeFormatWarningsStderr(command.args, merged.payload.warnings);
     yield* writeStdout(`${output}\n`);
     return;
   }
@@ -105,19 +97,14 @@ export const app = Effect.gen(function* () {
     for (const file of command.args.files) {
       snapshots.push(yield* readSnapshotFile(file));
     }
-    if (command.args.local) {
-      const machine = yield* ensureMachineConfig;
-      const config = yield* readMergedAiUsageConfig;
-      const rows = yield* collectSelectedHarnessRows({
-        harness: null,
-        includeCursor: true,
-        keepSource: true,
-        ...(config.cursor ? { cursorCsv: config.cursor } : {}),
-      });
-      snapshots.push(createUsageSnapshot({ machine, rows }));
-    }
-    const merged = mergeUsageSnapshots(snapshots);
-    yield* writeStdout(`${renderProjectSources(merged.rows)}\n`);
+    const { sources, warnings } = yield* listProjectSourcesWithWarnings({
+      snapshots,
+      includeLocal: command.args.local,
+      harness: null,
+      includeCursor: true,
+    });
+    yield* writeWarningsStderr(warnings);
+    yield* writeStdout(`${renderProjectSources(sources)}\n`);
     return;
   }
 
@@ -158,55 +145,22 @@ export const app = Effect.gen(function* () {
           return yield* Effect.promise(() => renderUsagePayloadForCli(payload, command.args));
         })
       : yield* Effect.gen(function* () {
-          const rows = yield* collectLocalReportRows(reportRequest);
-          return yield* Effect.promise(() => renderUsageReportForCli(rows, command.args));
+          const { rows, warnings } = yield* collectLocalReportRowsWithWarnings(reportRequest);
+          yield* writeFormatWarningsStderr(command.args, warnings);
+          return yield* Effect.promise(() => renderUsageReportForCli(rows, command.args, undefined, warnings));
         });
   yield* writeStdout(`${output}\n`);
 });
 
-interface ProjectSourceSummary {
-  project: string;
-  machine: string;
-  harness: string;
-  sourcePath: string;
-  sessions: number;
-  tokens: number;
-}
-
-const projectFromRow = (row: Row) =>
-  row.project || path.basename((row as Partial<SourcedRow>).source?.sourcePath ?? '') || '(unknown)';
-
-const renderProjectSources = (rows: Row[]) => {
-  const summaries = new Map<string, ProjectSourceSummary>();
-  for (const row of rows) {
-    const source = (row as Partial<SourcedRow>).source;
-    const summary: ProjectSourceSummary = {
-      project: projectFromRow(row),
-      machine: source?.machineLabel ?? 'Unknown machine',
-      harness: row.harness,
-      sourcePath: source?.sourcePath ?? '',
-      sessions: 0,
-      tokens: 0,
-    };
-    const key = [summary.project, summary.machine, summary.harness, summary.sourcePath].join('|');
-    const current = summaries.get(key) ?? summary;
-    current.sessions++;
-    current.tokens += usageRowTokenTotal(row);
-    summaries.set(key, current);
-  }
-
+const renderProjectSources = (items: ProjectSource[]) => {
   const cols = [
-    { h: 'Project', w: 20, f: (s: ProjectSourceSummary) => s.project },
-    { h: 'Machine', w: 18, f: (s: ProjectSourceSummary) => s.machine },
-    { h: 'Harness', w: 12, f: (s: ProjectSourceSummary) => s.harness },
-    { h: 'Sessions', w: 8, f: (s: ProjectSourceSummary) => fmtNum(s.sessions), r: true },
-    { h: 'Tokens', w: 10, f: (s: ProjectSourceSummary) => fmtNum(s.tokens), r: true },
-    { h: 'Path', w: 48, f: (s: ProjectSourceSummary) => s.sourcePath || '—' },
+    { h: 'Project', w: 20, f: (s: ProjectSource) => s.project },
+    { h: 'Machine', w: 18, f: (s: ProjectSource) => s.machine },
+    { h: 'Harness', w: 12, f: (s: ProjectSource) => s.harness },
+    { h: 'Sessions', w: 8, f: (s: ProjectSource) => fmtNum(s.sessions), r: true },
+    { h: 'Tokens', w: 10, f: (s: ProjectSource) => fmtNum(s.tokens), r: true },
+    { h: 'Path', w: 48, f: (s: ProjectSource) => s.sourcePath || '—' },
   ];
-  const items = [...summaries.values()].sort(
-    (a, b) =>
-      a.project.localeCompare(b.project) || a.machine.localeCompare(b.machine) || a.harness.localeCompare(b.harness),
-  );
   const header = cols.map((col) => pad(col.h, col.w, col.r)).join('  ');
   const body = items.map((item) => cols.map((col) => pad(trunc(col.f(item), col.w), col.w, col.r)).join('  '));
   return [header, ...body].join('\n');
@@ -221,6 +175,21 @@ const writeStdout = (text: string) =>
   Effect.async<void>((resume) => {
     process.stdout.write(text, () => resume(Effect.void));
   });
+
+const writeStderr = (text: string) =>
+  Effect.async<void>((resume) => {
+    process.stderr.write(text, () => resume(Effect.void));
+  });
+
+const writeWarningsStderr = (warnings: UsageReportWarning[] | undefined) => {
+  const output = renderWarnings(warnings);
+  return output ? writeStderr(`${output}\n`) : Effect.void;
+};
+
+const writeFormatWarningsStderr = (args: Args, warnings: UsageReportWarning[] | undefined) => {
+  const output = renderWarningsForStderr(args, warnings);
+  return output ? writeStderr(`${output}\n`) : Effect.void;
+};
 
 const fileError = (operation: string, filePath: string) => (cause: unknown) =>
   new CliArgumentError({

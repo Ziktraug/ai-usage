@@ -254,3 +254,24 @@ Checks:
 Commit:
 
 - `95a049c fix(report): load real payload in web runtime`
+
+## Later Architecture Pass
+
+Status: completed through the architecture debt implementation plan slices.
+
+Changes:
+
+- Package guardrails now block relative cross-package paths and private package `src` imports.
+- `@ai-usage/design-system` exposes generated Panda build info through a package export instead of app-relative package paths.
+- Local collectors use a collected session seam before normalization into usage rows.
+- Usage row provenance is explicit in `@ai-usage/core` types.
+- Local history partial failures surface as structured warnings in CLI and report payload/UI output.
+- Report runtime and HTML inlining seams are shared instead of duplicated across adapters.
+- Dashboard table schema, dashboard model calculations, and overview analytics calculations are split into testable model modules.
+- Public package interfaces and generated tooling ownership are documented.
+
+Follow-ups:
+
+- Fine-grained reporting query functions and server functions remain future work; the compatibility `UsageReportPayload` stays intentional for static HTML export and current report bootstrapping.
+- The CLI quota path remains the documented direct adapter exception to `@ai-usage/local-collectors/codex-history`.
+- `Hero` and `TokenAnatomy` in `Overview.tsx` still contain small presentation-local calculations; they can move later if the component grows again.

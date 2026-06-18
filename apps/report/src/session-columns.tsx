@@ -7,16 +7,12 @@ import {
   sessionCell,
   sessionTitleClamp,
 } from '@ai-usage/design-system/report';
-import type { ColumnDef, RowData, SortingState, VisibilityState } from '@tanstack/solid-table';
+import type { ColumnDef, RowData, VisibilityState } from '@tanstack/solid-table';
 import { Show } from 'solid-js';
-import {
-  type FieldFilterKey,
-  isSessionColumnId,
-  type SearchableColumnDiffId,
-  type SessionColumnId,
-} from './dashboard-search';
+import type { FieldFilterKey } from './dashboard-search';
 import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle, rtkSavingsPct, sortValueForRow } from './dashboard-sort';
 import { HighlightedText } from './highlighted-text';
+import { defaultColumnVisibility, isSessionColumnVisible, type SessionColumnId } from './session-table-schema';
 import {
   type DashboardRow,
   fmtCompact,
@@ -366,36 +362,10 @@ export const sessionColumns: SessionColumnDef[] = [
   },
 ];
 
-export const defaultColumnVisibility = Object.fromEntries(
-  sessionColumns.filter((column) => column.meta?.defaultVisible === false).map((column) => [column.id, false]),
-) as VisibilityState;
-
-export const isSessionColumnVisible = (visibility: VisibilityState, columnId: string) => visibility[columnId] !== false;
+export { defaultColumnVisibility, isSessionColumnVisible };
 
 export const visibleSessionColumns = (visibility: VisibilityState) =>
   sessionColumns.filter((column) => isSessionColumnVisible(visibility, column.id));
-
-export const columnVisibilityFromDiff = (columnDiff: SearchableColumnDiffId[]): VisibilityState => {
-  const visibility = { ...defaultColumnVisibility };
-  for (const columnId of columnDiff) {
-    visibility[columnId] = defaultColumnVisibility[columnId] === false;
-  }
-  return visibility;
-};
-
-export const columnDiffFromVisibility = (visibility: VisibilityState): SearchableColumnDiffId[] =>
-  sessionColumns.flatMap((column) => {
-    if (column.enableHiding === false) return [];
-    const defaultVisible = isSessionColumnVisible(defaultColumnVisibility, column.id);
-    const currentVisible = isSessionColumnVisible(visibility, column.id);
-    return defaultVisible === currentVisible ? [] : [column.id as SearchableColumnDiffId];
-  });
-
-export const sortFromSortingState = (sorting: SortingState, fallbackSort: { id: SessionColumnId; desc: boolean }) => {
-  const sort = sorting[0];
-  if (!sort || !isSessionColumnId(sort.id)) return fallbackSort;
-  return { id: sort.id, desc: sort.desc };
-};
 
 export const sessionColumnLabel = (column: SessionColumnDef) => column.meta?.label ?? column.id;
 

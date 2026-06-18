@@ -21,12 +21,6 @@ export interface CursorCommitAttributionFacet {
   v2AiPercentage: number | null;
 }
 
-declare global {
-  interface Window {
-    __AI_USAGE_REPORT__?: UsageReportPayload;
-  }
-}
-
 const demoRows: SerializedRow[] = [
   {
     date: '2026-06-11T08:00:00.000Z',
@@ -147,7 +141,7 @@ const demoRowsForAnalytics = () =>
     endDate: row.endDate ? new Date(row.endDate) : null,
   }));
 
-const demoPayload: UsageReportPayload = {
+export const demoReportPayload: UsageReportPayload = {
   generatedAt: '2026-06-11T12:00:00.000Z',
   filters: {
     since: null,
@@ -196,18 +190,6 @@ const isCursorCommitAttribution = (value: unknown): value is CursorCommitAttribu
     typeof record.linesAdded === 'number' &&
     typeof record.linesDeleted === 'number'
   );
-};
-
-export const readReportPayload = () =>
-  (typeof window === 'undefined' ? undefined : window.__AI_USAGE_REPORT__) ?? demoPayload;
-
-export const isDemoReportPayload = () => typeof window === 'undefined' || !window.__AI_USAGE_REPORT__;
-
-export const fetchReportPayload = async (_options?: { force?: boolean }) => {
-  const { getReportPayload } = await import('./server/report-payload');
-  const payload = (await getReportPayload()) as UsageReportPayload;
-  window.__AI_USAGE_REPORT__ = payload;
-  return payload;
 };
 
 export const cursorCommitAttributionFacet = (payload: UsageReportPayload): CursorCommitAttributionFacet[] => {

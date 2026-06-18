@@ -1,10 +1,10 @@
 import { sourceLabel } from '@ai-usage/core/snapshot';
-import type { Row, SourcedRow } from '@ai-usage/core/types';
+import type { Row, UsageRowWithOptionalSource } from '@ai-usage/core/types';
 
 const csvEscape = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
 const rtkSavingsPct = (row: Row) =>
   row.rtkSavedTokens && row.rtkInputTokens ? (row.rtkSavedTokens / row.rtkInputTokens) * 100 : null;
-const sourceMachineId = (row: Row) => (row as Partial<SourcedRow>).source?.machineId ?? '';
+const sourceMachineId = (row: UsageRowWithOptionalSource) => row.source?.machineId ?? '';
 
 export const renderCSV = (rows: Row[]) => {
   const head = [

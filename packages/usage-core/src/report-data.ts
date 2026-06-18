@@ -1,5 +1,5 @@
 import { type AnalyticsSummary, calculateAnalytics } from './analytics';
-import type { Row, SourcedRow, UsageRowSource } from './types';
+import type { UsageRow, UsageRowSource, UsageRowWithOptionalSource } from './types';
 import { usageRowActiveDate, usageRowLineDelta, usageRowSessionLabel, usageRowTokenTotal } from './usage-row';
 
 export type SortKey = 'date' | 'tokens' | 'cost';
@@ -13,12 +13,12 @@ export interface ReportOptions {
 }
 
 export interface PreparedUsageReport {
-  rows: Row[];
-  tableRows: Row[];
+  rows: UsageRow[];
+  tableRows: UsageRow[];
   omittedRows: number;
 }
 
-export interface SerializedRow extends Omit<Row, 'date' | 'endDate'> {
+export interface SerializedUsageRow extends Omit<UsageRow, 'date' | 'endDate'> {
   date: string | null;
   endDate: string | null;
   activeDate: string | null;
@@ -27,6 +27,16 @@ export interface SerializedRow extends Omit<Row, 'date' | 'endDate'> {
   freshTokens: number;
   lineDelta: number | null;
   source?: UsageRowSource;
+}
+
+export type SerializedRow = SerializedUsageRow;
+
+export interface UsageReportWarning {
+  harness?: string;
+  operation?: string;
+  path?: string;
+  sql?: string;
+  message: string;
 }
 
 export interface UsageReportPayload {
@@ -38,21 +48,23 @@ export interface UsageReportPayload {
     minTokens: number;
     sort: SortKey;
   };
-  rows: SerializedRow[];
-  tableRows: SerializedRow[];
+  rows: SerializedUsageRow[];
+  tableRows: SerializedUsageRow[];
   omittedRows: number;
   analytics: AnalyticsSummary;
+  warnings?: UsageReportWarning[];
   facets?: Record<string, unknown>;
 }
 
 export const compareUsageRows = (sort: SortKey) =>
   ({
-    date: (a: Row, b: Row) => (usageRowActiveDate(b)?.getTime() ?? 0) - (usageRowActiveDate(a)?.getTime() ?? 0),
-    tokens: (a: Row, b: Row) => usageRowTokenTotal(b) - usageRowTokenTotal(a),
-    cost: (a: Row, b: Row) => b.costApprox - a.costApprox,
+    date: (a: UsageRow, b: UsageRow) =>
+      (usageRowActiveDate(b)?.getTime() ?? 0) - (usageRowActiveDate(a)?.getTime() ?? 0),
+    tokens: (a: UsageRow, b: UsageRow) => usageRowTokenTotal(b) - usageRowTokenTotal(a),
+    cost: (a: UsageRow, b: UsageRow) => b.costApprox - a.costApprox,
   })[sort];
 
-export const filterUsageRows = (rows: Row[], options: ReportOptions) =>
+export const filterUsageRows = (rows: UsageRow[], options: ReportOptions) =>
   rows.filter((row) => {
     const activeAt = usageRowActiveDate(row);
     if (usageRowTokenTotal(row) < options.minTokens && !row.usageUnavailable) return false;
@@ -61,7 +73,7 @@ export const filterUsageRows = (rows: Row[], options: ReportOptions) =>
     return true;
   });
 
-export const prepareUsageReport = (rows: Row[], options: ReportOptions): PreparedUsageReport => {
+export const prepareUsageReport = (rows: UsageRow[], options: ReportOptions): PreparedUsageReport => {
   const filteredRows = filterUsageRows(rows, options).sort(compareUsageRows(options.sort));
   const tableRows = options.limit ? filteredRows.slice(0, options.limit) : filteredRows;
   return {
@@ -71,10 +83,10 @@ export const prepareUsageReport = (rows: Row[], options: ReportOptions): Prepare
   };
 };
 
-export const serializeUsageRow = (row: Row): SerializedRow => {
+export const serializeUsageRow = (row: UsageRowWithOptionalSource): SerializedUsageRow => {
   const lineDelta = usageRowLineDelta(row);
   const tokenTotal = usageRowTokenTotal(row);
-  const source = (row as Partial<SourcedRow>).source;
+  const source = row.source;
   return {
     ...row,
     date: row.date?.toISOString() ?? null,
@@ -93,6 +105,7 @@ export const createUsageReportPayload = (
   options: ReportOptions,
   generatedAt = new Date(),
   facets?: Record<string, unknown>,
+  warnings?: UsageReportWarning[],
 ): UsageReportPayload => ({
   generatedAt: generatedAt.toISOString(),
   filters: {
@@ -106,5 +119,6 @@ export const createUsageReportPayload = (
   tableRows: report.tableRows.map(serializeUsageRow),
   omittedRows: report.omittedRows,
   analytics: calculateAnalytics(report.rows, generatedAt.getTime()),
+  ...(warnings?.length ? { warnings } : {}),
   ...(facets && Object.keys(facets).length ? { facets } : {}),
 });

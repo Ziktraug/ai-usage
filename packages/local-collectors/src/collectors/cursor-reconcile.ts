@@ -1,8 +1,7 @@
 import { harnessLabel } from '@ai-usage/core/harness-metadata';
-import type { SourcedRow } from '@ai-usage/core/types';
-import { actualCost, normalizeUsageRow, usageRowTokenTotal } from '@ai-usage/core/usage-row';
+import { actualCost, usageRowTokenTotal } from '@ai-usage/core/usage-row';
+import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import type { CollectorRow } from '../rtk-enrichment';
-import { withSource } from '../rtk-enrichment';
 import { type CursorCsvCluster, type CursorCsvTurn, clusterFromTurns, clusterTurns } from './cursor-csv';
 
 export interface CursorReconcileOptions {
@@ -13,7 +12,7 @@ export interface CursorReconcileOptions {
 
 const cursorHarness = harnessLabel('cursor');
 
-const sourceFromRow = (row: CollectorRow) => (row as Partial<SourcedRow>).source;
+const sourceFromRow = (row: CollectorRow) => row.source;
 
 const isCursorRow = (row: CollectorRow) => row.harness === cursorHarness;
 
@@ -44,10 +43,15 @@ const modelList = (cluster: CursorCsvCluster) => (cluster.models.length > 1 ? cl
 const mergeClusterIntoRow = (row: CollectorRow, cluster: CursorCsvCluster, ambiguous: boolean): CollectorRow => {
   const source = sourceFromRow(row);
   const models = modelList(cluster);
-  const merged = normalizeUsageRow({
+  const merged = sessionToUsageRow({
+    source: {
+      harnessKey: 'cursor',
+      sourceSessionId: source?.sourceSessionId ?? null,
+      ...(source?.sourcePath !== undefined ? { sourcePath: source.sourcePath } : {}),
+    },
+    projectPath: row.projectPath ?? null,
     date: row.date ?? cluster.startDate,
     endDate: cluster.endDate,
-    harness: row.harness,
     provider: row.provider,
     name: row.name,
     model: cluster.dominantModel,
@@ -65,37 +69,35 @@ const mergeClusterIntoRow = (row: CollectorRow, cluster: CursorCsvCluster, ambig
     linesDeleted: row.linesDeleted,
     ...(ambiguous ? { ambiguous: true } : {}),
   });
-  const withMetadata: CollectorRow = {
-    ...merged,
-    ...(row.projectPath ? { projectPath: row.projectPath } : {}),
-  };
-  return source ? withSource(withMetadata, source) : withMetadata;
+  if (source) return merged;
+  const { source: _source, ...withoutSource } = merged;
+  return withoutSource;
 };
 
-const rowFromCluster = (cluster: CursorCsvCluster): CollectorRow =>
-  withSource(
-    normalizeUsageRow({
-      date: cluster.startDate,
-      endDate: cluster.endDate,
-      harness: cursorHarness,
-      provider: 'Cursor sub',
-      name: `Cursor export ${cluster.startDate.toISOString()}`,
-      model: cluster.dominantModel,
-      ...(modelList(cluster) ? { models: modelList(cluster) as string[] } : {}),
-      project: '',
-      tokens: cluster.tokens,
-      cost: actualCost(cluster.costActual),
-      costQuota: cluster.costQuota,
-      costApprox: cluster.costApprox,
-      costKnown: cluster.costKnown,
-      calls: cluster.calls,
-      turns: cluster.calls,
-      tools: 0,
-      linesAdded: null,
-      linesDeleted: null,
-    }),
-    { harnessKey: 'cursor', sourceSessionId: null, sourcePath: cluster.sourcePath },
-  );
+const rowFromCluster = (cluster: CursorCsvCluster): CollectorRow => {
+  const models = modelList(cluster);
+  const session: CollectedSession = {
+    source: { harnessKey: 'cursor', sourceSessionId: null, sourcePath: cluster.sourcePath },
+    date: cluster.startDate,
+    endDate: cluster.endDate,
+    provider: 'Cursor sub',
+    name: `Cursor export ${cluster.startDate.toISOString()}`,
+    model: cluster.dominantModel,
+    ...(models ? { models } : {}),
+    project: '',
+    tokens: cluster.tokens,
+    cost: actualCost(cluster.costActual),
+    costQuota: cluster.costQuota,
+    costApprox: cluster.costApprox,
+    costKnown: cluster.costKnown,
+    calls: cluster.calls,
+    turns: cluster.calls,
+    tools: 0,
+    linesAdded: null,
+    linesDeleted: null,
+  };
+  return sessionToUsageRow(session);
+};
 
 export const reconcileCursorRows = (
   rows: CollectorRow[],

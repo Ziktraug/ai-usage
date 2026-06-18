@@ -1,13 +1,12 @@
 import path from 'node:path';
-import type { Row, UsageRowSource } from '@ai-usage/core/types';
+import type { UsageRow, UsageRowSource, UsageRowWithOptionalSource } from '@ai-usage/core/types';
 import { Effect } from 'effect';
-import type { LocalHistoryError } from './errors';
+import { type LocalHistoryError, type LocalHistoryWarning, localHistoryWarningFromError } from './errors';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
 import { firstExisting, resolvePathCandidates } from './platform-paths';
 
-export type CollectorRow = Row & {
+export type CollectorRow = UsageRowWithOptionalSource & {
   readonly projectPath?: string | null;
-  readonly source?: UsageRowSource;
 };
 
 type RtkCommandRow = {
@@ -25,12 +24,17 @@ type RtkCandidate = {
   endMs: number;
 };
 
+export interface CollectorRowsWithWarnings {
+  rows: CollectorRow[];
+  warnings: LocalHistoryWarning[];
+}
+
 export const RTK_COMMANDS_SQL =
   'SELECT timestamp, project_path, input_tokens, output_tokens, saved_tokens FROM commands WHERE saved_tokens > 0';
 
 const MATCH_PADDING_MS = 2 * 60_000;
 
-export const withProjectPath = (row: Row, projectPath: string | null | undefined): CollectorRow =>
+export const withProjectPath = (row: UsageRow, projectPath: string | null | undefined): CollectorRow =>
   projectPath ? { ...row, projectPath } : row;
 
 export const withSource = (row: CollectorRow, source: UsageRowSource): CollectorRow => ({
@@ -41,12 +45,12 @@ export const withSource = (row: CollectorRow, source: UsageRowSource): Collector
   },
 });
 
-export const stripCollectorMetadata = (row: CollectorRow): Row => {
+export const stripCollectorMetadata = (row: CollectorRow): UsageRow => {
   const { projectPath: _projectPath, source: _source, ...publicRow } = row;
   return publicRow;
 };
 
-export const stripProjectPath = (row: CollectorRow): Row => {
+export const stripProjectPath = (row: CollectorRow): UsageRowWithOptionalSource => {
   const { projectPath: _projectPath, ...publicRow } = row;
   return publicRow;
 };
@@ -57,7 +61,7 @@ const normalizeProjectPath = (projectPath: string | null | undefined) =>
 const isSameOrNestedPath = (left: string, right: string) =>
   left === right || left.startsWith(`${right}${path.sep}`) || right.startsWith(`${left}${path.sep}`);
 
-const rowActiveEnd = (row: Row) => row.endDate ?? row.date;
+const rowActiveEnd = (row: UsageRow) => row.endDate ?? row.date;
 
 const candidatesForRows = (rows: CollectorRow[]): RtkCandidate[] =>
   rows.flatMap((row, index) => {
@@ -95,20 +99,20 @@ const bestCandidateForCommand = (command: RtkCommandRow, candidates: RtkCandidat
   return matches.sort((a, b) => a.endMs - a.startMs - (b.endMs - b.startMs))[0] ?? null;
 };
 
-export const enrichCollectorRowsWithRtkSavings = (
+export const enrichCollectorRowsWithRtkSavingsResult = (
   rows: CollectorRow[],
-): Effect.Effect<CollectorRow[], never, LocalHistoryStorageService> =>
+): Effect.Effect<CollectorRowsWithWarnings, never, LocalHistoryStorageService> =>
   Effect.gen(function* () {
-    if (!rows.length) return rows;
+    if (!rows.length) return { rows, warnings: [] };
     const storage = yield* LocalHistoryStorage;
     const dbPath = yield* firstExisting(storage, ...resolvePathCandidates(storage).rtk.historyDb);
-    if (!dbPath) return rows;
+    if (!dbPath) return { rows, warnings: [] };
 
     const candidates = candidatesForRows(rows);
-    if (!candidates.length) return rows;
+    if (!candidates.length) return { rows, warnings: [] };
 
     const totals = new Map<number, { saved: number; input: number; output: number; commands: number }>();
-    yield* Effect.acquireUseRelease(
+    const readResult = yield* Effect.acquireUseRelease(
       storage.openDatabase(dbPath),
       (db) =>
         Effect.gen(function* () {
@@ -124,18 +128,55 @@ export const enrichCollectorRowsWithRtkSavings = (
           }
         }),
       (db) => db.close,
-    ).pipe(Effect.catchAll((_error: LocalHistoryError) => Effect.void));
+    ).pipe(
+      Effect.match({
+        onFailure: (error: LocalHistoryError) => ({ _tag: 'failure' as const, error }),
+        onSuccess: () => ({ _tag: 'success' as const }),
+      }),
+    );
 
-    if (!totals.size) return rows;
-    return rows.map((row, index) => {
-      const total = totals.get(index);
-      if (!total || total.saved <= 0) return row;
+    if (readResult._tag === 'failure') {
       return {
-        ...row,
-        rtkSavedTokens: total.saved,
-        rtkInputTokens: total.input,
-        rtkOutputTokens: total.output,
-        rtkCommandCount: total.commands,
+        rows,
+        warnings: [
+          localHistoryWarningFromError(readResult.error, {
+            harness: 'rtk',
+            message: 'Failed to read RTK enrichment history',
+          }),
+        ],
       };
-    });
-  }).pipe(Effect.catchAll(() => Effect.succeed(rows)));
+    }
+
+    if (!totals.size) return { rows, warnings: [] };
+    return {
+      rows: rows.map((row, index) => {
+        const total = totals.get(index);
+        if (!total || total.saved <= 0) return row;
+        return {
+          ...row,
+          rtkSavedTokens: total.saved,
+          rtkInputTokens: total.input,
+          rtkOutputTokens: total.output,
+          rtkCommandCount: total.commands,
+        };
+      }),
+      warnings: [],
+    };
+  }).pipe(
+    Effect.catchAll((error: LocalHistoryError) =>
+      Effect.succeed({
+        rows,
+        warnings: [
+          localHistoryWarningFromError(error, {
+            harness: 'rtk',
+            message: 'Failed to read RTK enrichment history',
+          }),
+        ],
+      }),
+    ),
+  );
+
+export const enrichCollectorRowsWithRtkSavings = (
+  rows: CollectorRow[],
+): Effect.Effect<CollectorRow[], never, LocalHistoryStorageService> =>
+  enrichCollectorRowsWithRtkSavingsResult(rows).pipe(Effect.map((result) => result.rows));

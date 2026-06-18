@@ -16,9 +16,21 @@ _Avoid_: remote usage, cloud billing data
 A single conversation or agent run found in local history. A session can include child sessions, such as Codex subagent threads.
 _Avoid_: chat, transcript, thread
 
+**Collected session**:
+An intermediate collector result that preserves harness-specific local history details before normalization into a usage row. It is the seam used by collectors that need shared row conversion.
+_Avoid_: raw event, source row
+
 **Usage row**:
 The normalized per-session record consumed by table, CSV, JSON, and analytics output. It includes tokens, model, harness, provider, project, cost approximation, and optional partial/subagent markers.
 _Avoid_: raw event, database row
+
+**Report payload**:
+The JSON-serializable aggregate consumed by the interactive report app and static HTML export. It contains serialized usage rows, filters, analytics, facets, and optional local history warnings.
+_Avoid_: app state, server response blob
+
+**Usage snapshot**:
+A portable multi-machine export of usage rows and machine provenance that can be merged with other snapshots or local history.
+_Avoid_: backup, provider export
 
 **Provider**:
 The billing or subscription route inferred for a usage row, such as Claude API, Claude sub, Codex API, Codex sub, or Cursor sub.
