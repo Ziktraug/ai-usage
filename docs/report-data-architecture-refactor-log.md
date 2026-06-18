@@ -219,3 +219,38 @@ Checks:
 Commit:
 
 - `304924a fix(report): resolve repo config from report server`
+
+### Slice 7: Load Real Payload In The Web Runtime
+
+Status: completed
+
+Changes:
+
+- Changed the route loader to load the real report payload instead of always returning the demo payload when no static export payload exists.
+- Split loader execution: server-side loaders call the report server runner directly; client-side reloads call the TanStack Start server function.
+- Added `packages/reporting/src/report-payload-runner.ts` so the report server can collect local history in a Bun subprocess through the shared reporting package.
+- Changed `local-history` to import `bun:sqlite` lazily from `openDatabase` rather than at module load time.
+
+Decisions:
+
+- Vite/Nitro's module runner cannot load `bun:sqlite`, even through the server function path, so local SQLite collection must run in a Bun subprocess for the current web runtime.
+- The subprocess runs the shared reporting package, not the CLI. This preserves the architectural boundary that the report app does not depend on CLI commands.
+- The global payload remains one-shot for this compatibility milestone; finer server functions remain a later slice.
+
+Difficulties:
+
+- First loader fix still returned a 500 because SSR called `createServerFn` from server-side code.
+- Direct server-side collection then failed because the module runner rejected the `bun:` URL scheme used by `bun:sqlite`.
+
+Checks:
+
+- `bun run --cwd apps/report check`
+- `bun run --cwd packages/reporting check`
+- `bun -e '...'` against `runReportPayloadCollection`: `2288` rows.
+- Vite HTTP fetch on `/`: `200`, no demo date, no error, payload present.
+- `bun run check`
+- `bun run test`
+
+Commit:
+
+- Pending.
