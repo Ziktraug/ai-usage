@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 16 committe
-- Slice en cours: choisir Slice 17
-- Dernier commit de suivi: `fbd7a56 chore(workspace): verify public package exports`
+- Statut actuel: Slice 17 implementee et verifiee
+- Slice en cours: commit Slice 17
+- Dernier commit de suivi: `a1a3151 docs: record slice 16 commit`
 
 ## Decisions Transverses
 
@@ -667,6 +667,42 @@ Checks:
 Commit:
 - `fbd7a56 chore(workspace): verify public package exports`
 
+### Slice 17: Tooling Generated Ownership
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: rendre explicite la propriete des fichiers generes Panda/TanStack/Nitro et aligner Turbo/Biome avec cette propriete.
+
+Travail fait:
+- Ajout des outputs Turbo pour `@ai-usage/report#build`: `dist/**`, `.output/**`, `styled-system/**`.
+- Ajout des outputs Turbo pour `@ai-usage/report#check`: `styled-system/**`.
+- Conservation des outputs existants `@ai-usage/design-system#build/check`: `styled-system/**`.
+- Exclusion Biome de `apps/report/src/routeTree.gen.ts`.
+- Ajout de `docs/generated-tooling-ownership.md`.
+- Documentation du statut tracked de `routeTree.gen.ts` et du statut ignore de `styled-system/`, `dist/`, `.output/`, `.turbo/`.
+
+Difficultes:
+- `apps/report` scripts lancent encore `bun --filter @ai-usage/design-system build` directement. C'est redondant sous Turbo, mais necessaire pour les commandes package directes (`bun run --cwd apps/report check/test/build`) utilisees localement et dans les tests.
+- `css-bundle.test.ts` execute un build report pendant `bun test`, mais ces outputs ne sont pas des artifacts contractuels du task Turbo `test`; ils restent ignores par git.
+
+Decisions:
+- Garder `routeTree.gen.ts` tracked, car son augmentation de module TanStack fait partie de la compilation app.
+- Ne pas ajouter d'outputs generes au task global `test`; seuls `build` et `check` portent des outputs contractuels.
+- Ne pas supprimer les builds directs design-system dans `apps/report/package.json` tant que les commandes directes doivent rester autonomes.
+
+Fichiers touches:
+- `turbo.json`
+- `biome.json`
+- `docs/generated-tooling-ownership.md`
+- `docs/architecture-debt-implementation-log.md`
+
+Checks:
+- `bun run lint`: passe.
+- `bun run check`: passe.
+
+Commit:
+- Non committe.
+
 ## Journal Chronologique
 
 ### 2026-06-18
@@ -722,3 +758,6 @@ Commit:
 - Pick Slice 16: auditer les exports publics et ajouter un guardrail d'imports workspace.
 - Verifie Slice 16 avec `bun tools/check-public-package-exports.ts`, `bun run lint`, `bun run check`.
 - Commit Slice 16: `fbd7a56 chore(workspace): verify public package exports`.
+- Commit Slice 16 log correction: `a1a3151 docs: record slice 16 commit`.
+- Pick Slice 17: expliciter ownership des fichiers generes Panda/TanStack/Nitro/Turbo.
+- Verifie Slice 17 avec `bun run lint`, `bun run check`.
