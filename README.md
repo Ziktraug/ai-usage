@@ -222,6 +222,7 @@ Merged CSV/JSON/HTML payloads include row provenance (`source.machineLabel`, `so
 Architecture docs:
 
 - `docs/architecture.md`: package ownership, data flow, adapter rules, and guardrails
+- `docs/future-work.md`: global backlog for known follow-ups
 - `docs/public-package-interfaces.md`: public package exports and import rules
 - `docs/generated-tooling-ownership.md`: Panda/TanStack/Nitro/Turbo generated file ownership
 
