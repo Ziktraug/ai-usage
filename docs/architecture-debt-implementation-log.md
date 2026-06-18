@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 17 implementee et verifiee
-- Slice en cours: commit Slice 17
-- Dernier commit de suivi: `a1a3151 docs: record slice 16 commit`
+- Statut actuel: Slice 17 committe
+- Slice en cours: choisir Slice 18
+- Dernier commit de suivi: `a09c6c5 chore(workspace): document generated tooling ownership`
 
 ## Decisions Transverses
 
@@ -669,7 +669,7 @@ Commit:
 
 ### Slice 17: Tooling Generated Ownership
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: rendre explicite la propriete des fichiers generes Panda/TanStack/Nitro et aligner Turbo/Biome avec cette propriete.
 
@@ -701,7 +701,7 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
-- Non committe.
+- `a09c6c5 chore(workspace): document generated tooling ownership`
 
 ## Journal Chronologique
 
@@ -761,3 +761,4 @@ Commit:
 - Commit Slice 16 log correction: `a1a3151 docs: record slice 16 commit`.
 - Pick Slice 17: expliciter ownership des fichiers generes Panda/TanStack/Nitro/Turbo.
 - Verifie Slice 17 avec `bun run lint`, `bun run check`.
+- Commit Slice 17: `a09c6c5 chore(workspace): document generated tooling ownership`.
