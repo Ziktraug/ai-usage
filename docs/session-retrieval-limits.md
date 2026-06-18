@@ -16,13 +16,13 @@ how to read it.
 | Harness | Source read by the collector | Retention on disk |
 |---|---|---|
 | Claude Code | `~/.claude/projects/**/*.jsonl` (token-bearing transcripts) + fallback `~/.claude/history.jsonl` | **Purged after `cleanupPeriodDays`, default 30 days** |
-| Codex | `~/.codex/sessions/<YYYY>/<MM>/<DD>/*.jsonl` + `~/.codex/session_index.jsonl` | Kept; bounded by when Codex was adopted |
+| Codex | `~/.codex/sessions/<YYYY>/<MM>/<DD>/*.jsonl` + `~/.codex/state_5.sqlite` metadata + `~/.codex/session_index.jsonl` names | Kept; bounded by when Codex was adopted |
 | Cursor | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` (`cursorDiskKV`) | Sessions kept; **token counters dropped (see below)** |
 | OpenCode | `~/.local/share/opencode/opencode.db` | Kept — full history, no purge |
 
 Sources the collectors intentionally do **not** read (verified to carry no
-usable token data): `~/.codex/history.jsonl`, `~/.codex/sqlite/*.sqlite` (logs,
-goals, memories, app state), and `~/.cursor/projects/*/agent-transcripts/**/*.jsonl`
+usable token data): `~/.codex/history.jsonl`, Codex logs/goals/memories/app-state
+SQLite databases, and `~/.cursor/projects/*/agent-transcripts/**/*.jsonl`
 (CLI-agent transcripts — `role`/`message` events only, zero token fields).
 
 ## The two structural limits
@@ -81,6 +81,10 @@ legitimately Cursor + OpenCode only.
   name, line counts, and turn count, with zero tokens and null cost. This
   brought Cursor from 76 to 262 rows, restoring the Feb-Jun 2026 sessions to the
   timeline (as usage-unavailable).
+- **Hardened Codex extraction beyond the UI index** — the Codex collector treats
+  session JSONL files as the source of truth, enriches them from `state_5.sqlite`,
+  emits one usage row per local session including subagents/guardian checks, and
+  marks token-less local sessions as `usageUnavailable` instead of dropping them.
 
 ## What still requires work
 

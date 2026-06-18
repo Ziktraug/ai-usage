@@ -17,7 +17,7 @@ const renderReportNotes = () => {
   const nonLineHarnesses = nonLineTrackingHarnessLabels().join('/');
   const notes = [
     ...reportHarnessNotes(),
-    '↳ = contains sub-agents.',
+    '↳ = sub-agent session or parent with child sub-agents.',
     '? = Cursor CSV reconciliation was ambiguous; totals are best-effort.',
     'usage unavailable = session found in prompt history, but detailed local token counters are missing.',
     `Tracked lines: ${lineHarnesses} only (${nonLineHarnesses} expose none locally).`,
