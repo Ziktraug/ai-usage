@@ -29,4 +29,3 @@ Global backlog for known follow-ups that should survive individual refactor logs
 ## Source Logs
 
 - `docs/report-data-architecture-refactor-log.md` contains the original report-data refactor history and the first set of follow-ups.
-- `docs/architecture-debt-implementation-log.md` records the completed 18-slice architecture pass.
