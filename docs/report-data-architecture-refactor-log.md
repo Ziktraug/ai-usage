@@ -97,4 +97,31 @@ Checks:
 
 Commit:
 
+- `61d59e3 refactor(cli): use shared reporting path`
+
+### Slice 3: Move Report Server Payload To Shared Reporting
+
+Status: completed
+
+Changes:
+
+- Added `@ai-usage/reporting` as a report app dependency.
+- Replaced report-app-specific local history collection, alias application, facet collection, and payload generation with `createLocalReportPayload`.
+- Kept the existing `collectReportPayload` and `runReportPayloadCollection` exports so the server function boundary remains stable.
+
+Decisions:
+
+- The report app still requests the compatibility global payload for now.
+- The report app owns only its default request shape; shared reporting owns how that request is fulfilled.
+
+Difficulties:
+
+- None in this slice.
+
+Checks:
+
+- `bun run --cwd apps/report check`
+
+Commit:
+
 - Pending.
