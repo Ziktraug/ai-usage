@@ -200,8 +200,7 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
     };
   });
 
-const projectFromRow = (row: Row) =>
-  row.project || path.basename((row as Partial<SourcedRow>).source?.sourcePath ?? '') || '(unknown)';
+const projectFromRow = (row: SourcedRow) => row.project || path.basename(row.source.sourcePath ?? '') || '(unknown)';
 
 const readGitRemoteUrl = (projectPath: string): string => {
   try {
@@ -223,18 +222,18 @@ const extractRepoName = (url: string): string => {
   return url;
 };
 
-const collectProjectSources = (rows: Row[], includeGitRemote: boolean): ProjectSource[] => {
+const collectProjectSources = (rows: SourcedRow[], includeGitRemote: boolean): ProjectSource[] => {
   const summaries = new Map<string, ProjectSource>();
 
   for (const row of rows) {
-    const source = (row as Partial<SourcedRow>).source;
+    const source = row.source;
     const summary: ProjectSource = {
       project: projectFromRow(row),
-      machine: source?.machineLabel ?? 'Unknown machine',
-      machineId: source?.machineId ?? '',
+      machine: source.machineLabel ?? 'Unknown machine',
+      machineId: source.machineId ?? '',
       harness: row.harness,
-      harnessKey: source?.harnessKey ?? row.harness.toLowerCase(),
-      sourcePath: source?.sourcePath ?? '',
+      harnessKey: source.harnessKey,
+      sourcePath: source.sourcePath ?? '',
       gitRemote: '',
       sessions: 0,
       tokens: 0,

@@ -1,13 +1,12 @@
 import path from 'node:path';
-import type { Row, UsageRowSource } from '@ai-usage/core/types';
+import type { UsageRow, UsageRowSource, UsageRowWithOptionalSource } from '@ai-usage/core/types';
 import { Effect } from 'effect';
 import type { LocalHistoryError } from './errors';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
 import { firstExisting, resolvePathCandidates } from './platform-paths';
 
-export type CollectorRow = Row & {
+export type CollectorRow = UsageRowWithOptionalSource & {
   readonly projectPath?: string | null;
-  readonly source?: UsageRowSource;
 };
 
 type RtkCommandRow = {
@@ -30,7 +29,7 @@ export const RTK_COMMANDS_SQL =
 
 const MATCH_PADDING_MS = 2 * 60_000;
 
-export const withProjectPath = (row: Row, projectPath: string | null | undefined): CollectorRow =>
+export const withProjectPath = (row: UsageRow, projectPath: string | null | undefined): CollectorRow =>
   projectPath ? { ...row, projectPath } : row;
 
 export const withSource = (row: CollectorRow, source: UsageRowSource): CollectorRow => ({
@@ -41,12 +40,12 @@ export const withSource = (row: CollectorRow, source: UsageRowSource): Collector
   },
 });
 
-export const stripCollectorMetadata = (row: CollectorRow): Row => {
+export const stripCollectorMetadata = (row: CollectorRow): UsageRow => {
   const { projectPath: _projectPath, source: _source, ...publicRow } = row;
   return publicRow;
 };
 
-export const stripProjectPath = (row: CollectorRow): Row => {
+export const stripProjectPath = (row: CollectorRow): UsageRowWithOptionalSource => {
   const { projectPath: _projectPath, ...publicRow } = row;
   return publicRow;
 };
@@ -57,7 +56,7 @@ const normalizeProjectPath = (projectPath: string | null | undefined) =>
 const isSameOrNestedPath = (left: string, right: string) =>
   left === right || left.startsWith(`${right}${path.sep}`) || right.startsWith(`${left}${path.sep}`);
 
-const rowActiveEnd = (row: Row) => row.endDate ?? row.date;
+const rowActiveEnd = (row: UsageRow) => row.endDate ?? row.date;
 
 const candidatesForRows = (rows: CollectorRow[]): RtkCandidate[] =>
   rows.flatMap((row, index) => {

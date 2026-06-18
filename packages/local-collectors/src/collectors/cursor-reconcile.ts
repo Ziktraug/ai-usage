@@ -1,5 +1,4 @@
 import { harnessLabel } from '@ai-usage/core/harness-metadata';
-import type { SourcedRow } from '@ai-usage/core/types';
 import { actualCost, usageRowTokenTotal } from '@ai-usage/core/usage-row';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import type { CollectorRow } from '../rtk-enrichment';
@@ -13,7 +12,7 @@ export interface CursorReconcileOptions {
 
 const cursorHarness = harnessLabel('cursor');
 
-const sourceFromRow = (row: CollectorRow) => (row as Partial<SourcedRow>).source;
+const sourceFromRow = (row: CollectorRow) => row.source;
 
 const isCursorRow = (row: CollectorRow) => row.harness === cursorHarness;
 

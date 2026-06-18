@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { Row, SourcedRow } from './types';
+import type { UsageRowWithOptionalSource } from './types';
 
 export interface ProjectAliasEntry {
   name: string;
@@ -29,8 +29,8 @@ const globToRegex = (glob: string) => {
   return new RegExp(`^${pattern}$`, 'i');
 };
 
-const rowProjectCandidates = (row: Row) => {
-  const sourcePath = (row as Partial<SourcedRow>).source?.sourcePath;
+const rowProjectCandidates = (row: UsageRowWithOptionalSource) => {
+  const sourcePath = row.source?.sourcePath;
   const candidates = [row.project];
   if (sourcePath) {
     const normalized = path.normalize(sourcePath).replaceAll(path.sep, '/');
@@ -39,7 +39,7 @@ const rowProjectCandidates = (row: Row) => {
   return candidates.filter(Boolean);
 };
 
-const matchesAlias = (row: Row, alias: ProjectAliasEntry) => {
+const matchesAlias = (row: UsageRowWithOptionalSource, alias: ProjectAliasEntry) => {
   const candidates = rowProjectCandidates(row);
   return alias.match.some((pattern) => {
     const regex = globToRegex(pattern);
@@ -47,7 +47,10 @@ const matchesAlias = (row: Row, alias: ProjectAliasEntry) => {
   });
 };
 
-export const applyProjectAliases = (rows: Row[], aliases: ProjectAliasEntry[] = []): Row[] => {
+export const applyProjectAliases = <T extends UsageRowWithOptionalSource>(
+  rows: T[],
+  aliases: ProjectAliasEntry[] = [],
+): T[] => {
   if (!aliases.length) return rows;
   return rows.map((row) => {
     const alias = aliases.find((entry) => entry.name && Array.isArray(entry.match) && matchesAlias(row, entry));
