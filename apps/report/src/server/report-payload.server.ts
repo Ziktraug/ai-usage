@@ -8,10 +8,13 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.
 const reportingPayloadRunner = path.join(rootDir, 'packages/reporting/src/report-payload-runner.ts');
 const execFileAsync = promisify(execFile);
 
-export const runReportPayloadCollection = async (): Promise<UsageReportPayload> => {
+export const runReportPayloadRunner = async () => {
   const { stdout } = await execFileAsync('bun', [reportingPayloadRunner, rootDir], {
     cwd: rootDir,
     maxBuffer: 64 * 1024 * 1024,
   });
-  return JSON.parse(stdout) as UsageReportPayload;
+  return stdout;
 };
+
+export const runReportPayloadCollection = async (): Promise<UsageReportPayload> =>
+  JSON.parse(await runReportPayloadRunner()) as UsageReportPayload;

@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 10 implementee et verifiee
-- Slice en cours: commit Slice 10
-- Dernier commit de suivi: `70915cd refactor(collectors): report local history warnings`
+- Statut actuel: Slice 11 implementee et verifiee
+- Slice en cours: commit Slice 11
+- Dernier commit de suivi: `4a6da64 feat(report): surface local history warnings`
 
 ## Decisions Transverses
 
@@ -427,6 +427,46 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
+- `4a6da64 feat(report): surface local history warnings`
+
+### Slice 11: Report Runtime Module
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: centraliser SSR, payload injecte, refresh, demo fallback et export runtime.
+
+Travail fait:
+- Ajout de `apps/report/src/report-runtime.ts` pour porter `readReportPayload`, `isDemoReportPayload`, `fetchReportPayload`, `loadReportPayload`, `resolveInitialReportPayload` et `reportRefreshPayload`.
+- `report-data.ts` redevient un module de donnees demo/facets; il exporte `demoReportPayload` et ne connait plus `window` ni server functions.
+- `routes/index.tsx` ne connait plus `globalThis`, `window.__AI_USAGE_REPORT__`, `import.meta.env.SSR`, ni les imports server payload.
+- `Dashboard.tsx` consomme les helpers runtime au lieu de `report-data`.
+- `report-payload.server.ts` expose `runReportPayloadRunner` pour nommer explicitement l'adapter subprocess Bun, puis parse dans `runReportPayloadCollection`.
+- Le runtime utilise le bridge `createServerFn` via `server/report-payload.ts`; aucun import `.server` ne fuit dans le module client-visible.
+- Mise a jour du test payload bootstrap pour importer `readReportPayload` depuis le runtime.
+
+Difficultes:
+- Le build TanStack Start bloque les imports `.server` dans un module visible client, meme sous branche runtime. Le runtime passe donc uniquement par `getReportPayload` (`createServerFn`) et laisse l'import `.server` dans `server/report-payload.ts`.
+
+Decisions:
+- Garder `server/report-payload.ts` comme frontiere RPC Start officielle.
+- Ne pas supprimer le runner subprocess dans cette slice; il est seulement nomme et isole.
+- Ne pas deplacer `cursorCommitAttributionFacet`, car c'est un helper de lecture de payload/facets, pas du runtime.
+
+Fichiers touches:
+- `apps/report/src/report-runtime.ts`
+- `apps/report/src/report-data.ts`
+- `apps/report/src/report-data.test.ts`
+- `apps/report/src/routes/index.tsx`
+- `apps/report/src/Dashboard.tsx`
+- `apps/report/src/server/report-payload.server.ts`
+- `docs/architecture-debt-implementation-log.md`
+
+Checks:
+- `bun run --cwd apps/report check`: passe.
+- `bun run --cwd apps/report test`: passe.
+- `bun run check`: passe.
+
+Commit:
 - Non committe.
 
 ## Journal Chronologique
@@ -462,3 +502,6 @@ Commit:
 - Commit Slice 9: `70915cd refactor(collectors): report local history warnings`.
 - Pick Slice 10: exposer les warnings dans payload, CLI et dashboard.
 - Verifie Slice 10 avec `bun run --cwd packages/usage-core check`, `bun run --cwd packages/reporting check`, `bun run --cwd apps/cli check`, `bun run --cwd apps/report check`, `bun run --cwd apps/cli test`, `bun run --cwd apps/report test`, `bun run --cwd packages/reporting test`, `bun run check`.
+- Commit Slice 10: `4a6da64 feat(report): surface local history warnings`.
+- Pick Slice 11: centraliser le runtime report autour du chargement payload, refresh, injection et export.
+- Verifie Slice 11 avec `bun run --cwd apps/report check`, `bun run --cwd apps/report test`, `bun run check`.
