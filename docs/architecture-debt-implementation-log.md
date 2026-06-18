@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 14 committe
-- Slice en cours: choisir Slice 15
-- Dernier commit de suivi: `65a03c1 refactor(report): extract dashboard model`
+- Statut actuel: Slice 15 implementee et verifiee
+- Slice en cours: commit Slice 15
+- Dernier commit de suivi: `30e013b docs: record slice 14 commit`
 
 ## Decisions Transverses
 
@@ -590,6 +590,46 @@ Checks:
 Commit:
 - `65a03c1 refactor(report): extract dashboard model`
 
+### Slice 15: Overview Analytics Model
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: sortir les calculs analytiques de `Overview.tsx` pour garder le composant centre sur le rendu.
+
+Travail fait:
+- Ajout de `apps/report/src/overview-model.ts`.
+- Extraction du modele calendar heatmap: aggregation par jour, seuils, semaines, labels mois, mode cost/sessions.
+- Extraction du modele migration: buckets journaliers/hebdomadaires, series top models, other, paths SVG et total.
+- Extraction du modele session shape: points times/cost, echelles log, ticks et harnesses.
+- Extraction du modele punchcard: matrice weekday/hour, cout et densite sessions.
+- Extraction des records: top session, longest session, busiest day et streak sur tout l'historique filtre.
+- Extraction de `buildTopSessions`.
+- `Overview.tsx` conserve les classes/design-system, le rendu SVG/JSX et les handlers de selection.
+- Ajout de `overview-model.test.ts` pour couvrir heatmap, migration, session shape, punchcard, records et top sessions.
+
+Difficultes:
+- `Hero` et `TokenAnatomy` gardent encore de petits calculs de presentation, car ils sont tres proches de leurs segments visuels et ne bloquent pas le gain principal.
+- Le modele migration retourne les paths, mais pas les classes de couleur; le mapping de style reste dans `Overview.tsx` pour eviter une dependance design-system dans le modele.
+
+Decisions:
+- Ne pas importer le design-system depuis `overview-model.ts`.
+- Garder les fonctions de projection SVG (`xPct`, `yPct`) dans le modele, car elles sont le resultat calculatoire teste du chart.
+- Garder `PUNCH_DAYS` et les ticks duration/cost dans le modele, car ce sont des constantes de donnees du chart.
+
+Fichiers touches:
+- `apps/report/src/overview-model.ts`
+- `apps/report/src/overview-model.test.ts`
+- `apps/report/src/Overview.tsx`
+- `docs/architecture-debt-implementation-log.md`
+
+Checks:
+- `bun run --cwd apps/report test`: passe.
+- `bun run --cwd apps/report check`: passe.
+- `bun run check`: passe.
+
+Commit:
+- Non committe.
+
 ## Journal Chronologique
 
 ### 2026-06-18
@@ -637,3 +677,6 @@ Commit:
 - Pick Slice 14: extraire le modele pur de `Dashboard.tsx` sans changer le rendu.
 - Verifie Slice 14 avec `bun run --cwd apps/report test`, `bun run --cwd apps/report check`, `bun run check`.
 - Commit Slice 14: `65a03c1 refactor(report): extract dashboard model`.
+- Commit Slice 14 log correction: `30e013b docs: record slice 14 commit`.
+- Pick Slice 15: extraire les modeles analytiques purs de `Overview.tsx`.
+- Verifie Slice 15 avec `bun run --cwd apps/report test`, `bun run --cwd apps/report check`, `bun run check`.
