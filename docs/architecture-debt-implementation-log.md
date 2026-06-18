@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 14 implementee et verifiee
-- Slice en cours: commit Slice 14
-- Dernier commit de suivi: `0287ef5 docs: record committed architecture slices`
+- Statut actuel: Slice 14 committe
+- Slice en cours: choisir Slice 15
+- Dernier commit de suivi: `65a03c1 refactor(report): extract dashboard model`
 
 ## Decisions Transverses
 
@@ -553,7 +553,7 @@ Commit:
 
 ### Slice 14: Dashboard Model
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: sortir la logique calculatoire principale de `Dashboard.tsx` sans changer les signaux Solid ni le rendu.
 
@@ -588,7 +588,7 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
-- Non committe.
+- `65a03c1 refactor(report): extract dashboard model`
 
 ## Journal Chronologique
 
@@ -636,3 +636,4 @@ Commit:
 - Commit log correction: `0287ef5 docs: record committed architecture slices`.
 - Pick Slice 14: extraire le modele pur de `Dashboard.tsx` sans changer le rendu.
 - Verifie Slice 14 avec `bun run --cwd apps/report test`, `bun run --cwd apps/report check`, `bun run check`.
+- Commit Slice 14: `65a03c1 refactor(report): extract dashboard model`.
