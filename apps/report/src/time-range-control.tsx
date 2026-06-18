@@ -44,6 +44,7 @@ import type { DateRangeController } from './date-range-controller';
 import { type DashboardRow, fmtDateOnly, fmtMoney, fmtNum, HarnessBadge, harnessFillFor } from './shared';
 
 type RangeDragPointerEvent = PointerEvent & { currentTarget: HTMLButtonElement };
+type RangeHandle = 'start' | 'end';
 type TimelinePart = { harness: string; cost: number };
 type TimelineBucket = { date: Date; endDate: Date; total: number; sessions: number; parts: TimelinePart[] };
 
@@ -170,17 +171,19 @@ export const TimeRangeControl = (props: {
     trackWidth: number;
     maxIndex: number;
   } | null = null;
+  let handleDrag: {
+    handle: RangeHandle;
+    pointerId: number;
+    startIndex: number;
+    startX: number;
+    trackWidth: number;
+    maxIndex: number;
+  } | null = null;
 
   const indexesForValue = (value: number[]): [number, number] | null => {
     const chart = data();
     if (!chart) return null;
     return normalizeDateIndexRange(value, chart.maxIndex);
-  };
-
-  const previewSliderValue = (value: number[]) => {
-    const nextIndexes = indexesForValue(value);
-    if (!nextIndexes) return;
-    props.dateRange.setIndexes(nextIndexes[0], nextIndexes[1]);
   };
 
   const commitIndexes = (value?: number[]) => {
@@ -250,6 +253,73 @@ export const TimeRangeControl = (props: {
       event.currentTarget.releasePointerCapture(event.pointerId);
     event.preventDefault();
     event.stopPropagation();
+  };
+
+  const setHandleIndex = (handle: RangeHandle, index: number) => {
+    const [from, to] = props.dateRange.selectedIndexes();
+    if (handle === 'start') props.dateRange.setIndexes(Math.min(index, to), to);
+    else props.dateRange.setIndexes(from, Math.max(index, from));
+  };
+
+  const startHandleDrag = (
+    event: RangeDragPointerEvent,
+    handle: RangeHandle,
+    chart: NonNullable<ReturnType<typeof data>>,
+  ) => {
+    if (event.button !== 0) return;
+    const trackRect = event.currentTarget.parentElement?.getBoundingClientRect();
+    if (!trackRect?.width || chart.maxIndex <= 0) return;
+    const [from, to] = props.dateRange.selectedIndexes();
+    handleDrag = {
+      handle,
+      pointerId: event.pointerId,
+      startIndex: handle === 'start' ? from : to,
+      startX: event.clientX,
+      trackWidth: trackRect.width,
+      maxIndex: chart.maxIndex,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const moveHandleDrag = (event: RangeDragPointerEvent) => {
+    if (!handleDrag || handleDrag.pointerId !== event.pointerId) return;
+    const delta = Math.round(((event.clientX - handleDrag.startX) / handleDrag.trackWidth) * handleDrag.maxIndex);
+    setHandleIndex(handleDrag.handle, handleDrag.startIndex + delta);
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const endHandleDrag = (event: RangeDragPointerEvent) => {
+    if (!handleDrag || handleDrag.pointerId !== event.pointerId) return;
+    handleDrag = null;
+    commitIndexes();
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const handleSliderKeyDown = (event: KeyboardEvent & { currentTarget: HTMLButtonElement }, handle: RangeHandle) => {
+    const chart = data();
+    if (!chart) return;
+    const [from, to] = props.dateRange.selectedIndexes();
+    const current = handle === 'start' ? from : to;
+    const step = event.shiftKey ? 7 : 1;
+    const next = (() => {
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') return current - step;
+      if (event.key === 'ArrowRight' || event.key === 'ArrowUp') return current + step;
+      if (event.key === 'PageDown') return current - 30;
+      if (event.key === 'PageUp') return current + 30;
+      if (event.key === 'Home') return 0;
+      if (event.key === 'End') return chart.maxIndex;
+      return null;
+    })();
+    if (next == null) return;
+    setHandleIndex(handle, clampNumber(next, 0, chart.maxIndex));
+    commitIndexes();
+    event.preventDefault();
   };
 
   const rangeVars = (chart: NonNullable<ReturnType<typeof data>>) => {
@@ -387,39 +457,39 @@ export const TimeRangeControl = (props: {
                   onPointerCancel={endSelectionDrag}
                   onLostPointerCapture={endSelectionDrag}
                 />
-                <input
+                <button
                   class={timeSliderThumb}
-                  type="range"
-                  min={0}
-                  max={chart().maxIndex}
-                  step={1}
-                  value={props.dateRange.selectedIndexes()[0]}
-                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.01, 'z-index': 4 }}
+                  type="button"
+                  role="slider"
+                  aria-valuemin={0}
+                  aria-valuemax={chart().maxIndex}
+                  aria-valuenow={props.dateRange.selectedIndexes()[0]}
+                  style={{ left: 'var(--slider-range-start)' }}
                   aria-label="Start date"
                   aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, props.dateRange.selectedIndexes()[0]))}
-                  onInput={(event) =>
-                    previewSliderValue([Number(event.currentTarget.value), props.dateRange.selectedIndexes()[1]])
-                  }
-                  onChange={(event) =>
-                    commitIndexes([Number(event.currentTarget.value), props.dateRange.selectedIndexes()[1]])
-                  }
+                  onPointerDown={(event) => startHandleDrag(event, 'start', chart())}
+                  onPointerMove={moveHandleDrag}
+                  onPointerUp={endHandleDrag}
+                  onPointerCancel={endHandleDrag}
+                  onLostPointerCapture={endHandleDrag}
+                  onKeyDown={(event) => handleSliderKeyDown(event, 'start')}
                 />
-                <input
+                <button
                   class={timeSliderThumb}
-                  type="range"
-                  min={0}
-                  max={chart().maxIndex}
-                  step={1}
-                  value={props.dateRange.selectedIndexes()[1]}
-                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.01, 'z-index': 4 }}
+                  type="button"
+                  role="slider"
+                  aria-valuemin={0}
+                  aria-valuemax={chart().maxIndex}
+                  aria-valuenow={props.dateRange.selectedIndexes()[1]}
+                  style={{ left: `calc(100% - var(--slider-range-end))` }}
                   aria-label="End date"
                   aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, props.dateRange.selectedIndexes()[1]))}
-                  onInput={(event) =>
-                    previewSliderValue([props.dateRange.selectedIndexes()[0], Number(event.currentTarget.value)])
-                  }
-                  onChange={(event) =>
-                    commitIndexes([props.dateRange.selectedIndexes()[0], Number(event.currentTarget.value)])
-                  }
+                  onPointerDown={(event) => startHandleDrag(event, 'end', chart())}
+                  onPointerMove={moveHandleDrag}
+                  onPointerUp={endHandleDrag}
+                  onPointerCancel={endHandleDrag}
+                  onLostPointerCapture={endHandleDrag}
+                  onKeyDown={(event) => handleSliderKeyDown(event, 'end')}
                 />
               </div>
             </div>
