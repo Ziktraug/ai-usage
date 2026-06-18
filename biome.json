@@ -8,6 +8,7 @@
       "!**/.output",
       "!**/.turbo",
       "!**/dist",
+      "!apps/report/src/routeTree.gen.ts",
       "!**/node_modules",
       "!**/styled-system"
     ]
