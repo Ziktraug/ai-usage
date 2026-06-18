@@ -63,10 +63,8 @@ import { RefreshStatus } from './refresh-status';
 import { ReportWarnings } from './report-warnings';
 import {
   cursorCommitAttributionFacet,
-  fetchReportPayload,
-  isDemoReportPayload,
-  readReportPayload,
 } from './report-data';
+import { fetchReportPayload, isDemoReportPayload, readReportPayload } from './report-runtime';
 import { columnDiffFromVisibility, columnVisibilityFromDiff, sortFromSortingState } from './session-columns';
 import { SessionDrawer } from './session-drawer';
 import { SessionTable } from './session-table';
