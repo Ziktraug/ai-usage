@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 13 committe
-- Slice en cours: choisir Slice 14
-- Dernier commit de suivi: `8526d4e refactor(report): add session table schema`
+- Statut actuel: Slice 14 implementee et verifiee
+- Slice en cours: commit Slice 14
+- Dernier commit de suivi: `0287ef5 docs: record committed architecture slices`
 
 ## Decisions Transverses
 
@@ -551,6 +551,45 @@ Checks:
 Commit:
 - `8526d4e refactor(report): add session table schema`
 
+### Slice 14: Dashboard Model
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: sortir la logique calculatoire principale de `Dashboard.tsx` sans changer les signaux Solid ni le rendu.
+
+Travail fait:
+- Ajout de `apps/report/src/dashboard-model.ts`.
+- Extraction des fonctions pures pour filtrer les rows timeline depuis un snapshot de filtres.
+- Deplacement des primitives de filtre (`FilterSnapshot`, `createFilterSnapshot`, `matchesFilterSnapshot`) dans le modele.
+- Extraction du filtrage par `DateBounds`, du tri de rows export/table, des summaries visibles et de la summary periode precedente.
+- Extraction des groupes model/provider/harness/project depuis les rows timeline et bounds.
+- Extraction du modele des metrics et des deltas de periode.
+- `Dashboard.tsx` garde la composition des signaux, mais appelle les helpers model dans les memos.
+- Ajout de `dashboard-model.test.ts` pour couvrir filtres, bounds date, previous period, metrics et ordre export trie sans mutation.
+
+Difficultes:
+- Les metrics restent formatees en strings car `MetricTile` consomme deja ce modele UI; extraire un modele numerique separerait le comportement visuel dans une slice plus large.
+
+Decisions:
+- Garder les Solid signals et handlers dans `Dashboard.tsx` pour eviter un changement comportemental large.
+- Garder les gates par tab dans `Dashboard.tsx`; le model porte les calculs, pas la logique de navigation.
+- Ne pas deplacer `Overview.tsx`; Slice 15 est dediee a ses calculs.
+
+Fichiers touches:
+- `apps/report/src/dashboard-model.ts`
+- `apps/report/src/dashboard-model.test.ts`
+- `apps/report/src/Dashboard.tsx`
+- `apps/report/src/dashboard-filters.tsx`
+- `docs/architecture-debt-implementation-log.md`
+
+Checks:
+- `bun run --cwd apps/report test`: passe.
+- `bun run --cwd apps/report check`: passe.
+- `bun run check`: passe.
+
+Commit:
+- Non committe.
+
 ## Journal Chronologique
 
 ### 2026-06-18
@@ -594,3 +633,6 @@ Commit:
 - Pick Slice 13: extraire le schema table session pour ids, visibility URL, sort et CSV.
 - Verifie Slice 13 avec `bun run --cwd apps/report check`, `bun run --cwd apps/report test`, `bun run check`.
 - Commit Slice 13: `8526d4e refactor(report): add session table schema`.
+- Commit log correction: `0287ef5 docs: record committed architecture slices`.
+- Pick Slice 14: extraire le modele pur de `Dashboard.tsx` sans changer le rendu.
+- Verifie Slice 14 avec `bun run --cwd apps/report test`, `bun run --cwd apps/report check`, `bun run check`.

@@ -31,10 +31,23 @@ import { useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
 import { CursorAttributionPanel } from './cursor-attribution-panel';
-import { buildAnalyticsGroups, buildProjectGroups } from './dashboard-analytics';
 import { downloadCSV, downloadHTML } from './dashboard-export';
-import { createFilterSnapshot, FilterPill, fieldFilterLabels, matchesFilterSnapshot } from './dashboard-filters';
-import { type Metric, type MetricDelta, MetricTile } from './dashboard-metrics';
+import { FilterPill, fieldFilterLabels } from './dashboard-filters';
+import {
+  buildDashboardMetrics,
+  buildHarnessGroups,
+  buildModelGroups,
+  buildPreviousPeriodSummary,
+  buildProjectGroupRows,
+  buildProviderGroups,
+  buildSortedDashboardRows,
+  buildVisibleSummary,
+  createFilterSnapshot,
+  filterRowsByDateBounds,
+  filterTimelineRows,
+  hiddenSessionCount,
+} from './dashboard-model';
+import { MetricTile } from './dashboard-metrics';
 import {
   type DashboardSearch,
   type DashboardTab,
@@ -44,13 +57,9 @@ import {
   isDashboardTab,
   sortingStateFromSearch,
 } from './dashboard-search';
-import { compareRows } from './dashboard-sort';
 import { ThemeToggle } from './dashboard-theme';
 import {
-  DAY_MS,
   type DateBounds,
-  endOfDay,
-  rowMatchesDateBounds,
   shiftCalendarDays,
   startOfDay,
   toDateInputValue,
@@ -61,23 +70,17 @@ import { Overview } from './Overview';
 import { ProjectSummary } from './project-summary';
 import { RefreshStatus } from './refresh-status';
 import { ReportWarnings } from './report-warnings';
-import {
-  cursorCommitAttributionFacet,
-} from './report-data';
+import { cursorCommitAttributionFacet } from './report-data';
 import { fetchReportPayload, isDemoReportPayload, readReportPayload } from './report-runtime';
 import { columnDiffFromVisibility, columnVisibilityFromDiff, sortFromSortingState } from './session-table-schema';
 import { SessionDrawer } from './session-drawer';
 import { SessionTable } from './session-table';
 import {
-  buildReportSummary,
   type DashboardRow,
   enrichReportRow,
-  fmtCompact,
   fmtDate,
   fmtDateOnly,
-  fmtMoney,
   fmtNum,
-  fmtPct,
   rowKey,
 } from './shared';
 import { applyTableUpdate } from './table-utils';
@@ -135,10 +138,7 @@ export const Dashboard = (props: {
   const cursorCommitRows = createMemo(() => cursorCommitAttributionFacet(payload()));
   const harnesses = createMemo(() => ['all', ...new Set(reportRows().map((row) => row.harness))]);
   const filterSnapshot = createMemo(() => createFilterSnapshot(query(), harness(), fieldFilters()));
-  const timelineRows = createMemo(() => {
-    const filters = filterSnapshot();
-    return reportRows().filter((row) => matchesFilterSnapshot(row, filters));
-  });
+  const timelineRows = createMemo(() => filterTimelineRows(reportRows(), filterSnapshot()));
   const initialRange = search().range;
   const dateRange = createDateRangeController({
     generatedAt,
@@ -176,14 +176,11 @@ export const Dashboard = (props: {
       setTableDateBounds(dateRange.bounds());
     });
   });
-  const tableFilteredRows = createMemo(() => {
-    const bounds = tableDateBounds();
-    return timelineRows().filter((row) => rowMatchesDateBounds(row, bounds));
-  });
+  const tableFilteredRows = createMemo(() => filterRowsByDateBounds(timelineRows(), tableDateBounds()));
   const tableRows = tableFilteredRows;
   // Rows in the table's current sort order — shared by CSV export and the
   // drawer's previous/next navigation so both walk the list the user sees.
-  const sortedRows = createMemo(() => [...tableFilteredRows()].sort(compareRows(sorting())));
+  const sortedRows = createMemo(() => buildSortedDashboardRows(tableFilteredRows(), sorting()));
   // The drawer closes by itself when its row leaves the filtered set.
   const selectedRow = createMemo(() => tableFilteredRows().find((row) => rowKey(row) === selectedKey()) ?? null);
   const navigateSelected = (delta: number) => {
@@ -224,58 +221,27 @@ export const Dashboard = (props: {
     document.addEventListener('keydown', onKeyDown);
     onCleanup(() => document.removeEventListener('keydown', onKeyDown));
   });
-  const visibleSummary = createMemo(() => {
-    const bounds = dateRange.bounds();
-    return buildReportSummary(timelineRows(), (row) => rowMatchesDateBounds(row, bounds));
-  });
+  const visibleSummary = createMemo(() => buildVisibleSummary(timelineRows(), dateRange.bounds()));
   const modelGroups = createMemo(() => {
     if (search().tab !== 'models') return [];
-    const bounds = dateRange.bounds();
-    return buildAnalyticsGroups(
-      timelineRows(),
-      (row) => rowMatchesDateBounds(row, bounds),
-      (row) => row.modelKey,
-      visibleSummary().totalCost,
-    );
+    return buildModelGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost);
   });
   const providerGroups = createMemo(() => {
     if (search().tab !== 'providers') return [];
-    const bounds = dateRange.bounds();
-    return buildAnalyticsGroups(
-      timelineRows(),
-      (row) => rowMatchesDateBounds(row, bounds),
-      (row) => row.providerDisplay,
-      visibleSummary().totalCost,
-    );
+    return buildProviderGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost);
   });
   const harnessGroups = createMemo(() => {
     if (search().tab !== 'harnesses') return [];
-    const bounds = dateRange.bounds();
-    return buildAnalyticsGroups(
-      timelineRows(),
-      (row) => rowMatchesDateBounds(row, bounds),
-      (row) => row.harness,
-      visibleSummary().totalCost,
-    );
+    return buildHarnessGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost);
   });
   const projectGroupRows = createMemo(() => {
     if (search().tab !== 'projects') return [];
-    const bounds = dateRange.bounds();
-    return buildProjectGroups(timelineRows(), (row) => rowMatchesDateBounds(row, bounds));
+    return buildProjectGroupRows(timelineRows(), dateRange.bounds());
   });
-  const hiddenCount = createMemo(() => reportRows().length - visibleSummary().sessionCount);
-  // Usage in the equally-long window right before the selected one; null when
-  // the range is open-ended ("All") or the previous window is empty.
-  const previousSummary = createMemo(() => {
-    const bounds = dateRange.bounds();
-    if (!bounds.from) return null;
-    const from = bounds.from.getTime();
-    const to = (bounds.to ?? endOfDay(generatedAt())).getTime();
-    const span = Math.max(DAY_MS, to - from);
-    const previousBounds: DateBounds = { from: new Date(from - span), to: new Date(from - 1) };
-    const summary = buildReportSummary(timelineRows(), (row) => rowMatchesDateBounds(row, previousBounds));
-    return summary.sessionCount > 0 ? summary : null;
-  });
+  const hiddenCount = createMemo(() => hiddenSessionCount(reportRows().length, visibleSummary().sessionCount));
+  const previousSummary = createMemo(() =>
+    buildPreviousPeriodSummary(timelineRows(), dateRange.bounds(), generatedAt()),
+  );
   const exportRows = () => sortedRows();
   const refreshPayload = async (force = false) => {
     if (!props.fetchPayload || refreshing()) return;
@@ -369,81 +335,7 @@ export const Dashboard = (props: {
     if (!isDashboardTab(tab)) return;
     updateSearch((current) => ({ ...current, tab }));
   };
-  const deltaVs = (current: number, previous: number | undefined, fmt: (n: number) => string): MetricDelta | null => {
-    if (previous == null || previous <= 0) return null;
-    return {
-      pct: ((current - previous) / previous) * 100,
-      hint: `Previous period of equal length: ${fmt(previous)}`,
-    };
-  };
-  const metrics = createMemo<Metric[]>(() => {
-    const a = visibleSummary();
-    const prev = previousSummary() ?? undefined;
-    return [
-      {
-        label: 'Sessions',
-        value: fmtNum(a.sessionCount),
-        hint: 'Sessions in the current filter',
-        delta: deltaVs(a.sessionCount, prev?.sessionCount, fmtNum),
-      },
-      {
-        label: 'API value',
-        value: fmtMoney(a.totalCost),
-        hint: 'Estimated cost at standard API prices, including usage covered by subscriptions',
-        delta: deltaVs(a.totalCost, prev?.totalCost, fmtMoney),
-      },
-      {
-        label: 'Actual cost',
-        value: fmtMoney(a.actualCost),
-        hint: `Out-of-pocket spend reported by harnesses; subscription usage counts as $0${
-          a.unknownActual ? ` (${fmtNum(a.unknownActual)} sessions unknown)` : ''
-        }`,
-        delta: deltaVs(a.actualCost, prev?.actualCost, fmtMoney),
-      },
-      ...(a.costQuota
-        ? [
-            {
-              label: 'Sub value',
-              value: fmtMoney(a.costQuota),
-              hint: 'Cursor export value covered by the subscription quota',
-              delta: deltaVs(a.costQuota, prev?.costQuota, fmtMoney),
-            },
-          ]
-        : []),
-      { label: 'Mean / sess', value: fmtMoney(a.meanCost), hint: 'Mean API value per priced session' },
-      {
-        label: 'Fresh tokens',
-        value: fmtCompact(a.fresh),
-        hint: `Tokens processed without cache: ${fmtNum(a.fresh)}`,
-        delta: deltaVs(a.fresh, prev?.fresh, fmtCompact),
-      },
-      ...(a.rtkSaved
-        ? [
-            {
-              label: 'RTK savings',
-              value: fmtPct(a.rtkInput ? (a.rtkSaved / a.rtkInput) * 100 : 0),
-              hint: [
-                `${fmtNum(a.rtkSaved)} tokens saved in matched sessions`,
-                `${fmtNum(a.rtkInput)} RTK input tokens before filtering`,
-                `${fmtNum(a.rtkOutput)} RTK output tokens after filtering`,
-              ].join('\n'),
-            },
-          ]
-        : []),
-      {
-        label: 'Turns',
-        value: fmtNum(a.turns),
-        hint: 'Assistant turns across the filtered sessions',
-        delta: deltaVs(a.turns, prev?.turns, fmtNum),
-      },
-      {
-        label: 'Tool calls',
-        value: fmtNum(a.tools),
-        hint: 'Tool invocations across the filtered sessions',
-        delta: deltaVs(a.tools, prev?.tools, fmtNum),
-      },
-    ];
-  });
+  const metrics = createMemo(() => buildDashboardMetrics(visibleSummary(), previousSummary()));
 
   return (
     <main class={page}>
