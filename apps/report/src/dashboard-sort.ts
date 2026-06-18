@@ -2,37 +2,14 @@ import type { SerializedRow } from '@ai-usage/core/report-data';
 import type { SortingState } from '@tanstack/solid-table';
 import type { DashboardRow } from './shared';
 import { fmtMaybeNum, fmtNum, fmtPct } from './shared';
+import { isSessionColumnId, sortValueForSessionColumn, type SessionColumnId } from './session-table-schema';
 
-export const sortValueForRow = (row: DashboardRow, columnId: string): number | string => {
-  if (columnId === 'date') return row.sortDate;
-  if (columnId === 'harness') return row.sortHarness;
-  if (columnId === 'machine') return row.sortMachine;
-  if (columnId === 'provider') return row.sortProvider;
-  if (columnId === 'model') return row.sortModel;
-  if (columnId === 'project') return row.sortProject;
-  if (columnId === 'tokIn') return row.tokIn;
-  if (columnId === 'tokOut') return row.tokOut;
-  if (columnId === 'cache') return row.tokCr;
-  if (columnId === 'tokCw') return row.tokCw;
-  if (columnId === 'fresh') return row.freshTokens;
-  if (columnId === 'total') return row.tokenTotal;
-  if (columnId === 'cost') return row.costKnown ? row.costApprox : Number.NEGATIVE_INFINITY;
-  if (columnId === 'actual') return row.costActual ?? Number.NEGATIVE_INFINITY;
-  if (columnId === 'quota') return row.costQuota ?? 0;
-  if (columnId === 'duration') return row.durationMs ?? 0;
-  if (columnId === 'calls') return row.calls;
-  if (columnId === 'turns') return row.turns;
-  if (columnId === 'tools') return row.tools;
-  if (columnId === 'lines') return row.lineDelta ?? 0;
-  if (columnId === 'rtkSaved') return rtkSavingsPct(row) ?? 0;
-  if (columnId === 'subagent') return row.subagent ? 1 : 0;
-  if (columnId === 'partial') return row.partial ? 1 : 0;
-  if (columnId === 'ambiguous') return row.ambiguous ? 1 : 0;
-  return row.sortSession;
-};
+export const sortValueForRow = (row: DashboardRow, columnId: SessionColumnId): number | string =>
+  sortValueForSessionColumn(row, columnId);
 
 export const compareRows = (sorting: SortingState) => (a: DashboardRow, b: DashboardRow) => {
   for (const sort of sorting) {
+    if (!isSessionColumnId(sort.id)) continue;
     const av = sortValueForRow(a, sort.id);
     const bv = sortValueForRow(b, sort.id);
     const result =

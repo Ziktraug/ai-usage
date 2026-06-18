@@ -1,89 +1,14 @@
 import { inlineReportHTML } from '@ai-usage/core/html-export';
 import type { SerializedRow, UsageReportPayload } from '@ai-usage/core/report-data';
-import { rtkSavingsPct } from './dashboard-sort';
+import { sessionCsvColumns } from './session-table-schema';
 
 const csvEscape = (value: string) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value);
 
 const reportRowsToCSV = (rows: SerializedRow[]) => {
-  const head = [
-    'date',
-    'end_date',
-    'active_date',
-    'harness',
-    'machine',
-    'machine_id',
-    'provider',
-    'session',
-    'model',
-    'models',
-    'project',
-    'input',
-    'output',
-    'cache_read',
-    'cache_write',
-    'fresh_tokens',
-    'total_tokens',
-    'cost_actual',
-    'cost_quota',
-    'cost_approx_api',
-    'cost_known',
-    'calls',
-    'duration_ms',
-    'turns',
-    'tools',
-    'lines_added',
-    'lines_deleted',
-    'line_delta',
-    'rtk_saved_tokens',
-    'rtk_input_tokens',
-    'rtk_output_tokens',
-    'rtk_savings_pct',
-    'rtk_command_count',
-    'subagent',
-    'partial',
-    'usage_unavailable',
-    'ambiguous',
-  ];
+  const head = sessionCsvColumns.map((column) => column.header);
   const body = rows.map((row) =>
-    [
-      row.date ?? '',
-      row.endDate ?? '',
-      row.activeDate ?? '',
-      row.harness,
-      row.source?.machineLabel ?? '',
-      row.source?.machineId ?? '',
-      row.provider,
-      row.name,
-      row.model,
-      row.models?.join('|') ?? '',
-      row.project,
-      row.tokIn,
-      row.tokOut,
-      row.tokCr,
-      row.tokCw,
-      row.freshTokens,
-      row.tokenTotal,
-      row.costActual ?? '',
-      row.costQuota ?? '',
-      row.costApprox.toFixed(4),
-      row.costKnown,
-      row.calls,
-      row.durationMs ?? '',
-      row.turns,
-      row.tools,
-      row.linesAdded ?? '',
-      row.linesDeleted ?? '',
-      row.lineDelta ?? '',
-      row.rtkSavedTokens ?? '',
-      row.rtkInputTokens ?? '',
-      row.rtkOutputTokens ?? '',
-      rtkSavingsPct(row)?.toFixed(2) ?? '',
-      row.rtkCommandCount ?? '',
-      row.subagent ?? false,
-      row.partial ?? false,
-      row.usageUnavailable ?? false,
-      row.ambiguous ?? false,
-    ]
+    sessionCsvColumns
+      .map((column) => column.value(row) ?? '')
       .map((item) => csvEscape(String(item)))
       .join(','),
   );

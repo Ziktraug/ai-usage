@@ -1,5 +1,11 @@
 import type { SortingState } from '@tanstack/solid-table';
 import { type DateRangeMode, parseLocalDate } from './date-range';
+import {
+  isSearchableColumnDiffId,
+  isSessionColumnId,
+  type SearchableColumnDiffId,
+  type SessionColumnId,
+} from './session-table-schema';
 
 export const fieldFilterKeys = ['provider', 'model', 'project'] as const;
 export type FieldFilterKey = (typeof fieldFilterKeys)[number];
@@ -15,38 +21,6 @@ export const dashboardTabs = [
   'cursor-ai',
 ] as const;
 export type DashboardTab = (typeof dashboardTabs)[number];
-
-export const sessionColumnIds = [
-  'date',
-  'harness',
-  'machine',
-  'provider',
-  'model',
-  'project',
-  'tokIn',
-  'tokOut',
-  'cache',
-  'tokCw',
-  'fresh',
-  'total',
-  'rtkSaved',
-  'cost',
-  'actual',
-  'quota',
-  'duration',
-  'calls',
-  'turns',
-  'tools',
-  'lines',
-  'subagent',
-  'partial',
-  'ambiguous',
-  'session',
-] as const;
-export type SessionColumnId = (typeof sessionColumnIds)[number];
-
-export const searchableColumnDiffIds = sessionColumnIds.filter((id) => id !== 'session');
-export type SearchableColumnDiffId = Exclude<SessionColumnId, 'session'>;
 
 type ReportSort = 'date' | 'tokens' | 'cost';
 
@@ -74,8 +48,6 @@ export type DashboardSearch = {
 const dateRangeModes: DateRangeMode[] = ['all', 'today', '7d', '30d', 'custom'];
 const dateRangeModeSet = new Set<string>(dateRangeModes);
 const fieldFilterKeySet = new Set<string>(fieldFilterKeys);
-const sessionColumnIdSet = new Set<string>(sessionColumnIds);
-const searchableColumnDiffIdSet = new Set<string>(searchableColumnDiffIds);
 const dashboardTabSet = new Set<string>(dashboardTabs);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -99,12 +71,6 @@ const uniqueValidStrings = <T extends string>(values: unknown, isValid: (value: 
   }
   return next;
 };
-
-export const isSessionColumnId = (value: unknown): value is SessionColumnId =>
-  typeof value === 'string' && sessionColumnIdSet.has(value);
-
-export const isSearchableColumnDiffId = (value: unknown): value is SearchableColumnDiffId =>
-  typeof value === 'string' && searchableColumnDiffIdSet.has(value);
 
 export const isDashboardTab = (value: unknown): value is DashboardTab =>
   typeof value === 'string' && dashboardTabSet.has(value);

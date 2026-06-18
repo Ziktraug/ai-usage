@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 12 implementee et verifiee
-- Slice en cours: commit Slice 12
-- Dernier commit de suivi: `1721d1b refactor(report): centralize payload runtime`
+- Statut actuel: Slice 13 implementee et verifiee
+- Slice en cours: commit Slice 13
+- Dernier commit de suivi: `d3e60df refactor(report): share html export inliner`
 
 ## Decisions Transverses
 
@@ -507,6 +507,48 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
+- `d3e60df refactor(report): share html export inliner`
+
+### Slice 13: Table Schema Module
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: creer une source de verite pour les colonnes de session, le tri, la visibilite URL et le CSV report.
+
+Travail fait:
+- Ajout de `apps/report/src/session-table-schema.ts`.
+- Deplacement des ids de colonnes, types `SessionColumnId` / `SearchableColumnDiffId`, guards et diff visibility URL dans le schema.
+- Deplacement des accessors de tri dans le schema via `sortValueForSessionColumn`.
+- `dashboard-search.ts` valide les colonnes et tris via le schema.
+- `Dashboard.tsx` consomme `columnVisibilityFromDiff`, `columnDiffFromVisibility` et `sortFromSortingState` depuis le schema.
+- `dashboard-sort.ts` ne contient plus de cascade de fallback par string; les ids inconnus sont ignores avant accessor et les accessors connus viennent du schema.
+- `dashboard-export.ts` genere le CSV depuis `sessionCsvColumns`.
+- Ajout de `session-table-schema.test.ts` pour verifier alignement schema/colonnes rendues, round-trip URL visibility et ordre CSV.
+
+Difficultes:
+- Les objets `as const satisfies` conservent des unions exactes; un tableau interne elargi `sessionColumnEntries` est utilise pour lire les meta optionnelles `defaultVisible` / `hideable`.
+
+Decisions:
+- Garder le rendu cellule dans `session-columns.tsx`; le schema porte le contrat, pas les composants JSX.
+- Garder les labels UI existants dans `session-columns.tsx` pour eviter un changement visuel large; le test d'alignement empeche le drift d'ids.
+- Garder le CSV schema dans le meme module, car il partage le vocabulaire des colonnes mais reste un export dedie.
+
+Fichiers touches:
+- `apps/report/src/session-table-schema.ts`
+- `apps/report/src/session-table-schema.test.ts`
+- `apps/report/src/dashboard-search.ts`
+- `apps/report/src/dashboard-sort.ts`
+- `apps/report/src/session-columns.tsx`
+- `apps/report/src/Dashboard.tsx`
+- `apps/report/src/dashboard-export.ts`
+- `docs/architecture-debt-implementation-log.md`
+
+Checks:
+- `bun run --cwd apps/report check`: passe.
+- `bun run --cwd apps/report test`: passe.
+- `bun run check`: passe.
+
+Commit:
 - Non committe.
 
 ## Journal Chronologique
@@ -548,3 +590,6 @@ Commit:
 - Commit Slice 11: `1721d1b refactor(report): centralize payload runtime`.
 - Pick Slice 12: partager le module d'inlining HTML entre export CLI et export browser.
 - Verifie Slice 12 avec `bun run --cwd packages/usage-core check`, `bun run --cwd apps/cli check`, `bun run --cwd apps/report check`, `bun run --cwd apps/report test`, `bun run html export --since 1d`, `bun run check`.
+- Commit Slice 12: `d3e60df refactor(report): share html export inliner`.
+- Pick Slice 13: extraire le schema table session pour ids, visibility URL, sort et CSV.
+- Verifie Slice 13 avec `bun run --cwd apps/report check`, `bun run --cwd apps/report test`, `bun run check`.
