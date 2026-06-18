@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 18 implementee et verifiee
-- Slice en cours: commit Slice 18
-- Dernier commit de suivi: `cdfc606 docs: record slice 17 commit`
+- Statut actuel: plan complet
+- Slice en cours: aucune
+- Dernier commit de suivi: `6290f1d docs: map report architecture`
 
 ## Decisions Transverses
 
@@ -705,7 +705,7 @@ Commit:
 
 ### Slice 18: Documentation Architecture
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: rendre l'architecture actuelle navigable par humains et agents IA.
 
@@ -736,7 +736,7 @@ Checks:
 - Docs only; pas de test requis.
 
 Commit:
-- Non committe.
+- `6290f1d docs: map report architecture`
 
 ## Journal Chronologique
 
@@ -800,3 +800,5 @@ Commit:
 - Commit Slice 17 log correction: `cdfc606 docs: record slice 17 commit`.
 - Pick Slice 18: documenter l'architecture finale et les follow-ups.
 - Verifie Slice 18: docs only, pas de test requis.
+- Commit Slice 18: `6290f1d docs: map report architecture`.
+- Plan complet: slices 1-18 implementees, verifiees et documentees.
