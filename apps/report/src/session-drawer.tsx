@@ -127,7 +127,7 @@ export const SessionDrawer = (props: {
         <div>
           <div class={drawerTitle}>{props.row.sessionLabel}</div>
           <div class={muted}>
-            {props.row.providerDisplay} · {props.row.model}
+            {props.row.providerDisplay} · {props.row.modelLabel}
           </div>
         </div>
         <div>
@@ -166,6 +166,11 @@ export const SessionDrawer = (props: {
             value={fmtMoney(props.row.costActual)}
             hint="Out-of-pocket spend — $0.00 means covered by a subscription"
           />
+          <DetailItem
+            label="Sub value"
+            value={fmtMoney(props.row.costQuota)}
+            hint="Cursor export value covered by the subscription quota"
+          />
           <DetailItem label="Calls" value={fmtNum(props.row.calls)} />
           <DetailItem label="Turns" value={fmtNum(props.row.turns)} />
           <DetailItem label="Tools" value={fmtNum(props.row.tools)} />
@@ -180,6 +185,13 @@ export const SessionDrawer = (props: {
               label="Usage data"
               value="Unavailable"
               hint="Session came from prompt history, but detailed local token counters are missing"
+            />
+          </Show>
+          <Show when={props.row.ambiguous}>
+            <DetailItem
+              label="Reconciliation"
+              value="Ambiguous"
+              hint="Multiple local Cursor sessions matched the same export cluster; totals are best-effort"
             />
           </Show>
         </div>

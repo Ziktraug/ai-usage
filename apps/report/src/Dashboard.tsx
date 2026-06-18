@@ -27,7 +27,6 @@ import {
   unavailableText,
   unavailableTitle,
 } from '@ai-usage/design-system/report';
-import { Tabs } from '@ark-ui/solid/tabs';
 import { useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
@@ -38,6 +37,7 @@ import { createFilterSnapshot, FilterPill, fieldFilterLabels, matchesFilterSnaps
 import { type Metric, type MetricDelta, MetricTile } from './dashboard-metrics';
 import {
   type DashboardSearch,
+  type DashboardTab,
   dashboardSearchDefaultsFor,
   type FieldFilterKey,
   type FieldFilters,
@@ -84,14 +84,31 @@ import {
 import { applyTableUpdate } from './table-utils';
 import { TimeRangeControl } from './time-range-control';
 
-const initialPayload = readReportPayload();
 const REFRESH_INTERVAL_MS = 60_000;
-const dashboardSearchDefaults = dashboardSearchDefaultsFor(initialPayload.filters.sort);
 
-export const Dashboard = () => {
+const dashboardTabs: { label: string; value: DashboardTab }[] = [
+  { label: 'Overview', value: 'overview' },
+  { label: 'Sessions', value: 'sessions' },
+  { label: 'Models', value: 'models' },
+  { label: 'Providers', value: 'providers' },
+  { label: 'Harnesses', value: 'harnesses' },
+  { label: 'Projects', value: 'projects' },
+  { label: 'Cursor AI', value: 'cursor-ai' },
+];
+
+export const Dashboard = (props: {
+  fetchPayload?: () => Promise<UsageReportPayload>;
+  initialPayload?: UsageReportPayload;
+}) => {
+  const initialPayload = props.initialPayload ?? readReportPayload();
+  const dashboardSearchDefaults = dashboardSearchDefaultsFor(initialPayload.filters.sort);
   const [payload, setPayload] = createSignal<UsageReportPayload>(initialPayload);
-  const isDemo = isDemoReportPayload();
-  const canRefresh = !isDemo && typeof window !== 'undefined' && ['http:', 'https:'].includes(window.location.protocol);
+  const isDemo = !props.initialPayload && isDemoReportPayload();
+  const canRefresh =
+    !!props.fetchPayload &&
+    !isDemo &&
+    typeof window !== 'undefined' &&
+    ['http:', 'https:'].includes(window.location.protocol);
   const [refreshing, setRefreshing] = createSignal(false);
   const [lastRefreshError, setLastRefreshError] = createSignal<string | null>(null);
   const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = createSignal<number | null>(null);
@@ -262,10 +279,10 @@ export const Dashboard = () => {
   });
   const exportRows = () => sortedRows();
   const refreshPayload = async (force = false) => {
-    if (!canRefresh || refreshing()) return;
+    if (!props.fetchPayload || refreshing()) return;
     setRefreshing(true);
     try {
-      setPayload(await fetchReportPayload({ force }));
+      setPayload(await props.fetchPayload!());
       setLastRefreshError(null);
       setLastSuccessfulRefreshAt(Date.now());
       setRefreshErrorCount(0);
@@ -290,6 +307,18 @@ export const Dashboard = () => {
     if (next == null) return;
     const timer = window.setTimeout(() => void refreshPayload(), Math.max(0, next - Date.now()));
     onCleanup(() => window.clearTimeout(timer));
+  });
+  onMount(() => {
+    if (!isDemoReportPayload()) return;
+    if (props.fetchPayload) void refreshPayload(true);
+    else if (import.meta.env.DEV) {
+      void fetchReportPayload({ force: true })
+        .then(setPayload)
+        .catch((error: unknown) => {
+          setLastRefreshError(error instanceof Error ? error.message : 'Failed to refresh report payload');
+          setRefreshErrorCount((count) => count + 1);
+        });
+    }
   });
   const toggleSelected = (row: DashboardRow) =>
     setSelectedKey((current) => (current === rowKey(row) ? null : rowKey(row)));
@@ -372,6 +401,16 @@ export const Dashboard = () => {
         }`,
         delta: deltaVs(a.actualCost, prev?.actualCost, fmtMoney),
       },
+      ...(a.costQuota
+        ? [
+            {
+              label: 'Sub value',
+              value: fmtMoney(a.costQuota),
+              hint: 'Cursor export value covered by the subscription quota',
+              delta: deltaVs(a.costQuota, prev?.costQuota, fmtMoney),
+            },
+          ]
+        : []),
       { label: 'Mean / sess', value: fmtMoney(a.meanCost), hint: 'Mean API value per priced session' },
       {
         label: 'Fresh tokens',
@@ -415,7 +454,7 @@ export const Dashboard = () => {
             <div class={titleBlock}>
               <div class={eyebrowRow}>
                 <div class={eyebrow}>ai-usage</div>
-                <Show when={isDemoReportPayload()}>
+                <Show when={isDemo}>
                   <span class={demoBadge}>Demo data</span>
                 </Show>
               </div>
@@ -520,98 +559,102 @@ export const Dashboard = () => {
             <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>
           </div>
 
-          <Tabs.Root
-            value={search().tab}
-            class={tabsRoot}
-            lazyMount
-            unmountOnExit
-            onValueChange={(details) => setTab(details.value)}
-          >
-            <Tabs.List class={tabsList}>
-              <Tabs.Trigger value="overview" class={tabTrigger}>
-                Overview
-              </Tabs.Trigger>
-              <Tabs.Trigger value="sessions" class={tabTrigger}>
-                Sessions
-              </Tabs.Trigger>
-              <Tabs.Trigger value="models" class={tabTrigger}>
-                Models
-              </Tabs.Trigger>
-              <Tabs.Trigger value="providers" class={tabTrigger}>
-                Providers
-              </Tabs.Trigger>
-              <Tabs.Trigger value="harnesses" class={tabTrigger}>
-                Harnesses
-              </Tabs.Trigger>
-              <Tabs.Trigger value="projects" class={tabTrigger}>
-                Projects
-              </Tabs.Trigger>
-              <Tabs.Trigger value="cursor-ai" class={tabTrigger}>
-                Cursor AI
-              </Tabs.Trigger>
-            </Tabs.List>
-            <Tabs.Content value="overview" class={section}>
-              <Overview
-                rows={tableRows()}
-                timelineRows={timelineRows()}
-                summary={visibleSummary()}
-                rangeLabel={dateRange.label()}
-                onSelectSession={(row) => setSelectedKey(rowKey(row))}
-                onSelectDay={focusDay}
-              />
-            </Tabs.Content>
-            <Tabs.Content value="sessions" class={section}>
-              <SessionTable
-                rows={tableRows()}
-                selectedKey={selectedKey()}
-                searchQuery={query()}
-                sorting={sorting()}
-                columnVisibility={columnVisibility()}
-                onSortingChange={handleSortingChange}
-                onColumnVisibilityChange={handleColumnVisibilityChange}
-                onSelect={toggleSelected}
-                onHarnessFilter={setHarness}
-                onFieldFilter={setFieldFilter}
-                onClearFilters={clearFilters}
-              />
-            </Tabs.Content>
-            <Tabs.Content value="models" class={section}>
-              <GroupPanel
-                title="By model"
-                groups={modelGroups()}
-                countLabel="models"
-                harnessTones
-                onFilter={(value) => setFieldFilter('model', value)}
-              />
-            </Tabs.Content>
-            <Tabs.Content value="providers" class={section}>
-              <GroupPanel
-                title="By provider"
-                groups={providerGroups()}
-                countLabel="providers"
-                harnessTones
-                onFilter={(value) => setFieldFilter('provider', value)}
-              />
-            </Tabs.Content>
-            <Tabs.Content value="harnesses" class={section}>
-              <GroupPanel
-                title="By harness"
-                groups={harnessGroups()}
-                countLabel="harnesses"
-                harnessTones
-                onFilter={setHarness}
-              />
-            </Tabs.Content>
-            <Tabs.Content value="projects" class={section}>
-              <ProjectSummary
-                groups={projectGroupRows()}
-                onProjectFilter={(value) => setFieldFilter('project', value)}
-              />
-            </Tabs.Content>
-            <Tabs.Content value="cursor-ai" class={section}>
-              <CursorAttributionPanel rows={cursorCommitRows()} />
-            </Tabs.Content>
-          </Tabs.Root>
+          <div class={tabsRoot}>
+            <div role="tablist" class={tabsList}>
+              <For each={dashboardTabs}>
+                {(tab) => {
+                  const selected = () => search().tab === tab.value;
+                  return (
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={selected()}
+                      class={tabTrigger}
+                      data-selected={selected() ? '' : undefined}
+                      onClick={() => setTab(tab.value)}
+                    >
+                      {tab.label}
+                    </button>
+                  );
+                }}
+              </For>
+            </div>
+            <Show when={search().tab === 'overview'}>
+              <section role="tabpanel" class={section}>
+                <Overview
+                  rows={tableRows()}
+                  timelineRows={timelineRows()}
+                  summary={visibleSummary()}
+                  rangeLabel={dateRange.label()}
+                  onSelectSession={(row) => setSelectedKey(rowKey(row))}
+                  onSelectDay={focusDay}
+                />
+              </section>
+            </Show>
+            <Show when={search().tab === 'sessions'}>
+              <section role="tabpanel" class={section}>
+                <SessionTable
+                  rows={tableRows()}
+                  selectedKey={selectedKey()}
+                  searchQuery={query()}
+                  sorting={sorting()}
+                  columnVisibility={columnVisibility()}
+                  onSortingChange={handleSortingChange}
+                  onColumnVisibilityChange={handleColumnVisibilityChange}
+                  onSelect={toggleSelected}
+                  onHarnessFilter={setHarness}
+                  onFieldFilter={setFieldFilter}
+                  onClearFilters={clearFilters}
+                />
+              </section>
+            </Show>
+            <Show when={search().tab === 'models'}>
+              <section role="tabpanel" class={section}>
+                <GroupPanel
+                  title="By model"
+                  groups={modelGroups()}
+                  countLabel="models"
+                  harnessTones
+                  onFilter={(value) => setFieldFilter('model', value)}
+                />
+              </section>
+            </Show>
+            <Show when={search().tab === 'providers'}>
+              <section role="tabpanel" class={section}>
+                <GroupPanel
+                  title="By provider"
+                  groups={providerGroups()}
+                  countLabel="providers"
+                  harnessTones
+                  onFilter={(value) => setFieldFilter('provider', value)}
+                />
+              </section>
+            </Show>
+            <Show when={search().tab === 'harnesses'}>
+              <section role="tabpanel" class={section}>
+                <GroupPanel
+                  title="By harness"
+                  groups={harnessGroups()}
+                  countLabel="harnesses"
+                  harnessTones
+                  onFilter={setHarness}
+                />
+              </section>
+            </Show>
+            <Show when={search().tab === 'projects'}>
+              <section role="tabpanel" class={section}>
+                <ProjectSummary
+                  groups={projectGroupRows()}
+                  onProjectFilter={(value) => setFieldFilter('project', value)}
+                />
+              </section>
+            </Show>
+            <Show when={search().tab === 'cursor-ai'}>
+              <section role="tabpanel" class={section}>
+                <CursorAttributionPanel rows={cursorCommitRows()} />
+              </section>
+            </Show>
+          </div>
 
           <Show when={selectedRow()}>
             {(row) => (

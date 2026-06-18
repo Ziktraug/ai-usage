@@ -12,10 +12,8 @@ import {
   refreshRingSuccess,
   refreshStatus,
   refreshStatusError,
-  tooltipContent,
 } from '@ai-usage/design-system/report';
-import { Tooltip } from '@ark-ui/solid/tooltip';
-import { createMemo, createSignal, For, onCleanup, onMount } from 'solid-js';
+import { createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import { fmtDate } from './shared';
 
 const formatRefreshCountdown = (ms: number) => {
@@ -112,42 +110,37 @@ export const RefreshStatus = (props: {
     if (props.lastRefreshError) lines.push(`Last error: ${props.lastRefreshError}`);
     return lines;
   });
+  const tooltipText = createMemo(() => tooltipLines().join('\n'));
 
   return (
-    <Tooltip.Root openDelay={400} positioning={{ placement: 'bottom' }}>
-      <Tooltip.Trigger
-        class={cx(refreshStatus, status() === 'delayed' || status() === 'error' ? refreshStatusError : undefined)}
+    <div
+      class={cx(refreshStatus, status() === 'delayed' || status() === 'error' ? refreshStatusError : undefined)}
+      title={tooltipText()}
+    >
+      <span
+        class={cx(refreshRing, refreshRingClass[status()])}
+        role="status"
+        aria-live="polite"
+        aria-label={`Data refresh status: ${primaryLabel()}`}
+        style={{ '--refresh-progress': String(remainingRatio()) }}
+      />
+      <button
+        class={refreshButton}
+        type="button"
+        disabled={!props.canRefresh || props.refreshing}
+        onClick={props.onRefresh}
       >
-        <span
-          class={cx(refreshRing, refreshRingClass[status()])}
-          role="status"
-          aria-live="polite"
-          aria-label={`Data refresh status: ${primaryLabel()}`}
-          style={{ '--refresh-progress': String(remainingRatio()) }}
-        />
-        <button
-          class={refreshButton}
-          type="button"
-          disabled={!props.canRefresh || props.refreshing}
-          onClick={props.onRefresh}
-        >
-          Refresh
-        </button>
-        <button
-          class={refreshIconButton}
-          type="button"
-          disabled={!props.canRefresh}
-          aria-label={props.refreshPaused ? 'Resume auto-refresh' : 'Pause auto-refresh'}
-          onClick={props.onTogglePause}
-        >
-          {props.refreshPaused ? '>' : '||'}
-        </button>
-      </Tooltip.Trigger>
-      <Tooltip.Positioner>
-        <Tooltip.Content class={tooltipContent}>
-          <For each={tooltipLines()}>{(line) => <div>{line}</div>}</For>
-        </Tooltip.Content>
-      </Tooltip.Positioner>
-    </Tooltip.Root>
+        Refresh
+      </button>
+      <button
+        class={refreshIconButton}
+        type="button"
+        disabled={!props.canRefresh}
+        aria-label={props.refreshPaused ? 'Resume auto-refresh' : 'Pause auto-refresh'}
+        onClick={props.onTogglePause}
+      >
+        {props.refreshPaused ? '>' : '||'}
+      </button>
+    </div>
   );
 };

@@ -1,43 +1,16 @@
-import {
-  createBrowserHistory,
-  createHashHistory,
-  createRootRoute,
-  createRoute,
-  createRouter,
-  RouterProvider,
-  stripSearchParams,
-} from '@tanstack/solid-router';
-import { Dashboard } from './Dashboard';
-import { type DashboardSearch, dashboardSearchDefaultsFor, validateDashboardSearch } from './dashboard-search';
-import { readReportPayload } from './report-data';
+import { createRouter } from '@tanstack/solid-router';
+import { routeTree } from './routeTree.gen';
 
-const rootRoute = createRootRoute();
-const dashboardSearchDefaults = dashboardSearchDefaultsFor(readReportPayload().filters.sort);
-
-const dashboardRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/',
-  validateSearch: (search: Record<string, unknown>): DashboardSearch =>
-    validateDashboardSearch(search, dashboardSearchDefaults),
-  search: {
-    middlewares: [stripSearchParams<DashboardSearch>(dashboardSearchDefaults)],
-  },
-  component: Dashboard,
-});
-
-const routeTree = rootRoute.addChildren([dashboardRoute]);
-
-// Browser history breaks on file:// exports: the pathname is the full file path,
-// so "/" never matches and TanStack Router renders its default "Not Found".
-const history =
-  typeof window !== 'undefined' && window.location.protocol === 'file:' ? createHashHistory() : createBrowserHistory();
-
-export const router = createRouter({ routeTree, history });
+export function getRouter() {
+  return createRouter({
+    routeTree,
+    scrollRestoration: true,
+    defaultNotFoundComponent: () => <p>Not Found</p>,
+  });
+}
 
 declare module '@tanstack/solid-router' {
   interface Register {
-    router: typeof router;
+    router: ReturnType<typeof getRouter>;
   }
 }
-
-export const AppRouter = () => <RouterProvider router={router} />;

@@ -16,7 +16,6 @@ import {
   tableControls,
   tableWrap,
 } from '@ai-usage/design-system/report';
-import { Popover } from '@ark-ui/solid/popover';
 import type { Column, OnChangeFn, SortingState, VisibilityState } from '@tanstack/solid-table';
 import { createSolidTable, flexRender, getCoreRowModel, getSortedRowModel } from '@tanstack/solid-table';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
@@ -57,7 +56,7 @@ const SortHeader = (props: { column: Column<DashboardRow, unknown>; label: strin
   );
 };
 
-// Folded into a popover: column tuning is an occasional task, so it should
+// Folded into a disclosure: column tuning is an occasional task, so it should
 // not permanently cost two rows of prime space above the table.
 const ColumnVisibilityControl = (props: {
   columnVisibility: VisibilityState;
@@ -73,40 +72,34 @@ const ColumnVisibilityControl = (props: {
     props.onColumnVisibilityChange((current) => ({ ...current, [id]: visible }));
 
   return (
-    <Popover.Root lazyMount unmountOnExit>
-      <Popover.Trigger class={ghostButton}>Columns · {visibleCount()} ▾</Popover.Trigger>
-      <Popover.Positioner>
-        <Popover.Content class={popoverContent} aria-label="Choose table columns">
-          <div class={popoverHeader}>
-            <span>
-              {visibleCount()} of {sessionColumns.length} columns shown
-            </span>
-            <button
-              class={ghostButton}
-              type="button"
-              onClick={() => props.onColumnVisibilityChange(defaultColumnVisibility)}
-            >
-              Reset
-            </button>
-          </div>
-          <div class={popoverGrid}>
-            <For each={hideableColumns()}>
-              {(column) => (
-                <label class={columnToggle}>
-                  <input
-                    class={columnToggleInput}
-                    type="checkbox"
-                    checked={isSessionColumnVisible(props.columnVisibility, column.id)}
-                    onChange={(event) => setColumnVisible(column.id, event.currentTarget.checked)}
-                  />
-                  <span class={columnToggleText}>{sessionColumnLabel(column)}</span>
-                </label>
-              )}
-            </For>
-          </div>
-        </Popover.Content>
-      </Popover.Positioner>
-    </Popover.Root>
+    <details>
+      <summary class={ghostButton}>Columns · {visibleCount()} ▾</summary>
+      <div class={popoverContent} aria-label="Choose table columns">
+        <div class={popoverHeader}>
+          <span>
+            {visibleCount()} of {sessionColumns.length} columns shown
+          </span>
+          <button class={ghostButton} type="button" onClick={() => props.onColumnVisibilityChange(defaultColumnVisibility)}>
+            Reset
+          </button>
+        </div>
+        <div class={popoverGrid}>
+          <For each={hideableColumns()}>
+            {(column) => (
+              <label class={columnToggle}>
+                <input
+                  class={columnToggleInput}
+                  type="checkbox"
+                  checked={isSessionColumnVisible(props.columnVisibility, column.id)}
+                  onChange={(event) => setColumnVisible(column.id, event.currentTarget.checked)}
+                />
+                <span class={columnToggleText}>{sessionColumnLabel(column)}</span>
+              </label>
+            )}
+          </For>
+        </div>
+      </div>
+    </details>
   );
 };
 

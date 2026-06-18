@@ -64,7 +64,8 @@ export const GroupPanel = (props: {
                   </button>
                 </Show>
                 <div class={groupSub} title={groupFreshTitle(group)}>
-                  {group.sessions} sess · {groupFreshLabel(group)} · {groupCacheLabel(group)}
+                  {group.sessions} sess{group.ambiguous ? ` · ${group.ambiguous} ambig` : ''} · {groupFreshLabel(group)}{' '}
+                  · {groupCacheLabel(group)}
                 </div>
                 <div class={barTrack}>
                   <div

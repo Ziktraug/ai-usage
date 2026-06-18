@@ -18,6 +18,7 @@ export const sortValueForRow = (row: DashboardRow, columnId: string): number | s
   if (columnId === 'total') return row.tokenTotal;
   if (columnId === 'cost') return row.costKnown ? row.costApprox : Number.NEGATIVE_INFINITY;
   if (columnId === 'actual') return row.costActual ?? Number.NEGATIVE_INFINITY;
+  if (columnId === 'quota') return row.costQuota ?? 0;
   if (columnId === 'duration') return row.durationMs ?? 0;
   if (columnId === 'calls') return row.calls;
   if (columnId === 'turns') return row.turns;
@@ -26,6 +27,7 @@ export const sortValueForRow = (row: DashboardRow, columnId: string): number | s
   if (columnId === 'rtkSaved') return rtkSavingsPct(row) ?? 0;
   if (columnId === 'subagent') return row.subagent ? 1 : 0;
   if (columnId === 'partial') return row.partial ? 1 : 0;
+  if (columnId === 'ambiguous') return row.ambiguous ? 1 : 0;
   return row.sortSession;
 };
 

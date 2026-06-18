@@ -1,21 +1,24 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { $ } from 'bun';
 
 describe('report app CSS bundle', () => {
-  test('inlines generated Panda CSS in the single-file HTML build', async () => {
+  test('emits generated Panda CSS in the Start client build', async () => {
     const appDir = path.resolve(import.meta.dir, '..');
     await $`bun run build`.cwd(appDir).quiet();
 
-    const htmlPath = path.join(appDir, 'dist/index.html');
-    expect(existsSync(htmlPath)).toBe(true);
+    const assetsDir = path.join(appDir, '.output/public/assets');
+    expect(existsSync(assetsDir)).toBe(true);
 
-    const html = readFileSync(htmlPath, 'utf8');
-    expect(html).toContain('--colors-canvas');
-    expect(html).toContain('--colors-accent');
-    expect(html).toContain('[data-theme=dark]');
-    expect(html).toContain('prefers-color-scheme: dark');
-    expect(html).not.toContain('@layer reset,base,tokens,recipes,utilities;</style>');
+    const cssFile = readdirSync(assetsDir).find((file) => file.endsWith('.css'));
+    expect(cssFile).toBeTruthy();
+
+    const css = readFileSync(path.join(assetsDir, cssFile!), 'utf8');
+    expect(css).toContain('--colors-canvas');
+    expect(css).toContain('--colors-accent');
+    expect(css).toContain('[data-theme=dark]');
+    expect(css).toContain('prefers-color-scheme:dark');
+    expect(css).not.toContain('@layer reset,base,tokens,recipes,utilities;');
   }, 30_000);
 });

@@ -27,7 +27,6 @@ import {
   timeSliderThumb,
   timeSliderTrack,
 } from '@ai-usage/design-system/report';
-import { Slider } from '@ark-ui/solid/slider';
 import { createEffect, createMemo, createSignal, For, Show, untrack } from 'solid-js';
 import {
   clampNumber,
@@ -253,6 +252,17 @@ export const TimeRangeControl = (props: {
     event.stopPropagation();
   };
 
+  const rangeVars = (chart: NonNullable<ReturnType<typeof data>>) => {
+    const [from, to] = props.dateRange.selectedIndexes();
+    const max = Math.max(1, chart.maxIndex);
+    const startPct = (from / max) * 100;
+    const endPct = 100 - (to / max) * 100;
+    return {
+      '--slider-range-start': `${startPct}%`,
+      '--slider-range-end': `${endPct}%`,
+    };
+  };
+
   return (
     <Show
       when={data()}
@@ -325,24 +335,17 @@ export const TimeRangeControl = (props: {
             </div>
           </div>
 
-          <Slider.Root
-            class={timeSliderRoot}
-            min={0}
-            max={chart().maxIndex}
-            step={1}
-            value={props.dateRange.selectedIndexes()}
-            thumbSize={{ width: 32, height: 64 }}
-            aria-label={['Start date', 'End date']}
-            getAriaValueText={(details) => fmtDateOnly(dateFromIndex(chart().minDay, details.value))}
-            onValueChange={(details) => previewSliderValue(details.value)}
-            onValueChangeEnd={(details) => commitIndexes(details.value)}
-          >
-            <Slider.Control class={timeSliderControl}>
-              <Slider.Track class={timeSliderTrack}>
+          <div class={timeSliderRoot}>
+            <div class={timeSliderControl}>
+              <div class={timeSliderTrack} style={rangeVars(chart())}>
                 <For each={monthTicksFor(chart())}>
                   {(tick) => <div class={monthGridline} style={{ left: `${tick.pct}%` }} aria-hidden="true" />}
                 </For>
-                <Slider.Range class={timeSliderRange} />
+                <div
+                  class={timeSliderRange}
+                  style={{ left: 'var(--slider-range-start)', right: 'var(--slider-range-end)' }}
+                  aria-hidden="true"
+                />
                 <div class={timeSliderBars} aria-hidden="true">
                   <For each={chart().list}>
                     {(bucket) => (
@@ -384,14 +387,42 @@ export const TimeRangeControl = (props: {
                   onPointerCancel={endSelectionDrag}
                   onLostPointerCapture={endSelectionDrag}
                 />
-              </Slider.Track>
-              <Slider.Thumb index={0} class={timeSliderThumb}>
-                <Slider.HiddenInput />
-              </Slider.Thumb>
-              <Slider.Thumb index={1} class={timeSliderThumb}>
-                <Slider.HiddenInput />
-              </Slider.Thumb>
-            </Slider.Control>
+                <input
+                  class={timeSliderThumb}
+                  type="range"
+                  min={0}
+                  max={chart().maxIndex}
+                  step={1}
+                  value={props.dateRange.selectedIndexes()[0]}
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.01, 'z-index': 4 }}
+                  aria-label="Start date"
+                  aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, props.dateRange.selectedIndexes()[0]))}
+                  onInput={(event) =>
+                    previewSliderValue([Number(event.currentTarget.value), props.dateRange.selectedIndexes()[1]])
+                  }
+                  onChange={(event) =>
+                    commitIndexes([Number(event.currentTarget.value), props.dateRange.selectedIndexes()[1]])
+                  }
+                />
+                <input
+                  class={timeSliderThumb}
+                  type="range"
+                  min={0}
+                  max={chart().maxIndex}
+                  step={1}
+                  value={props.dateRange.selectedIndexes()[1]}
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0.01, 'z-index': 4 }}
+                  aria-label="End date"
+                  aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, props.dateRange.selectedIndexes()[1]))}
+                  onInput={(event) =>
+                    previewSliderValue([props.dateRange.selectedIndexes()[0], Number(event.currentTarget.value)])
+                  }
+                  onChange={(event) =>
+                    commitIndexes([props.dateRange.selectedIndexes()[0], Number(event.currentTarget.value)])
+                  }
+                />
+              </div>
+            </div>
             <div class={timeAxis}>
               <span>{fmtDateOnly(chart().minDay)}</span>
               <For each={monthTicksFor(chart()).filter((tick) => tick.pct >= 7 && tick.pct <= 93)}>
@@ -403,7 +434,7 @@ export const TimeRangeControl = (props: {
               </For>
               <span>{fmtDateOnly(chart().maxDay)}</span>
             </div>
-          </Slider.Root>
+          </div>
         </section>
       )}
     </Show>
