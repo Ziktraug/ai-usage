@@ -1,28 +1,16 @@
 #!/usr/bin/env bun
-import { createUsageSnapshot } from '@ai-usage/core/snapshot';
-import {
-  collectHarnessFacets,
-  collectSelectedHarnessRows,
-  ensureMachineConfig,
-  readMergedAiUsageConfig,
-} from '@ai-usage/local-collectors';
+import { ensureMachineConfig } from '@ai-usage/local-collectors';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
+import { createLocalUsageSnapshot } from '@ai-usage/reporting';
 import { Console, Effect } from 'effect';
 import type { ServeArgs } from './cli';
 
 const collectFreshSnapshot = (machine: { id: string; label: string }, args: ServeArgs) =>
-  Effect.gen(function* () {
-    const config = yield* readMergedAiUsageConfig;
-    const rows = yield* collectSelectedHarnessRows({
-      harness: args.harness,
-      includeCursor: args.cursor,
-      keepSource: true,
-      ...(config.cursor ? { cursorCsv: config.cursor } : {}),
-    });
-    const facets = yield* collectHarnessFacets({
-      includeCursor: args.cursor && (!args.harness || args.harness === 'cursor'),
-    });
-    return createUsageSnapshot({ machine, rows, facets });
+  createLocalUsageSnapshot({
+    machine,
+    harness: args.harness,
+    includeCursor: args.cursor,
+    includeFacets: true,
   }).pipe(Effect.provide(LocalHistoryStorageLive));
 
 export const runServe = (args: ServeArgs) =>

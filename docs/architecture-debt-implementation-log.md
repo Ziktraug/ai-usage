@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 3 implementee et verifiee
-- Slice en cours: commit Slice 3
-- Dernier commit de suivi: `eda1ddd chore(workspace): add package boundary guardrails`
+- Statut actuel: Slice 4 + Slice 5 implementees et verifiees
+- Slice en cours: commit Slice 4 + Slice 5
+- Dernier commit de suivi: `c062524 chore(design-system): clarify public exports`
 
 ## Decisions Transverses
 
@@ -34,7 +34,7 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 
 ### Slice 1: Guardrails Package
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: empecher imports et chemins relatifs inter-packages.
 
@@ -71,7 +71,7 @@ Commit:
 
 ### Slice 2: Panda Build Info
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: rendre `@ai-usage/design-system` consommable par Panda sans chemin relatif vers ses sources.
 
@@ -106,7 +106,7 @@ Commit:
 
 ### Slice 3: Clarifier Design-System Vs Report UI
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: separer le contrat root generique du namespace report specifique a l'app report.
 
@@ -137,6 +137,77 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
+- `c062524 chore(design-system): clarify public exports`
+
+### Slice 4: Reporting Module Canonique
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: faire de `packages/reporting` le Module profond pour snapshots, merge et project sources.
+
+Travail fait:
+- Ajout de `createLocalUsageSnapshot` dans `packages/reporting`.
+- Ajout de `createMergedUsageReport` dans `packages/reporting`.
+- Ajout de `listProjectSources` et du type `ProjectSource` dans `packages/reporting`.
+- Factorisation interne `collectConfiguredLocalRows` pour lire config, Cursor CSV et rows locales au meme endroit.
+- Migration `apps/cli/src/main.ts`: `snapshot`, `merge`, `projects list` passent par `@ai-usage/reporting`.
+- Migration `apps/cli/src/serve.ts`: `/snapshot` passe par `createLocalUsageSnapshot`.
+- Migration `apps/cli/src/setup.ts`: source discovery passe par `listProjectSources`; setup garde HTML, serveur et ecriture config.
+- Verification grep: plus de `collectSelectedHarnessRows`, `collectHarnessFacets`, `createUsageSnapshot`, `mergeUsageSnapshots`, `applyProjectAliases`, `usageRowTokenTotal` dans `apps/cli/src`.
+
+Difficultes:
+- `exactOptionalPropertyTypes` impose d'omettre les proprietes optionnelles `undefined`; ajout d'un helper `toLocalUsageSnapshotRequest`.
+- `setup --local` profite maintenant du chemin reporting, donc de la config Cursor mergee, alors que l'ancien setup collectait local sans config Cursor explicite.
+
+Decisions:
+- Le CLI reste adapter fichiers/HTTP/stdout; `parseUsageSnapshot` reste cote CLI pour lire fichiers/remotes.
+- `createMergedUsageReport` applique les aliases apres merge pour conserver le comportement CLI existant.
+- `listProjectSources` ne fait pas d'aliasing, car setup a besoin des sources brutes pour creer des aliases.
+- L'enrichissement git remote local vit dans reporting avec les project sources.
+
+Fichiers touches:
+- `packages/reporting/src/index.ts`
+- `apps/cli/src/main.ts`
+- `apps/cli/src/serve.ts`
+- `apps/cli/src/setup.ts`
+- `docs/architecture-debt-implementation-log.md`
+
+Checks:
+- `bun run --cwd packages/reporting check`: passe.
+- `bun run --cwd apps/cli check`: passe.
+- `bun run --cwd apps/cli test`: passe.
+- `bun run check`: passe.
+
+Commit:
+- Non committe.
+
+### Slice 5: Contract Tests Reporting
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: securiser le seam reporting avant les refactors plus profonds.
+
+Travail fait:
+- Ajout d'un test `createLocalUsageSnapshot` avec provenance machine sans lire la vraie home.
+- Ajout d'un test `createMergedUsageReport` avec snapshots, dedupe, warning et alias post-merge.
+- Ajout d'un test `listProjectSources` avec grouping source et remote git local.
+- Conservation des tests existants payload/config cwd.
+
+Difficultes:
+- Aucune difficulte technique apres correction des optionnels TypeScript.
+
+Decisions:
+- Les fixtures utilisent `mkdtempSync` + `createLocalHistoryStorage(home)`.
+- Les tests ne fournissent jamais `LocalHistoryStorageLive`.
+
+Fichiers touches:
+- `packages/reporting/src/reporting.test.ts`
+
+Checks:
+- `bun run --cwd packages/reporting test`: passe.
+- `bun run --cwd packages/reporting check`: passe.
+
+Commit:
 - Non committe.
 
 ## Journal Chronologique
@@ -151,3 +222,8 @@ Commit:
 - Commit Slice 1 + Slice 2: `eda1ddd chore(workspace): add package boundary guardrails`.
 - Pick Slice 3: clarifier le contrat root design-system et le namespace report.
 - Verifie Slice 3 avec `bun run --cwd packages/design-system check`, `bun run --cwd apps/report check`, `bun run lint`, `bun run check`.
+- Commit Slice 3: `c062524 chore(design-system): clarify public exports`.
+- Pick Slice 4 + Slice 5: rendre `packages/reporting` canonique pour snapshot/merge/project sources avec contract tests.
+- Implemente APIs reporting: `createLocalUsageSnapshot`, `createMergedUsageReport`, `listProjectSources`.
+- Migre CLI `main`, `serve`, `setup` vers reporting pour les chemins local history concernes.
+- Verifie Slice 4 + Slice 5 avec `bun run --cwd packages/reporting test`, `bun run --cwd packages/reporting check`, `bun run --cwd apps/cli test`, `bun run --cwd apps/cli check`, `bun run check`.
