@@ -5,5 +5,4 @@ styled-system
 .turbo
 .direnv/
 ai-usage-reports/
-ai-usage.config.ts
 .ai-usage/
