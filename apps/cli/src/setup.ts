@@ -3,103 +3,24 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ProjectAliasEntry } from '@ai-usage/core/project-alias';
-import { createUsageSnapshot, mergeUsageSnapshots, parseUsageSnapshot } from '@ai-usage/core/snapshot';
-import type { Row, SourcedRow } from '@ai-usage/core/types';
-import { usageRowTokenTotal } from '@ai-usage/core/usage-row';
-import { collectSelectedHarnessRows, ensureMachineConfig, readAiUsageConfig } from '@ai-usage/local-collectors';
+import { parseUsageSnapshot } from '@ai-usage/core/snapshot';
+import { readAiUsageConfig } from '@ai-usage/local-collectors';
+import { listProjectSources, type ProjectSource } from '@ai-usage/reporting';
 import { Console, Effect } from 'effect';
 
-interface ProjectSource {
-  project: string;
-  machine: string;
-  machineId: string;
-  harness: string;
-  harnessKey: string;
-  sourcePath: string;
-  gitRemote: string;
-  sessions: number;
-  tokens: number;
-}
-
-const projectFromRow = (row: Row) =>
-  row.project || path.basename((row as Partial<SourcedRow>).source?.sourcePath ?? '') || '(unknown)';
-
-const collectProjectSources = (rows: Row[]): ProjectSource[] => {
-  const summaries = new Map<string, ProjectSource>();
-  for (const row of rows) {
-    const source = (row as Partial<SourcedRow>).source;
-    const summary: ProjectSource = {
-      project: projectFromRow(row),
-      machine: source?.machineLabel ?? 'Unknown machine',
-      machineId: source?.machineId ?? '',
-      harness: row.harness,
-      harnessKey: source?.harnessKey ?? row.harness.toLowerCase(),
-      sourcePath: source?.sourcePath ?? '',
-      gitRemote: '',
-      sessions: 0,
-      tokens: 0,
-    };
-    const key = [summary.project, summary.machine, summary.harness, summary.sourcePath].join('|');
-    const current = summaries.get(key) ?? summary;
-    current.sessions++;
-    current.tokens += usageRowTokenTotal(row);
-    summaries.set(key, current);
-  }
-  const result = [...summaries.values()].sort(
-    (a, b) =>
-      a.project.localeCompare(b.project) || a.machine.localeCompare(b.machine) || a.harness.localeCompare(b.harness),
-  );
-  enrichGitRemotes(result);
-  return result;
-};
-
-const enrichGitRemotes = (sources: ProjectSource[]) => {
-  const cache = new Map<string, string>();
-  for (const source of sources) {
-    if (!source.sourcePath) continue;
-    const cached = cache.get(source.sourcePath);
-    if (cached !== undefined) {
-      source.gitRemote = cached;
-      continue;
-    }
-    const gitRemote = readGitRemoteUrl(source.sourcePath);
-    cache.set(source.sourcePath, gitRemote);
-    source.gitRemote = gitRemote;
-  }
-};
-
-const readGitRemoteUrl = (projectPath: string): string => {
-  try {
-    const configPath = path.join(projectPath, '.git', 'config');
-    if (!fs.existsSync(configPath)) return '';
-    const text = fs.readFileSync(configPath, 'utf8');
-    const match = text.match(/^\[remote\s+"origin"\]\s*\n\s*url\s*=\s*(.+)$/m);
-    return match ? extractRepoName(match[1]!.trim()) : '';
-  } catch {
-    return '';
-  }
-};
-
-const extractRepoName = (url: string): string => {
-  const httpsMatch = url.match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/);
-  if (httpsMatch) return httpsMatch[1]!;
-  const sshMatch = url.match(/git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/);
-  if (sshMatch) return sshMatch[1]!;
-  return url;
-};
-
-const collectAllRows = (snapshotFiles: string[], local: boolean) =>
+const collectSetupSources = (snapshotFiles: string[], local: boolean) =>
   Effect.gen(function* () {
     const snapshots = [];
     for (const file of snapshotFiles) {
       snapshots.push(parseUsageSnapshot(fs.readFileSync(file, 'utf8')));
     }
-    if (local) {
-      const machine = yield* ensureMachineConfig;
-      const rows = yield* collectSelectedHarnessRows({ harness: null, includeCursor: true, keepSource: true });
-      snapshots.push(createUsageSnapshot({ machine, rows }));
-    }
-    return mergeUsageSnapshots(snapshots).rows;
+    return yield* listProjectSources({
+      snapshots,
+      includeLocal: local,
+      harness: null,
+      includeCursor: true,
+      includeGitRemote: true,
+    });
   });
 
 const setupHTML = (sources: ProjectSource[], aliases: ProjectAliasEntry[]) => {
@@ -350,9 +271,8 @@ renderSuggestions();
 
 export const runSetupServer = (snapshotFiles: string[], local: boolean, port: number) =>
   Effect.gen(function* () {
-    const rows = yield* collectAllRows(snapshotFiles, local);
+    const sources = yield* collectSetupSources(snapshotFiles, local);
     const config = yield* readAiUsageConfig;
-    const sources = collectProjectSources(rows);
     const aliases = config.projectAliases ?? [];
     const html = setupHTML(sources, aliases);
     const configDir = path.join(os.homedir(), '.config', 'ai-usage');
