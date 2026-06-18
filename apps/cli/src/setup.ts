@@ -3,108 +3,32 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ProjectAliasEntry } from '@ai-usage/core/project-alias';
-import { createUsageSnapshot, mergeUsageSnapshots, parseUsageSnapshot } from '@ai-usage/core/snapshot';
-import type { Row, SourcedRow } from '@ai-usage/core/types';
-import { usageRowTokenTotal } from '@ai-usage/core/usage-row';
-import { collectSelectedHarnessRows, ensureMachineConfig, readAiUsageConfig } from '@ai-usage/local-collectors';
+import { parseUsageSnapshot } from '@ai-usage/core/snapshot';
+import { readAiUsageConfig } from '@ai-usage/local-collectors';
+import { listProjectSourcesWithWarnings, type ProjectSource } from '@ai-usage/reporting';
 import { Console, Effect } from 'effect';
 
-interface ProjectSource {
-  project: string;
-  machine: string;
-  machineId: string;
-  harness: string;
-  harnessKey: string;
-  sourcePath: string;
-  gitRemote: string;
-  sessions: number;
-  tokens: number;
-}
-
-const projectFromRow = (row: Row) =>
-  row.project || path.basename((row as Partial<SourcedRow>).source?.sourcePath ?? '') || '(unknown)';
-
-const collectProjectSources = (rows: Row[]): ProjectSource[] => {
-  const summaries = new Map<string, ProjectSource>();
-  for (const row of rows) {
-    const source = (row as Partial<SourcedRow>).source;
-    const summary: ProjectSource = {
-      project: projectFromRow(row),
-      machine: source?.machineLabel ?? 'Unknown machine',
-      machineId: source?.machineId ?? '',
-      harness: row.harness,
-      harnessKey: source?.harnessKey ?? row.harness.toLowerCase(),
-      sourcePath: source?.sourcePath ?? '',
-      gitRemote: '',
-      sessions: 0,
-      tokens: 0,
-    };
-    const key = [summary.project, summary.machine, summary.harness, summary.sourcePath].join('|');
-    const current = summaries.get(key) ?? summary;
-    current.sessions++;
-    current.tokens += usageRowTokenTotal(row);
-    summaries.set(key, current);
-  }
-  const result = [...summaries.values()].sort(
-    (a, b) =>
-      a.project.localeCompare(b.project) || a.machine.localeCompare(b.machine) || a.harness.localeCompare(b.harness),
-  );
-  enrichGitRemotes(result);
-  return result;
-};
-
-const enrichGitRemotes = (sources: ProjectSource[]) => {
-  const cache = new Map<string, string>();
-  for (const source of sources) {
-    if (!source.sourcePath) continue;
-    const cached = cache.get(source.sourcePath);
-    if (cached !== undefined) {
-      source.gitRemote = cached;
-      continue;
-    }
-    const gitRemote = readGitRemoteUrl(source.sourcePath);
-    cache.set(source.sourcePath, gitRemote);
-    source.gitRemote = gitRemote;
-  }
-};
-
-const readGitRemoteUrl = (projectPath: string): string => {
-  try {
-    const configPath = path.join(projectPath, '.git', 'config');
-    if (!fs.existsSync(configPath)) return '';
-    const text = fs.readFileSync(configPath, 'utf8');
-    const match = text.match(/^\[remote\s+"origin"\]\s*\n\s*url\s*=\s*(.+)$/m);
-    return match ? extractRepoName(match[1]!.trim()) : '';
-  } catch {
-    return '';
-  }
-};
-
-const extractRepoName = (url: string): string => {
-  const httpsMatch = url.match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/);
-  if (httpsMatch) return httpsMatch[1]!;
-  const sshMatch = url.match(/git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/);
-  if (sshMatch) return sshMatch[1]!;
-  return url;
-};
-
-const collectAllRows = (snapshotFiles: string[], local: boolean) =>
+const collectSetupSources = (snapshotFiles: string[], local: boolean) =>
   Effect.gen(function* () {
     const snapshots = [];
     for (const file of snapshotFiles) {
       snapshots.push(parseUsageSnapshot(fs.readFileSync(file, 'utf8')));
     }
-    if (local) {
-      const machine = yield* ensureMachineConfig;
-      const rows = yield* collectSelectedHarnessRows({ harness: null, includeCursor: true, keepSource: true });
-      snapshots.push(createUsageSnapshot({ machine, rows }));
-    }
-    return mergeUsageSnapshots(snapshots).rows;
+    return yield* listProjectSourcesWithWarnings({
+      snapshots,
+      includeLocal: local,
+      harness: null,
+      includeCursor: true,
+      includeGitRemote: true,
+    });
   });
 
-const setupHTML = (sources: ProjectSource[], aliases: ProjectAliasEntry[]) => {
-  const sourcesJson = JSON.stringify(sources);
-  const aliasesJson = JSON.stringify(aliases);
+const scriptJson = (value: unknown) => (JSON.stringify(value) ?? 'null').replace(/</g, '\\u003c');
+
+const setupHTML = (sources: ProjectSource[], aliases: ProjectAliasEntry[], warnings: { harness?: string; message: string }[]) => {
+  const sourcesJson = scriptJson(sources);
+  const aliasesJson = scriptJson(aliases);
+  const warningsJson = scriptJson(warnings);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -136,10 +60,14 @@ const setupHTML = (sources: ProjectSource[], aliases: ProjectAliasEntry[]) => {
   .row-selected { background: rgba(100, 149, 237, 0.15); }
   .suggestion { color: #999; font-size: 12px; padding: 4px 8px; background: rgba(255,255,255,0.05); border-radius: 4px; margin-right: 4px; }
   .suggestion:hover { background: rgba(255,255,255,0.1); cursor: pointer; }
+  .warning-panel { margin: 12px 0 16px; padding: 12px; border: 1px solid #b7791f; border-radius: 8px; background: rgba(183,121,31,0.12); color: #f6c177; }
+  .warning-panel h2 { margin: 0 0 8px; font-size: 14px; }
+  .warning-panel ul { margin-left: 18px; }
 </style>
 </head>
 <body>
 <h1>ai-usage project setup</h1>
+<div id="warnings"></div>
 <div class="actions" id="toolbar">
   <span id="selected-count">0 selected</span>
   <label>Alias name: <input id="alias-name" type="text" placeholder="my-project"></label>
@@ -164,9 +92,11 @@ const setupHTML = (sources: ProjectSource[], aliases: ProjectAliasEntry[]) => {
 <script>
 const sources = ${sourcesJson};
 const initialAliases = ${aliasesJson};
+const warnings = ${warningsJson};
 let aliases = JSON.parse(JSON.stringify(initialAliases));
 let selected = new Set();
 
+const warningsEl = document.getElementById('warnings');
 const tbody = document.getElementById('sources-body');
 const nameInput = document.getElementById('alias-name');
 const mergeBtn = document.getElementById('merge-btn');
@@ -196,6 +126,24 @@ function renderSources() {
     tbody.appendChild(tr);
   }
   updateCount();
+}
+
+function renderWarnings() {
+  warningsEl.innerHTML = '';
+  if (!warnings.length) return;
+  const panel = document.createElement('section');
+  panel.className = 'warning-panel';
+  const title = document.createElement('h2');
+  title.textContent = 'Report warnings';
+  const list = document.createElement('ul');
+  for (const warning of warnings) {
+    const item = document.createElement('li');
+    item.textContent = (warning.harness ? warning.harness + ': ' : '') + warning.message;
+    list.appendChild(item);
+  }
+  panel.appendChild(title);
+  panel.appendChild(list);
+  warningsEl.appendChild(panel);
 }
 
 function updateCount() {
@@ -341,6 +289,7 @@ async function saveAliases() {
 }
 
 renderSources();
+renderWarnings();
 renderAliases();
 renderSuggestions();
 </script>
@@ -350,11 +299,10 @@ renderSuggestions();
 
 export const runSetupServer = (snapshotFiles: string[], local: boolean, port: number) =>
   Effect.gen(function* () {
-    const rows = yield* collectAllRows(snapshotFiles, local);
+    const { sources, warnings } = yield* collectSetupSources(snapshotFiles, local);
     const config = yield* readAiUsageConfig;
-    const sources = collectProjectSources(rows);
     const aliases = config.projectAliases ?? [];
-    const html = setupHTML(sources, aliases);
+    const html = setupHTML(sources, aliases, warnings);
     const configDir = path.join(os.homedir(), '.config', 'ai-usage');
     const configPath = path.join(configDir, 'config.json');
 

@@ -2,6 +2,12 @@ const escapeScriptContent = (content: string) => content.replace(/<\/script/gi, 
 
 const escapeStyleContent = (content: string) => content.replace(/<\/style/gi, '<\\/style');
 
+export interface InlineReportHtmlInput {
+  html: string;
+  payload: unknown;
+  readAssetContent: (src: string) => string | Promise<string>;
+}
+
 export const serializeForInlineScript = (json: string) =>
   json
     .replace(/</g, '\\u003c')
@@ -9,6 +15,19 @@ export const serializeForInlineScript = (json: string) =>
     .replace(/&/g, '\\u0026')
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029');
+
+export const createReportPayloadScript = (payload: unknown) =>
+  `<script>window.__AI_USAGE_REPORT__=${serializeForInlineScript(JSON.stringify(payload))};</script>`;
+
+export const discoverHtmlAssetUrls = (html: string) => {
+  const scriptSrcs = [...html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>[\s\S]*?<\/script>/gi)].map(
+    (match) => match[1]!,
+  );
+  const stylesheetHrefs = [
+    ...html.matchAll(/<link\b[^>]*\brel=["']stylesheet["'][^>]*\bhref=["']([^"']+)["'][^>]*\/?>/gi),
+  ].map((match) => match[1]!);
+  return [...new Set([...scriptSrcs, ...stylesheetHrefs])];
+};
 
 export const inlineAssetsIntoHTML = (
   html: string,
@@ -62,4 +81,16 @@ export const inlineAssetsIntoHTML = (
   }
 
   return result;
+};
+
+export const inlineReportHTML = async ({ html, payload, readAssetContent }: InlineReportHtmlInput) => {
+  const assetContent = new Map<string, string>();
+  await Promise.all(
+    discoverHtmlAssetUrls(html).map(async (src) => {
+      const content = await readAssetContent(src);
+      if (content) assetContent.set(src, content);
+    }),
+  );
+
+  return inlineAssetsIntoHTML(html, (src) => assetContent.get(src) ?? '', createReportPayloadScript(payload));
 };

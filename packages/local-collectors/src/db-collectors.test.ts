@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
+import { collectSelectedHarnessResults, collectSelectedHarnessRows } from './collectors';
 import { collectClaude } from './collectors/claude';
 import { collectCursor } from './collectors/cursor';
 import { collectOpenCode } from './collectors/opencode';
@@ -27,6 +28,60 @@ const CURSOR_USER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bub
 const jsonl = (...events: unknown[]) => `${events.map((event) => JSON.stringify(event)).join('\n')}\n`;
 
 describe('DB-backed Harness collectors', () => {
+  test('reports one failing harness while keeping successful harness rows', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText('.codex/session_index.jsonl', jsonl({ id: 'codex-thread', thread_name: 'Fixture thread' }));
+    storage.writeText(
+      '.codex/sessions/2026/codex-thread.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'codex-thread', cwd: '/work/fixture-project' },
+        },
+        {
+          timestamp: '2026-01-01T00:01:00.000Z',
+          payload: { type: 'message', role: 'user', content: [{ input_text: 'Build the report' }] },
+        },
+        {
+          timestamp: '2026-01-01T00:02:00.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: {
+                total_tokens: 30,
+                input_tokens: 12,
+                cached_input_tokens: 2,
+                output_tokens: 18,
+              },
+            },
+          },
+        },
+      ),
+    );
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SESSION_SQL, [
+      {
+        id: 'broken-opencode',
+        title: 'Broken OpenCode DB',
+        directory: '/work/opencode',
+        summary_additions: 0,
+        summary_deletions: 0,
+      },
+    ]);
+
+    const selection = { harness: null, includeCursor: false, keepSource: true } as const;
+    const result = runWithStorage(collectSelectedHarnessResults(selection), storage);
+    const flatRows = runWithStorage(collectSelectedHarnessRows(selection), storage);
+    const opencode = result.harnesses.find((harness) => harness.harness === 'opencode');
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.harness).toBe('Codex');
+    expect(flatRows).toHaveLength(1);
+    expect(opencode?.status).toBe('warning');
+    expect(opencode?.warnings[0]?.message).toContain('Failed to read OpenCode live database');
+    expect(result.warnings.some((warning) => warning.harness === 'opencode')).toBe(true);
+  });
+
   test('collects Claude prompt-history fallbacks when detailed usage files are missing', () => {
     const storage = new TestMemoryStorage();
     storage.writeText(

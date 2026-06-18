@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { inlineAssetsIntoHTML, serializeForInlineScript } from '@ai-usage/core/html-export';
+import { inlineReportHTML } from '@ai-usage/core/html-export';
 import type { UsageReportPayload } from '@ai-usage/core/report-data';
 
 const reportAppDistPath = () => path.resolve(import.meta.dir, '../../../report/dist');
@@ -71,7 +71,6 @@ export const renderReportAppHTML = async (payload: UsageReportPayload) => {
 
   const clientDir = reportAppClientPath();
   html = injectClientAssets(html, clientDir);
-  const payloadScript = `<script>window.__AI_USAGE_REPORT__=${serializeForInlineScript(JSON.stringify(payload))};</script>`;
 
   const readAssetContent = (src: string): string => {
     const assetPath = path.join(clientDir, src.replace(/^\//, ''));
@@ -82,5 +81,5 @@ export const renderReportAppHTML = async (payload: UsageReportPayload) => {
     }
   };
 
-  return inlineAssetsIntoHTML(html, readAssetContent, payloadScript);
+  return inlineReportHTML({ html, payload, readAssetContent });
 };

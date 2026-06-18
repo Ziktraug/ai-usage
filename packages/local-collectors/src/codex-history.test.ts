@@ -101,23 +101,31 @@ describe('Codex local history', () => {
     const sessions = runWithStorage(readCodexUsageSessions, storage);
     expect(sessions).toHaveLength(2);
     expect(sessions[0]?.name).toBe('Fixture thread');
+    expect(sessions[0]?.provider).toBe('Codex sub');
+    expect(sessions[0]?.project).toBe('fixture-project');
+    expect(sessions[0]?.projectPath).toBe('/work/fixture-project');
+    expect(sessions[0]?.source).toEqual({
+      harnessKey: 'codex',
+      sourceSessionId: 'parent-thread',
+      sourcePath: '/work/fixture-project',
+    });
     expect(sessions[0]?.tokens.in).toBe(10);
     expect(sessions[0]?.tokens.cr).toBe(2);
     expect(sessions[0]?.tokens.out).toBe(18);
     expect(sessions[0]?.calls).toBe(1);
     expect(sessions[0]?.turns).toBe(1);
-    expect(sessions[0]?.hasSubagents).toBe(true);
-    expect(sessions[0]?.isSubagent).toBe(false);
+    expect(sessions[0]?.subagent).toBe(true);
     expect(sessions[0]?.usageUnavailable).toBe(false);
     expect(sessions[1]?.name).toBe('codex child-th');
+    expect(sessions[1]?.provider).toBe('Codex sub');
+    expect(sessions[1]?.projectPath).toBe('/work/fixture-project');
     expect(sessions[1]?.tokens.in).toBe(4);
     expect(sessions[1]?.tokens.cr).toBe(1);
     expect(sessions[1]?.tokens.out).toBe(4);
     expect(sessions[1]?.calls).toBe(1);
     expect(sessions[1]?.turns).toBe(1);
-    expect(sessions[1]?.hasSubagents).toBe(false);
-    expect(sessions[1]?.isSubagent).toBe(true);
-    expect(sessions[1]?.subscription).toBe(true);
+    expect(sessions[1]?.subagent).toBe(true);
+    expect(sessions[1]?.usageUnavailable).toBe(false);
 
     const quota = runWithStorage(findLatestCodexQuotaSnapshot(), storage);
     expect(quota?.planType).toBe('pro');
@@ -129,6 +137,12 @@ describe('Codex local history', () => {
     expect(rows[0]?.name).toBe('Fixture thread');
     expect(rows[0]?.provider).toBe('Codex sub');
     expect(rows[0]?.project).toBe('fixture-project');
+    expect(rows[0]?.projectPath).toBe('/work/fixture-project');
+    expect(rows[0]?.source).toEqual({
+      harnessKey: 'codex',
+      sourceSessionId: 'parent-thread',
+      sourcePath: '/work/fixture-project',
+    });
     expect(rows[0]?.tokIn).toBe(10);
     expect(rows[0]?.tokCr).toBe(2);
     expect(rows[0]?.tokOut).toBe(18);

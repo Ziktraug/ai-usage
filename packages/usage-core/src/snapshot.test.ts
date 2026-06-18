@@ -1,32 +1,31 @@
 import { describe, expect, test } from 'bun:test';
 import { createUsageSnapshot, mergeUsageSnapshots, parseUsageSnapshot } from './snapshot';
-import type { Row } from './types';
+import type { Row, SourcedRow } from './types';
 
-const row = (name: string, sourceSessionId: string, overrides: Partial<Row> = {}): Row =>
-  ({
-    date: new Date('2026-01-01T00:00:00.000Z'),
-    endDate: new Date('2026-01-01T00:01:00.000Z'),
-    harness: 'Codex',
-    provider: 'Codex API',
-    name,
-    model: 'gpt-5.3-codex',
-    project: 'ai-usage',
-    tokIn: 10,
-    tokOut: 5,
-    tokCr: 0,
-    tokCw: 0,
-    costActual: 0.1,
-    costApprox: 0.1,
-    costKnown: true,
-    calls: 1,
-    durationMs: 60_000,
-    turns: 1,
-    tools: 0,
-    linesAdded: null,
-    linesDeleted: null,
-    source: { harnessKey: 'codex', sourceSessionId },
-    ...overrides,
-  }) as Row;
+const row = (name: string, sourceSessionId: string, overrides: Partial<Row> = {}): SourcedRow => ({
+  date: new Date('2026-01-01T00:00:00.000Z'),
+  endDate: new Date('2026-01-01T00:01:00.000Z'),
+  harness: 'Codex',
+  provider: 'Codex API',
+  name,
+  model: 'gpt-5.3-codex',
+  project: 'ai-usage',
+  tokIn: 10,
+  tokOut: 5,
+  tokCr: 0,
+  tokCw: 0,
+  costActual: 0.1,
+  costApprox: 0.1,
+  costKnown: true,
+  calls: 1,
+  durationMs: 60_000,
+  turns: 1,
+  tools: 0,
+  linesAdded: null,
+  linesDeleted: null,
+  source: { harnessKey: 'codex', sourceSessionId },
+  ...overrides,
+});
 
 const machine = { id: 'machine-1', label: 'Machine 1' };
 
@@ -62,5 +61,23 @@ describe('usage snapshots', () => {
     expect(merged.rows[0]?.name).toBe('newer');
     expect(merged.duplicatesDropped).toBe(1);
     expect(merged.warnings).toHaveLength(1);
+  });
+
+  test('serializes and merges report warnings', () => {
+    const snapshot = createUsageSnapshot({
+      machine,
+      rows: [row('a', 'session-1')],
+      warnings: [{ harness: 'opencode', operation: 'sqlite.all', message: 'Failed to read OpenCode history' }],
+    });
+
+    const parsed = parseUsageSnapshot(JSON.stringify(snapshot));
+    const merged = mergeUsageSnapshots([parsed]);
+
+    expect(parsed.warnings?.[0]?.message).toBe('Failed to read OpenCode history');
+    expect(merged.warnings[0]).toMatchObject({
+      harness: 'opencode',
+      operation: 'sqlite.all',
+      message: 'Failed to read OpenCode history',
+    });
   });
 });

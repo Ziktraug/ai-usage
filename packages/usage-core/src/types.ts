@@ -8,7 +8,7 @@ export interface UsageRowSource {
   machineLabel?: string;
 }
 
-export interface Row {
+export interface UsageRow {
   date: Date | null;
   endDate: Date | null;
   harness: string;
@@ -41,6 +41,14 @@ export interface Row {
   ambiguous?: boolean;
 }
 
-export type SourcedRow = Row & {
+export type Row = UsageRow;
+
+export type UsageRowWithOptionalSource = UsageRow & {
+  source?: UsageRowSource;
+};
+
+export type CollectedUsageRow = UsageRow & {
   source: UsageRowSource;
 };
+
+export type SourcedRow = CollectedUsageRow;

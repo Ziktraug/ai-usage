@@ -1,7 +1,17 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
   "files": {
-    "includes": ["**/*.ts", "**/*.tsx", "**/*.json", "!**/dist", "!**/styled-system"]
+    "includes": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.json",
+      "!**/.output",
+      "!**/.turbo",
+      "!**/dist",
+      "!apps/report/src/routeTree.gen.ts",
+      "!**/node_modules",
+      "!**/styled-system"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -17,7 +27,27 @@
         "noExplicitAny": "off"
       },
       "style": {
-        "noNonNullAssertion": "off"
+        "noNonNullAssertion": "off",
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "patterns": [
+              {
+                "group": [
+                  "../packages/**",
+                  "../../packages/**",
+                  "../../../packages/**",
+                  "../apps/**",
+                  "../../apps/**",
+                  "../../../apps/**",
+                  "@ai-usage/*/src",
+                  "@ai-usage/*/src/**"
+                ],
+                "message": "Use workspace package imports and public package exports instead of relative workspace paths or private src paths."
+              }
+            ]
+          }
+        }
       }
     }
   },

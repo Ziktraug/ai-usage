@@ -1,3 +1,4 @@
+// Report-app-specific styles and slots. Promote exports to the root API only after another app needs them.
 export * from './components/badge';
 export * from './components/button';
 export * from './components/chart';
