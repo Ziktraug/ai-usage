@@ -253,4 +253,4 @@ Checks:
 
 Commit:
 
-- Pending.
+- `95a049c fix(report): load real payload in web runtime`
