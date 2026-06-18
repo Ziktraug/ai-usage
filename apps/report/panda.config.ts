@@ -1,9 +1,12 @@
 import { aiUsagePreset } from '@ai-usage/design-system/preset';
 import { defineConfig } from '@pandacss/dev';
 
+const designSystemBuildInfoPackage = '@ai-usage/design-system/panda.buildinfo.json';
+const designSystemBuildInfo = require.resolve(designSystemBuildInfoPackage);
+
 export default defineConfig({
   preflight: true,
-  include: ['./src/**/*.{ts,tsx}', '../../packages/design-system/src/**/*.{ts,tsx}'],
+  include: ['./src/**/*.{ts,tsx}', designSystemBuildInfo],
   exclude: [],
   jsxFramework: 'solid',
   outdir: 'styled-system',
