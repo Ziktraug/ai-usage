@@ -13,18 +13,25 @@ const exportPayload = () =>
     ? undefined
     : (globalThis as { __AI_USAGE_REPORT_EXPORT_PAYLOAD__?: UsageReportPayload }).__AI_USAGE_REPORT_EXPORT_PAYLOAD__;
 
+const loadReportPayload = async () => {
+  const payload = exportPayload();
+  if (payload) return payload;
+  if (typeof window !== 'undefined' && window.__AI_USAGE_REPORT__) return readReportPayload();
+  if (import.meta.env.SSR) {
+    const { runReportPayloadCollection } = await import('../server/report-payload.server');
+    return (await runReportPayloadCollection()) as UsageReportPayload;
+  }
+  const { getReportPayload } = await import('../server/report-payload');
+  return (await getReportPayload()) as UsageReportPayload;
+};
+
 export const Route = createFileRoute('/')({
   validateSearch: (search: Record<string, unknown>): DashboardSearch =>
     validateDashboardSearch(search, dashboardSearchDefaults),
   search: {
     middlewares: [stripSearchParams<DashboardSearch>(dashboardSearchDefaults)],
   },
-  loader: () => {
-    const payload = exportPayload();
-    if (payload) return payload;
-    if (typeof window !== 'undefined' && window.__AI_USAGE_REPORT__) return readReportPayload();
-    return readReportPayload();
-  },
+  loader: loadReportPayload,
   component: IndexRoute,
 });
 

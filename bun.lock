@@ -20,6 +20,7 @@
       "dependencies": {
         "@ai-usage/core": "workspace:*",
         "@ai-usage/local-collectors": "workspace:*",
+        "@ai-usage/reporting": "workspace:*",
         "effect": "^3.21.3",
       },
     },
@@ -30,6 +31,7 @@
         "@ai-usage/core": "workspace:*",
         "@ai-usage/design-system": "workspace:*",
         "@ai-usage/local-collectors": "workspace:*",
+        "@ai-usage/reporting": "workspace:*",
         "@tanstack/solid-router": "1.170.16",
         "@tanstack/solid-start": "1.168.26",
         "@tanstack/solid-table": "^8.21.3",
@@ -62,6 +64,15 @@
         "effect": "^3.21.3",
       },
     },
+    "packages/reporting": {
+      "name": "@ai-usage/reporting",
+      "version": "0.1.0",
+      "dependencies": {
+        "@ai-usage/core": "workspace:*",
+        "@ai-usage/local-collectors": "workspace:*",
+        "effect": "^3.21.3",
+      },
+    },
     "packages/usage-core": {
       "name": "@ai-usage/core",
       "version": "0.1.0",
@@ -77,6 +88,8 @@
     "@ai-usage/local-collectors": ["@ai-usage/local-collectors@workspace:packages/local-collectors"],
 
     "@ai-usage/report": ["@ai-usage/report@workspace:apps/report"],
+
+    "@ai-usage/reporting": ["@ai-usage/reporting@workspace:packages/reporting"],
 
     "@babel/code-frame": ["@babel/code-frame@7.29.7", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.29.7", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="],
 

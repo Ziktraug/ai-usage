@@ -156,12 +156,16 @@ export const readRepoAiUsageConfig = (cwd = process.cwd()): Effect.Effect<AiUsag
     return parseAiUsageConfig(exportedConfig, filePath);
   });
 
-export const readMergedAiUsageConfig: Effect.Effect<AiUsageConfig, LocalHistoryError, LocalHistoryStorageService> =
+export const readMergedAiUsageConfigFrom = (
+  cwd = process.cwd(),
+): Effect.Effect<AiUsageConfig, LocalHistoryError, LocalHistoryStorageService> =>
   Effect.gen(function* () {
     const homeConfig = yield* readAiUsageConfig;
-    const repoConfig = yield* readRepoAiUsageConfig();
+    const repoConfig = yield* readRepoAiUsageConfig(cwd);
     return mergeAiUsageConfig(homeConfig, repoConfig);
   });
+
+export const readMergedAiUsageConfig = readMergedAiUsageConfigFrom();
 
 export const writeAiUsageConfig = (
   config: AiUsageConfig,

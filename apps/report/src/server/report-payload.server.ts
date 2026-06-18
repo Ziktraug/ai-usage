@@ -1,31 +1,17 @@
-import { applyProjectAliases } from '@ai-usage/core/project-alias';
-import { createUsageReportPayload, prepareUsageReport } from '@ai-usage/core/report-data';
-import { collectHarnessFacets, collectSelectedHarnessRows } from '@ai-usage/local-collectors';
-import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
-import { readMergedAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
-import { Effect } from 'effect';
+import { execFile } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import type { UsageReportPayload } from '@ai-usage/core/report-data';
 
-const reportOptions = {
-  since: null,
-  project: null,
-  limit: null,
-  minTokens: 1,
-  sort: 'date',
-} as const;
+const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
+const reportingPayloadRunner = path.join(rootDir, 'packages/reporting/src/report-payload-runner.ts');
+const execFileAsync = promisify(execFile);
 
-export const collectReportPayload = Effect.gen(function* () {
-  const config = yield* readMergedAiUsageConfig;
-  const collectedRows = yield* collectSelectedHarnessRows({
-    harness: null,
-    includeCursor: true,
-    keepSource: true,
-    ...(config.cursor ? { cursorCsv: config.cursor } : {}),
+export const runReportPayloadCollection = async (): Promise<UsageReportPayload> => {
+  const { stdout } = await execFileAsync('bun', [reportingPayloadRunner, rootDir], {
+    cwd: rootDir,
+    maxBuffer: 64 * 1024 * 1024,
   });
-  const rows = applyProjectAliases(collectedRows, config.projectAliases ?? []);
-  const facets = yield* collectHarnessFacets({ includeCursor: true });
-  const report = prepareUsageReport(rows, reportOptions);
-  return createUsageReportPayload(report, reportOptions, new Date(), facets);
-});
-
-export const runReportPayloadCollection = () =>
-  Effect.runPromise(collectReportPayload.pipe(Effect.provide(LocalHistoryStorageLive)));
+  return JSON.parse(stdout) as UsageReportPayload;
+};
