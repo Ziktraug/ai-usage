@@ -185,3 +185,37 @@ Checks:
 Commit:
 
 - `0b34d4b test(reporting): cover shared payload boundary`
+
+### Slice 6: Restore Repo-Relative Config For Report Server
+
+Status: completed
+
+Changes:
+
+- Added `readMergedAiUsageConfigFrom(cwd)` so callers can choose which repo config directory to use.
+- Added `configCwd` to shared reporting requests.
+- Made the report server payload pass the repository root as `configCwd`.
+- Resolved relative Cursor CSV paths against `configCwd` before collection.
+- Added a reporting test that proves repo config is loaded from an explicit cwd.
+
+Decisions:
+
+- The CLI keeps using its invocation cwd by default.
+- The report server must pass repo root explicitly because Vite/TanStack runs with `process.cwd()` inside `apps/report`.
+- Relative paths from repo config should be interpreted relative to the repo config cwd, matching the old dev middleware behavior that launched the CLI from repo root.
+
+Difficulties:
+
+- Initial fix only loaded `ai-usage.config.ts` from repo root. Data was still missing because the Cursor CSV path inside config was relative and still resolved from `apps/report`.
+
+Checks:
+
+- Compared old/root payload count and report-server payload count: both `2288` rows.
+- `bun run --cwd packages/reporting test`
+- `bun run --cwd packages/reporting check`
+- `bun run --cwd apps/report check`
+- `bun run --cwd packages/local-collectors check`
+
+Commit:
+
+- Pending.

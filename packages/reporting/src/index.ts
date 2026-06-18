@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { applyProjectAliases } from '@ai-usage/core/project-alias';
 import {
   createUsageReportPayload,
@@ -13,13 +14,14 @@ import {
   type HarnessSelection,
 } from '@ai-usage/local-collectors';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
-import { readMergedAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
+import { readMergedAiUsageConfigFrom } from '@ai-usage/local-collectors/machine-config';
 import { Effect } from 'effect';
 
 export interface LocalReportRowsRequest {
   harness: HarnessKey | null;
   includeCursor: boolean;
   keepSource?: boolean;
+  configCwd?: string;
 }
 
 export interface LocalReportPayloadRequest extends LocalReportRowsRequest {
@@ -38,10 +40,31 @@ const toHarnessSelection = (
   ...(cursorCsv ? { cursorCsv } : {}),
 });
 
+const resolveConfigPath = (configCwd: string | undefined, value: string) =>
+  configCwd && !path.isAbsolute(value) ? path.resolve(configCwd, value) : value;
+
+const resolveCursorConfig = (
+  cursorCsv: HarnessSelection['cursorCsv'],
+  configCwd: string | undefined,
+): HarnessSelection['cursorCsv'] => {
+  if (!cursorCsv) return undefined;
+  return {
+    ...cursorCsv,
+    ...(cursorCsv.usageExportDir
+      ? { usageExportDir: resolveConfigPath(configCwd, cursorCsv.usageExportDir) }
+      : {}),
+    ...(cursorCsv.usageExportPaths
+      ? { usageExportPaths: cursorCsv.usageExportPaths.map((filePath) => resolveConfigPath(configCwd, filePath)) }
+      : {}),
+  };
+};
+
 export const collectLocalReportRows = (request: LocalReportRowsRequest) =>
   Effect.gen(function* () {
-    const config = yield* readMergedAiUsageConfig;
-    const collectedRows = yield* collectSelectedHarnessRows(toHarnessSelection(request, config.cursor));
+    const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
+    const collectedRows = yield* collectSelectedHarnessRows(
+      toHarnessSelection(request, resolveCursorConfig(config.cursor, request.configCwd)),
+    );
     return applyProjectAliases(collectedRows, config.projectAliases ?? []);
   });
 
