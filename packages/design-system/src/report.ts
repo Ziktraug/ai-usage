@@ -1,3 +1,4 @@
+// App-specific report UI styles and slots. Future apps should prefer the root primitives first.
 export * from './components/badge';
 export * from './components/button';
 export * from './components/chart';

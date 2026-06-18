@@ -10,6 +10,10 @@ Use the root export for reusable primitives that are not tied to the report app:
 import { HarnessBadge, MetricTile, SegmentBar, aiUsagePreset } from '@ai-usage/design-system';
 ```
 
+The root export intentionally exposes only generic primitives and their prop
+types. Style slots, layout classes, and report-specific helpers stay out of the
+default API.
+
 Use the report namespace for styles and slots that encode the current report UI:
 
 ```ts
@@ -17,7 +21,8 @@ import { page, shell, tableWrap } from '@ai-usage/design-system/report';
 ```
 
 This keeps app-specific vocabulary out of the default API while still allowing
-the report app to share its extracted styles.
+the report app to share its extracted styles. Treat `@ai-usage/design-system/report`
+as report-app-specific API; future apps should not import it by default.
 
 ## Panda consumer contract
 

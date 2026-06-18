@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 1 + Slice 2 implementees et verifiees
-- Slice en cours: commit Slice 1 + Slice 2
-- Dernier commit de suivi: aucun
+- Statut actuel: Slice 3 implementee et verifiee
+- Slice en cours: commit Slice 3
+- Dernier commit de suivi: `eda1ddd chore(workspace): add package boundary guardrails`
 
 ## Decisions Transverses
 
@@ -67,7 +67,7 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
-- Non committe.
+- `eda1ddd chore(workspace): add package boundary guardrails`
 
 ### Slice 2: Panda Build Info
 
@@ -102,6 +102,41 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
+- `eda1ddd chore(workspace): add package boundary guardrails`
+
+### Slice 3: Clarifier Design-System Vs Report UI
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: separer le contrat root generique du namespace report specifique a l'app report.
+
+Travail fait:
+- Inspection des exports `@ai-usage/design-system`, `@ai-usage/design-system/report` et des imports de `apps/report`.
+- Resserrement du barrel root aux primitives generiques: `HarnessBadge`, `MetricTile`, `SegmentBar`, `aiUsagePreset`, plus types de props/segments.
+- Ajout d'un commentaire court dans `src/report.ts` pour marquer le namespace comme specifique report.
+- Documentation README: root = primitives generiques; `./report` = API specifique report, pas le chemin par defaut des futures apps.
+
+Difficultes:
+- Aucune difficulte technique.
+
+Decisions:
+- Ne pas creer de nouveau package `report-ui` dans cette slice.
+- Ne pas changer les imports de `apps/report`; ils utilisent deja le namespace `@ai-usage/design-system/report`.
+- Garder les types `MetricTileProps` et `BarSegment` dans le root, car ils appartiennent aux primitives generiques exportees.
+
+Fichiers touches:
+- `packages/design-system/src/index.ts`
+- `packages/design-system/src/report.ts`
+- `packages/design-system/README.md`
+- `docs/architecture-debt-implementation-log.md`
+
+Checks:
+- `bun run --cwd packages/design-system check`: passe.
+- `bun run lint`: passe.
+- `bun run --cwd apps/report check`: passe.
+- `bun run check`: passe.
+
+Commit:
 - Non committe.
 
 ## Journal Chronologique
@@ -113,3 +148,6 @@ Commit:
 - Implemente Slice 1: guardrails Biome cibles, check texte dedie, scripts workspace sans `../../packages/design-system`.
 - Implemente Slice 2: generation/export `panda.buildinfo.json`, consommation par `apps/report` via package export.
 - Verifie avec `bun run lint`, `bun run --cwd packages/design-system build`, `bun run --cwd apps/report check`, `bun run check`.
+- Commit Slice 1 + Slice 2: `eda1ddd chore(workspace): add package boundary guardrails`.
+- Pick Slice 3: clarifier le contrat root design-system et le namespace report.
+- Verifie Slice 3 avec `bun run --cwd packages/design-system check`, `bun run --cwd apps/report check`, `bun run lint`, `bun run check`.
