@@ -124,4 +124,33 @@ Checks:
 
 Commit:
 
+- `676c2c1 refactor(report): use shared reporting payload`
+
+### Slice 4: Remove Report Dev CLI Middleware
+
+Status: completed
+
+Changes:
+
+- Removed the Vite dev middleware that executed `bun apps/cli/src/main.ts --payload-json`.
+- Changed `fetchReportPayload` to call the TanStack Start server function instead of fetching `/__ai_usage_report_payload`.
+- Kept the Vite Solid dependency-scan workaround because it addresses the Vite 8/Rolldown JSX scan issue independently of report data architecture.
+
+Decisions:
+
+- The dev refresh path now goes through the same report server function as the app server boundary.
+- The `force` option remains accepted by `fetchReportPayload` for caller compatibility, but it is currently ignored because the server function does a fresh collection per call.
+
+Difficulties:
+
+- None in this slice.
+
+Checks:
+
+- `bun run --cwd apps/report check`
+- `bun --cwd apps/report vite --host 127.0.0.1 --port 4317 --strictPort --clearScreen false` stopped by timeout after successful startup.
+- Searched `apps/report` for `__ai_usage_report_payload`, `payload-json`, `apps/cli/src/main`, `execFile`, and `child_process`; no matches.
+
+Commit:
+
 - Pending.
