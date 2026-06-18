@@ -153,4 +153,35 @@ Checks:
 
 Commit:
 
+- `29bd1b0 refactor(report): refresh payload via server function`
+
+### Slice 5: Milestone Verification And Test Stabilization
+
+Status: completed
+
+Changes:
+
+- Added a reporting package test so the workspace `test` task has a real test file for `@ai-usage/reporting`.
+- Changed `fetchReportPayload` to import the server function lazily so `report-data` can still be imported by server-side tests and static/demo payload paths.
+
+Decisions:
+
+- The dynamic import is intentionally limited to the client refresh path. A top-level server function import loaded TanStack client-only code during server-side tests.
+- The reporting package test uses a temporary empty home directory to validate the shared local history boundary without reading developer local history.
+
+Difficulties:
+
+- First `bun run test` failed because `@ai-usage/reporting` had no tests.
+- After adding the package test, `apps/report` tests failed because a top-level server function import triggered Solid/TanStack client-only code on the server side.
+
+Checks:
+
+- `bun run --cwd packages/reporting test`
+- `bun run --cwd packages/reporting check`
+- `bun run --cwd apps/report test`
+- `bun run test`
+- `bun run check`
+
+Commit:
+
 - Pending.
