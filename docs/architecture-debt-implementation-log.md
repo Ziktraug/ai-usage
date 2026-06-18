@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 8 implementee et verifiee
-- Slice en cours: commit Slice 8
-- Dernier commit de suivi: `dc0a764 refactor(collectors): finish session seam migration`
+- Statut actuel: Slice 9 implementee et verifiee
+- Slice en cours: commit Slice 9
+- Dernier commit de suivi: `cbab52b refactor(core): make row provenance explicit`
 
 ## Decisions Transverses
 
@@ -332,6 +332,53 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
+- `cbab52b refactor(core): make row provenance explicit`
+
+### Slice 9: Local History Warnings
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: distinguer absence normale de local history et echecs partiels silencieux.
+
+Travail fait:
+- Ajout de `LocalHistoryWarning` et `localHistoryWarningFromError` dans `packages/local-collectors/src/errors.ts`.
+- Ajout de `collectSelectedHarnessResults(selection)` avec enveloppe par harness: rows, warnings, duration, status `ok | warning | failed`.
+- Conservation de `collectSelectedHarnessRows(selection)` comme wrapper compatibilite qui retourne uniquement les rows finales.
+- Capture des erreurs de collector au niveau harness sans bloquer les autres harnesses.
+- Refactor OpenCode: `collectOpenCodeResult` capture les echecs par base live/stable et conserve les rows de l'autre base si possible.
+- Refactor RTK: `enrichCollectorRowsWithRtkSavingsResult` conserve les rows d'entree et retourne un warning structure si l'enrichissement echoue.
+- Cursor CSV import dans l'orchestrateur devient best-effort: un CSV illisible ajoute un warning Cursor et conserve les rows locales.
+- Reporting expose `collectLocalReportRowsWithWarnings(request)` sans changer la forme actuelle du payload JSON.
+- Ajout d'un test local-collectors: OpenCode DB partiellement cassée produit un warning tandis que Codex fournit toujours une row; l'API flat reste compatible.
+
+Difficultes:
+- Certaines `catchAll` restantes representent des probes d'existence/config ou des chemins hors payload principal; elles sont laissees hors scope pour eviter un refactor trop large.
+- Le payload n'expose pas encore les warnings; Slice 10 portera la visibilite UI/CLI.
+- `readMergedAiUsageConfigFrom` peut encore echouer; l'API reporting avec warnings garde donc `LocalHistoryError` comme erreur possible pour la config.
+
+Decisions:
+- Les warnings RTK sont globaux avec `harness: 'rtk'`, pas rattaches a un harness de session.
+- Les rows finales de l'enveloppe sont les rows apres Cursor CSV reconciliation, RTK enrichment et strip `keepSource`, pour rester alignees avec l'API flat.
+- Les warnings OpenCode live/stable sont captures au niveau DB pour eviter de jeter les rows d'une base saine.
+- Ne pas ajouter `warnings` a `UsageReportPayload` dans cette slice.
+
+Fichiers touches:
+- `packages/local-collectors/src/errors.ts`
+- `packages/local-collectors/src/collectors/index.ts`
+- `packages/local-collectors/src/collectors/opencode.ts`
+- `packages/local-collectors/src/rtk-enrichment.ts`
+- `packages/local-collectors/src/db-collectors.test.ts`
+- `packages/reporting/src/index.ts`
+- `docs/architecture-debt-implementation-log.md`
+
+Checks:
+- `bun run --cwd packages/local-collectors check`: passe.
+- `bun run --cwd packages/reporting check`: passe.
+- `bun run --cwd packages/local-collectors test`: passe.
+- `bun run --cwd packages/reporting test`: passe.
+- `bun run check`: passe.
+
+Commit:
 - Non committe.
 
 ## Journal Chronologique
@@ -361,3 +408,6 @@ Commit:
 - Commit Slice 7: `dc0a764 refactor(collectors): finish session seam migration`.
 - Pick Slice 8: rendre la provenance first-class et supprimer les casts `Partial<SourcedRow>`.
 - Verifie Slice 8 avec `bun run --cwd packages/usage-core check`, `bun run --cwd packages/usage-core test`, `bun run --cwd apps/cli test`, `bun run check`.
+- Commit Slice 8: `cbab52b refactor(core): make row provenance explicit`.
+- Pick Slice 9: ajouter warnings structures pour local history et garder l'API flat compatible.
+- Verifie Slice 9 avec `bun run --cwd packages/local-collectors check`, `bun run --cwd packages/reporting check`, `bun run --cwd packages/local-collectors test`, `bun run --cwd packages/reporting test`, `bun run check`.
