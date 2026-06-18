@@ -1,4 +1,4 @@
-import { inlineAssetsIntoHTML, serializeForInlineScript } from '@ai-usage/core/html-export';
+import { inlineReportHTML } from '@ai-usage/core/html-export';
 import type { SerializedRow, UsageReportPayload } from '@ai-usage/core/report-data';
 import { rtkSavingsPct } from './dashboard-sort';
 
@@ -103,7 +103,6 @@ export const downloadCSV = (rows: SerializedRow[], generatedAt: string) => {
 export const downloadHTML = async (payload: UsageReportPayload) => {
   const response = await fetch(location.href, { cache: 'no-store' });
   const html = await response.text();
-  const payloadScript = `<script>window.__AI_USAGE_REPORT__=${serializeForInlineScript(JSON.stringify(payload))};</script>`;
   const fetchAssetContent = async (src: string): Promise<string> => {
     try {
       const url = new URL(src, location.href).href;
@@ -113,20 +112,7 @@ export const downloadHTML = async (payload: UsageReportPayload) => {
       return '';
     }
   };
-  const assetCache = new Map<string, string>();
-  const readAssetContent = (src: string): string => assetCache.get(src) ?? '';
-  const scriptSrcs = [...html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/gi)].map((m) => m[1]!);
-  const linkHrefs = [...html.matchAll(/<link\b[^>]*\brel=["']stylesheet["'][^>]*\bhref=["']([^"']+)["']/gi)].map(
-    (m) => m[1]!,
-  );
-  const assetUrls = [...new Set([...scriptSrcs, ...linkHrefs])];
-  await Promise.all(
-    assetUrls.map(async (src) => {
-      const content = await fetchAssetContent(src);
-      if (content) assetCache.set(src, content);
-    }),
-  );
-  const selfContained = inlineAssetsIntoHTML(html, readAssetContent, payloadScript);
+  const selfContained = await inlineReportHTML({ html, payload, readAssetContent: fetchAssetContent });
   const blob = new Blob([selfContained], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');

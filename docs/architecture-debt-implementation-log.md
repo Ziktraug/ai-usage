@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 11 implementee et verifiee
-- Slice en cours: commit Slice 11
-- Dernier commit de suivi: `4a6da64 feat(report): surface local history warnings`
+- Statut actuel: Slice 12 implementee et verifiee
+- Slice en cours: commit Slice 12
+- Dernier commit de suivi: `1721d1b refactor(report): centralize payload runtime`
 
 ## Decisions Transverses
 
@@ -467,6 +467,46 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
+- `1721d1b refactor(report): centralize payload runtime`
+
+### Slice 12: HTML Export Adapter Unique
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: reduire la duplication asset inlining et payload injection entre export CLI et export browser.
+
+Travail fait:
+- Ajout de `InlineReportHtmlInput` dans `packages/usage-core/src/html-export.ts`.
+- Ajout de `createReportPayloadScript(payload)` pour centraliser l'injection `window.__AI_USAGE_REPORT__`.
+- Ajout de `discoverHtmlAssetUrls(html)` pour partager la discovery regex scripts/stylesheets.
+- Ajout de `inlineReportHTML(input)` qui precharge les assets, injecte le payload et appelle l'inliner existant.
+- Migration `apps/cli/src/render/html.ts` vers `inlineReportHTML` avec adapter filesystem.
+- Migration `apps/report/src/dashboard-export.ts` vers `inlineReportHTML` avec adapter browser `fetch`.
+- Conservation du comportement single-file et du fallback asset manquant.
+
+Difficultes:
+- Le check `bun run html export --since 1d` ecrit un HTML dans `ai-usage-reports`; le fichier est ignore par git et n'apparait pas dans le status.
+
+Decisions:
+- Garder `inlineAssetsIntoHTML` comme primitive sync bas niveau; `inlineReportHTML` est l'Interface report-level async partagee.
+- Ne pas changer les regex d'inlining existantes au-dela de leur centralisation.
+- Ne pas ajouter de dependance pour parser HTML; les regex existantes suffisent pour les assets Start generes.
+
+Fichiers touches:
+- `packages/usage-core/src/html-export.ts`
+- `apps/cli/src/render/html.ts`
+- `apps/report/src/dashboard-export.ts`
+- `docs/architecture-debt-implementation-log.md`
+
+Checks:
+- `bun run --cwd packages/usage-core check`: passe.
+- `bun run --cwd apps/cli check`: passe.
+- `bun run --cwd apps/report check`: passe.
+- `bun run --cwd apps/report test`: passe.
+- `bun run html export --since 1d`: passe.
+- `bun run check`: passe.
+
+Commit:
 - Non committe.
 
 ## Journal Chronologique
@@ -505,3 +545,6 @@ Commit:
 - Commit Slice 10: `4a6da64 feat(report): surface local history warnings`.
 - Pick Slice 11: centraliser le runtime report autour du chargement payload, refresh, injection et export.
 - Verifie Slice 11 avec `bun run --cwd apps/report check`, `bun run --cwd apps/report test`, `bun run check`.
+- Commit Slice 11: `1721d1b refactor(report): centralize payload runtime`.
+- Pick Slice 12: partager le module d'inlining HTML entre export CLI et export browser.
+- Verifie Slice 12 avec `bun run --cwd packages/usage-core check`, `bun run --cwd apps/cli check`, `bun run --cwd apps/report check`, `bun run --cwd apps/report test`, `bun run html export --since 1d`, `bun run check`.
