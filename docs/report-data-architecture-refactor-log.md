@@ -218,4 +218,4 @@ Checks:
 
 Commit:
 
-- Pending.
+- `304924a fix(report): resolve repo config from report server`
