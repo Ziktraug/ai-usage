@@ -32,6 +32,7 @@ export const sessionColumnIds = [
   'rtkSaved',
   'cost',
   'actual',
+  'quota',
   'duration',
   'calls',
   'turns',
@@ -39,6 +40,7 @@ export const sessionColumnIds = [
   'lines',
   'subagent',
   'partial',
+  'ambiguous',
   'session',
 ] as const;
 export type SessionColumnId = (typeof sessionColumnIds)[number];

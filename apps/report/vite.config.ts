@@ -2,34 +2,42 @@ import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { serializeForInlineScript } from '@ai-usage/core/html-export';
-import { defineConfig, type HtmlTagDescriptor, type Plugin } from 'vite';
+import { tanstackStart } from '@tanstack/solid-start/plugin/vite';
+import { nitro } from 'nitro/vite';
+import { defineConfig, type Plugin } from 'vite';
 import solid from 'vite-plugin-solid';
 
 const execFileAsync = promisify(execFile);
-const cliEntry = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../cli/src/main.ts');
-const PAYLOAD_TTL_MS = 60_000;
-const PAYLOAD_ENDPOINT = '/__ai_usage_report_payload';
+const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const cliEntry = path.join(rootDir, 'apps/cli/src/main.ts');
+const payloadTtlMs = 60_000;
 
-// Serve the dev dashboard with this machine's real usage data by injecting the
-// CLI payload exactly like `--html` does. Collection takes seconds, so the
-// payload is cached and refreshed stale-while-revalidate; when collection
-// fails the app falls back to its demo payload (flagged in the UI).
-const realUsagePayload = (): Plugin => {
-  let cache: { at: number; script: string } | null = null;
+const solidDepScanPlugin = (): Plugin => ({
+  name: 'ai-usage-solid-dep-scan',
+  enforce: 'post',
+  configEnvironment: {
+    order: 'post',
+    handler(_name, config) {
+      config.optimizeDeps ??= {};
+      config.optimizeDeps.rolldownOptions ??= {};
+      config.optimizeDeps.rolldownOptions.transform ??= {};
+      config.optimizeDeps.rolldownOptions.transform.jsx = 'preserve';
+    },
+  },
+});
+
+const devPayloadPlugin = (): Plugin => {
+  let cache: { at: number; payload: string } | null = null;
   let inflight: Promise<void> | null = null;
 
   const refresh = (force = false) => {
     if (force) cache = null;
-    inflight ??= execFileAsync('bun', [cliEntry, '--payload-json'], { maxBuffer: 64 * 1024 * 1024 })
+    inflight ??= execFileAsync('bun', [cliEntry, '--payload-json'], {
+      cwd: rootDir,
+      maxBuffer: 64 * 1024 * 1024,
+    })
       .then(({ stdout }) => {
-        cache = { at: Date.now(), script: serializeForInlineScript(stdout.trim()) };
-      })
-      .catch((error: unknown) => {
-        console.warn(
-          '[ai-usage] real usage payload unavailable; dev server falls back to demo data:',
-          error instanceof Error ? error.message : error,
-        );
+        cache = { at: Date.now(), payload: stdout.trim() };
       })
       .finally(() => {
         inflight = null;
@@ -38,51 +46,46 @@ const realUsagePayload = (): Plugin => {
   };
 
   return {
-    name: 'ai-usage:real-dev-payload',
+    name: 'ai-usage-dev-payload',
     apply: 'serve',
     configureServer(server) {
-      server.middlewares.use(PAYLOAD_ENDPOINT, async (req, res) => {
-        const url = new URL(req.url ?? '', `http://${req.headers.host ?? 'localhost'}`);
+      server.middlewares.use('/__ai_usage_report_payload', async (req, res) => {
+        const url = new URL(req.url ?? '/', 'http://localhost');
         const force = url.searchParams.get('force') === '1';
-        if (!cache || force || Date.now() - cache.at > PAYLOAD_TTL_MS) await refresh(force);
-        if (!cache) {
-          res.statusCode = 503;
-          res.setHeader('content-type', 'application/json');
-          res.end(JSON.stringify({ error: 'usage payload unavailable' }));
-          return;
+        try {
+          if (!cache || force || Date.now() - cache.at > payloadTtlMs) await refresh(force);
+          res.statusCode = 200;
+          res.setHeader('content-type', 'application/json; charset=utf-8');
+          res.setHeader('cache-control', 'no-store');
+          res.end(cache?.payload ?? '{}');
+        } catch (error) {
+          res.statusCode = 500;
+          res.setHeader('content-type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
         }
-        res.setHeader('content-type', 'application/json');
-        res.setHeader('cache-control', 'no-store');
-        res.end(cache.script);
       });
-      void refresh();
-    },
-    transformIndexHtml: {
-      order: 'pre',
-      async handler(): Promise<HtmlTagDescriptor[]> {
-        if (!cache) await refresh();
-        else if (Date.now() - cache.at > PAYLOAD_TTL_MS) void refresh();
-        if (!cache) return [];
-        return [
-          {
-            tag: 'script',
-            children: `window.__AI_USAGE_REPORT__=${cache.script};`,
-            injectTo: 'head',
-          },
-        ];
-      },
     },
   };
 };
 
 export default defineConfig({
-  plugins: [solid(), realUsagePayload()],
+  plugins: [
+    devPayloadPlugin(),
+    tanstackStart({
+      router: {
+        codeSplittingOptions: {
+          defaultBehavior: [],
+        },
+      },
+    }),
+    solid({ ssr: true }),
+    nitro(),
+    solidDepScanPlugin(),
+  ],
   build: {
     cssCodeSplit: false,
-    rollupOptions: {
-      output: {
-        format: 'iife',
-      },
-    },
+  },
+  resolve: {
+    dedupe: ['solid-js', 'solid-js/web'],
   },
 });

@@ -112,7 +112,7 @@ const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
   const data = createMemo(() => {
     const summary = props.summary;
     if (summary.totalCost <= 0) return null;
-    const covered = Math.max(0, summary.totalCost - summary.actualCost);
+    const covered = summary.costQuota || Math.max(0, summary.totalCost - summary.actualCost);
     const multiple = summary.actualCost > 0.005 ? summary.totalCost / summary.actualCost : null;
     return { covered, multiple, summary };
   });
@@ -125,7 +125,7 @@ const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
             <div class={heroLabel}>Subscription leverage</div>
             <div class={heroValue}>{fmtMoney(hero().covered)}</div>
             <div class={heroText}>
-              of API-rate value absorbed by subscriptions ({props.rangeLabel}) — you actually paid{' '}
+              of subscription value absorbed by quotas ({props.rangeLabel}) — you actually paid{' '}
               {fmtMoney(hero().summary.actualCost)} across {fmtNum(hero().summary.sessionCount)} sessions.
             </div>
           </div>

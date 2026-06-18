@@ -120,7 +120,7 @@ export const sessionColumns: SessionColumnDef[] = [
             info.table.options.meta?.onFieldFilter?.('model', row.modelKey);
           }}
         >
-          {row.model}
+          {row.modelLabel}
         </button>
       );
     },
@@ -267,6 +267,22 @@ export const sessionColumns: SessionColumnDef[] = [
     },
   },
   {
+    id: 'quota',
+    header: '$Sub',
+    accessorFn: (row) => sortValueForRow(row, 'quota'),
+    cell: (info) =>
+      info.row.original.usageUnavailable ? <UsageUnavailableCell /> : fmtMoney(info.row.original.costQuota ?? null),
+    sortDescFirst: true,
+    meta: {
+      label: 'Subscription value',
+      title: 'Cursor export value covered by the subscription quota',
+      widthPx: 86,
+      cellClass: numCell,
+      headerClass: right,
+      defaultVisible: false,
+    },
+  },
+  {
     id: 'duration',
     header: 'Span',
     accessorFn: (row) => row.durationMs ?? 0,
@@ -327,6 +343,14 @@ export const sessionColumns: SessionColumnDef[] = [
     cell: (info) => (info.row.original.partial ? 'Yes' : 'No'),
     sortDescFirst: true,
     meta: { label: 'Partial', widthPx: 82, defaultVisible: false },
+  },
+  {
+    id: 'ambiguous',
+    header: 'Ambig',
+    accessorFn: (row) => (row.ambiguous ? 1 : 0),
+    cell: (info) => (info.row.original.ambiguous ? 'Yes' : 'No'),
+    sortDescFirst: true,
+    meta: { label: 'Ambiguous reconciliation', widthPx: 92, defaultVisible: false },
   },
   {
     id: 'session',

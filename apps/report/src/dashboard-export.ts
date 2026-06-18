@@ -15,6 +15,7 @@ const reportRowsToCSV = (rows: SerializedRow[]) => {
     'provider',
     'session',
     'model',
+    'models',
     'project',
     'input',
     'output',
@@ -23,6 +24,7 @@ const reportRowsToCSV = (rows: SerializedRow[]) => {
     'fresh_tokens',
     'total_tokens',
     'cost_actual',
+    'cost_quota',
     'cost_approx_api',
     'cost_known',
     'calls',
@@ -40,6 +42,7 @@ const reportRowsToCSV = (rows: SerializedRow[]) => {
     'subagent',
     'partial',
     'usage_unavailable',
+    'ambiguous',
   ];
   const body = rows.map((row) =>
     [
@@ -52,6 +55,7 @@ const reportRowsToCSV = (rows: SerializedRow[]) => {
       row.provider,
       row.name,
       row.model,
+      row.models?.join('|') ?? '',
       row.project,
       row.tokIn,
       row.tokOut,
@@ -60,6 +64,7 @@ const reportRowsToCSV = (rows: SerializedRow[]) => {
       row.freshTokens,
       row.tokenTotal,
       row.costActual ?? '',
+      row.costQuota ?? '',
       row.costApprox.toFixed(4),
       row.costKnown,
       row.calls,
@@ -77,6 +82,7 @@ const reportRowsToCSV = (rows: SerializedRow[]) => {
       row.subagent ?? false,
       row.partial ?? false,
       row.usageUnavailable ?? false,
+      row.ambiguous ?? false,
     ]
       .map((item) => csvEscape(String(item)))
       .join(','),

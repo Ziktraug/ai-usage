@@ -1,10 +1,12 @@
 import { themeToggleButton } from '@ai-usage/design-system/report';
-import { createSignal, onCleanup, Show } from 'solid-js';
+import { createSignal, onCleanup, onMount, Show } from 'solid-js';
 
 const THEME_STORAGE_KEY = 'ai-usage-theme';
-const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+const systemTheme = () =>
+  typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 
 const storedTheme = (): 'light' | 'dark' | null => {
+  if (typeof window === 'undefined') return null;
   try {
     const value = localStorage.getItem(THEME_STORAGE_KEY);
     return value === 'light' || value === 'dark' ? value : null;
@@ -39,15 +41,20 @@ const MoonIcon = () => (
 // click. A pin that lands back on the OS value clears to auto, so the report
 // keeps tracking system changes unless the user actually diverges from them.
 export const ThemeToggle = () => {
-  const [theme, setTheme] = createSignal<'light' | 'dark'>(storedTheme() ?? (prefersDark.matches ? 'dark' : 'light'));
-  const handleSystemChange = (event: MediaQueryListEvent) => {
-    if (!storedTheme()) setTheme(event.matches ? 'dark' : 'light');
-  };
-  prefersDark.addEventListener('change', handleSystemChange);
-  onCleanup(() => prefersDark.removeEventListener('change', handleSystemChange));
+  const [theme, setTheme] = createSignal<'light' | 'dark'>(storedTheme() ?? systemTheme());
+  onMount(() => {
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+    setTheme(storedTheme() ?? (prefersDark.matches ? 'dark' : 'light'));
+    const handleSystemChange = (event: MediaQueryListEvent) => {
+      if (!storedTheme()) setTheme(event.matches ? 'dark' : 'light');
+    };
+    prefersDark.addEventListener('change', handleSystemChange);
+    onCleanup(() => prefersDark.removeEventListener('change', handleSystemChange));
+  });
 
   const toggle = () => {
     const next = theme() === 'dark' ? 'light' : 'dark';
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
     const followsSystem = next === (prefersDark.matches ? 'dark' : 'light');
     setTheme(next);
     try {

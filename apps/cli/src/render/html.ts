@@ -1,10 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { inlineAssetsIntoHTML, serializeForInlineScript } from '@ai-usage/core/html-export';
 import type { UsageReportPayload } from '@ai-usage/core/report-data';
 
 const reportAppDistPath = () => path.resolve(import.meta.dir, '../../../report/dist');
-const reportAppTemplatePath = () => path.join(reportAppDistPath(), 'index.html');
+const reportAppOutputPath = () => path.resolve(import.meta.dir, '../../../report/.output');
+const reportAppServerPath = () => {
+  const outputServer = path.join(reportAppOutputPath(), 'server/_ssr/ssr.mjs');
+  if (fs.existsSync(outputServer)) return outputServer;
+  const serverDir = path.join(reportAppDistPath(), 'server');
+  return ['entry-server.js', 'server.js'].map((file) => path.join(serverDir, file)).find((file) => fs.existsSync(file));
+};
+const reportAppClientPath = () => {
+  const outputPublic = path.join(reportAppOutputPath(), 'public');
+  return fs.existsSync(outputPublic) ? outputPublic : path.join(reportAppDistPath(), 'client');
+};
 
 const missingTemplateHTML = (templatePath: string) =>
   [
@@ -18,16 +29,52 @@ const missingTemplateHTML = (templatePath: string) =>
     '</html>',
   ].join('');
 
-export const renderReportAppHTML = (payload: UsageReportPayload) => {
-  const templatePath = reportAppTemplatePath();
-  if (!fs.existsSync(templatePath)) return missingTemplateHTML(templatePath);
+type StartServerModule = {
+  default: ((request: Request) => Response | Promise<Response>) | {
+    fetch: (request: Request) => Response | Promise<Response>;
+  };
+};
 
-  const distDir = reportAppDistPath();
-  const html = fs.readFileSync(templatePath, 'utf8');
+const clientAssetTags = (clientDir: string) => {
+  const assetsDir = path.join(clientDir, 'assets');
+  const files = fs.existsSync(assetsDir) ? fs.readdirSync(assetsDir) : [];
+  const css = files.find((file) => file.endsWith('.css'));
+  return css ? `<link rel="stylesheet" href="/assets/${css}">` : '';
+};
+
+const injectClientAssets = (html: string, clientDir: string) => {
+  const tags = clientAssetTags(clientDir);
+  if (!tags) return html;
+  const lastHeadClose = html.lastIndexOf('</head>');
+  if (lastHeadClose === -1) return `${tags}${html}`;
+  return html.slice(0, lastHeadClose) + tags + html.slice(lastHeadClose);
+};
+
+export const renderReportAppHTML = async (payload: UsageReportPayload) => {
+  const serverPath = reportAppServerPath();
+  if (!serverPath) return missingTemplateHTML(path.join(reportAppOutputPath(), 'server/_ssr/ssr.mjs'));
+
+  const globalPayload = globalThis as { __AI_USAGE_REPORT_EXPORT_PAYLOAD__?: UsageReportPayload | undefined };
+  const hadPreviousPayload = Object.hasOwn(globalPayload, '__AI_USAGE_REPORT_EXPORT_PAYLOAD__');
+  const previousPayload = globalPayload.__AI_USAGE_REPORT_EXPORT_PAYLOAD__;
+  let html: string;
+  try {
+    globalPayload.__AI_USAGE_REPORT_EXPORT_PAYLOAD__ = payload;
+    const startServer = (await import(pathToFileURL(serverPath).href)) as StartServerModule;
+    const startFetch = typeof startServer.default === 'function' ? startServer.default : startServer.default.fetch;
+    const response = await startFetch(new Request('http://localhost/', { headers: { accept: 'text/html' } }));
+    html = await response.text();
+  } finally {
+    if (hadPreviousPayload) globalPayload.__AI_USAGE_REPORT_EXPORT_PAYLOAD__ = previousPayload;
+    else delete globalPayload.__AI_USAGE_REPORT_EXPORT_PAYLOAD__;
+  }
+
+  const clientDir = reportAppClientPath();
+  html = injectClientAssets(html, clientDir);
   const payloadScript = `<script>window.__AI_USAGE_REPORT__=${serializeForInlineScript(JSON.stringify(payload))};</script>`;
 
   const readAssetContent = (src: string): string => {
-    const assetPath = path.join(distDir, src);
+    const assetPath = path.join(clientDir, src.replace(/^\//, ''));
     try {
       return fs.readFileSync(assetPath, 'utf8');
     } catch {

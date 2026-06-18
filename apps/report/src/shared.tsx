@@ -65,6 +65,7 @@ export const providerLabel = (provider: string) => provider.replace(/\s*\(OC\)\s
 
 export type DashboardRow = SerializedRow & {
   activeTime: number | null;
+  modelLabel: string;
   modelKey: string;
   projectKey: string;
   providerDisplay: string;
@@ -87,10 +88,21 @@ const timeFromRowDate = (row: SerializedRow) => {
 };
 
 const buildRowId = (row: SerializedRow) =>
-  [row.activeDate ?? row.date ?? '', row.harness, row.provider, row.model, row.project, row.sessionLabel].join('|');
+  [
+    row.activeDate ?? row.date ?? '',
+    row.harness,
+    row.provider,
+    row.model,
+    row.models?.join('+') ?? '',
+    row.project,
+    row.sessionLabel,
+  ].join('|');
+
+const modelLabelForRow = (row: SerializedRow) => (row.models?.length ? row.models.join(' + ') : row.model);
 
 export const enrichReportRow = (row: SerializedRow): DashboardRow => {
   const activeTime = timeFromRowDate(row);
+  const modelLabel = modelLabelForRow(row);
   const modelKey = normalizeModelKey(row.model);
   const projectKey = row.project || '(unknown)';
   const providerDisplay = providerLabel(row.provider);
@@ -99,12 +111,13 @@ export const enrichReportRow = (row: SerializedRow): DashboardRow => {
   return {
     ...row,
     activeTime,
+    modelLabel,
     modelKey,
     projectKey,
     providerDisplay,
     rowId: buildRowId(row),
     searchText:
-      `${row.sessionLabel} ${row.project} ${row.model} ${row.provider} ${providerDisplay} ${row.harness} ${machineLabel}`.toLowerCase(),
+      `${row.sessionLabel} ${row.project} ${modelLabel} ${row.provider} ${providerDisplay} ${row.harness} ${machineLabel}`.toLowerCase(),
     sortDate: activeTime ?? 0,
     sortHarness: row.harness.toLowerCase(),
     sortMachine: machineLabel.toLowerCase(),
@@ -130,6 +143,7 @@ export {
 
 export type ReportSummary = {
   actualCost: number;
+  costQuota: number;
   cacheRead: number;
   cacheWrite: number;
   fresh: number;
@@ -149,6 +163,7 @@ export type ReportSummary = {
 
 const createReportSummary = (): ReportSummary => ({
   actualCost: 0,
+  costQuota: 0,
   cacheRead: 0,
   cacheWrite: 0,
   fresh: 0,
@@ -178,6 +193,7 @@ export const buildReportSummary = (rows: DashboardRow[], acceptsRow: (row: Dashb
       pricedCount++;
     }
     summary.actualCost += row.costActual ?? 0;
+    summary.costQuota += row.costQuota ?? 0;
     if (row.costActual == null) summary.unknownActual++;
     summary.fresh += row.freshTokens;
     summary.cacheRead += row.tokCr;

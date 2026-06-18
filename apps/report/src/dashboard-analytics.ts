@@ -25,6 +25,7 @@ const createAnalyticsGroup = (key: string, row: DashboardRow): MutableAnalyticsG
   priced: 0,
   unpriced: 0,
   usageUnavailable: 0,
+  ambiguous: 0,
   fresh: 0,
   inp: 0,
   cache: 0,
@@ -51,6 +52,7 @@ const addAnalyticsRow = (groups: Map<string, MutableAnalyticsGroup>, key: string
 
   group.sessions++;
   if (row.usageUnavailable) group.usageUnavailable++;
+  if (row.ambiguous) group.ambiguous++;
   group.fresh += row.freshTokens;
   group.inp += row.tokIn;
   group.cache += row.tokCr;
