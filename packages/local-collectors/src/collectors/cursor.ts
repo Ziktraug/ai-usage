@@ -1,10 +1,8 @@
-import { harnessLabel } from '@ai-usage/core/harness-metadata';
-import type { Row } from '@ai-usage/core/types';
-import { actualCost, normalizeUsageRow } from '@ai-usage/core/usage-row';
+import { actualCost } from '@ai-usage/core/usage-row';
 import { Effect } from 'effect';
+import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import { LocalHistoryStorage } from '../local-history';
 import { firstExisting, resolvePathCandidates } from '../platform-paths';
-import { withSource } from '../rtk-enrichment';
 import { safeJSON, usablePrompt } from '../text';
 
 type KeyValueRow = { key: string; value: string };
@@ -77,7 +75,7 @@ export const collectCursor = Effect.gen(function* () {
     (db) => db.close,
   );
 
-  const rows: Row[] = [];
+  const sessions: CollectedSession[] = [];
   for (const [composerId, current] of agg) {
     const composer = comp.get(composerId);
     const name = naming.get(composerId);
@@ -88,28 +86,23 @@ export const collectCursor = Effect.gen(function* () {
       cr: current.cr,
       cw: current.cw,
     };
-    rows.push(
-      withSource(
-        normalizeUsageRow({
-          date: composer?.created ? new Date(composer.created) : null,
-          endDate: null,
-          harness: harnessLabel('cursor'),
-          provider: 'Cursor sub',
-          name: composer?.name || name?.first || `cursor ${composerId.slice(0, 8)}`,
-          model,
-          project: '',
-          tokens,
-          cost: actualCost(0),
-          calls: current.calls,
-          turns: name?.turns || 0,
-          tools: 0,
-          linesAdded: composer?.add ?? null,
-          linesDeleted: composer?.del ?? null,
-          partial: true,
-        }),
-        { harnessKey: 'cursor', sourceSessionId: composerId },
-      ),
-    );
+    sessions.push({
+      source: { harnessKey: 'cursor', sourceSessionId: composerId },
+      date: composer?.created ? new Date(composer.created) : null,
+      endDate: null,
+      provider: 'Cursor sub',
+      name: composer?.name || name?.first || `cursor ${composerId.slice(0, 8)}`,
+      model,
+      project: '',
+      tokens,
+      cost: actualCost(0),
+      calls: current.calls,
+      turns: name?.turns || 0,
+      tools: 0,
+      linesAdded: composer?.add ?? null,
+      linesDeleted: composer?.del ?? null,
+      partial: true,
+    });
   }
 
   // Cursor stopped persisting per-bubble token counts around Feb 2026, so recent
@@ -119,28 +112,23 @@ export const collectCursor = Effect.gen(function* () {
     if (agg.has(composerId)) continue;
     const name = naming.get(composerId);
     if (!name || name.turns === 0) continue;
-    rows.push(
-      withSource(
-        normalizeUsageRow({
-          date: composer.created ? new Date(composer.created) : null,
-          endDate: null,
-          harness: harnessLabel('cursor'),
-          provider: 'Cursor sub',
-          name: composer.name || name.first || `cursor ${composerId.slice(0, 8)}`,
-          model: 'usage unavailable',
-          project: '',
-          tokens: { in: 0, out: 0, cr: 0, cw: 0 },
-          cost: actualCost(null),
-          calls: 0,
-          turns: name.turns,
-          tools: 0,
-          linesAdded: composer.add ?? null,
-          linesDeleted: composer.del ?? null,
-          usageUnavailable: true,
-        }),
-        { harnessKey: 'cursor', sourceSessionId: composerId },
-      ),
-    );
+    sessions.push({
+      source: { harnessKey: 'cursor', sourceSessionId: composerId },
+      date: composer.created ? new Date(composer.created) : null,
+      endDate: null,
+      provider: 'Cursor sub',
+      name: composer.name || name.first || `cursor ${composerId.slice(0, 8)}`,
+      model: 'usage unavailable',
+      project: '',
+      tokens: { in: 0, out: 0, cr: 0, cw: 0 },
+      cost: actualCost(null),
+      calls: 0,
+      turns: name.turns,
+      tools: 0,
+      linesAdded: composer.add ?? null,
+      linesDeleted: composer.del ?? null,
+      usageUnavailable: true,
+    });
   }
-  return rows;
+  return sessions.map(sessionToUsageRow);
 });

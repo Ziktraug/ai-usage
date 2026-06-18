@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 6 implementee et verifiee
-- Slice en cours: commit Slice 6
-- Dernier commit de suivi: `398dd7e refactor(reporting): own snapshots and project sources`
+- Statut actuel: Slice 7 implementee et verifiee
+- Slice en cours: commit Slice 7
+- Dernier commit de suivi: `0304bb9 refactor(collectors): add collected session seam`
 
 ## Decisions Transverses
 
@@ -212,7 +212,7 @@ Commit:
 
 ### Slice 6: Introduire CollectedSession
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: creer un seam explicite `Local history -> Session -> Usage row` et migrer Codex en premier.
 
@@ -247,6 +247,45 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
+- `0304bb9 refactor(collectors): add collected session seam`
+
+### Slice 7: Migrer Collectors Vers Session Seam
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: faire passer Claude, OpenCode, Cursor DB et Cursor CSV reconciliation par `CollectedSession -> sessionToUsageRow`.
+
+Travail fait:
+- Migration `collectors/claude.ts`: sessions detaillees et fallbacks prompt-history produisent des `CollectedSession`.
+- Migration `collectors/opencode.ts`: aggregation SQLite conserve `seen`, `pricingModel`, lignes et provenance, puis mappe via `sessionToUsageRow`.
+- Migration `collectors/cursor.ts`: rows Cursor DB token-backed et usage-unavailable passent par `CollectedSession`.
+- Migration `collectors/cursor-reconcile.ts`: clusters CSV reconciles et orphan clusters construisent des `CollectedSession` au point ou une session existe.
+- `collectors/cursor-csv.ts` reste inchange, car il parse des turns/clusters, pas des sessions.
+- Verification grep: plus d'appel direct a `normalizeUsageRow`, `withSource`, `withProjectPath` dans les collecteurs, hors `cursor-reconcile` qui garde seulement `harnessLabel` pour filtrer les rows Cursor.
+
+Difficultes:
+- Cursor CSV devait rester en deux phases: parsing de turns inchangé, conversion en session seulement apres reconciliation.
+- Pour les rows Cursor source-less potentielles dans `reconcileCursorRows`, le mapper ajoute une source temporaire puis elle est retiree si la row d'origine n'avait pas de source.
+
+Decisions:
+- Ne pas forcer `cursor-csv.ts` dans le seam car il ne connait pas encore les sessions.
+- Garder `partial`/`usageUnavailable` absents sur les rows Cursor reconciliees, comme avant.
+- Garder `subagent: false` explicite pour les sessions Claude detaillees quand `sidechain` est faux.
+
+Fichiers touches:
+- `packages/local-collectors/src/collectors/claude.ts`
+- `packages/local-collectors/src/collectors/opencode.ts`
+- `packages/local-collectors/src/collectors/cursor.ts`
+- `packages/local-collectors/src/collectors/cursor-reconcile.ts`
+- `docs/architecture-debt-implementation-log.md`
+
+Checks:
+- `bun test packages/local-collectors/src/db-collectors.test.ts packages/local-collectors/src/cursor-csv-reconcile.test.ts packages/local-collectors/src/codex-history.test.ts`: passe.
+- `bun run --cwd packages/local-collectors check`: passe.
+- `bun run --cwd packages/local-collectors test`: passe.
+- `bun run check`: passe.
+
+Commit:
 - Non committe.
 
 ## Journal Chronologique
@@ -270,3 +309,6 @@ Commit:
 - Pick Slice 6: introduire `CollectedSession` et migrer Codex en premier.
 - Implemente `CollectedSession` + `sessionToUsageRow`, puis migre Codex vers ce mapper.
 - Verifie Slice 6 avec `bun test packages/local-collectors/src/codex-history.test.ts`, `bun run --cwd packages/local-collectors test`, `bun run --cwd packages/local-collectors check`, `bun run check`.
+- Commit Slice 6: `0304bb9 refactor(collectors): add collected session seam`.
+- Pick Slice 7: migrer Claude, OpenCode, Cursor DB et Cursor CSV reconciliation vers `CollectedSession`.
+- Verifie Slice 7 avec tests local-collectors cibles, `bun run --cwd packages/local-collectors test`, `bun run --cwd packages/local-collectors check`, `bun run check`.
