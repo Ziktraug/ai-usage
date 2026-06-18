@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 7 implementee et verifiee
-- Slice en cours: commit Slice 7
-- Dernier commit de suivi: `0304bb9 refactor(collectors): add collected session seam`
+- Statut actuel: Slice 8 implementee et verifiee
+- Slice en cours: commit Slice 8
+- Dernier commit de suivi: `dc0a764 refactor(collectors): finish session seam migration`
 
 ## Decisions Transverses
 
@@ -251,7 +251,7 @@ Commit:
 
 ### Slice 7: Migrer Collectors Vers Session Seam
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: faire passer Claude, OpenCode, Cursor DB et Cursor CSV reconciliation par `CollectedSession -> sessionToUsageRow`.
 
@@ -286,6 +286,52 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
+- `dc0a764 refactor(collectors): finish session seam migration`
+
+### Slice 8: Provenance First-Class
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: supprimer les casts `Partial<SourcedRow>` et rendre la provenance explicite dans les types.
+
+Travail fait:
+- Ajout de types explicites dans `usage-core`: `UsageRow`, alias compat `Row`, `UsageRowWithOptionalSource`, `CollectedUsageRow`, alias compat `SourcedRow`.
+- Renommage du type de serialization en `SerializedUsageRow`, avec alias compat `SerializedRow` pour l'app report.
+- `serializeUsageRow`, snapshot, CSV, project aliases, reporting project sources et Cursor reconciliation lisent maintenant `row.source` via des types explicites.
+- `SnapshotMergeResult` et `deserializeSnapshotRow` retournent des rows avec provenance requise via `CollectedUsageRow`.
+- `CollectorRow` encode la provenance optionnelle et `stripProjectPath` conserve ce type au lieu de cacher `source` derriere `Row`.
+- Nettoyage des tests `project-alias` et `snapshot` pour ne plus masquer la provenance via casts.
+- Verification grep: plus de cast `(row as Partial<SourcedRow>)` dans le repo.
+
+Difficultes:
+- `UsageReportPayload` et les consumers report utilisent encore le nom public `SerializedRow`; un alias compat est conserve pour eviter un rename large hors slice.
+- Les rows locales peuvent etre avec ou sans provenance selon `keepSource`; le type intermediaire `UsageRowWithOptionalSource` encode ce seam sans forcer tous les call sites a porter une source.
+
+Decisions:
+- Garder `Row` et `SourcedRow` comme alias publics temporaires pour limiter le churn.
+- Ne pas changer la forme JSON snapshot/payload; seules les annotations TypeScript changent.
+- Garder `CollectedUsageRow` cote core pour les rows deserializees depuis snapshot, distinct de `CollectedSession` cote collectors.
+
+Fichiers touches:
+- `packages/usage-core/src/types.ts`
+- `packages/usage-core/src/report-data.ts`
+- `packages/usage-core/src/snapshot.ts`
+- `packages/usage-core/src/project-alias.ts`
+- `packages/usage-core/src/project-alias.test.ts`
+- `packages/usage-core/src/snapshot.test.ts`
+- `packages/local-collectors/src/rtk-enrichment.ts`
+- `packages/local-collectors/src/collectors/cursor-reconcile.ts`
+- `packages/reporting/src/index.ts`
+- `apps/cli/src/render/csv.ts`
+- `docs/architecture-debt-implementation-log.md`
+
+Checks:
+- `bun run --cwd packages/usage-core check`: passe.
+- `bun run --cwd packages/usage-core test`: passe.
+- `bun run --cwd apps/cli test`: passe.
+- `bun run check`: passe.
+
+Commit:
 - Non committe.
 
 ## Journal Chronologique
@@ -312,3 +358,6 @@ Commit:
 - Commit Slice 6: `0304bb9 refactor(collectors): add collected session seam`.
 - Pick Slice 7: migrer Claude, OpenCode, Cursor DB et Cursor CSV reconciliation vers `CollectedSession`.
 - Verifie Slice 7 avec tests local-collectors cibles, `bun run --cwd packages/local-collectors test`, `bun run --cwd packages/local-collectors check`, `bun run check`.
+- Commit Slice 7: `dc0a764 refactor(collectors): finish session seam migration`.
+- Pick Slice 8: rendre la provenance first-class et supprimer les casts `Partial<SourcedRow>`.
+- Verifie Slice 8 avec `bun run --cwd packages/usage-core check`, `bun run --cwd packages/usage-core test`, `bun run --cwd apps/cli test`, `bun run check`.
