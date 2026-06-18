@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
 import type { LocalHistoryError } from './errors';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
-import { resolvePaths } from './platform-paths';
+import { firstExisting, resolvePathCandidates } from './platform-paths';
 
 export interface CursorCommitAttribution {
   commitHash: string;
@@ -107,8 +107,8 @@ const normalizeScoredCommit = (row: CursorScoredCommitRow): CursorCommitAttribut
 
 export const collectCursorCommitAttribution = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
-  const dbPath = resolvePaths(storage).cursor.aiTrackingDb;
-  if (!(yield* storage.exists(dbPath).pipe(Effect.catchAll(() => Effect.succeed(false))))) return [];
+  const dbPath = yield* firstExisting(storage, ...resolvePathCandidates(storage).cursor.aiTrackingDb);
+  if (!dbPath) return [];
 
   return yield* Effect.acquireUseRelease(
     storage.openDatabase(dbPath),

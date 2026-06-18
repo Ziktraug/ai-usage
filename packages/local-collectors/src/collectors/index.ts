@@ -7,6 +7,9 @@ import { enrichCollectorRowsWithRtkSavings, stripCollectorMetadata, stripProject
 import { collectClaude } from './claude';
 import { collectCodex } from './codex';
 import { collectCursor } from './cursor';
+import type { CursorCsvOptions } from './cursor-csv';
+import { collectCursorCsvTurns } from './cursor-csv';
+import { reconcileCursorRows } from './cursor-reconcile';
 import { collectOpenCode } from './opencode';
 
 export interface HarnessAdapter {
@@ -18,6 +21,7 @@ export interface HarnessSelection {
   harness: HarnessKey | null;
   includeCursor: boolean;
   keepSource?: boolean;
+  cursorCsv?: Partial<CursorCsvOptions> & { maxSessionSpanMs?: number; reconcileWindowMs?: number };
 }
 
 export const HARNESS_ADAPTERS: Record<HarnessKey, HarnessAdapter> = {
@@ -35,7 +39,25 @@ export const selectedHarnessAdapters = (selection: HarnessSelection) => {
 export const collectSelectedHarnessRows = (selection: HarnessSelection) =>
   Effect.gen(function* () {
     const effects = selectedHarnessAdapters(selection).map((adapter) => adapter.collect);
-    const rows = (yield* Effect.all(effects, { concurrency: 'unbounded' })).flat();
+    let rows = (yield* Effect.all(effects, { concurrency: 'unbounded' })).flat();
+    const cursorCsv = selection.cursorCsv;
+    if (
+      selection.includeCursor &&
+      (!selection.harness || selection.harness === 'cursor') &&
+      (cursorCsv?.usageExportPaths?.length || cursorCsv?.usageExportDir)
+    ) {
+      const turns = yield* collectCursorCsvTurns({
+        usageExportPaths: cursorCsv.usageExportPaths ?? [],
+        ...(cursorCsv.usageExportDir ? { usageExportDir: cursorCsv.usageExportDir } : {}),
+        clusterGapMs: cursorCsv.clusterGapMs ?? 5 * 60_000,
+        ...(cursorCsv.user ? { user: cursorCsv.user } : {}),
+      });
+      rows = reconcileCursorRows(rows, turns, {
+        clusterGapMs: cursorCsv.clusterGapMs ?? 5 * 60_000,
+        maxSessionSpanMs: cursorCsv.maxSessionSpanMs ?? 60 * 60_000,
+        reconcileWindowMs: cursorCsv.reconcileWindowMs ?? 3 * 60_000,
+      });
+    }
     const enrichedRows = yield* enrichCollectorRowsWithRtkSavings(rows);
     return enrichedRows.map(selection.keepSource ? stripProjectPath : stripCollectorMetadata);
   });

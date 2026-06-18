@@ -3,7 +3,7 @@ import type { Row, UsageRowSource } from '@ai-usage/core/types';
 import { Effect } from 'effect';
 import type { LocalHistoryError } from './errors';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
-import { resolvePaths } from './platform-paths';
+import { firstExisting, resolvePathCandidates } from './platform-paths';
 
 export type CollectorRow = Row & {
   readonly projectPath?: string | null;
@@ -101,9 +101,8 @@ export const enrichCollectorRowsWithRtkSavings = (
   Effect.gen(function* () {
     if (!rows.length) return rows;
     const storage = yield* LocalHistoryStorage;
-    const paths = resolvePaths(storage);
-    const dbPath = paths.rtk.historyDb;
-    if (!(yield* storage.exists(dbPath).pipe(Effect.catchAll(() => Effect.succeed(false))))) return rows;
+    const dbPath = yield* firstExisting(storage, ...resolvePathCandidates(storage).rtk.historyDb);
+    if (!dbPath) return rows;
 
     const candidates = candidatesForRows(rows);
     if (!candidates.length) return rows;

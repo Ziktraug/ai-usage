@@ -17,10 +17,14 @@ export interface UsageRowInput {
   provider: string;
   name: string;
   model: string;
+  models?: string[];
   pricingModel?: string;
   project?: string | null;
   tokens: TokenCounts;
   cost: UsageCostInput;
+  costQuota?: number | null;
+  costApprox?: number;
+  costKnown?: boolean;
   calls: number;
   durationMs?: number | null;
   turns?: number;
@@ -30,6 +34,7 @@ export interface UsageRowInput {
   subagent?: boolean;
   partial?: boolean;
   usageUnavailable?: boolean;
+  ambiguous?: boolean;
 }
 
 export interface UsageRowLineDelta {
@@ -46,7 +51,7 @@ const costActual = (cost: UsageCostInput, costApprox: number) =>
 
 export const normalizeUsageRow = (input: UsageRowInput): Row => {
   const { rates, known } = priceFor(input.pricingModel ?? input.model);
-  const costApprox = approxCost(rates, input.tokens);
+  const costApprox = input.costApprox ?? approxCost(rates, input.tokens);
   const durationMs =
     input.durationMs ?? (input.date && input.endDate ? input.endDate.getTime() - input.date.getTime() : null);
 
@@ -57,14 +62,16 @@ export const normalizeUsageRow = (input: UsageRowInput): Row => {
     provider: input.provider,
     name: input.name,
     model: input.model,
+    ...(input.models === undefined ? {} : { models: input.models }),
     project: input.project ?? '',
     tokIn: input.tokens.in,
     tokOut: input.tokens.out,
     tokCr: input.tokens.cr,
     tokCw: input.tokens.cw,
     costActual: costActual(input.cost, costApprox),
+    ...(input.costQuota === undefined ? {} : { costQuota: input.costQuota }),
     costApprox,
-    costKnown: known,
+    costKnown: input.costKnown ?? known,
     calls: input.calls,
     durationMs,
     turns: input.turns ?? 0,
@@ -74,6 +81,7 @@ export const normalizeUsageRow = (input: UsageRowInput): Row => {
     ...(input.subagent === undefined ? {} : { subagent: input.subagent }),
     ...(input.partial === undefined ? {} : { partial: input.partial }),
     ...(input.usageUnavailable === undefined ? {} : { usageUnavailable: input.usageUnavailable }),
+    ...(input.ambiguous === undefined ? {} : { ambiguous: input.ambiguous }),
   };
 };
 
@@ -107,6 +115,7 @@ export const usageRowMarkers = (row: Row) => ({
   partial: row.partial ?? false,
   subagent: row.subagent ?? false,
   usageUnavailable: row.usageUnavailable ?? false,
+  ambiguous: row.ambiguous ?? false,
 });
 
 export const usageRowSessionLabel = (row: Row) => {
@@ -115,6 +124,7 @@ export const usageRowSessionLabel = (row: Row) => {
     row.name +
     (markers.partial ? ' ~' : '') +
     (markers.subagent ? ' ↳' : '') +
+    (markers.ambiguous ? ' ?' : '') +
     (markers.usageUnavailable ? ' (usage unavailable)' : '')
   );
 };

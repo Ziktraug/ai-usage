@@ -3,7 +3,7 @@ import type { Row } from '@ai-usage/core/types';
 import { actualCost, normalizeUsageRow } from '@ai-usage/core/usage-row';
 import { Effect } from 'effect';
 import { LocalHistoryStorage } from '../local-history';
-import { resolvePaths } from '../platform-paths';
+import { firstExisting, resolvePathCandidates } from '../platform-paths';
 import { withSource } from '../rtk-enrichment';
 import { safeJSON, usablePrompt } from '../text';
 
@@ -15,9 +15,8 @@ const USER_BUBBLE_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bub
 
 export const collectCursor = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
-  const paths = resolvePaths(storage);
-  const dbPath = paths.cursor.stateVscdb;
-  if (!(yield* storage.exists(dbPath).pipe(Effect.catchAll(() => Effect.succeed(false))))) return [];
+  const dbPath = yield* firstExisting(storage, ...resolvePathCandidates(storage).cursor.stateVscdb);
+  if (!dbPath) return [];
 
   const comp = new Map<string, { name: string; model: string; created: number; add: number; del: number }>();
   const agg = new Map<string, { in: number; out: number; cr: number; cw: number; calls: number }>();

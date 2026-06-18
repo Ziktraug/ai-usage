@@ -18,6 +18,7 @@ const renderReportNotes = () => {
   const notes = [
     ...reportHarnessNotes(),
     '↳ = contains sub-agents.',
+    '? = Cursor CSV reconciliation was ambiguous; totals are best-effort.',
     'usage unavailable = session found in prompt history, but detailed local token counters are missing.',
     `Tracked lines: ${lineHarnesses} only (${nonLineHarnesses} expose none locally).`,
     'RTK = saved-token percentage from RTK commands matched by project path and session time window.',
@@ -42,10 +43,16 @@ export const renderUsageReport = (rows: Row[], args: Args, facets?: Record<strin
 
   if (args.format === 'json') return JSON.stringify(report.rows, null, 2);
   if (args.format === 'csv') return renderCSV(report.rows);
-  if (args.format === 'html') return renderReportAppHTML(createUsageReportPayload(report, args, new Date(), facets));
+  if (args.format === 'html') return renderTerminalReport(report, args);
   if (args.format === 'payload') return JSON.stringify(createUsageReportPayload(report, args, new Date(), facets));
 
   return renderTerminalReport(report, args);
+};
+
+export const renderUsageReportForCli = async (rows: Row[], args: Args, facets?: Record<string, unknown>) => {
+  const report = prepareUsageReport(rows, args);
+  if (args.format === 'html') return renderReportAppHTML(createUsageReportPayload(report, args, new Date(), facets));
+  return renderUsageReport(rows, args, facets);
 };
 
 export { prepareUsageReport };
