@@ -65,7 +65,7 @@ import {
   cursorCommitAttributionFacet,
 } from './report-data';
 import { fetchReportPayload, isDemoReportPayload, readReportPayload } from './report-runtime';
-import { columnDiffFromVisibility, columnVisibilityFromDiff, sortFromSortingState } from './session-columns';
+import { columnDiffFromVisibility, columnVisibilityFromDiff, sortFromSortingState } from './session-table-schema';
 import { SessionDrawer } from './session-drawer';
 import { SessionTable } from './session-table';
 import {
