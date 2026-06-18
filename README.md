@@ -212,10 +212,18 @@ Merged CSV/JSON/HTML payloads include row provenance (`source.machineLabel`, `so
 
 ## Project layout
 
-- `packages/usage-core` (`@ai-usage/core`): shared row types, pricing, normalization, report preparation, project aliases, and analytics
-- `packages/local-collectors`: Effect-based local filesystem/SQLite collectors for Claude, Codex, OpenCode, and Cursor, plus RTK savings enrichment, machine identity, and user config
-- `apps/cli`: terminal CLI, `quota` command, and table/CSV/JSON/HTML renderers
-- `apps/report`: Solid + TanStack Router + TanStack Table + Panda CSS + Ark UI report app, built as a single HTML file through Vite
+- `packages/usage-core` (`@ai-usage/core`): pure row types, pricing, normalization, analytics, report payloads, snapshots, and HTML inlining primitives
+- `packages/local-collectors` (`@ai-usage/local-collectors`): Effect-based local history collectors for Claude, Codex, OpenCode, Cursor, RTK enrichment, machine identity, and user config
+- `packages/reporting` (`@ai-usage/reporting`): report orchestration seam over core plus local collectors
+- `packages/design-system` (`@ai-usage/design-system`): Panda/Solid primitives, report style slots, and generated Panda consumer exports
+- `apps/cli`: terminal CLI, quota/setup/serve commands, and table/CSV/JSON/HTML output adapters
+- `apps/report`: Solid + TanStack Start/Router/Table + Panda CSS report app and browser export adapters
+
+Architecture docs:
+
+- `docs/architecture.md`: package ownership, data flow, adapter rules, and guardrails
+- `docs/public-package-interfaces.md`: public package exports and import rules
+- `docs/generated-tooling-ownership.md`: Panda/TanStack/Nitro/Turbo generated file ownership
 
 ## Development
 
@@ -228,7 +236,7 @@ bun run check
 Lint:
 
 ```sh
-bunx biome check .
+bun run lint
 ```
 
 Format:
