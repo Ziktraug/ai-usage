@@ -6,7 +6,7 @@ import { parseUsageSnapshot } from '@ai-usage/core/snapshot';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import {
-  collectLocalReportRows,
+  collectLocalReportRowsWithWarnings,
   createLocalReportPayload,
   createLocalUsageSnapshot,
   createMergedUsageReport,
@@ -80,7 +80,11 @@ export const app = Effect.gen(function* () {
       includeCursor: command.args.cursor,
       options: command.args,
     });
-    const output = yield* Effect.promise(() => renderUsageReportForCli(merged.rows, command.args));
+    const output = yield* Effect.promise(() =>
+      command.args.format === 'html' || command.args.format === 'payload'
+        ? renderUsagePayloadForCli(merged.payload, command.args)
+        : renderUsageReportForCli(merged.rows, command.args, undefined, merged.payload.warnings),
+    );
     yield* writeStdout(`${output}\n`);
     return;
   }
@@ -137,8 +141,8 @@ export const app = Effect.gen(function* () {
           return yield* Effect.promise(() => renderUsagePayloadForCli(payload, command.args));
         })
       : yield* Effect.gen(function* () {
-          const rows = yield* collectLocalReportRows(reportRequest);
-          return yield* Effect.promise(() => renderUsageReportForCli(rows, command.args));
+          const { rows, warnings } = yield* collectLocalReportRowsWithWarnings(reportRequest);
+          return yield* Effect.promise(() => renderUsageReportForCli(rows, command.args, undefined, warnings));
         });
   yield* writeStdout(`${output}\n`);
 });

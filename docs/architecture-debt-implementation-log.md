@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 9 implementee et verifiee
-- Slice en cours: commit Slice 9
-- Dernier commit de suivi: `cbab52b refactor(core): make row provenance explicit`
+- Statut actuel: Slice 10 implementee et verifiee
+- Slice en cours: commit Slice 10
+- Dernier commit de suivi: `70915cd refactor(collectors): report local history warnings`
 
 ## Decisions Transverses
 
@@ -379,6 +379,54 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
+- `70915cd refactor(collectors): report local history warnings`
+
+### Slice 10: Payload Warnings UI
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: rendre les echecs partiels visibles dans le payload, le CLI et le dashboard.
+
+Travail fait:
+- Ajout de `UsageReportWarning` et du champ optionnel `warnings` dans `UsageReportPayload`.
+- `createUsageReportPayload` accepte des warnings optionnels sans changer la forme des payloads sans warning.
+- `createLocalReportPayload` passe par `collectLocalReportRowsWithWarnings` et injecte les warnings dans le payload.
+- `createMergedUsageReport` convertit les warnings de merge snapshot en warnings de payload pour export HTML/payload.
+- CLI: les rapports terminal affichent un bloc `Warnings:`; payload/html transportent les warnings.
+- CLI merge: les sorties `--html` et `--payload-json` utilisent maintenant `merged.payload`, pour conserver les warnings du merge dans l'export.
+- Report UI: ajout de `ReportWarnings`, un panneau discret avec liste semantique, rendu au-dessus des metrics quand `payload.warnings` est non vide.
+- Ajout de tests CLI pour payload warnings et affichage terminal.
+
+Difficultes:
+- `exactOptionalPropertyTypes` impose de typer explicitement les props UI qui peuvent recevoir `undefined`.
+- Le panneau UI utilise une section avec titre et liste, sans live region assertive, car ces warnings ne sont pas des interruptions critiques.
+
+Decisions:
+- Ne pas afficher les warnings dans CSV ou rows JSON; le format payload est le format structurel complet.
+- Les payloads sans warning restent inchanges: le champ `warnings` est omis s'il est vide.
+- Le panneau UI reste dans `apps/report`, pas dans le design-system, car il est specifique au domaine local history.
+
+Fichiers touches:
+- `packages/usage-core/src/report-data.ts`
+- `packages/reporting/src/index.ts`
+- `apps/cli/src/main.ts`
+- `apps/cli/src/report.ts`
+- `apps/cli/src/report.test.ts`
+- `apps/report/src/Dashboard.tsx`
+- `apps/report/src/report-warnings.tsx`
+- `docs/architecture-debt-implementation-log.md`
+
+Checks:
+- `bun run --cwd packages/usage-core check`: passe.
+- `bun run --cwd packages/reporting check`: passe.
+- `bun run --cwd apps/cli check`: passe.
+- `bun run --cwd apps/report check`: passe.
+- `bun run --cwd apps/cli test`: passe.
+- `bun run --cwd apps/report test`: passe.
+- `bun run --cwd packages/reporting test`: passe.
+- `bun run check`: passe.
+
+Commit:
 - Non committe.
 
 ## Journal Chronologique
@@ -411,3 +459,6 @@ Commit:
 - Commit Slice 8: `cbab52b refactor(core): make row provenance explicit`.
 - Pick Slice 9: ajouter warnings structures pour local history et garder l'API flat compatible.
 - Verifie Slice 9 avec `bun run --cwd packages/local-collectors check`, `bun run --cwd packages/reporting check`, `bun run --cwd packages/local-collectors test`, `bun run --cwd packages/reporting test`, `bun run check`.
+- Commit Slice 9: `70915cd refactor(collectors): report local history warnings`.
+- Pick Slice 10: exposer les warnings dans payload, CLI et dashboard.
+- Verifie Slice 10 avec `bun run --cwd packages/usage-core check`, `bun run --cwd packages/reporting check`, `bun run --cwd apps/cli check`, `bun run --cwd apps/report check`, `bun run --cwd apps/cli test`, `bun run --cwd apps/report test`, `bun run --cwd packages/reporting test`, `bun run check`.

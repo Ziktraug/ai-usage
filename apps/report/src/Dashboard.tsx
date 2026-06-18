@@ -60,6 +60,7 @@ import { GroupPanel } from './group-panel';
 import { Overview } from './Overview';
 import { ProjectSummary } from './project-summary';
 import { RefreshStatus } from './refresh-status';
+import { ReportWarnings } from './report-warnings';
 import {
   cursorCommitAttributionFacet,
   fetchReportPayload,
@@ -554,6 +555,8 @@ export const Dashboard = (props: {
               </For>
             </div>
           </div>
+
+          <ReportWarnings warnings={payload().warnings} />
 
           <div class={metricGrid}>
             <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>
