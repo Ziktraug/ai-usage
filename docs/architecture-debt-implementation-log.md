@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 17 committe
-- Slice en cours: choisir Slice 18
-- Dernier commit de suivi: `a09c6c5 chore(workspace): document generated tooling ownership`
+- Statut actuel: Slice 18 implementee et verifiee
+- Slice en cours: commit Slice 18
+- Dernier commit de suivi: `cdfc606 docs: record slice 17 commit`
 
 ## Decisions Transverses
 
@@ -703,6 +703,41 @@ Checks:
 Commit:
 - `a09c6c5 chore(workspace): document generated tooling ownership`
 
+### Slice 18: Documentation Architecture
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: rendre l'architecture actuelle navigable par humains et agents IA.
+
+Travail fait:
+- Ajout de `docs/architecture.md` avec data flow, package ownership, adapter rules et guardrails.
+- Mise a jour de `CONTEXT.md` avec `Collected session`, `Report payload` et `Usage snapshot`.
+- Mise a jour du `README.md` pour detailler les packages, les adapters et pointer vers les docs architecture.
+- Mise a jour du vieux `docs/report-data-architecture-refactor-log.md` avec le bilan de la passe architecture et les follow-ups.
+- Conservation des docs Slice 16/17 (`public-package-interfaces.md`, `generated-tooling-ownership.md`) comme references specialisees.
+
+Difficultes:
+- Le plan initial mentionnait `Snapshot`; la doc canonique utilise `Usage snapshot` pour eviter la confusion avec `Quota snapshot`.
+- Le payload global reste volontairement documente comme compat/export HTML, pas comme dette a supprimer immediatement.
+
+Decisions:
+- Creer `docs/architecture.md` plutot que disperser la carte d'architecture entre README et logs.
+- Ne pas modifier de code dans cette slice; docs only.
+- Garder les follow-ups fins dans le refactor log au lieu de rouvrir le plan d'implementation termine.
+
+Fichiers touches:
+- `CONTEXT.md`
+- `README.md`
+- `docs/architecture.md`
+- `docs/report-data-architecture-refactor-log.md`
+- `docs/architecture-debt-implementation-log.md`
+
+Checks:
+- Docs only; pas de test requis.
+
+Commit:
+- Non committe.
+
 ## Journal Chronologique
 
 ### 2026-06-18
@@ -762,3 +797,6 @@ Commit:
 - Pick Slice 17: expliciter ownership des fichiers generes Panda/TanStack/Nitro/Turbo.
 - Verifie Slice 17 avec `bun run lint`, `bun run check`.
 - Commit Slice 17: `a09c6c5 chore(workspace): document generated tooling ownership`.
+- Commit Slice 17 log correction: `cdfc606 docs: record slice 17 commit`.
+- Pick Slice 18: documenter l'architecture finale et les follow-ups.
+- Verifie Slice 18: docs only, pas de test requis.
