@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 13 implementee et verifiee
-- Slice en cours: commit Slice 13
-- Dernier commit de suivi: `d3e60df refactor(report): share html export inliner`
+- Statut actuel: Slice 13 committe
+- Slice en cours: choisir Slice 14
+- Dernier commit de suivi: `8526d4e refactor(report): add session table schema`
 
 ## Decisions Transverses
 
@@ -290,7 +290,7 @@ Commit:
 
 ### Slice 8: Provenance First-Class
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: supprimer les casts `Partial<SourcedRow>` et rendre la provenance explicite dans les types.
 
@@ -336,7 +336,7 @@ Commit:
 
 ### Slice 9: Local History Warnings
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: distinguer absence normale de local history et echecs partiels silencieux.
 
@@ -383,7 +383,7 @@ Commit:
 
 ### Slice 10: Payload Warnings UI
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: rendre les echecs partiels visibles dans le payload, le CLI et le dashboard.
 
@@ -431,7 +431,7 @@ Commit:
 
 ### Slice 11: Report Runtime Module
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: centraliser SSR, payload injecte, refresh, demo fallback et export runtime.
 
@@ -471,7 +471,7 @@ Commit:
 
 ### Slice 12: HTML Export Adapter Unique
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: reduire la duplication asset inlining et payload injection entre export CLI et export browser.
 
@@ -511,7 +511,7 @@ Commit:
 
 ### Slice 13: Table Schema Module
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: creer une source de verite pour les colonnes de session, le tri, la visibilite URL et le CSV report.
 
@@ -549,7 +549,7 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
-- Non committe.
+- `8526d4e refactor(report): add session table schema`
 
 ## Journal Chronologique
 
@@ -593,3 +593,4 @@ Commit:
 - Commit Slice 12: `d3e60df refactor(report): share html export inliner`.
 - Pick Slice 13: extraire le schema table session pour ids, visibility URL, sort et CSV.
 - Verifie Slice 13 avec `bun run --cwd apps/report check`, `bun run --cwd apps/report test`, `bun run check`.
+- Commit Slice 13: `8526d4e refactor(report): add session table schema`.
