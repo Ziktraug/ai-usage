@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 4 + Slice 5 implementees et verifiees
-- Slice en cours: commit Slice 4 + Slice 5
-- Dernier commit de suivi: `c062524 chore(design-system): clarify public exports`
+- Statut actuel: Slice 6 implementee et verifiee
+- Slice en cours: commit Slice 6
+- Dernier commit de suivi: `398dd7e refactor(reporting): own snapshots and project sources`
 
 ## Decisions Transverses
 
@@ -141,7 +141,7 @@ Commit:
 
 ### Slice 4: Reporting Module Canonique
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: faire de `packages/reporting` le Module profond pour snapshots, merge et project sources.
 
@@ -179,11 +179,11 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
-- Non committe.
+- `398dd7e refactor(reporting): own snapshots and project sources`
 
 ### Slice 5: Contract Tests Reporting
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: securiser le seam reporting avant les refactors plus profonds.
 
@@ -208,6 +208,45 @@ Checks:
 - `bun run --cwd packages/reporting check`: passe.
 
 Commit:
+- `398dd7e refactor(reporting): own snapshots and project sources`
+
+### Slice 6: Introduire CollectedSession
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: creer un seam explicite `Local history -> Session -> Usage row` et migrer Codex en premier.
+
+Travail fait:
+- Ajout de `CollectedSession`, `CollectedSessionSource` et `sessionToUsageRow` dans `packages/local-collectors/src/collected-session.ts`.
+- Export du nouveau seam depuis `packages/local-collectors/src/index.ts`.
+- Migration de `readCodexUsageSessions` pour retourner des `CollectedSession` au lieu de `CodexUsageSession` specifique Codex.
+- Migration de `collectCodex` vers `readCodexUsageSessions.map(sessionToUsageRow)`.
+- Mise a jour du test Codex pour verifier provider, project, projectPath, source et markers au niveau session et row.
+
+Difficultes:
+- Les markers explicites `false` doivent rester portes par le seam; le mapper conserve les champs optionnels definis, y compris `false`.
+- Le parent Codex avec child sessions devient `subagent: true` des le niveau `CollectedSession`, comme le row final le faisait deja.
+
+Decisions:
+- Le seam vit dans `packages/local-collectors`, pas dans `usage-core`, car il represente la sortie normalisee des collecteurs locaux avant Usage row.
+- `sessionToUsageRow` reste le seul endroit Codex-independant qui appelle `normalizeUsageRow` pour ce seam.
+- Codex conserve `project: base(cwd)` et `projectPath: cwd` separement.
+
+Fichiers touches:
+- `packages/local-collectors/src/collected-session.ts`
+- `packages/local-collectors/src/index.ts`
+- `packages/local-collectors/src/codex-history.ts`
+- `packages/local-collectors/src/collectors/codex.ts`
+- `packages/local-collectors/src/codex-history.test.ts`
+- `docs/architecture-debt-implementation-log.md`
+
+Checks:
+- `bun test packages/local-collectors/src/codex-history.test.ts`: passe.
+- `bun run --cwd packages/local-collectors check`: passe.
+- `bun run --cwd packages/local-collectors test`: passe.
+- `bun run check`: passe.
+
+Commit:
 - Non committe.
 
 ## Journal Chronologique
@@ -227,3 +266,7 @@ Commit:
 - Implemente APIs reporting: `createLocalUsageSnapshot`, `createMergedUsageReport`, `listProjectSources`.
 - Migre CLI `main`, `serve`, `setup` vers reporting pour les chemins local history concernes.
 - Verifie Slice 4 + Slice 5 avec `bun run --cwd packages/reporting test`, `bun run --cwd packages/reporting check`, `bun run --cwd apps/cli test`, `bun run --cwd apps/cli check`, `bun run check`.
+- Commit Slice 4 + Slice 5: `398dd7e refactor(reporting): own snapshots and project sources`.
+- Pick Slice 6: introduire `CollectedSession` et migrer Codex en premier.
+- Implemente `CollectedSession` + `sessionToUsageRow`, puis migre Codex vers ce mapper.
+- Verifie Slice 6 avec `bun test packages/local-collectors/src/codex-history.test.ts`, `bun run --cwd packages/local-collectors test`, `bun run --cwd packages/local-collectors check`, `bun run check`.
