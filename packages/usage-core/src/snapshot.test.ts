@@ -62,4 +62,22 @@ describe('usage snapshots', () => {
     expect(merged.duplicatesDropped).toBe(1);
     expect(merged.warnings).toHaveLength(1);
   });
+
+  test('serializes and merges report warnings', () => {
+    const snapshot = createUsageSnapshot({
+      machine,
+      rows: [row('a', 'session-1')],
+      warnings: [{ harness: 'opencode', operation: 'sqlite.all', message: 'Failed to read OpenCode history' }],
+    });
+
+    const parsed = parseUsageSnapshot(JSON.stringify(snapshot));
+    const merged = mergeUsageSnapshots([parsed]);
+
+    expect(parsed.warnings?.[0]?.message).toBe('Failed to read OpenCode history');
+    expect(merged.warnings[0]).toMatchObject({
+      harness: 'opencode',
+      operation: 'sqlite.all',
+      message: 'Failed to read OpenCode history',
+    });
+  });
 });

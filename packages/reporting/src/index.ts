@@ -88,6 +88,11 @@ export interface ProjectSource {
   tokens: number;
 }
 
+export interface ProjectSourcesResult {
+  sources: ProjectSource[];
+  warnings: SnapshotMergeWarning[];
+}
+
 export interface ProjectSourcesRequest extends LocalUsageSelection {
   snapshots: UsageSnapshot[];
   includeLocal?: boolean;
@@ -196,7 +201,7 @@ export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
 export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
   Effect.gen(function* () {
     const machine = request.machine ?? (yield* ensureMachineConfig);
-    const { rows } = yield* collectConfiguredLocalRows({ ...request, keepSource: true });
+    const { collection } = yield* collectConfiguredLocalRowsWithWarnings({ ...request, keepSource: true });
     const facets = request.includeFacets
       ? yield* collectHarnessFacets({
           includeCursor: request.includeCursor && (!request.harness || request.harness === 'cursor'),
@@ -205,9 +210,10 @@ export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
 
     return createUsageSnapshot({
       machine,
-      rows,
+      rows: collection.rows,
       ...(request.generatedAt !== undefined ? { generatedAt: request.generatedAt } : {}),
       ...(request.appVersion !== undefined ? { appVersion: request.appVersion } : {}),
+      ...(collection.warnings.length ? { warnings: collection.warnings } : {}),
       ...(facets !== undefined ? { facets } : {}),
     });
   });
@@ -223,9 +229,9 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
     const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
     const rows = applyProjectAliases(merged.rows, config.projectAliases ?? []);
     const report = prepareUsageReport(rows, request.options);
-    const payloadWarnings = merged.warnings.map((warning) => ({
-      operation: 'mergeUsageSnapshots',
-      message: warning.key ? `${warning.message}: ${warning.key}` : warning.message,
+    const payloadWarnings = merged.warnings.map(({ key, ...warning }) => ({
+      ...warning,
+      message: key ? `${warning.message}: ${key}` : warning.message,
     }));
 
     return {
@@ -306,15 +312,26 @@ const enrichGitRemotes = (sources: ProjectSource[]) => {
   }
 };
 
-export const listProjectSources = (request: ProjectSourcesRequest) =>
+export const listProjectSourcesWithWarnings = (request: ProjectSourcesRequest): Effect.Effect<
+  ProjectSourcesResult,
+  LocalHistoryError,
+  import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
+> =>
   Effect.gen(function* () {
     const snapshots = [...request.snapshots];
     if (request.includeLocal) {
       snapshots.push(yield* createLocalUsageSnapshot(toLocalUsageSnapshotRequest(request)));
     }
 
-    return collectProjectSources(mergeUsageSnapshots(snapshots).rows, request.includeGitRemote ?? false);
+    const merged = mergeUsageSnapshots(snapshots);
+    return {
+      sources: collectProjectSources(merged.rows, request.includeGitRemote ?? false),
+      warnings: merged.warnings,
+    };
   });
+
+export const listProjectSources = (request: ProjectSourcesRequest) =>
+  listProjectSourcesWithWarnings(request).pipe(Effect.map((result) => result.sources));
 
 export const runLocalReportPayload = (request: LocalReportPayloadRequest): Promise<UsageReportPayload> =>
   Effect.runPromise(createLocalReportPayload(request).pipe(Effect.provide(LocalHistoryStorageLive)));

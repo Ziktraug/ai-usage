@@ -34,7 +34,7 @@ const renderReportNotes = () => {
   return clr.dim(`\nNotes: ${notes.join(' ')}`);
 };
 
-const renderWarnings = (warnings: UsageReportWarning[] = []) => {
+export const renderWarnings = (warnings: UsageReportWarning[] = []) => {
   if (!warnings.length) return '';
   const lines = warnings.map((warning) => {
     const prefix = warning.harness ? `${warning.harness}: ` : '';
@@ -42,6 +42,9 @@ const renderWarnings = (warnings: UsageReportWarning[] = []) => {
   });
   return `\n${clr.yellowB('Warnings:')}\n${clr.yellow(lines.join('\n'))}`;
 };
+
+export const renderWarningsForStderr = (args: Args, warnings: UsageReportWarning[] = []) =>
+  args.format === 'json' || args.format === 'csv' ? renderWarnings(warnings) : '';
 
 const renderTerminalReport = (report: PreparedUsageReport, args: Args, warnings: UsageReportWarning[] = []) => {
   const output = [renderTable(report.tableRows, args.wide)];

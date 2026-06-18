@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { UsageReportWarning } from '@ai-usage/core/report-data';
 import { parseUsageSnapshot } from '@ai-usage/core/snapshot';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
@@ -10,16 +11,16 @@ import {
   createLocalReportPayload,
   createLocalUsageSnapshot,
   createMergedUsageReport,
-  listProjectSources,
+  listProjectSourcesWithWarnings,
   type ProjectSource,
 } from '@ai-usage/reporting';
 import { Console, Effect, Layer } from 'effect';
-import { helpText, parseCommand } from './cli';
+import { type Args, helpText, parseCommand } from './cli';
 import { CliArgumentError, formatAppError } from './errors';
 import { renderQuota } from './quota';
 import { setColor } from './render/colors';
 import { fmtNum, pad, trunc } from './render/format';
-import { renderUsagePayloadForCli, renderUsageReportForCli } from './report';
+import { renderUsagePayloadForCli, renderUsageReportForCli, renderWarnings, renderWarningsForStderr } from './report';
 import { CliRuntime, CliRuntimeLive } from './runtime';
 import { runServe } from './serve';
 import { runSetupServer } from './setup';
@@ -60,6 +61,7 @@ export const app = Effect.gen(function* () {
       includeFacets: true,
     });
     yield* writeFile(command.args.out, `${JSON.stringify(snapshot, null, 2)}\n`);
+    yield* writeWarningsStderr(snapshot.warnings);
     yield* Console.log(`Wrote ${command.args.out}`);
     return;
   }
@@ -85,6 +87,7 @@ export const app = Effect.gen(function* () {
         ? renderUsagePayloadForCli(merged.payload, command.args)
         : renderUsageReportForCli(merged.rows, command.args, undefined, merged.payload.warnings),
     );
+    yield* writeFormatWarningsStderr(command.args, merged.payload.warnings);
     yield* writeStdout(`${output}\n`);
     return;
   }
@@ -94,12 +97,13 @@ export const app = Effect.gen(function* () {
     for (const file of command.args.files) {
       snapshots.push(yield* readSnapshotFile(file));
     }
-    const sources = yield* listProjectSources({
+    const { sources, warnings } = yield* listProjectSourcesWithWarnings({
       snapshots,
       includeLocal: command.args.local,
       harness: null,
       includeCursor: true,
     });
+    yield* writeWarningsStderr(warnings);
     yield* writeStdout(`${renderProjectSources(sources)}\n`);
     return;
   }
@@ -142,6 +146,7 @@ export const app = Effect.gen(function* () {
         })
       : yield* Effect.gen(function* () {
           const { rows, warnings } = yield* collectLocalReportRowsWithWarnings(reportRequest);
+          yield* writeFormatWarningsStderr(command.args, warnings);
           return yield* Effect.promise(() => renderUsageReportForCli(rows, command.args, undefined, warnings));
         });
   yield* writeStdout(`${output}\n`);
@@ -170,6 +175,21 @@ const writeStdout = (text: string) =>
   Effect.async<void>((resume) => {
     process.stdout.write(text, () => resume(Effect.void));
   });
+
+const writeStderr = (text: string) =>
+  Effect.async<void>((resume) => {
+    process.stderr.write(text, () => resume(Effect.void));
+  });
+
+const writeWarningsStderr = (warnings: UsageReportWarning[] | undefined) => {
+  const output = renderWarnings(warnings);
+  return output ? writeStderr(`${output}\n`) : Effect.void;
+};
+
+const writeFormatWarningsStderr = (args: Args, warnings: UsageReportWarning[] | undefined) => {
+  const output = renderWarningsForStderr(args, warnings);
+  return output ? writeStderr(`${output}\n`) : Effect.void;
+};
 
 const fileError = (operation: string, filePath: string) => (cause: unknown) =>
   new CliArgumentError({

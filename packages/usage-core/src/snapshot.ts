@@ -1,5 +1,5 @@
 import os from 'node:os';
-import { type SerializedUsageRow, serializeUsageRow } from './report-data';
+import { type SerializedUsageRow, serializeUsageRow, type UsageReportWarning } from './report-data';
 import type { CollectedUsageRow, UsageRow, UsageRowSource, UsageRowWithOptionalSource } from './types';
 import { usageRowActiveDate, usageRowTokenTotal } from './usage-row';
 
@@ -30,10 +30,11 @@ export interface UsageSnapshot {
   machine: UsageMachine;
   source: UsageSnapshotSource;
   rows: SnapshotUsageRow[];
+  warnings?: UsageReportWarning[];
   facets?: Record<string, unknown>;
 }
 
-export interface SnapshotMergeWarning {
+export interface SnapshotMergeWarning extends UsageReportWarning {
   message: string;
   key?: string;
 }
@@ -60,6 +61,7 @@ export const createUsageSnapshot = (input: {
   rows: UsageRowWithOptionalSource[];
   generatedAt?: Date;
   appVersion?: string | null;
+  warnings?: UsageReportWarning[];
   facets?: Record<string, unknown>;
 }): UsageSnapshot => {
   const generatedAt = input.generatedAt ?? new Date();
@@ -74,6 +76,7 @@ export const createUsageSnapshot = (input: {
       hostname: os.hostname(),
     },
     rows: input.rows.map((row) => toSnapshotRow(row, input.machine)),
+    ...(input.warnings?.length ? { warnings: input.warnings } : {}),
     ...(input.facets && Object.keys(input.facets).length ? { facets: input.facets } : {}),
   };
 };
@@ -105,6 +108,9 @@ export const parseUsageSnapshot = (text: string): UsageSnapshot => {
   for (const row of record.rows) {
     if (!isSnapshotRow(row)) throw new Error('Snapshot contains invalid row');
   }
+  if (record.warnings !== undefined && !isUsageReportWarnings(record.warnings)) {
+    throw new Error('Snapshot contains invalid warnings');
+  }
   return value as UsageSnapshot;
 };
 
@@ -126,12 +132,29 @@ const isSnapshotRow = (value: unknown): value is SnapshotUsageRow => {
   return typeof sourceRecord.machineId === 'string' && typeof sourceRecord.machineLabel === 'string';
 };
 
+const optionalString = (value: unknown) => value === undefined || typeof value === 'string';
+
+const isUsageReportWarnings = (value: unknown): value is UsageReportWarning[] =>
+  Array.isArray(value) &&
+  value.every((warning) => {
+    if (typeof warning !== 'object' || warning === null || Array.isArray(warning)) return false;
+    const record = warning as Record<string, unknown>;
+    return (
+      typeof record.message === 'string' &&
+      optionalString(record.harness) &&
+      optionalString(record.operation) &&
+      optionalString(record.path) &&
+      optionalString(record.sql)
+    );
+  });
+
 export const mergeUsageSnapshots = (snapshots: UsageSnapshot[]): SnapshotMergeResult => {
   const byKey = new Map<string, { snapshot: UsageSnapshot; row: SnapshotUsageRow }>();
   const warnings: SnapshotMergeWarning[] = [];
   let duplicatesDropped = 0;
 
   for (const snapshot of snapshots) {
+    if (snapshot.warnings?.length) warnings.push(...snapshot.warnings);
     for (const row of snapshot.rows) {
       const key = dedupeKey(row);
       const existing = byKey.get(key);
@@ -142,7 +165,7 @@ export const mergeUsageSnapshots = (snapshots: UsageSnapshot[]): SnapshotMergeRe
 
       duplicatesDropped++;
       if (JSON.stringify(existing.row) !== JSON.stringify(row)) {
-        warnings.push({ message: 'Duplicate source row differs; kept newest snapshot row', key });
+        warnings.push({ operation: 'mergeUsageSnapshots', message: 'Duplicate source row differs; kept newest snapshot row', key });
       }
       if (new Date(snapshot.generatedAt).getTime() >= new Date(existing.snapshot.generatedAt).getTime()) {
         byKey.set(key, { snapshot, row });

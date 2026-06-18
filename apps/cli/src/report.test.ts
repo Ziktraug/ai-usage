@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { Row } from '@ai-usage/core/types';
 import type { Args } from './cli';
-import { prepareUsageReport, renderUsageReport } from './report';
+import { prepareUsageReport, renderUsageReport, renderWarningsForStderr } from './report';
 
 const args = (overrides: Partial<Args> = {}): Args => ({
   since: null,
@@ -141,5 +141,16 @@ describe('Usage row report lifecycle', () => {
 
     expect(output).toContain('Warnings:');
     expect(output).toContain('cursor: Failed to import Cursor CSV usage export');
+  });
+
+  test('json and csv warnings use stderr side channel', () => {
+    const warnings = [{ harness: 'opencode', operation: 'sqlite.all', message: 'Failed to read OpenCode history' }];
+    const jsonOutput = renderUsageReport([row('a')], args({ format: 'json' }), undefined, warnings);
+
+    expect(JSON.parse(jsonOutput)).toHaveLength(1);
+    expect(jsonOutput).not.toContain('Warnings:');
+    expect(renderWarningsForStderr(args({ format: 'json' }), warnings)).toContain('opencode: Failed to read');
+    expect(renderWarningsForStderr(args({ format: 'csv' }), warnings)).toContain('opencode: Failed to read');
+    expect(renderWarningsForStderr(args(), warnings)).toBe('');
   });
 });

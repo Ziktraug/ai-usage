@@ -7,7 +7,13 @@ import type { SourcedRow } from '@ai-usage/core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/core/usage-row';
 import { LocalHistoryStorage, createLocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import { Effect } from 'effect';
-import { createLocalReportPayload, createLocalUsageSnapshot, createMergedUsageReport, listProjectSources } from './index';
+import {
+  createLocalReportPayload,
+  createLocalUsageSnapshot,
+  createMergedUsageReport,
+  listProjectSources,
+  listProjectSourcesWithWarnings,
+} from './index';
 
 const defaultOptions = {
   since: null,
@@ -41,6 +47,12 @@ const writeClaudeSession = (home: string, projectPath = '/work/raw') => {
       },
     })}\n`,
   );
+};
+
+const writeInvalidOpenCodeDb = (home: string) => {
+  const dbPath = path.join(home, '.local/share/opencode/opencode.db');
+  mkdirSync(path.dirname(dbPath), { recursive: true });
+  writeFileSync(dbPath, 'not a sqlite database');
 };
 
 const makeSourcedRow = (input: {
@@ -150,6 +162,54 @@ describe('shared reporting', () => {
       expect(snapshot.rows).toHaveLength(1);
       expect(snapshot.rows[0]?.source.machineId).toBe('machine-1');
       expect(snapshot.rows[0]?.source.machineLabel).toBe('Test Machine');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('carries local collection warnings through snapshots, merge reports, and project sources', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-warning-'));
+    try {
+      writeInvalidOpenCodeDb(home);
+
+      const storage = createLocalHistoryStorage(home);
+      const snapshot = await Effect.runPromise(
+        createLocalUsageSnapshot({
+          harness: 'opencode',
+          includeCursor: false,
+          machine: testMachine,
+          generatedAt: new Date('2026-01-02T00:00:00.000Z'),
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      const merged = await Effect.runPromise(
+        createMergedUsageReport({
+          snapshots: [],
+          includeLocal: true,
+          harness: 'opencode',
+          includeCursor: false,
+          machine: testMachine,
+          options: defaultOptions,
+          generatedAt: new Date('2026-01-03T00:00:00.000Z'),
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      const projectSources = await Effect.runPromise(
+        listProjectSourcesWithWarnings({
+          snapshots: [],
+          includeLocal: true,
+          harness: 'opencode',
+          includeCursor: false,
+          machine: testMachine,
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(snapshot.rows).toHaveLength(0);
+      expect(snapshot.warnings?.[0]?.harness).toBe('opencode');
+      expect(snapshot.warnings?.[0]?.message).toContain('Failed to read OpenCode live database');
+      expect(merged.payload.warnings?.[0]?.harness).toBe('opencode');
+      expect(merged.payload.warnings?.[0]?.message).toContain('Failed to read OpenCode live database');
+      expect(projectSources.sources).toHaveLength(0);
+      expect(projectSources.warnings[0]?.harness).toBe('opencode');
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
