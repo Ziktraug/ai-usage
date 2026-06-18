@@ -178,6 +178,8 @@ export const timeSliderRangeDrag = css({
 });
 
 export const timeSliderThumb = css({
+  appearance: 'none',
+  pointerEvents: 'none',
   top: '32px',
   zIndex: 4,
   w: '32px',
@@ -186,6 +188,32 @@ export const timeSliderThumb = css({
   borderRadius: 'full',
   bg: 'transparent',
   cursor: 'ew-resize',
+  '&::-webkit-slider-runnable-track': {
+    appearance: 'none',
+    bg: 'transparent',
+    border: '0',
+  },
+  '&::-webkit-slider-thumb': {
+    appearance: 'none',
+    pointerEvents: 'auto',
+    w: '32px',
+    h: '64px',
+    border: '0',
+    bg: 'transparent',
+    cursor: 'ew-resize',
+  },
+  '&::-moz-range-track': {
+    bg: 'transparent',
+    border: '0',
+  },
+  '&::-moz-range-thumb': {
+    pointerEvents: 'auto',
+    w: '32px',
+    h: '64px',
+    border: '0',
+    bg: 'transparent',
+    cursor: 'ew-resize',
+  },
   _before: {
     content: '""',
     position: 'absolute',
