@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 16 implementee et verifiee
-- Slice en cours: commit Slice 16
-- Dernier commit de suivi: `0017bf1 docs: record slice 15 commit`
+- Statut actuel: Slice 16 committe
+- Slice en cours: choisir Slice 17
+- Dernier commit de suivi: `fbd7a56 chore(workspace): verify public package exports`
 
 ## Decisions Transverses
 
@@ -632,7 +632,7 @@ Commit:
 
 ### Slice 16: Package Export Audit
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: rendre les Interfaces publiques inter-packages explicites et verifier que les imports workspace passent par les exports declares.
 
@@ -665,7 +665,7 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
-- Non committe.
+- `fbd7a56 chore(workspace): verify public package exports`
 
 ## Journal Chronologique
 
@@ -721,3 +721,4 @@ Commit:
 - Commit Slice 15 log correction: `0017bf1 docs: record slice 15 commit`.
 - Pick Slice 16: auditer les exports publics et ajouter un guardrail d'imports workspace.
 - Verifie Slice 16 avec `bun tools/check-public-package-exports.ts`, `bun run lint`, `bun run check`.
+- Commit Slice 16: `fbd7a56 chore(workspace): verify public package exports`.
