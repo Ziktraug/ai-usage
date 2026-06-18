@@ -31,6 +31,14 @@ export interface SerializedUsageRow extends Omit<UsageRow, 'date' | 'endDate'> {
 
 export type SerializedRow = SerializedUsageRow;
 
+export interface UsageReportWarning {
+  harness?: string;
+  operation?: string;
+  path?: string;
+  sql?: string;
+  message: string;
+}
+
 export interface UsageReportPayload {
   generatedAt: string;
   filters: {
@@ -44,6 +52,7 @@ export interface UsageReportPayload {
   tableRows: SerializedUsageRow[];
   omittedRows: number;
   analytics: AnalyticsSummary;
+  warnings?: UsageReportWarning[];
   facets?: Record<string, unknown>;
 }
 
@@ -96,6 +105,7 @@ export const createUsageReportPayload = (
   options: ReportOptions,
   generatedAt = new Date(),
   facets?: Record<string, unknown>,
+  warnings?: UsageReportWarning[],
 ): UsageReportPayload => ({
   generatedAt: generatedAt.toISOString(),
   filters: {
@@ -109,5 +119,6 @@ export const createUsageReportPayload = (
   tableRows: report.tableRows.map(serializeUsageRow),
   omittedRows: report.omittedRows,
   analytics: calculateAnalytics(report.rows, generatedAt.getTime()),
+  ...(warnings?.length ? { warnings } : {}),
   ...(facets && Object.keys(facets).length ? { facets } : {}),
 });

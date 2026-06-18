@@ -183,14 +183,14 @@ export const collectLocalReportRowsWithWarnings = (request: LocalReportRowsReque
 
 export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
   Effect.gen(function* () {
-    const rows: Row[] = yield* collectLocalReportRows(request);
+    const { rows, warnings } = yield* collectLocalReportRowsWithWarnings(request);
     const facets = request.includeFacets
       ? yield* collectHarnessFacets({
           includeCursor: request.includeCursor && (!request.harness || request.harness === 'cursor'),
         })
       : undefined;
     const report = prepareUsageReport(rows, request.options);
-    return createUsageReportPayload(report, request.options, request.generatedAt ?? new Date(), facets);
+    return createUsageReportPayload(report, request.options, request.generatedAt ?? new Date(), facets, warnings);
   });
 
 export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
@@ -223,11 +223,15 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
     const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
     const rows = applyProjectAliases(merged.rows, config.projectAliases ?? []);
     const report = prepareUsageReport(rows, request.options);
+    const payloadWarnings = merged.warnings.map((warning) => ({
+      operation: 'mergeUsageSnapshots',
+      message: warning.key ? `${warning.message}: ${warning.key}` : warning.message,
+    }));
 
     return {
       rows,
       report,
-      payload: createUsageReportPayload(report, request.options, request.generatedAt ?? new Date()),
+      payload: createUsageReportPayload(report, request.options, request.generatedAt ?? new Date(), undefined, payloadWarnings),
       warnings: merged.warnings,
       duplicatesDropped: merged.duplicatesDropped,
     };
