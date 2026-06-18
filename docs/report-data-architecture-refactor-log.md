@@ -16,7 +16,7 @@ Move report data generation out of app adapters and into a shared reporting laye
 
 ### Slice 0: Planning Baseline
 
-Status: in progress
+Status: completed
 
 Changes:
 
@@ -35,6 +35,35 @@ Difficulties:
 Checks:
 
 - Not run; documentation-only slice.
+
+Commit:
+
+- `dc2d7a5 docs(report): plan data architecture refactor`
+
+### Slice 1: Shared Reporting Package Baseline
+
+Status: completed
+
+Changes:
+
+- Added `@ai-usage/reporting` as a workspace package.
+- Added shared request types for local report row collection and compatibility payload generation.
+- Added `collectLocalReportRows`, `createLocalReportPayload`, and `runLocalReportPayload`.
+- Kept app adapters unchanged in this slice.
+
+Decisions:
+
+- The new package depends on `@ai-usage/core`, `@ai-usage/local-collectors`, and `effect` because it is the orchestration layer between pure report logic and local history IO.
+- The first public API keeps the current global payload as a compatibility contract.
+- `LocalHistoryStorageLive` is provided only by the Promise-level runner; the Effect-level function stays composable.
+
+Difficulties:
+
+- `HarnessKey` is exported by `@ai-usage/core/harness-metadata`, not `@ai-usage/core/types`.
+
+Checks:
+
+- `bun run --cwd packages/reporting check`
 
 Commit:
 
