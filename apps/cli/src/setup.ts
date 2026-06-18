@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { ProjectAliasEntry } from '@ai-usage/core/project-alias';
 import { parseUsageSnapshot } from '@ai-usage/core/snapshot';
 import { readAiUsageConfig } from '@ai-usage/local-collectors';
-import { listProjectSources, type ProjectSource } from '@ai-usage/reporting';
+import { listProjectSourcesWithWarnings, type ProjectSource } from '@ai-usage/reporting';
 import { Console, Effect } from 'effect';
 
 const collectSetupSources = (snapshotFiles: string[], local: boolean) =>
@@ -14,7 +14,7 @@ const collectSetupSources = (snapshotFiles: string[], local: boolean) =>
     for (const file of snapshotFiles) {
       snapshots.push(parseUsageSnapshot(fs.readFileSync(file, 'utf8')));
     }
-    return yield* listProjectSources({
+    return yield* listProjectSourcesWithWarnings({
       snapshots,
       includeLocal: local,
       harness: null,
@@ -23,9 +23,12 @@ const collectSetupSources = (snapshotFiles: string[], local: boolean) =>
     });
   });
 
-const setupHTML = (sources: ProjectSource[], aliases: ProjectAliasEntry[]) => {
-  const sourcesJson = JSON.stringify(sources);
-  const aliasesJson = JSON.stringify(aliases);
+const scriptJson = (value: unknown) => (JSON.stringify(value) ?? 'null').replace(/</g, '\\u003c');
+
+const setupHTML = (sources: ProjectSource[], aliases: ProjectAliasEntry[], warnings: { harness?: string; message: string }[]) => {
+  const sourcesJson = scriptJson(sources);
+  const aliasesJson = scriptJson(aliases);
+  const warningsJson = scriptJson(warnings);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -57,10 +60,14 @@ const setupHTML = (sources: ProjectSource[], aliases: ProjectAliasEntry[]) => {
   .row-selected { background: rgba(100, 149, 237, 0.15); }
   .suggestion { color: #999; font-size: 12px; padding: 4px 8px; background: rgba(255,255,255,0.05); border-radius: 4px; margin-right: 4px; }
   .suggestion:hover { background: rgba(255,255,255,0.1); cursor: pointer; }
+  .warning-panel { margin: 12px 0 16px; padding: 12px; border: 1px solid #b7791f; border-radius: 8px; background: rgba(183,121,31,0.12); color: #f6c177; }
+  .warning-panel h2 { margin: 0 0 8px; font-size: 14px; }
+  .warning-panel ul { margin-left: 18px; }
 </style>
 </head>
 <body>
 <h1>ai-usage project setup</h1>
+<div id="warnings"></div>
 <div class="actions" id="toolbar">
   <span id="selected-count">0 selected</span>
   <label>Alias name: <input id="alias-name" type="text" placeholder="my-project"></label>
@@ -85,9 +92,11 @@ const setupHTML = (sources: ProjectSource[], aliases: ProjectAliasEntry[]) => {
 <script>
 const sources = ${sourcesJson};
 const initialAliases = ${aliasesJson};
+const warnings = ${warningsJson};
 let aliases = JSON.parse(JSON.stringify(initialAliases));
 let selected = new Set();
 
+const warningsEl = document.getElementById('warnings');
 const tbody = document.getElementById('sources-body');
 const nameInput = document.getElementById('alias-name');
 const mergeBtn = document.getElementById('merge-btn');
@@ -117,6 +126,24 @@ function renderSources() {
     tbody.appendChild(tr);
   }
   updateCount();
+}
+
+function renderWarnings() {
+  warningsEl.innerHTML = '';
+  if (!warnings.length) return;
+  const panel = document.createElement('section');
+  panel.className = 'warning-panel';
+  const title = document.createElement('h2');
+  title.textContent = 'Report warnings';
+  const list = document.createElement('ul');
+  for (const warning of warnings) {
+    const item = document.createElement('li');
+    item.textContent = (warning.harness ? warning.harness + ': ' : '') + warning.message;
+    list.appendChild(item);
+  }
+  panel.appendChild(title);
+  panel.appendChild(list);
+  warningsEl.appendChild(panel);
 }
 
 function updateCount() {
@@ -262,6 +289,7 @@ async function saveAliases() {
 }
 
 renderSources();
+renderWarnings();
 renderAliases();
 renderSuggestions();
 </script>
@@ -271,10 +299,10 @@ renderSuggestions();
 
 export const runSetupServer = (snapshotFiles: string[], local: boolean, port: number) =>
   Effect.gen(function* () {
-    const sources = yield* collectSetupSources(snapshotFiles, local);
+    const { sources, warnings } = yield* collectSetupSources(snapshotFiles, local);
     const config = yield* readAiUsageConfig;
     const aliases = config.projectAliases ?? [];
-    const html = setupHTML(sources, aliases);
+    const html = setupHTML(sources, aliases, warnings);
     const configDir = path.join(os.homedir(), '.config', 'ai-usage');
     const configPath = path.join(configDir, 'config.json');
 

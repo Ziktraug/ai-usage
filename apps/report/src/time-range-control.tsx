@@ -320,6 +320,7 @@ export const TimeRangeControl = (props: {
     setHandleIndex(handle, clampNumber(next, 0, chart.maxIndex));
     commitIndexes();
     event.preventDefault();
+    event.stopPropagation();
   };
 
   const rangeVars = (chart: NonNullable<ReturnType<typeof data>>) => {

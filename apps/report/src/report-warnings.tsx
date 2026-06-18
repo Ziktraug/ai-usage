@@ -34,8 +34,8 @@ export const ReportWarnings = (props: { warnings: UsageReportWarning[] | undefin
     <Show when={warnings().length > 0}>
       <section class={cx(panel, warningPanel)}>
         <div class={panelHeader}>
-          <h2 class={panelTitle}>Local history warnings</h2>
-          <p class={panelSub}>Some harness local history could not be fully read. Totals use available rows only.</p>
+          <h2 class={panelTitle}>Report warnings</h2>
+          <p class={panelSub}>Some report inputs could not be fully processed. Totals use available rows only.</p>
         </div>
         <ul class={warningList}>
           <For each={warnings()}>
