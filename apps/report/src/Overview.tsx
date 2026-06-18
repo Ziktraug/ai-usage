@@ -70,7 +70,16 @@ import {
   twoColumns,
 } from '@ai-usage/design-system/report';
 import { createEffect, createMemo, For, type JSX, Show } from 'solid-js';
-import { DAY_MS, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
+import { toDateInputValue } from './date-range';
+import {
+  buildCalendarHeatmapData,
+  buildModelMigrationData,
+  buildOverviewRecords,
+  buildPunchcardData,
+  buildSessionShapeData,
+  buildTopSessions,
+  PUNCH_DAYS,
+} from './overview-model';
 import {
   type DashboardRow,
   fmtCompact,
@@ -174,74 +183,10 @@ const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
 
 const HEAT_OPACITY = [0.28, 0.52, 0.76, 1];
 
-type HeatDay = { cost: number; date: Date; level: number; sessions: number };
-type HeatWeek = { days: (HeatDay | null)[] };
-
 const CalendarHeatmap = (props: { rows: DashboardRow[]; onSelectDay: (day: Date) => void }) => {
   let scrollEl: HTMLDivElement | undefined;
 
-  const data = createMemo(() => {
-    const byDay = new Map<string, { cost: number; sessions: number }>();
-    let minTime = Number.POSITIVE_INFINITY;
-    let maxTime = Number.NEGATIVE_INFINITY;
-    for (const row of props.rows) {
-      if (row.activeTime == null) continue;
-      minTime = Math.min(minTime, row.activeTime);
-      maxTime = Math.max(maxTime, row.activeTime);
-      const key = toDateInputValue(startOfDay(new Date(row.activeTime)));
-      let entry = byDay.get(key);
-      if (!entry) {
-        entry = { cost: 0, sessions: 0 };
-        byDay.set(key, entry);
-      }
-      if (row.costKnown) entry.cost += row.costApprox;
-      entry.sessions++;
-    }
-    if (!byDay.size) return null;
-
-    const last = startOfDay(new Date(maxTime));
-    let first = startOfDay(new Date(minTime));
-    // Two years of day cells is the ceiling; beyond that the tail dominates
-    // the DOM without adding signal.
-    if ((last.getTime() - first.getTime()) / DAY_MS > 730) first = shiftCalendarDays(last, -730);
-    const gridStart = shiftCalendarDays(first, -((first.getDay() + 6) % 7));
-
-    const useCost = [...byDay.values()].some((entry) => entry.cost > 0);
-    const sorted = [...byDay.values()]
-      .map((entry) => (useCost ? entry.cost : entry.sessions))
-      .filter((value) => value > 0)
-      .sort((a, b) => a - b);
-    const quantile = (p: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] ?? 0;
-    const thresholds = [quantile(0.25), quantile(0.5), quantile(0.75)];
-
-    const todayKey = toDateInputValue(startOfDay(new Date()));
-    const weeks: HeatWeek[] = [];
-    const monthLabels: string[] = [];
-    let previousMonth = -1;
-    for (let cursor = gridStart; cursor <= last; cursor = shiftCalendarDays(cursor, 7)) {
-      const days: (HeatDay | null)[] = [];
-      for (let offset = 0; offset < 7; offset++) {
-        const date = shiftCalendarDays(cursor, offset);
-        if (date < first || date > last) {
-          days.push(null);
-          continue;
-        }
-        const entry = byDay.get(toDateInputValue(date));
-        const value = entry ? (useCost ? entry.cost : entry.sessions) : 0;
-        days.push({
-          date,
-          cost: entry?.cost ?? 0,
-          sessions: entry?.sessions ?? 0,
-          level: value <= 0 ? 0 : 1 + thresholds.filter((threshold) => value > threshold).length,
-        });
-      }
-      weeks.push({ days });
-      const month = cursor.getMonth();
-      monthLabels.push(month === previousMonth ? '' : cursor.toLocaleDateString('en', { month: 'short' }));
-      previousMonth = month;
-    }
-    return { weeks, monthLabels, useCost, todayKey };
-  });
+  const data = createMemo(() => buildCalendarHeatmapData(props.rows));
 
   // Most recent activity matters most: keep the right edge in view.
   createEffect(() => {
@@ -322,99 +267,14 @@ const CalendarHeatmap = (props: { rows: DashboardRow[]; onSelectDay: (day: Date)
 // Model migration — normalized stacked area of API value share per bucket.
 // This is where opus→fable and gpt-5.4→5.5 transitions become visible.
 
-type MigrationSeries = { key: string; total: number; fillClass: string; swatchClass: string };
+const migrationFillClass = (key: string, index: number) =>
+  key === 'other' ? otherFillClass : (chartFillClasses[index] ?? otherFillClass);
+
+const migrationSwatchClass = (key: string, index: number) =>
+  key === 'other' ? otherSwatchClass : (chartSwatchClasses[index] ?? otherSwatchClass);
 
 const ModelMigration = (props: { rows: DashboardRow[] }) => {
-  const data = createMemo(() => {
-    const dated = props.rows.filter(
-      (row) => row.activeTime != null && row.costKnown && row.costApprox > 0,
-    ) as (DashboardRow & { activeTime: number })[];
-    if (dated.length < 2) return null;
-
-    let minTime = Number.POSITIVE_INFINITY;
-    let maxTime = Number.NEGATIVE_INFINITY;
-    for (const row of dated) {
-      minTime = Math.min(minTime, row.activeTime);
-      maxTime = Math.max(maxTime, row.activeTime);
-    }
-    const spanDays = (maxTime - minTime) / DAY_MS;
-    const weekly = spanDays > 42;
-    const bucketStart = (date: Date) => {
-      const day = startOfDay(date);
-      return weekly ? shiftCalendarDays(day, -((day.getDay() + 6) % 7)) : day;
-    };
-
-    const firstBucket = bucketStart(new Date(minTime));
-    const lastBucket = bucketStart(new Date(maxTime));
-    const buckets: { date: Date; byModel: Map<string, number>; total: number }[] = [];
-    const bucketIndex = new Map<string, number>();
-    for (let cursor = firstBucket; cursor <= lastBucket; cursor = shiftCalendarDays(cursor, weekly ? 7 : 1)) {
-      bucketIndex.set(toDateInputValue(cursor), buckets.length);
-      buckets.push({ date: cursor, byModel: new Map(), total: 0 });
-    }
-    if (buckets.length < 2) return null;
-
-    const totals = new Map<string, number>();
-    for (const row of dated) {
-      const index = bucketIndex.get(toDateInputValue(bucketStart(new Date(row.activeTime))));
-      if (index === undefined) continue;
-      const bucket = buckets[index];
-      if (!bucket) continue;
-      bucket.byModel.set(row.modelKey, (bucket.byModel.get(row.modelKey) ?? 0) + row.costApprox);
-      bucket.total += row.costApprox;
-      totals.set(row.modelKey, (totals.get(row.modelKey) ?? 0) + row.costApprox);
-    }
-
-    const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]);
-    const top = ranked.slice(0, 5);
-    const otherTotal = ranked.slice(5).reduce((sum, [, value]) => sum + value, 0);
-    const grandTotal = ranked.reduce((sum, [, value]) => sum + value, 0);
-
-    const series: MigrationSeries[] = top.map(([key, total], index) => ({
-      key,
-      total,
-      fillClass: chartFillClasses[index] ?? otherFillClass,
-      swatchClass: chartSwatchClasses[index] ?? otherSwatchClass,
-    }));
-    if (otherTotal > 0) {
-      series.push({ key: 'other', total: otherTotal, fillClass: otherFillClass, swatchClass: otherSwatchClass });
-    }
-
-    const x = (index: number) => (index / (buckets.length - 1)) * 100;
-    const topKeys = top.map(([key]) => key);
-    const shareFor = (bucket: { byModel: Map<string, number>; total: number }, key: string) => {
-      if (bucket.total <= 0) return 0;
-      if (key === 'other') {
-        const topSum = topKeys.reduce((sum, topKey) => sum + (bucket.byModel.get(topKey) ?? 0), 0);
-        return Math.max(0, bucket.total - topSum) / bucket.total;
-      }
-      return (bucket.byModel.get(key) ?? 0) / bucket.total;
-    };
-    const paths = series.map((entry, seriesIdx) => {
-      const upper: string[] = [];
-      const lower: string[] = [];
-      for (let i = 0; i < buckets.length; i++) {
-        const bucket = buckets[i];
-        if (!bucket) continue;
-        let cumBefore = 0;
-        for (let k = 0; k < seriesIdx; k++) cumBefore += shareFor(bucket, series[k]?.key ?? '');
-        const own = shareFor(bucket, entry.key);
-        upper.push(`${x(i).toFixed(2)},${(100 - (cumBefore + own) * 100).toFixed(2)}`);
-        lower.push(`${x(i).toFixed(2)},${(100 - cumBefore * 100).toFixed(2)}`);
-      }
-      return `M${upper.join(' L')} L${lower.reverse().join(' L')} Z`;
-    });
-
-    return {
-      buckets,
-      grandTotal,
-      paths,
-      series,
-      weekly,
-      first: buckets[0]?.date ?? firstBucket,
-      last: buckets[buckets.length - 1]?.date ?? lastBucket,
-    };
-  });
+  const data = createMemo(() => buildModelMigrationData(props.rows));
 
   return (
     <Panel title="Model migration" sub="Share of API value per model over time">
@@ -426,7 +286,7 @@ const ModelMigration = (props: { rows: DashboardRow[] }) => {
                 <title>Share of API value per model over time</title>
                 <For each={chart().paths}>
                   {(path, index) => (
-                    <path class={cx(chart().series[index()]?.fillClass, migrationArea)} d={path}>
+                    <path class={cx(migrationFillClass(chart().series[index()]?.key ?? '', index()), migrationArea)} d={path}>
                       <title>
                         {chart().series[index()]?.key} — {fmtMoney(chart().series[index()]?.total ?? 0)} (
                         {fmtPct(((chart().series[index()]?.total ?? 0) / Math.max(1e-9, chart().grandTotal)) * 100)})
@@ -443,9 +303,9 @@ const ModelMigration = (props: { rows: DashboardRow[] }) => {
             </div>
             <div class={chartLegendList}>
               <For each={chart().series}>
-                {(entry) => (
+                {(entry, index) => (
                   <span class={chartLegendItem} title={fmtMoney(entry.total)}>
-                    <span class={cx(chartLegendSwatch, entry.swatchClass)} />
+                    <span class={cx(chartLegendSwatch, migrationSwatchClass(entry.key, index()))} />
                     {entry.key}
                     <span class={chartLegendPct}>
                       {fmtPct((entry.total / Math.max(1e-9, chart().grandTotal)) * 100)}
@@ -513,56 +373,8 @@ const TokenAnatomy = (props: { summary: ReportSummary }) => {
 // Session shape — duration × cost scatter on log scales. Micro-questions,
 // working sessions and marathons separate into visible clusters.
 
-const DURATION_TICKS = [
-  { value: 60_000, label: '1m' },
-  { value: 600_000, label: '10m' },
-  { value: 3_600_000, label: '1h' },
-  { value: 14_400_000, label: '4h' },
-];
-
-const COST_TICKS = [
-  { value: 0.01, label: '$0.01' },
-  { value: 0.1, label: '$0.10' },
-  { value: 1, label: '$1' },
-  { value: 10, label: '$10' },
-  { value: 100, label: '$100' },
-];
-
 const SessionShape = (props: { rows: DashboardRow[]; onSelectSession: (row: DashboardRow) => void }) => {
-  const data = createMemo(() => {
-    const points = props.rows.filter(
-      (row) => (row.durationMs ?? 0) > 0 && row.costKnown && row.costApprox > 0,
-    ) as (DashboardRow & { durationMs: number })[];
-    if (points.length < 3) return null;
-
-    let xMin = Number.POSITIVE_INFINITY;
-    let xMax = Number.NEGATIVE_INFINITY;
-    let yMin = Number.POSITIVE_INFINITY;
-    let yMax = Number.NEGATIVE_INFINITY;
-    for (const row of points) {
-      xMin = Math.min(xMin, row.durationMs);
-      xMax = Math.max(xMax, row.durationMs);
-      yMin = Math.min(yMin, row.costApprox);
-      yMax = Math.max(yMax, row.costApprox);
-    }
-    const lx = (value: number) => Math.log10(value);
-    const xLo = lx(xMin) - 0.08;
-    const xHi = lx(xMax) + 0.08;
-    const yLo = lx(yMin) - 0.12;
-    const yHi = lx(yMax) + 0.12;
-    const xPct = (value: number) => 4 + ((lx(value) - xLo) / Math.max(1e-9, xHi - xLo)) * 92;
-    const yPct = (value: number) => 92 - ((lx(value) - yLo) / Math.max(1e-9, yHi - yLo)) * 84;
-
-    const harnesses = [...new Set(points.map((row) => row.harness))];
-    return {
-      points: points.slice(0, 2000),
-      xPct,
-      yPct,
-      xTicks: DURATION_TICKS.filter((tick) => tick.value >= xMin && tick.value <= xMax),
-      yTicks: COST_TICKS.filter((tick) => tick.value >= yMin && tick.value <= yMax),
-      harnesses,
-    };
-  });
+  const data = createMemo(() => buildSessionShapeData(props.rows));
 
   return (
     <Panel title="Session shape" sub="Duration × API value (log scales) — click a point to inspect the session">
@@ -639,23 +451,8 @@ const SessionShape = (props: { rows: DashboardRow[]; onSelectSession: (row: Dash
 // Punchcard — hour × weekday density. Nightly auto-review bots and weekend
 // streaks show up immediately.
 
-const PUNCH_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
 const Punchcard = (props: { rows: DashboardRow[] }) => {
-  const data = createMemo(() => {
-    const cells = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => ({ cost: 0, sessions: 0 })));
-    let maxSessions = 0;
-    for (const row of props.rows) {
-      if (row.activeTime == null) continue;
-      const date = new Date(row.activeTime);
-      const cell = cells[(date.getDay() + 6) % 7]?.[date.getHours()];
-      if (!cell) continue;
-      cell.sessions++;
-      if (row.costKnown) cell.cost += row.costApprox;
-      maxSessions = Math.max(maxSessions, cell.sessions);
-    }
-    return maxSessions > 0 ? { cells, maxSessions } : null;
-  });
+  const data = createMemo(() => buildPunchcardData(props.rows));
 
   return (
     <Panel title="Punchcard" sub="When the sessions happen — hour of day × weekday">
@@ -710,58 +507,7 @@ const Records = (props: {
   onSelectSession: (row: DashboardRow) => void;
   onSelectDay: (day: Date) => void;
 }) => {
-  const data = createMemo(() => {
-    const priced = props.rows.filter((row) => row.costKnown && row.costApprox > 0);
-    const topCost = priced.reduce<DashboardRow | null>(
-      (best, row) => (best == null || row.costApprox > best.costApprox ? row : best),
-      null,
-    );
-    const longest = props.rows.reduce<DashboardRow | null>(
-      (best, row) =>
-        (row.durationMs ?? 0) > 0 && (best == null || (row.durationMs ?? 0) > (best.durationMs ?? 0)) ? row : best,
-      null,
-    );
-
-    const byDay = new Map<string, { cost: number; date: Date; sessions: number }>();
-    for (const row of props.rows) {
-      if (row.activeTime == null) continue;
-      const day = startOfDay(new Date(row.activeTime));
-      const key = toDateInputValue(day);
-      let entry = byDay.get(key);
-      if (!entry) {
-        entry = { cost: 0, date: day, sessions: 0 };
-        byDay.set(key, entry);
-      }
-      if (row.costKnown) entry.cost += row.costApprox;
-      entry.sessions++;
-    }
-    const busiest = [...byDay.values()].reduce<{ cost: number; date: Date; sessions: number } | null>(
-      (best, entry) =>
-        best == null || entry.cost > best.cost || (entry.cost === best.cost && entry.sessions > best.sessions)
-          ? entry
-          : best,
-      null,
-    );
-
-    // Streak is a property of the whole history, not of the brushed window.
-    const streakDays = new Set<string>();
-    let lastDay: Date | null = null;
-    for (const row of props.timelineRows) {
-      if (row.activeTime == null) continue;
-      const day = startOfDay(new Date(row.activeTime));
-      streakDays.add(toDateInputValue(day));
-      if (!lastDay || day > lastDay) lastDay = day;
-    }
-    let streak = 0;
-    if (lastDay) {
-      for (let cursor = lastDay; streakDays.has(toDateInputValue(cursor)); cursor = shiftCalendarDays(cursor, -1)) {
-        streak++;
-      }
-    }
-
-    if (!topCost && !longest && !busiest && streak === 0) return null;
-    return { topCost, longest, busiest, streak, streakEnd: lastDay };
-  });
+  const data = createMemo(() => buildOverviewRecords(props.rows, props.timelineRows));
 
   return (
     <Show when={data()}>
@@ -818,12 +564,7 @@ const Records = (props: {
 // carry a lot of qualitative signal; surface them.
 
 const TopSessions = (props: { rows: DashboardRow[]; onSelectSession: (row: DashboardRow) => void }) => {
-  const top = createMemo(() =>
-    props.rows
-      .filter((row) => row.costKnown && row.costApprox > 0)
-      .sort((a, b) => b.costApprox - a.costApprox)
-      .slice(0, 5),
-  );
+  const top = createMemo(() => buildTopSessions(props.rows));
 
   return (
     <Show when={top().length}>
