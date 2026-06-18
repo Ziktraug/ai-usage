@@ -13,13 +13,14 @@ import {
   readMergedAiUsageConfig,
   writeMachineConfig,
 } from '@ai-usage/local-collectors/machine-config';
+import { collectLocalReportRows, createLocalReportPayload } from '@ai-usage/reporting';
 import { Console, Effect, Layer } from 'effect';
 import { helpText, parseCommand } from './cli';
 import { CliArgumentError, formatAppError } from './errors';
 import { renderQuota } from './quota';
 import { setColor } from './render/colors';
 import { fmtNum, pad, trunc } from './render/format';
-import { renderUsageReportForCli } from './report';
+import { renderUsagePayloadForCli, renderUsageReportForCli } from './report';
 import { CliRuntime, CliRuntimeLive } from './runtime';
 import { runServe } from './serve';
 import { runSetupServer } from './setup';
@@ -141,21 +142,25 @@ export const app = Effect.gen(function* () {
   }
 
   yield* Effect.sync(() => setColor(command.args.color === null ? runtime.stdoutIsTTY : command.args.color));
-  const config = yield* readMergedAiUsageConfig;
-  const collectedRows = yield* collectSelectedHarnessRows({
+  const reportRequest = {
     harness: command.args.harness,
     includeCursor: command.args.cursor,
     keepSource: true,
-    ...(config.cursor ? { cursorCsv: config.cursor } : {}),
-  });
-  const rows = applyProjectAliases(collectedRows, config.projectAliases ?? []);
-  const facets =
+  };
+  const output =
     command.args.format === 'html' || command.args.format === 'payload'
-      ? yield* collectHarnessFacets({
-          includeCursor: command.args.cursor && (!command.args.harness || command.args.harness === 'cursor'),
+      ? yield* Effect.gen(function* () {
+          const payload = yield* createLocalReportPayload({
+            ...reportRequest,
+            options: command.args,
+            includeFacets: true,
+          });
+          return yield* Effect.promise(() => renderUsagePayloadForCli(payload, command.args));
         })
-      : undefined;
-  const output = yield* Effect.promise(() => renderUsageReportForCli(rows, command.args, facets));
+      : yield* Effect.gen(function* () {
+          const rows = yield* collectLocalReportRows(reportRequest);
+          return yield* Effect.promise(() => renderUsageReportForCli(rows, command.args));
+        });
   yield* writeStdout(`${output}\n`);
 });
 

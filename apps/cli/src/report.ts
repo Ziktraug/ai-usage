@@ -3,7 +3,12 @@ import {
   nonLineTrackingHarnessLabels,
   reportHarnessNotes,
 } from '@ai-usage/core/harness-metadata';
-import { createUsageReportPayload, type PreparedUsageReport, prepareUsageReport } from '@ai-usage/core/report-data';
+import {
+  createUsageReportPayload,
+  type PreparedUsageReport,
+  prepareUsageReport,
+  type UsageReportPayload,
+} from '@ai-usage/core/report-data';
 import type { Row } from '@ai-usage/core/types';
 import type { Args } from './cli';
 import { renderAnalytics } from './render/analytics';
@@ -17,7 +22,7 @@ const renderReportNotes = () => {
   const nonLineHarnesses = nonLineTrackingHarnessLabels().join('/');
   const notes = [
     ...reportHarnessNotes(),
-    '↳ = contains sub-agents.',
+    '↳ = sub-agent session or parent with child sub-agents.',
     '? = Cursor CSV reconciliation was ambiguous; totals are best-effort.',
     'usage unavailable = session found in prompt history, but detailed local token counters are missing.',
     `Tracked lines: ${lineHarnesses} only (${nonLineHarnesses} expose none locally).`,
@@ -53,6 +58,11 @@ export const renderUsageReportForCli = async (rows: Row[], args: Args, facets?: 
   const report = prepareUsageReport(rows, args);
   if (args.format === 'html') return renderReportAppHTML(createUsageReportPayload(report, args, new Date(), facets));
   return renderUsageReport(rows, args, facets);
+};
+
+export const renderUsagePayloadForCli = async (payload: UsageReportPayload, args: Args) => {
+  if (args.format === 'html') return renderReportAppHTML(payload);
+  return JSON.stringify(payload);
 };
 
 export { prepareUsageReport };

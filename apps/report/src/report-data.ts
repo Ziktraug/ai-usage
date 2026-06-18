@@ -203,11 +203,9 @@ export const readReportPayload = () =>
 
 export const isDemoReportPayload = () => typeof window === 'undefined' || !window.__AI_USAGE_REPORT__;
 
-export const fetchReportPayload = async (options?: { force?: boolean }) => {
-  const search = options?.force ? '?force=1' : '';
-  const response = await fetch(`/__ai_usage_report_payload${search}`, { cache: 'no-store' });
-  if (!response.ok) throw new Error(`Failed to refresh report payload (${response.status})`);
-  const payload = (await response.json()) as UsageReportPayload;
+export const fetchReportPayload = async (_options?: { force?: boolean }) => {
+  const { getReportPayload } = await import('./server/report-payload');
+  const payload = (await getReportPayload()) as UsageReportPayload;
   window.__AI_USAGE_REPORT__ = payload;
   return payload;
 };
