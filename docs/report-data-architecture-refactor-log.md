@@ -67,4 +67,34 @@ Checks:
 
 Commit:
 
+- `68ff987 refactor(report): add shared reporting package`
+
+### Slice 2: Move Main CLI Report Path To Shared Reporting
+
+Status: completed
+
+Changes:
+
+- Added `@ai-usage/reporting` as a CLI dependency.
+- Updated the main CLI report path to call `collectLocalReportRows` for table/csv/json output.
+- Updated the main CLI `html` and `payload` output path to call `createLocalReportPayload`.
+- Added `renderUsagePayloadForCli` so CLI rendering remains inside the CLI app.
+
+Decisions:
+
+- Snapshot, merge, project discovery, setup, serve, and quota commands stay unchanged in this slice because they are not the main report payload path.
+- The CLI composes shared reporting Effects with `yield*`; it does not run nested Effect runtimes.
+- HTML export rendering stays in the CLI because it is an output adapter concern.
+
+Difficulties:
+
+- The first implementation attempted nested `Effect.runPromise`; that would bypass the CLI-provided services. It was corrected to direct Effect composition.
+
+Checks:
+
+- `bun run --cwd apps/cli check`
+- `bun test apps/cli/src/cli.test.ts apps/cli/src/report.test.ts`
+
+Commit:
+
 - Pending.
