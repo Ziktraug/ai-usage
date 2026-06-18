@@ -20,9 +20,12 @@ import type { Row, SourcedRow } from '@ai-usage/core/types';
 import { usageRowTokenTotal } from '@ai-usage/core/usage-row';
 import {
   collectHarnessFacets,
+  collectSelectedHarnessResults,
   collectSelectedHarnessRows,
+  type SelectedHarnessCollectionResult,
   type HarnessSelection,
 } from '@ai-usage/local-collectors';
+import type { LocalHistoryError, LocalHistoryWarning } from '@ai-usage/local-collectors/errors';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-collectors/machine-config';
 import { Effect } from 'effect';
@@ -41,6 +44,12 @@ export interface LocalReportPayloadRequest extends LocalReportRowsRequest {
   options: ReportOptions;
   includeFacets?: boolean;
   generatedAt?: Date;
+}
+
+export interface LocalReportRowsResult {
+  rows: Row[];
+  warnings: LocalHistoryWarning[];
+  collection: SelectedHarnessCollectionResult;
 }
 
 export interface LocalUsageSnapshotRequest extends LocalUsageSelection {
@@ -142,10 +151,34 @@ const collectConfiguredLocalRows = (request: LocalReportRowsRequest) =>
     return { config, rows: collectedRows };
   });
 
+const collectConfiguredLocalRowsWithWarnings = (request: LocalReportRowsRequest) =>
+  Effect.gen(function* () {
+    const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
+    const collection = yield* collectSelectedHarnessResults(
+      toHarnessSelection(request, resolveCursorConfig(config.cursor, request.configCwd)),
+    );
+    return { config, collection };
+  });
+
 export const collectLocalReportRows = (request: LocalReportRowsRequest) =>
   Effect.gen(function* () {
     const { config, rows } = yield* collectConfiguredLocalRows(request);
     return applyProjectAliases(rows, config.projectAliases ?? []);
+  });
+
+export const collectLocalReportRowsWithWarnings = (request: LocalReportRowsRequest): Effect.Effect<
+  LocalReportRowsResult,
+  LocalHistoryError,
+  import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
+> =>
+  Effect.gen(function* () {
+    const { config, collection } = yield* collectConfiguredLocalRowsWithWarnings(request);
+    const rows = applyProjectAliases(collection.rows, config.projectAliases ?? []);
+    const harnesses = collection.harnesses.map((harness) => ({
+      ...harness,
+      rows: applyProjectAliases(harness.rows, config.projectAliases ?? []),
+    }));
+    return { rows, warnings: collection.warnings, collection: { ...collection, rows, harnesses } };
   });
 
 export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>

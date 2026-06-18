@@ -1,6 +1,7 @@
 import { actualCost } from '@ai-usage/core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
+import { type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
 import { LocalHistoryStorage } from '../local-history';
 import { resolvePathCandidates } from '../platform-paths';
 import type { CollectorRow } from '../rtk-enrichment';
@@ -30,6 +31,11 @@ type SessionRow = {
 
 type CountRow = { session_id: string; n: number };
 type MessageRow = { session_id: string; data: string };
+
+export interface OpenCodeCollectionResult {
+  rows: CollectorRow[];
+  warnings: LocalHistoryWarning[];
+}
 
 const SESSION_SQL = 'SELECT id, title, directory, summary_additions, summary_deletions FROM session';
 const TOOL_COUNT_SQL =
@@ -168,19 +174,59 @@ const collectFromDb = (
   });
 
 export const collectOpenCode = Effect.gen(function* () {
+  const result = yield* collectOpenCodeResult;
+  return result.rows;
+});
+
+export const collectOpenCodeResult: Effect.Effect<
+  OpenCodeCollectionResult,
+  never,
+  import('../local-history').LocalHistoryStorage
+> = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
   const paths = resolvePathCandidates(storage).opencode;
   const seen = new Set<string>();
+  const warnings: LocalHistoryWarning[] = [];
 
   const liveRows: CollectorRow[] = [];
   for (const dbPath of paths.liveDb) {
-    liveRows.push(...(yield* collectFromDb(dbPath, storage, seen).pipe(Effect.catchAll(() => Effect.succeed([])))));
+    const result = yield* collectFromDb(dbPath, storage, seen).pipe(
+      Effect.match({
+        onFailure: (error) => ({ _tag: 'failure' as const, error }),
+        onSuccess: (rows) => ({ _tag: 'success' as const, rows }),
+      }),
+    );
+    if (result._tag === 'failure') {
+      warnings.push(
+        localHistoryWarningFromError(result.error, {
+          harness: 'opencode',
+          message: 'Failed to read OpenCode live database',
+        }),
+      );
+    } else {
+      liveRows.push(...result.rows);
+    }
   }
 
   const stableRows: CollectorRow[] = [];
   for (const dbPath of paths.stableDb) {
-    stableRows.push(...(yield* collectFromDb(dbPath, storage, seen).pipe(Effect.catchAll(() => Effect.succeed([])))));
+    const result = yield* collectFromDb(dbPath, storage, seen).pipe(
+      Effect.match({
+        onFailure: (error) => ({ _tag: 'failure' as const, error }),
+        onSuccess: (rows) => ({ _tag: 'success' as const, rows }),
+      }),
+    );
+    if (result._tag === 'failure') {
+      warnings.push(
+        localHistoryWarningFromError(result.error, {
+          harness: 'opencode',
+          message: 'Failed to read OpenCode stable database',
+        }),
+      );
+    } else {
+      stableRows.push(...result.rows);
+    }
   }
 
-  return [...liveRows, ...stableRows];
+  return { rows: [...liveRows, ...stableRows], warnings };
 });
