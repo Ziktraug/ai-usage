@@ -9,6 +9,7 @@
   "dependencies": {
     "@ai-usage/core": "workspace:*",
     "@ai-usage/local-collectors": "workspace:*",
+    "@ai-usage/reporting": "workspace:*",
     "effect": "^3.21.3"
   },
   "scripts": {
