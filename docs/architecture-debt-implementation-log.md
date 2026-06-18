@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 15 implementee et verifiee
-- Slice en cours: commit Slice 15
-- Dernier commit de suivi: `30e013b docs: record slice 14 commit`
+- Statut actuel: Slice 15 committe
+- Slice en cours: choisir Slice 16
+- Dernier commit de suivi: `86d93a1 refactor(report): extract overview model`
 
 ## Decisions Transverses
 
@@ -592,7 +592,7 @@ Commit:
 
 ### Slice 15: Overview Analytics Model
 
-Statut: implemente, verifie, en attente commit
+Statut: implemente, verifie, committe
 
 Objectif: sortir les calculs analytiques de `Overview.tsx` pour garder le composant centre sur le rendu.
 
@@ -628,7 +628,7 @@ Checks:
 - `bun run check`: passe.
 
 Commit:
-- Non committe.
+- `86d93a1 refactor(report): extract overview model`
 
 ## Journal Chronologique
 
@@ -680,3 +680,4 @@ Commit:
 - Commit Slice 14 log correction: `30e013b docs: record slice 14 commit`.
 - Pick Slice 15: extraire les modeles analytiques purs de `Overview.tsx`.
 - Verifie Slice 15 avec `bun run --cwd apps/report test`, `bun run --cwd apps/report check`, `bun run check`.
+- Commit Slice 15: `86d93a1 refactor(report): extract overview model`.
