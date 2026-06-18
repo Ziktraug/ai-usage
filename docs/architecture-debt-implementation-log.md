@@ -15,9 +15,9 @@ Journal de suivi pour l'execution de `docs/architecture-debt-implementation-plan
 ## Etat Global
 
 - Plan source: `docs/architecture-debt-implementation-plan.md`
-- Statut actuel: Slice 15 committe
-- Slice en cours: choisir Slice 16
-- Dernier commit de suivi: `86d93a1 refactor(report): extract overview model`
+- Statut actuel: Slice 16 implementee et verifiee
+- Slice en cours: commit Slice 16
+- Dernier commit de suivi: `0017bf1 docs: record slice 15 commit`
 
 ## Decisions Transverses
 
@@ -630,6 +630,43 @@ Checks:
 Commit:
 - `86d93a1 refactor(report): extract overview model`
 
+### Slice 16: Package Export Audit
+
+Statut: implemente, verifie, en attente commit
+
+Objectif: rendre les Interfaces publiques inter-packages explicites et verifier que les imports workspace passent par les exports declares.
+
+Travail fait:
+- Audit des imports `@ai-usage/*` utilises par apps/packages.
+- Confirmation que les subpaths publics actuels couvrent les usages reels des packages `core`, `local-collectors`, `reporting` et `design-system`.
+- Ajout de `tools/check-public-package-exports.ts`.
+- Le nouveau guardrail scanne les imports/export statiques et `import(...)` vers `@ai-usage/*`, puis verifie que le package et le subpath existent dans `package.json#exports`.
+- Integration du guardrail dans le script root `lint`, apres Biome et `check-workspace-relative-paths`.
+- Ajout de `docs/public-package-interfaces.md` pour documenter les Interfaces publiques et les guardrails.
+
+Difficultes:
+- Certains tags Effect contiennent des strings `@ai-usage/...`; le guardrail lit seulement les specifiers d'imports statiques/dynamiques pour eviter ces faux positifs.
+- Le design-system importe son propre subpath public `@ai-usage/design-system/css`; ce pattern reste autorise car il passe par un export public.
+
+Decisions:
+- Ne pas reduire les exports existants dans cette slice: chaque subpath liste est actuellement utilise.
+- Garder `@ai-usage/local-collectors/codex-history` public, car la CLI quota l'utilise directement comme exception explicite.
+- Garder `biome` comme premier niveau de blocage `src`, et ajouter le script pour verifier les exports declares.
+
+Fichiers touches:
+- `tools/check-public-package-exports.ts`
+- `package.json`
+- `docs/public-package-interfaces.md`
+- `docs/architecture-debt-implementation-log.md`
+
+Checks:
+- `bun tools/check-public-package-exports.ts`: passe.
+- `bun run lint`: passe.
+- `bun run check`: passe.
+
+Commit:
+- Non committe.
+
 ## Journal Chronologique
 
 ### 2026-06-18
@@ -681,3 +718,6 @@ Commit:
 - Pick Slice 15: extraire les modeles analytiques purs de `Overview.tsx`.
 - Verifie Slice 15 avec `bun run --cwd apps/report test`, `bun run --cwd apps/report check`, `bun run check`.
 - Commit Slice 15: `86d93a1 refactor(report): extract overview model`.
+- Commit Slice 15 log correction: `0017bf1 docs: record slice 15 commit`.
+- Pick Slice 16: auditer les exports publics et ajouter un guardrail d'imports workspace.
+- Verifie Slice 16 avec `bun tools/check-public-package-exports.ts`, `bun run lint`, `bun run check`.
