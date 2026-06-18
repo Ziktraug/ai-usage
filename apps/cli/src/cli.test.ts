@@ -71,6 +71,13 @@ describe('CLI command parsing', () => {
     });
   });
 
+  test('parses Cursor import command', () => {
+    expect(Effect.runSync(parseCommand(['cursor', 'import', '/tmp/export.csv']))).toEqual({
+      _tag: 'CursorImport',
+      args: { file: '/tmp/export.csv' },
+    });
+  });
+
   test('parses setup web command', () => {
     expect(Effect.runSync(parseCommand(['setup', '--local', '--port', '8080']))).toEqual({
       _tag: 'Setup',
@@ -86,10 +93,12 @@ describe('CLI command parsing', () => {
   });
 
   test('parses serve command with LAN options', () => {
-    expect(Effect.runSync(parseCommand(['serve', '--host', '0.0.0.0', '--port', '9999', '--token', 's3cret']))).toEqual({
-      _tag: 'Serve',
-      args: { host: '0.0.0.0', port: 9999, token: 's3cret', harness: null, cursor: true },
-    });
+    expect(Effect.runSync(parseCommand(['serve', '--host', '0.0.0.0', '--port', '9999', '--token', 's3cret']))).toEqual(
+      {
+        _tag: 'Serve',
+        args: { host: '0.0.0.0', port: 9999, token: 's3cret', harness: null, cursor: true },
+      },
+    );
   });
 
   test('serve rejects LAN binding without token', () => {
@@ -98,7 +107,9 @@ describe('CLI command parsing', () => {
   });
 
   test('parses merge --remote', () => {
-    expect(Effect.runSync(parseCommand(['merge', '--remote', 'http://mac:3847/snapshot', '--token', 'abc', '--local']))).toMatchObject({
+    expect(
+      Effect.runSync(parseCommand(['merge', '--remote', 'http://mac:3847/snapshot', '--token', 'abc', '--local'])),
+    ).toMatchObject({
       _tag: 'Merge',
       args: { remote: ['http://mac:3847/snapshot'], token: 'abc', local: true },
     });

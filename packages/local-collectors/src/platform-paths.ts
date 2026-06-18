@@ -38,9 +38,33 @@ export interface HarnessPaths {
   };
 }
 
-export const resolvePaths = (storage: LocalHistoryStorage): HarnessPaths => {
+export interface HarnessPathCandidates {
+  claude: {
+    projectsDir: string[];
+    historyFile: string[];
+    configFile: string[];
+  };
+  codex: {
+    sessionsDir: string[];
+    sessionIndexFile: string[];
+  };
+  opencode: {
+    liveDb: string[];
+    stableDb: string[];
+  };
+  cursor: {
+    stateVscdb: string[];
+    aiTrackingDb: string[];
+  };
+  rtk: {
+    historyDb: string[];
+  };
+}
+
+const unique = <T>(values: T[]) => [...new Set(values)];
+
+const pathSet = (storage: LocalHistoryStorage) => {
   const home = storage.home;
-  const os = platform();
 
   const join = (...segments: string[]) => path.join(home, ...segments);
 
@@ -99,8 +123,39 @@ export const resolvePaths = (storage: LocalHistoryStorage): HarnessPaths => {
     },
   };
 
-  const pathsByPlatform: Record<Platform, HarnessPaths> = { macos, linux, windows };
-  return pathsByPlatform[os];
+  return { macos, linux, windows } satisfies Record<Platform, HarnessPaths>;
+};
+
+export const resolvePaths = (storage: LocalHistoryStorage): HarnessPaths => {
+  const os = platform();
+  return pathSet(storage)[os];
+};
+
+export const resolvePathCandidates = (storage: LocalHistoryStorage): HarnessPathCandidates => {
+  const paths = pathSet(storage);
+  const ordered = unique([platform(), 'macos', 'linux', 'windows'] satisfies Platform[]).map((os) => paths[os]);
+  return {
+    claude: {
+      projectsDir: unique(ordered.map((paths) => paths.claude.projectsDir)),
+      historyFile: unique(ordered.map((paths) => paths.claude.historyFile)),
+      configFile: unique(ordered.map((paths) => paths.claude.configFile)),
+    },
+    codex: {
+      sessionsDir: unique(ordered.map((paths) => paths.codex.sessionsDir)),
+      sessionIndexFile: unique(ordered.map((paths) => paths.codex.sessionIndexFile)),
+    },
+    opencode: {
+      liveDb: unique(ordered.map((paths) => paths.opencode.liveDb)),
+      stableDb: unique(ordered.map((paths) => paths.opencode.stableDb)),
+    },
+    cursor: {
+      stateVscdb: unique(ordered.map((paths) => paths.cursor.stateVscdb)),
+      aiTrackingDb: unique(ordered.map((paths) => paths.cursor.aiTrackingDb)),
+    },
+    rtk: {
+      historyDb: unique(ordered.map((paths) => paths.rtk.historyDb)),
+    },
+  };
 };
 
 export const firstExisting = (

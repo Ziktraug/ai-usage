@@ -15,6 +15,7 @@ export interface AnalyticsGroup {
   priced: number;
   unpriced: number;
   usageUnavailable: number;
+  ambiguous: number;
   fresh: number;
   inp: number;
   cache: number;
@@ -78,6 +79,7 @@ const finishGroup = (group: GroupDraft, totalCost: number): AnalyticsGroup => {
     priced: group.priced,
     unpriced: group.unpriced,
     usageUnavailable: group.usageUnavailable,
+    ambiguous: group.ambiguous,
     fresh: group.fresh,
     inp: group.inp,
     cache: group.cache,
@@ -109,6 +111,7 @@ const groupBy = (rows: Row[], keyFn: (row: Row) => string, totalCost: number): A
         priced: 0,
         unpriced: 0,
         usageUnavailable: 0,
+        ambiguous: 0,
         fresh: 0,
         inp: 0,
         cache: 0,
@@ -125,6 +128,7 @@ const groupBy = (rows: Row[], keyFn: (row: Row) => string, totalCost: number): A
     const pricedCost = usageRowPricedCost(row);
     group.sessions++;
     if (row.usageUnavailable) group.usageUnavailable++;
+    if (row.ambiguous) group.ambiguous++;
     group.fresh += usageRowFreshTokens(row);
     group.inp += row.tokIn;
     group.cache += usageRowCacheReadTokens(row);

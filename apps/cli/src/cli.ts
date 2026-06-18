@@ -46,6 +46,10 @@ export interface SetupArgs {
   port: number;
 }
 
+export interface CursorImportArgs {
+  file: string;
+}
+
 export type CliCommand =
   | { _tag: 'Help' }
   | { _tag: 'Quota'; color: boolean | null }
@@ -56,7 +60,8 @@ export type CliCommand =
   | { _tag: 'Machine' }
   | { _tag: 'MachineSetLabel'; label: string }
   | { _tag: 'ProjectsList'; args: ProjectsListArgs }
-  | { _tag: 'Setup'; args: SetupArgs };
+  | { _tag: 'Setup'; args: SetupArgs }
+  | { _tag: 'CursorImport'; args: CursorImportArgs };
 
 const cliArgumentError = (message: string) => new CliArgumentError({ message });
 
@@ -110,6 +115,7 @@ export const helpText =
   `  serve                  serve this machine's snapshot over HTTP\n` +
   `  machine                show or update this machine identity\n` +
   `  projects list          summarize detected projects\n` +
+  `  cursor import <csv>    copy a Cursor usage export into local ignored storage\n` +
   `  setup --web            launch project alias setup UI\n` +
   `  quota                  Codex subscription quota (5h / 7d usage)\n\n` +
   `Options:\n` +
@@ -140,6 +146,8 @@ export const helpText =
   `  machine set-label <x>  update this machine label\n` +
   `\nProjects:\n` +
   `  projects list --paths [files...] [--local]\n` +
+  `\nCursor:\n` +
+  `  cursor import <csv>    import a cursor.com usage-events CSV export\n` +
   `\nSetup:\n` +
   `  setup --web [files...] [--local] [--port 3456]\n`;
 
@@ -286,6 +294,18 @@ const parseProjectsCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgu
     return yield* Effect.fail(cliArgumentError(`Unknown projects subcommand: ${subcommand ?? ''}`.trim()));
   });
 
+const parseCursorCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgumentError> =>
+  Effect.gen(function* () {
+    const rest = [...argv];
+    const subcommand = rest.shift();
+    if (subcommand === 'import') {
+      const file = yield* parseRequiredValue(rest, 'cursor import');
+      if (rest.length) return yield* Effect.fail(cliArgumentError(`Unknown option for cursor import: ${rest[0]}`));
+      return { _tag: 'CursorImport', args: { file } };
+    }
+    return yield* Effect.fail(cliArgumentError(`Unknown cursor subcommand: ${subcommand ?? ''}`.trim()));
+  });
+
 const parseSetupArgs = (argv: string[]): Effect.Effect<SetupArgs, CliArgumentError> =>
   Effect.gen(function* () {
     const args: SetupArgs = { files: [], local: false, port: 3456 };
@@ -346,6 +366,10 @@ export const parseCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgum
     if (command === 'projects') {
       rest.shift();
       return yield* parseProjectsCommand(rest);
+    }
+    if (command === 'cursor') {
+      rest.shift();
+      return yield* parseCursorCommand(rest);
     }
     if (command === 'setup') {
       rest.shift();

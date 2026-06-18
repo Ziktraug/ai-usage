@@ -16,12 +16,14 @@ export const renderCSV = (rows: Row[]) => {
     'provider',
     'session',
     'model',
+    'models',
     'project',
     'input',
     'output',
     'cache_read',
     'cache_write',
     'cost_actual',
+    'cost_quota',
     'cost_approx_api',
     'cost_known',
     'calls',
@@ -38,6 +40,7 @@ export const renderCSV = (rows: Row[]) => {
     'subagent',
     'partial',
     'usage_unavailable',
+    'ambiguous',
   ];
   const body = rows.map((r) =>
     [
@@ -49,12 +52,14 @@ export const renderCSV = (rows: Row[]) => {
       r.provider,
       r.name,
       r.model,
+      r.models?.join('|') ?? '',
       r.project,
       r.tokIn,
       r.tokOut,
       r.tokCr,
       r.tokCw,
       r.costActual ?? '',
+      r.costQuota ?? '',
       r.costApprox.toFixed(4),
       r.costKnown,
       r.calls,
@@ -71,6 +76,7 @@ export const renderCSV = (rows: Row[]) => {
       r.subagent ?? false,
       r.partial ?? false,
       r.usageUnavailable ?? false,
+      r.ambiguous ?? false,
     ]
       .map((x) => csvEscape(String(x)))
       .join(','),

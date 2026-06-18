@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { applyProjectAliases } from '@ai-usage/core/project-alias';
@@ -7,14 +8,18 @@ import type { Row, SourcedRow } from '@ai-usage/core/types';
 import { usageRowTokenTotal } from '@ai-usage/core/usage-row';
 import { collectHarnessFacets, collectSelectedHarnessRows } from '@ai-usage/local-collectors';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
-import { ensureMachineConfig, readAiUsageConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
+import {
+  ensureMachineConfig,
+  readMergedAiUsageConfig,
+  writeMachineConfig,
+} from '@ai-usage/local-collectors/machine-config';
 import { Console, Effect, Layer } from 'effect';
 import { helpText, parseCommand } from './cli';
 import { CliArgumentError, formatAppError } from './errors';
 import { renderQuota } from './quota';
 import { setColor } from './render/colors';
 import { fmtNum, pad, trunc } from './render/format';
-import { renderUsageReport } from './report';
+import { renderUsageReportForCli } from './report';
 import { CliRuntime, CliRuntimeLive } from './runtime';
 import { runServe } from './serve';
 import { runSetupServer } from './setup';
@@ -50,10 +55,12 @@ export const app = Effect.gen(function* () {
 
   if (command._tag === 'Snapshot') {
     const machine = yield* ensureMachineConfig;
+    const config = yield* readMergedAiUsageConfig;
     const rows = yield* collectSelectedHarnessRows({
       harness: command.args.harness,
       includeCursor: command.args.cursor,
       keepSource: true,
+      ...(config.cursor ? { cursorCsv: config.cursor } : {}),
     });
     const facets = yield* collectHarnessFacets({
       includeCursor: command.args.cursor && (!command.args.harness || command.args.harness === 'cursor'),
@@ -75,16 +82,20 @@ export const app = Effect.gen(function* () {
     }
     if (command.args.local) {
       const machine = yield* ensureMachineConfig;
+      const config = yield* readMergedAiUsageConfig;
       const rows = yield* collectSelectedHarnessRows({
         harness: command.args.harness,
         includeCursor: command.args.cursor,
         keepSource: true,
+        ...(config.cursor ? { cursorCsv: config.cursor } : {}),
       });
       snapshots.push(createUsageSnapshot({ machine, rows }));
     }
     const merged = mergeUsageSnapshots(snapshots);
-    const rows = yield* applyConfiguredProjectAliases(merged.rows);
-    yield* writeStdout(`${renderUsageReport(rows, command.args)}\n`);
+    const config = yield* readMergedAiUsageConfig;
+    const rows = applyProjectAliases(merged.rows, config.projectAliases ?? []);
+    const output = yield* Effect.promise(() => renderUsageReportForCli(rows, command.args));
+    yield* writeStdout(`${output}\n`);
     return;
   }
 
@@ -95,11 +106,27 @@ export const app = Effect.gen(function* () {
     }
     if (command.args.local) {
       const machine = yield* ensureMachineConfig;
-      const rows = yield* collectSelectedHarnessRows({ harness: null, includeCursor: true, keepSource: true });
+      const config = yield* readMergedAiUsageConfig;
+      const rows = yield* collectSelectedHarnessRows({
+        harness: null,
+        includeCursor: true,
+        keepSource: true,
+        ...(config.cursor ? { cursorCsv: config.cursor } : {}),
+      });
       snapshots.push(createUsageSnapshot({ machine, rows }));
     }
     const merged = mergeUsageSnapshots(snapshots);
     yield* writeStdout(`${renderProjectSources(merged.rows)}\n`);
+    return;
+  }
+
+  if (command._tag === 'CursorImport') {
+    const imported = yield* importCursorUsageExport(command.args.file);
+    yield* Console.log(
+      imported.alreadyImported
+        ? `Already imported: ${imported.path}`
+        : `Imported Cursor usage export: ${imported.path}`,
+    );
     return;
   }
 
@@ -114,26 +141,23 @@ export const app = Effect.gen(function* () {
   }
 
   yield* Effect.sync(() => setColor(command.args.color === null ? runtime.stdoutIsTTY : command.args.color));
+  const config = yield* readMergedAiUsageConfig;
   const collectedRows = yield* collectSelectedHarnessRows({
     harness: command.args.harness,
     includeCursor: command.args.cursor,
     keepSource: true,
+    ...(config.cursor ? { cursorCsv: config.cursor } : {}),
   });
-  const rows = yield* applyConfiguredProjectAliases(collectedRows);
+  const rows = applyProjectAliases(collectedRows, config.projectAliases ?? []);
   const facets =
     command.args.format === 'html' || command.args.format === 'payload'
       ? yield* collectHarnessFacets({
           includeCursor: command.args.cursor && (!command.args.harness || command.args.harness === 'cursor'),
         })
       : undefined;
-  yield* writeStdout(`${renderUsageReport(rows, command.args, facets)}\n`);
+  const output = yield* Effect.promise(() => renderUsageReportForCli(rows, command.args, facets));
+  yield* writeStdout(`${output}\n`);
 });
-
-const applyConfiguredProjectAliases = (rows: Row[]) =>
-  Effect.gen(function* () {
-    const config = yield* readAiUsageConfig;
-    return applyProjectAliases(rows, config.projectAliases ?? []);
-  });
 
 interface ProjectSourceSummary {
   project: string;
@@ -249,6 +273,38 @@ const writeFile = (filePath: string, text: string) =>
       fs.writeFileSync(filePath, text, 'utf8');
     },
     catch: fileError('writeFile', filePath),
+  });
+
+const CURSOR_EXPORT_DIR = path.join(process.cwd(), '.ai-usage', 'cursor-exports');
+
+const safeImportName = (filePath: string) => path.basename(filePath).replace(/[^a-zA-Z0-9._-]+/g, '-');
+
+const cursorCsvLooksValid = (text: string) => {
+  const header = text.split(/\r?\n/, 1)[0] ?? '';
+  return ['Date', 'User', 'Kind', 'Model', 'Cost'].every((column) => header.includes(column));
+};
+
+const importCursorUsageExport = (filePath: string) =>
+  Effect.try({
+    try: () => {
+      const sourcePath = path.resolve(filePath);
+      const content = fs.readFileSync(sourcePath);
+      if (!cursorCsvLooksValid(content.toString('utf8', 0, Math.min(content.length, 4096)))) {
+        throw new Error('not a Cursor usage-events CSV export');
+      }
+      fs.mkdirSync(CURSOR_EXPORT_DIR, { recursive: true });
+      const hash = createHash('sha256').update(content).digest('hex');
+      for (const entry of fs.readdirSync(CURSOR_EXPORT_DIR, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.csv')) continue;
+        const existingPath = path.join(CURSOR_EXPORT_DIR, entry.name);
+        const existingHash = createHash('sha256').update(fs.readFileSync(existingPath)).digest('hex');
+        if (existingHash === hash) return { path: existingPath, alreadyImported: true };
+      }
+      const destination = path.join(CURSOR_EXPORT_DIR, `${hash.slice(0, 12)}-${safeImportName(sourcePath)}`);
+      fs.writeFileSync(destination, content);
+      return { path: destination, alreadyImported: false };
+    },
+    catch: fileError('cursorImport', filePath),
   });
 
 const formatDefect = (defect: unknown) => (defect instanceof Error ? defect.message : String(defect));

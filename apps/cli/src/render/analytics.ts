@@ -30,7 +30,7 @@ const analyticsTable = (
     const cells: string[] = [];
     cells.push(clr.cyan(pad(trunc(group.key, keyWidth), keyWidth)));
     if (showHarness) cells.push(harnessColor(group.harness)(pad(trunc(group.harness, 12), 12)));
-    cells.push(pad(String(group.sessions), 5, true));
+    cells.push(pad(`${group.sessions}${group.ambiguous ? '?' : ''}`, 5, true));
     cells.push(pad(unavailableOnly ? 'n/a' : fmtNum(group.fresh), 8, true));
     cells.push(clr.dim(pad(unavailableOnly ? 'n/a' : `${group.cacheHitPct.toFixed(0)}%`, 6, true)));
     const costText = unavailableOnly

@@ -8,6 +8,14 @@ export interface ProjectAliasEntry {
 
 export interface AiUsageConfig {
   projectAliases?: ProjectAliasEntry[];
+  cursor?: {
+    usageExportPaths?: string[];
+    usageExportDir?: string;
+    reconcileWindowMs?: number;
+    clusterGapMs?: number;
+    maxSessionSpanMs?: number;
+    user?: string;
+  };
 }
 
 const escapeRegex = (value: string) => value.replace(/[.+^${}()|[\]\\]/g, '\\$&');

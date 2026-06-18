@@ -3,7 +3,7 @@ import type { Row } from '@ai-usage/core/types';
 import { actualCost, normalizeUsageRow } from '@ai-usage/core/usage-row';
 import { Effect } from 'effect';
 import { LocalHistoryStorage } from '../local-history';
-import { resolvePaths } from '../platform-paths';
+import { resolvePathCandidates } from '../platform-paths';
 import { withProjectPath, withSource } from '../rtk-enrichment';
 import { base, dominant, safeJSON } from '../text';
 
@@ -177,15 +177,18 @@ const collectFromDb = (
 
 export const collectOpenCode = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
-  const paths = resolvePaths(storage);
+  const paths = resolvePathCandidates(storage).opencode;
   const seen = new Set<string>();
 
-  const liveRows = yield* collectFromDb(paths.opencode.liveDb, storage, seen).pipe(
-    Effect.catchAll(() => Effect.succeed([] as Row[])),
-  );
-  const stableRows = yield* collectFromDb(paths.opencode.stableDb, storage, seen).pipe(
-    Effect.catchAll(() => Effect.succeed([] as Row[])),
-  );
+  const liveRows: Row[] = [];
+  for (const dbPath of paths.liveDb) {
+    liveRows.push(...(yield* collectFromDb(dbPath, storage, seen).pipe(Effect.catchAll(() => Effect.succeed([])))));
+  }
+
+  const stableRows: Row[] = [];
+  for (const dbPath of paths.stableDb) {
+    stableRows.push(...(yield* collectFromDb(dbPath, storage, seen).pipe(Effect.catchAll(() => Effect.succeed([])))));
+  }
 
   return [...liveRows, ...stableRows];
 });

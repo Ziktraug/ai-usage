@@ -60,7 +60,7 @@ export const renderTable = (rows: Row[], wide = false) => {
       r: false,
       c: (r) => provColor(r.provider),
     },
-    { h: 'Model', f: (r) => r.model, w: 20, r: false, c: () => clr.cyan },
+    { h: 'Model', f: (r) => (r.models?.length ? r.models.join('+') : r.model), w: 20, r: false, c: () => clr.cyan },
     { h: 'Project', f: (r) => r.project, w: 14, r: false, c: () => clr.dim },
     { h: 'In', f: (r) => fmtTokens(r, r.tokIn), w: 7, r: true, c: () => id },
     { h: 'Out', f: (r) => fmtTokens(r, r.tokOut), w: 7, r: true, c: () => id },
@@ -120,7 +120,7 @@ export const renderTable = (rows: Row[], wide = false) => {
       f: usageRowSessionLabel,
       w: 34,
       r: false,
-      c: (r) => (r.partial || r.subagent || r.usageUnavailable ? clr.dim : id),
+      c: (r) => (r.partial || r.subagent || r.usageUnavailable || r.ambiguous ? clr.dim : id),
     },
   ];
   const header = clr.bold(cols.map((col) => pad(col.h, col.w, col.r)).join('  '));

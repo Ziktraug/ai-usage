@@ -15,12 +15,14 @@ export interface Row {
   provider: string;
   name: string;
   model: string;
+  models?: string[];
   project: string;
   tokIn: number;
   tokOut: number;
   tokCr: number;
   tokCw: number;
   costActual: number | null;
+  costQuota?: number | null;
   costApprox: number;
   costKnown: boolean;
   calls: number;
@@ -36,6 +38,7 @@ export interface Row {
   subagent?: boolean;
   partial?: boolean;
   usageUnavailable?: boolean;
+  ambiguous?: boolean;
 }
 
 export type SourcedRow = Row & {
