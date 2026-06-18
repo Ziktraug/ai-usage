@@ -1,4 +1,3 @@
-import { constants, Database } from 'bun:sqlite';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -59,8 +58,9 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
       catch: localHistoryError('readDir', { path: dirPath }),
     }),
   openDatabase: (dbPath) =>
-    Effect.try({
-      try: () => {
+    Effect.tryPromise({
+      try: async () => {
+        const { constants, Database } = await import('bun:sqlite');
         // bun:sqlite in readonly mode fails on WAL databases when the -shm file
         // doesn't exist: it can't create the shared-memory file while readonly,
         // so prepare() throws SQLITE_CANTOPEN. ?immutable=1 bypasses WAL/shm
