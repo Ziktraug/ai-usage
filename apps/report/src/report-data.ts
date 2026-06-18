@@ -1,6 +1,5 @@
 import { calculateAnalytics } from '@ai-usage/core/analytics';
 import type { SerializedRow, UsageReportPayload } from '@ai-usage/core/report-data';
-import { getReportPayload } from './server/report-payload';
 
 export interface CursorCommitAttributionFacet {
   commitHash: string;
@@ -205,6 +204,7 @@ export const readReportPayload = () =>
 export const isDemoReportPayload = () => typeof window === 'undefined' || !window.__AI_USAGE_REPORT__;
 
 export const fetchReportPayload = async (_options?: { force?: boolean }) => {
+  const { getReportPayload } = await import('./server/report-payload');
   const payload = (await getReportPayload()) as UsageReportPayload;
   window.__AI_USAGE_REPORT__ = payload;
   return payload;
