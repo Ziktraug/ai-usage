@@ -1,17 +1,15 @@
 import type { SyncRemoteConfig } from '@ai-usage/core/project-alias';
-import { LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
-import { ensureMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import {
-  listSyncRemotes,
-  readSyncedSnapshotRecords,
-  removeSyncRemote,
-  resolveSyncToken,
-  type StoredSyncedSnapshot,
-  storeSyncedSnapshot,
-  syncedSnapshotPath,
-  upsertSyncRemote,
-} from '@ai-usage/local-collectors/sync-storage';
-import { fetchRemoteSnapshot } from '@ai-usage/sync/transport';
+  addSyncRemote,
+  applyPullTokenEnvOverride,
+  getSyncState,
+  pullSyncRemote,
+  removeConfiguredSyncRemote,
+  selectSyncRemotesToPull,
+  validateTokenEnv,
+} from '@ai-usage/sync';
+import type { SyncRemoteState, SyncState } from '@ai-usage/sync/state';
+import { SyncWorkflowError } from '@ai-usage/sync/errors';
 import { Console, Effect } from 'effect';
 import type { SyncArgs } from './cli';
 import { CliArgumentError } from './errors';
@@ -36,109 +34,29 @@ const renderSyncHelp = () =>
     '  ai-usage sync pull --name macbook --remote http://<other-machine-ip>:3847/snapshot --token-env AI_USAGE_SYNC_MACBOOK_TOKEN',
   ].join('\n');
 
-const validateSyncUrl = (url: string) =>
-  Effect.try({
-    try: () => {
-      const parsed = new URL(url);
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
-        throw new Error('URL must start with http:// or https://');
-    },
-    catch: (cause) =>
-      new CliArgumentError({
-        message: `Invalid sync URL ${url}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      }),
-  });
-
-const validateTokenEnv = (tokenEnv: string | null) =>
-  Effect.try({
-    try: () => {
-      if (tokenEnv && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(tokenEnv))
-        throw new Error('environment variable names may contain letters, digits, and underscores');
-    },
-    catch: (cause) =>
-      new CliArgumentError({
-        message: `Invalid --token-env ${tokenEnv}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      }),
-  });
-
-const findRemote = (name: string) =>
-  Effect.gen(function* () {
-    const remotes = yield* listSyncRemotes;
-    const remote = remotes.find((item) => item.name === name);
-    if (!remote) {
-      return yield* Effect.fail(new CliArgumentError({ message: `Unknown sync remote: ${name}` }));
-    }
-    return remote;
-  });
-
-const tokenForRemote = (remote: SyncRemoteConfig) =>
-  Effect.gen(function* () {
-    const token = yield* resolveSyncToken(remote.tokenEnv);
-    if (remote.tokenEnv && !token) {
-      return yield* Effect.fail(
-        new CliArgumentError({
-          message: `Missing token env ${remote.tokenEnv}. Set it in your shell or ~/.config/ai-usage/.env.`,
-        }),
-      );
-    }
-    return token;
-  });
-
-const pullSyncRemote = (remote: SyncRemoteConfig) =>
-  Effect.gen(function* () {
-    const started = Date.now();
-    yield* Console.log(`[sync] pulling remote=${remote.name} url=${remote.url}`);
-    const token = yield* tokenForRemote(remote);
-    const snapshot = yield* fetchRemoteSnapshot(remote.url, token);
-    const localMachine = yield* ensureMachineConfig;
-    if (snapshot.machine.id === localMachine.id) {
-      return yield* Effect.fail(
-        new CliArgumentError({
-          message: `Refusing to sync remote ${remote.name}: snapshot machine id matches this machine (${localMachine.id}).`,
-        }),
-      );
-    }
-    yield* Console.log(
-      `[sync] fetched remote=${remote.name} machine=${snapshot.machine.label} rows=${snapshot.rows.length} generatedAt=${snapshot.generatedAt}`,
-    );
-    const record = yield* storeSyncedSnapshot({ remote, snapshot });
-    const storage = yield* LocalHistoryStorage;
-    return { record, path: syncedSnapshotPath(storage, remote.name), durationMs: Date.now() - started };
-  });
-
-const renderSyncList = (remotes: SyncRemoteConfig[], records: StoredSyncedSnapshot[]) => {
-  if (!remotes.length) return renderSyncHelp();
-  const byName = new Map(records.map((record) => [record.remoteName, record]));
-  const cols = [
-    { h: 'Name', w: 16, f: (r: SyncRemoteConfig) => r.name },
-    { h: 'Enabled', w: 7, f: (r: SyncRemoteConfig) => (r.enabled === false ? 'no' : 'yes') },
-    { h: 'Token', w: 28, f: (r: SyncRemoteConfig) => r.tokenEnv ?? 'none' },
-    { h: 'Machine', w: 22, f: (r: SyncRemoteConfig) => byName.get(r.name)?.snapshot.machine.label ?? 'not pulled' },
-    { h: 'Rows', w: 8, r: true, f: (r: SyncRemoteConfig) => String(byName.get(r.name)?.snapshot.rows.length ?? 0) },
-    { h: 'Fetched', w: 24, f: (r: SyncRemoteConfig) => byName.get(r.name)?.fetchedAt ?? 'never' },
-    { h: 'URL', w: 44, f: (r: SyncRemoteConfig) => r.url },
-  ];
-  const header = cols.map((col) => pad(col.h, col.w, col.r)).join('  ');
-  const body = remotes.map((remote) => cols.map((col) => pad(trunc(col.f(remote), col.w), col.w, col.r)).join('  '));
-  return [header, ...body].join('\n');
-};
-
-const readSyncedRecordsForCli = () =>
-  Effect.gen(function* () {
-    const result = yield* readSyncedSnapshotRecords;
-    return result.records;
-  });
+const noRemoteHelp = (error: unknown) =>
+  error instanceof SyncWorkflowError && error.reason === 'no-remotes'
+    ? new CliArgumentError({ message: renderSyncHelp() })
+    : error;
 
 const syncRemotesToPull = (args: Extract<SyncArgs, { action: 'pull' | 'watch' }>) =>
-  Effect.gen(function* () {
-    if (args.name) return [yield* findRemote(args.name)];
-    const remotes = (yield* listSyncRemotes).filter((remote) => remote.enabled !== false);
-    if (!remotes.length) return yield* Effect.fail(new CliArgumentError({ message: renderSyncHelp() }));
-    return remotes;
-  });
+  selectSyncRemotesToPull(args.name).pipe(Effect.mapError(noRemoteHelp));
 
-export const applyPullTokenEnvOverride = (remotes: SyncRemoteConfig[], tokenEnv: string | null): SyncRemoteConfig[] =>
-  tokenEnv ? remotes.map((remote) => ({ ...remote, tokenEnv })) : remotes;
+const renderSyncList = (state: SyncState) => {
+  if (!state.remotes.length) return renderSyncHelp();
+  const cols = [
+    { h: 'Name', w: 16, f: (r: SyncRemoteState) => r.name },
+    { h: 'Enabled', w: 7, f: (r: SyncRemoteState) => (r.enabled ? 'yes' : 'no') },
+    { h: 'Token', w: 28, f: (r: SyncRemoteState) => r.tokenEnv ?? r.tokenStatus },
+    { h: 'Machine', w: 22, f: (r: SyncRemoteState) => r.machineLabel ?? 'not pulled' },
+    { h: 'Rows', w: 8, r: true, f: (r: SyncRemoteState) => String(r.rows) },
+    { h: 'Fetched', w: 24, f: (r: SyncRemoteState) => r.fetchedAt ?? 'never' },
+    { h: 'URL', w: 44, f: (r: SyncRemoteState) => r.url },
+  ];
+  const header = cols.map((col) => pad(col.h, col.w, col.r)).join('  ');
+  const body = state.remotes.map((remote) => cols.map((col) => pad(trunc(col.f(remote), col.w), col.w, col.r)).join('  '));
+  return [header, ...body].join('\n');
+};
 
 const sleep = (ms: number) => Effect.promise(() => new Promise((resolve) => setTimeout(resolve, ms)));
 
@@ -150,7 +68,13 @@ const runSyncWatch = (args: Extract<SyncArgs, { action: 'watch' }>) =>
     );
     while (true) {
       for (const remote of remotes) {
+        yield* Console.log(`[sync] pulling remote=${remote.name} url=${remote.url}`);
         yield* pullSyncRemote(remote).pipe(
+          Effect.tap(({ record }) =>
+            Console.log(
+              `[sync] fetched remote=${remote.name} machine=${record.snapshot.machine.label} rows=${record.snapshot.rows.length} generatedAt=${record.snapshot.generatedAt}`,
+            ),
+          ),
           Effect.catchAll((error) => Console.error(`[sync] pull failed remote=${remote.name}: ${error.message}`)),
         );
       }
@@ -166,10 +90,7 @@ export const runSyncCommand = (args: SyncArgs) =>
     }
 
     if (args.action === 'add') {
-      yield* validateSyncUrl(args.url);
-      yield* validateTokenEnv(args.tokenEnv);
-      const remote = { name: args.name, url: args.url, ...(args.tokenEnv ? { tokenEnv: args.tokenEnv } : {}) };
-      yield* upsertSyncRemote(remote);
+      yield* addSyncRemote({ name: args.name, url: args.url, tokenEnv: args.tokenEnv });
       yield* Console.log(`Added sync remote ${args.name}`);
       if (args.tokenEnv) {
         yield* Console.log(`Token env: ${args.tokenEnv}`);
@@ -179,14 +100,12 @@ export const runSyncCommand = (args: SyncArgs) =>
     }
 
     if (args.action === 'list') {
-      const remotes = yield* listSyncRemotes;
-      const records = yield* readSyncedRecordsForCli();
-      yield* Console.log(renderSyncList(remotes, records));
+      yield* Console.log(renderSyncList(yield* getSyncState));
       return;
     }
 
     if (args.action === 'remove') {
-      const removed = yield* removeSyncRemote(args.name);
+      const removed = yield* removeConfiguredSyncRemote(args.name);
       yield* Console.log(removed ? `Removed sync remote ${args.name}` : `Sync remote not found: ${args.name}`);
       return;
     }
@@ -197,7 +116,11 @@ export const runSyncCommand = (args: SyncArgs) =>
         ? [{ name: args.name!, url: args.remote, ...(args.tokenEnv ? { tokenEnv: args.tokenEnv } : {}) }]
         : applyPullTokenEnvOverride(yield* syncRemotesToPull(args), args.tokenEnv);
       for (const remote of remotes) {
+        yield* Console.log(`[sync] pulling remote=${remote.name} url=${remote.url}`);
         const { record, path, durationMs } = yield* pullSyncRemote(remote);
+        yield* Console.log(
+          `[sync] fetched remote=${remote.name} machine=${record.snapshot.machine.label} rows=${record.snapshot.rows.length} generatedAt=${record.snapshot.generatedAt}`,
+        );
         yield* Console.log(
           `[sync] stored remote=${record.remoteName} path=${path} fetchedAt=${record.fetchedAt} duration=${durationMs}ms`,
         );

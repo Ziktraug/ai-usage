@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
+import { applyPullTokenEnvOverride } from '@ai-usage/sync/workflow';
 import { parseCommand } from './cli';
-import { applyPullTokenEnvOverride } from './sync';
 
 describe('CLI command parsing', () => {
   test('parses quota output policy without leaking raw argv to main', () => {
