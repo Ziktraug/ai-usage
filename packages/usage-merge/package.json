@@ -1,19 +1,15 @@
 {
-  "name": "@ai-usage/local-collectors",
+  "name": "@ai-usage/usage-merge",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./codex-history": "./src/codex-history.ts",
-    "./errors": "./src/errors.ts",
-    "./lan-peers": "./src/lan-peers.ts",
-    "./local-history": "./src/local-history.ts",
-    "./machine-config": "./src/machine-config.ts",
-    "./sync-storage": "./src/sync-storage.ts"
+    ".": "./src/index.ts"
   },
   "dependencies": {
+    "@ai-usage/lan-pairing": "workspace:*",
     "@ai-usage/report-core": "workspace:*",
+    "@ai-usage/usage-store": "workspace:*",
     "effect": "^3.21.3"
   },
   "scripts": {

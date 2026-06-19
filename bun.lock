@@ -58,6 +58,13 @@
         "solid-js": "^1.9.13",
       },
     },
+    "packages/lan-pairing": {
+      "name": "@ai-usage/lan-pairing",
+      "version": "0.1.0",
+      "dependencies": {
+        "effect": "^3.21.3",
+      },
+    },
     "packages/local-collectors": {
       "name": "@ai-usage/local-collectors",
       "version": "0.1.0",
@@ -88,11 +95,31 @@
         "effect": "^3.21.3",
       },
     },
+    "packages/usage-merge": {
+      "name": "@ai-usage/usage-merge",
+      "version": "0.1.0",
+      "dependencies": {
+        "@ai-usage/lan-pairing": "workspace:*",
+        "@ai-usage/report-core": "workspace:*",
+        "@ai-usage/usage-store": "workspace:*",
+        "effect": "^3.21.3",
+      },
+    },
+    "packages/usage-store": {
+      "name": "@ai-usage/usage-store",
+      "version": "0.1.0",
+      "dependencies": {
+        "@ai-usage/report-core": "workspace:*",
+        "effect": "^3.21.3",
+      },
+    },
   },
   "packages": {
     "@ai-usage/cli": ["@ai-usage/cli@workspace:apps/cli"],
 
     "@ai-usage/design-system": ["@ai-usage/design-system@workspace:packages/design-system"],
+
+    "@ai-usage/lan-pairing": ["@ai-usage/lan-pairing@workspace:packages/lan-pairing"],
 
     "@ai-usage/local-collectors": ["@ai-usage/local-collectors@workspace:packages/local-collectors"],
 
@@ -101,6 +128,10 @@
     "@ai-usage/report-data": ["@ai-usage/report-data@workspace:packages/report-data"],
 
     "@ai-usage/sync": ["@ai-usage/sync@workspace:packages/sync"],
+
+    "@ai-usage/usage-merge": ["@ai-usage/usage-merge@workspace:packages/usage-merge"],
+
+    "@ai-usage/usage-store": ["@ai-usage/usage-store@workspace:packages/usage-store"],
 
     "@ai-usage/web": ["@ai-usage/web@workspace:apps/web"],
 
