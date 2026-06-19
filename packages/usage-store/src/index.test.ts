@@ -1,20 +1,25 @@
 import { describe, expect, test } from 'bun:test';
+import { spawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createUsageMergeBundle, toSerializedMergeRow, type UsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
+import {
+  createUsageMergeBundle,
+  toSerializedMergeRow,
+  type UsageMergeBundle,
+} from '@ai-usage/report-core/merge-bundle';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import {
   exportLocalMergeBundle,
+  type ImportResult,
   importLocalRows,
   importPeerMergeBundle,
   queryReportRows,
-  usageStorePath,
   UsageStoreError,
-  type ImportResult,
+  usageStorePath,
 } from './index';
 
 const machineA: UsageMachine = { id: 'machine-a', label: 'Machine A' };
@@ -115,6 +120,56 @@ describe('usage-store public boundary', () => {
     expect(queried.rows[0]?.source.machineId).toBe('machine-a');
   });
 
+  test('waits for a short concurrent SQLite writer before importing rows', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-busy-'));
+    const dbPath = usageStorePath(home);
+
+    await Effect.runPromise(
+      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'seed' })] }),
+    );
+
+    const blocker = spawn(process.execPath, [
+      '-e',
+      `
+        const { Database } = await import('bun:sqlite');
+        const db = new Database(${JSON.stringify(dbPath)});
+        db.exec('PRAGMA busy_timeout = 5000');
+        db.exec('PRAGMA journal_mode = WAL');
+        db.exec('BEGIN IMMEDIATE');
+        process.stdout.write('locked\\n');
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        db.exec('COMMIT');
+        db.close();
+      `,
+    ]);
+
+    await new Promise<void>((resolve, reject) => {
+      let output = '';
+      blocker.stdout.on('data', (chunk) => {
+        output += chunk.toString();
+        if (output.includes('locked')) resolve();
+      });
+      blocker.on('error', reject);
+      blocker.on('exit', (code) => {
+        if (!output.includes('locked')) reject(new Error(`SQLite blocker exited before locking with code ${code}`));
+      });
+    });
+
+    try {
+      const imported = await Effect.runPromise(
+        importLocalRows({
+          dbPath,
+          machine: machineA,
+          rows: [makeRow({ sourceSessionId: 'after-lock' })],
+        }),
+      );
+
+      expect(imported.inserted).toBe(1);
+    } finally {
+      blocker.kill();
+    }
+  });
+
   test('updates a changed row with the same stable key', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-update-'));
     const dbPath = usageStorePath(home);
@@ -157,7 +212,9 @@ describe('usage-store public boundary', () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-export-'));
     const dbPath = usageStorePath(home);
 
-    await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'local-1' })] }));
+    await Effect.runPromise(
+      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'local-1' })] }),
+    );
     const bundle = await Effect.runPromise(
       exportLocalMergeBundle({
         dbPath,
@@ -176,7 +233,9 @@ describe('usage-store public boundary', () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-peer-'));
     const dbPath = usageStorePath(home);
 
-    await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'local-1' })] }));
+    await Effect.runPromise(
+      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'local-1' })] }),
+    );
     const inserted = await Effect.runPromise(
       importPeerMergeBundle({
         dbPath,
