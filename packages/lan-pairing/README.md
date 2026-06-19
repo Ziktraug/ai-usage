@@ -10,11 +10,11 @@ It does not own ai-usage machine config, usage rows, merge bundles, trusted ai-u
 
 ## Public Interface
 
-Slice 0 documents the boundary only. Future slices will add typed LAN peer identity, discovery, service lifecycle, pairing input/state/result, and error interfaces.
+The public interface exposes generic LAN peer identity, active discovery, service lifecycle, pairing input/state/result, CPace PAKE proof helpers, and typed errors. It does not expose application-specific merge or report data.
 
 ## Depends On
 
-`@ai-usage/lan-pairing` should stay project-agnostic. It may depend on Effect and generic runtime/crypto/HTTP libraries selected in later slices.
+`@ai-usage/lan-pairing` stays project-agnostic. It depends on Effect, Node/Bun runtime APIs, and `@cipherman/pake-js` for encapsulated CPace key agreement.
 
 ## Must Not Import
 
@@ -27,3 +27,15 @@ This package exchanges generic peer metadata and credential envelopes. It never 
 ## Test Strategy
 
 Use fake transport/runtime tests first, then local server tests for port binding, service lifecycle, discovery, pairing windows, and public-state redaction.
+
+## PAKE Selection
+
+The selected PAKE implementation is `@cipherman/pake-js` CPace/Ristretto255. It was accepted for this spike because it is stateless, has one runtime dependency (`@noble/curves`), exposes no transport/storage opinions, supports Bun and Node imports, and keeps CPace isolated behind this package's transcript helpers.
+
+The maturity risk is real: the package is pre-1.0, recently published, and single-maintainer. For that reason, `lan-pairing` treats it as replaceable infrastructure and does not leak its API outside this package. Production hardening should revisit audit status before relying on it for hostile networks.
+
+Fallback candidates:
+
+- OPAQUE and SRP-style libraries were not adopted in this slice because the desired LAN pairing model is balanced same-password pairing, not verifier-based login.
+- Noise was explicitly rejected as the short-password PAKE mechanism. It is useful for authenticated key exchange when keys already exist, but it is not a PAKE for low-entropy user-entered codes.
+- HMAC challenge-response remains only a documented emergency fallback. It is weaker because captured handshakes can be brute-forced offline, and would require a generated high-entropy passphrase rather than a short user password.
