@@ -12,6 +12,8 @@ import {
   setSyncRemoteEnabled,
 } from '@ai-usage/sync';
 import { Effect } from 'effect';
+import { upsertEnvToken } from './sync-env.server';
+import { decodeSyncInvite } from './sync-invite.server';
 
 export interface SyncRemoteInput {
   name: string;
@@ -37,6 +39,16 @@ export interface SyncDiscoverInput {
 export interface SyncValidateRemoteInput {
   url: string;
   token?: string | null;
+}
+
+export interface SyncInviteInput {
+  invite: string;
+}
+
+export interface SyncInviteImportResult {
+  state: import('@ai-usage/sync').SyncState;
+  remoteName: string;
+  envPath: string;
 }
 
 export type SyncServerResult<T> =
@@ -112,6 +124,24 @@ export const pullOneShotSyncRemoteForServer = (input: SyncRemoteInput) =>
 export const removeSyncRemoteForServer = (input: SyncRemoteNameInput) =>
   stateAfter(removeConfiguredSyncRemote(input.name));
 
+export const importSyncInviteForServer = async (input: SyncInviteInput): Promise<SyncServerResult<SyncInviteImportResult>> => {
+  try {
+    const invite = decodeSyncInvite(input.invite);
+    const { path: envPath } = await upsertEnvToken(invite.tokenEnv, invite.token);
+    const imported = await runSync(
+      Effect.gen(function* () {
+        yield* pullOneShotSyncRemote({ name: invite.name, url: invite.url, tokenEnv: invite.tokenEnv });
+        yield* addSyncRemote({ name: invite.name, url: invite.url, tokenEnv: invite.tokenEnv });
+        return yield* getSyncState;
+      }),
+    );
+    if (!imported.ok) return imported;
+    return { ok: true, data: { state: imported.data, remoteName: invite.name, envPath } };
+  } catch (error) {
+    return errorResult(error);
+  }
+};
+
 export const syncRemoteInputFrom = (input: unknown): SyncRemoteInput => {
   const record = objectInput(input);
   const name = stringField(record, 'name');
@@ -147,6 +177,10 @@ export const syncValidateRemoteInputFrom = (input: unknown): SyncValidateRemoteI
     ...(record.token == null ? {} : { token: String(record.token) }),
   };
 };
+
+export const syncInviteInputFrom = (input: unknown): SyncInviteInput => ({
+  invite: stringField(objectInput(input), 'invite'),
+});
 
 const objectInput = (input: unknown): Record<string, unknown> => {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new Error('Expected object input');

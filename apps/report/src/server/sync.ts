@@ -76,6 +76,14 @@ export const pullOneShotSyncRemote = createServerFn({ method: 'POST' })
     ),
   );
 
+export const importSyncInvite = createServerFn({ method: 'POST' })
+  .validator((input) => input)
+  .handler(({ data }) =>
+    import('./sync.server').then(({ importSyncInviteForServer, syncInviteInputFrom }) =>
+      importSyncInviteForServer(syncInviteInputFrom(data)),
+    ),
+  );
+
 export const removeSyncRemote = createServerFn({ method: 'POST' })
   .validator((input) => input)
   .handler(({ data }) =>
