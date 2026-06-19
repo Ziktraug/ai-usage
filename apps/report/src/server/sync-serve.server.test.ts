@@ -1,9 +1,12 @@
+import { mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import type { UsageSnapshot } from '@ai-usage/core/snapshot';
 import { createUsageSnapshot } from '@ai-usage/core/snapshot';
 import type { SourcedRow } from '@ai-usage/core/types';
 import type { SnapshotServerHandle, SnapshotServerInput } from '@ai-usage/sync/server';
 import { describe, expect, test } from 'bun:test';
-import { createSyncServeRuntime } from './sync-serve.server';
+import { createSyncServeRuntime, upsertEnvToken } from './sync-serve.server';
 
 const machine = { id: 'local-1', label: 'Local Machine' };
 
@@ -42,9 +45,11 @@ const runtime = (
   overrides: Partial<{ startServer: (input: SnapshotServerInput) => Promise<SnapshotServerHandle> }> = {},
 ) => {
   const starts: SnapshotServerInput[] = [];
+  const envWrites: { key: string; value: string }[] = [];
   let stopped = false;
   return {
     starts,
+    envWrites,
     stopped: () => stopped,
     service: createSyncServeRuntime({
       getMachine: async () => machine,
@@ -68,6 +73,11 @@ const runtime = (
             },
           };
         }),
+      generateSecret: () => 'generated-secret',
+      upsertEnvToken: async (key, value) => {
+        envWrites.push({ key, value });
+        return { path: '/repo/.env' };
+      },
       now: () => new Date('2026-06-19T09:00:00.000Z'),
     }),
   };
@@ -111,4 +121,48 @@ describe('sync serve runtime', () => {
     expect(stoppedResult.data.urls).toEqual([]);
     expect(stoppedResult.data.tokenConfigured).toBe(false);
   });
+
+  test('generates all-in-one share instructions and writes the repo env token', async () => {
+    const { service, starts, envWrites } = runtime();
+
+    const result = await service.startShare({ port: 3847 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.message);
+    expect(starts[0]?.host).toBe('0.0.0.0');
+    expect(starts[0]?.token).toBe('generated-secret');
+    expect(envWrites).toEqual([{ key: 'AI_USAGE_SYNC_LOCAL_MACHINE_TOKEN', value: 'generated-secret' }]);
+    expect(result.data.envKey).toBe('AI_USAGE_SYNC_LOCAL_MACHINE_TOKEN');
+    expect(result.data.envPath).toBe('/repo/.env');
+    expect(result.data.remoteName).toBe('local-machine');
+    expect(result.data.copyText).toContain('AI_USAGE_SYNC_LOCAL_MACHINE_TOKEN=generated-secret');
+    expect(result.data.copyText).toContain('bun run cli -- sync add local-machine http://0.0.0.0:3847/snapshot');
+    expect(result.data.state.status).toBe('running');
+  });
+
+  test('upserts env tokens in the workspace root env file from an app cwd', async () => {
+    const root = await mkdtemp('ai-usage-sync-serve-env-');
+    try {
+      const appCwd = path.join(root, 'apps', 'report');
+      mkdirSync(appCwd, { recursive: true });
+      writeFileSync(path.join(root, 'package.json'), JSON.stringify({ workspaces: ['apps/*'] }));
+      writeFileSync(path.join(root, '.env'), 'AI_USAGE_SYNC_HOST_TOKEN=old\nOTHER=value\n');
+
+      const first = await upsertEnvToken('AI_USAGE_SYNC_HOST_TOKEN', 'new', appCwd);
+      const second = await upsertEnvToken('AI_USAGE_SYNC_OTHER_HOST_TOKEN', 'secret', appCwd);
+
+      expect(first.path).toBe(path.join(root, '.env'));
+      expect(second.path).toBe(path.join(root, '.env'));
+      expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe(
+        'AI_USAGE_SYNC_HOST_TOKEN=new\nOTHER=value\nAI_USAGE_SYNC_OTHER_HOST_TOKEN=secret\n',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
+
+const mkdtemp = async (prefix: string) => {
+  const { mkdtemp } = await import('node:fs/promises');
+  return mkdtemp(path.join(tmpdir(), prefix));
+};

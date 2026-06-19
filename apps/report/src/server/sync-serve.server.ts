@@ -1,3 +1,6 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { UsageMachine, UsageSnapshot } from '@ai-usage/core/snapshot';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig } from '@ai-usage/local-collectors/machine-config';
@@ -40,10 +43,25 @@ export interface StartSyncServeInput {
   token: string | null;
 }
 
+export interface StartSyncServeShareInput {
+  port: number;
+}
+
+export interface SyncServeShareInstructions {
+  state: SyncServeState;
+  envKey: string;
+  envPath: string;
+  remoteName: string;
+  snapshotUrl: string;
+  copyText: string;
+}
+
 export interface SyncServeRuntimeDeps {
   getMachine: () => Promise<UsageMachine>;
   collectSnapshot: (machine: UsageMachine) => Promise<UsageSnapshot>;
   startServer: (input: SnapshotServerInput) => Promise<SnapshotServerHandle>;
+  generateSecret: () => string;
+  upsertEnvToken: (key: string, value: string) => Promise<{ path: string }>;
   now: () => Date;
 }
 
@@ -52,6 +70,19 @@ const defaultPort = 3847;
 const maxRecentRequests = 20;
 
 const tokenRequiredForHost = (host: string) => host === '0.0.0.0';
+
+const shellToken = (value: string) => value.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase();
+
+const remoteNameForMachine = (machine: UsageMachine) =>
+  machine.label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'remote';
+
+export const syncTokenEnvNameForMachine = (machine: UsageMachine) =>
+  `AI_USAGE_SYNC_${shellToken(machine.label || machine.id) || 'REMOTE'}_TOKEN`;
+
+const shareCopyText = (input: { envKey: string; secret: string; remoteName: string; snapshotUrl: string }) =>
+  `${input.envKey}=${input.secret}
+bun run cli -- sync add ${input.remoteName} ${input.snapshotUrl} --token-env ${input.envKey}
+bun run cli -- sync pull ${input.remoteName}`;
 
 const toJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -156,6 +187,43 @@ export const createSyncServeRuntime = (deps: SyncServeRuntimeDeps) => {
     }
   };
 
+  const startShare = async (
+    input: StartSyncServeShareInput,
+  ): Promise<SyncServerResult<SyncServeShareInstructions>> => {
+    if (state.status === 'running' || state.status === 'starting') {
+      return errorResult(
+        'SyncServeError',
+        'Stop the current snapshot server before generating a new all-in-one setup.',
+        'serve-already-running',
+      );
+    }
+
+    const machine = await deps.getMachine();
+    const secret = deps.generateSecret();
+    const envKey = syncTokenEnvNameForMachine(machine);
+    const { path: envPath } = await deps.upsertEnvToken(envKey, secret);
+    const started = await start({ host: '0.0.0.0', port: input.port, token: secret });
+    if (!started.ok) return started;
+    if (started.data.status !== 'running' || !started.data.urls[0]) {
+      return errorResult(
+        'SyncServeError',
+        started.data.lastError?.message ?? 'Snapshot server did not start.',
+        started.data.lastError?.reason,
+      );
+    }
+
+    const remoteName = remoteNameForMachine(machine);
+    const snapshotUrl = started.data.urls[0];
+    return ok({
+      state: started.data,
+      envKey,
+      envPath,
+      remoteName,
+      snapshotUrl,
+      copyText: shareCopyText({ envKey, secret, remoteName, snapshotUrl }),
+    });
+  };
+
   const stop = async (): Promise<SyncServerResult<SyncServeState>> => {
     if (state.status === 'stopped' && !handle) return ok(publicState());
     state = { ...state, status: 'stopping' };
@@ -180,6 +248,7 @@ export const createSyncServeRuntime = (deps: SyncServeRuntimeDeps) => {
   return {
     getState: () => ok(publicState()),
     start,
+    startShare,
     stop,
   };
 };
@@ -190,6 +259,13 @@ export const syncServeStartInputFrom = (input: unknown): StartSyncServeInput => 
     host: stringField(record, 'host'),
     port: positiveNumberField(record, 'port'),
     token: nullableStringField(record, 'token'),
+  };
+};
+
+export const syncServeShareInputFrom = (input: unknown): StartSyncServeShareInput => {
+  const record = objectInput(input);
+  return {
+    port: positiveNumberField(record, 'port'),
   };
 };
 
@@ -217,6 +293,38 @@ const positiveNumberField = (record: Record<string, unknown>, field: string) => 
   return value;
 };
 
+const findWorkspaceRoot = (cwd = process.cwd()) => {
+  let current = path.resolve(cwd);
+  while (true) {
+    const packagePath = path.join(current, 'package.json');
+    if (fs.existsSync(packagePath)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(packagePath, 'utf8')) as { workspaces?: unknown };
+        if (parsed.workspaces) return current;
+      } catch {
+        return current;
+      }
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return path.resolve(cwd);
+    current = parent;
+  }
+};
+
+export const upsertEnvToken = async (key: string, value: string, cwd = process.cwd()) => {
+  const envPath = path.join(findWorkspaceRoot(cwd), '.env');
+  const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+  const line = `${key}=${value}`;
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const matcher = new RegExp(`^${escapedKey}=.*$`, 'm');
+  const next = matcher.test(existing)
+    ? existing.replace(matcher, line)
+    : `${existing}${existing && !existing.endsWith('\n') ? '\n' : ''}${line}\n`;
+  fs.mkdirSync(path.dirname(envPath), { recursive: true });
+  fs.writeFileSync(envPath, next, 'utf8');
+  return { path: envPath };
+};
+
 const defaultRuntime = createSyncServeRuntime({
   getMachine: () => Effect.runPromise(ensureMachineConfig.pipe(Effect.provide(LocalHistoryStorageLive))),
   collectSnapshot: (machine) =>
@@ -229,11 +337,15 @@ const defaultRuntime = createSyncServeRuntime({
       }).pipe(Effect.provide(LocalHistoryStorageLive)),
     ),
   startServer: (input) => Effect.runPromise(startNodeSnapshotServer(input)),
+  generateSecret: () => crypto.randomBytes(32).toString('base64url'),
+  upsertEnvToken,
   now: () => new Date(),
 });
 
 export const getSyncServeStateForServer = () => defaultRuntime.getState();
 
 export const startSyncServeForServer = (input: StartSyncServeInput) => defaultRuntime.start(input);
+
+export const startSyncServeShareForServer = (input: StartSyncServeShareInput) => defaultRuntime.startShare(input);
 
 export const stopSyncServeForServer = () => defaultRuntime.stop();

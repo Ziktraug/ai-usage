@@ -280,3 +280,33 @@ Checks:
 Commit:
 
 - this follow-up commit records nested-cwd repo `.env` token resolution.
+
+### Follow-Up: All-In-One LAN Share Setup
+
+Status: completed.
+
+Intent:
+
+- add one button that starts LAN snapshot serving with an auto-generated secret;
+- upsert the generated token into the workspace root `.env` using a host/machine-derived env key;
+- return a copyable setup block for the other machine.
+
+Decisions:
+
+- generate the secret on the server, not in browser code;
+- bind all-in-one setup to `0.0.0.0` because the output is intended for another machine;
+- keep persistent remote config unchanged; the generated token is written only to `.env` and included in the copy block;
+- use `AI_USAGE_SYNC_<MACHINE_LABEL>_TOKEN` as the env key shape, matching the CLI serve guidance.
+
+Difficulties:
+
+- existing manual start does not retain the raw token by design, so all-in-one setup is only available when the current snapshot server is stopped.
+
+Checks:
+
+- `bun test apps/report/src/server/sync-serve.server.test.ts apps/report/src/sync-page-model.test.ts` passed.
+- `bun --filter @ai-usage/report check` passed.
+
+Commit:
+
+- this follow-up commit records the all-in-one LAN setup button.

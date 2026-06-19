@@ -16,6 +16,14 @@ export const startSyncServe = createServerFn({ method: 'POST' })
     ),
   );
 
+export const startSyncServeShare = createServerFn({ method: 'POST' })
+  .validator((input) => input)
+  .handler(({ data }) =>
+    import('./sync-serve.server').then(({ startSyncServeShareForServer, syncServeShareInputFrom }) =>
+      startSyncServeShareForServer(syncServeShareInputFrom(data)),
+    ),
+  );
+
 export const stopSyncServe = createServerFn({ method: 'POST' }).handler(() =>
   import('./sync-serve.server').then(({ stopSyncServeForServer }) => stopSyncServeForServer()),
 );
