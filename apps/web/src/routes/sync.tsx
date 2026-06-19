@@ -346,6 +346,13 @@ const DiscoveredMachines = (props: {
   onPair: (peer: DiscoveredLanPeer) => void;
 }) => {
   const visiblePeers = () => props.peers.filter((peer) => !peer.self);
+  const pairDisabledReason = (peer: DiscoveredLanPeer) => {
+    if (props.pendingOperation) return 'Operation in progress';
+    if (!props.password.trim()) return 'Enter the pair password first';
+    if (!peer.online) return 'Peer is offline';
+    if (!peer.pairingAvailable) return 'Pairing is unavailable on this peer';
+    return null;
+  };
   return (
     <div class={panelStack}>
       <label class={formField}>
@@ -365,30 +372,33 @@ const DiscoveredMachines = (props: {
       >
         <div class={machineList}>
           <For each={visiblePeers()}>
-            {(peer) => (
-              <div class={machineItem}>
-                <div class={machineHeader}>
-                  <div>
-                    <div class={strongCell}>{peer.identity.label}</div>
-                    <div class={muted}>{lanDiscoveredPeerStatusLabel(peer)}</div>
+            {(peer) => {
+              const disabledReason = () => pairDisabledReason(peer);
+              return (
+                <div class={machineItem}>
+                  <div class={machineHeader}>
+                    <div>
+                      <div class={strongCell}>{peer.identity.label}</div>
+                      <div class={muted}>{lanDiscoveredPeerStatusLabel(peer)}</div>
+                    </div>
+                    <span class={summaryPill}>{peer.online ? 'Online' : 'Offline'}</span>
                   </div>
-                  <span class={summaryPill}>{peer.online ? 'Online' : 'Offline'}</span>
+                  <div class={dateCell}>Last seen {formatSyncDateTime(peer.lastSeenAt)}</div>
+                  <div class={actionRow}>
+                    <button
+                      class={ghostButton}
+                      type="button"
+                      disabled={!!disabledReason()}
+                      title={disabledReason() ?? `Pair ${peer.identity.label}`}
+                      onClick={() => props.onPair(peer)}
+                    >
+                      Pair
+                    </button>
+                    <Show when={disabledReason()}>{(reason) => <span class={muted}>{reason()}</span>}</Show>
+                  </div>
                 </div>
-                <div class={dateCell}>Last seen {formatSyncDateTime(peer.lastSeenAt)}</div>
-                <div class={actionRow}>
-                  <button
-                    class={ghostButton}
-                    type="button"
-                    disabled={
-                      !!props.pendingOperation || !props.password.trim() || !peer.pairingAvailable || !peer.online
-                    }
-                    onClick={() => props.onPair(peer)}
-                  >
-                    Pair
-                  </button>
-                </div>
-              </div>
-            )}
+              );
+            }}
           </For>
         </div>
       </Show>
