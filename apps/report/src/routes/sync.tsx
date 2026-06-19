@@ -25,12 +25,13 @@ import {
   title,
   titleBlock,
 } from '@ai-usage/design-system/report';
-import type { SyncRemoteState, SyncState, SyncStoredSnapshotState } from '@ai-usage/sync';
+import type { DiscoveredSnapshotRemote, SyncRemoteState, SyncState, SyncStoredSnapshotState } from '@ai-usage/sync';
 import { createFileRoute, Link } from '@tanstack/solid-router';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
 import {
+  discoverSyncPeers,
   getSyncState as getSyncStateForRoute,
   pullSyncRemote,
   removeSyncRemote,
@@ -40,9 +41,11 @@ import {
 } from '../server/sync';
 import {
   buildSyncSummary,
+  discoveryBadgesForPeer,
   enabledStatusLabel,
   formatSyncDateTime,
   remoteMachineLabel,
+  remoteDraftFromDiscoveredPeer,
   syncOperationErrorHint,
   tokenStatusLabel,
 } from '../sync-page-model';
@@ -231,6 +234,41 @@ const operationPanel = css({
   borderRadius: 'sm',
   bg: 'surfaceMuted',
   fontSize: '13px',
+});
+
+const peerList = css({
+  display: 'grid',
+  gap: '10px',
+});
+
+const peerItem = css({
+  display: 'grid',
+  gap: '8px',
+  p: '10px 12px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surfaceMuted',
+});
+
+const peerHeader = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '8px',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+});
+
+const tinyBadge = css({
+  display: 'inline-flex',
+  alignItems: 'center',
+  h: '20px',
+  px: '7px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'full',
+  bg: 'surface',
+  color: 'muted',
+  fontSize: '11px',
+  fontWeight: 650,
 });
 
 const MetricPanel = (props: { label: string; value: number; detail: string }) => (
@@ -459,9 +497,59 @@ const RemoteForm = (props: {
   );
 };
 
+const DiscoveryPanel = (props: {
+  peers: DiscoveredSnapshotRemote[];
+  scanning: boolean;
+  pendingOperation: string | null;
+  onScan: () => void;
+  onAddPeer: (peer: DiscoveredSnapshotRemote) => void;
+}) => (
+  <div class={panelStack}>
+    <div class={actionRow}>
+      <button class={ghostButton} type="button" disabled={props.scanning || !!props.pendingOperation} onClick={props.onScan}>
+        {props.scanning ? 'Scanning' : 'Scan LAN'}
+      </button>
+    </div>
+    <Show
+      when={props.peers.length > 0}
+      fallback={<div class={emptyText}>No peers discovered in this browser session.</div>}
+    >
+      <div class={peerList}>
+        <For each={props.peers}>
+          {(peer) => {
+            const disabled = () => peer.self || peer.alreadyConfigured || !!props.pendingOperation;
+            return (
+              <div class={peerItem}>
+                <div class={peerHeader}>
+                  <div>
+                    <div class={strongCell}>{peer.machineLabel}</div>
+                    <div class={muted}>{peer.host}</div>
+                  </div>
+                  <div class={badgeRow}>
+                    <For each={discoveryBadgesForPeer(peer)}>{(badge) => <span class={tinyBadge}>{badge}</span>}</For>
+                  </div>
+                </div>
+                <div class={dateCell}>{peer.snapshotUrl}</div>
+                <div class={muted}>Last seen {formatSyncDateTime(peer.lastSeenAt)}</div>
+                <div class={actionRow}>
+                  <button class={ghostButton} type="button" disabled={disabled()} onClick={() => props.onAddPeer(peer)}>
+                    Add
+                  </button>
+                </div>
+              </div>
+            );
+          }}
+        </For>
+      </div>
+    </Show>
+  </div>
+);
+
 const SyncStateView = (props: {
   state: SyncState;
   refreshing: boolean;
+  discoveredPeers: DiscoveredSnapshotRemote[];
+  scanning: boolean;
   pendingOperation: string | null;
   operationError: SyncOperationResult | null;
   operationMessage: string | null;
@@ -474,6 +562,8 @@ const SyncStateView = (props: {
   onRemotePull: (remote: SyncRemoteState) => void;
   onRemoteSetEnabled: (remote: SyncRemoteState, enabled: boolean) => void;
   onRemoteRemove: (remote: SyncRemoteState) => void;
+  onDiscoveryScan: () => void;
+  onDiscoveryAddPeer: (peer: DiscoveredSnapshotRemote) => void;
   onRefresh: () => void;
 }) => {
   const summary = createMemo(() => buildSyncSummary(props.state));
@@ -578,6 +668,20 @@ const SyncStateView = (props: {
               onValidate={props.onRemoteValidate}
             />
           </div>
+
+          <div class={panel}>
+            <div class={panelHeader}>
+              <div class={panelTitle}>LAN discovery</div>
+              <div class={panelSub}>Scan default LAN candidates on port 3847 and prefill the add form.</div>
+            </div>
+            <DiscoveryPanel
+              peers={props.discoveredPeers}
+              scanning={props.scanning}
+              pendingOperation={props.pendingOperation}
+              onScan={props.onDiscoveryScan}
+              onAddPeer={props.onDiscoveryAddPeer}
+            />
+          </div>
         </div>
       </section>
     </div>
@@ -610,6 +714,8 @@ function SyncRoute() {
   const [operationError, setOperationError] = createSignal<SyncOperationResult | null>(null);
   const [operationMessage, setOperationMessage] = createSignal<string | null>(null);
   const [remoteForm, setRemoteForm] = createSignal<RemoteFormState>(emptyRemoteForm());
+  const [discoveredPeers, setDiscoveredPeers] = createSignal<DiscoveredSnapshotRemote[]>([]);
+  const [scanning, setScanning] = createSignal(false);
   const setOperationResult = (next: SyncStateResult, successMessage: string) => {
     if (next.ok) {
       setResult(next);
@@ -701,6 +807,29 @@ function SyncRoute() {
       `Removed ${remote.name}.`,
     );
   };
+  const scanLan = async () => {
+    if (scanning() || pendingOperation()) return;
+    setScanning(true);
+    setOperationError(null);
+    setOperationMessage(null);
+    try {
+      const result = await discoverSyncPeers({ data: {} });
+      if (result.ok) {
+        setDiscoveredPeers(result.data);
+        setOperationMessage(`Discovered ${result.data.length} peers.`);
+      } else {
+        setOperationError(result.error);
+      }
+    } finally {
+      setScanning(false);
+    }
+  };
+  const addDiscoveredPeer = (peer: DiscoveredSnapshotRemote) => {
+    const draft = remoteDraftFromDiscoveredPeer(peer);
+    setRemoteForm({ mode: 'add', name: draft.name, url: draft.url, tokenEnv: draft.tokenEnv, validationToken: '' });
+    setOperationMessage(`Prefilled ${draft.name}.`);
+    setOperationError(null);
+  };
 
   return (
     <main class={page}>
@@ -736,6 +865,8 @@ function SyncRoute() {
           <SyncStateView
             state={(result() as Extract<SyncStateResult, { ok: true }>).data}
             refreshing={refreshing()}
+            discoveredPeers={discoveredPeers()}
+            scanning={scanning()}
             pendingOperation={pendingOperation()}
             operationError={operationError()}
             operationMessage={operationMessage()}
@@ -748,6 +879,8 @@ function SyncRoute() {
             onRemotePull={pullRemote}
             onRemoteSetEnabled={setRemoteEnabled}
             onRemoteRemove={removeRemote}
+            onDiscoveryScan={() => void scanLan()}
+            onDiscoveryAddPeer={addDiscoveredPeer}
             onRefresh={() => void refresh()}
           />
         </Show>

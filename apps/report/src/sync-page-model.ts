@@ -1,4 +1,4 @@
-import type { SyncRemoteState, SyncState, SyncTokenStatus } from '@ai-usage/sync';
+import type { DiscoveredSnapshotRemote, SyncRemoteState, SyncState, SyncTokenStatus } from '@ai-usage/sync';
 
 export interface SyncSummary {
   configuredRemotes: number;
@@ -66,3 +66,26 @@ export const syncOperationErrorHint = (error: SyncOperationError) => {
         : null;
   }
 };
+
+export interface SyncRemoteDraft {
+  name: string;
+  url: string;
+  tokenEnv: string;
+}
+
+const cleanRemoteName = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+export const remoteDraftFromDiscoveredPeer = (peer: DiscoveredSnapshotRemote): SyncRemoteDraft => {
+  const name = cleanRemoteName(peer.machineLabel) || `peer-${peer.host.replace(/[^a-z0-9]+/gi, '-')}`;
+  return { name, url: peer.snapshotUrl, tokenEnv: '' };
+};
+
+export const discoveryBadgesForPeer = (peer: Pick<DiscoveredSnapshotRemote, 'self' | 'alreadyConfigured'>) => [
+  ...(peer.self ? ['self'] : []),
+  ...(peer.alreadyConfigured ? ['configured'] : []),
+];

@@ -124,3 +124,33 @@ Checks:
 Commit:
 
 - this phase commit records remote management mutations on `/sync`.
+
+### Phase 4: LAN Discovery
+
+Status: completed.
+
+Intent:
+
+- scan LAN snapshot peers from `/sync`;
+- show discovered peer rows with self/configured badges;
+- prefill the add-remote form from a discovered peer when allowed.
+
+Decisions:
+
+- kept discovery results in client component state because V1 does not poll;
+- used `discoverSyncPeers` from the report server adapter, so browser code does not scan the LAN directly;
+- extracted peer-to-form and badge derivation helpers into `sync-page-model.ts`.
+
+Difficulties:
+
+- default discovery intentionally swallows unreachable hosts, so the UI treats an empty scan as a valid completed scan.
+
+Checks:
+
+- `bun test apps/report/src/sync-page-model.test.ts` passed.
+- `bun test packages/sync/src/discovery.test.ts` passed.
+- `bun --filter @ai-usage/report check` passed.
+
+Commit:
+
+- this phase commit records LAN discovery on `/sync`.
