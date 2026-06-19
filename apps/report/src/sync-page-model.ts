@@ -39,3 +39,30 @@ export const formatSyncDateTime = (iso: string | undefined) => {
   if (Number.isNaN(date.getTime())) return iso;
   return date.toLocaleString();
 };
+
+export interface SyncOperationError {
+  tag: string;
+  message: string;
+  reason?: string;
+}
+
+export const syncOperationErrorHint = (error: SyncOperationError) => {
+  switch (error.reason) {
+    case 'missing-token':
+      return 'Set the token environment variable in your shell or supported .env file, then retry.';
+    case 'invalid-url':
+      return 'Use a snapshot URL that starts with http:// or https://.';
+    case 'invalid-token-env':
+      return 'Token env names may contain letters, digits, and underscores, and cannot start with a digit.';
+    case 'unknown-remote':
+      return 'Refresh sync state; this remote may have been removed.';
+    case 'no-remotes':
+      return 'Add a snapshot remote before pulling.';
+    case 'self-sync':
+      return 'This endpoint belongs to the local machine and cannot be synced as a remote.';
+    default:
+      return error.tag === 'SyncTransportError'
+        ? 'Check the host, port, firewall, token, and whether snapshot serving is enabled.'
+        : null;
+  }
+};

@@ -91,3 +91,36 @@ Checks:
 Commit:
 
 - this phase commit records the read-only sync state page.
+
+### Phase 3: Remote Mutations
+
+Status: completed.
+
+Intent:
+
+- add and edit persistent snapshot remotes from `/sync`;
+- validate endpoints with an optional one-time token that is not persisted;
+- enable, disable, pull, and remove configured remotes from the table;
+- render workflow and transport errors without exposing Effect internals to UI components.
+
+Decisions:
+
+- kept the edit form from renaming remotes by disabling the name field while editing;
+- used server function `{ data }` calls for all POST mutations;
+- kept operation feedback process-local in component state and refreshed `SyncState` from mutation results;
+- mapped known workflow reasons to short recovery hints in `sync-page-model.ts`.
+
+Difficulties:
+
+- the server function signatures were only exercised through typechecking because there were no existing UI callers;
+- remove uses browser confirmation, so the handler guards `window` for SSR safety.
+
+Checks:
+
+- `bun test apps/report/src/sync-page-model.test.ts` passed.
+- `bun --filter @ai-usage/report check` passed.
+- `bun test packages/sync/src/workflow.test.ts` passed.
+
+Commit:
+
+- this phase commit records remote management mutations on `/sync`.
