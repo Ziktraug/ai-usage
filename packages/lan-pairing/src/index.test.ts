@@ -8,6 +8,7 @@ import {
   LanPairingError,
   makeLanPairingService,
   makeLanPairingServiceWithOptions,
+  pairCredentialEnvelopes,
   startPakePairing,
   subnetHostsForAddress,
   verifyPakeConfirmation,
@@ -48,6 +49,12 @@ const startPair = (input: { password: string; sessionId?: string; role: 'initiat
     ...(input.now === undefined ? {} : { now: input.now }),
     ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
   });
+
+const envelope = (peerId: string, credential: string) => ({
+  peerId,
+  credential,
+  metadata: { scope: 'test' },
+});
 
 describe('LAN pairing public boundary', () => {
   test('documents the stable v1 LAN port range', () => {
@@ -198,6 +205,70 @@ describe('LAN pairing public boundary', () => {
     } finally {
       await stopAll(service);
     }
+  });
+
+  test('exchanges generic credential envelopes after successful same-password pairing', () => {
+    const result = pairCredentialEnvelopes({
+      initiator: {
+        identity: identity('peer-a'),
+        password: 'correct horse battery staple',
+        envelope: envelope('peer-a', 'credential-a'),
+      },
+      responder: {
+        identity: identity('peer-b'),
+        password: 'correct horse battery staple',
+        envelope: envelope('peer-b', 'credential-b'),
+      },
+      protocol: 'example-protocol',
+      protocolVersion: 1,
+      sessionId: 'pairing-session',
+      now: new Date('2026-06-19T12:00:00.000Z'),
+    });
+
+    expect(result.initiator.peer.identity.id).toBe('peer-b');
+    expect(result.responder.peer.identity.id).toBe('peer-a');
+    expect(result.initiator.receivedEnvelope.credential).toBe('credential-b');
+    expect(result.responder.receivedEnvelope.credential).toBe('credential-a');
+    expect(result.sessionKey).toBeString();
+  });
+
+  test('rejects generic envelope pairing for wrong password, expired sessions, and self-pairing', () => {
+    const base = {
+      initiator: {
+        identity: identity('peer-a'),
+        password: 'correct horse battery staple',
+        envelope: envelope('peer-a', 'credential-a'),
+      },
+      responder: {
+        identity: identity('peer-b'),
+        password: 'correct horse battery staple',
+        envelope: envelope('peer-b', 'credential-b'),
+      },
+      protocol: 'example-protocol',
+      protocolVersion: 1,
+      sessionId: 'pairing-session',
+    };
+
+    expect(() =>
+      pairCredentialEnvelopes({
+        ...base,
+        responder: { ...base.responder, password: 'wrong password' },
+      }),
+    ).toThrow();
+    expect(() =>
+      pairCredentialEnvelopes({
+        ...base,
+        now: new Date('2026-06-19T12:00:00.000Z'),
+        completedAt: new Date('2026-06-19T12:01:00.000Z'),
+        ttlMs: 1,
+      }),
+    ).toThrow();
+    expect(() =>
+      pairCredentialEnvelopes({
+        ...base,
+        responder: { ...base.responder, identity: identity('peer-a') },
+      }),
+    ).toThrow();
   });
 
   test('builds active subnet discovery candidates from multiple local interfaces', () => {

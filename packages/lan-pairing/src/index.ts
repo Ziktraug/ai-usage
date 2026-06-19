@@ -130,6 +130,29 @@ export interface PakeVerifyInput {
   confirmation: string;
 }
 
+export interface CredentialPairingPartyInput {
+  identity: LanPeerIdentity;
+  password: string;
+  envelope: PairingEnvelope;
+}
+
+export interface PairCredentialEnvelopesInput {
+  initiator: CredentialPairingPartyInput;
+  responder: CredentialPairingPartyInput;
+  protocol: string;
+  protocolVersion: number;
+  sessionId: string;
+  ttlMs?: number;
+  now?: Date;
+  completedAt?: Date;
+}
+
+export interface PairCredentialEnvelopesResult {
+  initiator: PairingResult;
+  responder: PairingResult;
+  sessionKey: string;
+}
+
 export type LanPairingErrorReason =
   | 'invalid-input'
   | 'port-unavailable'
@@ -382,6 +405,90 @@ export const verifyPakeConfirmation = (input: PakeVerifyInput) => {
   const expected = confirmationForRole(sessionKey, input.peerRole);
   const actual = fromBase64Url(input.confirmation);
   return expected.byteLength === actual.byteLength && timingSafeEqual(expected, actual);
+};
+
+const trustedPeerFromIdentity = (identity: LanPeerIdentity, pairedAt: string, metadata: Record<string, string>): TrustedLanPeer => ({
+  identity,
+  pairedAt,
+  lastSeenAt: pairedAt,
+  metadata,
+});
+
+export const pairCredentialEnvelopes = (input: PairCredentialEnvelopesInput): PairCredentialEnvelopesResult => {
+  if (input.initiator.identity.id === input.responder.identity.id) {
+    throw new LanPairingError({
+      operation: 'pairCredentialEnvelopes',
+      message: 'Cannot pair a peer with itself.',
+      reason: 'invalid-input',
+    });
+  }
+
+  const initiator = startPakePairing({
+    localPeerId: input.initiator.identity.id,
+    remotePeerId: input.responder.identity.id,
+    password: input.initiator.password,
+    protocol: input.protocol,
+    protocolVersion: input.protocolVersion,
+    sessionId: input.sessionId,
+    role: 'initiator',
+    ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
+    ...(input.now === undefined ? {} : { now: input.now }),
+  });
+  const responder = startPakePairing({
+    localPeerId: input.responder.identity.id,
+    remotePeerId: input.initiator.identity.id,
+    password: input.responder.password,
+    protocol: input.protocol,
+    protocolVersion: input.protocolVersion,
+    sessionId: input.sessionId,
+    role: 'responder',
+    ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
+    ...(input.now === undefined ? {} : { now: input.now }),
+  });
+  const initiatorComplete = completePakePairing({
+    state: initiator.state,
+    peerMessage: responder.message,
+    ...(input.completedAt === undefined && input.now === undefined ? {} : { now: input.completedAt ?? input.now }),
+  });
+  const responderComplete = completePakePairing({
+    state: responder.state,
+    peerMessage: initiator.message,
+    ...(input.completedAt === undefined && input.now === undefined ? {} : { now: input.completedAt ?? input.now }),
+  });
+
+  if (
+    !verifyPakeConfirmation({
+      sessionKey: initiatorComplete.sessionKey,
+      peerRole: 'responder',
+      confirmation: responderComplete.confirmation,
+    }) ||
+    !verifyPakeConfirmation({
+      sessionKey: responderComplete.sessionKey,
+      peerRole: 'initiator',
+      confirmation: initiatorComplete.confirmation,
+    })
+  ) {
+    throw new LanPairingError({
+      operation: 'pairCredentialEnvelopes',
+      message: 'PAKE confirmation failed.',
+      reason: 'pairing-failed',
+    });
+  }
+
+  const pairedAt = (input.now ?? new Date()).toISOString();
+  return {
+    sessionKey: initiatorComplete.sessionKey,
+    initiator: {
+      peer: trustedPeerFromIdentity(input.responder.identity, pairedAt, input.responder.envelope.metadata),
+      receivedEnvelope: input.responder.envelope,
+      sentEnvelope: input.initiator.envelope,
+    },
+    responder: {
+      peer: trustedPeerFromIdentity(input.initiator.identity, pairedAt, input.initiator.envelope.metadata),
+      receivedEnvelope: input.initiator.envelope,
+      sentEnvelope: input.responder.envelope,
+    },
+  };
 };
 
 const portRangeValues = (range = LAN_PAIRING_PORT_RANGE) =>

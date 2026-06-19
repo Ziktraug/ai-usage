@@ -378,4 +378,55 @@ Checks:
 
 Commit:
 
+- `502c7d1 feat: spike CPace LAN pairing`
+
+## Slice 8: Pairing Protocol
+
+Status: completed
+
+Picked on: 2026-06-19
+Stable on: 2026-06-19
+
+Goal:
+
+- Add same-password generic credential envelope exchange in `packages/lan-pairing`.
+- Add ai-usage merge credential encoding/decoding in `packages/usage-merge`.
+- Add trusted peer record persistence and `.env` token write helpers.
+
+Difficulties:
+
+- The generic exchange helper needed distinct start and completion timestamps so expired pairing windows can be tested deterministically.
+- The protocol work spans three packages, so the split needed to keep `lan-pairing` generic while putting ai-usage token/env semantics in `usage-merge` and peer file persistence in `local-collectors`.
+
+Decisions:
+
+- Keep generic envelope exchange as a CPace-confirmed helper over `PairingEnvelope`; it exchanges credentials only after both confirmations validate.
+- Store trusted peer records in `lan-peers.json` through `local-collectors`.
+- Encode ai-usage credentials as base64url JSON containing `version`, `tokenEnv`, and `token`; the generic LAN layer treats that as opaque.
+- Add `AI_USAGE_LAN_MERGE_*_TOKEN` env naming and `.env` upsert in `usage-merge`.
+- Leave full in-process web/server orchestration for the later usage merge runtime and UI slices.
+
+File changes:
+
+- Added `pairCredentialEnvelopes` and related generic protocol types to `packages/lan-pairing/src/index.ts`.
+- Added trusted peer config read/write/upsert helpers to `packages/local-collectors/src/lan-peers.ts`.
+- Added usage merge credential envelope, trusted peer record, token naming, token generation, and `.env` upsert helpers to `packages/usage-merge/src/index.ts`.
+- Added `@ai-usage/local-collectors` as a `usage-merge` dependency.
+- Expanded focused tests across `lan-pairing`, `local-collectors`, and `usage-merge`.
+- Regenerated `bun.lock`.
+
+Checks:
+
+- `bun test packages/lan-pairing/src/index.test.ts`: passed.
+- `bun test packages/usage-merge/src/index.test.ts`: passed.
+- `bun test packages/local-collectors/src/lan-peers.test.ts`: passed.
+- `bun run --cwd packages/lan-pairing check`: passed.
+- `bun run --cwd packages/usage-merge check`: passed.
+- `bun run --cwd packages/local-collectors check`: passed.
+- `bun run check`: passed. Biome reported the same non-failing `/nix/store` max-size warnings.
+- `bun run test`: passed.
+- Boundary search: `packages/lan-pairing/src` has no `from '@ai-usage/*'` imports.
+
+Commit:
+
 - Pending.
