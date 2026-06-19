@@ -222,3 +222,32 @@ Checks:
 Commit:
 
 - this phase commit records the serve toggle UI.
+
+### Phase 7: Polish And Final Validation
+
+Status: completed.
+
+Intent:
+
+- update project docs now that `/sync` is implemented;
+- move completed sync UI backlog items out of future work;
+- run full repository validation before closing the build plan.
+
+Decisions:
+
+- documented `/sync` in the README as the report app's LAN sync console;
+- kept future work focused on live polling, copy affordances, and possible remote rename UX;
+- updated architecture and public package interface docs for the Node snapshot adapter and report serve lifecycle.
+
+Difficulties:
+
+- none in code; `bun run check` still reports existing Biome large-file warnings for files under `/nix/store`.
+
+Checks:
+
+- `bun run test` passed.
+- `bun run check` passed with existing `/nix/store` large-file warnings only.
+
+Commit:
+
+- this phase commit records final docs and validation.
