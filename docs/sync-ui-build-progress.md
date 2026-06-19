@@ -251,3 +251,32 @@ Checks:
 Commit:
 
 - this phase commit records final docs and validation.
+
+### Follow-Up: Repo `.env` From Report App Cwd
+
+Status: completed.
+
+Intent:
+
+- fix token resolution when the report app runs from `apps/report` but the sync token is stored in the repository root `.env`.
+
+Decisions:
+
+- keep the existing priority order: process env, user config `.env`, then repo `.env`;
+- resolve the repo `.env` by walking upward from the provided cwd and using the nearest `.env`;
+- keep token values out of logs and test output.
+
+Difficulties:
+
+- the existing storage test used a real token env name, so a local developer environment could override the fixture value.
+
+Checks:
+
+- `bun test packages/local-collectors/src/sync-storage.test.ts packages/sync/src/workflow.test.ts` passed.
+- `bun --filter @ai-usage/local-collectors check` passed.
+- `bun --filter @ai-usage/sync check` passed.
+- `bun --filter @ai-usage/report check` passed.
+
+Commit:
+
+- this follow-up commit records nested-cwd repo `.env` token resolution.

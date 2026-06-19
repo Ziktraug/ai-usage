@@ -60,6 +60,17 @@ const readEnvFile = (filePath: string) =>
     catch: syncError('readSyncEnv', filePath),
   });
 
+const findNearestEnvPath = (cwd: string) => {
+  let current = path.resolve(cwd);
+  while (true) {
+    const candidate = path.join(current, '.env');
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+};
+
 export const resolveSyncToken = (
   tokenEnv: string | undefined,
   configCwd = process.cwd(),
@@ -70,7 +81,9 @@ export const resolveSyncToken = (
     const storage = yield* LocalHistoryStorage;
     const userEnv = yield* readEnvFile(userEnvPath(storage));
     if (userEnv[tokenEnv]) return userEnv[tokenEnv]!;
-    const repoEnv = yield* readEnvFile(path.join(configCwd, '.env'));
+    const repoEnvPath = findNearestEnvPath(configCwd);
+    if (!repoEnvPath) return null;
+    const repoEnv = yield* readEnvFile(repoEnvPath);
     return repoEnv[tokenEnv] ?? null;
   });
 
