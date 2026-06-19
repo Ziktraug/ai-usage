@@ -5,6 +5,7 @@ import {
   enabledStatusLabel,
   formatSyncDateTime,
   remoteMachineLabel,
+  syncOperationErrorHint,
   tokenStatusLabel,
 } from './sync-page-model';
 
@@ -68,5 +69,15 @@ describe('sync page model', () => {
   test('keeps invalid and missing dates readable', () => {
     expect(formatSyncDateTime(undefined)).toBe('Never');
     expect(formatSyncDateTime('not-a-date')).toBe('not-a-date');
+  });
+
+  test('maps known operation errors to recovery hints', () => {
+    expect(syncOperationErrorHint({ tag: 'SyncWorkflowError', message: 'Missing token', reason: 'missing-token' })).toContain(
+      'token environment variable',
+    );
+    expect(syncOperationErrorHint({ tag: 'SyncWorkflowError', message: 'Self sync', reason: 'self-sync' })).toContain(
+      'local machine',
+    );
+    expect(syncOperationErrorHint({ tag: 'SyncTransportError', message: 'fetch failed' })).toContain('host');
   });
 });

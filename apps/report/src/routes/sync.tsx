@@ -3,10 +3,12 @@ import {
   dateCell,
   eyebrow,
   eyebrowRow,
+  field,
   ghostButton,
   header,
   headerActions,
   headerTop,
+  inlineFieldLabel,
   meta,
   muted,
   navButton,
@@ -28,12 +30,20 @@ import { createFileRoute, Link } from '@tanstack/solid-router';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
-import { getSyncState as getSyncStateForRoute } from '../server/sync';
+import {
+  getSyncState as getSyncStateForRoute,
+  pullSyncRemote,
+  removeSyncRemote,
+  setSyncRemoteEnabled,
+  upsertSyncRemote,
+  validateSyncRemote,
+} from '../server/sync';
 import {
   buildSyncSummary,
   enabledStatusLabel,
   formatSyncDateTime,
   remoteMachineLabel,
+  syncOperationErrorHint,
   tokenStatusLabel,
 } from '../sync-page-model';
 
@@ -171,6 +181,57 @@ const errorPanel = css({
 });
 
 type SyncStateResult = Awaited<ReturnType<typeof getSyncStateForRoute>>;
+type SyncOperationResult = Extract<SyncStateResult, { ok: false }>['error'];
+
+interface RemoteFormState {
+  mode: 'add' | 'edit';
+  name: string;
+  url: string;
+  tokenEnv: string;
+  validationToken: string;
+}
+
+const emptyRemoteForm = (): RemoteFormState => ({
+  mode: 'add',
+  name: '',
+  url: '',
+  tokenEnv: '',
+  validationToken: '',
+});
+
+const remoteFormFrom = (remote: SyncRemoteState): RemoteFormState => ({
+  mode: 'edit',
+  name: remote.name,
+  url: remote.url,
+  tokenEnv: remote.tokenEnv ?? '',
+  validationToken: '',
+});
+
+const formGrid = css({
+  display: 'grid',
+  gridTemplateColumns: { base: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
+  gap: '10px',
+});
+
+const formField = css({
+  display: 'grid',
+  gap: '4px',
+  minW: 0,
+});
+
+const fullWidthField = css({
+  gridColumn: { base: 'auto', md: '1 / -1' },
+});
+
+const operationPanel = css({
+  display: 'grid',
+  gap: '4px',
+  p: '10px 12px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surfaceMuted',
+  fontSize: '13px',
+});
 
 const MetricPanel = (props: { label: string; value: number; detail: string }) => (
   <div class={panel}>
@@ -182,7 +243,14 @@ const MetricPanel = (props: { label: string; value: number; detail: string }) =>
   </div>
 );
 
-const RemoteRows = (props: { remotes: SyncRemoteState[] }) => (
+const RemoteRows = (props: {
+  remotes: SyncRemoteState[];
+  pendingOperation: string | null;
+  onEdit: (remote: SyncRemoteState) => void;
+  onPull: (remote: SyncRemoteState) => void;
+  onSetEnabled: (remote: SyncRemoteState, enabled: boolean) => void;
+  onRemove: (remote: SyncRemoteState) => void;
+}) => (
   <Show
     when={props.remotes.length > 0}
     fallback={<div class={emptyText}>No snapshot remotes are configured yet.</div>}
@@ -198,6 +266,7 @@ const RemoteRows = (props: { remotes: SyncRemoteState[] }) => (
             <th>Rows</th>
             <th>Fetched</th>
             <th>URL</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -216,6 +285,37 @@ const RemoteRows = (props: { remotes: SyncRemoteState[] }) => (
                 <td>{remote.rows.toLocaleString()}</td>
                 <td class={dateCell}>{formatSyncDateTime(remote.fetchedAt)}</td>
                 <td class={muted}>{remote.url}</td>
+                <td>
+                  <div class={actionRow}>
+                    <button
+                      class={ghostButton}
+                      type="button"
+                      disabled={!!props.pendingOperation}
+                      onClick={() => props.onPull(remote)}
+                    >
+                      Pull now
+                    </button>
+                    <button
+                      class={ghostButton}
+                      type="button"
+                      disabled={!!props.pendingOperation}
+                      onClick={() => props.onSetEnabled(remote, !remote.enabled)}
+                    >
+                      {remote.enabled ? 'Disable' : 'Enable'}
+                    </button>
+                    <button class={ghostButton} type="button" disabled={!!props.pendingOperation} onClick={() => props.onEdit(remote)}>
+                      Edit
+                    </button>
+                    <button
+                      class={ghostButton}
+                      type="button"
+                      disabled={!!props.pendingOperation}
+                      onClick={() => props.onRemove(remote)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </td>
               </tr>
             )}
           </For>
@@ -262,7 +362,120 @@ const WarningRows = (props: { warnings: SyncState['warnings'] }) => (
   </Show>
 );
 
-const SyncStateView = (props: { state: SyncState; refreshing: boolean; onRefresh: () => void }) => {
+const OperationNotice = (props: { error: SyncOperationResult | null; message: string | null }) => (
+  <Show when={props.error || props.message}>
+    <div class={operationPanel} role={props.error ? 'alert' : 'status'}>
+      <Show
+        when={props.error}
+        fallback={<div>{props.message}</div>}
+      >
+        {(error) => (
+          <>
+            <div class={strongCell}>{error().message}</div>
+            <Show when={syncOperationErrorHint(error())}>{(hint) => <div class={muted}>{hint()}</div>}</Show>
+          </>
+        )}
+      </Show>
+    </div>
+  </Show>
+);
+
+const RemoteForm = (props: {
+  form: RemoteFormState;
+  pendingOperation: string | null;
+  onChange: (form: RemoteFormState) => void;
+  onCancelEdit: () => void;
+  onSave: () => void;
+  onValidate: () => void;
+}) => {
+  const update = (patch: Partial<RemoteFormState>) => props.onChange({ ...props.form, ...patch });
+  const disabled = () => !!props.pendingOperation;
+  return (
+    <form
+      class={panelStack}
+      onSubmit={(event) => {
+        event.preventDefault();
+        props.onSave();
+      }}
+    >
+      <div class={formGrid}>
+        <label class={formField}>
+          <span class={inlineFieldLabel}>Remote name</span>
+          <input
+            class={field}
+            value={props.form.name}
+            disabled={disabled() || props.form.mode === 'edit'}
+            onInput={(event) => update({ name: event.currentTarget.value })}
+            placeholder="macbook"
+          />
+        </label>
+        <label class={formField}>
+          <span class={inlineFieldLabel}>Token env</span>
+          <input
+            class={field}
+            value={props.form.tokenEnv}
+            disabled={disabled()}
+            onInput={(event) => update({ tokenEnv: event.currentTarget.value })}
+            placeholder="AI_USAGE_SYNC_TOKEN"
+          />
+        </label>
+        <label class={`${formField} ${fullWidthField}`}>
+          <span class={inlineFieldLabel}>Snapshot URL</span>
+          <input
+            class={field}
+            value={props.form.url}
+            disabled={disabled()}
+            onInput={(event) => update({ url: event.currentTarget.value })}
+            placeholder="http://192.168.1.20:3847/snapshot"
+          />
+        </label>
+        <label class={`${formField} ${fullWidthField}`}>
+          <span class={inlineFieldLabel}>Validation token</span>
+          <input
+            class={field}
+            value={props.form.validationToken}
+            disabled={disabled()}
+            onInput={(event) => update({ validationToken: event.currentTarget.value })}
+            placeholder="Used once for /health, not saved"
+            type="password"
+            autocomplete="off"
+          />
+        </label>
+      </div>
+      <div class={actionRow}>
+        <button class={ghostButton} type="button" disabled={disabled() || !props.form.url} onClick={props.onValidate}>
+          Validate
+        </button>
+        <button class={ghostButton} type="submit" disabled={disabled() || !props.form.name || !props.form.url}>
+          {props.form.mode === 'edit' ? 'Save remote' : 'Add remote'}
+        </button>
+        <Show when={props.form.mode === 'edit'}>
+          <button class={ghostButton} type="button" disabled={disabled()} onClick={props.onCancelEdit}>
+            Cancel
+          </button>
+        </Show>
+      </div>
+    </form>
+  );
+};
+
+const SyncStateView = (props: {
+  state: SyncState;
+  refreshing: boolean;
+  pendingOperation: string | null;
+  operationError: SyncOperationResult | null;
+  operationMessage: string | null;
+  remoteForm: RemoteFormState;
+  onRemoteFormChange: (form: RemoteFormState) => void;
+  onRemoteFormReset: () => void;
+  onRemoteEdit: (remote: SyncRemoteState) => void;
+  onRemoteSave: () => void;
+  onRemoteValidate: () => void;
+  onRemotePull: (remote: SyncRemoteState) => void;
+  onRemoteSetEnabled: (remote: SyncRemoteState, enabled: boolean) => void;
+  onRemoteRemove: (remote: SyncRemoteState) => void;
+  onRefresh: () => void;
+}) => {
   const summary = createMemo(() => buildSyncSummary(props.state));
   return (
     <div class={pageStack}>
@@ -305,7 +518,15 @@ const SyncStateView = (props: { state: SyncState; refreshing: boolean; onRefresh
               <div class={panelTitle}>Snapshot remotes</div>
               <div class={panelSub}>Configured remotes and the latest stored snapshot state.</div>
             </div>
-            <RemoteRows remotes={props.state.remotes} />
+            <OperationNotice error={props.operationError} message={props.operationMessage} />
+            <RemoteRows
+              remotes={props.state.remotes}
+              pendingOperation={props.pendingOperation}
+              onEdit={props.onRemoteEdit}
+              onPull={props.onRemotePull}
+              onSetEnabled={props.onRemoteSetEnabled}
+              onRemove={props.onRemoteRemove}
+            />
           </div>
 
           <div class={panel}>
@@ -345,10 +566,17 @@ const SyncStateView = (props: { state: SyncState; refreshing: boolean; onRefresh
 
           <div class={panel}>
             <div class={panelHeader}>
-              <div class={panelTitle}>Discovery and add remote</div>
-              <div class={panelSub}>LAN scan and manual endpoint form connect in later slices.</div>
+              <div class={panelTitle}>{props.remoteForm.mode === 'edit' ? 'Edit remote' : 'Add remote'}</div>
+              <div class={panelSub}>Validate with an optional one-time token; save only name, URL, and token env.</div>
             </div>
-            <div class={emptyText}>Use the CLI sync commands until remote mutations and LAN discovery are wired here.</div>
+            <RemoteForm
+              form={props.remoteForm}
+              pendingOperation={props.pendingOperation}
+              onChange={props.onRemoteFormChange}
+              onCancelEdit={props.onRemoteFormReset}
+              onSave={props.onRemoteSave}
+              onValidate={props.onRemoteValidate}
+            />
           </div>
         </div>
       </section>
@@ -378,14 +606,100 @@ function SyncRoute() {
   const loaderResult = Route.useLoaderData();
   const [result, setResult] = createSignal<SyncStateResult>(loaderResult());
   const [refreshing, setRefreshing] = createSignal(false);
+  const [pendingOperation, setPendingOperation] = createSignal<string | null>(null);
+  const [operationError, setOperationError] = createSignal<SyncOperationResult | null>(null);
+  const [operationMessage, setOperationMessage] = createSignal<string | null>(null);
+  const [remoteForm, setRemoteForm] = createSignal<RemoteFormState>(emptyRemoteForm());
+  const setOperationResult = (next: SyncStateResult, successMessage: string) => {
+    if (next.ok) {
+      setResult(next);
+      setOperationError(null);
+      setOperationMessage(successMessage);
+      return true;
+    }
+    setResult(next);
+    setOperationError(next.error);
+    setOperationMessage(null);
+    return false;
+  };
+  const runStateMutation = async (operation: string, mutation: () => Promise<SyncStateResult>, successMessage: string) => {
+    if (pendingOperation()) return;
+    setPendingOperation(operation);
+    setOperationError(null);
+    setOperationMessage(null);
+    try {
+      return setOperationResult(await mutation(), successMessage);
+    } finally {
+      setPendingOperation(null);
+    }
+  };
   const refresh = async () => {
-    if (refreshing()) return;
+    if (refreshing() || pendingOperation()) return;
     setRefreshing(true);
     try {
       setResult(await getSyncStateForRoute());
+      setOperationError(null);
     } finally {
       setRefreshing(false);
     }
+  };
+  const saveRemote = async () => {
+    const form = remoteForm();
+    const saved = await runStateMutation(
+      'save-remote',
+      () =>
+        upsertSyncRemote({
+          data: {
+            name: form.name.trim(),
+            url: form.url.trim(),
+            tokenEnv: form.tokenEnv.trim() || null,
+          },
+        }),
+      form.mode === 'edit' ? `Updated ${form.name.trim()}.` : `Added ${form.name.trim()}.`,
+    );
+    if (saved) setRemoteForm(emptyRemoteForm());
+  };
+  const validateRemote = async () => {
+    const form = remoteForm();
+    if (pendingOperation()) return;
+    setPendingOperation('validate-remote');
+    setOperationError(null);
+    setOperationMessage(null);
+    try {
+      const validation = await validateSyncRemote({
+        data: {
+          url: form.url.trim(),
+          token: form.validationToken || null,
+        },
+      });
+      if (validation.ok) {
+        setOperationMessage(`Validated ${validation.data.machine.label}.`);
+      } else {
+        setOperationError(validation.error);
+      }
+    } finally {
+      setPendingOperation(null);
+    }
+  };
+  const setRemoteEnabled = (remote: SyncRemoteState, enabled: boolean) =>
+    void runStateMutation(
+      `set-enabled-${remote.name}`,
+      () => setSyncRemoteEnabled({ data: { name: remote.name, enabled } }),
+      `${enabled ? 'Enabled' : 'Disabled'} ${remote.name}.`,
+    );
+  const pullRemote = (remote: SyncRemoteState) =>
+    void runStateMutation(
+      `pull-${remote.name}`,
+      () => pullSyncRemote({ data: { name: remote.name } }),
+      `Pulled ${remote.name}.`,
+    );
+  const removeRemote = (remote: SyncRemoteState) => {
+    if (typeof window !== 'undefined' && !window.confirm(`Remove sync remote "${remote.name}"?`)) return;
+    void runStateMutation(
+      `remove-${remote.name}`,
+      () => removeSyncRemote({ data: { name: remote.name } }),
+      `Removed ${remote.name}.`,
+    );
   };
 
   return (
@@ -422,6 +736,18 @@ function SyncRoute() {
           <SyncStateView
             state={(result() as Extract<SyncStateResult, { ok: true }>).data}
             refreshing={refreshing()}
+            pendingOperation={pendingOperation()}
+            operationError={operationError()}
+            operationMessage={operationMessage()}
+            remoteForm={remoteForm()}
+            onRemoteFormChange={setRemoteForm}
+            onRemoteFormReset={() => setRemoteForm(emptyRemoteForm())}
+            onRemoteEdit={(remote) => setRemoteForm(remoteFormFrom(remote))}
+            onRemoteSave={() => void saveRemote()}
+            onRemoteValidate={() => void validateRemote()}
+            onRemotePull={pullRemote}
+            onRemoteSetEnabled={setRemoteEnabled}
+            onRemoteRemove={removeRemote}
             onRefresh={() => void refresh()}
           />
         </Show>
