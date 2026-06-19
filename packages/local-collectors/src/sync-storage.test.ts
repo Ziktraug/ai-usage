@@ -49,7 +49,7 @@ describe('sync storage', () => {
       const remote = {
         name: 'macbook',
         url: 'http://192.168.1.63:3847/snapshot',
-        tokenEnv: 'AI_USAGE_SYNC_MACBOOK_TOKEN',
+        tokenEnv: 'AI_USAGE_SYNC_STORAGE_TEST_TOKEN',
       };
 
       await Effect.runPromise(upsertSyncRemote(remote).pipe(Effect.provideService(LocalHistoryStorage, storage)));
@@ -57,9 +57,9 @@ describe('sync storage', () => {
       expect(remotes).toEqual([{ ...remote, enabled: true }]);
 
       mkdirSync(path.dirname(userEnvPath(storage)), { recursive: true });
-      writeFileSync(userEnvPath(storage), 'AI_USAGE_SYNC_MACBOOK_TOKEN=from-user-env\n');
+      writeFileSync(userEnvPath(storage), 'AI_USAGE_SYNC_STORAGE_TEST_TOKEN=from-user-env\n');
       const token = await Effect.runPromise(
-        resolveSyncToken('AI_USAGE_SYNC_MACBOOK_TOKEN').pipe(Effect.provideService(LocalHistoryStorage, storage)),
+        resolveSyncToken('AI_USAGE_SYNC_STORAGE_TEST_TOKEN').pipe(Effect.provideService(LocalHistoryStorage, storage)),
       );
       expect(token).toBe('from-user-env');
 
@@ -89,6 +89,28 @@ describe('sync storage', () => {
       expect(removed).toBe(true);
     } finally {
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('resolves repo .env from an app subdirectory cwd', async () => {
+    const home = await mkdtemp('ai-usage-sync-storage-');
+    const repo = await mkdtemp('ai-usage-sync-repo-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      const appCwd = path.join(repo, 'apps', 'report');
+      mkdirSync(appCwd, { recursive: true });
+      writeFileSync(path.join(repo, '.env'), 'AI_USAGE_SYNC_NESTED_TOKEN=from-repo-root\n');
+
+      const token = await Effect.runPromise(
+        resolveSyncToken('AI_USAGE_SYNC_NESTED_TOKEN', appCwd).pipe(
+          Effect.provideService(LocalHistoryStorage, storage),
+        ),
+      );
+
+      expect(token).toBe('from-repo-root');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
     }
   });
 });
