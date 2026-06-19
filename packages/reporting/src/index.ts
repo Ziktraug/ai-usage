@@ -28,6 +28,7 @@ import {
 import type { LocalHistoryError, LocalHistoryWarning } from '@ai-usage/local-collectors/errors';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-collectors/machine-config';
+import { readSyncedSnapshotRecords } from '@ai-usage/local-collectors/sync-storage';
 import { Effect } from 'effect';
 
 export interface LocalUsageSelection {
@@ -62,10 +63,12 @@ export interface LocalUsageSnapshotRequest extends LocalUsageSelection {
 export interface MergedUsageReportRequest extends LocalUsageSelection {
   snapshots: UsageSnapshot[];
   includeLocal?: boolean;
+  includeSynced?: boolean;
   machine?: UsageMachine;
   options: ReportOptions;
   generatedAt?: Date;
   appVersion?: string | null;
+  includeFacets?: boolean;
 }
 
 export interface MergedUsageReport {
@@ -221,6 +224,12 @@ export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
 export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
   Effect.gen(function* () {
     const snapshots = [...request.snapshots];
+    const syncedWarnings: SnapshotMergeWarning[] = [];
+    if (request.includeSynced) {
+      const synced = yield* readSyncedSnapshotRecords;
+      snapshots.push(...synced.records.map((record) => record.snapshot));
+      syncedWarnings.push(...synced.warnings);
+    }
     if (request.includeLocal) {
       snapshots.push(yield* createLocalUsageSnapshot(toLocalUsageSnapshotRequest(request)));
     }
@@ -229,16 +238,22 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
     const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
     const rows = applyProjectAliases(merged.rows, config.projectAliases ?? []);
     const report = prepareUsageReport(rows, request.options);
-    const payloadWarnings = merged.warnings.map(({ key, ...warning }) => ({
+    const allWarnings = [...merged.warnings, ...syncedWarnings];
+    const payloadWarnings = allWarnings.map(({ key, ...warning }) => ({
       ...warning,
       message: key ? `${warning.message}: ${key}` : warning.message,
     }));
+    const facets = request.includeFacets
+      ? yield* collectHarnessFacets({
+          includeCursor: request.includeCursor && (!request.harness || request.harness === 'cursor'),
+        })
+      : undefined;
 
     return {
       rows,
       report,
-      payload: createUsageReportPayload(report, request.options, request.generatedAt ?? new Date(), undefined, payloadWarnings),
-      warnings: merged.warnings,
+      payload: createUsageReportPayload(report, request.options, request.generatedAt ?? new Date(), facets, payloadWarnings),
+      warnings: allWarnings,
       duplicatesDropped: merged.duplicatesDropped,
     };
   });

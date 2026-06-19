@@ -6,6 +6,13 @@ export interface ProjectAliasEntry {
   match: string[];
 }
 
+export interface SyncRemoteConfig {
+  name: string;
+  url: string;
+  tokenEnv?: string;
+  enabled?: boolean;
+}
+
 export interface AiUsageConfig {
   projectAliases?: ProjectAliasEntry[];
   cursor?: {
@@ -15,6 +22,9 @@ export interface AiUsageConfig {
     clusterGapMs?: number;
     maxSessionSpanMs?: number;
     user?: string;
+  };
+  sync?: {
+    remotes?: SyncRemoteConfig[];
   };
 }
 
