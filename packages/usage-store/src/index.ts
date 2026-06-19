@@ -135,6 +135,7 @@ const openUsageStoreDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, U
       fs.mkdirSync(path.dirname(dbPath), { recursive: true });
       const { Database } = await import('bun:sqlite');
       const db = new Database(dbPath) as SqliteDatabase;
+      db.exec('PRAGMA busy_timeout = 5000');
       db.exec('PRAGMA journal_mode = WAL');
       migrate(db);
       return db;
@@ -302,9 +303,7 @@ export const importPeerMergeBundle = (
   return importMergeRows(input.dbPath, input.bundle.rows, input.importedAt);
 };
 
-export const queryReportRows = (
-  input: QueryReportRowsInput,
-): Effect.Effect<QueryRowsResult, UsageStoreError> =>
+export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<QueryRowsResult, UsageStoreError> =>
   withUsageStore(input.dbPath, (db) =>
     Effect.try({
       try: () => {
@@ -322,7 +321,7 @@ export const queryReportRows = (
           params.push(...input.harnessKeys);
         }
 
-        sql += ' ORDER BY COALESCE(active_date, \'\') DESC, row_key ASC';
+        sql += " ORDER BY COALESCE(active_date, '') DESC, row_key ASC";
         const records = db.query(sql).all(...params) as StoredRowRecord[];
         return {
           rows: records.map((record) => deserializeMergeRow(parseUsageMergeBundleRow(record.row_json))),
