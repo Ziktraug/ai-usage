@@ -476,3 +476,51 @@ Checks:
 Commit:
 
 - Committed as `feat: add usage merge peer runtime`. See `git log` for the final hash.
+
+## Slice 10: UI Refactor
+
+Status: completed
+
+Picked on: 2026-06-19
+Stable on: 2026-06-19
+
+Goal:
+
+- Make `/sync` a primary LAN merge UI.
+- Show the local machine, paired machine list, nearby machine discovery, pair-password UI, and paired machine merge actions.
+- Move low-level URLs into diagnostics instead of the primary path.
+- Remove invite-string and manual snapshot-remote forms from the primary `/sync` UI.
+
+Difficulties:
+
+- The existing `/sync` route was built around manual snapshot remotes, invite strings, and serve-token setup; the new UI needed a clean route rewrite rather than incremental rearrangement.
+- The LAN merge runtime has server-side primitives, but full two-device orchestration still depends on real LAN endpoint availability and trusted peer records.
+- Solid `Show` narrowing needed an explicit success-result memo so route data narrowed cleanly.
+
+Decisions:
+
+- Keep old snapshot sync server APIs in place for now, but stop surfacing them in `/sync`; cleanup can remove dead paths later.
+- Add a dedicated web server adapter for LAN merge state, scan, pair, and merge actions.
+- Keep token env names and merge URLs out of primary machine details; diagnostics is the only place that displays endpoint URLs.
+- Treat `pairPeer` as a UI action over the usage-merge runtime, which requires the trusted peer record created by the protocol layer.
+
+File changes:
+
+- Added `apps/web/src/server/lan-merge.server.ts` for LAN merge server reads, scan, pair, and merge actions.
+- Exposed LAN merge server functions from `apps/web/src/server/sync.ts`.
+- Replaced `apps/web/src/routes/sync.tsx` with a LAN merge machine list, scan action, pair-password form, merge actions, and diagnostics details.
+- Extended `apps/web/src/sync-page-model.ts` and tests with LAN merge summaries, status labels, primary-detail redaction checks, recovery hints, and diagnostics URL construction.
+- Added web workspace dependencies on `@ai-usage/lan-pairing`, `@ai-usage/usage-merge`, and `@ai-usage/usage-store`.
+- Regenerated `bun.lock`.
+
+Checks:
+
+- `bun test apps/web/src/sync-page-model.test.ts`: passed.
+- `bun run --cwd apps/web check`: passed.
+- `bun run check`: passed. Biome reported the same non-failing `/nix/store` max-size warnings.
+- `bun run test`: passed.
+- Manual two-device LAN pairing flow: not executed in this single-machine environment; route/server/action paths are covered by model/type/unit checks.
+
+Commit:
+
+- Committed as `feat: refactor sync page for LAN merge`. See `git log` for the final hash.
