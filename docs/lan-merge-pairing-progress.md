@@ -329,4 +329,53 @@ Checks:
 
 Commit:
 
+- `8309f0f feat: add LAN peer discovery`
+
+## Slice 7: PAKE Library Spike
+
+Status: completed
+
+Picked on: 2026-06-19
+Stable on: 2026-06-19
+
+Goal:
+
+- Evaluate `@cipherman/pake-js` CPace for Bun/Node compatibility and suitability.
+- Prove same-password pairing derives a shared session key and wrong passwords fail confirmation.
+- Bind the transcript to peer IDs, protocol version, session ID, and pairing roles.
+- Keep the proof inside `packages/lan-pairing` with no ai-usage imports.
+
+Difficulties:
+
+- Public search did not surface clean package metadata, so the npm registry and package tarball were inspected directly.
+- CPace does not include an explicit confirmation round, so the package wrapper adds role-bound HMAC confirmations over the derived ISK.
+- The selected package is pre-1.0, recently published, and single-maintainer; this is acceptable for a spike only because its API is encapsulated and replaceable.
+
+Decisions:
+
+- Accept `@cipherman/pake-js@0.1.1` for the spike because it is stateless, supports Bun/Node imports, exposes CPace/Ristretto255, has one runtime dependency (`@noble/curves`), and has no transport or app-domain coupling.
+- Derive CPace PRS with `scryptSync` using a transcript-derived salt before calling the library.
+- Bind transcript fields through channel identifier and associated data: peer IDs, protocol, protocol version, session ID, and initiator/responder role.
+- Reject self-pairing, expired sessions, mismatched/replayed peer messages, and wrong-password confirmations.
+- Explicitly reject Noise as the short-password PAKE mechanism and keep HMAC challenge-response only as a documented weaker fallback.
+
+File changes:
+
+- Added `@cipherman/pake-js` to `packages/lan-pairing`.
+- Added CPace PAKE start/complete/verify helpers to `packages/lan-pairing/src/index.ts`.
+- Expanded `packages/lan-pairing/src/index.test.ts` with Node import smoke, same-password success, wrong-password failure, replay/expiry/self/concurrent session tests, and secret redaction checks.
+- Updated `packages/lan-pairing/README.md` with the library decision, maturity caveat, alternatives, and fallback policy.
+- Regenerated `bun.lock`.
+
+Checks:
+
+- `bun test packages/lan-pairing/src/index.test.ts`: passed.
+- Node import smoke for `@cipherman/pake-js/cpace`: passed inside the LAN pairing test suite.
+- `bun run --cwd packages/lan-pairing check`: passed.
+- `bun run check`: passed. Biome reported the same non-failing `/nix/store` max-size warnings.
+- `bun run test`: passed.
+- Boundary search: `packages/lan-pairing/src` has no `from '@ai-usage/*'` imports.
+
+Commit:
+
 - Pending.

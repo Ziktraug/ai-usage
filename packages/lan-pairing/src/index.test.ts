@@ -1,13 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
 import {
+  completePakePairing,
   discoverLanPeers,
   discoveryHostsForAddresses,
   LAN_PAIRING_PORT_RANGE,
   LanPairingError,
   makeLanPairingService,
   makeLanPairingServiceWithOptions,
+  startPakePairing,
   subnetHostsForAddress,
+  verifyPakeConfirmation,
   type LanPeerProbeTransport,
   type LanPairingService,
   type LanPeerIdentity,
@@ -31,6 +34,19 @@ const missingPeer = (host: string, port: number) =>
     operation: 'readLanPeer',
     message: `No peer at ${host}:${port}`,
     reason: 'peer-not-found',
+  });
+
+const startPair = (input: { password: string; sessionId?: string; role: 'initiator' | 'responder'; now?: Date; ttlMs?: number }) =>
+  startPakePairing({
+    localPeerId: input.role === 'initiator' ? 'peer-a' : 'peer-b',
+    remotePeerId: input.role === 'initiator' ? 'peer-b' : 'peer-a',
+    password: input.password,
+    protocol: 'example-protocol',
+    protocolVersion: 1,
+    sessionId: input.sessionId ?? 'session-1',
+    role: input.role,
+    ...(input.now === undefined ? {} : { now: input.now }),
+    ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
   });
 
 describe('LAN pairing public boundary', () => {
@@ -57,6 +73,131 @@ describe('LAN pairing public boundary', () => {
     });
 
     expect(error._tag).toBe('LanPairingError');
+  });
+
+  test('selected CPace package imports and runs under Node', async () => {
+    const script = `
+      import { ristretto255 } from '@cipherman/pake-js/cpace';
+      const PRS = new Uint8Array(64).fill(7);
+      const sid = new TextEncoder().encode('node-smoke-session');
+      const CI = new TextEncoder().encode('node-smoke-ci');
+      const alice = ristretto255.init({ PRS, sid, CI });
+      const bob = ristretto255.init({ PRS, sid, CI });
+      const aliceKey = ristretto255.deriveIskSymmetric({
+        ephemeralSecret: alice.ephemeralSecret,
+        ownShare: alice.share,
+        peerShare: bob.share,
+        sid,
+      });
+      const bobKey = ristretto255.deriveIskSymmetric({
+        ephemeralSecret: bob.ephemeralSecret,
+        ownShare: bob.share,
+        peerShare: alice.share,
+        sid,
+      });
+      if (!ristretto255.iskEqual(aliceKey, bobKey)) process.exit(1);
+    `;
+    const proc = Bun.spawn(['node', '--input-type=module', '-e', script], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const exitCode = await proc.exited;
+
+    expect(exitCode).toBe(0);
+  });
+
+  test('derives a shared session key for same-password CPace pairing', () => {
+    const alice = startPair({ password: 'correct horse battery staple', role: 'initiator' });
+    const bob = startPair({ password: 'correct horse battery staple', role: 'responder' });
+    const aliceComplete = completePakePairing({ state: alice.state, peerMessage: bob.message });
+    const bobComplete = completePakePairing({ state: bob.state, peerMessage: alice.message });
+
+    expect(aliceComplete.sessionKey).toBe(bobComplete.sessionKey);
+    expect(verifyPakeConfirmation({
+      sessionKey: aliceComplete.sessionKey,
+      peerRole: 'responder',
+      confirmation: bobComplete.confirmation,
+    })).toBe(true);
+    expect(verifyPakeConfirmation({
+      sessionKey: bobComplete.sessionKey,
+      peerRole: 'initiator',
+      confirmation: aliceComplete.confirmation,
+    })).toBe(true);
+  });
+
+  test('fails key confirmation for a wrong password', () => {
+    const alice = startPair({ password: 'correct horse battery staple', role: 'initiator' });
+    const bob = startPair({ password: 'wrong password', role: 'responder' });
+    const aliceComplete = completePakePairing({ state: alice.state, peerMessage: bob.message });
+    const bobComplete = completePakePairing({ state: bob.state, peerMessage: alice.message });
+
+    expect(aliceComplete.sessionKey).not.toBe(bobComplete.sessionKey);
+    expect(verifyPakeConfirmation({
+      sessionKey: aliceComplete.sessionKey,
+      peerRole: 'responder',
+      confirmation: bobComplete.confirmation,
+    })).toBe(false);
+  });
+
+  test('binds replayed messages, expiry, self-pairing, and concurrent attempts to the transcript', () => {
+    const firstAlice = startPair({ password: 'correct horse battery staple', role: 'initiator', sessionId: 'session-1' });
+    const secondAlice = startPair({ password: 'correct horse battery staple', role: 'initiator', sessionId: 'session-2' });
+    const secondBob = startPair({ password: 'correct horse battery staple', role: 'responder', sessionId: 'session-2' });
+    const expiredAlice = startPair({
+      password: 'correct horse battery staple',
+      role: 'initiator',
+      now: new Date('2026-06-19T12:00:00.000Z'),
+      ttlMs: 1,
+    });
+    const expiredBob = startPair({
+      password: 'correct horse battery staple',
+      role: 'responder',
+      now: new Date('2026-06-19T12:00:00.000Z'),
+      ttlMs: 1,
+    });
+
+    expect(() => completePakePairing({ state: secondAlice.state, peerMessage: firstAlice.message })).toThrow();
+    expect(() =>
+      completePakePairing({
+        state: expiredAlice.state,
+        peerMessage: expiredBob.message,
+        now: new Date('2026-06-19T12:00:01.000Z'),
+      }),
+    ).toThrow();
+    expect(() =>
+      startPakePairing({
+        localPeerId: 'peer-a',
+        remotePeerId: 'peer-a',
+        password: 'correct horse battery staple',
+        protocol: 'example-protocol',
+        protocolVersion: 1,
+        sessionId: 'self',
+        role: 'initiator',
+      }),
+    ).toThrow();
+
+    const firstBob = startPair({ password: 'correct horse battery staple', role: 'responder', sessionId: 'session-1' });
+    const firstKey = completePakePairing({ state: firstAlice.state, peerMessage: firstBob.message }).sessionKey;
+    const secondKey = completePakePairing({ state: secondAlice.state, peerMessage: secondBob.message }).sessionKey;
+    expect(firstKey).not.toBe(secondKey);
+  });
+
+  test('keeps passwords, session keys, and merge tokens out of public PAKE messages and runtime state', async () => {
+    const alice = startPair({ password: 'secret-password', role: 'initiator' });
+    const service = await makeService();
+
+    try {
+      await Effect.runPromise(service.start({ identity: identity('peer-a'), portRange: { start: 0, end: 0 } }));
+      const state = await Effect.runPromise(service.getState());
+      const publicText = JSON.stringify({ message: alice.message, state, mergeToken: 'MERGE_TOKEN_SENTINEL' });
+
+      expect(publicText).not.toContain('secret-password');
+      expect(publicText).not.toContain(alice.state.ephemeralSecret);
+      expect(publicText).not.toContain('sessionKey');
+      expect(JSON.stringify(state)).not.toContain('MERGE_TOKEN_SENTINEL');
+    } finally {
+      await stopAll(service);
+    }
   });
 
   test('builds active subnet discovery candidates from multiple local interfaces', () => {

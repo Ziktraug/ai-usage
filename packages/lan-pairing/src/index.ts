@@ -1,4 +1,6 @@
+import { createHmac, scryptSync, timingSafeEqual } from 'node:crypto';
 import os from 'node:os';
+import { ristretto255 as cpaceRistretto255 } from '@cipherman/pake-js/cpace';
 import { Context, Data, Effect, Layer, Ref } from 'effect';
 
 export const LAN_PAIRING_PORT_RANGE = { start: 3847, end: 3857 } as const;
@@ -71,12 +73,70 @@ export interface PairingResult {
   sentEnvelope: PairingEnvelope;
 }
 
+export type PakePairingRole = 'initiator' | 'responder';
+
+export interface PakeTranscript {
+  localPeerId: string;
+  remotePeerId: string;
+  protocol: string;
+  protocolVersion: number;
+  sessionId: string;
+  role: PakePairingRole;
+}
+
+export interface PakeHandshakeMessage {
+  peerId: string;
+  protocol: string;
+  protocolVersion: number;
+  sessionId: string;
+  role: PakePairingRole;
+  share: string;
+  associatedData: string;
+}
+
+export interface PakePrivateState {
+  transcript: PakeTranscript;
+  expiresAt: string;
+  ephemeralSecret: string;
+  ownShare: string;
+  ownAssociatedData: string;
+}
+
+export interface PakeStartInput extends PakeTranscript {
+  password: string;
+  ttlMs?: number;
+  now?: Date;
+}
+
+export interface PakeStartResult {
+  state: PakePrivateState;
+  message: PakeHandshakeMessage;
+}
+
+export interface PakeCompleteInput {
+  state: PakePrivateState;
+  peerMessage: PakeHandshakeMessage;
+  now?: Date;
+}
+
+export interface PakeCompleteResult {
+  sessionKey: string;
+  confirmation: string;
+}
+
+export interface PakeVerifyInput {
+  sessionKey: string;
+  peerRole: PakePairingRole;
+  confirmation: string;
+}
+
 export type LanPairingErrorReason =
   | 'invalid-input'
   | 'port-unavailable'
   | 'service-stopped'
   | 'peer-not-found'
-  | 'pairing-failed';
+  | 'pairing-failed'
+  | 'pake-failed';
 
 export class LanPairingError extends Data.TaggedError('LanPairingError')<{
   readonly operation: string;
@@ -161,6 +221,168 @@ const jsonResponse = (value: unknown, init?: ResponseInit) =>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const textEncoder = new TextEncoder();
+
+const stableJson = (value: unknown): string => {
+  if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (!isRecord(value)) return 'null';
+  return `{${Object.keys(value)
+    .sort()
+    .filter((key) => value[key] !== undefined)
+    .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+    .join(',')}}`;
+};
+
+const toBytes = (value: string) => textEncoder.encode(value);
+
+const toBase64Url = (bytes: Uint8Array) => Buffer.from(bytes).toString('base64url');
+
+const fromBase64Url = (value: string) => new Uint8Array(Buffer.from(value, 'base64url'));
+
+const transcriptChannelIdentifier = (input: Omit<PakeTranscript, 'role'>) =>
+  toBytes(
+    stableJson({
+      peerIds: [input.localPeerId, input.remotePeerId].sort(),
+      protocol: input.protocol,
+      protocolVersion: input.protocolVersion,
+      sessionId: input.sessionId,
+    }),
+  );
+
+const transcriptAssociatedData = (input: PakeTranscript) =>
+  toBytes(
+    stableJson({
+      peerId: input.localPeerId,
+      protocol: input.protocol,
+      protocolVersion: input.protocolVersion,
+      role: input.role,
+      sessionId: input.sessionId,
+    }),
+  );
+
+const passwordRelatedString = (password: string, transcript: PakeTranscript) =>
+  scryptSync(password, transcriptChannelIdentifier(transcript), 64, { N: 16_384, r: 8, p: 1 });
+
+const assertValidPakeStart = (input: PakeStartInput) => {
+  if (!input.password) {
+    throw new LanPairingError({
+      operation: 'startPakePairing',
+      message: 'PAKE pairing requires a password.',
+      reason: 'invalid-input',
+    });
+  }
+  if (!input.localPeerId || !input.remotePeerId || !input.protocol || !input.sessionId) {
+    throw new LanPairingError({
+      operation: 'startPakePairing',
+      message: 'PAKE transcript is missing required peer, protocol, or session fields.',
+      reason: 'invalid-input',
+    });
+  }
+  if (input.localPeerId === input.remotePeerId) {
+    throw new LanPairingError({
+      operation: 'startPakePairing',
+      message: 'PAKE pairing cannot pair a peer with itself.',
+      reason: 'invalid-input',
+    });
+  }
+};
+
+export const startPakePairing = (input: PakeStartInput): PakeStartResult => {
+  assertValidPakeStart(input);
+  const now = input.now ?? new Date();
+  const transcript: PakeTranscript = {
+    localPeerId: input.localPeerId,
+    remotePeerId: input.remotePeerId,
+    protocol: input.protocol,
+    protocolVersion: input.protocolVersion,
+    sessionId: input.sessionId,
+    role: input.role,
+  };
+  const sid = toBytes(input.sessionId);
+  const ownAssociatedData = transcriptAssociatedData(transcript);
+  const init = cpaceRistretto255.init({
+    PRS: passwordRelatedString(input.password, transcript),
+    sid,
+    CI: transcriptChannelIdentifier(transcript),
+  });
+  const message: PakeHandshakeMessage = {
+    peerId: input.localPeerId,
+    protocol: input.protocol,
+    protocolVersion: input.protocolVersion,
+    sessionId: input.sessionId,
+    role: input.role,
+    share: toBase64Url(init.share),
+    associatedData: toBase64Url(ownAssociatedData),
+  };
+  return {
+    state: {
+      transcript,
+      expiresAt: new Date(now.getTime() + (input.ttlMs ?? 5 * 60_000)).toISOString(),
+      ephemeralSecret: toBase64Url(init.ephemeralSecret),
+      ownShare: message.share,
+      ownAssociatedData: message.associatedData,
+    },
+    message,
+  };
+};
+
+const expectedPeerRole = (role: PakePairingRole): PakePairingRole => (role === 'initiator' ? 'responder' : 'initiator');
+
+const assertValidPeerMessage = (state: PakePrivateState, peerMessage: PakeHandshakeMessage, now: Date) => {
+  if (now.getTime() > new Date(state.expiresAt).getTime()) {
+    throw new LanPairingError({
+      operation: 'completePakePairing',
+      message: 'PAKE pairing session has expired.',
+      reason: 'pake-failed',
+    });
+  }
+  if (
+    peerMessage.peerId !== state.transcript.remotePeerId ||
+    peerMessage.sessionId !== state.transcript.sessionId ||
+    peerMessage.protocol !== state.transcript.protocol ||
+    peerMessage.protocolVersion !== state.transcript.protocolVersion ||
+    peerMessage.role !== expectedPeerRole(state.transcript.role)
+  ) {
+    throw new LanPairingError({
+      operation: 'completePakePairing',
+      message: 'PAKE peer message does not match the expected transcript.',
+      reason: 'pake-failed',
+    });
+  }
+};
+
+const confirmationForRole = (sessionKey: Uint8Array, role: PakePairingRole) =>
+  createHmac('sha256', sessionKey).update(`ai-usage-lan-pairing:${role}`).digest();
+
+export const completePakePairing = (input: PakeCompleteInput): PakeCompleteResult => {
+  const now = input.now ?? new Date();
+  assertValidPeerMessage(input.state, input.peerMessage, now);
+
+  const isk = cpaceRistretto255.deriveIskInitiatorResponder({
+    ephemeralSecret: fromBase64Url(input.state.ephemeralSecret),
+    ownShare: fromBase64Url(input.state.ownShare),
+    peerShare: fromBase64Url(input.peerMessage.share),
+    ownAD: fromBase64Url(input.state.ownAssociatedData),
+    peerAD: fromBase64Url(input.peerMessage.associatedData),
+    sid: toBytes(input.state.transcript.sessionId),
+    role: input.state.transcript.role,
+  });
+  return {
+    sessionKey: toBase64Url(isk),
+    confirmation: toBase64Url(confirmationForRole(isk, input.state.transcript.role)),
+  };
+};
+
+export const verifyPakeConfirmation = (input: PakeVerifyInput) => {
+  const sessionKey = fromBase64Url(input.sessionKey);
+  const expected = confirmationForRole(sessionKey, input.peerRole);
+  const actual = fromBase64Url(input.confirmation);
+  return expected.byteLength === actual.byteLength && timingSafeEqual(expected, actual);
+};
 
 const portRangeValues = (range = LAN_PAIRING_PORT_RANGE) =>
   Array.from({ length: range.end - range.start + 1 }, (_, index) => range.start + index);
