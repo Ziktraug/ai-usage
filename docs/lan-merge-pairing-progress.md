@@ -146,4 +146,54 @@ Checks:
 
 Commit:
 
+- `0e98b5f chore: enforce package boundaries`
+
+## Slice 3: Usage Store Local Pipeline
+
+Status: completed
+
+Picked on: 2026-06-19
+Stable on: 2026-06-19
+
+Goal:
+
+- Add the SQLite-backed local usage-store pipeline.
+- Import locally collected rows into the store before reporting.
+- Query active local rows back through the store without adding LAN behavior.
+
+Difficulties:
+
+- `bun:sqlite` is Bun-specific, while app production builds can run under Node. The store now imports it dynamically inside the database opener instead of using a top-level import.
+- `report-data` needed `LocalHistoryError` as a runtime value, not only a type, so usage-store failures can be wrapped consistently with existing local collection errors.
+- The local collection path had to keep source metadata even when callers did not request it, because stable row keys require source identity.
+
+Decisions:
+
+- Store rows in `~/.config/ai-usage/usage-store.sqlite` under the same home boundary already used by local history storage.
+- Use the `SerializedMergeRow` key/hash model from `@ai-usage/report-core/merge-bundle` as the persisted row contract.
+- Default report queries to `active` rows and leave `superseded`/`deleted` support in the schema for later merge slices.
+- Apply project aliases before importing local rows, preserving current report output while making the store the report read path.
+- Keep peer bundle import/export functions in `usage-store` now, but do not call them from runtime code until Slice 4.
+
+File changes:
+
+- Implemented `packages/usage-store/src/index.ts` with SQLite migration, import, query, export, and self-import rejection helpers.
+- Added `deserializeMergeRow` to `packages/report-core/src/merge-bundle.ts`.
+- Updated `packages/report-data/src/index.ts` so local rows are imported into usage-store and read back from usage-store.
+- Added `@ai-usage/usage-store` as a `packages/report-data` dependency.
+- Expanded `packages/usage-store/src/index.test.ts` with idempotent import and same-key update tests.
+- Regenerated `bun.lock`.
+
+Checks:
+
+- `bun test packages/usage-store/src/index.test.ts`: passed.
+- `bun run --cwd packages/usage-store check`: passed.
+- `bun run --cwd packages/report-data check`: passed.
+- `bun run --cwd packages/report-data test`: passed.
+- `bun run --cwd apps/cli test`: passed.
+- `bun run check`: passed. Biome reported the same non-failing `/nix/store` max-size warnings.
+- `bun run test`: passed.
+
+Commit:
+
 - Pending.

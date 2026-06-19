@@ -83,6 +83,7 @@
       "dependencies": {
         "@ai-usage/local-collectors": "workspace:*",
         "@ai-usage/report-core": "workspace:*",
+        "@ai-usage/usage-store": "workspace:*",
         "effect": "^3.21.3",
       },
     },
