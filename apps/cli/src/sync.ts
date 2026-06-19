@@ -11,11 +11,11 @@ import {
   syncedSnapshotPath,
   upsertSyncRemote,
 } from '@ai-usage/local-collectors/sync-storage';
+import { fetchRemoteSnapshot } from '@ai-usage/sync/transport';
 import { Console, Effect } from 'effect';
 import type { SyncArgs } from './cli';
 import { CliArgumentError } from './errors';
 import { pad, trunc } from './render/format';
-import { fetchRemoteSnapshot } from './snapshot-transport';
 
 const renderSyncHelp = () =>
   [

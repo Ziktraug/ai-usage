@@ -8,7 +8,8 @@
 2. Collector adapters emit collected sessions or collected usage rows with local provenance.
 3. `@ai-usage/core` normalizes usage rows, computes derived row values, analytics, report payloads, and usage snapshots.
 4. `@ai-usage/reporting` orchestrates local history collection, project aliases, warnings, usage snapshots, and report payload creation.
-5. `apps/cli` and `apps/report` render the shared data through their own output adapters.
+5. `@ai-usage/sync` owns snapshot transport and sync workflow modules that can be used by both app adapters.
+6. `apps/cli` and `apps/report` render the shared data through their own output adapters.
 
 ## Package Ownership
 
@@ -46,6 +47,17 @@ Owns application-facing report orchestration:
 
 Apps should prefer this package over reaching into collectors directly. The known exception is the CLI quota path, which reads the newest Codex quota snapshot through the public `@ai-usage/local-collectors/codex-history` export.
 
+### `@ai-usage/sync`
+
+Owns application-facing sync modules:
+
+- snapshot file and HTTP transport;
+- snapshot endpoint health checks;
+- sync workflow and UI-consumable sync state;
+- LAN snapshot server protocol and discovery as those modules are added.
+
+Apps should use this package for sync behavior instead of owning transport, auth, parsing, or remote status logic.
+
 ### `apps/cli`
 
 Owns terminal and file output adapters:
@@ -82,6 +94,7 @@ See `docs/generated-tooling-ownership.md` for generated Panda/TanStack/Nitro own
 
 - Local history adapters live in `@ai-usage/local-collectors`.
 - Report orchestration lives in `@ai-usage/reporting`.
+- Sync transport and workflow modules live in `@ai-usage/sync`.
 - CLI renderers live in `apps/cli`.
 - Web server functions and browser output adapters live in `apps/report`.
 - Design-system exports are consumed through package exports, never through relative package paths.
