@@ -100,3 +100,38 @@ Checks:
 Commit:
 
 - this phase commit records the shared sync workflow and state extraction.
+
+### Phase 3: Shared Snapshot Server Protocol
+
+Status: completed.
+
+Intent:
+
+- move `/health` and `/snapshot` behavior out of `apps/cli/src/serve.ts`;
+- expose a testable snapshot HTTP handler for CLI and future web adapters;
+- keep CLI output as formatting over package request events.
+
+Decisions:
+
+- added `@ai-usage/sync/server`;
+- split server support into `createSnapshotHttpHandler` and `startSnapshotServer`;
+- made request logging an event callback so package code does not render terminal text;
+- kept snapshot production injected as `collectSnapshot` so `@ai-usage/sync` does not depend on `@ai-usage/reporting`.
+
+Difficulties:
+
+- Bun's `server.port` type allows `undefined`, so the server handle normalizes to `server.port ?? input.port`;
+- Bun's `server.stop()` can return a promise, so the shared handle exposes a synchronous `stop` wrapper that discards it.
+
+Checks:
+
+- `bun test packages/sync/src/server.test.ts packages/sync/src/workflow.test.ts packages/sync/src/transport.test.ts` passed.
+- `bun test apps/cli/src/cli.test.ts` passed.
+- `bun --filter @ai-usage/sync check` passed.
+- `bun --filter @ai-usage/cli check` passed.
+- `bun run check` passed.
+- Biome still reports existing large-file warnings for files under `/nix/store`.
+
+Commit:
+
+- this phase commit records the shared snapshot server protocol.
