@@ -31,11 +31,11 @@ export const buildLanMergeSummary = (state: LanMergeState): LanMergeSummary => (
 export const lanMergeServiceStatusLabel = (status: LanMergeState['service']['status']) => {
   switch (status) {
     case 'stopped':
-      return 'Ready';
+      return 'Stopped';
     case 'starting':
       return 'Starting';
     case 'running':
-      return 'Scanning';
+      return 'Online';
     case 'pairing':
       return 'Pairing';
     case 'error':

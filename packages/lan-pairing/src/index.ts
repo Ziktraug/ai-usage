@@ -1,4 +1,4 @@
-import { createHmac, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import os from 'node:os';
 import { ristretto255 as cpaceRistretto255 } from '@cipherman/pake-js/cpace';
 import { Context, Data, Effect, Layer, Ref } from 'effect';
@@ -54,11 +54,14 @@ export interface StartLanPairingInput {
     start: number;
     end: number;
   };
+  extraHandler?: LanPairingExtraHandler;
+  onPairingComplete?: (result: PairingResult) => void | Promise<void>;
 }
 
 export interface PairingInput {
   peerId: string;
   password: string;
+  envelope?: PairingEnvelope;
 }
 
 export interface PairingState {
@@ -71,6 +74,10 @@ export interface PairingResult {
   peer: TrustedLanPeer;
   receivedEnvelope: PairingEnvelope;
   sentEnvelope: PairingEnvelope;
+}
+
+export interface LanPairingExtraHandler {
+  (request: Request): Response | null | Promise<Response | null>;
 }
 
 export type PakePairingRole = 'initiator' | 'responder';
@@ -153,13 +160,49 @@ export interface PairCredentialEnvelopesResult {
   sessionKey: string;
 }
 
+export interface EncryptedPairingEnvelope {
+  algorithm: 'aes-256-gcm';
+  nonce: string;
+  ciphertext: string;
+}
+
+export interface PairingExchangeRequest {
+  identity: LanPeerIdentity;
+  message: PakeHandshakeMessage;
+}
+
+export interface PairingExchangeResponse {
+  identity: LanPeerIdentity;
+  message: PakeHandshakeMessage;
+  confirmation: string;
+  encryptedEnvelope: EncryptedPairingEnvelope;
+}
+
+export interface PairingFinalizeRequest {
+  identity: LanPeerIdentity;
+  sessionId: string;
+  confirmation: string;
+  encryptedEnvelope: EncryptedPairingEnvelope;
+}
+
+export interface PairWithLanPeerInput {
+  localIdentity: LanPeerIdentity;
+  peer: DiscoveredLanPeer;
+  password: string;
+  envelope: PairingEnvelope;
+  sessionId?: string;
+  ttlMs?: number;
+  now?: Date;
+}
+
 export type LanPairingErrorReason =
   | 'invalid-input'
   | 'port-unavailable'
   | 'service-stopped'
   | 'peer-not-found'
   | 'pairing-failed'
-  | 'pake-failed';
+  | 'pake-failed'
+  | 'protocol-mismatch';
 
 export class LanPairingError extends Data.TaggedError('LanPairingError')<{
   readonly operation: string;
@@ -214,9 +257,25 @@ export interface LanPairingRuntimeOptions {
 }
 
 interface RuntimeState {
-  pairing?: PairingState;
+  pairing?: ActivePairingSession;
   server?: LanPairingServerHandle;
   state: LanPairingState;
+  extraHandler?: LanPairingExtraHandler;
+  onPairingComplete?: (result: PairingResult) => void | Promise<void>;
+}
+
+interface PendingPairingExchange {
+  peerIdentity: LanPeerIdentity;
+  sessionId: string;
+  sessionKey: string;
+  confirmation: string;
+}
+
+interface ActivePairingSession {
+  state: PairingState;
+  password: string;
+  envelope?: PairingEnvelope;
+  pending: Record<string, PendingPairingExchange>;
 }
 
 const stoppedIdentity: LanPeerIdentity = {
@@ -244,6 +303,13 @@ const jsonResponse = (value: unknown, init?: ResponseInit) =>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const isPairingEnvelope = (value: unknown): value is PairingEnvelope =>
+  isRecord(value) &&
+  typeof value.peerId === 'string' &&
+  typeof value.credential === 'string' &&
+  isRecord(value.metadata) &&
+  Object.values(value.metadata).every((item) => typeof item === 'string');
 
 const textEncoder = new TextEncoder();
 
@@ -407,6 +473,36 @@ export const verifyPakeConfirmation = (input: PakeVerifyInput) => {
   return expected.byteLength === actual.byteLength && timingSafeEqual(expected, actual);
 };
 
+const encryptionKey = (sessionKey: string) => createHash('sha256').update(fromBase64Url(sessionKey)).digest();
+
+export const encryptPairingEnvelope = (sessionKey: string, envelope: PairingEnvelope): EncryptedPairingEnvelope => {
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', encryptionKey(sessionKey), nonce);
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(envelope), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return {
+    algorithm: 'aes-256-gcm',
+    nonce: nonce.toString('base64url'),
+    ciphertext: Buffer.concat([ciphertext, tag]).toString('base64url'),
+  };
+};
+
+export const decryptPairingEnvelope = (sessionKey: string, envelope: EncryptedPairingEnvelope): PairingEnvelope => {
+  if (envelope.algorithm !== 'aes-256-gcm') throw new Error('Unsupported encrypted pairing envelope algorithm');
+  const payload = Buffer.from(envelope.ciphertext, 'base64url');
+  if (payload.length < 16) throw new Error('Encrypted pairing envelope is too short');
+  const tag = payload.subarray(payload.length - 16);
+  const ciphertext = payload.subarray(0, payload.length - 16);
+  const decipher = createDecipheriv('aes-256-gcm', encryptionKey(sessionKey), Buffer.from(envelope.nonce, 'base64url'));
+  decipher.setAuthTag(tag);
+  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+  const parsed = JSON.parse(plaintext) as unknown;
+  if (!isPairingEnvelope(parsed)) {
+    throw new Error('Encrypted pairing envelope payload is invalid');
+  }
+  return parsed;
+};
+
 const trustedPeerFromIdentity = (identity: LanPeerIdentity, pairedAt: string, metadata: Record<string, string>): TrustedLanPeer => ({
   identity,
   pairedAt,
@@ -491,6 +587,155 @@ export const pairCredentialEnvelopes = (input: PairCredentialEnvelopesInput): Pa
   };
 };
 
+const pairingEndpoint = (peer: DiscoveredLanPeer, path: string) => `http://${peer.host}:${peer.port}${path}`;
+
+const parseJsonResponse = async (response: Response, operation: string) => {
+  if (!response.ok) {
+    let detail = '';
+    try {
+      const body = (await response.json()) as unknown;
+      if (isRecord(body) && typeof body.error === 'string') detail = `: ${body.error}`;
+    } catch {
+      // Keep the transport error usable even when the peer returns non-JSON.
+    }
+    throw new LanPairingError({
+      operation,
+      message: `LAN pairing peer returned HTTP ${response.status}${detail}.`,
+      reason: 'pairing-failed',
+    });
+  }
+  return (await response.json()) as unknown;
+};
+
+const isPakeHandshakeMessage = (value: unknown): value is PakeHandshakeMessage =>
+  isRecord(value) &&
+  typeof value.peerId === 'string' &&
+  typeof value.protocol === 'string' &&
+  typeof value.protocolVersion === 'number' &&
+  typeof value.sessionId === 'string' &&
+  (value.role === 'initiator' || value.role === 'responder') &&
+  typeof value.share === 'string' &&
+  typeof value.associatedData === 'string';
+
+const isLanPeerIdentity = (value: unknown): value is LanPeerIdentity =>
+  isRecord(value) &&
+  typeof value.id === 'string' &&
+  value.id.length > 0 &&
+  typeof value.label === 'string' &&
+  typeof value.protocol === 'string' &&
+  typeof value.version === 'number';
+
+const isEncryptedPairingEnvelope = (value: unknown): value is EncryptedPairingEnvelope =>
+  isRecord(value) &&
+  value.algorithm === 'aes-256-gcm' &&
+  typeof value.nonce === 'string' &&
+  typeof value.ciphertext === 'string';
+
+const parsePairingExchangeResponse = (value: unknown): PairingExchangeResponse => {
+  if (
+    !isRecord(value) ||
+    !isLanPeerIdentity(value.identity) ||
+    !isPakeHandshakeMessage(value.message) ||
+    typeof value.confirmation !== 'string' ||
+    !isEncryptedPairingEnvelope(value.encryptedEnvelope)
+  ) {
+    throw new Error('Invalid LAN pairing exchange response');
+  }
+  return {
+    identity: value.identity,
+    message: value.message,
+    confirmation: value.confirmation,
+    encryptedEnvelope: value.encryptedEnvelope,
+  };
+};
+
+export const pairWithLanPeer = (input: PairWithLanPeerInput): Effect.Effect<PairingResult, LanPairingError> =>
+  Effect.tryPromise({
+    try: async () => {
+      if (input.localIdentity.id === input.peer.identity.id) {
+        throw new LanPairingError({
+          operation: 'pairWithLanPeer',
+          message: 'Cannot pair a peer with itself.',
+          reason: 'invalid-input',
+        });
+      }
+
+      const sessionId = input.sessionId ?? randomBytes(16).toString('base64url');
+      const started = startPakePairing({
+        localPeerId: input.localIdentity.id,
+        remotePeerId: input.peer.identity.id,
+        password: input.password,
+        protocol: input.localIdentity.protocol,
+        protocolVersion: input.localIdentity.version,
+        sessionId,
+        role: 'initiator',
+        ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
+        ...(input.now === undefined ? {} : { now: input.now }),
+      });
+
+      const exchangeValue = await parseJsonResponse(
+        await fetch(pairingEndpoint(input.peer, '/lan/pairing/exchange'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ identity: input.localIdentity, message: started.message } satisfies PairingExchangeRequest),
+        }),
+        'pairWithLanPeer.exchange',
+      );
+      const exchange = parsePairingExchangeResponse(exchangeValue);
+      if (exchange.identity.id !== input.peer.identity.id) {
+        throw new LanPairingError({
+          operation: 'pairWithLanPeer',
+          message: 'LAN pairing exchange returned a different peer identity.',
+          reason: 'protocol-mismatch',
+        });
+      }
+
+      const completed = completePakePairing({ state: started.state, peerMessage: exchange.message });
+      if (
+        !verifyPakeConfirmation({
+          sessionKey: completed.sessionKey,
+          peerRole: 'responder',
+          confirmation: exchange.confirmation,
+        })
+      ) {
+        throw new LanPairingError({
+          operation: 'pairWithLanPeer',
+          message: 'LAN pairing confirmation failed.',
+          reason: 'pake-failed',
+        });
+      }
+
+      const receivedEnvelope = decryptPairingEnvelope(completed.sessionKey, exchange.encryptedEnvelope);
+      await parseJsonResponse(
+        await fetch(pairingEndpoint(input.peer, '/lan/pairing/finalize'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            identity: input.localIdentity,
+            sessionId,
+            confirmation: completed.confirmation,
+            encryptedEnvelope: encryptPairingEnvelope(completed.sessionKey, input.envelope),
+          } satisfies PairingFinalizeRequest),
+        }),
+        'pairWithLanPeer.finalize',
+      );
+
+      return {
+        peer: trustedPeerFromIdentity(exchange.identity, (input.now ?? new Date()).toISOString(), receivedEnvelope.metadata),
+        receivedEnvelope,
+        sentEnvelope: input.envelope,
+      };
+    },
+    catch: (cause) => {
+      if (cause instanceof LanPairingError) return cause;
+      return new LanPairingError({
+        operation: 'pairWithLanPeer',
+        message: cause instanceof Error ? cause.message : String(cause),
+        reason: 'pairing-failed',
+      });
+    },
+  });
+
 const portRangeValues = (range = LAN_PAIRING_PORT_RANGE) =>
   Array.from({ length: range.end - range.start + 1 }, (_, index) => range.start + index);
 
@@ -514,14 +759,6 @@ export const lanInterfaceAddresses = () =>
 export const defaultDiscoveryHosts = () => discoveryHostsForAddresses(lanInterfaceAddresses());
 
 const peerUrl = (host: string, port: number) => `http://${host}:${port}/lan/peer`;
-
-const isLanPeerIdentity = (value: unknown): value is LanPeerIdentity =>
-  isRecord(value) &&
-  typeof value.id === 'string' &&
-  value.id.length > 0 &&
-  typeof value.label === 'string' &&
-  typeof value.protocol === 'string' &&
-  typeof value.version === 'number';
 
 const parsePeerProbeResult = (value: unknown): LanPeerProbeResult => {
   if (!isRecord(value) || !isLanPeerIdentity(value.identity)) {
@@ -608,14 +845,18 @@ const parsePairingInput = async (request: Request): Promise<PairingInput> => {
       reason: 'invalid-input',
     });
   }
-  return { peerId: value.peerId, password: value.password };
+  return {
+    peerId: value.peerId,
+    password: value.password,
+    ...(isPairingEnvelope(value.envelope) ? { envelope: value.envelope } : {}),
+  };
 };
 
-const publicPeerState = (state: LanPairingState, pairing: PairingState | undefined) => ({
+const publicPeerState = (state: LanPairingState, pairing: ActivePairingSession | undefined) => ({
   identity: state.localIdentity,
   online: state.status === 'running' || state.status === 'pairing',
   pairingAvailable: state.status === 'running' || state.status === 'pairing',
-  pairing: pairing ? { peerId: pairing.peerId, startedAt: pairing.startedAt, expiresAt: pairing.expiresAt } : null,
+  pairing: pairing ? pairing.state : null,
   port: state.port ?? null,
   urls: state.urls,
 });
@@ -651,7 +892,12 @@ const startPairingInRef = (ref: Ref.Ref<RuntimeState>, input: PairingInput): Eff
     };
     yield* Ref.update(ref, (runtime) => ({
       ...runtime,
-      pairing,
+      pairing: {
+        state: pairing,
+        password: input.password,
+        ...(input.envelope === undefined ? {} : { envelope: input.envelope }),
+        pending: {},
+      },
       state: {
         ...runtime.state,
         status: 'pairing' as const,
@@ -673,7 +919,7 @@ const confirmPairingInRef = (ref: Ref.Ref<RuntimeState>, input: PairingInput): E
     }
 
     const current = yield* Ref.get(ref);
-    if (!current.pairing || current.pairing.peerId !== input.peerId) {
+    if (!current.pairing || current.pairing.state.peerId !== input.peerId) {
       return yield* Effect.fail(
         new LanPairingError({
           operation: 'confirmPairing',
@@ -699,10 +945,10 @@ const confirmPairingInRef = (ref: Ref.Ref<RuntimeState>, input: PairingInput): E
       peer,
       receivedEnvelope: {
         peerId: input.peerId,
-        credential: input.password,
+        credential: current.pairing.envelope?.credential ?? input.password,
         metadata: {},
       },
-      sentEnvelope: {
+      sentEnvelope: current.pairing.envelope ?? {
         peerId: current.state.localIdentity.id,
         credential: input.password,
         metadata: {},
@@ -723,6 +969,171 @@ const confirmPairingInRef = (ref: Ref.Ref<RuntimeState>, input: PairingInput): E
         },
       };
     });
+    return result;
+  });
+
+const parsePairingExchangeRequest = async (request: Request): Promise<PairingExchangeRequest> => {
+  const value = (await request.json()) as unknown;
+  if (!isRecord(value) || !isLanPeerIdentity(value.identity) || !isPakeHandshakeMessage(value.message)) {
+    throw new LanPairingError({
+      operation: 'parsePairingExchangeRequest',
+      message: 'Pairing exchange request is invalid.',
+      reason: 'invalid-input',
+    });
+  }
+  return { identity: value.identity, message: value.message };
+};
+
+const parsePairingFinalizeRequest = async (request: Request): Promise<PairingFinalizeRequest> => {
+  const value = (await request.json()) as unknown;
+  if (
+    !isRecord(value) ||
+    !isLanPeerIdentity(value.identity) ||
+    typeof value.sessionId !== 'string' ||
+    typeof value.confirmation !== 'string' ||
+    !isEncryptedPairingEnvelope(value.encryptedEnvelope)
+  ) {
+    throw new LanPairingError({
+      operation: 'parsePairingFinalizeRequest',
+      message: 'Pairing finalize request is invalid.',
+      reason: 'invalid-input',
+    });
+  }
+  return {
+    identity: value.identity,
+    sessionId: value.sessionId,
+    confirmation: value.confirmation,
+    encryptedEnvelope: value.encryptedEnvelope,
+  };
+};
+
+const exchangePairingInRef = (
+  ref: Ref.Ref<RuntimeState>,
+  input: PairingExchangeRequest,
+): Effect.Effect<PairingExchangeResponse, LanPairingError> =>
+  Effect.gen(function* () {
+    const current = yield* Ref.get(ref);
+    if (!current.pairing || current.pairing.state.peerId !== input.identity.id || !current.pairing.envelope) {
+      return yield* Effect.fail(
+        new LanPairingError({
+          operation: 'exchangePairing',
+          message: `No active pairing session for peer ${input.identity.id}.`,
+          reason: 'pairing-failed',
+        }),
+      );
+    }
+
+    const started = startPakePairing({
+      localPeerId: current.state.localIdentity.id,
+      remotePeerId: input.identity.id,
+      password: current.pairing.password,
+      protocol: current.state.localIdentity.protocol,
+      protocolVersion: current.state.localIdentity.version,
+      sessionId: input.message.sessionId,
+      role: 'responder',
+    });
+    const completed = completePakePairing({ state: started.state, peerMessage: input.message });
+    const encryptedEnvelope = encryptPairingEnvelope(completed.sessionKey, current.pairing.envelope);
+
+    yield* Ref.update(ref, (runtime) => {
+      if (!runtime.pairing) return runtime;
+      return {
+        ...runtime,
+        pairing: {
+          ...runtime.pairing,
+          pending: {
+            ...runtime.pairing.pending,
+            [input.message.sessionId]: {
+              peerIdentity: input.identity,
+              sessionId: input.message.sessionId,
+              sessionKey: completed.sessionKey,
+              confirmation: completed.confirmation,
+            },
+          },
+        },
+      };
+    });
+
+    return {
+      identity: current.state.localIdentity,
+      message: started.message,
+      confirmation: completed.confirmation,
+      encryptedEnvelope,
+    };
+  });
+
+const finalizePairingInRef = (
+  ref: Ref.Ref<RuntimeState>,
+  input: PairingFinalizeRequest,
+): Effect.Effect<PairingResult, LanPairingError> =>
+  Effect.gen(function* () {
+    const current = yield* Ref.get(ref);
+    const pending = current.pairing?.pending[input.sessionId];
+    if (!current.pairing || !pending || pending.peerIdentity.id !== input.identity.id || !current.pairing.envelope) {
+      return yield* Effect.fail(
+        new LanPairingError({
+          operation: 'finalizePairing',
+          message: `No pending pairing exchange for peer ${input.identity.id}.`,
+          reason: 'pairing-failed',
+        }),
+      );
+    }
+    if (
+      !verifyPakeConfirmation({
+        sessionKey: pending.sessionKey,
+        peerRole: 'initiator',
+        confirmation: input.confirmation,
+      })
+    ) {
+      return yield* Effect.fail(
+        new LanPairingError({
+          operation: 'finalizePairing',
+          message: 'Pairing confirmation failed.',
+          reason: 'pake-failed',
+        }),
+      );
+    }
+
+    const receivedEnvelope = decryptPairingEnvelope(pending.sessionKey, input.encryptedEnvelope);
+    const now = new Date().toISOString();
+    const result: PairingResult = {
+      peer: trustedPeerFromIdentity(input.identity, now, receivedEnvelope.metadata),
+      receivedEnvelope,
+      sentEnvelope: current.pairing.envelope,
+    };
+
+    yield* Effect.tryPromise({
+      try: async () => {
+        await current.onPairingComplete?.(result);
+      },
+      catch: (cause) =>
+        new LanPairingError({
+          operation: 'finalizePairing',
+          message: `Pairing completion callback failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          reason: 'pairing-failed',
+        }),
+    });
+
+    yield* Ref.update(ref, (runtime) => {
+      const nextPending = { ...(runtime.pairing?.pending ?? {}) };
+      delete nextPending[input.sessionId];
+      const { pairing: _pairing, ...withoutPairing } = runtime;
+      return {
+        ...withoutPairing,
+        state: {
+          ...runtime.state,
+          status: 'running' as const,
+          trustedPeers: [
+            ...runtime.state.trustedPeers.filter((trusted) => trusted.identity.id !== result.peer.identity.id),
+            result.peer,
+          ],
+        },
+        ...(Object.keys(nextPending).length && runtime.pairing
+          ? { pairing: { ...runtime.pairing, pending: nextPending } }
+          : {}),
+      };
+    });
+
     return result;
   });
 
@@ -768,10 +1179,39 @@ export const createLanPairingHttpHandler =
       }
     }
 
+    if (request.method === 'POST' && url.pathname === '/lan/pairing/exchange') {
+      try {
+        return jsonResponse(await Effect.runPromise(exchangePairingInRef(ref, await parsePairingExchangeRequest(request))));
+      } catch (cause) {
+        return jsonResponse({ error: cause instanceof Error ? cause.message : String(cause) }, { status: 400 });
+      }
+    }
+
+    if (request.method === 'POST' && url.pathname === '/lan/pairing/finalize') {
+      try {
+        const result = await Effect.runPromise(finalizePairingInRef(ref, await parsePairingFinalizeRequest(request)));
+        return jsonResponse({
+          peer: result.peer,
+          receivedEnvelope: { ...result.receivedEnvelope, credential: '[redacted]' },
+          sentEnvelope: { ...result.sentEnvelope, credential: '[redacted]' },
+        });
+      } catch (cause) {
+        return jsonResponse({ error: cause instanceof Error ? cause.message : String(cause) }, { status: 400 });
+      }
+    }
+
+    const runtime = await Effect.runPromise(Ref.get(ref));
+    const extraResponse = await runtime.extraHandler?.(request);
+    if (extraResponse) return extraResponse;
+
     return new Response('not found', { status: 404 });
   };
 
-const urlsFor = (host: string, port: number) => [`http://${host}:${port}/lan/peer`];
+const urlsFor = (host: string, port: number) => {
+  const hosts = host === '0.0.0.0' ? lanInterfaceAddresses() : [host];
+  const reachableHosts = hosts.length > 0 ? hosts : ['127.0.0.1'];
+  return reachableHosts.map((item) => `http://${item}:${port}/lan/peer`);
+};
 
 const startServerOnPort = (
   ref: Ref.Ref<RuntimeState>,
@@ -852,6 +1292,8 @@ export const makeLanPairingServiceWithOptions = (
           const { lastError: _lastError, ...stateWithoutLastError } = runtime.state;
           return {
             ...runtime,
+            ...(input.extraHandler === undefined ? {} : { extraHandler: input.extraHandler }),
+            ...(input.onPairingComplete === undefined ? {} : { onPairingComplete: input.onPairingComplete }),
             state: {
               ...stateWithoutLastError,
               localIdentity: input.identity,

@@ -12,6 +12,14 @@ export const scanLanMergePeers = createServerFn({ method: 'POST' })
     ),
   );
 
+export const startLanMerge = createServerFn({ method: 'POST' })
+  .validator((input) => input)
+  .handler(() => import('./lan-merge.server').then(({ startLanMergeForServer }) => startLanMergeForServer()));
+
+export const stopLanMerge = createServerFn({ method: 'POST' })
+  .validator((input) => input)
+  .handler(() => import('./lan-merge.server').then(({ stopLanMergeForServer }) => stopLanMergeForServer()));
+
 export const mergeLanPeer = createServerFn({ method: 'POST' })
   .validator((input) => input)
   .handler(({ data }) =>
