@@ -38,6 +38,7 @@ import {
   removeSyncRemote,
   setSyncRemoteEnabled,
   startSyncServe,
+  startSyncServeShare,
   stopSyncServe,
   upsertSyncRemote,
   validateSyncRemote,
@@ -193,6 +194,7 @@ const errorPanel = css({
 
 type SyncStateResult = Awaited<ReturnType<typeof getSyncStateForRoute>>;
 type SyncServeStateResult = Awaited<ReturnType<typeof getSyncServeState>>;
+type SyncServeShareResult = Awaited<ReturnType<typeof startSyncServeShare>>;
 type SyncOperationResult = Extract<SyncStateResult, { ok: false }>['error'];
 
 interface RemoteFormState {
@@ -291,6 +293,23 @@ const requestLogRow = css({
   border: '1px solid token(colors.line)',
   borderRadius: 'sm',
   bg: 'surfaceMuted',
+});
+
+const copyBlock = css({
+  display: 'grid',
+  gap: '8px',
+  p: '10px 12px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surfaceMuted',
+});
+
+const copyText = css({
+  m: 0,
+  whiteSpace: 'pre-wrap',
+  overflowWrap: 'anywhere',
+  fontFamily: 'mono',
+  fontSize: '12px',
 });
 
 const peerList = css({
@@ -604,13 +623,16 @@ const DiscoveryPanel = (props: {
 
 const ServePanel = (props: {
   result: SyncServeStateResult;
+  shareResult: SyncServeShareResult | null;
   form: ServeFormState;
   pending: boolean;
   formError: string | null;
   onFormChange: (form: ServeFormState) => void;
   onStart: () => void;
+  onShareStart: () => void;
   onStop: () => void;
   onRefresh: () => void;
+  onCopyShare: (text: string) => void;
 }) => {
   const state = () => (props.result.ok ? props.result.data : null);
   const disabled = () => props.pending || state()?.status === 'starting' || state()?.status === 'stopping';
@@ -706,6 +728,21 @@ const ServePanel = (props: {
                   </For>
                 </div>
               </Show>
+
+              <Show when={props.shareResult?.ok ? props.shareResult.data : null}>
+                {(share) => (
+                  <div class={copyBlock}>
+                    <div class={strongCell}>Copy on the other machine</div>
+                    <div class={muted}>Updated {share().envPath}</div>
+                    <pre class={copyText}>{share().copyText}</pre>
+                    <div class={actionRow}>
+                      <button class={ghostButton} type="button" onClick={() => props.onCopyShare(share().copyText)}>
+                        Copy
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </Show>
             </div>
           )}
         </Show>
@@ -723,6 +760,9 @@ const ServePanel = (props: {
             {props.pending || state()?.status === 'stopping' ? 'Stopping' : 'Stop'}
           </button>
         </Show>
+        <button class={ghostButton} type="button" disabled={props.pending || state()?.status === 'running'} onClick={props.onShareStart}>
+          All-in-one LAN setup
+        </button>
         <button class={ghostButton} type="button" disabled={props.pending} onClick={props.onRefresh}>
           Refresh
         </button>
@@ -734,6 +774,7 @@ const ServePanel = (props: {
 const SyncStateView = (props: {
   state: SyncState;
   serveResult: SyncServeStateResult;
+  serveShareResult: SyncServeShareResult | null;
   serveForm: ServeFormState;
   servePending: boolean;
   serveFormError: string | null;
@@ -756,8 +797,10 @@ const SyncStateView = (props: {
   onDiscoveryAddPeer: (peer: DiscoveredSnapshotRemote) => void;
   onServeFormChange: (form: ServeFormState) => void;
   onServeStart: () => void;
+  onServeShareStart: () => void;
   onServeStop: () => void;
   onServeRefresh: () => void;
+  onServeShareCopy: (text: string) => void;
   onRefresh: () => void;
 }) => {
   const summary = createMemo(() => buildSyncSummary(props.state));
@@ -765,13 +808,16 @@ const SyncStateView = (props: {
     <div class={pageStack}>
       <ServePanel
         result={props.serveResult}
+        shareResult={props.serveShareResult}
         form={props.serveForm}
         pending={props.servePending}
         formError={props.serveFormError}
         onFormChange={props.onServeFormChange}
         onStart={props.onServeStart}
+        onShareStart={props.onServeShareStart}
         onStop={props.onServeStop}
         onRefresh={props.onServeRefresh}
+        onCopyShare={props.onServeShareCopy}
       />
 
       <section class={summaryGrid} aria-label="Sync summary">
@@ -894,6 +940,7 @@ function SyncRoute() {
   const loaderResult = Route.useLoaderData();
   const [result, setResult] = createSignal<SyncStateResult>(loaderResult().sync);
   const [serveResult, setServeResult] = createSignal<SyncServeStateResult>(loaderResult().serve);
+  const [serveShareResult, setServeShareResult] = createSignal<SyncServeShareResult | null>(null);
   const [serveForm, setServeForm] = createSignal<ServeFormState>(serveFormFromResult(loaderResult().serve));
   const [servePending, setServePending] = createSignal(false);
   const [serveFormError, setServeFormError] = createSignal<string | null>(null);
@@ -960,7 +1007,31 @@ function SyncRoute() {
         },
       });
       setServeResult(next);
+      setServeShareResult(null);
       if (next.ok && next.data.status === 'running') setServeForm({ host: next.data.host, port: next.data.port, token: '' });
+    } finally {
+      setServePending(false);
+    }
+  };
+  const startServeShare = async () => {
+    if (servePending()) return;
+    const port = serveForm().port;
+    if (!Number.isFinite(port) || port < 1 || port > 65_535) {
+      setServeFormError('Port must be between 1 and 65535.');
+      return;
+    }
+    setServePending(true);
+    setServeFormError(null);
+    setServeShareResult(null);
+    try {
+      const next = await startSyncServeShare({ data: { port } });
+      setServeShareResult(next);
+      if (next.ok) {
+        setServeResult({ ok: true, data: next.data.state });
+        setServeForm({ host: next.data.state.host, port: next.data.state.port, token: '' });
+      } else {
+        setServeFormError(next.error.message);
+      }
     } finally {
       setServePending(false);
     }
@@ -972,6 +1043,7 @@ function SyncRoute() {
     try {
       const next = await stopSyncServe();
       setServeResult(next);
+      setServeShareResult(null);
       if (next.ok) setServeForm({ host: next.data.host, port: next.data.port, token: '' });
     } finally {
       setServePending(false);
@@ -1093,6 +1165,7 @@ function SyncRoute() {
           <SyncStateView
             state={(result() as Extract<SyncStateResult, { ok: true }>).data}
             serveResult={serveResult()}
+            serveShareResult={serveShareResult()}
             serveForm={serveForm()}
             servePending={servePending()}
             serveFormError={serveFormError()}
@@ -1118,8 +1191,12 @@ function SyncRoute() {
               setServeFormError(null);
             }}
             onServeStart={() => void startServe()}
+            onServeShareStart={() => void startServeShare()}
             onServeStop={() => void stopServe()}
             onServeRefresh={() => void refreshServe()}
+            onServeShareCopy={(text) => {
+              if (typeof navigator !== 'undefined') void navigator.clipboard?.writeText(text);
+            }}
             onRefresh={() => void refresh()}
           />
         </Show>
