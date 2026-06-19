@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { type SerializedUsageRow, serializeUsageRow, type UsageReportWarning } from './report-data';
 import type { UsageMachine } from './snapshot';
-import type { UsageRowSource, UsageRowWithOptionalSource } from './types';
+import type { CollectedUsageRow, UsageRowSource, UsageRowWithOptionalSource } from './types';
 
 export const USAGE_MERGE_BUNDLE_VERSION = 1 as const;
 
@@ -189,3 +189,37 @@ export const parseUsageMergeBundle = (text: string): UsageMergeBundle => {
     warnings: value.warnings,
   };
 };
+
+export const deserializeMergeRow = (row: SerializedMergeRow): CollectedUsageRow => ({
+  date: row.date ? new Date(row.date) : null,
+  endDate: row.endDate ? new Date(row.endDate) : null,
+  harness: row.harness,
+  provider: row.provider,
+  name: row.name,
+  model: row.model,
+  ...(row.models === undefined ? {} : { models: row.models }),
+  project: row.project,
+  tokIn: row.tokIn,
+  tokOut: row.tokOut,
+  tokCr: row.tokCr,
+  tokCw: row.tokCw,
+  costActual: row.costActual,
+  ...(row.costQuota === undefined ? {} : { costQuota: row.costQuota }),
+  costApprox: row.costApprox,
+  costKnown: row.costKnown,
+  calls: row.calls,
+  durationMs: row.durationMs,
+  turns: row.turns,
+  tools: row.tools,
+  linesAdded: row.linesAdded,
+  linesDeleted: row.linesDeleted,
+  ...(row.rtkSavedTokens === undefined ? {} : { rtkSavedTokens: row.rtkSavedTokens }),
+  ...(row.rtkInputTokens === undefined ? {} : { rtkInputTokens: row.rtkInputTokens }),
+  ...(row.rtkOutputTokens === undefined ? {} : { rtkOutputTokens: row.rtkOutputTokens }),
+  ...(row.rtkCommandCount === undefined ? {} : { rtkCommandCount: row.rtkCommandCount }),
+  ...(row.subagent === undefined ? {} : { subagent: row.subagent }),
+  ...(row.partial === undefined ? {} : { partial: row.partial }),
+  ...(row.usageUnavailable === undefined ? {} : { usageUnavailable: row.usageUnavailable }),
+  ...(row.ambiguous === undefined ? {} : { ambiguous: row.ambiguous }),
+  source: row.source,
+});

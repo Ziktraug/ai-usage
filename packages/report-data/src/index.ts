@@ -25,10 +25,11 @@ import {
   type SelectedHarnessCollectionResult,
   type HarnessSelection,
 } from '@ai-usage/local-collectors';
-import type { LocalHistoryError, LocalHistoryWarning } from '@ai-usage/local-collectors/errors';
-import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
+import { LocalHistoryError, type LocalHistoryWarning } from '@ai-usage/local-collectors/errors';
+import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-collectors/machine-config';
 import { readSyncedSnapshotRecords } from '@ai-usage/local-collectors/sync-storage';
+import { importLocalRows, queryReportRows, usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 
 export interface LocalUsageSelection {
@@ -168,6 +169,9 @@ const collectConfiguredLocalRowsWithWarnings = (request: LocalReportRowsRequest)
     return { config, collection };
   });
 
+const usageStoreLocalHistoryError = (operation: string, dbPath: string) => (cause: unknown) =>
+  new LocalHistoryError({ operation, path: dbPath, cause });
+
 export const collectLocalReportRows = (request: LocalReportRowsRequest) =>
   Effect.gen(function* () {
     const { config, rows } = yield* collectConfiguredLocalRows(request);
@@ -180,13 +184,22 @@ export const collectLocalReportRowsWithWarnings = (request: LocalReportRowsReque
   import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
 > =>
   Effect.gen(function* () {
-    const { config, collection } = yield* collectConfiguredLocalRowsWithWarnings(request);
+    const storage = yield* LocalHistoryStorage;
+    const machine = yield* ensureMachineConfig;
+    const dbPath = usageStorePath(storage.home);
+    const { config, collection } = yield* collectConfiguredLocalRowsWithWarnings({ ...request, keepSource: true });
     const rows = applyProjectAliases(collection.rows, config.projectAliases ?? []);
+    yield* importLocalRows({ dbPath, machine, rows }).pipe(
+      Effect.mapError(usageStoreLocalHistoryError('usageStore.importLocalRows', dbPath)),
+    );
+    const stored = yield* queryReportRows({ dbPath, originMachineIds: [machine.id] }).pipe(
+      Effect.mapError(usageStoreLocalHistoryError('usageStore.queryReportRows', dbPath)),
+    );
     const harnesses = collection.harnesses.map((harness) => ({
       ...harness,
-      rows: applyProjectAliases(harness.rows, config.projectAliases ?? []),
+      rows: stored.rows.filter((row) => row.harness === harness.label),
     }));
-    return { rows, warnings: collection.warnings, collection: { ...collection, rows, harnesses } };
+    return { rows: stored.rows, warnings: collection.warnings, collection: { ...collection, rows: stored.rows, harnesses } };
   });
 
 export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
