@@ -4,7 +4,7 @@ Global backlog for known follow-ups that should survive individual refactor logs
 
 ## Report Data Architecture
 
-- Add fine-grained reporting query functions in `@ai-usage/reporting` for rows, analytics, harness status, facets, quota snapshots, and project/source summaries.
+- Add fine-grained reporting query functions in `@ai-usage/report-data` for rows, analytics, harness status, facets, quota snapshots, and project/source summaries.
 - Expose those fine-grained queries through TanStack Start server functions without leaking Effect services or collector internals to client code.
 - Move the report UI from one compatibility `UsageReportPayload` signal toward independently loaded slices once the query seams exist.
 - Keep `UsageReportPayload` for static HTML export and current bootstrapping until the app has migrated safely.
@@ -30,7 +30,7 @@ Global backlog for known follow-ups that should survive individual refactor logs
 
 ## Tooling And Generated Files
 
-- Revisit direct `bun --filter @ai-usage/design-system build` calls in `apps/report` scripts if all local workflows move through `turbo run`.
+- Revisit direct `bun --filter @ai-usage/design-system build` calls in `apps/web` scripts if all local workflows move through `turbo run`.
 - Keep `docs/generated-tooling-ownership.md` updated when Panda, TanStack Router, Vite, Nitro, or Turbo generated outputs change.
 
 ## Source Logs

@@ -17,11 +17,11 @@
       "dependsOn": ["^build"],
       "outputs": ["styled-system/**"]
     },
-    "@ai-usage/report#build": {
+    "@ai-usage/web#build": {
       "dependsOn": ["^build"],
       "outputs": ["dist/**", ".output/**", "styled-system/**"]
     },
-    "@ai-usage/report#check": {
+    "@ai-usage/web#check": {
       "dependsOn": ["^build"],
       "outputs": ["styled-system/**"]
     },

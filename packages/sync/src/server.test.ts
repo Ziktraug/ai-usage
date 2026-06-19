@@ -1,5 +1,5 @@
-import { createUsageSnapshot } from '@ai-usage/core/snapshot';
-import type { SourcedRow } from '@ai-usage/core/types';
+import { createUsageSnapshot } from '@ai-usage/report-core/snapshot';
+import type { SourcedRow } from '@ai-usage/report-core/types';
 import { describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
 import { createSnapshotHttpHandler, startNodeSnapshotServer, type SnapshotRequestEvent } from './server';

@@ -149,7 +149,7 @@ Report machine
 
 ### 0. Keep Sync Logic In Packages
 
-Sync behavior should live in `@ai-usage/sync`, not in `apps/cli` or `apps/report`.
+Sync behavior should live in `@ai-usage/sync`, not in `apps/cli` or `apps/web`.
 
 Responsibilities:
 
@@ -163,7 +163,7 @@ Responsibilities:
 The apps are adapters:
 
 - `apps/cli` parses arguments and renders terminal text;
-- `apps/report` exposes server functions and eventually renders a dedicated sync UI.
+- `apps/web` exposes server functions and eventually renders a dedicated sync UI.
 
 ### 1. Add A Synced Usage Snapshot Module
 
@@ -215,7 +215,7 @@ Current implementation target:
 
 ### 3. Keep Report Merge In Reporting
 
-`@ai-usage/reporting` should remain the module that builds reports from:
+`@ai-usage/report-data` should remain the module that builds reports from:
 
 - explicit snapshots;
 - local history;
@@ -407,7 +407,7 @@ Move file and HTTP snapshot loading out of the CLI.
 Likely files:
 
 - `apps/cli/src/main.ts`;
-- new module under `apps/cli/src/` or `@ai-usage/reporting`;
+- new module under `apps/cli/src/` or `@ai-usage/report-data`;
 - tests around file, HTTP, auth, parse, and error modes.
 
 Acceptance criteria:
@@ -424,7 +424,7 @@ Likely files:
 
 - `packages/local-collectors/src/local-history.ts` if reusing the existing filesystem seam;
 - `packages/local-collectors/src/machine-config.ts` or a new local config module;
-- `@ai-usage/reporting` orchestration for reading stored snapshots.
+- `@ai-usage/report-data` orchestration for reading stored snapshots.
 
 Acceptance criteria:
 
@@ -557,7 +557,7 @@ Acceptance criteria:
 
 ### Unit Tests
 
-- `UsageSnapshot` parsing and dedupe remain in `@ai-usage/core`.
+- `UsageSnapshot` parsing and dedupe remain in `@ai-usage/report-core`.
 - Snapshot transport tests cover file and HTTP adapters.
 - Synced snapshot storage tests use a fake local filesystem root.
 - Config parsing tests cover remotes and token redaction.

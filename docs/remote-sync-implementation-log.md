@@ -30,9 +30,9 @@ Initial target:
 
 ### Implementation Decisions
 
-- `@ai-usage/core` will own the pure config shape for sync remotes.
+- `@ai-usage/report-core` will own the pure config shape for sync remotes.
 - `@ai-usage/local-collectors` will own synced snapshot storage because it already owns user-local filesystem state and machine config.
-- `@ai-usage/reporting` will read stored synced snapshots only as report inputs; it will not own sync persistence.
+- `@ai-usage/report-data` will read stored synced snapshots only as report inputs; it will not own sync persistence.
 
 ### Progress
 

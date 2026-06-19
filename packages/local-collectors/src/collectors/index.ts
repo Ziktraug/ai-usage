@@ -1,5 +1,5 @@
-import { HARNESS_METADATA, type HarnessKey, type HarnessMetadata, harnessKeys } from '@ai-usage/core/harness-metadata';
-import type { Row } from '@ai-usage/core/types';
+import { HARNESS_METADATA, type HarnessKey, type HarnessMetadata, harnessKeys } from '@ai-usage/report-core/harness-metadata';
+import type { Row } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
 import { type LocalHistoryError, type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
 import type { LocalHistoryStorage as LocalHistoryStorageService } from '../local-history';

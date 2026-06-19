@@ -1,4 +1,4 @@
-import type { SyncRemoteConfig } from '@ai-usage/core/project-alias';
+import type { SyncRemoteConfig } from '@ai-usage/report-core/project-alias';
 import type { LocalHistoryError } from '@ai-usage/local-collectors/errors';
 import { LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig } from '@ai-usage/local-collectors/machine-config';

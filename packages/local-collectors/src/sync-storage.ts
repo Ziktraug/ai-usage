@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { SyncRemoteConfig } from '@ai-usage/core/project-alias';
-import { parseUsageSnapshot, type UsageSnapshot } from '@ai-usage/core/snapshot';
+import type { SyncRemoteConfig } from '@ai-usage/report-core/project-alias';
+import { parseUsageSnapshot, type UsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { Effect } from 'effect';
 import { LocalHistoryError, type LocalHistoryWarning } from './errors';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';

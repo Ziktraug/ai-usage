@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Row } from '@ai-usage/core/types';
+import type { Row } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
 import { LocalHistoryStorage } from './local-history';
 import {
@@ -55,7 +55,7 @@ describe('RTK enrichment', () => {
       },
       {
         timestamp: '2026-01-01T00:08:00.000Z',
-        project_path: '/work/ai-usage/apps/report',
+        project_path: '/work/ai-usage/apps/web',
         input_tokens: 50,
         output_tokens: 20,
         saved_tokens: 5,

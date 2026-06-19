@@ -261,12 +261,12 @@ Merged CSV/JSON/HTML payloads include row provenance (`source.machineLabel`, `so
 
 ## Project layout
 
-- `packages/usage-core` (`@ai-usage/core`): pure row types, pricing, normalization, analytics, report payloads, snapshots, and HTML inlining primitives
+- `packages/report-core` (`@ai-usage/report-core`): pure row types, pricing, normalization, analytics, report payloads, snapshots, and HTML inlining primitives
 - `packages/local-collectors` (`@ai-usage/local-collectors`): Effect-based local history collectors for Claude, Codex, OpenCode, Cursor, RTK enrichment, machine identity, and user config
-- `packages/reporting` (`@ai-usage/reporting`): report orchestration seam over core plus local collectors
+- `packages/report-data` (`@ai-usage/report-data`): report orchestration seam over core plus local collectors
 - `packages/design-system` (`@ai-usage/design-system`): Panda/Solid primitives, report style slots, and generated Panda consumer exports
 - `apps/cli`: terminal CLI, quota/setup/serve commands, and table/CSV/JSON/HTML output adapters
-- `apps/report`: Solid + TanStack Start/Router/Table + Panda CSS report app and browser export adapters
+- `apps/web`: Solid + TanStack Start/Router/Table + Panda CSS report app and browser export adapters
 
 Architecture docs:
 
@@ -305,5 +305,5 @@ The dev server injects this machine's real usage data into the app (the same pay
 
 ## Notes
 
-- **`$API`** is an estimated cost at standard API prices, computed from local token counters and the editable pricing table in `packages/usage-core/src/pricing.ts`. Models without public pricing are marked as unknown.
+- **`$API`** is an estimated cost at standard API prices, computed from local token counters and the editable pricing table in `packages/report-core/src/pricing.ts`. Models without public pricing are marked as unknown.
 - **`$Actual`** is out-of-pocket spend when a harness reports it. Subscription products bill differently from per-token API rates, so the two columns can diverge.

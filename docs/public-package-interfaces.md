@@ -2,7 +2,7 @@
 
 The workspace packages expose only these public seams. Cross-package imports must use these package exports, not private `src` paths or relative workspace paths.
 
-## `@ai-usage/core`
+## `@ai-usage/report-core`
 
 - `.`: core barrel for stable domain helpers.
 - `./analytics`: analytics summary/group calculations.
@@ -24,7 +24,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./machine-config`: user-local machine/project alias config helpers.
 - `./sync-storage`: user-local synced snapshot config, env token resolution, and stored snapshot helpers.
 
-## `@ai-usage/reporting`
+## `@ai-usage/report-data`
 
 - `.`: report payload and snapshot assembly seam over core plus local collectors.
 

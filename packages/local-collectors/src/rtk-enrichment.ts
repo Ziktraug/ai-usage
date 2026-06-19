@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { UsageRow, UsageRowSource, UsageRowWithOptionalSource } from '@ai-usage/core/types';
+import type { UsageRow, UsageRowSource, UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
 import { type LocalHistoryError, type LocalHistoryWarning, localHistoryWarningFromError } from './errors';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';

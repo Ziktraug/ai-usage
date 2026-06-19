@@ -1,5 +1,5 @@
-import type { SyncRemoteConfig } from '@ai-usage/core/project-alias';
-import type { UsageMachine } from '@ai-usage/core/snapshot';
+import type { SyncRemoteConfig } from '@ai-usage/report-core/project-alias';
+import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { LocalHistoryError, LocalHistoryWarning } from '@ai-usage/local-collectors/errors';
 import { ensureMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import {

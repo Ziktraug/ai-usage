@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 const rootDir = path.resolve(import.meta.dir, '../../..');
-const reportDir = path.resolve(rootDir, 'apps/report');
+const reportDir = path.resolve(rootDir, 'apps/web');
 const cliEntry = path.resolve(import.meta.dir, 'main.ts');
 const outputDir = path.resolve(rootDir, 'ai-usage-reports');
 

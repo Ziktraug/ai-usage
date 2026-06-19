@@ -13,7 +13,7 @@
     "./transport": "./src/transport.ts"
   },
   "dependencies": {
-    "@ai-usage/core": "workspace:*",
+    "@ai-usage/report-core": "workspace:*",
     "@ai-usage/local-collectors": "workspace:*",
     "effect": "^3.21.3"
   },

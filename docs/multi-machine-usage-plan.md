@@ -484,8 +484,8 @@ Scope:
 
 Likely files:
 
-- `packages/usage-core/src/types.ts`
-- `packages/usage-core/src/report-data.ts`
+- `packages/report-core/src/types.ts`
+- `packages/report-core/src/report-data.ts`
 - `packages/local-collectors/src/collectors/claude.ts`
 - `packages/local-collectors/src/collectors/codex.ts`
 - `packages/local-collectors/src/collectors/opencode.ts`
@@ -531,7 +531,7 @@ Likely files:
 - `apps/cli/src/cli.ts`
 - `apps/cli/src/main.ts`
 - `apps/cli/src/runtime.ts`
-- `packages/usage-core/src/snapshot.ts`
+- `packages/report-core/src/snapshot.ts`
 - `packages/local-collectors/src/local-history.ts` or a new config module
 - `README.md`
 - `apps/cli/src/cli.test.ts`
@@ -574,8 +574,8 @@ Likely files:
 - `apps/cli/src/cli.ts`
 - `apps/cli/src/main.ts`
 - `apps/cli/src/report.ts`
-- `packages/usage-core/src/snapshot.ts`
-- `packages/usage-core/src/report-data.ts`
+- `packages/report-core/src/snapshot.ts`
+- `packages/report-core/src/report-data.ts`
 - `apps/cli/src/cli.test.ts`
 - new merge tests under `apps/cli/src/`
 
@@ -612,7 +612,7 @@ Likely files:
 
 - `apps/cli/src/cli.ts`
 - `apps/cli/src/main.ts`
-- `packages/usage-core/src/snapshot.ts`
+- `packages/report-core/src/snapshot.ts`
 - local collector source metadata code from Ticket 1
 - merge tests under `apps/cli/src/`
 
@@ -643,11 +643,11 @@ Scope:
 
 Likely files:
 
-- `packages/usage-core/src/report-data.ts`
+- `packages/report-core/src/report-data.ts`
 - `apps/cli/src/render/csv.ts`
-- `apps/report/src/shared.tsx`
-- `apps/report/src/Dashboard.tsx`
-- dashboard tests under `apps/report/src/`
+- `apps/web/src/shared.tsx`
+- `apps/web/src/Dashboard.tsx`
+- dashboard tests under `apps/web/src/`
 
 Acceptance criteria:
 
@@ -677,8 +677,8 @@ Likely files:
 
 - `apps/cli/src/cli.ts`
 - `apps/cli/src/main.ts`
-- `packages/usage-core/src/snapshot.ts`
-- `packages/usage-core/src/usage-row.ts`
+- `packages/report-core/src/snapshot.ts`
+- `packages/report-core/src/usage-row.ts`
 - `apps/cli/src/render/` for a small table renderer if needed
 
 Acceptance criteria:
@@ -715,11 +715,11 @@ Scope:
 
 Likely files:
 
-- new config module under `packages/usage-core/src/` or `packages/local-collectors/src/`
-- `packages/usage-core/src/report-data.ts`
+- new config module under `packages/report-core/src/` or `packages/local-collectors/src/`
+- `packages/report-core/src/report-data.ts`
 - `apps/cli/src/main.ts`
-- `apps/report/src/` only if needed after serialization
-- tests under `packages/usage-core/src/`
+- `apps/web/src/` only if needed after serialization
+- tests under `packages/report-core/src/`
 
 Acceptance criteria:
 
@@ -749,7 +749,7 @@ Scope:
 
 Likely files:
 
-- `apps/report` if reusing the Solid app shell
+- `apps/web` if reusing the Solid app shell
 - `apps/cli/src/` for command and local server/bootstrap
 - project discovery code from Ticket 6
 - user-local config code from Ticket 7
@@ -790,7 +790,7 @@ Likely files:
 
 - `apps/cli/src/cli.ts`
 - `apps/cli/src/main.ts`
-- `packages/usage-core/src/snapshot.ts`
+- `packages/report-core/src/snapshot.ts`
 - possibly new server module under `apps/cli/src/`
 
 Acceptance criteria:

@@ -1,6 +1,6 @@
-import { type HarnessKey, harnessLabel } from '@ai-usage/core/harness-metadata';
-import type { UsageRowSource } from '@ai-usage/core/types';
-import { type UsageRowInput, normalizeUsageRow } from '@ai-usage/core/usage-row';
+import { type HarnessKey, harnessLabel } from '@ai-usage/report-core/harness-metadata';
+import type { UsageRowSource } from '@ai-usage/report-core/types';
+import { type UsageRowInput, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import type { CollectorRow } from './rtk-enrichment';
 import { withProjectPath, withSource } from './rtk-enrichment';
 

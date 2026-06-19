@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { inlineReportHTML } from '@ai-usage/core/html-export';
-import type { UsageReportPayload } from '@ai-usage/core/report-data';
+import { inlineReportHTML } from '@ai-usage/report-core/html-export';
+import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 
 const reportAppDistPath = () => path.resolve(import.meta.dir, '../../../report/dist');
 const reportAppOutputPath = () => path.resolve(import.meta.dir, '../../../report/.output');

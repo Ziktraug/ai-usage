@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a dedicated web UI for LAN sync management in `apps/report`.
+Build a dedicated web UI for LAN sync management in `apps/web`.
 
 Success means:
 
@@ -71,7 +71,7 @@ The page should use the domain language from `CONTEXT.md`:
 Add a dedicated TanStack Router file route:
 
 ```txt
-apps/report/src/routes/sync.tsx
+apps/web/src/routes/sync.tsx
 ```
 
 The dashboard should expose a navigation control to `/sync`.
@@ -185,7 +185,7 @@ Persistent remote configuration continues to store `tokenEnv`, not raw token val
 
 ### Server Functions
 
-Add report server functions, probably in `apps/report/src/server/sync.ts` backed by `sync.server.ts` or a new `sync-serve.server.ts`:
+Add report server functions, probably in `apps/web/src/server/sync.ts` backed by `sync.server.ts` or a new `sync-serve.server.ts`:
 
 ```ts
 getSyncServeState()
@@ -238,7 +238,7 @@ interface StartSyncServeInput {
 
 Do not assume the report app can call `Bun.serve`.
 
-The CLI currently uses the Bun adapter in `@ai-usage/sync/server`, but `apps/report` can be run through Nitro with a Node server in production (`node .output/server/index.mjs`). The UI toggle needs a runtime-safe server starter.
+The CLI currently uses the Bun adapter in `@ai-usage/sync/server`, but `apps/web` can be run through Nitro with a Node server in production (`node .output/server/index.mjs`). The UI toggle needs a runtime-safe server starter.
 
 Recommended implementation:
 
@@ -409,9 +409,9 @@ Do not introduce a new color theme for sync. Use existing semantic tokens and ch
 
 Files:
 
-- `apps/report/src/routes/sync.tsx`;
-- `apps/report/src/Dashboard.tsx`;
-- `apps/report/src/routeTree.gen.ts` if route generation is manual in this workflow;
+- `apps/web/src/routes/sync.tsx`;
+- `apps/web/src/Dashboard.tsx`;
+- `apps/web/src/routeTree.gen.ts` if route generation is manual in this workflow;
 - design-system report styles if needed.
 
 Deliverables:
@@ -422,14 +422,14 @@ Deliverables:
 
 Checks:
 
-- `bun --filter @ai-usage/report check`.
+- `bun --filter @ai-usage/web check`.
 
 ### Slice 2: Read-Only Sync State
 
 Files:
 
-- `apps/report/src/sync-page.tsx` or route-local components;
-- optional `apps/report/src/sync-page-model.ts`.
+- `apps/web/src/sync-page.tsx` or route-local components;
+- optional `apps/web/src/sync-page-model.ts`.
 
 Deliverables:
 
@@ -440,7 +440,7 @@ Deliverables:
 Checks:
 
 - model tests if formatting/status derivation is extracted;
-- `bun --filter @ai-usage/report check`.
+- `bun --filter @ai-usage/web check`.
 
 ### Slice 3: Remote Mutations
 
@@ -455,7 +455,7 @@ Deliverables:
 Checks:
 
 - targeted server adapter tests where practical;
-- `bun --filter @ai-usage/report check`;
+- `bun --filter @ai-usage/web check`;
 - sync package tests remain passing.
 
 ### Slice 4: LAN Discovery
@@ -472,7 +472,7 @@ Checks:
 
 - model tests for peer-to-form mapping and badge derivation;
 - `bun test packages/sync/src/discovery.test.ts`;
-- `bun --filter @ai-usage/report check`.
+- `bun --filter @ai-usage/web check`.
 
 ### Slice 5: Serve Runtime Adapter
 
@@ -489,7 +489,7 @@ Checks:
 - unit tests around serve state transitions using an injected fake server starter;
 - direct adapter smoke test if the runtime supports it;
 - `bun --filter @ai-usage/sync check`;
-- `bun --filter @ai-usage/report check`.
+- `bun --filter @ai-usage/web check`.
 
 ### Slice 6: Serve Toggle UI
 
@@ -634,8 +634,8 @@ Decisions:
 
 Tested:
 
-- `bun test apps/report/src/server/sync-serve.server.test.ts apps/report/src/sync-page-model.test.ts`
-- `bun --filter @ai-usage/report check`
+- `bun test apps/web/src/server/sync-serve.server.test.ts apps/web/src/sync-page-model.test.ts`
+- `bun --filter @ai-usage/web check`
 
 ### 2026-06-19: UI-to-UI sync invite
 
@@ -661,5 +661,5 @@ Decisions:
 
 Tested:
 
-- `bun test apps/report/src/server/sync-serve.server.test.ts apps/report/src/sync-page-model.test.ts`
-- `bun --filter @ai-usage/report check`
+- `bun test apps/web/src/server/sync-serve.server.test.ts apps/web/src/sync-page-model.test.ts`
+- `bun --filter @ai-usage/web check`

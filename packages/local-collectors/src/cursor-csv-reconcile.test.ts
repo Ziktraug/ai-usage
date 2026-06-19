@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { harnessLabel } from '@ai-usage/core/harness-metadata';
-import { actualCost, normalizeUsageRow } from '@ai-usage/core/usage-row';
+import { harnessLabel } from '@ai-usage/report-core/harness-metadata';
+import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { collectCursorCsvTurns } from './collectors/cursor-csv';
 import { reconcileCursorRows } from './collectors/cursor-reconcile';

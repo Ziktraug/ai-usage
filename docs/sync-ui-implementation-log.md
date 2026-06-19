@@ -17,8 +17,8 @@ Intent:
 Decisions:
 
 - use a new package-oriented module shape centered on `@ai-usage/sync`;
-- keep `@ai-usage/reporting` focused on report and `UsageSnapshot` production;
-- keep `apps/cli` and `apps/report` as adapters, with feature parity optional.
+- keep `@ai-usage/report-data` focused on report and `UsageSnapshot` production;
+- keep `apps/cli` and `apps/web` as adapters, with feature parity optional.
 
 Difficulties:
 
@@ -116,7 +116,7 @@ Decisions:
 - added `@ai-usage/sync/server`;
 - split server support into `createSnapshotHttpHandler` and `startSnapshotServer`;
 - made request logging an event callback so package code does not render terminal text;
-- kept snapshot production injected as `collectSnapshot` so `@ai-usage/sync` does not depend on `@ai-usage/reporting`.
+- kept snapshot production injected as `collectSnapshot` so `@ai-usage/sync` does not depend on `@ai-usage/report-data`.
 
 Difficulties:
 
@@ -162,7 +162,7 @@ Checks:
 
 - `bun test packages/sync/src/discovery.test.ts packages/sync/src/server.test.ts packages/sync/src/workflow.test.ts packages/sync/src/transport.test.ts` passed.
 - `bun --filter @ai-usage/sync check` passed.
-- `bun --filter @ai-usage/report check` passed.
+- `bun --filter @ai-usage/web check` passed.
 - `bun --filter @ai-usage/cli check` passed.
 - `bun run check` passed.
 - Biome still reports existing large-file warnings for files under `/nix/store`.
