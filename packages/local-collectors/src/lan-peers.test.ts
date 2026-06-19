@@ -1,5 +1,17 @@
 import { describe, expect, test } from 'bun:test';
-import { emptyLanPeersConfig, LAN_PEERS_CONFIG_FILE, lanPeersConfigPath, parseLanPeersConfig } from './lan-peers';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { Effect } from 'effect';
+import { LocalHistoryStorage, createLocalHistoryStorage } from './local-history';
+import {
+  emptyLanPeersConfig,
+  LAN_PEERS_CONFIG_FILE,
+  lanPeersConfigPath,
+  parseLanPeersConfig,
+  readLanPeersConfig,
+  upsertStoredLanPeer,
+} from './lan-peers';
 
 describe('LAN peer config boundary', () => {
   test('owns the lan-peers.json path under the ai-usage user config directory', () => {
@@ -29,5 +41,37 @@ describe('LAN peer config boundary', () => {
       'invalid peers',
     );
     expect(emptyLanPeersConfig()).toEqual({ version: 1, peers: [] });
+  });
+
+  test('reads empty config and upserts trusted peers on disk', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-lan-peers-'));
+    try {
+      const storage = createLocalHistoryStorage(home);
+      const empty = await Effect.runPromise(readLanPeersConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)));
+      const first = await Effect.runPromise(
+        upsertStoredLanPeer({
+          machineId: 'machine-b',
+          machineLabel: 'Machine B',
+          pairedAt: '2026-06-19T12:00:00.000Z',
+          tokenEnv: 'AI_USAGE_LAN_MERGE_MACHINE_B_TOKEN',
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      const second = await Effect.runPromise(
+        upsertStoredLanPeer({
+          machineId: 'machine-b',
+          machineLabel: 'Machine B',
+          pairedAt: '2026-06-19T12:30:00.000Z',
+          tokenEnv: 'AI_USAGE_LAN_MERGE_MACHINE_B_TOKEN',
+          lastSeenAt: '2026-06-19T12:30:00.000Z',
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(empty).toEqual(emptyLanPeersConfig());
+      expect(first.peers).toHaveLength(1);
+      expect(second.peers).toHaveLength(1);
+      expect(second.peers[0]?.lastSeenAt).toBe('2026-06-19T12:30:00.000Z');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

@@ -1,4 +1,8 @@
+import fs from 'node:fs';
 import path from 'node:path';
+import { Effect } from 'effect';
+import { LocalHistoryError } from './errors';
+import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
 
 export const LAN_PEERS_CONFIG_FILE = 'lan-peers.json';
 
@@ -52,3 +56,46 @@ export const parseLanPeersConfig = (text: string): LanPeersConfig => {
     peers: value.peers,
   };
 };
+
+const lanPeersError = (operation: string, filePath: string) => (cause: unknown) =>
+  new LocalHistoryError({ operation, path: filePath, cause });
+
+export const readLanPeersConfig: Effect.Effect<LanPeersConfig, LocalHistoryError, LocalHistoryStorageService> =
+  Effect.gen(function* () {
+    const storage = yield* LocalHistoryStorage;
+    const filePath = lanPeersConfigPath(storage);
+    if (!(yield* storage.exists(filePath).pipe(Effect.catchAll(() => Effect.succeed(false))))) {
+      return emptyLanPeersConfig();
+    }
+    return parseLanPeersConfig(yield* storage.readText(filePath));
+  });
+
+export const writeLanPeersConfig = (
+  config: LanPeersConfig,
+): Effect.Effect<void, LocalHistoryError, LocalHistoryStorageService> =>
+  Effect.gen(function* () {
+    const storage = yield* LocalHistoryStorage;
+    const filePath = lanPeersConfigPath(storage);
+    yield* Effect.try({
+      try: () => {
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+      },
+      catch: lanPeersError('writeLanPeersConfig', filePath),
+    });
+  });
+
+export const upsertStoredLanPeer = (
+  peer: StoredLanPeer,
+): Effect.Effect<LanPeersConfig, LocalHistoryError, LocalHistoryStorageService> =>
+  Effect.gen(function* () {
+    const current = yield* readLanPeersConfig;
+    const next: LanPeersConfig = {
+      version: 1,
+      peers: [...current.peers.filter((stored) => stored.machineId !== peer.machineId), peer].sort((a, b) =>
+        a.machineLabel.localeCompare(b.machineLabel),
+      ),
+    };
+    yield* writeLanPeersConfig(next);
+    return next;
+  });
