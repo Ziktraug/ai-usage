@@ -1,4 +1,12 @@
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+  scryptSync,
+  timingSafeEqual,
+} from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
@@ -217,7 +225,7 @@ export class LanPairingError extends Data.TaggedError('LanPairingError')<{
 export interface LanPairingService {
   start(input: StartLanPairingInput): Effect.Effect<void, LanPairingError>;
   stop(): Effect.Effect<void, LanPairingError>;
-  scan(): Effect.Effect<DiscoveredLanPeer[], LanPairingError>;
+  scan(input?: LanPairingScanInput): Effect.Effect<DiscoveredLanPeer[], LanPairingError>;
   startPairing(input: PairingInput): Effect.Effect<PairingState, LanPairingError>;
   confirmPairing(input: PairingInput): Effect.Effect<PairingResult, LanPairingError>;
   getState(): Effect.Effect<LanPairingState, never>;
@@ -255,6 +263,11 @@ export interface DiscoverLanPeersInput {
   now?: Date;
 }
 
+export interface LanPairingScanInput {
+  hosts?: string[];
+  timeoutMs?: number;
+}
+
 export interface LanPairingRuntimeOptions {
   discoveryHosts?: string[];
   discoveryTimeoutMs?: number;
@@ -286,11 +299,7 @@ interface ActivePairingSession {
 }
 
 interface BunServeRuntime {
-  serve(input: {
-    hostname: string;
-    port: number;
-    fetch: (request: Request) => Response | Promise<Response>;
-  }): {
+  serve(input: { hostname: string; port: number; fetch: (request: Request) => Response | Promise<Response> }): {
     port?: number;
     stop: () => void | Promise<void>;
   };
@@ -521,7 +530,11 @@ export const decryptPairingEnvelope = (sessionKey: string, envelope: EncryptedPa
   return parsed;
 };
 
-const trustedPeerFromIdentity = (identity: LanPeerIdentity, pairedAt: string, metadata: Record<string, string>): TrustedLanPeer => ({
+const trustedPeerFromIdentity = (
+  identity: LanPeerIdentity,
+  pairedAt: string,
+  metadata: Record<string, string>,
+): TrustedLanPeer => ({
   identity,
   pairedAt,
   lastSeenAt: pairedAt,
@@ -695,7 +708,10 @@ export const pairWithLanPeer = (input: PairWithLanPeerInput): Effect.Effect<Pair
         await fetch(pairingEndpoint(input.peer, '/lan/pairing/exchange'), {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ identity: input.localIdentity, message: started.message } satisfies PairingExchangeRequest),
+          body: JSON.stringify({
+            identity: input.localIdentity,
+            message: started.message,
+          } satisfies PairingExchangeRequest),
         }),
         'pairWithLanPeer.exchange',
       );
@@ -739,7 +755,11 @@ export const pairWithLanPeer = (input: PairWithLanPeerInput): Effect.Effect<Pair
       );
 
       return {
-        peer: trustedPeerFromIdentity(exchange.identity, (input.now ?? new Date()).toISOString(), receivedEnvelope.metadata),
+        peer: trustedPeerFromIdentity(
+          exchange.identity,
+          (input.now ?? new Date()).toISOString(),
+          receivedEnvelope.metadata,
+        ),
         receivedEnvelope,
         sentEnvelope: input.envelope,
       };
@@ -770,8 +790,9 @@ export const subnetHostsForAddress = (address: string) => {
   return Array.from({ length: 254 }, (_, index) => `${prefix}.${index + 1}`).filter((host) => host !== address);
 };
 
-export const discoveryHostsForAddresses = (addresses: string[]) =>
-  [...new Set(addresses.flatMap(subnetHostsForAddress))];
+export const discoveryHostsForAddresses = (addresses: string[]) => [
+  ...new Set(addresses.flatMap(subnetHostsForAddress)),
+];
 
 export const lanInterfaceAddresses = () =>
   Object.values(os.networkInterfaces())
@@ -816,9 +837,7 @@ export const fetchLanPeerProbeTransport: LanPeerProbeTransport = {
     }),
 };
 
-export const discoverLanPeers = (
-  input: DiscoverLanPeersInput,
-): Effect.Effect<DiscoveredLanPeer[], never> =>
+export const discoverLanPeers = (input: DiscoverLanPeersInput): Effect.Effect<DiscoveredLanPeer[], never> =>
   Effect.gen(function* () {
     const hosts = [...new Set(input.hosts ?? defaultDiscoveryHosts())];
     const ports = [...new Set(input.ports ?? portRangeValues())];
@@ -833,33 +852,38 @@ export const discoverLanPeers = (
     yield* Effect.all(
       hosts.flatMap((host) =>
         ports.map((port) =>
-          transport.readPeer({
-            host,
-            port,
-            timeoutMs: input.timeoutMs ?? LAN_PAIRING_DISCOVERY_TIMEOUT_MS,
-          }).pipe(
-            Effect.map((probe) => {
-              const discovered: DiscoveredLanPeer = {
-                identity: probe.identity,
-                host,
-                port,
-                online: true,
-                pairingAvailable: probe.pairingAvailable,
-                self: probe.identity.id === input.localIdentity.id,
-                lastSeenAt,
-              };
-              const existing = byMachine.get(discovered.identity.id);
-              if (!existing || !existing.online) byMachine.set(discovered.identity.id, discovered);
-            }),
-            Effect.catchAll(() => Effect.void),
-          ),
+          transport
+            .readPeer({
+              host,
+              port,
+              timeoutMs: input.timeoutMs ?? LAN_PAIRING_DISCOVERY_TIMEOUT_MS,
+            })
+            .pipe(
+              Effect.map((probe) => {
+                const discovered: DiscoveredLanPeer = {
+                  identity: probe.identity,
+                  host,
+                  port,
+                  online: true,
+                  pairingAvailable: probe.pairingAvailable,
+                  self: probe.identity.id === input.localIdentity.id,
+                  lastSeenAt,
+                };
+                const existing = byMachine.get(discovered.identity.id);
+                if (!existing || !existing.online) byMachine.set(discovered.identity.id, discovered);
+              }),
+              Effect.catchAll(() => Effect.void),
+            ),
         ),
       ),
       { concurrency: discoveryConcurrency(input.concurrency) },
     );
 
     return [...byMachine.values()].sort(
-      (a, b) => Number(a.self) - Number(b.self) || a.identity.label.localeCompare(b.identity.label) || a.host.localeCompare(b.host),
+      (a, b) =>
+        Number(a.self) - Number(b.self) ||
+        a.identity.label.localeCompare(b.identity.label) ||
+        a.host.localeCompare(b.host),
     );
   });
 
@@ -888,7 +912,10 @@ const publicPeerState = (state: LanPairingState, pairing: ActivePairingSession |
   urls: state.urls,
 });
 
-const startPairingInRef = (ref: Ref.Ref<RuntimeState>, input: PairingInput): Effect.Effect<PairingState, LanPairingError> =>
+const startPairingInRef = (
+  ref: Ref.Ref<RuntimeState>,
+  input: PairingInput,
+): Effect.Effect<PairingState, LanPairingError> =>
   Effect.gen(function* () {
     if (!input.peerId || !input.password) {
       return yield* Effect.fail(
@@ -933,7 +960,10 @@ const startPairingInRef = (ref: Ref.Ref<RuntimeState>, input: PairingInput): Eff
     return pairing;
   });
 
-const confirmPairingInRef = (ref: Ref.Ref<RuntimeState>, input: PairingInput): Effect.Effect<PairingResult, LanPairingError> =>
+const confirmPairingInRef = (
+  ref: Ref.Ref<RuntimeState>,
+  input: PairingInput,
+): Effect.Effect<PairingResult, LanPairingError> =>
   Effect.gen(function* () {
     if (!input.peerId || !input.password) {
       return yield* Effect.fail(
@@ -1208,7 +1238,9 @@ export const createLanPairingHttpHandler =
 
     if (request.method === 'POST' && url.pathname === '/lan/pairing/exchange') {
       try {
-        return jsonResponse(await Effect.runPromise(exchangePairingInRef(ref, await parsePairingExchangeRequest(request))));
+        return jsonResponse(
+          await Effect.runPromise(exchangePairingInRef(ref, await parsePairingExchangeRequest(request))),
+        );
       } catch (cause) {
         return jsonResponse({ error: cause instanceof Error ? cause.message : String(cause) }, { status: 400 });
       }
@@ -1429,31 +1461,31 @@ export const makeLanPairingServiceWithOptions = (
           const portRange = input.portRange ?? LAN_PAIRING_PORT_RANGE;
           const serverRuntime = options.serverRuntime ?? 'auto';
           yield* Ref.update(ref, (runtime) => {
-          const { lastError: _lastError, ...stateWithoutLastError } = runtime.state;
-          return {
-            ...runtime,
-            ...(input.extraHandler === undefined ? {} : { extraHandler: input.extraHandler }),
-            ...(input.onPairingComplete === undefined ? {} : { onPairingComplete: input.onPairingComplete }),
-            state: {
-              ...stateWithoutLastError,
-              localIdentity: input.identity,
-              status: 'starting' as const,
-            },
-          };
-        });
+            const { lastError: _lastError, ...stateWithoutLastError } = runtime.state;
+            return {
+              ...runtime,
+              ...(input.extraHandler === undefined ? {} : { extraHandler: input.extraHandler }),
+              ...(input.onPairingComplete === undefined ? {} : { onPairingComplete: input.onPairingComplete }),
+              state: {
+                ...stateWithoutLastError,
+                localIdentity: input.identity,
+                status: 'starting' as const,
+              },
+            };
+          });
 
           const server = yield* startServerInRange(ref, host, portRange, serverRuntime).pipe(
-          Effect.tapError((error) =>
-            Ref.update(ref, (runtime) => ({
-              ...runtime,
-              state: {
-                ...runtime.state,
-                status: 'error' as const,
-                lastError: error.message,
-              },
-            })),
-          ),
-        );
+            Effect.tapError((error) =>
+              Ref.update(ref, (runtime) => ({
+                ...runtime,
+                state: {
+                  ...runtime.state,
+                  status: 'error' as const,
+                  lastError: error.message,
+                },
+              })),
+            ),
+          );
 
           yield* Ref.update(ref, (runtime) => ({
             ...runtime,
@@ -1487,7 +1519,7 @@ export const makeLanPairingServiceWithOptions = (
           });
           yield* Ref.set(ref, initialState());
         }),
-      scan: () =>
+      scan: (input = {}) =>
         Effect.gen(function* () {
           const current = yield* Ref.get(ref);
           if (current.state.status === 'stopped') {
@@ -1503,8 +1535,16 @@ export const makeLanPairingServiceWithOptions = (
           const discoveredPeers = yield* discoverLanPeers({
             localIdentity: current.state.localIdentity,
             cache: current.state.discoveredPeers,
-            ...(options.discoveryHosts === undefined ? {} : { hosts: options.discoveryHosts }),
-            ...(options.discoveryTimeoutMs === undefined ? {} : { timeoutMs: options.discoveryTimeoutMs }),
+            ...(input.hosts === undefined
+              ? options.discoveryHosts === undefined
+                ? {}
+                : { hosts: options.discoveryHosts }
+              : { hosts: input.hosts }),
+            ...(input.timeoutMs === undefined
+              ? options.discoveryTimeoutMs === undefined
+                ? {}
+                : { timeoutMs: options.discoveryTimeoutMs }
+              : { timeoutMs: input.timeoutMs }),
             ...(options.discoveryConcurrency === undefined ? {} : { concurrency: options.discoveryConcurrency }),
             ...(options.discoveryTransport === undefined ? {} : { transport: options.discoveryTransport }),
           });

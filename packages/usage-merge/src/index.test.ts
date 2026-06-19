@@ -100,8 +100,16 @@ describe('usage-merge public boundary', () => {
       pairedAt: '2026-06-19T12:00:00.000Z',
       lastSeenAt: '2026-06-19T12:00:00.000Z',
     });
-    expect(() => storedLanPeerFromPairingEnvelope({ identity: lanIdentityFromMachine({ id: 'other', label: 'Other' }), envelope, pairedAt: new Date() })).toThrow();
-    expect(() => decodeUsageMergeCredential(encodeUsageMergeCredential({ tokenEnv: 'BAD-NAME', token: 'secret' }))).toThrow();
+    expect(() =>
+      storedLanPeerFromPairingEnvelope({
+        identity: lanIdentityFromMachine({ id: 'other', label: 'Other' }),
+        envelope,
+        pairedAt: new Date(),
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeUsageMergeCredential(encodeUsageMergeCredential({ tokenEnv: 'BAD-NAME', token: 'secret' })),
+    ).toThrow();
   });
 
   test('upserts usage merge tokens in the workspace root env file', () => {
@@ -208,7 +216,9 @@ describe('usage-merge public boundary', () => {
       });
 
       const result = await Effect.runPromise(runtime.mergePeer({ machineId: peerMachine.id }));
-      const rows = await Effect.runPromise(queryReportRows({ dbPath: localDbPath, originMachineIds: [peerMachine.id] }));
+      const rows = await Effect.runPromise(
+        queryReportRows({ dbPath: localDbPath, originMachineIds: [peerMachine.id] }),
+      );
       const state = await Effect.runPromise(runtime.getLanMergeState());
 
       expect(result.inserted).toBe(1);
@@ -265,6 +275,46 @@ describe('usage-merge public boundary', () => {
     expect(offline.reason).toBe('peer-offline');
     const state = await Effect.runPromise(offlineRuntime.getLanMergeState());
     expect(state.service.lastError).toContain('offline');
+  });
+
+  test('uses a merge URL supplied by the caller for a paired peer', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-merge-url-'));
+    try {
+      const peerMachine: UsageMachine = { id: 'peer-machine', label: 'Peer Machine' };
+      let requestedUrl = '';
+      const runtime = createUsageMergeRuntime({
+        localMachine: { id: 'local-machine', label: 'Local Machine' },
+        dbPath: path.join(home, 'usage.sqlite'),
+        peers: [
+          {
+            machineId: peerMachine.id,
+            machineLabel: peerMachine.label,
+            tokenEnv: 'AI_USAGE_LAN_MERGE_PEER_TOKEN',
+            pairedAt: '2026-06-19T11:00:00.000Z',
+          },
+        ],
+        getToken: () => 'peer-token',
+        transport: {
+          fetchMergeBundle: ({ url }) => {
+            requestedUrl = url;
+            return Effect.succeed(
+              createUsageMergeBundle({
+                machine: peerMachine,
+                rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-1' })],
+              }),
+            );
+          },
+        },
+      });
+
+      await Effect.runPromise(
+        runtime.mergePeer({ machineId: peerMachine.id, url: 'http://192.168.1.44:3847/lan/merge-bundle' }),
+      );
+
+      expect(requestedUrl).toBe('http://192.168.1.44:3847/lan/merge-bundle');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test('runs the first merge when pairing a trusted discovered peer', async () => {
@@ -382,7 +432,9 @@ describe('usage-merge public boundary', () => {
       await Effect.runPromise(runtimeA.scanLanMergePeers());
       await Effect.runPromise(runtimeB.scanLanMergePeers());
 
-      await Effect.runPromise(runtimeB.pairPeer({ discoveredPeerId: machineA.id, password: '123456' }).pipe(Effect.either));
+      await Effect.runPromise(
+        runtimeB.pairPeer({ discoveredPeerId: machineA.id, password: '123456' }).pipe(Effect.either),
+      );
       const stateA = await Effect.runPromise(runtimeA.pairPeer({ discoveredPeerId: machineB.id, password: '123456' }));
       const rowsA = await Effect.runPromise(queryReportRows({ dbPath: dbA, originMachineIds: [machineB.id] }));
       const rowsB = await Effect.runPromise(queryReportRows({ dbPath: dbB, originMachineIds: [machineA.id] }));
@@ -393,7 +445,9 @@ describe('usage-merge public boundary', () => {
       expect(tokensB.get('AI_USAGE_LAN_MERGE_MACHINE_A_TOKEN')).toBe('token-a');
       expect(rowsA.rows[0]?.project).toBe('peer-project');
       expect(rowsB.rows[0]?.project).toBe('local-project');
-      expect(stateA.trustedPeers.find((peer) => peer.machineId === machineB.id)?.lastMergedAt).toBe('2026-06-19T12:30:00.000Z');
+      expect(stateA.trustedPeers.find((peer) => peer.machineId === machineB.id)?.lastMergedAt).toBe(
+        '2026-06-19T12:30:00.000Z',
+      );
     } finally {
       if (runtimeA) {
         try {
