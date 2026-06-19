@@ -26,7 +26,7 @@ Difficulties:
 
 Checks:
 
-- `bun --filter @ai-usage/report check` passed after slice 1 changes.
+- `bun --filter @ai-usage/web check` passed after slice 1 changes.
 
 Commit:
 
@@ -46,7 +46,7 @@ Decisions:
 
 - added report-specific `headerActions` and `navButton` styles in the design-system report exports;
 - kept the initial `/sync` page dense and operational: serve status, sync summary, remotes, and discovery sections;
-- generated `apps/report/src/routeTree.gen.ts` through `@tanstack/router-generator` instead of editing it by hand;
+- generated `apps/web/src/routeTree.gen.ts` through `@tanstack/router-generator` instead of editing it by hand;
 - preserved the existing TanStack Start route tree footer during generation.
 
 Difficulties:
@@ -56,7 +56,7 @@ Difficulties:
 
 Checks:
 
-- `bun --filter @ai-usage/report check` passed.
+- `bun --filter @ai-usage/web check` passed.
 
 Commit:
 
@@ -74,7 +74,7 @@ Intent:
 
 Decisions:
 
-- introduced `apps/report/src/sync-page-model.ts` for pure summary and formatting helpers;
+- introduced `apps/web/src/sync-page-model.ts` for pure summary and formatting helpers;
 - kept start/remote mutation controls non-functional until their dedicated slices;
 - added an explicit refresh action for the sync state instead of polling.
 
@@ -85,8 +85,8 @@ Difficulties:
 
 Checks:
 
-- `bun test apps/report/src/sync-page-model.test.ts` passed.
-- `bun --filter @ai-usage/report check` passed.
+- `bun test apps/web/src/sync-page-model.test.ts` passed.
+- `bun --filter @ai-usage/web check` passed.
 
 Commit:
 
@@ -117,8 +117,8 @@ Difficulties:
 
 Checks:
 
-- `bun test apps/report/src/sync-page-model.test.ts` passed.
-- `bun --filter @ai-usage/report check` passed.
+- `bun test apps/web/src/sync-page-model.test.ts` passed.
+- `bun --filter @ai-usage/web check` passed.
 - `bun test packages/sync/src/workflow.test.ts` passed.
 
 Commit:
@@ -147,9 +147,9 @@ Difficulties:
 
 Checks:
 
-- `bun test apps/report/src/sync-page-model.test.ts` passed.
+- `bun test apps/web/src/sync-page-model.test.ts` passed.
 - `bun test packages/sync/src/discovery.test.ts` passed.
-- `bun --filter @ai-usage/report check` passed.
+- `bun --filter @ai-usage/web check` passed.
 
 Commit:
 
@@ -169,7 +169,7 @@ Intent:
 Decisions:
 
 - added `startNodeSnapshotServer` to `@ai-usage/sync/server` while keeping `startSnapshotServer` on Bun;
-- implemented the report lifecycle in `apps/report/src/server/sync-serve.server.ts` with injectable dependencies for tests;
+- implemented the report lifecycle in `apps/web/src/server/sync-serve.server.ts` with injectable dependencies for tests;
 - treated `host=0.0.0.0` as requiring a token before start;
 - public serve state exposes only `tokenConfigured`, never the token string.
 
@@ -181,9 +181,9 @@ Difficulties:
 Checks:
 
 - `bun test packages/sync/src/server.test.ts` passed.
-- `bun test apps/report/src/server/sync-serve.server.test.ts` passed.
+- `bun test apps/web/src/server/sync-serve.server.test.ts` passed.
 - `bun --filter @ai-usage/sync check` passed.
-- `bun --filter @ai-usage/report check` passed.
+- `bun --filter @ai-usage/web check` passed.
 
 Commit:
 
@@ -214,8 +214,8 @@ Difficulties:
 
 Checks:
 
-- `bun test apps/report/src/sync-page-model.test.ts` passed.
-- `bun --filter @ai-usage/report check` passed.
+- `bun test apps/web/src/sync-page-model.test.ts` passed.
+- `bun --filter @ai-usage/web check` passed.
 - Manual smoke: `127.0.0.1:43847` start, `/health`, stop passed.
 - Manual smoke: `0.0.0.0:43848` with token start, `/health` through `127.0.0.1`, stop passed.
 
@@ -258,7 +258,7 @@ Status: completed.
 
 Intent:
 
-- fix token resolution when the report app runs from `apps/report` but the sync token is stored in the repository root `.env`.
+- fix token resolution when the report app runs from `apps/web` but the sync token is stored in the repository root `.env`.
 
 Decisions:
 
@@ -275,7 +275,7 @@ Checks:
 - `bun test packages/local-collectors/src/sync-storage.test.ts packages/sync/src/workflow.test.ts` passed.
 - `bun --filter @ai-usage/local-collectors check` passed.
 - `bun --filter @ai-usage/sync check` passed.
-- `bun --filter @ai-usage/report check` passed.
+- `bun --filter @ai-usage/web check` passed.
 
 Commit:
 
@@ -304,8 +304,8 @@ Difficulties:
 
 Checks:
 
-- `bun test apps/report/src/server/sync-serve.server.test.ts apps/report/src/sync-page-model.test.ts` passed.
-- `bun --filter @ai-usage/report check` passed.
+- `bun test apps/web/src/server/sync-serve.server.test.ts apps/web/src/sync-page-model.test.ts` passed.
+- `bun --filter @ai-usage/web check` passed.
 
 Commit:
 

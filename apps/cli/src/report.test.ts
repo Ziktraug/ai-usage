@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Row } from '@ai-usage/core/types';
+import type { Row } from '@ai-usage/report-core/types';
 import type { Args } from './cli';
 import { prepareUsageReport, renderUsageReport, renderWarningsForStderr } from './report';
 

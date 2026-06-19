@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { ensureMachineConfig } from '@ai-usage/local-collectors';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
-import { createLocalUsageSnapshot } from '@ai-usage/reporting';
+import { createLocalUsageSnapshot } from '@ai-usage/report-data';
 import { startSnapshotServer } from '@ai-usage/sync/server';
 import { Console, Effect } from 'effect';
 import type { ServeArgs } from './cli';

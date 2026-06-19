@@ -1,4 +1,4 @@
-import { actualCost, approximateApiCost } from '@ai-usage/core/usage-row';
+import { actualCost, approximateApiCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import type { CollectedSession } from './collected-session';
 import type { LocalHistoryError } from './errors';

@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { parseUsageSnapshot, type UsageSnapshot } from '@ai-usage/core/snapshot';
+import { parseUsageSnapshot, type UsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { Effect } from 'effect';
 import { SyncTransportError, transportError } from './errors';
 

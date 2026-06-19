@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { UsageReportWarning } from '@ai-usage/core/report-data';
+import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import {
@@ -12,7 +12,7 @@ import {
   createMergedUsageReport,
   listProjectSourcesWithWarnings,
   type ProjectSource,
-} from '@ai-usage/reporting';
+} from '@ai-usage/report-data';
 import { fetchRemoteSnapshot, readSnapshotFile } from '@ai-usage/sync/transport';
 import { Console, Effect, Layer } from 'effect';
 import { type Args, helpText, parseCommand } from './cli';

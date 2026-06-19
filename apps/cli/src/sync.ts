@@ -1,4 +1,4 @@
-import type { SyncRemoteConfig } from '@ai-usage/core/project-alias';
+import type { SyncRemoteConfig } from '@ai-usage/report-core/project-alias';
 import {
   addSyncRemote,
   applyPullTokenEnvOverride,

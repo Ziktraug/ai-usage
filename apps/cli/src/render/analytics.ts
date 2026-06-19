@@ -1,5 +1,5 @@
-import { type AnalyticsGroup, calculateAnalytics } from '@ai-usage/core/analytics';
-import type { Row } from '@ai-usage/core/types';
+import { type AnalyticsGroup, calculateAnalytics } from '@ai-usage/report-core/analytics';
+import type { Row } from '@ai-usage/report-core/types';
 import { clr, harnessColor, id } from './colors';
 import { fmtDur, fmtNum, pad, trunc } from './format';
 

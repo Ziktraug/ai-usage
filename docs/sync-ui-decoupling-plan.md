@@ -7,9 +7,9 @@ Prepare `ai-usage` for a dedicated web UI that manages sync state without making
 Success means:
 
 - `apps/cli` is an adapter for argument parsing and terminal rendering.
-- `apps/report` can expose server functions for a future `/sync` page without calling CLI code.
+- `apps/web` can expose server functions for a future `/sync` page without calling CLI code.
 - shared sync behavior lives behind package interfaces.
-- `@ai-usage/reporting` remains focused on report and `UsageSnapshot` production.
+- `@ai-usage/report-data` remains focused on report and `UsageSnapshot` production.
 - a future UI can render serve/discovery/remote/pull state from serializable data.
 
 ## Architecture Decision
@@ -17,13 +17,13 @@ Success means:
 Create a package-owned sync module instead of growing app code:
 
 ```txt
-@ai-usage/core
+@ai-usage/report-core
   pure sync config and snapshot types
 
 @ai-usage/local-collectors
   user-local storage, machine config, env-backed token lookup
 
-@ai-usage/reporting
+@ai-usage/report-data
   local history -> UsageSnapshot and report assembly
 
 @ai-usage/sync
@@ -33,7 +33,7 @@ Create a package-owned sync module instead of growing app code:
 apps/cli
   CLI adapter over @ai-usage/sync
 
-apps/report
+apps/web
   web server-function adapter over @ai-usage/sync
 ```
 
@@ -200,11 +200,11 @@ Success:
 
 ## Phase 5: Web Server-Function Adapter Readiness
 
-Add server functions in `apps/report` without building the visible page yet.
+Add server functions in `apps/web` without building the visible page yet.
 
 Implementation:
 
-- add `apps/report/src/server/sync.ts`;
+- add `apps/web/src/server/sync.ts`;
 - expose serializable server functions:
   - `getSyncState`;
   - `discoverPeers`;

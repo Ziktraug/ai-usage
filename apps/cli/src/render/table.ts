@@ -1,11 +1,11 @@
-import { sourceLabel } from '@ai-usage/core/snapshot';
-import type { Row } from '@ai-usage/core/types';
+import { sourceLabel } from '@ai-usage/report-core/snapshot';
+import type { Row } from '@ai-usage/report-core/types';
 import {
   usageRowActiveDate,
   usageRowLineDelta,
   usageRowPricedCost,
   usageRowSessionLabel,
-} from '@ai-usage/core/usage-row';
+} from '@ai-usage/report-core/usage-row';
 import { clr, costStyle, harnessColor, id, provColor } from './colors';
 import { fmtDate, fmtDur, fmtNum, pad, trunc } from './format';
 

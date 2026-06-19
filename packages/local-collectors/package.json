@@ -12,7 +12,7 @@
     "./sync-storage": "./src/sync-storage.ts"
   },
   "dependencies": {
-    "@ai-usage/core": "workspace:*",
+    "@ai-usage/report-core": "workspace:*",
     "effect": "^3.21.3"
   },
   "scripts": {

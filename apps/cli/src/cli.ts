@@ -1,5 +1,5 @@
-import { type HarnessKey, harnessKeyList, harnessLabelList, isHarnessKey } from '@ai-usage/core/harness-metadata';
-import type { ReportOptions, SortKey } from '@ai-usage/core/report-data';
+import { type HarnessKey, harnessKeyList, harnessLabelList, isHarnessKey } from '@ai-usage/report-core/harness-metadata';
+import type { ReportOptions, SortKey } from '@ai-usage/report-core/report-data';
 import { Effect } from 'effect';
 import { CliArgumentError } from './errors';
 

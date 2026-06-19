@@ -25,7 +25,7 @@ Changes:
 
 Decisions:
 
-- First implementation milestone is compatibility-only: remove `apps/report -> apps/cli` while keeping the current global payload contract.
+- First implementation milestone is compatibility-only: remove `apps/web -> apps/cli` while keeping the current global payload contract.
 - Later milestones can introduce harness-level result envelopes and fine-grained server functions.
 
 Difficulties:
@@ -46,24 +46,24 @@ Status: completed
 
 Changes:
 
-- Added `@ai-usage/reporting` as a workspace package.
+- Added `@ai-usage/report-data` as a workspace package.
 - Added shared request types for local report row collection and compatibility payload generation.
 - Added `collectLocalReportRows`, `createLocalReportPayload`, and `runLocalReportPayload`.
 - Kept app adapters unchanged in this slice.
 
 Decisions:
 
-- The new package depends on `@ai-usage/core`, `@ai-usage/local-collectors`, and `effect` because it is the orchestration layer between pure report logic and local history IO.
+- The new package depends on `@ai-usage/report-core`, `@ai-usage/local-collectors`, and `effect` because it is the orchestration layer between pure report logic and local history IO.
 - The first public API keeps the current global payload as a compatibility contract.
 - `LocalHistoryStorageLive` is provided only by the Promise-level runner; the Effect-level function stays composable.
 
 Difficulties:
 
-- `HarnessKey` is exported by `@ai-usage/core/harness-metadata`, not `@ai-usage/core/types`.
+- `HarnessKey` is exported by `@ai-usage/report-core/harness-metadata`, not `@ai-usage/report-core/types`.
 
 Checks:
 
-- `bun run --cwd packages/reporting check`
+- `bun run --cwd packages/report-data check`
 
 Commit:
 
@@ -75,7 +75,7 @@ Status: completed
 
 Changes:
 
-- Added `@ai-usage/reporting` as a CLI dependency.
+- Added `@ai-usage/report-data` as a CLI dependency.
 - Updated the main CLI report path to call `collectLocalReportRows` for table/csv/json output.
 - Updated the main CLI `html` and `payload` output path to call `createLocalReportPayload`.
 - Added `renderUsagePayloadForCli` so CLI rendering remains inside the CLI app.
@@ -105,7 +105,7 @@ Status: completed
 
 Changes:
 
-- Added `@ai-usage/reporting` as a report app dependency.
+- Added `@ai-usage/report-data` as a report app dependency.
 - Replaced report-app-specific local history collection, alias application, facet collection, and payload generation with `createLocalReportPayload`.
 - Kept the existing `collectReportPayload` and `runReportPayloadCollection` exports so the server function boundary remains stable.
 
@@ -120,7 +120,7 @@ Difficulties:
 
 Checks:
 
-- `bun run --cwd apps/report check`
+- `bun run --cwd apps/web check`
 
 Commit:
 
@@ -147,9 +147,9 @@ Difficulties:
 
 Checks:
 
-- `bun run --cwd apps/report check`
-- `bun --cwd apps/report vite --host 127.0.0.1 --port 4317 --strictPort --clearScreen false` stopped by timeout after successful startup.
-- Searched `apps/report` for `__ai_usage_report_payload`, `payload-json`, `apps/cli/src/main`, `execFile`, and `child_process`; no matches.
+- `bun run --cwd apps/web check`
+- `bun --cwd apps/web vite --host 127.0.0.1 --port 4317 --strictPort --clearScreen false` stopped by timeout after successful startup.
+- Searched `apps/web` for `__ai_usage_report_payload`, `payload-json`, `apps/cli/src/main`, `execFile`, and `child_process`; no matches.
 
 Commit:
 
@@ -161,7 +161,7 @@ Status: completed
 
 Changes:
 
-- Added a reporting package test so the workspace `test` task has a real test file for `@ai-usage/reporting`.
+- Added a reporting package test so the workspace `test` task has a real test file for `@ai-usage/report-data`.
 - Changed `fetchReportPayload` to import the server function lazily so `report-data` can still be imported by server-side tests and static/demo payload paths.
 
 Decisions:
@@ -171,14 +171,14 @@ Decisions:
 
 Difficulties:
 
-- First `bun run test` failed because `@ai-usage/reporting` had no tests.
-- After adding the package test, `apps/report` tests failed because a top-level server function import triggered Solid/TanStack client-only code on the server side.
+- First `bun run test` failed because `@ai-usage/report-data` had no tests.
+- After adding the package test, `apps/web` tests failed because a top-level server function import triggered Solid/TanStack client-only code on the server side.
 
 Checks:
 
-- `bun run --cwd packages/reporting test`
-- `bun run --cwd packages/reporting check`
-- `bun run --cwd apps/report test`
+- `bun run --cwd packages/report-data test`
+- `bun run --cwd packages/report-data check`
+- `bun run --cwd apps/web test`
 - `bun run test`
 - `bun run check`
 
@@ -201,19 +201,19 @@ Changes:
 Decisions:
 
 - The CLI keeps using its invocation cwd by default.
-- The report server must pass repo root explicitly because Vite/TanStack runs with `process.cwd()` inside `apps/report`.
+- The report server must pass repo root explicitly because Vite/TanStack runs with `process.cwd()` inside `apps/web`.
 - Relative paths from repo config should be interpreted relative to the repo config cwd, matching the old dev middleware behavior that launched the CLI from repo root.
 
 Difficulties:
 
-- Initial fix only loaded `ai-usage.config.ts` from repo root. Data was still missing because the Cursor CSV path inside config was relative and still resolved from `apps/report`.
+- Initial fix only loaded `ai-usage.config.ts` from repo root. Data was still missing because the Cursor CSV path inside config was relative and still resolved from `apps/web`.
 
 Checks:
 
 - Compared old/root payload count and report-server payload count: both `2288` rows.
-- `bun run --cwd packages/reporting test`
-- `bun run --cwd packages/reporting check`
-- `bun run --cwd apps/report check`
+- `bun run --cwd packages/report-data test`
+- `bun run --cwd packages/report-data check`
+- `bun run --cwd apps/web check`
 - `bun run --cwd packages/local-collectors check`
 
 Commit:
@@ -228,7 +228,7 @@ Changes:
 
 - Changed the route loader to load the real report payload instead of always returning the demo payload when no static export payload exists.
 - Split loader execution: server-side loaders call the report server runner directly; client-side reloads call the TanStack Start server function.
-- Added `packages/reporting/src/report-payload-runner.ts` so the report server can collect local history in a Bun subprocess through the shared reporting package.
+- Added `packages/report-data/src/report-payload-runner.ts` so the report server can collect local history in a Bun subprocess through the shared reporting package.
 - Changed `local-history` to import `bun:sqlite` lazily from `openDatabase` rather than at module load time.
 
 Decisions:
@@ -244,8 +244,8 @@ Difficulties:
 
 Checks:
 
-- `bun run --cwd apps/report check`
-- `bun run --cwd packages/reporting check`
+- `bun run --cwd apps/web check`
+- `bun run --cwd packages/report-data check`
 - `bun -e '...'` against `runReportPayloadCollection`: `2288` rows.
 - Vite HTTP fetch on `/`: `200`, no demo date, no error, payload present.
 - `bun run check`
@@ -264,7 +264,7 @@ Changes:
 - Package guardrails now block relative cross-package paths and private package `src` imports.
 - `@ai-usage/design-system` exposes generated Panda build info through a package export instead of app-relative package paths.
 - Local collectors use a collected session seam before normalization into usage rows.
-- Usage row provenance is explicit in `@ai-usage/core` types.
+- Usage row provenance is explicit in `@ai-usage/report-core` types.
 - Local history partial failures surface as structured warnings in CLI and report payload/UI output.
 - Report runtime and HTML inlining seams are shared instead of duplicated across adapters.
 - Dashboard table schema, dashboard model calculations, and overview analytics calculations are split into testable model modules.

@@ -2,10 +2,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { ProjectAliasEntry } from '@ai-usage/core/project-alias';
-import { parseUsageSnapshot } from '@ai-usage/core/snapshot';
+import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
+import { parseUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { readAiUsageConfig } from '@ai-usage/local-collectors';
-import { listProjectSourcesWithWarnings, type ProjectSource } from '@ai-usage/reporting';
+import { listProjectSourcesWithWarnings, type ProjectSource } from '@ai-usage/report-data';
 import { Console, Effect } from 'effect';
 
 const collectSetupSources = (snapshotFiles: string[], local: boolean) =>

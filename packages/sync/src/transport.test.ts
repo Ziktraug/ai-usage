@@ -1,8 +1,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createUsageSnapshot } from '@ai-usage/core/snapshot';
-import type { SourcedRow } from '@ai-usage/core/types';
+import { createUsageSnapshot } from '@ai-usage/report-core/snapshot';
+import type { SourcedRow } from '@ai-usage/report-core/types';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
 import { fetchRemoteSnapshot, readSnapshotEndpointHealth, readSnapshotFile } from './transport';

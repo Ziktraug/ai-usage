@@ -17,20 +17,20 @@ Use a shared reporting layer as the only application-facing report data boundary
 packages/local-collectors
   -> reads local history per harness
 
-packages/usage-core
+packages/report-core
   -> normalizes usage rows, filters, analytics, payload serialization
 
-packages/reporting
+packages/report-data
   -> orchestrates report queries with Effect
   -> exposes coarse compatibility payload and fine-grained query functions
 
 apps/cli
   -> parses CLI args
-  -> calls packages/reporting
+  -> calls packages/report-data
   -> renders table/csv/json/html/payload
 
-apps/report
-  -> serverFns call packages/reporting
+apps/web
+  -> serverFns call packages/report-data
   -> UI consumes serverFns through TanStack Query-compatible resources
 ```
 
@@ -38,11 +38,11 @@ The CLI can keep a one-shot command UX. That one-shot behavior should be a facad
 
 ## Current State Observed
 
-- `apps/report/vite.config.ts` has a dev payload middleware that executes `apps/cli/src/main.ts --payload-json`.
-- `apps/report/src/server/report-payload.server.ts` already uses `Effect`, `collectSelectedHarnessRows`, `collectHarnessFacets`, `prepareUsageReport`, and `createUsageReportPayload` directly.
+- `apps/web/vite.config.ts` has a dev payload middleware that executes `apps/cli/src/main.ts --payload-json`.
+- `apps/web/src/server/report-payload.server.ts` already uses `Effect`, `collectSelectedHarnessRows`, `collectHarnessFacets`, `prepareUsageReport`, and `createUsageReportPayload` directly.
 - `packages/local-collectors/src/collectors/index.ts` already has `HARNESS_ADAPTERS`, `selectedHarnessAdapters`, and parallel `Effect.all(..., { concurrency: 'unbounded' })` collection.
 - `apps/cli/src/main.ts` duplicates report collection orchestration for normal reports, snapshots, merge local rows, projects list, and payload/html facets.
-- `packages/usage-core/src/report-data.ts` owns filtering, sorting, row serialization, analytics, and the current global payload shape.
+- `packages/report-core/src/report-data.ts` owns filtering, sorting, row serialization, analytics, and the current global payload shape.
 
 ## Refactor Strategy
 
@@ -132,7 +132,7 @@ Acceptance criteria:
 
 Suggested checks:
 
-- `bun run --cwd apps/report check`
+- `bun run --cwd apps/web check`
 - Start Vite and confirm the dashboard loads.
 
 ### Commit 6: Remove dev middleware CLI execution from Vite config
@@ -141,14 +141,14 @@ Remove the Vite middleware that shells out to `bun apps/cli/src/main.ts --payloa
 
 Acceptance criteria:
 
-- `apps/report/vite.config.ts` no longer imports `node:child_process` for report payload data.
-- `apps/report/vite.config.ts` no longer references `apps/cli/src/main.ts`.
+- `apps/web/vite.config.ts` no longer imports `node:child_process` for report payload data.
+- `apps/web/vite.config.ts` no longer references `apps/cli/src/main.ts`.
 - Dev refresh still works through the server function.
 - The only remaining Vite plugins are framework/build plumbing and unavoidable Vite workarounds.
 
 Suggested checks:
 
-- `bun run --cwd apps/report check`
+- `bun run --cwd apps/web check`
 - `bun dev`
 - Confirm there is no `react/jsx-dev-runtime` dependency scan failure.
 
@@ -192,7 +192,7 @@ Acceptance criteria:
 Suggested checks:
 
 - Add unit tests for filters and analytics parity between the global payload and fine-grained functions.
-- `bun test packages/usage-core/src/analytics.test.ts`
+- `bun test packages/report-core/src/analytics.test.ts`
 - `bun run check`
 
 ### Commit 9: Add fine-grained server functions
@@ -207,7 +207,7 @@ Acceptance criteria:
 
 Suggested checks:
 
-- `bun run --cwd apps/report check`
+- `bun run --cwd apps/web check`
 - Add a small server function serialization test if the repo has a suitable seam.
 
 ### Commit 10: Move report UI data loading to fine-grained queries
@@ -223,7 +223,7 @@ Acceptance criteria:
 
 Suggested checks:
 
-- `bun run --cwd apps/report check`
+- `bun run --cwd apps/web check`
 - Browser smoke test for initial load, refresh, filter changes, and export.
 
 ### Commit 11: Retire global payload from interactive web flow
@@ -238,8 +238,8 @@ Acceptance criteria:
 
 Suggested checks:
 
-- `bun run --cwd apps/report check`
-- `bun test apps/report/src/report-data.test.ts`
+- `bun run --cwd apps/web check`
+- `bun test apps/web/src/report-data.test.ts`
 - Generate HTML and open it locally if the repo has an existing command for that flow.
 
 ### Commit 12: Cleanup and documentation
@@ -248,7 +248,7 @@ Remove obsolete compatibility paths that are no longer needed by CLI, report app
 
 Acceptance criteria:
 
-- No `apps/report -> apps/cli` dependency remains.
+- No `apps/web -> apps/cli` dependency remains.
 - No duplicate collector orchestration remains in app adapters.
 - Documentation explains which layer owns local history collection, report orchestration, rendering, and server functions.
 

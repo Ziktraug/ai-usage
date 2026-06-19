@@ -2,15 +2,15 @@ import {
   lineTrackingHarnessLabels,
   nonLineTrackingHarnessLabels,
   reportHarnessNotes,
-} from '@ai-usage/core/harness-metadata';
+} from '@ai-usage/report-core/harness-metadata';
 import {
   createUsageReportPayload,
   type PreparedUsageReport,
   prepareUsageReport,
   type UsageReportPayload,
   type UsageReportWarning,
-} from '@ai-usage/core/report-data';
-import type { Row } from '@ai-usage/core/types';
+} from '@ai-usage/report-core/report-data';
+import type { Row } from '@ai-usage/report-core/types';
 import type { Args } from './cli';
 import { renderAnalytics } from './render/analytics';
 import { clr } from './render/colors';
