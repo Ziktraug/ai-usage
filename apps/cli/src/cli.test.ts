@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
 import { parseCommand } from './cli';
+import { applyPullTokenEnvOverride } from './sync';
 
 describe('CLI command parsing', () => {
   test('parses quota output policy without leaking raw argv to main', () => {
@@ -122,7 +123,16 @@ describe('CLI command parsing', () => {
 
   test('parses sync commands', () => {
     expect(
-      Effect.runSync(parseCommand(['sync', 'add', 'macbook', 'http://192.168.1.63:3847/snapshot', '--token-env', 'AI_USAGE_SYNC_MACBOOK_TOKEN'])),
+      Effect.runSync(
+        parseCommand([
+          'sync',
+          'add',
+          'macbook',
+          'http://192.168.1.63:3847/snapshot',
+          '--token-env',
+          'AI_USAGE_SYNC_MACBOOK_TOKEN',
+        ]),
+      ),
     ).toEqual({
       _tag: 'Sync',
       args: {
@@ -136,10 +146,26 @@ describe('CLI command parsing', () => {
       _tag: 'Sync',
       args: { action: 'pull', name: 'macbook', all: false, remote: null, tokenEnv: null },
     });
+    expect(Effect.runSync(parseCommand(['sync', 'pull', 'macbook', '--token-env', 'AI_USAGE_SYNC_TOKEN']))).toEqual({
+      _tag: 'Sync',
+      args: { action: 'pull', name: 'macbook', all: false, remote: null, tokenEnv: 'AI_USAGE_SYNC_TOKEN' },
+    });
     expect(Effect.runSync(parseCommand(['sync', 'watch', '--all', '--interval', '60s']))).toEqual({
       _tag: 'Sync',
       args: { action: 'watch', name: null, all: true, intervalMs: 60_000 },
     });
+  });
+
+  test('sync pull token env overrides configured remotes without mutating storage shape', () => {
+    expect(
+      applyPullTokenEnvOverride([{ name: 'macbook', url: 'http://mac:3847/snapshot' }], 'AI_USAGE_SYNC_TOKEN'),
+    ).toEqual([{ name: 'macbook', url: 'http://mac:3847/snapshot', tokenEnv: 'AI_USAGE_SYNC_TOKEN' }]);
+    expect(
+      applyPullTokenEnvOverride(
+        [{ name: 'macbook', url: 'http://mac:3847/snapshot', tokenEnv: 'CONFIGURED_TOKEN' }],
+        'AI_USAGE_SYNC_TOKEN',
+      ),
+    ).toEqual([{ name: 'macbook', url: 'http://mac:3847/snapshot', tokenEnv: 'AI_USAGE_SYNC_TOKEN' }]);
   });
 
   test('sync watch rejects too-small intervals', () => {

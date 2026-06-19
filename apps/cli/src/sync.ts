@@ -6,9 +6,9 @@ import {
   readSyncedSnapshotRecords,
   removeSyncRemote,
   resolveSyncToken,
+  type StoredSyncedSnapshot,
   storeSyncedSnapshot,
   syncedSnapshotPath,
-  type StoredSyncedSnapshot,
   upsertSyncRemote,
 } from '@ai-usage/local-collectors/sync-storage';
 import { Console, Effect } from 'effect';
@@ -133,6 +133,9 @@ const syncRemotesToPull = (args: Extract<SyncArgs, { action: 'pull' | 'watch' }>
     return remotes;
   });
 
+export const applyPullTokenEnvOverride = (remotes: SyncRemoteConfig[], tokenEnv: string | null): SyncRemoteConfig[] =>
+  tokenEnv ? remotes.map((remote) => ({ ...remote, tokenEnv })) : remotes;
+
 const sleep = (ms: number) => Effect.promise(() => new Promise((resolve) => setTimeout(resolve, ms)));
 
 const runSyncWatch = (args: Extract<SyncArgs, { action: 'watch' }>) =>
@@ -185,9 +188,10 @@ export const runSyncCommand = (args: SyncArgs) =>
     }
 
     if (args.action === 'pull') {
+      yield* validateTokenEnv(args.tokenEnv);
       const remotes = args.remote
         ? [{ name: args.name!, url: args.remote, ...(args.tokenEnv ? { tokenEnv: args.tokenEnv } : {}) }]
-        : yield* syncRemotesToPull(args);
+        : applyPullTokenEnvOverride(yield* syncRemotesToPull(args), args.tokenEnv);
       for (const remote of remotes) {
         const { record, path, durationMs } = yield* pullSyncRemote(remote);
         yield* Console.log(
