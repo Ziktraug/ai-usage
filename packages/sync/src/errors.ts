@@ -7,7 +7,22 @@ export class SyncTransportError extends Data.TaggedError('SyncTransportError')<{
   readonly status?: number;
 }> {}
 
-export type SyncError = SyncTransportError;
+export type SyncWorkflowErrorReason =
+  | 'invalid-token-env'
+  | 'invalid-url'
+  | 'missing-token'
+  | 'no-remotes'
+  | 'self-sync'
+  | 'unknown-remote';
+
+export class SyncWorkflowError extends Data.TaggedError('SyncWorkflowError')<{
+  readonly operation: string;
+  readonly message: string;
+  readonly reason?: SyncWorkflowErrorReason;
+  readonly remoteName?: string;
+}> {}
+
+export type SyncError = SyncTransportError | SyncWorkflowError;
 
 const causeMessage = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 

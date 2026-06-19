@@ -65,3 +65,38 @@ Checks:
 Commit:
 
 - this phase commit records the shared transport extraction.
+
+### Phase 2: Shared Sync Workflow And State
+
+Status: completed.
+
+Intent:
+
+- move remote registration, token validation, pull, self-machine rejection, and state assembly out of `apps/cli`;
+- make `apps/cli/src/sync.ts` render package results instead of owning sync behavior;
+- expose a serializable `SyncState` shape for future web server functions.
+
+Decisions:
+
+- kept low-level persistence in `@ai-usage/local-collectors/sync-storage`;
+- added `@ai-usage/sync/state` as the UI-facing read model over config plus stored snapshots;
+- added `@ai-usage/sync/workflow` for remote selection, `tokenEnv` validation, token resolution, and pull operations;
+- kept the CLI `watch` loop in the adapter for now, but it now calls package-owned remote selection and pull logic.
+
+Difficulties:
+
+- repo/local `.env` can make common token env names present during tests, so workflow tests use a unique missing env name.
+- `expect(error._tag)` does not narrow Effect error unions for TypeScript, so tests use explicit guards before reading `reason`.
+
+Checks:
+
+- `bun test packages/sync/src/workflow.test.ts packages/sync/src/transport.test.ts` passed.
+- `bun test apps/cli/src/cli.test.ts` passed.
+- `bun --filter @ai-usage/sync check` passed.
+- `bun --filter @ai-usage/cli check` passed.
+- `bun run check` passed.
+- Biome still reports existing large-file warnings for files under `/nix/store`.
+
+Commit:
+
+- this phase commit records the shared sync workflow and state extraction.
