@@ -220,6 +220,8 @@ const OperationNotice = (props: { error: LanOperationError | null; message: stri
   </Show>
 );
 
+const canScanLan = (status: LanMergeState['service']['status']) => status === 'running' || status === 'pairing';
+
 const LocalMachinePanel = (props: {
   state: LanMergeState;
   scanning: boolean;
@@ -267,11 +269,11 @@ const LocalMachinePanel = (props: {
         disabled={
           props.pending ||
           props.scanning ||
-          (props.state.service.status !== 'running' && props.state.service.status !== 'pairing')
+          !canScanLan(props.state.service.status)
         }
         onClick={props.onScan}
       >
-        {props.scanning ? 'Scanning' : 'Scan LAN'}
+        {!canScanLan(props.state.service.status) ? 'Start first' : props.scanning ? 'Scanning' : 'Scan LAN'}
       </button>
       <button class={ghostButton} type="button" disabled={props.pending || props.scanning} onClick={props.onRefresh}>
         Refresh

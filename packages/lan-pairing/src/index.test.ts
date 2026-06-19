@@ -412,6 +412,22 @@ describe('LAN pairing public boundary', () => {
     }
   });
 
+  test('starts a local server with the Node HTTP runtime', async () => {
+    const service = await Effect.runPromise(makeLanPairingServiceWithOptions({ serverRuntime: 'node' }));
+
+    try {
+      await Effect.runPromise(service.start({ identity: identity('peer-node'), portRange: { start: 0, end: 0 } }));
+      const state = await Effect.runPromise(service.getState());
+      const health = await fetch(`http://127.0.0.1:${state.port}/lan/health`);
+
+      expect(state.status).toBe('running');
+      expect(health.status).toBe(200);
+      expect((await health.json()).peer.identity.id).toBe('peer-node');
+    } finally {
+      await stopAll(service);
+    }
+  });
+
   test('skips an occupied port and uses the next port in range', async () => {
     const occupied = Bun.serve({
       hostname: '127.0.0.1',
