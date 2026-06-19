@@ -1,9 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
 import {
+  discoverLanPeers,
+  discoveryHostsForAddresses,
   LAN_PAIRING_PORT_RANGE,
   LanPairingError,
   makeLanPairingService,
+  makeLanPairingServiceWithOptions,
+  subnetHostsForAddress,
+  type LanPeerProbeTransport,
   type LanPairingService,
   type LanPeerIdentity,
 } from './index';
@@ -20,6 +25,13 @@ const makeService = () => Effect.runPromise(makeLanPairingService);
 const stopAll = async (...services: LanPairingService[]) => {
   await Promise.all(services.map((service) => Effect.runPromise(service.stop())));
 };
+
+const missingPeer = (host: string, port: number) =>
+  new LanPairingError({
+    operation: 'readLanPeer',
+    message: `No peer at ${host}:${port}`,
+    reason: 'peer-not-found',
+  });
 
 describe('LAN pairing public boundary', () => {
   test('documents the stable v1 LAN port range', () => {
@@ -45,6 +57,123 @@ describe('LAN pairing public boundary', () => {
     });
 
     expect(error._tag).toBe('LanPairingError');
+  });
+
+  test('builds active subnet discovery candidates from multiple local interfaces', () => {
+    const hosts = discoveryHostsForAddresses(['192.168.1.63', '10.0.0.4']);
+
+    expect(subnetHostsForAddress('192.168.1.63')).toHaveLength(253);
+    expect(hosts).toContain('192.168.1.1');
+    expect(hosts).toContain('10.0.0.1');
+    expect(hosts).not.toContain('192.168.1.63');
+    expect(hosts).not.toContain('10.0.0.4');
+  });
+
+  test('scans the stable LAN port range through an injectable transport', async () => {
+    const probes: Array<{ host: string; port: number }> = [];
+    const transport: LanPeerProbeTransport = {
+      readPeer: (input) => {
+        probes.push({ host: input.host, port: input.port });
+        if (input.host === '192.168.1.10' && input.port === 3850) {
+          return Effect.succeed({ identity: identity('peer-a'), pairingAvailable: true });
+        }
+        return Effect.fail(missingPeer(input.host, input.port));
+      },
+    };
+
+    const peers = await Effect.runPromise(
+      discoverLanPeers({
+        localIdentity: identity('local'),
+        hosts: ['192.168.1.10'],
+        transport,
+        now: new Date('2026-06-19T12:00:00.000Z'),
+      }),
+    );
+
+    expect(probes.map((probe) => probe.port).sort((a, b) => a - b)).toEqual([
+      3847,
+      3848,
+      3849,
+      3850,
+      3851,
+      3852,
+      3853,
+      3854,
+      3855,
+      3856,
+      3857,
+    ]);
+    expect(peers).toEqual([
+      {
+        identity: identity('peer-a'),
+        host: '192.168.1.10',
+        port: 3850,
+        online: true,
+        pairingAvailable: true,
+        self: false,
+        lastSeenAt: '2026-06-19T12:00:00.000Z',
+      },
+    ]);
+  });
+
+  test('dedupes discovered peers by machine id and marks self peers', async () => {
+    const transport: LanPeerProbeTransport = {
+      readPeer: (input) => {
+        if (input.host === '192.168.1.10') {
+          return Effect.succeed({ identity: { ...identity('peer-a'), label: 'Peer A' }, pairingAvailable: true });
+        }
+        if (input.host === '192.168.1.11') {
+          return Effect.succeed({ identity: { ...identity('peer-a'), label: 'Peer A Duplicate' }, pairingAvailable: true });
+        }
+        if (input.host === '192.168.1.12') {
+          return Effect.succeed({ identity: { ...identity('local'), label: 'Local' }, pairingAvailable: true });
+        }
+        return Effect.fail(missingPeer(input.host, input.port));
+      },
+    };
+
+    const peers = await Effect.runPromise(
+      discoverLanPeers({
+        localIdentity: identity('local'),
+        hosts: ['192.168.1.10', '192.168.1.11', '192.168.1.12'],
+        ports: [3847],
+        transport,
+      }),
+    );
+
+    expect(peers).toHaveLength(2);
+    expect(peers.find((peer) => peer.identity.id === 'peer-a')?.host).toBe('192.168.1.10');
+    expect(peers.find((peer) => peer.identity.id === 'local')?.self).toBe(true);
+  });
+
+  test('service scan updates the discovery cache and marks missing peers offline', async () => {
+    let online = true;
+    const transport: LanPeerProbeTransport = {
+      readPeer: (input) =>
+        online
+          ? Effect.succeed({ identity: { ...identity('peer-a'), label: 'Peer A' }, pairingAvailable: true })
+          : Effect.fail(missingPeer(input.host, input.port)),
+    };
+    const service = await Effect.runPromise(
+      makeLanPairingServiceWithOptions({
+        discoveryHosts: ['192.168.1.10'],
+        discoveryTransport: transport,
+      }),
+    );
+
+    try {
+      await Effect.runPromise(service.start({ identity: identity('local'), portRange: { start: 0, end: 0 } }));
+      const first = await Effect.runPromise(service.scan());
+      online = false;
+      const second = await Effect.runPromise(service.scan());
+      const state = await Effect.runPromise(service.getState());
+
+      expect(first[0]?.online).toBe(true);
+      expect(second[0]?.online).toBe(false);
+      expect(state.discoveredPeers[0]?.online).toBe(false);
+    } finally {
+      await stopAll(service);
+    }
   });
 
   test('starts two local servers on random ports', async () => {

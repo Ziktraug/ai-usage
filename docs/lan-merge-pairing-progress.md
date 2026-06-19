@@ -285,4 +285,48 @@ Checks:
 
 Commit:
 
+- `d9e2e15 feat: add LAN pairing runtime`
+
+## Slice 6: Discovery
+
+Status: completed
+
+Picked on: 2026-06-19
+Stable on: 2026-06-19
+
+Goal:
+
+- Add active subnet-scan discovery to `packages/lan-pairing`.
+- Scan the stable LAN port range without mDNS/Bonjour/Avahi.
+- Keep the discovery interface open for later manual-host or mDNS adapters.
+
+Difficulties:
+
+- Discovery needed to be generic enough for fake transports and later adapters, while still usable by the process-local runtime immediately.
+- Port scans run concurrently, so tests cannot rely on probe ordering.
+
+Decisions:
+
+- Add `LanPeerProbeTransport` and `discoverLanPeers` as the adapter boundary.
+- Generate default discovery hosts from non-internal IPv4 interfaces and `/24` subnet candidates.
+- Scan all ports in `3847-3857` by default.
+- Preserve cached peers as `online: false` when a later scan misses them.
+- Mark self peers explicitly instead of dropping them, matching the existing snapshot discovery behavior.
+
+File changes:
+
+- Added subnet host generation, default interface host discovery, fetch-based peer probing, and active LAN peer discovery in `packages/lan-pairing/src/index.ts`.
+- Added injectable discovery options to `makeLanPairingServiceWithOptions`; `scan()` now updates the runtime discovery cache.
+- Added tests for multiple-interface subnet candidates, fake transport scanning, stable port range coverage, machine-id dedupe, self detection, and offline cache state.
+
+Checks:
+
+- `bun test packages/lan-pairing/src/index.test.ts`: passed.
+- `bun run --cwd packages/lan-pairing check`: passed.
+- `bun run check`: passed. Biome reported the same non-failing `/nix/store` max-size warnings.
+- `bun run test`: passed.
+- Boundary search: `packages/lan-pairing/src` has no `from '@ai-usage/*'` imports.
+
+Commit:
+
 - Pending.
