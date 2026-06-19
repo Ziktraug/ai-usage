@@ -123,7 +123,8 @@ bun run cli -- merge --remote http://localhost:3847/snapshot --local
 For a persistent workflow, register the other machine as a snapshot remote and pull it into local storage:
 
 ```sh
-# Store this in your shell or ~/.config/ai-usage/.env
+# Store this in your shell, ./.env, or ~/.config/ai-usage/.env
+# .env is gitignored in this repo.
 AI_USAGE_SYNC_MACBOOK_TOKEN=mysecret
 
 bun run cli -- sync add macbook http://macbook.local:3847/snapshot --token-env AI_USAGE_SYNC_MACBOOK_TOKEN
