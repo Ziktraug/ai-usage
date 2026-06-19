@@ -22,6 +22,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./errors`: local history error and warning formatting/types.
 - `./local-history`: local history storage service interface/live layer.
 - `./machine-config`: user-local machine/project alias config helpers.
+- `./sync-storage`: user-local synced snapshot config, env token resolution, and stored snapshot helpers.
 
 ## `@ai-usage/reporting`
 

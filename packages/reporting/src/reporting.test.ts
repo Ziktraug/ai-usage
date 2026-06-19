@@ -6,6 +6,7 @@ import { createUsageSnapshot, type UsageMachine } from '@ai-usage/core/snapshot'
 import type { SourcedRow } from '@ai-usage/core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/core/usage-row';
 import { LocalHistoryStorage, createLocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
+import { storeSyncedSnapshot } from '@ai-usage/local-collectors/sync-storage';
 import { Effect } from 'effect';
 import {
   createLocalReportPayload,
@@ -258,6 +259,49 @@ describe('shared reporting', () => {
       expect(merged.rows).toHaveLength(1);
       expect(merged.rows[0]?.project).toBe('Aliased Project');
       expect(merged.payload.rows[0]?.project).toBe('Aliased Project');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(configCwd, { recursive: true, force: true });
+    }
+  });
+
+  test('includes stored synced snapshots when creating merged reports', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-synced-home-'));
+    const configCwd = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-synced-config-'));
+    try {
+      writeFileSync(
+        path.join(configCwd, 'ai-usage.config.ts'),
+        `export default { projectAliases: [{ name: 'Aliased Project', match: ['/work/raw'] }] }`,
+      );
+      const storage = createLocalHistoryStorage(home);
+      const snapshot = createUsageSnapshot({
+        machine: { id: 'remote-machine', label: 'Remote Machine' },
+        rows: [makeSourcedRow({ project: 'raw', sourcePath: '/work/raw', sessionId: 'remote-session-1' })],
+      });
+      await Effect.runPromise(
+        storeSyncedSnapshot({
+          remote: { name: 'macbook', url: 'http://192.168.1.63:3847/snapshot' },
+          snapshot,
+          fetchedAt: new Date('2026-01-02T00:00:00.000Z'),
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      const merged = await Effect.runPromise(
+        createMergedUsageReport({
+          snapshots: [],
+          includeLocal: false,
+          includeSynced: true,
+          harness: null,
+          includeCursor: false,
+          configCwd,
+          options: defaultOptions,
+          generatedAt: new Date('2026-01-03T00:00:00.000Z'),
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(merged.rows).toHaveLength(1);
+      expect(merged.rows[0]?.project).toBe('Aliased Project');
+      expect(merged.rows[0]?.source.machineLabel).toBe('Remote Machine');
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(configCwd, { recursive: true, force: true });

@@ -94,7 +94,7 @@ Duplicate sessions (same machine, same harness, same session ID) are deduplicate
 
 ### 3. Merge over LAN (no file transfer)
 
-Instead of copying snapshot files, run a snapshot server on the other machine and merge directly.
+Instead of copying snapshot files, run a snapshot server on the other machine.
 
 On the Mac:
 
@@ -106,11 +106,11 @@ bun run cli -- serve --host 0.0.0.0 --token mysecret
 On the PC:
 
 ```sh
-# Fetch and merge in one command
+# Fetch and merge in one command, without storing the remote snapshot
 bun run cli -- merge --remote http://macbook.local:3847/snapshot --token mysecret --local
 ```
 
-The server collects a fresh snapshot on each request, so you always get the latest data. For localhost-only access (same machine, different terminal), omit `--host` and `--token`:
+The server collects a fresh snapshot on each request, so you always get the latest data for that command. For localhost-only access (same machine, different terminal), omit `--host` and `--token`:
 
 ```sh
 bun run cli -- serve
@@ -118,11 +118,43 @@ bun run cli -- serve
 bun run cli -- merge --remote http://localhost:3847/snapshot --local
 ```
 
-### 3. See where sessions come from
+### 4. Sync over LAN
+
+For a persistent workflow, register the other machine as a snapshot remote and pull it into local storage:
+
+```sh
+# Store this in your shell or ~/.config/ai-usage/.env
+AI_USAGE_SYNC_MACBOOK_TOKEN=mysecret
+
+bun run cli -- sync add macbook http://macbook.local:3847/snapshot --token-env AI_USAGE_SYNC_MACBOOK_TOKEN
+bun run cli -- sync pull macbook
+```
+
+Future reports include synced snapshots by default:
+
+```sh
+bun run cli -- report --wide
+```
+
+Use `--no-synced` to report only this machine's local history:
+
+```sh
+bun run cli -- report --no-synced
+```
+
+You can keep a remote fresh with polling:
+
+```sh
+bun run cli -- sync watch macbook --interval 60s
+```
+
+Bidirectional sync is symmetric pull: run `serve` on both machines and configure each machine to pull the other's snapshot.
+
+### 5. See where sessions come from
 
 Merged reports include a `Machine` column (CLI `--wide`, CSV, and HTML dashboard). CSV also includes `machine_id` for scripting.
 
-### 4. Group project folders across machines
+### 6. Group project folders across machines
 
 The same project often lives at different paths on different machines. Project aliases let you merge them under one name.
 
@@ -207,6 +239,8 @@ All exploration state (active view, filters, range, sorting, visible columns) is
 - `--json` / `--csv` / `--html`: pick an output format (mutually exclusive)
 
 `merge` accepts the same report options and adds `--local` to include the current machine's local history, `--remote <url>` to fetch a snapshot from a serve instance, and `--token <secret>` for authentication.
+
+`sync` stores remote snapshots locally. `sync add` registers a remote, `sync pull` fetches and stores a snapshot, `sync watch` polls repeatedly, and `sync list` shows remote status. Persistent remotes should use `--token-env <name>` instead of storing raw tokens in config.
 
 Merged CSV/JSON/HTML payloads include row provenance (`source.machineLabel`, `source.machineId`, harness key, and source session ID) when available. The terminal table shows `Machine` in `--wide` mode.
 

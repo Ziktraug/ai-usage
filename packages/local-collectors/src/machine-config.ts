@@ -88,36 +88,56 @@ const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
   }
 
   const cursor = config.cursor;
-  if (cursor === undefined) return true;
-  if (typeof cursor !== 'object' || cursor === null || Array.isArray(cursor)) return false;
-  const cursorConfig = cursor as Record<string, unknown>;
-  const usageExportPaths = cursorConfig.usageExportPaths;
-  if (usageExportPaths !== undefined) {
-    if (!Array.isArray(usageExportPaths) || !usageExportPaths.every((v) => typeof v === 'string')) return false;
+  if (cursor !== undefined) {
+    if (typeof cursor !== 'object' || cursor === null || Array.isArray(cursor)) return false;
+    const cursorConfig = cursor as Record<string, unknown>;
+    const usageExportPaths = cursorConfig.usageExportPaths;
+    if (usageExportPaths !== undefined) {
+      if (!Array.isArray(usageExportPaths) || !usageExportPaths.every((v) => typeof v === 'string')) return false;
+    }
+    const usageExportDir = cursorConfig.usageExportDir;
+    if (usageExportDir !== undefined && typeof usageExportDir !== 'string') return false;
+    const reconcileWindowMs = cursorConfig.reconcileWindowMs;
+    if (
+      reconcileWindowMs !== undefined &&
+      (typeof reconcileWindowMs !== 'number' || !Number.isInteger(reconcileWindowMs) || reconcileWindowMs <= 0)
+    )
+      return false;
+    const clusterGapMs = cursorConfig.clusterGapMs;
+    if (
+      clusterGapMs !== undefined &&
+      (typeof clusterGapMs !== 'number' || !Number.isInteger(clusterGapMs) || clusterGapMs <= 0)
+    )
+      return false;
+    const maxSessionSpanMs = cursorConfig.maxSessionSpanMs;
+    if (
+      maxSessionSpanMs !== undefined &&
+      (typeof maxSessionSpanMs !== 'number' || !Number.isInteger(maxSessionSpanMs) || maxSessionSpanMs <= 0)
+    )
+      return false;
+    const user = cursorConfig.user;
+    if (user !== undefined && typeof user !== 'string') return false;
   }
-  const usageExportDir = cursorConfig.usageExportDir;
-  if (usageExportDir !== undefined && typeof usageExportDir !== 'string') return false;
-  const reconcileWindowMs = cursorConfig.reconcileWindowMs;
-  if (
-    reconcileWindowMs !== undefined &&
-    (typeof reconcileWindowMs !== 'number' || !Number.isInteger(reconcileWindowMs) || reconcileWindowMs <= 0)
-  )
-    return false;
-  const clusterGapMs = cursorConfig.clusterGapMs;
-  if (
-    clusterGapMs !== undefined &&
-    (typeof clusterGapMs !== 'number' || !Number.isInteger(clusterGapMs) || clusterGapMs <= 0)
-  )
-    return false;
-  const maxSessionSpanMs = cursorConfig.maxSessionSpanMs;
-  if (
-    maxSessionSpanMs !== undefined &&
-    (typeof maxSessionSpanMs !== 'number' || !Number.isInteger(maxSessionSpanMs) || maxSessionSpanMs <= 0)
-  )
-    return false;
-  const user = cursorConfig.user;
-  if (user !== undefined && typeof user !== 'string') return false;
-  return true;
+
+  const sync = config.sync;
+  if (sync === undefined) return true;
+  if (typeof sync !== 'object' || sync === null || Array.isArray(sync)) return false;
+  const syncConfig = sync as Record<string, unknown>;
+  const remotes = syncConfig.remotes;
+  if (remotes === undefined) return true;
+  if (!Array.isArray(remotes)) return false;
+  return remotes.every((remote) => {
+    if (typeof remote !== 'object' || remote === null || Array.isArray(remote)) return false;
+    const record = remote as Record<string, unknown>;
+    return (
+      typeof record.name === 'string' &&
+      record.name.length > 0 &&
+      typeof record.url === 'string' &&
+      record.url.length > 0 &&
+      (record.tokenEnv === undefined || typeof record.tokenEnv === 'string') &&
+      (record.enabled === undefined || typeof record.enabled === 'boolean')
+    );
+  });
 };
 
 const parseAiUsageConfig = (value: unknown, filePath: string): AiUsageConfig => {
@@ -130,6 +150,10 @@ const mergeAiUsageConfig = (base: AiUsageConfig, override: AiUsageConfig): AiUsa
   if (override.projectAliases === undefined && base.projectAliases !== undefined)
     merged.projectAliases = base.projectAliases;
   if (base.cursor || override.cursor) merged.cursor = { ...(base.cursor ?? {}), ...(override.cursor ?? {}) };
+  if (base.sync || override.sync) {
+    merged.sync = { ...(base.sync ?? {}), ...(override.sync ?? {}) };
+    if (override.sync?.remotes === undefined && base.sync?.remotes !== undefined) merged.sync.remotes = base.sync.remotes;
+  }
   return merged;
 };
 
