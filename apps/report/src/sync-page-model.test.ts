@@ -7,8 +7,10 @@ import {
   remoteMachineLabel,
   discoveryBadgesForPeer,
   remoteDraftFromDiscoveredPeer,
+  serveStatusLabel,
   syncOperationErrorHint,
   tokenStatusLabel,
+  validateServeStartInput,
 } from './sync-page-model';
 
 const state: SyncState = {
@@ -101,5 +103,12 @@ describe('sync page model', () => {
       tokenEnv: '',
     });
     expect(discoveryBadgesForPeer(peer)).toEqual(['self', 'configured']);
+  });
+
+  test('labels and validates serve state inputs', () => {
+    expect(serveStatusLabel('running')).toBe('Serving');
+    expect(validateServeStartInput({ host: '0.0.0.0', port: 3847, token: '' })).toContain('token');
+    expect(validateServeStartInput({ host: '127.0.0.1', port: 3847, token: '' })).toBeNull();
+    expect(validateServeStartInput({ host: '127.0.0.1', port: 70_000, token: '' })).toContain('Port');
   });
 });

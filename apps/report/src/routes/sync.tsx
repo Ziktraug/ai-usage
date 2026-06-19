@@ -32,10 +32,13 @@ import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
 import {
   discoverSyncPeers,
+  getSyncServeState,
   getSyncState as getSyncStateForRoute,
   pullSyncRemote,
   removeSyncRemote,
   setSyncRemoteEnabled,
+  startSyncServe,
+  stopSyncServe,
   upsertSyncRemote,
   validateSyncRemote,
 } from '../server/sync';
@@ -46,12 +49,17 @@ import {
   formatSyncDateTime,
   remoteMachineLabel,
   remoteDraftFromDiscoveredPeer,
+  serveStatusLabel,
   syncOperationErrorHint,
   tokenStatusLabel,
+  validateServeStartInput,
 } from '../sync-page-model';
 
 export const Route = createFileRoute('/sync')({
-  loader: () => getSyncStateForRoute(),
+  loader: async () => ({
+    sync: await getSyncStateForRoute(),
+    serve: await getSyncServeState(),
+  }),
   component: SyncRoute,
 });
 
@@ -184,6 +192,7 @@ const errorPanel = css({
 });
 
 type SyncStateResult = Awaited<ReturnType<typeof getSyncStateForRoute>>;
+type SyncServeStateResult = Awaited<ReturnType<typeof getSyncServeState>>;
 type SyncOperationResult = Extract<SyncStateResult, { ok: false }>['error'];
 
 interface RemoteFormState {
@@ -194,6 +203,12 @@ interface RemoteFormState {
   validationToken: string;
 }
 
+interface ServeFormState {
+  host: string;
+  port: number;
+  token: string;
+}
+
 const emptyRemoteForm = (): RemoteFormState => ({
   mode: 'add',
   name: '',
@@ -201,6 +216,15 @@ const emptyRemoteForm = (): RemoteFormState => ({
   tokenEnv: '',
   validationToken: '',
 });
+
+const serveFormFromResult = (result: SyncServeStateResult): ServeFormState => {
+  const state = result.ok ? result.data : null;
+  return {
+    host: state?.host ?? '127.0.0.1',
+    port: state?.port ?? 3847,
+    token: '',
+  };
+};
 
 const remoteFormFrom = (remote: SyncRemoteState): RemoteFormState => ({
   mode: 'edit',
@@ -234,6 +258,39 @@ const operationPanel = css({
   borderRadius: 'sm',
   bg: 'surfaceMuted',
   fontSize: '13px',
+});
+
+const serveFormGrid = css({
+  display: 'grid',
+  gridTemplateColumns: { base: '1fr', md: 'minmax(0, 1fr) 120px minmax(0, 1fr)' },
+  gap: '10px',
+});
+
+const urlList = css({
+  display: 'grid',
+  gap: '6px',
+  fontFamily: 'mono',
+  fontSize: '12px',
+  overflowWrap: 'anywhere',
+});
+
+const requestLog = css({
+  display: 'grid',
+  gap: '6px',
+  maxH: '180px',
+  overflow: 'auto',
+  fontSize: '12px',
+});
+
+const requestLogRow = css({
+  display: 'grid',
+  gridTemplateColumns: '72px minmax(0, 1fr) 52px',
+  gap: '8px',
+  alignItems: 'center',
+  p: '6px 8px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surfaceMuted',
 });
 
 const peerList = css({
@@ -545,8 +602,141 @@ const DiscoveryPanel = (props: {
   </div>
 );
 
+const ServePanel = (props: {
+  result: SyncServeStateResult;
+  form: ServeFormState;
+  pending: boolean;
+  formError: string | null;
+  onFormChange: (form: ServeFormState) => void;
+  onStart: () => void;
+  onStop: () => void;
+  onRefresh: () => void;
+}) => {
+  const state = () => (props.result.ok ? props.result.data : null);
+  const disabled = () => props.pending || state()?.status === 'starting' || state()?.status === 'stopping';
+  const update = (patch: Partial<ServeFormState>) => props.onFormChange({ ...props.form, ...patch });
+  return (
+    <section class={statusBand}>
+      <div class={statusContent}>
+        <div class={statusTitleRow}>
+          <span class={statusTitle}>Local snapshot server</span>
+          <span class={summaryPill}>{state() ? serveStatusLabel(state()!.status) : 'Unavailable'}</span>
+        </div>
+        <Show
+          when={state()}
+          fallback={<div class={statusMeta}>{props.result.ok ? 'Serve state unavailable' : props.result.error.message}</div>}
+        >
+          {(serve) => (
+            <div class={panelStack}>
+              <div class={statusMeta}>
+                <span>{serve().machine?.label ?? 'Local machine'}</span>
+                <span>{serve().machine?.id ?? 'Machine id unavailable'}</span>
+                <span>{serve().tokenRequired ? 'Token required' : 'Token optional'}</span>
+                <span>{serve().tokenConfigured ? 'Token configured' : 'No serve token configured'}</span>
+              </div>
+
+              <Show when={serve().lastError}>
+                {(error) => (
+                  <div class={operationPanel} role="alert">
+                    <div class={strongCell}>{error().message}</div>
+                  </div>
+                )}
+              </Show>
+              <Show when={props.formError}>
+                {(error) => (
+                  <div class={operationPanel} role="alert">
+                    <div class={strongCell}>{error()}</div>
+                  </div>
+                )}
+              </Show>
+
+              <Show when={serve().status !== 'running'}>
+                <div class={serveFormGrid}>
+                  <label class={formField}>
+                    <span class={inlineFieldLabel}>Host</span>
+                    <input
+                      class={field}
+                      value={props.form.host}
+                      disabled={disabled()}
+                      onInput={(event) => update({ host: event.currentTarget.value })}
+                    />
+                  </label>
+                  <label class={formField}>
+                    <span class={inlineFieldLabel}>Port</span>
+                    <input
+                      class={field}
+                      value={String(props.form.port)}
+                      disabled={disabled()}
+                      type="number"
+                      min="1"
+                      max="65535"
+                      onInput={(event) => update({ port: Number(event.currentTarget.value) })}
+                    />
+                  </label>
+                  <label class={formField}>
+                    <span class={inlineFieldLabel}>Serve token</span>
+                    <input
+                      class={field}
+                      value={props.form.token}
+                      disabled={disabled()}
+                      type="password"
+                      autocomplete="off"
+                      onInput={(event) => update({ token: event.currentTarget.value })}
+                    />
+                  </label>
+                </div>
+              </Show>
+
+              <Show when={serve().urls.length > 0}>
+                <div class={urlList}>
+                  <For each={serve().urls}>{(url) => <span>{url}</span>}</For>
+                </div>
+              </Show>
+
+              <Show when={serve().recentRequests.length > 0}>
+                <div class={requestLog}>
+                  <For each={serve().recentRequests}>
+                    {(event) => (
+                      <div class={requestLogRow}>
+                        <span>{event.method}</span>
+                        <span class={muted}>{event.path}</span>
+                        <span>{event.status}</span>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
+          )}
+        </Show>
+      </div>
+      <div class={actionRow}>
+        <Show
+          when={state()?.status === 'running'}
+          fallback={
+            <button class={ghostButton} type="button" disabled={disabled()} onClick={props.onStart}>
+              {props.pending || state()?.status === 'starting' ? 'Starting' : 'Start'}
+            </button>
+          }
+        >
+          <button class={ghostButton} type="button" disabled={disabled()} onClick={props.onStop}>
+            {props.pending || state()?.status === 'stopping' ? 'Stopping' : 'Stop'}
+          </button>
+        </Show>
+        <button class={ghostButton} type="button" disabled={props.pending} onClick={props.onRefresh}>
+          Refresh
+        </button>
+      </div>
+    </section>
+  );
+};
+
 const SyncStateView = (props: {
   state: SyncState;
+  serveResult: SyncServeStateResult;
+  serveForm: ServeFormState;
+  servePending: boolean;
+  serveFormError: string | null;
   refreshing: boolean;
   discoveredPeers: DiscoveredSnapshotRemote[];
   scanning: boolean;
@@ -564,31 +754,25 @@ const SyncStateView = (props: {
   onRemoteRemove: (remote: SyncRemoteState) => void;
   onDiscoveryScan: () => void;
   onDiscoveryAddPeer: (peer: DiscoveredSnapshotRemote) => void;
+  onServeFormChange: (form: ServeFormState) => void;
+  onServeStart: () => void;
+  onServeStop: () => void;
+  onServeRefresh: () => void;
   onRefresh: () => void;
 }) => {
   const summary = createMemo(() => buildSyncSummary(props.state));
   return (
     <div class={pageStack}>
-      <section class={statusBand}>
-        <div class={statusContent}>
-          <div class={statusTitleRow}>
-            <span class={statusTitle}>Local snapshot server</span>
-            <span class={summaryPill}>Not serving</span>
-          </div>
-          <div class={statusMeta}>
-            <span>{props.state.localMachine.label}</span>
-            <span>{props.state.localMachine.id}</span>
-          </div>
-        </div>
-        <div class={actionRow}>
-          <button class={ghostButton} type="button" disabled>
-            Start
-          </button>
-          <button class={ghostButton} type="button" disabled={props.refreshing} onClick={props.onRefresh}>
-            {props.refreshing ? 'Refreshing' : 'Refresh'}
-          </button>
-        </div>
-      </section>
+      <ServePanel
+        result={props.serveResult}
+        form={props.serveForm}
+        pending={props.servePending}
+        formError={props.serveFormError}
+        onFormChange={props.onServeFormChange}
+        onStart={props.onServeStart}
+        onStop={props.onServeStop}
+        onRefresh={props.onServeRefresh}
+      />
 
       <section class={summaryGrid} aria-label="Sync summary">
         <MetricPanel label="Configured remotes" value={summary().configuredRemotes} detail="Snapshot remotes" />
@@ -708,7 +892,11 @@ const SyncStateError = (props: {
 
 function SyncRoute() {
   const loaderResult = Route.useLoaderData();
-  const [result, setResult] = createSignal<SyncStateResult>(loaderResult());
+  const [result, setResult] = createSignal<SyncStateResult>(loaderResult().sync);
+  const [serveResult, setServeResult] = createSignal<SyncServeStateResult>(loaderResult().serve);
+  const [serveForm, setServeForm] = createSignal<ServeFormState>(serveFormFromResult(loaderResult().serve));
+  const [servePending, setServePending] = createSignal(false);
+  const [serveFormError, setServeFormError] = createSignal<string | null>(null);
   const [refreshing, setRefreshing] = createSignal(false);
   const [pendingOperation, setPendingOperation] = createSignal<string | null>(null);
   const [operationError, setOperationError] = createSignal<SyncOperationResult | null>(null);
@@ -747,6 +935,46 @@ function SyncRoute() {
       setOperationError(null);
     } finally {
       setRefreshing(false);
+    }
+  };
+  const refreshServe = async () => {
+    if (servePending()) return;
+    setServeResult(await getSyncServeState());
+  };
+  const startServe = async () => {
+    if (servePending()) return;
+    const form = serveForm();
+    const formError = validateServeStartInput(form);
+    if (formError) {
+      setServeFormError(formError);
+      return;
+    }
+    setServePending(true);
+    setServeFormError(null);
+    try {
+      const next = await startSyncServe({
+        data: {
+          host: form.host.trim(),
+          port: form.port,
+          token: form.token.trim() || null,
+        },
+      });
+      setServeResult(next);
+      if (next.ok && next.data.status === 'running') setServeForm({ host: next.data.host, port: next.data.port, token: '' });
+    } finally {
+      setServePending(false);
+    }
+  };
+  const stopServe = async () => {
+    if (servePending()) return;
+    setServePending(true);
+    setServeFormError(null);
+    try {
+      const next = await stopSyncServe();
+      setServeResult(next);
+      if (next.ok) setServeForm({ host: next.data.host, port: next.data.port, token: '' });
+    } finally {
+      setServePending(false);
     }
   };
   const saveRemote = async () => {
@@ -864,6 +1092,10 @@ function SyncRoute() {
         >
           <SyncStateView
             state={(result() as Extract<SyncStateResult, { ok: true }>).data}
+            serveResult={serveResult()}
+            serveForm={serveForm()}
+            servePending={servePending()}
+            serveFormError={serveFormError()}
             refreshing={refreshing()}
             discoveredPeers={discoveredPeers()}
             scanning={scanning()}
@@ -881,6 +1113,13 @@ function SyncRoute() {
             onRemoteRemove={removeRemote}
             onDiscoveryScan={() => void scanLan()}
             onDiscoveryAddPeer={addDiscoveredPeer}
+            onServeFormChange={(form) => {
+              setServeForm(form);
+              setServeFormError(null);
+            }}
+            onServeStart={() => void startServe()}
+            onServeStop={() => void stopServe()}
+            onServeRefresh={() => void refreshServe()}
             onRefresh={() => void refresh()}
           />
         </Show>

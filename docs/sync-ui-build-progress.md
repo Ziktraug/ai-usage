@@ -188,3 +188,37 @@ Checks:
 Commit:
 
 - this phase commit records the report snapshot serve runtime.
+
+### Phase 6: Serve Toggle UI
+
+Status: completed.
+
+Intent:
+
+- load serve lifecycle state on `/sync`;
+- let the UI start and stop local snapshot serving;
+- show host, port, token policy, snapshot URLs, and recent requests;
+- validate the `0.0.0.0` token requirement before calling the server.
+
+Decisions:
+
+- changed the route loader to fetch both sync state and serve state;
+- clear the token field after a successful start so the browser state does not retain it;
+- keep serve errors separate from remote operation errors;
+- keep copy affordance out of V1 because visible URLs are already selectable and the core toggle behavior is now wired.
+
+Difficulties:
+
+- the route had to keep two independent server-function result states: sync data and serve lifecycle data;
+- manual smoke tests use high local ports to avoid colliding with a user process on the default sync port.
+
+Checks:
+
+- `bun test apps/report/src/sync-page-model.test.ts` passed.
+- `bun --filter @ai-usage/report check` passed.
+- Manual smoke: `127.0.0.1:43847` start, `/health`, stop passed.
+- Manual smoke: `0.0.0.0:43848` with token start, `/health` through `127.0.0.1`, stop passed.
+
+Commit:
+
+- this phase commit records the serve toggle UI.
