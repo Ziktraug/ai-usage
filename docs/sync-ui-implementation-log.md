@@ -170,3 +170,32 @@ Checks:
 Commit:
 
 - this phase commit records LAN discovery and report server-function readiness.
+
+### Final Validation And Documentation Cleanup
+
+Status: completed.
+
+Intent:
+
+- update domain and architecture docs after the package extraction;
+- run full repository validation;
+- confirm the remaining work is UI implementation, not sync decoupling.
+
+Decisions:
+
+- added domain language for `Snapshot peer` and `Sync state`;
+- left visible `/sync` UI work in future work because the requested success criterion is readiness for UI integration.
+
+Difficulties:
+
+- none beyond the serialization cleanup already handled in phase 4.
+
+Checks:
+
+- `bun run test` passed.
+- `bun run check` passed.
+- Biome still reports existing large-file warnings for files under `/nix/store`.
+
+Commit:
+
+- this phase commit records final documentation cleanup after validation.
