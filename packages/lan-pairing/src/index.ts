@@ -6,6 +6,8 @@ import { ristretto255 as cpaceRistretto255 } from '@cipherman/pake-js/cpace';
 import { Context, Data, Effect, Layer, Ref } from 'effect';
 
 export const LAN_PAIRING_PORT_RANGE = { start: 3847, end: 3857 } as const;
+export const LAN_PAIRING_DISCOVERY_TIMEOUT_MS = 300;
+export const LAN_PAIRING_DISCOVERY_CONCURRENCY = 128;
 
 export interface LanPeerIdentity {
   id: string;
@@ -247,6 +249,7 @@ export interface DiscoverLanPeersInput {
   hosts?: string[];
   ports?: number[];
   timeoutMs?: number;
+  concurrency?: number;
   cache?: DiscoveredLanPeer[];
   transport?: LanPeerProbeTransport;
   now?: Date;
@@ -255,6 +258,7 @@ export interface DiscoverLanPeersInput {
 export interface LanPairingRuntimeOptions {
   discoveryHosts?: string[];
   discoveryTimeoutMs?: number;
+  discoveryConcurrency?: number;
   discoveryTransport?: LanPeerProbeTransport;
   serverRuntime?: 'auto' | 'bun' | 'node';
 }
@@ -753,6 +757,11 @@ export const pairWithLanPeer = (input: PairWithLanPeerInput): Effect.Effect<Pair
 const portRangeValues = (range = LAN_PAIRING_PORT_RANGE) =>
   Array.from({ length: range.end - range.start + 1 }, (_, index) => range.start + index);
 
+const discoveryConcurrency = (value: number | undefined) => {
+  if (value === undefined) return LAN_PAIRING_DISCOVERY_CONCURRENCY;
+  return Math.max(1, Math.floor(value));
+};
+
 export const subnetHostsForAddress = (address: string) => {
   const parts = address.split('.');
   if (parts.length !== 4) return [];
@@ -789,7 +798,7 @@ export const fetchLanPeerProbeTransport: LanPeerProbeTransport = {
     Effect.tryPromise({
       try: async () => {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? 800);
+        const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? LAN_PAIRING_DISCOVERY_TIMEOUT_MS);
         try {
           const response = await fetch(peerUrl(input.host, input.port), { signal: controller.signal });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -824,7 +833,11 @@ export const discoverLanPeers = (
     yield* Effect.all(
       hosts.flatMap((host) =>
         ports.map((port) =>
-          transport.readPeer({ host, port, ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }) }).pipe(
+          transport.readPeer({
+            host,
+            port,
+            timeoutMs: input.timeoutMs ?? LAN_PAIRING_DISCOVERY_TIMEOUT_MS,
+          }).pipe(
             Effect.map((probe) => {
               const discovered: DiscoveredLanPeer = {
                 identity: probe.identity,
@@ -842,7 +855,7 @@ export const discoverLanPeers = (
           ),
         ),
       ),
-      { concurrency: 32 },
+      { concurrency: discoveryConcurrency(input.concurrency) },
     );
 
     return [...byMachine.values()].sort(
@@ -1492,6 +1505,7 @@ export const makeLanPairingServiceWithOptions = (
             cache: current.state.discoveredPeers,
             ...(options.discoveryHosts === undefined ? {} : { hosts: options.discoveryHosts }),
             ...(options.discoveryTimeoutMs === undefined ? {} : { timeoutMs: options.discoveryTimeoutMs }),
+            ...(options.discoveryConcurrency === undefined ? {} : { concurrency: options.discoveryConcurrency }),
             ...(options.discoveryTransport === undefined ? {} : { transport: options.discoveryTransport }),
           });
           yield* Ref.update(ref, (runtime) => ({
