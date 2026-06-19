@@ -40,6 +40,14 @@ _Avoid_: report cache, raw sync, remote history
 A named endpoint that serves a fresh usage snapshot from another machine. A snapshot remote is pulled by this machine; it is not written to by this machine.
 _Avoid_: peer database, cloud account, upstream
 
+**Snapshot peer**:
+A machine discovered on the LAN as exposing snapshot endpoint health. A snapshot peer is not necessarily configured as a snapshot remote yet.
+_Avoid_: sync account, remote database, device
+
+**Sync state**:
+The UI-consumable view of local machine identity, configured snapshot remotes, stored synced usage snapshot summaries, token status, and sync warnings.
+_Avoid_: raw config, sync database, report payload
+
 **Provider**:
 The billing or subscription route inferred for a usage row, such as Claude API, Claude sub, Codex API, Codex sub, or Cursor sub.
 _Avoid_: vendor, platform

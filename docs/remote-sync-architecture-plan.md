@@ -103,6 +103,8 @@ The exact CLI shape is still open, but the product distinction should be clear:
 - `sync`: persist remote snapshot inputs for later reports.
 - `report`: produce the final report from local history plus configured synced snapshots.
 
+The CLI is only one adapter for this model. Web sync management should consume the same package-owned sync modules and may expose a guided flow without matching every CLI command.
+
 Bidirectional sync should be modeled as symmetric pull:
 
 ```txt
@@ -145,6 +147,24 @@ Report machine
 
 ## Architecture Changes
 
+### 0. Keep Sync Logic In Packages
+
+Sync behavior should live in `@ai-usage/sync`, not in `apps/cli` or `apps/report`.
+
+Responsibilities:
+
+- snapshot file and HTTP transport;
+- endpoint health checks;
+- remote registration, removal, enable/disable, and pull workflow;
+- UI-consumable sync state;
+- snapshot server protocol;
+- LAN discovery.
+
+The apps are adapters:
+
+- `apps/cli` parses arguments and renders terminal text;
+- `apps/report` exposes server functions and eventually renders a dedicated sync UI.
+
 ### 1. Add A Synced Usage Snapshot Module
 
 Create one deep module that owns durable synced snapshot state.
@@ -170,7 +190,7 @@ The exact paths should follow the existing local storage conventions before impl
 
 ### 2. Move Snapshot Transport Behind A Seam
 
-Today `apps/cli/src/main.ts` owns file reading, HTTP fetching, auth headers, parsing, and render orchestration.
+Historically `apps/cli/src/main.ts` owned file reading, HTTP fetching, auth headers, parsing, and render orchestration.
 
 Introduce a snapshot transport module so file and HTTP sources are adapters behind one interface.
 
@@ -183,6 +203,15 @@ Responsibilities:
 - return useful connection and parse errors.
 
 This gives sync and merge the same transport behavior without duplicating CLI code.
+
+Current implementation target:
+
+```txt
+@ai-usage/sync/transport
+  readSnapshotFile
+  fetchRemoteSnapshot
+  readSnapshotEndpointHealth
+```
 
 ### 3. Keep Report Merge In Reporting
 
@@ -262,6 +291,21 @@ Possible env locations:
 ```
 
 The user-local env file is safer for persistent remotes. A repo-local `.env` is acceptable for development if it is gitignored.
+
+### 5a. Expose UI-Consumable Sync State
+
+The web UI should not assemble state from raw config files and stored snapshot JSON. It should consume a package-owned read model:
+
+```txt
+getSyncState
+  -> local machine
+  -> configured remotes
+  -> token status
+  -> stored synced snapshot summaries
+  -> warnings
+```
+
+This keeps UI rendering independent from filesystem layout and snapshot internals.
 
 ### 6. Define Bidirectional Sync As Symmetric Pull
 

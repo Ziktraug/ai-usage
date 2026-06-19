@@ -15,6 +15,12 @@ Global backlog for known follow-ups that should survive individual refactor logs
 - Move the small `Hero` and `TokenAnatomy` presentation calculations out of `Overview.tsx` if those components grow again.
 - Keep adding pure model tests when dashboard or overview calculations change.
 
+## Sync UI
+
+- Build a dedicated server-backed `/sync` route using the existing sync server functions in `apps/report/src/server/sync.ts`.
+- Add UI affordances for local snapshot serving, LAN peer discovery, remote enable/disable, pull now, and sync error states.
+- Add secret-entry UX before storing raw tokens; persistent config should keep using `tokenEnv`.
+
 ## Design System
 
 - Audit `@ai-usage/design-system/report` after another app exists or a second report surface appears.
