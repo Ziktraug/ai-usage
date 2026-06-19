@@ -196,4 +196,49 @@ Checks:
 
 Commit:
 
+- `13da52c feat: add usage-store local pipeline`
+
+## Slice 4: Usage Store Peer Bundle Import/Export
+
+Status: completed
+
+Picked on: 2026-06-19
+Stable on: 2026-06-19
+
+Goal:
+
+- Prove usage-store can export this machine's merge bundle and import peer merge bundles.
+- Keep peer rows by origin machine and stable row key.
+- Make report-data include stored peer rows in the normal local payload path.
+
+Difficulties:
+
+- Effect typed failures reject through `Effect.runPromise` as fiber failures, so self-import tests need `Effect.either` to assert the typed `UsageStoreError`.
+- Querying all active stored rows would have leaked stored Cursor rows when `includeCursor` is false, and would have ignored explicit harness selection. The store query needed a harness-key filter before report-data could safely read local plus peer rows.
+
+Decisions:
+
+- Keep later peer imports additive: a missing row in a later peer bundle does not delete prior peer rows.
+- Treat explicit `deleted` merge rows as tombstones by updating row status and excluding them from default active queries.
+- Keep local export limited to this machine's active rows.
+- Add `harnessKeys` to `queryReportRows` so report-data can apply the same harness selection to stored local and peer rows.
+
+File changes:
+
+- Extended `packages/usage-store/src/index.ts` query input with `harnessKeys`.
+- Updated `packages/report-data/src/index.ts` to query all active stored rows while preserving requested harness and Cursor selection.
+- Expanded `packages/usage-store/src/index.test.ts` with local export, peer import, self-import rejection, idempotent import, changed-content update, missing-row retention, and tombstone tests.
+- Added a `packages/report-data/src/reporting.test.ts` integration test proving stored peer rows appear in the final local `UsageReportPayload`.
+
+Checks:
+
+- `bun test packages/usage-store/src/index.test.ts`: passed.
+- `bun test packages/report-data/src/reporting.test.ts`: passed.
+- `bun run --cwd packages/usage-store check`: passed.
+- `bun run --cwd packages/report-data check`: passed.
+- `bun run check`: passed. Biome reported the same non-failing `/nix/store` max-size warnings.
+- `bun run test`: passed.
+
+Commit:
+
 - Pending.
