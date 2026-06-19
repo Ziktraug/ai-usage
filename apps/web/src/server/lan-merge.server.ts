@@ -1,8 +1,8 @@
-import { discoverLanPeers, type DiscoveredLanPeer } from '@ai-usage/lan-pairing';
+import { makeLanPairingService } from '@ai-usage/lan-pairing';
 import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig } from '@ai-usage/local-collectors/machine-config';
-import { readLanPeersConfig } from '@ai-usage/local-collectors/lan-peers';
-import { createUsageMergeRuntime, lanIdentityFromMachine } from '@ai-usage/usage-merge';
+import { readLanPeersConfig, upsertStoredLanPeer } from '@ai-usage/local-collectors/lan-peers';
+import { createUsageMergeRuntime, upsertUsageMergeEnvToken, type UsageMergeService } from '@ai-usage/usage-merge';
 import { usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 
@@ -47,83 +47,68 @@ const errorResult = (error: unknown): LanMergeServerResult<never> => {
   };
 };
 
-const mergeBundleUrlForPeer = (peer: DiscoveredLanPeer) => `http://${peer.host}:${peer.port}/lan/merge-bundle`;
+let runtimePromise: Promise<UsageMergeService> | undefined;
 
-const peerUrlsFromDiscovered = (peers: DiscoveredLanPeer[]) =>
-  Object.fromEntries(peers.filter((peer) => peer.online).map((peer) => [peer.identity.id, mergeBundleUrlForPeer(peer)]));
+const createRuntime =
+  Effect.gen(function* () {
+    const storage = yield* LocalHistoryStorage;
+    const localMachine = yield* ensureMachineConfig;
+    const peers = yield* readLanPeersConfig;
+    const lanPairing = yield* makeLanPairingService;
+    return createUsageMergeRuntime({
+      localMachine,
+      dbPath: usageStorePath(storage.home),
+      peers: peers.peers,
+      lanPairing,
+      lanHost: '0.0.0.0',
+      persistToken: (key, value) => {
+        upsertUsageMergeEnvToken(key, value);
+      },
+      persistTrustedPeer: async (peer) => {
+        await Effect.runPromise(upsertStoredLanPeer(peer).pipe(Effect.provideService(LocalHistoryStorage, storage)));
+      },
+    });
+  });
 
-const runLanMerge = async <A>(
-  effect: Effect.Effect<A, unknown, import('@ai-usage/local-collectors/local-history').LocalHistoryStorage>,
-): Promise<LanMergeServerResult<A>> => {
+const getRuntime = () => {
+  runtimePromise ??= Effect.runPromise(createRuntime.pipe(Effect.provide(LocalHistoryStorageLive))).catch((error) => {
+    runtimePromise = undefined;
+    throw error;
+  });
+  return runtimePromise;
+};
+
+const runRuntime = async <A>(operation: (runtime: UsageMergeService) => Effect.Effect<A, unknown>): Promise<LanMergeServerResult<A>> => {
   try {
-    return { ok: true, data: toJson(await Effect.runPromise(effect.pipe(Effect.provide(LocalHistoryStorageLive)))) };
+    const runtime = await getRuntime();
+    return { ok: true, data: toJson(await Effect.runPromise(operation(runtime))) };
   } catch (error) {
     return errorResult(error);
   }
 };
 
-const makeRuntime = (input: { discoveredPeers?: DiscoveredLanPeer[]; peerUrls?: Record<string, string> } = {}) =>
-  Effect.gen(function* () {
-    const storage = yield* LocalHistoryStorage;
-    const localMachine = yield* ensureMachineConfig;
-    const peers = yield* readLanPeersConfig;
-    return createUsageMergeRuntime({
-      localMachine,
-      dbPath: usageStorePath(storage.home),
-      peers: peers.peers,
-      discoveredPeers: input.discoveredPeers ?? [],
-      peerUrls: input.peerUrls ?? peerUrlsFromDiscovered(input.discoveredPeers ?? []),
-    });
-  });
-
 export const readLanMergeStateForServer = () =>
-  runLanMerge(Effect.gen(function* () {
-    const runtime = yield* makeRuntime();
-    return yield* runtime.getLanMergeState();
-  }));
+  runRuntime((runtime) => runtime.getLanMergeState());
 
-export const scanLanMergePeersForServer = (input: LanMergeScanInput = {}) =>
-  runLanMerge(Effect.gen(function* () {
-    const localMachine = yield* ensureMachineConfig;
-    const discoveredPeers = yield* discoverLanPeers({
-      localIdentity: lanIdentityFromMachine(localMachine),
-      ...(input.hosts === undefined ? {} : { hosts: input.hosts }),
-      ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
-    });
-    const runtime = yield* makeRuntime({ discoveredPeers });
-    return yield* runtime.getLanMergeState();
-  }));
+export const startLanMergeForServer = () =>
+  runRuntime((runtime) => runtime.startLanMerge().pipe(Effect.zipRight(runtime.getLanMergeState())));
+
+export const stopLanMergeForServer = () =>
+  runRuntime((runtime) => runtime.stopLanMerge().pipe(Effect.zipRight(runtime.getLanMergeState())));
+
+export const scanLanMergePeersForServer = (_input: LanMergeScanInput = {}) =>
+  runRuntime((runtime) => runtime.scanLanMergePeers());
 
 export const mergeLanPeerForServer = (input: LanMergePeerInput) =>
-  runLanMerge(Effect.gen(function* () {
-    const runtime = yield* makeRuntime({
-      peerUrls: input.url ? { [input.machineId]: input.url } : {},
-    });
-    yield* runtime.mergePeer({ machineId: input.machineId });
-    return yield* runtime.getLanMergeState();
-  }));
+  runRuntime((runtime) => runtime.mergePeer({ machineId: input.machineId }).pipe(Effect.zipRight(runtime.getLanMergeState())));
 
 export const pairLanPeerForServer = (input: LanMergePairInput) =>
-  runLanMerge(Effect.gen(function* () {
-    const runtime = yield* makeRuntime({
-      discoveredPeers: [
-        {
-          identity: { id: input.discoveredPeerId, label: input.discoveredPeerId, protocol: 'ai-usage-lan-merge', version: 1 },
-          host: 'paired-peer',
-          port: 3847,
-          online: Boolean(input.url),
-          pairingAvailable: true,
-          self: false,
-          lastSeenAt: new Date().toISOString(),
-        },
-      ],
-      peerUrls: input.url ? { [input.discoveredPeerId]: input.url } : {},
-    });
-    return yield* runtime.pairPeer({
+  runRuntime((runtime) =>
+    runtime.pairPeer({
       discoveredPeerId: input.discoveredPeerId,
       password: input.password,
-    });
-  }));
+    }),
+  );
 
 const objectInput = (input: unknown): Record<string, unknown> => {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new Error('Expected object input');

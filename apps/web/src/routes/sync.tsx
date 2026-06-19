@@ -27,7 +27,7 @@ import { createFileRoute, Link } from '@tanstack/solid-router';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
-import { getLanMergeState, mergeLanPeer, pairLanPeer, scanLanMergePeers } from '../server/sync';
+import { getLanMergeState, mergeLanPeer, pairLanPeer, scanLanMergePeers, startLanMerge, stopLanMerge } from '../server/sync';
 import {
   buildLanMergeSummary,
   formatSyncDateTime,
@@ -220,7 +220,15 @@ const OperationNotice = (props: { error: LanOperationError | null; message: stri
   </Show>
 );
 
-const LocalMachinePanel = (props: { state: LanMergeState; scanning: boolean; pending: boolean; onScan: () => void; onRefresh: () => void }) => (
+const LocalMachinePanel = (props: {
+  state: LanMergeState;
+  scanning: boolean;
+  pending: boolean;
+  onStart: () => void;
+  onStop: () => void;
+  onScan: () => void;
+  onRefresh: () => void;
+}) => (
   <section class={statusBand}>
     <div class={statusContent}>
       <div class={statusTitleRow}>
@@ -241,7 +249,28 @@ const LocalMachinePanel = (props: { state: LanMergeState; scanning: boolean; pen
       </Show>
     </div>
     <div class={actionRow}>
-      <button class={ghostButton} type="button" disabled={props.pending || props.scanning} onClick={props.onScan}>
+      <Show
+        when={props.state.service.status === 'running' || props.state.service.status === 'pairing'}
+        fallback={
+          <button class={ghostButton} type="button" disabled={props.pending || props.scanning} onClick={props.onStart}>
+            Start LAN merge
+          </button>
+        }
+      >
+        <button class={ghostButton} type="button" disabled={props.pending || props.scanning} onClick={props.onStop}>
+          Stop
+        </button>
+      </Show>
+      <button
+        class={ghostButton}
+        type="button"
+        disabled={
+          props.pending ||
+          props.scanning ||
+          (props.state.service.status !== 'running' && props.state.service.status !== 'pairing')
+        }
+        onClick={props.onScan}
+      >
         {props.scanning ? 'Scanning' : 'Scan LAN'}
       </button>
       <button class={ghostButton} type="button" disabled={props.pending || props.scanning} onClick={props.onRefresh}>
@@ -384,6 +413,8 @@ const SyncStateView = (props: {
   operationMessage: string | null;
   pairPassword: string;
   onPairPasswordChange: (password: string) => void;
+  onStart: () => void;
+  onStop: () => void;
   onScan: () => void;
   onRefresh: () => void;
   onMerge: (peer: TrustedLanPeer, discovered: DiscoveredLanPeer | undefined) => void;
@@ -396,6 +427,8 @@ const SyncStateView = (props: {
         state={props.state}
         scanning={props.scanning}
         pending={props.refreshing || !!props.pendingOperation}
+        onStart={props.onStart}
+        onStop={props.onStop}
         onScan={props.onScan}
         onRefresh={props.onRefresh}
       />
@@ -524,6 +557,12 @@ function SyncRoute() {
     }
   };
 
+  const start = () =>
+    runOperation('start', () => startLanMerge({ data: {} }), 'LAN merge started.');
+
+  const stop = () =>
+    runOperation('stop', () => stopLanMerge({ data: {} }), 'LAN merge stopped.');
+
   const mergePeer = (peer: TrustedLanPeer, discovered: DiscoveredLanPeer | undefined) =>
     runOperation(
       `merge:${peer.machineId}`,
@@ -548,7 +587,7 @@ function SyncRoute() {
             url: mergeBundleUrlForLanPeer(peer),
           },
         }),
-      `Paired ${peer.identity.label} and ran the first merge.`,
+      `Pairing updated for ${peer.identity.label}.`,
     );
 
   return (
@@ -583,6 +622,8 @@ function SyncRoute() {
               operationMessage={operationMessage()}
               pairPassword={pairPassword()}
               onPairPasswordChange={setPairPassword}
+              onStart={start}
+              onStop={stop}
               onScan={scan}
               onRefresh={refresh}
               onMerge={mergePeer}

@@ -52,7 +52,8 @@ describe('LAN merge sync page model', () => {
   });
 
   test('labels LAN merge statuses and recovery actions', () => {
-    expect(lanMergeServiceStatusLabel('stopped')).toBe('Ready');
+    expect(lanMergeServiceStatusLabel('stopped')).toBe('Stopped');
+    expect(lanMergeServiceStatusLabel('running')).toBe('Online');
     expect(lanMergeServiceStatusLabel('error')).toBe('Needs attention');
     expect(lanTrustedPeerStatusLabel(lanState.trustedPeers[0]!)).toBe('Available');
     expect(lanDiscoveredPeerStatusLabel(lanState.discoveredPeers[0]!)).toBe('Ready to pair');

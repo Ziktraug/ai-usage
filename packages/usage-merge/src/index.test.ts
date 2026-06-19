@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
+import { makeLanPairingServiceWithOptions } from '@ai-usage/lan-pairing';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
@@ -308,5 +309,107 @@ describe('usage-merge public boundary', () => {
 
     expect(state.trustedPeers[0]?.lastMergedAt).toBe('2026-06-19T12:30:00.000Z');
     expect(state.trustedPeers[0]?.rows).toBe(1);
+  });
+
+  test('pairs a new LAN peer, persists both trusted records, and runs the first merge', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-merge-lan-pair-'));
+    let runtimeA: ReturnType<typeof createUsageMergeRuntime> | undefined;
+    let runtimeB: ReturnType<typeof createUsageMergeRuntime> | undefined;
+    try {
+      const machineA: UsageMachine = { id: 'machine-a', label: 'Machine A' };
+      const machineB: UsageMachine = { id: 'machine-b', label: 'Machine B' };
+      const dbA = path.join(home, 'a.sqlite');
+      const dbB = path.join(home, 'b.sqlite');
+      const tokensA = new Map<string, string>();
+      const tokensB = new Map<string, string>();
+      const storedA: Array<{ machineId: string }> = [];
+      const storedB: Array<{ machineId: string }> = [];
+      const serviceA = await Effect.runPromise(
+        makeLanPairingServiceWithOptions({ discoveryHosts: ['127.0.0.1'], discoveryTimeoutMs: 100 }),
+      );
+      const serviceB = await Effect.runPromise(
+        makeLanPairingServiceWithOptions({ discoveryHosts: ['127.0.0.1'], discoveryTimeoutMs: 100 }),
+      );
+
+      await Effect.runPromise(
+        importLocalRows({
+          dbPath: dbA,
+          machine: machineA,
+          rows: [makeSourcedRow({ project: 'local-project', sourcePath: '/work/local', sessionId: 'local-1' })],
+        }),
+      );
+      await Effect.runPromise(
+        importLocalRows({
+          dbPath: dbB,
+          machine: machineB,
+          rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-1' })],
+        }),
+      );
+
+      runtimeA = createUsageMergeRuntime({
+        localMachine: machineA,
+        dbPath: dbA,
+        peers: [],
+        lanPairing: serviceA,
+        localToken: 'token-a',
+        getToken: (key) => tokensA.get(key),
+        persistToken: (key, value) => {
+          tokensA.set(key, value);
+        },
+        persistTrustedPeer: (peer) => {
+          storedA.push(peer);
+        },
+        now: () => new Date('2026-06-19T12:30:00.000Z'),
+      });
+      runtimeB = createUsageMergeRuntime({
+        localMachine: machineB,
+        dbPath: dbB,
+        peers: [],
+        lanPairing: serviceB,
+        localToken: 'token-b',
+        getToken: (key) => tokensB.get(key),
+        persistToken: (key, value) => {
+          tokensB.set(key, value);
+        },
+        persistTrustedPeer: (peer) => {
+          storedB.push(peer);
+        },
+        now: () => new Date('2026-06-19T12:30:00.000Z'),
+      });
+
+      await Effect.runPromise(runtimeA.startLanMerge());
+      await Effect.runPromise(runtimeB.startLanMerge());
+      await Effect.runPromise(runtimeA.scanLanMergePeers());
+      await Effect.runPromise(runtimeB.scanLanMergePeers());
+
+      await Effect.runPromise(runtimeB.pairPeer({ discoveredPeerId: machineA.id, password: '123456' }).pipe(Effect.either));
+      const stateA = await Effect.runPromise(runtimeA.pairPeer({ discoveredPeerId: machineB.id, password: '123456' }));
+      const rowsA = await Effect.runPromise(queryReportRows({ dbPath: dbA, originMachineIds: [machineB.id] }));
+      const rowsB = await Effect.runPromise(queryReportRows({ dbPath: dbB, originMachineIds: [machineA.id] }));
+
+      expect(storedA.map((peer) => peer.machineId)).toContain(machineB.id);
+      expect(storedB.map((peer) => peer.machineId)).toContain(machineA.id);
+      expect(tokensA.get('AI_USAGE_LAN_MERGE_MACHINE_B_TOKEN')).toBe('token-b');
+      expect(tokensB.get('AI_USAGE_LAN_MERGE_MACHINE_A_TOKEN')).toBe('token-a');
+      expect(rowsA.rows[0]?.project).toBe('peer-project');
+      expect(rowsB.rows[0]?.project).toBe('local-project');
+      expect(stateA.trustedPeers.find((peer) => peer.machineId === machineB.id)?.lastMergedAt).toBe('2026-06-19T12:30:00.000Z');
+    } finally {
+      if (runtimeA) {
+        try {
+          await Effect.runPromise(runtimeA.stopLanMerge());
+        } catch {
+          // Best-effort cleanup so a failed assertion does not leave the test port bound.
+        }
+      }
+      if (runtimeB) {
+        try {
+          await Effect.runPromise(runtimeB.stopLanMerge());
+        } catch {
+          // Best-effort cleanup so a failed assertion does not leave the test port bound.
+        }
+      }
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
