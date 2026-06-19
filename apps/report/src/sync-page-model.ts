@@ -89,3 +89,27 @@ export const discoveryBadgesForPeer = (peer: Pick<DiscoveredSnapshotRemote, 'sel
   ...(peer.self ? ['self'] : []),
   ...(peer.alreadyConfigured ? ['configured'] : []),
 ];
+
+export type SyncServeStatus = 'stopped' | 'starting' | 'running' | 'stopping' | 'error';
+
+export const serveStatusLabel = (status: SyncServeStatus) => {
+  switch (status) {
+    case 'stopped':
+      return 'Not serving';
+    case 'starting':
+      return 'Starting';
+    case 'running':
+      return 'Serving';
+    case 'stopping':
+      return 'Stopping';
+    case 'error':
+      return 'Error';
+  }
+};
+
+export const validateServeStartInput = (input: { host: string; port: number; token: string }) => {
+  if (!input.host.trim()) return 'Host is required.';
+  if (!Number.isFinite(input.port) || input.port < 1 || input.port > 65_535) return 'Port must be between 1 and 65535.';
+  if (input.host.trim() === '0.0.0.0' && !input.token.trim()) return 'A token is required when serving on 0.0.0.0.';
+  return null;
+};
