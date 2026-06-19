@@ -79,10 +79,19 @@ const remoteNameForMachine = (machine: UsageMachine) =>
 export const syncTokenEnvNameForMachine = (machine: UsageMachine) =>
   `AI_USAGE_SYNC_${shellToken(machine.label || machine.id) || 'REMOTE'}_TOKEN`;
 
+const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+
 const shareCopyText = (input: { envKey: string; secret: string; remoteName: string; snapshotUrl: string }) =>
-  `${input.envKey}=${input.secret}
-bun run cli -- sync add ${input.remoteName} ${input.snapshotUrl} --token-env ${input.envKey}
-bun run cli -- sync pull ${input.remoteName}`;
+  `TOKEN_ENV=${shellQuote(input.envKey)}
+TOKEN_VALUE=${shellQuote(input.secret)}
+ENV_FILE=.env
+touch "$ENV_FILE"
+awk -v key="$TOKEN_ENV" -v value="$TOKEN_VALUE" 'BEGIN { found = 0 } $0 ~ "^" key "=" { print key "=" value; found = 1; next } { print } END { if (!found) print key "=" value }' "$ENV_FILE" > "$ENV_FILE.tmp" && mv "$ENV_FILE.tmp" "$ENV_FILE"
+bun run cli -- sync add ${shellQuote(input.remoteName)} ${shellQuote(input.snapshotUrl)} --token-env "$TOKEN_ENV"
+bun run cli -- sync pull ${shellQuote(input.remoteName)}`;
+
+const isAddressAlreadyInUse = (state: SyncServeState) =>
+  state.status === 'error' && /EADDRINUSE|address already in use/i.test(state.lastError?.message ?? '');
 
 const toJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -202,7 +211,10 @@ export const createSyncServeRuntime = (deps: SyncServeRuntimeDeps) => {
     const secret = deps.generateSecret();
     const envKey = syncTokenEnvNameForMachine(machine);
     const { path: envPath } = await deps.upsertEnvToken(envKey, secret);
-    const started = await start({ host: '0.0.0.0', port: input.port, token: secret });
+    let started = await start({ host: '0.0.0.0', port: input.port, token: secret });
+    if (started.ok && isAddressAlreadyInUse(started.data) && input.port !== 0) {
+      started = await start({ host: '0.0.0.0', port: 0, token: secret });
+    }
     if (!started.ok) return started;
     if (started.data.status !== 'running' || !started.data.urls[0]) {
       return errorResult(

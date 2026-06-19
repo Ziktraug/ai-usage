@@ -67,6 +67,18 @@ export const syncOperationErrorHint = (error: SyncOperationError) => {
   }
 };
 
+export const syncServeErrorHint = (error: { message: string; reason?: string } | undefined) => {
+  if (!error) return null;
+  if (error.reason === 'missing-serve-token') return 'Use All-in-one setup or enter a serve token before binding to 0.0.0.0.';
+  if (/EADDRINUSE|address already in use/i.test(error.message)) {
+    return 'Port is already used. Stop the other sync server, choose another port, or use All-in-one setup to pick a free port automatically.';
+  }
+  return null;
+};
+
+export const allInOneSetupSummary =
+  'Starts this machine on the LAN, writes its token to this repo .env, then gives you a paste-ready setup block for the other machine.';
+
 export interface SyncRemoteDraft {
   name: string;
   url: string;

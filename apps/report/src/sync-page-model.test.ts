@@ -8,6 +8,7 @@ import {
   discoveryBadgesForPeer,
   remoteDraftFromDiscoveredPeer,
   serveStatusLabel,
+  syncServeErrorHint,
   syncOperationErrorHint,
   tokenStatusLabel,
   validateServeStartInput,
@@ -110,5 +111,8 @@ describe('sync page model', () => {
     expect(validateServeStartInput({ host: '0.0.0.0', port: 3847, token: '' })).toContain('token');
     expect(validateServeStartInput({ host: '127.0.0.1', port: 3847, token: '' })).toBeNull();
     expect(validateServeStartInput({ host: '127.0.0.1', port: 70_000, token: '' })).toContain('Port');
+    expect(syncServeErrorHint({ message: 'listen EADDRINUSE: address already in use 0.0.0.0:3847' })).toContain(
+      'Port is already used',
+    );
   });
 });

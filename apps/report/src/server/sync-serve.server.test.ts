@@ -58,6 +58,8 @@ const runtime = (
         overrides.startServer ??
         (async (input) => {
           starts.push(input);
+          const port = input.port === 0 ? 49_321 : input.port;
+          const host = input.host === '0.0.0.0' ? '192.168.1.30' : input.host;
           input.onRequest?.({
             method: 'GET',
             path: '/health',
@@ -66,8 +68,8 @@ const runtime = (
             durationMs: 3,
           });
           return {
-            port: input.port,
-            urls: [`http://${input.host}:${input.port}/snapshot`],
+            port,
+            urls: [`http://${host}:${port}/snapshot`],
             stop: async () => {
               stopped = true;
             },
@@ -135,9 +137,36 @@ describe('sync serve runtime', () => {
     expect(result.data.envKey).toBe('AI_USAGE_SYNC_LOCAL_MACHINE_TOKEN');
     expect(result.data.envPath).toBe('/repo/.env');
     expect(result.data.remoteName).toBe('local-machine');
-    expect(result.data.copyText).toContain('AI_USAGE_SYNC_LOCAL_MACHINE_TOKEN=generated-secret');
-    expect(result.data.copyText).toContain('bun run cli -- sync add local-machine http://0.0.0.0:3847/snapshot');
+    expect(result.data.snapshotUrl).toBe('http://192.168.1.30:3847/snapshot');
+    expect(result.data.copyText).toContain("TOKEN_ENV='AI_USAGE_SYNC_LOCAL_MACHINE_TOKEN'");
+    expect(result.data.copyText).toContain("TOKEN_VALUE='generated-secret'");
+    expect(result.data.copyText).toContain('awk -v key="$TOKEN_ENV" -v value="$TOKEN_VALUE"');
+    expect(result.data.copyText).toContain("bun run cli -- sync add 'local-machine' 'http://192.168.1.30:3847/snapshot'");
     expect(result.data.state.status).toBe('running');
+  });
+
+  test('all-in-one share setup falls back to a free port when the default port is busy', async () => {
+    const starts: SnapshotServerInput[] = [];
+    const { service } = runtime({
+      startServer: async (input) => {
+        starts.push(input);
+        if (input.port === 3847) throw new Error('listen EADDRINUSE: address already in use 0.0.0.0:3847');
+        return {
+          port: 49_321,
+          urls: ['http://192.168.1.30:49321/snapshot'],
+          stop: async () => {},
+        };
+      },
+    });
+
+    const result = await service.startShare({ port: 3847 });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.message);
+    expect(starts.map((start) => start.port)).toEqual([3847, 0]);
+    expect(result.data.state.port).toBe(49_321);
+    expect(result.data.snapshotUrl).toBe('http://192.168.1.30:49321/snapshot');
+    expect(result.data.copyText).toContain("'http://192.168.1.30:49321/snapshot'");
   });
 
   test('upserts env tokens in the workspace root env file from an app cwd', async () => {
