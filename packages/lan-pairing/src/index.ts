@@ -1,4 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import { ristretto255 as cpaceRistretto255 } from '@cipherman/pake-js/cpace';
 import { Context, Data, Effect, Layer, Ref } from 'effect';
@@ -254,6 +256,7 @@ export interface LanPairingRuntimeOptions {
   discoveryHosts?: string[];
   discoveryTimeoutMs?: number;
   discoveryTransport?: LanPeerProbeTransport;
+  serverRuntime?: 'auto' | 'bun' | 'node';
 }
 
 interface RuntimeState {
@@ -276,6 +279,17 @@ interface ActivePairingSession {
   password: string;
   envelope?: PairingEnvelope;
   pending: Record<string, PendingPairingExchange>;
+}
+
+interface BunServeRuntime {
+  serve(input: {
+    hostname: string;
+    port: number;
+    fetch: (request: Request) => Response | Promise<Response>;
+  }): {
+    port?: number;
+    stop: () => void | Promise<void>;
+  };
 }
 
 const stoppedIdentity: LanPeerIdentity = {
@@ -1213,26 +1227,137 @@ const urlsFor = (host: string, port: number) => {
   return reachableHosts.map((item) => `http://${item}:${port}/lan/peer`);
 };
 
+const requestBody = async (request: IncomingMessage) => {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+  }
+  return Buffer.concat(chunks);
+};
+
+const requestHeaders = (request: IncomingMessage) => {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(request.headers)) {
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(key, item);
+    } else if (value !== undefined) {
+      headers.set(key, value);
+    }
+  }
+  return headers;
+};
+
+const requestUrl = (request: IncomingMessage, host: string, port: number) => {
+  const hostHeader = request.headers.host ?? `${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}`;
+  return `http://${hostHeader}${request.url ?? '/'}`;
+};
+
+const nodeRequestToFetchRequest = async (request: IncomingMessage, host: string, port: number) => {
+  const method = request.method ?? 'GET';
+  if (method === 'GET' || method === 'HEAD') {
+    return new Request(requestUrl(request, host, port), {
+      method,
+      headers: requestHeaders(request),
+    });
+  }
+
+  const body = await requestBody(request);
+  return new Request(requestUrl(request, host, port), {
+    method,
+    headers: requestHeaders(request),
+    body: body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+  });
+};
+
+const writeFetchResponse = async (response: Response, output: ServerResponse) => {
+  output.statusCode = response.status;
+  output.statusMessage = response.statusText;
+  response.headers.forEach((value, key) => {
+    output.setHeader(key, value);
+  });
+  if (!response.body) {
+    output.end();
+    return;
+  }
+  output.end(Buffer.from(await response.arrayBuffer()));
+};
+
+const startNodeServerOnPort = (
+  ref: Ref.Ref<RuntimeState>,
+  host: string,
+  port: number,
+): Promise<LanPairingServerHandle> =>
+  new Promise((resolve, reject) => {
+    const handler = createLanPairingHttpHandler(ref);
+    const server = createServer((request, response) => {
+      void (async () => {
+        try {
+          await writeFetchResponse(await handler(await nodeRequestToFetchRequest(request, host, port)), response);
+        } catch (cause) {
+          response.statusCode = 500;
+          response.end(cause instanceof Error ? cause.message : String(cause));
+        }
+      })();
+    });
+
+    const cleanup = () => {
+      server.off('error', onError);
+      server.off('listening', onListening);
+    };
+    const onError = (cause: Error) => {
+      cleanup();
+      reject(cause);
+    };
+    const onListening = () => {
+      cleanup();
+      const address = server.address() as AddressInfo | null;
+      const boundPort = address?.port ?? port;
+      resolve({
+        port: boundPort,
+        urls: urlsFor(host, boundPort),
+        stop: () =>
+          new Promise<void>((resolveStop, rejectStop) => {
+            server.close((error) => {
+              if (error) rejectStop(error);
+              else resolveStop();
+            });
+          }),
+      });
+    };
+
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, host);
+  });
+
+const startBunServerOnPort = (ref: Ref.Ref<RuntimeState>, host: string, port: number, bunRuntime: BunServeRuntime) => {
+  const server = bunRuntime.serve({
+    hostname: host,
+    port,
+    fetch: createLanPairingHttpHandler(ref),
+  });
+  const boundPort = server.port ?? port;
+  return {
+    port: boundPort,
+    urls: urlsFor(host, boundPort),
+    stop: () => {
+      void server.stop();
+    },
+  };
+};
+
 const startServerOnPort = (
   ref: Ref.Ref<RuntimeState>,
   host: string,
   port: number,
+  runtime: NonNullable<LanPairingRuntimeOptions['serverRuntime']>,
 ): Effect.Effect<LanPairingServerHandle, LanPairingError> =>
-  Effect.try({
-    try: () => {
-      const server = Bun.serve({
-        hostname: host,
-        port,
-        fetch: createLanPairingHttpHandler(ref),
-      });
-      const boundPort = server.port ?? port;
-      return {
-        port: boundPort,
-        urls: urlsFor(host, boundPort),
-        stop: () => {
-          void server.stop();
-        },
-      };
+  Effect.tryPromise({
+    try: async () => {
+      const bunRuntime = (globalThis as { Bun?: BunServeRuntime }).Bun;
+      if (runtime !== 'node' && bunRuntime?.serve) return startBunServerOnPort(ref, host, port, bunRuntime);
+      if (runtime === 'bun') throw new Error('Bun.serve is not available in this runtime');
+      return await startNodeServerOnPort(ref, host, port);
     },
     catch: (cause) =>
       new LanPairingError({
@@ -1246,6 +1371,7 @@ const startServerInRange = (
   ref: Ref.Ref<RuntimeState>,
   host: string,
   portRange: { start: number; end: number },
+  runtime: NonNullable<LanPairingRuntimeOptions['serverRuntime']>,
 ): Effect.Effect<LanPairingServerHandle, LanPairingError> =>
   Effect.gen(function* () {
     if (portRange.start > portRange.end) {
@@ -1260,7 +1386,7 @@ const startServerInRange = (
 
     let lastError: LanPairingError | undefined;
     for (let port = portRange.start; port <= portRange.end; port++) {
-      const result = yield* Effect.either(startServerOnPort(ref, host, port));
+      const result = yield* Effect.either(startServerOnPort(ref, host, port, runtime));
       if (result._tag === 'Right') return result.right;
       lastError = result.left;
     }
@@ -1278,17 +1404,18 @@ export const makeLanPairingServiceWithOptions = (
   options: LanPairingRuntimeOptions = {},
 ): Effect.Effect<LanPairingService, never> =>
   Effect.gen(function* () {
-  const ref = yield* Ref.make(initialState());
+    const ref = yield* Ref.make(initialState());
 
-  const service: LanPairingService = {
-    start: (input) =>
-      Effect.gen(function* () {
-        const current = yield* Ref.get(ref);
-        if (current.server) return;
+    const service: LanPairingService = {
+      start: (input) =>
+        Effect.gen(function* () {
+          const current = yield* Ref.get(ref);
+          if (current.server) return;
 
-        const host = input.host ?? '127.0.0.1';
-        const portRange = input.portRange ?? LAN_PAIRING_PORT_RANGE;
-        yield* Ref.update(ref, (runtime) => {
+          const host = input.host ?? '127.0.0.1';
+          const portRange = input.portRange ?? LAN_PAIRING_PORT_RANGE;
+          const serverRuntime = options.serverRuntime ?? 'auto';
+          yield* Ref.update(ref, (runtime) => {
           const { lastError: _lastError, ...stateWithoutLastError } = runtime.state;
           return {
             ...runtime,
@@ -1302,7 +1429,7 @@ export const makeLanPairingServiceWithOptions = (
           };
         });
 
-        const server = yield* startServerInRange(ref, host, portRange).pipe(
+          const server = yield* startServerInRange(ref, host, portRange, serverRuntime).pipe(
           Effect.tapError((error) =>
             Ref.update(ref, (runtime) => ({
               ...runtime,
@@ -1315,74 +1442,74 @@ export const makeLanPairingServiceWithOptions = (
           ),
         );
 
-        yield* Ref.update(ref, (runtime) => ({
-          ...runtime,
-          server,
-          state: {
-            ...runtime.state,
-            status: 'running' as const,
-            port: server.port,
-            urls: server.urls,
-          },
-        }));
-      }),
-    stop: () =>
-      Effect.gen(function* () {
-        const current = yield* Ref.get(ref);
-        if (!current.server) {
+          yield* Ref.update(ref, (runtime) => ({
+            ...runtime,
+            server,
+            state: {
+              ...runtime.state,
+              status: 'running' as const,
+              port: server.port,
+              urls: server.urls,
+            },
+          }));
+        }),
+      stop: () =>
+        Effect.gen(function* () {
+          const current = yield* Ref.get(ref);
+          if (!current.server) {
+            yield* Ref.set(ref, initialState());
+            return;
+          }
+
+          yield* Effect.tryPromise({
+            try: async () => {
+              await current.server?.stop();
+            },
+            catch: (cause) =>
+              new LanPairingError({
+                operation: 'stopLanPairingServer',
+                message: `Failed to stop LAN pairing server: ${cause instanceof Error ? cause.message : String(cause)}`,
+                reason: 'pairing-failed',
+              }),
+          });
           yield* Ref.set(ref, initialState());
-          return;
-        }
+        }),
+      scan: () =>
+        Effect.gen(function* () {
+          const current = yield* Ref.get(ref);
+          if (current.state.status === 'stopped') {
+            return yield* Effect.fail(
+              new LanPairingError({
+                operation: 'scan',
+                message: 'LAN pairing service is stopped.',
+                reason: 'service-stopped',
+              }),
+            );
+          }
 
-        yield* Effect.tryPromise({
-          try: async () => {
-            await current.server?.stop();
-          },
-          catch: (cause) =>
-            new LanPairingError({
-              operation: 'stopLanPairingServer',
-              message: `Failed to stop LAN pairing server: ${cause instanceof Error ? cause.message : String(cause)}`,
-              reason: 'pairing-failed',
-            }),
-        });
-        yield* Ref.set(ref, initialState());
-      }),
-    scan: () =>
-      Effect.gen(function* () {
-        const current = yield* Ref.get(ref);
-        if (current.state.status === 'stopped') {
-          return yield* Effect.fail(
-            new LanPairingError({
-              operation: 'scan',
-              message: 'LAN pairing service is stopped.',
-              reason: 'service-stopped',
-            }),
-          );
-        }
+          const discoveredPeers = yield* discoverLanPeers({
+            localIdentity: current.state.localIdentity,
+            cache: current.state.discoveredPeers,
+            ...(options.discoveryHosts === undefined ? {} : { hosts: options.discoveryHosts }),
+            ...(options.discoveryTimeoutMs === undefined ? {} : { timeoutMs: options.discoveryTimeoutMs }),
+            ...(options.discoveryTransport === undefined ? {} : { transport: options.discoveryTransport }),
+          });
+          yield* Ref.update(ref, (runtime) => ({
+            ...runtime,
+            state: {
+              ...runtime.state,
+              discoveredPeers,
+            },
+          }));
+          return discoveredPeers;
+        }),
+      startPairing: (input) => startPairingInRef(ref, input),
+      confirmPairing: (input) => confirmPairingInRef(ref, input),
+      getState: () => Ref.get(ref).pipe(Effect.map((runtime) => runtime.state)),
+    };
 
-        const discoveredPeers = yield* discoverLanPeers({
-          localIdentity: current.state.localIdentity,
-          cache: current.state.discoveredPeers,
-          ...(options.discoveryHosts === undefined ? {} : { hosts: options.discoveryHosts }),
-          ...(options.discoveryTimeoutMs === undefined ? {} : { timeoutMs: options.discoveryTimeoutMs }),
-          ...(options.discoveryTransport === undefined ? {} : { transport: options.discoveryTransport }),
-        });
-        yield* Ref.update(ref, (runtime) => ({
-          ...runtime,
-          state: {
-            ...runtime.state,
-            discoveredPeers,
-          },
-        }));
-        return discoveredPeers;
-      }),
-    startPairing: (input) => startPairingInRef(ref, input),
-    confirmPairing: (input) => confirmPairingInRef(ref, input),
-    getState: () => Ref.get(ref).pipe(Effect.map((runtime) => runtime.state)),
-  };
-
-  return service;
-});
+    return service;
+  });
 
 export const makeLanPairingService = makeLanPairingServiceWithOptions();
 
