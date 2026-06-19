@@ -6,7 +6,9 @@ import { createUsageSnapshot } from '@ai-usage/core/snapshot';
 import type { SourcedRow } from '@ai-usage/core/types';
 import type { SnapshotServerHandle, SnapshotServerInput } from '@ai-usage/sync/server';
 import { describe, expect, test } from 'bun:test';
-import { createSyncServeRuntime, upsertEnvToken } from './sync-serve.server';
+import { upsertEnvToken } from './sync-env.server';
+import { decodeSyncInvite, encodeSyncInvite } from './sync-invite.server';
+import { createSyncServeRuntime } from './sync-serve.server';
 
 const machine = { id: 'local-1', label: 'Local Machine' };
 
@@ -86,6 +88,41 @@ const runtime = (
 };
 
 describe('sync serve runtime', () => {
+  test('encodes and rejects sync invite strings', () => {
+    const invite = encodeSyncInvite({
+      v: 1,
+      name: 'local-machine',
+      url: 'http://192.168.1.30:3847/snapshot',
+      tokenEnv: 'AI_USAGE_SYNC_LOCAL_MACHINE_TOKEN',
+      token: 'generated-secret',
+    });
+
+    expect(invite.startsWith('ai-usage-sync-v1:')).toBe(true);
+    expect(decodeSyncInvite(invite).name).toBe('local-machine');
+    expect(() =>
+      decodeSyncInvite(
+        encodeSyncInvite({
+          v: 1,
+          name: 'local-machine',
+          url: 'file:///tmp/snapshot',
+          tokenEnv: 'AI_USAGE_SYNC_LOCAL_MACHINE_TOKEN',
+          token: 'generated-secret',
+        }),
+      ),
+    ).toThrow('snapshot URL is invalid');
+    expect(() =>
+      decodeSyncInvite(
+        encodeSyncInvite({
+          v: 1,
+          name: 'local-machine',
+          url: 'http://192.168.1.30:3847/snapshot',
+          tokenEnv: 'BAD-NAME',
+          token: 'generated-secret',
+        }),
+      ),
+    ).toThrow('token env name is invalid');
+  });
+
   test('requires a token before serving on 0.0.0.0', async () => {
     const { service, starts } = runtime();
 
@@ -142,6 +179,13 @@ describe('sync serve runtime', () => {
     expect(result.data.copyText).toContain("TOKEN_VALUE='generated-secret'");
     expect(result.data.copyText).toContain('awk -v key="$TOKEN_ENV" -v value="$TOKEN_VALUE"');
     expect(result.data.copyText).toContain("bun run cli -- sync add 'local-machine' 'http://192.168.1.30:3847/snapshot'");
+    expect(decodeSyncInvite(result.data.inviteText)).toEqual({
+      v: 1,
+      name: 'local-machine',
+      url: 'http://192.168.1.30:3847/snapshot',
+      tokenEnv: 'AI_USAGE_SYNC_LOCAL_MACHINE_TOKEN',
+      token: 'generated-secret',
+    });
     expect(result.data.state.status).toBe('running');
   });
 

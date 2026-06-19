@@ -1,6 +1,4 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 import type { UsageMachine, UsageSnapshot } from '@ai-usage/core/snapshot';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig } from '@ai-usage/local-collectors/machine-config';
@@ -12,6 +10,8 @@ import {
   type SnapshotServerInput,
 } from '@ai-usage/sync/server';
 import { Effect } from 'effect';
+import { upsertEnvToken } from './sync-env.server';
+import { encodeSyncInvite } from './sync-invite.server';
 import type { SyncServerResult } from './sync.server';
 
 export type SyncServeStatus = 'stopped' | 'starting' | 'running' | 'stopping' | 'error';
@@ -54,6 +54,7 @@ export interface SyncServeShareInstructions {
   remoteName: string;
   snapshotUrl: string;
   copyText: string;
+  inviteText: string;
 }
 
 export interface SyncServeRuntimeDeps {
@@ -233,6 +234,7 @@ export const createSyncServeRuntime = (deps: SyncServeRuntimeDeps) => {
       remoteName,
       snapshotUrl,
       copyText: shareCopyText({ envKey, secret, remoteName, snapshotUrl }),
+      inviteText: encodeSyncInvite({ v: 1, name: remoteName, url: snapshotUrl, tokenEnv: envKey, token: secret }),
     });
   };
 
@@ -303,38 +305,6 @@ const positiveNumberField = (record: Record<string, unknown>, field: string) => 
   const value = record[field];
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) throw new Error(`Expected ${field} to be a positive number`);
   return value;
-};
-
-const findWorkspaceRoot = (cwd = process.cwd()) => {
-  let current = path.resolve(cwd);
-  while (true) {
-    const packagePath = path.join(current, 'package.json');
-    if (fs.existsSync(packagePath)) {
-      try {
-        const parsed = JSON.parse(fs.readFileSync(packagePath, 'utf8')) as { workspaces?: unknown };
-        if (parsed.workspaces) return current;
-      } catch {
-        return current;
-      }
-    }
-    const parent = path.dirname(current);
-    if (parent === current) return path.resolve(cwd);
-    current = parent;
-  }
-};
-
-export const upsertEnvToken = async (key: string, value: string, cwd = process.cwd()) => {
-  const envPath = path.join(findWorkspaceRoot(cwd), '.env');
-  const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
-  const line = `${key}=${value}`;
-  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const matcher = new RegExp(`^${escapedKey}=.*$`, 'm');
-  const next = matcher.test(existing)
-    ? existing.replace(matcher, line)
-    : `${existing}${existing && !existing.endsWith('\n') ? '\n' : ''}${line}\n`;
-  fs.mkdirSync(path.dirname(envPath), { recursive: true });
-  fs.writeFileSync(envPath, next, 'utf8');
-  return { path: envPath };
 };
 
 const defaultRuntime = createSyncServeRuntime({

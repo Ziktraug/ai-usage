@@ -34,6 +34,7 @@ import {
   discoverSyncPeers,
   getSyncServeState,
   getSyncState as getSyncStateForRoute,
+  importSyncInvite,
   pullSyncRemote,
   removeSyncRemote,
   setSyncRemoteEnabled,
@@ -197,6 +198,7 @@ const errorPanel = css({
 type SyncStateResult = Awaited<ReturnType<typeof getSyncStateForRoute>>;
 type SyncServeStateResult = Awaited<ReturnType<typeof getSyncServeState>>;
 type SyncServeShareResult = Awaited<ReturnType<typeof startSyncServeShare>>;
+type SyncInviteImportResult = Awaited<ReturnType<typeof importSyncInvite>>;
 type SyncOperationResult = Extract<SyncStateResult, { ok: false }>['error'];
 
 interface RemoteFormState {
@@ -312,6 +314,11 @@ const copyText = css({
   overflowWrap: 'anywhere',
   fontFamily: 'mono',
   fontSize: '12px',
+});
+
+const inviteField = css({
+  minH: '92px',
+  resize: 'vertical',
 });
 
 const peerList = css({
@@ -575,6 +582,40 @@ const RemoteForm = (props: {
   );
 };
 
+const InviteImportForm = (props: {
+  invite: string;
+  pendingOperation: string | null;
+  onChange: (invite: string) => void;
+  onImport: () => void;
+}) => {
+  const disabled = () => !!props.pendingOperation;
+  return (
+    <form
+      class={panelStack}
+      onSubmit={(event) => {
+        event.preventDefault();
+        props.onImport();
+      }}
+    >
+      <label class={`${formField} ${fullWidthField}`}>
+        <span class={inlineFieldLabel}>Sync invite</span>
+        <textarea
+          class={`${field} ${inviteField}`}
+          value={props.invite}
+          disabled={disabled()}
+          onInput={(event) => props.onChange(event.currentTarget.value)}
+          placeholder="ai-usage-sync-v1:..."
+        />
+      </label>
+      <div class={actionRow}>
+        <button class={ghostButton} type="submit" disabled={disabled() || !props.invite.trim()}>
+          Import invite
+        </button>
+      </div>
+    </form>
+  );
+};
+
 const DiscoveryPanel = (props: {
   peers: DiscoveredSnapshotRemote[];
   scanning: boolean;
@@ -736,12 +777,12 @@ const ServePanel = (props: {
               <Show when={props.shareResult?.ok ? props.shareResult.data : null}>
                 {(share) => (
                   <div class={copyBlock}>
-                    <div class={strongCell}>Paste in the other repo checkout</div>
-                    <div class={muted}>This machine updated {share().envPath}. The pasted block updates .env on the other machine.</div>
-                    <pre class={copyText}>{share().copyText}</pre>
+                    <div class={strongCell}>Sync invite for the other machine</div>
+                    <div class={muted}>Copy this string from this machine, then paste it into Sync invite on the other machine.</div>
+                    <pre class={copyText}>{share().inviteText}</pre>
                     <div class={actionRow}>
-                      <button class={ghostButton} type="button" onClick={() => props.onCopyShare(share().copyText)}>
-                        Copy
+                      <button class={ghostButton} type="button" onClick={() => props.onCopyShare(share().inviteText)}>
+                        Copy invite
                       </button>
                     </div>
                   </div>
@@ -789,6 +830,7 @@ const SyncStateView = (props: {
   operationError: SyncOperationResult | null;
   operationMessage: string | null;
   remoteForm: RemoteFormState;
+  syncInvite: string;
   onRemoteFormChange: (form: RemoteFormState) => void;
   onRemoteFormReset: () => void;
   onRemoteEdit: (remote: SyncRemoteState) => void;
@@ -799,6 +841,8 @@ const SyncStateView = (props: {
   onRemoteRemove: (remote: SyncRemoteState) => void;
   onDiscoveryScan: () => void;
   onDiscoveryAddPeer: (peer: DiscoveredSnapshotRemote) => void;
+  onSyncInviteChange: (invite: string) => void;
+  onSyncInviteImport: () => void;
   onServeFormChange: (form: ServeFormState) => void;
   onServeStart: () => void;
   onServeShareStart: () => void;
@@ -890,6 +934,19 @@ const SyncStateView = (props: {
 
           <div class={panel}>
             <div class={panelHeader}>
+              <div class={panelTitle}>Paste sync invite</div>
+              <div class={panelSub}>Paste the invite copied from another machine; this writes .env, adds the remote, and pulls once.</div>
+            </div>
+            <InviteImportForm
+              invite={props.syncInvite}
+              pendingOperation={props.pendingOperation}
+              onChange={props.onSyncInviteChange}
+              onImport={props.onSyncInviteImport}
+            />
+          </div>
+
+          <div class={panel}>
+            <div class={panelHeader}>
               <div class={panelTitle}>{props.remoteForm.mode === 'edit' ? 'Edit remote' : 'Add remote'}</div>
               <div class={panelSub}>Validate with an optional one-time token; save only name, URL, and token env.</div>
             </div>
@@ -953,6 +1010,7 @@ function SyncRoute() {
   const [operationError, setOperationError] = createSignal<SyncOperationResult | null>(null);
   const [operationMessage, setOperationMessage] = createSignal<string | null>(null);
   const [remoteForm, setRemoteForm] = createSignal<RemoteFormState>(emptyRemoteForm());
+  const [syncInvite, setSyncInvite] = createSignal('');
   const [discoveredPeers, setDiscoveredPeers] = createSignal<DiscoveredSnapshotRemote[]>([]);
   const [scanning, setScanning] = createSignal(false);
   const setOperationResult = (next: SyncStateResult, successMessage: string) => {
@@ -1134,6 +1192,25 @@ function SyncRoute() {
     setOperationMessage(`Prefilled ${draft.name}.`);
     setOperationError(null);
   };
+  const importInvite = async () => {
+    const invite = syncInvite().trim();
+    if (!invite || pendingOperation()) return;
+    setPendingOperation('import-invite');
+    setOperationError(null);
+    setOperationMessage(null);
+    try {
+      const imported: SyncInviteImportResult = await importSyncInvite({ data: { invite } });
+      if (imported.ok) {
+        setResult({ ok: true, data: imported.data.state });
+        setSyncInvite('');
+        setOperationMessage(`Imported ${imported.data.remoteName} and updated ${imported.data.envPath}.`);
+      } else {
+        setOperationError(imported.error);
+      }
+    } finally {
+      setPendingOperation(null);
+    }
+  };
 
   return (
     <main class={page}>
@@ -1180,6 +1257,7 @@ function SyncRoute() {
             operationError={operationError()}
             operationMessage={operationMessage()}
             remoteForm={remoteForm()}
+            syncInvite={syncInvite()}
             onRemoteFormChange={setRemoteForm}
             onRemoteFormReset={() => setRemoteForm(emptyRemoteForm())}
             onRemoteEdit={(remote) => setRemoteForm(remoteFormFrom(remote))}
@@ -1190,6 +1268,8 @@ function SyncRoute() {
             onRemoteRemove={removeRemote}
             onDiscoveryScan={() => void scanLan()}
             onDiscoveryAddPeer={addDiscoveredPeer}
+            onSyncInviteChange={setSyncInvite}
+            onSyncInviteImport={() => void importInvite()}
             onServeFormChange={(form) => {
               setServeForm(form);
               setServeFormError(null);
