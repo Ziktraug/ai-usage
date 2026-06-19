@@ -579,3 +579,33 @@ Checks:
 Commit:
 
 - Committed as `chore: clean up legacy web sync paths`. See `git log` for the final hash.
+
+## Follow-Up: Dev HMR Hydration Stability
+
+Status: completed
+
+Picked on: 2026-06-19
+Stable on: 2026-06-19
+
+Goal:
+
+- Diagnose `/sync` showing SSR content but not reacting to button clicks in the dev server.
+
+Difficulties:
+
+- The broken state was client-side HMR, not a compile failure: `bun --filter @ai-usage/web check` and `build` both passed.
+- The dev server log showed Vite importing generated Panda helpers while they were being rewritten, producing transient missing export errors for `css` and `cx`.
+
+Decision:
+
+- Ignore `packages/design-system/styled-system/**` in the web dev server watcher. These files are generated build artifacts and should not trigger live HMR while Panda rewrites them in place.
+
+File changes:
+
+- Added a commented `server.watch.ignored` entry in `apps/web/vite.config.ts`.
+
+Checks:
+
+- `bun --filter @ai-usage/web check`: passed.
+- `bun --filter @ai-usage/web build`: passed.
+- `bun run lint`: passed with the existing non-failing `/nix/store` max-size warnings.
