@@ -11,6 +11,10 @@ export interface SnapshotEndpointHealth {
   };
 }
 
+export interface SnapshotTransportOptions {
+  timeoutMs?: number;
+}
+
 const readFileText = (filePath: string) =>
   Effect.try({
     try: () => fs.readFileSync(filePath, 'utf8'),
@@ -32,10 +36,21 @@ const authHeaders = (token: string | null) => {
   return headers;
 };
 
-const fetchText = (url: string, token: string | null) =>
+const fetchText = (url: string, token: string | null, options: SnapshotTransportOptions = {}) =>
   Effect.gen(function* () {
     const response = yield* Effect.tryPromise({
-      try: () => fetch(url, { headers: authHeaders(token) }),
+      try: async () => {
+        const controller = options.timeoutMs ? new AbortController() : null;
+        const timer = controller ? setTimeout(() => controller.abort(), options.timeoutMs) : null;
+        try {
+          return await fetch(url, {
+            headers: authHeaders(token),
+            ...(controller ? { signal: controller.signal } : {}),
+          });
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      },
       catch: (cause) => transportError('fetch', url, cause),
     });
 
@@ -61,8 +76,9 @@ const fetchText = (url: string, token: string | null) =>
 export const fetchRemoteSnapshot = (
   url: string,
   token: string | null,
+  options?: SnapshotTransportOptions,
 ): Effect.Effect<UsageSnapshot, SyncTransportError> =>
-  fetchText(url, token).pipe(Effect.flatMap((text) => parseSnapshotText(url, text)));
+  fetchText(url, token, options).pipe(Effect.flatMap((text) => parseSnapshotText(url, text)));
 
 const parseEndpointHealth = (url: string, text: string) =>
   Effect.try({
@@ -85,5 +101,6 @@ const parseEndpointHealth = (url: string, text: string) =>
 export const readSnapshotEndpointHealth = (
   url: string,
   token: string | null,
+  options?: SnapshotTransportOptions,
 ): Effect.Effect<SnapshotEndpointHealth, SyncTransportError> =>
-  fetchText(url, token).pipe(Effect.flatMap((text) => parseEndpointHealth(url, text)));
+  fetchText(url, token, options).pipe(Effect.flatMap((text) => parseEndpointHealth(url, text)));

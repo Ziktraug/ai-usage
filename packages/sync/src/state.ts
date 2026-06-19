@@ -6,7 +6,6 @@ import {
   listSyncRemotes,
   readSyncedSnapshotRecords,
   resolveSyncToken,
-  type StoredSyncedSnapshot,
 } from '@ai-usage/local-collectors/sync-storage';
 import { Effect } from 'effect';
 
@@ -24,10 +23,19 @@ export interface SyncRemoteState {
   fetchedAt?: string;
 }
 
+export interface SyncStoredSnapshotState {
+  remoteName: string;
+  remoteUrl: string;
+  fetchedAt: string;
+  machineId: string;
+  machineLabel: string;
+  rows: number;
+}
+
 export interface SyncState {
   localMachine: UsageMachine;
   remotes: SyncRemoteState[];
-  storedSnapshots: StoredSyncedSnapshot[];
+  storedSnapshots: SyncStoredSnapshotState[];
   warnings: LocalHistoryWarning[];
 }
 
@@ -68,7 +76,14 @@ export const getSyncState: Effect.Effect<
   return {
     localMachine,
     remotes: remoteStates,
-    storedSnapshots: synced.records,
+    storedSnapshots: synced.records.map((record) => ({
+      remoteName: record.remoteName,
+      remoteUrl: record.remoteUrl,
+      fetchedAt: record.fetchedAt,
+      machineId: record.snapshot.machine.id,
+      machineLabel: record.snapshot.machine.label,
+      rows: record.snapshot.rows.length,
+    })),
     warnings: synced.warnings,
   };
 });

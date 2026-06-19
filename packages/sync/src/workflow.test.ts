@@ -10,8 +10,10 @@ import { Effect } from 'effect';
 import { getSyncState } from './state';
 import {
   addSyncRemote,
+  pullOneShotSyncRemote,
   pullSyncRemote,
   selectSyncRemotesToPull,
+  setSyncRemoteEnabled,
   tokenForSyncRemote,
 } from './workflow';
 
@@ -103,6 +105,32 @@ describe('sync workflow', () => {
       rows: 1,
       tokenStatus: 'none',
     });
+  });
+
+  test('toggles remote enabled state', async () => {
+    const state = await withStorage(
+      Effect.gen(function* () {
+        yield* addSyncRemote({ name: 'macbook', url: 'http://remote/snapshot', tokenEnv: null });
+        yield* setSyncRemoteEnabled('macbook', false);
+        return yield* getSyncState;
+      }),
+    );
+
+    expect(state.remotes[0]?.enabled).toBe(false);
+  });
+
+  test('pulls a one-shot remote without preconfigured storage', async () => {
+    globalThis.fetch = (async () => new Response(JSON.stringify(snapshot()), { status: 200 })) as unknown as typeof fetch;
+
+    const state = await withStorage(
+      Effect.gen(function* () {
+        yield* pullOneShotSyncRemote({ name: 'macbook', url: 'http://remote/snapshot', tokenEnv: null });
+        return yield* getSyncState;
+      }),
+    );
+
+    expect(state.remotes).toHaveLength(0);
+    expect(state.storedSnapshots[0]?.machineLabel).toBe('Remote Machine');
   });
 
   test('fails when a configured token env is missing', async () => {

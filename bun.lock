@@ -33,6 +33,7 @@
         "@ai-usage/design-system": "workspace:*",
         "@ai-usage/local-collectors": "workspace:*",
         "@ai-usage/reporting": "workspace:*",
+        "@ai-usage/sync": "workspace:*",
         "@tanstack/solid-router": "1.170.16",
         "@tanstack/solid-start": "1.168.26",
         "@tanstack/solid-table": "^8.21.3",
@@ -79,6 +80,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@ai-usage/core": "workspace:*",
+        "@ai-usage/local-collectors": "workspace:*",
         "effect": "^3.21.3",
       },
     },

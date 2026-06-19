@@ -135,3 +135,38 @@ Checks:
 Commit:
 
 - this phase commit records the shared snapshot server protocol.
+
+### Phase 4: Discovery And Web Server-Function Readiness
+
+Status: completed.
+
+Intent:
+
+- add package-owned LAN peer discovery so browser/UI code does not scan the network directly;
+- add report-app server functions that expose sync state and sync actions for a future `/sync` page;
+- keep the web adapter server-backed and leave visible UI work for a later slice.
+
+Decisions:
+
+- added `@ai-usage/sync/discovery` with active `/health` scanning and host injection for tests;
+- added timeouts to snapshot transport so active discovery does not hang indefinitely;
+- changed `SyncState.storedSnapshots` from full snapshot records to serializable summaries because TanStack server functions enforce strict serialization and the full snapshot facets type can contain `unknown`;
+- server functions return `{ ok, data/error }` so the future page can render typed failures without depending on Effect error internals.
+
+Difficulties:
+
+- TanStack Start server functions rejected `SyncState` while it contained full `StoredSyncedSnapshot` records; summarizing stored snapshots made the interface more UI-shaped and serializable.
+- `createServerFn` input handling has no local examples with validators, so the adapter validates unknown input manually in `sync.server.ts`.
+
+Checks:
+
+- `bun test packages/sync/src/discovery.test.ts packages/sync/src/server.test.ts packages/sync/src/workflow.test.ts packages/sync/src/transport.test.ts` passed.
+- `bun --filter @ai-usage/sync check` passed.
+- `bun --filter @ai-usage/report check` passed.
+- `bun --filter @ai-usage/cli check` passed.
+- `bun run check` passed.
+- Biome still reports existing large-file warnings for files under `/nix/store`.
+
+Commit:
+
+- this phase commit records LAN discovery and report server-function readiness.
