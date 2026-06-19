@@ -21,6 +21,14 @@ export const commandButton = css({
     outline: '2px solid token(colors.accent)',
     outlineOffset: '2px',
   },
+  _disabled: {
+    opacity: 0.45,
+    cursor: 'not-allowed',
+    _hover: {
+      borderColor: 'line',
+      color: 'muted',
+    },
+  },
 });
 
 export const ghostButton = css({
