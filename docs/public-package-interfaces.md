@@ -33,7 +33,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `.`: sync package barrel.
 - `./discovery`: snapshot remote LAN discovery helpers and peer discovery results.
 - `./errors`: sync error types shared by sync modules.
-- `./server`: snapshot HTTP protocol, LAN host URL helpers, and Bun snapshot server adapter.
+- `./server`: snapshot HTTP protocol, LAN host URL helpers, and Bun/Node snapshot server adapters.
 - `./state`: UI-consumable sync state assembled from configured remotes and stored synced snapshots.
 - `./transport`: snapshot file/HTTP loading and endpoint health checks.
 - `./workflow`: remote registration, selection, token validation, pull, and removal workflow.

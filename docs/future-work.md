@@ -17,9 +17,10 @@ Global backlog for known follow-ups that should survive individual refactor logs
 
 ## Sync UI
 
-- Build a dedicated server-backed `/sync` route using the existing sync server functions in `apps/report/src/server/sync.ts`.
-- Add UI affordances for local snapshot serving, LAN peer discovery, remote enable/disable, pull now, and sync error states.
-- Add secret-entry UX before storing raw tokens; persistent config should keep using `tokenEnv`.
+- Add optional live polling on `/sync` once manual refresh/start/stop flows have had real use.
+- Add copy-to-clipboard affordances for served snapshot URLs if selectable text is not enough in practice.
+- Consider richer inline editing for remote renames; the current edit form intentionally keeps the remote name fixed.
+- Keep persistent config using `tokenEnv`; raw tokens should remain process-local or one-shot only.
 
 ## Design System
 

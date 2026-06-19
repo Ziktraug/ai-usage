@@ -54,7 +54,7 @@ Owns application-facing sync modules:
 - snapshot file and HTTP transport;
 - snapshot endpoint health checks;
 - sync workflow and UI-consumable sync state;
-- LAN snapshot server protocol and discovery as those modules are added.
+- LAN snapshot server protocol, Bun and Node server adapters, and discovery.
 
 Apps should use this package for sync behavior instead of owning transport, auth, parsing, or remote status logic.
 
@@ -75,6 +75,7 @@ Owns web runtime and UI:
 
 - TanStack Start server functions and Bun subprocess boundary for local collection under Nitro;
 - report payload runtime/bootstrap/refresh;
+- LAN sync console route and process-local snapshot serve lifecycle;
 - dashboard, overview, table schema, and UI model modules;
 - browser CSV/HTML export adapters.
 

@@ -163,6 +163,8 @@ bun run cli -- sync watch macbook --interval 60s
 
 Bidirectional sync is symmetric pull: run `serve` on both machines and configure each machine to pull the other's snapshot.
 
+The interactive report also includes a LAN sync console at `/sync` when served through the report app. Use it to start or stop this machine's snapshot server, discover peers, validate endpoints, add remotes, pull now, enable or disable remotes, and remove remotes without calling CLI code from the web UI.
+
 ### 5. See where sessions come from
 
 Merged reports include a `Machine` column (CLI `--wide`, CSV, and HTML dashboard). CSV also includes `machine_id` for scripting.
