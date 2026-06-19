@@ -51,6 +51,8 @@ import {
   remoteMachineLabel,
   remoteDraftFromDiscoveredPeer,
   serveStatusLabel,
+  allInOneSetupSummary,
+  syncServeErrorHint,
   syncOperationErrorHint,
   tokenStatusLabel,
   validateServeStartInput,
@@ -655,12 +657,14 @@ const ServePanel = (props: {
                 <span>{serve().machine?.id ?? 'Machine id unavailable'}</span>
                 <span>{serve().tokenRequired ? 'Token required' : 'Token optional'}</span>
                 <span>{serve().tokenConfigured ? 'Token configured' : 'No serve token configured'}</span>
+                <span>{allInOneSetupSummary}</span>
               </div>
 
               <Show when={serve().lastError}>
                 {(error) => (
                   <div class={operationPanel} role="alert">
                     <div class={strongCell}>{error().message}</div>
+                    <Show when={syncServeErrorHint(error())}>{(hint) => <div class={muted}>{hint()}</div>}</Show>
                   </div>
                 )}
               </Show>
@@ -732,8 +736,8 @@ const ServePanel = (props: {
               <Show when={props.shareResult?.ok ? props.shareResult.data : null}>
                 {(share) => (
                   <div class={copyBlock}>
-                    <div class={strongCell}>Copy on the other machine</div>
-                    <div class={muted}>Updated {share().envPath}</div>
+                    <div class={strongCell}>Paste in the other repo checkout</div>
+                    <div class={muted}>This machine updated {share().envPath}. The pasted block updates .env on the other machine.</div>
                     <pre class={copyText}>{share().copyText}</pre>
                     <div class={actionRow}>
                       <button class={ghostButton} type="button" onClick={() => props.onCopyShare(share().copyText)}>
