@@ -171,7 +171,7 @@ export const readRepoAiUsageConfig = (cwd = process.cwd()): Effect.Effect<AiUsag
     const filePath = repoAiUsageConfigPath(cwd);
     if (!fs.existsSync(filePath)) return {};
     const module = yield* Effect.tryPromise({
-      try: () => import(`${pathToFileURL(filePath).href}?t=${Date.now()}`),
+      try: () => import(/* @vite-ignore */ `${pathToFileURL(filePath).href}?t=${Date.now()}`),
       catch: machineConfigError('importAiUsageConfig', filePath),
     });
     const exportedConfig =
