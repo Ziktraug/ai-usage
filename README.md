@@ -103,6 +103,8 @@ On the Mac:
 bun run cli -- serve --host 0.0.0.0 --token mysecret
 ```
 
+Keep that command running. It prints one or more `http://...:3847/snapshot` URLs detected from the Mac's network interfaces; use one of those URLs from the other machine. If `macbook.local` does not resolve on your network, use the printed IP address instead.
+
 On the PC:
 
 ```sh
@@ -123,12 +125,22 @@ bun run cli -- merge --remote http://localhost:3847/snapshot --local
 For a persistent workflow, register the other machine as a snapshot remote and pull it into local storage:
 
 ```sh
+# First, keep the snapshot server running on the other machine:
+bun run cli -- serve --host 0.0.0.0 --token mysecret
+
 # Store this in your shell, ./.env, or ~/.config/ai-usage/.env
 # .env is gitignored in this repo.
 AI_USAGE_SYNC_MACBOOK_TOKEN=mysecret
 
+# Use one of the snapshot URLs printed by the serve command.
 bun run cli -- sync add macbook http://macbook.local:3847/snapshot --token-env AI_USAGE_SYNC_MACBOOK_TOKEN
 bun run cli -- sync pull macbook
+```
+
+If you do not know the host name ahead of time, that is expected: start `serve` first, copy the printed URL, then run `sync add`. To test a URL before saving it as a remote, you can do a one-shot pull:
+
+```sh
+bun run cli -- sync pull --name macbook --remote http://192.168.1.63:3847/snapshot --token-env AI_USAGE_SYNC_MACBOOK_TOKEN
 ```
 
 Future reports include synced snapshots by default:
