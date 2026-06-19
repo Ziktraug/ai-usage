@@ -429,4 +429,50 @@ Checks:
 
 Commit:
 
-- Pending.
+- `e619b95 feat: add LAN pairing credential protocol`
+
+## Slice 9: Usage Merge Peer Runtime
+
+Status: completed
+
+Picked on: 2026-06-19
+Stable on: 2026-06-19
+
+Goal:
+
+- Expose `/lan/merge-bundle` through `usage-merge` with bearer-token protection.
+- Add merge-now behavior for a paired peer, backed by `usage-store` peer bundle import.
+- Run the first merge after pairing a trusted discovered peer.
+- Surface peer rows, warnings, online state, and last-merged timestamp through the LAN merge state model.
+- Keep report rendering offline; peer data must come from the local usage store, not network fetches.
+
+Difficulties:
+
+- Effect failures are easier to test through `Effect.flip` than through printed `Cause` strings; the first test pass checked the wrong representation.
+- Bun's global `fetch` type includes additional properties, so the network-blocking report test needed an explicit `unknown` cast.
+- The discovery peer fixture initially used an older `url` shape; current `DiscoveredLanPeer` records host, port, availability, self, and last-seen fields.
+
+Decisions:
+
+- Keep LAN serving generic and put merge-bundle authorization in `usage-merge`.
+- Add `createUsageMergeBundleHttpHandler` as a small composable HTTP handler for `/lan/merge-bundle`.
+- Add `createUsageMergeRuntime` with injectable peer URLs, token lookup, transport, and clock so tests can cover network and in-memory paths.
+- Treat missing tokens as `missing-token` recovery errors and missing endpoints or failed fetches as `peer-offline` errors with UI-visible `lastError`.
+- Implement first-merge-after-pairing by requiring the peer to already be recorded as trusted, then immediately calling `mergePeer`.
+
+File changes:
+
+- Added authenticated merge-bundle HTTP serving, fetch transport, runtime state, merge-now import, first-merge-after-pairing, and peer status tracking to `packages/usage-merge/src/index.ts`.
+- Expanded `packages/usage-merge/src/index.test.ts` with authenticated handler, paired peer merge, missing-token, offline, and first-merge tests.
+- Updated `packages/report-data/src/reporting.test.ts` to prove local report rendering performs no network work while including stored peer rows.
+
+Checks:
+
+- `bun test packages/usage-merge/src/index.test.ts`: passed.
+- `bun test packages/report-data/src/reporting.test.ts`: passed.
+- `bun run check`: passed. Biome reported the same non-failing `/nix/store` max-size warnings.
+- `bun run test`: passed.
+
+Commit:
+
+- Committed as `feat: add usage merge peer runtime`. See `git log` for the final hash.
