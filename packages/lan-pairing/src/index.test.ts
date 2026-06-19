@@ -4,6 +4,8 @@ import {
   completePakePairing,
   discoverLanPeers,
   discoveryHostsForAddresses,
+  LAN_PAIRING_DISCOVERY_CONCURRENCY,
+  LAN_PAIRING_DISCOVERY_TIMEOUT_MS,
   LAN_PAIRING_PORT_RANGE,
   LanPairingError,
   makeLanPairingService,
@@ -59,6 +61,11 @@ const envelope = (peerId: string, credential: string) => ({
 describe('LAN pairing public boundary', () => {
   test('documents the stable v1 LAN port range', () => {
     expect(LAN_PAIRING_PORT_RANGE).toEqual({ start: 3847, end: 3857 });
+  });
+
+  test('documents bounded active scan defaults', () => {
+    expect(LAN_PAIRING_DISCOVERY_TIMEOUT_MS).toBe(300);
+    expect(LAN_PAIRING_DISCOVERY_CONCURRENCY).toBe(128);
   });
 
   test('keeps peer identity generic and project-agnostic', () => {
