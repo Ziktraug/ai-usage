@@ -23,6 +23,7 @@ const renderSyncHelp = () =>
     '',
     'On the other machine, run:',
     '  ai-usage serve --host 0.0.0.0 --token <secret>',
+    '  # Keep it running and copy one of the printed http://...:3847/snapshot URLs.',
     '',
     'On this machine, store the token in your shell or ~/.config/ai-usage/.env:',
     '  AI_USAGE_SYNC_MACBOOK_TOKEN=<secret>',
@@ -30,6 +31,9 @@ const renderSyncHelp = () =>
     'Then add and pull the remote:',
     '  ai-usage sync add macbook http://<other-machine-ip>:3847/snapshot --token-env AI_USAGE_SYNC_MACBOOK_TOKEN',
     '  ai-usage sync pull macbook',
+    '',
+    'Or test the URL once before saving it:',
+    '  ai-usage sync pull --name macbook --remote http://<other-machine-ip>:3847/snapshot --token-env AI_USAGE_SYNC_MACBOOK_TOKEN',
   ].join('\n');
 
 const validateSyncUrl = (url: string) =>

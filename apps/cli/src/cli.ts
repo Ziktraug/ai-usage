@@ -156,6 +156,7 @@ export const helpText =
   `\nSync:\n` +
   `  sync add <name> <url> --token-env <env>\n` +
   `  sync pull [name] | --all\n` +
+  `  sync pull --name <name> --remote <url> --token-env <env>\n` +
   `  sync watch [name] | --all --interval 60s\n` +
   `  sync list\n` +
   `  sync remove <name>\n` +
