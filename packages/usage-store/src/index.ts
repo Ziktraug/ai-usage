@@ -45,6 +45,7 @@ export interface ImportPeerMergeBundleInput {
 
 export interface QueryReportRowsInput {
   dbPath: string;
+  harnessKeys?: string[];
   originMachineIds?: string[];
   statuses?: StoredUsageRowStatus[];
 }
@@ -314,6 +315,11 @@ export const queryReportRows = (
         if (input.originMachineIds?.length) {
           sql += ` AND origin_machine_id IN (${input.originMachineIds.map(() => '?').join(', ')})`;
           params.push(...input.originMachineIds);
+        }
+
+        if (input.harnessKeys?.length) {
+          sql += ` AND harness_key IN (${input.harnessKeys.map(() => '?').join(', ')})`;
+          params.push(...input.harnessKeys);
         }
 
         sql += ' ORDER BY COALESCE(active_date, \'\') DESC, row_key ASC';

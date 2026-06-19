@@ -8,7 +8,7 @@ import {
   type ReportOptions,
   type UsageReportPayload,
 } from '@ai-usage/report-core/report-data';
-import type { HarnessKey } from '@ai-usage/report-core/harness-metadata';
+import { harnessKeys, type HarnessKey } from '@ai-usage/report-core/harness-metadata';
 import {
   createUsageSnapshot,
   mergeUsageSnapshots,
@@ -172,6 +172,12 @@ const collectConfiguredLocalRowsWithWarnings = (request: LocalReportRowsRequest)
 const usageStoreLocalHistoryError = (operation: string, dbPath: string) => (cause: unknown) =>
   new LocalHistoryError({ operation, path: dbPath, cause });
 
+const selectedStoredHarnessKeys = (request: LocalUsageSelection): HarnessKey[] | undefined => {
+  if (request.harness) return [request.harness];
+  if (request.includeCursor) return undefined;
+  return harnessKeys.filter((key) => key !== 'cursor');
+};
+
 export const collectLocalReportRows = (request: LocalReportRowsRequest) =>
   Effect.gen(function* () {
     const { config, rows } = yield* collectConfiguredLocalRows(request);
@@ -192,7 +198,8 @@ export const collectLocalReportRowsWithWarnings = (request: LocalReportRowsReque
     yield* importLocalRows({ dbPath, machine, rows }).pipe(
       Effect.mapError(usageStoreLocalHistoryError('usageStore.importLocalRows', dbPath)),
     );
-    const stored = yield* queryReportRows({ dbPath, originMachineIds: [machine.id] }).pipe(
+    const harnessKeys = selectedStoredHarnessKeys(request);
+    const stored = yield* queryReportRows({ dbPath, ...(harnessKeys === undefined ? {} : { harnessKeys }) }).pipe(
       Effect.mapError(usageStoreLocalHistoryError('usageStore.queryReportRows', dbPath)),
     );
     const harnesses = collection.harnesses.map((harness) => ({

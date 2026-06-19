@@ -2,11 +2,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, test } from 'bun:test';
+import { createUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import { createUsageSnapshot, type UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import { LocalHistoryStorage, createLocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
+import { writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import { storeSyncedSnapshot } from '@ai-usage/local-collectors/sync-storage';
+import { importPeerMergeBundle, usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 import {
   createLocalReportPayload,
@@ -140,6 +143,41 @@ describe('shared reporting', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(configCwd, { recursive: true, force: true });
+    }
+  });
+
+  test('includes stored peer rows when creating the local report payload', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-peer-store-'));
+    try {
+      const storage = createLocalHistoryStorage(home);
+      writeClaudeSession(home, '/work/local');
+      await Effect.runPromise(writeMachineConfig(testMachine).pipe(Effect.provideService(LocalHistoryStorage, storage)));
+      await Effect.runPromise(
+        importPeerMergeBundle({
+          dbPath: usageStorePath(home),
+          localMachineId: testMachine.id,
+          bundle: createUsageMergeBundle({
+            machine: { id: 'peer-machine', label: 'Peer Machine' },
+            rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-session-1' })],
+          }),
+        }),
+      );
+
+      const payload = await Effect.runPromise(
+        createLocalReportPayload({
+          harness: null,
+          includeCursor: false,
+          keepSource: true,
+          generatedAt: new Date('2026-01-01T00:00:00.000Z'),
+          options: defaultOptions,
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(payload.rows).toHaveLength(2);
+      expect(payload.rows.map((row) => row.project).sort()).toContain('peer-project');
+      expect(payload.rows.find((row) => row.project === 'peer-project')?.source?.machineLabel).toBe('Peer Machine');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 
