@@ -22,7 +22,12 @@ export class SyncWorkflowError extends Data.TaggedError('SyncWorkflowError')<{
   readonly remoteName?: string;
 }> {}
 
-export type SyncError = SyncTransportError | SyncWorkflowError;
+export class SyncServerError extends Data.TaggedError('SyncServerError')<{
+  readonly operation: string;
+  readonly message: string;
+}> {}
+
+export type SyncError = SyncTransportError | SyncWorkflowError | SyncServerError;
 
 const causeMessage = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 
