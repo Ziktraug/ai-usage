@@ -5,7 +5,17 @@ import { readLanPeersConfig } from '@ai-usage/local-collectors/lan-peers';
 import { createUsageMergeRuntime, lanIdentityFromMachine } from '@ai-usage/usage-merge';
 import { usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
-import type { SyncServerResult } from './sync.server';
+
+export type LanMergeServerResult<T> =
+  | { ok: true; data: T }
+  | {
+      ok: false;
+      error: {
+        tag: string;
+        message: string;
+        reason?: string;
+      };
+    };
 
 export interface LanMergePeerInput {
   machineId: string;
@@ -25,7 +35,7 @@ export interface LanMergeScanInput {
 
 const toJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
-const errorResult = (error: unknown): SyncServerResult<never> => {
+const errorResult = (error: unknown): LanMergeServerResult<never> => {
   const record = typeof error === 'object' && error !== null ? (error as Record<string, unknown>) : {};
   return {
     ok: false,
@@ -44,7 +54,7 @@ const peerUrlsFromDiscovered = (peers: DiscoveredLanPeer[]) =>
 
 const runLanMerge = async <A>(
   effect: Effect.Effect<A, unknown, import('@ai-usage/local-collectors/local-history').LocalHistoryStorage>,
-): Promise<SyncServerResult<A>> => {
+): Promise<LanMergeServerResult<A>> => {
   try {
     return { ok: true, data: toJson(await Effect.runPromise(effect.pipe(Effect.provide(LocalHistoryStorageLive)))) };
   } catch (error) {

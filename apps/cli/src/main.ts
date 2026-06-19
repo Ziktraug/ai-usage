@@ -143,37 +143,15 @@ export const app = Effect.gen(function* () {
   const output =
     command.args.format === 'html' || command.args.format === 'payload'
       ? yield* Effect.gen(function* () {
-          const payload = command.args.synced !== false
-            ? (yield* createMergedUsageReport({
-                snapshots: [],
-                includeLocal: true,
-                includeSynced: true,
-                harness: command.args.harness,
-                includeCursor: command.args.cursor,
-                options: command.args,
-                includeFacets: true,
-              })).payload
-            : yield* createLocalReportPayload({
-                ...reportRequest,
-                options: command.args,
-                includeFacets: true,
-              });
+          const payload = yield* createLocalReportPayload({
+            ...reportRequest,
+            options: command.args,
+            includeFacets: true,
+          });
           return yield* Effect.promise(() => renderUsagePayloadForCli(payload, command.args));
         })
       : yield* Effect.gen(function* () {
-          const { rows, warnings } = command.args.synced !== false
-            ? yield* Effect.gen(function* () {
-                const merged = yield* createMergedUsageReport({
-                  snapshots: [],
-                  includeLocal: true,
-                  includeSynced: true,
-                  harness: command.args.harness,
-                  includeCursor: command.args.cursor,
-                  options: command.args,
-                });
-                return { rows: merged.rows, warnings: merged.payload.warnings ?? [] };
-              })
-            : yield* collectLocalReportRowsWithWarnings(reportRequest);
+          const { rows, warnings } = yield* collectLocalReportRowsWithWarnings(reportRequest);
           yield* writeFormatWarningsStderr(command.args, warnings);
           return yield* Effect.promise(() => renderUsageReportForCli(rows, command.args, undefined, warnings));
         });

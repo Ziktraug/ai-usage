@@ -524,3 +524,58 @@ Checks:
 Commit:
 
 - Committed as `feat: refactor sync page for LAN merge`. See `git log` for the final hash.
+
+## Slice 11: Cleanup
+
+Status: completed
+
+Picked on: 2026-06-19
+Stable on: 2026-06-19
+
+Goal:
+
+- Remove old snapshot-remote UI/server paths from web.
+- Remove invite string UI/server support from web.
+- Stop report rendering from reading legacy stored synced snapshots.
+- Retire `packages/sync` from web/reporting ownership while preserving CLI legacy sync commands.
+- Verify LAN modules stay independent from report payload rendering APIs.
+
+Difficulties:
+
+- `packages/sync` is still imported by CLI sync commands and the CLI snapshot server path, so deleting the package would break the current CLI surface.
+- The dev server produced transient HMR import errors while files were being deleted and recreated; a later `/sync` request returned 200 after the final file state settled.
+- The legacy local snapshot cache directory did not exist on this machine, so there was nothing to delete.
+
+Decisions:
+
+- Retire rather than delete `packages/sync`: it is documented as legacy snapshot sync and no longer used by web or report-data.
+- Remove web's `@ai-usage/sync` dependency and delete web snapshot server/invite server files.
+- Keep CLI legacy sync commands compiling, but remove the stale `--no-synced` report option because reports now read usage-store rows.
+- Leave `local-collectors/sync-storage` in place for the retired CLI sync package only.
+
+File changes:
+
+- Deleted `apps/web/src/server/sync.server.ts`, `sync-serve.server.ts`, `sync-invite.server.ts`, and the old snapshot serve server test.
+- Replaced `apps/web/src/server/sync.ts` with LAN merge server functions only.
+- Trimmed `apps/web/src/sync-page-model.ts` and tests to LAN merge-only helpers.
+- Removed `@ai-usage/sync` from `apps/web/package.json` and refreshed `bun.lock`.
+- Removed report-data reads of `readSyncedSnapshotRecords` and deleted the stored synced snapshot reporting test.
+- Removed `--no-synced` from CLI report args/help and switched CLI reports to the usage-store-backed local report path.
+- Added `packages/sync/README.md` marking the package as retired legacy snapshot sync.
+
+Checks:
+
+- `bun test apps/web/src/sync-page-model.test.ts packages/report-data/src/reporting.test.ts`: passed.
+- `bun run --cwd apps/web check`: passed.
+- `bun run --cwd packages/report-data check`: passed.
+- `bun run --cwd apps/cli check`: passed.
+- `bun run check`: passed. Biome reported the same non-failing `/nix/store` max-size warnings.
+- `bun run test`: passed.
+- `/sync` dev-server smoke request: `HTTP/1.1 200`.
+- Legacy snapshot cache check: `$HOME/.local/share/ai-usage/snapshots` did not exist.
+- Search verified `apps/web` has no `@ai-usage/sync` imports and report-data has no `readSyncedSnapshotRecords` or `includeSynced`.
+- Search verified LAN modules do not import `UsageReportPayload` or `createUsageReportPayload`.
+
+Commit:
+
+- Committed as `chore: clean up legacy web sync paths`. See `git log` for the final hash.
