@@ -28,6 +28,12 @@ The workspace packages expose only these public seams. Cross-package imports mus
 
 - `.`: report payload and snapshot assembly seam over core plus local collectors.
 
+## `@ai-usage/sync`
+
+- `.`: sync package barrel.
+- `./errors`: sync error types shared by sync modules.
+- `./transport`: snapshot file/HTTP loading and endpoint health checks.
+
 ## `@ai-usage/design-system`
 
 - `.`: design-system public barrel.

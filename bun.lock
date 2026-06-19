@@ -21,6 +21,7 @@
         "@ai-usage/core": "workspace:*",
         "@ai-usage/local-collectors": "workspace:*",
         "@ai-usage/reporting": "workspace:*",
+        "@ai-usage/sync": "workspace:*",
         "effect": "^3.21.3",
       },
     },
@@ -73,6 +74,14 @@
         "effect": "^3.21.3",
       },
     },
+    "packages/sync": {
+      "name": "@ai-usage/sync",
+      "version": "0.1.0",
+      "dependencies": {
+        "@ai-usage/core": "workspace:*",
+        "effect": "^3.21.3",
+      },
+    },
     "packages/usage-core": {
       "name": "@ai-usage/core",
       "version": "0.1.0",
@@ -90,6 +99,8 @@
     "@ai-usage/report": ["@ai-usage/report@workspace:apps/report"],
 
     "@ai-usage/reporting": ["@ai-usage/reporting@workspace:packages/reporting"],
+
+    "@ai-usage/sync": ["@ai-usage/sync@workspace:packages/sync"],
 
     "@babel/code-frame": ["@babel/code-frame@7.29.7", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.29.7", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="],
 

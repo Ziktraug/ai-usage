@@ -13,6 +13,7 @@ import {
   listProjectSourcesWithWarnings,
   type ProjectSource,
 } from '@ai-usage/reporting';
+import { fetchRemoteSnapshot, readSnapshotFile } from '@ai-usage/sync/transport';
 import { Console, Effect, Layer } from 'effect';
 import { type Args, helpText, parseCommand } from './cli';
 import { CliArgumentError, formatAppError } from './errors';
@@ -23,7 +24,6 @@ import { renderUsagePayloadForCli, renderUsageReportForCli, renderWarnings, rend
 import { CliRuntime, CliRuntimeLive } from './runtime';
 import { runServe } from './serve';
 import { runSetupServer } from './setup';
-import { fetchRemoteSnapshot, readSnapshotFile } from './snapshot-transport';
 import { runSyncCommand } from './sync';
 
 export const app = Effect.gen(function* () {
