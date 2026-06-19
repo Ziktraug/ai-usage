@@ -33,6 +33,14 @@ export default defineConfig({
   build: {
     cssCodeSplit: false,
   },
+  server: {
+    watch: {
+      // The design-system package writes Panda helpers in-place during check/build.
+      // If a dev server watches those generated files, HMR can import them mid-write
+      // and leave the client bundle unhydrated until a full restart.
+      ignored: ['**/packages/design-system/styled-system/**'],
+    },
+  },
   resolve: {
     dedupe: ['solid-js', 'solid-js/web'],
   },
