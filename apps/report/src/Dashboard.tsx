@@ -8,9 +8,11 @@ import {
   filterSummary,
   ghostButton,
   header,
+  headerActions,
   headerTop,
   meta,
   metricGrid,
+  navButton,
   page,
   searchInput,
   section,
@@ -27,7 +29,7 @@ import {
   unavailableText,
   unavailableTitle,
 } from '@ai-usage/design-system/report';
-import { useNavigate, useSearch } from '@tanstack/solid-router';
+import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
 import { CursorAttributionPanel } from './cursor-attribution-panel';
@@ -356,7 +358,12 @@ export const Dashboard = (props: {
                 </Show>
               </div>
             </div>
-            <ThemeToggle />
+            <div class={headerActions}>
+              <Link to="/sync" class={navButton}>
+                Sync
+              </Link>
+              <ThemeToggle />
+            </div>
           </div>
         </header>
 

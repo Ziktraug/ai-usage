@@ -27,6 +27,14 @@ export const headerTop = css({
   gap: '16px',
 });
 
+export const headerActions = css({
+  display: 'flex',
+  alignItems: 'center',
+  gap: '8px',
+  flexShrink: 0,
+  _print: { display: 'none' },
+});
+
 export const titleBlock = css({
   display: 'grid',
   gap: '8px',
