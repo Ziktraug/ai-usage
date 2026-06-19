@@ -148,7 +148,11 @@ describe('shared reporting', () => {
 
   test('includes stored peer rows when creating the local report payload', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-peer-store-'));
+    const originalFetch = globalThis.fetch;
     try {
+      globalThis.fetch = (() => {
+        throw new Error('Report rendering must not perform network work');
+      }) as unknown as typeof fetch;
       const storage = createLocalHistoryStorage(home);
       writeClaudeSession(home, '/work/local');
       await Effect.runPromise(writeMachineConfig(testMachine).pipe(Effect.provideService(LocalHistoryStorage, storage)));
@@ -177,6 +181,7 @@ describe('shared reporting', () => {
       expect(payload.rows.map((row) => row.project).sort()).toContain('peer-project');
       expect(payload.rows.find((row) => row.project === 'peer-project')?.source?.machineLabel).toBe('Peer Machine');
     } finally {
+      globalThis.fetch = originalFetch;
       rmSync(home, { recursive: true, force: true });
     }
   });

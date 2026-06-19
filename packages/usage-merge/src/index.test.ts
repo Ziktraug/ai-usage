@@ -2,8 +2,16 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { createUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
+import type { UsageMachine } from '@ai-usage/report-core/snapshot';
+import type { SourcedRow } from '@ai-usage/report-core/types';
+import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
+import { importLocalRows, queryReportRows } from '@ai-usage/usage-store';
+import { Effect } from 'effect';
 import {
+  createUsageMergeBundleHttpHandler,
   createUsageMergePairingEnvelope,
+  createUsageMergeRuntime,
   decodeUsageMergeCredential,
   encodeUsageMergeCredential,
   lanIdentityFromMachine,
@@ -14,6 +22,26 @@ import {
   USAGE_MERGE_PROTOCOL,
   USAGE_MERGE_PROTOCOL_VERSION,
 } from './index';
+
+const makeSourcedRow = (input: { project: string; sourcePath: string; sessionId: string }): SourcedRow => ({
+  ...normalizeUsageRow({
+    date: new Date('2026-01-01T00:00:00.000Z'),
+    endDate: new Date('2026-01-01T00:01:00.000Z'),
+    harness: 'Claude Code',
+    provider: 'Claude API',
+    name: input.sessionId,
+    model: 'claude-sonnet-4-6',
+    project: input.project,
+    tokens: { in: 10, out: 5, cr: 0, cw: 0 },
+    cost: approximateApiCost,
+    calls: 1,
+  }),
+  source: {
+    harnessKey: 'claude',
+    sourceSessionId: input.sessionId,
+    sourcePath: input.sourcePath,
+  },
+});
 
 describe('usage-merge public boundary', () => {
   test('adapts ai-usage machines into generic LAN identities', () => {
@@ -94,5 +122,191 @@ describe('usage-merge public boundary', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test('serves authenticated local merge bundles without exposing the token', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-merge-handler-'));
+    try {
+      const dbPath = path.join(home, 'usage.sqlite');
+      const machine: UsageMachine = { id: 'machine-a', label: 'Machine A' };
+      await Effect.runPromise(
+        importLocalRows({
+          dbPath,
+          machine,
+          rows: [makeSourcedRow({ project: 'local-project', sourcePath: '/work/local', sessionId: 'local-1' })],
+        }),
+      );
+
+      const handler = createUsageMergeBundleHttpHandler({
+        machine,
+        dbPath,
+        token: 'secret-token',
+        generatedAt: () => new Date('2026-06-19T12:00:00.000Z'),
+      });
+
+      const rejected = await handler(new Request('http://127.0.0.1/lan/merge-bundle'));
+      const accepted = await handler(
+        new Request('http://127.0.0.1/lan/merge-bundle', {
+          headers: { authorization: 'Bearer secret-token' },
+        }),
+      );
+      const text = await accepted.text();
+
+      expect(rejected.status).toBe(401);
+      expect(accepted.status).toBe(200);
+      expect(text).not.toContain('secret-token');
+      expect(JSON.parse(text)).toMatchObject({
+        machine,
+        generatedAt: '2026-06-19T12:00:00.000Z',
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('merges a paired peer bundle into the local usage store and updates peer state', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-merge-peer-'));
+    let server: ReturnType<typeof Bun.serve> | undefined;
+    try {
+      const localMachine: UsageMachine = { id: 'local-machine', label: 'Local Machine' };
+      const peerMachine: UsageMachine = { id: 'peer-machine', label: 'Peer Machine' };
+      const localDbPath = path.join(home, 'local.sqlite');
+      const peerDbPath = path.join(home, 'peer.sqlite');
+      await Effect.runPromise(
+        importLocalRows({
+          dbPath: peerDbPath,
+          machine: peerMachine,
+          rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-1' })],
+        }),
+      );
+
+      server = Bun.serve({
+        port: 0,
+        fetch: createUsageMergeBundleHttpHandler({
+          machine: peerMachine,
+          dbPath: peerDbPath,
+          token: 'peer-token',
+          generatedAt: () => new Date('2026-06-19T12:00:00.000Z'),
+        }),
+      });
+
+      const runtime = createUsageMergeRuntime({
+        localMachine,
+        dbPath: localDbPath,
+        peers: [
+          {
+            machineId: peerMachine.id,
+            machineLabel: peerMachine.label,
+            tokenEnv: 'AI_USAGE_LAN_MERGE_PEER_TOKEN',
+            pairedAt: '2026-06-19T11:00:00.000Z',
+          },
+        ],
+        peerUrls: { [peerMachine.id]: `http://${server.hostname}:${server.port}/lan/merge-bundle` },
+        getToken: () => 'peer-token',
+        now: () => new Date('2026-06-19T12:30:00.000Z'),
+      });
+
+      const result = await Effect.runPromise(runtime.mergePeer({ machineId: peerMachine.id }));
+      const rows = await Effect.runPromise(queryReportRows({ dbPath: localDbPath, originMachineIds: [peerMachine.id] }));
+      const state = await Effect.runPromise(runtime.getLanMergeState());
+
+      expect(result.inserted).toBe(1);
+      expect(rows.rows).toHaveLength(1);
+      expect(rows.rows[0]?.project).toBe('peer-project');
+      expect(state.trustedPeers[0]).toMatchObject({
+        machineId: peerMachine.id,
+        online: true,
+        rows: 1,
+        warnings: 0,
+        lastMergedAt: '2026-06-19T12:30:00.000Z',
+      });
+    } finally {
+      server?.stop(true);
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('reports missing token and offline peer recovery errors', async () => {
+    const runtime = createUsageMergeRuntime({
+      localMachine: { id: 'local-machine', label: 'Local Machine' },
+      dbPath: path.join(tmpdir(), 'unused.sqlite'),
+      peers: [
+        {
+          machineId: 'peer-machine',
+          machineLabel: 'Peer Machine',
+          tokenEnv: 'AI_USAGE_LAN_MERGE_PEER_TOKEN',
+          pairedAt: '2026-06-19T11:00:00.000Z',
+        },
+      ],
+      peerUrls: {},
+      getToken: () => undefined,
+    });
+
+    const missingToken = await Effect.runPromise(runtime.mergePeer({ machineId: 'peer-machine' }).pipe(Effect.flip));
+    expect(missingToken.reason).toBe('missing-token');
+
+    const offlineRuntime = createUsageMergeRuntime({
+      localMachine: { id: 'local-machine', label: 'Local Machine' },
+      dbPath: path.join(tmpdir(), 'unused.sqlite'),
+      peers: [
+        {
+          machineId: 'peer-machine',
+          machineLabel: 'Peer Machine',
+          tokenEnv: 'AI_USAGE_LAN_MERGE_PEER_TOKEN',
+          pairedAt: '2026-06-19T11:00:00.000Z',
+        },
+      ],
+      peerUrls: {},
+      getToken: () => 'peer-token',
+    });
+
+    const offline = await Effect.runPromise(offlineRuntime.mergePeer({ machineId: 'peer-machine' }).pipe(Effect.flip));
+    expect(offline.reason).toBe('peer-offline');
+    const state = await Effect.runPromise(offlineRuntime.getLanMergeState());
+    expect(state.service.lastError).toContain('offline');
+  });
+
+  test('runs the first merge when pairing a trusted discovered peer', async () => {
+    const peerMachine: UsageMachine = { id: 'peer-machine', label: 'Peer Machine' };
+    const runtime = createUsageMergeRuntime({
+      localMachine: { id: 'local-machine', label: 'Local Machine' },
+      dbPath: path.join(tmpdir(), 'unused.sqlite'),
+      peers: [
+        {
+          machineId: peerMachine.id,
+          machineLabel: peerMachine.label,
+          tokenEnv: 'AI_USAGE_LAN_MERGE_PEER_TOKEN',
+          pairedAt: '2026-06-19T11:00:00.000Z',
+        },
+      ],
+      discoveredPeers: [
+        {
+          identity: lanIdentityFromMachine(peerMachine),
+          host: '127.0.0.1',
+          port: 5000,
+          online: true,
+          pairingAvailable: true,
+          self: false,
+          lastSeenAt: '2026-06-19T11:00:00.000Z',
+        },
+      ],
+      peerUrls: { [peerMachine.id]: 'memory://peer/lan/merge-bundle' },
+      getToken: () => 'peer-token',
+      transport: {
+        fetchMergeBundle: () =>
+          Effect.succeed(
+            createUsageMergeBundle({
+              machine: peerMachine,
+              rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-1' })],
+            }),
+          ),
+      },
+      now: () => new Date('2026-06-19T12:30:00.000Z'),
+    });
+
+    const state = await Effect.runPromise(runtime.pairPeer({ discoveredPeerId: peerMachine.id, password: '123456' }));
+
+    expect(state.trustedPeers[0]?.lastMergedAt).toBe('2026-06-19T12:30:00.000Z');
+    expect(state.trustedPeers[0]?.rows).toBe(1);
   });
 });
