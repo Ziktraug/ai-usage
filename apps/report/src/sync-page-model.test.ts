@@ -5,6 +5,8 @@ import {
   enabledStatusLabel,
   formatSyncDateTime,
   remoteMachineLabel,
+  discoveryBadgesForPeer,
+  remoteDraftFromDiscoveredPeer,
   syncOperationErrorHint,
   tokenStatusLabel,
 } from './sync-page-model';
@@ -79,5 +81,25 @@ describe('sync page model', () => {
       'local machine',
     );
     expect(syncOperationErrorHint({ tag: 'SyncTransportError', message: 'fetch failed' })).toContain('host');
+  });
+
+  test('maps discovered peers to add-remote form defaults and badges', () => {
+    const peer = {
+      host: '192.168.1.20',
+      healthUrl: 'http://192.168.1.20:3847/health',
+      snapshotUrl: 'http://192.168.1.20:3847/snapshot',
+      machineId: 'remote-1',
+      machineLabel: 'Nathans MacBook Pro',
+      self: true,
+      alreadyConfigured: true,
+      lastSeenAt: '2026-06-19T09:00:00.000Z',
+    };
+
+    expect(remoteDraftFromDiscoveredPeer(peer)).toEqual({
+      name: 'nathans-macbook-pro',
+      url: 'http://192.168.1.20:3847/snapshot',
+      tokenEnv: '',
+    });
+    expect(discoveryBadgesForPeer(peer)).toEqual(['self', 'configured']);
   });
 });
