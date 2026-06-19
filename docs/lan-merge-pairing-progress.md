@@ -241,4 +241,48 @@ Checks:
 
 Commit:
 
+- `807cb0b feat: support usage-store peer bundles`
+
+## Slice 5: LAN Pairing Runtime
+
+Status: completed
+
+Picked on: 2026-06-19
+Stable on: 2026-06-19
+
+Goal:
+
+- Add a generic process-local LAN pairing runtime in `packages/lan-pairing`.
+- Bind the first available port in the stable `3847-3857` range by default.
+- Expose `/lan/health`, `/lan/peer`, and generic pairing endpoints without ai-usage imports.
+
+Difficulties:
+
+- `exactOptionalPropertyTypes` required clearing optional runtime fields by omitting them instead of assigning `undefined`.
+- TypeScript widens object-literal status values inside `Ref.update`, so runtime state updates need explicit literal statuses.
+- `Bun.serve().port` is typed optional in tests even though it is populated after binding.
+
+Decisions:
+
+- Implement the runtime as an Effect `Layer` and `Ref`-backed service via `makeLanPairingService` and `LanPairingRuntimeLive`.
+- Use Bun's HTTP server for this first runtime slice, matching the repo's Bun-based package tests.
+- Keep the generic pairing endpoints minimal and credential-redacted; real PAKE remains a later slice.
+- Treat repeated `start` and `stop` calls as idempotent.
+- Keep discovery as a stub returning no peers until Slice 6.
+
+File changes:
+
+- Added the generic LAN pairing HTTP handler, port-range binder, runtime state, service factory, Context tag, and live Layer in `packages/lan-pairing/src/index.ts`.
+- Expanded `packages/lan-pairing/src/index.test.ts` to cover random local servers, occupied-port fallback, full-range failure, idempotent lifecycle, and public credential redaction.
+
+Checks:
+
+- `bun test packages/lan-pairing/src/index.test.ts`: passed.
+- `bun run --cwd packages/lan-pairing check`: passed.
+- `bun run check`: passed. Biome reported the same non-failing `/nix/store` max-size warnings.
+- `bun run test`: passed.
+- Boundary search: `packages/lan-pairing/src` has no `from '@ai-usage/*'` imports.
+
+Commit:
+
 - Pending.
