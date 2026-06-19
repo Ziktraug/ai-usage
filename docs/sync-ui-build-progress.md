@@ -61,3 +61,33 @@ Checks:
 Commit:
 
 - this phase commit records the initial `/sync` route and dashboard navigation.
+
+### Phase 2: Read-Only Sync State
+
+Status: completed.
+
+Intent:
+
+- load `getSyncState` from the `/sync` route;
+- render local machine identity, configured remotes, stored snapshot summaries, and sync warnings;
+- add focused model coverage for summary counts and display labels.
+
+Decisions:
+
+- introduced `apps/report/src/sync-page-model.ts` for pure summary and formatting helpers;
+- kept start/remote mutation controls non-functional until their dedicated slices;
+- added an explicit refresh action for the sync state instead of polling.
+
+Difficulties:
+
+- route state is returned as `{ ok, data/error }`, so the component narrows the result before rendering the success and error branches;
+- the static shell had grown large enough that replacing the route content was clearer than patching the placeholder markup in place.
+
+Checks:
+
+- `bun test apps/report/src/sync-page-model.test.ts` passed.
+- `bun --filter @ai-usage/report check` passed.
+
+Commit:
+
+- this phase commit records the read-only sync state page.
