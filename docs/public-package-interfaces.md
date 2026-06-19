@@ -31,6 +31,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 ## `@ai-usage/sync`
 
 - `.`: sync package barrel.
+- `./discovery`: snapshot remote LAN discovery helpers and peer discovery results.
 - `./errors`: sync error types shared by sync modules.
 - `./server`: snapshot HTTP protocol, LAN host URL helpers, and Bun snapshot server adapter.
 - `./state`: UI-consumable sync state assembled from configured remotes and stored synced snapshots.

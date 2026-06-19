@@ -1,3 +1,4 @@
+export * from './discovery';
 export * from './errors';
 export * from './server';
 export * from './state';

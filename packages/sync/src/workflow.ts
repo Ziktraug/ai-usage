@@ -80,6 +80,19 @@ export const removeConfiguredSyncRemote = (
 ): Effect.Effect<boolean, LocalHistoryError, import('@ai-usage/local-collectors/local-history').LocalHistoryStorage> =>
   removeSyncRemote(name);
 
+export const setSyncRemoteEnabled = (
+  name: string,
+  enabled: boolean,
+): Effect.Effect<
+  SyncRemoteConfig[],
+  LocalHistoryError | SyncWorkflowError,
+  import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
+> =>
+  Effect.gen(function* () {
+    const remote = yield* findSyncRemote(name);
+    return yield* upsertSyncRemote({ ...remote, enabled });
+  });
+
 export const findSyncRemote = (
   name: string,
 ): Effect.Effect<
@@ -175,4 +188,21 @@ export const pullSyncRemote = (
     const record = yield* storeSyncedSnapshot({ remote, snapshot });
     const storage = yield* LocalHistoryStorage;
     return { record, path: syncedSnapshotPath(storage, remote.name), durationMs: Date.now() - started };
+  });
+
+export const pullOneShotSyncRemote = (
+  input: AddSyncRemoteInput,
+): Effect.Effect<
+  PullSyncRemoteResult,
+  LocalHistoryError | SyncTransportError | SyncWorkflowError,
+  import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
+> =>
+  Effect.gen(function* () {
+    yield* validateSyncUrl(input.url);
+    yield* validateTokenEnv(input.tokenEnv);
+    return yield* pullSyncRemote({
+      name: input.name,
+      url: input.url,
+      ...(input.tokenEnv ? { tokenEnv: input.tokenEnv } : {}),
+    });
   });
