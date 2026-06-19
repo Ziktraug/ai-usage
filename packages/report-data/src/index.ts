@@ -28,7 +28,6 @@ import {
 import { LocalHistoryError, type LocalHistoryWarning } from '@ai-usage/local-collectors/errors';
 import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-collectors/machine-config';
-import { readSyncedSnapshotRecords } from '@ai-usage/local-collectors/sync-storage';
 import { importLocalRows, queryReportRows, usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 
@@ -64,7 +63,6 @@ export interface LocalUsageSnapshotRequest extends LocalUsageSelection {
 export interface MergedUsageReportRequest extends LocalUsageSelection {
   snapshots: UsageSnapshot[];
   includeLocal?: boolean;
-  includeSynced?: boolean;
   machine?: UsageMachine;
   options: ReportOptions;
   generatedAt?: Date;
@@ -244,12 +242,6 @@ export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
 export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
   Effect.gen(function* () {
     const snapshots = [...request.snapshots];
-    const syncedWarnings: SnapshotMergeWarning[] = [];
-    if (request.includeSynced) {
-      const synced = yield* readSyncedSnapshotRecords;
-      snapshots.push(...synced.records.map((record) => record.snapshot));
-      syncedWarnings.push(...synced.warnings);
-    }
     if (request.includeLocal) {
       snapshots.push(yield* createLocalUsageSnapshot(toLocalUsageSnapshotRequest(request)));
     }
@@ -258,7 +250,7 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
     const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
     const rows = applyProjectAliases(merged.rows, config.projectAliases ?? []);
     const report = prepareUsageReport(rows, request.options);
-    const allWarnings = [...merged.warnings, ...syncedWarnings];
+    const allWarnings = merged.warnings;
     const payloadWarnings = allWarnings.map(({ key, ...warning }) => ({
       ...warning,
       message: key ? `${warning.message}: ${key}` : warning.message,

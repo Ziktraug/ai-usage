@@ -14,7 +14,7 @@ The public interface is the app route tree, server functions under `src/server`,
 
 ## Depends On
 
-`apps/web` may depend on `@ai-usage/report-data`, `@ai-usage/report-core`, `@ai-usage/design-system`, `@ai-usage/local-collectors` only for current server boundaries, and temporary legacy `@ai-usage/sync` code until the LAN merge migration removes it.
+`apps/web` may depend on `@ai-usage/report-data`, `@ai-usage/report-core`, `@ai-usage/design-system`, `@ai-usage/local-collectors`, `@ai-usage/lan-pairing`, `@ai-usage/usage-merge`, and `@ai-usage/usage-store` through public package exports.
 
 ## Must Not Import
 

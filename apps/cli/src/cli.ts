@@ -11,7 +11,6 @@ export interface Args extends ReportOptions {
   cursor: boolean;
   color: boolean | null;
   wide: boolean;
-  synced?: boolean;
 }
 
 export interface SnapshotArgs {
@@ -137,7 +136,6 @@ export const helpText =
   `  --limit <n>            show only n table rows (analysis covers all)\n` +
   `  --sort date|tokens|cost\n` +
   `  --wide                 add Dur / Turns / Tools / ±Lines columns\n` +
-  `  --no-synced            exclude stored synced snapshots from report\n` +
   `  --no-cursor            skip Cursor (local data is partial)\n` +
   `  --no-color / --color   disable / force ANSI colors (default: auto)\n` +
   `  --json | --csv | --html\n` +
@@ -183,7 +181,6 @@ export const parseArgs = (argv: string[]): Effect.Effect<Args, CliArgumentError>
       color: null,
       wide: false,
       sort: 'date',
-      synced: true,
     };
     const rest = [...argv];
     while (rest.length) {
@@ -203,7 +200,6 @@ export const parseArgs = (argv: string[]): Effect.Effect<Args, CliArgumentError>
       else if (arg === '--no-color') args.color = false;
       else if (arg === '--color') args.color = true;
       else if (arg === '--wide') args.wide = true;
-      else if (arg === '--no-synced') args.synced = false;
       else if (arg === '--sort') args.sort = yield* parseSort(yield* parseRequiredValue(rest, '--sort'));
       else if (arg === '-h' || arg === '--help')
         return yield* Effect.fail(cliArgumentError('Help is a command-level flag'));
@@ -267,7 +263,6 @@ const parseMergeArgs = (argv: string[]): Effect.Effect<MergeArgs, CliArgumentErr
       else if (arg === '--no-color') args.color = false;
       else if (arg === '--color') args.color = true;
       else if (arg === '--wide') args.wide = true;
-      else if (arg === '--no-synced') args.synced = false;
       else if (arg === '--sort') args.sort = yield* parseSort(yield* parseRequiredValue(rest, '--sort'));
       else if (arg.startsWith('--')) return yield* Effect.fail(cliArgumentError(`Unknown option for merge: ${arg}`));
       else args.files.push(arg);
