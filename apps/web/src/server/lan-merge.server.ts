@@ -49,26 +49,25 @@ const errorResult = (error: unknown): LanMergeServerResult<never> => {
 
 let runtimePromise: Promise<UsageMergeService> | undefined;
 
-const createRuntime =
-  Effect.gen(function* () {
-    const storage = yield* LocalHistoryStorage;
-    const localMachine = yield* ensureMachineConfig;
-    const peers = yield* readLanPeersConfig;
-    const lanPairing = yield* makeLanPairingService;
-    return createUsageMergeRuntime({
-      localMachine,
-      dbPath: usageStorePath(storage.home),
-      peers: peers.peers,
-      lanPairing,
-      lanHost: '0.0.0.0',
-      persistToken: (key, value) => {
-        upsertUsageMergeEnvToken(key, value);
-      },
-      persistTrustedPeer: async (peer) => {
-        await Effect.runPromise(upsertStoredLanPeer(peer).pipe(Effect.provideService(LocalHistoryStorage, storage)));
-      },
-    });
+const createRuntime = Effect.gen(function* () {
+  const storage = yield* LocalHistoryStorage;
+  const localMachine = yield* ensureMachineConfig;
+  const peers = yield* readLanPeersConfig;
+  const lanPairing = yield* makeLanPairingService;
+  return createUsageMergeRuntime({
+    localMachine,
+    dbPath: usageStorePath(storage.home),
+    peers: peers.peers,
+    lanPairing,
+    lanHost: '0.0.0.0',
+    persistToken: (key, value) => {
+      upsertUsageMergeEnvToken(key, value);
+    },
+    persistTrustedPeer: async (peer) => {
+      await Effect.runPromise(upsertStoredLanPeer(peer).pipe(Effect.provideService(LocalHistoryStorage, storage)));
+    },
   });
+});
 
 const getRuntime = () => {
   runtimePromise ??= Effect.runPromise(createRuntime.pipe(Effect.provide(LocalHistoryStorageLive))).catch((error) => {
@@ -78,7 +77,9 @@ const getRuntime = () => {
   return runtimePromise;
 };
 
-const runRuntime = async <A>(operation: (runtime: UsageMergeService) => Effect.Effect<A, unknown>): Promise<LanMergeServerResult<A>> => {
+const runRuntime = async <A>(
+  operation: (runtime: UsageMergeService) => Effect.Effect<A, unknown>,
+): Promise<LanMergeServerResult<A>> => {
   try {
     const runtime = await getRuntime();
     return { ok: true, data: toJson(await Effect.runPromise(operation(runtime))) };
@@ -87,8 +88,7 @@ const runRuntime = async <A>(operation: (runtime: UsageMergeService) => Effect.E
   }
 };
 
-export const readLanMergeStateForServer = () =>
-  runRuntime((runtime) => runtime.getLanMergeState());
+export const readLanMergeStateForServer = () => runRuntime((runtime) => runtime.getLanMergeState());
 
 export const startLanMergeForServer = () =>
   runRuntime((runtime) => runtime.startLanMerge().pipe(Effect.zipRight(runtime.getLanMergeState())));
@@ -97,16 +97,21 @@ export const stopLanMergeForServer = () =>
   runRuntime((runtime) => runtime.stopLanMerge().pipe(Effect.zipRight(runtime.getLanMergeState())));
 
 export const scanLanMergePeersForServer = (_input: LanMergeScanInput = {}) =>
-  runRuntime((runtime) => runtime.scanLanMergePeers());
+  runRuntime((runtime) => runtime.scanLanMergePeers(_input));
 
 export const mergeLanPeerForServer = (input: LanMergePeerInput) =>
-  runRuntime((runtime) => runtime.mergePeer({ machineId: input.machineId }).pipe(Effect.zipRight(runtime.getLanMergeState())));
+  runRuntime((runtime) =>
+    runtime
+      .mergePeer({ machineId: input.machineId, ...(input.url === undefined ? {} : { url: input.url }) })
+      .pipe(Effect.zipRight(runtime.getLanMergeState())),
+  );
 
 export const pairLanPeerForServer = (input: LanMergePairInput) =>
   runRuntime((runtime) =>
     runtime.pairPeer({
       discoveredPeerId: input.discoveredPeerId,
       password: input.password,
+      ...(input.url === undefined ? {} : { url: input.url }),
     }),
   );
 

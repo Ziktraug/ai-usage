@@ -39,7 +39,13 @@ const missingPeer = (host: string, port: number) =>
     reason: 'peer-not-found',
   });
 
-const startPair = (input: { password: string; sessionId?: string; role: 'initiator' | 'responder'; now?: Date; ttlMs?: number }) =>
+const startPair = (input: {
+  password: string;
+  sessionId?: string;
+  role: 'initiator' | 'responder';
+  now?: Date;
+  ttlMs?: number;
+}) =>
   startPakePairing({
     localPeerId: input.role === 'initiator' ? 'peer-a' : 'peer-b',
     remotePeerId: input.role === 'initiator' ? 'peer-b' : 'peer-a',
@@ -127,16 +133,20 @@ describe('LAN pairing public boundary', () => {
     const bobComplete = completePakePairing({ state: bob.state, peerMessage: alice.message });
 
     expect(aliceComplete.sessionKey).toBe(bobComplete.sessionKey);
-    expect(verifyPakeConfirmation({
-      sessionKey: aliceComplete.sessionKey,
-      peerRole: 'responder',
-      confirmation: bobComplete.confirmation,
-    })).toBe(true);
-    expect(verifyPakeConfirmation({
-      sessionKey: bobComplete.sessionKey,
-      peerRole: 'initiator',
-      confirmation: aliceComplete.confirmation,
-    })).toBe(true);
+    expect(
+      verifyPakeConfirmation({
+        sessionKey: aliceComplete.sessionKey,
+        peerRole: 'responder',
+        confirmation: bobComplete.confirmation,
+      }),
+    ).toBe(true);
+    expect(
+      verifyPakeConfirmation({
+        sessionKey: bobComplete.sessionKey,
+        peerRole: 'initiator',
+        confirmation: aliceComplete.confirmation,
+      }),
+    ).toBe(true);
   });
 
   test('fails key confirmation for a wrong password', () => {
@@ -146,17 +156,31 @@ describe('LAN pairing public boundary', () => {
     const bobComplete = completePakePairing({ state: bob.state, peerMessage: alice.message });
 
     expect(aliceComplete.sessionKey).not.toBe(bobComplete.sessionKey);
-    expect(verifyPakeConfirmation({
-      sessionKey: aliceComplete.sessionKey,
-      peerRole: 'responder',
-      confirmation: bobComplete.confirmation,
-    })).toBe(false);
+    expect(
+      verifyPakeConfirmation({
+        sessionKey: aliceComplete.sessionKey,
+        peerRole: 'responder',
+        confirmation: bobComplete.confirmation,
+      }),
+    ).toBe(false);
   });
 
   test('binds replayed messages, expiry, self-pairing, and concurrent attempts to the transcript', () => {
-    const firstAlice = startPair({ password: 'correct horse battery staple', role: 'initiator', sessionId: 'session-1' });
-    const secondAlice = startPair({ password: 'correct horse battery staple', role: 'initiator', sessionId: 'session-2' });
-    const secondBob = startPair({ password: 'correct horse battery staple', role: 'responder', sessionId: 'session-2' });
+    const firstAlice = startPair({
+      password: 'correct horse battery staple',
+      role: 'initiator',
+      sessionId: 'session-1',
+    });
+    const secondAlice = startPair({
+      password: 'correct horse battery staple',
+      role: 'initiator',
+      sessionId: 'session-2',
+    });
+    const secondBob = startPair({
+      password: 'correct horse battery staple',
+      role: 'responder',
+      sessionId: 'session-2',
+    });
     const expiredAlice = startPair({
       password: 'correct horse battery staple',
       role: 'initiator',
@@ -310,17 +334,7 @@ describe('LAN pairing public boundary', () => {
     );
 
     expect(probes.map((probe) => probe.port).sort((a, b) => a - b)).toEqual([
-      3847,
-      3848,
-      3849,
-      3850,
-      3851,
-      3852,
-      3853,
-      3854,
-      3855,
-      3856,
-      3857,
+      3847, 3848, 3849, 3850, 3851, 3852, 3853, 3854, 3855, 3856, 3857,
     ]);
     expect(peers).toEqual([
       {
@@ -342,7 +356,10 @@ describe('LAN pairing public boundary', () => {
           return Effect.succeed({ identity: { ...identity('peer-a'), label: 'Peer A' }, pairingAvailable: true });
         }
         if (input.host === '192.168.1.11') {
-          return Effect.succeed({ identity: { ...identity('peer-a'), label: 'Peer A Duplicate' }, pairingAvailable: true });
+          return Effect.succeed({
+            identity: { ...identity('peer-a'), label: 'Peer A Duplicate' },
+            pairingAvailable: true,
+          });
         }
         if (input.host === '192.168.1.12') {
           return Effect.succeed({ identity: { ...identity('local'), label: 'Local' }, pairingAvailable: true });
@@ -390,6 +407,39 @@ describe('LAN pairing public boundary', () => {
       expect(first[0]?.online).toBe(true);
       expect(second[0]?.online).toBe(false);
       expect(state.discoveredPeers[0]?.online).toBe(false);
+    } finally {
+      await stopAll(service);
+    }
+  });
+
+  test('service scan accepts explicit hosts for direct LAN probing', async () => {
+    const probes: Array<{ host: string; port: number }> = [];
+    const transport: LanPeerProbeTransport = {
+      readPeer: (input) => {
+        probes.push({ host: input.host, port: input.port });
+        if (input.host === '192.168.1.44' && input.port === 3847) {
+          return Effect.succeed({ identity: { ...identity('peer-a'), label: 'Peer A' }, pairingAvailable: true });
+        }
+        return Effect.fail(missingPeer(input.host, input.port));
+      },
+    };
+    const service = await Effect.runPromise(
+      makeLanPairingServiceWithOptions({
+        discoveryHosts: ['192.168.1.10'],
+        discoveryTransport: transport,
+      }),
+    );
+
+    try {
+      await Effect.runPromise(service.start({ identity: identity('local'), portRange: { start: 0, end: 0 } }));
+      const peers = await Effect.runPromise(service.scan({ hosts: ['192.168.1.44'] }));
+
+      expect(probes.every((probe) => probe.host === '192.168.1.44')).toBe(true);
+      expect(peers[0]).toMatchObject({
+        identity: { id: 'peer-a' },
+        host: '192.168.1.44',
+        online: true,
+      });
     } finally {
       await stopAll(service);
     }

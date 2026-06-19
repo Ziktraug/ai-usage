@@ -27,7 +27,14 @@ import { createFileRoute, Link } from '@tanstack/solid-router';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
-import { getLanMergeState, mergeLanPeer, pairLanPeer, scanLanMergePeers, startLanMerge, stopLanMerge } from '../server/sync';
+import {
+  getLanMergeState,
+  mergeLanPeer,
+  pairLanPeer,
+  scanLanMergePeers,
+  startLanMerge,
+  stopLanMerge,
+} from '../server/sync';
 import {
   buildLanMergeSummary,
   formatSyncDateTime,
@@ -226,6 +233,8 @@ const LocalMachinePanel = (props: {
   state: LanMergeState;
   scanning: boolean;
   pending: boolean;
+  scanHost: string;
+  onScanHostChange: (host: string) => void;
   onStart: () => void;
   onStop: () => void;
   onScan: () => void;
@@ -251,6 +260,16 @@ const LocalMachinePanel = (props: {
       </Show>
     </div>
     <div class={actionRow}>
+      <label class={formField}>
+        <span class={inlineFieldLabel}>Scan host</span>
+        <input
+          class={field}
+          value={props.scanHost}
+          placeholder="192.168.1.23"
+          disabled={props.pending || props.scanning}
+          onInput={(event) => props.onScanHostChange(event.currentTarget.value)}
+        />
+      </label>
       <Show
         when={props.state.service.status === 'running' || props.state.service.status === 'pairing'}
         fallback={
@@ -266,11 +285,7 @@ const LocalMachinePanel = (props: {
       <button
         class={ghostButton}
         type="button"
-        disabled={
-          props.pending ||
-          props.scanning ||
-          !canScanLan(props.state.service.status)
-        }
+        disabled={props.pending || props.scanning || !canScanLan(props.state.service.status)}
         onClick={props.onScan}
       >
         {!canScanLan(props.state.service.status) ? 'Start first' : props.scanning ? 'Scanning' : 'Scan LAN'}
@@ -344,7 +359,10 @@ const DiscoveredMachines = (props: {
           onInput={(event) => props.onPasswordChange(event.currentTarget.value)}
         />
       </label>
-      <Show when={visiblePeers().length > 0} fallback={<div class={emptyText}>Scan the LAN to find nearby machines.</div>}>
+      <Show
+        when={visiblePeers().length > 0}
+        fallback={<div class={emptyText}>Scan the LAN to find nearby machines.</div>}
+      >
         <div class={machineList}>
           <For each={visiblePeers()}>
             {(peer) => (
@@ -361,7 +379,9 @@ const DiscoveredMachines = (props: {
                   <button
                     class={ghostButton}
                     type="button"
-                    disabled={!!props.pendingOperation || !props.password.trim() || !peer.pairingAvailable || !peer.online}
+                    disabled={
+                      !!props.pendingOperation || !props.password.trim() || !peer.pairingAvailable || !peer.online
+                    }
                     onClick={() => props.onPair(peer)}
                   >
                     Pair
@@ -383,7 +403,10 @@ const DiagnosticsPanel = (props: { state: LanMergeState }) => (
       <div>
         <div class={panelSub}>Local endpoints</div>
         <div class={diagnosticsList}>
-          <Show when={props.state.service.urls.length > 0} fallback={<span>No local LAN merge endpoint is running.</span>}>
+          <Show
+            when={props.state.service.urls.length > 0}
+            fallback={<span>No local LAN merge endpoint is running.</span>}
+          >
             <For each={props.state.service.urls}>{(url) => <span>{url}</span>}</For>
           </Show>
         </div>
@@ -391,7 +414,10 @@ const DiagnosticsPanel = (props: { state: LanMergeState }) => (
       <div>
         <div class={panelSub}>Discovered endpoints</div>
         <div class={diagnosticsList}>
-          <Show when={props.state.discoveredPeers.length > 0} fallback={<span>No diagnostics for discovered machines.</span>}>
+          <Show
+            when={props.state.discoveredPeers.length > 0}
+            fallback={<span>No diagnostics for discovered machines.</span>}
+          >
             <For each={props.state.discoveredPeers}>
               {(peer) => (
                 <span>
@@ -413,7 +439,9 @@ const SyncStateView = (props: {
   pendingOperation: string | null;
   operationError: LanOperationError | null;
   operationMessage: string | null;
+  scanHost: string;
   pairPassword: string;
+  onScanHostChange: (host: string) => void;
   onPairPasswordChange: (password: string) => void;
   onStart: () => void;
   onStop: () => void;
@@ -429,6 +457,8 @@ const SyncStateView = (props: {
         state={props.state}
         scanning={props.scanning}
         pending={props.refreshing || !!props.pendingOperation}
+        scanHost={props.scanHost}
+        onScanHostChange={props.onScanHostChange}
         onStart={props.onStart}
         onStop={props.onStop}
         onScan={props.onScan}
@@ -462,7 +492,9 @@ const SyncStateView = (props: {
           <div class={panel}>
             <div class={panelHeader}>
               <div class={panelTitle}>Pair nearby machine</div>
-              <div class={panelSub}>Enter the shared password shown during pairing, then choose a discovered machine.</div>
+              <div class={panelSub}>
+                Enter the shared password shown during pairing, then choose a discovered machine.
+              </div>
             </div>
             <DiscoveredMachines
               peers={props.state.discoveredPeers}
@@ -506,6 +538,7 @@ function SyncRoute() {
   const [pendingOperation, setPendingOperation] = createSignal<string | null>(null);
   const [operationError, setOperationError] = createSignal<LanOperationError | null>(null);
   const [operationMessage, setOperationMessage] = createSignal<string | null>(null);
+  const [scanHost, setScanHost] = createSignal('');
   const [pairPassword, setPairPassword] = createSignal('');
   const okResult = createMemo(() => {
     const current = result();
@@ -541,29 +574,35 @@ function SyncRoute() {
     setOperationError(null);
     setOperationMessage(null);
     try {
-      setOperationResult(await scanLanMergePeers({ data: {} }), 'LAN scan complete.');
+      const host = scanHost().trim();
+      setOperationResult(await scanLanMergePeers({ data: host ? { hosts: [host] } : {} }), 'LAN scan complete.');
     } finally {
       setScanning(false);
     }
   };
 
-  const runOperation = async (operation: string, mutation: () => Promise<LanStateResult>, successMessage: string) => {
+  const runOperation = async (
+    operation: string,
+    mutation: () => Promise<LanStateResult>,
+    successMessage: string | ((state: LanMergeState) => string),
+  ) => {
     if (pendingOperation()) return;
     setPendingOperation(operation);
     setOperationError(null);
     setOperationMessage(null);
     try {
-      return setOperationResult(await mutation(), successMessage);
+      const next = await mutation();
+      const message =
+        typeof successMessage === 'function' ? (next.ok ? successMessage(next.data) : '') : successMessage;
+      return setOperationResult(next, message);
     } finally {
       setPendingOperation(null);
     }
   };
 
-  const start = () =>
-    runOperation('start', () => startLanMerge({ data: {} }), 'LAN merge started.');
+  const start = () => runOperation('start', () => startLanMerge({ data: {} }), 'LAN merge started.');
 
-  const stop = () =>
-    runOperation('stop', () => stopLanMerge({ data: {} }), 'LAN merge stopped.');
+  const stop = () => runOperation('stop', () => stopLanMerge({ data: {} }), 'LAN merge stopped.');
 
   const mergePeer = (peer: TrustedLanPeer, discovered: DiscoveredLanPeer | undefined) =>
     runOperation(
@@ -589,7 +628,10 @@ function SyncRoute() {
             url: mergeBundleUrlForLanPeer(peer),
           },
         }),
-      `Pairing updated for ${peer.identity.label}.`,
+      (state) =>
+        state.trustedPeers.some((trusted) => trusted.machineId === peer.identity.id)
+          ? `Paired ${peer.identity.label}.`
+          : `Waiting for ${peer.identity.label}.`,
     );
 
   return (
@@ -612,7 +654,13 @@ function SyncRoute() {
       <main class={page}>
         <Show
           when={okResult()}
-          fallback={<SyncStateError result={result() as Extract<LanStateResult, { ok: false }>} refreshing={refreshing()} onRefresh={refresh} />}
+          fallback={
+            <SyncStateError
+              result={result() as Extract<LanStateResult, { ok: false }>}
+              refreshing={refreshing()}
+              onRefresh={refresh}
+            />
+          }
         >
           {(okResult) => (
             <SyncStateView
@@ -622,7 +670,9 @@ function SyncRoute() {
               pendingOperation={pendingOperation()}
               operationError={operationError()}
               operationMessage={operationMessage()}
+              scanHost={scanHost()}
               pairPassword={pairPassword()}
+              onScanHostChange={setScanHost}
               onPairPasswordChange={setPairPassword}
               onStart={start}
               onStop={stop}

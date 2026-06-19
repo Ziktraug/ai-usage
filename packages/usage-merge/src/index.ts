@@ -47,10 +47,17 @@ export interface LanMergeState {
 export interface PairPeerInput {
   discoveredPeerId: string;
   password: string;
+  url?: string | null;
 }
 
 export interface MergePeerInput {
   machineId: string;
+  url?: string | null;
+}
+
+export interface ScanLanMergePeersInput {
+  hosts?: string[];
+  timeoutMs?: number;
 }
 
 export interface ForgetPeerInput {
@@ -68,10 +75,7 @@ export interface FetchPeerMergeBundleResult {
 }
 
 export interface UsageMergePeerTransport {
-  fetchMergeBundle(input: {
-    url: string;
-    token: string;
-  }): Effect.Effect<UsageMergeBundle, UsageMergeError>;
+  fetchMergeBundle(input: { url: string; token: string }): Effect.Effect<UsageMergeBundle, UsageMergeError>;
 }
 
 export interface UsageMergeRuntimeOptions {
@@ -141,7 +145,11 @@ export const lanIdentityFromMachine = (machine: UsageMachine): LanPeerIdentity =
   version: USAGE_MERGE_PROTOCOL_VERSION,
 });
 
-const shellToken = (value: string) => value.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase();
+const shellToken = (value: string) =>
+  value
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toUpperCase();
 
 export const usageMergeTokenEnvNameForMachine = (machine: UsageMachine) =>
   `AI_USAGE_LAN_MERGE_${shellToken(machine.label || machine.id) || 'REMOTE'}_TOKEN`;
@@ -288,7 +296,12 @@ export const fetchUsageMergeBundleTransport: UsageMergePeerTransport = {
       },
       catch: (cause) => {
         if (cause instanceof UsageMergeError) return cause;
-        return usageMergeError('fetchMergeBundle', 'Peer is offline or unreachable for LAN merge.', 'peer-offline', cause);
+        return usageMergeError(
+          'fetchMergeBundle',
+          'Peer is offline or unreachable for LAN merge.',
+          'peer-offline',
+          cause,
+        );
       },
     }),
 };
@@ -325,7 +338,9 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
   const peerStats = new Map<string, { lastMergedAt?: string; rows?: number; warnings?: number }>();
   let serviceStatus: LanMergeState['service']['status'] = 'stopped';
   let lastError: string | undefined;
-  let localToken = options.localToken ?? readUsageMergeEnvToken(options.localTokenEnv ?? usageMergeTokenEnvNameForMachine(options.localMachine));
+  let localToken =
+    options.localToken ??
+    readUsageMergeEnvToken(options.localTokenEnv ?? usageMergeTokenEnvNameForMachine(options.localMachine));
 
   const now = () => options.now?.() ?? new Date();
 
@@ -338,8 +353,14 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
   const refreshPeerUrls = (items: DiscoveredLanPeer[]) => {
     peerUrls = {
       ...peerUrls,
-      ...Object.fromEntries(items.filter((peer) => peer.online).map((peer) => [peer.identity.id, mergeBundleUrlForPeer(peer)])),
+      ...Object.fromEntries(
+        items.filter((peer) => peer.online).map((peer) => [peer.identity.id, mergeBundleUrlForPeer(peer)]),
+      ),
     };
+  };
+
+  const rememberPeerUrl = (machineId: string, url: string | null | undefined) => {
+    if (url) peerUrls[machineId] = url;
   };
 
   refreshPeerUrls(discoveredPeers);
@@ -354,7 +375,13 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
     discoveredPeers: lanState?.discoveredPeers ?? discoveredPeers,
     trustedPeers: peers.map((peer) =>
       trustedPeerFromStored(peer, {
-        online: Boolean(peerUrls[peer.machineId]) || Boolean((lanState?.discoveredPeers ?? discoveredPeers).find((item) => item.identity.id === peer.machineId && item.online)),
+        online:
+          Boolean(peerUrls[peer.machineId]) ||
+          Boolean(
+            (lanState?.discoveredPeers ?? discoveredPeers).find(
+              (item) => item.identity.id === peer.machineId && item.online,
+            ),
+          ),
         ...peerStats.get(peer.machineId),
       }),
     ),
@@ -386,7 +413,8 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
         upsertPeerInMemory(peer);
         return peer;
       },
-      catch: (cause) => usageMergeError('pairPeer', 'Could not persist LAN pairing credentials.', 'pairing-failed', cause),
+      catch: (cause) =>
+        usageMergeError('pairPeer', 'Could not persist LAN pairing credentials.', 'pairing-failed', cause),
     });
 
   const localPairingEnvelope = (): Effect.Effect<PairingEnvelope, UsageMergeError> =>
@@ -397,21 +425,24 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
         await persistToken(tokenEnv, localToken);
         return createUsageMergePairingEnvelope({ machine: options.localMachine, tokenEnv, token: localToken });
       },
-      catch: (cause) => usageMergeError('startLanMerge', 'Could not prepare local LAN merge credentials.', 'pairing-failed', cause),
+      catch: (cause) =>
+        usageMergeError('startLanMerge', 'Could not prepare local LAN merge credentials.', 'pairing-failed', cause),
     });
 
   const mergePeer = (input: MergePeerInput): Effect.Effect<ImportResult, UsageMergeError> =>
     Effect.gen(function* () {
       if (input.machineId === options.localMachine.id) {
-        return yield* Effect.fail(
-          usageMergeError('mergePeer', 'Cannot merge this machine into itself.', 'self-merge'),
-        );
+        return yield* Effect.fail(usageMergeError('mergePeer', 'Cannot merge this machine into itself.', 'self-merge'));
       }
 
       const peer = peerByMachineId(input.machineId);
       if (!peer) {
-        return yield* Effect.fail(usageMergeError('mergePeer', 'Peer is not paired with this machine.', 'peer-not-found'));
+        return yield* Effect.fail(
+          usageMergeError('mergePeer', 'Peer is not paired with this machine.', 'peer-not-found'),
+        );
       }
+
+      rememberPeerUrl(input.machineId, input.url);
 
       const token = getToken(peer.tokenEnv);
       if (!token) {
@@ -435,7 +466,12 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
         importedAt: now(),
       }).pipe(
         Effect.mapError((cause) =>
-          usageMergeError('mergePeer', `Could not import peer bundle from ${peer.machineLabel}.`, 'store-failed', cause),
+          usageMergeError(
+            'mergePeer',
+            `Could not import peer bundle from ${peer.machineLabel}.`,
+            'store-failed',
+            cause,
+          ),
         ),
       );
 
@@ -459,26 +495,33 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
       Effect.gen(function* () {
         const envelope = yield* localPairingEnvelope();
         if (options.lanPairing) {
-          yield* options.lanPairing.start({
-            identity: lanIdentityFromMachine(options.localMachine),
-            host: options.lanHost ?? '0.0.0.0',
-            portRange: LAN_PAIRING_PORT_RANGE,
-            extraHandler: createUsageMergeBundleHttpHandler({
-              machine: options.localMachine,
-              dbPath: options.dbPath,
-              token: localToken ?? decodeUsageMergeCredential(envelope.credential).token,
-            }),
-            onPairingComplete: async (result) => {
-              const peer = await Effect.runPromise(recordPairingResult(result));
-              if (peerUrls[peer.machineId]) {
-                await Effect.runPromise(mergePeer({ machineId: peer.machineId }).pipe(Effect.either));
-              }
-            },
-          }).pipe(
-            Effect.mapError((cause) =>
-              usageMergeError('startLanMerge', `Could not start LAN merge service: ${cause.message}`, 'peer-offline', cause),
-            ),
-          );
+          yield* options.lanPairing
+            .start({
+              identity: lanIdentityFromMachine(options.localMachine),
+              host: options.lanHost ?? '0.0.0.0',
+              portRange: LAN_PAIRING_PORT_RANGE,
+              extraHandler: createUsageMergeBundleHttpHandler({
+                machine: options.localMachine,
+                dbPath: options.dbPath,
+                token: localToken ?? decodeUsageMergeCredential(envelope.credential).token,
+              }),
+              onPairingComplete: async (result) => {
+                const peer = await Effect.runPromise(recordPairingResult(result));
+                if (peerUrls[peer.machineId]) {
+                  await Effect.runPromise(mergePeer({ machineId: peer.machineId }).pipe(Effect.either));
+                }
+              },
+            })
+            .pipe(
+              Effect.mapError((cause) =>
+                usageMergeError(
+                  'startLanMerge',
+                  `Could not start LAN merge service: ${cause.message}`,
+                  'peer-offline',
+                  cause,
+                ),
+              ),
+            );
         }
         serviceStatus = 'running';
         lastError = undefined;
@@ -486,11 +529,18 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
     stopLanMerge: () =>
       Effect.gen(function* () {
         if (options.lanPairing) {
-          yield* options.lanPairing.stop().pipe(
-            Effect.mapError((cause) =>
-              usageMergeError('stopLanMerge', `Could not stop LAN merge service: ${cause.message}`, 'peer-offline', cause),
-            ),
-          );
+          yield* options.lanPairing
+            .stop()
+            .pipe(
+              Effect.mapError((cause) =>
+                usageMergeError(
+                  'stopLanMerge',
+                  `Could not stop LAN merge service: ${cause.message}`,
+                  'peer-offline',
+                  cause,
+                ),
+              ),
+            );
         }
         serviceStatus = 'stopped';
       }),
@@ -499,14 +549,21 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
         const lanState = options.lanPairing ? yield* options.lanPairing.getState() : undefined;
         return state(lanState);
       }),
-    scanLanMergePeers: () =>
+    scanLanMergePeers: (input = {}) =>
       Effect.gen(function* () {
         if (options.lanPairing) {
-          discoveredPeers = yield* options.lanPairing.scan().pipe(
-            Effect.mapError((cause) =>
-              usageMergeError('scanLanMergePeers', `Could not scan LAN peers: ${cause.message}`, 'peer-offline', cause),
-            ),
-          );
+          discoveredPeers = yield* options.lanPairing
+            .scan(input)
+            .pipe(
+              Effect.mapError((cause) =>
+                usageMergeError(
+                  'scanLanMergePeers',
+                  `Could not scan LAN peers: ${cause.message}`,
+                  'peer-offline',
+                  cause,
+                ),
+              ),
+            );
           refreshPeerUrls(discoveredPeers);
           return state(yield* options.lanPairing.getState());
         }
@@ -521,30 +578,43 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
         return Effect.fail(usageMergeError('pairPeer', 'Cannot pair this machine with itself.', 'self-merge'));
       }
       if (!options.lanPairing) {
+        rememberPeerUrl(discoveredPeer.identity.id, input.url);
         if (!peerByMachineId(discoveredPeer.identity.id)) {
           return Effect.fail(
             usageMergeError('pairPeer', 'Pairing credentials were not recorded for this peer.', 'pairing-failed'),
           );
         }
-        return mergePeer({ machineId: discoveredPeer.identity.id }).pipe(Effect.zipRight(Effect.sync(() => state())));
+        return mergePeer({
+          machineId: discoveredPeer.identity.id,
+          ...(input.url === undefined ? {} : { url: input.url }),
+        }).pipe(Effect.zipRight(Effect.sync(() => state())));
       }
       return Effect.gen(function* () {
         const envelope = yield* localPairingEnvelope();
-        yield* options.lanPairing!.startPairing({
-          peerId: discoveredPeer.identity.id,
-          password: input.password,
-          envelope,
-        }).pipe(
-          Effect.mapError((cause) =>
-            usageMergeError('pairPeer', `Could not open local pairing session: ${cause.message}`, 'pairing-failed', cause),
-          ),
+        yield* options
+          .lanPairing!.startPairing({
+            peerId: discoveredPeer.identity.id,
+            password: input.password,
+            envelope,
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              usageMergeError(
+                'pairPeer',
+                `Could not open local pairing session: ${cause.message}`,
+                'pairing-failed',
+                cause,
+              ),
+            ),
+          );
+        const pairAttempt = yield* Effect.either(
+          pairWithLanPeer({
+            localIdentity: lanIdentityFromMachine(options.localMachine),
+            peer: discoveredPeer,
+            password: input.password,
+            envelope,
+          }),
         );
-        const pairAttempt = yield* Effect.either(pairWithLanPeer({
-          localIdentity: lanIdentityFromMachine(options.localMachine),
-          peer: discoveredPeer,
-          password: input.password,
-          envelope,
-        }));
         if (pairAttempt._tag === 'Left') {
           if (isPeerWaitingForPairing(pairAttempt.left)) {
             const lanState = yield* options.lanPairing!.getState();
@@ -561,8 +631,11 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
         }
         const result = pairAttempt.right;
         const peer = yield* recordPairingResult(result);
-        peerUrls[peer.machineId] = mergeBundleUrlForPeer(discoveredPeer);
-        yield* mergePeer({ machineId: peer.machineId });
+        peerUrls[peer.machineId] = input.url ?? mergeBundleUrlForPeer(discoveredPeer);
+        yield* mergePeer({
+          machineId: peer.machineId,
+          ...(input.url === undefined ? {} : { url: input.url }),
+        });
         const lanState = yield* options.lanPairing!.getState();
         return state(lanState);
       });
@@ -581,7 +654,7 @@ export interface UsageMergeService {
   startLanMerge(): Effect.Effect<void, UsageMergeError>;
   stopLanMerge(): Effect.Effect<void, UsageMergeError>;
   getLanMergeState(): Effect.Effect<LanMergeState, UsageMergeError>;
-  scanLanMergePeers(): Effect.Effect<LanMergeState, UsageMergeError>;
+  scanLanMergePeers(input?: ScanLanMergePeersInput): Effect.Effect<LanMergeState, UsageMergeError>;
   pairPeer(input: PairPeerInput): Effect.Effect<LanMergeState, UsageMergeError>;
   mergePeer(input: MergePeerInput): Effect.Effect<ImportResult, UsageMergeError>;
   forgetPeer(input: ForgetPeerInput): Effect.Effect<LanMergeState, UsageMergeError>;

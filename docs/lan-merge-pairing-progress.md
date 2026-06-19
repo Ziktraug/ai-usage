@@ -599,6 +599,7 @@ Difficulties:
 Decision:
 
 - Ignore `packages/design-system/styled-system/**` in the web dev server watcher. These files are generated build artifacts and should not trigger live HMR while Panda rewrites them in place.
+- This is a stability fix, not a promise of live HMR for generated design-system helpers. App CSS HMR still comes from the web app's own `apps/web/styled-system/styles.css` import; design-system helper regeneration can still require rerunning Panda or restarting the dev server.
 
 File changes:
 
