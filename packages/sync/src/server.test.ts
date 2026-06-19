@@ -1,7 +1,8 @@
 import { createUsageSnapshot } from '@ai-usage/core/snapshot';
 import type { SourcedRow } from '@ai-usage/core/types';
 import { describe, expect, test } from 'bun:test';
-import { createSnapshotHttpHandler, type SnapshotRequestEvent } from './server';
+import { Effect } from 'effect';
+import { createSnapshotHttpHandler, startNodeSnapshotServer, type SnapshotRequestEvent } from './server';
 
 const machine = { id: 'machine-1', label: 'Machine 1' };
 
@@ -96,5 +97,26 @@ describe('snapshot server protocol', () => {
 
     expect(response.status).toBe(404);
     expect(await response.text()).toBe('not found');
+  });
+
+  test('starts a Node snapshot server adapter', async () => {
+    const server = await Effect.runPromise(
+      startNodeSnapshotServer({
+        host: '127.0.0.1',
+        port: 0,
+        machine,
+        token: null,
+        collectSnapshot: async () => snapshot(),
+      }),
+    );
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${server.port}/health`);
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true, machine });
+    } finally {
+      await server.stop();
+    }
   });
 });

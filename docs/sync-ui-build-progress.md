@@ -154,3 +154,37 @@ Checks:
 Commit:
 
 - this phase commit records LAN discovery on `/sync`.
+
+### Phase 5: Serve Runtime Adapter
+
+Status: completed.
+
+Intent:
+
+- add a Node-compatible snapshot server adapter without changing the CLI Bun adapter;
+- add process-local report server lifecycle state for local snapshot serving;
+- expose `getSyncServeState`, `startSyncServe`, and `stopSyncServe` as report server functions;
+- record recent request events without logging or serializing raw token values.
+
+Decisions:
+
+- added `startNodeSnapshotServer` to `@ai-usage/sync/server` while keeping `startSnapshotServer` on Bun;
+- implemented the report lifecycle in `apps/report/src/server/sync-serve.server.ts` with injectable dependencies for tests;
+- treated `host=0.0.0.0` as requiring a token before start;
+- public serve state exposes only `tokenConfigured`, never the token string.
+
+Difficulties:
+
+- `exactOptionalPropertyTypes` requires optional state fields to be omitted rather than assigned `undefined`;
+- the generated snapshot protocol already uses Web `Request`/`Response`, so the Node adapter only needed request/response translation around the shared handler.
+
+Checks:
+
+- `bun test packages/sync/src/server.test.ts` passed.
+- `bun test apps/report/src/server/sync-serve.server.test.ts` passed.
+- `bun --filter @ai-usage/sync check` passed.
+- `bun --filter @ai-usage/report check` passed.
+
+Commit:
+
+- this phase commit records the report snapshot serve runtime.

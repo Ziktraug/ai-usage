@@ -1,3 +1,4 @@
+import http from 'node:http';
 import os from 'node:os';
 import type { UsageMachine, UsageSnapshot } from '@ai-usage/core/snapshot';
 import { Effect } from 'effect';
@@ -27,7 +28,7 @@ export interface SnapshotServerInput extends SnapshotHttpHandlerInput {
 export interface SnapshotServerHandle {
   port: number;
   urls: string[];
-  stop: () => void;
+  stop: () => void | Promise<void>;
 }
 
 export const lanHosts = () =>
@@ -140,5 +141,74 @@ export const startSnapshotServer = (
       new SyncServerError({
         operation: 'startSnapshotServer',
         message: `startSnapshotServer ${input.host}:${input.port}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      }),
+  });
+
+const requestFromIncomingMessage = (req: http.IncomingMessage) => {
+  const host = req.headers.host ?? 'localhost';
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value === undefined) continue;
+    headers.set(key, Array.isArray(value) ? value.join(', ') : value);
+  }
+  return new Request(`http://${host}${req.url ?? '/'}`, {
+    method: req.method ?? 'GET',
+    headers,
+  });
+};
+
+const writeWebResponse = async (webResponse: Response, res: http.ServerResponse) => {
+  res.statusCode = webResponse.status;
+  webResponse.headers.forEach((value, key) => res.setHeader(key, value));
+  res.end(Buffer.from(await webResponse.arrayBuffer()));
+};
+
+export const startNodeSnapshotServer = (
+  input: SnapshotServerInput,
+): Effect.Effect<SnapshotServerHandle, SyncServerError> =>
+  Effect.tryPromise({
+    try: () =>
+      new Promise<SnapshotServerHandle>((resolve, reject) => {
+        const handler = createSnapshotHttpHandler(input);
+        const server = http.createServer((req, res) => {
+          void handler(requestFromIncomingMessage(req))
+            .then((response) => writeWebResponse(response, res))
+            .catch((cause: unknown) => {
+              const message = cause instanceof Error ? cause.message : String(cause);
+              if (!res.headersSent) res.statusCode = 500;
+              res.end(JSON.stringify({ error: message }));
+            });
+        });
+
+        const onError = (cause: Error) => {
+          server.removeListener('listening', onListening);
+          reject(cause);
+        };
+        const onListening = () => {
+          server.removeListener('error', onError);
+          const address = server.address();
+          const port = typeof address === 'object' && address ? address.port : input.port;
+          const hosts = displayHosts(input.host);
+          const urls = hosts.length
+            ? hosts.map((host) => `http://${host}:${port}/snapshot`)
+            : [`http://${input.host}:${port}/snapshot`];
+          resolve({
+            port,
+            urls,
+            stop: () =>
+              new Promise<void>((stopResolve, stopReject) => {
+                server.close((error) => (error ? stopReject(error) : stopResolve()));
+              }),
+          });
+        };
+
+        server.once('error', onError);
+        server.once('listening', onListening);
+        server.listen(input.port, input.host);
+      }),
+    catch: (cause) =>
+      new SyncServerError({
+        operation: 'startNodeSnapshotServer',
+        message: `startNodeSnapshotServer ${input.host}:${input.port}: ${cause instanceof Error ? cause.message : String(cause)}`,
       }),
   });
