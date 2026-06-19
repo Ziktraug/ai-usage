@@ -102,4 +102,48 @@ Checks:
 
 Commit:
 
+- `3fddde2 feat: add LAN merge domain boundaries`
+
+## Slice 2: Dependency Boundary Linting
+
+Status: completed
+
+Picked on: 2026-06-19
+Stable on: 2026-06-19
+
+Goal:
+
+- Enforce the package graph boundary instead of leaving it as documentation.
+- Catch forbidden direct source imports and forbidden workspace dependencies.
+- Link the lint policy back to the LAN merge plan and package READMEs.
+
+Difficulties:
+
+- The installed Biome CLI exposes experimental `search`, but this repo does not have a Grit plugin setup and `biome explain` does not expose a project-domain rule in this version.
+- Biome `noRestrictedImports` can express source import bans, but not package-specific `package.json` dependency matrix checks.
+
+Decisions:
+
+- Add scoped Biome `noRestrictedImports` overrides for package boundaries that are simple to express globally per path: `packages/lan-pairing` cannot import `@ai-usage/*`, and `packages/report-core` cannot import workspace packages.
+- Add `tools/check-package-boundaries.ts` for the package graph cases that need package-specific import and dependency checks.
+- Co-locate architectural comments with the policy list in the checker so the reason for each forbidden edge is visible next to the rule.
+- Wire `tools/check-package-boundaries.ts` into `bun run lint`.
+
+File changes:
+
+- Updated `biome.json` with scoped restricted-import overrides.
+- Added `tools/check-package-boundaries.ts`.
+- Updated root `package.json` lint script.
+- Updated `docs/architecture.md` to document the boundary lint entry point and link it to this plan and package READMEs.
+
+Checks:
+
+- `bun run lint`: passed. Biome reported the same non-failing `/nix/store` max-size warnings.
+- `bun run check`: passed. Biome reported the same non-failing `/nix/store` max-size warnings.
+- Boundary search: `packages/lan-pairing` has no `@ai-usage/*` imports.
+- Boundary search: no package imports `@ai-usage/web`.
+- `bun run test`: passed.
+
+Commit:
+
 - Pending.

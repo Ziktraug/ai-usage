@@ -57,5 +57,67 @@
       "semicolons": "always",
       "trailingCommas": "all"
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["packages/lan-pairing/src/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "@ai-usage/*",
+                      "../packages/**",
+                      "../../packages/**",
+                      "../../../packages/**",
+                      "../apps/**",
+                      "../../apps/**",
+                      "../../../apps/**",
+                      "@ai-usage/*/src",
+                      "@ai-usage/*/src/**"
+                    ],
+                    "message": "packages/lan-pairing must stay project-agnostic and cannot import ai-usage domain packages."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["packages/report-core/src/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "@ai-usage/*",
+                      "../packages/**",
+                      "../../packages/**",
+                      "../../../packages/**",
+                      "../apps/**",
+                      "../../apps/**",
+                      "../../../apps/**",
+                      "@ai-usage/*/src",
+                      "@ai-usage/*/src/**"
+                    ],
+                    "message": "packages/report-core is pure domain code and cannot import workspace runtime packages."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
