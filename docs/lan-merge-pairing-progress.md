@@ -51,4 +51,55 @@ Checks:
 
 Commit:
 
+- `46cc44e refactor: rename report packages`
+
+## Slice 1: Domain Boundaries
+
+Status: completed
+
+Picked on: 2026-06-19
+Stable on: 2026-06-19
+
+Goal:
+
+- Add typed domain boundaries for merge bundles, LAN pairing, usage merge, and usage-store.
+- Define the `lan-peers.json` storage boundary.
+- Avoid UI behavior changes.
+
+Difficulties:
+
+- The new interface-only packages still need test files because `bun test` exits non-zero when a package has a `test` script but no tests.
+- Parsed JSON validators in TypeScript needed constructed return values rather than direct `Record<string, unknown>` casts.
+
+Decisions:
+
+- Put `UsageMergeBundle`, `SerializedMergeRow`, row status, stable row key, source fingerprint, content hash, and parse/create helpers in `@ai-usage/report-core/merge-bundle`.
+- Use deterministic SHA-256 hashes over stable JSON for row identity/content change detection.
+- Keep `@ai-usage/lan-pairing` project-agnostic: it imports only `effect` and exposes generic LAN identity, discovery, pairing, and service interfaces.
+- Put the ai-usage-specific `TrustedLanPeer`, `LanMergeState`, service commands, and machine-to-LAN identity adapter in `@ai-usage/usage-merge`.
+- Put the first `lan-peers.json` parse/path boundary in `@ai-usage/local-collectors/lan-peers`; no read/write mutation workflow yet.
+- Define `@ai-usage/usage-store` as an Effect-shaped interface package only; SQLite implementation starts in Slice 3.
+
+File changes:
+
+- Added `packages/report-core/src/merge-bundle.ts` and focused tests.
+- Added `packages/local-collectors/src/lan-peers.ts` and focused tests.
+- Added package manifests, tsconfigs, public interfaces, and boundary tests for `packages/lan-pairing`, `packages/usage-store`, and `packages/usage-merge`.
+- Added public exports for `@ai-usage/report-core/merge-bundle` and `@ai-usage/local-collectors/lan-peers`.
+- Regenerated `bun.lock`.
+
+Checks:
+
+- `bun test packages/report-core/src/merge-bundle.test.ts packages/local-collectors/src/lan-peers.test.ts`: passed.
+- `bun test packages/lan-pairing/src/index.test.ts packages/usage-store/src/index.test.ts packages/usage-merge/src/index.test.ts`: passed.
+- `bun run --cwd packages/lan-pairing check`: passed.
+- `bun run --cwd packages/usage-store check`: passed.
+- `bun run --cwd packages/usage-merge check`: passed.
+- Boundary search: `packages/lan-pairing` has no `@ai-usage/*` imports.
+- Boundary search: no package imports `@ai-usage/web`; the only `apps/web` package hit is an RTK test fixture path.
+- `bun run test`: passed.
+- `bun run check`: passed. Biome reported the same non-failing `/nix/store` max-size warnings.
+
+Commit:
+
 - Pending.

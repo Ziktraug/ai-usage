@@ -10,6 +10,7 @@
     "./html-export": "./src/html-export.ts",
     "./pricing": "./src/pricing.ts",
     "./project-alias": "./src/project-alias.ts",
+    "./merge-bundle": "./src/merge-bundle.ts",
     "./report-data": "./src/report-data.ts",
     "./snapshot": "./src/snapshot.ts",
     "./types": "./src/types.ts",

@@ -1,6 +1,7 @@
 export * from './analytics';
 export * from './harness-metadata';
 export * from './html-export';
+export * from './merge-bundle';
 export * from './pricing';
 export * from './project-alias';
 export * from './report-data';
