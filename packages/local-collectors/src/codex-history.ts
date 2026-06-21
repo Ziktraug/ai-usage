@@ -23,6 +23,7 @@ interface CodexSession {
   model: string;
   source: string | null;
   threadSource: string | null;
+  agentNickname: string | null;
   subscription: boolean;
   firstUser: string | null;
   turns: number;
@@ -42,6 +43,7 @@ interface CodexThreadMetadata {
   firstUser: string | null;
   source: string | null;
   threadSource: string | null;
+  agentNickname: string | null;
   model: string | null;
   start: Date | null;
   end: Date | null;
@@ -117,7 +119,7 @@ type SqliteDatabase = {
   query(sql: string): SqliteStatement;
 };
 
-const CODEX_SESSION_CACHE_VERSION = 2;
+const CODEX_SESSION_CACHE_VERSION = 3;
 
 export const codexSessionsDir = (storage: LocalHistoryStorageService) => {
   const paths = resolvePaths(storage);
@@ -216,6 +218,13 @@ const nonEmpty = (value: unknown): string | null => {
   return trimmed ? trimmed : null;
 };
 
+const agentNicknameFromSource = (source: string | null | undefined): string | null => {
+  if (!source) return null;
+  const parsed = safeJSON(source);
+  const spawn = parsed?.subagent?.thread_spawn;
+  return nonEmpty(spawn?.agent_nickname) ?? nonEmpty(spawn?.agent_role);
+};
+
 const readCodexThreadMetadata: Effect.Effect<
   Map<string, CodexThreadMetadata>,
   LocalHistoryError,
@@ -260,6 +269,7 @@ const readCodexThreadMetadata: Effect.Effect<
           firstUser: nonEmpty(row.firstUser),
           source: nonEmpty(row.source),
           threadSource: nonEmpty(row.threadSource),
+          agentNickname: agentNicknameFromSource(row.source),
           model: nonEmpty(row.model),
           start: unixDate(row.createdAt),
           end: unixDate(row.updatedAt),
@@ -281,6 +291,7 @@ const emptySession = (): CodexSession => ({
   model: 'codex',
   source: null,
   threadSource: null,
+  agentNickname: null,
   subscription: false,
   firstUser: null,
   turns: 0,
@@ -359,6 +370,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       model: typeof value.model === 'string' ? value.model : 'codex',
       source: typeof value.source === 'string' ? value.source : null,
       threadSource: typeof value.threadSource === 'string' ? value.threadSource : null,
+      agentNickname: typeof value.agentNickname === 'string' ? value.agentNickname : null,
       subscription: value.subscription === true,
       firstUser: typeof value.firstUser === 'string' ? value.firstUser : null,
       turns: typeof value.turns === 'number' ? value.turns : 0,
@@ -481,7 +493,10 @@ const parseCodexSessionText = (text: string): CodexSessionParseResult => {
       session.source = payload.source == null ? session.source : JSON.stringify(payload.source);
       session.threadSource = payload.thread_source ?? session.threadSource;
       const spawn = payload.source?.subagent?.thread_spawn;
-      if (spawn) session.parent = spawn.parent_thread_id ?? session.parent;
+      if (spawn) {
+        session.parent = spawn.parent_thread_id ?? session.parent;
+        session.agentNickname = nonEmpty(spawn.agent_nickname) ?? nonEmpty(spawn.agent_role) ?? session.agentNickname;
+      }
     }
     if (event.type === 'turn_context' && payload.model) session.model = payload.model;
     const userText = userTextFromPayload(payload);
@@ -514,6 +529,7 @@ const mergeMetadata = (session: CodexSession, metadata: CodexThreadMetadata | un
   session.model = session.model === 'codex' && metadata.model ? metadata.model : session.model;
   session.source = session.source ?? metadata.source;
   session.threadSource = session.threadSource ?? metadata.threadSource;
+  session.agentNickname = session.agentNickname ?? metadata.agentNickname;
   session.firstUser = session.firstUser ?? (metadata.firstUser ? usablePrompt(metadata.firstUser.slice(0, 200)) : null);
   return session;
 };
@@ -531,10 +547,22 @@ const codexSessionName = (
   indexedName: string | undefined,
   metadata: CodexThreadMetadata | undefined,
 ) => {
+  if (session.agentNickname) return session.agentNickname;
   if (indexedName) return indexedName;
   const candidate = metadata?.title || session.firstUser;
   if (isGuardianSession(session, candidate ?? null)) return guardianName(candidate ?? null);
   return candidate || (session.id ? `codex ${session.id.slice(0, 8)}` : 'codex');
+};
+
+const codexTitleSource = (
+  session: CodexSession,
+  indexedName: string | undefined,
+  metadata: CodexThreadMetadata | undefined,
+  isSubagent: boolean,
+) => {
+  if (isSubagent && session.agentNickname) return 'agent-role';
+  const candidate = indexedName || metadata?.title || session.firstUser;
+  return candidate ? 'first-prompt' : 'id';
 };
 
 const readCodexSessions = (
@@ -671,10 +699,12 @@ export const readCodexUsageSessions: Effect.Effect<CollectedSession[], LocalHist
         const isSubagent = (session.id ? childIds.has(session.id) : false) || session.threadSource === 'subagent';
         const parentSession = session.parent ? byId.get(session.parent) : undefined;
         const subscription = session.subscription || Boolean(parentSession?.subscription);
+        const indexedName = session.id ? names.get(session.id) : undefined;
         usageSessions.push({
           source: {
             harnessKey: 'codex',
             sourceSessionId: session.id,
+            ...(session.parent === null ? {} : { parentSourceSessionId: session.parent }),
             sourcePath: session.cwd,
           },
           projectPath: session.cwd,
@@ -682,7 +712,8 @@ export const readCodexUsageSessions: Effect.Effect<CollectedSession[], LocalHist
           endDate: session.end,
           provider: subscription ? 'Codex sub' : 'Codex API',
           model: session.model,
-          name: codexSessionName(session, session.id ? names.get(session.id) : undefined, meta),
+          name: codexSessionName(session, indexedName, meta),
+          titleSource: codexTitleSource(session, indexedName, meta, isSubagent),
           project: base(session.cwd),
           tokens,
           cost: subscription ? actualCost(0) : approximateApiCost,

@@ -88,6 +88,8 @@ const toSnapshotRow = (row: UsageRowWithOptionalSource, machine: UsageMachine): 
     source: {
       harnessKey: source?.harnessKey ?? row.harness.toLowerCase(),
       sourceSessionId: source?.sourceSessionId ?? null,
+      ...(source?.parentSourceSessionId === undefined ? {} : { parentSourceSessionId: source.parentSourceSessionId }),
+      ...(source?.rootSourceSessionId === undefined ? {} : { rootSourceSessionId: source.rootSourceSessionId }),
       ...(source?.sourcePath === undefined ? {} : { sourcePath: source.sourcePath }),
       machineId: machine.id,
       machineLabel: machine.label,
@@ -165,7 +167,11 @@ export const mergeUsageSnapshots = (snapshots: UsageSnapshot[]): SnapshotMergeRe
 
       duplicatesDropped++;
       if (JSON.stringify(existing.row) !== JSON.stringify(row)) {
-        warnings.push({ operation: 'mergeUsageSnapshots', message: 'Duplicate source row differs; kept newest snapshot row', key });
+        warnings.push({
+          operation: 'mergeUsageSnapshots',
+          message: 'Duplicate source row differs; kept newest snapshot row',
+          key,
+        });
       }
       if (new Date(snapshot.generatedAt).getTime() >= new Date(existing.snapshot.generatedAt).getTime()) {
         byKey.set(key, { snapshot, row });
@@ -233,8 +239,7 @@ export const localRowsToSnapshot = (
   machine: UsageMachine,
   rows: UsageRowWithOptionalSource[],
   generatedAt = new Date(),
-): UsageSnapshot =>
-  createUsageSnapshot({ machine, rows, generatedAt });
+): UsageSnapshot => createUsageSnapshot({ machine, rows, generatedAt });
 
 export const sourceLabel = (row: UsageRowWithOptionalSource) => row.source?.machineLabel ?? '';
 

@@ -17,7 +17,7 @@ const COMPOSER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'compos
 const TOKEN_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"inputTokens\"%'";
 const USER_BUBBLE_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"type\":1%'";
 
-const CURSOR_DB_CACHE_VERSION = 1;
+const CURSOR_DB_CACHE_VERSION = 2;
 const CURSOR_DB_CACHE_FILE = 'cursor-db-cache.json';
 
 export type CursorCsvIngestionOptions = Partial<CursorCsvOptions> & {
@@ -162,6 +162,7 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
             endDate: null,
             provider: 'Cursor sub',
             name: composer?.name || name?.first || `cursor ${composerId.slice(0, 8)}`,
+            titleSource: composer?.name ? 'ai' : name?.first ? 'first-prompt' : 'id',
             model,
             project: '',
             tokens,
@@ -188,6 +189,7 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
             endDate: null,
             provider: 'Cursor sub',
             name: composer.name || name.first || `cursor ${composerId.slice(0, 8)}`,
+            titleSource: composer.name ? 'ai' : name.first ? 'first-prompt' : 'id',
             model: 'usage unavailable',
             project: '',
             tokens: { in: 0, out: 0, cr: 0, cw: 0 },

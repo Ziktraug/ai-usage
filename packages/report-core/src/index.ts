@@ -7,6 +7,8 @@ export * from './merge-bundle';
 export * from './pricing';
 export * from './project-alias';
 export * from './report-data';
+export * from './provenance';
+export * from './session-lineage';
 export * from './snapshot';
 export * from './types';
 export * from './usage-row';

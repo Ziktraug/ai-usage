@@ -74,7 +74,7 @@ describe('Codex local history', () => {
             id: 'child-thread',
             cwd: '/work/fixture-project',
             source: {
-              subagent: { thread_spawn: { parent_thread_id: 'parent-thread' } },
+              subagent: { thread_spawn: { parent_thread_id: 'parent-thread', agent_nickname: 'builder-agent' } },
             },
           },
         },
@@ -115,6 +115,7 @@ describe('Codex local history', () => {
       sourceSessionId: 'parent-thread',
       sourcePath: '/work/fixture-project',
     });
+    expect(sessions[0]?.titleSource).toBe('first-prompt');
     expect(sessions[0]?.tokens.in).toBe(10);
     expect(sessions[0]?.tokens.cr).toBe(2);
     expect(sessions[0]?.tokens.out).toBe(18);
@@ -122,9 +123,11 @@ describe('Codex local history', () => {
     expect(sessions[0]?.turns).toBe(1);
     expect(sessions[0]?.subagent).toBe(true);
     expect(sessions[0]?.usageUnavailable).toBe(false);
-    expect(sessions[1]?.name).toBe('codex child-th');
+    expect(sessions[1]?.name).toBe('builder-agent');
+    expect(sessions[1]?.titleSource).toBe('agent-role');
     expect(sessions[1]?.provider).toBe('Codex sub');
     expect(sessions[1]?.projectPath).toBe('/work/fixture-project');
+    expect(sessions[1]?.source.parentSourceSessionId).toBe('parent-thread');
     expect(sessions[1]?.tokens.in).toBe(4);
     expect(sessions[1]?.tokens.cr).toBe(1);
     expect(sessions[1]?.tokens.out).toBe(4);
@@ -149,6 +152,7 @@ describe('Codex local history', () => {
       sourceSessionId: 'parent-thread',
       sourcePath: '/work/fixture-project',
     });
+    expect(rows[0]?.titleSource).toBe('first-prompt');
     expect(rows[0]?.tokIn).toBe(10);
     expect(rows[0]?.tokCr).toBe(2);
     expect(rows[0]?.tokOut).toBe(18);
@@ -156,8 +160,10 @@ describe('Codex local history', () => {
     expect(rows[0]?.turns).toBe(1);
     expect(rows[0]?.subagent).toBe(true);
     expect(rows[0]?.usageUnavailable).toBe(false);
-    expect(rows[1]?.name).toBe('codex child-th');
+    expect(rows[1]?.name).toBe('builder-agent');
+    expect(rows[1]?.titleSource).toBe('agent-role');
     expect(rows[1]?.provider).toBe('Codex sub');
+    expect(rows[1]?.source?.parentSourceSessionId).toBe('parent-thread');
     expect(rows[1]?.tokIn).toBe(4);
     expect(rows[1]?.tokCr).toBe(1);
     expect(rows[1]?.tokOut).toBe(4);

@@ -104,6 +104,8 @@ export const toSerializedMergeRow = (
   const mergeSource = {
     harnessKey: source?.harnessKey ?? row.harness.toLowerCase(),
     sourceSessionId: source?.sourceSessionId ?? null,
+    ...(source?.parentSourceSessionId === undefined ? {} : { parentSourceSessionId: source.parentSourceSessionId }),
+    ...(source?.rootSourceSessionId === undefined ? {} : { rootSourceSessionId: source.rootSourceSessionId }),
     ...(source?.sourcePath === undefined ? {} : { sourcePath: source.sourcePath }),
     machineId: machine.id,
     machineLabel: machine.label,
@@ -148,6 +150,12 @@ const isMergeRowSource = (value: unknown): value is SerializedMergeRow['source']
     typeof value.harnessKey === 'string' &&
     value.harnessKey.length > 0 &&
     (value.sourceSessionId === null || typeof value.sourceSessionId === 'string') &&
+    (value.parentSourceSessionId === undefined ||
+      value.parentSourceSessionId === null ||
+      typeof value.parentSourceSessionId === 'string') &&
+    (value.rootSourceSessionId === undefined ||
+      value.rootSourceSessionId === null ||
+      typeof value.rootSourceSessionId === 'string') &&
     (value.sourcePath === undefined || value.sourcePath === null || typeof value.sourcePath === 'string') &&
     typeof value.machineId === 'string' &&
     value.machineId.length > 0 &&
