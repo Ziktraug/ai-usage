@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { Effect } from 'effect';
 import { applyPullTokenEnvOverride } from '@ai-usage/sync/workflow';
+import { Effect } from 'effect';
 import { parseCommand } from './cli';
 
 describe('CLI command parsing', () => {

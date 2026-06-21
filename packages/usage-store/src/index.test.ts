@@ -177,11 +177,15 @@ describe('usage-store public boundary', () => {
       let output = '';
       blocker.stdout.on('data', (chunk) => {
         output += chunk.toString();
-        if (output.includes('locked')) resolve();
+        if (output.includes('locked')) {
+          resolve();
+        }
       });
       blocker.on('error', reject);
       blocker.on('exit', (code) => {
-        if (!output.includes('locked')) reject(new Error(`SQLite blocker exited before locking with code ${code}`));
+        if (!output.includes('locked')) {
+          reject(new Error(`SQLite blocker exited before locking with code ${code}`));
+        }
       });
     });
 
@@ -302,7 +306,9 @@ describe('usage-store public boundary', () => {
     );
 
     expect(result._tag).toBe('Left');
-    if (result._tag === 'Left') expect(result.left.reason).toBe('self-import');
+    if (result._tag === 'Left') {
+      expect(result.left.reason).toBe('self-import');
+    }
   });
 
   test('updates peer rows with changed content and keeps missing rows from later bundles', async () => {

@@ -10,6 +10,8 @@ const rootDir = path.resolve(import.meta.dir, '../../..');
 const reportDir = path.resolve(rootDir, 'apps/web');
 const cliEntry = path.resolve(import.meta.dir, 'main.ts');
 const outputDir = path.resolve(rootDir, 'ai-usage-reports');
+const ISO_MILLISECONDS_SUFFIX = /\.\d{3}Z$/;
+const TIME_SEPARATOR = /:/g;
 
 const usage = `Usage:
   bun run html export [report options]
@@ -21,10 +23,7 @@ Examples:
 Creates a dated single-file HTML report in ./ai-usage-reports/.`;
 
 const timestampForFilename = (date: Date) =>
-  date
-    .toISOString()
-    .replace(/\.\d{3}Z$/, 'Z')
-    .replace(/:/g, '-');
+  date.toISOString().replace(ISO_MILLISECONDS_SUFFIX, 'Z').replace(TIME_SEPARATOR, '-');
 
 const run = async () => {
   const [command, ...reportArgs] = Bun.argv.slice(2);

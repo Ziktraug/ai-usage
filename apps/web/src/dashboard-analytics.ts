@@ -1,18 +1,18 @@
 import { type AnalyticsRowInput, groupAnalytics } from '@ai-usage/report-core/analytics';
 import type { DashboardRow } from './shared';
 
-export type ProjectGroup = {
-  key: string;
-  sessions: number;
-  fresh: number;
+export interface ProjectGroup {
   cache: number;
   cost: number;
-  priced: number;
-  turns: number;
-  tools: number;
+  fresh: number;
+  key: string;
   linesAdded: number;
   linesDeleted: number;
-};
+  priced: number;
+  sessions: number;
+  tools: number;
+  turns: number;
+}
 
 const dashboardRowToAnalyticsInput = (row: DashboardRow): AnalyticsRowInput => ({
   harness: row.harness,
@@ -73,7 +73,9 @@ export const buildProjectGroups = (rows: DashboardRow[], acceptsRow: (row: Dashb
   const projects = new Map<string, ProjectGroup>();
 
   for (const row of rows) {
-    if (!acceptsRow(row)) continue;
+    if (!acceptsRow(row)) {
+      continue;
+    }
     addProjectRow(projects, row);
   }
 

@@ -7,7 +7,7 @@ function RootDocument(props: { children: JSX.Element }) {
   return (
     <html lang="en">
       <head>
-        <meta name="color-scheme" content="light dark" />
+        <meta content="light dark" name="color-scheme" />
         <script>
           {`try{var theme=localStorage.getItem('ai-usage-theme');if(theme==='light'||theme==='dark'){document.documentElement.dataset.theme=theme;document.querySelector('meta[name="color-scheme"]')?.setAttribute('content',theme)}}catch(_){}`}
         </script>

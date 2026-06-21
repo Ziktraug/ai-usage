@@ -1,44 +1,49 @@
-export type Rates = { in: number; out: number; cr: number; cw: number };
+export interface Rates {
+  cr: number;
+  cw: number;
+  in: number;
+  out: number;
+}
 
 export interface UsageRowSource {
   harnessKey: string;
-  sourceSessionId: string | null;
-  sourcePath?: string | null;
   machineId?: string;
   machineLabel?: string;
+  sourcePath?: string | null;
+  sourceSessionId: string | null;
 }
 
 export interface UsageRow {
-  date: Date | null;
-  endDate: Date | null;
-  harness: string;
-  provider: string;
-  name: string;
-  model: string;
-  models?: string[];
-  project: string;
-  tokIn: number;
-  tokOut: number;
-  tokCr: number;
-  tokCw: number;
+  ambiguous?: boolean;
+  calls: number;
   costActual: number | null;
-  costQuota?: number | null;
   costApprox: number;
   costKnown: boolean;
-  calls: number;
+  costQuota?: number | null;
+  date: Date | null;
   durationMs: number | null;
-  turns: number;
-  tools: number;
+  endDate: Date | null;
+  harness: string;
   linesAdded: number | null;
   linesDeleted: number | null;
-  rtkSavedTokens?: number;
+  model: string;
+  models?: string[];
+  name: string;
+  partial?: boolean;
+  project: string;
+  provider: string;
+  rtkCommandCount?: number;
   rtkInputTokens?: number;
   rtkOutputTokens?: number;
-  rtkCommandCount?: number;
+  rtkSavedTokens?: number;
   subagent?: boolean;
-  partial?: boolean;
+  tokCr: number;
+  tokCw: number;
+  tokIn: number;
+  tokOut: number;
+  tools: number;
+  turns: number;
   usageUnavailable?: boolean;
-  ambiguous?: boolean;
 }
 
 export type Row = UsageRow;

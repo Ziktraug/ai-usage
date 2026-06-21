@@ -27,34 +27,34 @@ interface HarnessAdapterCollection {
 }
 
 export interface HarnessAdapter {
-  metadata: HarnessMetadata;
   collect: Effect.Effect<CollectorRow[], LocalHistoryError, LocalHistoryStorageService>;
   collectResult?: Effect.Effect<HarnessAdapterCollection, LocalHistoryError, LocalHistoryStorageService>;
+  metadata: HarnessMetadata;
 }
 
 export type HarnessCollectionStatus = 'ok' | 'warning' | 'failed';
 
 export interface HarnessCollectionResult {
+  durationMs: number;
   harness: HarnessKey;
   label: string;
   rows: Row[];
-  warnings: LocalHistoryWarning[];
-  durationMs: number;
   status: HarnessCollectionStatus;
+  warnings: LocalHistoryWarning[];
 }
 
 export interface SelectedHarnessCollectionResult {
-  rows: Row[];
-  harnesses: HarnessCollectionResult[];
-  warnings: LocalHistoryWarning[];
   durationMs: number;
+  harnesses: HarnessCollectionResult[];
+  rows: Row[];
+  warnings: LocalHistoryWarning[];
 }
 
 export interface HarnessSelection {
+  cursorCsv?: Partial<CursorCsvOptions> & { maxSessionSpanMs?: number; reconcileWindowMs?: number };
   harness: HarnessKey | null;
   includeCursor: boolean;
   keepSource?: boolean;
-  cursorCsv?: Partial<CursorCsvOptions> & { maxSessionSpanMs?: number; reconcileWindowMs?: number };
 }
 
 export const HARNESS_ADAPTERS: Record<HarnessKey, HarnessAdapter> = {
@@ -179,7 +179,7 @@ export const collectSelectedHarnessResults = (selection: HarnessSelection) =>
           ...result,
           rows: publicRows.filter((row) => row.harness === result.label),
           warnings,
-          status: result.status === 'failed' ? 'failed' : warnings.length ? 'warning' : 'ok',
+          status: collectorStatus(result.status, warnings.length),
         };
       });
       return {
@@ -195,6 +195,13 @@ export const collectSelectedHarnessResults = (selection: HarnessSelection) =>
       warnings: result.warnings.length,
     }),
   );
+
+const collectorStatus = (status: HarnessCollectionStatus, warningCount: number) => {
+  if (status === 'failed') {
+    return 'failed';
+  }
+  return warningCount ? 'warning' : 'ok';
+};
 
 export const collectSelectedHarnessRows = (selection: HarnessSelection) =>
   collectSelectedHarnessResults(selection).pipe(Effect.map((result) => result.rows));

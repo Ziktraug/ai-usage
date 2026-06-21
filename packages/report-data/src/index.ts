@@ -32,10 +32,17 @@ import { importLocalRows, queryReportRows, usageStorePath } from '@ai-usage/usag
 import { Effect } from 'effect';
 import { withPerfSpan } from './perf';
 
+const GIT_CONFIG_LINE_SEPARATOR = /\r?\n/;
+const GIT_REMOTE_HEADER_PATTERN = /^\s*\[remote\s+"([^"]+)"\]\s*$/;
+const GIT_SECTION_HEADER_PATTERN = /^\s*\[[^\]]+\]\s*$/;
+const GIT_REMOTE_URL_PATTERN = /^\s*url\s*=\s*(.+?)\s*$/;
+const GITHUB_HTTPS_REPO_PATTERN = /github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/;
+const GITHUB_SSH_REPO_PATTERN = /git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/;
+
 export interface LocalUsageSelection {
+  configCwd?: string;
   harness: HarnessKey | null;
   includeCursor: boolean;
-  configCwd?: string;
 }
 
 export interface LocalReportRowsRequest extends LocalUsageSelection {
@@ -43,57 +50,57 @@ export interface LocalReportRowsRequest extends LocalUsageSelection {
 }
 
 export interface LocalReportPayloadRequest extends LocalReportRowsRequest {
-  options: ReportOptions;
-  includeFacets?: boolean;
   generatedAt?: Date;
+  includeFacets?: boolean;
+  options: ReportOptions;
 }
 
 export interface StoredReportPayloadRequest extends LocalUsageSelection {
-  options: ReportOptions;
-  includeFacets?: boolean;
   generatedAt?: Date;
+  includeFacets?: boolean;
+  options: ReportOptions;
 }
 
 export interface LocalReportRowsResult {
+  collection: SelectedHarnessCollectionResult;
   rows: Row[];
   warnings: LocalHistoryWarning[];
-  collection: SelectedHarnessCollectionResult;
 }
 
 export interface LocalUsageSnapshotRequest extends LocalUsageSelection {
-  machine?: UsageMachine;
-  generatedAt?: Date;
   appVersion?: string | null;
+  generatedAt?: Date;
   includeFacets?: boolean;
+  machine?: UsageMachine;
 }
 
 export interface MergedUsageReportRequest extends LocalUsageSelection {
-  snapshots: UsageSnapshot[];
+  appVersion?: string | null;
+  generatedAt?: Date;
+  includeFacets?: boolean;
   includeLocal?: boolean;
   machine?: UsageMachine;
   options: ReportOptions;
-  generatedAt?: Date;
-  appVersion?: string | null;
-  includeFacets?: boolean;
+  snapshots: UsageSnapshot[];
 }
 
 export interface MergedUsageReport {
-  rows: Row[];
-  report: PreparedUsageReport;
-  payload: UsageReportPayload;
-  warnings: SnapshotMergeWarning[];
   duplicatesDropped: number;
+  payload: UsageReportPayload;
+  report: PreparedUsageReport;
+  rows: Row[];
+  warnings: SnapshotMergeWarning[];
 }
 
 export interface ProjectSource {
-  project: string;
-  machine: string;
-  machineId: string;
+  gitRemote: string;
   harness: string;
   harnessKey: string;
-  sourcePath: string;
-  gitRemote: string;
+  machine: string;
+  machineId: string;
+  project: string;
   sessions: number;
+  sourcePath: string;
   tokens: number;
 }
 
@@ -105,13 +112,13 @@ export interface ProjectSourcesResult {
 export type ReadGitFile = (filePath: string) => string | null;
 
 export interface ProjectSourcesRequest extends LocalUsageSelection {
-  snapshots: UsageSnapshot[];
+  appVersion?: string | null;
+  generatedAt?: Date;
+  includeGitRemote?: boolean;
   includeLocal?: boolean;
   machine?: UsageMachine;
-  generatedAt?: Date;
-  appVersion?: string | null;
-  includeGitRemote?: boolean;
   readGitFile?: ReadGitFile;
+  snapshots: UsageSnapshot[];
 }
 
 const toLocalUsageSnapshotRequest = (request: {
@@ -124,10 +131,10 @@ const toLocalUsageSnapshotRequest = (request: {
 }): LocalUsageSnapshotRequest => ({
   harness: request.harness,
   includeCursor: request.includeCursor,
-  ...(request.configCwd !== undefined ? { configCwd: request.configCwd } : {}),
-  ...(request.machine !== undefined ? { machine: request.machine } : {}),
-  ...(request.generatedAt !== undefined ? { generatedAt: request.generatedAt } : {}),
-  ...(request.appVersion !== undefined ? { appVersion: request.appVersion } : {}),
+  ...(request.configCwd === undefined ? {} : { configCwd: request.configCwd }),
+  ...(request.machine === undefined ? {} : { machine: request.machine }),
+  ...(request.generatedAt === undefined ? {} : { generatedAt: request.generatedAt }),
+  ...(request.appVersion === undefined ? {} : { appVersion: request.appVersion }),
 });
 
 const toHarnessSelection = (
@@ -136,7 +143,7 @@ const toHarnessSelection = (
 ): HarnessSelection => ({
   harness: request.harness,
   includeCursor: request.includeCursor,
-  ...(request.keepSource !== undefined ? { keepSource: request.keepSource } : {}),
+  ...(request.keepSource === undefined ? {} : { keepSource: request.keepSource }),
   ...(cursorCsv ? { cursorCsv } : {}),
 });
 
@@ -147,7 +154,9 @@ const resolveCursorConfig = (
   cursorCsv: HarnessSelection['cursorCsv'],
   configCwd: string | undefined,
 ): HarnessSelection['cursorCsv'] => {
-  if (!cursorCsv) return undefined;
+  if (!cursorCsv) {
+    return;
+  }
   return {
     ...cursorCsv,
     ...(cursorCsv.usageExportDir ? { usageExportDir: resolveConfigPath(configCwd, cursorCsv.usageExportDir) } : {}),
@@ -179,8 +188,12 @@ const usageStoreLocalHistoryError = (operation: string, dbPath: string) => (caus
   new LocalHistoryError({ operation, path: dbPath, cause });
 
 const selectedStoredHarnessKeys = (request: LocalUsageSelection): HarnessKey[] | undefined => {
-  if (request.harness) return [request.harness];
-  if (request.includeCursor) return undefined;
+  if (request.harness) {
+    return [request.harness];
+  }
+  if (request.includeCursor) {
+    return;
+  }
   return harnessKeys.filter((key) => key !== 'cursor');
 };
 
@@ -364,10 +377,10 @@ export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
     return createUsageSnapshot({
       machine,
       rows: collection.rows,
-      ...(request.generatedAt !== undefined ? { generatedAt: request.generatedAt } : {}),
-      ...(request.appVersion !== undefined ? { appVersion: request.appVersion } : {}),
+      ...(request.generatedAt === undefined ? {} : { generatedAt: request.generatedAt }),
+      ...(request.appVersion === undefined ? {} : { appVersion: request.appVersion }),
       ...(collection.warnings.length ? { warnings: collection.warnings } : {}),
-      ...(facets !== undefined ? { facets } : {}),
+      ...(facets === undefined ? {} : { facets }),
     });
   });
 
@@ -412,7 +425,9 @@ const projectFromRow = (row: SourcedRow) => row.project || path.basename(row.sou
 
 const defaultReadGitFile: ReadGitFile = (filePath) => {
   try {
-    if (!fs.existsSync(filePath)) return null;
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
     return fs.readFileSync(filePath, 'utf8');
   } catch {
     return null;
@@ -421,28 +436,36 @@ const defaultReadGitFile: ReadGitFile = (filePath) => {
 
 export const parseGitConfigRemote = (text: string, remoteName = 'origin'): string => {
   let inRemote = false;
-  for (const line of text.split(/\r?\n/)) {
-    const remoteMatch = line.match(/^\s*\[remote\s+"([^"]+)"\]\s*$/);
+  for (const line of text.split(GIT_CONFIG_LINE_SEPARATOR)) {
+    const remoteMatch = line.match(GIT_REMOTE_HEADER_PATTERN);
     if (remoteMatch) {
       inRemote = remoteMatch[1] === remoteName;
       continue;
     }
-    if (/^\s*\[[^\]]+\]\s*$/.test(line)) {
+    if (GIT_SECTION_HEADER_PATTERN.test(line)) {
       inRemote = false;
       continue;
     }
-    if (!inRemote) continue;
-    const urlMatch = line.match(/^\s*url\s*=\s*(.+?)\s*$/);
-    if (urlMatch) return extractRepoName(urlMatch[1]!);
+    if (!inRemote) {
+      continue;
+    }
+    const urlMatch = line.match(GIT_REMOTE_URL_PATTERN);
+    if (urlMatch) {
+      return extractRepoName(urlMatch[1]!);
+    }
   }
   return '';
 };
 
 const extractRepoName = (url: string): string => {
-  const httpsMatch = url.match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/);
-  if (httpsMatch) return httpsMatch[1]!;
-  const sshMatch = url.match(/git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/);
-  if (sshMatch) return sshMatch[1]!;
+  const httpsMatch = url.match(GITHUB_HTTPS_REPO_PATTERN);
+  if (httpsMatch) {
+    return httpsMatch[1]!;
+  }
+  const sshMatch = url.match(GITHUB_SSH_REPO_PATTERN);
+  if (sshMatch) {
+    return sshMatch[1]!;
+  }
   return url;
 };
 
@@ -483,14 +506,18 @@ const collectProjectSources = (
       a.project.localeCompare(b.project) || a.machine.localeCompare(b.machine) || a.harness.localeCompare(b.harness),
   );
 
-  if (includeGitRemote) enrichGitRemotes(result, readGitFile);
+  if (includeGitRemote) {
+    enrichGitRemotes(result, readGitFile);
+  }
   return result;
 };
 
 const enrichGitRemotes = (sources: ProjectSource[], readGitFile: ReadGitFile) => {
   const cache = new Map<string, string>();
   for (const source of sources) {
-    if (!source.sourcePath) continue;
+    if (!source.sourcePath) {
+      continue;
+    }
     const cached = cache.get(source.sourcePath);
     if (cached !== undefined) {
       source.gitRemote = cached;

@@ -1,8 +1,8 @@
 import { makeLanPairingService } from '@ai-usage/lan-pairing';
+import { readLanPeersConfig, upsertStoredLanPeer } from '@ai-usage/local-collectors/lan-peers';
 import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig } from '@ai-usage/local-collectors/machine-config';
-import { readLanPeersConfig, upsertStoredLanPeer } from '@ai-usage/local-collectors/lan-peers';
-import { createUsageMergeRuntime, upsertUsageMergeEnvToken, type UsageMergeService } from '@ai-usage/usage-merge';
+import { createUsageMergeRuntime, type UsageMergeService, upsertUsageMergeEnvToken } from '@ai-usage/usage-merge';
 import { usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 import { runReportPayloadCollection } from './report-payload.server';
@@ -133,20 +133,28 @@ export const importManualMergeBundleForServer = (input: ManualMergeImportInput) 
   runRuntime((runtime) => runtime.importManualMergeBundle(input));
 
 const objectInput = (input: unknown): Record<string, unknown> => {
-  if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new Error('Expected object input');
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    throw new Error('Expected object input');
+  }
   return input as Record<string, unknown>;
 };
 
 const stringField = (record: Record<string, unknown>, field: string) => {
   const value = record[field];
-  if (typeof value !== 'string' || !value) throw new Error(`Expected ${field} to be a non-empty string`);
+  if (typeof value !== 'string' || !value) {
+    throw new Error(`Expected ${field} to be a non-empty string`);
+  }
   return value;
 };
 
 const optionalStringField = (record: Record<string, unknown>, field: string) => {
   const value = record[field];
-  if (value == null || value === '') return null;
-  if (typeof value !== 'string') throw new Error(`Expected ${field} to be a string`);
+  if (value == null || value === '') {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    throw new Error(`Expected ${field} to be a string`);
+  }
   return value;
 };
 
@@ -165,7 +173,9 @@ export const lanMergePairInputFrom = (input: unknown): LanMergePairInput => {
 };
 
 export const lanMergeScanInputFrom = (input: unknown): LanMergeScanInput => {
-  if (input == null) return {};
+  if (input == null) {
+    return {};
+  }
   const record = objectInput(input);
   const hosts = record.hosts;
   return {

@@ -15,32 +15,32 @@ import { Data, Effect } from 'effect';
 export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
 
 export interface ImportResult {
-  inserted: number;
-  updated: number;
-  unchanged: number;
-  superseded: number;
   deleted: number;
+  inserted: number;
+  superseded: number;
+  unchanged: number;
+  updated: number;
   warnings: number;
 }
 
 export interface ImportLocalRowsInput {
   dbPath: string;
+  importedAt?: Date;
   machine: UsageMachine;
   rows: UsageRowWithOptionalSource[];
-  importedAt?: Date;
 }
 
 export interface ExportLocalMergeBundleInput {
   dbPath: string;
-  machine: UsageMachine;
   generatedAt?: Date;
+  machine: UsageMachine;
 }
 
 export interface ImportPeerMergeBundleInput {
-  dbPath: string;
-  localMachineId: string;
   bundle: UsageMergeBundle;
+  dbPath: string;
   importedAt?: Date;
+  localMachineId: string;
 }
 
 export interface QueryReportRowsInput {
@@ -64,32 +64,32 @@ export class UsageStoreError extends Data.TaggedError('UsageStoreError')<{
 }> {}
 
 export interface UsageStore {
-  importLocalRows(input: ImportLocalRowsInput): Effect.Effect<ImportResult, UsageStoreError>;
   exportLocalMergeBundle(input: ExportLocalMergeBundleInput): Effect.Effect<UsageMergeBundle, UsageStoreError>;
+  importLocalRows(input: ImportLocalRowsInput): Effect.Effect<ImportResult, UsageStoreError>;
   importPeerMergeBundle(input: ImportPeerMergeBundleInput): Effect.Effect<ImportResult, UsageStoreError>;
   queryReportRows(input?: QueryReportRowsInput): Effect.Effect<QueryRowsResult, UsageStoreError>;
 }
 
-type SqliteStatement = {
+interface SqliteStatement {
   all(...params: unknown[]): unknown[];
   get(...params: unknown[]): unknown;
   run(...params: unknown[]): unknown;
-};
+}
 
-type SqliteDatabase = {
+interface SqliteDatabase {
   close(): void;
   exec(sql: string): unknown;
   query(sql: string): SqliteStatement;
-};
+}
 
-type ExistingRow = {
+interface ExistingRow {
   content_hash: string;
   status: StoredUsageRowStatus;
-};
+}
 
-type StoredRowRecord = {
+interface StoredRowRecord {
   row_json: string;
-};
+}
 
 const usageStoreError = (operation: string, dbPath: string, cause: unknown, reason?: UsageStoreErrorReason) =>
   new UsageStoreError({
@@ -269,9 +269,13 @@ const importMergeRows = (
             }
 
             updateMergeRow(db, row, now);
-            if (row.status === 'deleted') result.deleted++;
-            else if (row.status === 'superseded') result.superseded++;
-            else result.updated++;
+            if (row.status === 'deleted') {
+              result.deleted++;
+            } else if (row.status === 'superseded') {
+              result.superseded++;
+            } else {
+              result.updated++;
+            }
           }
           db.exec('COMMIT');
         } catch (error) {

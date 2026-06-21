@@ -9,17 +9,27 @@ export class LocalHistoryError extends Data.TaggedError('LocalHistoryError')<{
 
 export interface LocalHistoryWarning {
   readonly harness?: string;
+  readonly message: string;
   readonly operation: string;
   readonly path?: string;
   readonly sql?: string;
-  readonly message: string;
 }
 
 const causeMessage = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 
 export const formatLocalHistoryError = (error: LocalHistoryError) => {
-  const target = error.path ? ` ${error.path}` : error.sql ? ` SQL ${JSON.stringify(error.sql)}` : '';
+  const target = localHistoryErrorTarget(error);
   return `${error.operation}${target}: ${causeMessage(error.cause)}`;
+};
+
+const localHistoryErrorTarget = (error: LocalHistoryError) => {
+  if (error.path) {
+    return ` ${error.path}`;
+  }
+  if (error.sql) {
+    return ` SQL ${JSON.stringify(error.sql)}`;
+  }
+  return '';
 };
 
 export const localHistoryWarningFromError = (

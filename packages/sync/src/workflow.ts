@@ -1,4 +1,3 @@
-import type { SyncRemoteConfig } from '@ai-usage/report-core/project-alias';
 import type { LocalHistoryError } from '@ai-usage/local-collectors/errors';
 import { LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig } from '@ai-usage/local-collectors/machine-config';
@@ -6,34 +5,37 @@ import {
   listSyncRemotes,
   removeSyncRemote,
   resolveSyncToken,
+  type StoredSyncedSnapshot,
   storeSyncedSnapshot,
   syncedSnapshotPath,
   upsertSyncRemote,
-  type StoredSyncedSnapshot,
 } from '@ai-usage/local-collectors/sync-storage';
+import type { SyncRemoteConfig } from '@ai-usage/report-core/project-alias';
 import { Effect } from 'effect';
-import { SyncTransportError } from './errors';
-import { SyncWorkflowError } from './errors';
+import { type SyncTransportError, SyncWorkflowError } from './errors';
 import { fetchRemoteSnapshot } from './transport';
+
+const TOKEN_ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export interface AddSyncRemoteInput {
   name: string;
-  url: string;
   tokenEnv: string | null;
+  url: string;
 }
 
 export interface PullSyncRemoteResult {
-  record: StoredSyncedSnapshot;
-  path: string;
   durationMs: number;
+  path: string;
+  record: StoredSyncedSnapshot;
 }
 
 export const validateSyncUrl = (url: string): Effect.Effect<void, SyncWorkflowError> =>
   Effect.try({
     try: () => {
       const parsed = new URL(url);
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
         throw new Error('URL must start with http:// or https://');
+      }
     },
     catch: (cause) =>
       new SyncWorkflowError({
@@ -46,8 +48,9 @@ export const validateSyncUrl = (url: string): Effect.Effect<void, SyncWorkflowEr
 export const validateTokenEnv = (tokenEnv: string | null): Effect.Effect<void, SyncWorkflowError> =>
   Effect.try({
     try: () => {
-      if (tokenEnv && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(tokenEnv))
+      if (tokenEnv && !TOKEN_ENV_NAME_PATTERN.test(tokenEnv)) {
         throw new Error('environment variable names may contain letters, digits, and underscores');
+      }
     },
     catch: (cause) =>
       new SyncWorkflowError({
@@ -146,7 +149,9 @@ export const selectSyncRemotesToPull = (
   import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
 > =>
   Effect.gen(function* () {
-    if (name) return [yield* findSyncRemote(name)];
+    if (name) {
+      return [yield* findSyncRemote(name)];
+    }
     const remotes = (yield* listSyncRemotes).filter((remote) => remote.enabled !== false);
     if (!remotes.length) {
       return yield* Effect.fail(

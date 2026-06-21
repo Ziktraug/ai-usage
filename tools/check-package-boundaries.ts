@@ -11,26 +11,26 @@ const workspaceImportPattern =
 
 type DependencyField = (typeof dependencyFields)[number];
 
-type BoundaryPolicy = {
+interface BoundaryPolicy {
   forbiddenDependencies: string[];
   forbiddenImports: string[];
   packageName: string;
   reason: string;
-};
+}
 
-type PackageInfo = {
+interface PackageInfo {
   dependencies: Map<string, DependencyField>;
   directory: string;
   packageName: string;
-};
+}
 
-type Violation = {
+interface Violation {
   file: string;
   line?: number;
   message: string;
   packageName: string;
   specifier: string;
-};
+}
 
 // packages/lan-pairing is generic LAN mechanics. Importing ai-usage domain packages would make pairing
 // reusable only by this app and would collapse the planned adapter boundary.
@@ -93,7 +93,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const matchesPattern = (specifier: string, pattern: string) => {
-  if (pattern.endsWith('/*')) return specifier.startsWith(pattern.slice(0, -1));
+  if (pattern.endsWith('/*')) {
+    return specifier.startsWith(pattern.slice(0, -1));
+  }
   return specifier === pattern || specifier.startsWith(`${pattern}/`);
 };
 
@@ -102,18 +104,26 @@ async function readPackageInfo(packageJsonPath: string): Promise<PackageInfo | n
   try {
     text = await readFile(packageJsonPath, 'utf8');
   } catch (error) {
-    if (isRecord(error) && error.code === 'ENOENT') return null;
+    if (isRecord(error) && error.code === 'ENOENT') {
+      return null;
+    }
     throw error;
   }
 
   const json = JSON.parse(text) as unknown;
-  if (!isRecord(json) || typeof json.name !== 'string' || !json.name.startsWith('@ai-usage/')) return null;
+  if (!isRecord(json) || typeof json.name !== 'string' || !json.name.startsWith('@ai-usage/')) {
+    return null;
+  }
 
   const dependencies = new Map<string, DependencyField>();
   for (const field of dependencyFields) {
     const value = json[field];
-    if (!isRecord(value)) continue;
-    for (const dependencyName of Object.keys(value)) dependencies.set(dependencyName, field);
+    if (!isRecord(value)) {
+      continue;
+    }
+    for (const dependencyName of Object.keys(value)) {
+      dependencies.set(dependencyName, field);
+    }
   }
 
   return {
@@ -129,9 +139,13 @@ async function discoverWorkspacePackages() {
     const parentPath = path.join(root, parent);
     const entries = await readdir(parentPath, { withFileTypes: true });
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
+      if (!entry.isDirectory()) {
+        continue;
+      }
       const packageInfo = await readPackageInfo(path.join(parentPath, entry.name, 'package.json'));
-      if (packageInfo) packages.set(packageInfo.packageName, packageInfo);
+      if (packageInfo) {
+        packages.set(packageInfo.packageName, packageInfo);
+      }
     }
   }
   return packages;
@@ -143,7 +157,9 @@ async function collectSourceFiles(directory: string): Promise<string[]> {
 
   for (const entry of entries) {
     if (entry.isDirectory()) {
-      if (!ignoredDirectories.has(entry.name)) files.push(...(await collectSourceFiles(path.join(directory, entry.name))));
+      if (!ignoredDirectories.has(entry.name)) {
+        files.push(...(await collectSourceFiles(path.join(directory, entry.name))));
+      }
       continue;
     }
 
@@ -157,13 +173,17 @@ async function collectSourceFiles(directory: string): Promise<string[]> {
 
 const lineNumberFor = (text: string, index: number) => text.slice(0, index).split('\n').length;
 
-async function collectDependencyViolations(packages: Map<string, PackageInfo>, policy: BoundaryPolicy) {
+function collectDependencyViolations(packages: Map<string, PackageInfo>, policy: BoundaryPolicy) {
   const packageInfo = packages.get(policy.packageName);
-  if (!packageInfo) return [];
+  if (!packageInfo) {
+    return [];
+  }
 
   const violations: Violation[] = [];
   for (const [dependencyName, field] of packageInfo.dependencies) {
-    if (!policy.forbiddenDependencies.some((pattern) => matchesPattern(dependencyName, pattern))) continue;
+    if (!policy.forbiddenDependencies.some((pattern) => matchesPattern(dependencyName, pattern))) {
+      continue;
+    }
     violations.push({
       file: path.relative(root, path.join(packageInfo.directory, 'package.json')),
       message: `${policy.reason} Forbidden ${field} entry.`,
@@ -182,8 +202,12 @@ async function collectImportViolations(packageInfo: PackageInfo, policy: Boundar
     const text = await readFile(file, 'utf8');
     for (const match of text.matchAll(workspaceImportPattern)) {
       const specifier = match[1] ?? match[2];
-      if (!specifier) continue;
-      if (!policy.forbiddenImports.some((pattern) => matchesPattern(specifier, pattern))) continue;
+      if (!specifier) {
+        continue;
+      }
+      if (!policy.forbiddenImports.some((pattern) => matchesPattern(specifier, pattern))) {
+        continue;
+      }
       violations.push({
         file: path.relative(root, file),
         line: lineNumberFor(text, match.index),
@@ -203,8 +227,10 @@ async function collectViolations() {
 
   for (const policy of boundaryPolicies) {
     const packageInfo = packages.get(policy.packageName);
-    violations.push(...(await collectDependencyViolations(packages, policy)));
-    if (packageInfo) violations.push(...(await collectImportViolations(packageInfo, policy)));
+    violations.push(...collectDependencyViolations(packages, policy));
+    if (packageInfo) {
+      violations.push(...(await collectImportViolations(packageInfo, policy)));
+    }
   }
 
   return violations;

@@ -9,7 +9,9 @@ export interface CursorReconcileOptions {
 }
 
 const turnDistance = (session: CollectedSession, turn: CursorCsvTurn) => {
-  if (!session.date) return Number.POSITIVE_INFINITY;
+  if (!session.date) {
+    return Number.POSITIVE_INFINITY;
+  }
   return Math.abs(session.date.getTime() - turn.date.getTime());
 };
 
@@ -91,12 +93,14 @@ export const reconcileCursorSessions = (
   turns: CursorCsvTurn[],
   options: CursorReconcileOptions,
 ): CollectedSession[] => {
-  if (!turns.length) return sessions;
+  if (!turns.length) {
+    return sessions;
+  }
   const windows = cursorSessionWindows(sessions, options);
   const assignments = new Map<number, { turns: CursorCsvTurn[]; ambiguous: boolean }>();
   const orphanTurns: CursorCsvTurn[] = [];
 
-  turns.forEach((turn) => {
+  for (const turn of turns) {
     const candidates = windows
       .filter((window) => {
         const time = turn.date.getTime();
@@ -115,19 +119,21 @@ export const reconcileCursorSessions = (
     const best = candidates[0];
     if (!best) {
       orphanTurns.push(turn);
-      return;
+      continue;
     }
 
     const assignment = assignments.get(best.index) ?? { turns: [], ambiguous: false };
     assignment.turns.push(turn);
     assignment.ambiguous = assignment.ambiguous || candidates.length > 1 || nearbyCandidateCount > 1;
     assignments.set(best.index, assignment);
-  });
+  }
 
   const reconciledSessions = new Map<number, CollectedSession>();
   for (const [index, assignment] of assignments) {
     const session = sessions[index];
-    if (!session) continue;
+    if (!session) {
+      continue;
+    }
     reconciledSessions.set(
       index,
       mergeClusterIntoSession(session, clusterFromTurns(assignment.turns), assignment.ambiguous),

@@ -26,13 +26,13 @@ export interface HarnessPaths {
     sessionsDir: string;
     sessionIndexFile: string;
   };
-  opencode: {
-    liveDb: string;
-    stableDb: string;
-  };
   cursor: {
     stateVscdb: string;
     aiTrackingDb: string;
+  };
+  opencode: {
+    liveDb: string;
+    stableDb: string;
   };
   rtk: {
     historyDb: string;
@@ -49,13 +49,13 @@ export interface HarnessPathCandidates {
     sessionsDir: string[];
     sessionIndexFile: string[];
   };
-  opencode: {
-    liveDb: string[];
-    stableDb: string[];
-  };
   cursor: {
     stateVscdb: string[];
     aiTrackingDb: string[];
+  };
+  opencode: {
+    liveDb: string[];
+    stableDb: string[];
   };
   rtk: {
     historyDb: string[];
@@ -167,7 +167,9 @@ export const firstExisting = (
   Effect.gen(function* () {
     for (const candidate of candidates) {
       const exists = yield* storage.exists(candidate).pipe(Effect.catchAll(() => Effect.succeed(false)));
-      if (exists) return candidate;
+      if (exists) {
+        return candidate;
+      }
     }
     return null;
   });

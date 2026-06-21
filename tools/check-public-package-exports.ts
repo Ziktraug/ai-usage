@@ -4,19 +4,20 @@ import path from 'node:path';
 const ignoredDirectories = new Set(['.git', '.turbo', '.output', 'dist', 'node_modules', 'styled-system']);
 const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.ts', '.tsx']);
 const workspacePackageParents = ['apps', 'packages'];
-const workspaceImportPattern = /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"](@ai-usage\/[^'"]+)['"]|\bimport\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)/g;
+const workspaceImportPattern =
+  /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"](@ai-usage\/[^'"]+)['"]|\bimport\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)/g;
 
-type PackageInterface = {
+interface PackageInterface {
   exports: Set<string>;
   packageName: string;
-};
+}
 
-type Violation = {
+interface Violation {
   file: string;
   line: number;
   message: string;
   specifier: string;
-};
+}
 
 const root = process.cwd();
 
@@ -24,8 +25,12 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const packageExportKeys = (exportsValue: unknown) => {
-  if (typeof exportsValue === 'string') return new Set(['.']);
-  if (!isRecord(exportsValue)) return new Set<string>();
+  if (typeof exportsValue === 'string') {
+    return new Set(['.']);
+  }
+  if (!isRecord(exportsValue)) {
+    return new Set<string>();
+  }
   return new Set(Object.keys(exportsValue).filter((key) => key === '.' || key.startsWith('./')));
 };
 
@@ -34,11 +39,15 @@ async function readPackageInterface(packageJsonPath: string): Promise<PackageInt
   try {
     text = await readFile(packageJsonPath, 'utf8');
   } catch (error) {
-    if (isRecord(error) && error.code === 'ENOENT') return null;
+    if (isRecord(error) && error.code === 'ENOENT') {
+      return null;
+    }
     throw error;
   }
   const json = JSON.parse(text) as unknown;
-  if (!isRecord(json) || typeof json.name !== 'string' || !json.name.startsWith('@ai-usage/')) return null;
+  if (!isRecord(json) || typeof json.name !== 'string' || !json.name.startsWith('@ai-usage/')) {
+    return null;
+  }
   return {
     exports: packageExportKeys(json.exports),
     packageName: json.name,
@@ -51,9 +60,13 @@ async function discoverWorkspacePackages() {
     const parentPath = path.join(root, parent);
     const entries = await readdir(parentPath, { withFileTypes: true });
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
+      if (!entry.isDirectory()) {
+        continue;
+      }
       const packageInterface = await readPackageInterface(path.join(parentPath, entry.name, 'package.json'));
-      if (packageInterface) packages.set(packageInterface.packageName, packageInterface);
+      if (packageInterface) {
+        packages.set(packageInterface.packageName, packageInterface);
+      }
     }
   }
   return packages;
@@ -65,7 +78,9 @@ async function collectSourceFiles(directory: string): Promise<string[]> {
 
   for (const entry of entries) {
     if (entry.isDirectory()) {
-      if (!ignoredDirectories.has(entry.name)) files.push(...(await collectSourceFiles(path.join(directory, entry.name))));
+      if (!ignoredDirectories.has(entry.name)) {
+        files.push(...(await collectSourceFiles(path.join(directory, entry.name))));
+      }
       continue;
     }
 
@@ -81,7 +96,9 @@ const lineNumberFor = (text: string, index: number) => text.slice(0, index).spli
 
 const parseWorkspaceSpecifier = (specifier: string) => {
   const [, packageSegment, ...subpathParts] = specifier.split('/');
-  if (!packageSegment) return null;
+  if (!packageSegment) {
+    return null;
+  }
   return {
     exportKey: subpathParts.length ? `./${subpathParts.join('/')}` : '.',
     packageName: `@ai-usage/${packageSegment}`,
@@ -96,9 +113,13 @@ async function collectViolations(packages: Map<string, PackageInterface>) {
     const text = await readFile(file, 'utf8');
     for (const match of text.matchAll(workspaceImportPattern)) {
       const specifier = match[1] ?? match[2];
-      if (!specifier) continue;
+      if (!specifier) {
+        continue;
+      }
       const parsed = parseWorkspaceSpecifier(specifier);
-      if (!parsed) continue;
+      if (!parsed) {
+        continue;
+      }
 
       const packageInterface = packages.get(parsed.packageName);
       if (!packageInterface) {

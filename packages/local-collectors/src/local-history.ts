@@ -7,29 +7,29 @@ import { Context, Effect, Layer } from 'effect';
 import { LocalHistoryError } from './errors';
 
 export interface LocalHistoryDirEntry {
-  name: string;
   isDirectory: boolean;
+  name: string;
 }
 
 export interface LocalHistoryDatabase {
-  all<T extends Record<string, any> = Record<string, any>>(sql: string): Effect.Effect<T[], LocalHistoryError>;
+  all<T extends object = Record<string, unknown>>(sql: string): Effect.Effect<T[], LocalHistoryError>;
   close: Effect.Effect<void>;
 }
 
 export interface LocalHistoryStorage {
-  home: string;
   exists(filePath: string): Effect.Effect<boolean, LocalHistoryError>;
-  readText(filePath: string): Effect.Effect<string, LocalHistoryError>;
-  readDir(dirPath: string): Effect.Effect<LocalHistoryDirEntry[], LocalHistoryError>;
+  home: string;
   openDatabase(dbPath: string): Effect.Effect<LocalHistoryDatabase, LocalHistoryError>;
+  readDir(dirPath: string): Effect.Effect<LocalHistoryDirEntry[], LocalHistoryError>;
+  readText(filePath: string): Effect.Effect<string, LocalHistoryError>;
 }
 
 export const LocalHistoryStorage = Context.GenericTag<LocalHistoryStorage>('@ai-usage/LocalHistoryStorage');
 
-type LocalHistoryErrorDetails = {
+interface LocalHistoryErrorDetails {
   readonly path?: string;
   readonly sql?: string;
-};
+}
 
 const localHistoryError =
   (operation: string, details: LocalHistoryErrorDetails = {}) =>
@@ -70,9 +70,9 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
         // SQLITE_OPEN_URI is needed for the ?immutable=1 query param to be
         // honored; DatabaseOptions exposes no `uri` flag, so open with the
         // numeric flag constants instead.
-        const db = new Database(url.href, constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI);
+        const db = new Database(url.href, constants.SQLITE_OPEN_READONLY + constants.SQLITE_OPEN_URI);
         return {
-          all: <T extends Record<string, any> = Record<string, any>>(sql: string) =>
+          all: <T extends object = Record<string, unknown>>(sql: string) =>
             Effect.try({
               try: () => db.query(sql).all() as T[],
               catch: localHistoryError('sqlite.all', { path: dbPath, sql }),
@@ -98,15 +98,20 @@ export const walkFiles = (
   include: (fileName: string, filePath: string) => boolean,
 ): Effect.Effect<string[], LocalHistoryError> =>
   Effect.gen(function* () {
-    if (!(yield* storage.exists(dirPath))) return [];
+    if (!(yield* storage.exists(dirPath))) {
+      return [];
+    }
 
     const files: string[] = [];
     const walk = (currentPath: string): Effect.Effect<void, LocalHistoryError> =>
       Effect.gen(function* () {
         for (const entry of yield* storage.readDir(currentPath)) {
           const filePath = path.join(currentPath, entry.name);
-          if (entry.isDirectory) yield* walk(filePath);
-          else if (include(entry.name, filePath)) files.push(filePath);
+          if (entry.isDirectory) {
+            yield* walk(filePath);
+          } else if (include(entry.name, filePath)) {
+            files.push(filePath);
+          }
         }
       });
 

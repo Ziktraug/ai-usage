@@ -10,6 +10,7 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.
 const reportingPayloadRunner = path.join(rootDir, 'packages/report-data/src/report-payload-runner.ts');
 const execFileAsync = promisify(execFile);
 const rootEnvPath = path.join(rootDir, '.env');
+const LINE_SEPARATOR = /\r?\n/;
 const payloadCacheTtlMs = 10_000;
 let cachedPayload: { payload: UsageReportPayload; storedAt: number } | null = null;
 let inFlightPayload: Promise<UsageReportPayload> | null = null;
@@ -24,18 +25,22 @@ export type ReportPayloadRefreshState =
 
 const readRootEnvValue = (key: string) => {
   try {
-    if (!fs.existsSync(rootEnvPath)) return undefined;
+    if (!fs.existsSync(rootEnvPath)) {
+      return;
+    }
     const line = fs
       .readFileSync(rootEnvPath, 'utf8')
-      .split(/\r?\n/)
+      .split(LINE_SEPARATOR)
       .find((entry) => entry.trim().startsWith(`${key}=`));
-    if (!line) return undefined;
+    if (!line) {
+      return;
+    }
     return line
       .slice(line.indexOf('=') + 1)
       .trim()
       .replace(/^['"]|['"]$/g, '');
   } catch {
-    return undefined;
+    return;
   }
 };
 
@@ -64,7 +69,9 @@ const payloadRequest = (): StoredReportPayloadRequest => ({
 const withRootPerfEnv = async <A>(run: () => Promise<A>) => {
   const rootPerfValue = perfEnvValue();
   const previousPerfValue = process.env.AI_USAGE_PERF;
-  if (rootPerfValue) process.env.AI_USAGE_PERF = rootPerfValue;
+  if (rootPerfValue) {
+    process.env.AI_USAGE_PERF = rootPerfValue;
+  }
 
   try {
     return await run();
@@ -110,7 +117,9 @@ export const runReportPayloadRunner = async (options: { force?: boolean } = {}) 
       maxBuffer: 64 * 1024 * 1024,
     });
     if (perfEnabled()) {
-      if (stderr.trim()) console.error(stderr.trimEnd());
+      if (stderr.trim()) {
+        console.error(stderr.trimEnd());
+      }
       console.error(
         `[perf] aiUsage.web.reportPayloadRunner ok mode=${mode} durationMs=${Date.now() - startedAt} bytes=${stdout.length}`,
       );
@@ -119,7 +128,9 @@ export const runReportPayloadRunner = async (options: { force?: boolean } = {}) 
   } catch (error) {
     const stderr = typeof error === 'object' && error !== null && 'stderr' in error ? String(error.stderr) : '';
     if (perfEnabled()) {
-      if (stderr.trim()) console.error(stderr.trimEnd());
+      if (stderr.trim()) {
+        console.error(stderr.trimEnd());
+      }
       console.error(`[perf] aiUsage.web.reportPayloadRunner failed mode=${mode} durationMs=${Date.now() - startedAt}`);
     }
     throw error;
@@ -174,7 +185,9 @@ export const startReportPayloadRefresh = () => {
 };
 
 const loadPayload = (options: { force?: boolean }) => {
-  if (!options.force && isBunRuntime()) return loadStoredPayloadDirect();
+  if (!options.force && isBunRuntime()) {
+    return loadStoredPayloadDirect();
+  }
   return runReportPayloadRunner(options).then((stdout) => JSON.parse(stdout) as UsageReportPayload);
 };
 
@@ -188,14 +201,18 @@ export const runReportPayloadCollection = async (options: { force?: boolean } = 
   }
 
   if (!options.force && inFlightPayload) {
-    if (perfEnabled()) console.error('[perf] aiUsage.web.reportPayloadCache join');
+    if (perfEnabled()) {
+      console.error('[perf] aiUsage.web.reportPayloadCache join');
+    }
     return inFlightPayload;
   }
 
   inFlightPayload = loadPayload(options)
     .then((payload) => {
       if (!options.force && payload.rows.length === 0) {
-        if (perfEnabled()) console.error('[perf] aiUsage.web.reportPayloadCache stored-empty-fallback');
+        if (perfEnabled()) {
+          console.error('[perf] aiUsage.web.reportPayloadCache stored-empty-fallback');
+        }
         return loadFreshPayload();
       }
       return payload;
@@ -208,5 +225,5 @@ export const runReportPayloadCollection = async (options: { force?: boolean } = 
       inFlightPayload = null;
     });
 
-  return inFlightPayload;
+  return await inFlightPayload;
 };

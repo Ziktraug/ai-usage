@@ -1,4 +1,3 @@
-import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
 import { cx } from '@ai-usage/design-system/css';
 import {
   barFill,
@@ -16,6 +15,7 @@ import {
   right,
   strongCell,
 } from '@ai-usage/design-system/report';
+import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
 import { createMemo, For, Show } from 'solid-js';
 import {
   accentFill,
@@ -58,8 +58,8 @@ export const GroupPanel = (props: {
           {(group) => (
             <div class={groupRow}>
               <div>
-                <Show when={props.onFilter} fallback={<div class={strongCell}>{group.key}</div>}>
-                  <button class={groupKeyButton} type="button" onClick={() => props.onFilter?.(group.key)}>
+                <Show fallback={<div class={strongCell}>{group.key}</div>} when={props.onFilter}>
+                  <button class={groupKeyButton} onClick={() => props.onFilter?.(group.key)} type="button">
                     {group.key}
                   </button>
                 </Show>
@@ -80,8 +80,8 @@ export const GroupPanel = (props: {
               </div>
               <div class={right}>
                 <div class={groupValue}>
-                  <Show when={!analyticsGroupUnavailableOnly(group)} fallback={<UsageUnavailableCell />}>
-                    <Show when={group.priced} fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>}>
+                  <Show fallback={<UsageUnavailableCell />} when={!analyticsGroupUnavailableOnly(group)}>
+                    <Show fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>} when={group.priced}>
                       {fmtMoney(group.costSum)}
                     </Show>
                   </Show>

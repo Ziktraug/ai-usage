@@ -1,5 +1,5 @@
-import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { describe, expect, test } from 'bun:test';
+import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import {
   buildDashboardMetrics,
   buildPreviousPeriodSummary,
@@ -46,7 +46,13 @@ describe('dashboard model', () => {
   test('filters timeline rows from a search snapshot', () => {
     const rows = [
       row({ name: 'Alpha build', sessionLabel: 'Alpha build', project: 'alpha', harness: 'Codex' }),
-      row({ name: 'Beta review', sessionLabel: 'Beta review', project: 'beta', harness: 'Claude', provider: 'Claude sub' }),
+      row({
+        name: 'Beta review',
+        sessionLabel: 'Beta review',
+        project: 'beta',
+        harness: 'Claude',
+        provider: 'Claude sub',
+      }),
     ];
 
     const filtered = filterTimelineRows(rows, createFilterSnapshot('alpha', 'Codex', { project: 'alpha' }));

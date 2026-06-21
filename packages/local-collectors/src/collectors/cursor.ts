@@ -11,7 +11,32 @@ import { safeJSON, usablePrompt } from '../text';
 import { type CursorCsvOptions, collectCursorCsvTurns } from './cursor-csv';
 import { reconcileCursorSessions } from './cursor-reconcile';
 
-type KeyValueRow = { key: string; value: string };
+interface KeyValueRow {
+  key: string;
+  value: string;
+}
+interface CursorBubbleData {
+  text?: string;
+  type?: number;
+}
+interface CursorComposerData {
+  createdAt?: number;
+  modelConfig?: {
+    model?: string;
+    modelName?: string;
+  };
+  name?: string;
+  totalLinesAdded?: number;
+  totalLinesRemoved?: number;
+}
+interface CursorTokenData {
+  tokenCount?: {
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+  };
+}
 
 const COMPOSER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'";
 const TOKEN_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"inputTokens\"%'";
@@ -68,8 +93,10 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
             Effect.sync(() => {
               for (const row of composerRows) {
                 const id = row.key.slice('composerData:'.length);
-                const data = safeJSON(row.value);
-                if (!data) continue;
+                const data = safeJSON<CursorComposerData>(row.value);
+                if (!data) {
+                  continue;
+                }
                 comp.set(id, {
                   name: data.name || '',
                   model: data.modelConfig?.modelName || data.modelConfig?.model || 'cursor',
@@ -93,14 +120,18 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
               for (const row of tokenRows) {
                 const parts = String(row.key).split(':');
                 const composerId = parts[1];
-                const data = safeJSON(row.value);
+                const data = safeJSON<CursorTokenData>(row.value);
                 const tokenCount = data?.tokenCount;
-                if (!tokenCount || !composerId) continue;
+                if (!(tokenCount && composerId)) {
+                  continue;
+                }
                 const input = tokenCount.inputTokens || 0;
                 const output = tokenCount.outputTokens || 0;
                 const cacheRead = tokenCount.cacheReadTokens || 0;
                 const cacheWrite = tokenCount.cacheWriteTokens || 0;
-                if (input + output + cacheRead + cacheWrite === 0) continue;
+                if (input + output + cacheRead + cacheWrite === 0) {
+                  continue;
+                }
                 let current = agg.get(composerId);
                 if (!current) {
                   current = { in: 0, out: 0, cr: 0, cw: 0, calls: 0 };
@@ -127,12 +158,18 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
             Effect.sync(() => {
               for (const row of userRows) {
                 const composerId = String(row.key).split(':')[1];
-                if (!composerId || !namedComposerIds.has(composerId)) continue;
-                const data = safeJSON(row.value);
-                if (data?.type !== 1) continue;
+                if (!(composerId && namedComposerIds.has(composerId))) {
+                  continue;
+                }
+                const data = safeJSON<CursorBubbleData>(row.value);
+                if (data?.type !== 1) {
+                  continue;
+                }
                 const current = naming.get(composerId) ?? { turns: 0, first: null };
                 current.turns++;
-                if (!current.first) current.first = usablePrompt(data.text);
+                if (!current.first) {
+                  current.first = usablePrompt(data.text);
+                }
                 naming.set(composerId, current);
               }
             }),
@@ -179,9 +216,13 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
         // composers carry no usable tokens. Surface them as usage-unavailable rows (like
         // the Claude prompt-history fallback) so the timeline still reflects the sessions.
         for (const [composerId, composer] of comp) {
-          if (agg.has(composerId)) continue;
+          if (agg.has(composerId)) {
+            continue;
+          }
           const name = naming.get(composerId);
-          if (!name || name.turns === 0) continue;
+          if (!name || name.turns === 0) {
+            continue;
+          }
           sessions.push({
             source: { harnessKey: 'cursor', sourceSessionId: composerId },
             date: composer.created ? new Date(composer.created) : null,
@@ -215,7 +256,9 @@ export const collectCursor = withPerfSpan(
       firstExisting(storage, ...resolvePathCandidates(storage).cursor.stateVscdb),
       (path) => ({ found: path !== null }),
     );
-    if (!dbPath) return [];
+    if (!dbPath) {
+      return [];
+    }
 
     const cache = yield* withPerfSpan(
       'aiUsage.collect.cursor.cache.read',

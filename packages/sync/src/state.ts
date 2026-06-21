@@ -1,34 +1,30 @@
-import type { SyncRemoteConfig } from '@ai-usage/report-core/project-alias';
-import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { LocalHistoryError, LocalHistoryWarning } from '@ai-usage/local-collectors/errors';
 import { ensureMachineConfig } from '@ai-usage/local-collectors/machine-config';
-import {
-  listSyncRemotes,
-  readSyncedSnapshotRecords,
-  resolveSyncToken,
-} from '@ai-usage/local-collectors/sync-storage';
+import { listSyncRemotes, readSyncedSnapshotRecords, resolveSyncToken } from '@ai-usage/local-collectors/sync-storage';
+import type { SyncRemoteConfig } from '@ai-usage/report-core/project-alias';
+import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import { Effect } from 'effect';
 
 export type SyncTokenStatus = 'missing' | 'none' | 'present';
 
 export interface SyncRemoteState {
-  name: string;
-  url: string;
   enabled: boolean;
-  tokenStatus: SyncTokenStatus;
-  tokenEnv?: string;
+  fetchedAt?: string;
   machineId?: string;
   machineLabel?: string;
+  name: string;
   rows: number;
-  fetchedAt?: string;
+  tokenEnv?: string;
+  tokenStatus: SyncTokenStatus;
+  url: string;
 }
 
 export interface SyncStoredSnapshotState {
-  remoteName: string;
-  remoteUrl: string;
   fetchedAt: string;
   machineId: string;
   machineLabel: string;
+  remoteName: string;
+  remoteUrl: string;
   rows: number;
 }
 
@@ -41,7 +37,9 @@ export interface SyncState {
 
 const tokenStatusForRemote = (remote: SyncRemoteConfig) =>
   Effect.gen(function* () {
-    if (!remote.tokenEnv) return 'none' as const;
+    if (!remote.tokenEnv) {
+      return 'none' as const;
+    }
     const token = yield* resolveSyncToken(remote.tokenEnv);
     return token ? ('present' as const) : ('missing' as const);
   });

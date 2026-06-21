@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { actualCost, normalizeUsageRow } from './usage-row';
 import {
   createUsageMergeBundle,
   mergeRowIdentity,
@@ -7,6 +6,7 @@ import {
   parseUsageMergeBundle,
   toSerializedMergeRow,
 } from './merge-bundle';
+import { actualCost, normalizeUsageRow } from './usage-row';
 
 const machine = { id: 'machine-a', label: 'Machine A' };
 
