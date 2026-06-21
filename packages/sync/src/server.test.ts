@@ -99,7 +99,8 @@ describe('snapshot server protocol', () => {
     expect(await response.text()).toBe('not found');
   });
 
-  test('starts a Node snapshot server adapter', async () => {
+  test('starts a Node snapshot server adapter and reports the client address', async () => {
+    const events: SnapshotRequestEvent[] = [];
     const server = await Effect.runPromise(
       startNodeSnapshotServer({
         host: '127.0.0.1',
@@ -107,6 +108,7 @@ describe('snapshot server protocol', () => {
         machine,
         token: null,
         collectSnapshot: async () => snapshot(),
+        onRequest: (event) => events.push(event),
       }),
     );
 
@@ -115,8 +117,24 @@ describe('snapshot server protocol', () => {
 
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ ok: true, machine });
+      expect(events[0]?.remoteAddress).not.toBe('unknown');
+      expect(events[0]?.remoteAddress.length).toBeGreaterThan(0);
     } finally {
       await server.stop();
     }
+  });
+
+  test('refuses to bind beyond localhost without a token', async () => {
+    const exit = await Effect.runPromiseExit(
+      startNodeSnapshotServer({
+        host: '0.0.0.0',
+        port: 0,
+        machine,
+        token: null,
+        collectSnapshot: async () => snapshot(),
+      }),
+    );
+
+    expect(exit._tag).toBe('Failure');
   });
 });

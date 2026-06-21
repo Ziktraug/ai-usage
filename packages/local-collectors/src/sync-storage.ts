@@ -43,10 +43,7 @@ const parseEnvText = (text: string): Record<string, string> => {
     if (eq <= 0) continue;
     const key = line.slice(0, eq).trim();
     let value = line.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1);
     }
     result[key] = value;
@@ -60,11 +57,34 @@ const readEnvFile = (filePath: string) =>
     catch: syncError('readSyncEnv', filePath),
   });
 
-const findNearestEnvPath = (cwd: string) => {
+const findWorkspaceRoot = (cwd: string) => {
+  let current = path.resolve(cwd);
+  while (true) {
+    const packagePath = path.join(current, 'package.json');
+    if (fs.existsSync(packagePath)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(packagePath, 'utf8')) as { workspaces?: unknown };
+        if (parsed.workspaces) return current;
+      } catch {
+        // Ignore an unreadable package.json and keep walking up.
+      }
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+};
+
+// Walk up from `cwd` looking for a `.env`, but never above the workspace root (or, failing that, the
+// user's home directory). This keeps token resolution from picking up a `.env` in an unrelated parent
+// directory outside the project.
+const findNearestEnvPath = (cwd: string, homeDir?: string) => {
+  const boundary = findWorkspaceRoot(cwd) ?? (homeDir ? path.resolve(homeDir) : null);
   let current = path.resolve(cwd);
   while (true) {
     const candidate = path.join(current, '.env');
     if (fs.existsSync(candidate)) return candidate;
+    if (boundary && current === boundary) return null;
     const parent = path.dirname(current);
     if (parent === current) return null;
     current = parent;
@@ -81,7 +101,7 @@ export const resolveSyncToken = (
     const storage = yield* LocalHistoryStorage;
     const userEnv = yield* readEnvFile(userEnvPath(storage));
     if (userEnv[tokenEnv]) return userEnv[tokenEnv]!;
-    const repoEnvPath = findNearestEnvPath(configCwd);
+    const repoEnvPath = findNearestEnvPath(configCwd, storage.home);
     if (!repoEnvPath) return null;
     const repoEnv = yield* readEnvFile(repoEnvPath);
     return repoEnv[tokenEnv] ?? null;
@@ -99,7 +119,10 @@ export const upsertSyncRemote = (
   Effect.gen(function* () {
     const config = yield* readAiUsageConfig;
     const remotes = config.sync?.remotes ?? [];
-    const next = [...remotes.filter((item) => item.name !== remote.name), { ...remote, enabled: remote.enabled ?? true }];
+    const next = [
+      ...remotes.filter((item) => item.name !== remote.name),
+      { ...remote, enabled: remote.enabled ?? true },
+    ];
     yield* writeAiUsageConfig({ ...config, sync: { ...(config.sync ?? {}), remotes: next } });
     return next;
   });
@@ -152,7 +175,8 @@ export const storeSyncedSnapshot = (input: {
 
 const parseStoredSyncedSnapshot = (text: string): StoredSyncedSnapshot => {
   const value = JSON.parse(text) as unknown;
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('Stored snapshot must be an object');
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    throw new Error('Stored snapshot must be an object');
   const record = value as Record<string, unknown>;
   if (typeof record.remoteName !== 'string') throw new Error('Stored snapshot missing remoteName');
   if (typeof record.remoteUrl !== 'string') throw new Error('Stored snapshot missing remoteUrl');

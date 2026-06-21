@@ -3,7 +3,7 @@ import path from 'node:path';
 import {
   createUsageMergeBundle,
   deserializeMergeRow,
-  parseUsageMergeBundle,
+  parseSerializedMergeRow,
   type SerializedMergeRow,
   toSerializedMergeRow,
   type UsageMergeBundle,
@@ -119,6 +119,8 @@ const migrate = (db: SqliteDatabase) => {
       first_seen_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
+      -- Reserved for future explicit supersession tracking; supersession is currently
+      -- carried by the status column (active | superseded | deleted).
       superseded_by TEXT
     );
 
@@ -208,6 +210,7 @@ const updateMergeRow = (db: SqliteDatabase, row: SerializedMergeRow, now: string
   db.query(`
     UPDATE usage_rows
     SET
+      source_fingerprint = ?,
       content_hash = ?,
       row_json = ?,
       status = ?,
@@ -219,6 +222,7 @@ const updateMergeRow = (db: SqliteDatabase, row: SerializedMergeRow, now: string
       updated_at = ?
     WHERE row_key = ?
   `).run(
+    row.sourceFingerprint,
     row.contentHash,
     JSON.stringify(row),
     row.status,
@@ -324,25 +328,14 @@ export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<Quer
         sql += " ORDER BY COALESCE(active_date, '') DESC, row_key ASC";
         const records = db.query(sql).all(...params) as StoredRowRecord[];
         return {
-          rows: records.map((record) => deserializeMergeRow(parseUsageMergeBundleRow(record.row_json))),
+          rows: records.map((record) =>
+            deserializeMergeRow(parseSerializedMergeRow(JSON.parse(record.row_json) as unknown)),
+          ),
         };
       },
       catch: (cause) => usageStoreError('queryReportRows', input.dbPath, cause, 'storage-failure'),
     }),
   );
-
-const parseUsageMergeBundleRow = (text: string): SerializedMergeRow => {
-  const bundle = parseUsageMergeBundle(
-    JSON.stringify({
-      version: 1,
-      machine: { id: 'row-parser', label: 'row-parser' },
-      generatedAt: new Date(0).toISOString(),
-      rows: [JSON.parse(text) as unknown],
-      warnings: [],
-    }),
-  );
-  return bundle.rows[0]!;
-};
 
 export const exportLocalMergeBundle = (
   input: ExportLocalMergeBundleInput,

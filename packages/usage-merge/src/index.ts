@@ -12,6 +12,7 @@ import {
   type PairingResult,
 } from '@ai-usage/lan-pairing';
 import type { StoredLanPeer } from '@ai-usage/local-collectors/lan-peers';
+import { safeTokenEqual } from '@ai-usage/report-core/auth';
 import { parseUsageMergeBundle, type UsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import { exportLocalMergeBundle, importPeerMergeBundle, type ImportResult } from '@ai-usage/usage-store';
@@ -290,7 +291,9 @@ export const createUsageMergeBundleHttpHandler =
     const url = new URL(request.url);
     if (url.pathname !== '/lan/merge-bundle') return new Response('Not found', { status: 404 });
     if (request.method !== 'GET') return new Response('Method not allowed', { status: 405 });
-    if (authorizationToken(request) !== input.token) return new Response('Unauthorized', { status: 401 });
+    const provided = authorizationToken(request);
+    if (provided === null || !safeTokenEqual(provided, input.token))
+      return new Response('Unauthorized', { status: 401 });
 
     const result = await Effect.runPromiseExit(
       exportLocalMergeBundle({

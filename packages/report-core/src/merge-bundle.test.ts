@@ -3,6 +3,7 @@ import { actualCost, normalizeUsageRow } from './usage-row';
 import {
   createUsageMergeBundle,
   mergeRowIdentity,
+  parseSerializedMergeRow,
   parseUsageMergeBundle,
   toSerializedMergeRow,
 } from './merge-bundle';
@@ -48,7 +49,10 @@ describe('usage merge bundles', () => {
   });
 
   test('keeps row keys stable while content hashes change with row content', () => {
-    const first = toSerializedMergeRow({ ...row, source: { harnessKey: 'codex', sourceSessionId: 'session-1' } }, machine);
+    const first = toSerializedMergeRow(
+      { ...row, source: { harnessKey: 'codex', sourceSessionId: 'session-1' } },
+      machine,
+    );
     const updated = toSerializedMergeRow(
       { ...row, tokOut: row.tokOut + 1, source: { harnessKey: 'codex', sourceSessionId: 'session-1' } },
       machine,
@@ -64,5 +68,30 @@ describe('usage merge bundles', () => {
 
     expect(identity.rowKey.startsWith('v1:machine-a:codex:')).toBe(true);
     expect(identity.sourceFingerprint).toHaveLength(64);
+  });
+
+  test('keeps the fallback key stable when only volatile fields change', () => {
+    const base = { ...row, source: { harnessKey: 'codex', sourceSessionId: null } };
+    const first = toSerializedMergeRow(base, machine);
+    const grown = toSerializedMergeRow({ ...base, tokOut: row.tokOut + 100 }, machine);
+
+    // Same logical row recollected with more tokens keeps its key but a fresh content hash and fingerprint.
+    expect(grown.rowKey).toBe(first.rowKey);
+    expect(grown.contentHash).not.toBe(first.contentHash);
+    expect(grown.sourceFingerprint).not.toBe(first.sourceFingerprint);
+  });
+
+  test('gives distinct fallback keys to logically distinct rows', () => {
+    const source = { harnessKey: 'codex', sourceSessionId: null };
+    const a = toSerializedMergeRow({ ...row, project: 'project-a', source }, machine);
+    const b = toSerializedMergeRow({ ...row, project: 'project-b', source }, machine);
+
+    expect(a.rowKey).not.toBe(b.rowKey);
+  });
+
+  test('parseSerializedMergeRow validates a single row', () => {
+    const [serialized] = createUsageMergeBundle({ machine, rows: [{ ...row }] }).rows;
+    expect(parseSerializedMergeRow(serialized).rowKey).toBe(serialized!.rowKey);
+    expect(() => parseSerializedMergeRow({ ...serialized, source: { harnessKey: 'codex' } })).toThrow('invalid row');
   });
 });
