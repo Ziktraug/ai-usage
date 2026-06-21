@@ -33,7 +33,7 @@ const row = (project: string, sourcePath?: string): UsageRowWithOptionalSource =
 describe('project aliases', () => {
   test('applies first matching alias against source paths', () => {
     const rows = applyProjectAliases(
-      [row('exalibur-spike', '/Users/nathan/tmp/exalibur-spike')],
+      [row('exalibur-spike', '/Users/alex/tmp/exalibur-spike')],
       [
         { name: 'exalibur', match: ['*/exalibur-*'] },
         { name: 'other', match: ['*/exalibur-spike'] },
