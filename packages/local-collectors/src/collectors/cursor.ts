@@ -8,7 +8,7 @@ import { withPerfSpan } from '../perf';
 import { firstExisting, resolvePathCandidates } from '../platform-paths';
 import type { CollectorRow } from '../rtk-enrichment';
 import { safeJSON, usablePrompt } from '../text';
-import { collectCursorCsvTurns, type CursorCsvOptions } from './cursor-csv';
+import { type CursorCsvOptions, collectCursorCsvTurns } from './cursor-csv';
 import { reconcileCursorSessions } from './cursor-reconcile';
 
 type KeyValueRow = { key: string; value: string };
@@ -254,8 +254,28 @@ export const collectCursorResult = (
         firstExisting(storage, ...resolvePathCandidates(storage).cursor.stateVscdb),
         (path) => ({ found: path !== null }),
       );
-      let sessions = dbPath ? yield* collectCursorSessionsFromDb(storage, dbPath) : [];
       const warnings: LocalHistoryWarning[] = [];
+      let sessions: CollectedSession[] = [];
+
+      if (dbPath) {
+        const dbResult = yield* collectCursorSessionsFromDb(storage, dbPath).pipe(
+          Effect.match({
+            onFailure: (error) => ({ _tag: 'failure' as const, error }),
+            onSuccess: (dbSessions) => ({ _tag: 'success' as const, dbSessions }),
+          }),
+        );
+
+        if (dbResult._tag === 'failure') {
+          warnings.push(
+            localHistoryWarningFromError(dbResult.error, {
+              harness: 'cursor',
+              message: 'Failed to read Cursor database',
+            }),
+          );
+        } else {
+          sessions = dbResult.dbSessions;
+        }
+      }
 
       if (cursorCsv && hasCursorCsvInput(cursorCsv)) {
         const turnsResult = yield* withPerfSpan(

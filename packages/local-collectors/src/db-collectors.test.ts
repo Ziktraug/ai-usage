@@ -420,6 +420,35 @@ describe('DB-backed Harness collectors', () => {
     expect(result.harnesses.find((harness) => harness.harness === 'cursor')?.rows).toHaveLength(2);
   });
 
+  test('keeps Cursor CSV import when Cursor database read fails', () => {
+    const storage = new TestMemoryStorage();
+    const exportPath = `${storage.home}/cursor.csv`;
+    storage.writeText(CURSOR_DB, '');
+    storage.writeText(
+      'cursor.csv',
+      cursorCsv([
+        '"2026-06-03T12:00:00.000Z","alex@example.com","","","On-Demand","claude-4.5-sonnet","No","0","7","50","3","60","0.40"',
+      ]),
+    );
+
+    const result = runWithStorage(
+      collectSelectedHarnessResults({
+        harness: 'cursor',
+        includeCursor: true,
+        keepSource: true,
+        cursorCsv: { usageExportPaths: [exportPath], clusterGapMs: 5 * 60_000, user: 'alex@example.com' },
+      }),
+      storage,
+    );
+    const cursor = result.harnesses.find((harness) => harness.harness === 'cursor');
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.harness).toBe('Cursor');
+    expect(result.rows[0]?.costActual).toBe(0.4);
+    expect(cursor?.status).toBe('warning');
+    expect(cursor?.warnings[0]?.message).toContain('Failed to read Cursor database');
+  });
+
   test('collects Cursor commit attribution as a separate facet', () => {
     const storage = new TestMemoryStorage();
     storage.writeDatabaseRows(CURSOR_AI_TRACKING_DB, CURSOR_COMMIT_ATTRIBUTION_SQL, [
