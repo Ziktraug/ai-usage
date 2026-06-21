@@ -32,6 +32,26 @@ export interface AnalyticsGroup {
   tools: number;
 }
 
+/**
+ * The minimal per-row shape the grouping engine accumulates. Callers project
+ * their own row type onto it, so the finalize formulas live in exactly one
+ * place instead of being re-derived per output adapter.
+ */
+export interface AnalyticsRowInput {
+  harness: string;
+  provider: string;
+  usageUnavailable?: boolean;
+  ambiguous?: boolean;
+  fresh: number;
+  inp: number;
+  cache: number;
+  linesAdded: number;
+  linesDeleted: number;
+  turns: number;
+  tools: number;
+  pricedCost: number | null;
+}
+
 export interface AnalyticsSummary {
   sessionCount: number;
   totalCost: number;
@@ -97,16 +117,27 @@ const finishGroup = (group: GroupDraft, totalCost: number): AnalyticsGroup => {
   };
 };
 
-const groupBy = (rows: Row[], keyFn: (row: Row) => string, totalCost: number): AnalyticsGroup[] => {
+/**
+ * Group rows of any shape into analytics groups. The caller supplies a
+ * projection onto {@link AnalyticsRowInput} and a key selector; accumulation
+ * and the finalize formulas stay behind this one interface.
+ */
+export const groupAnalytics = <T>(
+  rows: readonly T[],
+  toInput: (row: T) => AnalyticsRowInput,
+  keyFn: (row: T) => string,
+  totalCost: number,
+): AnalyticsGroup[] => {
   const groups = new Map<string, GroupDraft>();
   for (const row of rows) {
+    const input = toInput(row);
     const key = keyFn(row);
     let group = groups.get(key);
     if (!group) {
       group = {
         key,
-        harness: row.harness,
-        provider: row.provider,
+        harness: input.harness,
+        provider: input.provider,
         sessions: 0,
         priced: 0,
         unpriced: 0,
@@ -124,22 +155,20 @@ const groupBy = (rows: Row[], keyFn: (row: Row) => string, totalCost: number): A
       };
       groups.set(key, group);
     }
-    const lineDelta = usageRowLineDelta(row);
-    const pricedCost = usageRowPricedCost(row);
     group.sessions++;
-    if (row.usageUnavailable) group.usageUnavailable++;
-    if (row.ambiguous) group.ambiguous++;
-    group.fresh += usageRowFreshTokens(row);
-    group.inp += row.tokIn;
-    group.cache += usageRowCacheReadTokens(row);
-    group.linesA += lineDelta.added;
-    group.linesD += lineDelta.deleted;
-    group.turns += row.turns;
-    group.tools += row.tools;
-    if (pricedCost != null) {
+    if (input.usageUnavailable) group.usageUnavailable++;
+    if (input.ambiguous) group.ambiguous++;
+    group.fresh += input.fresh;
+    group.inp += input.inp;
+    group.cache += input.cache;
+    group.linesA += input.linesAdded;
+    group.linesD += input.linesDeleted;
+    group.turns += input.turns;
+    group.tools += input.tools;
+    if (input.pricedCost != null) {
       group.priced++;
-      group.costs.push(pricedCost);
-      group.costSum += pricedCost;
+      group.costs.push(input.pricedCost);
+      group.costSum += input.pricedCost;
     } else {
       group.unpriced++;
     }
@@ -147,6 +176,27 @@ const groupBy = (rows: Row[], keyFn: (row: Row) => string, totalCost: number): A
 
   return [...groups.values()].map((group) => finishGroup(group, totalCost)).sort((a, b) => b.costSum - a.costSum);
 };
+
+export const rowToAnalyticsInput = (row: Row): AnalyticsRowInput => {
+  const lineDelta = usageRowLineDelta(row);
+  return {
+    harness: row.harness,
+    provider: row.provider,
+    usageUnavailable: row.usageUnavailable ?? false,
+    ambiguous: row.ambiguous ?? false,
+    fresh: usageRowFreshTokens(row),
+    inp: row.tokIn,
+    cache: usageRowCacheReadTokens(row),
+    linesAdded: lineDelta.added,
+    linesDeleted: lineDelta.deleted,
+    turns: row.turns,
+    tools: row.tools,
+    pricedCost: usageRowPricedCost(row),
+  };
+};
+
+const groupBy = (rows: Row[], keyFn: (row: Row) => string, totalCost: number): AnalyticsGroup[] =>
+  groupAnalytics(rows, rowToAnalyticsInput, keyFn, totalCost);
 
 export const calculateAnalytics = (rows: Row[], now = Date.now()): AnalyticsSummary => {
   const pricedCosts = rows.flatMap((row) => {

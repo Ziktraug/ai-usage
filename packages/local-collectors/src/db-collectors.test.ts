@@ -26,6 +26,12 @@ const CURSOR_USER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bub
 
 const jsonl = (...events: unknown[]) => `${events.map((event) => JSON.stringify(event)).join('\n')}\n`;
 
+const cursorCsv = (rows: string[]) =>
+  [
+    'Date,User,Cloud Agent ID,Automation ID,Kind,Model,Max Mode,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost',
+    ...rows,
+  ].join('\n');
+
 describe('DB-backed Harness collectors', () => {
   test('reports one failing harness while keeping successful harness rows', () => {
     const storage = new TestMemoryStorage();
@@ -350,6 +356,97 @@ describe('DB-backed Harness collectors', () => {
     expect(rows[0]?.turns).toBe(2);
     expect(rows[0]?.linesAdded).toBe(9);
     expect(rows[0]?.date?.toISOString()).toBe('2026-03-10T00:00:00.000Z');
+  });
+
+  test('ingests Cursor CSV through the Cursor harness before publishing rows', () => {
+    const storage = new TestMemoryStorage();
+    const exportPath = `${storage.home}/cursor.csv`;
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_COMPOSER_SQL, [
+      {
+        key: 'composerData:tokenless',
+        value: JSON.stringify({
+          name: 'Refactor agent loop',
+          modelConfig: { modelName: 'gpt-5.3' },
+          createdAt: Date.parse('2026-06-03T09:00:00.000Z'),
+          totalLinesAdded: 9,
+          totalLinesRemoved: 4,
+        }),
+      },
+    ]);
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_TOKEN_SQL, [
+      {
+        key: 'bubbleId:tokenless:assistant-1',
+        value: JSON.stringify({ tokenCount: { inputTokens: 0, outputTokens: 0 } }),
+      },
+    ]);
+    storage.writeDatabaseRows(CURSOR_DB, CURSOR_USER_SQL, [
+      { key: 'bubbleId:tokenless:user-1', value: JSON.stringify({ type: 1, text: 'Refactor the agent loop' }) },
+    ]);
+    storage.writeText(
+      'cursor.csv',
+      cursorCsv([
+        '"2026-06-03T09:00:57.773Z","alex@example.com","","","Included","claude-opus-4-8-thinking-high","No","20","10","100","5","135","1.50"',
+        '"2026-06-03T12:00:00.000Z","alex@example.com","","","On-Demand","claude-4.5-sonnet","No","0","7","50","3","60","0.40"',
+      ]),
+    );
+
+    const result = runWithStorage(
+      collectSelectedHarnessResults({
+        harness: 'cursor',
+        includeCursor: true,
+        keepSource: true,
+        cursorCsv: { usageExportPaths: [exportPath], clusterGapMs: 5 * 60_000, user: 'alex@example.com' },
+      }),
+      storage,
+    );
+    const rows = result.rows as Array<
+      (typeof result.rows)[number] & { source?: { sourcePath?: string | null; sourceSessionId: string | null } }
+    >;
+
+    expect(rows).toHaveLength(2);
+    const matched = rows.find((row) => row.source?.sourceSessionId === 'tokenless');
+    const orphan = rows.find((row) => row.name.startsWith('Cursor export'));
+
+    expect(matched?.usageUnavailable).toBeUndefined();
+    expect(matched?.model).toBe('claude-opus-4-8-thinking-high');
+    expect(matched?.tokIn).toBe(10);
+    expect(matched?.tokCw).toBe(20);
+    expect(matched?.tokCr).toBe(100);
+    expect(matched?.tokOut).toBe(5);
+    expect(matched?.costQuota).toBe(1.5);
+    expect(matched?.linesAdded).toBe(9);
+    expect(orphan?.source?.sourcePath).toBe(exportPath);
+    expect(orphan?.costActual).toBe(0.4);
+    expect(result.harnesses.find((harness) => harness.harness === 'cursor')?.rows).toHaveLength(2);
+  });
+
+  test('keeps Cursor CSV import when Cursor database read fails', () => {
+    const storage = new TestMemoryStorage();
+    const exportPath = `${storage.home}/cursor.csv`;
+    storage.writeText(CURSOR_DB, '');
+    storage.writeText(
+      'cursor.csv',
+      cursorCsv([
+        '"2026-06-03T12:00:00.000Z","alex@example.com","","","On-Demand","claude-4.5-sonnet","No","0","7","50","3","60","0.40"',
+      ]),
+    );
+
+    const result = runWithStorage(
+      collectSelectedHarnessResults({
+        harness: 'cursor',
+        includeCursor: true,
+        keepSource: true,
+        cursorCsv: { usageExportPaths: [exportPath], clusterGapMs: 5 * 60_000, user: 'alex@example.com' },
+      }),
+      storage,
+    );
+    const cursor = result.harnesses.find((harness) => harness.harness === 'cursor');
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.harness).toBe('Cursor');
+    expect(result.rows[0]?.costActual).toBe(0.4);
+    expect(cursor?.status).toBe('warning');
+    expect(cursor?.warnings[0]?.message).toContain('Failed to read Cursor database');
   });
 
   test('collects Cursor commit attribution as a separate facet', () => {

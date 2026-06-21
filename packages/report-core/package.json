@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./analytics": "./src/analytics.ts",
     "./auth": "./src/auth.ts",
+    "./csv": "./src/csv.ts",
     "./harness-metadata": "./src/harness-metadata.ts",
     "./html-export": "./src/html-export.ts",
     "./pricing": "./src/pricing.ts",

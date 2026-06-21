@@ -102,6 +102,8 @@ export interface ProjectSourcesResult {
   warnings: SnapshotMergeWarning[];
 }
 
+export type ReadGitFile = (filePath: string) => string | null;
+
 export interface ProjectSourcesRequest extends LocalUsageSelection {
   snapshots: UsageSnapshot[];
   includeLocal?: boolean;
@@ -109,6 +111,7 @@ export interface ProjectSourcesRequest extends LocalUsageSelection {
   generatedAt?: Date;
   appVersion?: string | null;
   includeGitRemote?: boolean;
+  readGitFile?: ReadGitFile;
 }
 
 const toLocalUsageSnapshotRequest = (request: {
@@ -407,16 +410,32 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
 
 const projectFromRow = (row: SourcedRow) => row.project || path.basename(row.source.sourcePath ?? '') || '(unknown)';
 
-const readGitRemoteUrl = (projectPath: string): string => {
+const defaultReadGitFile: ReadGitFile = (filePath) => {
   try {
-    const configPath = path.join(projectPath, '.git', 'config');
-    if (!fs.existsSync(configPath)) return '';
-    const text = fs.readFileSync(configPath, 'utf8');
-    const match = text.match(/^\[remote\s+"origin"\]\s*\n\s*url\s*=\s*(.+)$/m);
-    return match ? extractRepoName(match[1]!.trim()) : '';
+    if (!fs.existsSync(filePath)) return null;
+    return fs.readFileSync(filePath, 'utf8');
   } catch {
-    return '';
+    return null;
   }
+};
+
+export const parseGitConfigRemote = (text: string, remoteName = 'origin'): string => {
+  let inRemote = false;
+  for (const line of text.split(/\r?\n/)) {
+    const remoteMatch = line.match(/^\s*\[remote\s+"([^"]+)"\]\s*$/);
+    if (remoteMatch) {
+      inRemote = remoteMatch[1] === remoteName;
+      continue;
+    }
+    if (/^\s*\[[^\]]+\]\s*$/.test(line)) {
+      inRemote = false;
+      continue;
+    }
+    if (!inRemote) continue;
+    const urlMatch = line.match(/^\s*url\s*=\s*(.+?)\s*$/);
+    if (urlMatch) return extractRepoName(urlMatch[1]!);
+  }
+  return '';
 };
 
 const extractRepoName = (url: string): string => {
@@ -427,7 +446,16 @@ const extractRepoName = (url: string): string => {
   return url;
 };
 
-const collectProjectSources = (rows: SourcedRow[], includeGitRemote: boolean): ProjectSource[] => {
+const readGitRemoteUrl = (projectPath: string, readGitFile: ReadGitFile): string => {
+  const text = readGitFile(path.join(projectPath, '.git', 'config'));
+  return text === null ? '' : parseGitConfigRemote(text);
+};
+
+const collectProjectSources = (
+  rows: SourcedRow[],
+  includeGitRemote: boolean,
+  readGitFile: ReadGitFile = defaultReadGitFile,
+): ProjectSource[] => {
   const summaries = new Map<string, ProjectSource>();
 
   for (const row of rows) {
@@ -455,11 +483,11 @@ const collectProjectSources = (rows: SourcedRow[], includeGitRemote: boolean): P
       a.project.localeCompare(b.project) || a.machine.localeCompare(b.machine) || a.harness.localeCompare(b.harness),
   );
 
-  if (includeGitRemote) enrichGitRemotes(result);
+  if (includeGitRemote) enrichGitRemotes(result, readGitFile);
   return result;
 };
 
-const enrichGitRemotes = (sources: ProjectSource[]) => {
+const enrichGitRemotes = (sources: ProjectSource[], readGitFile: ReadGitFile) => {
   const cache = new Map<string, string>();
   for (const source of sources) {
     if (!source.sourcePath) continue;
@@ -468,7 +496,7 @@ const enrichGitRemotes = (sources: ProjectSource[]) => {
       source.gitRemote = cached;
       continue;
     }
-    const gitRemote = readGitRemoteUrl(source.sourcePath);
+    const gitRemote = readGitRemoteUrl(source.sourcePath, readGitFile);
     cache.set(source.sourcePath, gitRemote);
     source.gitRemote = gitRemote;
   }
@@ -489,7 +517,7 @@ export const listProjectSourcesWithWarnings = (
 
     const merged = mergeUsageSnapshots(snapshots);
     return {
-      sources: collectProjectSources(merged.rows, request.includeGitRemote ?? false),
+      sources: collectProjectSources(merged.rows, request.includeGitRemote ?? false, request.readGitFile),
       warnings: merged.warnings,
     };
   });

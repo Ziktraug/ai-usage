@@ -16,6 +16,7 @@ import {
   decodeUsageMergeCredential,
   encodeUsageMergeCredential,
   lanIdentityFromMachine,
+  resolveUsageMergeBundle,
   storedLanPeerFromPairingEnvelope,
   upsertUsageMergeEnvToken,
   usageMergeTokenEnvNameForMachine,
@@ -130,6 +131,51 @@ describe('usage-merge public boundary', () => {
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('resolves authenticated local merge bundles without HTTP types', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-merge-resolve-'));
+    try {
+      const dbPath = path.join(home, 'usage.sqlite');
+      const machine: UsageMachine = { id: 'machine-a', label: 'Machine A' };
+      await Effect.runPromise(
+        importLocalRows({
+          dbPath,
+          machine,
+          rows: [makeSourcedRow({ project: 'local-project', sourcePath: '/work/local', sessionId: 'local-1' })],
+        }),
+      );
+
+      const rejected = await Effect.runPromise(
+        resolveUsageMergeBundle({
+          machine,
+          dbPath,
+          expectedToken: 'secret-token',
+          providedToken: null,
+          generatedAt: new Date('2026-06-19T12:00:00.000Z'),
+        }),
+      );
+      const accepted = await Effect.runPromise(
+        resolveUsageMergeBundle({
+          machine,
+          dbPath,
+          expectedToken: 'secret-token',
+          providedToken: 'secret-token',
+          generatedAt: new Date('2026-06-19T12:00:00.000Z'),
+        }),
+      );
+
+      expect(rejected.kind).toBe('unauthorized');
+      expect(accepted.kind).toBe('ready');
+      if (accepted.kind !== 'ready') throw new Error('Expected authenticated merge bundle');
+      expect(JSON.stringify(accepted.bundle)).not.toContain('secret-token');
+      expect(accepted.bundle).toMatchObject({
+        machine,
+        generatedAt: '2026-06-19T12:00:00.000Z',
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 

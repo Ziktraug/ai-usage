@@ -121,6 +121,19 @@ export interface UsageMergeBundleHttpHandlerInput {
   generatedAt?: () => Date;
 }
 
+export interface ResolveUsageMergeBundleInput {
+  machine: UsageMachine;
+  dbPath: string;
+  expectedToken: string;
+  providedToken: string | null;
+  generatedAt?: Date;
+}
+
+export type UsageMergeBundleResolution =
+  | { kind: 'unauthorized' }
+  | { kind: 'export-failed'; error: unknown }
+  | { kind: 'ready'; bundle: UsageMergeBundle };
+
 export interface UsageMergeCredential {
   version: 1;
   tokenEnv: string;
@@ -285,25 +298,41 @@ const authorizationToken = (request: Request) => {
   return header.slice('Bearer '.length);
 };
 
+export const resolveUsageMergeBundle = (
+  input: ResolveUsageMergeBundleInput,
+): Effect.Effect<UsageMergeBundleResolution> => {
+  if (input.providedToken === null || !safeTokenEqual(input.providedToken, input.expectedToken)) {
+    return Effect.succeed({ kind: 'unauthorized' });
+  }
+
+  return exportLocalMergeBundle({
+    dbPath: input.dbPath,
+    machine: input.machine,
+    ...(input.generatedAt === undefined ? {} : { generatedAt: input.generatedAt }),
+  }).pipe(
+    Effect.map((bundle) => ({ kind: 'ready', bundle }) satisfies UsageMergeBundleResolution),
+    Effect.catchAll((error) => Effect.succeed({ kind: 'export-failed', error } satisfies UsageMergeBundleResolution)),
+  );
+};
+
 export const createUsageMergeBundleHttpHandler =
   (input: UsageMergeBundleHttpHandlerInput) =>
   async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     if (url.pathname !== '/lan/merge-bundle') return new Response('Not found', { status: 404 });
     if (request.method !== 'GET') return new Response('Method not allowed', { status: 405 });
-    const provided = authorizationToken(request);
-    if (provided === null || !safeTokenEqual(provided, input.token))
-      return new Response('Unauthorized', { status: 401 });
-
-    const result = await Effect.runPromiseExit(
-      exportLocalMergeBundle({
+    const result = await Effect.runPromise(
+      resolveUsageMergeBundle({
         dbPath: input.dbPath,
         machine: input.machine,
+        expectedToken: input.token,
+        providedToken: authorizationToken(request),
         ...(input.generatedAt === undefined ? {} : { generatedAt: input.generatedAt() }),
       }),
     );
-    if (result._tag === 'Failure') return new Response('Failed to export merge bundle', { status: 500 });
-    return Response.json(result.value);
+    if (result.kind === 'unauthorized') return new Response('Unauthorized', { status: 401 });
+    if (result.kind === 'export-failed') return new Response('Failed to export merge bundle', { status: 500 });
+    return Response.json(result.bundle);
   };
 
 export const fetchUsageMergeBundleTransport: UsageMergePeerTransport = {

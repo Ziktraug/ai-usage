@@ -3,6 +3,7 @@ import path from 'node:path';
 import { actualCost, approximateApiCost, tokenTotal } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
+import { collectorCachePath, reviveCollectorRows } from '../collector-cache';
 import type { LocalHistoryError, LocalHistoryWarning } from '../errors';
 import { LocalHistoryStorage, walkFiles } from '../local-history';
 import { withPerfSpan } from '../perf';
@@ -22,28 +23,7 @@ type FileFingerprint = { mtimeMs: number; path: string; size: number };
 type ClaudeCache = { fingerprintKey: string | null; rows: CollectorRow[]; version: number };
 
 const CLAUDE_CACHE_VERSION = 1;
-const claudeCachePath = (storage: LocalHistoryStorage) =>
-  path.join(storage.home, '.config', 'ai-usage', 'claude-cache.json');
-
-const reviveDate = (value: unknown): Date | null => {
-  if (value == null) return null;
-  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
-  if (typeof value !== 'string') return null;
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date : null;
-};
-
-const reviveCollectorRows = (value: unknown): CollectorRow[] => {
-  if (!Array.isArray(value)) return [];
-  return value.map((row) => {
-    const record = row as CollectorRow;
-    return {
-      ...record,
-      date: reviveDate(record.date),
-      endDate: reviveDate(record.endDate),
-    };
-  });
-};
+const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 
 const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
   try {
