@@ -13,7 +13,8 @@
   },
   "scripts": {
     "cli": "bun apps/cli/src/main.ts",
-    "dev": "bun run --cwd apps/web dev",
+    "dev": "bun tools/dev.ts",
+    "dev:once": "bun run --cwd apps/web dev",
     "preview": "bun run --cwd apps/web preview",
     "html": "bun apps/cli/src/html.ts",
     "build": "turbo run build",
