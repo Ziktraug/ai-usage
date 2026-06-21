@@ -1,5 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  collectHarnessFacets,
+  collectSelectedHarnessResults,
+  collectSelectedHarnessRows,
+  type HarnessSelection,
+  type SelectedHarnessCollectionResult,
+} from '@ai-usage/local-collectors';
+import { LocalHistoryError, type LocalHistoryWarning } from '@ai-usage/local-collectors/errors';
+import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
+import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-collectors/machine-config';
+import { type HarnessKey, harnessKeys } from '@ai-usage/report-core/harness-metadata';
 import { applyProjectAliases } from '@ai-usage/report-core/project-alias';
 import {
   createUsageReportPayload,
@@ -8,7 +19,6 @@ import {
   type ReportOptions,
   type UsageReportPayload,
 } from '@ai-usage/report-core/report-data';
-import { harnessKeys, type HarnessKey } from '@ai-usage/report-core/harness-metadata';
 import {
   createUsageSnapshot,
   mergeUsageSnapshots,
@@ -18,18 +28,9 @@ import {
 } from '@ai-usage/report-core/snapshot';
 import type { Row, SourcedRow } from '@ai-usage/report-core/types';
 import { usageRowTokenTotal } from '@ai-usage/report-core/usage-row';
-import {
-  collectHarnessFacets,
-  collectSelectedHarnessResults,
-  collectSelectedHarnessRows,
-  type SelectedHarnessCollectionResult,
-  type HarnessSelection,
-} from '@ai-usage/local-collectors';
-import { LocalHistoryError, type LocalHistoryWarning } from '@ai-usage/local-collectors/errors';
-import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
-import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-collectors/machine-config';
 import { importLocalRows, queryReportRows, usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
+import { withPerfSpan } from './perf';
 
 export interface LocalUsageSelection {
   harness: HarnessKey | null;
@@ -42,6 +43,12 @@ export interface LocalReportRowsRequest extends LocalUsageSelection {
 }
 
 export interface LocalReportPayloadRequest extends LocalReportRowsRequest {
+  options: ReportOptions;
+  includeFacets?: boolean;
+  generatedAt?: Date;
+}
+
+export interface StoredReportPayloadRequest extends LocalUsageSelection {
   options: ReportOptions;
   includeFacets?: boolean;
   generatedAt?: Date;
@@ -140,9 +147,7 @@ const resolveCursorConfig = (
   if (!cursorCsv) return undefined;
   return {
     ...cursorCsv,
-    ...(cursorCsv.usageExportDir
-      ? { usageExportDir: resolveConfigPath(configCwd, cursorCsv.usageExportDir) }
-      : {}),
+    ...(cursorCsv.usageExportDir ? { usageExportDir: resolveConfigPath(configCwd, cursorCsv.usageExportDir) } : {}),
     ...(cursorCsv.usageExportPaths
       ? { usageExportPaths: cursorCsv.usageExportPaths.map((filePath) => resolveConfigPath(configCwd, filePath)) }
       : {}),
@@ -182,42 +187,166 @@ export const collectLocalReportRows = (request: LocalReportRowsRequest) =>
     return applyProjectAliases(rows, config.projectAliases ?? []);
   });
 
-export const collectLocalReportRowsWithWarnings = (request: LocalReportRowsRequest): Effect.Effect<
+export const collectLocalReportRowsWithWarnings = (
+  request: LocalReportRowsRequest,
+): Effect.Effect<
   LocalReportRowsResult,
   LocalHistoryError,
   import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
 > =>
-  Effect.gen(function* () {
-    const storage = yield* LocalHistoryStorage;
-    const machine = yield* ensureMachineConfig;
-    const dbPath = usageStorePath(storage.home);
-    const { config, collection } = yield* collectConfiguredLocalRowsWithWarnings({ ...request, keepSource: true });
-    const rows = applyProjectAliases(collection.rows, config.projectAliases ?? []);
-    yield* importLocalRows({ dbPath, machine, rows }).pipe(
-      Effect.mapError(usageStoreLocalHistoryError('usageStore.importLocalRows', dbPath)),
-    );
-    const harnessKeys = selectedStoredHarnessKeys(request);
-    const stored = yield* queryReportRows({ dbPath, ...(harnessKeys === undefined ? {} : { harnessKeys }) }).pipe(
-      Effect.mapError(usageStoreLocalHistoryError('usageStore.queryReportRows', dbPath)),
-    );
-    const harnesses = collection.harnesses.map((harness) => ({
-      ...harness,
-      rows: stored.rows.filter((row) => row.harness === harness.label),
-    }));
-    return { rows: stored.rows, warnings: collection.warnings, collection: { ...collection, rows: stored.rows, harnesses } };
-  });
+  withPerfSpan(
+    'aiUsage.report.collectRowsWithWarnings',
+    Effect.gen(function* () {
+      const storage = yield* LocalHistoryStorage;
+      const machine = yield* ensureMachineConfig;
+      const dbPath = usageStorePath(storage.home);
+      const { config, collection } = yield* withPerfSpan(
+        'aiUsage.report.collectConfiguredRows',
+        collectConfiguredLocalRowsWithWarnings({ ...request, keepSource: true }),
+        (result) => ({
+          harnesses: result.collection.harnesses.length,
+          rows: result.collection.rows.length,
+          warnings: result.collection.warnings.length,
+        }),
+      );
+      const rows = yield* withPerfSpan(
+        'aiUsage.report.applyProjectAliases',
+        Effect.sync(() => applyProjectAliases(collection.rows, config.projectAliases ?? [])),
+        (aliasedRows) => ({ aliases: config.projectAliases?.length ?? 0, rows: aliasedRows.length }),
+      );
+      yield* withPerfSpan(
+        'aiUsage.usageStore.importLocalRows',
+        importLocalRows({ dbPath, machine, rows }).pipe(
+          Effect.mapError(usageStoreLocalHistoryError('usageStore.importLocalRows', dbPath)),
+        ),
+        (result) => ({
+          deleted: result.deleted,
+          inserted: result.inserted,
+          superseded: result.superseded,
+          unchanged: result.unchanged,
+          updated: result.updated,
+          warnings: result.warnings,
+        }),
+      );
+      const harnessKeys = selectedStoredHarnessKeys(request);
+      const stored = yield* withPerfSpan(
+        'aiUsage.usageStore.queryReportRows',
+        queryReportRows({ dbPath, ...(harnessKeys === undefined ? {} : { harnessKeys }) }).pipe(
+          Effect.mapError(usageStoreLocalHistoryError('usageStore.queryReportRows', dbPath)),
+        ),
+        (result) => ({ rows: result.rows.length }),
+      );
+      const harnesses = collection.harnesses.map((harness) => ({
+        ...harness,
+        rows: stored.rows.filter((row) => row.harness === harness.label),
+      }));
+      return {
+        rows: stored.rows,
+        warnings: collection.warnings,
+        collection: { ...collection, rows: stored.rows, harnesses },
+      };
+    }),
+    (result) => ({
+      harnesses: result.collection.harnesses.length,
+      rows: result.rows.length,
+      warnings: result.warnings.length,
+    }),
+  );
 
 export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
-  Effect.gen(function* () {
-    const { rows, warnings } = yield* collectLocalReportRowsWithWarnings(request);
-    const facets = request.includeFacets
-      ? yield* collectHarnessFacets({
-          includeCursor: request.includeCursor && (!request.harness || request.harness === 'cursor'),
-        })
-      : undefined;
-    const report = prepareUsageReport(rows, request.options);
-    return createUsageReportPayload(report, request.options, request.generatedAt ?? new Date(), facets, warnings);
-  });
+  withPerfSpan(
+    'aiUsage.report.createLocalPayload',
+    Effect.gen(function* () {
+      const { rows, warnings } = yield* collectLocalReportRowsWithWarnings(request);
+      const facets = request.includeFacets
+        ? yield* withPerfSpan(
+            'aiUsage.report.collectFacets',
+            collectHarnessFacets({
+              includeCursor: request.includeCursor && (!request.harness || request.harness === 'cursor'),
+            }),
+            (result) => ({ groups: Object.keys(result).length }),
+          )
+        : undefined;
+      const report = yield* withPerfSpan(
+        'aiUsage.report.prepare',
+        Effect.sync(() => prepareUsageReport(rows, request.options)),
+        (prepared) => ({
+          omittedRows: prepared.omittedRows,
+          rows: prepared.rows.length,
+          tableRows: prepared.tableRows.length,
+        }),
+      );
+      return yield* withPerfSpan(
+        'aiUsage.report.serializePayload',
+        Effect.sync(() =>
+          createUsageReportPayload(report, request.options, request.generatedAt ?? new Date(), facets, warnings),
+        ),
+        (payload) => ({
+          rows: payload.rows.length,
+          tableRows: payload.tableRows.length,
+          warnings: payload.warnings?.length ?? 0,
+        }),
+      );
+    }),
+    (payload) => ({
+      rows: payload.rows.length,
+      tableRows: payload.tableRows.length,
+      warnings: payload.warnings?.length ?? 0,
+    }),
+  );
+
+export const createStoredReportPayload = (
+  request: StoredReportPayloadRequest,
+): Effect.Effect<
+  UsageReportPayload,
+  LocalHistoryError,
+  import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
+> =>
+  withPerfSpan(
+    'aiUsage.report.createStoredPayload',
+    Effect.gen(function* () {
+      const storage = yield* LocalHistoryStorage;
+      const dbPath = usageStorePath(storage.home);
+      const harnessKeys = selectedStoredHarnessKeys(request);
+      const stored = yield* withPerfSpan(
+        'aiUsage.usageStore.queryStoredReportRows',
+        queryReportRows({ dbPath, ...(harnessKeys === undefined ? {} : { harnessKeys }) }).pipe(
+          Effect.mapError(usageStoreLocalHistoryError('usageStore.queryReportRows', dbPath)),
+        ),
+        (result) => ({ rows: result.rows.length }),
+      );
+      const facets = request.includeFacets
+        ? yield* withPerfSpan(
+            'aiUsage.report.collectStoredFacets',
+            collectHarnessFacets({
+              includeCursor: request.includeCursor && (!request.harness || request.harness === 'cursor'),
+            }),
+            (result) => ({ groups: Object.keys(result).length }),
+          )
+        : undefined;
+      const report = yield* withPerfSpan(
+        'aiUsage.report.prepareStored',
+        Effect.sync(() => prepareUsageReport(stored.rows, request.options)),
+        (prepared) => ({
+          omittedRows: prepared.omittedRows,
+          rows: prepared.rows.length,
+          tableRows: prepared.tableRows.length,
+        }),
+      );
+      return yield* withPerfSpan(
+        'aiUsage.report.serializeStoredPayload',
+        Effect.sync(() => createUsageReportPayload(report, request.options, request.generatedAt ?? new Date(), facets)),
+        (payload) => ({
+          rows: payload.rows.length,
+          tableRows: payload.tableRows.length,
+        }),
+      );
+    }),
+    (payload) => ({
+      rows: payload.rows.length,
+      tableRows: payload.tableRows.length,
+    }),
+  );
 
 export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
   Effect.gen(function* () {
@@ -264,7 +393,13 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
     return {
       rows,
       report,
-      payload: createUsageReportPayload(report, request.options, request.generatedAt ?? new Date(), facets, payloadWarnings),
+      payload: createUsageReportPayload(
+        report,
+        request.options,
+        request.generatedAt ?? new Date(),
+        facets,
+        payloadWarnings,
+      ),
       warnings: allWarnings,
       duplicatesDropped: merged.duplicatesDropped,
     };
@@ -339,7 +474,9 @@ const enrichGitRemotes = (sources: ProjectSource[]) => {
   }
 };
 
-export const listProjectSourcesWithWarnings = (request: ProjectSourcesRequest): Effect.Effect<
+export const listProjectSourcesWithWarnings = (
+  request: ProjectSourcesRequest,
+): Effect.Effect<
   ProjectSourcesResult,
   LocalHistoryError,
   import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
@@ -362,3 +499,6 @@ export const listProjectSources = (request: ProjectSourcesRequest) =>
 
 export const runLocalReportPayload = (request: LocalReportPayloadRequest): Promise<UsageReportPayload> =>
   Effect.runPromise(createLocalReportPayload(request).pipe(Effect.provide(LocalHistoryStorageLive)));
+
+export const runStoredReportPayload = (request: StoredReportPayloadRequest): Promise<UsageReportPayload> =>
+  Effect.runPromise(createStoredReportPayload(request).pipe(Effect.provide(LocalHistoryStorageLive)));

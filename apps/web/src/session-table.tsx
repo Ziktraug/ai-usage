@@ -19,6 +19,7 @@ import {
 import type { Column, OnChangeFn, SortingState, VisibilityState } from '@tanstack/solid-table';
 import { createSolidTable, flexRender, getCoreRowModel, getSortedRowModel } from '@tanstack/solid-table';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
+import { measureClientPerf } from './client-perf';
 import type { FieldFilterKey } from './dashboard-search';
 import {
   defaultColumnVisibility,
@@ -74,12 +75,16 @@ const ColumnVisibilityControl = (props: {
   return (
     <details>
       <summary class={ghostButton}>Columns · {visibleCount()} ▾</summary>
-      <div class={popoverContent} aria-label="Choose table columns">
+      <div class={popoverContent}>
         <div class={popoverHeader}>
           <span>
             {visibleCount()} of {sessionColumns.length} columns shown
           </span>
-          <button class={ghostButton} type="button" onClick={() => props.onColumnVisibilityChange(defaultColumnVisibility)}>
+          <button
+            class={ghostButton}
+            type="button"
+            onClick={() => props.onColumnVisibilityChange(defaultColumnVisibility)}
+          >
             Reset
           </button>
         </div>
@@ -178,7 +183,11 @@ export const SessionTable = (props: {
   const rowModelRows = createMemo(() => {
     props.rows;
     props.sorting;
-    return sessionTable.getRowModel().rows;
+    return measureClientPerf(
+      'aiUsage.web.client.compute.sessionTableRowModel',
+      () => sessionTable.getRowModel().rows,
+      (rows) => ({ rows: rows.length }),
+    );
   });
   const visibleColumnCount = () => visibleColumns().length;
   const virtualRows = createMemo(() => {
@@ -186,11 +195,15 @@ export const SessionTable = (props: {
     const viewport = tableViewport();
     const start = Math.max(0, Math.floor(viewport.scrollTop / rowHeight) - overscanRows);
     const end = Math.min(rows.length, start + Math.ceil(viewport.height / rowHeight) + overscanRows * 2);
-    return {
-      bottomHeight: Math.max(0, rows.length - end) * rowHeight,
-      rows: rows.slice(start, end),
-      topHeight: start * rowHeight,
-    };
+    return measureClientPerf(
+      'aiUsage.web.client.compute.sessionTableVirtualRows',
+      () => ({
+        bottomHeight: Math.max(0, rows.length - end) * rowHeight,
+        rows: rows.slice(start, end),
+        topHeight: start * rowHeight,
+      }),
+      (result) => ({ rows: result.rows.length }),
+    );
   });
 
   onMount(() => {

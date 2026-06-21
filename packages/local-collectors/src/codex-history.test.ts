@@ -1,13 +1,19 @@
+import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { Effect } from 'effect';
 import { findLatestCodexQuotaSnapshot, readCodexUsageSessions } from './codex-history';
 import { collectCodex } from './collectors/codex';
-import { LocalHistoryStorage } from './local-history';
+import { createLocalHistoryStorage, LocalHistoryStorage } from './local-history';
 import { TestMemoryStorage } from './test-memory-storage';
 
 const jsonl = (...events: unknown[]) => `${events.map((event) => JSON.stringify(event)).join('\n')}\n`;
 const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, storage: TestMemoryStorage) =>
   Effect.runSync(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
+const runWithRealStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, home: string) =>
+  Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))));
 
 describe('Codex local history', () => {
   test('parses sessions, child sessions, names, and quota snapshots through fixture storage', () => {
@@ -157,5 +163,62 @@ describe('Codex local history', () => {
     expect(rows[1]?.tokOut).toBe(4);
     expect(rows[1]?.subagent).toBe(true);
     expect(rows[1]?.usageUnavailable).toBe(false);
+  });
+
+  test('caches parsed Codex session files by mtime and size', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-cache-'));
+    try {
+      const sessionPath = path.join(home, '.codex', 'sessions', '2026', 'cached.jsonl');
+      mkdirSync(path.dirname(sessionPath), { recursive: true });
+      writeFileSync(
+        sessionPath,
+        jsonl(
+          {
+            timestamp: '2026-01-01T00:00:00.000Z',
+            type: 'session_meta',
+            payload: { id: 'cached-thread', cwd: '/work/cache-project' },
+          },
+          {
+            timestamp: '2026-01-01T00:01:00.000Z',
+            type: 'event_msg',
+            payload: { type: 'task_started' },
+          },
+          {
+            timestamp: '2026-01-01T00:02:00.000Z',
+            type: 'event_msg',
+            payload: {
+              type: 'token_count',
+              info: {
+                total_token_usage: {
+                  total_tokens: 42,
+                  input_tokens: 30,
+                  cached_input_tokens: 10,
+                  output_tokens: 12,
+                },
+              },
+            },
+          },
+        ),
+      );
+
+      const first = await runWithRealStorage(collectCodex, home);
+      const second = await runWithRealStorage(collectCodex, home);
+
+      expect(second).toEqual(first);
+      expect(second[0]?.name).toBe('codex cached-t');
+      expect(second[0]?.tokIn).toBe(20);
+      expect(second[0]?.tokCr).toBe(10);
+      expect(second[0]?.tokOut).toBe(12);
+
+      const db = new Database(path.join(home, '.config', 'ai-usage', 'codex-session-cache.sqlite'));
+      try {
+        const row = db.query('SELECT count(*) as count FROM codex_session_cache').get() as { count: number };
+        expect(row.count).toBe(1);
+      } finally {
+        db.close();
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

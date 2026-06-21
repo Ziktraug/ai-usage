@@ -1,19 +1,20 @@
+import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { describe, expect, test } from 'bun:test';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
+import { writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import { createUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import { createUsageSnapshot, type UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
-import { LocalHistoryStorage, createLocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
-import { writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import { importPeerMergeBundle, usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 import {
   createLocalReportPayload,
   createLocalUsageSnapshot,
   createMergedUsageReport,
+  createStoredReportPayload,
   listProjectSources,
   listProjectSourcesWithWarnings,
 } from './index';
@@ -154,7 +155,9 @@ describe('shared reporting', () => {
       }) as unknown as typeof fetch;
       const storage = createLocalHistoryStorage(home);
       writeClaudeSession(home, '/work/local');
-      await Effect.runPromise(writeMachineConfig(testMachine).pipe(Effect.provideService(LocalHistoryStorage, storage)));
+      await Effect.runPromise(
+        writeMachineConfig(testMachine).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
       await Effect.runPromise(
         importPeerMergeBundle({
           dbPath: usageStorePath(home),
@@ -181,6 +184,38 @@ describe('shared reporting', () => {
       expect(payload.rows.find((row) => row.project === 'peer-project')?.source?.machineLabel).toBe('Peer Machine');
     } finally {
       globalThis.fetch = originalFetch;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('creates a report payload from stored rows without collecting local history', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-stored-'));
+    try {
+      const storage = createLocalHistoryStorage(home);
+      await Effect.runPromise(
+        importPeerMergeBundle({
+          dbPath: usageStorePath(home),
+          localMachineId: testMachine.id,
+          bundle: createUsageMergeBundle({
+            machine: { id: 'peer-machine', label: 'Peer Machine' },
+            rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-session-1' })],
+          }),
+        }),
+      );
+
+      const payload = await Effect.runPromise(
+        createStoredReportPayload({
+          harness: null,
+          includeCursor: false,
+          generatedAt: new Date('2026-01-01T00:00:00.000Z'),
+          options: defaultOptions,
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(payload.rows).toHaveLength(1);
+      expect(payload.rows[0]?.project).toBe('peer-project');
+      expect(payload.rows[0]?.source?.machineLabel).toBe('Peer Machine');
+    } finally {
       rmSync(home, { recursive: true, force: true });
     }
   });
@@ -312,7 +347,10 @@ describe('shared reporting', () => {
     const projectPath = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-project-'));
     try {
       mkdirSync(path.join(projectPath, '.git'), { recursive: true });
-      writeFileSync(path.join(projectPath, '.git', 'config'), '[remote "origin"]\n  url = git@github.com:owner/repo.git\n');
+      writeFileSync(
+        path.join(projectPath, '.git', 'config'),
+        '[remote "origin"]\n  url = git@github.com:owner/repo.git\n',
+      );
       const snapshot = createUsageSnapshot({
         machine: testMachine,
         rows: [

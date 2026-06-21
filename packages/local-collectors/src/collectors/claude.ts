@@ -1,10 +1,13 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { actualCost, approximateApiCost, tokenTotal } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import type { LocalHistoryError, LocalHistoryWarning } from '../errors';
 import { LocalHistoryStorage, walkFiles } from '../local-history';
+import { withPerfSpan } from '../perf';
 import { type HarnessPaths, resolvePaths } from '../platform-paths';
+import type { CollectorRow } from '../rtk-enrichment';
 import { base, dominant, safeJSON, usablePrompt } from '../text';
 
 type ClaudeHistoryFallback = {
@@ -14,6 +17,92 @@ type ClaudeHistoryFallback = {
   project: string | null;
   firstPrompt: string | null;
   turns: number;
+};
+type FileFingerprint = { mtimeMs: number; path: string; size: number };
+type ClaudeCache = { fingerprintKey: string | null; rows: CollectorRow[]; version: number };
+
+const CLAUDE_CACHE_VERSION = 1;
+const claudeCachePath = (storage: LocalHistoryStorage) =>
+  path.join(storage.home, '.config', 'ai-usage', 'claude-cache.json');
+
+const reviveDate = (value: unknown): Date | null => {
+  if (value == null) return null;
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
+  if (typeof value !== 'string') return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+};
+
+const reviveCollectorRows = (value: unknown): CollectorRow[] => {
+  if (!Array.isArray(value)) return [];
+  return value.map((row) => {
+    const record = row as CollectorRow;
+    return {
+      ...record,
+      date: reviveDate(record.date),
+      endDate: reviveDate(record.endDate),
+    };
+  });
+};
+
+const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
+  try {
+    if (!fs.existsSync(storage.home)) return null;
+    const cachePath = claudeCachePath(storage);
+    if (!fs.existsSync(cachePath)) return { fingerprintKey: null, rows: [], version: CLAUDE_CACHE_VERSION };
+    const parsed = JSON.parse(fs.readFileSync(cachePath, 'utf8')) as {
+      fingerprintKey?: unknown;
+      rows?: unknown;
+      version?: number;
+    };
+    if (parsed.version !== CLAUDE_CACHE_VERSION) {
+      return { fingerprintKey: null, rows: [], version: CLAUDE_CACHE_VERSION };
+    }
+    return {
+      fingerprintKey: typeof parsed.fingerprintKey === 'string' ? parsed.fingerprintKey : null,
+      rows: reviveCollectorRows(parsed.rows),
+      version: CLAUDE_CACHE_VERSION,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writeClaudeCache = (storage: LocalHistoryStorage, fingerprintKey: string | null, rows: CollectorRow[]) => {
+  if (!fingerprintKey) return false;
+  const cachePath = claudeCachePath(storage);
+  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+  fs.writeFileSync(cachePath, `${JSON.stringify({ fingerprintKey, rows, version: CLAUDE_CACHE_VERSION })}\n`, 'utf8');
+  return true;
+};
+
+const fileFingerprint = (filePath: string): FileFingerprint | null => {
+  try {
+    const stat = fs.statSync(filePath);
+    return { mtimeMs: stat.mtimeMs, path: filePath, size: stat.size };
+  } catch {
+    return null;
+  }
+};
+
+const createClaudeFingerprintKey = (storage: LocalHistoryStorage, paths: HarnessPaths, files: string[]) => {
+  try {
+    if (!fs.existsSync(storage.home)) return null;
+    const fileFingerprints: FileFingerprint[] = [];
+    for (const filePath of files) {
+      const fingerprint = fileFingerprint(filePath);
+      if (!fingerprint) return null;
+      fileFingerprints.push(fingerprint);
+    }
+    fileFingerprints.sort((left, right) => left.path.localeCompare(right.path));
+    return JSON.stringify({
+      config: fileFingerprint(paths.claude.configFile),
+      history: fileFingerprint(paths.claude.historyFile),
+      files: fileFingerprints,
+    });
+  } catch {
+    return null;
+  }
 };
 
 const HOUSEKEEPING_COMMANDS = new Set(['/clear', '/model', '/effort', '/usage', '/rate-limit-options', '/resume']);
@@ -107,6 +196,26 @@ export const collectClaude = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
   const paths = resolvePaths(storage);
   const dir = paths.claude.projectsDir;
+  const files = yield* withPerfSpan(
+    'aiUsage.collect.claude.walkFiles',
+    walkFiles(storage, dir, (fileName) => fileName.endsWith('.jsonl')),
+    (value) => ({ files: value.length }),
+  );
+  const fingerprintKey = yield* withPerfSpan(
+    'aiUsage.collect.claude.fingerprint',
+    Effect.sync(() => createClaudeFingerprintKey(storage, paths, files)),
+    (value) => ({ enabled: value !== null }),
+  );
+  const cache = yield* withPerfSpan(
+    'aiUsage.collect.claude.cache.read',
+    Effect.sync(() => readClaudeCache(storage)),
+    (value) => ({ enabled: value !== null, rows: value?.rows.length ?? 0 }),
+  );
+  if (cache?.fingerprintKey && cache.fingerprintKey === fingerprintKey) {
+    return yield* withPerfSpan('aiUsage.collect.claude.cache.hit', Effect.succeed(cache.rows), (rows) => ({
+      rows: rows.length,
+    }));
+  }
 
   let provider = 'Claude sub';
   const cfg = paths.claude.configFile;
@@ -115,105 +224,113 @@ export const collectClaude = Effect.gen(function* () {
     if (json?.hasApiKey) provider = 'Claude API';
   }
 
-  const files = yield* walkFiles(storage, dir, (fileName) => fileName.endsWith('.jsonl'));
   const sessions: CollectedSession[] = [];
   const existingSessionIds = new Set(files.map((filePath) => path.basename(filePath, '.jsonl')));
   const seen = new Set<string>();
 
-  for (const filePath of files) {
-    const sourceSessionId = path.basename(filePath, '.jsonl');
-    const isAgentFile = path.basename(filePath).startsWith('agent-');
-    let title: string | null = null;
-    let lastPrompt: string | null = null;
-    let firstPrompt: string | null = null;
-    let cwd: string | null = null;
-    let start: Date | null = null;
-    let end: Date | null = null;
-    let calls = 0;
-    let turns = 0;
-    let tools = 0;
-    let sidechain = isAgentFile;
-    const tokens = { in: 0, out: 0, cr: 0, cw: 0 };
-    const byModel = new Map<string, number>();
+  yield* withPerfSpan(
+    'aiUsage.collect.claude.parseFiles',
+    Effect.gen(function* () {
+      let lines = 0;
+      for (const filePath of files) {
+        const sourceSessionId = path.basename(filePath, '.jsonl');
+        const isAgentFile = path.basename(filePath).startsWith('agent-');
+        let title: string | null = null;
+        let lastPrompt: string | null = null;
+        let firstPrompt: string | null = null;
+        let cwd: string | null = null;
+        let start: Date | null = null;
+        let end: Date | null = null;
+        let calls = 0;
+        let turns = 0;
+        let tools = 0;
+        let sidechain = isAgentFile;
+        const tokens = { in: 0, out: 0, cr: 0, cw: 0 };
+        const byModel = new Map<string, number>();
 
-    for (const line of (yield* storage.readText(filePath)).split('\n')) {
-      if (!line) continue;
-      const event = safeJSON(line);
-      if (!event) continue;
-      if (event.timestamp) {
-        const date = new Date(event.timestamp);
-        if (Number.isFinite(date.getTime())) {
-          if (!start || date < start) start = date;
-          if (!end || date > end) end = date;
+        for (const line of (yield* storage.readText(filePath)).split('\n')) {
+          if (!line) continue;
+          lines++;
+          const event = safeJSON(line);
+          if (!event) continue;
+          if (event.timestamp) {
+            const date = new Date(event.timestamp);
+            if (Number.isFinite(date.getTime())) {
+              if (!start || date < start) start = date;
+              if (!end || date > end) end = date;
+            }
+          }
+          if (event.isSidechain) sidechain = true;
+          if (event.type === 'ai-title' && event.aiTitle) title = event.aiTitle;
+          else if (event.type === 'last-prompt' && event.lastPrompt) lastPrompt = String(event.lastPrompt);
+          else if (event.type === 'user') {
+            const content = event.message?.content;
+            let text: string | null = null;
+            if (typeof content === 'string') text = content;
+            else if (Array.isArray(content)) {
+              const isToolResult = content.some((block: any) => block?.type === 'tool_result');
+              if (!isToolResult) text = content.find((block: any) => block?.type === 'text')?.text ?? null;
+            }
+            if (text) {
+              turns++;
+              if (!firstPrompt) firstPrompt = usablePrompt(text);
+            }
+          } else if (event.type === 'assistant') {
+            if (event.cwd) cwd = event.cwd;
+            const usage = event.message?.usage;
+            if (Array.isArray(event.message?.content)) {
+              tools += event.message.content.filter((block: any) => block?.type === 'tool_use').length;
+            }
+            if (!usage) continue;
+            const id = event.message?.id;
+            const key = `${id}:${event.requestId}`;
+            if (id && seen.has(key)) continue;
+            if (id) seen.add(key);
+            calls++;
+            const input = usage.input_tokens || 0;
+            const output = usage.output_tokens || 0;
+            const cacheRead = usage.cache_read_input_tokens || 0;
+            const cacheWrite = usage.cache_creation_input_tokens || 0;
+            tokens.in += input;
+            tokens.out += output;
+            tokens.cr += cacheRead;
+            tokens.cw += cacheWrite;
+            const model = event.message?.model || 'unknown';
+            byModel.set(model, (byModel.get(model) || 0) + input + output + cacheRead + cacheWrite);
+          }
         }
+
+        if (!start && tokenTotal(tokens) === 0) continue;
+        const model = dominant(byModel);
+        const name =
+          title ||
+          usablePrompt(lastPrompt) ||
+          firstPrompt ||
+          `${sidechain ? 'subagent ' : ''}${sourceSessionId.slice(0, 8)}`;
+
+        sessions.push({
+          source: { harnessKey: 'claude', sourceSessionId, sourcePath: cwd },
+          projectPath: cwd,
+          date: start,
+          endDate: end,
+          provider,
+          name,
+          model,
+          project: base(cwd),
+          tokens,
+          cost: provider === 'Claude API' ? approximateApiCost : actualCost(0),
+          calls,
+          turns,
+          tools,
+          linesAdded: null,
+          linesDeleted: null,
+          subagent: sidechain,
+        });
       }
-      if (event.isSidechain) sidechain = true;
-      if (event.type === 'ai-title' && event.aiTitle) title = event.aiTitle;
-      else if (event.type === 'last-prompt' && event.lastPrompt) lastPrompt = String(event.lastPrompt);
-      else if (event.type === 'user') {
-        const content = event.message?.content;
-        let text: string | null = null;
-        if (typeof content === 'string') text = content;
-        else if (Array.isArray(content)) {
-          const isToolResult = content.some((block: any) => block?.type === 'tool_result');
-          if (!isToolResult) text = content.find((block: any) => block?.type === 'text')?.text ?? null;
-        }
-        if (text) {
-          turns++;
-          if (!firstPrompt) firstPrompt = usablePrompt(text);
-        }
-      } else if (event.type === 'assistant') {
-        if (event.cwd) cwd = event.cwd;
-        const usage = event.message?.usage;
-        if (Array.isArray(event.message?.content)) {
-          tools += event.message.content.filter((block: any) => block?.type === 'tool_use').length;
-        }
-        if (!usage) continue;
-        const id = event.message?.id;
-        const key = `${id}:${event.requestId}`;
-        if (id && seen.has(key)) continue;
-        if (id) seen.add(key);
-        calls++;
-        const input = usage.input_tokens || 0;
-        const output = usage.output_tokens || 0;
-        const cacheRead = usage.cache_read_input_tokens || 0;
-        const cacheWrite = usage.cache_creation_input_tokens || 0;
-        tokens.in += input;
-        tokens.out += output;
-        tokens.cr += cacheRead;
-        tokens.cw += cacheWrite;
-        const model = event.message?.model || 'unknown';
-        byModel.set(model, (byModel.get(model) || 0) + input + output + cacheRead + cacheWrite);
-      }
-    }
-
-    if (!start && tokenTotal(tokens) === 0) continue;
-    const model = dominant(byModel);
-    const name =
-      title ||
-      usablePrompt(lastPrompt) ||
-      firstPrompt ||
-      `${sidechain ? 'subagent ' : ''}${sourceSessionId.slice(0, 8)}`;
-
-    sessions.push({
-      source: { harnessKey: 'claude', sourceSessionId, sourcePath: cwd },
-      projectPath: cwd,
-      date: start,
-      endDate: end,
-      provider,
-      name,
-      model,
-      project: base(cwd),
-      tokens,
-      cost: provider === 'Claude API' ? approximateApiCost : actualCost(0),
-      calls,
-      turns,
-      tools,
-      linesAdded: null,
-      linesDeleted: null,
-      subagent: sidechain,
-    });
-  }
+      return { files: files.length, lines, sessions: sessions.length };
+    }),
+    (result) => result,
+  );
 
   for (const session of yield* readClaudeHistoryFallbacks(storage, existingSessionIds, paths)) {
     sessions.push({
@@ -236,5 +353,11 @@ export const collectClaude = Effect.gen(function* () {
     });
   }
 
-  return sessions.map(sessionToUsageRow);
+  const rows = sessions.map(sessionToUsageRow);
+  yield* withPerfSpan(
+    'aiUsage.collect.claude.cache.write',
+    Effect.sync(() => writeClaudeCache(storage, fingerprintKey, rows)),
+    (wrote) => ({ wrote }),
+  );
+  return rows;
 });

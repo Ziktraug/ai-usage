@@ -4,7 +4,7 @@ import { collectSelectedHarnessResults, collectSelectedHarnessRows } from './col
 import { collectClaude, collectClaudeRetentionWarnings } from './collectors/claude';
 import { collectCursor } from './collectors/cursor';
 import { collectOpenCode } from './collectors/opencode';
-import { collectCursorCommitAttribution, CURSOR_COMMIT_ATTRIBUTION_SQL } from './facets';
+import { CURSOR_COMMIT_ATTRIBUTION_SQL, collectCursorCommitAttribution } from './facets';
 import { LocalHistoryStorage } from './local-history';
 import { TestMemoryStorage } from './test-memory-storage';
 
@@ -14,8 +14,7 @@ const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, 
 const OPENCODE_DB = '.local/share/opencode/opencode.db';
 const OPENCODE_STABLE_DB = '.local/share/opencode/opencode-stable.db';
 const OPENCODE_SESSION_SQL = 'SELECT id, title, directory, summary_additions, summary_deletions FROM session';
-const OPENCODE_TOOL_SQL =
-  "SELECT session_id, count(*) n FROM part WHERE json_extract(data,'$.type')='tool' GROUP BY session_id";
+const OPENCODE_TOOL_SQL = `SELECT session_id, count(*) n FROM part WHERE data LIKE '%"type":"tool"%' GROUP BY session_id`;
 const OPENCODE_MESSAGE_SQL = 'SELECT session_id, data FROM message';
 
 const CURSOR_DB = '.config/Cursor/User/globalStorage/state.vscdb';
