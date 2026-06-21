@@ -1,3 +1,4 @@
+import type { TitleSource } from '@ai-usage/report-core/types';
 import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
@@ -32,6 +33,7 @@ type Agg = {
 
 type SessionRow = {
   id: string;
+  parent_id: string | null;
   title: string | null;
   directory: string | null;
   summary_additions: number | null;
@@ -46,9 +48,9 @@ export interface OpenCodeCollectionResult {
   warnings: LocalHistoryWarning[];
 }
 
-const OPENCODE_DB_CACHE_VERSION = 1;
+const OPENCODE_DB_CACHE_VERSION = 2;
 const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
-const SESSION_SQL = 'SELECT id, title, directory, summary_additions, summary_deletions FROM session';
+const SESSION_SQL = 'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
 const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE data LIKE '%"type":"tool"%' GROUP BY session_id`;
 const MESSAGE_SQL = 'SELECT session_id, data FROM message';
 
@@ -77,7 +79,7 @@ const collectFromDb = (
         }));
       }
 
-      const meta = new Map<string, { title: string; dir: string; add: number; del: number }>();
+      const meta = new Map<string, { parentId: string | null; title: string; dir: string; add: number; del: number }>();
       const toolCount = new Map<string, number>();
       const turnCount = new Map<string, number>();
       const agg = new Map<string, Agg>();
@@ -93,6 +95,7 @@ const collectFromDb = (
             );
             for (const row of sessionRows) {
               meta.set(row.id, {
+                parentId: row.parent_id || null,
                 title: row.title || '',
                 dir: row.directory || '',
                 add: row.summary_additions || 0,
@@ -212,14 +215,20 @@ const collectFromDb = (
               cr: current.tcr,
               cw: current.tcw,
             };
-            const title = sessionMeta?.title && !/^ACP Session /i.test(sessionMeta.title) ? sessionMeta.title : '';
+            const title = classifyOpenCodeTitle(sessionMeta?.title ?? null, sid);
             sessions.push({
-              source: { harnessKey: 'opencode', sourceSessionId: sid, sourcePath: sessionMeta?.dir ?? null },
+              source: {
+                harnessKey: 'opencode',
+                sourceSessionId: sid,
+                ...(sessionMeta?.parentId ? { parentSourceSessionId: sessionMeta.parentId } : {}),
+                sourcePath: sessionMeta?.dir ?? null,
+              },
               projectPath: sessionMeta?.dir ?? null,
               date: current.start,
               endDate: current.end,
               provider: provLabel(providerId, current.cost),
-              name: title || (sessionMeta?.title ? 'ACP session' : '') || sid.slice(0, 10),
+              name: title.name,
+              titleSource: title.source,
               model: `${providerId}/${model}`,
               pricingModel: model,
               project: base(sessionMeta?.dir),
@@ -241,6 +250,18 @@ const collectFromDb = (
     }),
     (rows) => ({ db: source, rows: rows.length }),
   );
+
+export const classifyOpenCodeTitle = (
+  title: string | null,
+  sessionId: string,
+): { name: string; source: TitleSource } => {
+  const normalized = title?.trim().replace(/\s+/g, ' ') ?? '';
+  if (!normalized) return { name: sessionId.slice(0, 10), source: 'id' };
+  if (/^(new session\s*[.…]*|acp(?: session)?)$/i.test(normalized)) {
+    return { name: normalized.toLowerCase().startsWith('acp') ? 'ACP session' : sessionId.slice(0, 10), source: 'id' };
+  }
+  return { name: normalized, source: 'ai' };
+};
 
 export const collectOpenCode = Effect.gen(function* () {
   const result = yield* collectOpenCodeResult;

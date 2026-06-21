@@ -1,8 +1,12 @@
 export type Rates = { in: number; out: number; cr: number; cw: number };
 
+export type TitleSource = 'ai' | 'first-prompt' | 'agent-role' | 'id';
+
 export interface UsageRowSource {
   harnessKey: string;
   sourceSessionId: string | null;
+  parentSourceSessionId?: string | null;
+  rootSourceSessionId?: string | null;
   sourcePath?: string | null;
   machineId?: string;
   machineLabel?: string;
@@ -39,6 +43,7 @@ export interface UsageRow {
   partial?: boolean;
   usageUnavailable?: boolean;
   ambiguous?: boolean;
+  titleSource?: TitleSource;
 }
 
 export type Row = UsageRow;

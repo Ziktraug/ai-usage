@@ -19,6 +19,7 @@ import {
   type ReportOptions,
   type UsageReportPayload,
 } from '@ai-usage/report-core/report-data';
+import { normalizeSessionLineage } from '@ai-usage/report-core/session-lineage';
 import {
   createUsageSnapshot,
   mergeUsageSnapshots,
@@ -184,6 +185,9 @@ const selectedStoredHarnessKeys = (request: LocalUsageSelection): HarnessKey[] |
   return harnessKeys.filter((key) => key !== 'cursor');
 };
 
+const prepareNormalizedUsageReport = (rows: Row[], options: ReportOptions) =>
+  prepareUsageReport(normalizeSessionLineage(rows), options);
+
 export const collectLocalReportRows = (request: LocalReportRowsRequest) =>
   Effect.gen(function* () {
     const { config, rows } = yield* collectConfiguredLocalRows(request);
@@ -272,7 +276,7 @@ export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
         : undefined;
       const report = yield* withPerfSpan(
         'aiUsage.report.prepare',
-        Effect.sync(() => prepareUsageReport(rows, request.options)),
+        Effect.sync(() => prepareNormalizedUsageReport(rows, request.options)),
         (prepared) => ({
           omittedRows: prepared.omittedRows,
           rows: prepared.rows.length,
@@ -329,7 +333,7 @@ export const createStoredReportPayload = (
         : undefined;
       const report = yield* withPerfSpan(
         'aiUsage.report.prepareStored',
-        Effect.sync(() => prepareUsageReport(stored.rows, request.options)),
+        Effect.sync(() => prepareNormalizedUsageReport(stored.rows, request.options)),
         (prepared) => ({
           omittedRows: prepared.omittedRows,
           rows: prepared.rows.length,
@@ -380,7 +384,7 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
 
     const merged = mergeUsageSnapshots(snapshots);
     const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
-    const rows = applyProjectAliases(merged.rows, config.projectAliases ?? []);
+    const rows = normalizeSessionLineage(applyProjectAliases(merged.rows, config.projectAliases ?? []));
     const report = prepareUsageReport(rows, request.options);
     const allWarnings = merged.warnings;
     const payloadWarnings = allWarnings.map(({ key, ...warning }) => ({

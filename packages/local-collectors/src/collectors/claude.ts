@@ -22,7 +22,7 @@ type ClaudeHistoryFallback = {
 type FileFingerprint = { mtimeMs: number; path: string; size: number };
 type ClaudeCache = { fingerprintKey: string | null; rows: CollectorRow[]; version: number };
 
-const CLAUDE_CACHE_VERSION = 1;
+const CLAUDE_CACHE_VERSION = 2;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 
 const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
@@ -218,6 +218,7 @@ export const collectClaude = Effect.gen(function* () {
         let title: string | null = null;
         let lastPrompt: string | null = null;
         let firstPrompt: string | null = null;
+        let parentSourceSessionId: string | null = null;
         let cwd: string | null = null;
         let start: Date | null = null;
         let end: Date | null = null;
@@ -233,6 +234,9 @@ export const collectClaude = Effect.gen(function* () {
           lines++;
           const event = safeJSON(line);
           if (!event) continue;
+          if (isAgentFile && typeof event.sessionId === 'string' && event.sessionId !== sourceSessionId) {
+            parentSourceSessionId = event.sessionId;
+          }
           if (event.timestamp) {
             const date = new Date(event.timestamp);
             if (Number.isFinite(date.getTime())) {
@@ -287,14 +291,27 @@ export const collectClaude = Effect.gen(function* () {
           usablePrompt(lastPrompt) ||
           firstPrompt ||
           `${sidechain ? 'subagent ' : ''}${sourceSessionId.slice(0, 8)}`;
+        const titleSource = title
+          ? 'ai'
+          : sidechain && !lastPrompt && !firstPrompt
+            ? 'agent-role'
+            : lastPrompt || firstPrompt
+              ? 'first-prompt'
+              : 'id';
 
         sessions.push({
-          source: { harnessKey: 'claude', sourceSessionId, sourcePath: cwd },
+          source: {
+            harnessKey: 'claude',
+            sourceSessionId,
+            ...(parentSourceSessionId === null ? {} : { parentSourceSessionId }),
+            sourcePath: cwd,
+          },
           projectPath: cwd,
           date: start,
           endDate: end,
           provider,
           name,
+          titleSource,
           model,
           project: base(cwd),
           tokens,
@@ -320,6 +337,7 @@ export const collectClaude = Effect.gen(function* () {
       endDate: session.end,
       provider,
       name: session.firstPrompt || `claude ${session.sessionId.slice(0, 8)}`,
+      titleSource: session.firstPrompt ? 'first-prompt' : 'id',
       model: 'usage unavailable',
       project: base(session.project),
       tokens: { in: 0, out: 0, cr: 0, cw: 0 },
