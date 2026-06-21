@@ -610,3 +610,32 @@ Checks:
 - `bun --filter @ai-usage/web check`: passed.
 - `bun --filter @ai-usage/web build`: passed.
 - `bun run lint`: passed with the existing non-failing `/nix/store` max-size warnings.
+
+## Follow-Up: Manual File Transfer
+
+Status: completed
+
+Picked on: 2026-06-21
+Stable on: 2026-06-21
+
+Goal:
+
+- Provide a no-firewall fallback for machines that cannot accept inbound LAN pairing or merge requests.
+
+Decision:
+
+- Keep the existing `UsageMergeBundle` as the portable file format.
+- Add manual export/import to `@ai-usage/usage-merge`; do not put file transfer in `@ai-usage/lan-pairing`.
+- Treat manual imports as one-shot transfers. They import peer rows into `usage-store` but do not create a trusted LAN peer, token, or pairing relationship.
+- Let the web adapter refresh local collection before export so `/sync` can produce a current file even when opened directly.
+
+File changes:
+
+- Added manual merge export/import methods to `packages/usage-merge`.
+- Added web server functions for manual export/import.
+- Added a `/sync` Manual transfer panel for downloading a JSON bundle and importing one from another machine.
+
+Checks:
+
+- `bun test packages/usage-merge/src/index.test.ts --test-name-pattern "manual|self-import"`: passed.
+- `bun --filter @ai-usage/web check`: passed.

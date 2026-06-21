@@ -69,6 +69,23 @@ export interface PeerStatusResult {
   peers: TrustedLanPeer[];
 }
 
+export interface ManualMergeExportResult {
+  filename: string;
+  bundle: UsageMergeBundle;
+}
+
+export interface ManualMergeImportInput {
+  text: string;
+}
+
+export interface ManualMergeImportResult {
+  machine: UsageMachine;
+  generatedAt: string;
+  rows: number;
+  warnings: number;
+  result: ImportResult;
+}
+
 export interface FetchPeerMergeBundleResult {
   peer: TrustedLanPeer;
   bundle: UsageMergeBundle;
@@ -124,6 +141,15 @@ export class UsageMergeError extends Data.TaggedError('UsageMergeError')<{
   readonly reason?: UsageMergeErrorReason;
   readonly cause?: unknown;
 }> {}
+
+const manualMergeFilenameForMachine = (machine: UsageMachine, generatedAt: Date) => {
+  const machineName = (machine.label || machine.id)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  const timestamp = generatedAt.toISOString().replace(/[:.]/g, '-');
+  return `ai-usage-${machineName || 'machine'}-${timestamp}.json`;
+};
 
 const usageMergeError = (
   operation: string,
@@ -490,6 +516,76 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
       ),
     );
 
+  const exportManualMergeBundle = (): Effect.Effect<ManualMergeExportResult, UsageMergeError> =>
+    Effect.gen(function* () {
+      const generatedAt = now();
+      const bundle = yield* exportLocalMergeBundle({
+        dbPath: options.dbPath,
+        machine: options.localMachine,
+        generatedAt,
+      }).pipe(
+        Effect.mapError((cause) =>
+          usageMergeError('exportManualMergeBundle', 'Could not export local usage merge file.', 'store-failed', cause),
+        ),
+      );
+      lastError = undefined;
+      return {
+        filename: manualMergeFilenameForMachine(options.localMachine, generatedAt),
+        bundle,
+      };
+    }).pipe(
+      Effect.tapError((error) =>
+        Effect.sync(() => {
+          lastError = error.message;
+        }),
+      ),
+    );
+
+  const importManualMergeBundle = (
+    input: ManualMergeImportInput,
+  ): Effect.Effect<ManualMergeImportResult, UsageMergeError> =>
+    Effect.gen(function* () {
+      const bundle = yield* Effect.try({
+        try: () => parseUsageMergeBundle(input.text),
+        catch: (cause) =>
+          usageMergeError(
+            'importManualMergeBundle',
+            `Could not parse usage merge file: ${cause instanceof Error ? cause.message : String(cause)}`,
+            'invalid-input',
+            cause,
+          ),
+      });
+      const result = yield* importPeerMergeBundle({
+        dbPath: options.dbPath,
+        localMachineId: options.localMachine.id,
+        bundle,
+        importedAt: now(),
+      }).pipe(
+        Effect.mapError((cause) =>
+          usageMergeError(
+            'importManualMergeBundle',
+            `Could not import usage merge file from ${bundle.machine.label}.`,
+            cause.reason === 'self-import' ? 'self-merge' : 'store-failed',
+            cause,
+          ),
+        ),
+      );
+      lastError = undefined;
+      return {
+        machine: bundle.machine,
+        generatedAt: bundle.generatedAt,
+        rows: bundle.rows.length,
+        warnings: bundle.warnings.length,
+        result,
+      };
+    }).pipe(
+      Effect.tapError((error) =>
+        Effect.sync(() => {
+          lastError = error.message;
+        }),
+      ),
+    );
+
   return {
     startLanMerge: () =>
       Effect.gen(function* () {
@@ -641,6 +737,8 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
       });
     },
     mergePeer,
+    exportManualMergeBundle,
+    importManualMergeBundle,
     forgetPeer: (input) =>
       Effect.sync(() => {
         peerStats.delete(input.machineId);
@@ -657,6 +755,8 @@ export interface UsageMergeService {
   scanLanMergePeers(input?: ScanLanMergePeersInput): Effect.Effect<LanMergeState, UsageMergeError>;
   pairPeer(input: PairPeerInput): Effect.Effect<LanMergeState, UsageMergeError>;
   mergePeer(input: MergePeerInput): Effect.Effect<ImportResult, UsageMergeError>;
+  exportManualMergeBundle(): Effect.Effect<ManualMergeExportResult, UsageMergeError>;
+  importManualMergeBundle(input: ManualMergeImportInput): Effect.Effect<ManualMergeImportResult, UsageMergeError>;
   forgetPeer(input: ForgetPeerInput): Effect.Effect<LanMergeState, UsageMergeError>;
   readPeerStatuses(): Effect.Effect<PeerStatusResult, UsageMergeError>;
 }
