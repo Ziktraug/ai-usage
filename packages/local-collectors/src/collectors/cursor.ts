@@ -1,91 +1,20 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
+import { cachedDbRows, dbStat, readDbRowCache, storeDbRows, writeDbRowCache } from '../collector-cache';
 import { LocalHistoryStorage } from '../local-history';
 import { withPerfSpan } from '../perf';
 import { firstExisting, resolvePathCandidates } from '../platform-paths';
-import type { CollectorRow } from '../rtk-enrichment';
 import { safeJSON, usablePrompt } from '../text';
 
 type KeyValueRow = { key: string; value: string };
-type CursorDbCacheEntry = { mtimeMs: number; rows: CollectorRow[]; size: number };
-type CursorDbCache = { dirty: boolean; entries: Record<string, CursorDbCacheEntry>; version: number };
 
 const COMPOSER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'";
 const TOKEN_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"inputTokens\"%'";
 const USER_BUBBLE_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"type\":1%'";
 
 const CURSOR_DB_CACHE_VERSION = 1;
-
-const cursorDbCachePath = (storage: import('../local-history').LocalHistoryStorage) =>
-  path.join(storage.home, '.config', 'ai-usage', 'cursor-db-cache.json');
-
-const reviveDate = (value: unknown): Date | null => {
-  if (value == null) return null;
-  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
-  if (typeof value !== 'string') return null;
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date : null;
-};
-
-const reviveCollectorRows = (value: unknown): CollectorRow[] => {
-  if (!Array.isArray(value)) return [];
-  return value.map((row) => {
-    const record = row as CollectorRow;
-    return {
-      ...record,
-      date: reviveDate(record.date),
-      endDate: reviveDate(record.endDate),
-    };
-  });
-};
-
-const readCursorDbCache = (storage: import('../local-history').LocalHistoryStorage): CursorDbCache | null => {
-  try {
-    if (!fs.existsSync(storage.home)) return null;
-    const cachePath = cursorDbCachePath(storage);
-    if (!fs.existsSync(cachePath)) return { dirty: false, entries: {}, version: CURSOR_DB_CACHE_VERSION };
-    const parsed = JSON.parse(fs.readFileSync(cachePath, 'utf8')) as {
-      entries?: Record<string, { mtimeMs: number; rows: unknown; size: number }>;
-      version?: number;
-    };
-    if (parsed.version !== CURSOR_DB_CACHE_VERSION) {
-      return { dirty: false, entries: {}, version: CURSOR_DB_CACHE_VERSION };
-    }
-    const entries: Record<string, CursorDbCacheEntry> = {};
-    for (const [dbPath, entry] of Object.entries(parsed.entries ?? {})) {
-      if (typeof entry.mtimeMs !== 'number' || typeof entry.size !== 'number') continue;
-      entries[dbPath] = { mtimeMs: entry.mtimeMs, rows: reviveCollectorRows(entry.rows), size: entry.size };
-    }
-    return { dirty: false, entries, version: CURSOR_DB_CACHE_VERSION };
-  } catch {
-    return null;
-  }
-};
-
-const writeCursorDbCache = (storage: import('../local-history').LocalHistoryStorage, cache: CursorDbCache | null) => {
-  if (!cache?.dirty) return false;
-  const cachePath = cursorDbCachePath(storage);
-  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-  fs.writeFileSync(
-    cachePath,
-    `${JSON.stringify({ entries: cache.entries, version: CURSOR_DB_CACHE_VERSION })}\n`,
-    'utf8',
-  );
-  cache.dirty = false;
-  return true;
-};
-
-const dbStat = (dbPath: string) => {
-  try {
-    const stat = fs.statSync(dbPath);
-    return { mtimeMs: stat.mtimeMs, size: stat.size };
-  } catch {
-    return null;
-  }
-};
+const CURSOR_DB_CACHE_FILE = 'cursor-db-cache.json';
 
 export const collectCursor = withPerfSpan(
   'aiUsage.collect.cursor.details',
@@ -100,17 +29,15 @@ export const collectCursor = withPerfSpan(
 
     const cache = yield* withPerfSpan(
       'aiUsage.collect.cursor.cache.read',
-      Effect.sync(() => readCursorDbCache(storage)),
+      Effect.sync(() => readDbRowCache(storage, CURSOR_DB_CACHE_FILE, CURSOR_DB_CACHE_VERSION)),
       (value) => ({ enabled: value !== null, entries: value ? Object.keys(value.entries).length : 0 }),
     );
     const stat = dbStat(dbPath);
-    if (cache && stat) {
-      const cached = cache.entries[dbPath];
-      if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
-        return yield* withPerfSpan('aiUsage.collect.cursor.cache.hit', Effect.succeed(cached.rows), (rows) => ({
-          rows: rows.length,
-        }));
-      }
+    const cachedRows = cachedDbRows(cache, dbPath, stat);
+    if (cachedRows) {
+      return yield* withPerfSpan('aiUsage.collect.cursor.cache.hit', Effect.succeed(cachedRows), (rows) => ({
+        rows: rows.length,
+      }));
     }
 
     const comp = new Map<string, { name: string; model: string; created: number; add: number; del: number }>();
@@ -267,13 +194,10 @@ export const collectCursor = withPerfSpan(
       }),
       (rows) => ({ rows: rows.length }),
     );
-    if (cache && stat) {
-      cache.entries[dbPath] = { mtimeMs: stat.mtimeMs, rows: sessions, size: stat.size };
-      cache.dirty = true;
-    }
+    storeDbRows(cache, dbPath, stat, sessions);
     yield* withPerfSpan(
       'aiUsage.collect.cursor.cache.write',
-      Effect.sync(() => writeCursorDbCache(storage, cache)),
+      Effect.sync(() => writeDbRowCache(storage, CURSOR_DB_CACHE_FILE, CURSOR_DB_CACHE_VERSION, cache)),
       (wrote) => ({ wrote }),
     );
     return sessions;

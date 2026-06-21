@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { calculateAnalytics } from './analytics';
+import { calculateAnalytics, groupAnalytics, rowToAnalyticsInput } from './analytics';
 import type { Row } from './types';
 
 const row = (overrides: Partial<Row>): Row => ({
@@ -65,5 +65,25 @@ describe('analytics calculation', () => {
     expect(analytics.byModel[0]?.cacheHitPct).toBeCloseTo(33.333, 2);
     expect(analytics.byModel.find((group) => group.key === 'usage unavailable')?.usageUnavailable).toBe(1);
     expect(analytics.recentSessions).toBe(3);
+  });
+
+  test('groupAnalytics groups any row by an arbitrary key with shared finalize math', () => {
+    const rows = [
+      row({ project: 'alpha', costApprox: 3 }),
+      row({ project: 'alpha', costApprox: 1 }),
+      row({ project: 'beta', costApprox: 0, costKnown: false }),
+    ];
+    const totalCost = 4;
+    const groups = groupAnalytics(rows, rowToAnalyticsInput, (row) => row.project, totalCost);
+
+    const alpha = groups.find((group) => group.key === 'alpha');
+    const beta = groups.find((group) => group.key === 'beta');
+    expect(groups[0]?.key).toBe('alpha'); // sorted by costSum desc
+    expect(alpha?.sessions).toBe(2);
+    expect(alpha?.costSum).toBe(4);
+    expect(alpha?.costPercent).toBe(100);
+    expect(alpha?.costPerSession).toBe(2);
+    expect(beta?.unpriced).toBe(1);
+    expect(beta?.costPerSession).toBeNull();
   });
 });
