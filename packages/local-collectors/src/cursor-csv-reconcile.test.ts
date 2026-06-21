@@ -46,13 +46,13 @@ describe('Cursor CSV reconciliation', () => {
     storage.writeText(
       'cursor.csv',
       csv([
-        '"2026-06-03T09:00:57.773Z","nathan@example.com","","","Included","claude-opus-4-8-thinking-high","No","20","10","100","5","135","1.50"',
-        '"2026-06-03T09:02:00.000Z","nathan@example.com","","","On-Demand","claude-4.5-sonnet","No","0","7","50","3","60","0.40"',
+        '"2026-06-03T09:00:57.773Z","alex@example.com","","","Included","claude-opus-4-8-thinking-high","No","20","10","100","5","135","1.50"',
+        '"2026-06-03T09:02:00.000Z","alex@example.com","","","On-Demand","claude-4.5-sonnet","No","0","7","50","3","60","0.40"',
       ]),
     );
 
     const turns = runWithStorage(
-      collectCursorCsvTurns({ usageExportPaths: [exportPath], clusterGapMs: 5 * 60_000, user: 'nathan@example.com' }),
+      collectCursorCsvTurns({ usageExportPaths: [exportPath], clusterGapMs: 5 * 60_000, user: 'alex@example.com' }),
       storage,
     );
     const [row] = reconcileCursorRows([localCursorRow('2026-06-03T09:00:00.000Z', 2)], turns, {
@@ -79,12 +79,12 @@ describe('Cursor CSV reconciliation', () => {
     storage.writeText(
       'cursor.csv',
       csv([
-        '"2026-06-03T09:00:30.000Z","nathan@example.com","","","Included","composer-2.5-fast","No","0","10","20","3","33","0.10"',
+        '"2026-06-03T09:00:30.000Z","alex@example.com","","","Included","composer-2.5-fast","No","0","10","20","3","33","0.10"',
       ]),
     );
 
     const turns = runWithStorage(
-      collectCursorCsvTurns({ usageExportPaths: [exportPath], clusterGapMs: 5 * 60_000, user: 'nathan@example.com' }),
+      collectCursorCsvTurns({ usageExportPaths: [exportPath], clusterGapMs: 5 * 60_000, user: 'alex@example.com' }),
       storage,
     );
     const rows = reconcileCursorRows(
@@ -102,12 +102,12 @@ describe('Cursor CSV reconciliation', () => {
     storage.writeText(
       'cursor.csv',
       csv([
-        '"2026-06-03T12:00:00.000Z","nathan@example.com","","","Included","composer-2.5-fast","No","0","10","20","3","33","0.10"',
+        '"2026-06-03T12:00:00.000Z","alex@example.com","","","Included","composer-2.5-fast","No","0","10","20","3","33","0.10"',
       ]),
     );
 
     const turns = runWithStorage(
-      collectCursorCsvTurns({ usageExportPaths: [exportPath], clusterGapMs: 5 * 60_000, user: 'nathan@example.com' }),
+      collectCursorCsvTurns({ usageExportPaths: [exportPath], clusterGapMs: 5 * 60_000, user: 'alex@example.com' }),
       storage,
     );
     const rows = reconcileCursorRows([localCursorRow('2026-06-03T09:00:00.000Z')], turns, {
