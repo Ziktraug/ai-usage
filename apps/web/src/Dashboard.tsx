@@ -1,4 +1,3 @@
-import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import {
   activeFilters,
   commandButton,
@@ -29,12 +28,22 @@ import {
   unavailableText,
   unavailableTitle,
 } from '@ai-usage/design-system/report';
+import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
+import {
+  createClientPerfTrace,
+  logClientPerf,
+  logNavigationPerf,
+  measureClientPerf,
+  payloadStats,
+  resolveClientPerfEnabled,
+} from './client-perf';
 import { CursorAttributionPanel } from './cursor-attribution-panel';
 import { downloadCSV, downloadHTML } from './dashboard-export';
 import { FilterPill, fieldFilterLabels } from './dashboard-filters';
+import { MetricTile } from './dashboard-metrics';
 import {
   buildDashboardMetrics,
   buildHarnessGroups,
@@ -49,7 +58,6 @@ import {
   filterTimelineRows,
   hiddenSessionCount,
 } from './dashboard-model';
-import { MetricTile } from './dashboard-metrics';
 import {
   type DashboardSearch,
   type DashboardTab,
@@ -60,31 +68,19 @@ import {
   sortingStateFromSearch,
 } from './dashboard-search';
 import { ThemeToggle } from './dashboard-theme';
-import {
-  type DateBounds,
-  shiftCalendarDays,
-  startOfDay,
-  toDateInputValue,
-} from './date-range';
+import { type DateBounds, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
 import { createDateRangeController } from './date-range-controller';
 import { GroupPanel } from './group-panel';
 import { Overview } from './Overview';
 import { ProjectSummary } from './project-summary';
 import { RefreshStatus } from './refresh-status';
-import { ReportWarnings } from './report-warnings';
 import { cursorCommitAttributionFacet } from './report-data';
 import { fetchReportPayload, isDemoReportPayload, readReportPayload } from './report-runtime';
-import { columnDiffFromVisibility, columnVisibilityFromDiff, sortFromSortingState } from './session-table-schema';
+import { ReportWarnings } from './report-warnings';
 import { SessionDrawer } from './session-drawer';
 import { SessionTable } from './session-table';
-import {
-  type DashboardRow,
-  enrichReportRow,
-  fmtDate,
-  fmtDateOnly,
-  fmtNum,
-  rowKey,
-} from './shared';
+import { columnDiffFromVisibility, columnVisibilityFromDiff, sortFromSortingState } from './session-table-schema';
+import { type DashboardRow, enrichReportRow, fmtDate, fmtDateOnly, fmtNum, rowKey } from './shared';
 import { applyTableUpdate } from './table-utils';
 import { TimeRangeControl } from './time-range-control';
 
@@ -101,7 +97,7 @@ const dashboardTabs: { label: string; value: DashboardTab }[] = [
 ];
 
 export const Dashboard = (props: {
-  fetchPayload?: () => Promise<UsageReportPayload>;
+  fetchPayload?: (options?: { force?: boolean }) => Promise<UsageReportPayload>;
   initialPayload?: UsageReportPayload;
 }) => {
   const initialPayload = props.initialPayload ?? readReportPayload();
@@ -134,13 +130,27 @@ export const Dashboard = (props: {
   const sorting = createMemo(() => sortingStateFromSearch(search().sort));
   const columnVisibility = createMemo(() => columnVisibilityFromDiff(search().cols));
   const generatedAt = createMemo(() => new Date(payload().generatedAt));
-  const reportRows = createMemo(() => payload().rows.map(enrichReportRow));
+  const reportRows = createMemo(() =>
+    measureClientPerf(
+      'aiUsage.web.client.compute.reportRows',
+      () => payload().rows.map(enrichReportRow),
+      (rows) => ({
+        rows: rows.length,
+      }),
+    ),
+  );
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
   let searchInputEl: HTMLInputElement | undefined;
   const cursorCommitRows = createMemo(() => cursorCommitAttributionFacet(payload()));
   const harnesses = createMemo(() => ['all', ...new Set(reportRows().map((row) => row.harness))]);
   const filterSnapshot = createMemo(() => createFilterSnapshot(query(), harness(), fieldFilters()));
-  const timelineRows = createMemo(() => filterTimelineRows(reportRows(), filterSnapshot()));
+  const timelineRows = createMemo(() =>
+    measureClientPerf(
+      'aiUsage.web.client.compute.timelineRows',
+      () => filterTimelineRows(reportRows(), filterSnapshot()),
+      (rows) => ({ rows: rows.length }),
+    ),
+  );
   const initialRange = search().range;
   const dateRange = createDateRangeController({
     generatedAt,
@@ -178,11 +188,23 @@ export const Dashboard = (props: {
       setTableDateBounds(dateRange.bounds());
     });
   });
-  const tableFilteredRows = createMemo(() => filterRowsByDateBounds(timelineRows(), tableDateBounds()));
+  const tableFilteredRows = createMemo(() =>
+    measureClientPerf(
+      'aiUsage.web.client.compute.tableFilteredRows',
+      () => filterRowsByDateBounds(timelineRows(), tableDateBounds()),
+      (rows) => ({ rows: rows.length }),
+    ),
+  );
   const tableRows = tableFilteredRows;
   // Rows in the table's current sort order — shared by CSV export and the
   // drawer's previous/next navigation so both walk the list the user sees.
-  const sortedRows = createMemo(() => buildSortedDashboardRows(tableFilteredRows(), sorting()));
+  const sortedRows = createMemo(() =>
+    measureClientPerf(
+      'aiUsage.web.client.compute.sortedRows',
+      () => buildSortedDashboardRows(tableFilteredRows(), sorting()),
+      (rows) => ({ rows: rows.length }),
+    ),
+  );
   // The drawer closes by itself when its row leaves the filtered set.
   const selectedRow = createMemo(() => tableFilteredRows().find((row) => rowKey(row) === selectedKey()) ?? null);
   const navigateSelected = (delta: number) => {
@@ -223,7 +245,20 @@ export const Dashboard = (props: {
     document.addEventListener('keydown', onKeyDown);
     onCleanup(() => document.removeEventListener('keydown', onKeyDown));
   });
-  const visibleSummary = createMemo(() => buildVisibleSummary(timelineRows(), dateRange.bounds()));
+  onMount(() => {
+    void resolveClientPerfEnabled().then((enabled) => {
+      if (!enabled) return;
+      logNavigationPerf(payload());
+      requestAnimationFrame(() => {
+        logClientPerf('aiUsage.web.client.initialFrame', payloadStats(payload()));
+      });
+    });
+  });
+  const visibleSummary = createMemo(() =>
+    measureClientPerf('aiUsage.web.client.compute.visibleSummary', () =>
+      buildVisibleSummary(timelineRows(), dateRange.bounds()),
+    ),
+  );
   const modelGroups = createMemo(() => {
     if (search().tab !== 'models') return [];
     return buildModelGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost);
@@ -247,14 +282,23 @@ export const Dashboard = (props: {
   const exportRows = () => sortedRows();
   const refreshPayload = async (force = false) => {
     if (!props.fetchPayload || refreshing()) return;
+    const perfTrace = createClientPerfTrace('aiUsage.web.client.refresh', { force });
     setRefreshing(true);
+    perfTrace?.mark('started');
     try {
-      setPayload(await props.fetchPayload!());
+      const nextPayload = await props.fetchPayload!({ force });
+      perfTrace?.mark('payloadReceived', payloadStats(nextPayload));
+      setPayload(nextPayload);
+      perfTrace?.mark('stateUpdated');
+      requestAnimationFrame(() => {
+        perfTrace?.end('frame', payloadStats(payload()));
+      });
       setLastRefreshError(null);
       setLastSuccessfulRefreshAt(Date.now());
       setRefreshErrorCount(0);
       setNextRefreshAt(Date.now() + REFRESH_INTERVAL_MS);
     } catch (error) {
+      perfTrace?.end('failed', { error: error instanceof Error ? error.message : String(error) });
       setLastRefreshError(error instanceof Error ? error.message : 'Failed to refresh report payload');
       setRefreshErrorCount((count) => count + 1);
       setNextRefreshAt(Date.now() + REFRESH_INTERVAL_MS);
@@ -272,10 +316,11 @@ export const Dashboard = (props: {
     if (!canRefresh || refreshPaused() || refreshing()) return;
     const next = nextRefreshAt();
     if (next == null) return;
-    const timer = window.setTimeout(() => void refreshPayload(), Math.max(0, next - Date.now()));
+    const timer = window.setTimeout(() => void refreshPayload(true), Math.max(0, next - Date.now()));
     onCleanup(() => window.clearTimeout(timer));
   });
   onMount(() => {
+    if (props.initialPayload) return;
     if (!isDemoReportPayload()) return;
     if (props.fetchPayload) void refreshPayload(true);
     else if (import.meta.env.DEV) {
@@ -337,7 +382,11 @@ export const Dashboard = (props: {
     if (!isDashboardTab(tab)) return;
     updateSearch((current) => ({ ...current, tab }));
   };
-  const metrics = createMemo(() => buildDashboardMetrics(visibleSummary(), previousSummary()));
+  const metrics = createMemo(() =>
+    measureClientPerf('aiUsage.web.client.compute.metrics', () =>
+      buildDashboardMetrics(visibleSummary(), previousSummary()),
+    ),
+  );
 
   return (
     <main class={page}>

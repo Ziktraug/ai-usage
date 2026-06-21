@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
-import { runLocalReportPayload } from './index';
+import { type LocalReportPayloadRequest, runLocalReportPayload, runStoredReportPayload } from './index';
 
-const configCwd = process.argv[2] ?? process.cwd();
+const mode = process.argv[2] === 'fresh' || process.argv[2] === 'stored' ? process.argv[2] : 'fresh';
+const configCwd = process.argv[3] ?? process.argv[2] ?? process.cwd();
 
-const payload = await runLocalReportPayload({
+const request: LocalReportPayloadRequest = {
   harness: null,
   includeCursor: true,
   keepSource: true,
@@ -16,6 +17,8 @@ const payload = await runLocalReportPayload({
     minTokens: 1,
     sort: 'date',
   },
-});
+};
+
+const payload = await (mode === 'stored' ? runStoredReportPayload(request) : runLocalReportPayload(request));
 
 process.stdout.write(JSON.stringify(payload));

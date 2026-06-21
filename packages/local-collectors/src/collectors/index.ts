@@ -8,6 +8,7 @@ import type { Row } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
 import { type LocalHistoryError, type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
 import type { LocalHistoryStorage as LocalHistoryStorageService } from '../local-history';
+import { withPerfSpan } from '../perf';
 import {
   type CollectorRow,
   enrichCollectorRowsWithRtkSavingsResult,
@@ -97,112 +98,132 @@ interface RawHarnessCollectionResult extends Omit<HarnessCollectionResult, 'rows
 const collectHarnessResult = (
   adapter: HarnessAdapter,
 ): Effect.Effect<RawHarnessCollectionResult, never, LocalHistoryStorageService> =>
-  Effect.gen(function* () {
-    const startedAt = Date.now();
-    const outcome = yield* collectAdapter(adapter);
-    const durationMs = Date.now() - startedAt;
-    const harness = adapter.metadata.key;
-    if (outcome._tag === 'failure') {
+  withPerfSpan(
+    `aiUsage.collect.${adapter.metadata.key}`,
+    Effect.gen(function* () {
+      const startedAt = Date.now();
+      const outcome = yield* collectAdapter(adapter);
+      const durationMs = Date.now() - startedAt;
+      const harness = adapter.metadata.key;
+      if (outcome._tag === 'failure') {
+        return {
+          harness,
+          label: adapter.metadata.label,
+          rows: [],
+          warnings: [
+            localHistoryWarningFromError(outcome.error, {
+              harness,
+              message: `Failed to collect ${adapter.metadata.label} local history`,
+            }),
+          ],
+          durationMs,
+          status: 'failed',
+        };
+      }
       return {
         harness,
         label: adapter.metadata.label,
-        rows: [],
-        warnings: [
-          localHistoryWarningFromError(outcome.error, {
-            harness,
-            message: `Failed to collect ${adapter.metadata.label} local history`,
-          }),
-        ],
+        rows: outcome.rows,
+        warnings: outcome.warnings,
         durationMs,
-        status: 'failed',
+        status: outcome.warnings.length ? 'warning' : 'ok',
       };
-    }
-    return {
-      harness,
-      label: adapter.metadata.label,
-      rows: outcome.rows,
-      warnings: outcome.warnings,
-      durationMs,
-      status: outcome.warnings.length ? 'warning' : 'ok',
-    };
-  });
+    }),
+    (result) => ({
+      rows: result.rows.length,
+      status: result.status,
+      warnings: result.warnings.length,
+    }),
+  );
 
 export const collectSelectedHarnessResults = (selection: HarnessSelection) =>
-  Effect.gen(function* () {
-    const startedAt = Date.now();
-    const harnessResults = yield* Effect.all(selectedHarnessAdapters(selection).map(collectHarnessResult), {
-      concurrency: 'unbounded',
-    });
-    const harnessExtraWarnings = new Map<HarnessKey, LocalHistoryWarning[]>();
-    const globalWarnings: LocalHistoryWarning[] = [];
-    const addHarnessWarning = (harness: HarnessKey, warning: LocalHistoryWarning) => {
-      const warnings = harnessExtraWarnings.get(harness) ?? [];
-      warnings.push(warning);
-      harnessExtraWarnings.set(harness, warnings);
-    };
-
-    if (!selection.harness || selection.harness === 'claude') {
-      for (const warning of yield* collectClaudeRetentionWarnings) {
-        addHarnessWarning('claude', warning);
-      }
-    }
-
-    let rows = harnessResults.flatMap((result) => result.rows);
-    const cursorCsv = selection.cursorCsv;
-    if (
-      selection.includeCursor &&
-      (!selection.harness || selection.harness === 'cursor') &&
-      (cursorCsv?.usageExportPaths?.length || cursorCsv?.usageExportDir)
-    ) {
-      const turnsResult = yield* collectCursorCsvTurns({
-        usageExportPaths: cursorCsv.usageExportPaths ?? [],
-        ...(cursorCsv.usageExportDir ? { usageExportDir: cursorCsv.usageExportDir } : {}),
-        clusterGapMs: cursorCsv.clusterGapMs ?? 5 * 60_000,
-        ...(cursorCsv.user ? { user: cursorCsv.user } : {}),
-      }).pipe(
-        Effect.match({
-          onFailure: (error) => ({ _tag: 'failure' as const, error }),
-          onSuccess: (turns) => ({ _tag: 'success' as const, turns }),
-        }),
-      );
-      if (turnsResult._tag === 'failure') {
-        addHarnessWarning(
-          'cursor',
-          localHistoryWarningFromError(turnsResult.error, {
-            harness: 'cursor',
-            message: 'Failed to import Cursor CSV usage export',
-          }),
-        );
-      } else {
-        rows = reconcileCursorRows(rows, turnsResult.turns, {
-          clusterGapMs: cursorCsv.clusterGapMs ?? 5 * 60_000,
-          maxSessionSpanMs: cursorCsv.maxSessionSpanMs ?? 60 * 60_000,
-          reconcileWindowMs: cursorCsv.reconcileWindowMs ?? 3 * 60_000,
-        });
-      }
-    }
-
-    const enriched = yield* enrichCollectorRowsWithRtkSavingsResult(rows);
-    rows = enriched.rows;
-    globalWarnings.push(...enriched.warnings);
-
-    const publicRows = rows.map(selection.keepSource ? stripProjectPath : stripCollectorMetadata);
-    const publicHarnesses = harnessResults.map((result): HarnessCollectionResult => {
-      const warnings = [...result.warnings, ...(harnessExtraWarnings.get(result.harness) ?? [])];
-      return {
-        ...result,
-        rows: publicRows.filter((row) => row.harness === result.label),
-        warnings,
-        status: result.status === 'failed' ? 'failed' : warnings.length ? 'warning' : 'ok',
+  withPerfSpan(
+    'aiUsage.collect.selectedHarnesses',
+    Effect.gen(function* () {
+      const startedAt = Date.now();
+      const harnessResults = yield* Effect.all(selectedHarnessAdapters(selection).map(collectHarnessResult), {
+        concurrency: 1,
+      });
+      const harnessExtraWarnings = new Map<HarnessKey, LocalHistoryWarning[]>();
+      const globalWarnings: LocalHistoryWarning[] = [];
+      const addHarnessWarning = (harness: HarnessKey, warning: LocalHistoryWarning) => {
+        const warnings = harnessExtraWarnings.get(harness) ?? [];
+        warnings.push(warning);
+        harnessExtraWarnings.set(harness, warnings);
       };
-    });
-    return {
-      rows: publicRows,
-      harnesses: publicHarnesses,
-      warnings: [...publicHarnesses.flatMap((result) => result.warnings), ...globalWarnings],
-      durationMs: Date.now() - startedAt,
-    };
-  });
+
+      if (!selection.harness || selection.harness === 'claude') {
+        for (const warning of yield* collectClaudeRetentionWarnings) {
+          addHarnessWarning('claude', warning);
+        }
+      }
+
+      let rows = harnessResults.flatMap((result) => result.rows);
+      const cursorCsv = selection.cursorCsv;
+      if (
+        selection.includeCursor &&
+        (!selection.harness || selection.harness === 'cursor') &&
+        (cursorCsv?.usageExportPaths?.length || cursorCsv?.usageExportDir)
+      ) {
+        const turnsResult = yield* withPerfSpan(
+          'aiUsage.collect.cursorCsv',
+          collectCursorCsvTurns({
+            usageExportPaths: cursorCsv.usageExportPaths ?? [],
+            ...(cursorCsv.usageExportDir ? { usageExportDir: cursorCsv.usageExportDir } : {}),
+            clusterGapMs: cursorCsv.clusterGapMs ?? 5 * 60_000,
+            ...(cursorCsv.user ? { user: cursorCsv.user } : {}),
+          }).pipe(
+            Effect.match({
+              onFailure: (error) => ({ _tag: 'failure' as const, error }),
+              onSuccess: (turns) => ({ _tag: 'success' as const, turns }),
+            }),
+          ),
+          (result) => ({ status: result._tag, turns: result._tag === 'success' ? result.turns.length : 0 }),
+        );
+        if (turnsResult._tag === 'failure') {
+          addHarnessWarning(
+            'cursor',
+            localHistoryWarningFromError(turnsResult.error, {
+              harness: 'cursor',
+              message: 'Failed to import Cursor CSV usage export',
+            }),
+          );
+        } else {
+          rows = reconcileCursorRows(rows, turnsResult.turns, {
+            clusterGapMs: cursorCsv.clusterGapMs ?? 5 * 60_000,
+            maxSessionSpanMs: cursorCsv.maxSessionSpanMs ?? 60 * 60_000,
+            reconcileWindowMs: cursorCsv.reconcileWindowMs ?? 3 * 60_000,
+          });
+        }
+      }
+
+      const enriched = yield* enrichCollectorRowsWithRtkSavingsResult(rows);
+      rows = enriched.rows;
+      globalWarnings.push(...enriched.warnings);
+
+      const publicRows = rows.map(selection.keepSource ? stripProjectPath : stripCollectorMetadata);
+      const publicHarnesses = harnessResults.map((result): HarnessCollectionResult => {
+        const warnings = [...result.warnings, ...(harnessExtraWarnings.get(result.harness) ?? [])];
+        return {
+          ...result,
+          rows: publicRows.filter((row) => row.harness === result.label),
+          warnings,
+          status: result.status === 'failed' ? 'failed' : warnings.length ? 'warning' : 'ok',
+        };
+      });
+      return {
+        rows: publicRows,
+        harnesses: publicHarnesses,
+        warnings: [...publicHarnesses.flatMap((result) => result.warnings), ...globalWarnings],
+        durationMs: Date.now() - startedAt,
+      };
+    }),
+    (result) => ({
+      harnesses: result.harnesses.length,
+      rows: result.rows.length,
+      warnings: result.warnings.length,
+    }),
+  );
 
 export const collectSelectedHarnessRows = (selection: HarnessSelection) =>
   collectSelectedHarnessResults(selection).pipe(Effect.map((result) => result.rows));
