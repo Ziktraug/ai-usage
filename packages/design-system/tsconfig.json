@@ -4,7 +4,8 @@
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
     "lib": ["DOM", "DOM.Iterable", "ES2023"],
-    "types": ["bun"]
+    "types": ["bun"],
+    "strictNullChecks": true
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "panda.config.ts", "styled-system"]
 }

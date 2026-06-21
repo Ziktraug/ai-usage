@@ -1,5 +1,5 @@
-import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { describe, expect, test } from 'bun:test';
+import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { toDateInputValue } from './date-range';
 import {
   buildCalendarHeatmapData,
@@ -47,8 +47,18 @@ const heatDay = (data: NonNullable<ReturnType<typeof buildCalendarHeatmapData>>,
 describe('overview model', () => {
   test('builds calendar heatmap data from dated sessions', () => {
     const rows = [
-      row({ sessionLabel: 'A', activeDate: '2026-06-10T12:00:00.000Z', date: '2026-06-10T12:00:00.000Z', costApprox: 2 }),
-      row({ sessionLabel: 'B', activeDate: '2026-06-10T15:00:00.000Z', date: '2026-06-10T15:00:00.000Z', costApprox: 3 }),
+      row({
+        sessionLabel: 'A',
+        activeDate: '2026-06-10T12:00:00.000Z',
+        date: '2026-06-10T12:00:00.000Z',
+        costApprox: 2,
+      }),
+      row({
+        sessionLabel: 'B',
+        activeDate: '2026-06-10T15:00:00.000Z',
+        date: '2026-06-10T15:00:00.000Z',
+        costApprox: 3,
+      }),
       row({
         sessionLabel: 'C',
         activeDate: '2026-06-11T12:00:00.000Z',
@@ -70,9 +80,27 @@ describe('overview model', () => {
 
   test('builds model migration series and paths', () => {
     const rows = [
-      row({ sessionLabel: 'GPT one', activeDate: '2026-06-01T12:00:00.000Z', date: '2026-06-01T12:00:00.000Z', model: 'gpt-5', costApprox: 5 }),
-      row({ sessionLabel: 'Claude', activeDate: '2026-06-02T12:00:00.000Z', date: '2026-06-02T12:00:00.000Z', model: 'claude-sonnet', costApprox: 2 }),
-      row({ sessionLabel: 'GPT two', activeDate: '2026-06-03T12:00:00.000Z', date: '2026-06-03T12:00:00.000Z', model: 'gpt-5', costApprox: 4 }),
+      row({
+        sessionLabel: 'GPT one',
+        activeDate: '2026-06-01T12:00:00.000Z',
+        date: '2026-06-01T12:00:00.000Z',
+        model: 'gpt-5',
+        costApprox: 5,
+      }),
+      row({
+        sessionLabel: 'Claude',
+        activeDate: '2026-06-02T12:00:00.000Z',
+        date: '2026-06-02T12:00:00.000Z',
+        model: 'claude-sonnet',
+        costApprox: 2,
+      }),
+      row({
+        sessionLabel: 'GPT two',
+        activeDate: '2026-06-03T12:00:00.000Z',
+        date: '2026-06-03T12:00:00.000Z',
+        model: 'gpt-5',
+        costApprox: 4,
+      }),
     ];
 
     const data = buildModelMigrationData(rows);
@@ -100,8 +128,18 @@ describe('overview model', () => {
 
   test('builds punchcard density', () => {
     const rows = [
-      row({ sessionLabel: 'A', activeDate: '2026-06-10T12:00:00.000Z', date: '2026-06-10T12:00:00.000Z', costApprox: 2 }),
-      row({ sessionLabel: 'B', activeDate: '2026-06-10T12:30:00.000Z', date: '2026-06-10T12:30:00.000Z', costApprox: 3 }),
+      row({
+        sessionLabel: 'A',
+        activeDate: '2026-06-10T12:00:00.000Z',
+        date: '2026-06-10T12:00:00.000Z',
+        costApprox: 2,
+      }),
+      row({
+        sessionLabel: 'B',
+        activeDate: '2026-06-10T12:30:00.000Z',
+        date: '2026-06-10T12:30:00.000Z',
+        costApprox: 3,
+      }),
     ];
 
     const data = buildPunchcardData(rows);
@@ -114,9 +152,27 @@ describe('overview model', () => {
 
   test('builds records and top sessions', () => {
     const rows = [
-      row({ sessionLabel: 'High', activeDate: '2026-06-10T12:00:00.000Z', date: '2026-06-10T12:00:00.000Z', costApprox: 10, durationMs: 60_000 }),
-      row({ sessionLabel: 'Long', activeDate: '2026-06-09T12:00:00.000Z', date: '2026-06-09T12:00:00.000Z', costApprox: 3, durationMs: 3_600_000 }),
-      row({ sessionLabel: 'Old', activeDate: '2026-06-08T12:00:00.000Z', date: '2026-06-08T12:00:00.000Z', costApprox: 1, durationMs: 600_000 }),
+      row({
+        sessionLabel: 'High',
+        activeDate: '2026-06-10T12:00:00.000Z',
+        date: '2026-06-10T12:00:00.000Z',
+        costApprox: 10,
+        durationMs: 60_000,
+      }),
+      row({
+        sessionLabel: 'Long',
+        activeDate: '2026-06-09T12:00:00.000Z',
+        date: '2026-06-09T12:00:00.000Z',
+        costApprox: 3,
+        durationMs: 3_600_000,
+      }),
+      row({
+        sessionLabel: 'Old',
+        activeDate: '2026-06-08T12:00:00.000Z',
+        date: '2026-06-08T12:00:00.000Z',
+        costApprox: 1,
+        durationMs: 600_000,
+      }),
     ];
 
     const records = buildOverviewRecords(rows, rows);

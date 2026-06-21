@@ -8,6 +8,8 @@ export class CliArgumentError extends Data.TaggedError('CliArgumentError')<{
 export type AppError = LocalHistoryError | CliArgumentError;
 
 export const formatAppError = (error: AppError) => {
-  if (error._tag === 'CliArgumentError') return error.message;
+  if (error._tag === 'CliArgumentError') {
+    return error.message;
+  }
   return formatLocalHistoryError(error);
 };

@@ -1,7 +1,7 @@
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import { createFileRoute, stripSearchParams } from '@tanstack/solid-router';
 import { createMemo, ErrorBoundary } from 'solid-js';
-import { Dashboard } from '../Dashboard';
+import { Dashboard } from '../dashboard';
 import { type DashboardSearch, dashboardSearchDefaultsFor, validateDashboardSearch } from '../dashboard-search';
 import { loadReportPayload, reportRefreshPayload, resolveInitialReportPayload } from '../report-runtime';
 

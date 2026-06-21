@@ -1,9 +1,9 @@
+import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
-import { afterEach, describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
 import { fetchRemoteSnapshot, readSnapshotEndpointHealth, readSnapshotFile } from './transport';
 
@@ -62,7 +62,7 @@ describe('snapshot transport', () => {
 
   test('fetches a remote snapshot with bearer auth', async () => {
     const seen: { authorization: string | null } = { authorization: null };
-    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
+    globalThis.fetch = ((_input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
       seen.authorization = init?.headers && 'authorization' in init.headers ? init.headers.authorization : null;
       return new Response(JSON.stringify(snapshot()), { status: 200 });
     }) as unknown as typeof fetch;

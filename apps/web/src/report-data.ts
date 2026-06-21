@@ -2,21 +2,21 @@ import { calculateAnalytics } from '@ai-usage/report-core/analytics';
 import type { SerializedRow, UsageReportPayload } from '@ai-usage/report-core/report-data';
 
 export interface CursorCommitAttributionFacet {
-  commitHash: string;
+  blankLinesAdded: number;
+  blankLinesDeleted: number;
   branchName: string;
-  scoredAt: string | null;
-  commitMessage: string | null;
   commitDate: string | null;
-  linesAdded: number;
-  linesDeleted: number;
-  tabLinesAdded: number;
-  tabLinesDeleted: number;
+  commitHash: string;
+  commitMessage: string | null;
   composerLinesAdded: number;
   composerLinesDeleted: number;
   humanLinesAdded: number;
   humanLinesDeleted: number;
-  blankLinesAdded: number;
-  blankLinesDeleted: number;
+  linesAdded: number;
+  linesDeleted: number;
+  scoredAt: string | null;
+  tabLinesAdded: number;
+  tabLinesDeleted: number;
   v1AiPercentage: number | null;
   v2AiPercentage: number | null;
 }
@@ -32,17 +32,17 @@ const demoRows: SerializedRow[] = [
     sessionLabel: 'Build report UI',
     model: 'gpt-5.3-codex',
     project: 'ai-usage',
-    tokIn: 62000,
+    tokIn: 62_000,
     tokOut: 9400,
-    tokCr: 130000,
+    tokCr: 130_000,
     tokCw: 2100,
-    tokenTotal: 203500,
-    freshTokens: 73500,
+    tokenTotal: 203_500,
+    freshTokens: 73_500,
     costActual: 3.2,
     costApprox: 3.2,
     costKnown: true,
     calls: 18,
-    durationMs: 6120000,
+    durationMs: 6_120_000,
     turns: 22,
     tools: 64,
     linesAdded: 860,
@@ -59,17 +59,17 @@ const demoRows: SerializedRow[] = [
     sessionLabel: 'Review analytics model',
     model: 'claude-sonnet-4.5',
     project: 'ai-usage',
-    tokIn: 28000,
+    tokIn: 28_000,
     tokOut: 4600,
-    tokCr: 44000,
+    tokCr: 44_000,
     tokCw: 0,
-    tokenTotal: 76600,
-    freshTokens: 32600,
+    tokenTotal: 76_600,
+    freshTokens: 32_600,
     costActual: 0,
     costApprox: 0,
     costKnown: true,
     calls: 9,
-    durationMs: 1740000,
+    durationMs: 1_740_000,
     turns: 11,
     tools: 18,
     linesAdded: null,
@@ -87,17 +87,17 @@ const demoRows: SerializedRow[] = [
     sessionLabel: 'Tune collector fixtures',
     model: 'qwen3-coder',
     project: 'ai-usage',
-    tokIn: 41000,
+    tokIn: 41_000,
     tokOut: 7800,
-    tokCr: 72000,
+    tokCr: 72_000,
     tokCw: 0,
-    tokenTotal: 120800,
-    freshTokens: 48800,
+    tokenTotal: 120_800,
+    freshTokens: 48_800,
     costActual: 0.84,
     costApprox: 0.84,
     costKnown: true,
     calls: 12,
-    durationMs: 4380000,
+    durationMs: 4_380_000,
     turns: 16,
     tools: 27,
     linesAdded: 220,
@@ -114,17 +114,17 @@ const demoRows: SerializedRow[] = [
     sessionLabel: 'Explore report sketch',
     model: 'cursor-agent',
     project: 'ai-usage',
-    tokIn: 19000,
+    tokIn: 19_000,
     tokOut: 2600,
-    tokCr: 31000,
+    tokCr: 31_000,
     tokCw: 0,
-    tokenTotal: 52600,
-    freshTokens: 21600,
+    tokenTotal: 52_600,
+    freshTokens: 21_600,
     costActual: null,
     costApprox: 0,
     costKnown: false,
     calls: 6,
-    durationMs: 2700000,
+    durationMs: 2_700_000,
     turns: 8,
     tools: 9,
     linesAdded: null,
@@ -182,7 +182,9 @@ export const demoReportPayload: UsageReportPayload = {
 };
 
 const isCursorCommitAttribution = (value: unknown): value is CursorCommitAttributionFacet => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
   const record = value as Record<string, unknown>;
   return (
     typeof record.commitHash === 'string' &&
@@ -194,8 +196,12 @@ const isCursorCommitAttribution = (value: unknown): value is CursorCommitAttribu
 
 export const cursorCommitAttributionFacet = (payload: UsageReportPayload): CursorCommitAttributionFacet[] => {
   const cursor = payload.facets?.cursor;
-  if (typeof cursor !== 'object' || cursor === null || Array.isArray(cursor)) return [];
+  if (typeof cursor !== 'object' || cursor === null || Array.isArray(cursor)) {
+    return [];
+  }
   const commitAttribution = (cursor as Record<string, unknown>).commitAttribution;
-  if (!Array.isArray(commitAttribution)) return [];
+  if (!Array.isArray(commitAttribution)) {
+    return [];
+  }
   return commitAttribution.filter(isCursorCommitAttribution);
 };

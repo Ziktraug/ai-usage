@@ -2,22 +2,26 @@ import type { DiscoveredLanPeer } from '@ai-usage/lan-pairing';
 import type { LanMergeState, TrustedLanPeer } from '@ai-usage/usage-merge';
 
 export const formatSyncDateTime = (iso: string | undefined) => {
-  if (!iso) return 'Never';
+  if (!iso) {
+    return 'Never';
+  }
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
   return date.toLocaleString();
 };
 
 export interface SyncOperationError {
-  tag: string;
   message: string;
   reason?: string;
+  tag: string;
 }
 
 export interface LanMergeSummary {
-  trustedMachines: number;
-  onlineMachines: number;
   discoveredMachines: number;
+  onlineMachines: number;
+  trustedMachines: number;
   warningCount: number;
 }
 
@@ -40,17 +44,25 @@ export const lanMergeServiceStatusLabel = (status: LanMergeState['service']['sta
       return 'Pairing';
     case 'error':
       return 'Needs attention';
+    default:
+      return 'Unknown';
   }
 };
 
 export const lanTrustedPeerStatusLabel = (peer: Pick<TrustedLanPeer, 'online' | 'paired'>) => {
-  if (!peer.paired) return 'Not paired';
+  if (!peer.paired) {
+    return 'Not paired';
+  }
   return peer.online ? 'Available' : 'Offline';
 };
 
 export const lanDiscoveredPeerStatusLabel = (peer: Pick<DiscoveredLanPeer, 'self' | 'pairingAvailable' | 'online'>) => {
-  if (peer.self) return 'This machine';
-  if (!peer.online) return 'Offline';
+  if (peer.self) {
+    return 'This machine';
+  }
+  if (!peer.online) {
+    return 'Offline';
+  }
   return peer.pairingAvailable ? 'Ready to pair' : 'Pairing unavailable';
 };
 

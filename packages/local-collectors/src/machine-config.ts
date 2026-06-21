@@ -21,7 +21,9 @@ export const aiUsageConfigPath = (storage: LocalHistoryStorageService) =>
 export const repoAiUsageConfigPath = (cwd = process.cwd()) => path.join(cwd, 'ai-usage.config.ts');
 
 const isUsageMachine = (value: unknown): value is UsageMachine => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
   const record = value as Record<string, unknown>;
   return typeof record.id === 'string' && record.id.length > 0 && typeof record.label === 'string';
 };
@@ -32,7 +34,9 @@ export const ensureMachineConfig: Effect.Effect<UsageMachine, LocalHistoryError,
     const filePath = machineConfigPath(storage);
     if (yield* storage.exists(filePath).pipe(Effect.catchAll(() => Effect.succeed(false)))) {
       const parsed = JSON.parse(yield* storage.readText(filePath)) as unknown;
-      if (!isUsageMachine(parsed)) throw new Error(`Invalid machine config: ${filePath}`);
+      if (!isUsageMachine(parsed)) {
+        throw new Error(`Invalid machine config: ${filePath}`);
+      }
       return parsed;
     }
 
@@ -68,14 +72,20 @@ export const writeMachineConfig = (
   });
 
 const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
   const config = value as Record<string, unknown>;
   const aliases = config.projectAliases;
   if (aliases !== undefined) {
-    if (!Array.isArray(aliases)) return false;
+    if (!Array.isArray(aliases)) {
+      return false;
+    }
     if (
       !aliases.every((alias) => {
-        if (typeof alias !== 'object' || alias === null || Array.isArray(alias)) return false;
+        if (typeof alias !== 'object' || alias === null || Array.isArray(alias)) {
+          return false;
+        }
         const record = alias as Record<string, unknown>;
         return (
           typeof record.name === 'string' &&
@@ -83,51 +93,74 @@ const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
           record.match.every((v) => typeof v === 'string')
         );
       })
-    )
+    ) {
       return false;
+    }
   }
 
   const cursor = config.cursor;
   if (cursor !== undefined) {
-    if (typeof cursor !== 'object' || cursor === null || Array.isArray(cursor)) return false;
+    if (typeof cursor !== 'object' || cursor === null || Array.isArray(cursor)) {
+      return false;
+    }
     const cursorConfig = cursor as Record<string, unknown>;
     const usageExportPaths = cursorConfig.usageExportPaths;
-    if (usageExportPaths !== undefined) {
-      if (!Array.isArray(usageExportPaths) || !usageExportPaths.every((v) => typeof v === 'string')) return false;
+    if (
+      usageExportPaths !== undefined &&
+      !(Array.isArray(usageExportPaths) && usageExportPaths.every((v) => typeof v === 'string'))
+    ) {
+      return false;
     }
     const usageExportDir = cursorConfig.usageExportDir;
-    if (usageExportDir !== undefined && typeof usageExportDir !== 'string') return false;
+    if (usageExportDir !== undefined && typeof usageExportDir !== 'string') {
+      return false;
+    }
     const reconcileWindowMs = cursorConfig.reconcileWindowMs;
     if (
       reconcileWindowMs !== undefined &&
       (typeof reconcileWindowMs !== 'number' || !Number.isInteger(reconcileWindowMs) || reconcileWindowMs <= 0)
-    )
+    ) {
       return false;
+    }
     const clusterGapMs = cursorConfig.clusterGapMs;
     if (
       clusterGapMs !== undefined &&
       (typeof clusterGapMs !== 'number' || !Number.isInteger(clusterGapMs) || clusterGapMs <= 0)
-    )
+    ) {
       return false;
+    }
     const maxSessionSpanMs = cursorConfig.maxSessionSpanMs;
     if (
       maxSessionSpanMs !== undefined &&
       (typeof maxSessionSpanMs !== 'number' || !Number.isInteger(maxSessionSpanMs) || maxSessionSpanMs <= 0)
-    )
+    ) {
       return false;
+    }
     const user = cursorConfig.user;
-    if (user !== undefined && typeof user !== 'string') return false;
+    if (user !== undefined && typeof user !== 'string') {
+      return false;
+    }
   }
 
   const sync = config.sync;
-  if (sync === undefined) return true;
-  if (typeof sync !== 'object' || sync === null || Array.isArray(sync)) return false;
+  if (sync === undefined) {
+    return true;
+  }
+  if (typeof sync !== 'object' || sync === null || Array.isArray(sync)) {
+    return false;
+  }
   const syncConfig = sync as Record<string, unknown>;
   const remotes = syncConfig.remotes;
-  if (remotes === undefined) return true;
-  if (!Array.isArray(remotes)) return false;
+  if (remotes === undefined) {
+    return true;
+  }
+  if (!Array.isArray(remotes)) {
+    return false;
+  }
   return remotes.every((remote) => {
-    if (typeof remote !== 'object' || remote === null || Array.isArray(remote)) return false;
+    if (typeof remote !== 'object' || remote === null || Array.isArray(remote)) {
+      return false;
+    }
     const record = remote as Record<string, unknown>;
     return (
       typeof record.name === 'string' &&
@@ -141,18 +174,25 @@ const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
 };
 
 const parseAiUsageConfig = (value: unknown, filePath: string): AiUsageConfig => {
-  if (!isAiUsageConfig(value)) throw new Error(`Invalid ai-usage config: ${filePath}`);
+  if (!isAiUsageConfig(value)) {
+    throw new Error(`Invalid ai-usage config: ${filePath}`);
+  }
   return value;
 };
 
 const mergeAiUsageConfig = (base: AiUsageConfig, override: AiUsageConfig): AiUsageConfig => {
   const merged: AiUsageConfig = { ...base, ...override };
-  if (override.projectAliases === undefined && base.projectAliases !== undefined)
+  if (override.projectAliases === undefined && base.projectAliases !== undefined) {
     merged.projectAliases = base.projectAliases;
-  if (base.cursor || override.cursor) merged.cursor = { ...(base.cursor ?? {}), ...(override.cursor ?? {}) };
+  }
+  if (base.cursor || override.cursor) {
+    merged.cursor = { ...(base.cursor ?? {}), ...(override.cursor ?? {}) };
+  }
   if (base.sync || override.sync) {
     merged.sync = { ...(base.sync ?? {}), ...(override.sync ?? {}) };
-    if (override.sync?.remotes === undefined && base.sync?.remotes !== undefined) merged.sync.remotes = base.sync.remotes;
+    if (override.sync?.remotes === undefined && base.sync?.remotes !== undefined) {
+      merged.sync.remotes = base.sync.remotes;
+    }
   }
   return merged;
 };
@@ -161,7 +201,9 @@ export const readAiUsageConfig: Effect.Effect<AiUsageConfig, LocalHistoryError, 
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
     const filePath = aiUsageConfigPath(storage);
-    if (!(yield* storage.exists(filePath).pipe(Effect.catchAll(() => Effect.succeed(false))))) return {};
+    if (!(yield* storage.exists(filePath).pipe(Effect.catchAll(() => Effect.succeed(false))))) {
+      return {};
+    }
     const parsed = JSON.parse(yield* storage.readText(filePath)) as unknown;
     return parseAiUsageConfig(parsed, filePath);
   });
@@ -169,7 +211,9 @@ export const readAiUsageConfig: Effect.Effect<AiUsageConfig, LocalHistoryError, 
 export const readRepoAiUsageConfig = (cwd = process.cwd()): Effect.Effect<AiUsageConfig, LocalHistoryError> =>
   Effect.gen(function* () {
     const filePath = repoAiUsageConfigPath(cwd);
-    if (!fs.existsSync(filePath)) return {};
+    if (!fs.existsSync(filePath)) {
+      return {};
+    }
     const module = yield* Effect.tryPromise({
       try: () => import(/* @vite-ignore */ `${pathToFileURL(filePath).href}?t=${Date.now()}`),
       catch: machineConfigError('importAiUsageConfig', filePath),

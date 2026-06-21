@@ -1,11 +1,11 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createUsageSnapshot } from '@ai-usage/report-core/snapshot';
-import type { SourcedRow } from '@ai-usage/report-core/types';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig } from '@ai-usage/local-collectors/machine-config';
-import { afterEach, describe, expect, test } from 'bun:test';
+import { createUsageSnapshot } from '@ai-usage/report-core/snapshot';
+import type { SourcedRow } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
 import { getSyncState } from './state';
 import {
@@ -88,7 +88,8 @@ describe('sync workflow', () => {
   });
 
   test('pulls and stores a configured remote snapshot', async () => {
-    globalThis.fetch = (async () => new Response(JSON.stringify(snapshot()), { status: 200 })) as unknown as typeof fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify(snapshot()), { status: 200 })) as unknown as typeof fetch;
 
     const result = await withStorage(
       Effect.gen(function* () {
@@ -120,7 +121,8 @@ describe('sync workflow', () => {
   });
 
   test('pulls a one-shot remote without preconfigured storage', async () => {
-    globalThis.fetch = (async () => new Response(JSON.stringify(snapshot()), { status: 200 })) as unknown as typeof fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify(snapshot()), { status: 200 })) as unknown as typeof fetch;
 
     const state = await withStorage(
       Effect.gen(function* () {
@@ -146,7 +148,9 @@ describe('sync workflow', () => {
       }),
     );
 
-    if (error._tag !== 'SyncWorkflowError') throw new Error(`Expected SyncWorkflowError, got ${error._tag}`);
+    if (error._tag !== 'SyncWorkflowError') {
+      throw new Error(`Expected SyncWorkflowError, got ${error._tag}`);
+    }
     expect(error.reason).toBe('missing-token');
   });
 
@@ -162,7 +166,9 @@ describe('sync workflow', () => {
       }),
     );
 
-    if (error._tag !== 'SyncWorkflowError') throw new Error(`Expected SyncWorkflowError, got ${error._tag}`);
+    if (error._tag !== 'SyncWorkflowError') {
+      throw new Error(`Expected SyncWorkflowError, got ${error._tag}`);
+    }
     expect(error.reason).toBe('self-sync');
   });
 });

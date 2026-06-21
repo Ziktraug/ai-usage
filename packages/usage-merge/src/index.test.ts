@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import { makeLanPairingServiceWithOptions } from '@ai-usage/lan-pairing';
+import { createUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
@@ -18,11 +18,11 @@ import {
   lanIdentityFromMachine,
   resolveUsageMergeBundle,
   storedLanPeerFromPairingEnvelope,
-  upsertUsageMergeEnvToken,
-  usageMergeTokenEnvNameForMachine,
-  UsageMergeError,
   USAGE_MERGE_PROTOCOL,
   USAGE_MERGE_PROTOCOL_VERSION,
+  UsageMergeError,
+  upsertUsageMergeEnvToken,
+  usageMergeTokenEnvNameForMachine,
 } from './index';
 
 const makeSourcedRow = (input: { project: string; sourcePath: string; sessionId: string }): SourcedRow => ({
@@ -168,7 +168,9 @@ describe('usage-merge public boundary', () => {
 
       expect(rejected.kind).toBe('unauthorized');
       expect(accepted.kind).toBe('ready');
-      if (accepted.kind !== 'ready') throw new Error('Expected authenticated merge bundle');
+      if (accepted.kind !== 'ready') {
+        throw new Error('Expected authenticated merge bundle');
+      }
       expect(JSON.stringify(accepted.bundle)).not.toContain('secret-token');
       expect(accepted.bundle).toMatchObject({
         machine,

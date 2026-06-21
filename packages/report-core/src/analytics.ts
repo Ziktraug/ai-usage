@@ -8,28 +8,28 @@ import {
 } from './usage-row';
 
 export interface AnalyticsGroup {
-  key: string;
-  harness: string;
-  provider: string;
-  sessions: number;
-  priced: number;
-  unpriced: number;
-  usageUnavailable: number;
   ambiguous: number;
-  fresh: number;
-  inp: number;
   cache: number;
   cacheHitPct: number;
-  costSum: number;
-  costPerSession: number | null;
-  medianCost: number | null;
-  linesA: number;
-  linesD: number;
-  lineCount: number;
   costPer100Lines: number | null;
   costPercent: number;
-  turns: number;
+  costPerSession: number | null;
+  costSum: number;
+  fresh: number;
+  harness: string;
+  inp: number;
+  key: string;
+  lineCount: number;
+  linesA: number;
+  linesD: number;
+  medianCost: number | null;
+  priced: number;
+  provider: string;
+  sessions: number;
   tools: number;
+  turns: number;
+  unpriced: number;
+  usageUnavailable: number;
 }
 
 /**
@@ -38,40 +38,40 @@ export interface AnalyticsGroup {
  * place instead of being re-derived per output adapter.
  */
 export interface AnalyticsRowInput {
-  harness: string;
-  provider: string;
-  usageUnavailable?: boolean;
   ambiguous?: boolean;
-  fresh: number;
-  inp: number;
   cache: number;
+  fresh: number;
+  harness: string;
+  inp: number;
   linesAdded: number;
   linesDeleted: number;
-  turns: number;
-  tools: number;
   pricedCost: number | null;
+  provider: string;
+  tools: number;
+  turns: number;
+  usageUnavailable?: boolean;
 }
 
 export interface AnalyticsSummary {
-  sessionCount: number;
-  totalCost: number;
-  pricedCount: number;
-  unpricedCount: number;
-  meanCost: number;
-  medianCost: number;
-  linesA: number;
-  linesD: number;
-  lineCount: number;
-  costPer100Lines: number | null;
-  turns: number;
-  tools: number;
-  durationMs: number;
-  durationRows: number;
   averageDurationMs: number | null;
-  recentSessions: number;
+  byHarness: AnalyticsGroup[];
   byModel: AnalyticsGroup[];
   byProvider: AnalyticsGroup[];
-  byHarness: AnalyticsGroup[];
+  costPer100Lines: number | null;
+  durationMs: number;
+  durationRows: number;
+  lineCount: number;
+  linesA: number;
+  linesD: number;
+  meanCost: number;
+  medianCost: number;
+  pricedCount: number;
+  recentSessions: number;
+  sessionCount: number;
+  tools: number;
+  totalCost: number;
+  turns: number;
+  unpricedCount: number;
 }
 
 type GroupDraft = Omit<
@@ -82,7 +82,9 @@ type GroupDraft = Omit<
 };
 
 const median = (values: number[]) => {
-  if (!values.length) return 0;
+  if (!values.length) {
+    return 0;
+  }
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
   const value = sorted.length % 2 ? sorted[middle] : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
@@ -156,8 +158,12 @@ export const groupAnalytics = <T>(
       groups.set(key, group);
     }
     group.sessions++;
-    if (input.usageUnavailable) group.usageUnavailable++;
-    if (input.ambiguous) group.ambiguous++;
+    if (input.usageUnavailable) {
+      group.usageUnavailable++;
+    }
+    if (input.ambiguous) {
+      group.ambiguous++;
+    }
     group.fresh += input.fresh;
     group.inp += input.inp;
     group.cache += input.cache;
@@ -165,12 +171,12 @@ export const groupAnalytics = <T>(
     group.linesD += input.linesDeleted;
     group.turns += input.turns;
     group.tools += input.tools;
-    if (input.pricedCost != null) {
+    if (input.pricedCost == null) {
+      group.unpriced++;
+    } else {
       group.priced++;
       group.costs.push(input.pricedCost);
       group.costSum += input.pricedCost;
-    } else {
-      group.unpriced++;
     }
   }
 
