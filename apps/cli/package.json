@@ -11,7 +11,7 @@
     "@ai-usage/local-collectors": "workspace:*",
     "@ai-usage/report-data": "workspace:*",
     "@ai-usage/sync": "workspace:*",
-    "effect": "^3.21.3"
+    "effect": "^3.21.4"
   },
   "scripts": {
     "start": "bun src/main.ts",

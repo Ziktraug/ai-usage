@@ -8,7 +8,7 @@
   },
   "dependencies": {
     "@cipherman/pake-js": "0.1.1",
-    "effect": "^3.21.3"
+    "effect": "^3.21.4"
   },
   "scripts": {
     "build": "tsc --noEmit",
