@@ -1,7 +1,5 @@
-import { harnessLabel } from '@ai-usage/report-core/harness-metadata';
-import { actualCost, usageRowTokenTotal } from '@ai-usage/report-core/usage-row';
-import { type CollectedSession, sessionToUsageRow } from '../collected-session';
-import type { CollectorRow } from '../rtk-enrichment';
+import { actualCost, tokenTotal } from '@ai-usage/report-core/usage-row';
+import type { CollectedSession } from '../collected-session';
 import { type CursorCsvCluster, type CursorCsvTurn, clusterFromTurns, clusterTurns } from './cursor-csv';
 
 export interface CursorReconcileOptions {
@@ -10,25 +8,19 @@ export interface CursorReconcileOptions {
   reconcileWindowMs: number;
 }
 
-const cursorHarness = harnessLabel('cursor');
-
-const sourceFromRow = (row: CollectorRow) => row.source;
-
-const isCursorRow = (row: CollectorRow) => row.harness === cursorHarness;
-
-const turnDistance = (row: CollectorRow, turn: CursorCsvTurn) => {
-  if (!row.date) return Number.POSITIVE_INFINITY;
-  return Math.abs(row.date.getTime() - turn.date.getTime());
+const turnDistance = (session: CollectedSession, turn: CursorCsvTurn) => {
+  if (!session.date) return Number.POSITIVE_INFINITY;
+  return Math.abs(session.date.getTime() - turn.date.getTime());
 };
 
-const cursorSessionWindows = (rows: CollectorRow[], options: CursorReconcileOptions) => {
-  const sorted = rows
-    .map((row, index) => ({ row, index }))
-    .filter((entry) => entry.row.date)
-    .sort((a, b) => (a.row.date?.getTime() ?? 0) - (b.row.date?.getTime() ?? 0));
+const cursorSessionWindows = (sessions: CollectedSession[], options: CursorReconcileOptions) => {
+  const sorted = sessions
+    .map((session, index) => ({ session, index }))
+    .filter((entry) => entry.session.date)
+    .sort((a, b) => (a.session.date?.getTime() ?? 0) - (b.session.date?.getTime() ?? 0));
   return sorted.map((entry, sortedIndex) => {
-    const start = entry.row.date?.getTime() ?? 0;
-    const nextStart = sorted[sortedIndex + 1]?.row.date?.getTime();
+    const start = entry.session.date?.getTime() ?? 0;
+    const nextStart = sorted[sortedIndex + 1]?.session.date?.getTime();
     const maxEnd = start + options.maxSessionSpanMs;
     return {
       ...entry,
@@ -40,43 +32,39 @@ const cursorSessionWindows = (rows: CollectorRow[], options: CursorReconcileOpti
 
 const modelList = (cluster: CursorCsvCluster) => (cluster.models.length > 1 ? cluster.models : undefined);
 
-const mergeClusterIntoRow = (row: CollectorRow, cluster: CursorCsvCluster, ambiguous: boolean): CollectorRow => {
-  const source = sourceFromRow(row);
+const mergeClusterIntoSession = (
+  session: CollectedSession,
+  cluster: CursorCsvCluster,
+  ambiguous: boolean,
+): CollectedSession => {
   const models = modelList(cluster);
-  const merged = sessionToUsageRow({
-    source: {
-      harnessKey: 'cursor',
-      sourceSessionId: source?.sourceSessionId ?? null,
-      ...(source?.sourcePath !== undefined ? { sourcePath: source.sourcePath } : {}),
-    },
-    projectPath: row.projectPath ?? null,
-    date: row.date ?? cluster.startDate,
+  return {
+    source: session.source,
+    ...(session.projectPath === undefined ? {} : { projectPath: session.projectPath }),
+    date: session.date ?? cluster.startDate,
     endDate: cluster.endDate,
-    provider: row.provider,
-    name: row.name,
+    provider: session.provider,
+    name: session.name,
     model: cluster.dominantModel,
     ...(models ? { models } : {}),
-    project: row.project,
+    project: session.project ?? '',
     tokens: cluster.tokens,
     cost: actualCost(cluster.costActual),
     costQuota: cluster.costQuota,
     costApprox: cluster.costApprox,
     costKnown: cluster.costKnown,
     calls: cluster.calls,
-    turns: row.turns || cluster.calls,
-    tools: row.tools,
-    linesAdded: row.linesAdded,
-    linesDeleted: row.linesDeleted,
+    turns: session.turns || cluster.calls,
+    tools: session.tools ?? 0,
+    linesAdded: session.linesAdded ?? null,
+    linesDeleted: session.linesDeleted ?? null,
     ...(ambiguous ? { ambiguous: true } : {}),
-  });
-  if (source) return merged;
-  const { source: _source, ...withoutSource } = merged;
-  return withoutSource;
+  };
 };
 
-const rowFromCluster = (cluster: CursorCsvCluster): CollectorRow => {
+const sessionFromCluster = (cluster: CursorCsvCluster): CollectedSession => {
   const models = modelList(cluster);
-  const session: CollectedSession = {
+  return {
     source: { harnessKey: 'cursor', sourceSessionId: null, sourcePath: cluster.sourcePath },
     date: cluster.startDate,
     endDate: cluster.endDate,
@@ -96,18 +84,15 @@ const rowFromCluster = (cluster: CursorCsvCluster): CollectorRow => {
     linesAdded: null,
     linesDeleted: null,
   };
-  return sessionToUsageRow(session);
 };
 
-export const reconcileCursorRows = (
-  rows: CollectorRow[],
+export const reconcileCursorSessions = (
+  sessions: CollectedSession[],
   turns: CursorCsvTurn[],
   options: CursorReconcileOptions,
-): CollectorRow[] => {
-  if (!turns.length) return rows;
-  const cursorRows = rows.filter(isCursorRow);
-  const otherRows = rows.filter((row) => !isCursorRow(row));
-  const windows = cursorSessionWindows(cursorRows, options);
+): CollectedSession[] => {
+  if (!turns.length) return sessions;
+  const windows = cursorSessionWindows(sessions, options);
   const assignments = new Map<number, { turns: CursorCsvTurn[]; ambiguous: boolean }>();
   const orphanTurns: CursorCsvTurn[] = [];
 
@@ -117,10 +102,14 @@ export const reconcileCursorRows = (
         const time = turn.date.getTime();
         return time >= window.startMs && time <= window.endMs;
       })
-      .map((window) => ({ row: window.row, index: window.index, distance: turnDistance(window.row, turn) }))
-      .sort((a, b) => a.distance - b.distance || usageRowTokenTotal(a.row) - usageRowTokenTotal(b.row));
-    const nearbyCandidateCount = cursorRows.filter(
-      (row) => turnDistance(row, turn) <= options.reconcileWindowMs,
+      .map((window) => ({
+        session: window.session,
+        index: window.index,
+        distance: turnDistance(window.session, turn),
+      }))
+      .sort((a, b) => a.distance - b.distance || tokenTotal(a.session.tokens) - tokenTotal(b.session.tokens));
+    const nearbyCandidateCount = sessions.filter(
+      (session) => turnDistance(session, turn) <= options.reconcileWindowMs,
     ).length;
 
     const best = candidates[0];
@@ -135,14 +124,17 @@ export const reconcileCursorRows = (
     assignments.set(best.index, assignment);
   });
 
-  const reconciledCursorRows = new Map<number, CollectorRow>();
+  const reconciledSessions = new Map<number, CollectedSession>();
   for (const [index, assignment] of assignments) {
-    const row = cursorRows[index];
-    if (!row) continue;
-    reconciledCursorRows.set(index, mergeClusterIntoRow(row, clusterFromTurns(assignment.turns), assignment.ambiguous));
+    const session = sessions[index];
+    if (!session) continue;
+    reconciledSessions.set(
+      index,
+      mergeClusterIntoSession(session, clusterFromTurns(assignment.turns), assignment.ambiguous),
+    );
   }
 
-  const cursorOutput = cursorRows.map((row, index) => reconciledCursorRows.get(index) ?? row);
-  const newRows = clusterTurns(orphanTurns, options.clusterGapMs).map(rowFromCluster);
-  return [...otherRows, ...cursorOutput, ...newRows];
+  const cursorOutput = sessions.map((session, index) => reconciledSessions.get(index) ?? session);
+  const newSessions = clusterTurns(orphanTurns, options.clusterGapMs).map(sessionFromCluster);
+  return [...cursorOutput, ...newSessions];
 };

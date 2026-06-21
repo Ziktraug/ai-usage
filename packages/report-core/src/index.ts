@@ -1,5 +1,6 @@
 export * from './analytics';
 export * from './auth';
+export * from './csv';
 export * from './harness-metadata';
 export * from './html-export';
 export * from './merge-bundle';
