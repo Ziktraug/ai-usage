@@ -6,12 +6,12 @@ const ignoredFiles = new Set(['biome.json']);
 const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.json', '.mjs', '.ts', '.tsx', '.yaml', '.yml']);
 const relativeWorkspacePath = /\.\.\/(?:\.\.\/)*(?:apps|packages)\//g;
 
-type Violation = {
+interface Violation {
   column: number;
   file: string;
   line: number;
   match: string;
-};
+}
 
 const root = process.cwd();
 

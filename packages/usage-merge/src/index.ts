@@ -2,46 +2,46 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  LAN_PAIRING_PORT_RANGE,
-  pairWithLanPeer,
   type DiscoveredLanPeer,
+  LAN_PAIRING_PORT_RANGE,
   type LanPairingService,
   type LanPairingState,
   type LanPeerIdentity,
   type PairingEnvelope,
   type PairingResult,
+  pairWithLanPeer,
 } from '@ai-usage/lan-pairing';
 import type { StoredLanPeer } from '@ai-usage/local-collectors/lan-peers';
 import { safeTokenEqual } from '@ai-usage/report-core/auth';
 import { parseUsageMergeBundle, type UsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
-import { exportLocalMergeBundle, importPeerMergeBundle, type ImportResult } from '@ai-usage/usage-store';
+import { exportLocalMergeBundle, type ImportResult, importPeerMergeBundle } from '@ai-usage/usage-store';
 import { Data, Effect } from 'effect';
 
 export const USAGE_MERGE_PROTOCOL = 'ai-usage-lan-merge' as const;
 export const USAGE_MERGE_PROTOCOL_VERSION = 1 as const;
 
 export interface TrustedLanPeer {
+  lastMergedAt?: string;
+  lastSeenAt?: string;
   machineId: string;
   machineLabel: string;
-  tokenEnv: string;
-  pairedAt: string;
   online: boolean;
   paired: boolean;
-  lastSeenAt?: string;
-  lastMergedAt?: string;
+  pairedAt: string;
   rows?: number;
+  tokenEnv: string;
   warnings: number;
 }
 
 export interface LanMergeState {
+  discoveredPeers: DiscoveredLanPeer[];
   localMachine: UsageMachine;
   service: {
     status: 'stopped' | 'starting' | 'running' | 'pairing' | 'error';
     urls: string[];
     lastError?: string;
   };
-  discoveredPeers: DiscoveredLanPeer[];
   trustedPeers: TrustedLanPeer[];
 }
 
@@ -62,8 +62,8 @@ export interface ScanLanMergePeersInput {
 }
 
 export interface ForgetPeerInput {
-  machineId: string;
   deleteRows?: boolean;
+  machineId: string;
 }
 
 export interface PeerStatusResult {
@@ -71,8 +71,8 @@ export interface PeerStatusResult {
 }
 
 export interface ManualMergeExportResult {
-  filename: string;
   bundle: UsageMergeBundle;
+  filename: string;
 }
 
 export interface ManualMergeImportInput {
@@ -80,16 +80,16 @@ export interface ManualMergeImportInput {
 }
 
 export interface ManualMergeImportResult {
-  machine: UsageMachine;
   generatedAt: string;
+  machine: UsageMachine;
+  result: ImportResult;
   rows: number;
   warnings: number;
-  result: ImportResult;
 }
 
 export interface FetchPeerMergeBundleResult {
-  peer: TrustedLanPeer;
   bundle: UsageMergeBundle;
+  peer: TrustedLanPeer;
 }
 
 export interface UsageMergePeerTransport {
@@ -97,36 +97,36 @@ export interface UsageMergePeerTransport {
 }
 
 export interface UsageMergeRuntimeOptions {
-  localMachine: UsageMachine;
   dbPath: string;
-  peers: StoredLanPeer[];
   discoveredPeers?: DiscoveredLanPeer[];
-  peerUrls?: Record<string, string>;
-  urls?: string[];
   getToken?: (tokenEnv: string) => string | undefined;
-  lanPairing?: LanPairingService;
   lanHost?: string;
+  lanPairing?: LanPairingService;
+  localMachine: UsageMachine;
   localToken?: string;
   localTokenEnv?: string;
+  now?: () => Date;
+  peers: StoredLanPeer[];
+  peerUrls?: Record<string, string>;
   persistToken?: (key: string, value: string) => void | Promise<void>;
   persistTrustedPeer?: (peer: StoredLanPeer) => void | Promise<void>;
   transport?: UsageMergePeerTransport;
-  now?: () => Date;
+  urls?: string[];
 }
 
 export interface UsageMergeBundleHttpHandlerInput {
-  machine: UsageMachine;
   dbPath: string;
-  token: string;
   generatedAt?: () => Date;
+  machine: UsageMachine;
+  token: string;
 }
 
 export interface ResolveUsageMergeBundleInput {
-  machine: UsageMachine;
   dbPath: string;
   expectedToken: string;
-  providedToken: string | null;
   generatedAt?: Date;
+  machine: UsageMachine;
+  providedToken: string | null;
 }
 
 export type UsageMergeBundleResolution =
@@ -135,9 +135,9 @@ export type UsageMergeBundleResolution =
   | { kind: 'ready'; bundle: UsageMergeBundle };
 
 export interface UsageMergeCredential {
-  version: 1;
-  tokenEnv: string;
   token: string;
+  tokenEnv: string;
+  version: 1;
 }
 
 export type UsageMergeErrorReason =
@@ -203,11 +203,13 @@ const fromBase64Url = (value: string) => Buffer.from(value, 'base64url').toStrin
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+const TOKEN_ENV_PATTERN = /^AI_USAGE_[A-Z0-9_]+_TOKEN$/;
+
 const isCredential = (value: unknown): value is UsageMergeCredential =>
   isRecord(value) &&
   value.version === 1 &&
   typeof value.tokenEnv === 'string' &&
-  /^AI_USAGE_[A-Z0-9_]+_TOKEN$/.test(value.tokenEnv) &&
+  TOKEN_ENV_PATTERN.test(value.tokenEnv) &&
   typeof value.token === 'string' &&
   value.token.length > 0;
 
@@ -216,7 +218,9 @@ export const encodeUsageMergeCredential = (credential: Omit<UsageMergeCredential
 
 export const decodeUsageMergeCredential = (value: string): UsageMergeCredential => {
   const parsed = JSON.parse(fromBase64Url(value)) as unknown;
-  if (!isCredential(parsed)) throw new Error('Invalid usage merge credential');
+  if (!isCredential(parsed)) {
+    throw new Error('Invalid usage merge credential');
+  }
   return parsed;
 };
 
@@ -239,7 +243,9 @@ export const storedLanPeerFromPairingEnvelope = (input: {
   envelope: PairingEnvelope;
   pairedAt: Date;
 }): StoredLanPeer => {
-  if (input.identity.id !== input.envelope.peerId) throw new Error('Pairing envelope peer id does not match identity');
+  if (input.identity.id !== input.envelope.peerId) {
+    throw new Error('Pairing envelope peer id does not match identity');
+  }
   const credential = decodeUsageMergeCredential(input.envelope.credential);
   return {
     machineId: input.identity.id,
@@ -257,13 +263,17 @@ const findWorkspaceRoot = (cwd = process.cwd()) => {
     if (fs.existsSync(packagePath)) {
       try {
         const parsed = JSON.parse(fs.readFileSync(packagePath, 'utf8')) as { workspaces?: unknown };
-        if (parsed.workspaces) return current;
+        if (parsed.workspaces) {
+          return current;
+        }
       } catch {
         return current;
       }
     }
     const parent = path.dirname(current);
-    if (parent === current) return path.resolve(cwd);
+    if (parent === current) {
+      return path.resolve(cwd);
+    }
     current = parent;
   }
 };
@@ -284,9 +294,13 @@ export const upsertUsageMergeEnvToken = (key: string, value: string, cwd = proce
 };
 
 export const readUsageMergeEnvToken = (key: string, cwd = process.cwd()) => {
-  if (process.env[key]) return process.env[key];
+  if (process.env[key]) {
+    return process.env[key];
+  }
   const envPath = path.join(findWorkspaceRoot(cwd), '.env');
-  if (!fs.existsSync(envPath)) return undefined;
+  if (!fs.existsSync(envPath)) {
+    return;
+  }
   const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = fs.readFileSync(envPath, 'utf8').match(new RegExp(`^${escapedKey}=(.*)$`, 'm'));
   return match?.[1];
@@ -294,7 +308,9 @@ export const readUsageMergeEnvToken = (key: string, cwd = process.cwd()) => {
 
 const authorizationToken = (request: Request) => {
   const header = request.headers.get('authorization');
-  if (!header?.startsWith('Bearer ')) return null;
+  if (!header?.startsWith('Bearer ')) {
+    return null;
+  }
   return header.slice('Bearer '.length);
 };
 
@@ -319,8 +335,12 @@ export const createUsageMergeBundleHttpHandler =
   (input: UsageMergeBundleHttpHandlerInput) =>
   async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
-    if (url.pathname !== '/lan/merge-bundle') return new Response('Not found', { status: 404 });
-    if (request.method !== 'GET') return new Response('Method not allowed', { status: 405 });
+    if (url.pathname !== '/lan/merge-bundle') {
+      return new Response('Not found', { status: 404 });
+    }
+    if (request.method !== 'GET') {
+      return new Response('Method not allowed', { status: 405 });
+    }
     const result = await Effect.runPromise(
       resolveUsageMergeBundle({
         dbPath: input.dbPath,
@@ -330,8 +350,12 @@ export const createUsageMergeBundleHttpHandler =
         ...(input.generatedAt === undefined ? {} : { generatedAt: input.generatedAt() }),
       }),
     );
-    if (result.kind === 'unauthorized') return new Response('Unauthorized', { status: 401 });
-    if (result.kind === 'export-failed') return new Response('Failed to export merge bundle', { status: 500 });
+    if (result.kind === 'unauthorized') {
+      return new Response('Unauthorized', { status: 401 });
+    }
+    if (result.kind === 'export-failed') {
+      return new Response('Failed to export merge bundle', { status: 500 });
+    }
     return Response.json(result.bundle);
   };
 
@@ -353,7 +377,9 @@ export const fetchUsageMergeBundleTransport: UsageMergePeerTransport = {
         return parseUsageMergeBundle(await response.text());
       },
       catch: (cause) => {
-        if (cause instanceof UsageMergeError) return cause;
+        if (cause instanceof UsageMergeError) {
+          return cause;
+        }
         return usageMergeError(
           'fetchMergeBundle',
           'Peer is offline or unreachable for LAN merge.',
@@ -418,7 +444,9 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
   };
 
   const rememberPeerUrl = (machineId: string, url: string | null | undefined) => {
-    if (url) peerUrls[machineId] = url;
+    if (url) {
+      peerUrls[machineId] = url;
+    }
   };
 
   refreshPeerUrls(discoveredPeers);
@@ -445,14 +473,23 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
     ),
   });
 
-  const persistToken = (key: string, value: string) => options.persistToken?.(key, value) ?? (process.env[key] = value);
+  const persistToken = (key: string, value: string) => {
+    if (options.persistToken) {
+      return options.persistToken(key, value);
+    }
+    process.env[key] = value;
+    return value;
+  };
 
   const persistTrustedPeer = (peer: StoredLanPeer) => options.persistTrustedPeer?.(peer);
 
   const upsertPeerInMemory = (peer: StoredLanPeer) => {
     const index = peers.findIndex((stored) => stored.machineId === peer.machineId);
-    if (index >= 0) peers[index] = peer;
-    else peers.push(peer);
+    if (index >= 0) {
+      peers[index] = peer;
+    } else {
+      peers.push(peer);
+    }
     peers.sort((a, b) => a.machineLabel.localeCompare(b.machineLabel));
   };
 
@@ -781,14 +818,14 @@ export const createUsageMergeRuntime = (options: UsageMergeRuntimeOptions): Usag
 };
 
 export interface UsageMergeService {
+  exportManualMergeBundle(): Effect.Effect<ManualMergeExportResult, UsageMergeError>;
+  forgetPeer(input: ForgetPeerInput): Effect.Effect<LanMergeState, UsageMergeError>;
+  getLanMergeState(): Effect.Effect<LanMergeState, UsageMergeError>;
+  importManualMergeBundle(input: ManualMergeImportInput): Effect.Effect<ManualMergeImportResult, UsageMergeError>;
+  mergePeer(input: MergePeerInput): Effect.Effect<ImportResult, UsageMergeError>;
+  pairPeer(input: PairPeerInput): Effect.Effect<LanMergeState, UsageMergeError>;
+  readPeerStatuses(): Effect.Effect<PeerStatusResult, UsageMergeError>;
+  scanLanMergePeers(input?: ScanLanMergePeersInput): Effect.Effect<LanMergeState, UsageMergeError>;
   startLanMerge(): Effect.Effect<void, UsageMergeError>;
   stopLanMerge(): Effect.Effect<void, UsageMergeError>;
-  getLanMergeState(): Effect.Effect<LanMergeState, UsageMergeError>;
-  scanLanMergePeers(input?: ScanLanMergePeersInput): Effect.Effect<LanMergeState, UsageMergeError>;
-  pairPeer(input: PairPeerInput): Effect.Effect<LanMergeState, UsageMergeError>;
-  mergePeer(input: MergePeerInput): Effect.Effect<ImportResult, UsageMergeError>;
-  exportManualMergeBundle(): Effect.Effect<ManualMergeExportResult, UsageMergeError>;
-  importManualMergeBundle(input: ManualMergeImportInput): Effect.Effect<ManualMergeImportResult, UsageMergeError>;
-  forgetPeer(input: ForgetPeerInput): Effect.Effect<LanMergeState, UsageMergeError>;
-  readPeerStatuses(): Effect.Effect<PeerStatusResult, UsageMergeError>;
 }

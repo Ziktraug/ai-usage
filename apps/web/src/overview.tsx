@@ -92,14 +92,14 @@ import {
   SegmentBar,
 } from './shared';
 
-export type OverviewProps = {
-  rows: DashboardRow[];
-  timelineRows: DashboardRow[];
-  summary: ReportSummary;
-  rangeLabel: string;
-  onSelectSession: (row: DashboardRow) => void;
+export interface OverviewProps {
   onSelectDay: (day: Date) => void;
-};
+  onSelectSession: (row: DashboardRow) => void;
+  rangeLabel: string;
+  rows: DashboardRow[];
+  summary: ReportSummary;
+  timelineRows: DashboardRow[];
+}
 
 const Panel = (props: { title: string; sub?: string; children: JSX.Element }) => (
   <section class={panel}>
@@ -120,7 +120,9 @@ const Panel = (props: { title: string; sub?: string; children: JSX.Element }) =>
 const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
   const data = createMemo(() => {
     const summary = props.summary;
-    if (summary.totalCost <= 0) return null;
+    if (summary.totalCost <= 0) {
+      return null;
+    }
     const covered = summary.costQuota || Math.max(0, summary.totalCost - summary.actualCost);
     const multiple = summary.actualCost > 0.005 ? summary.totalCost / summary.actualCost : null;
     return { covered, multiple, summary };
@@ -129,7 +131,7 @@ const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
   return (
     <Show when={data()}>
       {(hero) => (
-        <section class={heroPanel} aria-label="Subscription leverage">
+        <section aria-label="Subscription leverage" class={heroPanel}>
           <div>
             <div class={heroLabel}>Subscription leverage</div>
             <div class={heroValue}>{fmtMoney(hero().covered)}</div>
@@ -139,7 +141,7 @@ const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
             </div>
           </div>
           <div class={heroSide}>
-            <Show when={hero().multiple} fallback={<span class={heroMultiple}>fully covered by subscriptions</span>}>
+            <Show fallback={<span class={heroMultiple}>fully covered by subscriptions</span>} when={hero().multiple}>
               {(multiple) => <span class={heroMultiple}>×{fmtNum(multiple())} leverage</span>}
             </Show>
             <SegmentBar
@@ -190,19 +192,21 @@ const CalendarHeatmap = (props: { rows: DashboardRow[]; onSelectDay: (day: Date)
 
   // Most recent activity matters most: keep the right edge in view.
   createEffect(() => {
-    if (data() && scrollEl) scrollEl.scrollLeft = scrollEl.scrollWidth;
+    if (data() && scrollEl) {
+      scrollEl.scrollLeft = scrollEl.scrollWidth;
+    }
   });
 
   return (
     <Panel
-      title="Rhythm"
       sub="Daily activity across the whole filtered history — click a day to focus the dashboard on it"
+      title="Rhythm"
     >
-      <Show when={data()} fallback={<div class={emptyPanel}>No dated sessions match the current filters</div>}>
+      <Show fallback={<div class={emptyPanel}>No dated sessions match the current filters</div>} when={data()}>
         {(heat) => (
           <>
             <div class={heatBody}>
-              <div class={heatWeekdays} aria-hidden="true">
+              <div aria-hidden="true" class={heatWeekdays}>
                 <span>Mon</span>
                 <span />
                 <span>Wed</span>
@@ -211,8 +215,13 @@ const CalendarHeatmap = (props: { rows: DashboardRow[]; onSelectDay: (day: Date)
                 <span />
                 <span />
               </div>
-              <div class={heatScroll} ref={scrollEl}>
-                <div class={heatMonths} aria-hidden="true">
+              <div
+                class={heatScroll}
+                ref={(element) => {
+                  scrollEl = element;
+                }}
+              >
+                <div aria-hidden="true" class={heatMonths}>
                   <For each={heat().monthLabels}>{(label) => <span>{label}</span>}</For>
                 </div>
                 <div class={heatGrid}>
@@ -221,19 +230,19 @@ const CalendarHeatmap = (props: { rows: DashboardRow[]; onSelectDay: (day: Date)
                       <div class={heatWeekColumn}>
                         <For each={week.days}>
                           {(day) => (
-                            <Show when={day} fallback={<span />}>
+                            <Show fallback={<span />} when={day}>
                               {(cell) => (
                                 <button
-                                  type="button"
+                                  aria-label={`Focus on ${fmtDateOnly(cell().date)}`}
                                   class={cx(
                                     heatCell,
                                     cell().level === 0 ? heatCellZero : accentFill,
                                     toDateInputValue(cell().date) === heat().todayKey ? heatCellToday : undefined,
                                   )}
+                                  onClick={() => props.onSelectDay(cell().date)}
                                   style={cell().level > 0 ? { opacity: HEAT_OPACITY[cell().level - 1] } : undefined}
                                   title={`${fmtDateOnly(cell().date)} — ${fmtMoney(cell().cost)} · ${fmtNum(cell().sessions)} sessions`}
-                                  aria-label={`Focus on ${fmtDateOnly(cell().date)}`}
-                                  onClick={() => props.onSelectDay(cell().date)}
+                                  type="button"
                                 />
                               )}
                             </Show>
@@ -277,16 +286,19 @@ const ModelMigration = (props: { rows: DashboardRow[] }) => {
   const data = createMemo(() => buildModelMigrationData(props.rows));
 
   return (
-    <Panel title="Model migration" sub="Share of API value per model over time">
-      <Show when={data()} fallback={<div class={emptyPanel}>Not enough priced sessions in range</div>}>
+    <Panel sub="Share of API value per model over time" title="Model migration">
+      <Show fallback={<div class={emptyPanel}>Not enough priced sessions in range</div>} when={data()}>
         {(chart) => (
           <>
             <div class={migrationSvgWrap}>
-              <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none" role="img">
+              <svg height="100%" preserveAspectRatio="none" role="img" viewBox="0 0 100 100" width="100%">
                 <title>Share of API value per model over time</title>
                 <For each={chart().paths}>
                   {(path, index) => (
-                    <path class={cx(migrationFillClass(chart().series[index()]?.key ?? '', index()), migrationArea)} d={path}>
+                    <path
+                      class={cx(migrationFillClass(chart().series[index()]?.key ?? '', index()), migrationArea)}
+                      d={path}
+                    >
                       <title>
                         {chart().series[index()]?.key} — {fmtMoney(chart().series[index()]?.total ?? 0)} (
                         {fmtPct(((chart().series[index()]?.total ?? 0) / Math.max(1e-9, chart().grandTotal)) * 100)})
@@ -337,13 +349,13 @@ const TokenAnatomy = (props: { summary: ReportSummary }) => {
   const cachePct = () => (total() > 0 ? (props.summary.cacheRead / total()) * 100 : 0);
 
   return (
-    <Panel title="Token anatomy" sub="Where the volume actually goes">
-      <Show when={total() > 0} fallback={<div class={emptyPanel}>No token data in range</div>}>
+    <Panel sub="Where the volume actually goes" title="Token anatomy">
+      <Show fallback={<div class={emptyPanel}>No token data in range</div>} when={total() > 0}>
         <div class={anatomyHeadline}>
           <strong>{fmtPct(cachePct())}</strong> of all token volume was read from cache — context reuse is what makes
           agentic sessions affordable.
         </div>
-        <SegmentBar segments={segments()} ariaLabel="Token anatomy" />
+        <SegmentBar ariaLabel="Token anatomy" segments={segments()} />
         <div class={anatomyLegend}>
           <For each={segments()}>
             {(segment) => (
@@ -377,12 +389,12 @@ const SessionShape = (props: { rows: DashboardRow[]; onSelectSession: (row: Dash
   const data = createMemo(() => buildSessionShapeData(props.rows));
 
   return (
-    <Panel title="Session shape" sub="Duration × API value (log scales) — click a point to inspect the session">
-      <Show when={data()} fallback={<div class={emptyPanel}>Not enough timed, priced sessions in range</div>}>
+    <Panel sub="Duration × API value (log scales) — click a point to inspect the session" title="Session shape">
+      <Show fallback={<div class={emptyPanel}>Not enough timed, priced sessions in range</div>} when={data()}>
         {(chart) => (
           <>
             <div class={scatterWrap}>
-              <svg width="100%" height="100%" role="img">
+              <svg height="100%" role="img" width="100%">
                 <title>Session duration versus API value</title>
                 <For each={chart().xTicks}>
                   {(tick) => (
@@ -394,7 +406,7 @@ const SessionShape = (props: { rows: DashboardRow[]; onSelectSession: (row: Dash
                         y1="0"
                         y2="100%"
                       />
-                      <text class={scatterAxisText} x={`${chart().xPct(tick.value)}%`} y="100%" dy="-5" dx="3">
+                      <text class={scatterAxisText} dx="3" dy="-5" x={`${chart().xPct(tick.value)}%`} y="100%">
                         {tick.label}
                       </text>
                     </>
@@ -410,7 +422,7 @@ const SessionShape = (props: { rows: DashboardRow[]; onSelectSession: (row: Dash
                         y1={`${chart().yPct(tick.value)}%`}
                         y2={`${chart().yPct(tick.value)}%`}
                       />
-                      <text class={scatterAxisText} x="4" y={`${chart().yPct(tick.value)}%`} dy="-3">
+                      <text class={scatterAxisText} dy="-3" x="4" y={`${chart().yPct(tick.value)}%`}>
                         {tick.label}
                       </text>
                     </>
@@ -420,14 +432,14 @@ const SessionShape = (props: { rows: DashboardRow[]; onSelectSession: (row: Dash
                   {(row) => (
                     // biome-ignore lint/a11y/useSemanticElements: an SVG cannot contain <button>; role is the standard pattern for SVG hit targets
                     <circle
+                      aria-label={`Inspect session: ${row.sessionLabel}`}
                       class={cx(harnessSvgFillFor(row.harness), scatterPoint)}
                       cx={`${chart().xPct(row.durationMs)}%`}
                       cy={`${chart().yPct(row.costApprox)}%`}
+                      onClick={() => props.onSelectSession(row)}
                       r="3.5"
                       role="button"
-                      aria-label={`Inspect session: ${row.sessionLabel}`}
                       tabIndex={-1}
-                      onClick={() => props.onSelectSession(row)}
                     >
                       <title>
                         {row.sessionLabel} — {fmtMoney(row.costApprox)} · {fmtDuration(row.durationMs)} · {row.harness}
@@ -455,14 +467,14 @@ const Punchcard = (props: { rows: DashboardRow[] }) => {
   const data = createMemo(() => buildPunchcardData(props.rows));
 
   return (
-    <Panel title="Punchcard" sub="When the sessions happen — hour of day × weekday">
-      <Show when={data()} fallback={<div class={emptyPanel}>No dated sessions in range</div>}>
+    <Panel sub="When the sessions happen — hour of day × weekday" title="Punchcard">
+      <Show fallback={<div class={emptyPanel}>No dated sessions in range</div>} when={data()}>
         {(punch) => (
           <div class={punchGrid}>
             <For each={punch().cells}>
               {(dayCells, dayIndex) => (
                 <>
-                  <span class={punchDayLabel} aria-hidden="true">
+                  <span aria-hidden="true" class={punchDayLabel}>
                     {PUNCH_DAYS[dayIndex()]}
                   </span>
                   <For each={dayCells}>
@@ -515,7 +527,7 @@ const Records = (props: {
         <div class={recordsGrid}>
           <Show when={records().topCost}>
             {(row) => (
-              <button type="button" class={recordCard} onClick={() => props.onSelectSession(row())}>
+              <button class={recordCard} onClick={() => props.onSelectSession(row())} type="button">
                 <span class={recordLabel}>Top session</span>
                 <span class={recordValue}>{fmtMoney(row().costApprox)}</span>
                 <span class={recordSub}>{row().sessionLabel}</span>
@@ -524,7 +536,7 @@ const Records = (props: {
           </Show>
           <Show when={records().longest}>
             {(row) => (
-              <button type="button" class={recordCard} onClick={() => props.onSelectSession(row())}>
+              <button class={recordCard} onClick={() => props.onSelectSession(row())} type="button">
                 <span class={recordLabel}>Longest session</span>
                 <span class={recordValue}>{fmtDuration(row().durationMs)}</span>
                 <span class={recordSub}>{row().sessionLabel}</span>
@@ -533,7 +545,7 @@ const Records = (props: {
           </Show>
           <Show when={records().busiest}>
             {(day) => (
-              <button type="button" class={recordCard} onClick={() => props.onSelectDay(day().date)}>
+              <button class={recordCard} onClick={() => props.onSelectDay(day().date)} type="button">
                 <span class={recordLabel}>Busiest day</span>
                 <span class={recordValue}>{fmtMoney(day().cost)}</span>
                 <span class={recordSub}>
@@ -544,7 +556,7 @@ const Records = (props: {
           </Show>
           <Show when={records().streak > 0 && records().streakEnd}>
             {(end) => (
-              <button type="button" class={recordCard} onClick={() => props.onSelectDay(end())}>
+              <button class={recordCard} onClick={() => props.onSelectDay(end())} type="button">
                 <span class={recordLabel}>Streak</span>
                 <span class={recordValue}>
                   {fmtNum(records().streak)} {records().streak === 1 ? 'day' : 'days'}
@@ -568,11 +580,11 @@ const TopSessions = (props: { rows: DashboardRow[]; onSelectSession: (row: Dashb
 
   return (
     <Show when={top().length}>
-      <Panel title="Top sessions" sub="The five most expensive sessions in range — click to inspect">
+      <Panel sub="The five most expensive sessions in range — click to inspect" title="Top sessions">
         <div class={topList}>
           <For each={top()}>
             {(row, index) => (
-              <button type="button" class={topRow} onClick={() => props.onSelectSession(row)}>
+              <button class={topRow} onClick={() => props.onSelectSession(row)} type="button">
                 <span class={topRank}>{index() + 1}</span>
                 <span class={topTitle}>{row.sessionLabel}</span>
                 <HarnessBadge name={row.harness} />
@@ -589,25 +601,25 @@ const TopSessions = (props: { rows: DashboardRow[]; onSelectSession: (row: Dashb
 // ---------------------------------------------------------------------------
 
 export const Overview = (props: OverviewProps) => (
-  <Show when={props.rows.length} fallback={<div class={emptyPanel}>No sessions match the current filters</div>}>
+  <Show fallback={<div class={emptyPanel}>No sessions match the current filters</div>} when={props.rows.length}>
     <div class={overviewGrid}>
-      <Hero summary={props.summary} rangeLabel={props.rangeLabel} />
-      <CalendarHeatmap rows={props.timelineRows} onSelectDay={props.onSelectDay} />
+      <Hero rangeLabel={props.rangeLabel} summary={props.summary} />
+      <CalendarHeatmap onSelectDay={props.onSelectDay} rows={props.timelineRows} />
       <div class={twoColumns}>
         <ModelMigration rows={props.rows} />
         <TokenAnatomy summary={props.summary} />
       </div>
       <div class={twoColumns}>
-        <SessionShape rows={props.rows} onSelectSession={props.onSelectSession} />
+        <SessionShape onSelectSession={props.onSelectSession} rows={props.rows} />
         <Punchcard rows={props.rows} />
       </div>
       <Records
+        onSelectDay={props.onSelectDay}
+        onSelectSession={props.onSelectSession}
         rows={props.rows}
         timelineRows={props.timelineRows}
-        onSelectSession={props.onSelectSession}
-        onSelectDay={props.onSelectDay}
       />
-      <TopSessions rows={props.rows} onSelectSession={props.onSelectSession} />
+      <TopSessions onSelectSession={props.onSelectSession} rows={props.rows} />
     </div>
   </Show>
 );

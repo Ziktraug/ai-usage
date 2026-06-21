@@ -1,16 +1,16 @@
-import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { cx } from '@ai-usage/design-system/css';
-import {
+import { segmentBarPart, segmentBarTrack, unavailableCell } from '@ai-usage/design-system/report';
+import type { SerializedRow } from '@ai-usage/report-core/report-data';
+import { For } from 'solid-js';
+
+export {
   accentFill,
   badgeToneFor,
   HarnessBadge,
   harnessFamily,
   harnessFillFor,
   harnessSvgFillFor,
-  segmentBarPart,
-  segmentBarTrack,
   tokenSegmentClasses,
-  unavailableCell,
 } from '@ai-usage/design-system/report';
 
 const numberFormatter = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
@@ -31,9 +31,15 @@ export const fmtMoney = (n: number | null | undefined) => (n == null ? '—' : `
 export const fmtPct = (n: number) => `${n.toFixed(n >= 10 ? 0 : 1)}%`;
 export const fmtMaybeNum = (n: number | null | undefined) => (n == null ? '—' : fmtNum(n));
 export const fmtCompact = (n: number) => {
-  if (Math.abs(n) >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
-  if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-  if (Math.abs(n) >= 1e5) return `${Math.round(n / 1e3)}k`;
+  if (Math.abs(n) >= 1e9) {
+    return `${(n / 1e9).toFixed(2)}B`;
+  }
+  if (Math.abs(n) >= 1e6) {
+    return `${(n / 1e6).toFixed(1)}M`;
+  }
+  if (Math.abs(n) >= 1e5) {
+    return `${Math.round(n / 1e3)}k`;
+  }
   return fmtNum(n);
 };
 export const UNKNOWN_PRICE_HINT = 'No pricing data for this model';
@@ -43,14 +49,20 @@ export const fmtDateOnly = (value: string | Date | null) =>
   value ? dateOnlyFormatter.format(value instanceof Date ? value : new Date(value)) : '—';
 
 export const fmtDuration = (ms: number | null) => {
-  if (!ms || ms <= 0) return '—';
-  const minutes = Math.round(ms / 60000);
-  if (minutes < 90) return `${minutes}m`;
-  return `${(ms / 3600000).toFixed(1)}h`;
+  if (!ms || ms <= 0) {
+    return '—';
+  }
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 90) {
+    return `${minutes}m`;
+  }
+  return `${(ms / 3_600_000).toFixed(1)}h`;
 };
 
 export const median = (values: number[]) => {
-  if (!values.length) return 0;
+  if (!values.length) {
+    return 0;
+  }
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? (sorted[middle] ?? 0) : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
@@ -61,7 +73,9 @@ export const median = (values: number[]) => {
 export const normalizeModelKey = (model: string) => model.slice(model.lastIndexOf('/') + 1);
 
 // "(OC)" is collector shorthand for sessions proxied through OpenCode.
-export const providerLabel = (provider: string) => provider.replace(/\s*\(OC\)\s*$/, ' · via OpenCode');
+const OPENCODE_PROVIDER_SUFFIX = /\s*\(OC\)\s*$/;
+
+export const providerLabel = (provider: string) => provider.replace(OPENCODE_PROVIDER_SUFFIX, ' · via OpenCode');
 
 export type DashboardRow = SerializedRow & {
   activeTime: number | null;
@@ -82,7 +96,9 @@ export type DashboardRow = SerializedRow & {
 
 const timeFromRowDate = (row: SerializedRow) => {
   const value = row.activeDate ?? row.date;
-  if (!value) return null;
+  if (!value) {
+    return null;
+  }
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : null;
 };
@@ -130,22 +146,11 @@ export const enrichReportRow = (row: SerializedRow): DashboardRow => {
 
 export const rowKey = (row: DashboardRow) => row.rowId;
 
-// Re-export design-system primitives used by the app.
-export {
-  accentFill,
-  badgeToneFor,
-  HarnessBadge,
-  harnessFamily,
-  harnessFillFor,
-  harnessSvgFillFor,
-  tokenSegmentClasses,
-};
-
-export type ReportSummary = {
+export interface ReportSummary {
   actualCost: number;
-  costQuota: number;
   cacheRead: number;
   cacheWrite: number;
+  costQuota: number;
   fresh: number;
   meanCost: number;
   rtkInput: number;
@@ -159,7 +164,7 @@ export type ReportSummary = {
   totalCost: number;
   turns: number;
   unknownActual: number;
-};
+}
 
 const createReportSummary = (): ReportSummary => ({
   actualCost: 0,
@@ -186,7 +191,9 @@ export const buildReportSummary = (rows: DashboardRow[], acceptsRow: (row: Dashb
   let pricedCount = 0;
 
   for (const row of rows) {
-    if (!acceptsRow(row)) continue;
+    if (!acceptsRow(row)) {
+      continue;
+    }
     summary.sessionCount++;
     if (row.costKnown) {
       summary.totalCost += row.costApprox;
@@ -194,7 +201,9 @@ export const buildReportSummary = (rows: DashboardRow[], acceptsRow: (row: Dashb
     }
     summary.actualCost += row.costActual ?? 0;
     summary.costQuota += row.costQuota ?? 0;
-    if (row.costActual == null) summary.unknownActual++;
+    if (row.costActual == null) {
+      summary.unknownActual++;
+    }
     summary.fresh += row.freshTokens;
     summary.cacheRead += row.tokCr;
     summary.cacheWrite += row.tokCw;
@@ -203,7 +212,9 @@ export const buildReportSummary = (rows: DashboardRow[], acceptsRow: (row: Dashb
     summary.rtkSaved += row.rtkSavedTokens ?? 0;
     summary.rtkInput += row.rtkInputTokens ?? 0;
     summary.rtkOutput += row.rtkOutputTokens ?? 0;
-    if (row.rtkSavedTokens) summary.rtkSessions++;
+    if (row.rtkSavedTokens) {
+      summary.rtkSessions++;
+    }
     summary.turns += row.turns;
     summary.tools += row.tools;
   }
@@ -212,7 +223,12 @@ export const buildReportSummary = (rows: DashboardRow[], acceptsRow: (row: Dashb
   return summary;
 };
 
-export type BarSegment = { label: string; value: number; class: string; title?: string };
+export interface BarSegment {
+  class: string;
+  label: string;
+  title?: string;
+  value: number;
+}
 
 export const UsageUnavailableCell = () => (
   <span class={unavailableCell} title={USAGE_UNAVAILABLE_HINT}>
@@ -223,17 +239,18 @@ export const UsageUnavailableCell = () => (
 // Proportional horizontal bar: token anatomy in the drawer and the overview.
 export const SegmentBar = (props: { segments: BarSegment[]; ariaLabel?: string }) => {
   const total = () => props.segments.reduce((sum, segment) => sum + segment.value, 0);
+  const visibleSegments = () => props.segments.filter((segment) => segment.value > 0);
   return (
-    <div class={segmentBarTrack} role="img" aria-label={props.ariaLabel}>
-      {props.segments
-        .filter((segment) => segment.value > 0)
-        .map((segment) => (
+    <div aria-label={props.ariaLabel} class={segmentBarTrack} role="img">
+      <For each={visibleSegments()}>
+        {(segment) => (
           <div
             class={cx(segmentBarPart, segment.class)}
             style={{ width: `${(segment.value / Math.max(1, total())) * 100}%` }}
             title={segment.title ?? `${segment.label}: ${fmtNum(segment.value)}`}
           />
-        ))}
+        )}
+      </For>
     </div>
   );
 };

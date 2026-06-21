@@ -8,13 +8,17 @@ const findWorkspaceRoot = (cwd = process.cwd()) => {
     if (fs.existsSync(packagePath)) {
       try {
         const parsed = JSON.parse(fs.readFileSync(packagePath, 'utf8')) as { workspaces?: unknown };
-        if (parsed.workspaces) return current;
+        if (parsed.workspaces) {
+          return current;
+        }
       } catch {
         return current;
       }
     }
     const parent = path.dirname(current);
-    if (parent === current) return path.resolve(cwd);
+    if (parent === current) {
+      return path.resolve(cwd);
+    }
     current = parent;
   }
 };
@@ -30,5 +34,5 @@ export const upsertEnvToken = async (key: string, value: string, cwd = process.c
     : `${existing}${existing && !existing.endsWith('\n') ? '\n' : ''}${line}\n`;
   fs.mkdirSync(path.dirname(envPath), { recursive: true });
   fs.writeFileSync(envPath, next, 'utf8');
-  return { path: envPath };
+  return await Promise.resolve({ path: envPath });
 };

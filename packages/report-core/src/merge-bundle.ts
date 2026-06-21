@@ -15,21 +15,21 @@ export interface MergeRowIdentity {
 }
 
 export interface SerializedMergeRow extends SerializedUsageRow {
+  contentHash: UsageRowContentHash;
+  rowKey: StableUsageRowKey;
   source: UsageRowSource & {
     machineId: string;
     machineLabel: string;
   };
   sourceFingerprint: string;
-  rowKey: StableUsageRowKey;
-  contentHash: UsageRowContentHash;
   status: UsageRowStatus;
 }
 
 export interface UsageMergeBundle {
-  version: typeof USAGE_MERGE_BUNDLE_VERSION;
-  machine: UsageMachine;
   generatedAt: string;
+  machine: UsageMachine;
   rows: SerializedMergeRow[];
+  version: typeof USAGE_MERGE_BUNDLE_VERSION;
   warnings: UsageReportWarning[];
 }
 
@@ -39,10 +39,18 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const normalizeJsonValue = (value: unknown): JsonValue => {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  if (Array.isArray(value)) return value.map(normalizeJsonValue);
-  if (!isRecord(value)) return null;
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeJsonValue);
+  }
+  if (!isRecord(value)) {
+    return null;
+  }
   return Object.fromEntries(
     Object.keys(value)
       .sort()
@@ -138,12 +146,16 @@ export const createUsageMergeBundle = (input: {
 });
 
 const isMachine = (value: unknown): value is UsageMachine => {
-  if (!isRecord(value)) return false;
+  if (!isRecord(value)) {
+    return false;
+  }
   return typeof value.id === 'string' && value.id.length > 0 && typeof value.label === 'string';
 };
 
 const isMergeRowSource = (value: unknown): value is SerializedMergeRow['source'] => {
-  if (!isRecord(value)) return false;
+  if (!isRecord(value)) {
+    return false;
+  }
   return (
     typeof value.harnessKey === 'string' &&
     value.harnessKey.length > 0 &&
@@ -168,7 +180,9 @@ const isUsageReportWarnings = (value: unknown): value is UsageReportWarning[] =>
   );
 
 export const isSerializedMergeRow = (value: unknown): value is SerializedMergeRow => {
-  if (!isRecord(value)) return false;
+  if (!isRecord(value)) {
+    return false;
+  }
   return (
     typeof value.harness === 'string' &&
     typeof value.provider === 'string' &&
@@ -184,20 +198,32 @@ export const isSerializedMergeRow = (value: unknown): value is SerializedMergeRo
 };
 
 export const parseSerializedMergeRow = (value: unknown): SerializedMergeRow => {
-  if (!isSerializedMergeRow(value)) throw new Error('Usage merge bundle contains an invalid row');
+  if (!isSerializedMergeRow(value)) {
+    throw new Error('Usage merge bundle contains an invalid row');
+  }
   return value;
 };
 
 export const parseUsageMergeBundle = (text: string): UsageMergeBundle => {
   const value = JSON.parse(text) as unknown;
-  if (!isRecord(value)) throw new Error('Usage merge bundle must be an object');
-  if (value.version !== USAGE_MERGE_BUNDLE_VERSION) throw new Error('Unsupported usage merge bundle version');
-  if (!isMachine(value.machine)) throw new Error('Usage merge bundle missing machine');
-  if (typeof value.generatedAt !== 'string') throw new Error('Usage merge bundle missing generatedAt');
-  if (!Array.isArray(value.rows) || !value.rows.every(isSerializedMergeRow)) {
+  if (!isRecord(value)) {
+    throw new Error('Usage merge bundle must be an object');
+  }
+  if (value.version !== USAGE_MERGE_BUNDLE_VERSION) {
+    throw new Error('Unsupported usage merge bundle version');
+  }
+  if (!isMachine(value.machine)) {
+    throw new Error('Usage merge bundle missing machine');
+  }
+  if (typeof value.generatedAt !== 'string') {
+    throw new Error('Usage merge bundle missing generatedAt');
+  }
+  if (!(Array.isArray(value.rows) && value.rows.every(isSerializedMergeRow))) {
     throw new Error('Usage merge bundle contains invalid rows');
   }
-  if (!isUsageReportWarnings(value.warnings)) throw new Error('Usage merge bundle contains invalid warnings');
+  if (!isUsageReportWarnings(value.warnings)) {
+    throw new Error('Usage merge bundle contains invalid warnings');
+  }
   return {
     version: value.version,
     machine: value.machine,

@@ -16,7 +16,7 @@ const baseRow: UsageRow = {
   tokCr: 10,
   tokCw: 5,
   costActual: null,
-  costApprox: 1.23456,
+  costApprox: 1.234_56,
   costKnown: true,
   calls: 3,
   durationMs: null,

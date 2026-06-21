@@ -6,7 +6,7 @@ import {
 import {
   createUsageReportPayload,
   type PreparedUsageReport,
-  prepareUsageReport,
+  prepareUsageReport as prepareUsageReportForRender,
   type UsageReportPayload,
   type UsageReportWarning,
 } from '@ai-usage/report-core/report-data';
@@ -35,7 +35,9 @@ const renderReportNotes = () => {
 };
 
 export const renderWarnings = (warnings: UsageReportWarning[] = []) => {
-  if (!warnings.length) return '';
+  if (!warnings.length) {
+    return '';
+  }
   const lines = warnings.map((warning) => {
     const prefix = warning.harness ? `${warning.harness}: ` : '';
     return `  ! ${prefix}${warning.message}`;
@@ -52,7 +54,9 @@ const renderTerminalReport = (report: PreparedUsageReport, args: Args, warnings:
     output.push(clr.dim(`  … ${report.omittedRows} more rows (analytics below cover all ${report.rows.length})`));
   }
   const warningOutput = renderWarnings(warnings);
-  if (warningOutput) output.push(warningOutput);
+  if (warningOutput) {
+    output.push(warningOutput);
+  }
   output.push(renderAnalytics(report.rows));
   output.push(renderReportNotes());
   return output.join('\n');
@@ -64,12 +68,20 @@ export const renderUsageReport = (
   facets?: Record<string, unknown>,
   warnings?: UsageReportWarning[],
 ) => {
-  const report = prepareUsageReport(rows, args);
+  const report = prepareUsageReportForRender(rows, args);
 
-  if (args.format === 'json') return JSON.stringify(report.rows, null, 2);
-  if (args.format === 'csv') return renderCSV(report.rows);
-  if (args.format === 'html') return renderTerminalReport(report, args, warnings);
-  if (args.format === 'payload') return JSON.stringify(createUsageReportPayload(report, args, new Date(), facets, warnings));
+  if (args.format === 'json') {
+    return JSON.stringify(report.rows, null, 2);
+  }
+  if (args.format === 'csv') {
+    return renderCSV(report.rows);
+  }
+  if (args.format === 'html') {
+    return renderTerminalReport(report, args, warnings);
+  }
+  if (args.format === 'payload') {
+    return JSON.stringify(createUsageReportPayload(report, args, new Date(), facets, warnings));
+  }
 
   return renderTerminalReport(report, args, warnings);
 };
@@ -80,14 +92,18 @@ export const renderUsageReportForCli = async (
   facets?: Record<string, unknown>,
   warnings?: UsageReportWarning[],
 ) => {
-  const report = prepareUsageReport(rows, args);
-  if (args.format === 'html') return renderReportAppHTML(createUsageReportPayload(report, args, new Date(), facets, warnings));
-  return renderUsageReport(rows, args, facets, warnings);
+  const report = prepareUsageReportForRender(rows, args);
+  if (args.format === 'html') {
+    return await renderReportAppHTML(createUsageReportPayload(report, args, new Date(), facets, warnings));
+  }
+  return await Promise.resolve(renderUsageReport(rows, args, facets, warnings));
 };
 
 export const renderUsagePayloadForCli = async (payload: UsageReportPayload, args: Args) => {
-  if (args.format === 'html') return renderReportAppHTML(payload);
-  return JSON.stringify(payload);
+  if (args.format === 'html') {
+    return await renderReportAppHTML(payload);
+  }
+  return await Promise.resolve(JSON.stringify(payload));
 };
 
-export { prepareUsageReport };
+export { prepareUsageReport } from '@ai-usage/report-core/report-data';

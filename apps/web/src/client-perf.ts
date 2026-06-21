@@ -9,13 +9,17 @@ let resolvePerfPromise: Promise<boolean> | null = null;
 const isBrowser = () => typeof window !== 'undefined' && typeof performance !== 'undefined';
 
 const urlPerfEnabled = () => {
-  if (!isBrowser()) return false;
+  if (!isBrowser()) {
+    return false;
+  }
   const value = new URLSearchParams(window.location.search).get('perf');
   return value === '1' || value === 'true';
 };
 
 const storedPerfEnabled = () => {
-  if (!isBrowser()) return false;
+  if (!isBrowser()) {
+    return false;
+  }
   try {
     const value = window.localStorage.getItem('ai-usage-perf');
     return value === '1' || value === 'true';
@@ -27,8 +31,12 @@ const storedPerfEnabled = () => {
 export const clientPerfEnabled = () => resolvedPerfEnabled === true || urlPerfEnabled() || storedPerfEnabled();
 
 export const resolveClientPerfEnabled = async () => {
-  if (clientPerfEnabled()) return true;
-  if (resolvedPerfEnabled !== undefined) return resolvedPerfEnabled;
+  if (clientPerfEnabled()) {
+    return true;
+  }
+  if (resolvedPerfEnabled !== undefined) {
+    return resolvedPerfEnabled;
+  }
   resolvePerfPromise ??= import('./server/report-payload')
     .then(({ getReportPerfEnabled }) => getReportPerfEnabled())
     .then((enabled) => {
@@ -39,7 +47,7 @@ export const resolveClientPerfEnabled = async () => {
       resolvedPerfEnabled = false;
       return false;
     });
-  return resolvePerfPromise;
+  return await resolvePerfPromise;
 };
 
 const formatFields = (fields: PerfFields = {}) =>
@@ -49,7 +57,9 @@ const formatFields = (fields: PerfFields = {}) =>
     .join(' ');
 
 export const logClientPerf = (label: string, fields?: PerfFields) => {
-  if (!clientPerfEnabled()) return;
+  if (!clientPerfEnabled()) {
+    return;
+  }
   const summary = formatFields(fields);
   console.info(`[perf] ${label}${summary ? ` ${summary}` : ''}`);
 };
@@ -67,7 +77,9 @@ export const measureClientPerf = <A>(
   fields?: (value: A) => PerfFields,
   options: { minDurationMs?: number } = {},
 ) => {
-  if (!clientPerfEnabled()) return run();
+  if (!clientPerfEnabled()) {
+    return run();
+  }
   const startedAt = performance.now();
   const value = run();
   const durationMs = Math.round(performance.now() - startedAt);
@@ -78,7 +90,9 @@ export const measureClientPerf = <A>(
 };
 
 export const createClientPerfTrace = (label: string, fields: PerfFields = {}) => {
-  if (!clientPerfEnabled()) return null;
+  if (!clientPerfEnabled()) {
+    return null;
+  }
   const startedAt = performance.now();
   let lastAt = startedAt;
 
@@ -97,7 +111,9 @@ export const createClientPerfTrace = (label: string, fields: PerfFields = {}) =>
 };
 
 export const logNavigationPerf = (payload: UsageReportPayload) => {
-  if (!clientPerfEnabled() || !isBrowser()) return;
+  if (!(clientPerfEnabled() && isBrowser())) {
+    return;
+  }
   const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
   logClientPerf('aiUsage.web.client.initial', {
     ...payloadStats(payload),

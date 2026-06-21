@@ -24,18 +24,18 @@ export type DashboardTab = (typeof dashboardTabs)[number];
 
 type ReportSort = 'date' | 'tokens' | 'cost';
 
-export type DashboardSort = {
+export interface DashboardSort {
   desc: boolean;
   id: SessionColumnId;
-};
+}
 
-export type DashboardDateRangeSearch = {
+export interface DashboardDateRangeSearch {
   from?: string;
   mode: DateRangeMode;
   to?: string;
-};
+}
 
-export type DashboardSearch = {
+export interface DashboardSearch {
   cols: SearchableColumnDiffId[];
   filters: FieldFilters;
   harness: string;
@@ -43,7 +43,7 @@ export type DashboardSearch = {
   range: DashboardDateRangeSearch;
   sort: DashboardSort;
   tab: DashboardTab;
-};
+}
 
 const dateRangeModes: DateRangeMode[] = ['all', 'today', '7d', '30d', 'custom'];
 const dateRangeModeSet = new Set<string>(dateRangeModes);
@@ -56,16 +56,22 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const cleanString = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
 
 const validDateInput = (value: unknown) => {
-  if (typeof value !== 'string') return undefined;
+  if (typeof value !== 'string') {
+    return;
+  }
   return parseLocalDate(value) ? value : undefined;
 };
 
 const uniqueValidStrings = <T extends string>(values: unknown, isValid: (value: unknown) => value is T): T[] => {
-  if (!Array.isArray(values)) return [];
+  if (!Array.isArray(values)) {
+    return [];
+  }
   const next: T[] = [];
   const seen = new Set<T>();
   for (const value of values) {
-    if (!isValid(value) || seen.has(value)) continue;
+    if (!isValid(value) || seen.has(value)) {
+      continue;
+    }
     next.push(value);
     seen.add(value);
   }
@@ -91,22 +97,32 @@ export const dashboardSearchDefaultsFor = (sort: ReportSort): DashboardSearch =>
 });
 
 const parseFilters = (value: unknown): FieldFilters => {
-  if (!isRecord(value)) return {};
+  if (!isRecord(value)) {
+    return {};
+  }
   const filters: FieldFilters = {};
   for (const [key, rawFilter] of Object.entries(value)) {
-    if (!fieldFilterKeySet.has(key)) continue;
+    if (!fieldFilterKeySet.has(key)) {
+      continue;
+    }
     const filter = cleanString(rawFilter);
-    if (filter) filters[key as FieldFilterKey] = filter;
+    if (filter) {
+      filters[key as FieldFilterKey] = filter;
+    }
   }
   return filters;
 };
 
 const parseRange = (value: unknown, fallback: DashboardDateRangeSearch): DashboardDateRangeSearch => {
-  if (!isRecord(value)) return fallback;
+  if (!isRecord(value)) {
+    return fallback;
+  }
 
   const mode =
     typeof value.mode === 'string' && dateRangeModeSet.has(value.mode) ? (value.mode as DateRangeMode) : fallback.mode;
-  if (mode !== 'custom') return { mode };
+  if (mode !== 'custom') {
+    return { mode };
+  }
 
   const from = validDateInput(value.from);
   const to = validDateInput(value.to);
@@ -119,7 +135,9 @@ const parseRange = (value: unknown, fallback: DashboardDateRangeSearch): Dashboa
 
 const parseSort = (value: unknown, fallback: DashboardSort): DashboardSort => {
   const candidate = Array.isArray(value) ? value[0] : value;
-  if (!isRecord(candidate) || !isSessionColumnId(candidate.id)) return fallback;
+  if (!(isRecord(candidate) && isSessionColumnId(candidate.id))) {
+    return fallback;
+  }
   return {
     id: candidate.id,
     desc: typeof candidate.desc === 'boolean' ? candidate.desc : fallback.desc,

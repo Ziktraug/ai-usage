@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Effect } from 'effect';
-import { LocalHistoryStorage, createLocalHistoryStorage } from './local-history';
 import {
   emptyLanPeersConfig,
   LAN_PEERS_CONFIG_FILE,
@@ -12,6 +11,7 @@ import {
   readLanPeersConfig,
   upsertStoredLanPeer,
 } from './lan-peers';
+import { createLocalHistoryStorage, LocalHistoryStorage } from './local-history';
 
 describe('LAN peer config boundary', () => {
   test('owns the lan-peers.json path under the ai-usage user config directory', () => {
@@ -47,7 +47,9 @@ describe('LAN peer config boundary', () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-lan-peers-'));
     try {
       const storage = createLocalHistoryStorage(home);
-      const empty = await Effect.runPromise(readLanPeersConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)));
+      const empty = await Effect.runPromise(
+        readLanPeersConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
       const first = await Effect.runPromise(
         upsertStoredLanPeer({
           machineId: 'machine-b',

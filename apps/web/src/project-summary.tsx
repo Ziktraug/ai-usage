@@ -14,31 +14,31 @@ import type { ProjectGroup } from './dashboard-analytics';
 import { fmtCompact, fmtMoney, fmtNum, UNKNOWN_PRICE_HINT } from './shared';
 
 export const ProjectSummary = (props: { groups: ProjectGroup[]; onProjectFilter: (value: string) => void }) => (
-  <Show when={props.groups.length} fallback={<div class={empty}>No projects</div>}>
+  <Show fallback={<div class={empty}>No projects</div>} when={props.groups.length}>
     <div class={tableWrap}>
       <table class={cx(table, projectTable)}>
         <thead>
           <tr>
             <th>Project</th>
-            <th style={{ width: '88px' }} class={right}>
+            <th class={right} style={{ width: '88px' }}>
               Sessions
             </th>
-            <th style={{ width: '110px' }} class={right}>
+            <th class={right} style={{ width: '110px' }}>
               Fresh
             </th>
-            <th style={{ width: '110px' }} class={right}>
+            <th class={right} style={{ width: '110px' }}>
               Cache
             </th>
-            <th style={{ width: '96px' }} class={right}>
+            <th class={right} style={{ width: '96px' }}>
               $API
             </th>
-            <th style={{ width: '110px' }} class={right}>
+            <th class={right} style={{ width: '110px' }}>
               Lines
             </th>
-            <th style={{ width: '96px' }} class={right}>
+            <th class={right} style={{ width: '96px' }}>
               Turns
             </th>
-            <th style={{ width: '96px' }} class={right}>
+            <th class={right} style={{ width: '96px' }}>
               Tools
             </th>
           </tr>
@@ -51,7 +51,7 @@ export const ProjectSummary = (props: { groups: ProjectGroup[]; onProjectFilter:
                   class={strongCell}
                   title={project.key === '(unknown)' ? 'Sessions without a detected project directory' : undefined}
                 >
-                  <button class={groupKeyButton} type="button" onClick={() => props.onProjectFilter(project.key)}>
+                  <button class={groupKeyButton} onClick={() => props.onProjectFilter(project.key)} type="button">
                     {project.key}
                   </button>
                 </td>
@@ -63,7 +63,7 @@ export const ProjectSummary = (props: { groups: ProjectGroup[]; onProjectFilter:
                   {fmtCompact(project.cache)}
                 </td>
                 <td class={numCell}>
-                  <Show when={project.priced} fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>}>
+                  <Show fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>} when={project.priced}>
                     {fmtMoney(project.cost)}
                   </Show>
                 </td>

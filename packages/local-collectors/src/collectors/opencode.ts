@@ -16,30 +16,57 @@ import { resolvePathCandidates } from '../platform-paths';
 import type { CollectorRow } from '../rtk-enrichment';
 import { base, dominant, safeJSON } from '../text';
 
-type Agg = {
-  tin: number;
-  tout: number;
+const DEFAULT_ACP_SESSION_TITLE = /^ACP Session /i;
+
+interface Agg {
+  calls: number;
+  cost: number;
+  end: Date | null;
+  model: Map<string, number>;
+  prov: Map<string, number>;
+  reason: number;
+  start: Date | null;
   tcr: number;
   tcw: number;
-  reason: number;
-  cost: number;
-  calls: number;
-  start: Date | null;
-  end: Date | null;
-  prov: Map<string, number>;
-  model: Map<string, number>;
-};
+  tin: number;
+  tout: number;
+}
 
-type SessionRow = {
-  id: string;
-  title: string | null;
+interface SessionRow {
   directory: string | null;
+  id: string;
   summary_additions: number | null;
   summary_deletions: number | null;
-};
+  title: string | null;
+}
 
-type CountRow = { session_id: string; n: number };
-type MessageRow = { session_id: string; data: string };
+interface CountRow {
+  n: number;
+  session_id: string;
+}
+interface MessageRow {
+  data: string;
+  session_id: string;
+}
+interface OpenCodeMessageData {
+  cost?: number;
+  modelID?: string;
+  providerID?: string;
+  role?: string;
+  time?: {
+    completed?: string | number | Date;
+    created?: string | number | Date;
+  };
+  tokens?: {
+    cache?: {
+      read?: number;
+      write?: number;
+    };
+    input?: number;
+    output?: number;
+    reasoning?: number;
+  };
+}
 
 export interface OpenCodeCollectionResult {
   rows: CollectorRow[];
@@ -66,7 +93,9 @@ const collectFromDb = (
         storage.exists(dbPath).pipe(Effect.catchAll(() => Effect.succeed(false))),
         (value) => ({ db: source, exists: value }),
       );
-      if (!exists) return [];
+      if (!exists) {
+        return [];
+      }
 
       const stat = dbStat(dbPath);
       const cachedRows = cachedDbRows(cache, dbPath, stat);
@@ -121,16 +150,20 @@ const collectFromDb = (
                 let tokenRows = 0;
                 let userRows = 0;
                 for (const row of messageRows) {
-                  const data = safeJSON(row.data);
+                  const data = safeJSON<OpenCodeMessageData>(row.data);
                   if (data?.role === 'user') {
                     userRows++;
                     turnCount.set(row.session_id, (turnCount.get(row.session_id) || 0) + 1);
                     continue;
                   }
-                  if (data?.role !== 'assistant') continue;
+                  if (data?.role !== 'assistant') {
+                    continue;
+                  }
                   assistantRows++;
                   const tokens = data.tokens;
-                  if (!tokens) continue;
+                  if (!tokens) {
+                    continue;
+                  }
                   tokenRows++;
                   let current = agg.get(row.session_id);
                   if (!current) {
@@ -164,12 +197,16 @@ const collectFromDb = (
                   const created = data.time?.created;
                   if (created) {
                     const date = new Date(created);
-                    if (!current.start || date < current.start) current.start = date;
+                    if (!current.start || date < current.start) {
+                      current.start = date;
+                    }
                   }
                   const completed = data.time?.completed || data.time?.created;
                   if (completed) {
                     const date = new Date(completed);
-                    if (!current.end || date > current.end) current.end = date;
+                    if (!current.end || date > current.end) {
+                      current.end = date;
+                    }
                   }
                   const total = input + output + cacheRead + cacheWrite;
                   current.prov.set(data.providerID || '?', (current.prov.get(data.providerID || '?') || 0) + total);
@@ -191,10 +228,18 @@ const collectFromDb = (
       );
 
       const provLabel = (providerId: string, cost: number) => {
-        if (providerId === 'openai') return cost > 0 ? 'OpenAI API' : 'Codex sub (OC)';
-        if (providerId === 'anthropic') return 'Anthropic API';
-        if (providerId === 'opencode') return 'OpenCode Zen';
-        if (providerId === 'cursor') return 'via Cursor (OC)';
+        if (providerId === 'openai') {
+          return cost > 0 ? 'OpenAI API' : 'Codex sub (OC)';
+        }
+        if (providerId === 'anthropic') {
+          return 'Anthropic API';
+        }
+        if (providerId === 'opencode') {
+          return 'OpenCode Zen';
+        }
+        if (providerId === 'cursor') {
+          return 'via Cursor (OC)';
+        }
         return providerId;
       };
 
@@ -212,7 +257,8 @@ const collectFromDb = (
               cr: current.tcr,
               cw: current.tcw,
             };
-            const title = sessionMeta?.title && !/^ACP Session /i.test(sessionMeta.title) ? sessionMeta.title : '';
+            const title =
+              sessionMeta?.title && !DEFAULT_ACP_SESSION_TITLE.test(sessionMeta.title) ? sessionMeta.title : '';
             sessions.push({
               source: { harnessKey: 'opencode', sourceSessionId: sid, sourcePath: sessionMeta?.dir ?? null },
               projectPath: sessionMeta?.dir ?? null,
@@ -264,8 +310,12 @@ export const collectOpenCodeResult: Effect.Effect<
   const appendRows = (target: CollectorRow[], rows: CollectorRow[]) => {
     for (const row of rows) {
       const sessionId = row.source?.sourceSessionId;
-      if (sessionId && seen.has(sessionId)) continue;
-      if (sessionId) seen.add(sessionId);
+      if (sessionId && seen.has(sessionId)) {
+        continue;
+      }
+      if (sessionId) {
+        seen.add(sessionId);
+      }
       target.push(row);
     }
   };

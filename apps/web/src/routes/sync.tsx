@@ -218,7 +218,7 @@ const MetricPanel = (props: { label: string; value: number; detail: string }) =>
 const OperationNotice = (props: { error: LanOperationError | null; message: string | null }) => (
   <Show when={props.error || props.message}>
     <div class={operationPanel} role={props.error ? 'alert' : 'status'}>
-      <Show when={props.error} fallback={<div>{props.message}</div>}>
+      <Show fallback={<div>{props.message}</div>} when={props.error}>
         {(error) => (
           <>
             <div class={strongCell}>{error().message}</div>
@@ -231,6 +231,12 @@ const OperationNotice = (props: { error: LanOperationError | null; message: stri
 );
 
 const canScanLan = (status: LanMergeState['service']['status']) => status === 'running' || status === 'pairing';
+const scanButtonLabel = (canScan: boolean, scanning: boolean) => {
+  if (!canScan) {
+    return 'Start first';
+  }
+  return scanning ? 'Scanning' : 'Scan LAN';
+};
 
 const LocalMachinePanel = (props: {
   state: LanMergeState;
@@ -267,33 +273,33 @@ const LocalMachinePanel = (props: {
         <span class={inlineFieldLabel}>Scan host</span>
         <input
           class={field}
-          value={props.scanHost}
-          placeholder="192.168.1.23"
           disabled={props.pending || props.scanning}
           onInput={(event) => props.onScanHostChange(event.currentTarget.value)}
+          placeholder="192.168.1.23"
+          value={props.scanHost}
         />
       </label>
       <Show
-        when={props.state.service.status === 'running' || props.state.service.status === 'pairing'}
         fallback={
-          <button class={ghostButton} type="button" disabled={props.pending || props.scanning} onClick={props.onStart}>
+          <button class={ghostButton} disabled={props.pending || props.scanning} onClick={props.onStart} type="button">
             Start LAN merge
           </button>
         }
+        when={props.state.service.status === 'running' || props.state.service.status === 'pairing'}
       >
-        <button class={ghostButton} type="button" disabled={props.pending || props.scanning} onClick={props.onStop}>
+        <button class={ghostButton} disabled={props.pending || props.scanning} onClick={props.onStop} type="button">
           Stop
         </button>
       </Show>
       <button
         class={ghostButton}
-        type="button"
         disabled={props.pending || props.scanning || !canScanLan(props.state.service.status)}
         onClick={props.onScan}
+        type="button"
       >
-        {!canScanLan(props.state.service.status) ? 'Start first' : props.scanning ? 'Scanning' : 'Scan LAN'}
+        {scanButtonLabel(canScanLan(props.state.service.status), props.scanning)}
       </button>
-      <button class={ghostButton} type="button" disabled={props.pending || props.scanning} onClick={props.onRefresh}>
+      <button class={ghostButton} disabled={props.pending || props.scanning} onClick={props.onRefresh} type="button">
         Refresh
       </button>
     </div>
@@ -306,7 +312,7 @@ const PairedMachines = (props: {
   pendingOperation: string | null;
   onMerge: (peer: TrustedLanPeer, discovered: DiscoveredLanPeer | undefined) => void;
 }) => (
-  <Show when={props.peers.length > 0} fallback={<div class={emptyText}>No machines are paired yet.</div>}>
+  <Show fallback={<div class={emptyText}>No machines are paired yet.</div>} when={props.peers.length > 0}>
     <div class={machineList}>
       <For each={props.peers}>
         {(peer) => {
@@ -326,9 +332,9 @@ const PairedMachines = (props: {
               <div class={actionRow}>
                 <button
                   class={ghostButton}
-                  type="button"
                   disabled={!!props.pendingOperation}
                   onClick={() => props.onMerge(peer, discovered())}
+                  type="button"
                 >
                   Merge now
                 </button>
@@ -350,10 +356,18 @@ const DiscoveredMachines = (props: {
 }) => {
   const visiblePeers = () => props.peers.filter((peer) => !peer.self);
   const pairDisabledReason = (peer: DiscoveredLanPeer) => {
-    if (props.pendingOperation) return 'Operation in progress';
-    if (!props.password.trim()) return 'Enter the pair password first';
-    if (!peer.online) return 'Peer is offline';
-    if (!peer.pairingAvailable) return 'Pairing is unavailable on this peer';
+    if (props.pendingOperation) {
+      return 'Operation in progress';
+    }
+    if (!props.password.trim()) {
+      return 'Enter the pair password first';
+    }
+    if (!peer.online) {
+      return 'Peer is offline';
+    }
+    if (!peer.pairingAvailable) {
+      return 'Pairing is unavailable on this peer';
+    }
     return null;
   };
   return (
@@ -361,17 +375,17 @@ const DiscoveredMachines = (props: {
       <label class={formField}>
         <span class={inlineFieldLabel}>Pair password</span>
         <input
-          class={field}
-          value={props.password}
-          type="password"
           autocomplete="one-time-code"
+          class={field}
           disabled={!!props.pendingOperation}
           onInput={(event) => props.onPasswordChange(event.currentTarget.value)}
+          type="password"
+          value={props.password}
         />
       </label>
       <Show
-        when={visiblePeers().length > 0}
         fallback={<div class={emptyText}>Scan the LAN to find nearby machines.</div>}
+        when={visiblePeers().length > 0}
       >
         <div class={machineList}>
           <For each={visiblePeers()}>
@@ -390,10 +404,10 @@ const DiscoveredMachines = (props: {
                   <div class={actionRow}>
                     <button
                       class={ghostButton}
-                      type="button"
                       disabled={!!disabledReason()}
-                      title={disabledReason() ?? `Pair ${peer.identity.label}`}
                       onClick={() => props.onPair(peer)}
+                      title={disabledReason() ?? `Pair ${peer.identity.label}`}
+                      type="button"
                     >
                       Pair
                     </button>
@@ -417,8 +431,8 @@ const DiagnosticsPanel = (props: { state: LanMergeState }) => (
         <div class={panelSub}>Local endpoints</div>
         <div class={diagnosticsList}>
           <Show
-            when={props.state.service.urls.length > 0}
             fallback={<span>No local LAN merge endpoint is running.</span>}
+            when={props.state.service.urls.length > 0}
           >
             <For each={props.state.service.urls}>{(url) => <span>{url}</span>}</For>
           </Show>
@@ -428,8 +442,8 @@ const DiagnosticsPanel = (props: { state: LanMergeState }) => (
         <div class={panelSub}>Discovered endpoints</div>
         <div class={diagnosticsList}>
           <Show
-            when={props.state.discoveredPeers.length > 0}
             fallback={<span>No diagnostics for discovered machines.</span>}
+            when={props.state.discoveredPeers.length > 0}
           >
             <For each={props.state.discoveredPeers}>
               {(peer) => (
@@ -456,20 +470,20 @@ const ManualTransferPanel = (props: {
       <div class={panelSub}>Export usage as a file or import a file from another machine.</div>
     </div>
     <div class={actionRow}>
-      <button class={ghostButton} type="button" disabled={!!props.pendingOperation} onClick={props.onExport}>
+      <button class={ghostButton} disabled={!!props.pendingOperation} onClick={props.onExport} type="button">
         {props.pendingOperation === 'manual-export' ? 'Exporting' : 'Export file'}
       </button>
       <label class={formField}>
         <span class={inlineFieldLabel}>Import file</span>
         <input
-          class={field}
-          type="file"
           accept=".json,application/json"
+          class={field}
           disabled={!!props.pendingOperation}
           onChange={(event) => {
             props.onImport(event.currentTarget.files?.[0]);
             event.currentTarget.value = '';
           }}
+          type="file"
         />
       </label>
     </div>
@@ -500,22 +514,22 @@ const SyncStateView = (props: {
   return (
     <div class={pageStack}>
       <LocalMachinePanel
-        state={props.state}
-        scanning={props.scanning}
-        pending={props.refreshing || !!props.pendingOperation}
-        scanHost={props.scanHost}
+        onRefresh={props.onRefresh}
+        onScan={props.onScan}
         onScanHostChange={props.onScanHostChange}
         onStart={props.onStart}
         onStop={props.onStop}
-        onScan={props.onScan}
-        onRefresh={props.onRefresh}
+        pending={props.refreshing || !!props.pendingOperation}
+        scanHost={props.scanHost}
+        scanning={props.scanning}
+        state={props.state}
       />
 
-      <section class={summaryGrid} aria-label="LAN merge summary">
-        <MetricPanel label="Paired machines" value={summary().trustedMachines} detail="Allowed to merge" />
-        <MetricPanel label="Available" value={summary().onlineMachines} detail="Seen on the LAN" />
-        <MetricPanel label="Nearby" value={summary().discoveredMachines} detail="Found by scan" />
-        <MetricPanel label="Warnings" value={summary().warningCount} detail="From peer bundles" />
+      <section aria-label="LAN merge summary" class={summaryGrid}>
+        <MetricPanel detail="Allowed to merge" label="Paired machines" value={summary().trustedMachines} />
+        <MetricPanel detail="Seen on the LAN" label="Available" value={summary().onlineMachines} />
+        <MetricPanel detail="Found by scan" label="Nearby" value={summary().discoveredMachines} />
+        <MetricPanel detail="From peer bundles" label="Warnings" value={summary().warningCount} />
       </section>
 
       <OperationNotice error={props.operationError} message={props.operationMessage} />
@@ -527,18 +541,18 @@ const SyncStateView = (props: {
             <div class={panelSub}>Merge usage rows from machines that already completed pairing.</div>
           </div>
           <PairedMachines
-            peers={props.state.trustedPeers}
             discoveredPeers={props.state.discoveredPeers}
-            pendingOperation={props.pendingOperation}
             onMerge={props.onMerge}
+            peers={props.state.trustedPeers}
+            pendingOperation={props.pendingOperation}
           />
         </div>
 
         <div class={panelStack}>
           <ManualTransferPanel
-            pendingOperation={props.pendingOperation}
             onExport={props.onManualExport}
             onImport={props.onManualImport}
+            pendingOperation={props.pendingOperation}
           />
 
           <div class={panel}>
@@ -549,11 +563,11 @@ const SyncStateView = (props: {
               </div>
             </div>
             <DiscoveredMachines
-              peers={props.state.discoveredPeers}
-              password={props.pairPassword}
-              pendingOperation={props.pendingOperation}
-              onPasswordChange={props.onPairPasswordChange}
               onPair={props.onPair}
+              onPasswordChange={props.onPairPasswordChange}
+              password={props.pairPassword}
+              peers={props.state.discoveredPeers}
+              pendingOperation={props.pendingOperation}
             />
           </div>
 
@@ -575,7 +589,7 @@ const SyncStateError = (props: {
       <div class={panelSub}>{props.result.error.message}</div>
     </div>
     <div class={actionRow}>
-      <button class={ghostButton} type="button" disabled={props.refreshing} onClick={props.onRefresh}>
+      <button class={ghostButton} disabled={props.refreshing} onClick={props.onRefresh} type="button">
         {props.refreshing ? 'Refreshing' : 'Retry'}
       </button>
     </div>
@@ -625,7 +639,9 @@ function SyncRoute() {
   };
 
   const refresh = async () => {
-    if (refreshing() || pendingOperation()) return;
+    if (refreshing() || pendingOperation()) {
+      return;
+    }
     setRefreshing(true);
     try {
       setResult(await getLanMergeState());
@@ -636,7 +652,9 @@ function SyncRoute() {
   };
 
   const scan = async () => {
-    if (scanning() || pendingOperation()) return;
+    if (scanning() || pendingOperation()) {
+      return;
+    }
     setScanning(true);
     setOperationError(null);
     setOperationMessage(null);
@@ -653,18 +671,29 @@ function SyncRoute() {
     mutation: () => Promise<LanStateResult>,
     successMessage: string | ((state: LanMergeState) => string),
   ) => {
-    if (pendingOperation()) return;
+    if (pendingOperation()) {
+      return;
+    }
     setPendingOperation(operation);
     setOperationError(null);
     setOperationMessage(null);
     try {
       const next = await mutation();
-      const message =
-        typeof successMessage === 'function' ? (next.ok ? successMessage(next.data) : '') : successMessage;
+      const message = operationSuccessMessage(successMessage, next);
       return setOperationResult(next, message);
     } finally {
       setPendingOperation(null);
     }
+  };
+
+  const operationSuccessMessage = (
+    successMessage: string | ((state: LanMergeState) => string),
+    result: LanStateResult,
+  ) => {
+    if (typeof successMessage !== 'function') {
+      return successMessage;
+    }
+    return result.ok ? successMessage(result.data) : '';
   };
 
   const start = () => runOperation('start', () => startLanMerge({ data: {} }), 'LAN merge started.');
@@ -702,7 +731,9 @@ function SyncRoute() {
     );
 
   const manualExport = async () => {
-    if (pendingOperation()) return;
+    if (pendingOperation()) {
+      return;
+    }
     setPendingOperation('manual-export');
     setOperationError(null);
     setOperationMessage(null);
@@ -722,7 +753,9 @@ function SyncRoute() {
   };
 
   const manualImport = async (file: File | undefined) => {
-    if (!file || pendingOperation()) return;
+    if (!file || pendingOperation()) {
+      return;
+    }
     setPendingOperation('manual-import');
     setOperationError(null);
     setOperationMessage(null);
@@ -747,7 +780,7 @@ function SyncRoute() {
             <h1 class={title}>Sync</h1>
           </div>
           <div class={headerActions}>
-            <Link class={navButton} to="/" search={dashboardSearchDefaults}>
+            <Link class={navButton} search={dashboardSearchDefaults} to="/">
               Dashboard
             </Link>
             <ThemeToggle />
@@ -757,35 +790,35 @@ function SyncRoute() {
 
       <main class={page}>
         <Show
-          when={okResult()}
           fallback={
             <SyncStateError
-              result={result() as Extract<LanStateResult, { ok: false }>}
-              refreshing={refreshing()}
               onRefresh={refresh}
+              refreshing={refreshing()}
+              result={result() as Extract<LanStateResult, { ok: false }>}
             />
           }
+          when={okResult()}
         >
           {(okResult) => (
             <SyncStateView
-              state={okResult().data}
-              scanning={scanning()}
-              refreshing={refreshing()}
-              pendingOperation={pendingOperation()}
-              operationError={operationError()}
-              operationMessage={operationMessage()}
-              scanHost={scanHost()}
-              pairPassword={pairPassword()}
-              onScanHostChange={setScanHost}
-              onPairPasswordChange={setPairPassword}
-              onStart={start}
-              onStop={stop}
-              onScan={scan}
-              onRefresh={refresh}
-              onMerge={mergePeer}
-              onPair={pairPeer}
               onManualExport={manualExport}
               onManualImport={manualImport}
+              onMerge={mergePeer}
+              onPair={pairPeer}
+              onPairPasswordChange={setPairPassword}
+              onRefresh={refresh}
+              onScan={scan}
+              onScanHostChange={setScanHost}
+              onStart={start}
+              onStop={stop}
+              operationError={operationError()}
+              operationMessage={operationMessage()}
+              pairPassword={pairPassword()}
+              pendingOperation={pendingOperation()}
+              refreshing={refreshing()}
+              scanHost={scanHost()}
+              scanning={scanning()}
+              state={okResult().data}
             />
           )}
         </Show>

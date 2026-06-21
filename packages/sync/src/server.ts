@@ -6,19 +6,19 @@ import { Effect } from 'effect';
 import { SyncServerError } from './errors';
 
 export interface SnapshotRequestEvent {
+  details?: string;
+  durationMs: number;
   method: string;
   path: string;
   remoteAddress: string;
   status: number;
-  durationMs: number;
-  details?: string;
 }
 
 export interface SnapshotHttpHandlerInput {
-  machine: UsageMachine;
-  token: string | null;
   collectSnapshot: () => Promise<UsageSnapshot>;
+  machine: UsageMachine;
   onRequest?: (event: SnapshotRequestEvent) => void;
+  token: string | null;
 }
 
 export interface SnapshotServerInput extends SnapshotHttpHandlerInput {
@@ -28,8 +28,8 @@ export interface SnapshotServerInput extends SnapshotHttpHandlerInput {
 
 export interface SnapshotServerHandle {
   port: number;
-  urls: string[];
   stop: () => void | Promise<void>;
+  urls: string[];
 }
 
 export const lanHosts = () =>
@@ -39,7 +39,9 @@ export const lanHosts = () =>
     .map((item) => item.address);
 
 export const displayHosts = (host: string) => {
-  if (host === '0.0.0.0') return lanHosts();
+  if (host === '0.0.0.0') {
+    return lanHosts();
+  }
   return [host];
 };
 
@@ -122,14 +124,14 @@ export const createSnapshotHttpHandler =
   };
 
 const ensureTokenForHost = (input: SnapshotServerInput): Effect.Effect<void, SyncServerError> =>
-  !input.token && !isLoopbackHost(input.host)
-    ? Effect.fail(
+  input.token || isLoopbackHost(input.host)
+    ? Effect.void
+    : Effect.fail(
         new SyncServerError({
           operation: 'startSnapshotServer',
           message: `Refusing to bind ${input.host}:${input.port} without a token: a snapshot server reachable beyond localhost must require authentication.`,
         }),
-      )
-    : Effect.void;
+      );
 
 export const startSnapshotServer = (input: SnapshotServerInput): Effect.Effect<SnapshotServerHandle, SyncServerError> =>
   ensureTokenForHost(input).pipe(
@@ -152,7 +154,7 @@ export const startSnapshotServer = (input: SnapshotServerInput): Effect.Effect<S
             port,
             urls,
             stop: () => {
-              void server.stop();
+              server.stop();
             },
           };
         },
@@ -169,7 +171,9 @@ const requestFromIncomingMessage = (req: http.IncomingMessage) => {
   const host = req.headers.host ?? 'localhost';
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
-    if (value === undefined) continue;
+    if (value === undefined) {
+      continue;
+    }
     headers.set(key, Array.isArray(value) ? value.join(', ') : value);
   }
   return new Request(`http://${host}${req.url ?? '/'}`, {
@@ -180,7 +184,9 @@ const requestFromIncomingMessage = (req: http.IncomingMessage) => {
 
 const writeWebResponse = async (webResponse: Response, res: http.ServerResponse) => {
   res.statusCode = webResponse.status;
-  webResponse.headers.forEach((value, key) => res.setHeader(key, value));
+  webResponse.headers.forEach((value, key) => {
+    res.setHeader(key, value);
+  });
   res.end(Buffer.from(await webResponse.arrayBuffer()));
 };
 
@@ -194,11 +200,13 @@ export const startNodeSnapshotServer = (
           new Promise<SnapshotServerHandle>((resolve, reject) => {
             const handler = createSnapshotHttpHandler(input);
             const server = http.createServer((req, res) => {
-              void handler(requestFromIncomingMessage(req), req.socket.remoteAddress ?? undefined)
+              handler(requestFromIncomingMessage(req), req.socket.remoteAddress ?? undefined)
                 .then((response) => writeWebResponse(response, res))
                 .catch((cause: unknown) => {
                   const message = cause instanceof Error ? cause.message : String(cause);
-                  if (!res.headersSent) res.statusCode = 500;
+                  if (!res.headersSent) {
+                    res.statusCode = 500;
+                  }
                   res.end(JSON.stringify({ error: message }));
                 });
             });
