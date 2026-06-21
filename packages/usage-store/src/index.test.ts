@@ -120,6 +120,36 @@ describe('usage-store public boundary', () => {
     expect(queried.rows[0]?.source.machineId).toBe('machine-a');
   });
 
+  test('updates rather than duplicates rows without a source session id', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-nosession-'));
+    const dbPath = usageStorePath(home);
+    const row = (tokOut: number): UsageRowWithOptionalSource => ({
+      ...normalizeUsageRow({
+        calls: 1,
+        cost: actualCost(null),
+        date: new Date('2026-06-01T10:00:00.000Z'),
+        durationMs: 1000,
+        endDate: new Date('2026-06-01T10:01:00.000Z'),
+        harness: 'Cursor',
+        model: 'gpt-5',
+        name: 'Daily',
+        project: 'ai-usage',
+        provider: 'OpenAI',
+        tokens: { in: 10, out: tokOut, cr: 0, cw: 5 },
+      }),
+      source: { harnessKey: 'cursor', sourceSessionId: null },
+    });
+
+    const first = await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [row(20)] }));
+    const second = await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [row(120)] }));
+    const queried = await Effect.runPromise(queryReportRows({ dbPath, originMachineIds: [machineA.id] }));
+
+    expect(first.inserted).toBe(1);
+    expect(second.inserted).toBe(0);
+    expect(second.updated).toBe(1);
+    expect(queried.rows).toHaveLength(1);
+  });
+
   test('waits for a short concurrent SQLite writer before importing rows', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-busy-'));
     const dbPath = usageStorePath(home);

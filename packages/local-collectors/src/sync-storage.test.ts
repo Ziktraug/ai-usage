@@ -53,7 +53,9 @@ describe('sync storage', () => {
       };
 
       await Effect.runPromise(upsertSyncRemote(remote).pipe(Effect.provideService(LocalHistoryStorage, storage)));
-      const remotes = await Effect.runPromise(listSyncRemotes.pipe(Effect.provideService(LocalHistoryStorage, storage)));
+      const remotes = await Effect.runPromise(
+        listSyncRemotes.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
       expect(remotes).toEqual([{ ...remote, enabled: true }]);
 
       mkdirSync(path.dirname(userEnvPath(storage)), { recursive: true });
@@ -111,6 +113,29 @@ describe('sync storage', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('does not read a .env above the workspace root', async () => {
+    const home = await mkdtemp('ai-usage-sync-storage-');
+    const parent = await mkdtemp('ai-usage-sync-parent-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      const workspaceRoot = path.join(parent, 'workspace');
+      const appCwd = path.join(workspaceRoot, 'apps', 'web');
+      mkdirSync(appCwd, { recursive: true });
+      writeFileSync(path.join(workspaceRoot, 'package.json'), JSON.stringify({ name: 'ws', workspaces: ['apps/*'] }));
+      // .env lives ABOVE the workspace root and must be ignored.
+      writeFileSync(path.join(parent, '.env'), 'AI_USAGE_SYNC_ABOVE_TOKEN=from-above\n');
+
+      const token = await Effect.runPromise(
+        resolveSyncToken('AI_USAGE_SYNC_ABOVE_TOKEN', appCwd).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(token).toBeNull();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(parent, { recursive: true, force: true });
     }
   });
 });

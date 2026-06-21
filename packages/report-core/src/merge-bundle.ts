@@ -70,12 +70,24 @@ const identityParts = (row: SerializedUsageRow, source: SerializedMergeRow['sour
   tokenTotal: row.tokenTotal,
 });
 
-export const mergeRowIdentity = (
-  row: SerializedUsageRow,
-  source: SerializedMergeRow['source'],
-): MergeRowIdentity => {
+// Stable identity for rows without a `sourceSessionId` (e.g. Cursor CSV-reconciled daily rows).
+// Excludes volatile fields (`tokenTotal`, `date`, `endDate`) that grow as a session/day accumulates,
+// so the same logical row keeps the same `rowKey` across re-collection and is updated rather than
+// duplicated. `identityParts`/`sourceFingerprint` stays content-based for provenance.
+const stableIdentityParts = (row: SerializedUsageRow, source: SerializedMergeRow['source']) => ({
+  activeDate: row.activeDate,
+  harness: row.harness,
+  model: row.model,
+  models: row.models ?? [],
+  name: row.name,
+  project: row.project,
+  provider: row.provider,
+  sourcePath: source.sourcePath ?? null,
+});
+
+export const mergeRowIdentity = (row: SerializedUsageRow, source: SerializedMergeRow['source']): MergeRowIdentity => {
   const sourceFingerprint = usageContentHash(identityParts(row, source));
-  const sourceId = source.sourceSessionId ?? sourceFingerprint;
+  const sourceId = source.sourceSessionId ?? usageContentHash(stableIdentityParts(row, source));
   return {
     sourceFingerprint,
     rowKey: ['v1', source.machineId, source.harnessKey, sourceId].join(':'),
@@ -155,7 +167,7 @@ const isUsageReportWarnings = (value: unknown): value is UsageReportWarning[] =>
       (warning.sql === undefined || typeof warning.sql === 'string'),
   );
 
-const isSerializedMergeRow = (value: unknown): value is SerializedMergeRow => {
+export const isSerializedMergeRow = (value: unknown): value is SerializedMergeRow => {
   if (!isRecord(value)) return false;
   return (
     typeof value.harness === 'string' &&
@@ -169,6 +181,11 @@ const isSerializedMergeRow = (value: unknown): value is SerializedMergeRow => {
     (value.status === 'active' || value.status === 'superseded' || value.status === 'deleted') &&
     isMergeRowSource(value.source)
   );
+};
+
+export const parseSerializedMergeRow = (value: unknown): SerializedMergeRow => {
+  if (!isSerializedMergeRow(value)) throw new Error('Usage merge bundle contains an invalid row');
+  return value;
 };
 
 export const parseUsageMergeBundle = (text: string): UsageMergeBundle => {

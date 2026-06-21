@@ -1,5 +1,6 @@
 import http from 'node:http';
 import os from 'node:os';
+import { safeTokenEqual } from '@ai-usage/report-core/auth';
 import type { UsageMachine, UsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { Effect } from 'effect';
 import { SyncServerError } from './errors';
@@ -42,7 +43,12 @@ export const displayHosts = (host: string) => {
   return [host];
 };
 
-const requestAddress = (req: Request) =>
+const loopbackHosts = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+export const isLoopbackHost = (host: string) => loopbackHosts.has(host);
+
+const requestAddress = (req: Request, clientAddress?: string) =>
+  clientAddress ||
   req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
   req.headers.get('x-real-ip') ||
   'unknown';
@@ -53,12 +59,13 @@ const emitRequest = (
   url: URL,
   status: number,
   started: number,
+  clientAddress?: string,
   details?: string,
 ) => {
   input.onRequest?.({
     method: req.method,
     path: url.pathname,
-    remoteAddress: requestAddress(req),
+    remoteAddress: requestAddress(req, clientAddress),
     status,
     durationMs: Date.now() - started,
     ...(details ? { details } : {}),
@@ -73,15 +80,15 @@ const jsonResponse = (value: unknown, init?: ResponseInit) =>
 
 export const createSnapshotHttpHandler =
   (input: SnapshotHttpHandlerInput) =>
-  async (req: Request): Promise<Response> => {
+  async (req: Request, clientAddress?: string): Promise<Response> => {
     const started = Date.now();
     const url = new URL(req.url);
 
     if (url.pathname === '/snapshot') {
       if (input.token) {
-        const auth = req.headers.get('authorization');
-        if (auth !== `Bearer ${input.token}`) {
-          emitRequest(input, req, url, 401, started, 'auth=denied');
+        const auth = req.headers.get('authorization') ?? '';
+        if (!safeTokenEqual(auth, `Bearer ${input.token}`)) {
+          emitRequest(input, req, url, 401, started, clientAddress, 'auth=denied');
           return new Response('unauthorized', { status: 401 });
         }
       }
@@ -94,55 +101,69 @@ export const createSnapshotHttpHandler =
           url,
           200,
           started,
+          clientAddress,
           `auth=${input.token ? 'ok' : 'none'} rows=${snapshot.rows.length} warnings=${snapshot.warnings?.length ?? 0} generatedAt=${snapshot.generatedAt}`,
         );
         return jsonResponse(snapshot);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        emitRequest(input, req, url, 500, started, `error=${message}`);
+        emitRequest(input, req, url, 500, started, clientAddress, `error=${message}`);
         return jsonResponse({ error: message }, { status: 500 });
       }
     }
 
     if (url.pathname === '/' || url.pathname === '/health') {
-      emitRequest(input, req, url, 200, started);
+      emitRequest(input, req, url, 200, started, clientAddress);
       return jsonResponse({ ok: true, machine: { id: input.machine.id, label: input.machine.label } });
     }
 
-    emitRequest(input, req, url, 404, started);
+    emitRequest(input, req, url, 404, started, clientAddress);
     return new Response('not found', { status: 404 });
   };
 
-export const startSnapshotServer = (
-  input: SnapshotServerInput,
-): Effect.Effect<SnapshotServerHandle, SyncServerError> =>
-  Effect.try({
-    try: () => {
-      const server = Bun.serve({
-        hostname: input.host,
-        port: input.port,
-        fetch: createSnapshotHttpHandler(input),
-      });
-      const port = server.port ?? input.port;
-      const hosts = displayHosts(input.host);
-      const urls = hosts.length
-        ? hosts.map((host) => `http://${host}:${port}/snapshot`)
-        : [`http://${input.host}:${port}/snapshot`];
+const ensureTokenForHost = (input: SnapshotServerInput): Effect.Effect<void, SyncServerError> =>
+  !input.token && !isLoopbackHost(input.host)
+    ? Effect.fail(
+        new SyncServerError({
+          operation: 'startSnapshotServer',
+          message: `Refusing to bind ${input.host}:${input.port} without a token: a snapshot server reachable beyond localhost must require authentication.`,
+        }),
+      )
+    : Effect.void;
 
-      return {
-        port,
-        urls,
-        stop: () => {
-          void server.stop();
+export const startSnapshotServer = (input: SnapshotServerInput): Effect.Effect<SnapshotServerHandle, SyncServerError> =>
+  ensureTokenForHost(input).pipe(
+    Effect.flatMap(() =>
+      Effect.try({
+        try: () => {
+          const handler = createSnapshotHttpHandler(input);
+          const server = Bun.serve({
+            hostname: input.host,
+            port: input.port,
+            fetch: (req, srv) => handler(req, srv.requestIP(req)?.address),
+          });
+          const port = server.port ?? input.port;
+          const hosts = displayHosts(input.host);
+          const urls = hosts.length
+            ? hosts.map((host) => `http://${host}:${port}/snapshot`)
+            : [`http://${input.host}:${port}/snapshot`];
+
+          return {
+            port,
+            urls,
+            stop: () => {
+              void server.stop();
+            },
+          };
         },
-      };
-    },
-    catch: (cause) =>
-      new SyncServerError({
-        operation: 'startSnapshotServer',
-        message: `startSnapshotServer ${input.host}:${input.port}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        catch: (cause) =>
+          new SyncServerError({
+            operation: 'startSnapshotServer',
+            message: `startSnapshotServer ${input.host}:${input.port}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          }),
       }),
-  });
+    ),
+  );
 
 const requestFromIncomingMessage = (req: http.IncomingMessage) => {
   const host = req.headers.host ?? 'localhost';
@@ -166,49 +187,53 @@ const writeWebResponse = async (webResponse: Response, res: http.ServerResponse)
 export const startNodeSnapshotServer = (
   input: SnapshotServerInput,
 ): Effect.Effect<SnapshotServerHandle, SyncServerError> =>
-  Effect.tryPromise({
-    try: () =>
-      new Promise<SnapshotServerHandle>((resolve, reject) => {
-        const handler = createSnapshotHttpHandler(input);
-        const server = http.createServer((req, res) => {
-          void handler(requestFromIncomingMessage(req))
-            .then((response) => writeWebResponse(response, res))
-            .catch((cause: unknown) => {
-              const message = cause instanceof Error ? cause.message : String(cause);
-              if (!res.headersSent) res.statusCode = 500;
-              res.end(JSON.stringify({ error: message }));
+  ensureTokenForHost(input).pipe(
+    Effect.flatMap(() =>
+      Effect.tryPromise({
+        try: () =>
+          new Promise<SnapshotServerHandle>((resolve, reject) => {
+            const handler = createSnapshotHttpHandler(input);
+            const server = http.createServer((req, res) => {
+              void handler(requestFromIncomingMessage(req), req.socket.remoteAddress ?? undefined)
+                .then((response) => writeWebResponse(response, res))
+                .catch((cause: unknown) => {
+                  const message = cause instanceof Error ? cause.message : String(cause);
+                  if (!res.headersSent) res.statusCode = 500;
+                  res.end(JSON.stringify({ error: message }));
+                });
             });
-        });
 
-        const onError = (cause: Error) => {
-          server.removeListener('listening', onListening);
-          reject(cause);
-        };
-        const onListening = () => {
-          server.removeListener('error', onError);
-          const address = server.address();
-          const port = typeof address === 'object' && address ? address.port : input.port;
-          const hosts = displayHosts(input.host);
-          const urls = hosts.length
-            ? hosts.map((host) => `http://${host}:${port}/snapshot`)
-            : [`http://${input.host}:${port}/snapshot`];
-          resolve({
-            port,
-            urls,
-            stop: () =>
-              new Promise<void>((stopResolve, stopReject) => {
-                server.close((error) => (error ? stopReject(error) : stopResolve()));
-              }),
-          });
-        };
+            const onError = (cause: Error) => {
+              server.removeListener('listening', onListening);
+              reject(cause);
+            };
+            const onListening = () => {
+              server.removeListener('error', onError);
+              const address = server.address();
+              const port = typeof address === 'object' && address ? address.port : input.port;
+              const hosts = displayHosts(input.host);
+              const urls = hosts.length
+                ? hosts.map((host) => `http://${host}:${port}/snapshot`)
+                : [`http://${input.host}:${port}/snapshot`];
+              resolve({
+                port,
+                urls,
+                stop: () =>
+                  new Promise<void>((stopResolve, stopReject) => {
+                    server.close((error) => (error ? stopReject(error) : stopResolve()));
+                  }),
+              });
+            };
 
-        server.once('error', onError);
-        server.once('listening', onListening);
-        server.listen(input.port, input.host);
+            server.once('error', onError);
+            server.once('listening', onListening);
+            server.listen(input.port, input.host);
+          }),
+        catch: (cause) =>
+          new SyncServerError({
+            operation: 'startNodeSnapshotServer',
+            message: `startNodeSnapshotServer ${input.host}:${input.port}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          }),
       }),
-    catch: (cause) =>
-      new SyncServerError({
-        operation: 'startNodeSnapshotServer',
-        message: `startNodeSnapshotServer ${input.host}:${input.port}: ${cause instanceof Error ? cause.message : String(cause)}`,
-      }),
-  });
+    ),
+  );
