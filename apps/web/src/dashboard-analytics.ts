@@ -1,6 +1,5 @@
-import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
+import { type AnalyticsRowInput, groupAnalytics } from '@ai-usage/report-core/analytics';
 import type { DashboardRow } from './shared';
-import { median } from './shared';
 
 export type ProjectGroup = {
   key: string;
@@ -15,75 +14,20 @@ export type ProjectGroup = {
   linesDeleted: number;
 };
 
-type MutableAnalyticsGroup = AnalyticsGroup & { costs: number[] };
-
-const createAnalyticsGroup = (key: string, row: DashboardRow): MutableAnalyticsGroup => ({
-  key,
+const dashboardRowToAnalyticsInput = (row: DashboardRow): AnalyticsRowInput => ({
   harness: row.harness,
   provider: row.provider,
-  sessions: 0,
-  priced: 0,
-  unpriced: 0,
-  usageUnavailable: 0,
-  ambiguous: 0,
-  fresh: 0,
-  inp: 0,
-  cache: 0,
-  cacheHitPct: 0,
-  costSum: 0,
-  costPerSession: null,
-  medianCost: null,
-  linesA: 0,
-  linesD: 0,
-  lineCount: 0,
-  costPer100Lines: null,
-  costPercent: 0,
-  turns: 0,
-  tools: 0,
-  costs: [],
+  usageUnavailable: row.usageUnavailable ?? false,
+  ambiguous: row.ambiguous ?? false,
+  fresh: row.freshTokens,
+  inp: row.tokIn,
+  cache: row.tokCr,
+  linesAdded: row.linesAdded ?? 0,
+  linesDeleted: row.linesDeleted ?? 0,
+  turns: row.turns,
+  tools: row.tools,
+  pricedCost: row.costKnown ? row.costApprox : null,
 });
-
-const addAnalyticsRow = (groups: Map<string, MutableAnalyticsGroup>, key: string, row: DashboardRow) => {
-  let group = groups.get(key);
-  if (!group) {
-    group = createAnalyticsGroup(key, row);
-    groups.set(key, group);
-  }
-
-  group.sessions++;
-  if (row.usageUnavailable) group.usageUnavailable++;
-  if (row.ambiguous) group.ambiguous++;
-  group.fresh += row.freshTokens;
-  group.inp += row.tokIn;
-  group.cache += row.tokCr;
-  group.linesA += row.linesAdded ?? 0;
-  group.linesD += row.linesDeleted ?? 0;
-  group.turns += row.turns;
-  group.tools += row.tools;
-  if (row.costKnown) {
-    group.priced++;
-    group.costSum += row.costApprox;
-    group.costs.push(row.costApprox);
-  } else {
-    group.unpriced++;
-  }
-};
-
-const finalizeAnalyticsGroups = (groups: Map<string, MutableAnalyticsGroup>, totalCost: number): AnalyticsGroup[] =>
-  [...groups.values()]
-    .map((group) => {
-      const lineCount = group.linesA + group.linesD;
-      return {
-        ...group,
-        cacheHitPct: group.inp + group.cache > 0 ? (group.cache / (group.inp + group.cache)) * 100 : 0,
-        costPerSession: group.priced ? group.costSum / group.priced : null,
-        medianCost: group.priced ? median(group.costs) : null,
-        lineCount,
-        costPer100Lines: lineCount && group.priced ? (group.costSum / lineCount) * 100 : null,
-        costPercent: totalCost > 0 ? (group.costSum / totalCost) * 100 : 0,
-      };
-    })
-    .sort((a, b) => b.costSum - a.costSum);
 
 const createProjectGroup = (key: string): ProjectGroup => ({
   key,
@@ -123,16 +67,7 @@ export const buildAnalyticsGroups = (
   acceptsRow: (row: DashboardRow) => boolean,
   keyForRow: (row: DashboardRow) => string,
   totalCost: number,
-) => {
-  const groups = new Map<string, MutableAnalyticsGroup>();
-
-  for (const row of rows) {
-    if (!acceptsRow(row)) continue;
-    addAnalyticsRow(groups, keyForRow(row), row);
-  }
-
-  return finalizeAnalyticsGroups(groups, totalCost);
-};
+) => groupAnalytics(rows.filter(acceptsRow), dashboardRowToAnalyticsInput, keyForRow, totalCost);
 
 export const buildProjectGroups = (rows: DashboardRow[], acceptsRow: (row: DashboardRow) => boolean) => {
   const projects = new Map<string, ProjectGroup>();

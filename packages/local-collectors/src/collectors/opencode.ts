@@ -1,8 +1,14 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
+import {
+  cachedDbRows,
+  type DbRowCache,
+  dbStat,
+  readDbRowCache,
+  storeDbRows,
+  writeDbRowCache,
+} from '../collector-cache';
 import { type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
 import { LocalHistoryStorage } from '../local-history';
 import { withPerfSpan } from '../perf';
@@ -34,8 +40,6 @@ type SessionRow = {
 
 type CountRow = { session_id: string; n: number };
 type MessageRow = { session_id: string; data: string };
-type OpenCodeDbCacheEntry = { mtimeMs: number; rows: CollectorRow[]; size: number };
-type OpenCodeDbCache = { dirty: boolean; entries: Record<string, OpenCodeDbCacheEntry>; version: number };
 
 export interface OpenCodeCollectionResult {
   rows: CollectorRow[];
@@ -43,86 +47,16 @@ export interface OpenCodeCollectionResult {
 }
 
 const OPENCODE_DB_CACHE_VERSION = 1;
+const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 const SESSION_SQL = 'SELECT id, title, directory, summary_additions, summary_deletions FROM session';
 const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE data LIKE '%"type":"tool"%' GROUP BY session_id`;
 const MESSAGE_SQL = 'SELECT session_id, data FROM message';
-
-const opencodeDbCachePath = (storage: import('../local-history').LocalHistoryStorage) =>
-  path.join(storage.home, '.config', 'ai-usage', 'opencode-db-cache.json');
-
-const reviveDate = (value: unknown): Date | null => {
-  if (value == null) return null;
-  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
-  if (typeof value !== 'string') return null;
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date : null;
-};
-
-const reviveCollectorRows = (value: unknown): CollectorRow[] => {
-  if (!Array.isArray(value)) return [];
-  return value.map((row) => {
-    const record = row as CollectorRow;
-    return {
-      ...record,
-      date: reviveDate(record.date),
-      endDate: reviveDate(record.endDate),
-    };
-  });
-};
-
-const readOpenCodeDbCache = (storage: import('../local-history').LocalHistoryStorage): OpenCodeDbCache | null => {
-  try {
-    if (!fs.existsSync(storage.home)) return null;
-    const cachePath = opencodeDbCachePath(storage);
-    if (!fs.existsSync(cachePath)) return { dirty: false, entries: {}, version: OPENCODE_DB_CACHE_VERSION };
-    const parsed = JSON.parse(fs.readFileSync(cachePath, 'utf8')) as {
-      entries?: Record<string, { mtimeMs: number; rows: unknown; size: number }>;
-      version?: number;
-    };
-    if (parsed.version !== OPENCODE_DB_CACHE_VERSION) {
-      return { dirty: false, entries: {}, version: OPENCODE_DB_CACHE_VERSION };
-    }
-    const entries: Record<string, OpenCodeDbCacheEntry> = {};
-    for (const [dbPath, entry] of Object.entries(parsed.entries ?? {})) {
-      if (typeof entry.mtimeMs !== 'number' || typeof entry.size !== 'number') continue;
-      entries[dbPath] = { mtimeMs: entry.mtimeMs, rows: reviveCollectorRows(entry.rows), size: entry.size };
-    }
-    return { dirty: false, entries, version: OPENCODE_DB_CACHE_VERSION };
-  } catch {
-    return null;
-  }
-};
-
-const writeOpenCodeDbCache = (
-  storage: import('../local-history').LocalHistoryStorage,
-  cache: OpenCodeDbCache | null,
-) => {
-  if (!cache?.dirty) return false;
-  const cachePath = opencodeDbCachePath(storage);
-  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-  fs.writeFileSync(
-    cachePath,
-    `${JSON.stringify({ entries: cache.entries, version: OPENCODE_DB_CACHE_VERSION })}\n`,
-    'utf8',
-  );
-  cache.dirty = false;
-  return true;
-};
-
-const dbStat = (dbPath: string) => {
-  try {
-    const stat = fs.statSync(dbPath);
-    return { mtimeMs: stat.mtimeMs, size: stat.size };
-  } catch {
-    return null;
-  }
-};
 
 const collectFromDb = (
   dbPath: string,
   storage: import('../local-history').LocalHistoryStorage,
   source: 'live' | 'stable',
-  cache: OpenCodeDbCache | null,
+  cache: DbRowCache | null,
 ): Effect.Effect<CollectorRow[], import('../errors').LocalHistoryError, never> =>
   withPerfSpan(
     'aiUsage.collect.opencode.db',
@@ -135,14 +69,12 @@ const collectFromDb = (
       if (!exists) return [];
 
       const stat = dbStat(dbPath);
-      if (cache && stat) {
-        const cached = cache.entries[dbPath];
-        if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
-          return yield* withPerfSpan('aiUsage.collect.opencode.cache.hit', Effect.succeed(cached.rows), (rows) => ({
-            db: source,
-            rows: rows.length,
-          }));
-        }
+      const cachedRows = cachedDbRows(cache, dbPath, stat);
+      if (cachedRows) {
+        return yield* withPerfSpan('aiUsage.collect.opencode.cache.hit', Effect.succeed(cachedRows), (rows) => ({
+          db: source,
+          rows: rows.length,
+        }));
       }
 
       const meta = new Map<string, { title: string; dir: string; add: number; del: number }>();
@@ -304,10 +236,7 @@ const collectFromDb = (
         }),
         (rows) => ({ db: source, rows: rows.length, sessions: rows.length }),
       );
-      if (cache && stat) {
-        cache.entries[dbPath] = { mtimeMs: stat.mtimeMs, rows: sessions, size: stat.size };
-        cache.dirty = true;
-      }
+      storeDbRows(cache, dbPath, stat, sessions);
       return sessions;
     }),
     (rows) => ({ db: source, rows: rows.length }),
@@ -327,7 +256,7 @@ export const collectOpenCodeResult: Effect.Effect<
   const paths = resolvePathCandidates(storage).opencode;
   const cache = yield* withPerfSpan(
     'aiUsage.collect.opencode.cache.read',
-    Effect.sync(() => readOpenCodeDbCache(storage)),
+    Effect.sync(() => readDbRowCache(storage, OPENCODE_DB_CACHE_FILE, OPENCODE_DB_CACHE_VERSION)),
     (value) => ({ enabled: value !== null, entries: value ? Object.keys(value.entries).length : 0 }),
   );
   const seen = new Set<string>();
@@ -383,7 +312,7 @@ export const collectOpenCodeResult: Effect.Effect<
 
   yield* withPerfSpan(
     'aiUsage.collect.opencode.cache.write',
-    Effect.sync(() => writeOpenCodeDbCache(storage, cache)),
+    Effect.sync(() => writeDbRowCache(storage, OPENCODE_DB_CACHE_FILE, OPENCODE_DB_CACHE_VERSION, cache)),
     (wrote) => ({ wrote }),
   );
 

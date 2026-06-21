@@ -17,6 +17,7 @@ import {
   createStoredReportPayload,
   listProjectSources,
   listProjectSourcesWithWarnings,
+  parseGitConfigRemote,
 } from './index';
 
 const defaultOptions = {
@@ -346,11 +347,7 @@ describe('shared reporting', () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-sources-home-'));
     const projectPath = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-project-'));
     try {
-      mkdirSync(path.join(projectPath, '.git'), { recursive: true });
-      writeFileSync(
-        path.join(projectPath, '.git', 'config'),
-        '[remote "origin"]\n  url = git@github.com:owner/repo.git\n',
-      );
+      const gitConfigPath = path.join(projectPath, '.git', 'config');
       const snapshot = createUsageSnapshot({
         machine: testMachine,
         rows: [
@@ -371,6 +368,8 @@ describe('shared reporting', () => {
           harness: null,
           includeCursor: false,
           includeGitRemote: true,
+          readGitFile: (filePath) =>
+            filePath === gitConfigPath ? '[remote "origin"]\n  url = git@github.com:owner/repo.git\n' : null,
         }).pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
       );
 
@@ -391,5 +390,19 @@ describe('shared reporting', () => {
       rmSync(home, { recursive: true, force: true });
       rmSync(projectPath, { recursive: true, force: true });
     }
+  });
+
+  test('parses the origin remote from git config text', () => {
+    expect(
+      parseGitConfigRemote(`
+[core]
+  repositoryformatversion = 0
+[remote "upstream"]
+  url = https://github.com/other/repo.git
+[remote "origin"]
+  fetch = +refs/heads/*:refs/remotes/origin/*
+  url = https://github.com/owner/repo.git
+`),
+    ).toBe('owner/repo');
   });
 });
