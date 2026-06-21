@@ -1,0 +1,23 @@
+{
+  "name": "@ai-usage/usage-merge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ai-usage/lan-pairing": "workspace:*",
+    "@ai-usage/local-collectors": "workspace:*",
+    "@ai-usage/report-core": "workspace:*",
+    "@ai-usage/usage-store": "workspace:*",
+    "effect": "^3.21.3"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

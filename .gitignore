@@ -4,5 +4,7 @@ dist
 styled-system
 .turbo
 .direnv/
+.env
 ai-usage-reports/
 .ai-usage/
+.agent-memory/

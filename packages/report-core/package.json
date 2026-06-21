@@ -1,0 +1,27 @@
+{
+  "name": "@ai-usage/report-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./analytics": "./src/analytics.ts",
+    "./auth": "./src/auth.ts",
+    "./harness-metadata": "./src/harness-metadata.ts",
+    "./html-export": "./src/html-export.ts",
+    "./pricing": "./src/pricing.ts",
+    "./project-alias": "./src/project-alias.ts",
+    "./merge-bundle": "./src/merge-bundle.ts",
+    "./report-data": "./src/report-data.ts",
+    "./snapshot": "./src/snapshot.ts",
+    "./types": "./src/types.ts",
+    "./usage-row": "./src/usage-row.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

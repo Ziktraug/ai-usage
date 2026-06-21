@@ -1,59 +1,29 @@
 # @ai-usage/design-system
 
-Shared Solid/Panda design primitives for ai-usage apps.
+## Owns
 
-## Public API
+Reusable Solid/Panda primitives, report-specific style slots, the Panda preset export, generated Panda build metadata exports, and shared UI styling contracts.
 
-Use the root export for reusable primitives that are not tied to the report app:
+## Does Not Own
 
-```ts
-import { HarnessBadge, MetricTile, SegmentBar, aiUsagePreset } from '@ai-usage/design-system';
-```
+It does not own app routes, report data, local collection, sync or LAN merge behavior, persistence, or domain calculations.
 
-The root export intentionally exposes only generic primitives and their prop
-types. Style slots, layout classes, and report-specific helpers stay out of the
-default API.
+## Public Interface
 
-Use the report namespace for styles and slots that encode the current report UI:
+The package exposes declared exports for `.`, `./preset`, `./report`, `./css`, `./panda.buildinfo.json`, and `./styles.css`.
 
-```ts
-import { page, shell, tableWrap } from '@ai-usage/design-system/report';
-```
+## Depends On
 
-This keeps app-specific vocabulary out of the default API while still allowing
-the report app to share its extracted styles. Treat `@ai-usage/design-system/report`
-as report-app-specific API; future apps should not import it by default.
+Consumers provide `solid-js`. The package may use Panda tooling for build/check generation and Solid types/components for exported primitives.
 
-## Panda consumer contract
+## Must Not Import
 
-This package ships its Panda build info from `styled-system/panda.buildinfo.json`.
-A consuming app must run the design-system build before its own Panda
-codegen/cssgen, then include the package-exported build info in its Panda scan:
+It must not import app packages, data/runtime packages, local collectors, sync/LAN modules, private package paths, or relative workspace paths.
 
-```ts
-import { aiUsagePreset } from '@ai-usage/design-system/preset';
-import { defineConfig } from '@pandacss/dev';
+## Data Boundary
 
-const designSystemBuildInfoPackage = '@ai-usage/design-system/panda.buildinfo.json';
-const designSystemBuildInfo = require.resolve(designSystemBuildInfoPackage);
+The package exports styling primitives and class contracts only. It should receive display-ready props and must not fetch, derive, persist, or mutate report data.
 
-export default defineConfig({
-  include: ['./src/**/*.{ts,tsx}', designSystemBuildInfo],
-  importMap: '@ai-usage/design-system',
-  jsxFramework: 'solid',
-  outdir: 'styled-system',
-  presets: ['@pandacss/preset-panda', aiUsagePreset],
-});
-```
+## Test Strategy
 
-The package exports `@ai-usage/design-system/css` and
-`@ai-usage/design-system/styles.css` from generated Panda output. Those files
-exist after `bun run build` or `bun run check` in this package. Workspace apps
-should depend on this package's `build` task before their own check/build task.
-Direct app scripts should run `bun --filter @ai-usage/design-system build`
-first if they import `@ai-usage/design-system/css` without going through Turbo.
-
-## Dependency contract
-
-Consumers provide `solid-js`. The design-system package keeps Solid as a peer
-dependency because it exports Solid JSX components such as `HarnessBadge`.
+Use TypeScript checks and focused component/helper tests where behavior exists. Panda generated output is validated through package build/check scripts.

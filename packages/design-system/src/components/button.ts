@@ -21,10 +21,21 @@ export const commandButton = css({
     outline: '2px solid token(colors.accent)',
     outlineOffset: '2px',
   },
+  _disabled: {
+    opacity: 0.45,
+    cursor: 'not-allowed',
+    _hover: {
+      borderColor: 'line',
+      color: 'muted',
+    },
+  },
 });
 
 export const ghostButton = css({
   appearance: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
   border: '1px solid token(colors.line)',
   borderRadius: 'sm',
   bg: 'surface',
@@ -38,6 +49,32 @@ export const ghostButton = css({
   _hover: {
     borderColor: 'accent',
     color: 'accent',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+});
+
+export const navButton = css({
+  appearance: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  h: '36px',
+  px: '12px',
+  border: '1px solid token(colors.lineStrong)',
+  borderRadius: 'sm',
+  bg: 'surface',
+  color: 'muted',
+  fontSize: '12px',
+  fontWeight: 650,
+  textDecoration: 'none',
+  whiteSpace: 'nowrap',
+  transition: 'color 0.15s, border-color 0.15s, background-color 0.15s',
+  _hover: {
+    color: 'accent',
+    borderColor: 'accent',
   },
   _focusVisible: {
     outline: '2px solid token(colors.accent)',

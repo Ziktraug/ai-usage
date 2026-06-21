@@ -13,12 +13,12 @@
   },
   "scripts": {
     "cli": "bun apps/cli/src/main.ts",
-    "dev": "bun run --cwd apps/report dev",
-    "preview": "bun run --cwd apps/report preview",
+    "dev": "bun run --cwd apps/web dev",
+    "preview": "bun run --cwd apps/web preview",
     "html": "bun apps/cli/src/html.ts",
     "build": "turbo run build",
     "check": "bun run lint && turbo run check",
-    "lint": "biome check --formatter-enabled=false --assist-enabled=false --only=lint/style/noRestrictedImports . && bun tools/check-workspace-relative-paths.ts && bun tools/check-public-package-exports.ts",
+    "lint": "biome check --formatter-enabled=false --assist-enabled=false --only=lint/style/noRestrictedImports . && bun tools/check-workspace-relative-paths.ts && bun tools/check-public-package-exports.ts && bun tools/check-package-boundaries.ts",
     "test": "turbo run test"
   },
   "devDependencies": {

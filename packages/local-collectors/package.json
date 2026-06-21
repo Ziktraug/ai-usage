@@ -7,11 +7,13 @@
     ".": "./src/index.ts",
     "./codex-history": "./src/codex-history.ts",
     "./errors": "./src/errors.ts",
+    "./lan-peers": "./src/lan-peers.ts",
     "./local-history": "./src/local-history.ts",
-    "./machine-config": "./src/machine-config.ts"
+    "./machine-config": "./src/machine-config.ts",
+    "./sync-storage": "./src/sync-storage.ts"
   },
   "dependencies": {
-    "@ai-usage/core": "workspace:*",
+    "@ai-usage/report-core": "workspace:*",
     "effect": "^3.21.3"
   },
   "scripts": {

@@ -94,7 +94,7 @@ Duplicate sessions (same machine, same harness, same session ID) are deduplicate
 
 ### 3. Merge over LAN (no file transfer)
 
-Instead of copying snapshot files, run a snapshot server on the other machine and merge directly.
+Instead of copying snapshot files, run a snapshot server on the other machine.
 
 On the Mac:
 
@@ -103,14 +103,16 @@ On the Mac:
 bun run cli -- serve --host 0.0.0.0 --token mysecret
 ```
 
+Keep that command running. It prints one or more `http://...:3847/snapshot` URLs detected from the Mac's network interfaces; use one of those URLs from the other machine. If `macbook.local` does not resolve on your network, use the printed IP address instead.
+
 On the PC:
 
 ```sh
-# Fetch and merge in one command
+# Fetch and merge in one command, without storing the remote snapshot
 bun run cli -- merge --remote http://macbook.local:3847/snapshot --token mysecret --local
 ```
 
-The server collects a fresh snapshot on each request, so you always get the latest data. For localhost-only access (same machine, different terminal), omit `--host` and `--token`:
+The server collects a fresh snapshot on each request, so you always get the latest data for that command. For localhost-only access (same machine, different terminal), omit `--host` and `--token`:
 
 ```sh
 bun run cli -- serve
@@ -118,11 +120,56 @@ bun run cli -- serve
 bun run cli -- merge --remote http://localhost:3847/snapshot --local
 ```
 
-### 3. See where sessions come from
+### 4. Sync over LAN
+
+For a persistent workflow, register the other machine as a snapshot remote and pull it into local storage:
+
+```sh
+# First, keep the snapshot server running on the other machine:
+bun run cli -- serve --host 0.0.0.0 --token mysecret
+
+# Store this in your shell, ./.env, or ~/.config/ai-usage/.env
+# .env is gitignored in this repo.
+AI_USAGE_SYNC_MACBOOK_TOKEN=mysecret
+
+# Use one of the snapshot URLs printed by the serve command.
+bun run cli -- sync add macbook http://macbook.local:3847/snapshot --token-env AI_USAGE_SYNC_MACBOOK_TOKEN
+bun run cli -- sync pull macbook
+```
+
+If you do not know the host name ahead of time, that is expected: start `serve` first, copy the printed URL, then run `sync add`. To test a URL before saving it as a remote, you can do a one-shot pull:
+
+```sh
+bun run cli -- sync pull --name macbook --remote http://192.168.1.63:3847/snapshot --token-env AI_USAGE_SYNC_MACBOOK_TOKEN
+```
+
+Future reports include synced snapshots by default:
+
+```sh
+bun run cli -- report --wide
+```
+
+Use `--no-synced` to report only this machine's local history:
+
+```sh
+bun run cli -- report --no-synced
+```
+
+You can keep a remote fresh with polling:
+
+```sh
+bun run cli -- sync watch macbook --interval 60s
+```
+
+Bidirectional sync is symmetric pull: run `serve` on both machines and configure each machine to pull the other's snapshot.
+
+The interactive report also includes a LAN sync console at `/sync` when served through the report app. Use it to start or stop this machine's snapshot server, discover peers, validate endpoints, add remotes, pull now, enable or disable remotes, and remove remotes without calling CLI code from the web UI.
+
+### 5. See where sessions come from
 
 Merged reports include a `Machine` column (CLI `--wide`, CSV, and HTML dashboard). CSV also includes `machine_id` for scripting.
 
-### 4. Group project folders across machines
+### 6. Group project folders across machines
 
 The same project often lives at different paths on different machines. Project aliases let you merge them under one name.
 
@@ -208,16 +255,18 @@ All exploration state (active view, filters, range, sorting, visible columns) is
 
 `merge` accepts the same report options and adds `--local` to include the current machine's local history, `--remote <url>` to fetch a snapshot from a serve instance, and `--token <secret>` for authentication.
 
+`sync` stores remote snapshots locally. `sync add` registers a remote, `sync pull` fetches and stores a snapshot, `sync watch` polls repeatedly, and `sync list` shows remote status. Persistent remotes should use `--token-env <name>` instead of storing raw tokens in config.
+
 Merged CSV/JSON/HTML payloads include row provenance (`source.machineLabel`, `source.machineId`, harness key, and source session ID) when available. The terminal table shows `Machine` in `--wide` mode.
 
 ## Project layout
 
-- `packages/usage-core` (`@ai-usage/core`): pure row types, pricing, normalization, analytics, report payloads, snapshots, and HTML inlining primitives
+- `packages/report-core` (`@ai-usage/report-core`): pure row types, pricing, normalization, analytics, report payloads, snapshots, and HTML inlining primitives
 - `packages/local-collectors` (`@ai-usage/local-collectors`): Effect-based local history collectors for Claude, Codex, OpenCode, Cursor, RTK enrichment, machine identity, and user config
-- `packages/reporting` (`@ai-usage/reporting`): report orchestration seam over core plus local collectors
+- `packages/report-data` (`@ai-usage/report-data`): report orchestration seam over core plus local collectors
 - `packages/design-system` (`@ai-usage/design-system`): Panda/Solid primitives, report style slots, and generated Panda consumer exports
 - `apps/cli`: terminal CLI, quota/setup/serve commands, and table/CSV/JSON/HTML output adapters
-- `apps/report`: Solid + TanStack Start/Router/Table + Panda CSS report app and browser export adapters
+- `apps/web`: Solid + TanStack Start/Router/Table + Panda CSS report app and browser export adapters
 
 Architecture docs:
 
@@ -256,5 +305,5 @@ The dev server injects this machine's real usage data into the app (the same pay
 
 ## Notes
 
-- **`$API`** is an estimated cost at standard API prices, computed from local token counters and the editable pricing table in `packages/usage-core/src/pricing.ts`. Models without public pricing are marked as unknown.
+- **`$API`** is an estimated cost at standard API prices, computed from local token counters and the editable pricing table in `packages/report-core/src/pricing.ts`. Models without public pricing are marked as unknown.
 - **`$Actual`** is out-of-pocket spend when a harness reports it. Subscription products bill differently from per-token API rates, so the two columns can diverge.

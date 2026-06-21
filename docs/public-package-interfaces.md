@@ -2,7 +2,7 @@
 
 The workspace packages expose only these public seams. Cross-package imports must use these package exports, not private `src` paths or relative workspace paths.
 
-## `@ai-usage/core`
+## `@ai-usage/report-core`
 
 - `.`: core barrel for stable domain helpers.
 - `./analytics`: analytics summary/group calculations.
@@ -22,10 +22,21 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./errors`: local history error and warning formatting/types.
 - `./local-history`: local history storage service interface/live layer.
 - `./machine-config`: user-local machine/project alias config helpers.
+- `./sync-storage`: user-local synced snapshot config, env token resolution, and stored snapshot helpers.
 
-## `@ai-usage/reporting`
+## `@ai-usage/report-data`
 
 - `.`: report payload and snapshot assembly seam over core plus local collectors.
+
+## `@ai-usage/sync`
+
+- `.`: sync package barrel.
+- `./discovery`: snapshot remote LAN discovery helpers and peer discovery results.
+- `./errors`: sync error types shared by sync modules.
+- `./server`: snapshot HTTP protocol, LAN host URL helpers, and Bun/Node snapshot server adapters.
+- `./state`: UI-consumable sync state assembled from configured remotes and stored synced snapshots.
+- `./transport`: snapshot file/HTTP loading and endpoint health checks.
+- `./workflow`: remote registration, selection, token validation, pull, and removal workflow.
 
 ## `@ai-usage/design-system`
 

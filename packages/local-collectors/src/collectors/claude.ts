@@ -1,10 +1,10 @@
 import path from 'node:path';
-import { actualCost, approximateApiCost, tokenTotal } from '@ai-usage/core/usage-row';
+import { actualCost, approximateApiCost, tokenTotal } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
-import type { LocalHistoryError } from '../errors';
+import type { LocalHistoryError, LocalHistoryWarning } from '../errors';
 import { LocalHistoryStorage, walkFiles } from '../local-history';
-import { resolvePaths } from '../platform-paths';
+import { type HarnessPaths, resolvePaths } from '../platform-paths';
 import { base, dominant, safeJSON, usablePrompt } from '../text';
 
 type ClaudeHistoryFallback = {
@@ -66,6 +66,41 @@ const readClaudeHistoryFallbacks = (
     }
 
     return [...sessions.values()].filter((session) => session.turns > 0);
+  });
+
+// Claude Code prunes chat transcripts whose last activity is older than this many
+// days; the default applies when `cleanupPeriodDays` is unset in settings.json.
+const CLAUDE_DEFAULT_CLEANUP_DAYS = 30;
+
+// Surface a heads-up when Claude Code is configured to delete transcripts, since
+// this report is rebuilt from those transcripts: anything pruned is unrecoverable.
+export const collectClaudeRetentionWarnings: Effect.Effect<LocalHistoryWarning[], never, LocalHistoryStorage> =
+  Effect.gen(function* () {
+    const storage = yield* LocalHistoryStorage;
+    const paths: HarnessPaths = resolvePaths(storage);
+    const settingsFile = paths.claude.settingsFile;
+
+    const exists = yield* storage.exists(settingsFile).pipe(Effect.catchAll(() => Effect.succeed(false)));
+    const raw = exists ? yield* storage.readText(settingsFile).pipe(Effect.catchAll(() => Effect.succeed(''))) : '';
+    const configured = safeJSON(raw)?.cleanupPeriodDays;
+    const hasExplicit = typeof configured === 'number' && Number.isFinite(configured);
+    const days = hasExplicit ? (configured as number) : CLAUDE_DEFAULT_CLEANUP_DAYS;
+
+    // Only warn when retention is at or below the lossy default; raising the value
+    // (or disabling cleanup) means history is being kept, so stay quiet.
+    if (days > CLAUDE_DEFAULT_CLEANUP_DAYS) return [];
+
+    const detail = hasExplicit
+      ? `cleanupPeriodDays is set to ${days}`
+      : `cleanupPeriodDays is unset, so the ${CLAUDE_DEFAULT_CLEANUP_DAYS}-day default applies`;
+    return [
+      {
+        harness: 'claude',
+        operation: 'claude.settings',
+        path: settingsFile,
+        message: `Claude Code deletes chat transcripts after ${days} days (${detail}). Usage older than ${days} days is removed permanently and can no longer be reported — raise cleanupPeriodDays in ~/.claude/settings.json to keep your history.`,
+      },
+    ];
   });
 
 export const collectClaude = Effect.gen(function* () {
