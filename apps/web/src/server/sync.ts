@@ -35,3 +35,17 @@ export const pairLanPeer = createServerFn({ method: 'POST' })
       pairLanPeerForServer(lanMergePairInputFrom(data)),
     ),
   );
+
+export const exportManualMergeBundle = createServerFn({ method: 'POST' })
+  .validator((input) => input)
+  .handler(() =>
+    import('./lan-merge.server').then(({ exportManualMergeBundleForServer }) => exportManualMergeBundleForServer()),
+  );
+
+export const importManualMergeBundle = createServerFn({ method: 'POST' })
+  .validator((input) => input)
+  .handler(({ data }) =>
+    import('./lan-merge.server').then(({ importManualMergeBundleForServer, manualMergeImportInputFrom }) =>
+      importManualMergeBundleForServer(manualMergeImportInputFrom(data)),
+    ),
+  );

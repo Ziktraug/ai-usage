@@ -317,6 +317,93 @@ describe('usage-merge public boundary', () => {
     }
   });
 
+  test('exports local usage as a manual merge bundle file', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-manual-export-'));
+    try {
+      const localMachine: UsageMachine = { id: 'local-machine', label: 'Local Machine' };
+      const dbPath = path.join(home, 'usage.sqlite');
+      await Effect.runPromise(
+        importLocalRows({
+          dbPath,
+          machine: localMachine,
+          rows: [makeSourcedRow({ project: 'local-project', sourcePath: '/work/local', sessionId: 'local-1' })],
+        }),
+      );
+
+      const runtime = createUsageMergeRuntime({
+        localMachine,
+        dbPath,
+        peers: [],
+        now: () => new Date('2026-06-19T12:30:00.000Z'),
+      });
+
+      const exported = await Effect.runPromise(runtime.exportManualMergeBundle());
+
+      expect(exported.filename).toBe('ai-usage-local-machine-2026-06-19T12-30-00-000Z.json');
+      expect(exported.bundle.machine).toEqual(localMachine);
+      expect(exported.bundle.rows).toHaveLength(1);
+      expect(exported.bundle.rows[0]?.source.machineId).toBe(localMachine.id);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('imports a manual merge bundle without trusting the peer', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-manual-import-'));
+    try {
+      const localMachine: UsageMachine = { id: 'local-machine', label: 'Local Machine' };
+      const peerMachine: UsageMachine = { id: 'peer-machine', label: 'Peer Machine' };
+      const dbPath = path.join(home, 'usage.sqlite');
+      const bundle = createUsageMergeBundle({
+        machine: peerMachine,
+        rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-1' })],
+        warnings: [{ message: 'manual warning' }],
+      });
+      const runtime = createUsageMergeRuntime({
+        localMachine,
+        dbPath,
+        peers: [],
+        now: () => new Date('2026-06-19T12:30:00.000Z'),
+      });
+
+      const imported = await Effect.runPromise(runtime.importManualMergeBundle({ text: JSON.stringify(bundle) }));
+      const repeated = await Effect.runPromise(runtime.importManualMergeBundle({ text: JSON.stringify(bundle) }));
+      const rows = await Effect.runPromise(queryReportRows({ dbPath, originMachineIds: [peerMachine.id] }));
+      const state = await Effect.runPromise(runtime.getLanMergeState());
+
+      expect(imported).toMatchObject({
+        machine: peerMachine,
+        rows: 1,
+        warnings: 1,
+        result: { inserted: 1 },
+      });
+      expect(repeated.result.unchanged).toBe(1);
+      expect(rows.rows[0]?.project).toBe('peer-project');
+      expect(state.trustedPeers).toHaveLength(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects manual self-imports', async () => {
+    const localMachine: UsageMachine = { id: 'local-machine', label: 'Local Machine' };
+    const runtime = createUsageMergeRuntime({
+      localMachine,
+      dbPath: path.join(tmpdir(), 'unused.sqlite'),
+      peers: [],
+    });
+    const bundle = createUsageMergeBundle({
+      machine: localMachine,
+      rows: [makeSourcedRow({ project: 'local-project', sourcePath: '/work/local', sessionId: 'local-1' })],
+    });
+
+    const error = await Effect.runPromise(
+      runtime.importManualMergeBundle({ text: JSON.stringify(bundle) }).pipe(Effect.flip),
+    );
+
+    expect(error.reason).toBe('self-merge');
+  });
+
   test('runs the first merge when pairing a trusted discovered peer', async () => {
     const peerMachine: UsageMachine = { id: 'peer-machine', label: 'Peer Machine' };
     const runtime = createUsageMergeRuntime({

@@ -5,6 +5,7 @@ import { readLanPeersConfig, upsertStoredLanPeer } from '@ai-usage/local-collect
 import { createUsageMergeRuntime, upsertUsageMergeEnvToken, type UsageMergeService } from '@ai-usage/usage-merge';
 import { usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
+import { runReportPayloadCollection } from './report-payload.server';
 
 export type LanMergeServerResult<T> =
   | { ok: true; data: T }
@@ -31,6 +32,10 @@ export interface LanMergePairInput {
 export interface LanMergeScanInput {
   hosts?: string[];
   timeoutMs?: number;
+}
+
+export interface ManualMergeImportInput {
+  text: string;
 }
 
 const toJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -115,6 +120,18 @@ export const pairLanPeerForServer = (input: LanMergePairInput) =>
     }),
   );
 
+export const exportManualMergeBundleForServer = async () => {
+  try {
+    await runReportPayloadCollection();
+  } catch (error) {
+    return errorResult(error);
+  }
+  return runRuntime((runtime) => runtime.exportManualMergeBundle());
+};
+
+export const importManualMergeBundleForServer = (input: ManualMergeImportInput) =>
+  runRuntime((runtime) => runtime.importManualMergeBundle(input));
+
 const objectInput = (input: unknown): Record<string, unknown> => {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) throw new Error('Expected object input');
   return input as Record<string, unknown>;
@@ -155,4 +172,9 @@ export const lanMergeScanInputFrom = (input: unknown): LanMergeScanInput => {
     ...(Array.isArray(hosts) ? { hosts: hosts.map((host) => String(host)) } : {}),
     ...(typeof record.timeoutMs === 'number' ? { timeoutMs: record.timeoutMs } : {}),
   };
+};
+
+export const manualMergeImportInputFrom = (input: unknown): ManualMergeImportInput => {
+  const record = objectInput(input);
+  return { text: stringField(record, 'text') };
 };

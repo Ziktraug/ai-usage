@@ -28,7 +28,9 @@ import { createMemo, createSignal, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
 import {
+  exportManualMergeBundle,
   getLanMergeState,
+  importManualMergeBundle,
   mergeLanPeer,
   pairLanPeer,
   scanLanMergePeers,
@@ -201,6 +203,7 @@ const diagnosticsList = css({
 
 type LanStateResult = Awaited<ReturnType<typeof getLanMergeState>>;
 type LanOperationError = Extract<LanStateResult, { ok: false }>['error'];
+type ManualImportResult = Awaited<ReturnType<typeof importManualMergeBundle>>;
 
 const MetricPanel = (props: { label: string; value: number; detail: string }) => (
   <div class={panel}>
@@ -442,6 +445,37 @@ const DiagnosticsPanel = (props: { state: LanMergeState }) => (
   </details>
 );
 
+const ManualTransferPanel = (props: {
+  pendingOperation: string | null;
+  onExport: () => void;
+  onImport: (file: File | undefined) => void;
+}) => (
+  <div class={panel}>
+    <div class={panelHeader}>
+      <div class={panelTitle}>Manual transfer</div>
+      <div class={panelSub}>Export usage as a file or import a file from another machine.</div>
+    </div>
+    <div class={actionRow}>
+      <button class={ghostButton} type="button" disabled={!!props.pendingOperation} onClick={props.onExport}>
+        {props.pendingOperation === 'manual-export' ? 'Exporting' : 'Export file'}
+      </button>
+      <label class={formField}>
+        <span class={inlineFieldLabel}>Import file</span>
+        <input
+          class={field}
+          type="file"
+          accept=".json,application/json"
+          disabled={!!props.pendingOperation}
+          onChange={(event) => {
+            props.onImport(event.currentTarget.files?.[0]);
+            event.currentTarget.value = '';
+          }}
+        />
+      </label>
+    </div>
+  </div>
+);
+
 const SyncStateView = (props: {
   state: LanMergeState;
   scanning: boolean;
@@ -459,6 +493,8 @@ const SyncStateView = (props: {
   onRefresh: () => void;
   onMerge: (peer: TrustedLanPeer, discovered: DiscoveredLanPeer | undefined) => void;
   onPair: (peer: DiscoveredLanPeer) => void;
+  onManualExport: () => void;
+  onManualImport: (file: File | undefined) => void;
 }) => {
   const summary = createMemo(() => buildLanMergeSummary(props.state));
   return (
@@ -499,6 +535,12 @@ const SyncStateView = (props: {
         </div>
 
         <div class={panelStack}>
+          <ManualTransferPanel
+            pendingOperation={props.pendingOperation}
+            onExport={props.onManualExport}
+            onImport={props.onManualImport}
+          />
+
           <div class={panel}>
             <div class={panelHeader}>
               <div class={panelTitle}>Pair nearby machine</div>
@@ -539,6 +581,21 @@ const SyncStateError = (props: {
     </div>
   </div>
 );
+
+const downloadJsonFile = (filename: string, value: unknown) => {
+  const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+};
+
+const manualImportMessage = (result: Extract<ManualImportResult, { ok: true }>['data']) => {
+  const changed = result.result.inserted + result.result.updated + result.result.superseded + result.result.deleted;
+  return `Imported ${result.machine.label}: ${changed.toLocaleString()} changed, ${result.result.unchanged.toLocaleString()} unchanged.`;
+};
 
 function SyncRoute() {
   const loaderResult = Route.useLoaderData();
@@ -644,6 +701,43 @@ function SyncRoute() {
           : `Waiting for ${peer.identity.label}.`,
     );
 
+  const manualExport = async () => {
+    if (pendingOperation()) return;
+    setPendingOperation('manual-export');
+    setOperationError(null);
+    setOperationMessage(null);
+    try {
+      const next = await exportManualMergeBundle({ data: {} });
+      if (next.ok) {
+        downloadJsonFile(next.data.filename, next.data.bundle);
+        setOperationMessage(
+          `Exported ${next.data.bundle.rows.length.toLocaleString()} rows from ${next.data.bundle.machine.label}.`,
+        );
+        return;
+      }
+      setOperationError(next.error);
+    } finally {
+      setPendingOperation(null);
+    }
+  };
+
+  const manualImport = async (file: File | undefined) => {
+    if (!file || pendingOperation()) return;
+    setPendingOperation('manual-import');
+    setOperationError(null);
+    setOperationMessage(null);
+    try {
+      const next = await importManualMergeBundle({ data: { text: await file.text() } });
+      if (next.ok) {
+        setOperationMessage(manualImportMessage(next.data));
+        return;
+      }
+      setOperationError(next.error);
+    } finally {
+      setPendingOperation(null);
+    }
+  };
+
   return (
     <div class={shell}>
       <header class={header}>
@@ -690,6 +784,8 @@ function SyncRoute() {
               onRefresh={refresh}
               onMerge={mergePeer}
               onPair={pairPeer}
+              onManualExport={manualExport}
+              onManualImport={manualImport}
             />
           )}
         </Show>
