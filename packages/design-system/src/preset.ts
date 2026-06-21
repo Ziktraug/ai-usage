@@ -97,26 +97,31 @@ export const aiUsagePreset = definePreset({
       },
       semanticTokens: {
         colors: {
-          // Surfaces — warm paper in light, warm graphite in dark.
-          canvas: dual('#F6F4EF', '#121110'),
-          surface: dual('#FFFFFF', '#1A1917'),
-          surfaceMuted: dual('#EFECE5', '#232120'),
-          track: dual('#ECE8E0', '#2E2C28'),
+          // Surfaces — warm paper in light, neutral graphite in dark.
+          // Dark neutrals are kept hue-neutral (a hair cool) so the copper
+          // accent carries all the warmth instead of the whole canvas.
+          canvas: dual('#F6F4EF', '#111113'),
+          surface: dual('#FFFFFF', '#18191C'),
+          surfaceMuted: dual('#EFECE5', '#212327'),
+          track: dual('#ECE8E0', '#2C2E33'),
 
           // Ink.
-          ink: dual('#1F1D19', '#ECE9E2'),
-          inkHover: dual('#3B3833', '#D6D2C8'),
-          muted: dual('#6E6A60', '#969084'),
-          faint: dual('#9C978B', '#6E6960'),
+          ink: dual('#1F1D19', '#EAEBEE'),
+          inkHover: dual('#3B3833', '#D3D5DA'),
+          muted: dual('#6E6A60', '#8F9199'),
+          faint: dual('#9C978B', '#686A72'),
 
           // Hairlines and control borders.
-          line: dual('#E5E2DA', '#2B2925'),
-          lineStrong: dual('#D2CEC3', '#3A372F'),
+          line: dual('#E5E2DA', '#292B30'),
+          lineStrong: dual('#D2CEC3', '#383B41'),
 
           // Copper accent — the single brand color.
+          // Dark soft/tint are desaturated "warm graphite": the neutral dark
+          // surface plus a whisper of copper, so they read as tinted surfaces
+          // rather than saturated brown blocks against the cool neutrals.
           accent: dual('#B14E12', '#E0833C'),
-          accentSoft: dual('#F5E6D8', '#3A2410'),
-          accentTint: dual('#F8F0E5', '#251B10'),
+          accentSoft: dual('#F5E6D8', '#332A20'),
+          accentTint: dual('#F8F0E5', '#23201B'),
           focusRing: dual('rgba(177, 78, 18, 0.28)', 'rgba(224, 131, 60, 0.35)'),
 
           // Categorical series palette for charts (model migration, etc.).
