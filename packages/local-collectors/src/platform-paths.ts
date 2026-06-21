@@ -20,6 +20,7 @@ export interface HarnessPaths {
     projectsDir: string;
     historyFile: string;
     configFile: string;
+    settingsFile: string;
   };
   codex: {
     sessionsDir: string;
@@ -73,6 +74,7 @@ const pathSet = (storage: LocalHistoryStorage) => {
       projectsDir: join('.claude', 'projects'),
       historyFile: join('.claude', 'history.jsonl'),
       configFile: join('.claude.json'),
+      settingsFile: join('.claude', 'settings.json'),
     },
     codex: {
       sessionsDir: join('.codex', 'sessions'),
