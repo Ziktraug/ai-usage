@@ -18,20 +18,24 @@
         "ai-usage": "./src/main.ts",
       },
       "dependencies": {
-        "@ai-usage/core": "workspace:*",
         "@ai-usage/local-collectors": "workspace:*",
-        "@ai-usage/reporting": "workspace:*",
+        "@ai-usage/report-core": "workspace:*",
+        "@ai-usage/report-data": "workspace:*",
+        "@ai-usage/sync": "workspace:*",
         "effect": "^3.21.3",
       },
     },
-    "apps/report": {
-      "name": "@ai-usage/report",
+    "apps/web": {
+      "name": "@ai-usage/web",
       "version": "0.1.0",
       "dependencies": {
-        "@ai-usage/core": "workspace:*",
         "@ai-usage/design-system": "workspace:*",
+        "@ai-usage/lan-pairing": "workspace:*",
         "@ai-usage/local-collectors": "workspace:*",
-        "@ai-usage/reporting": "workspace:*",
+        "@ai-usage/report-core": "workspace:*",
+        "@ai-usage/report-data": "workspace:*",
+        "@ai-usage/usage-merge": "workspace:*",
+        "@ai-usage/usage-store": "workspace:*",
         "@tanstack/solid-router": "1.170.16",
         "@tanstack/solid-start": "1.168.26",
         "@tanstack/solid-table": "^8.21.3",
@@ -56,40 +60,85 @@
         "solid-js": "^1.9.13",
       },
     },
+    "packages/lan-pairing": {
+      "name": "@ai-usage/lan-pairing",
+      "version": "0.1.0",
+      "dependencies": {
+        "@cipherman/pake-js": "0.1.1",
+        "effect": "^3.21.3",
+      },
+    },
     "packages/local-collectors": {
       "name": "@ai-usage/local-collectors",
       "version": "0.1.0",
       "dependencies": {
-        "@ai-usage/core": "workspace:*",
+        "@ai-usage/report-core": "workspace:*",
         "effect": "^3.21.3",
       },
     },
-    "packages/reporting": {
-      "name": "@ai-usage/reporting",
+    "packages/report-core": {
+      "name": "@ai-usage/report-core",
+      "version": "0.1.0",
+    },
+    "packages/report-data": {
+      "name": "@ai-usage/report-data",
       "version": "0.1.0",
       "dependencies": {
-        "@ai-usage/core": "workspace:*",
         "@ai-usage/local-collectors": "workspace:*",
+        "@ai-usage/report-core": "workspace:*",
+        "@ai-usage/usage-store": "workspace:*",
         "effect": "^3.21.3",
       },
     },
-    "packages/usage-core": {
-      "name": "@ai-usage/core",
+    "packages/sync": {
+      "name": "@ai-usage/sync",
       "version": "0.1.0",
+      "dependencies": {
+        "@ai-usage/local-collectors": "workspace:*",
+        "@ai-usage/report-core": "workspace:*",
+        "effect": "^3.21.3",
+      },
+    },
+    "packages/usage-merge": {
+      "name": "@ai-usage/usage-merge",
+      "version": "0.1.0",
+      "dependencies": {
+        "@ai-usage/lan-pairing": "workspace:*",
+        "@ai-usage/local-collectors": "workspace:*",
+        "@ai-usage/report-core": "workspace:*",
+        "@ai-usage/usage-store": "workspace:*",
+        "effect": "^3.21.3",
+      },
+    },
+    "packages/usage-store": {
+      "name": "@ai-usage/usage-store",
+      "version": "0.1.0",
+      "dependencies": {
+        "@ai-usage/report-core": "workspace:*",
+        "effect": "^3.21.3",
+      },
     },
   },
   "packages": {
     "@ai-usage/cli": ["@ai-usage/cli@workspace:apps/cli"],
 
-    "@ai-usage/core": ["@ai-usage/core@workspace:packages/usage-core"],
-
     "@ai-usage/design-system": ["@ai-usage/design-system@workspace:packages/design-system"],
+
+    "@ai-usage/lan-pairing": ["@ai-usage/lan-pairing@workspace:packages/lan-pairing"],
 
     "@ai-usage/local-collectors": ["@ai-usage/local-collectors@workspace:packages/local-collectors"],
 
-    "@ai-usage/report": ["@ai-usage/report@workspace:apps/report"],
+    "@ai-usage/report-core": ["@ai-usage/report-core@workspace:packages/report-core"],
 
-    "@ai-usage/reporting": ["@ai-usage/reporting@workspace:packages/reporting"],
+    "@ai-usage/report-data": ["@ai-usage/report-data@workspace:packages/report-data"],
+
+    "@ai-usage/sync": ["@ai-usage/sync@workspace:packages/sync"],
+
+    "@ai-usage/usage-merge": ["@ai-usage/usage-merge@workspace:packages/usage-merge"],
+
+    "@ai-usage/usage-store": ["@ai-usage/usage-store@workspace:packages/usage-store"],
+
+    "@ai-usage/web": ["@ai-usage/web@workspace:apps/web"],
 
     "@babel/code-frame": ["@babel/code-frame@7.29.7", "", { "dependencies": { "@babel/helper-validator-identifier": "^7.29.7", "js-tokens": "^4.0.0", "picocolors": "^1.1.1" } }, "sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw=="],
 
@@ -144,6 +193,8 @@
     "@biomejs/cli-win32-arm64": ["@biomejs/cli-win32-arm64@2.4.16", "", { "os": "win32", "cpu": "arm64" }, "sha512-0rgImMsNb5v/chhkIFe3wu7PEFClS6RBAYUijGL9UsYN3PanSaoK24HSSuSJb1pYbYYVjzAyZTl3gtjJ84BM8A=="],
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.4.16", "", { "os": "win32", "cpu": "x64" }, "sha512-Kp85jgoBHa05gix6UIRjfCDiUV3w/8VIdZ247VyyO2gEjaw12WEVhdIjlxp/AMzXxqxQwbxNTDVZ3Mwd2RG5rw=="],
+
+    "@cipherman/pake-js": ["@cipherman/pake-js@0.1.1", "", { "dependencies": { "@noble/curves": "^1.6.0" } }, "sha512-iutxMCmRXYacl3fc19SKFisk1sRD1FNQi7+GWPlnQnFit6l3sUagYOCU2IgRPD8MF3s1HwnkSpqARFUp04+GVQ=="],
 
     "@clack/core": ["@clack/core@0.5.0", "", { "dependencies": { "picocolors": "^1.0.0", "sisteransi": "^1.0.5" } }, "sha512-p3y0FIOwaYRUPRcMO7+dlmLh8PSRcrjuTndsiA0WAFbWES0mLZlrjVoBRZ9DzkPFJZG6KGkJmoEAY0ZcVWTkow=="],
 
@@ -226,6 +277,10 @@
     "@modelcontextprotocol/sdk": ["@modelcontextprotocol/sdk@1.29.0", "", { "dependencies": { "@hono/node-server": "^1.19.9", "ajv": "^8.17.1", "ajv-formats": "^3.0.1", "content-type": "^1.0.5", "cors": "^2.8.5", "cross-spawn": "^7.0.5", "eventsource": "^3.0.2", "eventsource-parser": "^3.0.0", "express": "^5.2.1", "express-rate-limit": "^8.2.1", "hono": "^4.11.4", "jose": "^6.1.3", "json-schema-typed": "^8.0.2", "pkce-challenge": "^5.0.0", "raw-body": "^3.0.0", "zod": "^3.25 || ^4.0", "zod-to-json-schema": "^3.25.1" }, "peerDependencies": { "@cfworker/json-schema": "^4.1.1" }, "optionalPeers": ["@cfworker/json-schema"] }, "sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ=="],
 
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@1.1.5", "", { "dependencies": { "@tybys/wasm-util": "^0.10.2" }, "peerDependencies": { "@emnapi/core": "^1.7.1", "@emnapi/runtime": "^1.7.1" } }, "sha512-AWPoBRJ9tsnVhor4sjO7rkni+7p+2IAEFj6cx06UgP10jkQHqay/36uRV/bFkgrh18D9vb4cr8Q0Pthskgzy+Q=="],
+
+    "@noble/curves": ["@noble/curves@1.9.7", "", { "dependencies": { "@noble/hashes": "1.8.0" } }, "sha512-gbKGcRUYIjA3/zCCNaWDciTMFI0dCkvou3TL8Zmy5Nc7sJ47a0jtOeZoTaMxkuqRo9cRhjOdZJXegxYE5FN/xw=="],
+
+    "@noble/hashes": ["@noble/hashes@1.8.0", "", {}, "sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A=="],
 
     "@nodelib/fs.scandir": ["@nodelib/fs.scandir@2.1.5", "", { "dependencies": { "@nodelib/fs.stat": "2.0.5", "run-parallel": "^1.1.9" } }, "sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g=="],
 

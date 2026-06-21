@@ -1,5 +1,10 @@
-import { HARNESS_METADATA, type HarnessKey, type HarnessMetadata, harnessKeys } from '@ai-usage/core/harness-metadata';
-import type { Row } from '@ai-usage/core/types';
+import {
+  HARNESS_METADATA,
+  type HarnessKey,
+  type HarnessMetadata,
+  harnessKeys,
+} from '@ai-usage/report-core/harness-metadata';
+import type { Row } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
 import { type LocalHistoryError, type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
 import type { LocalHistoryStorage as LocalHistoryStorageService } from '../local-history';
@@ -9,7 +14,7 @@ import {
   stripCollectorMetadata,
   stripProjectPath,
 } from '../rtk-enrichment';
-import { collectClaude } from './claude';
+import { collectClaude, collectClaudeRetentionWarnings } from './claude';
 import { collectCodex } from './codex';
 import { collectCursor } from './cursor';
 import type { CursorCsvOptions } from './cursor-csv';
@@ -135,6 +140,12 @@ export const collectSelectedHarnessResults = (selection: HarnessSelection) =>
       warnings.push(warning);
       harnessExtraWarnings.set(harness, warnings);
     };
+
+    if (!selection.harness || selection.harness === 'claude') {
+      for (const warning of yield* collectClaudeRetentionWarnings) {
+        addHarnessWarning('claude', warning);
+      }
+    }
 
     let rows = harnessResults.flatMap((result) => result.rows);
     const cursorCsv = selection.cursorCsv;

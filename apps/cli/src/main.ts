@@ -2,8 +2,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { UsageReportWarning } from '@ai-usage/core/report-data';
-import { parseUsageSnapshot } from '@ai-usage/core/snapshot';
+import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import {
@@ -13,7 +12,8 @@ import {
   createMergedUsageReport,
   listProjectSourcesWithWarnings,
   type ProjectSource,
-} from '@ai-usage/reporting';
+} from '@ai-usage/report-data';
+import { fetchRemoteSnapshot, readSnapshotFile } from '@ai-usage/sync/transport';
 import { Console, Effect, Layer } from 'effect';
 import { type Args, helpText, parseCommand } from './cli';
 import { CliArgumentError, formatAppError } from './errors';
@@ -24,6 +24,7 @@ import { renderUsagePayloadForCli, renderUsageReportForCli, renderWarnings, rend
 import { CliRuntime, CliRuntimeLive } from './runtime';
 import { runServe } from './serve';
 import { runSetupServer } from './setup';
+import { runSyncCommand } from './sync';
 
 export const app = Effect.gen(function* () {
   const runtime = yield* CliRuntime;
@@ -89,6 +90,11 @@ export const app = Effect.gen(function* () {
     );
     yield* writeFormatWarningsStderr(command.args, merged.payload.warnings);
     yield* writeStdout(`${output}\n`);
+    return;
+  }
+
+  if (command._tag === 'Sync') {
+    yield* runSyncCommand(command.args);
     return;
   }
 
@@ -194,50 +200,6 @@ const writeFormatWarningsStderr = (args: Args, warnings: UsageReportWarning[] | 
 const fileError = (operation: string, filePath: string) => (cause: unknown) =>
   new CliArgumentError({
     message: `${operation} ${filePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-  });
-
-const readFile = (filePath: string) =>
-  Effect.try({
-    try: () => fs.readFileSync(filePath, 'utf8'),
-    catch: fileError('readFile', filePath),
-  });
-
-const readSnapshotFile = (filePath: string) =>
-  readFile(filePath).pipe(
-    Effect.flatMap((text) =>
-      Effect.try({
-        try: () => parseUsageSnapshot(text),
-        catch: fileError('parseSnapshot', filePath),
-      }),
-    ),
-  );
-
-const fetchRemoteSnapshot = (url: string, token: string | null) =>
-  Effect.gen(function* () {
-    const headers: Record<string, string> = {};
-    if (token) headers.authorization = `Bearer ${token}`;
-    const response = yield* Effect.tryPromise({
-      try: () => fetch(url, { headers }),
-      catch: (cause) =>
-        new CliArgumentError({ message: `fetch ${url}: ${cause instanceof Error ? cause.message : String(cause)}` }),
-    });
-    if (!response.ok) {
-      const body = yield* Effect.tryPromise({
-        try: () => response.text(),
-        catch: () => response.statusText,
-      });
-      return yield* Effect.fail(new CliArgumentError({ message: `fetch ${url}: HTTP ${response.status} ${body}` }));
-    }
-    const text = yield* Effect.tryPromise({
-      try: () => response.text(),
-      catch: (cause) =>
-        new CliArgumentError({ message: `read ${url}: ${cause instanceof Error ? cause.message : String(cause)}` }),
-    });
-    return yield* Effect.try({
-      try: () => parseUsageSnapshot(text),
-      catch: (cause) =>
-        new CliArgumentError({ message: `parse ${url}: ${cause instanceof Error ? cause.message : String(cause)}` }),
-    });
   });
 
 const writeFile = (filePath: string, text: string) =>

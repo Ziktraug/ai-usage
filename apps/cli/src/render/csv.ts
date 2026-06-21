@@ -1,5 +1,5 @@
-import { sourceLabel } from '@ai-usage/core/snapshot';
-import type { Row, UsageRowWithOptionalSource } from '@ai-usage/core/types';
+import { sourceLabel } from '@ai-usage/report-core/snapshot';
+import type { Row, UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 
 const csvEscape = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
 const rtkSavingsPct = (row: Row) =>

@@ -1,6 +1,6 @@
-import { type HarnessColor, harnessMetadataForLabel } from '@ai-usage/core/harness-metadata';
-import type { Row } from '@ai-usage/core/types';
-import { usageRowPricedCost } from '@ai-usage/core/usage-row';
+import { type HarnessColor, harnessMetadataForLabel } from '@ai-usage/report-core/harness-metadata';
+import type { Row } from '@ai-usage/report-core/types';
+import { usageRowPricedCost } from '@ai-usage/report-core/usage-row';
 
 let colorEnabled = true;
 

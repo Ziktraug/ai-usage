@@ -1,6 +1,6 @@
 import path from 'node:path';
-import { approxCost, priceFor } from '@ai-usage/core/pricing';
-import type { TokenCounts } from '@ai-usage/core/usage-row';
+import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
+import type { TokenCounts } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { LocalHistoryError } from '../errors';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from '../local-history';

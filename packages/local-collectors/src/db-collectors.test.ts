@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
 import { collectSelectedHarnessResults, collectSelectedHarnessRows } from './collectors';
-import { collectClaude } from './collectors/claude';
+import { collectClaude, collectClaudeRetentionWarnings } from './collectors/claude';
 import { collectCursor } from './collectors/cursor';
 import { collectOpenCode } from './collectors/opencode';
 import { collectCursorCommitAttribution, CURSOR_COMMIT_ATTRIBUTION_SQL } from './facets';
@@ -148,6 +148,29 @@ describe('DB-backed Harness collectors', () => {
     expect(unavailable?.turns).toBe(2);
     expect(unavailable?.date?.toISOString()).toBe('2026-04-24T07:17:43.816Z');
     expect(unavailable?.endDate?.toISOString()).toBe('2026-04-24T08:33:07.361Z');
+  });
+
+  test('warns when Claude Code is set to delete transcripts at the lossy default', () => {
+    const storage = new TestMemoryStorage();
+
+    // No settings.json at all -> the 30-day default applies, so we warn.
+    const missing = runWithStorage(collectClaudeRetentionWarnings, storage);
+    expect(missing).toHaveLength(1);
+    expect(missing[0]?.harness).toBe('claude');
+    expect(missing[0]?.operation).toBe('claude.settings');
+    expect(missing[0]?.message).toContain('30 days');
+    expect(missing[0]?.message).toContain('unset');
+
+    // Explicit value at or below the default still prunes history -> warn with the value.
+    storage.writeText('.claude/settings.json', JSON.stringify({ cleanupPeriodDays: 7 }));
+    const low = runWithStorage(collectClaudeRetentionWarnings, storage);
+    expect(low).toHaveLength(1);
+    expect(low[0]?.message).toContain('7 days');
+    expect(low[0]?.message).toContain('set to 7');
+
+    // Raising the value beyond the default keeps history -> stay quiet.
+    storage.writeText('.claude/settings.json', JSON.stringify({ cleanupPeriodDays: 3650 }));
+    expect(runWithStorage(collectClaudeRetentionWarnings, storage)).toHaveLength(0);
   });
 
   test('collects OpenCode Usage rows through SQLite fixture storage', () => {

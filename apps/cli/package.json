@@ -7,9 +7,10 @@
     "ai-usage": "./src/main.ts"
   },
   "dependencies": {
-    "@ai-usage/core": "workspace:*",
+    "@ai-usage/report-core": "workspace:*",
     "@ai-usage/local-collectors": "workspace:*",
-    "@ai-usage/reporting": "workspace:*",
+    "@ai-usage/report-data": "workspace:*",
+    "@ai-usage/sync": "workspace:*",
     "effect": "^3.21.3"
   },
   "scripts": {

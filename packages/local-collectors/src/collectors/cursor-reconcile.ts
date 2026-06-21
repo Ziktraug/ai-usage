@@ -1,5 +1,5 @@
-import { harnessLabel } from '@ai-usage/core/harness-metadata';
-import { actualCost, usageRowTokenTotal } from '@ai-usage/core/usage-row';
+import { harnessLabel } from '@ai-usage/report-core/harness-metadata';
+import { actualCost, usageRowTokenTotal } from '@ai-usage/report-core/usage-row';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import type { CollectorRow } from '../rtk-enrichment';
 import { type CursorCsvCluster, type CursorCsvTurn, clusterFromTurns, clusterTurns } from './cursor-csv';

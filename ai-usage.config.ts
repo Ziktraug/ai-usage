@@ -1,4 +1,4 @@
-import type { AiUsageConfig } from '@ai-usage/core/project-alias';
+import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
 
 const config = {
   cursor: {

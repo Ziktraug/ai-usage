@@ -30,7 +30,13 @@ const packageExportKeys = (exportsValue: unknown) => {
 };
 
 async function readPackageInterface(packageJsonPath: string): Promise<PackageInterface | null> {
-  const text = await readFile(packageJsonPath, 'utf8');
+  let text: string;
+  try {
+    text = await readFile(packageJsonPath, 'utf8');
+  } catch (error) {
+    if (isRecord(error) && error.code === 'ENOENT') return null;
+    throw error;
+  }
   const json = JSON.parse(text) as unknown;
   if (!isRecord(json) || typeof json.name !== 'string' || !json.name.startsWith('@ai-usage/')) return null;
   return {

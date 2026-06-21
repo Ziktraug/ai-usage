@@ -1,5 +1,5 @@
-import { type HarnessKey, harnessKeyList, harnessLabelList, isHarnessKey } from '@ai-usage/core/harness-metadata';
-import type { ReportOptions, SortKey } from '@ai-usage/core/report-data';
+import { type HarnessKey, harnessKeyList, harnessLabelList, isHarnessKey } from '@ai-usage/report-core/harness-metadata';
+import type { ReportOptions, SortKey } from '@ai-usage/report-core/report-data';
 import { Effect } from 'effect';
 import { CliArgumentError } from './errors';
 
@@ -50,6 +50,14 @@ export interface CursorImportArgs {
   file: string;
 }
 
+export type SyncArgs =
+  | { action: 'help' }
+  | { action: 'add'; name: string; url: string; tokenEnv: string | null }
+  | { action: 'list' }
+  | { action: 'remove'; name: string }
+  | { action: 'pull'; name: string | null; all: boolean; remote: string | null; tokenEnv: string | null }
+  | { action: 'watch'; name: string | null; all: boolean; intervalMs: number };
+
 export type CliCommand =
   | { _tag: 'Help' }
   | { _tag: 'Quota'; color: boolean | null }
@@ -61,7 +69,8 @@ export type CliCommand =
   | { _tag: 'MachineSetLabel'; label: string }
   | { _tag: 'ProjectsList'; args: ProjectsListArgs }
   | { _tag: 'Setup'; args: SetupArgs }
-  | { _tag: 'CursorImport'; args: CursorImportArgs };
+  | { _tag: 'CursorImport'; args: CursorImportArgs }
+  | { _tag: 'Sync'; args: SyncArgs };
 
 const cliArgumentError = (message: string) => new CliArgumentError({ message });
 
@@ -113,6 +122,7 @@ export const helpText =
   `  snapshot               write a portable usage snapshot\n` +
   `  merge                  merge usage snapshots into a report\n` +
   `  serve                  serve this machine's snapshot over HTTP\n` +
+  `  sync                   persist remote snapshots for future reports\n` +
   `  machine                show or update this machine identity\n` +
   `  projects list          summarize detected projects\n` +
   `  cursor import <csv>    copy a Cursor usage export into local ignored storage\n` +
@@ -141,6 +151,13 @@ export const helpText =
   `  serve --host 0.0.0.0   bind to all interfaces (default: localhost)\n` +
   `  serve --port 3847      listen port (default: 3847)\n` +
   `  serve --token <secret> required when binding outside localhost\n` +
+  `\nSync:\n` +
+  `  sync add <name> <url> --token-env <env>\n` +
+  `  sync pull [name] | --all\n` +
+  `  sync pull --name <name> --remote <url> --token-env <env>\n` +
+  `  sync watch [name] | --all --interval 60s\n` +
+  `  sync list\n` +
+  `  sync remove <name>\n` +
   `\nMachine:\n` +
   `  machine                show this machine id and label\n` +
   `  machine set-label <x>  update this machine label\n` +
@@ -342,6 +359,84 @@ const parseServeArgs = (argv: string[]): Effect.Effect<ServeArgs, CliArgumentErr
     return args;
   });
 
+const parseInterval = (value: string): Effect.Effect<number, CliArgumentError> => {
+  const m = /^(\d+)(ms|s|m)?$/.exec(value);
+  if (!m) return Effect.fail(cliArgumentError('--interval expects e.g. 60s, 5m, or 30000ms'));
+  const n = Number.parseInt(m[1]!, 10);
+  const unit = m[2] ?? 'ms';
+  const mult = unit === 'm' ? 60_000 : unit === 's' ? 1_000 : 1;
+  return Effect.succeed(n * mult);
+};
+
+const parseSyncArgs = (argv: string[]): Effect.Effect<SyncArgs, CliArgumentError> =>
+  Effect.gen(function* () {
+    const rest = [...argv];
+    const action = rest.shift();
+    if (!action) return { action: 'help' };
+
+    if (action === 'add') {
+      const name = yield* parseRequiredValue(rest, 'sync add <name>');
+      const url = yield* parseRequiredValue(rest, 'sync add <url>');
+      let tokenEnv: string | null = null;
+      while (rest.length) {
+        const arg = rest.shift()!;
+        if (arg === '--token-env') tokenEnv = yield* parseRequiredValue(rest, '--token-env');
+        else return yield* Effect.fail(cliArgumentError(`Unknown option for sync add: ${arg}`));
+      }
+      return { action: 'add', name, url, tokenEnv };
+    }
+
+    if (action === 'list') {
+      if (rest.length) return yield* Effect.fail(cliArgumentError(`Unknown option for sync list: ${rest[0]}`));
+      return { action: 'list' };
+    }
+
+    if (action === 'remove') {
+      const name = yield* parseRequiredValue(rest, 'sync remove <name>');
+      if (rest.length) return yield* Effect.fail(cliArgumentError(`Unknown option for sync remove: ${rest[0]}`));
+      return { action: 'remove', name };
+    }
+
+    if (action === 'pull') {
+      let name: string | null = null;
+      let remote: string | null = null;
+      let tokenEnv: string | null = null;
+      let all = false;
+      while (rest.length) {
+        const arg = rest.shift()!;
+        if (arg === '--all') all = true;
+        else if (arg === '--remote') remote = yield* parseRequiredValue(rest, '--remote');
+        else if (arg === '--name') name = yield* parseRequiredValue(rest, '--name');
+        else if (arg === '--token-env') tokenEnv = yield* parseRequiredValue(rest, '--token-env');
+        else if (arg.startsWith('--')) return yield* Effect.fail(cliArgumentError(`Unknown option for sync pull: ${arg}`));
+        else if (!name) name = arg;
+        else return yield* Effect.fail(cliArgumentError(`Unexpected argument for sync pull: ${arg}`));
+      }
+      if (all && (name || remote)) return yield* Effect.fail(cliArgumentError('sync pull --all cannot be combined with a remote name or --remote'));
+      if (remote && !name) return yield* Effect.fail(cliArgumentError('sync pull --remote expects --name <name>'));
+      return { action: 'pull', name, all, remote, tokenEnv };
+    }
+
+    if (action === 'watch') {
+      let name: string | null = null;
+      let all = false;
+      let intervalMs = 60_000;
+      while (rest.length) {
+        const arg = rest.shift()!;
+        if (arg === '--all') all = true;
+        else if (arg === '--interval') intervalMs = yield* parseInterval(yield* parseRequiredValue(rest, '--interval'));
+        else if (arg.startsWith('--')) return yield* Effect.fail(cliArgumentError(`Unknown option for sync watch: ${arg}`));
+        else if (!name) name = arg;
+        else return yield* Effect.fail(cliArgumentError(`Unexpected argument for sync watch: ${arg}`));
+      }
+      if (all && name) return yield* Effect.fail(cliArgumentError('sync watch --all cannot be combined with a remote name'));
+      if (intervalMs < 30_000) return yield* Effect.fail(cliArgumentError('sync watch --interval must be at least 30s'));
+      return { action: 'watch', name, all, intervalMs };
+    }
+
+    return yield* Effect.fail(cliArgumentError(`Unknown sync subcommand: ${action}`));
+  });
+
 export const parseCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgumentError> =>
   Effect.gen(function* () {
     const rest = [...argv];
@@ -378,6 +473,10 @@ export const parseCommand = (argv: string[]): Effect.Effect<CliCommand, CliArgum
     if (command === 'serve') {
       rest.shift();
       return { _tag: 'Serve', args: yield* parseServeArgs(rest) };
+    }
+    if (command === 'sync') {
+      rest.shift();
+      return { _tag: 'Sync', args: yield* parseSyncArgs(rest) };
     }
     if (command === 'report') rest.shift();
     return { _tag: 'Report', args: yield* parseArgs(rest) };

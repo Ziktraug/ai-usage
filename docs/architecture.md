@@ -6,13 +6,14 @@
 
 1. Harness local history is read by `@ai-usage/local-collectors`.
 2. Collector adapters emit collected sessions or collected usage rows with local provenance.
-3. `@ai-usage/core` normalizes usage rows, computes derived row values, analytics, report payloads, and usage snapshots.
-4. `@ai-usage/reporting` orchestrates local history collection, project aliases, warnings, usage snapshots, and report payload creation.
-5. `apps/cli` and `apps/report` render the shared data through their own output adapters.
+3. `@ai-usage/report-core` normalizes usage rows, computes derived row values, analytics, report payloads, and usage snapshots.
+4. `@ai-usage/report-data` orchestrates local history collection, project aliases, warnings, usage snapshots, and report payload creation.
+5. `@ai-usage/sync` owns snapshot transport and sync workflow modules that can be used by both app adapters.
+6. `apps/cli` and `apps/web` render the shared data through their own output adapters.
 
 ## Package Ownership
 
-### `@ai-usage/core`
+### `@ai-usage/report-core`
 
 Owns pure domain data and deterministic calculations:
 
@@ -21,7 +22,7 @@ Owns pure domain data and deterministic calculations:
 - pricing, analytics, project aliases, report payload serialization, and usage snapshot parsing/creation;
 - static report HTML inlining primitives.
 
-`@ai-usage/core` must not read local history, the filesystem, SQLite, browser globals, or app runtime state.
+`@ai-usage/report-core` must not read local history, the filesystem, SQLite, browser globals, or app runtime state.
 
 ### `@ai-usage/local-collectors`
 
@@ -34,7 +35,7 @@ Owns local history adapters:
 
 This is the package allowed to know where harnesses store local history. It should not render CLI/UI output.
 
-### `@ai-usage/reporting`
+### `@ai-usage/report-data`
 
 Owns application-facing report orchestration:
 
@@ -46,6 +47,17 @@ Owns application-facing report orchestration:
 
 Apps should prefer this package over reaching into collectors directly. The known exception is the CLI quota path, which reads the newest Codex quota snapshot through the public `@ai-usage/local-collectors/codex-history` export.
 
+### `@ai-usage/sync`
+
+Owns application-facing sync modules:
+
+- snapshot file and HTTP transport;
+- snapshot endpoint health checks;
+- sync workflow and UI-consumable sync state;
+- LAN snapshot server protocol, Bun and Node server adapters, and discovery.
+
+Apps should use this package for sync behavior instead of owning transport, auth, parsing, or remote status logic.
+
 ### `apps/cli`
 
 Owns terminal and file output adapters:
@@ -55,14 +67,15 @@ Owns terminal and file output adapters:
 - machine/setup/project-source commands;
 - serve and quota commands.
 
-The CLI calls `@ai-usage/reporting` for report data. It should not be called by the report app.
+The CLI calls `@ai-usage/report-data` for report data. It should not be called by the report app.
 
-### `apps/report`
+### `apps/web`
 
 Owns web runtime and UI:
 
 - TanStack Start server functions and Bun subprocess boundary for local collection under Nitro;
 - report payload runtime/bootstrap/refresh;
+- LAN sync console route and process-local snapshot serve lifecycle;
 - dashboard, overview, table schema, and UI model modules;
 - browser CSV/HTML export adapters.
 
@@ -81,14 +94,17 @@ See `docs/generated-tooling-ownership.md` for generated Panda/TanStack/Nitro own
 ## Adapter Rules
 
 - Local history adapters live in `@ai-usage/local-collectors`.
-- Report orchestration lives in `@ai-usage/reporting`.
+- Report orchestration lives in `@ai-usage/report-data`.
+- Sync transport and workflow modules live in `@ai-usage/sync`.
 - CLI renderers live in `apps/cli`.
-- Web server functions and browser output adapters live in `apps/report`.
+- Web server functions and browser output adapters live in `apps/web`.
 - Design-system exports are consumed through package exports, never through relative package paths.
 
 ## Guardrails
 
 - Cross-package imports must use package exports documented in `docs/public-package-interfaces.md`.
 - Relative workspace paths such as `../../packages/...` and `../apps/...` are forbidden.
-- Private package paths such as `@ai-usage/core/src/...` are forbidden.
-- `bun run lint` runs Biome restricted-import rules, `tools/check-workspace-relative-paths.ts`, and `tools/check-public-package-exports.ts`.
+- Private package paths such as `@ai-usage/report-core/src/...` are forbidden.
+- Package graph boundaries for LAN merge are enforced by scoped Biome restricted-import rules and `tools/check-package-boundaries.ts`.
+- The package graph policy follows `docs/lan-merge-pairing-plan.md` and the ownership READMEs in each app/package directory.
+- `bun run lint` runs Biome restricted-import rules, `tools/check-workspace-relative-paths.ts`, `tools/check-public-package-exports.ts`, and `tools/check-package-boundaries.ts`.
