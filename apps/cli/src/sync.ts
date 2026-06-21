@@ -1,4 +1,3 @@
-import type { SyncRemoteConfig } from '@ai-usage/report-core/project-alias';
 import {
   addSyncRemote,
   applyPullTokenEnvOverride,
@@ -8,8 +7,8 @@ import {
   selectSyncRemotesToPull,
   validateTokenEnv,
 } from '@ai-usage/sync';
-import type { SyncRemoteState, SyncState } from '@ai-usage/sync/state';
 import { SyncWorkflowError } from '@ai-usage/sync/errors';
+import type { SyncRemoteState, SyncState } from '@ai-usage/sync/state';
 import { Console, Effect } from 'effect';
 import type { SyncArgs } from './cli';
 import { CliArgumentError } from './errors';
@@ -43,7 +42,9 @@ const syncRemotesToPull = (args: Extract<SyncArgs, { action: 'pull' | 'watch' }>
   selectSyncRemotesToPull(args.name).pipe(Effect.mapError(noRemoteHelp));
 
 const renderSyncList = (state: SyncState) => {
-  if (!state.remotes.length) return renderSyncHelp();
+  if (!state.remotes.length) {
+    return renderSyncHelp();
+  }
   const cols = [
     { h: 'Name', w: 16, f: (r: SyncRemoteState) => r.name },
     { h: 'Enabled', w: 7, f: (r: SyncRemoteState) => (r.enabled ? 'yes' : 'no') },
@@ -54,7 +55,9 @@ const renderSyncList = (state: SyncState) => {
     { h: 'URL', w: 44, f: (r: SyncRemoteState) => r.url },
   ];
   const header = cols.map((col) => pad(col.h, col.w, col.r)).join('  ');
-  const body = state.remotes.map((remote) => cols.map((col) => pad(trunc(col.f(remote), col.w), col.w, col.r)).join('  '));
+  const body = state.remotes.map((remote) =>
+    cols.map((col) => pad(trunc(col.f(remote), col.w), col.w, col.r)).join('  '),
+  );
   return [header, ...body].join('\n');
 };
 

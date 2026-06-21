@@ -29,20 +29,16 @@ const analyticsTable = (
     const unavailableOnly = group.usageUnavailable === group.sessions;
     const cells: string[] = [];
     cells.push(clr.cyan(pad(trunc(group.key, keyWidth), keyWidth)));
-    if (showHarness) cells.push(harnessColor(group.harness)(pad(trunc(group.harness, 12), 12)));
+    if (showHarness) {
+      cells.push(harnessColor(group.harness)(pad(trunc(group.harness, 12), 12)));
+    }
     cells.push(pad(`${group.sessions}${group.ambiguous ? '?' : ''}`, 5, true));
     cells.push(pad(unavailableOnly ? 'n/a' : fmtNum(group.fresh), 8, true));
     cells.push(clr.dim(pad(unavailableOnly ? 'n/a' : `${group.cacheHitPct.toFixed(0)}%`, 6, true)));
     const costText = unavailableOnly
       ? 'n/a'
       : (group.priced ? `$${group.costSum.toFixed(2)}` : '–') + (group.unpriced ? '*' : '');
-    const costStyle = !group.priced
-      ? clr.grey
-      : group.costSum >= 100
-        ? clr.redB
-        : group.costSum >= 25
-          ? clr.yellow
-          : id;
+    const costStyle = analyticsCostStyle(group);
     cells.push(costStyle(pad(costText, 10, true)));
     cells.push(
       pad(unavailableOnly || group.costPerSession == null ? '–' : `$${group.costPerSession.toFixed(2)}`, 8, true),
@@ -54,6 +50,19 @@ const analyticsTable = (
     out.push(cells.join('  '));
   }
   return out.join('\n');
+};
+
+const analyticsCostStyle = (group: AnalyticsGroup) => {
+  if (!group.priced) {
+    return clr.grey;
+  }
+  if (group.costSum >= 100) {
+    return clr.redB;
+  }
+  if (group.costSum >= 25) {
+    return clr.yellow;
+  }
+  return id;
 };
 
 export const renderAnalytics = (rows: Row[]) => {
@@ -90,11 +99,12 @@ export const renderAnalytics = (rows: Row[]) => {
   out.push(analyticsTable('By model — cost & usage (sorted by ~API $)', analytics.byModel, 'Model', 24, true));
   out.push(analyticsTable('By provider — cost & usage', analytics.byProvider, 'Provider', 20, false));
   out.push(analyticsTable('By harness — cost & usage', analytics.byHarness, 'Harness', 14, false));
-  if (analytics.unpricedCount)
+  if (analytics.unpricedCount) {
     out.push(
       clr.dim(
-        `  * $API sums priced sessions only; n/a = usage counters unavailable; $/sess & median exclude unpriced/unavailable sessions.`,
+        '  * $API sums priced sessions only; n/a = usage counters unavailable; $/sess & median exclude unpriced/unavailable sessions.',
       ),
     );
+  }
   return out.join('\n');
 };

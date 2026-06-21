@@ -1,6 +1,6 @@
-import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
 import { css, cx } from '@ai-usage/design-system/css';
 import { panel, panelHeader, panelSub, panelTitle } from '@ai-usage/design-system/report';
+import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
 import { For, Show } from 'solid-js';
 
 const warningPanel = css({
@@ -41,9 +41,7 @@ export const ReportWarnings = (props: { warnings: UsageReportWarning[] | undefin
           <For each={warnings()}>
             {(warning) => (
               <li class={warningItem}>
-                <Show when={warning.harness}>
-                  {(harness) => <span class={warningHarness}>{harness()}: </span>}
-                </Show>
+                <Show when={warning.harness}>{(harness) => <span class={warningHarness}>{harness()}: </span>}</Show>
                 {warning.message}
               </li>
             )}

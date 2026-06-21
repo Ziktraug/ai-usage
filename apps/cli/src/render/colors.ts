@@ -39,12 +39,20 @@ const harnessColorFn = (color: HarnessColor) =>
 
 export const harnessColor = (h: string) => harnessColorFn(harnessMetadataForLabel(h)?.color ?? 'blue');
 
-export const provColor = (p: string) => (/API/.test(p) ? clr.yellow : clr.green);
+const API_PROVIDER_PATTERN = /API/;
+
+export const provColor = (p: string) => (API_PROVIDER_PATTERN.test(p) ? clr.yellow : clr.green);
 
 export const costStyle = (row: Row) => {
   const cost = usageRowPricedCost(row);
-  if (cost == null) return clr.grey;
-  if (cost >= 20) return clr.redB;
-  if (cost >= 5) return clr.yellow;
+  if (cost == null) {
+    return clr.grey;
+  }
+  if (cost >= 20) {
+    return clr.redB;
+  }
+  if (cost >= 5) {
+    return clr.yellow;
+  }
   return id;
 };

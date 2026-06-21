@@ -15,26 +15,26 @@ import {
 } from './date-range';
 
 export interface DateRangeDomain {
-  minDay: Date;
   maxDay: Date;
   maxIndex: number;
+  minDay: Date;
 }
 
 export interface DateRangeController {
-  mode: Accessor<DateRangeMode>;
   bounds: Accessor<DateBounds>;
+  clear: () => void;
   domain: Accessor<DateRangeDomain | null>;
   inputValues: Accessor<{ from: string; to: string }>;
   label: Accessor<string>;
+  mode: Accessor<DateRangeMode>;
   selectedIndexes: Accessor<[number, number]>;
-  setRange: (mode: DateRangeMode, from?: string, to?: string) => void;
-  setPreset: (mode: TimeRangePreset) => void;
   setCustom: (from: string, to: string) => void;
   setFromInput: (from: string) => void;
-  setToInput: (to: string) => void;
   setIndexes: (from: number, to: number) => void;
+  setPreset: (mode: TimeRangePreset) => void;
+  setRange: (mode: DateRangeMode, from?: string, to?: string) => void;
+  setToInput: (to: string) => void;
   shiftSelection: (delta: number) => void;
-  clear: () => void;
 }
 
 export const createDateRangeController = (options: {
@@ -71,8 +71,9 @@ export const createDateRangeController = (options: {
       boundsCache.customFrom === currentFrom &&
       boundsCache.customTo === currentTo &&
       boundsCache.generatedAtTime === generatedAtTime
-    )
+    ) {
       return boundsCache.value;
+    }
 
     const value = dateBoundsForRange(currentMode, currentGeneratedAt, currentFrom, currentTo);
     boundsCache = {
@@ -97,13 +98,17 @@ export const createDateRangeController = (options: {
   } | null = null;
   const rowTimeSpan = () => {
     const rows = options.rows();
-    if (rowSpanCache?.rows === rows) return rowSpanCache;
+    if (rowSpanCache?.rows === rows) {
+      return rowSpanCache;
+    }
 
     let minTime = Number.POSITIVE_INFINITY;
     let maxTime = Number.NEGATIVE_INFINITY;
     for (const row of rows) {
       const time = rowTime(row);
-      if (time == null) continue;
+      if (time == null) {
+        continue;
+      }
       minTime = Math.min(minTime, time);
       maxTime = Math.max(maxTime, time);
     }
@@ -129,8 +134,9 @@ export const createDateRangeController = (options: {
       domainCache.rows === rows &&
       domainCache.boundsFrom === boundsFrom &&
       domainCache.boundsTo === boundsTo
-    )
+    ) {
       return domainCache.value;
+    }
 
     if (rowSpan.minTime == null || rowSpan.maxTime == null) {
       domainCache = {
@@ -163,7 +169,9 @@ export const createDateRangeController = (options: {
 
   const selectedIndexes = (): [number, number] => {
     const currentDomain = domain();
-    if (!currentDomain) return [0, 0];
+    if (!currentDomain) {
+      return [0, 0];
+    }
     const currentBounds = bounds();
     const from = currentBounds.from ? dateIndexFrom(currentBounds.from, currentDomain.minDay) : 0;
     const to = currentBounds.to ? dateIndexFrom(currentBounds.to, currentDomain.minDay) : currentDomain.maxIndex;
@@ -172,7 +180,9 @@ export const createDateRangeController = (options: {
 
   const inputValues = () => {
     const currentDomain = domain();
-    if (!currentDomain) return { from: customFrom(), to: customTo() };
+    if (!currentDomain) {
+      return { from: customFrom(), to: customTo() };
+    }
     const [from, to] = selectedIndexes();
     return {
       from: toDateInputValue(dateFromIndex(currentDomain.minDay, from)),
@@ -181,10 +191,18 @@ export const createDateRangeController = (options: {
   };
 
   const label = () => {
-    if (mode() === 'all') return 'all dates';
-    if (mode() === 'today') return 'today';
-    if (mode() === '7d') return 'last 7 days';
-    if (mode() === '30d') return 'last 30 days';
+    if (mode() === 'all') {
+      return 'all dates';
+    }
+    if (mode() === 'today') {
+      return 'today';
+    }
+    if (mode() === '7d') {
+      return 'last 7 days';
+    }
+    if (mode() === '30d') {
+      return 'last 30 days';
+    }
     const values = inputValues();
     return `${values.from ? options.formatDate(parseLocalDate(values.from)) : 'start'} – ${
       values.to ? options.formatDate(parseLocalDate(values.to, true)) : 'end'
@@ -199,14 +217,18 @@ export const createDateRangeController = (options: {
 
   const setRange = (nextMode: DateRangeMode, from?: string, to?: string) => {
     setMode(nextMode);
-    if (nextMode !== 'custom') return;
+    if (nextMode !== 'custom') {
+      return;
+    }
     setCustomFrom(from ?? '');
     setCustomTo(to ?? '');
   };
 
   const setIndexes = (from: number, to: number) => {
     const currentDomain = domain();
-    if (!currentDomain) return;
+    if (!currentDomain) {
+      return;
+    }
     const [nextFrom, nextTo] = normalizeDateIndexRange([from, to], currentDomain.maxIndex);
     setCustom(
       toDateInputValue(dateFromIndex(currentDomain.minDay, nextFrom)),
@@ -243,7 +265,9 @@ export const createDateRangeController = (options: {
     setIndexes,
     shiftSelection: (delta: number) => {
       const currentDomain = domain();
-      if (!currentDomain) return;
+      if (!currentDomain) {
+        return;
+      }
       const [from, to] = selectedIndexes();
       const span = to - from;
       const nextFrom = Math.min(Math.max(from + delta, 0), Math.max(0, currentDomain.maxIndex - span));

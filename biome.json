@@ -23,8 +23,11 @@
     "enabled": true,
     "rules": {
       "recommended": true,
-      "suspicious": {
-        "noExplicitAny": "off"
+      "complexity": {
+        "noExcessiveCognitiveComplexity": "off"
+      },
+      "performance": {
+        "noBarrelFile": "off"
       },
       "style": {
         "noNonNullAssertion": "off",
@@ -56,7 +59,8 @@
       "quoteStyle": "single",
       "semicolons": "always",
       "trailingCommas": "all"
-    }
+    },
+    "globals": ["Bun"]
   },
   "overrides": [
     {

@@ -2,8 +2,8 @@ import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
 import type { SortingState } from '@tanstack/solid-table';
 import { buildAnalyticsGroups, buildProjectGroups, type ProjectGroup } from './dashboard-analytics';
 import type { Metric, MetricDelta } from './dashboard-metrics';
-import { compareRows } from './dashboard-sort';
 import type { FieldFilterKey, FieldFilters } from './dashboard-search';
+import { compareRows } from './dashboard-sort';
 import { DAY_MS, type DateBounds, endOfDay, rowMatchesDateBounds } from './date-range';
 import {
   buildReportSummary,
@@ -16,16 +16,20 @@ import {
 } from './shared';
 
 export const fieldValueForRow = (row: DashboardRow, key: FieldFilterKey) => {
-  if (key === 'provider') return row.providerDisplay;
-  if (key === 'model') return row.modelKey;
+  if (key === 'provider') {
+    return row.providerDisplay;
+  }
+  if (key === 'model') {
+    return row.modelKey;
+  }
   return row.projectKey;
 };
 
-export type FilterSnapshot = {
+export interface FilterSnapshot {
   fieldEntries: [FieldFilterKey, string][];
   harness: string;
   query: string;
-};
+}
 
 export const createFilterSnapshot = (query: string, harness: string, filters: FieldFilters): FilterSnapshot => ({
   fieldEntries: Object.entries(filters) as [FieldFilterKey, string][],
@@ -44,13 +48,16 @@ export const filterTimelineRows = (rows: DashboardRow[], filters: FilterSnapshot
 export const filterRowsByDateBounds = (rows: DashboardRow[], bounds: DateBounds) =>
   rows.filter((row) => rowMatchesDateBounds(row, bounds));
 
-export const buildSortedDashboardRows = (rows: DashboardRow[], sorting: SortingState) => [...rows].sort(compareRows(sorting));
+export const buildSortedDashboardRows = (rows: DashboardRow[], sorting: SortingState) =>
+  [...rows].sort(compareRows(sorting));
 
 export const buildVisibleSummary = (rows: DashboardRow[], bounds: DateBounds) =>
   buildReportSummary(rows, (row) => rowMatchesDateBounds(row, bounds));
 
 export const buildPreviousPeriodBounds = (bounds: DateBounds, generatedAt: Date): DateBounds | null => {
-  if (!bounds.from) return null;
+  if (!bounds.from) {
+    return null;
+  }
   const from = bounds.from.getTime();
   const to = (bounds.to ?? endOfDay(generatedAt)).getTime();
   const span = Math.max(DAY_MS, to - from);
@@ -59,7 +66,9 @@ export const buildPreviousPeriodBounds = (bounds: DateBounds, generatedAt: Date)
 
 export const buildPreviousPeriodSummary = (rows: DashboardRow[], bounds: DateBounds, generatedAt: Date) => {
   const previousBounds = buildPreviousPeriodBounds(bounds, generatedAt);
-  if (!previousBounds) return null;
+  if (!previousBounds) {
+    return null;
+  }
   const summary = buildVisibleSummary(rows, previousBounds);
   return summary.sessionCount > 0 ? summary : null;
 };
@@ -67,13 +76,28 @@ export const buildPreviousPeriodSummary = (rows: DashboardRow[], bounds: DateBou
 export const hiddenSessionCount = (totalRows: number, visibleRows: number) => totalRows - visibleRows;
 
 export const buildModelGroups = (rows: DashboardRow[], bounds: DateBounds, totalCost: number): AnalyticsGroup[] =>
-  buildAnalyticsGroups(rows, (row) => rowMatchesDateBounds(row, bounds), (row) => row.modelKey, totalCost);
+  buildAnalyticsGroups(
+    rows,
+    (row) => rowMatchesDateBounds(row, bounds),
+    (row) => row.modelKey,
+    totalCost,
+  );
 
 export const buildProviderGroups = (rows: DashboardRow[], bounds: DateBounds, totalCost: number): AnalyticsGroup[] =>
-  buildAnalyticsGroups(rows, (row) => rowMatchesDateBounds(row, bounds), (row) => row.providerDisplay, totalCost);
+  buildAnalyticsGroups(
+    rows,
+    (row) => rowMatchesDateBounds(row, bounds),
+    (row) => row.providerDisplay,
+    totalCost,
+  );
 
 export const buildHarnessGroups = (rows: DashboardRow[], bounds: DateBounds, totalCost: number): AnalyticsGroup[] =>
-  buildAnalyticsGroups(rows, (row) => rowMatchesDateBounds(row, bounds), (row) => row.harness, totalCost);
+  buildAnalyticsGroups(
+    rows,
+    (row) => rowMatchesDateBounds(row, bounds),
+    (row) => row.harness,
+    totalCost,
+  );
 
 export const buildProjectGroupRows = (rows: DashboardRow[], bounds: DateBounds): ProjectGroup[] =>
   buildProjectGroups(rows, (row) => rowMatchesDateBounds(row, bounds));
@@ -83,7 +107,9 @@ export const deltaVs = (
   previous: number | undefined,
   fmt: (value: number) => string,
 ): MetricDelta | null => {
-  if (previous == null || previous <= 0) return null;
+  if (previous == null || previous <= 0) {
+    return null;
+  }
   return {
     pct: ((current - previous) / previous) * 100,
     hint: `Previous period of equal length: ${fmt(previous)}`,

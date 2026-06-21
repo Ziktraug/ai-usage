@@ -61,7 +61,9 @@ export const SessionDrawer = (props: {
     const previous = document.activeElement;
     closeButton?.focus();
     onCleanup(() => {
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+      if (previous instanceof HTMLElement && previous.isConnected) {
+        previous.focus();
+      }
     });
   });
 
@@ -85,7 +87,7 @@ export const SessionDrawer = (props: {
   ];
 
   return (
-    <aside class={drawer} role="dialog" aria-label="Session details">
+    <aside aria-label="Session details" class={drawer} role="dialog">
       <div class={drawerTop}>
         <HarnessBadge name={props.row.harness} />
         <div class={drawerNav}>
@@ -93,31 +95,33 @@ export const SessionDrawer = (props: {
             {fmtNum(position() + 1)} / {fmtNum(props.rows.length)}
           </span>
           <button
-            class={drawerClose}
-            type="button"
             aria-label="Previous session (k)"
-            title="Previous session (k)"
+            class={drawerClose}
             disabled={position() <= 0}
             onClick={() => props.onNavigate(-1)}
+            title="Previous session (k)"
+            type="button"
           >
             ↑
           </button>
           <button
-            class={drawerClose}
-            type="button"
             aria-label="Next session (j)"
-            title="Next session (j)"
+            class={drawerClose}
             disabled={position() >= props.rows.length - 1}
             onClick={() => props.onNavigate(1)}
+            title="Next session (j)"
+            type="button"
           >
             ↓
           </button>
           <button
-            ref={closeButton}
-            class={drawerClose}
-            type="button"
             aria-label="Close session details"
+            class={drawerClose}
             onClick={() => props.onClose()}
+            ref={(element) => {
+              closeButton = element;
+            }}
+            type="button"
           >
             ✕
           </button>
@@ -131,7 +135,7 @@ export const SessionDrawer = (props: {
           </div>
         </div>
         <div>
-          <SegmentBar segments={anatomySegments()} ariaLabel="Token anatomy" />
+          <SegmentBar ariaLabel="Token anatomy" segments={anatomySegments()} />
           <div class={drawerLegend} style={{ 'margin-top': '8px' }}>
             <For each={anatomySegments()}>
               {(segment) => (
@@ -155,21 +159,21 @@ export const SessionDrawer = (props: {
           <DetailItem label="Started" value={fmtDate(props.row.date)} />
           <DetailItem label="Ended" value={fmtDate(props.row.endDate)} />
           <DetailItem label="Total tokens" value={fmtNum(props.row.tokenTotal)} />
-          <DetailItem label="RTK savings" value={rtkSavedLabel(props.row)} hint={rtkSavedTitle(props.row)} />
+          <DetailItem hint={rtkSavedTitle(props.row)} label="RTK savings" value={rtkSavedLabel(props.row)} />
           <DetailItem
+            hint={props.row.costKnown ? 'Estimated cost at standard API prices' : UNKNOWN_PRICE_HINT}
             label="API value"
             value={props.row.costKnown ? fmtMoney(props.row.costApprox) : '—'}
-            hint={props.row.costKnown ? 'Estimated cost at standard API prices' : UNKNOWN_PRICE_HINT}
           />
           <DetailItem
+            hint="Out-of-pocket spend — $0.00 means covered by a subscription"
             label="Actual cost"
             value={fmtMoney(props.row.costActual)}
-            hint="Out-of-pocket spend — $0.00 means covered by a subscription"
           />
           <DetailItem
+            hint="Cursor export value covered by the subscription quota"
             label="Sub value"
             value={fmtMoney(props.row.costQuota)}
-            hint="Cursor export value covered by the subscription quota"
           />
           <DetailItem label="Calls" value={fmtNum(props.row.calls)} />
           <DetailItem label="Turns" value={fmtNum(props.row.turns)} />
@@ -178,32 +182,32 @@ export const SessionDrawer = (props: {
           <DetailItem label="Lines" value={lineDeltaLabel(props.row)} />
           <DetailItem label="Subagent" value={props.row.subagent ? 'Yes' : 'No'} />
           <Show when={props.row.partial}>
-            <DetailItem label="Partial" value="Yes" hint="Local history did not cover the whole session" />
+            <DetailItem hint="Local history did not cover the whole session" label="Partial" value="Yes" />
           </Show>
           <Show when={props.row.usageUnavailable}>
             <DetailItem
+              hint="Session came from prompt history, but detailed local token counters are missing"
               label="Usage data"
               value="Unavailable"
-              hint="Session came from prompt history, but detailed local token counters are missing"
             />
           </Show>
           <Show when={props.row.ambiguous}>
             <DetailItem
+              hint="Multiple local Cursor sessions matched the same export cluster; totals are best-effort"
               label="Reconciliation"
               value="Ambiguous"
-              hint="Multiple local Cursor sessions matched the same export cluster; totals are best-effort"
             />
           </Show>
         </div>
         <div class={drawerActions}>
           <button
             class={ghostButton}
-            type="button"
             onClick={() => props.onFieldFilter('project', props.row.projectKey)}
+            type="button"
           >
             Filter project: {props.row.projectKey}
           </button>
-          <button class={ghostButton} type="button" onClick={() => props.onFieldFilter('model', props.row.modelKey)}>
+          <button class={ghostButton} onClick={() => props.onFieldFilter('model', props.row.modelKey)} type="button">
             Filter model: {props.row.modelKey}
           </button>
         </div>

@@ -10,15 +10,17 @@ import { clr, costStyle, harnessColor, id, provColor } from './colors';
 import { fmtDate, fmtDur, fmtNum, pad, trunc } from './format';
 
 interface Col {
-  h: string;
-  f: (r: Row) => string;
-  w: number;
-  r: boolean;
   c: (r: Row) => (s: string) => string;
+  f: (r: Row) => string;
+  h: string;
+  r: boolean;
+  w: number;
 }
 
 const fmtCost = (r: Row) => {
-  if (r.usageUnavailable) return 'n/a';
+  if (r.usageUnavailable) {
+    return 'n/a';
+  }
   const cost = usageRowPricedCost(r);
   return cost == null ? '?' : `$${cost.toFixed(2)}`;
 };
@@ -27,12 +29,16 @@ const fmtTokens = (r: Row, value: number) => (r.usageUnavailable ? 'n/a' : fmtNu
 
 const fmtDelta = (r: Row) => {
   const delta = usageRowLineDelta(r);
-  if (!delta.present || delta.total === 0) return '';
+  if (!delta.present || delta.total === 0) {
+    return '';
+  }
   return `+${fmtNum(delta.added)}/-${fmtNum(delta.deleted)}`;
 };
 
 const fmtRtkSaved = (r: Row) => {
-  if (!r.rtkSavedTokens || !r.rtkInputTokens) return '';
+  if (!(r.rtkSavedTokens && r.rtkInputTokens)) {
+    return '';
+  }
   const pct = (r.rtkSavedTokens / r.rtkInputTokens) * 100;
   return `${pct.toFixed(pct >= 10 ? 0 : 1)}%`;
 };

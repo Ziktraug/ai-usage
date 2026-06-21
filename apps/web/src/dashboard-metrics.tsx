@@ -2,14 +2,17 @@ import { metricDelta, metricDeltaArrow, metricLabel, metricTile, metricValue } f
 import { Show } from 'solid-js';
 import { fmtPct } from './shared';
 
-export type MetricDelta = { pct: number; hint: string };
+export interface MetricDelta {
+  hint: string;
+  pct: number;
+}
 
-export type Metric = {
+export interface Metric {
+  delta?: MetricDelta | null;
+  hint?: string;
   label: string;
   value: string;
-  hint?: string;
-  delta?: MetricDelta | null;
-};
+}
 
 // Past ~4× the percentage stops being readable ("▲ 4632%"); switch to the
 // multiplication factor instead.
@@ -31,7 +34,7 @@ export const MetricTile = (props: Metric) => (
       <Show when={props.delta}>
         {(delta) => (
           <div class={metricDelta} title={delta().hint}>
-            <span class={metricDeltaArrow} aria-hidden="true">
+            <span aria-hidden="true" class={metricDeltaArrow}>
               {delta().pct >= 0 ? '▲' : '▼'}
             </span>{' '}
             {fmtDeltaPct(delta().pct)}

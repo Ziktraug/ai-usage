@@ -6,7 +6,9 @@ type PerfSummary = Record<string, PerfField>;
 const perfEnabled = () => process.env.AI_USAGE_PERF === '1' || process.env.AI_USAGE_PERF === 'true';
 
 const formatError = (error: unknown) => {
-  if (error instanceof Error) return error.message;
+  if (error instanceof Error) {
+    return error.message;
+  }
   if (typeof error === 'object' && error !== null && 'message' in error) {
     return String((error as { message: unknown }).message);
   }
@@ -24,7 +26,9 @@ export const withPerfSpan = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   summarize?: (value: A) => PerfSummary,
 ): Effect.Effect<A, E, R> => {
-  if (!perfEnabled()) return effect;
+  if (!perfEnabled()) {
+    return effect;
+  }
 
   return Effect.gen(function* () {
     const startedAt = Date.now();

@@ -1,8 +1,8 @@
+import { describe, expect, test } from 'bun:test';
 import { createUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
-import { describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
-import { createSnapshotHttpHandler, startNodeSnapshotServer, type SnapshotRequestEvent } from './server';
+import { createSnapshotHttpHandler, type SnapshotRequestEvent, startNodeSnapshotServer } from './server';
 
 const machine = { id: 'machine-1', label: 'Machine 1' };
 
@@ -75,7 +75,7 @@ describe('snapshot server protocol', () => {
     const handler = createSnapshotHttpHandler({
       machine,
       token: null,
-      collectSnapshot: async () => {
+      collectSnapshot: () => {
         throw new Error('collection failed');
       },
     });

@@ -8,9 +8,9 @@ import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageSer
 import { readAiUsageConfig, writeAiUsageConfig } from './machine-config';
 
 export interface StoredSyncedSnapshot {
+  fetchedAt: string;
   remoteName: string;
   remoteUrl: string;
-  fetchedAt: string;
   snapshot: UsageSnapshot;
 }
 
@@ -30,17 +30,22 @@ export const userEnvPath = (storage: LocalHistoryStorageService) =>
   path.join(storage.home, '.config', 'ai-usage', '.env');
 
 const remoteFileName = (name: string) => `${name.replace(/[^a-zA-Z0-9._-]+/g, '-')}.json`;
+const LINE_SEPARATOR = /\r?\n/;
 
 export const syncedSnapshotPath = (storage: LocalHistoryStorageService, remoteName: string) =>
   path.join(syncedSnapshotsDir(storage), remoteFileName(remoteName));
 
 const parseEnvText = (text: string): Record<string, string> => {
   const result: Record<string, string> = {};
-  for (const rawLine of text.split(/\r?\n/)) {
+  for (const rawLine of text.split(LINE_SEPARATOR)) {
     const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
     const eq = line.indexOf('=');
-    if (eq <= 0) continue;
+    if (eq <= 0) {
+      continue;
+    }
     const key = line.slice(0, eq).trim();
     let value = line.slice(eq + 1).trim();
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
@@ -64,13 +69,17 @@ const findWorkspaceRoot = (cwd: string) => {
     if (fs.existsSync(packagePath)) {
       try {
         const parsed = JSON.parse(fs.readFileSync(packagePath, 'utf8')) as { workspaces?: unknown };
-        if (parsed.workspaces) return current;
+        if (parsed.workspaces) {
+          return current;
+        }
       } catch {
         // Ignore an unreadable package.json and keep walking up.
       }
     }
     const parent = path.dirname(current);
-    if (parent === current) return null;
+    if (parent === current) {
+      return null;
+    }
     current = parent;
   }
 };
@@ -83,10 +92,16 @@ const findNearestEnvPath = (cwd: string, homeDir?: string) => {
   let current = path.resolve(cwd);
   while (true) {
     const candidate = path.join(current, '.env');
-    if (fs.existsSync(candidate)) return candidate;
-    if (boundary && current === boundary) return null;
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+    if (boundary && current === boundary) {
+      return null;
+    }
     const parent = path.dirname(current);
-    if (parent === current) return null;
+    if (parent === current) {
+      return null;
+    }
     current = parent;
   }
 };
@@ -96,13 +111,21 @@ export const resolveSyncToken = (
   configCwd = process.cwd(),
 ): Effect.Effect<string | null, LocalHistoryError, LocalHistoryStorageService> =>
   Effect.gen(function* () {
-    if (!tokenEnv) return null;
-    if (process.env[tokenEnv]) return process.env[tokenEnv]!;
+    if (!tokenEnv) {
+      return null;
+    }
+    if (process.env[tokenEnv]) {
+      return process.env[tokenEnv]!;
+    }
     const storage = yield* LocalHistoryStorage;
     const userEnv = yield* readEnvFile(userEnvPath(storage));
-    if (userEnv[tokenEnv]) return userEnv[tokenEnv]!;
+    if (userEnv[tokenEnv]) {
+      return userEnv[tokenEnv]!;
+    }
     const repoEnvPath = findNearestEnvPath(configCwd, storage.home);
-    if (!repoEnvPath) return null;
+    if (!repoEnvPath) {
+      return null;
+    }
     const repoEnv = yield* readEnvFile(repoEnvPath);
     return repoEnv[tokenEnv] ?? null;
   });
@@ -141,7 +164,9 @@ export const removeSyncRemote = (
       const filePath = syncedSnapshotPath(storage, name);
       yield* Effect.try({
         try: () => {
-          if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+          }
         },
         catch: syncError('removeSyncedSnapshot', filePath),
       });
@@ -175,12 +200,19 @@ export const storeSyncedSnapshot = (input: {
 
 const parseStoredSyncedSnapshot = (text: string): StoredSyncedSnapshot => {
   const value = JSON.parse(text) as unknown;
-  if (typeof value !== 'object' || value === null || Array.isArray(value))
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error('Stored snapshot must be an object');
+  }
   const record = value as Record<string, unknown>;
-  if (typeof record.remoteName !== 'string') throw new Error('Stored snapshot missing remoteName');
-  if (typeof record.remoteUrl !== 'string') throw new Error('Stored snapshot missing remoteUrl');
-  if (typeof record.fetchedAt !== 'string') throw new Error('Stored snapshot missing fetchedAt');
+  if (typeof record.remoteName !== 'string') {
+    throw new Error('Stored snapshot missing remoteName');
+  }
+  if (typeof record.remoteUrl !== 'string') {
+    throw new Error('Stored snapshot missing remoteUrl');
+  }
+  if (typeof record.fetchedAt !== 'string') {
+    throw new Error('Stored snapshot missing fetchedAt');
+  }
   return {
     remoteName: record.remoteName,
     remoteUrl: record.remoteUrl,
@@ -207,9 +239,13 @@ export const readSyncedSnapshotRecords: Effect.Effect<
 
   yield* Effect.try({
     try: () => {
-      if (!fs.existsSync(dirPath)) return;
+      if (!fs.existsSync(dirPath)) {
+        return;
+      }
       for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
-        if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+        if (!(entry.isFile() && entry.name.endsWith('.json'))) {
+          continue;
+        }
         const filePath = path.join(dirPath, entry.name);
         try {
           records.push(parseStoredSyncedSnapshot(fs.readFileSync(filePath, 'utf8')));

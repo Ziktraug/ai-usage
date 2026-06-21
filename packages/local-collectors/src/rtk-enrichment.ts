@@ -10,20 +10,20 @@ export type CollectorRow = UsageRowWithOptionalSource & {
   readonly projectPath?: string | null;
 };
 
-type RtkCommandRow = {
-  timestamp: string;
-  project_path: string;
+interface RtkCommandRow {
   input_tokens: number;
   output_tokens: number;
+  project_path: string;
   saved_tokens: number;
-};
+  timestamp: string;
+}
 
-type RtkCandidate = {
+interface RtkCandidate {
+  endMs: number;
   index: number;
   projectPath: string;
   startMs: number;
-  endMs: number;
-};
+}
 
 export interface CollectorRowsWithWarnings {
   rows: CollectorRow[];
@@ -69,10 +69,14 @@ const candidatesForRows = (rows: CollectorRow[]): RtkCandidate[] =>
     const projectPath = normalizeProjectPath(row.projectPath);
     const start = row.date;
     const end = rowActiveEnd(row);
-    if (!projectPath || !start || !end) return [];
+    if (!(projectPath && start && end)) {
+      return [];
+    }
     const startMs = start.getTime();
     const endMs = end.getTime();
-    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return [];
+    if (!(Number.isFinite(startMs) && Number.isFinite(endMs))) {
+      return [];
+    }
     return [
       {
         index,
@@ -91,7 +95,9 @@ const commandTime = (timestamp: string) => {
 const bestCandidateForCommand = (command: RtkCommandRow, candidates: RtkCandidate[]) => {
   const time = commandTime(command.timestamp);
   const projectPath = normalizeProjectPath(command.project_path);
-  if (time == null || !projectPath) return null;
+  if (time == null || !projectPath) {
+    return null;
+  }
 
   const matches = candidates.filter(
     (candidate) =>
@@ -106,13 +112,19 @@ export const enrichCollectorRowsWithRtkSavingsResult = (
   withPerfSpan(
     'aiUsage.enrich.rtk',
     Effect.gen(function* () {
-      if (!rows.length) return { rows, warnings: [] };
+      if (!rows.length) {
+        return { rows, warnings: [] };
+      }
       const storage = yield* LocalHistoryStorage;
       const dbPath = yield* firstExisting(storage, ...resolvePathCandidates(storage).rtk.historyDb);
-      if (!dbPath) return { rows, warnings: [] };
+      if (!dbPath) {
+        return { rows, warnings: [] };
+      }
 
       const candidates = candidatesForRows(rows);
-      if (!candidates.length) return { rows, warnings: [] };
+      if (!candidates.length) {
+        return { rows, warnings: [] };
+      }
 
       const totals = new Map<number, { saved: number; input: number; output: number; commands: number }>();
       const readResult = yield* Effect.acquireUseRelease(
@@ -121,7 +133,9 @@ export const enrichCollectorRowsWithRtkSavingsResult = (
           Effect.gen(function* () {
             for (const command of yield* db.all<RtkCommandRow>(RTK_COMMANDS_SQL)) {
               const candidate = bestCandidateForCommand(command, candidates);
-              if (!candidate) continue;
+              if (!candidate) {
+                continue;
+              }
               const current = totals.get(candidate.index) ?? { saved: 0, input: 0, output: 0, commands: 0 };
               current.saved += Number(command.saved_tokens) || 0;
               current.input += Number(command.input_tokens) || 0;
@@ -150,11 +164,15 @@ export const enrichCollectorRowsWithRtkSavingsResult = (
         };
       }
 
-      if (!totals.size) return { rows, warnings: [] };
+      if (!totals.size) {
+        return { rows, warnings: [] };
+      }
       return {
         rows: rows.map((row, index) => {
           const total = totals.get(index);
-          if (!total || total.saved <= 0) return row;
+          if (!total || total.saved <= 0) {
+            return row;
+          }
           return {
             ...row,
             rtkSavedTokens: total.saved,
