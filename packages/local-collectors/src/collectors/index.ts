@@ -17,10 +17,8 @@ import {
 } from '../rtk-enrichment';
 import { collectClaude, collectClaudeRetentionWarnings } from './claude';
 import { collectCodex } from './codex';
-import { collectCursor } from './cursor';
+import { collectCursor, collectCursorResult } from './cursor';
 import type { CursorCsvOptions } from './cursor-csv';
-import { collectCursorCsvTurns } from './cursor-csv';
-import { reconcileCursorRows } from './cursor-reconcile';
 import { collectOpenCode, collectOpenCodeResult } from './opencode';
 
 interface HarnessAdapterCollection {
@@ -31,7 +29,7 @@ interface HarnessAdapterCollection {
 export interface HarnessAdapter {
   metadata: HarnessMetadata;
   collect: Effect.Effect<CollectorRow[], LocalHistoryError, LocalHistoryStorageService>;
-  collectResult?: Effect.Effect<HarnessAdapterCollection, never, LocalHistoryStorageService>;
+  collectResult?: Effect.Effect<HarnessAdapterCollection, LocalHistoryError, LocalHistoryStorageService>;
 }
 
 export type HarnessCollectionStatus = 'ok' | 'warning' | 'failed';
@@ -66,9 +64,23 @@ export const HARNESS_ADAPTERS: Record<HarnessKey, HarnessAdapter> = {
   cursor: { metadata: HARNESS_METADATA.cursor, collect: collectCursor },
 };
 
+const hasCursorCsvInput = (cursorCsv: HarnessSelection['cursorCsv']) =>
+  Boolean(cursorCsv?.usageExportPaths?.length || cursorCsv?.usageExportDir);
+
 export const selectedHarnessAdapters = (selection: HarnessSelection) => {
   const keys = selection.harness ? [selection.harness] : harnessKeys;
-  return keys.filter((key) => selection.includeCursor || key !== 'cursor').map((key) => HARNESS_ADAPTERS[key]);
+  return keys
+    .filter((key) => selection.includeCursor || key !== 'cursor')
+    .map((key): HarnessAdapter => {
+      if (key === 'cursor' && hasCursorCsvInput(selection.cursorCsv)) {
+        return {
+          metadata: HARNESS_METADATA.cursor,
+          collect: collectCursor,
+          collectResult: collectCursorResult(selection.cursorCsv),
+        };
+      }
+      return HARNESS_ADAPTERS[key];
+    });
 };
 
 type HarnessAdapterOutcome =
@@ -78,15 +90,11 @@ type HarnessAdapterOutcome =
 const collectAdapter = (
   adapter: HarnessAdapter,
 ): Effect.Effect<HarnessAdapterOutcome, never, LocalHistoryStorageService> => {
-  if (adapter.collectResult) {
-    return adapter.collectResult.pipe(
-      Effect.map((result) => ({ _tag: 'success' as const, rows: result.rows, warnings: result.warnings })),
-    );
-  }
-  return adapter.collect.pipe(
+  const collection = adapter.collectResult ?? adapter.collect.pipe(Effect.map((rows) => ({ rows, warnings: [] })));
+  return collection.pipe(
     Effect.match({
       onFailure: (error) => ({ _tag: 'failure' as const, error }),
-      onSuccess: (rows) => ({ _tag: 'success' as const, rows, warnings: [] }),
+      onSuccess: (result) => ({ _tag: 'success' as const, rows: result.rows, warnings: result.warnings }),
     }),
   );
 };
@@ -159,43 +167,6 @@ export const collectSelectedHarnessResults = (selection: HarnessSelection) =>
       }
 
       let rows = harnessResults.flatMap((result) => result.rows);
-      const cursorCsv = selection.cursorCsv;
-      if (
-        selection.includeCursor &&
-        (!selection.harness || selection.harness === 'cursor') &&
-        (cursorCsv?.usageExportPaths?.length || cursorCsv?.usageExportDir)
-      ) {
-        const turnsResult = yield* withPerfSpan(
-          'aiUsage.collect.cursorCsv',
-          collectCursorCsvTurns({
-            usageExportPaths: cursorCsv.usageExportPaths ?? [],
-            ...(cursorCsv.usageExportDir ? { usageExportDir: cursorCsv.usageExportDir } : {}),
-            clusterGapMs: cursorCsv.clusterGapMs ?? 5 * 60_000,
-            ...(cursorCsv.user ? { user: cursorCsv.user } : {}),
-          }).pipe(
-            Effect.match({
-              onFailure: (error) => ({ _tag: 'failure' as const, error }),
-              onSuccess: (turns) => ({ _tag: 'success' as const, turns }),
-            }),
-          ),
-          (result) => ({ status: result._tag, turns: result._tag === 'success' ? result.turns.length : 0 }),
-        );
-        if (turnsResult._tag === 'failure') {
-          addHarnessWarning(
-            'cursor',
-            localHistoryWarningFromError(turnsResult.error, {
-              harness: 'cursor',
-              message: 'Failed to import Cursor CSV usage export',
-            }),
-          );
-        } else {
-          rows = reconcileCursorRows(rows, turnsResult.turns, {
-            clusterGapMs: cursorCsv.clusterGapMs ?? 5 * 60_000,
-            maxSessionSpanMs: cursorCsv.maxSessionSpanMs ?? 60 * 60_000,
-            reconcileWindowMs: cursorCsv.reconcileWindowMs ?? 3 * 60_000,
-          });
-        }
-      }
 
       const enriched = yield* enrichCollectorRowsWithRtkSavingsResult(rows);
       rows = enriched.rows;
