@@ -2,10 +2,14 @@ import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import { cachedDbRows, dbStat, readDbRowCache, storeDbRows, writeDbRowCache } from '../collector-cache';
-import { LocalHistoryStorage } from '../local-history';
+import { type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
+import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from '../local-history';
 import { withPerfSpan } from '../perf';
 import { firstExisting, resolvePathCandidates } from '../platform-paths';
+import type { CollectorRow } from '../rtk-enrichment';
 import { safeJSON, usablePrompt } from '../text';
+import { collectCursorCsvTurns, type CursorCsvOptions } from './cursor-csv';
+import { reconcileCursorSessions } from './cursor-reconcile';
 
 type KeyValueRow = { key: string; value: string };
 
@@ -16,30 +20,36 @@ const USER_BUBBLE_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bub
 const CURSOR_DB_CACHE_VERSION = 1;
 const CURSOR_DB_CACHE_FILE = 'cursor-db-cache.json';
 
-export const collectCursor = withPerfSpan(
-  'aiUsage.collect.cursor.details',
+export type CursorCsvIngestionOptions = Partial<CursorCsvOptions> & {
+  maxSessionSpanMs?: number;
+  reconcileWindowMs?: number;
+};
+
+export interface CursorCollectionResult {
+  rows: CollectorRow[];
+  warnings: LocalHistoryWarning[];
+}
+
+const hasCursorCsvInput = (cursorCsv: CursorCsvIngestionOptions | undefined) =>
+  Boolean(cursorCsv?.usageExportPaths?.length || cursorCsv?.usageExportDir);
+
+const cursorCsvTurnsOptions = (cursorCsv: CursorCsvIngestionOptions): CursorCsvOptions => ({
+  usageExportPaths: cursorCsv.usageExportPaths ?? [],
+  ...(cursorCsv.usageExportDir ? { usageExportDir: cursorCsv.usageExportDir } : {}),
+  clusterGapMs: cursorCsv.clusterGapMs ?? 5 * 60_000,
+  ...(cursorCsv.user ? { user: cursorCsv.user } : {}),
+});
+
+const cursorCsvReconcileOptions = (cursorCsv: CursorCsvIngestionOptions) => ({
+  clusterGapMs: cursorCsv.clusterGapMs ?? 5 * 60_000,
+  maxSessionSpanMs: cursorCsv.maxSessionSpanMs ?? 60 * 60_000,
+  reconcileWindowMs: cursorCsv.reconcileWindowMs ?? 3 * 60_000,
+});
+
+const cursorSessionsToRows = (sessions: CollectedSession[]) => sessions.map(sessionToUsageRow);
+
+const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath: string) =>
   Effect.gen(function* () {
-    const storage = yield* LocalHistoryStorage;
-    const dbPath = yield* withPerfSpan(
-      'aiUsage.collect.cursor.findDb',
-      firstExisting(storage, ...resolvePathCandidates(storage).cursor.stateVscdb),
-      (path) => ({ found: path !== null }),
-    );
-    if (!dbPath) return [];
-
-    const cache = yield* withPerfSpan(
-      'aiUsage.collect.cursor.cache.read',
-      Effect.sync(() => readDbRowCache(storage, CURSOR_DB_CACHE_FILE, CURSOR_DB_CACHE_VERSION)),
-      (value) => ({ enabled: value !== null, entries: value ? Object.keys(value.entries).length : 0 }),
-    );
-    const stat = dbStat(dbPath);
-    const cachedRows = cachedDbRows(cache, dbPath, stat);
-    if (cachedRows) {
-      return yield* withPerfSpan('aiUsage.collect.cursor.cache.hit', Effect.succeed(cachedRows), (rows) => ({
-        rows: rows.length,
-      }));
-    }
-
     const comp = new Map<string, { name: string; model: string; created: number; add: number; del: number }>();
     const agg = new Map<string, { in: number; out: number; cr: number; cw: number; calls: number }>();
     const naming = new Map<string, { turns: number; first: string | null }>();
@@ -132,7 +142,7 @@ export const collectCursor = withPerfSpan(
       (db) => db.close,
     );
 
-    const sessions = yield* withPerfSpan(
+    return yield* withPerfSpan(
       'aiUsage.collect.cursor.mapSessions',
       Effect.sync(() => {
         const sessions: CollectedSession[] = [];
@@ -190,17 +200,88 @@ export const collectCursor = withPerfSpan(
             usageUnavailable: true,
           });
         }
-        return sessions.map(sessionToUsageRow);
+        return sessions;
       }),
-      (rows) => ({ rows: rows.length }),
+      (sessions) => ({ rows: sessions.length }),
     );
-    storeDbRows(cache, dbPath, stat, sessions);
+  });
+
+export const collectCursor = withPerfSpan(
+  'aiUsage.collect.cursor.details',
+  Effect.gen(function* () {
+    const storage = yield* LocalHistoryStorage;
+    const dbPath = yield* withPerfSpan(
+      'aiUsage.collect.cursor.findDb',
+      firstExisting(storage, ...resolvePathCandidates(storage).cursor.stateVscdb),
+      (path) => ({ found: path !== null }),
+    );
+    if (!dbPath) return [];
+
+    const cache = yield* withPerfSpan(
+      'aiUsage.collect.cursor.cache.read',
+      Effect.sync(() => readDbRowCache(storage, CURSOR_DB_CACHE_FILE, CURSOR_DB_CACHE_VERSION)),
+      (value) => ({ enabled: value !== null, entries: value ? Object.keys(value.entries).length : 0 }),
+    );
+    const stat = dbStat(dbPath);
+    const cachedRows = cachedDbRows(cache, dbPath, stat);
+    if (cachedRows) {
+      return yield* withPerfSpan('aiUsage.collect.cursor.cache.hit', Effect.succeed(cachedRows), (rows) => ({
+        rows: rows.length,
+      }));
+    }
+    const sessions = yield* collectCursorSessionsFromDb(storage, dbPath);
+    const rows = cursorSessionsToRows(sessions);
+    storeDbRows(cache, dbPath, stat, rows);
     yield* withPerfSpan(
       'aiUsage.collect.cursor.cache.write',
       Effect.sync(() => writeDbRowCache(storage, CURSOR_DB_CACHE_FILE, CURSOR_DB_CACHE_VERSION, cache)),
       (wrote) => ({ wrote }),
     );
-    return sessions;
+    return rows;
   }),
   (rows) => ({ rows: rows.length }),
 );
+
+export const collectCursorResult = (
+  cursorCsv?: CursorCsvIngestionOptions,
+): Effect.Effect<CursorCollectionResult, import('../errors').LocalHistoryError, LocalHistoryStorageService> =>
+  withPerfSpan(
+    'aiUsage.collect.cursor.ingestion',
+    Effect.gen(function* () {
+      const storage = yield* LocalHistoryStorage;
+      const dbPath = yield* withPerfSpan(
+        'aiUsage.collect.cursor.findDb',
+        firstExisting(storage, ...resolvePathCandidates(storage).cursor.stateVscdb),
+        (path) => ({ found: path !== null }),
+      );
+      let sessions = dbPath ? yield* collectCursorSessionsFromDb(storage, dbPath) : [];
+      const warnings: LocalHistoryWarning[] = [];
+
+      if (cursorCsv && hasCursorCsvInput(cursorCsv)) {
+        const turnsResult = yield* withPerfSpan(
+          'aiUsage.collect.cursorCsv',
+          collectCursorCsvTurns(cursorCsvTurnsOptions(cursorCsv)).pipe(
+            Effect.match({
+              onFailure: (error) => ({ _tag: 'failure' as const, error }),
+              onSuccess: (turns) => ({ _tag: 'success' as const, turns }),
+            }),
+          ),
+          (result) => ({ status: result._tag, turns: result._tag === 'success' ? result.turns.length : 0 }),
+        );
+
+        if (turnsResult._tag === 'failure') {
+          warnings.push(
+            localHistoryWarningFromError(turnsResult.error, {
+              harness: 'cursor',
+              message: 'Failed to import Cursor CSV usage export',
+            }),
+          );
+        } else {
+          sessions = reconcileCursorSessions(sessions, turnsResult.turns, cursorCsvReconcileOptions(cursorCsv));
+        }
+      }
+
+      return { rows: cursorSessionsToRows(sessions), warnings };
+    }),
+    (result) => ({ rows: result.rows.length, warnings: result.warnings.length }),
+  );
