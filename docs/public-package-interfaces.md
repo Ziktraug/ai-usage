@@ -10,6 +10,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./html-export`: static report HTML payload/asset inlining.
 - `./pricing`: editable model pricing and cost approximation support.
 - `./project-alias`: project alias config parsing and application.
+- `./project-group`: project grouping config, source identity, and selector matching helpers.
 - `./report-data`: serialized usage report payloads and report preparation.
 - `./snapshot`: multi-machine usage snapshot creation, parsing, and source labels.
 - `./types`: usage row and provenance types.
@@ -21,7 +22,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./codex-history`: Codex quota/local history helpers used by CLI quota output.
 - `./errors`: local history error and warning formatting/types.
 - `./local-history`: local history storage service interface/live layer.
-- `./machine-config`: user-local machine/project alias config helpers.
+- `./machine-config`: user-local machine, project group, and legacy project alias config helpers.
 - `./sync-storage`: user-local synced snapshot config, env token resolution, and stored snapshot helpers.
 
 ## `@ai-usage/report-data`

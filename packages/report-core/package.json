@@ -13,6 +13,7 @@
     "./pricing": "./src/pricing.ts",
     "./provenance": "./src/provenance.ts",
     "./project-alias": "./src/project-alias.ts",
+    "./project-group": "./src/project-group.ts",
     "./merge-bundle": "./src/merge-bundle.ts",
     "./report-data": "./src/report-data.ts",
     "./session-lineage": "./src/session-lineage.ts",

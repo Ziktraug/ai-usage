@@ -1,5 +1,5 @@
 import { css, cx } from '@ai-usage/design-system/css';
-import { panel, panelHeader, panelSub, panelTitle } from '@ai-usage/design-system/report';
+import { ghostButton, panel, panelHeader, panelSub, panelTitle } from '@ai-usage/design-system/report';
 import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
 import { For, Show } from 'solid-js';
 
@@ -20,7 +20,15 @@ const warningList = css({
 });
 
 const warningItem = css({
+  display: 'flex',
+  gap: '10px',
+  alignItems: 'center',
+  justifyContent: 'space-between',
   overflowWrap: 'anywhere',
+});
+
+const warningMessage = css({
+  minW: 0,
 });
 
 const warningHarness = css({
@@ -28,7 +36,15 @@ const warningHarness = css({
   fontWeight: 650,
 });
 
-export const ReportWarnings = (props: { warnings: UsageReportWarning[] | undefined }) => {
+const warningCanCleanup = (warning: UsageReportWarning) =>
+  warning.operation === 'projectGrouping' &&
+  (warning.reason === 'unmatched-group' || warning.reason === 'partial-group') &&
+  Boolean(warning.groupId);
+
+export const ReportWarnings = (props: {
+  onCleanupProjectWarning?: (warning: UsageReportWarning) => void;
+  warnings: UsageReportWarning[] | undefined;
+}) => {
   const warnings = () => props.warnings ?? [];
   return (
     <Show when={warnings().length > 0}>
@@ -41,8 +57,15 @@ export const ReportWarnings = (props: { warnings: UsageReportWarning[] | undefin
           <For each={warnings()}>
             {(warning) => (
               <li class={warningItem}>
-                <Show when={warning.harness}>{(harness) => <span class={warningHarness}>{harness()}: </span>}</Show>
-                {warning.message}
+                <span class={warningMessage}>
+                  <Show when={warning.harness}>{(harness) => <span class={warningHarness}>{harness()}: </span>}</Show>
+                  {warning.message}
+                </span>
+                <Show when={props.onCleanupProjectWarning && warningCanCleanup(warning)}>
+                  <button class={ghostButton} onClick={() => props.onCleanupProjectWarning?.(warning)} type="button">
+                    Cleanup
+                  </button>
+                </Show>
               </li>
             )}
           </For>

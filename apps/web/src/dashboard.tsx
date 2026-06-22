@@ -25,6 +25,7 @@ import {
   unavailableText,
   unavailableTitle,
 } from '@ai-usage/design-system/report';
+import type { ProjectGroupConfig, ProjectSourceSelector } from '@ai-usage/report-core/project-group';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
@@ -70,6 +71,7 @@ import { type DateBounds, shiftCalendarDays, startOfDay, toDateInputValue } from
 import { createDateRangeController } from './date-range-controller';
 import { GroupPanel } from './group-panel';
 import { Overview } from './overview';
+import { ProjectGroupEditor } from './project-group-editor';
 import { ProjectSummary } from './project-summary';
 import { RefreshStatus } from './refresh-status';
 import { cursorCommitAttributionFacet } from './report-data';
@@ -84,6 +86,14 @@ import { TimeRangeControl } from './time-range-control';
 
 const REFRESH_INTERVAL_MS = 60_000;
 const FORM_CONTROL_TAG_PATTERN = /^(INPUT|SELECT|TEXTAREA)$/;
+
+const projectSelectorKey = (selector: ProjectSourceSelector) =>
+  [selector.machineId ?? '', selector.sourcePath ?? '', selector.project ?? '', selector.gitRemote ?? ''].join('|');
+
+const removeSelectors = (sources: ProjectSourceSelector[], selectors: ProjectSourceSelector[]) => {
+  const removed = new Set(selectors.map(projectSelectorKey));
+  return sources.filter((source) => !removed.has(projectSelectorKey(source)));
+};
 
 export const Dashboard = (props: {
   fetchPayload?: (options?: { force?: boolean }) => Promise<UsageReportPayload>;
@@ -368,6 +378,34 @@ export const Dashboard = (props: {
       setRefreshing(false);
     }
   };
+  const saveProjectGroupConfigs = async (projectGroups: ProjectGroupConfig[]) => {
+    const { saveProjectGroups } = await import('./server/report-payload');
+    await saveProjectGroups({ data: { projectGroups } });
+    await refreshPayload(true);
+  };
+  const cleanupProjectWarning = (warning: NonNullable<UsageReportPayload['warnings']>[number]) => {
+    const groupId = warning.groupId;
+    if (!groupId) {
+      return;
+    }
+    const configs = payload().projectGroupConfigs ?? [];
+    const target = configs.find((group) => group.id === groupId);
+    if (!target) {
+      return;
+    }
+    const nextGroups =
+      warning.reason === 'unmatched-group'
+        ? configs.filter((group) => group.id !== groupId)
+        : configs.map((group) => {
+            if (group.id !== groupId) {
+              return group;
+            }
+            return { ...group, sources: removeSelectors(group.sources, warning.selectors ?? []) };
+          });
+    saveProjectGroupConfigs(nextGroups.filter((group) => group.sources.length > 0)).catch((error: unknown) => {
+      console.error(error);
+    });
+  };
   const toggleRefreshPause = () => {
     setRefreshPaused((paused) => {
       if (paused) {
@@ -640,7 +678,7 @@ export const Dashboard = (props: {
             </div>
           </div>
 
-          <ReportWarnings warnings={payload().warnings} />
+          <ReportWarnings onCleanupProjectWarning={cleanupProjectWarning} warnings={payload().warnings} />
 
           <div class={metricGrid}>
             <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>
@@ -738,6 +776,7 @@ export const Dashboard = (props: {
               {
                 content: () => (
                   <section class={section}>
+                    <ProjectGroupEditor disabled={!canRefresh} onSave={saveProjectGroupConfigs} payload={payload()} />
                     <ProjectSummary
                       groups={projectGroupRows()}
                       onProjectFilter={(value) => setFieldFilter('project', value)}

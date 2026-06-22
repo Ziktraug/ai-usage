@@ -6,6 +6,7 @@ export * from './html-export';
 export * from './merge-bundle';
 export * from './pricing';
 export * from './project-alias';
+export * from './project-group';
 export * from './provenance';
 export * from './report-data';
 export * from './session-lineage';

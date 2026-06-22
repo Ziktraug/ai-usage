@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
+import { isProjectGroupConfig } from '@ai-usage/report-core/project-group';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import { Effect } from 'effect';
 import { LocalHistoryError } from './errors';
@@ -96,6 +97,11 @@ const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
     ) {
       return false;
     }
+  }
+
+  const projectGroups = config.projectGroups;
+  if (projectGroups !== undefined && !(Array.isArray(projectGroups) && projectGroups.every(isProjectGroupConfig))) {
+    return false;
   }
 
   const cursor = config.cursor;

@@ -11,13 +11,23 @@ import { LocalHistoryError, type LocalHistoryWarning } from '@ai-usage/local-col
 import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-collectors/machine-config';
 import { type HarnessKey, harnessKeys } from '@ai-usage/report-core/harness-metadata';
-import { applyProjectAliases } from '@ai-usage/report-core/project-alias';
+import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
+import {
+  matchesProjectSourceSelector,
+  type ProjectGroupConfig,
+  type ProjectGroupingWarning,
+  type ProjectSourceSelector,
+  projectSourceId,
+  projectSourceSelectorLabel,
+} from '@ai-usage/report-core/project-group';
 import {
   createUsageReportPayload,
   type PreparedUsageReport,
   prepareUsageReport,
   type ReportOptions,
   type UsageReportPayload,
+  type UsageReportProjectGroup,
+  type UsageReportWarning,
 } from '@ai-usage/report-core/report-data';
 import { normalizeSessionLineage } from '@ai-usage/report-core/session-lineage';
 import {
@@ -28,7 +38,7 @@ import {
   type UsageSnapshot,
 } from '@ai-usage/report-core/snapshot';
 import type { Row, SourcedRow } from '@ai-usage/report-core/types';
-import { usageRowTokenTotal } from '@ai-usage/report-core/usage-row';
+import { usageRowLineDelta, usageRowPricedCost, usageRowTokenTotal } from '@ai-usage/report-core/usage-row';
 import { importLocalRows, queryReportRows, usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 import { withPerfSpan } from './perf';
@@ -90,13 +100,16 @@ export interface MergedUsageReport {
   payload: UsageReportPayload;
   report: PreparedUsageReport;
   rows: Row[];
-  warnings: SnapshotMergeWarning[];
+  warnings: UsageReportWarning[];
 }
 
 export interface ProjectSource {
   gitRemote: string;
   harness: string;
+  harnesses: string[];
   harnessKey: string;
+  harnessKeys: string[];
+  id: string;
   machine: string;
   machineId: string;
   project: string;
@@ -198,13 +211,25 @@ const selectedStoredHarnessKeys = (request: LocalUsageSelection): HarnessKey[] |
   return harnessKeys.filter((key) => key !== 'cursor');
 };
 
+type ProjectedRow = SourcedRow & {
+  projectGroupId: string;
+  projectSourceId: string;
+  rawProject: string;
+};
+
+interface ProjectProjection {
+  projectGroups: UsageReportProjectGroup[];
+  rows: ProjectedRow[];
+  warnings: UsageReportWarning[];
+}
+
 const prepareNormalizedUsageReport = (rows: Row[], options: ReportOptions) =>
   prepareUsageReport(normalizeSessionLineage(rows), options);
 
 export const collectLocalReportRows = (request: LocalReportRowsRequest) =>
   Effect.gen(function* () {
-    const { config, rows } = yield* collectConfiguredLocalRows(request);
-    return applyProjectAliases(rows, config.projectAliases ?? []);
+    const { rows } = yield* collectConfiguredLocalRows(request);
+    return rows;
   });
 
 export const collectLocalReportRowsWithWarnings = (
@@ -220,7 +245,7 @@ export const collectLocalReportRowsWithWarnings = (
       const storage = yield* LocalHistoryStorage;
       const machine = yield* ensureMachineConfig;
       const dbPath = usageStorePath(storage.home);
-      const { config, collection } = yield* withPerfSpan(
+      const { collection } = yield* withPerfSpan(
         'aiUsage.report.collectConfiguredRows',
         collectConfiguredLocalRowsWithWarnings({ ...request, keepSource: true }),
         (result) => ({
@@ -229,11 +254,7 @@ export const collectLocalReportRowsWithWarnings = (
           warnings: result.collection.warnings.length,
         }),
       );
-      const rows = yield* withPerfSpan(
-        'aiUsage.report.applyProjectAliases',
-        Effect.sync(() => applyProjectAliases(collection.rows, config.projectAliases ?? [])),
-        (aliasedRows) => ({ aliases: config.projectAliases?.length ?? 0, rows: aliasedRows.length }),
-      );
+      const rows = collection.rows;
       yield* withPerfSpan(
         'aiUsage.usageStore.importLocalRows',
         importLocalRows({ dbPath, machine, rows }).pipe(
@@ -278,6 +299,18 @@ export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
     'aiUsage.report.createLocalPayload',
     Effect.gen(function* () {
       const { rows, warnings } = yield* collectLocalReportRowsWithWarnings(request);
+      const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
+      const projection = yield* withPerfSpan(
+        'aiUsage.report.projectGroups',
+        Effect.sync(() =>
+          buildProjectProjection(rows as SourcedRow[], config.projectGroups ?? [], config.projectAliases ?? []),
+        ),
+        (result) => ({
+          groups: result.projectGroups.length,
+          rows: result.rows.length,
+          warnings: result.warnings.length,
+        }),
+      );
       const facets = request.includeFacets
         ? yield* withPerfSpan(
             'aiUsage.report.collectFacets',
@@ -289,7 +322,7 @@ export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
         : undefined;
       const report = yield* withPerfSpan(
         'aiUsage.report.prepare',
-        Effect.sync(() => prepareNormalizedUsageReport(rows, request.options)),
+        Effect.sync(() => prepareNormalizedUsageReport(projection.rows, request.options)),
         (prepared) => ({
           omittedRows: prepared.omittedRows,
           rows: prepared.rows.length,
@@ -299,7 +332,15 @@ export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
       return yield* withPerfSpan(
         'aiUsage.report.serializePayload',
         Effect.sync(() =>
-          createUsageReportPayload(report, request.options, request.generatedAt ?? new Date(), facets, warnings),
+          createUsageReportPayload(
+            report,
+            request.options,
+            request.generatedAt ?? new Date(),
+            facets,
+            [...warnings, ...projection.warnings],
+            projection.projectGroups,
+            config.projectGroups ?? [],
+          ),
         ),
         (payload) => ({
           rows: payload.rows.length,
@@ -335,6 +376,18 @@ export const createStoredReportPayload = (
         ),
         (result) => ({ rows: result.rows.length }),
       );
+      const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
+      const projection = yield* withPerfSpan(
+        'aiUsage.report.projectStoredGroups',
+        Effect.sync(() =>
+          buildProjectProjection(stored.rows as SourcedRow[], config.projectGroups ?? [], config.projectAliases ?? []),
+        ),
+        (result) => ({
+          groups: result.projectGroups.length,
+          rows: result.rows.length,
+          warnings: result.warnings.length,
+        }),
+      );
       const facets = request.includeFacets
         ? yield* withPerfSpan(
             'aiUsage.report.collectStoredFacets',
@@ -346,7 +399,7 @@ export const createStoredReportPayload = (
         : undefined;
       const report = yield* withPerfSpan(
         'aiUsage.report.prepareStored',
-        Effect.sync(() => prepareNormalizedUsageReport(stored.rows, request.options)),
+        Effect.sync(() => prepareNormalizedUsageReport(projection.rows, request.options)),
         (prepared) => ({
           omittedRows: prepared.omittedRows,
           rows: prepared.rows.length,
@@ -355,7 +408,17 @@ export const createStoredReportPayload = (
       );
       return yield* withPerfSpan(
         'aiUsage.report.serializeStoredPayload',
-        Effect.sync(() => createUsageReportPayload(report, request.options, request.generatedAt ?? new Date(), facets)),
+        Effect.sync(() =>
+          createUsageReportPayload(
+            report,
+            request.options,
+            request.generatedAt ?? new Date(),
+            facets,
+            projection.warnings,
+            projection.projectGroups,
+            config.projectGroups ?? [],
+          ),
+        ),
         (payload) => ({
           rows: payload.rows.length,
           tableRows: payload.tableRows.length,
@@ -397,13 +460,20 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
 
     const merged = mergeUsageSnapshots(snapshots);
     const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
-    const rows = normalizeSessionLineage(applyProjectAliases(merged.rows, config.projectAliases ?? []));
+    const projection = buildProjectProjection(merged.rows, config.projectGroups ?? [], config.projectAliases ?? []);
+    const rows = normalizeSessionLineage(projection.rows);
     const report = prepareUsageReport(rows, request.options);
-    const allWarnings = merged.warnings;
-    const payloadWarnings = allWarnings.map(({ key, ...warning }) => ({
-      ...warning,
-      message: key ? `${warning.message}: ${key}` : warning.message,
-    }));
+    const allWarnings = [...merged.warnings, ...projection.warnings];
+    const payloadWarnings = allWarnings.map((warning) => {
+      if ('key' in warning) {
+        const { key, ...payloadWarning } = warning;
+        return {
+          ...payloadWarning,
+          message: key ? `${warning.message}: ${key}` : warning.message,
+        };
+      }
+      return warning;
+    });
     const facets = request.includeFacets
       ? yield* collectHarnessFacets({
           includeCursor: request.includeCursor && (!request.harness || request.harness === 'cursor'),
@@ -419,6 +489,8 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
         request.generatedAt ?? new Date(),
         facets,
         payloadWarnings,
+        projection.projectGroups,
+        config.projectGroups ?? [],
       ),
       warnings: allWarnings,
       duplicatesDropped: merged.duplicatesDropped,
@@ -478,6 +550,31 @@ const readGitRemoteUrl = (projectPath: string, readGitFile: ReadGitFile): string
   return text === null ? '' : parseGitConfigRemote(text);
 };
 
+const sourceInputFromRow = (row: SourcedRow) => ({
+  machineId: row.source.machineId ?? '',
+  project: projectFromRow(row),
+  sourcePath: row.source.sourcePath ?? '',
+});
+
+const createProjectSourceFromRow = (row: SourcedRow): ProjectSource => {
+  const project = projectFromRow(row);
+  const sourcePath = row.source.sourcePath ?? '';
+  return {
+    id: projectSourceId({ machineId: row.source.machineId ?? '', project, sourcePath }),
+    project,
+    machine: row.source.machineLabel ?? 'Unknown machine',
+    machineId: row.source.machineId ?? '',
+    harness: row.harness,
+    harnessKey: row.source.harnessKey,
+    harnesses: [row.harness],
+    harnessKeys: [row.source.harnessKey],
+    sourcePath,
+    gitRemote: '',
+    sessions: 0,
+    tokens: 0,
+  };
+};
+
 const collectProjectSources = (
   rows: SourcedRow[],
   includeGitRemote: boolean,
@@ -486,22 +583,19 @@ const collectProjectSources = (
   const summaries = new Map<string, ProjectSource>();
 
   for (const row of rows) {
-    const source = row.source;
-    const summary: ProjectSource = {
-      project: projectFromRow(row),
-      machine: source.machineLabel ?? 'Unknown machine',
-      machineId: source.machineId ?? '',
-      harness: row.harness,
-      harnessKey: source.harnessKey,
-      sourcePath: source.sourcePath ?? '',
-      gitRemote: '',
-      sessions: 0,
-      tokens: 0,
-    };
-    const key = [summary.project, summary.machineId, summary.machine, summary.harness, summary.sourcePath].join('|');
+    const summary = createProjectSourceFromRow(row);
+    const key = summary.id;
     const current = summaries.get(key) ?? summary;
     current.sessions++;
     current.tokens += usageRowTokenTotal(row);
+    if (!current.harnesses.includes(row.harness)) {
+      current.harnesses.push(row.harness);
+      current.harness = current.harnesses.join(', ');
+    }
+    if (!current.harnessKeys.includes(row.source.harnessKey)) {
+      current.harnessKeys.push(row.source.harnessKey);
+      current.harnessKey = current.harnessKeys.join(',');
+    }
     summaries.set(key, current);
   }
 
@@ -514,6 +608,226 @@ const collectProjectSources = (
     enrichGitRemotes(result, readGitFile);
   }
   return result;
+};
+
+const escapeRegex = (value: string) => value.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+
+const globToRegex = (glob: string) => {
+  const normalized = path.normalize(glob).replaceAll(path.sep, '/');
+  const pattern = normalized
+    .split('*')
+    .map((part) => escapeRegex(part))
+    .join('.*');
+  return new RegExp(`^${pattern}$`, 'i');
+};
+
+const legacyAliasMatchesSource = (source: ProjectSource, alias: ProjectAliasEntry) =>
+  alias.match.some((pattern) => {
+    const regex = globToRegex(pattern);
+    return [source.sourcePath, source.project].some((candidate) => candidate && regex.test(candidate));
+  });
+
+const sourceLabel = (source: ProjectSource) =>
+  source.machine ? `${source.project} · ${source.machine}` : source.project;
+
+const lineDeltaForRows = (rows: SourcedRow[]) =>
+  rows.reduce(
+    (total, row) => {
+      const lineDelta = usageRowLineDelta(row);
+      total.added += lineDelta.added;
+      total.deleted += lineDelta.deleted;
+      return total;
+    },
+    { added: 0, deleted: 0 },
+  );
+
+const createReportProjectGroup = (
+  id: string,
+  name: string,
+  grouped: boolean,
+  sources: ProjectSource[],
+  rows: SourcedRow[],
+): UsageReportProjectGroup => {
+  const lineDelta = lineDeltaForRows(rows);
+  return {
+    id,
+    name,
+    grouped,
+    sources: sources.map((source) => ({
+      gitRemote: source.gitRemote,
+      id: source.id,
+      machineId: source.machineId,
+      machineLabel: source.machine,
+      project: source.project,
+      sessions: source.sessions,
+      sourcePath: source.sourcePath,
+      tokens: source.tokens,
+    })),
+    sessions: rows.length,
+    tokens: rows.reduce((total, row) => total + usageRowTokenTotal(row), 0),
+    fresh: rows.reduce((total, row) => total + row.tokIn + row.tokOut + row.tokCw, 0),
+    cache: rows.reduce((total, row) => total + row.tokCr, 0),
+    cost: rows.reduce((total, row) => total + (usageRowPricedCost(row) ?? 0), 0),
+    priced: rows.filter((row) => usageRowPricedCost(row) !== null).length,
+    linesAdded: lineDelta.added,
+    linesDeleted: lineDelta.deleted,
+    turns: rows.reduce((total, row) => total + row.turns, 0),
+    tools: rows.reduce((total, row) => total + row.tools, 0),
+  };
+};
+
+const projectGroupingWarning = (
+  reason: ProjectGroupingWarning['reason'],
+  message: string,
+  group?: Pick<ProjectGroupConfig, 'id' | 'name'>,
+  selectors?: ProjectSourceSelector[],
+): UsageReportWarning => ({
+  operation: 'projectGrouping',
+  reason,
+  message,
+  ...(group === undefined ? {} : { groupId: group.id, groupName: group.name }),
+  ...(selectors === undefined ? {} : { selectors }),
+});
+
+const buildProjectProjection = (
+  rows: SourcedRow[],
+  groups: ProjectGroupConfig[] = [],
+  legacyAliases: ProjectAliasEntry[] = [],
+): ProjectProjection => {
+  const sources = collectProjectSources(rows, false);
+  const sourceById = new Map(sources.map((source) => [source.id, source]));
+  const rowsBySourceId = new Map<string, SourcedRow[]>();
+  for (const row of rows) {
+    const sourceId = projectSourceId(sourceInputFromRow(row));
+    const sourceRows = rowsBySourceId.get(sourceId) ?? [];
+    sourceRows.push(row);
+    rowsBySourceId.set(sourceId, sourceRows);
+  }
+
+  const warnings: UsageReportWarning[] = [];
+  const sourceGroupName = new Map<string, { groupId: string; name: string }>();
+  const projectGroups: UsageReportProjectGroup[] = [];
+
+  for (const group of groups) {
+    const matchedSourceIds = new Set<string>();
+    const unmatchedSelectors: ProjectSourceSelector[] = [];
+    for (const selector of group.sources) {
+      const matched = sources.filter((source) =>
+        matchesProjectSourceSelector(
+          {
+            machineId: source.machineId,
+            project: source.project,
+            sourcePath: source.sourcePath,
+            gitRemote: source.gitRemote,
+          },
+          selector,
+        ),
+      );
+      if (!matched.length) {
+        unmatchedSelectors.push(selector);
+        continue;
+      }
+      if (matched.length > 1) {
+        warnings.push(
+          projectGroupingWarning(
+            'broad-selector',
+            `Project group "${group.name}" selector matched ${matched.length} sources: ${projectSourceSelectorLabel(selector)}`,
+            group,
+          ),
+        );
+      }
+      for (const source of matched) {
+        matchedSourceIds.add(source.id);
+      }
+    }
+
+    if (!matchedSourceIds.size) {
+      warnings.push(
+        projectGroupingWarning('unmatched-group', `Project group "${group.name}" matches no sources.`, group, [
+          ...group.sources,
+        ]),
+      );
+      continue;
+    }
+    if (unmatchedSelectors.length) {
+      const unmatchedLabels = unmatchedSelectors.map(projectSourceSelectorLabel);
+      warnings.push(
+        projectGroupingWarning(
+          'partial-group',
+          `Project group "${group.name}" has unmatched selectors: ${unmatchedLabels.join('; ')}`,
+          group,
+          unmatchedSelectors,
+        ),
+      );
+    }
+
+    const matchedSources = [...matchedSourceIds].flatMap((id) => {
+      const source = sourceById.get(id);
+      return source ? [source] : [];
+    });
+    const groupRows = [...matchedSourceIds].flatMap((id) => rowsBySourceId.get(id) ?? []);
+    const groupId = `group:${group.id}`;
+    projectGroups.push(createReportProjectGroup(groupId, group.name, true, matchedSources, groupRows));
+    for (const id of matchedSourceIds) {
+      sourceGroupName.set(id, { groupId, name: group.name });
+    }
+  }
+
+  for (const alias of legacyAliases) {
+    const matchedSources = sources.filter(
+      (source) => !sourceGroupName.has(source.id) && legacyAliasMatchesSource(source, alias),
+    );
+    if (!matchedSources.length) {
+      continue;
+    }
+    const groupId = `legacy-alias:${alias.name}`;
+    const groupRows = matchedSources.flatMap((source) => rowsBySourceId.get(source.id) ?? []);
+    warnings.push(
+      projectGroupingWarning(
+        'legacy-alias',
+        `Legacy project alias "${alias.name}" was applied as a report-time project group.`,
+        { id: alias.name, name: alias.name },
+      ),
+    );
+    projectGroups.push(createReportProjectGroup(groupId, alias.name, true, matchedSources, groupRows));
+    for (const source of matchedSources) {
+      sourceGroupName.set(source.id, { groupId, name: alias.name });
+    }
+  }
+
+  for (const source of sources) {
+    if (sourceGroupName.has(source.id)) {
+      continue;
+    }
+    const groupId = `source:${source.id}`;
+    const groupName = sourceLabel(source);
+    projectGroups.push(
+      createReportProjectGroup(groupId, groupName, false, [source], rowsBySourceId.get(source.id) ?? []),
+    );
+    sourceGroupName.set(source.id, { groupId, name: groupName });
+  }
+
+  const projectedRows = rows.map((row) => {
+    const rawProject = row.project;
+    const projectSourceIdValue = projectSourceId(sourceInputFromRow(row));
+    const group = sourceGroupName.get(projectSourceIdValue) ?? {
+      groupId: `source:${projectSourceIdValue}`,
+      name: projectFromRow(row),
+    };
+    return {
+      ...row,
+      rawProject,
+      project: group.name,
+      projectGroupId: group.groupId,
+      projectSourceId: projectSourceIdValue,
+    };
+  });
+
+  return {
+    rows: projectedRows,
+    projectGroups: projectGroups.sort((a, b) => b.cost - a.cost || b.fresh - a.fresh),
+    warnings,
+  };
 };
 
 const enrichGitRemotes = (sources: ProjectSource[], readGitFile: ReadGitFile) => {

@@ -1,3 +1,4 @@
+import { isProjectGroupConfig, type ProjectGroupConfig } from '@ai-usage/report-core/project-group';
 import type { createUsageReportPayload } from '@ai-usage/report-core/report-data';
 import { createServerFn } from '@tanstack/solid-start';
 
@@ -32,3 +33,16 @@ export const startReportPayloadRefresh = createServerFn({ method: 'POST' }).hand
 export const getReportPayloadRefreshState = createServerFn({ method: 'GET' }).handler(() =>
   import('./report-payload.server').then(({ getReportPayloadRefreshState: getRefreshState }) => getRefreshState()),
 );
+
+export const saveProjectGroups = createServerFn({ method: 'POST' })
+  .validator((input: { projectGroups?: unknown }) => {
+    if (!(Array.isArray(input.projectGroups) && input.projectGroups.every(isProjectGroupConfig))) {
+      throw new Error('Invalid project groups');
+    }
+    return { projectGroups: input.projectGroups as ProjectGroupConfig[] };
+  })
+  .handler(({ data }) =>
+    import('./report-payload.server').then(({ saveProjectGroupsForServer }) =>
+      saveProjectGroupsForServer(data.projectGroups),
+    ),
+  );

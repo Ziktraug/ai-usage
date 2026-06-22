@@ -85,6 +85,7 @@ export type DashboardRow = SerializedRow & {
   children?: DashboardRow[];
   modelLabel: string;
   modelKey: string;
+  projectLabel: string;
   projectKey: string;
   providerDisplay: string;
   rowId: string;
@@ -109,6 +110,8 @@ const timeFromRowDate = (row: SerializedRow) => {
 
 const buildRowId = (row: SerializedRow) =>
   [
+    row.source?.machineId ?? '',
+    row.source?.sourceSessionId ?? '',
     row.activeDate ?? row.date ?? '',
     row.harness,
     row.provider,
@@ -124,7 +127,8 @@ export const enrichReportRow = (row: SerializedRow): DashboardRow => {
   const activeTime = timeFromRowDate(row);
   const modelLabel = modelLabelForRow(row);
   const modelKey = normalizeModelKey(row.model);
-  const projectKey = row.project || '(unknown)';
+  const projectLabel = row.project || '(unknown)';
+  const projectKey = projectLabel;
   const providerDisplay = providerLabel(row.provider);
   const machineLabel = row.source?.machineLabel ?? '';
 
@@ -133,11 +137,12 @@ export const enrichReportRow = (row: SerializedRow): DashboardRow => {
     activeTime,
     modelLabel,
     modelKey,
+    projectLabel,
     projectKey,
     providerDisplay,
     rowId: buildRowId(row),
     searchText:
-      `${row.sessionLabel} ${row.project} ${modelLabel} ${row.provider} ${providerDisplay} ${row.harness} ${machineLabel}`.toLowerCase(),
+      `${row.sessionLabel} ${row.project} ${row.rawProject ?? ''} ${projectKey} ${modelLabel} ${row.provider} ${providerDisplay} ${row.harness} ${machineLabel}`.toLowerCase(),
     sortDate: activeTime ?? 0,
     sortHarness: row.harness.toLowerCase(),
     sortMachine: machineLabel.toLowerCase(),

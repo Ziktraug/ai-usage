@@ -6,6 +6,7 @@ import {
   buildCampaignViews,
   buildDashboardMetrics,
   buildPreviousPeriodSummary,
+  buildProjectGroupRows,
   buildSortedDashboardRows,
   buildVisibleSummary,
   createFilterSnapshot,
@@ -134,6 +135,50 @@ describe('dashboard model', () => {
 
     expect(sorted.map((item) => item.sessionLabel)).toEqual(['High cost', 'Low cost']);
     expect(rows.map((item) => item.sessionLabel)).toEqual(['Low cost', 'High cost']);
+  });
+
+  test('groups projects by the native projected project name from the report payload', () => {
+    const bounds: DateBounds = { from: null, to: null };
+    const rows = [
+      row({
+        project: 'exalibur · Machine A',
+        rawProject: 'exalibur',
+        source: {
+          harnessKey: 'codex',
+          sourceSessionId: 'machine-a-session',
+          machineId: 'machine-a',
+          machineLabel: 'Machine A',
+        },
+      }),
+      row({
+        project: 'exalibur · Machine B',
+        rawProject: 'exalibur',
+        source: {
+          harnessKey: 'codex',
+          sourceSessionId: 'machine-b-session',
+          machineId: 'machine-b',
+          machineLabel: 'Machine B',
+        },
+      }),
+      row({
+        project: 'exalibur',
+        rawProject: 'exalibur2',
+        source: {
+          harnessKey: 'codex',
+          sourceSessionId: 'aliased-session',
+          machineId: 'machine-c',
+          machineLabel: 'Machine C',
+        },
+      }),
+    ];
+
+    const groups = buildProjectGroupRows(rows, bounds);
+
+    expect(groups.map((group) => group.key).sort()).toEqual([
+      'exalibur',
+      'exalibur · Machine A',
+      'exalibur · Machine B',
+    ]);
   });
 
   test('builds campaign views by machine and root source id without merging rows', () => {

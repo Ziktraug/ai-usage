@@ -169,29 +169,41 @@ The interactive report also includes a LAN sync console at `/sync` when served t
 
 Merged reports include a `Machine` column (CLI `--wide`, CSV, and HTML dashboard). CSV also includes `machine_id` for scripting.
 
+Projects with the same name from different machines stay separate by default and are displayed with the machine label.
+If those folders are intentionally the same project, create a project group in the dashboard's Projects tab.
+
 ### 6. Group project folders across machines
 
-The same project often lives at different paths on different machines. Project aliases let you merge them under one name.
+The same project often lives at different paths on different machines. Project groups let you merge those sources under one native project name for analytics, filtering, CSV, sessions, and the Projects tab.
 
 Create `~/.config/ai-usage/config.json`:
 
 ```json
 {
-  "projectAliases": [
-    { "name": "exalibur", "match": ["*/exalibur", "*/exalibur-*"] }
+  "projectGroups": [
+    {
+      "id": "exalibur",
+      "name": "exalibur",
+      "sources": [
+        { "machineId": "macbook-machine-id", "sourcePath": "/Users/nathan/projects/exalibur" },
+        { "machineId": "linux-machine-id", "sourcePath": "/home/nathan/projects/exalibur" },
+        { "machineId": "macbook-machine-id", "sourcePath": "/Users/nathan/projects/exalibur2" }
+      ]
+    }
   ]
 }
 ```
 
-Or use the local setup UI:
+Or use the live dashboard:
 
 ```sh
-bun run cli -- setup ./mac-usage.json --local --port 3456
+bun run dev:web
 ```
 
-Then open `http://localhost:3456` in a browser. The UI shows all detected project sources, suggests merges for matching basenames, and saves aliases directly to your config.
+Then open the Projects tab. The UI shows detected project sources with machine labels and writes project groups to your local config.
 
-Once configured, aliases apply before filtering and analytics, so `--project exalibur` matches the grouped project. Config stays local to your machine and is never read from the repo.
+Legacy `projectAliases` are still supported as broad report-time groups, but new dashboard edits write `projectGroups`.
+Config stays local to your machine and is never read from the repo.
 
 ### 5. Discover project sources
 

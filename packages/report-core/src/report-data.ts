@@ -1,4 +1,5 @@
 import { type AnalyticsSummary, calculateAnalytics } from './analytics';
+import type { ProjectGroupConfig, ProjectGroupingWarningReason, ProjectSourceSelector } from './project-group';
 import type { UsageRow, UsageRowSource, UsageRowWithOptionalSource } from './types';
 import { usageRowActiveDate, usageRowLineDelta, usageRowSessionLabel, usageRowTokenTotal } from './usage-row';
 
@@ -24,6 +25,9 @@ export interface SerializedUsageRow extends Omit<UsageRow, 'date' | 'endDate'> {
   endDate: string | null;
   freshTokens: number;
   lineDelta: number | null;
+  projectGroupId?: string;
+  projectSourceId?: string;
+  rawProject?: string;
   sessionLabel: string;
   source?: UsageRowSource;
   tokenTotal: number;
@@ -32,11 +36,43 @@ export interface SerializedUsageRow extends Omit<UsageRow, 'date' | 'endDate'> {
 export type SerializedRow = SerializedUsageRow;
 
 export interface UsageReportWarning {
+  groupId?: string;
+  groupName?: string;
   harness?: string;
   message: string;
   operation?: string;
   path?: string;
+  reason?: ProjectGroupingWarningReason;
+  selectors?: ProjectSourceSelector[];
   sql?: string;
+}
+
+export interface UsageReportProjectSource {
+  gitRemote: string;
+  id: string;
+  machineId: string;
+  machineLabel: string;
+  project: string;
+  sessions: number;
+  sourcePath: string;
+  tokens: number;
+}
+
+export interface UsageReportProjectGroup {
+  cache: number;
+  cost: number;
+  fresh: number;
+  grouped: boolean;
+  id: string;
+  linesAdded: number;
+  linesDeleted: number;
+  name: string;
+  priced: number;
+  sessions: number;
+  sources: UsageReportProjectSource[];
+  tokens: number;
+  tools: number;
+  turns: number;
 }
 
 export interface UsageReportPayload {
@@ -51,6 +87,8 @@ export interface UsageReportPayload {
   };
   generatedAt: string;
   omittedRows: number;
+  projectGroupConfigs?: ProjectGroupConfig[];
+  projectGroups?: UsageReportProjectGroup[];
   rows: SerializedUsageRow[];
   tableRows: SerializedUsageRow[];
   warnings?: UsageReportWarning[];
@@ -93,6 +131,11 @@ export const serializeUsageRow = (row: UsageRowWithOptionalSource): SerializedUs
   const lineDelta = usageRowLineDelta(row);
   const tokenTotal = usageRowTokenTotal(row);
   const source = row.source;
+  const projectMetadata = row as UsageRowWithOptionalSource & {
+    projectGroupId?: string;
+    projectSourceId?: string;
+    rawProject?: string;
+  };
   return {
     ...row,
     date: row.date?.toISOString() ?? null,
@@ -102,6 +145,9 @@ export const serializeUsageRow = (row: UsageRowWithOptionalSource): SerializedUs
     tokenTotal,
     freshTokens: row.tokIn + row.tokOut + row.tokCw,
     lineDelta: lineDelta.present ? lineDelta.total : null,
+    ...(projectMetadata.rawProject === undefined ? {} : { rawProject: projectMetadata.rawProject }),
+    ...(projectMetadata.projectGroupId === undefined ? {} : { projectGroupId: projectMetadata.projectGroupId }),
+    ...(projectMetadata.projectSourceId === undefined ? {} : { projectSourceId: projectMetadata.projectSourceId }),
     ...(source ? { source } : {}),
   };
 };
@@ -112,6 +158,8 @@ export const createUsageReportPayload = (
   generatedAt = new Date(),
   facets?: Record<string, unknown>,
   warnings?: UsageReportWarning[],
+  projectGroups?: UsageReportProjectGroup[],
+  projectGroupConfigs?: ProjectGroupConfig[],
 ): UsageReportPayload => ({
   generatedAt: generatedAt.toISOString(),
   filters: {
@@ -125,6 +173,8 @@ export const createUsageReportPayload = (
   tableRows: report.tableRows.map(serializeUsageRow),
   omittedRows: report.omittedRows,
   analytics: calculateAnalytics(report.rows, generatedAt.getTime()),
+  ...(projectGroups === undefined ? {} : { projectGroups }),
+  ...(projectGroupConfigs === undefined ? {} : { projectGroupConfigs }),
   ...(warnings?.length ? { warnings } : {}),
   ...(facets && Object.keys(facets).length ? { facets } : {}),
 });
