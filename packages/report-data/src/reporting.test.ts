@@ -60,6 +60,12 @@ const writeInvalidOpenCodeDb = (home: string) => {
   writeFileSync(dbPath, 'not a sqlite database');
 };
 
+const writeAiUsageConfig = (home: string, config: unknown) => {
+  const configPath = path.join(home, '.config/ai-usage/config.json');
+  mkdirSync(path.dirname(configPath), { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+};
+
 const makeSourcedRow = (input: {
   project: string;
   sourcePath: string;
@@ -191,8 +197,8 @@ describe('shared reporting', () => {
       );
 
       expect(payload.rows).toHaveLength(3);
-      expect(payload.rows.map((row) => row.project).sort()).toContain('peer-project');
-      expect(payload.rows.find((row) => row.project === 'peer-project')?.source?.machineLabel).toBe('Peer Machine');
+      expect(payload.rows.map((row) => row.project).sort()).toContain('peer-project · Peer Machine');
+      expect(payload.rows.find((row) => row.rawProject === 'peer-project')?.source?.machineLabel).toBe('Peer Machine');
       expect(payload.rows.find((row) => row.name === 'peer-child')?.source?.rootSourceSessionId).toBe('peer-parent');
     } finally {
       globalThis.fetch = originalFetch;
@@ -233,9 +239,88 @@ describe('shared reporting', () => {
       );
 
       expect(payload.rows).toHaveLength(2);
-      expect(payload.rows[0]?.project).toBe('peer-project');
+      expect(payload.rows[0]?.project).toBe('peer-project · Peer Machine');
+      expect(payload.rows[0]?.rawProject).toBe('peer-project');
       expect(payload.rows[0]?.source?.machineLabel).toBe('Peer Machine');
       expect(payload.rows.find((row) => row.name === 'peer-child')?.source?.rootSourceSessionId).toBe('peer-parent');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('projects configured project groups as native report projects', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-project-groups-'));
+    try {
+      const storage = createLocalHistoryStorage(home);
+      writeAiUsageConfig(home, {
+        projectGroups: [
+          {
+            id: 'exalibur',
+            name: 'exalibur',
+            sources: [
+              { machineId: 'peer-a', sourcePath: '/work/exalibur' },
+              { machineId: 'peer-a', sourcePath: '/work/exalibur2' },
+              { machineId: 'peer-b', sourcePath: '/Users/nathan/exalibur' },
+              { machineId: 'peer-b', sourcePath: '/missing/exalibur3' },
+            ],
+          },
+        ],
+      });
+      await Effect.runPromise(
+        importPeerMergeBundle({
+          dbPath: usageStorePath(home),
+          localMachineId: testMachine.id,
+          bundle: createUsageMergeBundle({
+            machine: { id: 'peer-a', label: 'Machine A' },
+            rows: [
+              makeSourcedRow({ project: 'exalibur', sourcePath: '/work/exalibur', sessionId: 'a-exalibur' }),
+              makeSourcedRow({ project: 'exalibur2', sourcePath: '/work/exalibur2', sessionId: 'a-exalibur2' }),
+            ],
+          }),
+        }),
+      );
+      await Effect.runPromise(
+        importPeerMergeBundle({
+          dbPath: usageStorePath(home),
+          localMachineId: testMachine.id,
+          bundle: createUsageMergeBundle({
+            machine: { id: 'peer-b', label: 'Machine B' },
+            rows: [
+              makeSourcedRow({
+                project: 'exalibur',
+                sourcePath: '/Users/nathan/exalibur',
+                sessionId: 'b-exalibur',
+              }),
+            ],
+          }),
+        }),
+      );
+
+      const payload = await Effect.runPromise(
+        createStoredReportPayload({
+          harness: null,
+          includeCursor: false,
+          includeFacets: true,
+          generatedAt: new Date('2026-01-01T00:00:00.000Z'),
+          options: defaultOptions,
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(payload.rows).toHaveLength(3);
+      expect(payload.rows.every((row) => row.project === 'exalibur')).toBe(true);
+      expect(payload.rows.map((row) => row.rawProject).sort()).toEqual(['exalibur', 'exalibur', 'exalibur2']);
+      expect(payload.projectGroups?.find((group) => group.id === 'group:exalibur')).toMatchObject({
+        grouped: true,
+        name: 'exalibur',
+        sessions: 3,
+      });
+      expect(payload.projectGroups?.find((group) => group.id === 'group:exalibur')?.sources).toHaveLength(3);
+      expect(payload.projectGroupConfigs?.[0]?.name).toBe('exalibur');
+      expect(payload.warnings?.find((warning) => warning.reason === 'partial-group')).toMatchObject({
+        groupId: 'exalibur',
+        operation: 'projectGrouping',
+        selectors: [{ machineId: 'peer-b', sourcePath: '/missing/exalibur3' }],
+      });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -368,10 +453,12 @@ describe('shared reporting', () => {
       );
 
       expect(merged.duplicatesDropped).toBe(2);
-      expect(merged.warnings).toHaveLength(2);
+      expect(merged.warnings).toHaveLength(3);
       expect(merged.rows).toHaveLength(2);
       expect(merged.rows[0]?.project).toBe('Aliased Project');
+      expect(merged.rows[0]?.rawProject).toBe('raw-newer');
       expect(merged.payload.rows[0]?.project).toBe('Aliased Project');
+      expect(merged.payload.warnings?.some((warning) => warning.reason === 'legacy-alias')).toBe(true);
       expect(merged.rows.find((row) => row.name === 'session-2')?.source.rootSourceSessionId).toBe('session-1');
       expect(merged.payload.rows.find((row) => row.name === 'session-2')?.source?.rootSourceSessionId).toBe(
         'session-1',

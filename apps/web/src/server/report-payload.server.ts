@@ -1,8 +1,11 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
+import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import { runStoredReportPayload, type StoredReportPayloadRequest } from '@ai-usage/report-data';
 
@@ -10,6 +13,7 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.
 const reportingPayloadRunner = path.join(rootDir, 'packages/report-data/src/report-payload-runner.ts');
 const execFileAsync = promisify(execFile);
 const rootEnvPath = path.join(rootDir, '.env');
+const userConfigPath = path.join(os.homedir(), '.config', 'ai-usage', 'config.json');
 const LINE_SEPARATOR = /\r?\n/;
 const payloadCacheTtlMs = 10_000;
 let cachedPayload: { payload: UsageReportPayload; storedAt: number } | null = null;
@@ -48,6 +52,17 @@ const perfEnvValue = () => process.env.AI_USAGE_PERF ?? readRootEnvValue('AI_USA
 const perfEnabled = () => perfEnvValue() === '1' || perfEnvValue() === 'true';
 
 export const reportPerfEnabled = () => perfEnabled();
+
+export const saveProjectGroupsForServer = (projectGroups: ProjectGroupConfig[]) => {
+  const config = fs.existsSync(userConfigPath)
+    ? (JSON.parse(fs.readFileSync(userConfigPath, 'utf8')) as AiUsageConfig)
+    : {};
+  fs.mkdirSync(path.dirname(userConfigPath), { recursive: true });
+  fs.writeFileSync(userConfigPath, `${JSON.stringify({ ...config, projectGroups }, null, 2)}\n`, 'utf8');
+  cachedPayload = null;
+  inFlightPayload = null;
+  return { projectGroups };
+};
 
 const payloadModeFromOptions = (options: { force?: boolean }) => (options.force ? 'fresh' : 'stored');
 const isBunRuntime = () => Boolean((process.versions as unknown as Record<string, string | undefined>).bun);

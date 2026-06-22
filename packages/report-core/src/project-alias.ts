@@ -1,4 +1,5 @@
 import path from 'node:path';
+import type { ProjectGroupConfig } from './project-group';
 import type { UsageRowWithOptionalSource } from './types';
 
 export interface ProjectAliasEntry {
@@ -23,6 +24,7 @@ export interface AiUsageConfig {
     user?: string;
   };
   projectAliases?: ProjectAliasEntry[];
+  projectGroups?: ProjectGroupConfig[];
   sync?: {
     remotes?: SyncRemoteConfig[];
   };

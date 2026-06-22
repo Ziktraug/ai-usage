@@ -149,7 +149,7 @@ export const sessionColumns: SessionColumnDef[] = [
           title={`Filter by ${label}`}
           type="button"
         >
-          {row.project || '—'}
+          {row.projectLabel === '(unknown)' ? '—' : row.projectLabel}
         </button>
       );
     },
