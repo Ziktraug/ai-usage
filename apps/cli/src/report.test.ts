@@ -99,6 +99,23 @@ describe('Usage row report lifecycle', () => {
     expect(renderUsageReport([row('a'), row('b')], args({ limit: 1 }))).toContain('analytics below cover all 2');
   });
 
+  test('normalizes lineage before CLI filtering and serialization', () => {
+    const parent = row('parent', {
+      source: { harnessKey: 'codex', sourceSessionId: 'parent' },
+    } as Partial<Row>);
+    const child = row('child', {
+      source: { harnessKey: 'codex', sourceSessionId: 'child', parentSourceSessionId: 'parent' },
+    } as Partial<Row>);
+
+    const report = prepareUsageReport([child, parent], args());
+    const payload = JSON.parse(renderUsageReport([child, parent], args({ format: 'payload' })));
+
+    expect(
+      (report.rows[0] as Row & { source?: { rootSourceSessionId?: string | null } }).source?.rootSourceSessionId,
+    ).toBe('parent');
+    expect(payload.rows[0].source.rootSourceSessionId).toBe('parent');
+  });
+
   test('terminal table displays the active date used by filters and sort', () => {
     const output = renderUsageReport(
       [

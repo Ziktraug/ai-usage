@@ -5,10 +5,14 @@ export interface Rates {
   out: number;
 }
 
+export type TitleSource = 'ai' | 'first-prompt' | 'agent-role' | 'id';
+
 export interface UsageRowSource {
   harnessKey: string;
   machineId?: string;
   machineLabel?: string;
+  parentSourceSessionId?: string | null;
+  rootSourceSessionId?: string | null;
   sourcePath?: string | null;
   sourceSessionId: string | null;
 }
@@ -37,6 +41,7 @@ export interface UsageRow {
   rtkOutputTokens?: number;
   rtkSavedTokens?: number;
   subagent?: boolean;
+  titleSource?: TitleSource;
   tokCr: number;
   tokCw: number;
   tokIn: number;

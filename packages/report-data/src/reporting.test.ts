@@ -64,6 +64,7 @@ const makeSourcedRow = (input: {
   project: string;
   sourcePath: string;
   sessionId: string;
+  parentSessionId?: string;
   tokens?: { in: number; out: number; cr: number; cw: number };
 }): SourcedRow => ({
   ...normalizeUsageRow({
@@ -81,6 +82,7 @@ const makeSourcedRow = (input: {
   source: {
     harnessKey: 'claude',
     sourceSessionId: input.sessionId,
+    ...(input.parentSessionId === undefined ? {} : { parentSourceSessionId: input.parentSessionId }),
     sourcePath: input.sourcePath,
   },
 });
@@ -165,7 +167,15 @@ describe('shared reporting', () => {
           localMachineId: testMachine.id,
           bundle: createUsageMergeBundle({
             machine: { id: 'peer-machine', label: 'Peer Machine' },
-            rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-session-1' })],
+            rows: [
+              makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-parent' }),
+              makeSourcedRow({
+                project: 'peer-project',
+                sourcePath: '/work/peer',
+                sessionId: 'peer-child',
+                parentSessionId: 'peer-parent',
+              }),
+            ],
           }),
         }),
       );
@@ -180,9 +190,10 @@ describe('shared reporting', () => {
         }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
       );
 
-      expect(payload.rows).toHaveLength(2);
+      expect(payload.rows).toHaveLength(3);
       expect(payload.rows.map((row) => row.project).sort()).toContain('peer-project');
       expect(payload.rows.find((row) => row.project === 'peer-project')?.source?.machineLabel).toBe('Peer Machine');
+      expect(payload.rows.find((row) => row.name === 'peer-child')?.source?.rootSourceSessionId).toBe('peer-parent');
     } finally {
       globalThis.fetch = originalFetch;
       rmSync(home, { recursive: true, force: true });
@@ -199,7 +210,15 @@ describe('shared reporting', () => {
           localMachineId: testMachine.id,
           bundle: createUsageMergeBundle({
             machine: { id: 'peer-machine', label: 'Peer Machine' },
-            rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-session-1' })],
+            rows: [
+              makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-parent' }),
+              makeSourcedRow({
+                project: 'peer-project',
+                sourcePath: '/work/peer',
+                sessionId: 'peer-child',
+                parentSessionId: 'peer-parent',
+              }),
+            ],
           }),
         }),
       );
@@ -213,9 +232,10 @@ describe('shared reporting', () => {
         }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
       );
 
-      expect(payload.rows).toHaveLength(1);
+      expect(payload.rows).toHaveLength(2);
       expect(payload.rows[0]?.project).toBe('peer-project');
       expect(payload.rows[0]?.source?.machineLabel).toBe('Peer Machine');
+      expect(payload.rows.find((row) => row.name === 'peer-child')?.source?.rootSourceSessionId).toBe('peer-parent');
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -305,7 +325,15 @@ describe('shared reporting', () => {
       const older = createUsageSnapshot({
         machine: testMachine,
         generatedAt: new Date('2026-01-01T00:00:00.000Z'),
-        rows: [makeSourcedRow({ project: 'raw', sourcePath: '/work/raw', sessionId: 'session-1' })],
+        rows: [
+          makeSourcedRow({ project: 'raw', sourcePath: '/work/raw', sessionId: 'session-1' }),
+          makeSourcedRow({
+            project: 'raw-child',
+            sourcePath: '/work/raw',
+            sessionId: 'session-2',
+            parentSessionId: 'session-1',
+          }),
+        ],
       });
       const newer = createUsageSnapshot({
         machine: testMachine,
@@ -316,6 +344,13 @@ describe('shared reporting', () => {
             sourcePath: '/work/raw',
             sessionId: 'session-1',
             tokens: { in: 20, out: 10, cr: 0, cw: 0 },
+          }),
+          makeSourcedRow({
+            project: 'raw-child-newer',
+            sourcePath: '/work/raw',
+            sessionId: 'session-2',
+            parentSessionId: 'session-1',
+            tokens: { in: 8, out: 4, cr: 0, cw: 0 },
           }),
         ],
       });
@@ -332,11 +367,15 @@ describe('shared reporting', () => {
         }).pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
       );
 
-      expect(merged.duplicatesDropped).toBe(1);
-      expect(merged.warnings).toHaveLength(1);
-      expect(merged.rows).toHaveLength(1);
+      expect(merged.duplicatesDropped).toBe(2);
+      expect(merged.warnings).toHaveLength(2);
+      expect(merged.rows).toHaveLength(2);
       expect(merged.rows[0]?.project).toBe('Aliased Project');
       expect(merged.payload.rows[0]?.project).toBe('Aliased Project');
+      expect(merged.rows.find((row) => row.name === 'session-2')?.source.rootSourceSessionId).toBe('session-1');
+      expect(merged.payload.rows.find((row) => row.name === 'session-2')?.source?.rootSourceSessionId).toBe(
+        'session-1',
+      );
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(configCwd, { recursive: true, force: true });

@@ -1,3 +1,4 @@
+import type { TitleSource } from '@ai-usage/report-core/types';
 import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
@@ -38,11 +39,21 @@ interface CursorTokenData {
   };
 }
 
+const cursorTitleSource = (aiTitle: string | null | undefined, firstPrompt: string | null | undefined): TitleSource => {
+  if (aiTitle) {
+    return 'ai';
+  }
+  if (firstPrompt) {
+    return 'first-prompt';
+  }
+  return 'id';
+};
+
 const COMPOSER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'composerData:%'";
 const TOKEN_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"inputTokens\"%'";
 const USER_BUBBLE_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"type\":1%'";
 
-const CURSOR_DB_CACHE_VERSION = 1;
+const CURSOR_DB_CACHE_VERSION = 2;
 const CURSOR_DB_CACHE_FILE = 'cursor-db-cache.json';
 
 export type CursorCsvIngestionOptions = Partial<CursorCsvOptions> & {
@@ -199,6 +210,7 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
             endDate: null,
             provider: 'Cursor sub',
             name: composer?.name || name?.first || `cursor ${composerId.slice(0, 8)}`,
+            titleSource: cursorTitleSource(composer?.name, name?.first),
             model,
             project: '',
             tokens,
@@ -229,6 +241,7 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
             endDate: null,
             provider: 'Cursor sub',
             name: composer.name || name.first || `cursor ${composerId.slice(0, 8)}`,
+            titleSource: cursorTitleSource(composer.name, name.first),
             model: 'usage unavailable',
             project: '',
             tokens: { in: 0, out: 0, cr: 0, cw: 0 },

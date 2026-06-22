@@ -1,5 +1,5 @@
 import { approxCost, priceFor } from './pricing';
-import type { Row } from './types';
+import type { Row, TitleSource } from './types';
 
 export interface TokenCounts {
   cr: number;
@@ -36,6 +36,7 @@ export interface UsageRowInput {
   project?: string | null;
   provider: string;
   subagent?: boolean;
+  titleSource?: TitleSource;
   tokens: TokenCounts;
   tools?: number;
   turns?: number;
@@ -87,6 +88,7 @@ export const normalizeUsageRow = (input: UsageRowInput): Row => {
     ...(input.partial === undefined ? {} : { partial: input.partial }),
     ...(input.usageUnavailable === undefined ? {} : { usageUnavailable: input.usageUnavailable }),
     ...(input.ambiguous === undefined ? {} : { ambiguous: input.ambiguous }),
+    ...(input.titleSource === undefined ? {} : { titleSource: input.titleSource }),
   };
 };
 

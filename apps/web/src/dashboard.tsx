@@ -45,6 +45,8 @@ import { downloadCSV, downloadHTML } from './dashboard-export';
 import { FilterPill, fieldFilterLabels } from './dashboard-filters';
 import { MetricTile } from './dashboard-metrics';
 import {
+  buildCampaignTableRows,
+  buildCampaignViews,
   buildDashboardMetrics,
   buildHarnessGroups,
   buildModelGroups,
@@ -204,6 +206,7 @@ export const Dashboard = (props: {
     ),
   );
   const tableRows = tableFilteredRows;
+  const groupCampaigns = () => search().campaigns !== 'off';
   // Rows in the table's current sort order — shared by CSV export and the
   // drawer's previous/next navigation so both walk the list the user sees.
   const sortedRows = createMemo(() =>
@@ -213,8 +216,33 @@ export const Dashboard = (props: {
       (rows) => ({ rows: rows.length }),
     ),
   );
-  // The drawer closes by itself when its row leaves the filtered set.
-  const selectedRow = createMemo(() => tableFilteredRows().find((row) => rowKey(row) === selectedKey()) ?? null);
+  const sessionTableRows = createMemo(() =>
+    measureClientPerf(
+      'aiUsage.web.client.compute.sessionTableRows',
+      () => buildCampaignTableRows(reportRows(), tableFilteredRows(), sorting(), groupCampaigns()),
+      (rows) => ({ rows: rows.length }),
+    ),
+  );
+  const campaignViews = createMemo(() =>
+    measureClientPerf(
+      'aiUsage.web.client.compute.campaignViews',
+      () => buildCampaignViews(reportRows(), tableFilteredRows()),
+      (campaigns) => ({ campaigns: campaigns.length }),
+    ),
+  );
+  // Campaign context rows can select their atomic root even when the root is outside
+  // the current table filter, so resolve selection against the payload rows.
+  const selectedRow = createMemo(() => reportRows().find((row) => rowKey(row) === selectedKey()) ?? null);
+  const selectedCampaign = createMemo(() => {
+    const row = selectedRow();
+    if (!row) {
+      return null;
+    }
+    const key = rowKey(row);
+    return (
+      campaignViews().find((campaign) => campaign.allRows.some((campaignRow) => rowKey(campaignRow) === key)) ?? null
+    );
+  });
   const navigateSelected = (delta: number) => {
     const rows = sortedRows();
     const key = selectedKey();
@@ -405,6 +433,15 @@ export const Dashboard = (props: {
     const value = toDateInputValue(day);
     dateRange.setCustom(value, value);
     commitTableDateRange();
+    setTab('sessions');
+  };
+  const inspectOverviewSession = (row: DashboardRow) => {
+    setSelectedKey(rowKey(row));
+    setTab('sessions');
+  };
+  const inspectOverviewModel = (modelKey: string) => {
+    setFieldFilter('model', modelKey);
+    setTab('sessions');
   };
   const setFieldFilters = (updater: Updater<FieldFilters>) =>
     updateSearch((current) => ({ ...current, filters: applyTableUpdate(updater, current.filters) }));
@@ -434,6 +471,8 @@ export const Dashboard = (props: {
       const nextVisibility = applyTableUpdate(updater, columnVisibilityFromDiff(current.cols));
       return { ...current, cols: columnDiffFromVisibility(nextVisibility) };
     });
+  const setCampaignGrouping = (enabled: boolean) =>
+    updateSearch((current) => ({ ...current, campaigns: enabled ? 'on' : 'off' }));
   const setTab = (tab: string) => {
     if (!isDashboardTab(tab)) {
       return;
@@ -605,8 +644,10 @@ export const Dashboard = (props: {
             <Show when={search().tab === 'overview'}>
               <section class={section} role="tabpanel">
                 <Overview
+                  campaigns={campaignViews()}
                   onSelectDay={focusDay}
-                  onSelectSession={(row) => setSelectedKey(rowKey(row))}
+                  onSelectModel={inspectOverviewModel}
+                  onSelectSession={inspectOverviewSession}
                   rangeLabel={dateRange.label()}
                   rows={tableRows()}
                   summary={visibleSummary()}
@@ -618,13 +659,15 @@ export const Dashboard = (props: {
               <section class={section} role="tabpanel">
                 <SessionTable
                   columnVisibility={columnVisibility()}
+                  groupCampaigns={groupCampaigns()}
                   onClearFilters={clearFilters}
                   onColumnVisibilityChange={handleColumnVisibilityChange}
                   onFieldFilter={setFieldFilter}
+                  onGroupCampaignsChange={setCampaignGrouping}
                   onHarnessFilter={setHarness}
                   onSelect={toggleSelected}
                   onSortingChange={handleSortingChange}
-                  rows={tableRows()}
+                  rows={sessionTableRows()}
                   searchQuery={query()}
                   selectedKey={selectedKey()}
                   sorting={sorting()}
@@ -682,11 +725,14 @@ export const Dashboard = (props: {
           <Show when={selectedRow()}>
             {(row) => (
               <SessionDrawer
+                onClearFilters={clearFilters}
                 onClose={() => setSelectedKey(null)}
                 onFieldFilter={setFieldFilter}
                 onNavigate={navigateSelected}
+                onSelectSession={(session) => setSelectedKey(rowKey(session))}
                 row={row()}
                 rows={sortedRows()}
+                selectedCampaign={selectedCampaign()}
               />
             )}
           </Show>

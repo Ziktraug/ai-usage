@@ -6,10 +6,11 @@ import {
 import {
   createUsageReportPayload,
   type PreparedUsageReport,
-  prepareUsageReport as prepareUsageReportForRender,
+  prepareUsageReport as prepareCoreUsageReport,
   type UsageReportPayload,
   type UsageReportWarning,
 } from '@ai-usage/report-core/report-data';
+import { normalizeSessionLineage } from '@ai-usage/report-core/session-lineage';
 import type { Row } from '@ai-usage/report-core/types';
 import type { Args } from './cli';
 import { renderAnalytics } from './render/analytics';
@@ -68,7 +69,7 @@ export const renderUsageReport = (
   facets?: Record<string, unknown>,
   warnings?: UsageReportWarning[],
 ) => {
-  const report = prepareUsageReportForRender(rows, args);
+  const report = prepareUsageReport(rows, args);
 
   if (args.format === 'json') {
     return JSON.stringify(report.rows, null, 2);
@@ -92,7 +93,7 @@ export const renderUsageReportForCli = async (
   facets?: Record<string, unknown>,
   warnings?: UsageReportWarning[],
 ) => {
-  const report = prepareUsageReportForRender(rows, args);
+  const report = prepareUsageReport(rows, args);
   if (args.format === 'html') {
     return await renderReportAppHTML(createUsageReportPayload(report, args, new Date(), facets, warnings));
   }
@@ -106,4 +107,5 @@ export const renderUsagePayloadForCli = async (payload: UsageReportPayload, args
   return await Promise.resolve(JSON.stringify(payload));
 };
 
-export { prepareUsageReport } from '@ai-usage/report-core/report-data';
+export const prepareUsageReport = (rows: Row[], args: Args) =>
+  prepareCoreUsageReport(normalizeSessionLineage(rows), args);
