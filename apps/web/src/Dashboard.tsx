@@ -47,6 +47,7 @@ import { MetricTile } from './dashboard-metrics';
 import {
   buildDashboardMetrics,
   buildCampaignTableRows,
+  buildCampaignViews,
   buildHarnessGroups,
   buildModelGroups,
   buildPreviousPeriodSummary,
@@ -214,9 +215,24 @@ export const Dashboard = (props: {
       (rows) => ({ rows: rows.length }),
     ),
   );
+  const campaignViews = createMemo(() =>
+    measureClientPerf(
+      'aiUsage.web.client.compute.campaignViews',
+      () => buildCampaignViews(reportRows(), tableFilteredRows()),
+      (campaigns) => ({ campaigns: campaigns.length }),
+    ),
+  );
   // Campaign context rows can select their atomic root even when the root is outside
   // the current table filter, so resolve selection against the payload rows.
   const selectedRow = createMemo(() => reportRows().find((row) => rowKey(row) === selectedKey()) ?? null);
+  const selectedCampaign = createMemo(() => {
+    const row = selectedRow();
+    if (!row) return null;
+    const key = rowKey(row);
+    return (
+      campaignViews().find((campaign) => campaign.allRows.some((campaignRow) => rowKey(campaignRow) === key)) ?? null
+    );
+  });
   const navigateSelected = (delta: number) => {
     const rows = sortedRows();
     const key = selectedKey();
@@ -359,6 +375,15 @@ export const Dashboard = (props: {
     const value = toDateInputValue(day);
     dateRange.setCustom(value, value);
     commitTableDateRange();
+    setTab('sessions');
+  };
+  const inspectOverviewSession = (row: DashboardRow) => {
+    setSelectedKey(rowKey(row));
+    setTab('sessions');
+  };
+  const inspectOverviewModel = (modelKey: string) => {
+    setFieldFilter('model', modelKey);
+    setTab('sessions');
   };
   const setFieldFilters = (updater: Updater<FieldFilters>) =>
     updateSearch((current) => ({ ...current, filters: applyTableUpdate(updater, current.filters) }));
@@ -543,11 +568,13 @@ export const Dashboard = (props: {
             <Show when={search().tab === 'overview'}>
               <section role="tabpanel" class={section}>
                 <Overview
+                  campaigns={campaignViews()}
                   rows={tableRows()}
                   timelineRows={timelineRows()}
                   summary={visibleSummary()}
                   rangeLabel={dateRange.label()}
-                  onSelectSession={(row) => setSelectedKey(rowKey(row))}
+                  onSelectModel={inspectOverviewModel}
+                  onSelectSession={inspectOverviewSession}
                   onSelectDay={focusDay}
                 />
               </section>
@@ -624,9 +651,12 @@ export const Dashboard = (props: {
               <SessionDrawer
                 row={row()}
                 rows={sortedRows()}
+                selectedCampaign={selectedCampaign()}
                 onClose={() => setSelectedKey(null)}
                 onNavigate={navigateSelected}
+                onSelectSession={(session) => setSelectedKey(rowKey(session))}
                 onFieldFilter={setFieldFilter}
+                onClearFilters={clearFilters}
               />
             )}
           </Show>

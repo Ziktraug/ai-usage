@@ -1,9 +1,11 @@
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { describe, expect, test } from 'bun:test';
 import { toDateInputValue } from './date-range';
+import { buildCampaignViews } from './dashboard-model';
 import {
   buildCalendarHeatmapData,
   buildModelMigrationData,
+  buildOverviewSessionItems,
   buildOverviewRecords,
   buildPunchcardData,
   buildSessionShapeData,
@@ -47,8 +49,18 @@ const heatDay = (data: NonNullable<ReturnType<typeof buildCalendarHeatmapData>>,
 describe('overview model', () => {
   test('builds calendar heatmap data from dated sessions', () => {
     const rows = [
-      row({ sessionLabel: 'A', activeDate: '2026-06-10T12:00:00.000Z', date: '2026-06-10T12:00:00.000Z', costApprox: 2 }),
-      row({ sessionLabel: 'B', activeDate: '2026-06-10T15:00:00.000Z', date: '2026-06-10T15:00:00.000Z', costApprox: 3 }),
+      row({
+        sessionLabel: 'A',
+        activeDate: '2026-06-10T12:00:00.000Z',
+        date: '2026-06-10T12:00:00.000Z',
+        costApprox: 2,
+      }),
+      row({
+        sessionLabel: 'B',
+        activeDate: '2026-06-10T15:00:00.000Z',
+        date: '2026-06-10T15:00:00.000Z',
+        costApprox: 3,
+      }),
       row({
         sessionLabel: 'C',
         activeDate: '2026-06-11T12:00:00.000Z',
@@ -70,9 +82,27 @@ describe('overview model', () => {
 
   test('builds model migration series and paths', () => {
     const rows = [
-      row({ sessionLabel: 'GPT one', activeDate: '2026-06-01T12:00:00.000Z', date: '2026-06-01T12:00:00.000Z', model: 'gpt-5', costApprox: 5 }),
-      row({ sessionLabel: 'Claude', activeDate: '2026-06-02T12:00:00.000Z', date: '2026-06-02T12:00:00.000Z', model: 'claude-sonnet', costApprox: 2 }),
-      row({ sessionLabel: 'GPT two', activeDate: '2026-06-03T12:00:00.000Z', date: '2026-06-03T12:00:00.000Z', model: 'gpt-5', costApprox: 4 }),
+      row({
+        sessionLabel: 'GPT one',
+        activeDate: '2026-06-01T12:00:00.000Z',
+        date: '2026-06-01T12:00:00.000Z',
+        model: 'gpt-5',
+        costApprox: 5,
+      }),
+      row({
+        sessionLabel: 'Claude',
+        activeDate: '2026-06-02T12:00:00.000Z',
+        date: '2026-06-02T12:00:00.000Z',
+        model: 'claude-sonnet',
+        costApprox: 2,
+      }),
+      row({
+        sessionLabel: 'GPT two',
+        activeDate: '2026-06-03T12:00:00.000Z',
+        date: '2026-06-03T12:00:00.000Z',
+        model: 'gpt-5',
+        costApprox: 4,
+      }),
     ];
 
     const data = buildModelMigrationData(rows);
@@ -100,8 +130,18 @@ describe('overview model', () => {
 
   test('builds punchcard density', () => {
     const rows = [
-      row({ sessionLabel: 'A', activeDate: '2026-06-10T12:00:00.000Z', date: '2026-06-10T12:00:00.000Z', costApprox: 2 }),
-      row({ sessionLabel: 'B', activeDate: '2026-06-10T12:30:00.000Z', date: '2026-06-10T12:30:00.000Z', costApprox: 3 }),
+      row({
+        sessionLabel: 'A',
+        activeDate: '2026-06-10T12:00:00.000Z',
+        date: '2026-06-10T12:00:00.000Z',
+        costApprox: 2,
+      }),
+      row({
+        sessionLabel: 'B',
+        activeDate: '2026-06-10T12:30:00.000Z',
+        date: '2026-06-10T12:30:00.000Z',
+        costApprox: 3,
+      }),
     ];
 
     const data = buildPunchcardData(rows);
@@ -114,9 +154,27 @@ describe('overview model', () => {
 
   test('builds records and top sessions', () => {
     const rows = [
-      row({ sessionLabel: 'High', activeDate: '2026-06-10T12:00:00.000Z', date: '2026-06-10T12:00:00.000Z', costApprox: 10, durationMs: 60_000 }),
-      row({ sessionLabel: 'Long', activeDate: '2026-06-09T12:00:00.000Z', date: '2026-06-09T12:00:00.000Z', costApprox: 3, durationMs: 3_600_000 }),
-      row({ sessionLabel: 'Old', activeDate: '2026-06-08T12:00:00.000Z', date: '2026-06-08T12:00:00.000Z', costApprox: 1, durationMs: 600_000 }),
+      row({
+        sessionLabel: 'High',
+        activeDate: '2026-06-10T12:00:00.000Z',
+        date: '2026-06-10T12:00:00.000Z',
+        costApprox: 10,
+        durationMs: 60_000,
+      }),
+      row({
+        sessionLabel: 'Long',
+        activeDate: '2026-06-09T12:00:00.000Z',
+        date: '2026-06-09T12:00:00.000Z',
+        costApprox: 3,
+        durationMs: 3_600_000,
+      }),
+      row({
+        sessionLabel: 'Old',
+        activeDate: '2026-06-08T12:00:00.000Z',
+        date: '2026-06-08T12:00:00.000Z',
+        costApprox: 1,
+        durationMs: 600_000,
+      }),
     ];
 
     const records = buildOverviewRecords(rows, rows);
@@ -125,6 +183,49 @@ describe('overview model', () => {
     expect(records?.topCost?.sessionLabel).toBe('High');
     expect(records?.longest?.sessionLabel).toBe('Long');
     expect(records?.streak).toBe(3);
-    expect(top.map((item) => item.sessionLabel)).toEqual(['High', 'Long']);
+    expect(top.map((item) => item.label)).toEqual(['High', 'Long']);
+  });
+
+  test('groups campaigns for top sessions and session shape without double counting children', () => {
+    const campaignRoot = row({
+      sessionLabel: 'Campaign root',
+      activeDate: '2026-06-10T12:00:00.000Z',
+      date: '2026-06-10T12:00:00.000Z',
+      costApprox: 8,
+      durationMs: 600_000,
+      source: {
+        harnessKey: 'codex',
+        sourceSessionId: 'root-1',
+        rootSourceSessionId: 'root-1',
+        machineId: 'machine-a',
+      },
+    });
+    const campaignChild = row({
+      sessionLabel: 'Campaign child',
+      activeDate: '2026-06-10T12:05:00.000Z',
+      date: '2026-06-10T12:05:00.000Z',
+      costApprox: 5,
+      durationMs: 300_000,
+      source: {
+        harnessKey: 'codex',
+        sourceSessionId: 'child-1',
+        parentSourceSessionId: 'root-1',
+        rootSourceSessionId: 'root-1',
+        machineId: 'machine-a',
+      },
+    });
+    const soloA = row({ sessionLabel: 'Solo A', costApprox: 12, durationMs: 120_000 });
+    const soloB = row({ sessionLabel: 'Solo B', costApprox: 3, durationMs: 240_000 });
+    const rows = [campaignRoot, campaignChild, soloA, soloB];
+    const campaigns = buildCampaignViews(rows, rows);
+
+    const items = buildOverviewSessionItems(rows, campaigns);
+    const top = buildTopSessions(rows, 2, campaigns);
+    const shape = buildSessionShapeData(rows, campaigns);
+
+    expect(items.map((item) => item.label).sort()).toEqual(['Campaign root', 'Solo A', 'Solo B']);
+    expect(top.map((item) => item.kind)).toEqual(['campaign', 'session']);
+    expect(top.map((item) => item.costApprox)).toEqual([13, 12]);
+    expect(shape?.points.map((item) => item.label).sort()).toEqual(['Campaign root', 'Solo A', 'Solo B']);
   });
 });

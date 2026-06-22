@@ -1,4 +1,5 @@
 import { DAY_MS, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
+import type { CampaignView } from './dashboard-model';
 import type { DashboardRow } from './shared';
 
 export type HeatDay = { cost: number; date: Date; level: number; sessions: number };
@@ -85,9 +86,9 @@ export type ModelMigrationData = {
 };
 
 export const buildModelMigrationData = (rows: DashboardRow[]): ModelMigrationData | null => {
-  const dated = rows.filter(
-    (row) => row.activeTime != null && row.costKnown && row.costApprox > 0,
-  ) as (DashboardRow & { activeTime: number })[];
+  const dated = rows.filter((row) => row.activeTime != null && row.costKnown && row.costApprox > 0) as (DashboardRow & {
+    activeTime: number;
+  })[];
   if (dated.length < 2) return null;
 
   let minTime = Number.POSITIVE_INFINITY;
@@ -183,19 +184,73 @@ export const COST_TICKS = [
   { value: 100, label: '$100' },
 ] as const;
 
-export type SessionShapeData = {
-  harnesses: string[];
-  points: (DashboardRow & { durationMs: number })[];
-  xPct: (value: number) => number;
-  xTicks: typeof DURATION_TICKS[number][];
-  yPct: (value: number) => number;
-  yTicks: typeof COST_TICKS[number][];
+export type OverviewSessionItem =
+  | {
+      kind: 'session';
+      row: DashboardRow;
+      label: string;
+      harness: string;
+      costApprox: number;
+      durationMs: number | null;
+      sessionCount: 1;
+    }
+  | {
+      kind: 'campaign';
+      row: DashboardRow;
+      campaign: CampaignView;
+      label: string;
+      harness: string;
+      costApprox: number;
+      durationMs: number | null;
+      sessionCount: number;
+    };
+
+export const buildOverviewSessionItems = (
+  rows: DashboardRow[],
+  campaigns: CampaignView[] = [],
+): OverviewSessionItem[] => {
+  const campaignRowIds = new Set(campaigns.flatMap((campaign) => campaign.visibleRows.map((row) => row.rowId)));
+  const campaignItems: OverviewSessionItem[] = campaigns.map((campaign) => ({
+    kind: 'campaign',
+    row: campaign.root,
+    campaign,
+    label: campaign.root.sessionLabel,
+    harness: campaign.root.harness,
+    costApprox: campaign.visibleTotals.totalCost,
+    durationMs: campaign.visibleTotals.durationMs,
+    sessionCount: campaign.visibleCount,
+  }));
+  const sessionItems: OverviewSessionItem[] = rows
+    .filter((row) => !campaignRowIds.has(row.rowId))
+    .map((row) => ({
+      kind: 'session',
+      row,
+      label: row.sessionLabel,
+      harness: row.harness,
+      costApprox: row.costApprox,
+      durationMs: row.durationMs,
+      sessionCount: 1,
+    }));
+
+  return [...campaignItems, ...sessionItems];
 };
 
-export const buildSessionShapeData = (rows: DashboardRow[]): SessionShapeData | null => {
-  const points = rows.filter(
-    (row) => (row.durationMs ?? 0) > 0 && row.costKnown && row.costApprox > 0,
-  ) as (DashboardRow & { durationMs: number })[];
+export type SessionShapeData = {
+  harnesses: string[];
+  points: (OverviewSessionItem & { durationMs: number })[];
+  xPct: (value: number) => number;
+  xTicks: (typeof DURATION_TICKS)[number][];
+  yPct: (value: number) => number;
+  yTicks: (typeof COST_TICKS)[number][];
+};
+
+export const buildSessionShapeData = (
+  rows: DashboardRow[],
+  campaigns: CampaignView[] = [],
+): SessionShapeData | null => {
+  const points = buildOverviewSessionItems(rows, campaigns).filter(
+    (item) => (item.durationMs ?? 0) > 0 && item.costApprox > 0,
+  ) as (OverviewSessionItem & { durationMs: number })[];
   if (points.length < 3) return null;
 
   let xMin = Number.POSITIVE_INFINITY;
@@ -222,7 +277,7 @@ export const buildSessionShapeData = (rows: DashboardRow[]): SessionShapeData | 
     yPct,
     xTicks: DURATION_TICKS.filter((tick) => tick.value >= xMin && tick.value <= xMax),
     yTicks: COST_TICKS.filter((tick) => tick.value >= yMin && tick.value <= yMax),
-    harnesses: [...new Set(points.map((row) => row.harness))],
+    harnesses: [...new Set(points.map((item) => item.harness))],
   };
 };
 
@@ -305,8 +360,8 @@ export const buildOverviewRecords = (rows: DashboardRow[], timelineRows: Dashboa
   return { topCost, longest, busiest, streak, streakEnd: lastDay };
 };
 
-export const buildTopSessions = (rows: DashboardRow[], limit = 5) =>
-  rows
-    .filter((row) => row.costKnown && row.costApprox > 0)
+export const buildTopSessions = (rows: DashboardRow[], limit = 5, campaigns: CampaignView[] = []) =>
+  buildOverviewSessionItems(rows, campaigns)
+    .filter((item) => item.costApprox > 0)
     .sort((a, b) => b.costApprox - a.costApprox)
     .slice(0, limit);

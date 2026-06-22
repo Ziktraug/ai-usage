@@ -1,4 +1,5 @@
 import {
+  CellWithProvenance,
   dateCell,
   filterTextButton,
   modelCell,
@@ -7,9 +8,11 @@ import {
   right,
   sessionCell,
   sessionTitleClamp,
+  ProvenanceMarker,
 } from '@ai-usage/design-system/report';
+import { provenanceForMetric, type UsageMetricKey } from '@ai-usage/report-core/provenance';
 import type { ColumnDef, RowData, VisibilityState } from '@tanstack/solid-table';
-import { Show } from 'solid-js';
+import { Show, type JSX } from 'solid-js';
 import type { FieldFilterKey } from './dashboard-search';
 import { campaignBadgeLabelForRow } from './dashboard-model';
 import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle, rtkSavingsPct, sortValueForRow } from './dashboard-sort';
@@ -46,10 +49,14 @@ declare module '@tanstack/solid-table' {
 
 export type SessionColumnDef = ColumnDef<DashboardRow> & { id: SessionColumnId };
 
+const provenanceFacts = (row: DashboardRow, metric: UsageMetricKey) => provenanceForMetric(row, metric);
+const withProvenance = (row: DashboardRow, metric: UsageMetricKey, value: string | JSX.Element) => (
+  <CellWithProvenance facts={provenanceFacts(row, metric)}>{value}</CellWithProvenance>
+);
 const tokenCell = (row: DashboardRow, value: number) =>
-  row.usageUnavailable ? <UsageUnavailableCell /> : fmtCompact(value);
-const countCell = (row: DashboardRow, value: number) =>
-  row.usageUnavailable ? <UsageUnavailableCell /> : fmtNum(value);
+  withProvenance(row, 'tokens', row.usageUnavailable ? <UsageUnavailableCell /> : fmtCompact(value));
+const countCell = (row: DashboardRow, value: number, metric: UsageMetricKey) =>
+  withProvenance(row, metric, row.usageUnavailable ? <UsageUnavailableCell /> : fmtNum(value));
 
 export const sessionColumns: SessionColumnDef[] = [
   {
@@ -232,13 +239,18 @@ export const sessionColumns: SessionColumnDef[] = [
     id: 'cost',
     header: '$API',
     accessorFn: (row) => sortValueForRow(row, 'cost'),
-    cell: (info) => (
-      <Show when={!info.row.original.usageUnavailable} fallback={<UsageUnavailableCell />}>
-        <Show when={info.row.original.costKnown} fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>}>
-          {fmtMoney(info.row.original.costApprox)}
-        </Show>
-      </Show>
-    ),
+    cell: (info) => {
+      const row = info.row.original;
+      return withProvenance(
+        row,
+        'api-value',
+        <Show when={!row.usageUnavailable} fallback={<UsageUnavailableCell />}>
+          <Show when={row.costKnown} fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>}>
+            {fmtMoney(row.costApprox)}
+          </Show>
+        </Show>,
+      );
+    },
     sortDescFirst: true,
     meta: {
       label: 'API value',
@@ -252,8 +264,14 @@ export const sessionColumns: SessionColumnDef[] = [
     id: 'actual',
     header: '$Actual',
     accessorFn: (row) => sortValueForRow(row, 'actual'),
-    cell: (info) =>
-      info.row.original.usageUnavailable ? <UsageUnavailableCell /> : fmtMoney(info.row.original.costActual),
+    cell: (info) => {
+      const row = info.row.original;
+      return withProvenance(
+        row,
+        'actual-cost',
+        row.usageUnavailable ? <UsageUnavailableCell /> : fmtMoney(row.costActual),
+      );
+    },
     sortDescFirst: true,
     meta: {
       label: 'Actual cost',
@@ -268,8 +286,14 @@ export const sessionColumns: SessionColumnDef[] = [
     id: 'quota',
     header: '$Sub',
     accessorFn: (row) => sortValueForRow(row, 'quota'),
-    cell: (info) =>
-      info.row.original.usageUnavailable ? <UsageUnavailableCell /> : fmtMoney(info.row.original.costQuota ?? null),
+    cell: (info) => {
+      const row = info.row.original;
+      return withProvenance(
+        row,
+        'subscription-value',
+        row.usageUnavailable ? <UsageUnavailableCell /> : fmtMoney(row.costQuota ?? null),
+      );
+    },
     sortDescFirst: true,
     meta: {
       label: 'Subscription value',
@@ -298,7 +322,7 @@ export const sessionColumns: SessionColumnDef[] = [
     id: 'calls',
     header: 'Calls',
     accessorFn: (row) => row.calls,
-    cell: (info) => countCell(info.row.original, info.row.original.calls),
+    cell: (info) => countCell(info.row.original, info.row.original.calls, 'calls'),
     sortDescFirst: true,
     meta: { label: 'Calls', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
   },
@@ -306,7 +330,7 @@ export const sessionColumns: SessionColumnDef[] = [
     id: 'turns',
     header: 'Turns',
     accessorFn: (row) => row.turns,
-    cell: (info) => fmtNum(info.row.original.turns),
+    cell: (info) => withProvenance(info.row.original, 'turns', fmtNum(info.row.original.turns)),
     sortDescFirst: true,
     meta: { label: 'Turns', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
   },
@@ -314,7 +338,7 @@ export const sessionColumns: SessionColumnDef[] = [
     id: 'tools',
     header: 'Tools',
     accessorFn: (row) => row.tools,
-    cell: (info) => countCell(info.row.original, info.row.original.tools),
+    cell: (info) => countCell(info.row.original, info.row.original.tools, 'tools'),
     sortDescFirst: true,
     meta: { label: 'Tools', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
   },
@@ -322,7 +346,7 @@ export const sessionColumns: SessionColumnDef[] = [
     id: 'lines',
     header: 'Lines',
     accessorFn: (row) => row.lineDelta ?? 0,
-    cell: (info) => lineDeltaLabel(info.row.original),
+    cell: (info) => withProvenance(info.row.original, 'lines', lineDeltaLabel(info.row.original)),
     sortDescFirst: true,
     meta: { label: 'Lines changed', widthPx: 96, cellClass: numCell, headerClass: right, defaultVisible: false },
   },
@@ -356,6 +380,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => row.sessionLabel.toLowerCase(),
     cell: (info) => {
       const campaignLabel = () => campaignBadgeLabelForRow(info.row.original);
+      const titleFacts = () => provenanceFacts(info.row.original, 'title');
       return (
         <div class={sessionTitleClamp} style={{ 'padding-left': `${info.row.depth * 14}px` }}>
           <Show when={info.row.getCanExpand()}>
@@ -372,6 +397,7 @@ export const sessionColumns: SessionColumnDef[] = [
             </button>
           </Show>
           <HighlightedText text={info.row.original.sessionLabel} query={info.table.options.meta?.searchQuery ?? ''} />
+          <ProvenanceMarker facts={titleFacts()} />
           <Show when={campaignLabel()}>
             {(label) => (
               <span class={muted} title={label()}>
