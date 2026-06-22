@@ -16,8 +16,14 @@ import {
   tableControls,
   tableWrap,
 } from '@ai-usage/design-system/report';
-import type { Column, OnChangeFn, SortingState, VisibilityState } from '@tanstack/solid-table';
-import { createSolidTable, flexRender, getCoreRowModel, getSortedRowModel } from '@tanstack/solid-table';
+import type { Column, ExpandedState, OnChangeFn, SortingState, VisibilityState } from '@tanstack/solid-table';
+import {
+  createSolidTable,
+  flexRender,
+  getCoreRowModel,
+  getExpandedRowModel,
+  getSortedRowModel,
+} from '@tanstack/solid-table';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { measureClientPerf } from './client-perf';
 import type { FieldFilterKey } from './dashboard-search';
@@ -110,12 +116,14 @@ const ColumnVisibilityControl = (props: {
 
 export const SessionTable = (props: {
   rows: DashboardRow[];
+  groupCampaigns: boolean;
   selectedKey: string | null;
   searchQuery: string;
   sorting: SortingState;
   columnVisibility: VisibilityState;
   onSortingChange: OnChangeFn<SortingState>;
   onColumnVisibilityChange: OnChangeFn<VisibilityState>;
+  onGroupCampaignsChange: (enabled: boolean) => void;
   onSelect: (row: DashboardRow) => void;
   onHarnessFilter: (value: string) => void;
   onFieldFilter: (key: FieldFilterKey, value: string) => void;
@@ -125,6 +133,7 @@ export const SessionTable = (props: {
   // only earns its slot when the filtered set actually carries RTK data.
   // Folding this into the visibility state keeps headers and cells in sync.
   const hasRtkData = createMemo(() => props.rows.some((row) => row.rtkSavedTokens));
+  const [expanded, setExpanded] = createSignal<ExpandedState>({});
   const effectiveVisibility = createMemo(() =>
     hasRtkData() ? props.columnVisibility : { ...props.columnVisibility, rtkSaved: false },
   );
@@ -138,11 +147,14 @@ export const SessionTable = (props: {
       return {
         sorting: props.sorting,
         columnVisibility: effectiveVisibility(),
+        expanded: expanded(),
       };
     },
     enableMultiSort: false,
     enableSortingRemoval: false,
     getCoreRowModel: getCoreRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
+    getSubRows: (row) => row.children ?? [],
     getRowId: (row) => rowKey(row),
     getSortedRowModel: getSortedRowModel(),
     meta: {
@@ -153,6 +165,8 @@ export const SessionTable = (props: {
       },
     },
     onColumnVisibilityChange: props.onColumnVisibilityChange,
+    onExpandedChange: (updater) =>
+      setExpanded((current) => (typeof updater === 'function' ? updater(current) : updater)),
     onSortingChange: props.onSortingChange,
   });
   const visibleColumns = createMemo(() =>
@@ -220,6 +234,21 @@ export const SessionTable = (props: {
     updateTableViewport();
   });
 
+  createEffect(() => {
+    if (!props.groupCampaigns) {
+      setExpanded({});
+      return;
+    }
+    const selectedKey = props.selectedKey;
+    if (!selectedKey) return;
+    const parent = props.rows.find((row) => row.children?.some((child) => rowKey(child) === selectedKey));
+    if (!parent) return;
+    setExpanded((current) => ({
+      ...(typeof current === 'object' ? current : {}),
+      [rowKey(parent)]: true,
+    }));
+  });
+
   return (
     <Show
       when={props.rows.length}
@@ -235,6 +264,18 @@ export const SessionTable = (props: {
       }
     >
       <div class={tableControls}>
+        <label class={columnToggle}>
+          <input
+            class={columnToggleInput}
+            type="checkbox"
+            checked={props.groupCampaigns}
+            onChange={(event) => {
+              props.onGroupCampaignsChange(event.currentTarget.checked);
+              setExpanded({});
+            }}
+          />
+          <span class={columnToggleText}>Group campaigns</span>
+        </label>
         <ColumnVisibilityControl
           columnVisibility={props.columnVisibility}
           hiddenColumnIds={dataHiddenColumnIds()}
@@ -271,6 +312,7 @@ export const SessionTable = (props: {
               {(tableRow) => (
                 <tr
                   data-selected={String(props.selectedKey === tableRow.id)}
+                  data-depth={tableRow.depth}
                   tabIndex={0}
                   onClick={() => props.onSelect(tableRow.original)}
                   onKeyDown={(event) => {

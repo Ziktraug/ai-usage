@@ -2,6 +2,9 @@ import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { describe, expect, test } from 'bun:test';
 import {
   buildDashboardMetrics,
+  buildCampaignTableRows,
+  buildCampaignTableItems,
+  buildCampaignViews,
   buildPreviousPeriodSummary,
   buildSortedDashboardRows,
   buildVisibleSummary,
@@ -42,11 +45,32 @@ const baseRow: SerializedRow = {
 
 const row = (overrides: Partial<SerializedRow> = {}) => enrichReportRow({ ...baseRow, ...overrides });
 
+const sourcedRow = (sessionId: string, overrides: Partial<SerializedRow> = {}) =>
+  row({
+    name: sessionId,
+    sessionLabel: sessionId,
+    source: {
+      harnessKey: 'codex',
+      sourceSessionId: sessionId,
+      rootSourceSessionId: sessionId,
+      machineId: 'machine-a',
+      machineLabel: 'Machine A',
+      ...overrides.source,
+    },
+    ...overrides,
+  });
+
 describe('dashboard model', () => {
   test('filters timeline rows from a search snapshot', () => {
     const rows = [
       row({ name: 'Alpha build', sessionLabel: 'Alpha build', project: 'alpha', harness: 'Codex' }),
-      row({ name: 'Beta review', sessionLabel: 'Beta review', project: 'beta', harness: 'Claude', provider: 'Claude sub' }),
+      row({
+        name: 'Beta review',
+        sessionLabel: 'Beta review',
+        project: 'beta',
+        harness: 'Claude',
+        provider: 'Claude sub',
+      }),
     ];
 
     const filtered = filterTimelineRows(rows, createFilterSnapshot('alpha', 'Codex', { project: 'alpha' }));
@@ -110,5 +134,192 @@ describe('dashboard model', () => {
 
     expect(sorted.map((item) => item.sessionLabel)).toEqual(['High cost', 'Low cost']);
     expect(rows.map((item) => item.sessionLabel)).toEqual(['Low cost', 'High cost']);
+  });
+
+  test('builds campaign views by machine and root source id without merging rows', () => {
+    const parent = sourcedRow('parent', { costApprox: 4, tokenTotal: 40, freshTokens: 30 });
+    const child = sourcedRow('child', {
+      costApprox: 2,
+      tokenTotal: 20,
+      freshTokens: 15,
+      source: {
+        harnessKey: 'codex',
+        sourceSessionId: 'child',
+        parentSourceSessionId: 'parent',
+        rootSourceSessionId: 'parent',
+        machineId: 'machine-a',
+      },
+    });
+    const sameIdsOtherMachine = sourcedRow('child', {
+      source: {
+        harnessKey: 'codex',
+        sourceSessionId: 'child',
+        parentSourceSessionId: 'parent',
+        rootSourceSessionId: 'parent',
+        machineId: 'machine-b',
+      },
+    });
+
+    const campaigns = buildCampaignViews([parent, child, sameIdsOtherMachine], [parent, child, sameIdsOtherMachine]);
+
+    expect(campaigns).toHaveLength(1);
+    expect(campaigns[0]?.campaignKey).toBe('machine-a:codex:parent');
+    expect(campaigns[0]?.root).toBe(parent);
+    expect(campaigns[0]?.allRows).toEqual([parent, child]);
+    expect(campaigns[0]?.visibleTotals.totalCost).toBe(6);
+    expect(campaigns[0]?.visibleTotals.tokenTotal).toBe(60);
+  });
+
+  test('keeps the root as context when only a child matches filters', () => {
+    const parent = sourcedRow('parent', { costApprox: 10, tokenTotal: 100, freshTokens: 90 });
+    const child = sourcedRow('child', {
+      costApprox: 3,
+      tokenTotal: 30,
+      freshTokens: 20,
+      source: {
+        harnessKey: 'codex',
+        sourceSessionId: 'child',
+        parentSourceSessionId: 'parent',
+        rootSourceSessionId: 'parent',
+        machineId: 'machine-a',
+      },
+    });
+
+    const campaign = buildCampaignViews([parent, child], [child])[0];
+
+    expect(campaign?.root).toBe(parent);
+    expect(campaign?.visibleRows).toEqual([child]);
+    expect(campaign?.visibleChildren).toEqual([child]);
+    expect(campaign?.visibleCount).toBe(1);
+    expect(campaign?.totalCount).toBe(2);
+    expect(campaign?.visibleTotals.totalCost).toBe(3);
+    expect(campaign?.allTotals.totalCost).toBe(13);
+  });
+
+  test('builds grouped table items that remove visible children from the root level and sort by visible totals', () => {
+    const parent = sourcedRow('campaign parent', { costApprox: 1, tokenTotal: 10, freshTokens: 10 });
+    const child = sourcedRow('campaign child', {
+      costApprox: 9,
+      tokenTotal: 90,
+      freshTokens: 90,
+      source: {
+        harnessKey: 'codex',
+        sourceSessionId: 'campaign child',
+        parentSourceSessionId: 'campaign parent',
+        rootSourceSessionId: 'campaign parent',
+        machineId: 'machine-a',
+      },
+    });
+    const standalone = row({
+      name: 'standalone',
+      sessionLabel: 'standalone',
+      costApprox: 5,
+      tokenTotal: 50,
+      freshTokens: 50,
+    });
+
+    const grouped = buildCampaignTableItems(
+      [parent, child, standalone],
+      [parent, child, standalone],
+      [{ id: 'cost', desc: true }],
+      true,
+    );
+    const flat = buildCampaignTableItems(
+      [parent, child, standalone],
+      [parent, child, standalone],
+      [{ id: 'cost', desc: true }],
+      false,
+    );
+
+    expect(
+      grouped.map((item) => (item.kind === 'campaign' ? item.campaign.root.sessionLabel : item.row.sessionLabel)),
+    ).toEqual(['campaign parent', 'standalone']);
+    expect(grouped[0]?.kind).toBe('campaign');
+    expect(grouped[0]?.kind === 'campaign' ? grouped[0].campaign.visibleTotals.totalCost : 0).toBe(10);
+    expect(flat.map((item) => item.row.sessionLabel)).toEqual(['campaign child', 'standalone', 'campaign parent']);
+  });
+
+  test('sorts campaigns by latest visible activity for date sorting', () => {
+    const firstParent = sourcedRow('first parent', {
+      activeDate: '2026-06-10T12:00:00.000Z',
+      date: '2026-06-10T12:00:00.000Z',
+    });
+    const firstChild = sourcedRow('first child', {
+      activeDate: '2026-06-12T12:00:00.000Z',
+      date: '2026-06-12T12:00:00.000Z',
+      source: {
+        harnessKey: 'codex',
+        sourceSessionId: 'first child',
+        parentSourceSessionId: 'first parent',
+        rootSourceSessionId: 'first parent',
+        machineId: 'machine-a',
+      },
+    });
+    const secondParent = sourcedRow('second parent', {
+      activeDate: '2026-06-11T12:00:00.000Z',
+      date: '2026-06-11T12:00:00.000Z',
+      source: {
+        harnessKey: 'codex',
+        sourceSessionId: 'second parent',
+        rootSourceSessionId: 'second parent',
+        machineId: 'machine-a',
+      },
+    });
+    const secondChild = sourcedRow('second child', {
+      activeDate: '2026-06-11T13:00:00.000Z',
+      date: '2026-06-11T13:00:00.000Z',
+      source: {
+        harnessKey: 'codex',
+        sourceSessionId: 'second child',
+        parentSourceSessionId: 'second parent',
+        rootSourceSessionId: 'second parent',
+        machineId: 'machine-a',
+      },
+    });
+
+    const items = buildCampaignTableItems(
+      [firstParent, firstChild, secondParent, secondChild],
+      [firstParent, firstChild, secondParent, secondChild],
+      [{ id: 'date', desc: true }],
+      true,
+    );
+
+    expect(items.map((item) => item.row.sessionLabel)).toEqual(['first parent', 'second parent']);
+  });
+
+  test('projects campaign table rows with aggregate metrics and latest visible date', () => {
+    const parent = sourcedRow('parent', {
+      activeDate: '2026-06-10T12:00:00.000Z',
+      costApprox: 1,
+      date: '2026-06-10T12:00:00.000Z',
+      freshTokens: 10,
+      tokenTotal: 10,
+    });
+    const child = sourcedRow('child', {
+      activeDate: '2026-06-12T12:00:00.000Z',
+      costApprox: 4,
+      date: '2026-06-12T12:00:00.000Z',
+      freshTokens: 40,
+      tokenTotal: 40,
+      source: {
+        harnessKey: 'codex',
+        sourceSessionId: 'child',
+        parentSourceSessionId: 'parent',
+        rootSourceSessionId: 'parent',
+        machineId: 'machine-a',
+      },
+    });
+
+    const rows = buildCampaignTableRows([parent, child], [parent, child], [{ id: 'date', desc: true }], true);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.sessionLabel).toBe('parent');
+    expect(rows[0]?.campaignVisibleCount).toBe(2);
+    expect(rows[0]?.campaignTotalCount).toBe(2);
+    expect(rows[0]?.activeDate).toBe('2026-06-12T12:00:00.000Z');
+    expect(rows[0]?.sortDate).toBe(child.sortDate);
+    expect(rows[0]?.costApprox).toBe(5);
+    expect(rows[0]?.freshTokens).toBe(50);
+    expect(rows[0]?.children?.map((row) => row.sessionLabel)).toEqual(['child']);
   });
 });

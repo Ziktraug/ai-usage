@@ -46,6 +46,7 @@ import { FilterPill, fieldFilterLabels } from './dashboard-filters';
 import { MetricTile } from './dashboard-metrics';
 import {
   buildDashboardMetrics,
+  buildCampaignTableRows,
   buildHarnessGroups,
   buildModelGroups,
   buildPreviousPeriodSummary,
@@ -196,6 +197,7 @@ export const Dashboard = (props: {
     ),
   );
   const tableRows = tableFilteredRows;
+  const groupCampaigns = () => search().campaigns !== 'off';
   // Rows in the table's current sort order — shared by CSV export and the
   // drawer's previous/next navigation so both walk the list the user sees.
   const sortedRows = createMemo(() =>
@@ -205,8 +207,16 @@ export const Dashboard = (props: {
       (rows) => ({ rows: rows.length }),
     ),
   );
-  // The drawer closes by itself when its row leaves the filtered set.
-  const selectedRow = createMemo(() => tableFilteredRows().find((row) => rowKey(row) === selectedKey()) ?? null);
+  const sessionTableRows = createMemo(() =>
+    measureClientPerf(
+      'aiUsage.web.client.compute.sessionTableRows',
+      () => buildCampaignTableRows(reportRows(), tableFilteredRows(), sorting(), groupCampaigns()),
+      (rows) => ({ rows: rows.length }),
+    ),
+  );
+  // Campaign context rows can select their atomic root even when the root is outside
+  // the current table filter, so resolve selection against the payload rows.
+  const selectedRow = createMemo(() => reportRows().find((row) => rowKey(row) === selectedKey()) ?? null);
   const navigateSelected = (delta: number) => {
     const rows = sortedRows();
     const key = selectedKey();
@@ -378,6 +388,8 @@ export const Dashboard = (props: {
       const nextVisibility = applyTableUpdate(updater, columnVisibilityFromDiff(current.cols));
       return { ...current, cols: columnDiffFromVisibility(nextVisibility) };
     });
+  const setCampaignGrouping = (enabled: boolean) =>
+    updateSearch((current) => ({ ...current, campaigns: enabled ? 'on' : 'off' }));
   const setTab = (tab: string) => {
     if (!isDashboardTab(tab)) return;
     updateSearch((current) => ({ ...current, tab }));
@@ -543,11 +555,13 @@ export const Dashboard = (props: {
             <Show when={search().tab === 'sessions'}>
               <section role="tabpanel" class={section}>
                 <SessionTable
-                  rows={tableRows()}
+                  rows={sessionTableRows()}
+                  groupCampaigns={groupCampaigns()}
                   selectedKey={selectedKey()}
                   searchQuery={query()}
                   sorting={sorting()}
                   columnVisibility={columnVisibility()}
+                  onGroupCampaignsChange={setCampaignGrouping}
                   onSortingChange={handleSortingChange}
                   onColumnVisibilityChange={handleColumnVisibilityChange}
                   onSelect={toggleSelected}

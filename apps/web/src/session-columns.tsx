@@ -2,6 +2,7 @@ import {
   dateCell,
   filterTextButton,
   modelCell,
+  muted,
   numCell,
   right,
   sessionCell,
@@ -10,6 +11,7 @@ import {
 import type { ColumnDef, RowData, VisibilityState } from '@tanstack/solid-table';
 import { Show } from 'solid-js';
 import type { FieldFilterKey } from './dashboard-search';
+import { campaignBadgeLabelForRow } from './dashboard-model';
 import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle, rtkSavingsPct, sortValueForRow } from './dashboard-sort';
 import { HighlightedText } from './highlighted-text';
 import { defaultColumnVisibility, isSessionColumnVisible, type SessionColumnId } from './session-table-schema';
@@ -352,11 +354,35 @@ export const sessionColumns: SessionColumnDef[] = [
     id: 'session',
     header: 'Session',
     accessorFn: (row) => row.sessionLabel.toLowerCase(),
-    cell: (info) => (
-      <div class={sessionTitleClamp}>
-        <HighlightedText text={info.row.original.sessionLabel} query={info.table.options.meta?.searchQuery ?? ''} />
-      </div>
-    ),
+    cell: (info) => {
+      const campaignLabel = () => campaignBadgeLabelForRow(info.row.original);
+      return (
+        <div class={sessionTitleClamp} style={{ 'padding-left': `${info.row.depth * 14}px` }}>
+          <Show when={info.row.getCanExpand()}>
+            <button
+              class={filterTextButton}
+              type="button"
+              title={info.row.getIsExpanded() ? 'Collapse campaign' : 'Expand campaign'}
+              onClick={(event) => {
+                event.stopPropagation();
+                info.row.toggleExpanded();
+              }}
+            >
+              {info.row.getIsExpanded() ? '▾' : '▸'}
+            </button>
+          </Show>
+          <HighlightedText text={info.row.original.sessionLabel} query={info.table.options.meta?.searchQuery ?? ''} />
+          <Show when={campaignLabel()}>
+            {(label) => (
+              <span class={muted} title={label()}>
+                {' '}
+                {label()}
+              </span>
+            )}
+          </Show>
+        </div>
+      );
+    },
     enableHiding: false,
     meta: { label: 'Session', widthPx: 300, cellClass: sessionCell },
   },
