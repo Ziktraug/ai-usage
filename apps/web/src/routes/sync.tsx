@@ -27,6 +27,7 @@ import { createFileRoute, Link } from '@tanstack/solid-router';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
+import type { LanMergeServerResult } from '../server/lan-merge.server';
 import {
   exportManualMergeBundle,
   getLanMergeState,
@@ -36,7 +37,6 @@ import {
   startLanMerge,
   stopLanMerge,
 } from '../server/sync';
-import type { LanMergeServerResult } from '../server/lan-merge.server';
 import {
   buildLanMergeSummary,
   formatSyncDateTime,

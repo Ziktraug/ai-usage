@@ -137,8 +137,19 @@ export const runReportPayloadRunner = async (options: { force?: boolean } = {}) 
   }
 };
 
-const loadFreshPayload = () =>
-  runReportPayloadRunner({ force: true }).then((stdout) => JSON.parse(stdout) as UsageReportPayload);
+export const parseRunnerPayload = (stdout: string): UsageReportPayload => {
+  try {
+    return JSON.parse(stdout) as UsageReportPayload;
+  } catch (error) {
+    const jsonStart = stdout.lastIndexOf('\n{');
+    if (jsonStart >= 0) {
+      return JSON.parse(stdout.slice(jsonStart + 1)) as UsageReportPayload;
+    }
+    throw error;
+  }
+};
+
+const loadFreshPayload = () => runReportPayloadRunner({ force: true }).then(parseRunnerPayload);
 
 const formatRefreshError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -188,7 +199,7 @@ const loadPayload = (options: { force?: boolean }) => {
   if (!options.force && isBunRuntime()) {
     return loadStoredPayloadDirect();
   }
-  return runReportPayloadRunner(options).then((stdout) => JSON.parse(stdout) as UsageReportPayload);
+  return runReportPayloadRunner(options).then(parseRunnerPayload);
 };
 
 export const runReportPayloadCollection = async (options: { force?: boolean } = {}): Promise<UsageReportPayload> => {

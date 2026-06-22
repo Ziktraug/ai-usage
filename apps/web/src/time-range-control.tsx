@@ -1,3 +1,4 @@
+import { SegmentedControl } from '@ai-usage/design-system';
 import { cx } from '@ai-usage/design-system/css';
 import {
   accentFill,
@@ -7,8 +8,6 @@ import {
   dateInput,
   inlineFieldLabel,
   monthGridline,
-  presetButton,
-  presetGroup,
   timeAxis,
   timeAxisTick,
   timeBucket,
@@ -97,7 +96,7 @@ const monthTicksFor = (chart: { minDay: Date; maxDay: Date; maxIndex: number }) 
 export const TimeRangeControl = (props: {
   rows: DashboardRow[];
   dateRange: DateRangeController;
-  activeHarness: string;
+  activeHarness: string[];
   onHarnessFilter: (value: string) => void;
   onDateRangeCommit: () => void;
 }) => {
@@ -413,20 +412,17 @@ export const TimeRangeControl = (props: {
               <div class={timeRangeTitle}>Time range</div>
               <div class={timeRangeMeta}>{props.dateRange.label()}</div>
             </div>
-            <fieldset aria-label="Date presets" class={presetGroup}>
-              <For each={dateRangePresets}>
-                {(preset) => (
-                  <button
-                    class={presetButton}
-                    data-active={String(props.dateRange.mode() === preset.mode)}
-                    onClick={() => applyPreset(preset.mode)}
-                    type="button"
-                  >
-                    {preset.label}
-                  </button>
-                )}
-              </For>
-            </fieldset>
+            <SegmentedControl
+              ariaLabel="Date presets"
+              items={dateRangePresets.map((preset) => ({ label: preset.label, value: preset.mode }))}
+              onValueChange={(value) => {
+                const preset = dateRangePresets.find((item) => item.mode === value);
+                if (preset) {
+                  applyPreset(preset.mode);
+                }
+              }}
+              value={props.dateRange.mode()}
+            />
           </div>
 
           <div class={dateEditRow}>
@@ -456,10 +452,10 @@ export const TimeRangeControl = (props: {
               <For each={chart().harnesses}>
                 {(name) => (
                   <HarnessBadge
-                    active={props.activeHarness === name}
+                    active={props.activeHarness.includes(name)}
                     name={name}
                     onClick={() => props.onHarnessFilter(name)}
-                    title={props.activeHarness === name ? `Clear ${name} filter` : `Filter by ${name}`}
+                    title={props.activeHarness.includes(name) ? `Clear ${name} filter` : `Filter by ${name}`}
                   />
                 )}
               </For>

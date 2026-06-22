@@ -41,7 +41,8 @@ export interface DashboardSearch {
   campaigns: DashboardCampaignMode;
   cols: SearchableColumnDiffId[];
   filters: FieldFilters;
-  harness: string;
+  harness: string[];
+  machine: string[];
   q: string;
   range: DashboardDateRangeSearch;
   sort: DashboardSort;
@@ -93,12 +94,37 @@ export const dashboardSearchDefaultsFor = (sort: ReportSort): DashboardSearch =>
   campaigns: 'on',
   cols: [],
   filters: {},
-  harness: 'all',
+  harness: [],
+  machine: [],
   q: '',
   range: { mode: 'all' },
   sort: defaultDashboardSortFor(sort),
   tab: 'overview',
 });
+
+// Accepts an array (current shape) or a bare string (legacy single-value URLs).
+// Drops the old 'all' sentinel so stale links migrate cleanly to "no filter".
+const parseStringArray = (value: unknown): string[] => {
+  const raw = (() => {
+    if (Array.isArray(value)) {
+      return value;
+    }
+    if (value == null) {
+      return [];
+    }
+    return [value];
+  })();
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const entry of raw) {
+    const cleaned = cleanString(entry);
+    if (cleaned && cleaned !== 'all' && !seen.has(cleaned)) {
+      seen.add(cleaned);
+      result.push(cleaned);
+    }
+  }
+  return result;
+};
 
 const parseFilters = (value: unknown): FieldFilters => {
   if (!isRecord(value)) {
@@ -153,13 +179,13 @@ export const validateDashboardSearch = (
   defaults: DashboardSearch,
 ): DashboardSearch => {
   const q = cleanString(search.q);
-  const harness = cleanString(search.harness);
 
   return {
     campaigns: search.campaigns === 'off' ? 'off' : defaults.campaigns,
     cols: uniqueValidStrings(search.cols, isSearchableColumnDiffId),
     filters: parseFilters(search.filters),
-    harness: harness || defaults.harness,
+    harness: parseStringArray(search.harness),
+    machine: parseStringArray(search.machine),
     q,
     range: parseRange(search.range, defaults.range),
     sort: parseSort(search.sort, defaults.sort),

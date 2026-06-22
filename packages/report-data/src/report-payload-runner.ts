@@ -19,6 +19,20 @@ const request: LocalReportPayloadRequest = {
   },
 };
 
-const payload = await (mode === 'stored' ? runStoredReportPayload(request) : runLocalReportPayload(request));
+const writeStdout = process.stdout.write.bind(process.stdout);
+const writeStderr = process.stderr.write.bind(process.stderr);
+
+const withStdoutRedirectedToStderr = async <A>(run: () => Promise<A>) => {
+  process.stdout.write = writeStderr as typeof process.stdout.write;
+  try {
+    return await run();
+  } finally {
+    process.stdout.write = writeStdout as typeof process.stdout.write;
+  }
+};
+
+const payload = await withStdoutRedirectedToStderr(() =>
+  mode === 'stored' ? runStoredReportPayload(request) : runLocalReportPayload(request),
+);
 
 process.stdout.write(JSON.stringify(payload));

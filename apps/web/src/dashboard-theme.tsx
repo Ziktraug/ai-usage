@@ -1,3 +1,4 @@
+import { Toggle } from '@ai-usage/design-system';
 import { themeToggleButton } from '@ai-usage/design-system/report';
 import { createSignal, onCleanup, onMount, Show } from 'solid-js';
 
@@ -56,8 +57,7 @@ export const ThemeToggle = () => {
     onCleanup(() => prefersDark.removeEventListener('change', handleSystemChange));
   });
 
-  const toggle = () => {
-    const next = theme() === 'dark' ? 'light' : 'dark';
+  const setThemePreference = (next: 'light' | 'dark') => {
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
     const followsSystem = next === (prefersDark.matches ? 'dark' : 'light');
     setTheme(next);
@@ -77,17 +77,18 @@ export const ThemeToggle = () => {
     }
     document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', followsSystem ? 'light dark' : next);
   };
+  const toggle = (pressed: boolean) => setThemePreference(pressed ? 'dark' : 'light');
 
   return (
-    <button
-      aria-label={theme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+    <Toggle
+      ariaLabel={theme() === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
       class={themeToggleButton}
-      onClick={toggle}
-      type="button"
+      onPressedChange={toggle}
+      pressed={theme() === 'dark'}
     >
       <Show fallback={<SunIcon />} when={theme() === 'dark'}>
         <MoonIcon />
       </Show>
-    </button>
+    </Toggle>
   );
 };

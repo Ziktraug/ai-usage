@@ -1,3 +1,4 @@
+import { MultiSelect, Tabs } from '@ai-usage/design-system';
 import {
   activeFilters,
   commandButton,
@@ -15,12 +16,8 @@ import {
   page,
   searchInput,
   section,
-  selectInput,
   shell,
   summaryPill,
-  tabsList,
-  tabsRoot,
-  tabTrigger,
   title,
   titleBlock,
   toolbar,
@@ -62,7 +59,6 @@ import {
 } from './dashboard-model';
 import {
   type DashboardSearch,
-  type DashboardTab,
   dashboardSearchDefaultsFor,
   type FieldFilterKey,
   type FieldFilters,
@@ -89,16 +85,6 @@ import { TimeRangeControl } from './time-range-control';
 const REFRESH_INTERVAL_MS = 60_000;
 const FORM_CONTROL_TAG_PATTERN = /^(INPUT|SELECT|TEXTAREA)$/;
 
-const dashboardTabs: { label: string; value: DashboardTab }[] = [
-  { label: 'Overview', value: 'overview' },
-  { label: 'Sessions', value: 'sessions' },
-  { label: 'Models', value: 'models' },
-  { label: 'Providers', value: 'providers' },
-  { label: 'Harnesses', value: 'harnesses' },
-  { label: 'Projects', value: 'projects' },
-  { label: 'Cursor AI', value: 'cursor-ai' },
-];
-
 export const Dashboard = (props: {
   fetchPayload?: (options?: { force?: boolean }) => Promise<UsageReportPayload>;
   initialPayload?: UsageReportPayload;
@@ -122,16 +108,21 @@ export const Dashboard = (props: {
   );
   const search = useSearch({ from: '/' });
   const navigate = useNavigate({ from: '/' });
-  const updateSearch = (updater: (current: DashboardSearch) => DashboardSearch, options?: { replace?: boolean }) => {
+  const updateSearch = (
+    updater: (current: DashboardSearch) => DashboardSearch,
+    options?: { replace?: boolean; resetScroll?: boolean },
+  ) => {
     navigate({
       search: updater(search()),
       ...(options?.replace == null ? {} : { replace: options.replace }),
+      resetScroll: options?.resetScroll ?? false,
     }).catch((error: unknown) => {
       console.error(error);
     });
   };
   const query = () => search().q;
   const harness = () => search().harness;
+  const machine = () => search().machine;
   const fieldFilters = () => search().filters;
   const sorting = createMemo(() => sortingStateFromSearch(search().sort));
   const columnVisibility = createMemo(() => columnVisibilityFromDiff(search().cols));
@@ -148,8 +139,15 @@ export const Dashboard = (props: {
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
   let searchInputEl: HTMLInputElement | undefined;
   const cursorCommitRows = createMemo(() => cursorCommitAttributionFacet(payload()));
-  const harnesses = createMemo(() => ['all', ...new Set(reportRows().map((row) => row.harness))]);
-  const filterSnapshot = createMemo(() => createFilterSnapshot(query(), harness(), fieldFilters()));
+  const harnessOptions = createMemo(() => [...new Set(reportRows().map((row) => row.harness))]);
+  const machineOptions = createMemo(() => [
+    ...new Set(
+      reportRows()
+        .map((row) => row.source?.machineLabel ?? '')
+        .filter((label) => label !== ''),
+    ),
+  ]);
+  const filterSnapshot = createMemo(() => createFilterSnapshot(query(), harness(), machine(), fieldFilters()));
   const timelineRows = createMemo(() =>
     measureClientPerf(
       'aiUsage.web.client.compute.timelineRows',
@@ -427,8 +425,12 @@ export const Dashboard = (props: {
     activeQueryEdit = true;
     updateSearch((current) => ({ ...current, q }), { replace });
   };
-  const setHarness = (nextHarness: string) => updateSearch((current) => ({ ...current, harness: nextHarness }));
-  const toggleHarness = (name: string) => setHarness(harness() === name ? 'all' : name);
+  const setHarness = (next: string[]) => updateSearch((current) => ({ ...current, harness: next }));
+  const toggleHarness = (name: string) =>
+    setHarness(harness().includes(name) ? harness().filter((value) => value !== name) : [...harness(), name]);
+  const removeHarness = (name: string) => setHarness(harness().filter((value) => value !== name));
+  const setMachine = (next: string[]) => updateSearch((current) => ({ ...current, machine: next }));
+  const removeMachine = (name: string) => setMachine(machine().filter((value) => value !== name));
   const focusDay = (day: Date) => {
     const value = toDateInputValue(day);
     dateRange.setCustom(value, value);
@@ -456,7 +458,14 @@ export const Dashboard = (props: {
   const clearFilters = () => {
     dateRange.clear();
     setTableDateBounds(dateRange.bounds());
-    updateSearch((current) => ({ ...current, filters: {}, harness: 'all', q: '', range: { mode: 'all' } }));
+    updateSearch((current) => ({
+      ...current,
+      filters: {},
+      harness: [],
+      machine: [],
+      q: '',
+      range: { mode: 'all' },
+    }));
   };
   const handleSortingChange: OnChangeFn<SortingState> = (updater) =>
     updateSearch((current) => ({
@@ -531,11 +540,24 @@ export const Dashboard = (props: {
               }}
               value={query()}
             />
-            <select class={selectInput} onChange={(event) => setHarness(event.currentTarget.value)} value={harness()}>
-              <For each={harnesses()}>
-                {(item) => <option value={item}>{item === 'all' ? 'All harnesses' : item}</option>}
-              </For>
-            </select>
+            <MultiSelect
+              label="Filter by harness"
+              noun="harnesses"
+              onValueChange={setHarness}
+              options={harnessOptions()}
+              placeholder="All harnesses"
+              value={harness()}
+            />
+            <Show when={machineOptions().length > 1}>
+              <MultiSelect
+                label="Filter by machine"
+                noun="machines"
+                onValueChange={setMachine}
+                options={machineOptions()}
+                placeholder="All machines"
+                value={machine()}
+              />
+            </Show>
             <RefreshStatus
               canRefresh={canRefresh}
               generatedAt={payload().generatedAt}
@@ -604,9 +626,12 @@ export const Dashboard = (props: {
               <span>{fmtNum(hiddenCount())} hidden by filters</span>
             </Show>
             <div class={activeFilters}>
-              <Show when={harness() !== 'all'}>
-                <FilterPill label="Harness" onClear={() => setHarness('all')} value={harness()} />
-              </Show>
+              <For each={harness()}>
+                {(value) => <FilterPill label="Harness" onClear={() => removeHarness(value)} value={value} />}
+              </For>
+              <For each={machine()}>
+                {(value) => <FilterPill label="Machine" onClear={() => removeMachine(value)} value={value} />}
+              </For>
               <For each={Object.entries(fieldFilters()) as [FieldFilterKey, string][]}>
                 {([key, value]) => (
                   <FilterPill label={fieldFilterLabels[key]} onClear={() => clearFieldFilter(key)} value={value} />
@@ -621,106 +646,120 @@ export const Dashboard = (props: {
             <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>
           </div>
 
-          <div class={tabsRoot}>
-            <div class={tabsList} role="tablist">
-              <For each={dashboardTabs}>
-                {(tab) => {
-                  const selected = () => search().tab === tab.value;
-                  return (
-                    <button
-                      aria-selected={selected()}
-                      class={tabTrigger}
-                      data-selected={selected() ? '' : undefined}
-                      onClick={() => setTab(tab.value)}
-                      role="tab"
-                      type="button"
-                    >
-                      {tab.label}
-                    </button>
-                  );
-                }}
-              </For>
-            </div>
-            <Show when={search().tab === 'overview'}>
-              <section class={section} role="tabpanel">
-                <Overview
-                  campaigns={campaignViews()}
-                  onSelectDay={focusDay}
-                  onSelectModel={inspectOverviewModel}
-                  onSelectSession={inspectOverviewSession}
-                  rangeLabel={dateRange.label()}
-                  rows={tableRows()}
-                  summary={visibleSummary()}
-                  timelineRows={timelineRows()}
-                />
-              </section>
-            </Show>
-            <Show when={search().tab === 'sessions'}>
-              <section class={section} role="tabpanel">
-                <SessionTable
-                  columnVisibility={columnVisibility()}
-                  groupCampaigns={groupCampaigns()}
-                  onClearFilters={clearFilters}
-                  onColumnVisibilityChange={handleColumnVisibilityChange}
-                  onFieldFilter={setFieldFilter}
-                  onGroupCampaignsChange={setCampaignGrouping}
-                  onHarnessFilter={setHarness}
-                  onSelect={toggleSelected}
-                  onSortingChange={handleSortingChange}
-                  rows={sessionTableRows()}
-                  searchQuery={query()}
-                  selectedKey={selectedKey()}
-                  sorting={sorting()}
-                />
-              </section>
-            </Show>
-            <Show when={search().tab === 'models'}>
-              <section class={section} role="tabpanel">
-                <GroupPanel
-                  countLabel="models"
-                  groups={modelGroups()}
-                  harnessTones
-                  onFilter={(value) => setFieldFilter('model', value)}
-                  title="By model"
-                />
-              </section>
-            </Show>
-            <Show when={search().tab === 'providers'}>
-              <section class={section} role="tabpanel">
-                <GroupPanel
-                  countLabel="providers"
-                  groups={providerGroups()}
-                  harnessTones
-                  onFilter={(value) => setFieldFilter('provider', value)}
-                  title="By provider"
-                />
-              </section>
-            </Show>
-            <Show when={search().tab === 'harnesses'}>
-              <section class={section} role="tabpanel">
-                <GroupPanel
-                  countLabel="harnesses"
-                  groups={harnessGroups()}
-                  harnessTones
-                  onFilter={setHarness}
-                  title="By harness"
-                />
-              </section>
-            </Show>
-            <Show when={search().tab === 'projects'}>
-              <section class={section} role="tabpanel">
-                <ProjectSummary
-                  groups={projectGroupRows()}
-                  onProjectFilter={(value) => setFieldFilter('project', value)}
-                />
-              </section>
-            </Show>
-            <Show when={search().tab === 'cursor-ai'}>
-              <section class={section} role="tabpanel">
-                <CursorAttributionPanel rows={cursorCommitRows()} />
-              </section>
-            </Show>
-          </div>
+          <Tabs
+            ariaLabel="Dashboard sections"
+            items={[
+              {
+                content: () => (
+                  <section class={section}>
+                    <Overview
+                      campaigns={campaignViews()}
+                      onSelectDay={focusDay}
+                      onSelectModel={inspectOverviewModel}
+                      onSelectSession={inspectOverviewSession}
+                      rangeLabel={dateRange.label()}
+                      rows={tableRows()}
+                      summary={visibleSummary()}
+                      timelineRows={timelineRows()}
+                    />
+                  </section>
+                ),
+                label: 'Overview',
+                value: 'overview',
+              },
+              {
+                content: () => (
+                  <section class={section}>
+                    <SessionTable
+                      columnVisibility={columnVisibility()}
+                      groupCampaigns={groupCampaigns()}
+                      onClearFilters={clearFilters}
+                      onColumnVisibilityChange={handleColumnVisibilityChange}
+                      onFieldFilter={setFieldFilter}
+                      onGroupCampaignsChange={setCampaignGrouping}
+                      onHarnessFilter={toggleHarness}
+                      onSelect={toggleSelected}
+                      onSortingChange={handleSortingChange}
+                      rows={sessionTableRows()}
+                      searchQuery={query()}
+                      selectedKey={selectedKey()}
+                      sorting={sorting()}
+                    />
+                  </section>
+                ),
+                label: 'Sessions',
+                value: 'sessions',
+              },
+              {
+                content: () => (
+                  <section class={section}>
+                    <GroupPanel
+                      countLabel="models"
+                      groups={modelGroups()}
+                      harnessTones
+                      onFilter={(value) => setFieldFilter('model', value)}
+                      title="By model"
+                    />
+                  </section>
+                ),
+                label: 'Models',
+                value: 'models',
+              },
+              {
+                content: () => (
+                  <section class={section}>
+                    <GroupPanel
+                      countLabel="providers"
+                      groups={providerGroups()}
+                      harnessTones
+                      onFilter={(value) => setFieldFilter('provider', value)}
+                      title="By provider"
+                    />
+                  </section>
+                ),
+                label: 'Providers',
+                value: 'providers',
+              },
+              {
+                content: () => (
+                  <section class={section}>
+                    <GroupPanel
+                      countLabel="harnesses"
+                      groups={harnessGroups()}
+                      harnessTones
+                      onFilter={toggleHarness}
+                      title="By harness"
+                    />
+                  </section>
+                ),
+                label: 'Harnesses',
+                value: 'harnesses',
+              },
+              {
+                content: () => (
+                  <section class={section}>
+                    <ProjectSummary
+                      groups={projectGroupRows()}
+                      onProjectFilter={(value) => setFieldFilter('project', value)}
+                    />
+                  </section>
+                ),
+                label: 'Projects',
+                value: 'projects',
+              },
+              {
+                content: () => (
+                  <section class={section}>
+                    <CursorAttributionPanel rows={cursorCommitRows()} />
+                  </section>
+                ),
+                label: 'Cursor AI',
+                value: 'cursor-ai',
+              },
+            ]}
+            onValueChange={setTab}
+            value={search().tab}
+          />
 
           <Show when={selectedRow()}>
             {(row) => (

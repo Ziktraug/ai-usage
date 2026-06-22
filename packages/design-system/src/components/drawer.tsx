@@ -1,4 +1,20 @@
 import { css } from '@ai-usage/design-system/css';
+import { Drawer as ArkDrawer } from '@ark-ui/solid/drawer';
+import type { JSX } from 'solid-js';
+import { Portal } from 'solid-js/web';
+
+export interface DrawerProps {
+  children: JSX.Element;
+  closeOnInteractOutside?: boolean;
+  contentAriaLabel: string;
+  contentClass?: string;
+  finalFocusEl?: () => HTMLElement | null;
+  initialFocusEl?: () => HTMLElement | null;
+  modal?: boolean;
+  onOpenChange: (open: boolean) => void;
+  open: boolean;
+  trapFocus?: boolean;
+}
 
 export const drawer = css({
   position: 'fixed',
@@ -102,3 +118,23 @@ export const drawerActions = css({
   flexWrap: 'wrap',
   gap: '8px',
 });
+
+export const Drawer = (props: DrawerProps) => (
+  <ArkDrawer.Root
+    closeOnInteractOutside={props.closeOnInteractOutside}
+    finalFocusEl={props.finalFocusEl}
+    initialFocusEl={props.initialFocusEl}
+    modal={props.modal}
+    onOpenChange={(details) => props.onOpenChange(details.open)}
+    open={props.open}
+    trapFocus={props.trapFocus}
+  >
+    <Portal>
+      <ArkDrawer.Positioner>
+        <ArkDrawer.Content aria-label={props.contentAriaLabel} class={props.contentClass ?? drawer}>
+          {props.children}
+        </ArkDrawer.Content>
+      </ArkDrawer.Positioner>
+    </Portal>
+  </ArkDrawer.Root>
+);

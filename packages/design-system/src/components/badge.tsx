@@ -1,4 +1,5 @@
 import { css, cx } from '@ai-usage/design-system/css';
+import { Toggle } from './toggle';
 
 const badge = css({
   display: 'inline-flex',
@@ -89,17 +90,17 @@ export const HarnessBadge = (props: { name: string; onClick?: () => void; active
     return <span class={className()}>{props.name}</span>;
   }
   return (
-    <button
-      aria-pressed={props.active === undefined ? undefined : props.active}
+    <Toggle
+      ariaLabel={props.title ?? `Filter by ${props.name}`}
       class={className()}
       onClick={(event) => {
         event.stopPropagation();
-        props.onClick?.();
       }}
+      onPressedChange={() => props.onClick?.()}
+      pressed={props.active === true}
       title={props.title ?? `Filter by ${props.name}`}
-      type="button"
     >
       {props.name}
-    </button>
+    </Toggle>
   );
 };

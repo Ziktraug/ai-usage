@@ -1,8 +1,6 @@
+import { Checkbox, Popover } from '@ai-usage/design-system';
 import { cx } from '@ai-usage/design-system/css';
 import {
-  columnToggle,
-  columnToggleInput,
-  columnToggleText,
   empty,
   emptyActions,
   ghostButton,
@@ -81,38 +79,36 @@ const ColumnVisibilityControl = (props: {
     props.onColumnVisibilityChange((current) => ({ ...current, [id]: visible }));
 
   return (
-    <details>
-      <summary class={ghostButton}>Columns · {visibleCount()} ▾</summary>
-      <div class={popoverContent}>
-        <div class={popoverHeader}>
-          <span>
-            {visibleCount()} of {sessionColumns.length} columns shown
-          </span>
-          <button
-            class={ghostButton}
-            onClick={() => props.onColumnVisibilityChange(defaultColumnVisibility)}
-            type="button"
-          >
-            Reset
-          </button>
-        </div>
-        <div class={popoverGrid}>
-          <For each={hideableColumns()}>
-            {(column) => (
-              <label class={columnToggle}>
-                <input
-                  checked={isSessionColumnVisible(props.columnVisibility, column.id)}
-                  class={columnToggleInput}
-                  onChange={(event) => setColumnVisible(column.id, event.currentTarget.checked)}
-                  type="checkbox"
-                />
-                <span class={columnToggleText}>{sessionColumnLabel(column)}</span>
-              </label>
-            )}
-          </For>
-        </div>
+    <Popover
+      contentClass={popoverContent}
+      trigger={<span>Columns · {visibleCount()} ▾</span>}
+      triggerClass={ghostButton}
+    >
+      <div class={popoverHeader}>
+        <span>
+          {visibleCount()} of {sessionColumns.length} columns shown
+        </span>
+        <button
+          class={ghostButton}
+          onClick={() => props.onColumnVisibilityChange(defaultColumnVisibility)}
+          type="button"
+        >
+          Reset
+        </button>
       </div>
-    </details>
+      <div class={popoverGrid}>
+        <For each={hideableColumns()}>
+          {(column) => (
+            <Checkbox
+              checked={isSessionColumnVisible(props.columnVisibility, column.id)}
+              onCheckedChange={(checked) => setColumnVisible(column.id, checked)}
+            >
+              {sessionColumnLabel(column)}
+            </Checkbox>
+          )}
+        </For>
+      </div>
+    </Popover>
   );
 };
 
@@ -272,18 +268,15 @@ export const SessionTable = (props: {
       when={props.rows.length}
     >
       <div class={tableControls}>
-        <label class={columnToggle}>
-          <input
-            checked={props.groupCampaigns}
-            class={columnToggleInput}
-            onChange={(event) => {
-              props.onGroupCampaignsChange(event.currentTarget.checked);
-              setExpanded({});
-            }}
-            type="checkbox"
-          />
-          <span class={columnToggleText}>Group campaigns</span>
-        </label>
+        <Checkbox
+          checked={props.groupCampaigns}
+          onCheckedChange={(checked) => {
+            props.onGroupCampaignsChange(checked);
+            setExpanded({});
+          }}
+        >
+          Group campaigns
+        </Checkbox>
         <ColumnVisibilityControl
           columnVisibility={props.columnVisibility}
           hiddenColumnIds={dataHiddenColumnIds()}
