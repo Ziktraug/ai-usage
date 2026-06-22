@@ -36,5 +36,8 @@
     "check": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && bun run ship && tsc --noEmit",
     "lint": "biome check .",
     "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@ark-ui/solid": "^5.37.1"
   }
 }

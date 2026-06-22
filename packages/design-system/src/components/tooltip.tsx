@@ -1,5 +1,14 @@
 import { css } from '@ai-usage/design-system/css';
+import { Tooltip as ArkTooltip } from '@ark-ui/solid/tooltip';
 import type { JSX } from 'solid-js';
+import { Portal } from 'solid-js/web';
+
+export interface TooltipProps {
+  children: JSX.Element;
+  content: JSX.Element;
+  contentClass?: string;
+  openDelay?: number;
+}
 
 export const tooltipContent = css({
   p: '8px 12px',
@@ -15,6 +24,17 @@ export const tooltipContent = css({
     animation: 'fadeIn 0.12s ease-out',
   },
 });
+
+export const Tooltip = (props: TooltipProps) => (
+  <ArkTooltip.Root lazyMount openDelay={props.openDelay ?? 300} unmountOnExit>
+    <ArkTooltip.Trigger asChild={(triggerProps) => <span {...triggerProps()}>{props.children}</span>} />
+    <Portal>
+      <ArkTooltip.Positioner>
+        <ArkTooltip.Content class={props.contentClass ?? tooltipContent}>{props.content}</ArkTooltip.Content>
+      </ArkTooltip.Positioner>
+    </Portal>
+  </ArkTooltip.Root>
+);
 
 const provenanceCell = css({
   display: 'inline-flex',
@@ -57,15 +77,17 @@ export const ProvenanceMarker = (props: { facts: ProvenanceMarkerFact[] }) => {
     return null;
   }
   const hasWarning = props.facts.some((fact) => fact.severity === 'warning');
+  const title = provenanceTitle(props.facts);
   return (
-    <span
-      aria-label={provenanceTitle(props.facts)}
-      class={hasWarning ? `${provenanceMarker} ${provenanceMarkerWarning}` : provenanceMarker}
-      role="img"
-      title={provenanceTitle(props.facts)}
-    >
-      !
-    </span>
+    <Tooltip content={title}>
+      <span
+        aria-label={title}
+        class={hasWarning ? `${provenanceMarker} ${provenanceMarkerWarning}` : provenanceMarker}
+        role="img"
+      >
+        !
+      </span>
+    </Tooltip>
   );
 };
 

@@ -170,7 +170,7 @@ export const presetButton = css({
     borderColor: 'accent',
     color: 'accent',
   },
-  '&[data-active="true"]': {
+  '&[data-active="true"], &[data-state=checked]': {
     bg: 'accentSoft',
     borderColor: 'accent',
     color: 'accent',

@@ -73,7 +73,7 @@ describe('dashboard model', () => {
       }),
     ];
 
-    const filtered = filterTimelineRows(rows, createFilterSnapshot('alpha', 'Codex', { project: 'alpha' }));
+    const filtered = filterTimelineRows(rows, createFilterSnapshot('alpha', ['Codex'], [], { project: 'alpha' }));
 
     expect(filtered.map((item) => item.sessionLabel)).toEqual(['Alpha build']);
   });

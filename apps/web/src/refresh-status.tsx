@@ -1,3 +1,4 @@
+import { Toggle } from '@ai-usage/design-system';
 import { cx } from '@ai-usage/design-system/css';
 import {
   refreshButton,
@@ -171,15 +172,15 @@ export const RefreshStatus = (props: {
       >
         Refresh
       </button>
-      <button
-        aria-label={props.refreshPaused ? 'Resume auto-refresh' : 'Pause auto-refresh'}
+      <Toggle
+        ariaLabel={props.refreshPaused ? 'Resume auto-refresh' : 'Pause auto-refresh'}
         class={refreshIconButton}
         disabled={!props.canRefresh}
-        onClick={props.onTogglePause}
-        type="button"
+        onPressedChange={props.onTogglePause}
+        pressed={props.refreshPaused}
       >
         {props.refreshPaused ? '>' : '||'}
-      </button>
+      </Toggle>
     </div>
   );
 };

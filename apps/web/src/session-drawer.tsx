@@ -1,3 +1,4 @@
+import { Drawer } from '@ai-usage/design-system';
 import { cx } from '@ai-usage/design-system/css';
 import {
   detailItem,
@@ -20,7 +21,7 @@ import {
   ghostButton,
   muted,
 } from '@ai-usage/design-system/report';
-import { createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
+import { createMemo, createSignal, For, Show } from 'solid-js';
 import type { CampaignTotals, CampaignView } from './dashboard-model';
 import type { FieldFilterKey } from './dashboard-search';
 import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from './dashboard-sort';
@@ -75,18 +76,8 @@ export const SessionDrawer = (props: {
   onClearFilters: () => void;
 }) => {
   let closeButton: HTMLButtonElement | undefined;
+  const previousFocus = typeof document === 'undefined' ? null : document.activeElement;
   const [showAllCampaignSessions, setShowAllCampaignSessions] = createSignal(false);
-  // Move focus in on open and hand it back on close, so keyboard users are
-  // not stranded; the inspector itself stays non-modal.
-  onMount(() => {
-    const previous = document.activeElement;
-    closeButton?.focus();
-    onCleanup(() => {
-      if (previous instanceof HTMLElement && previous.isConnected) {
-        previous.focus();
-      }
-    });
-  });
 
   const position = createMemo(() => props.rows.findIndex((row) => rowKey(row) === rowKey(props.row)));
   const medianCost = createMemo(() =>
@@ -122,7 +113,21 @@ export const SessionDrawer = (props: {
   });
 
   return (
-    <aside aria-label="Session details" class={drawer} role="dialog">
+    <Drawer
+      closeOnInteractOutside
+      contentAriaLabel="Session details"
+      contentClass={drawer}
+      finalFocusEl={() => (previousFocus instanceof HTMLElement && previousFocus.isConnected ? previousFocus : null)}
+      initialFocusEl={() => closeButton ?? null}
+      modal={false}
+      onOpenChange={(open) => {
+        if (!open) {
+          props.onClose();
+        }
+      }}
+      open
+      trapFocus={false}
+    >
       <div class={drawerTop}>
         <HarnessBadge name={props.row.harness} />
         <div class={drawerNav}>
@@ -303,6 +308,6 @@ export const SessionDrawer = (props: {
           </button>
         </div>
       </div>
-    </aside>
+    </Drawer>
   );
 };

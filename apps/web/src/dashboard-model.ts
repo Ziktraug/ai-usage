@@ -28,19 +28,27 @@ export const fieldValueForRow = (row: DashboardRow, key: FieldFilterKey) => {
 
 export interface FilterSnapshot {
   fieldEntries: [FieldFilterKey, string][];
-  harness: string;
+  harness: string[];
+  machine: string[];
   query: string;
 }
 
-export const createFilterSnapshot = (query: string, harness: string, filters: FieldFilters): FilterSnapshot => ({
+export const createFilterSnapshot = (
+  query: string,
+  harness: string[],
+  machine: string[],
+  filters: FieldFilters,
+): FilterSnapshot => ({
   fieldEntries: Object.entries(filters) as [FieldFilterKey, string][],
   harness,
+  machine,
   query: query.trim().toLowerCase(),
 });
 
 export const matchesFilterSnapshot = (row: DashboardRow, filters: FilterSnapshot) =>
   row.searchText.includes(filters.query) &&
-  (filters.harness === 'all' || row.harness === filters.harness) &&
+  (filters.harness.length === 0 || filters.harness.includes(row.harness)) &&
+  (filters.machine.length === 0 || filters.machine.includes(row.source?.machineLabel ?? '')) &&
   filters.fieldEntries.every(([key, value]) => fieldValueForRow(row, key) === value);
 
 export const filterTimelineRows = (rows: DashboardRow[], filters: FilterSnapshot) =>

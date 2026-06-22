@@ -2,6 +2,7 @@
 export * from './components/badge';
 export * from './components/button';
 export * from './components/chart';
+export * from './components/checkbox';
 export * from './components/drawer';
 export * from './components/empty-state';
 export * from './components/field';
