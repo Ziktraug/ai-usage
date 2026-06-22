@@ -20,7 +20,8 @@ import {
   ghostButton,
   muted,
 } from '@ai-usage/design-system/report';
-import { createMemo, For, onCleanup, onMount, Show } from 'solid-js';
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
+import type { CampaignTotals, CampaignView } from './dashboard-model';
 import type { FieldFilterKey } from './dashboard-search';
 import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from './dashboard-sort';
 import {
@@ -47,14 +48,34 @@ const DetailItem = (props: { label: string; value: string; hint?: string }) => (
 
 const fmtRatio = (ratio: number) => (ratio >= 10 ? `${Math.round(ratio)}×` : `${ratio.toFixed(1)}×`);
 
+const fmtCampaignTotals = (totals: CampaignTotals) =>
+  [
+    `${fmtMoney(totals.totalCost)} API`,
+    `${fmtCompact(totals.freshTokens)} fresh tokens`,
+    `${fmtNum(totals.turns)} turns`,
+    `${fmtNum(totals.tools)} tools`,
+  ].join(' · ');
+
+const campaignSessionSummary = (row: DashboardRow) =>
+  [
+    row.costKnown ? fmtMoney(row.costApprox) : '— API',
+    `${fmtCompact(row.freshTokens)} fresh`,
+    `${fmtNum(row.turns)} turns`,
+    `${fmtNum(row.tools)} tools`,
+  ].join(' · ');
+
 export const SessionDrawer = (props: {
   row: DashboardRow;
   rows: DashboardRow[];
+  selectedCampaign?: CampaignView | null;
   onClose: () => void;
   onNavigate: (delta: number) => void;
+  onSelectSession: (row: DashboardRow) => void;
   onFieldFilter: (key: FieldFilterKey, value: string) => void;
+  onClearFilters: () => void;
 }) => {
   let closeButton: HTMLButtonElement | undefined;
+  const [showAllCampaignSessions, setShowAllCampaignSessions] = createSignal(false);
   // Move focus in on open and hand it back on close, so keyboard users are
   // not stranded; the inspector itself stays non-modal.
   onMount(() => {
@@ -78,6 +99,7 @@ export const SessionDrawer = (props: {
     props.row.costKnown && props.row.costApprox > 0 && medianCost() > 0 ? props.row.costApprox / medianCost() : null;
   const durationRatio = () =>
     (props.row.durationMs ?? 0) > 0 && medianDuration() > 0 ? (props.row.durationMs ?? 0) / medianDuration() : null;
+  const isInNavigation = () => position() >= 0;
 
   const anatomySegments = () => [
     { label: 'Cache read', value: props.row.tokCr, class: tokenSegmentClasses.cacheRead },
@@ -85,6 +107,19 @@ export const SessionDrawer = (props: {
     { label: 'Input', value: props.row.tokIn, class: tokenSegmentClasses.input },
     { label: 'Output', value: props.row.tokOut, class: tokenSegmentClasses.output },
   ];
+  const campaignVisibleKeys = createMemo(
+    () => new Set((props.selectedCampaign?.visibleRows ?? []).map((row) => rowKey(row))),
+  );
+  const hiddenCampaignRows = createMemo(
+    () => props.selectedCampaign?.allRows.filter((row) => !campaignVisibleKeys().has(rowKey(row))) ?? [],
+  );
+  const campaignRowsToShow = createMemo(() => {
+    const campaign = props.selectedCampaign;
+    if (!campaign) {
+      return [];
+    }
+    return showAllCampaignSessions() ? [...campaign.visibleRows, ...hiddenCampaignRows()] : campaign.visibleRows;
+  });
 
   return (
     <aside aria-label="Session details" class={drawer} role="dialog">
@@ -92,12 +127,14 @@ export const SessionDrawer = (props: {
         <HarnessBadge name={props.row.harness} />
         <div class={drawerNav}>
           <span class={drawerPosition}>
-            {fmtNum(position() + 1)} / {fmtNum(props.rows.length)}
+            <Show fallback="Outside filters" when={isInNavigation()}>
+              {fmtNum(position() + 1)} / {fmtNum(props.rows.length)}
+            </Show>
           </span>
           <button
             aria-label="Previous session (k)"
             class={drawerClose}
-            disabled={position() <= 0}
+            disabled={!isInNavigation() || position() <= 0}
             onClick={() => props.onNavigate(-1)}
             title="Previous session (k)"
             type="button"
@@ -107,7 +144,7 @@ export const SessionDrawer = (props: {
           <button
             aria-label="Next session (j)"
             class={drawerClose}
-            disabled={position() >= props.rows.length - 1}
+            disabled={!isInNavigation() || position() >= props.rows.length - 1}
             onClick={() => props.onNavigate(1)}
             title="Next session (j)"
             type="button"
@@ -154,6 +191,60 @@ export const SessionDrawer = (props: {
             <Show when={costRatio() != null && durationRatio() != null}> · </Show>
             <Show when={durationRatio() != null}>{fmtRatio(durationRatio() ?? 0)} median duration</Show>
           </div>
+        </Show>
+        <Show when={props.selectedCampaign}>
+          {(campaign) => (
+            <div class={drawerCompare}>
+              <div class={drawerTitle}>Campaign</div>
+              <div style={{ 'margin-top': '6px' }}>{fmtCampaignTotals(campaign().visibleTotals)}</div>
+              <div class={muted} style={{ 'margin-top': '4px' }}>
+                {fmtNum(campaign().visibleCount)} / {fmtNum(campaign().totalCount)} sessions shown
+                <Show when={campaign().visibleCount < campaign().totalCount}>
+                  {' · '}current filters hide part of this campaign
+                </Show>
+              </div>
+              <div style={{ display: 'grid', gap: '8px', 'margin-top': '10px' }}>
+                <For each={campaignRowsToShow()}>
+                  {(session) => {
+                    const hidden = () => !campaignVisibleKeys().has(rowKey(session));
+                    return (
+                      <button
+                        class={ghostButton}
+                        onClick={() => props.onSelectSession(session)}
+                        style={{
+                          display: 'block',
+                          'text-align': 'left',
+                          opacity: hidden() ? 0.58 : 1,
+                        }}
+                        title={hidden() ? 'Select session hidden by current filters' : 'Select campaign session'}
+                        type="button"
+                      >
+                        <div>{session.sessionLabel}</div>
+                        <div class={muted}>
+                          {campaignSessionSummary(session)}
+                          <Show when={hidden()}>{' · '}hidden by current filters</Show>
+                        </div>
+                      </button>
+                    );
+                  }}
+                </For>
+              </div>
+              <Show when={hiddenCampaignRows().length > 0}>
+                <div class={drawerActions} style={{ 'margin-top': '10px' }}>
+                  <button
+                    class={ghostButton}
+                    onClick={() => setShowAllCampaignSessions((current) => !current)}
+                    type="button"
+                  >
+                    {showAllCampaignSessions() ? 'Show filtered campaign sessions' : 'Show all campaign sessions'}
+                  </button>
+                  <button class={ghostButton} onClick={() => props.onClearFilters()} type="button">
+                    Clear filters
+                  </button>
+                </div>
+              </Show>
+            </div>
+          )}
         </Show>
         <div class={drawerGrid}>
           <DetailItem label="Started" value={fmtDate(props.row.date)} />

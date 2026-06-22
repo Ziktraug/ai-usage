@@ -3,7 +3,7 @@ import { Effect } from 'effect';
 import { collectSelectedHarnessResults, collectSelectedHarnessRows } from './collectors';
 import { collectClaude, collectClaudeRetentionWarnings } from './collectors/claude';
 import { collectCursor } from './collectors/cursor';
-import { collectOpenCode } from './collectors/opencode';
+import { classifyOpenCodeTitle, collectOpenCode } from './collectors/opencode';
 import { CURSOR_COMMIT_ATTRIBUTION_SQL, collectCursorCommitAttribution } from './facets';
 import { LocalHistoryStorage } from './local-history';
 import { TestMemoryStorage } from './test-memory-storage';
@@ -13,7 +13,8 @@ const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, 
 
 const OPENCODE_DB = '.local/share/opencode/opencode.db';
 const OPENCODE_STABLE_DB = '.local/share/opencode/opencode-stable.db';
-const OPENCODE_SESSION_SQL = 'SELECT id, title, directory, summary_additions, summary_deletions FROM session';
+const OPENCODE_SESSION_SQL =
+  'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
 const OPENCODE_TOOL_SQL = `SELECT session_id, count(*) n FROM part WHERE data LIKE '%"type":"tool"%' GROUP BY session_id`;
 const OPENCODE_MESSAGE_SQL = 'SELECT session_id, data FROM message';
 
@@ -155,6 +156,68 @@ describe('DB-backed Harness collectors', () => {
     expect(unavailable?.endDate?.toISOString()).toBe('2026-04-24T08:33:07.361Z');
   });
 
+  test('collects Claude title provenance and agent parent lineage from transcript files', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.claude/projects/-work-ai-usage/parent-session.jsonl',
+      jsonl(
+        {
+          type: 'ai-title',
+          timestamp: '2026-04-25T07:59:00.000Z',
+          aiTitle: 'Refresh dashboard UX',
+        },
+        {
+          type: 'assistant',
+          timestamp: '2026-04-25T08:00:00.000Z',
+          cwd: '/work/ai-usage',
+          requestId: 'request-1',
+          sessionId: 'parent-session',
+          message: {
+            id: 'message-1',
+            model: 'claude-sonnet-4-6',
+            usage: {
+              input_tokens: 10,
+              output_tokens: 5,
+              cache_read_input_tokens: 2,
+              cache_creation_input_tokens: 1,
+            },
+          },
+        },
+      ),
+    );
+    storage.writeText(
+      '.claude/projects/-work-ai-usage/agent-child.jsonl',
+      jsonl({
+        type: 'assistant',
+        timestamp: '2026-04-25T08:01:00.000Z',
+        cwd: '/work/ai-usage',
+        requestId: 'request-2',
+        sessionId: 'parent-session',
+        isSidechain: true,
+        message: {
+          id: 'message-2',
+          model: 'claude-sonnet-4-6',
+          usage: {
+            input_tokens: 6,
+            output_tokens: 3,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+        },
+      }),
+    );
+
+    const rows = runWithStorage(collectClaude, storage);
+    const parent = rows.find((row) => row.source?.sourceSessionId === 'parent-session');
+    const child = rows.find((row) => row.source?.sourceSessionId === 'agent-child');
+
+    expect(parent?.name).toBe('Refresh dashboard UX');
+    expect(parent?.titleSource).toBe('ai');
+    expect(child?.source?.parentSourceSessionId).toBe('parent-session');
+    expect(child?.titleSource).toBe('agent-role');
+    expect(child?.subagent).toBe(true);
+  });
+
   test('warns when Claude Code is set to delete transcripts at the lossy default', () => {
     const storage = new TestMemoryStorage();
 
@@ -183,6 +246,7 @@ describe('DB-backed Harness collectors', () => {
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SESSION_SQL, [
       {
         id: 'session-1',
+        parent_id: 'parent-session',
         title: 'Build usage report',
         directory: '/work/ai-usage',
         summary_additions: 12,
@@ -211,11 +275,31 @@ describe('DB-backed Harness collectors', () => {
     expect(rows[0]?.harness).toBe('OpenCode');
     expect(rows[0]?.provider).toBe('OpenAI API');
     expect(rows[0]?.project).toBe('ai-usage');
+    expect(rows[0]?.titleSource).toBe('ai');
+    expect(rows[0]?.source?.parentSourceSessionId).toBe('parent-session');
     expect(rows[0]?.tokOut).toBe(25);
     expect(rows[0]?.costActual).toBe(0.12);
     expect(rows[0]?.turns).toBe(1);
     expect(rows[0]?.tools).toBe(2);
     expect(rows[0]?.linesAdded).toBe(12);
+  });
+
+  test('classifies OpenCode generic titles as technical id fallbacks', () => {
+    expect(classifyOpenCodeTitle(null, 'session-abcdef').source).toBe('id');
+    expect(classifyOpenCodeTitle('  New   session... ', 'session-abcdef')).toEqual({
+      name: 'session-ab',
+      source: 'id',
+    });
+    expect(classifyOpenCodeTitle('New session …', 'session-abcdef')).toEqual({
+      name: 'session-ab',
+      source: 'id',
+    });
+    expect(classifyOpenCodeTitle('ACP', 'session-abcdef')).toEqual({ name: 'ACP session', source: 'id' });
+    expect(classifyOpenCodeTitle('ACP session', 'session-abcdef')).toEqual({ name: 'ACP session', source: 'id' });
+    expect(classifyOpenCodeTitle('Build usage report', 'session-abcdef')).toEqual({
+      name: 'Build usage report',
+      source: 'ai',
+    });
   });
 
   test('collects OpenCode sessions from stable.db without duplicating live.db sessions', () => {
@@ -311,6 +395,7 @@ describe('DB-backed Harness collectors', () => {
     expect(rows[0]?.harness).toBe('Cursor');
     expect(rows[0]?.provider).toBe('Cursor sub');
     expect(rows[0]?.name).toBe('Fix UI');
+    expect(rows[0]?.titleSource).toBe('ai');
     expect(rows[0]?.partial).toBe(true);
     expect(rows[0]?.tokIn).toBe(10);
     expect(rows[0]?.tokCr).toBe(2);
@@ -349,6 +434,7 @@ describe('DB-backed Harness collectors', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.harness).toBe('Cursor');
     expect(rows[0]?.name).toBe('Refactor agent loop');
+    expect(rows[0]?.titleSource).toBe('ai');
     expect(rows[0]?.usageUnavailable).toBe(true);
     expect(rows[0]?.tokIn).toBe(0);
     expect(rows[0]?.costActual).toBeNull();

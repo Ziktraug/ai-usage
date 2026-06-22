@@ -38,6 +38,7 @@ import {
   inkFill,
   migrationArea,
   migrationSvgWrap,
+  muted,
   otherFillClass,
   otherSwatchClass,
   overviewGrid,
@@ -70,6 +71,7 @@ import {
   twoColumns,
 } from '@ai-usage/design-system/report';
 import { createEffect, createMemo, For, type JSX, Show } from 'solid-js';
+import type { CampaignView } from './dashboard-model';
 import { toDateInputValue } from './date-range';
 import {
   buildCalendarHeatmapData,
@@ -93,7 +95,9 @@ import {
 } from './shared';
 
 export interface OverviewProps {
+  campaigns: CampaignView[];
   onSelectDay: (day: Date) => void;
+  onSelectModel: (modelKey: string) => void;
   onSelectSession: (row: DashboardRow) => void;
   rangeLabel: string;
   rows: DashboardRow[];
@@ -282,7 +286,9 @@ const migrationFillClass = (key: string, index: number) =>
 const migrationSwatchClass = (key: string, index: number) =>
   key === 'other' ? otherSwatchClass : (chartSwatchClasses[index] ?? otherSwatchClass);
 
-const ModelMigration = (props: { rows: DashboardRow[] }) => {
+const isActivationKey = (event: KeyboardEvent) => event.key === 'Enter' || event.key === ' ';
+
+const ModelMigration = (props: { rows: DashboardRow[]; onSelectModel: (modelKey: string) => void }) => {
   const data = createMemo(() => buildModelMigrationData(props.rows));
 
   return (
@@ -295,9 +301,29 @@ const ModelMigration = (props: { rows: DashboardRow[] }) => {
                 <title>Share of API value per model over time</title>
                 <For each={chart().paths}>
                   {(path, index) => (
+                    // biome-ignore lint/a11y/useSemanticElements: an SVG cannot contain <button>; role is the standard pattern for SVG hit targets
                     <path
                       class={cx(migrationFillClass(chart().series[index()]?.key ?? '', index()), migrationArea)}
                       d={path}
+                      onClick={() => {
+                        const key = chart().series[index()]?.key;
+                        if (key && key !== 'other') {
+                          props.onSelectModel(key);
+                        }
+                      }}
+                      onKeyDown={(event) => {
+                        if (!isActivationKey(event)) {
+                          return;
+                        }
+                        const key = chart().series[index()]?.key;
+                        if (!key || key === 'other') {
+                          return;
+                        }
+                        event.preventDefault();
+                        props.onSelectModel(key);
+                      }}
+                      role="button"
+                      tabIndex={0}
                     >
                       <title>
                         {chart().series[index()]?.key} — {fmtMoney(chart().series[index()]?.total ?? 0)} (
@@ -385,11 +411,15 @@ const TokenAnatomy = (props: { summary: ReportSummary }) => {
 // Session shape — duration × cost scatter on log scales. Micro-questions,
 // working sessions and marathons separate into visible clusters.
 
-const SessionShape = (props: { rows: DashboardRow[]; onSelectSession: (row: DashboardRow) => void }) => {
-  const data = createMemo(() => buildSessionShapeData(props.rows));
+const SessionShape = (props: {
+  campaigns: CampaignView[];
+  rows: DashboardRow[];
+  onSelectSession: (row: DashboardRow) => void;
+}) => {
+  const data = createMemo(() => buildSessionShapeData(props.rows, props.campaigns));
 
   return (
-    <Panel sub="Duration × API value (log scales) — click a point to inspect the session" title="Session shape">
+    <Panel sub="Duration × API value (log scales) — click a point to inspect the work" title="Session shape">
       <Show fallback={<div class={emptyPanel}>Not enough timed, priced sessions in range</div>} when={data()}>
         {(chart) => (
           <>
@@ -429,20 +459,25 @@ const SessionShape = (props: { rows: DashboardRow[]; onSelectSession: (row: Dash
                   )}
                 </For>
                 <For each={chart().points}>
-                  {(row) => (
+                  {(item) => (
                     // biome-ignore lint/a11y/useSemanticElements: an SVG cannot contain <button>; role is the standard pattern for SVG hit targets
                     <circle
-                      aria-label={`Inspect session: ${row.sessionLabel}`}
-                      class={cx(harnessSvgFillFor(row.harness), scatterPoint)}
-                      cx={`${chart().xPct(row.durationMs)}%`}
-                      cy={`${chart().yPct(row.costApprox)}%`}
-                      onClick={() => props.onSelectSession(row)}
-                      r="3.5"
+                      aria-label={`Inspect ${item.kind === 'campaign' ? 'campaign' : 'session'}: ${item.label}`}
+                      class={cx(harnessSvgFillFor(item.harness), scatterPoint)}
+                      cx={`${chart().xPct(item.durationMs)}%`}
+                      cy={`${chart().yPct(item.costApprox)}%`}
+                      onClick={() => props.onSelectSession(item.row)}
+                      r={item.kind === 'campaign' ? '5' : '3.5'}
                       role="button"
                       tabIndex={-1}
                     >
                       <title>
-                        {row.sessionLabel} — {fmtMoney(row.costApprox)} · {fmtDuration(row.durationMs)} · {row.harness}
+                        {[
+                          `${item.label} — ${fmtMoney(item.costApprox)} · ${fmtDuration(item.durationMs)} · ${item.harness}`,
+                          item.kind === 'campaign' ? `${fmtNum(item.sessionCount)} sessions` : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
                       </title>
                     </circle>
                   )}
@@ -575,20 +610,29 @@ const Records = (props: {
 // Top sessions — the five most expensive sessions, by name. Session titles
 // carry a lot of qualitative signal; surface them.
 
-const TopSessions = (props: { rows: DashboardRow[]; onSelectSession: (row: DashboardRow) => void }) => {
-  const top = createMemo(() => buildTopSessions(props.rows));
+const TopSessions = (props: {
+  campaigns: CampaignView[];
+  rows: DashboardRow[];
+  onSelectSession: (row: DashboardRow) => void;
+}) => {
+  const top = createMemo(() => buildTopSessions(props.rows, 5, props.campaigns));
 
   return (
     <Show when={top().length}>
-      <Panel sub="The five most expensive sessions in range — click to inspect" title="Top sessions">
+      <Panel sub="The five most expensive sessions or campaigns in range — click to inspect" title="Top sessions">
         <div class={topList}>
           <For each={top()}>
-            {(row, index) => (
-              <button class={topRow} onClick={() => props.onSelectSession(row)} type="button">
+            {(item, index) => (
+              <button class={topRow} onClick={() => props.onSelectSession(item.row)} type="button">
                 <span class={topRank}>{index() + 1}</span>
-                <span class={topTitle}>{row.sessionLabel}</span>
-                <HarnessBadge name={row.harness} />
-                <span class={topMoney}>{fmtMoney(row.costApprox)}</span>
+                <span class={topTitle}>
+                  {item.label}
+                  <Show when={item.kind === 'campaign'}>
+                    <span class={muted}> · Campaign · {fmtNum(item.sessionCount)} sessions</span>
+                  </Show>
+                </span>
+                <HarnessBadge name={item.harness} />
+                <span class={topMoney}>{fmtMoney(item.costApprox)}</span>
               </button>
             )}
           </For>
@@ -606,11 +650,11 @@ export const Overview = (props: OverviewProps) => (
       <Hero rangeLabel={props.rangeLabel} summary={props.summary} />
       <CalendarHeatmap onSelectDay={props.onSelectDay} rows={props.timelineRows} />
       <div class={twoColumns}>
-        <ModelMigration rows={props.rows} />
+        <ModelMigration onSelectModel={props.onSelectModel} rows={props.rows} />
         <TokenAnatomy summary={props.summary} />
       </div>
       <div class={twoColumns}>
-        <SessionShape onSelectSession={props.onSelectSession} rows={props.rows} />
+        <SessionShape campaigns={props.campaigns} onSelectSession={props.onSelectSession} rows={props.rows} />
         <Punchcard rows={props.rows} />
       </div>
       <Records
@@ -619,7 +663,7 @@ export const Overview = (props: OverviewProps) => (
         rows={props.rows}
         timelineRows={props.timelineRows}
       />
-      <TopSessions onSelectSession={props.onSelectSession} rows={props.rows} />
+      <TopSessions campaigns={props.campaigns} onSelectSession={props.onSelectSession} rows={props.rows} />
     </div>
   </Show>
 );

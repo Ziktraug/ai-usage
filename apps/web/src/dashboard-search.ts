@@ -35,7 +35,10 @@ export interface DashboardDateRangeSearch {
   to?: string;
 }
 
+export type DashboardCampaignMode = 'on' | 'off';
+
 export interface DashboardSearch {
+  campaigns: DashboardCampaignMode;
   cols: SearchableColumnDiffId[];
   filters: FieldFilters;
   harness: string;
@@ -87,6 +90,7 @@ export const defaultDashboardSortFor = (sort: ReportSort): DashboardSort => ({
 });
 
 export const dashboardSearchDefaultsFor = (sort: ReportSort): DashboardSearch => ({
+  campaigns: 'on',
   cols: [],
   filters: {},
   harness: 'all',
@@ -152,6 +156,7 @@ export const validateDashboardSearch = (
   const harness = cleanString(search.harness);
 
   return {
+    campaigns: search.campaigns === 'off' ? 'off' : defaults.campaigns,
     cols: uniqueValidStrings(search.cols, isSearchableColumnDiffId),
     filters: parseFilters(search.filters),
     harness: harness || defaults.harness,

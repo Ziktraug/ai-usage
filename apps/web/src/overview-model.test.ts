@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
+import { buildCampaignViews } from './dashboard-model';
 import { toDateInputValue } from './date-range';
 import {
   buildCalendarHeatmapData,
   buildModelMigrationData,
   buildOverviewRecords,
+  buildOverviewSessionItems,
   buildPunchcardData,
   buildSessionShapeData,
   buildTopSessions,
@@ -181,6 +183,49 @@ describe('overview model', () => {
     expect(records?.topCost?.sessionLabel).toBe('High');
     expect(records?.longest?.sessionLabel).toBe('Long');
     expect(records?.streak).toBe(3);
-    expect(top.map((item) => item.sessionLabel)).toEqual(['High', 'Long']);
+    expect(top.map((item) => item.label)).toEqual(['High', 'Long']);
+  });
+
+  test('groups campaigns for top sessions and session shape without double counting children', () => {
+    const campaignRoot = row({
+      sessionLabel: 'Campaign root',
+      activeDate: '2026-06-10T12:00:00.000Z',
+      date: '2026-06-10T12:00:00.000Z',
+      costApprox: 8,
+      durationMs: 600_000,
+      source: {
+        harnessKey: 'codex',
+        sourceSessionId: 'root-1',
+        rootSourceSessionId: 'root-1',
+        machineId: 'machine-a',
+      },
+    });
+    const campaignChild = row({
+      sessionLabel: 'Campaign child',
+      activeDate: '2026-06-10T12:05:00.000Z',
+      date: '2026-06-10T12:05:00.000Z',
+      costApprox: 5,
+      durationMs: 300_000,
+      source: {
+        harnessKey: 'codex',
+        sourceSessionId: 'child-1',
+        parentSourceSessionId: 'root-1',
+        rootSourceSessionId: 'root-1',
+        machineId: 'machine-a',
+      },
+    });
+    const soloA = row({ sessionLabel: 'Solo A', costApprox: 12, durationMs: 120_000 });
+    const soloB = row({ sessionLabel: 'Solo B', costApprox: 3, durationMs: 240_000 });
+    const rows = [campaignRoot, campaignChild, soloA, soloB];
+    const campaigns = buildCampaignViews(rows, rows);
+
+    const items = buildOverviewSessionItems(rows, campaigns);
+    const top = buildTopSessions(rows, 2, campaigns);
+    const shape = buildSessionShapeData(rows, campaigns);
+
+    expect(items.map((item) => item.label).sort()).toEqual(['Campaign root', 'Solo A', 'Solo B']);
+    expect(top.map((item) => item.kind)).toEqual(['campaign', 'session']);
+    expect(top.map((item) => item.costApprox)).toEqual([13, 12]);
+    expect(shape?.points.map((item) => item.label).sort()).toEqual(['Campaign root', 'Solo A', 'Solo B']);
   });
 });

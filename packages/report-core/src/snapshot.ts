@@ -88,6 +88,8 @@ const toSnapshotRow = (row: UsageRowWithOptionalSource, machine: UsageMachine): 
     source: {
       harnessKey: source?.harnessKey ?? row.harness.toLowerCase(),
       sourceSessionId: source?.sourceSessionId ?? null,
+      ...(source?.parentSourceSessionId === undefined ? {} : { parentSourceSessionId: source.parentSourceSessionId }),
+      ...(source?.rootSourceSessionId === undefined ? {} : { rootSourceSessionId: source.rootSourceSessionId }),
       ...(source?.sourcePath === undefined ? {} : { sourcePath: source.sourcePath }),
       machineId: machine.id,
       machineLabel: machine.label,

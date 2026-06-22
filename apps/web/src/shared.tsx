@@ -79,6 +79,10 @@ export const providerLabel = (provider: string) => provider.replace(OPENCODE_PRO
 
 export type DashboardRow = SerializedRow & {
   activeTime: number | null;
+  campaignKey?: string;
+  campaignTotalCount?: number;
+  campaignVisibleCount?: number;
+  children?: DashboardRow[];
   modelLabel: string;
   modelKey: string;
   projectKey: string;

@@ -120,7 +120,7 @@ export const rtkNote = css({
   p: '10px 12px',
   border: '1px solid token(colors.line)',
   borderRadius: 'sm',
-  bg: 'accentTint',
+  bg: 'surfaceMuted',
   fontSize: '12px',
   color: 'muted',
   '& strong': {
