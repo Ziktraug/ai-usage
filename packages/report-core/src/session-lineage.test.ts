@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { normalizeSessionLineage } from './session-lineage';
-import type { CollectedUsageRow } from './types';
+import type { CollectedUsageRow, UsageRowWithOptionalSource } from './types';
 
 const row = (sourceSessionId: string | null, overrides: Partial<CollectedUsageRow> = {}): CollectedUsageRow => ({
   date: new Date('2026-01-01T00:00:00.000Z'),
@@ -83,14 +83,13 @@ describe('normalizeSessionLineage', () => {
   });
 
   test('keeps source-less and null-source rows rootless', () => {
-    const sourceLess = { ...row('source-less') };
-    const nullSource = row(null);
-    delete (sourceLess as Partial<CollectedUsageRow>).source;
+    const sourceLess: UsageRowWithOptionalSource = (({ source: _source, ...rest }) => rest)(row('source-less'));
+    const nullSource: UsageRowWithOptionalSource = row(null);
 
     const normalized = normalizeSessionLineage([sourceLess, nullSource]);
 
     expect(normalized[0]).not.toBe(sourceLess);
     expect(normalized[0]?.source).toBeUndefined();
-    expect(normalized[1]?.source.rootSourceSessionId).toBeNull();
+    expect(normalized[1]?.source?.rootSourceSessionId).toBeNull();
   });
 });

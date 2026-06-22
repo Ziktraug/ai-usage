@@ -8,7 +8,9 @@ const reportAppDistPath = () => path.resolve(import.meta.dir, '../../../report/d
 const reportAppOutputPath = () => path.resolve(import.meta.dir, '../../../report/.output');
 const reportAppServerPath = () => {
   const outputServer = path.join(reportAppOutputPath(), 'server/_ssr/ssr.mjs');
-  if (fs.existsSync(outputServer)) return outputServer;
+  if (fs.existsSync(outputServer)) {
+    return outputServer;
+  }
   const serverDir = path.join(reportAppDistPath(), 'server');
   return ['entry-server.js', 'server.js'].map((file) => path.join(serverDir, file)).find((file) => fs.existsSync(file));
 };
@@ -29,11 +31,15 @@ const missingTemplateHTML = (templatePath: string) =>
     '</html>',
   ].join('');
 
-type StartServerModule = {
-  default: ((request: Request) => Response | Promise<Response>) | {
-    fetch: (request: Request) => Response | Promise<Response>;
-  };
-};
+interface StartServerModule {
+  default:
+    | ((request: Request) => Response | Promise<Response>)
+    | {
+        fetch: (request: Request) => Response | Promise<Response>;
+      };
+}
+
+const LEADING_SLASH = /^\//;
 
 const clientAssetTags = (clientDir: string) => {
   const assetsDir = path.join(clientDir, 'assets');
@@ -44,15 +50,21 @@ const clientAssetTags = (clientDir: string) => {
 
 const injectClientAssets = (html: string, clientDir: string) => {
   const tags = clientAssetTags(clientDir);
-  if (!tags) return html;
+  if (!tags) {
+    return html;
+  }
   const lastHeadClose = html.lastIndexOf('</head>');
-  if (lastHeadClose === -1) return `${tags}${html}`;
+  if (lastHeadClose === -1) {
+    return `${tags}${html}`;
+  }
   return html.slice(0, lastHeadClose) + tags + html.slice(lastHeadClose);
 };
 
 export const renderReportAppHTML = async (payload: UsageReportPayload) => {
   const serverPath = reportAppServerPath();
-  if (!serverPath) return missingTemplateHTML(path.join(reportAppOutputPath(), 'server/_ssr/ssr.mjs'));
+  if (!serverPath) {
+    return missingTemplateHTML(path.join(reportAppOutputPath(), 'server/_ssr/ssr.mjs'));
+  }
 
   const globalPayload = globalThis as { __AI_USAGE_REPORT_EXPORT_PAYLOAD__?: UsageReportPayload | undefined };
   const hadPreviousPayload = Object.hasOwn(globalPayload, '__AI_USAGE_REPORT_EXPORT_PAYLOAD__');
@@ -65,15 +77,18 @@ export const renderReportAppHTML = async (payload: UsageReportPayload) => {
     const response = await startFetch(new Request('http://localhost/', { headers: { accept: 'text/html' } }));
     html = await response.text();
   } finally {
-    if (hadPreviousPayload) globalPayload.__AI_USAGE_REPORT_EXPORT_PAYLOAD__ = previousPayload;
-    else delete globalPayload.__AI_USAGE_REPORT_EXPORT_PAYLOAD__;
+    if (hadPreviousPayload) {
+      globalPayload.__AI_USAGE_REPORT_EXPORT_PAYLOAD__ = previousPayload;
+    } else {
+      globalPayload.__AI_USAGE_REPORT_EXPORT_PAYLOAD__ = undefined;
+    }
   }
 
   const clientDir = reportAppClientPath();
   html = injectClientAssets(html, clientDir);
 
   const readAssetContent = (src: string): string => {
-    const assetPath = path.join(clientDir, src.replace(/^\//, ''));
+    const assetPath = path.join(clientDir, src.replace(LEADING_SLASH, ''));
     try {
       return fs.readFileSync(assetPath, 'utf8');
     } catch {

@@ -72,7 +72,9 @@ export const isSearchableColumnDiffId = (value: unknown): value is SearchableCol
 
 export const sortValueForSessionColumn = (row: DashboardRow, columnId: SessionColumnId): SortValue => {
   const column = sessionColumnSchemaById.get(columnId);
-  if (!column) throw new Error(`Unknown session column: ${columnId}`);
+  if (!column) {
+    throw new Error(`Unknown session column: ${columnId}`);
+  }
   return column.sortValue(row);
 };
 
@@ -99,7 +101,9 @@ export const columnDiffFromVisibility = (visibility: VisibilityState): Searchabl
 
 export const sortFromSortingState = (sorting: SortingState, fallbackSort: { id: SessionColumnId; desc: boolean }) => {
   const sort = sorting[0];
-  if (!sort || !isSessionColumnId(sort.id)) return fallbackSort;
+  if (!(sort && isSessionColumnId(sort.id))) {
+    return fallbackSort;
+  }
   return { id: sort.id, desc: sort.desc };
 };
 

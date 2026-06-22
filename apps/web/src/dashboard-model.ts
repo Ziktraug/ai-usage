@@ -2,10 +2,10 @@ import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
 import type { SortingState } from '@tanstack/solid-table';
 import { buildAnalyticsGroups, buildProjectGroups, type ProjectGroup } from './dashboard-analytics';
 import type { Metric, MetricDelta } from './dashboard-metrics';
-import { compareRows } from './dashboard-sort';
 import type { FieldFilterKey, FieldFilters } from './dashboard-search';
-import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from './session-table-schema';
+import { compareRows } from './dashboard-sort';
 import { DAY_MS, type DateBounds, endOfDay, rowMatchesDateBounds } from './date-range';
+import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from './session-table-schema';
 import {
   buildReportSummary,
   type DashboardRow,
@@ -17,16 +17,20 @@ import {
 } from './shared';
 
 export const fieldValueForRow = (row: DashboardRow, key: FieldFilterKey) => {
-  if (key === 'provider') return row.providerDisplay;
-  if (key === 'model') return row.modelKey;
+  if (key === 'provider') {
+    return row.providerDisplay;
+  }
+  if (key === 'model') {
+    return row.modelKey;
+  }
   return row.projectKey;
 };
 
-export type FilterSnapshot = {
+export interface FilterSnapshot {
   fieldEntries: [FieldFilterKey, string][];
   harness: string;
   query: string;
-};
+}
 
 export const createFilterSnapshot = (query: string, harness: string, filters: FieldFilters): FilterSnapshot => ({
   fieldEntries: Object.entries(filters) as [FieldFilterKey, string][],
@@ -62,8 +66,8 @@ export interface CampaignTotals {
   lineDelta: number | null;
   linesAdded: number | null;
   linesDeleted: number | null;
-  rtkInputTokens: number;
   rtkCommandCount: number;
+  rtkInputTokens: number;
   rtkOutputTokens: number;
   rtkSavedTokens: number;
   tokenTotal: number;
@@ -75,17 +79,17 @@ export interface CampaignTotals {
 }
 
 export interface CampaignView {
-  campaignKey: CampaignKey;
-  rootSourceSessionId: string;
-  root: DashboardRow;
-  visibleRows: DashboardRow[];
-  allRows: DashboardRow[];
-  visibleChildren: DashboardRow[];
   allChildren: DashboardRow[];
-  visibleTotals: CampaignTotals;
+  allRows: DashboardRow[];
   allTotals: CampaignTotals;
-  visibleCount: number;
+  campaignKey: CampaignKey;
+  root: DashboardRow;
+  rootSourceSessionId: string;
   totalCount: number;
+  visibleChildren: DashboardRow[];
+  visibleCount: number;
+  visibleRows: DashboardRow[];
+  visibleTotals: CampaignTotals;
 }
 
 export type CampaignTableItem =
@@ -98,7 +102,9 @@ const campaignKeyFor = (row: DashboardRow, rootSourceSessionId: string): Campaig
 const campaignIdentityForRow = (row: DashboardRow) => {
   const sourceSessionId = row.source?.sourceSessionId ?? null;
   const rootSourceSessionId = row.source?.rootSourceSessionId ?? null;
-  if (!sourceSessionId || !rootSourceSessionId) return null;
+  if (!(sourceSessionId && rootSourceSessionId)) {
+    return null;
+  }
   return { campaignKey: campaignKeyFor(row, rootSourceSessionId), rootSourceSessionId, sourceSessionId };
 };
 
@@ -107,7 +113,9 @@ const sumNullable = (rows: DashboardRow[], value: (row: DashboardRow) => number 
   let total = 0;
   for (const row of rows) {
     const next = value(row);
-    if (next == null) continue;
+    if (next == null) {
+      continue;
+    }
     present = true;
     total += next;
   }
@@ -151,7 +159,9 @@ export const buildCampaignViews = (allRows: DashboardRow[], visibleRows: Dashboa
 
   for (const row of allRows) {
     const identity = campaignIdentityForRow(row);
-    if (!identity) continue;
+    if (!identity) {
+      continue;
+    }
     const rows = groups.get(identity.campaignKey) ?? [];
     rows.push(row);
     groups.set(identity.campaignKey, rows);
@@ -160,22 +170,30 @@ export const buildCampaignViews = (allRows: DashboardRow[], visibleRows: Dashboa
   const campaigns: CampaignView[] = [];
   for (const [campaignKey, rows] of groups) {
     const firstIdentity = campaignIdentityForRow(rows[0]!);
-    if (!firstIdentity) continue;
+    if (!firstIdentity) {
+      continue;
+    }
     const root = rows.find((row) => row.source?.sourceSessionId === firstIdentity.rootSourceSessionId);
-    if (!root) continue;
+    if (!root) {
+      continue;
+    }
 
     const allChildren = rows.filter((row) => row !== root);
     const hasDirectChildren = rows.some(
       (row) => row.source?.parentSourceSessionId === firstIdentity.rootSourceSessionId,
     );
-    if (rows.length < 2 && !hasDirectChildren) continue;
+    if (rows.length < 2 && !hasDirectChildren) {
+      continue;
+    }
 
     const rootMatches = visibleKeys.has(rowKeyForCampaignMembership(root));
     const visibleChildren = allChildren.filter((row) => visibleKeys.has(rowKeyForCampaignMembership(row)));
     const visibleRowsForTotals = [rootMatches ? root : null, ...visibleChildren].filter((row): row is DashboardRow =>
       Boolean(row),
     );
-    if (!visibleRowsForTotals.length) continue;
+    if (!visibleRowsForTotals.length) {
+      continue;
+    }
 
     campaigns.push({
       campaignKey,
@@ -251,26 +269,35 @@ const campaignSortValue = (campaign: CampaignView, columnId: SessionColumnId): n
       return root.sortProject;
     case 'session':
       return root.sortSession;
+    default:
+      return sortValueForSessionColumn(root, columnId);
   }
 };
 
 const itemSortValue = (item: CampaignTableItem, columnId: SessionColumnId): number | string =>
   item.kind === 'campaign' ? campaignSortValue(item.campaign, columnId) : sortValueForSessionColumn(item.row, columnId);
 
+const compareCampaignSortValues = (av: number | string, bv: number | string) => {
+  if (typeof av === 'string' || typeof bv === 'string') {
+    return String(av).localeCompare(String(bv));
+  }
+  if (av === bv) {
+    return 0;
+  }
+  return av > bv ? 1 : -1;
+};
+
 const compareCampaignTableItems = (sorting: SortingState) => (a: CampaignTableItem, b: CampaignTableItem) => {
   for (const sort of sorting) {
-    if (!isSessionColumnId(sort.id)) continue;
+    if (!isSessionColumnId(sort.id)) {
+      continue;
+    }
     const av = itemSortValue(a, sort.id);
     const bv = itemSortValue(b, sort.id);
-    const result =
-      typeof av === 'string' || typeof bv === 'string'
-        ? String(av).localeCompare(String(bv))
-        : av === bv
-          ? 0
-          : av > bv
-            ? 1
-            : -1;
-    if (result !== 0) return sort.desc ? -result : result;
+    const result = compareCampaignSortValues(av, bv);
+    if (result !== 0) {
+      return sort.desc ? -result : result;
+    }
   }
   return 0;
 };
@@ -281,7 +308,9 @@ export const buildCampaignTableItems = (
   sorting: SortingState,
   groupCampaigns: boolean,
 ): CampaignTableItem[] => {
-  if (!groupCampaigns) return buildSortedDashboardRows(visibleRows, sorting).map((row) => ({ kind: 'session', row }));
+  if (!groupCampaigns) {
+    return buildSortedDashboardRows(visibleRows, sorting).map((row) => ({ kind: 'session', row }));
+  }
 
   const campaigns = buildCampaignViews(allRows, visibleRows);
   const campaignByKey = new Map(campaigns.map((campaign) => [campaign.campaignKey, campaign]));
@@ -293,16 +322,22 @@ export const buildCampaignTableItems = (
     const identity = campaignIdentityForRow(row);
     const campaign = identity ? campaignByKey.get(identity.campaignKey) : undefined;
     if (campaign) {
-      if (emittedCampaigns.has(campaign.campaignKey)) continue;
+      if (emittedCampaigns.has(campaign.campaignKey)) {
+        continue;
+      }
       emittedCampaigns.add(campaign.campaignKey);
       items.push({ kind: 'campaign', row: campaign.root, campaign, children: campaign.visibleChildren });
       continue;
     }
-    if (!childKeys.has(rowKeyForCampaignMembership(row))) items.push({ kind: 'session', row });
+    if (!childKeys.has(rowKeyForCampaignMembership(row))) {
+      items.push({ kind: 'session', row });
+    }
   }
 
   for (const campaign of campaigns) {
-    if (emittedCampaigns.has(campaign.campaignKey)) continue;
+    if (emittedCampaigns.has(campaign.campaignKey)) {
+      continue;
+    }
     emittedCampaigns.add(campaign.campaignKey);
     items.push({ kind: 'campaign', row: campaign.root, campaign, children: campaign.visibleChildren });
   }
@@ -359,7 +394,9 @@ const campaignDisplayRow = (campaign: CampaignView, sorting: SortingState): Dash
 };
 
 export const campaignBadgeLabelForRow = (row: DashboardRow) => {
-  if (!row.campaignKey || row.campaignTotalCount == null || row.campaignVisibleCount == null) return null;
+  if (!row.campaignKey || row.campaignTotalCount == null || row.campaignVisibleCount == null) {
+    return null;
+  }
   return row.campaignVisibleCount === row.campaignTotalCount
     ? `Campaign · ${row.campaignTotalCount} sessions`
     : `Campaign · ${row.campaignVisibleCount}/${row.campaignTotalCount} sessions`;
@@ -379,7 +416,9 @@ export const buildVisibleSummary = (rows: DashboardRow[], bounds: DateBounds) =>
   buildReportSummary(rows, (row) => rowMatchesDateBounds(row, bounds));
 
 export const buildPreviousPeriodBounds = (bounds: DateBounds, generatedAt: Date): DateBounds | null => {
-  if (!bounds.from) return null;
+  if (!bounds.from) {
+    return null;
+  }
   const from = bounds.from.getTime();
   const to = (bounds.to ?? endOfDay(generatedAt)).getTime();
   const span = Math.max(DAY_MS, to - from);
@@ -388,7 +427,9 @@ export const buildPreviousPeriodBounds = (bounds: DateBounds, generatedAt: Date)
 
 export const buildPreviousPeriodSummary = (rows: DashboardRow[], bounds: DateBounds, generatedAt: Date) => {
   const previousBounds = buildPreviousPeriodBounds(bounds, generatedAt);
-  if (!previousBounds) return null;
+  if (!previousBounds) {
+    return null;
+  }
   const summary = buildVisibleSummary(rows, previousBounds);
   return summary.sessionCount > 0 ? summary : null;
 };
@@ -427,7 +468,9 @@ export const deltaVs = (
   previous: number | undefined,
   fmt: (value: number) => string,
 ): MetricDelta | null => {
-  if (previous == null || previous <= 0) return null;
+  if (previous == null || previous <= 0) {
+    return null;
+  }
   return {
     pct: ((current - previous) / previous) * 100,
     hint: `Previous period of equal length: ${fmt(previous)}`,

@@ -48,12 +48,12 @@ export const metricDeltaArrow = css({
   fontSize: '9px',
 });
 
-export type MetricTileProps = {
+export interface MetricTileProps {
+  delta?: { label: string; hint?: string; positive?: boolean } | null;
+  hint?: string;
   label: string;
   value: string;
-  hint?: string;
-  delta?: { label: string; hint?: string; positive?: boolean } | null;
-};
+}
 
 export const MetricTile = (props: MetricTileProps) => (
   <div class={metricTile} title={props.hint}>
@@ -63,7 +63,7 @@ export const MetricTile = (props: MetricTileProps) => (
       <Show when={props.delta}>
         {(delta) => (
           <div class={metricDelta} title={delta().hint}>
-            <span class={metricDeltaArrow} aria-hidden="true">
+            <span aria-hidden="true" class={metricDeltaArrow}>
               {delta().positive === false ? '▼' : '▲'}
             </span>{' '}
             {delta().label}

@@ -6,7 +6,7 @@ import type { LocalHistoryDatabase, LocalHistoryDirEntry, LocalHistoryStorage } 
 export class TestMemoryStorage implements LocalHistoryStorage {
   readonly home: string;
   private readonly files = new Map<string, string>();
-  private readonly databases = new Map<string, Map<string, Record<string, any>[]>>();
+  private readonly databases = new Map<string, Map<string, Record<string, unknown>[]>>();
 
   constructor(home = '/home/test') {
     this.home = home;
@@ -16,9 +16,9 @@ export class TestMemoryStorage implements LocalHistoryStorage {
     this.files.set(path.join(this.home, relativePath), content);
   }
 
-  writeDatabaseRows(relativePath: string, sql: string, rows: Record<string, any>[]) {
+  writeDatabaseRows(relativePath: string, sql: string, rows: Record<string, unknown>[]) {
     const dbPath = path.join(this.home, relativePath);
-    const database = this.databases.get(dbPath) ?? new Map<string, Record<string, any>[]>();
+    const database = this.databases.get(dbPath) ?? new Map<string, Record<string, unknown>[]>();
     database.set(sql, rows);
     this.databases.set(dbPath, database);
   }
@@ -51,10 +51,14 @@ export class TestMemoryStorage implements LocalHistoryStorage {
     const prefix = dirPath.endsWith(path.sep) ? dirPath : `${dirPath}${path.sep}`;
     const entries = new Map<string, boolean>();
     for (const filePath of [...this.files.keys(), ...this.databases.keys()]) {
-      if (!filePath.startsWith(prefix)) continue;
+      if (!filePath.startsWith(prefix)) {
+        continue;
+      }
       const rest = filePath.slice(prefix.length);
       const [name, ...remaining] = rest.split(path.sep);
-      if (!name) continue;
+      if (!name) {
+        continue;
+      }
       entries.set(name, remaining.length > 0);
     }
     return Effect.succeed(
@@ -77,7 +81,7 @@ export class TestMemoryStorage implements LocalHistoryStorage {
     }
 
     return Effect.succeed({
-      all: <T extends Record<string, any> = Record<string, any>>(sql: string) => {
+      all: <T extends object = Record<string, unknown>>(sql: string) => {
         const rows = database.get(sql);
         if (!rows) {
           return Effect.fail(

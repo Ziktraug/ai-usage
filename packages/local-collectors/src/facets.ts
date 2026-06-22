@@ -4,21 +4,21 @@ import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageSer
 import { firstExisting, resolvePathCandidates } from './platform-paths';
 
 export interface CursorCommitAttribution {
-  commitHash: string;
+  blankLinesAdded: number;
+  blankLinesDeleted: number;
   branchName: string;
-  scoredAt: string | null;
-  commitMessage: string | null;
   commitDate: string | null;
-  linesAdded: number;
-  linesDeleted: number;
-  tabLinesAdded: number;
-  tabLinesDeleted: number;
+  commitHash: string;
+  commitMessage: string | null;
   composerLinesAdded: number;
   composerLinesDeleted: number;
   humanLinesAdded: number;
   humanLinesDeleted: number;
-  blankLinesAdded: number;
-  blankLinesDeleted: number;
+  linesAdded: number;
+  linesDeleted: number;
+  scoredAt: string | null;
+  tabLinesAdded: number;
+  tabLinesDeleted: number;
   v1AiPercentage: number | null;
   v2AiPercentage: number | null;
 }
@@ -29,25 +29,25 @@ export interface HarnessFacets extends Record<string, unknown> {
   };
 }
 
-type CursorScoredCommitRow = {
-  commitHash: string;
+interface CursorScoredCommitRow {
+  blankLinesAdded: number | null;
+  blankLinesDeleted: number | null;
   branchName: string;
-  scoredAt: number | null;
-  linesAdded: number | null;
-  linesDeleted: number | null;
-  tabLinesAdded: number | null;
-  tabLinesDeleted: number | null;
+  commitDate: string | null;
+  commitHash: string;
+  commitMessage: string | null;
   composerLinesAdded: number | null;
   composerLinesDeleted: number | null;
   humanLinesAdded: number | null;
   humanLinesDeleted: number | null;
-  blankLinesAdded: number | null;
-  blankLinesDeleted: number | null;
-  commitMessage: string | null;
-  commitDate: string | null;
+  linesAdded: number | null;
+  linesDeleted: number | null;
+  scoredAt: number | null;
+  tabLinesAdded: number | null;
+  tabLinesDeleted: number | null;
   v1AiPercentage: string | null;
   v2AiPercentage: string | null;
-};
+}
 
 export const CURSOR_COMMIT_ATTRIBUTION_SQL = `
 SELECT
@@ -74,13 +74,17 @@ ORDER BY scoredAt DESC
 `;
 
 const nullableNumber = (value: string | null) => {
-  if (value == null) return null;
+  if (value == null) {
+    return null;
+  }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 };
 
 const scoredAtIso = (timestamp: number | null) => {
-  if (!timestamp) return null;
+  if (!timestamp) {
+    return null;
+  }
   const date = new Date(timestamp);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 };
@@ -108,7 +112,9 @@ const normalizeScoredCommit = (row: CursorScoredCommitRow): CursorCommitAttribut
 export const collectCursorCommitAttribution = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
   const dbPath = yield* firstExisting(storage, ...resolvePathCandidates(storage).cursor.aiTrackingDb);
-  if (!dbPath) return [];
+  if (!dbPath) {
+    return [];
+  }
 
   return yield* Effect.acquireUseRelease(
     storage.openDatabase(dbPath),
@@ -132,7 +138,9 @@ export const collectHarnessFacets = (
     const facets: HarnessFacets = {};
     if (selection.includeCursor) {
       const commitAttribution = yield* collectCursorCommitAttribution.pipe(Effect.catchAll(() => Effect.succeed([])));
-      if (commitAttribution.length) facets.cursor = { commitAttribution };
+      if (commitAttribution.length) {
+        facets.cursor = { commitAttribution };
+      }
     }
     return facets;
   });

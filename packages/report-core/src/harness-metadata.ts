@@ -54,7 +54,9 @@ export const harnessLabel = (key: HarnessKey) => HARNESS_METADATA[key].label;
 export const harnessMetadataForLabel = (label: string): HarnessMetadata | null => {
   for (const key of harnessKeys) {
     const metadata = HARNESS_METADATA[key];
-    if (metadata.label === label) return metadata;
+    if (metadata.label === label) {
+      return metadata;
+    }
   }
   return null;
 };

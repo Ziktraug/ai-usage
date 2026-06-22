@@ -26,7 +26,7 @@ const row = (project: string, sourcePath?: string): UsageRowWithOptionalSource =
   source: {
     harnessKey: 'codex',
     sourceSessionId: 'session-1',
-    ...(sourcePath !== undefined ? { sourcePath } : {}),
+    ...(sourcePath === undefined ? {} : { sourcePath }),
   },
 });
 

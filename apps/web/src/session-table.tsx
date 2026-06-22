@@ -38,22 +38,24 @@ import {
 } from './session-columns';
 import { type DashboardRow, rowKey } from './shared';
 
+const track = (..._values: unknown[]) => _values.length;
+
 const SortHeader = (props: { column: Column<DashboardRow, unknown>; label: string }) => {
   const meta = () => props.column.columnDef.meta;
   const sortDirection = () => props.column.getIsSorted();
 
   return (
-    <Show when={props.column.getCanSort()} fallback={<span class={meta()?.headerClass}>{props.label}</span>}>
+    <Show fallback={<span class={meta()?.headerClass}>{props.label}</span>} when={props.column.getCanSort()}>
       <button
         class={cx(sortButton, meta()?.headerClass)}
-        type="button"
-        title={meta()?.title}
         onClick={(event) => props.column.getToggleSortingHandler()?.(event)}
+        title={meta()?.title}
+        type="button"
       >
         <span>{props.label}</span>
         <Show when={sortDirection()}>
           {(direction) => (
-            <span class={sortArrow} aria-hidden="true">
+            <span aria-hidden="true" class={sortArrow}>
               {direction() === 'asc' ? '↑' : '↓'}
             </span>
           )}
@@ -88,8 +90,8 @@ const ColumnVisibilityControl = (props: {
           </span>
           <button
             class={ghostButton}
-            type="button"
             onClick={() => props.onColumnVisibilityChange(defaultColumnVisibility)}
+            type="button"
           >
             Reset
           </button>
@@ -99,10 +101,10 @@ const ColumnVisibilityControl = (props: {
             {(column) => (
               <label class={columnToggle}>
                 <input
-                  class={columnToggleInput}
-                  type="checkbox"
                   checked={isSessionColumnVisible(props.columnVisibility, column.id)}
+                  class={columnToggleInput}
                   onChange={(event) => setColumnVisible(column.id, event.currentTarget.checked)}
+                  type="checkbox"
                 />
                 <span class={columnToggleText}>{sessionColumnLabel(column)}</span>
               </label>
@@ -195,8 +197,7 @@ export const SessionTable = (props: {
     );
   };
   const rowModelRows = createMemo(() => {
-    props.rows;
-    props.sorting;
+    track(props.rows, props.sorting);
     return measureClientPerf(
       'aiUsage.web.client.compute.sessionTableRowModel',
       () => sessionTable.getRowModel().rows,
@@ -223,14 +224,17 @@ export const SessionTable = (props: {
   onMount(() => {
     updateTableViewport();
     const observer = new ResizeObserver(updateTableViewport);
-    if (tableViewportEl) observer.observe(tableViewportEl);
+    if (tableViewportEl) {
+      observer.observe(tableViewportEl);
+    }
     onCleanup(() => observer.disconnect());
   });
 
   createEffect(() => {
-    props.rows;
-    props.sorting;
-    if (tableViewportEl) tableViewportEl.scrollTop = 0;
+    track(props.rows, props.sorting);
+    if (tableViewportEl) {
+      tableViewportEl.scrollTop = 0;
+    }
     updateTableViewport();
   });
 
@@ -240,9 +244,13 @@ export const SessionTable = (props: {
       return;
     }
     const selectedKey = props.selectedKey;
-    if (!selectedKey) return;
+    if (!selectedKey) {
+      return;
+    }
     const parent = props.rows.find((row) => row.children?.some((child) => rowKey(child) === selectedKey));
-    if (!parent) return;
+    if (!parent) {
+      return;
+    }
     setExpanded((current) => ({
       ...(typeof current === 'object' ? current : {}),
       [rowKey(parent)]: true,
@@ -251,28 +259,28 @@ export const SessionTable = (props: {
 
   return (
     <Show
-      when={props.rows.length}
       fallback={
         <div class={empty}>
           <div class={emptyActions}>
             <span>No sessions match the current filters</span>
-            <button class={ghostButton} type="button" onClick={() => props.onClearFilters()}>
+            <button class={ghostButton} onClick={() => props.onClearFilters()} type="button">
               Clear filters
             </button>
           </div>
         </div>
       }
+      when={props.rows.length}
     >
       <div class={tableControls}>
         <label class={columnToggle}>
           <input
-            class={columnToggleInput}
-            type="checkbox"
             checked={props.groupCampaigns}
+            class={columnToggleInput}
             onChange={(event) => {
               props.onGroupCampaignsChange(event.currentTarget.checked);
               setExpanded({});
             }}
+            type="checkbox"
           />
           <span class={columnToggleText}>Group campaigns</span>
         </label>
@@ -282,7 +290,13 @@ export const SessionTable = (props: {
           onColumnVisibilityChange={props.onColumnVisibilityChange}
         />
       </div>
-      <div class={tableWrap} ref={tableViewportEl} onScroll={updateTableViewport}>
+      <div
+        class={tableWrap}
+        onScroll={updateTableViewport}
+        ref={(element) => {
+          tableViewportEl = element;
+        }}
+      >
         <table class={cx(table, sessionsTable)} style={{ 'min-width': `${tableMinWidth()}px` }}>
           <thead>
             <tr>
@@ -290,8 +304,8 @@ export const SessionTable = (props: {
                 {({ columnDef, tableColumn }) => (
                   <th
                     class={columnDef.meta?.headerClass}
-                    title={columnDef.meta?.title}
                     style={{ width: `${columnDef.meta?.widthPx ?? 140}px` }}
+                    title={columnDef.meta?.title}
                   >
                     <SortHeader column={tableColumn} label={sessionColumnHeader(columnDef)} />
                   </th>
@@ -311,16 +325,20 @@ export const SessionTable = (props: {
             <For each={virtualRows().rows}>
               {(tableRow) => (
                 <tr
-                  data-selected={String(props.selectedKey === tableRow.id)}
                   data-depth={tableRow.depth}
-                  tabIndex={0}
+                  data-selected={String(props.selectedKey === tableRow.id)}
                   onClick={() => props.onSelect(tableRow.original)}
                   onKeyDown={(event) => {
-                    if (event.target !== event.currentTarget) return;
-                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    if (event.target !== event.currentTarget) {
+                      return;
+                    }
+                    if (event.key !== 'Enter' && event.key !== ' ') {
+                      return;
+                    }
                     event.preventDefault();
                     props.onSelect(tableRow.original);
                   }}
+                  tabIndex={0}
                 >
                   <For each={tableRow.getVisibleCells()}>
                     {(cell) => (

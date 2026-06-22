@@ -29,7 +29,9 @@ const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve
 const fetchStoredReportPayload = async () => {
   const { getReportPayload } = await import('./server/report-payload');
   const payload = (await getReportPayload({ data: { force: false } })) as UsageReportPayload;
-  if (typeof window !== 'undefined') window.__AI_USAGE_REPORT__ = payload;
+  if (typeof window !== 'undefined') {
+    window.__AI_USAGE_REPORT__ = payload;
+  }
   return payload;
 };
 
@@ -42,7 +44,9 @@ const refreshReportPayloadInBackground = async () => {
       await sleep(300);
       continue;
     }
-    if (state.status === 'failed') throw new Error(state.error);
+    if (state.status === 'failed') {
+      throw new Error(state.error);
+    }
     return fetchStoredReportPayload();
   }
 };
@@ -65,19 +69,25 @@ export const fetchReportPayload = async (_options?: { force?: boolean }) => {
   perfTrace?.mark('serverFnLoaded');
   const payload = (await getReportPayload({ data: { force: false } })) as UsageReportPayload;
   perfTrace?.mark('received', payloadStats(payload));
-  if (typeof window !== 'undefined') window.__AI_USAGE_REPORT__ = payload;
+  if (typeof window !== 'undefined') {
+    window.__AI_USAGE_REPORT__ = payload;
+  }
   perfTrace?.end('storedGlobal');
   return payload;
 };
 
 export const loadReportPayload = async () => {
   const exportPayload = readExportReportPayload();
-  if (exportPayload) return exportPayload;
+  if (exportPayload) {
+    return exportPayload;
+  }
 
   const injectedPayload = readInjectedReportPayload();
-  if (injectedPayload) return injectedPayload;
+  if (injectedPayload) {
+    return injectedPayload;
+  }
 
-  return collectReportPayload();
+  return await collectReportPayload();
 };
 
 export const resolveInitialReportPayload = (loaderPayload: UsageReportPayload) =>

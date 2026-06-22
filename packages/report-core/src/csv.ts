@@ -1,6 +1,9 @@
 import type { SerializedRow } from './report-data';
 
-const csvEscape = (value: string) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value);
+const CSV_ESCAPE_REQUIRED = /[",\n]/;
+const CSV_QUOTE = /"/g;
+
+const csvEscape = (value: string) => (CSV_ESCAPE_REQUIRED.test(value) ? `"${value.replace(CSV_QUOTE, '""')}"` : value);
 
 export const rtkSavingsPct = (row: Pick<SerializedRow, 'rtkInputTokens' | 'rtkSavedTokens'>) =>
   row.rtkSavedTokens && row.rtkInputTokens ? (row.rtkSavedTokens / row.rtkInputTokens) * 100 : null;

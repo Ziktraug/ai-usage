@@ -1,6 +1,6 @@
+import { describe, expect, test } from 'bun:test';
 import type { DiscoveredLanPeer } from '@ai-usage/lan-pairing';
 import type { LanMergeState } from '@ai-usage/usage-merge';
-import { describe, expect, test } from 'bun:test';
 import {
   buildLanMergeSummary,
   formatSyncDateTime,

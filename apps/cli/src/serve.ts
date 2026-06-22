@@ -15,7 +15,12 @@ const collectFreshSnapshot = (machine: { id: string; label: string }, args: Serv
   }).pipe(Effect.provide(LocalHistoryStorageLive));
 
 const envNameForMachine = (label: string) =>
-  `AI_USAGE_SYNC_${label.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase() || 'REMOTE'}_TOKEN`;
+  `AI_USAGE_SYNC_${
+    label
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toUpperCase() || 'REMOTE'
+  }_TOKEN`;
 
 export const runServe = (args: ServeArgs) =>
   Effect.gen(function* () {
@@ -44,7 +49,9 @@ export const runServe = (args: ServeArgs) =>
       const tokenEnv = envNameForMachine(machine.label);
       yield* Console.log('On another machine:');
       yield* Console.log(`  ${tokenEnv}=<secret>`);
-      yield* Console.log(`  ai-usage sync add ${machine.label.replace(/\s+/g, '-').toLowerCase()} ${server.urls[0]} --token-env ${tokenEnv}`);
+      yield* Console.log(
+        `  ai-usage sync add ${machine.label.replace(/\s+/g, '-').toLowerCase()} ${server.urls[0]} --token-env ${tokenEnv}`,
+      );
       yield* Console.log(`  ai-usage sync pull ${machine.label.replace(/\s+/g, '-').toLowerCase()}`);
     }
     yield* Console.log('Press Ctrl+C to stop.');

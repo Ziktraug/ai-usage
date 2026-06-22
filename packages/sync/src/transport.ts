@@ -4,11 +4,11 @@ import { Effect } from 'effect';
 import { SyncTransportError, transportError } from './errors';
 
 export interface SnapshotEndpointHealth {
-  ok: boolean;
   machine: {
     id: string;
     label: string;
   };
+  ok: boolean;
 }
 
 export interface SnapshotTransportOptions {
@@ -32,7 +32,9 @@ export const readSnapshotFile = (filePath: string): Effect.Effect<UsageSnapshot,
 
 const authHeaders = (token: string | null) => {
   const headers: Record<string, string> = {};
-  if (token) headers.authorization = `Bearer ${token}`;
+  if (token) {
+    headers.authorization = `Bearer ${token}`;
+  }
   return headers;
 };
 
@@ -48,7 +50,9 @@ const fetchText = (url: string, token: string | null, options: SnapshotTransport
             ...(controller ? { signal: controller.signal } : {}),
           });
         } finally {
-          if (timer) clearTimeout(timer);
+          if (timer) {
+            clearTimeout(timer);
+          }
         }
       },
       catch: (cause) => transportError('fetch', url, cause),
@@ -84,15 +88,24 @@ const parseEndpointHealth = (url: string, text: string) =>
   Effect.try({
     try: () => {
       const value = JSON.parse(text) as unknown;
-      if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('health must be an object');
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        throw new Error('health must be an object');
+      }
       const record = value as Record<string, unknown>;
       const machine = record.machine;
-      if (record.ok !== true) throw new Error('health ok must be true');
-      if (typeof machine !== 'object' || machine === null || Array.isArray(machine))
+      if (record.ok !== true) {
+        throw new Error('health ok must be true');
+      }
+      if (typeof machine !== 'object' || machine === null || Array.isArray(machine)) {
         throw new Error('health machine must be an object');
+      }
       const machineRecord = machine as Record<string, unknown>;
-      if (typeof machineRecord.id !== 'string') throw new Error('health machine missing id');
-      if (typeof machineRecord.label !== 'string') throw new Error('health machine missing label');
+      if (typeof machineRecord.id !== 'string') {
+        throw new Error('health machine missing id');
+      }
+      if (typeof machineRecord.label !== 'string') {
+        throw new Error('health machine missing label');
+      }
       return { ok: true, machine: { id: machineRecord.id, label: machineRecord.label } };
     },
     catch: (cause) => transportError('parseHealth', url, cause),

@@ -5,19 +5,20 @@ import {
   modelCell,
   muted,
   numCell,
+  ProvenanceMarker,
   right,
   sessionCell,
   sessionTitleClamp,
-  ProvenanceMarker,
 } from '@ai-usage/design-system/report';
 import { provenanceForMetric, type UsageMetricKey } from '@ai-usage/report-core/provenance';
 import type { ColumnDef, RowData, VisibilityState } from '@tanstack/solid-table';
-import { Show, type JSX } from 'solid-js';
-import type { FieldFilterKey } from './dashboard-search';
+import { type JSX, Show } from 'solid-js';
 import { campaignBadgeLabelForRow } from './dashboard-model';
+import type { FieldFilterKey } from './dashboard-search';
 import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle, rtkSavingsPct, sortValueForRow } from './dashboard-sort';
 import { HighlightedText } from './highlighted-text';
-import { defaultColumnVisibility, isSessionColumnVisible, type SessionColumnId } from './session-table-schema';
+import type { SessionColumnId } from './session-table-schema';
+import { isSessionColumnVisible as isSessionColumnVisibleForSchema } from './session-table-schema';
 import {
   type DashboardRow,
   fmtCompact,
@@ -96,12 +97,12 @@ export const sessionColumns: SessionColumnDef[] = [
       return (
         <button
           class={filterTextButton}
-          type="button"
-          title={`Filter by ${label}`}
           onClick={(event) => {
             event.stopPropagation();
             info.table.options.meta?.onFieldFilter?.('provider', label);
           }}
+          title={`Filter by ${label}`}
+          type="button"
         >
           {label}
         </button>
@@ -118,12 +119,12 @@ export const sessionColumns: SessionColumnDef[] = [
       return (
         <button
           class={filterTextButton}
-          type="button"
-          title={`Filter by ${row.modelKey}`}
           onClick={(event) => {
             event.stopPropagation();
             info.table.options.meta?.onFieldFilter?.('model', row.modelKey);
           }}
+          title={`Filter by ${row.modelKey}`}
+          type="button"
         >
           {row.modelLabel}
         </button>
@@ -141,12 +142,12 @@ export const sessionColumns: SessionColumnDef[] = [
       return (
         <button
           class={filterTextButton}
-          type="button"
-          title={`Filter by ${label}`}
           onClick={(event) => {
             event.stopPropagation();
             info.table.options.meta?.onFieldFilter?.('project', label);
           }}
+          title={`Filter by ${label}`}
+          type="button"
         >
           {row.project || '—'}
         </button>
@@ -244,8 +245,8 @@ export const sessionColumns: SessionColumnDef[] = [
       return withProvenance(
         row,
         'api-value',
-        <Show when={!row.usageUnavailable} fallback={<UsageUnavailableCell />}>
-          <Show when={row.costKnown} fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>}>
+        <Show fallback={<UsageUnavailableCell />} when={!row.usageUnavailable}>
+          <Show fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>} when={row.costKnown}>
             {fmtMoney(row.costApprox)}
           </Show>
         </Show>,
@@ -386,17 +387,17 @@ export const sessionColumns: SessionColumnDef[] = [
           <Show when={info.row.getCanExpand()}>
             <button
               class={filterTextButton}
-              type="button"
-              title={info.row.getIsExpanded() ? 'Collapse campaign' : 'Expand campaign'}
               onClick={(event) => {
                 event.stopPropagation();
                 info.row.toggleExpanded();
               }}
+              title={info.row.getIsExpanded() ? 'Collapse campaign' : 'Expand campaign'}
+              type="button"
             >
               {info.row.getIsExpanded() ? '▾' : '▸'}
             </button>
           </Show>
-          <HighlightedText text={info.row.original.sessionLabel} query={info.table.options.meta?.searchQuery ?? ''} />
+          <HighlightedText query={info.table.options.meta?.searchQuery ?? ''} text={info.row.original.sessionLabel} />
           <ProvenanceMarker facts={titleFacts()} />
           <Show when={campaignLabel()}>
             {(label) => (
@@ -414,10 +415,10 @@ export const sessionColumns: SessionColumnDef[] = [
   },
 ];
 
-export { defaultColumnVisibility, isSessionColumnVisible };
+export { defaultColumnVisibility, isSessionColumnVisible } from './session-table-schema';
 
 export const visibleSessionColumns = (visibility: VisibilityState) =>
-  sessionColumns.filter((column) => isSessionColumnVisible(visibility, column.id));
+  sessionColumns.filter((column) => isSessionColumnVisibleForSchema(visibility, column.id));
 
 export const sessionColumnLabel = (column: SessionColumnDef) => column.meta?.label ?? column.id;
 

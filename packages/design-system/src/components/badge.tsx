@@ -46,10 +46,11 @@ const badgeTones: Record<string, string> = {
 };
 
 const badgeNeutral = css({ bg: 'surfaceMuted', color: 'muted' });
+const HARNESS_NAME_SEPARATOR = /[\s-]/;
 
 export const harnessFamily = (name: string) => {
   const lower = name.toLowerCase();
-  return badgeTones[lower] ? lower : (lower.split(/[\s-]/)[0] ?? '');
+  return badgeTones[lower] ? lower : (lower.split(HARNESS_NAME_SEPARATOR)[0] ?? '');
 };
 
 export const badgeToneFor = (name: string) => badgeTones[harnessFamily(name)] ?? badgeNeutral;
@@ -84,17 +85,19 @@ export const HarnessBadge = (props: { name: string; onClick?: () => void; active
       props.onClick ? badgeButton : undefined,
       props.active ? badgeActive : undefined,
     );
-  if (!props.onClick) return <span class={className()}>{props.name}</span>;
+  if (!props.onClick) {
+    return <span class={className()}>{props.name}</span>;
+  }
   return (
     <button
-      class={className()}
-      type="button"
-      title={props.title ?? `Filter by ${props.name}`}
       aria-pressed={props.active === undefined ? undefined : props.active}
+      class={className()}
       onClick={(event) => {
         event.stopPropagation();
         props.onClick?.();
       }}
+      title={props.title ?? `Filter by ${props.name}`}
+      type="button"
     >
       {props.name}
     </button>

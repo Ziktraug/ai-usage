@@ -2,9 +2,10 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
+import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
+import type { UsageSnapshot } from '@ai-usage/report-core/snapshot';
 import {
   collectLocalReportRowsWithWarnings,
   createLocalReportPayload,
@@ -16,7 +17,7 @@ import {
 import { fetchRemoteSnapshot, readSnapshotFile } from '@ai-usage/sync/transport';
 import { Console, Effect, Layer } from 'effect';
 import { type Args, helpText, parseCommand } from './cli';
-import { CliArgumentError, formatAppError } from './errors';
+import { type AppError, CliArgumentError, formatAppError } from './errors';
 import { renderQuota } from './quota';
 import { setColor } from './render/colors';
 import { fmtNum, pad, trunc } from './render/format';
@@ -25,6 +26,8 @@ import { CliRuntime, CliRuntimeLive } from './runtime';
 import { runServe } from './serve';
 import { runSetupServer } from './setup';
 import { runSyncCommand } from './sync';
+
+const CURSOR_CSV_LINE_SEPARATOR = /\r?\n/;
 
 export const app = Effect.gen(function* () {
   const runtime = yield* CliRuntime;
@@ -69,7 +72,7 @@ export const app = Effect.gen(function* () {
 
   if (command._tag === 'Merge') {
     yield* Effect.sync(() => setColor(command.args.color === null ? runtime.stdoutIsTTY : command.args.color));
-    const snapshots = [];
+    const snapshots: UsageSnapshot[] = [];
     for (const file of command.args.files) {
       snapshots.push(yield* readSnapshotFile(file));
     }
@@ -99,7 +102,7 @@ export const app = Effect.gen(function* () {
   }
 
   if (command._tag === 'ProjectsList') {
-    const snapshots = [];
+    const snapshots: UsageSnapshot[] = [];
     for (const file of command.args.files) {
       snapshots.push(yield* readSnapshotFile(file));
     }
@@ -216,7 +219,7 @@ const CURSOR_EXPORT_DIR = path.join(process.cwd(), '.ai-usage', 'cursor-exports'
 const safeImportName = (filePath: string) => path.basename(filePath).replace(/[^a-zA-Z0-9._-]+/g, '-');
 
 const cursorCsvLooksValid = (text: string) => {
-  const header = text.split(/\r?\n/, 1)[0] ?? '';
+  const header = text.split(CURSOR_CSV_LINE_SEPARATOR, 1)[0] ?? '';
   return ['Date', 'User', 'Kind', 'Model', 'Cost'].every((column) => header.includes(column));
 };
 
@@ -231,10 +234,14 @@ const importCursorUsageExport = (filePath: string) =>
       fs.mkdirSync(CURSOR_EXPORT_DIR, { recursive: true });
       const hash = createHash('sha256').update(content).digest('hex');
       for (const entry of fs.readdirSync(CURSOR_EXPORT_DIR, { withFileTypes: true })) {
-        if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.csv')) continue;
+        if (!(entry.isFile() && entry.name.toLowerCase().endsWith('.csv'))) {
+          continue;
+        }
         const existingPath = path.join(CURSOR_EXPORT_DIR, entry.name);
         const existingHash = createHash('sha256').update(fs.readFileSync(existingPath)).digest('hex');
-        if (existingHash === hash) return { path: existingPath, alreadyImported: true };
+        if (existingHash === hash) {
+          return { path: existingPath, alreadyImported: true };
+        }
       }
       const destination = path.join(CURSOR_EXPORT_DIR, `${hash.slice(0, 12)}-${safeImportName(sourcePath)}`);
       fs.writeFileSync(destination, content);
@@ -245,15 +252,24 @@ const importCursorUsageExport = (filePath: string) =>
 
 const formatDefect = (defect: unknown) => (defect instanceof Error ? defect.message : String(defect));
 
+const isAppError = (error: unknown): error is AppError =>
+  error instanceof CliArgumentError ||
+  (typeof error === 'object' &&
+    error !== null &&
+    '_tag' in error &&
+    (error as { _tag: unknown })._tag === 'LocalHistoryError');
+
 const runnable = app.pipe(
   Effect.as(0 as number),
   Effect.catchAll((error: unknown) =>
-    Console.error(`Error: ${error instanceof Error ? error.message : formatAppError(error as any)}`).pipe(Effect.as(1)),
+    Console.error(`Error: ${isAppError(error) ? formatAppError(error) : formatDefect(error)}`).pipe(Effect.as(1)),
   ),
   Effect.catchAllDefect((defect: unknown) => Console.error(`Error: ${formatDefect(defect)}`).pipe(Effect.as(1))),
   Effect.provide(Layer.mergeAll(LocalHistoryStorageLive, CliRuntimeLive)),
 );
 
 Effect.runPromise(runnable).then((code) => {
-  if (code !== 0) process.exit(code);
+  if (code !== 0) {
+    process.exit(code);
+  }
 });

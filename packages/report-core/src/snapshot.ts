@@ -12,8 +12,8 @@ export interface UsageMachine {
 
 export interface UsageSnapshotSource {
   appVersion: string | null;
-  platform: 'macos' | 'linux' | 'windows';
   hostname?: string;
+  platform: 'macos' | 'linux' | 'windows';
 }
 
 export interface SnapshotUsageRow extends SerializedUsageRow {
@@ -24,25 +24,25 @@ export interface SnapshotUsageRow extends SerializedUsageRow {
 }
 
 export interface UsageSnapshot {
-  schemaVersion: typeof USAGE_SNAPSHOT_SCHEMA_VERSION;
-  snapshotId: string;
+  facets?: Record<string, unknown>;
   generatedAt: string;
   machine: UsageMachine;
-  source: UsageSnapshotSource;
   rows: SnapshotUsageRow[];
+  schemaVersion: typeof USAGE_SNAPSHOT_SCHEMA_VERSION;
+  snapshotId: string;
+  source: UsageSnapshotSource;
   warnings?: UsageReportWarning[];
-  facets?: Record<string, unknown>;
 }
 
 export interface SnapshotMergeWarning extends UsageReportWarning {
-  message: string;
   key?: string;
+  message: string;
 }
 
 export interface SnapshotMergeResult {
+  duplicatesDropped: number;
   rows: CollectedUsageRow[];
   warnings: SnapshotMergeWarning[];
-  duplicatesDropped: number;
 }
 
 export const snapshotPlatform = (): UsageSnapshotSource['platform'] => {
@@ -99,16 +99,29 @@ const toSnapshotRow = (row: UsageRowWithOptionalSource, machine: UsageMachine): 
 
 export const parseUsageSnapshot = (text: string): UsageSnapshot => {
   const value = JSON.parse(text) as unknown;
-  if (typeof value !== 'object' || value === null || Array.isArray(value))
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new Error('Snapshot must be an object');
+  }
   const record = value as Record<string, unknown>;
-  if (record.schemaVersion !== USAGE_SNAPSHOT_SCHEMA_VERSION) throw new Error('Unsupported snapshot schemaVersion');
-  if (typeof record.snapshotId !== 'string') throw new Error('Snapshot missing snapshotId');
-  if (typeof record.generatedAt !== 'string') throw new Error('Snapshot missing generatedAt');
-  if (!isMachine(record.machine)) throw new Error('Snapshot missing machine');
-  if (!Array.isArray(record.rows)) throw new Error('Snapshot missing rows');
+  if (record.schemaVersion !== USAGE_SNAPSHOT_SCHEMA_VERSION) {
+    throw new Error('Unsupported snapshot schemaVersion');
+  }
+  if (typeof record.snapshotId !== 'string') {
+    throw new Error('Snapshot missing snapshotId');
+  }
+  if (typeof record.generatedAt !== 'string') {
+    throw new Error('Snapshot missing generatedAt');
+  }
+  if (!isMachine(record.machine)) {
+    throw new Error('Snapshot missing machine');
+  }
+  if (!Array.isArray(record.rows)) {
+    throw new Error('Snapshot missing rows');
+  }
   for (const row of record.rows) {
-    if (!isSnapshotRow(row)) throw new Error('Snapshot contains invalid row');
+    if (!isSnapshotRow(row)) {
+      throw new Error('Snapshot contains invalid row');
+    }
   }
   if (record.warnings !== undefined && !isUsageReportWarnings(record.warnings)) {
     throw new Error('Snapshot contains invalid warnings');
@@ -117,19 +130,25 @@ export const parseUsageSnapshot = (text: string): UsageSnapshot => {
 };
 
 const isMachine = (value: unknown): value is UsageMachine => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
   const record = value as Record<string, unknown>;
   return typeof record.id === 'string' && typeof record.label === 'string';
 };
 
 const isSnapshotRow = (value: unknown): value is SnapshotUsageRow => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
   const record = value as Record<string, unknown>;
   const source = record.source;
   if (typeof record.harness !== 'string' || typeof record.provider !== 'string' || typeof record.name !== 'string') {
     return false;
   }
-  if (typeof source !== 'object' || source === null || Array.isArray(source)) return false;
+  if (typeof source !== 'object' || source === null || Array.isArray(source)) {
+    return false;
+  }
   const sourceRecord = source as Record<string, unknown>;
   return typeof sourceRecord.machineId === 'string' && typeof sourceRecord.machineLabel === 'string';
 };
@@ -139,7 +158,9 @@ const optionalString = (value: unknown) => value === undefined || typeof value =
 const isUsageReportWarnings = (value: unknown): value is UsageReportWarning[] =>
   Array.isArray(value) &&
   value.every((warning) => {
-    if (typeof warning !== 'object' || warning === null || Array.isArray(warning)) return false;
+    if (typeof warning !== 'object' || warning === null || Array.isArray(warning)) {
+      return false;
+    }
     const record = warning as Record<string, unknown>;
     return (
       typeof record.message === 'string' &&
@@ -156,7 +177,9 @@ export const mergeUsageSnapshots = (snapshots: UsageSnapshot[]): SnapshotMergeRe
   let duplicatesDropped = 0;
 
   for (const snapshot of snapshots) {
-    if (snapshot.warnings?.length) warnings.push(...snapshot.warnings);
+    if (snapshot.warnings?.length) {
+      warnings.push(...snapshot.warnings);
+    }
     for (const row of snapshot.rows) {
       const key = dedupeKey(row);
       const existing = byKey.get(key);
@@ -222,7 +245,9 @@ export const deserializeSnapshotRow = (row: SnapshotUsageRow): CollectedUsageRow
 
 const dedupeKey = (row: SnapshotUsageRow) => {
   const sessionId = row.source.sourceSessionId;
-  if (sessionId) return [row.source.machineId, row.source.harnessKey, sessionId].join('|');
+  if (sessionId) {
+    return [row.source.machineId, row.source.harnessKey, sessionId].join('|');
+  }
   return [
     row.source.machineId,
     row.harness,

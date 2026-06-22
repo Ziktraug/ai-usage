@@ -47,7 +47,9 @@ const PRICING: [string, Rates][] = [
 export const priceFor = (model: string): { rates: Rates; known: boolean } => {
   const m = (model || '').toLowerCase();
   for (const [key, rates] of PRICING) {
-    if (m.includes(key)) return { rates, known: rates !== UNKNOWN };
+    if (m.includes(key)) {
+      return { rates, known: rates !== UNKNOWN };
+    }
   }
   return { rates: UNKNOWN, known: false };
 };

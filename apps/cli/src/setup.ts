@@ -2,15 +2,15 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
-import { parseUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { readAiUsageConfig } from '@ai-usage/local-collectors';
+import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
+import { parseUsageSnapshot, type UsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { listProjectSourcesWithWarnings, type ProjectSource } from '@ai-usage/report-data';
 import { Console, Effect } from 'effect';
 
 const collectSetupSources = (snapshotFiles: string[], local: boolean) =>
   Effect.gen(function* () {
-    const snapshots = [];
+    const snapshots: UsageSnapshot[] = [];
     for (const file of snapshotFiles) {
       snapshots.push(parseUsageSnapshot(fs.readFileSync(file, 'utf8')));
     }
@@ -25,7 +25,11 @@ const collectSetupSources = (snapshotFiles: string[], local: boolean) =>
 
 const scriptJson = (value: unknown) => (JSON.stringify(value) ?? 'null').replace(/</g, '\\u003c');
 
-const setupHTML = (sources: ProjectSource[], aliases: ProjectAliasEntry[], warnings: { harness?: string; message: string }[]) => {
+const setupHTML = (
+  sources: ProjectSource[],
+  aliases: ProjectAliasEntry[],
+  warnings: { harness?: string; message: string }[],
+) => {
   const sourcesJson = scriptJson(sources);
   const aliasesJson = scriptJson(aliases);
   const warningsJson = scriptJson(warnings);
@@ -336,7 +340,7 @@ export const runSetupServer = (snapshotFiles: string[], local: boolean, port: nu
         }
 
         if (url.pathname === '/api/sources') {
-          return new Response(JSON.stringify(sources), { headers: { 'content-type': 'application/json' } });
+          return Response.json(sources);
         }
 
         return new Response('not found', { status: 404 });

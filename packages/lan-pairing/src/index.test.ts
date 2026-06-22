@@ -8,15 +8,15 @@ import {
   LAN_PAIRING_DISCOVERY_TIMEOUT_MS,
   LAN_PAIRING_PORT_RANGE,
   LanPairingError,
+  type LanPairingService,
+  type LanPeerIdentity,
+  type LanPeerProbeTransport,
   makeLanPairingService,
   makeLanPairingServiceWithOptions,
   pairCredentialEnvelopes,
   startPakePairing,
   subnetHostsForAddress,
   verifyPakeConfirmation,
-  type LanPeerProbeTransport,
-  type LanPairingService,
-  type LanPeerIdentity,
 } from './index';
 
 const identity = (id: string): LanPeerIdentity => ({
@@ -506,7 +506,7 @@ describe('LAN pairing public boundary', () => {
       expect(state.port).toBe(occupiedPort + 1);
     } finally {
       await stopAll(service);
-      void occupied.stop();
+      occupied.stop();
     }
   });
 
@@ -531,12 +531,14 @@ describe('LAN pairing public boundary', () => {
       const state = await Effect.runPromise(service.getState());
 
       expect(result._tag).toBe('Left');
-      if (result._tag === 'Left') expect(result.left.reason).toBe('port-unavailable');
+      if (result._tag === 'Left') {
+        expect(result.left.reason).toBe('port-unavailable');
+      }
       expect(state.status).toBe('error');
       expect(state.lastError).toContain(`${occupiedPort}-${occupiedPort}`);
     } finally {
       await stopAll(service);
-      void occupied.stop();
+      occupied.stop();
     }
   });
 

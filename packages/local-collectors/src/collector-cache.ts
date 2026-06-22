@@ -10,15 +10,23 @@ import type { CollectorRow } from './rtk-enrichment';
  */
 
 export const reviveDate = (value: unknown): Date | null => {
-  if (value == null) return null;
-  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
-  if (typeof value !== 'string') return null;
+  if (value == null) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value : null;
+  }
+  if (typeof value !== 'string') {
+    return null;
+  }
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date : null;
 };
 
 export const reviveCollectorRows = (value: unknown): CollectorRow[] => {
-  if (!Array.isArray(value)) return [];
+  if (!Array.isArray(value)) {
+    return [];
+  }
   return value.map((row) => {
     const record = row as CollectorRow;
     return {
@@ -59,23 +67,27 @@ export interface DbRowCache {
 }
 
 /** Read a per-db row cache, returning an empty cache on a version mismatch and null on any IO failure. */
-export const readDbRowCache = (
-  storage: LocalHistoryStorage,
-  fileName: string,
-  version: number,
-): DbRowCache | null => {
+export const readDbRowCache = (storage: LocalHistoryStorage, fileName: string, version: number): DbRowCache | null => {
   try {
-    if (!fs.existsSync(storage.home)) return null;
+    if (!fs.existsSync(storage.home)) {
+      return null;
+    }
     const cachePath = collectorCachePath(storage, fileName);
-    if (!fs.existsSync(cachePath)) return { dirty: false, entries: {}, version };
+    if (!fs.existsSync(cachePath)) {
+      return { dirty: false, entries: {}, version };
+    }
     const parsed = JSON.parse(fs.readFileSync(cachePath, 'utf8')) as {
       entries?: Record<string, { mtimeMs: number; rows: unknown; size: number }>;
       version?: number;
     };
-    if (parsed.version !== version) return { dirty: false, entries: {}, version };
+    if (parsed.version !== version) {
+      return { dirty: false, entries: {}, version };
+    }
     const entries: Record<string, DbRowCacheEntry> = {};
     for (const [dbPath, entry] of Object.entries(parsed.entries ?? {})) {
-      if (typeof entry.mtimeMs !== 'number' || typeof entry.size !== 'number') continue;
+      if (typeof entry.mtimeMs !== 'number' || typeof entry.size !== 'number') {
+        continue;
+      }
       entries[dbPath] = { mtimeMs: entry.mtimeMs, rows: reviveCollectorRows(entry.rows), size: entry.size };
     }
     return { dirty: false, entries, version };
@@ -91,7 +103,9 @@ export const writeDbRowCache = (
   version: number,
   cache: DbRowCache | null,
 ): boolean => {
-  if (!cache?.dirty) return false;
+  if (!cache?.dirty) {
+    return false;
+  }
   const cachePath = collectorCachePath(storage, fileName);
   fs.mkdirSync(path.dirname(cachePath), { recursive: true });
   fs.writeFileSync(cachePath, `${JSON.stringify({ entries: cache.entries, version })}\n`, 'utf8');
@@ -100,14 +114,14 @@ export const writeDbRowCache = (
 };
 
 /** Return cached rows for a db path when the cache entry matches the current file stat, else null. */
-export const cachedDbRows = (
-  cache: DbRowCache | null,
-  dbPath: string,
-  stat: DbStat | null,
-): CollectorRow[] | null => {
-  if (!cache || !stat) return null;
+export const cachedDbRows = (cache: DbRowCache | null, dbPath: string, stat: DbStat | null): CollectorRow[] | null => {
+  if (!(cache && stat)) {
+    return null;
+  }
   const cached = cache.entries[dbPath];
-  if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return cached.rows;
+  if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+    return cached.rows;
+  }
   return null;
 };
 
@@ -118,7 +132,9 @@ export const storeDbRows = (
   stat: DbStat | null,
   rows: CollectorRow[],
 ): void => {
-  if (!cache || !stat) return;
+  if (!(cache && stat)) {
+    return;
+  }
   cache.entries[dbPath] = { mtimeMs: stat.mtimeMs, rows, size: stat.size };
   cache.dirty = true;
 };

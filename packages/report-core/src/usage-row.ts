@@ -1,7 +1,12 @@
 import { approxCost, priceFor } from './pricing';
 import type { Row, TitleSource } from './types';
 
-export type TokenCounts = { in: number; out: number; cr: number; cw: number };
+export interface TokenCounts {
+  cr: number;
+  cw: number;
+  in: number;
+  out: number;
+}
 
 export type UsageCostInput =
   | { readonly _tag: 'ActualCost'; readonly amount: number | null }
@@ -11,37 +16,37 @@ export const actualCost = (amount: number | null): UsageCostInput => ({ _tag: 'A
 export const approximateApiCost: UsageCostInput = { _tag: 'ApproximateApiCost' };
 
 export interface UsageRowInput {
-  date: Date | null;
-  endDate: Date | null;
-  harness: string;
-  provider: string;
-  name: string;
-  model: string;
-  models?: string[];
-  pricingModel?: string;
-  project?: string | null;
-  tokens: TokenCounts;
+  ambiguous?: boolean;
+  calls: number;
   cost: UsageCostInput;
-  costQuota?: number | null;
   costApprox?: number;
   costKnown?: boolean;
-  calls: number;
+  costQuota?: number | null;
+  date: Date | null;
   durationMs?: number | null;
-  turns?: number;
-  tools?: number;
+  endDate: Date | null;
+  harness: string;
   linesAdded?: number | null;
   linesDeleted?: number | null;
-  subagent?: boolean;
+  model: string;
+  models?: string[];
+  name: string;
   partial?: boolean;
-  usageUnavailable?: boolean;
-  ambiguous?: boolean;
+  pricingModel?: string;
+  project?: string | null;
+  provider: string;
+  subagent?: boolean;
   titleSource?: TitleSource;
+  tokens: TokenCounts;
+  tools?: number;
+  turns?: number;
+  usageUnavailable?: boolean;
 }
 
 export interface UsageRowLineDelta {
-  present: boolean;
   added: number;
   deleted: number;
+  present: boolean;
   total: number;
 }
 

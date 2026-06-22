@@ -4,7 +4,14 @@
     "jsx": "preserve",
     "jsxImportSource": "solid-js",
     "lib": ["DOM", "DOM.Iterable", "ES2023"],
-    "types": ["vite/client", "bun"]
+    "types": ["vite/client", "bun"],
+    "strictNullChecks": true
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts", "panda.config.ts", "styled-system"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "vite.config.ts",
+    "panda.config.ts",
+    "styled-system"
+  ]
 }

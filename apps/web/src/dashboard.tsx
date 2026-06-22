@@ -45,9 +45,9 @@ import { downloadCSV, downloadHTML } from './dashboard-export';
 import { FilterPill, fieldFilterLabels } from './dashboard-filters';
 import { MetricTile } from './dashboard-metrics';
 import {
-  buildDashboardMetrics,
   buildCampaignTableRows,
   buildCampaignViews,
+  buildDashboardMetrics,
   buildHarnessGroups,
   buildModelGroups,
   buildPreviousPeriodSummary,
@@ -73,7 +73,7 @@ import { ThemeToggle } from './dashboard-theme';
 import { type DateBounds, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
 import { createDateRangeController } from './date-range-controller';
 import { GroupPanel } from './group-panel';
-import { Overview } from './Overview';
+import { Overview } from './overview';
 import { ProjectSummary } from './project-summary';
 import { RefreshStatus } from './refresh-status';
 import { cursorCommitAttributionFacet } from './report-data';
@@ -87,6 +87,7 @@ import { applyTableUpdate } from './table-utils';
 import { TimeRangeControl } from './time-range-control';
 
 const REFRESH_INTERVAL_MS = 60_000;
+const FORM_CONTROL_TAG_PATTERN = /^(INPUT|SELECT|TEXTAREA)$/;
 
 const dashboardTabs: { label: string; value: DashboardTab }[] = [
   { label: 'Overview', value: 'overview' },
@@ -121,11 +122,14 @@ export const Dashboard = (props: {
   );
   const search = useSearch({ from: '/' });
   const navigate = useNavigate({ from: '/' });
-  const updateSearch = (updater: (current: DashboardSearch) => DashboardSearch, options?: { replace?: boolean }) =>
-    void navigate({
+  const updateSearch = (updater: (current: DashboardSearch) => DashboardSearch, options?: { replace?: boolean }) => {
+    navigate({
       search: updater(search()),
       ...(options?.replace == null ? {} : { replace: options.replace }),
+    }).catch((error: unknown) => {
+      console.error(error);
     });
+  };
   const query = () => search().q;
   const harness = () => search().harness;
   const fieldFilters = () => search().filters;
@@ -167,7 +171,9 @@ export const Dashboard = (props: {
   const [tableDateBounds, setTableDateBounds] = createSignal<DateBounds>(dateRange.bounds());
   const searchRangeFromDateRange = (): DashboardSearch['range'] => {
     const mode = dateRange.mode();
-    if (mode !== 'custom') return { mode };
+    if (mode !== 'custom') {
+      return { mode };
+    }
     const values = dateRange.inputValues();
     return {
       mode,
@@ -186,7 +192,9 @@ export const Dashboard = (props: {
       const matchesRange =
         dateRange.mode() === range.mode &&
         (range.mode !== 'custom' || (values.from === (range.from ?? '') && values.to === (range.to ?? '')));
-      if (!matchesRange) dateRange.setRange(range.mode, range.from, range.to);
+      if (!matchesRange) {
+        dateRange.setRange(range.mode, range.from, range.to);
+      }
       setTableDateBounds(dateRange.bounds());
     });
   });
@@ -227,7 +235,9 @@ export const Dashboard = (props: {
   const selectedRow = createMemo(() => reportRows().find((row) => rowKey(row) === selectedKey()) ?? null);
   const selectedCampaign = createMemo(() => {
     const row = selectedRow();
-    if (!row) return null;
+    if (!row) {
+      return null;
+    }
     const key = rowKey(row);
     return (
       campaignViews().find((campaign) => campaign.allRows.some((campaignRow) => rowKey(campaignRow) === key)) ?? null
@@ -237,15 +247,23 @@ export const Dashboard = (props: {
     const rows = sortedRows();
     const key = selectedKey();
     const index = rows.findIndex((row) => rowKey(row) === key);
-    if (index === -1) return;
+    if (index === -1) {
+      return;
+    }
     const next = rows[index + delta];
-    if (next) setSelectedKey(rowKey(next));
+    if (next) {
+      setSelectedKey(rowKey(next));
+    }
   };
   createEffect(() => {
-    if (!selectedRow()) return;
+    if (!selectedRow()) {
+      return;
+    }
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target instanceof HTMLElement ? event.target : null;
-      if (target && (/^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName) || target.isContentEditable)) return;
+      if (target && (FORM_CONTROL_TAG_PATTERN.test(target.tagName) || target.isContentEditable)) {
+        return;
+      }
       if (event.key === 'Escape') {
         setSelectedKey(null);
       } else if (event.key === 'j' || event.key === 'ArrowDown') {
@@ -262,9 +280,13 @@ export const Dashboard = (props: {
   // "/" jumps to the filter input, mirroring the CLI feel of the report.
   onMount(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
       const target = event.target instanceof HTMLElement ? event.target : null;
-      if (target && (/^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName) || target.isContentEditable)) return;
+      if (target && (FORM_CONTROL_TAG_PATTERN.test(target.tagName) || target.isContentEditable)) {
+        return;
+      }
       event.preventDefault();
       searchInputEl?.focus();
     };
@@ -272,13 +294,19 @@ export const Dashboard = (props: {
     onCleanup(() => document.removeEventListener('keydown', onKeyDown));
   });
   onMount(() => {
-    void resolveClientPerfEnabled().then((enabled) => {
-      if (!enabled) return;
-      logNavigationPerf(payload());
-      requestAnimationFrame(() => {
-        logClientPerf('aiUsage.web.client.initialFrame', payloadStats(payload()));
+    resolveClientPerfEnabled()
+      .then((enabled) => {
+        if (!enabled) {
+          return;
+        }
+        logNavigationPerf(payload());
+        requestAnimationFrame(() => {
+          logClientPerf('aiUsage.web.client.initialFrame', payloadStats(payload()));
+        });
+      })
+      .catch((error: unknown) => {
+        console.error(error);
       });
-    });
   });
   const visibleSummary = createMemo(() =>
     measureClientPerf('aiUsage.web.client.compute.visibleSummary', () =>
@@ -286,19 +314,27 @@ export const Dashboard = (props: {
     ),
   );
   const modelGroups = createMemo(() => {
-    if (search().tab !== 'models') return [];
+    if (search().tab !== 'models') {
+      return [];
+    }
     return buildModelGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost);
   });
   const providerGroups = createMemo(() => {
-    if (search().tab !== 'providers') return [];
+    if (search().tab !== 'providers') {
+      return [];
+    }
     return buildProviderGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost);
   });
   const harnessGroups = createMemo(() => {
-    if (search().tab !== 'harnesses') return [];
+    if (search().tab !== 'harnesses') {
+      return [];
+    }
     return buildHarnessGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost);
   });
   const projectGroupRows = createMemo(() => {
-    if (search().tab !== 'projects') return [];
+    if (search().tab !== 'projects') {
+      return [];
+    }
     return buildProjectGroupRows(timelineRows(), dateRange.bounds());
   });
   const hiddenCount = createMemo(() => hiddenSessionCount(reportRows().length, visibleSummary().sessionCount));
@@ -307,7 +343,9 @@ export const Dashboard = (props: {
   );
   const exportRows = () => sortedRows();
   const refreshPayload = async (force = false) => {
-    if (!props.fetchPayload || refreshing()) return;
+    if (!props.fetchPayload || refreshing()) {
+      return;
+    }
     const perfTrace = createClientPerfTrace('aiUsage.web.client.refresh', { force });
     setRefreshing(true);
     perfTrace?.mark('started');
@@ -334,23 +372,43 @@ export const Dashboard = (props: {
   };
   const toggleRefreshPause = () => {
     setRefreshPaused((paused) => {
-      if (paused) setNextRefreshAt(Date.now() + REFRESH_INTERVAL_MS);
+      if (paused) {
+        setNextRefreshAt(Date.now() + REFRESH_INTERVAL_MS);
+      }
       return !paused;
     });
   };
   createEffect(() => {
-    if (!canRefresh || refreshPaused() || refreshing()) return;
+    if (!canRefresh || refreshPaused() || refreshing()) {
+      return;
+    }
     const next = nextRefreshAt();
-    if (next == null) return;
-    const timer = window.setTimeout(() => void refreshPayload(true), Math.max(0, next - Date.now()));
+    if (next == null) {
+      return;
+    }
+    const timer = window.setTimeout(
+      () => {
+        refreshPayload(true).catch((error: unknown) => {
+          console.error(error);
+        });
+      },
+      Math.max(0, next - Date.now()),
+    );
     onCleanup(() => window.clearTimeout(timer));
   });
   onMount(() => {
-    if (props.initialPayload) return;
-    if (!isDemoReportPayload()) return;
-    if (props.fetchPayload) void refreshPayload(true);
-    else if (import.meta.env.DEV) {
-      void fetchReportPayload({ force: true })
+    if (props.initialPayload) {
+      return;
+    }
+    if (!isDemoReportPayload()) {
+      return;
+    }
+    if (props.fetchPayload) {
+      refreshPayload(true).catch((error: unknown) => {
+        console.error(error);
+      });
+    } else if (import.meta.env.DEV) {
+      fetchReportPayload({ force: true })
         .then(setPayload)
         .catch((error: unknown) => {
           setLastRefreshError(error instanceof Error ? error.message : 'Failed to refresh report payload');
@@ -416,7 +474,9 @@ export const Dashboard = (props: {
   const setCampaignGrouping = (enabled: boolean) =>
     updateSearch((current) => ({ ...current, campaigns: enabled ? 'on' : 'off' }));
   const setTab = (tab: string) => {
-    if (!isDashboardTab(tab)) return;
+    if (!isDashboardTab(tab)) {
+      return;
+    }
     updateSearch((current) => ({ ...current, tab }));
   };
   const metrics = createMemo(() =>
@@ -439,13 +499,13 @@ export const Dashboard = (props: {
               </div>
               <h1 class={title}>Usage report</h1>
               <div class={meta}>
-                <Show when={!isDemo} fallback="Report payload unavailable">
+                <Show fallback="Report payload unavailable" when={!isDemo}>
                   Generated {fmtDate(payload().generatedAt)}
                 </Show>
               </div>
             </div>
             <div class={headerActions}>
-              <Link to="/sync" class={navButton}>
+              <Link class={navButton} to="/sync">
                 Sync
               </Link>
               <ThemeToggle />
@@ -456,18 +516,22 @@ export const Dashboard = (props: {
         <Show when={!isDemo}>
           <div class={toolbar}>
             <input
-              ref={searchInputEl}
+              aria-label="Filter sessions by title, project, model, provider, or harness"
               class={searchInput}
-              value={query()}
-              onInput={(event) => setQuery(event.currentTarget.value)}
               onBlur={commitQueryEdit}
+              onInput={(event) => setQuery(event.currentTarget.value)}
               onKeyDown={(event) => {
-                if (event.key === 'Enter') commitQueryEdit();
+                if (event.key === 'Enter') {
+                  commitQueryEdit();
+                }
               }}
               placeholder="Filter by title, project, model…  ( / )"
-              aria-label="Filter sessions by title, project, model, provider, or harness"
+              ref={(element) => {
+                searchInputEl = element;
+              }}
+              value={query()}
             />
-            <select class={selectInput} value={harness()} onChange={(event) => setHarness(event.currentTarget.value)}>
+            <select class={selectInput} onChange={(event) => setHarness(event.currentTarget.value)} value={harness()}>
               <For each={harnesses()}>
                 {(item) => <option value={item}>{item === 'all' ? 'All harnesses' : item}</option>}
               </For>
@@ -478,22 +542,34 @@ export const Dashboard = (props: {
               lastRefreshError={lastRefreshError()}
               lastSuccessfulRefreshAt={lastSuccessfulRefreshAt()}
               nextRefreshAt={nextRefreshAt()}
+              onRefresh={() => {
+                refreshPayload(true).catch((error: unknown) => {
+                  console.error(error);
+                });
+              }}
               onTogglePause={toggleRefreshPause}
               refreshErrorCount={refreshErrorCount()}
               refreshIntervalMs={REFRESH_INTERVAL_MS}
-              refreshPaused={refreshPaused()}
               refreshing={refreshing()}
-              onRefresh={() => void refreshPayload(true)}
+              refreshPaused={refreshPaused()}
             />
             <button
               class={commandButton}
-              type="button"
               onClick={() => downloadCSV(exportRows(), payload().generatedAt)}
+              type="button"
             >
               Export CSV
             </button>
             <Show when={!import.meta.env.DEV}>
-              <button class={ghostButton} type="button" onClick={() => void downloadHTML(payload())}>
+              <button
+                class={ghostButton}
+                onClick={() => {
+                  downloadHTML(payload()).catch((error: unknown) => {
+                    console.error(error);
+                  });
+                }}
+                type="button"
+              >
                 Export HTML
               </button>
             </Show>
@@ -501,7 +577,6 @@ export const Dashboard = (props: {
         </Show>
 
         <Show
-          when={!isDemo}
           fallback={
             <section class={unavailablePanel}>
               <div class={unavailableTitle}>Real report data is not loaded</div>
@@ -511,17 +586,18 @@ export const Dashboard = (props: {
               </div>
             </section>
           }
+          when={!isDemo}
         >
           <TimeRangeControl
-            rows={timelineRows()}
-            dateRange={dateRange}
             activeHarness={harness()}
-            onHarnessFilter={toggleHarness}
+            dateRange={dateRange}
             onDateRangeCommit={commitTableDateRange}
+            onHarnessFilter={toggleHarness}
+            rows={timelineRows()}
           />
 
           <div class={filterSummary}>
-            <span class={summaryPill} aria-live="polite">
+            <span aria-live="polite" class={summaryPill}>
               {fmtNum(visibleSummary().sessionCount)} / {fmtNum(reportRows().length)} sessions
             </span>
             <Show when={hiddenCount() > 0}>
@@ -529,11 +605,11 @@ export const Dashboard = (props: {
             </Show>
             <div class={activeFilters}>
               <Show when={harness() !== 'all'}>
-                <FilterPill label="Harness" value={harness()} onClear={() => setHarness('all')} />
+                <FilterPill label="Harness" onClear={() => setHarness('all')} value={harness()} />
               </Show>
               <For each={Object.entries(fieldFilters()) as [FieldFilterKey, string][]}>
                 {([key, value]) => (
-                  <FilterPill label={fieldFilterLabels[key]} value={value} onClear={() => clearFieldFilter(key)} />
+                  <FilterPill label={fieldFilterLabels[key]} onClear={() => clearFieldFilter(key)} value={value} />
                 )}
               </For>
             </div>
@@ -546,18 +622,18 @@ export const Dashboard = (props: {
           </div>
 
           <div class={tabsRoot}>
-            <div role="tablist" class={tabsList}>
+            <div class={tabsList} role="tablist">
               <For each={dashboardTabs}>
                 {(tab) => {
                   const selected = () => search().tab === tab.value;
                   return (
                     <button
-                      type="button"
-                      role="tab"
                       aria-selected={selected()}
                       class={tabTrigger}
                       data-selected={selected() ? '' : undefined}
                       onClick={() => setTab(tab.value)}
+                      role="tab"
+                      type="button"
                     >
                       {tab.label}
                     </button>
@@ -566,73 +642,73 @@ export const Dashboard = (props: {
               </For>
             </div>
             <Show when={search().tab === 'overview'}>
-              <section role="tabpanel" class={section}>
+              <section class={section} role="tabpanel">
                 <Overview
                   campaigns={campaignViews()}
-                  rows={tableRows()}
-                  timelineRows={timelineRows()}
-                  summary={visibleSummary()}
-                  rangeLabel={dateRange.label()}
+                  onSelectDay={focusDay}
                   onSelectModel={inspectOverviewModel}
                   onSelectSession={inspectOverviewSession}
-                  onSelectDay={focusDay}
+                  rangeLabel={dateRange.label()}
+                  rows={tableRows()}
+                  summary={visibleSummary()}
+                  timelineRows={timelineRows()}
                 />
               </section>
             </Show>
             <Show when={search().tab === 'sessions'}>
-              <section role="tabpanel" class={section}>
+              <section class={section} role="tabpanel">
                 <SessionTable
-                  rows={sessionTableRows()}
-                  groupCampaigns={groupCampaigns()}
-                  selectedKey={selectedKey()}
-                  searchQuery={query()}
-                  sorting={sorting()}
                   columnVisibility={columnVisibility()}
-                  onGroupCampaignsChange={setCampaignGrouping}
-                  onSortingChange={handleSortingChange}
-                  onColumnVisibilityChange={handleColumnVisibilityChange}
-                  onSelect={toggleSelected}
-                  onHarnessFilter={setHarness}
-                  onFieldFilter={setFieldFilter}
+                  groupCampaigns={groupCampaigns()}
                   onClearFilters={clearFilters}
+                  onColumnVisibilityChange={handleColumnVisibilityChange}
+                  onFieldFilter={setFieldFilter}
+                  onGroupCampaignsChange={setCampaignGrouping}
+                  onHarnessFilter={setHarness}
+                  onSelect={toggleSelected}
+                  onSortingChange={handleSortingChange}
+                  rows={sessionTableRows()}
+                  searchQuery={query()}
+                  selectedKey={selectedKey()}
+                  sorting={sorting()}
                 />
               </section>
             </Show>
             <Show when={search().tab === 'models'}>
-              <section role="tabpanel" class={section}>
+              <section class={section} role="tabpanel">
                 <GroupPanel
-                  title="By model"
-                  groups={modelGroups()}
                   countLabel="models"
+                  groups={modelGroups()}
                   harnessTones
                   onFilter={(value) => setFieldFilter('model', value)}
+                  title="By model"
                 />
               </section>
             </Show>
             <Show when={search().tab === 'providers'}>
-              <section role="tabpanel" class={section}>
+              <section class={section} role="tabpanel">
                 <GroupPanel
-                  title="By provider"
-                  groups={providerGroups()}
                   countLabel="providers"
+                  groups={providerGroups()}
                   harnessTones
                   onFilter={(value) => setFieldFilter('provider', value)}
+                  title="By provider"
                 />
               </section>
             </Show>
             <Show when={search().tab === 'harnesses'}>
-              <section role="tabpanel" class={section}>
+              <section class={section} role="tabpanel">
                 <GroupPanel
-                  title="By harness"
-                  groups={harnessGroups()}
                   countLabel="harnesses"
+                  groups={harnessGroups()}
                   harnessTones
                   onFilter={setHarness}
+                  title="By harness"
                 />
               </section>
             </Show>
             <Show when={search().tab === 'projects'}>
-              <section role="tabpanel" class={section}>
+              <section class={section} role="tabpanel">
                 <ProjectSummary
                   groups={projectGroupRows()}
                   onProjectFilter={(value) => setFieldFilter('project', value)}
@@ -640,7 +716,7 @@ export const Dashboard = (props: {
               </section>
             </Show>
             <Show when={search().tab === 'cursor-ai'}>
-              <section role="tabpanel" class={section}>
+              <section class={section} role="tabpanel">
                 <CursorAttributionPanel rows={cursorCommitRows()} />
               </section>
             </Show>
@@ -649,14 +725,14 @@ export const Dashboard = (props: {
           <Show when={selectedRow()}>
             {(row) => (
               <SessionDrawer
+                onClearFilters={clearFilters}
+                onClose={() => setSelectedKey(null)}
+                onFieldFilter={setFieldFilter}
+                onNavigate={navigateSelected}
+                onSelectSession={(session) => setSelectedKey(rowKey(session))}
                 row={row()}
                 rows={sortedRows()}
                 selectedCampaign={selectedCampaign()}
-                onClose={() => setSelectedKey(null)}
-                onNavigate={navigateSelected}
-                onSelectSession={(session) => setSelectedKey(rowKey(session))}
-                onFieldFilter={setFieldFilter}
-                onClearFilters={clearFilters}
               />
             )}
           </Show>

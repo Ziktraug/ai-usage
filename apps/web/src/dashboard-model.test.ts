@@ -1,10 +1,10 @@
-import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { describe, expect, test } from 'bun:test';
+import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import {
-  buildDashboardMetrics,
-  buildCampaignTableRows,
   buildCampaignTableItems,
+  buildCampaignTableRows,
   buildCampaignViews,
+  buildDashboardMetrics,
   buildPreviousPeriodSummary,
   buildSortedDashboardRows,
   buildVisibleSummary,
