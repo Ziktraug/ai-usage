@@ -22,7 +22,7 @@ import {
   titleBlock,
 } from '@ai-usage/design-system/report';
 import type { DiscoveredLanPeer } from '@ai-usage/lan-pairing';
-import type { LanMergeState, TrustedLanPeer } from '@ai-usage/usage-merge';
+import type { LanMergeState, ManualMergeImportResult, TrustedLanPeer } from '@ai-usage/usage-merge';
 import { createFileRoute, Link } from '@tanstack/solid-router';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
@@ -30,13 +30,13 @@ import { ThemeToggle } from '../dashboard-theme';
 import {
   exportManualMergeBundle,
   getLanMergeState,
-  importManualMergeBundle,
   mergeLanPeer,
   pairLanPeer,
   scanLanMergePeers,
   startLanMerge,
   stopLanMerge,
 } from '../server/sync';
+import type { LanMergeServerResult } from '../server/lan-merge.server';
 import {
   buildLanMergeSummary,
   formatSyncDateTime,
@@ -49,6 +49,14 @@ import {
 } from '../sync-page-model';
 
 export const Route = createFileRoute('/sync')({
+  server: {
+    handlers: {
+      POST: async ({ request }) => {
+        const { importManualMergeBundleForServer } = await import('../server/lan-merge.server');
+        return Response.json(await importManualMergeBundleForServer({ text: await request.text() }));
+      },
+    },
+  },
   loader: async () => ({
     lan: await getLanMergeState(),
   }),
@@ -203,7 +211,7 @@ const diagnosticsList = css({
 
 type LanStateResult = Awaited<ReturnType<typeof getLanMergeState>>;
 type LanOperationError = Extract<LanStateResult, { ok: false }>['error'];
-type ManualImportResult = Awaited<ReturnType<typeof importManualMergeBundle>>;
+type ManualImportResult = LanMergeServerResult<ManualMergeImportResult>;
 
 const MetricPanel = (props: { label: string; value: number; detail: string }) => (
   <div class={panel}>
@@ -611,6 +619,24 @@ const manualImportMessage = (result: Extract<ManualImportResult, { ok: true }>['
   return `Imported ${result.machine.label}: ${changed.toLocaleString()} changed, ${result.result.unchanged.toLocaleString()} unchanged.`;
 };
 
+const importManualMergeFile = async (file: File): Promise<ManualImportResult> => {
+  const response = await fetch('/sync', {
+    body: file,
+    headers: { 'Content-Type': file.type || 'application/json' },
+    method: 'POST',
+  });
+  if (!response.ok) {
+    return {
+      ok: false,
+      error: {
+        tag: 'HttpError',
+        message: `Manual import failed with HTTP ${response.status}.`,
+      },
+    };
+  }
+  return (await response.json()) as ManualImportResult;
+};
+
 function SyncRoute() {
   const loaderResult = Route.useLoaderData();
   const [result, setResult] = createSignal<LanStateResult>(loaderResult().lan);
@@ -760,7 +786,7 @@ function SyncRoute() {
     setOperationError(null);
     setOperationMessage(null);
     try {
-      const next = await importManualMergeBundle({ data: { text: await file.text() } });
+      const next = await importManualMergeFile(file);
       if (next.ok) {
         setOperationMessage(manualImportMessage(next.data));
         return;

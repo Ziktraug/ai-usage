@@ -4,7 +4,7 @@ import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-co
 import { ensureMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import { createUsageMergeRuntime, type UsageMergeService, upsertUsageMergeEnvToken } from '@ai-usage/usage-merge';
 import { usageStorePath } from '@ai-usage/usage-store';
-import { Effect } from 'effect';
+import { Cause, Effect, Option, Runtime } from 'effect';
 import { runReportPayloadCollection } from './report-payload.server';
 
 export type LanMergeServerResult<T> =
@@ -40,13 +40,21 @@ export interface ManualMergeImportInput {
 
 const toJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
+const unwrapEffectFailure = (error: unknown) => {
+  if (!Runtime.isFiberFailure(error)) {
+    return error;
+  }
+  return Option.getOrUndefined(Cause.failureOption(error[Runtime.FiberFailureCauseId])) ?? error;
+};
+
 const errorResult = (error: unknown): LanMergeServerResult<never> => {
-  const record = typeof error === 'object' && error !== null ? (error as Record<string, unknown>) : {};
+  const unwrapped = unwrapEffectFailure(error);
+  const record = typeof unwrapped === 'object' && unwrapped !== null ? (unwrapped as Record<string, unknown>) : {};
   return {
     ok: false,
     error: {
       tag: typeof record._tag === 'string' ? record._tag : 'Error',
-      message: error instanceof Error ? error.message : String(error),
+      message: unwrapped instanceof Error ? unwrapped.message : String(unwrapped),
       ...(typeof record.reason === 'string' ? { reason: record.reason } : {}),
     },
   };
