@@ -28,6 +28,16 @@ export interface UsageRowProvenance {
   description: string;
 }
 
+export interface UsageProvenanceInput {
+  ambiguous?: boolean;
+  costActual: number | null;
+  costKnown: boolean;
+  costQuota?: number | null;
+  partial?: boolean;
+  titleSource?: UsageRow['titleSource'];
+  usageUnavailable?: boolean;
+}
+
 const COUNTERS_AND_AGGREGATES: UsageMetricKey[] = [
   'tokens',
   'api-value',
@@ -48,9 +58,10 @@ const USAGE_UNAVAILABLE_METRICS: UsageMetricKey[] = [
   'tools',
 ];
 
-const hasOwn = (row: UsageRow, key: keyof UsageRow) => Object.prototype.hasOwnProperty.call(row, key);
+const hasOwn = (row: UsageProvenanceInput, key: keyof UsageProvenanceInput) =>
+  Object.prototype.hasOwnProperty.call(row, key);
 
-export const provenanceForUsageRow = (row: UsageRow): UsageRowProvenance[] => {
+export const provenanceForUsageRow = (row: UsageProvenanceInput): UsageRowProvenance[] => {
   const provenance: UsageRowProvenance[] = [];
 
   if (row.titleSource !== 'ai') {
@@ -126,5 +137,5 @@ export const provenanceForUsageRow = (row: UsageRow): UsageRowProvenance[] => {
   return provenance;
 };
 
-export const provenanceForMetric = (row: UsageRow, metricKey: UsageMetricKey): UsageRowProvenance[] =>
+export const provenanceForMetric = (row: UsageProvenanceInput, metricKey: UsageMetricKey): UsageRowProvenance[] =>
   provenanceForUsageRow(row).filter((item) => item.appliesTo.includes(metricKey));
