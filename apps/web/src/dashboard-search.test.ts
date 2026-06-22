@@ -15,6 +15,7 @@ describe('dashboard search params', () => {
     expect(
       validateDashboardSearch(
         {
+          campaigns: 'off',
           cols: ['tokIn', 'session', 'tokIn', 'missing'],
           filters: {
             ignored: 'x',
@@ -31,6 +32,7 @@ describe('dashboard search params', () => {
         defaults,
       ),
     ).toEqual({
+      campaigns: 'off',
       cols: ['tokIn'],
       filters: { model: 'gpt-5', provider: 'Codex API' },
       harness: 'Codex',
@@ -50,6 +52,7 @@ describe('dashboard search params', () => {
           range: { mode: 'wat' },
           sort: { id: 'missing', desc: false },
           tab: 'missing',
+          campaigns: 'sideways',
         },
         defaults,
       ),
