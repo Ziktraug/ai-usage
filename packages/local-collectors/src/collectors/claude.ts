@@ -11,25 +11,76 @@ import { type HarnessPaths, resolvePaths } from '../platform-paths';
 import type { CollectorRow } from '../rtk-enrichment';
 import { base, dominant, safeJSON, usablePrompt } from '../text';
 
-type ClaudeHistoryFallback = {
+interface ClaudeHistoryFallback {
+  end: Date;
+  firstPrompt: string | null;
+  project: string | null;
   sessionId: string;
   start: Date;
-  end: Date;
-  project: string | null;
-  firstPrompt: string | null;
   turns: number;
-};
-type FileFingerprint = { mtimeMs: number; path: string; size: number };
-type ClaudeCache = { fingerprintKey: string | null; rows: CollectorRow[]; version: number };
+}
+interface FileFingerprint {
+  mtimeMs: number;
+  path: string;
+  size: number;
+}
+interface ClaudeCache {
+  fingerprintKey: string | null;
+  rows: CollectorRow[];
+  version: number;
+}
+interface ClaudeConfig {
+  hasApiKey?: boolean;
+}
+interface ClaudeHistoryEvent {
+  display?: string;
+  project?: string;
+  sessionId?: string;
+  timestamp?: number;
+}
+interface ClaudeMessage {
+  content?: unknown;
+  id?: string;
+  model?: string;
+  usage?: ClaudeUsage;
+}
+interface ClaudeSettings {
+  cleanupPeriodDays?: number;
+}
+interface ClaudeTranscriptEvent {
+  aiTitle?: string;
+  cwd?: string;
+  isSidechain?: boolean;
+  lastPrompt?: unknown;
+  message?: ClaudeMessage;
+  requestId?: string;
+  sessionId?: string;
+  timestamp?: string | number | Date;
+  type?: string;
+}
+interface ClaudeUsage {
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+}
 
 const CLAUDE_CACHE_VERSION = 2;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+const blockType = (block: unknown) => (isRecord(block) && typeof block.type === 'string' ? block.type : null);
+const textBlockText = (block: unknown) => (isRecord(block) && typeof block.text === 'string' ? block.text : null);
 
 const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
   try {
-    if (!fs.existsSync(storage.home)) return null;
+    if (!fs.existsSync(storage.home)) {
+      return null;
+    }
     const cachePath = claudeCachePath(storage);
-    if (!fs.existsSync(cachePath)) return { fingerprintKey: null, rows: [], version: CLAUDE_CACHE_VERSION };
+    if (!fs.existsSync(cachePath)) {
+      return { fingerprintKey: null, rows: [], version: CLAUDE_CACHE_VERSION };
+    }
     const parsed = JSON.parse(fs.readFileSync(cachePath, 'utf8')) as {
       fingerprintKey?: unknown;
       rows?: unknown;
@@ -49,7 +100,9 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
 };
 
 const writeClaudeCache = (storage: LocalHistoryStorage, fingerprintKey: string | null, rows: CollectorRow[]) => {
-  if (!fingerprintKey) return false;
+  if (!fingerprintKey) {
+    return false;
+  }
   const cachePath = claudeCachePath(storage);
   fs.mkdirSync(path.dirname(cachePath), { recursive: true });
   fs.writeFileSync(cachePath, `${JSON.stringify({ fingerprintKey, rows, version: CLAUDE_CACHE_VERSION })}\n`, 'utf8');
@@ -67,11 +120,15 @@ const fileFingerprint = (filePath: string): FileFingerprint | null => {
 
 const createClaudeFingerprintKey = (storage: LocalHistoryStorage, paths: HarnessPaths, files: string[]) => {
   try {
-    if (!fs.existsSync(storage.home)) return null;
+    if (!fs.existsSync(storage.home)) {
+      return null;
+    }
     const fileFingerprints: FileFingerprint[] = [];
     for (const filePath of files) {
       const fingerprint = fileFingerprint(filePath);
-      if (!fingerprint) return null;
+      if (!fingerprint) {
+        return null;
+      }
       fileFingerprints.push(fingerprint);
     }
     fileFingerprints.sort((left, right) => left.path.localeCompare(right.path));
@@ -88,7 +145,9 @@ const createClaudeFingerprintKey = (storage: LocalHistoryStorage, paths: Harness
 const HOUSEKEEPING_COMMANDS = new Set(['/clear', '/model', '/effort', '/usage', '/rate-limit-options', '/resume']);
 
 const isUsageBearingHistoryEntry = (text: string | null) => {
-  if (!text) return false;
+  if (!text) {
+    return false;
+  }
   const cleaned = text.trim();
   return cleaned.length > 0 && !HOUSEKEEPING_COMMANDS.has(cleaned);
 };
@@ -100,17 +159,28 @@ const readClaudeHistoryFallbacks = (
 ): Effect.Effect<ClaudeHistoryFallback[], LocalHistoryError> =>
   Effect.gen(function* () {
     const historyFile = paths.claude.historyFile;
-    if (!(yield* storage.exists(historyFile))) return [];
+    if (!(yield* storage.exists(historyFile))) {
+      return [];
+    }
 
     const sessions = new Map<string, ClaudeHistoryFallback>();
     for (const line of (yield* storage.readText(historyFile)).split('\n')) {
-      if (!line) continue;
-      const event = safeJSON(line);
+      if (!line) {
+        continue;
+      }
+      const event = safeJSON<ClaudeHistoryEvent>(line);
+      if (!event) {
+        continue;
+      }
       const sessionId = typeof event?.sessionId === 'string' ? event.sessionId : null;
-      if (!sessionId || existingSessionIds.has(sessionId)) continue;
+      if (!sessionId || existingSessionIds.has(sessionId)) {
+        continue;
+      }
       const timestamp = Number(event.timestamp);
       const date = new Date(timestamp);
-      if (!Number.isFinite(date.getTime())) continue;
+      if (!Number.isFinite(date.getTime())) {
+        continue;
+      }
 
       const display = typeof event.display === 'string' ? event.display : null;
       const prompt = usablePrompt(display);
@@ -124,12 +194,20 @@ const readClaudeHistoryFallbacks = (
         turns: 0,
       };
 
-      if (date < current.start) current.start = date;
-      if (date > current.end) current.end = date;
-      if (!current.project && typeof event.project === 'string') current.project = event.project;
+      if (date < current.start) {
+        current.start = date;
+      }
+      if (date > current.end) {
+        current.end = date;
+      }
+      if (!current.project && typeof event.project === 'string') {
+        current.project = event.project;
+      }
       if (usageBearing) {
         current.turns++;
-        if (!current.firstPrompt) current.firstPrompt = prompt;
+        if (!current.firstPrompt) {
+          current.firstPrompt = prompt;
+        }
       }
       sessions.set(sessionId, current);
     }
@@ -151,13 +229,15 @@ export const collectClaudeRetentionWarnings: Effect.Effect<LocalHistoryWarning[]
 
     const exists = yield* storage.exists(settingsFile).pipe(Effect.catchAll(() => Effect.succeed(false)));
     const raw = exists ? yield* storage.readText(settingsFile).pipe(Effect.catchAll(() => Effect.succeed(''))) : '';
-    const configured = safeJSON(raw)?.cleanupPeriodDays;
+    const configured = safeJSON<ClaudeSettings>(raw)?.cleanupPeriodDays;
     const hasExplicit = typeof configured === 'number' && Number.isFinite(configured);
     const days = hasExplicit ? (configured as number) : CLAUDE_DEFAULT_CLEANUP_DAYS;
 
     // Only warn when retention is at or below the lossy default; raising the value
     // (or disabling cleanup) means history is being kept, so stay quiet.
-    if (days > CLAUDE_DEFAULT_CLEANUP_DAYS) return [];
+    if (days > CLAUDE_DEFAULT_CLEANUP_DAYS) {
+      return [];
+    }
 
     const detail = hasExplicit
       ? `cleanupPeriodDays is set to ${days}`
@@ -200,8 +280,10 @@ export const collectClaude = Effect.gen(function* () {
   let provider = 'Claude sub';
   const cfg = paths.claude.configFile;
   if (yield* storage.exists(cfg).pipe(Effect.catchAll(() => Effect.succeed(false)))) {
-    const json = safeJSON(yield* storage.readText(cfg).pipe(Effect.catchAll(() => Effect.succeed(''))));
-    if (json?.hasApiKey) provider = 'Claude API';
+    const json = safeJSON<ClaudeConfig>(yield* storage.readText(cfg).pipe(Effect.catchAll(() => Effect.succeed(''))));
+    if (json?.hasApiKey) {
+      provider = 'Claude API';
+    }
   }
 
   const sessions: CollectedSession[] = [];
@@ -230,46 +312,71 @@ export const collectClaude = Effect.gen(function* () {
         const byModel = new Map<string, number>();
 
         for (const line of (yield* storage.readText(filePath)).split('\n')) {
-          if (!line) continue;
+          if (!line) {
+            continue;
+          }
           lines++;
-          const event = safeJSON(line);
-          if (!event) continue;
+          const event = safeJSON<ClaudeTranscriptEvent>(line);
+          if (!event) {
+            continue;
+          }
           if (isAgentFile && typeof event.sessionId === 'string' && event.sessionId !== sourceSessionId) {
             parentSourceSessionId = event.sessionId;
           }
           if (event.timestamp) {
             const date = new Date(event.timestamp);
             if (Number.isFinite(date.getTime())) {
-              if (!start || date < start) start = date;
-              if (!end || date > end) end = date;
+              if (!start || date < start) {
+                start = date;
+              }
+              if (!end || date > end) {
+                end = date;
+              }
             }
           }
-          if (event.isSidechain) sidechain = true;
-          if (event.type === 'ai-title' && event.aiTitle) title = event.aiTitle;
-          else if (event.type === 'last-prompt' && event.lastPrompt) lastPrompt = String(event.lastPrompt);
-          else if (event.type === 'user') {
+          if (event.isSidechain) {
+            sidechain = true;
+          }
+          if (event.type === 'ai-title' && event.aiTitle) {
+            title = event.aiTitle;
+          } else if (event.type === 'last-prompt' && event.lastPrompt) {
+            lastPrompt = String(event.lastPrompt);
+          } else if (event.type === 'user') {
             const content = event.message?.content;
             let text: string | null = null;
-            if (typeof content === 'string') text = content;
-            else if (Array.isArray(content)) {
-              const isToolResult = content.some((block: any) => block?.type === 'tool_result');
-              if (!isToolResult) text = content.find((block: any) => block?.type === 'text')?.text ?? null;
+            if (typeof content === 'string') {
+              text = content;
+            } else if (Array.isArray(content)) {
+              const isToolResult = content.some((block) => blockType(block) === 'tool_result');
+              if (!isToolResult) {
+                text = content.map(textBlockText).find((value) => value !== null) ?? null;
+              }
             }
             if (text) {
               turns++;
-              if (!firstPrompt) firstPrompt = usablePrompt(text);
+              if (!firstPrompt) {
+                firstPrompt = usablePrompt(text);
+              }
             }
           } else if (event.type === 'assistant') {
-            if (event.cwd) cwd = event.cwd;
+            if (event.cwd) {
+              cwd = event.cwd;
+            }
             const usage = event.message?.usage;
             if (Array.isArray(event.message?.content)) {
-              tools += event.message.content.filter((block: any) => block?.type === 'tool_use').length;
+              tools += event.message.content.filter((block) => blockType(block) === 'tool_use').length;
             }
-            if (!usage) continue;
+            if (!usage) {
+              continue;
+            }
             const id = event.message?.id;
             const key = `${id}:${event.requestId}`;
-            if (id && seen.has(key)) continue;
-            if (id) seen.add(key);
+            if (id && seen.has(key)) {
+              continue;
+            }
+            if (id) {
+              seen.add(key);
+            }
             calls++;
             const input = usage.input_tokens || 0;
             const output = usage.output_tokens || 0;
@@ -284,20 +391,25 @@ export const collectClaude = Effect.gen(function* () {
           }
         }
 
-        if (!start && tokenTotal(tokens) === 0) continue;
+        if (!start && tokenTotal(tokens) === 0) {
+          continue;
+        }
         const model = dominant(byModel);
         const name =
           title ||
           usablePrompt(lastPrompt) ||
           firstPrompt ||
           `${sidechain ? 'subagent ' : ''}${sourceSessionId.slice(0, 8)}`;
-        const titleSource = title
-          ? 'ai'
-          : sidechain && !lastPrompt && !firstPrompt
-            ? 'agent-role'
-            : lastPrompt || firstPrompt
-              ? 'first-prompt'
-              : 'id';
+        let titleSource: 'ai' | 'agent-role' | 'first-prompt' | 'id';
+        if (title) {
+          titleSource = 'ai';
+        } else if (sidechain && !lastPrompt && !firstPrompt) {
+          titleSource = 'agent-role';
+        } else if (lastPrompt || firstPrompt) {
+          titleSource = 'first-prompt';
+        } else {
+          titleSource = 'id';
+        }
 
         sessions.push({
           source: {

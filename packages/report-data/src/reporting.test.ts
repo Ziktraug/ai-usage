@@ -82,7 +82,7 @@ const makeSourcedRow = (input: {
   source: {
     harnessKey: 'claude',
     sourceSessionId: input.sessionId,
-    ...(input.parentSessionId !== undefined ? { parentSourceSessionId: input.parentSessionId } : {}),
+    ...(input.parentSessionId === undefined ? {} : { parentSourceSessionId: input.parentSessionId }),
     sourcePath: input.sourcePath,
   },
 });

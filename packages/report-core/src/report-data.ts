@@ -5,42 +5,43 @@ import { usageRowActiveDate, usageRowLineDelta, usageRowSessionLabel, usageRowTo
 export type SortKey = 'date' | 'tokens' | 'cost';
 
 export interface ReportOptions {
-  since: Date | null;
-  project: string | null;
   limit: number | null;
   minTokens: number;
+  project: string | null;
+  since: Date | null;
   sort: SortKey;
 }
 
 export interface PreparedUsageReport {
+  omittedRows: number;
   rows: UsageRow[];
   tableRows: UsageRow[];
-  omittedRows: number;
 }
 
 export interface SerializedUsageRow extends Omit<UsageRow, 'date' | 'endDate'> {
+  activeDate: string | null;
   date: string | null;
   endDate: string | null;
-  activeDate: string | null;
-  sessionLabel: string;
-  tokenTotal: number;
   freshTokens: number;
   lineDelta: number | null;
+  sessionLabel: string;
   source?: UsageRowSource;
+  tokenTotal: number;
 }
 
 export type SerializedRow = SerializedUsageRow;
 
 export interface UsageReportWarning {
   harness?: string;
+  message: string;
   operation?: string;
   path?: string;
   sql?: string;
-  message: string;
 }
 
 export interface UsageReportPayload {
-  generatedAt: string;
+  analytics: AnalyticsSummary;
+  facets?: Record<string, unknown>;
   filters: {
     since: string | null;
     project: string | null;
@@ -48,12 +49,11 @@ export interface UsageReportPayload {
     minTokens: number;
     sort: SortKey;
   };
+  generatedAt: string;
+  omittedRows: number;
   rows: SerializedUsageRow[];
   tableRows: SerializedUsageRow[];
-  omittedRows: number;
-  analytics: AnalyticsSummary;
   warnings?: UsageReportWarning[];
-  facets?: Record<string, unknown>;
 }
 
 export const compareUsageRows = (sort: SortKey) =>
@@ -67,9 +67,15 @@ export const compareUsageRows = (sort: SortKey) =>
 export const filterUsageRows = (rows: UsageRow[], options: ReportOptions) =>
   rows.filter((row) => {
     const activeAt = usageRowActiveDate(row);
-    if (usageRowTokenTotal(row) < options.minTokens && !row.usageUnavailable) return false;
-    if (options.since && (!activeAt || activeAt < options.since)) return false;
-    if (options.project && !row.project.toLowerCase().includes(options.project)) return false;
+    if (usageRowTokenTotal(row) < options.minTokens && !row.usageUnavailable) {
+      return false;
+    }
+    if (options.since && (!activeAt || activeAt < options.since)) {
+      return false;
+    }
+    if (options.project && !row.project.toLowerCase().includes(options.project)) {
+      return false;
+    }
     return true;
   });
 

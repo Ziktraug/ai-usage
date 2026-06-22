@@ -25,29 +25,29 @@ export const CursorAttributionPanel = (props: { rows: CursorCommitAttributionFac
 
   return (
     <Show
-      when={props.rows.length}
       fallback={<div class={empty}>No Cursor commit attribution data in this payload</div>}
+      when={props.rows.length}
     >
       <div class={metricGrid}>
         <MetricTile
+          hint="Unique commit hashes scored by Cursor"
           label="Scored commits"
           value={fmtNum(uniqueCursorCommits(props.rows))}
-          hint="Unique commit hashes scored by Cursor"
         />
         <MetricTile
+          hint="Cursor stores attribution per branch, so commits can repeat"
           label="Branch rows"
           value={fmtNum(props.rows.length)}
-          hint="Cursor stores attribution per branch, so commits can repeat"
         />
         <MetricTile
+          hint="Composer + Tab lines over scored added/deleted lines"
           label="AI line share"
           value={fmtPct(aiPct())}
-          hint="Composer + Tab lines over scored added/deleted lines"
         />
         <MetricTile
+          hint="Lines Cursor classified as human-authored"
           label="Human lines"
           value={fmtNum(totals().humanLines)}
-          hint="Lines Cursor classified as human-authored"
         />
       </div>
 
@@ -57,19 +57,19 @@ export const CursorAttributionPanel = (props: { rows: CursorCommitAttributionFac
             <tr>
               <th>Commit</th>
               <th style={{ width: '150px' }}>Branch</th>
-              <th style={{ width: '110px' }} class={right}>
+              <th class={right} style={{ width: '110px' }}>
                 AI %
               </th>
-              <th style={{ width: '120px' }} class={right}>
+              <th class={right} style={{ width: '120px' }}>
                 Composer
               </th>
-              <th style={{ width: '100px' }} class={right}>
+              <th class={right} style={{ width: '100px' }}>
                 Tab
               </th>
-              <th style={{ width: '110px' }} class={right}>
+              <th class={right} style={{ width: '110px' }}>
                 Human
               </th>
-              <th style={{ width: '130px' }} class={right}>
+              <th class={right} style={{ width: '130px' }}>
                 Total +/-
               </th>
               <th style={{ width: '150px' }}>Scored</th>

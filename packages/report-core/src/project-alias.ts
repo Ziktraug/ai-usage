@@ -2,19 +2,18 @@ import path from 'node:path';
 import type { UsageRowWithOptionalSource } from './types';
 
 export interface ProjectAliasEntry {
-  name: string;
   match: string[];
+  name: string;
 }
 
 export interface SyncRemoteConfig {
-  name: string;
-  url: string;
-  tokenEnv?: string;
   enabled?: boolean;
+  name: string;
+  tokenEnv?: string;
+  url: string;
 }
 
 export interface AiUsageConfig {
-  projectAliases?: ProjectAliasEntry[];
   cursor?: {
     usageExportPaths?: string[];
     usageExportDir?: string;
@@ -23,6 +22,7 @@ export interface AiUsageConfig {
     maxSessionSpanMs?: number;
     user?: string;
   };
+  projectAliases?: ProjectAliasEntry[];
   sync?: {
     remotes?: SyncRemoteConfig[];
   };
@@ -61,7 +61,9 @@ export const applyProjectAliases = <T extends UsageRowWithOptionalSource>(
   rows: T[],
   aliases: ProjectAliasEntry[] = [],
 ): T[] => {
-  if (!aliases.length) return rows;
+  if (!aliases.length) {
+    return rows;
+  }
   return rows.map((row) => {
     const alias = aliases.find((entry) => entry.name && Array.isArray(entry.match) && matchesAlias(row, entry));
     return alias ? { ...row, project: alias.name } : row;

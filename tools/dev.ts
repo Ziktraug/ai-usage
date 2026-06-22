@@ -33,7 +33,10 @@ if ((await prep.exited) !== 0) {
   process.exit(1);
 }
 
-type Child = { name: string; proc: Bun.Subprocess };
+interface Child {
+  name: string;
+  proc: Bun.Subprocess;
+}
 
 const children: Child[] = [
   {
@@ -64,7 +67,9 @@ const children: Child[] = [
 
 let shuttingDown = false;
 const shutdown = (code: number) => {
-  if (shuttingDown) return;
+  if (shuttingDown) {
+    return;
+  }
   shuttingDown = true;
   for (const child of children) {
     child.proc.kill();

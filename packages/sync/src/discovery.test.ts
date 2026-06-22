@@ -1,4 +1,4 @@
-import { describe, expect, test, afterEach } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
 import { discoverSnapshotRemotes, healthUrlForHost, snapshotUrlForHost, subnetHostsForAddress } from './discovery';
 
@@ -18,10 +18,10 @@ describe('snapshot remote discovery', () => {
   });
 
   test('discovers healthy snapshot remotes', async () => {
-    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+    globalThis.fetch = ((input: Parameters<typeof fetch>[0]) => {
       const url = String(input);
       if (url.includes('192.168.1.10')) {
-        return new Response(JSON.stringify({ ok: true, machine: { id: 'remote-1', label: 'MacBook' } }));
+        return Response.json({ ok: true, machine: { id: 'remote-1', label: 'MacBook' } });
       }
       return new Response('not found', { status: 404 });
     }) as unknown as typeof fetch;
@@ -47,7 +47,7 @@ describe('snapshot remote discovery', () => {
 
   test('dedupes peers by machine id', async () => {
     globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ ok: true, machine: { id: 'remote-1', label: 'MacBook' } }))) as unknown as typeof fetch;
+      Response.json({ ok: true, machine: { id: 'remote-1', label: 'MacBook' } })) as unknown as typeof fetch;
 
     const peers = await Effect.runPromise(discoverSnapshotRemotes({ hosts: ['192.168.1.10', '192.168.1.11'] }));
 

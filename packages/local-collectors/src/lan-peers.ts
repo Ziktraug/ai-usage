@@ -7,17 +7,17 @@ import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageSer
 export const LAN_PEERS_CONFIG_FILE = 'lan-peers.json';
 
 export interface StoredLanPeer {
+  lastMergedAt?: string;
+  lastSeenAt?: string;
   machineId: string;
   machineLabel: string;
-  tokenEnv: string;
   pairedAt: string;
-  lastSeenAt?: string;
-  lastMergedAt?: string;
+  tokenEnv: string;
 }
 
 export interface LanPeersConfig {
-  version: 1;
   peers: StoredLanPeer[];
+  version: 1;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -26,7 +26,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isOptionalString = (value: unknown) => value === undefined || typeof value === 'string';
 
 const isStoredLanPeer = (value: unknown): value is StoredLanPeer => {
-  if (!isRecord(value)) return false;
+  if (!isRecord(value)) {
+    return false;
+  }
   return (
     typeof value.machineId === 'string' &&
     value.machineId.length > 0 &&
@@ -46,9 +48,13 @@ export const emptyLanPeersConfig = (): LanPeersConfig => ({ version: 1, peers: [
 
 export const parseLanPeersConfig = (text: string): LanPeersConfig => {
   const value = JSON.parse(text) as unknown;
-  if (!isRecord(value)) throw new Error('LAN peers config must be an object');
-  if (value.version !== 1) throw new Error('Unsupported LAN peers config version');
-  if (!Array.isArray(value.peers) || !value.peers.every(isStoredLanPeer)) {
+  if (!isRecord(value)) {
+    throw new Error('LAN peers config must be an object');
+  }
+  if (value.version !== 1) {
+    throw new Error('Unsupported LAN peers config version');
+  }
+  if (!(Array.isArray(value.peers) && value.peers.every(isStoredLanPeer))) {
     throw new Error('LAN peers config contains invalid peers');
   }
   return {

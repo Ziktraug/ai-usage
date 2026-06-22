@@ -1,22 +1,31 @@
-import { DAY_MS, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
 import type { CampaignView } from './dashboard-model';
+import { DAY_MS, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
 import type { DashboardRow } from './shared';
 
-export type HeatDay = { cost: number; date: Date; level: number; sessions: number };
-export type HeatWeek = { days: (HeatDay | null)[] };
-export type CalendarHeatmapData = {
+export interface HeatDay {
+  cost: number;
+  date: Date;
+  level: number;
+  sessions: number;
+}
+export interface HeatWeek {
+  days: (HeatDay | null)[];
+}
+export interface CalendarHeatmapData {
   monthLabels: string[];
   todayKey: string;
   useCost: boolean;
   weeks: HeatWeek[];
-};
+}
 
 export const buildCalendarHeatmapData = (rows: DashboardRow[], now = new Date()): CalendarHeatmapData | null => {
   const byDay = new Map<string, { cost: number; sessions: number }>();
   let minTime = Number.POSITIVE_INFINITY;
   let maxTime = Number.NEGATIVE_INFINITY;
   for (const row of rows) {
-    if (row.activeTime == null) continue;
+    if (row.activeTime == null) {
+      continue;
+    }
     minTime = Math.min(minTime, row.activeTime);
     maxTime = Math.max(maxTime, row.activeTime);
     const key = toDateInputValue(startOfDay(new Date(row.activeTime)));
@@ -25,14 +34,20 @@ export const buildCalendarHeatmapData = (rows: DashboardRow[], now = new Date())
       entry = { cost: 0, sessions: 0 };
       byDay.set(key, entry);
     }
-    if (row.costKnown) entry.cost += row.costApprox;
+    if (row.costKnown) {
+      entry.cost += row.costApprox;
+    }
     entry.sessions++;
   }
-  if (!byDay.size) return null;
+  if (!byDay.size) {
+    return null;
+  }
 
   const last = startOfDay(new Date(maxTime));
   let first = startOfDay(new Date(minTime));
-  if ((last.getTime() - first.getTime()) / DAY_MS > 730) first = shiftCalendarDays(last, -730);
+  if ((last.getTime() - first.getTime()) / DAY_MS > 730) {
+    first = shiftCalendarDays(last, -730);
+  }
   const gridStart = shiftCalendarDays(first, -((first.getDay() + 6) % 7));
 
   const useCost = [...byDay.values()].some((entry) => entry.cost > 0);
@@ -56,7 +71,7 @@ export const buildCalendarHeatmapData = (rows: DashboardRow[], now = new Date())
         continue;
       }
       const entry = byDay.get(toDateInputValue(date));
-      const value = entry ? (useCost ? entry.cost : entry.sessions) : 0;
+      const value = heatDayValue(entry, useCost);
       days.push({
         date,
         cost: entry?.cost ?? 0,
@@ -73,9 +88,23 @@ export const buildCalendarHeatmapData = (rows: DashboardRow[], now = new Date())
   return { weeks, monthLabels, useCost, todayKey };
 };
 
-type MigrationBucket = { date: Date; byModel: Map<string, number>; total: number };
-export type MigrationSeries = { key: string; total: number };
-export type ModelMigrationData = {
+const heatDayValue = (entry: { cost: number; sessions: number } | undefined, useCost: boolean) => {
+  if (!entry) {
+    return 0;
+  }
+  return useCost ? entry.cost : entry.sessions;
+};
+
+interface MigrationBucket {
+  byModel: Map<string, number>;
+  date: Date;
+  total: number;
+}
+export interface MigrationSeries {
+  key: string;
+  total: number;
+}
+export interface ModelMigrationData {
   buckets: MigrationBucket[];
   first: Date;
   grandTotal: number;
@@ -83,13 +112,15 @@ export type ModelMigrationData = {
   paths: string[];
   series: MigrationSeries[];
   weekly: boolean;
-};
+}
 
 export const buildModelMigrationData = (rows: DashboardRow[]): ModelMigrationData | null => {
   const dated = rows.filter((row) => row.activeTime != null && row.costKnown && row.costApprox > 0) as (DashboardRow & {
     activeTime: number;
   })[];
-  if (dated.length < 2) return null;
+  if (dated.length < 2) {
+    return null;
+  }
 
   let minTime = Number.POSITIVE_INFINITY;
   let maxTime = Number.NEGATIVE_INFINITY;
@@ -112,14 +143,20 @@ export const buildModelMigrationData = (rows: DashboardRow[]): ModelMigrationDat
     bucketIndex.set(toDateInputValue(cursor), buckets.length);
     buckets.push({ date: cursor, byModel: new Map(), total: 0 });
   }
-  if (buckets.length < 2) return null;
+  if (buckets.length < 2) {
+    return null;
+  }
 
   const totals = new Map<string, number>();
   for (const row of dated) {
     const index = bucketIndex.get(toDateInputValue(bucketStart(new Date(row.activeTime))));
-    if (index === undefined) continue;
+    if (index === undefined) {
+      continue;
+    }
     const bucket = buckets[index];
-    if (!bucket) continue;
+    if (!bucket) {
+      continue;
+    }
     bucket.byModel.set(row.modelKey, (bucket.byModel.get(row.modelKey) ?? 0) + row.costApprox);
     bucket.total += row.costApprox;
     totals.set(row.modelKey, (totals.get(row.modelKey) ?? 0) + row.costApprox);
@@ -131,12 +168,16 @@ export const buildModelMigrationData = (rows: DashboardRow[]): ModelMigrationDat
   const grandTotal = ranked.reduce((sum, [, value]) => sum + value, 0);
 
   const series: MigrationSeries[] = top.map(([key, total]) => ({ key, total }));
-  if (otherTotal > 0) series.push({ key: 'other', total: otherTotal });
+  if (otherTotal > 0) {
+    series.push({ key: 'other', total: otherTotal });
+  }
 
   const x = (index: number) => (index / (buckets.length - 1)) * 100;
   const topKeys = top.map(([key]) => key);
   const shareFor = (bucket: MigrationBucket, key: string) => {
-    if (bucket.total <= 0) return 0;
+    if (bucket.total <= 0) {
+      return 0;
+    }
     if (key === 'other') {
       const topSum = topKeys.reduce((sum, topKey) => sum + (bucket.byModel.get(topKey) ?? 0), 0);
       return Math.max(0, bucket.total - topSum) / bucket.total;
@@ -148,9 +189,13 @@ export const buildModelMigrationData = (rows: DashboardRow[]): ModelMigrationDat
     const lower: string[] = [];
     for (let i = 0; i < buckets.length; i++) {
       const bucket = buckets[i];
-      if (!bucket) continue;
+      if (!bucket) {
+        continue;
+      }
       let cumBefore = 0;
-      for (let k = 0; k < seriesIdx; k++) cumBefore += shareFor(bucket, series[k]?.key ?? '');
+      for (let k = 0; k < seriesIdx; k++) {
+        cumBefore += shareFor(bucket, series[k]?.key ?? '');
+      }
       const own = shareFor(bucket, entry.key);
       upper.push(`${x(i).toFixed(2)},${(100 - (cumBefore + own) * 100).toFixed(2)}`);
       lower.push(`${x(i).toFixed(2)},${(100 - cumBefore * 100).toFixed(2)}`);
@@ -165,7 +210,7 @@ export const buildModelMigrationData = (rows: DashboardRow[]): ModelMigrationDat
     series,
     weekly,
     first: buckets[0]?.date ?? firstBucket,
-    last: buckets[buckets.length - 1]?.date ?? lastBucket,
+    last: buckets.at(-1)?.date ?? lastBucket,
   };
 };
 
@@ -235,14 +280,14 @@ export const buildOverviewSessionItems = (
   return [...campaignItems, ...sessionItems];
 };
 
-export type SessionShapeData = {
+export interface SessionShapeData {
   harnesses: string[];
   points: (OverviewSessionItem & { durationMs: number })[];
   xPct: (value: number) => number;
   xTicks: (typeof DURATION_TICKS)[number][];
   yPct: (value: number) => number;
   yTicks: (typeof COST_TICKS)[number][];
-};
+}
 
 export const buildSessionShapeData = (
   rows: DashboardRow[],
@@ -251,7 +296,9 @@ export const buildSessionShapeData = (
   const points = buildOverviewSessionItems(rows, campaigns).filter(
     (item) => (item.durationMs ?? 0) > 0 && item.costApprox > 0,
   ) as (OverviewSessionItem & { durationMs: number })[];
-  if (points.length < 3) return null;
+  if (points.length < 3) {
+    return null;
+  }
 
   let xMin = Number.POSITIVE_INFINITY;
   let xMax = Number.NEGATIVE_INFINITY;
@@ -282,31 +329,43 @@ export const buildSessionShapeData = (
 };
 
 export const PUNCH_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
-export type PunchCell = { cost: number; sessions: number };
-export type PunchcardData = { cells: PunchCell[][]; maxSessions: number };
+export interface PunchCell {
+  cost: number;
+  sessions: number;
+}
+export interface PunchcardData {
+  cells: PunchCell[][];
+  maxSessions: number;
+}
 
 export const buildPunchcardData = (rows: DashboardRow[]): PunchcardData | null => {
   const cells = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => ({ cost: 0, sessions: 0 })));
   let maxSessions = 0;
   for (const row of rows) {
-    if (row.activeTime == null) continue;
+    if (row.activeTime == null) {
+      continue;
+    }
     const date = new Date(row.activeTime);
     const cell = cells[(date.getDay() + 6) % 7]?.[date.getHours()];
-    if (!cell) continue;
+    if (!cell) {
+      continue;
+    }
     cell.sessions++;
-    if (row.costKnown) cell.cost += row.costApprox;
+    if (row.costKnown) {
+      cell.cost += row.costApprox;
+    }
     maxSessions = Math.max(maxSessions, cell.sessions);
   }
   return maxSessions > 0 ? { cells, maxSessions } : null;
 };
 
-export type OverviewRecords = {
+export interface OverviewRecords {
   busiest: { cost: number; date: Date; sessions: number } | null;
   longest: DashboardRow | null;
   streak: number;
   streakEnd: Date | null;
   topCost: DashboardRow | null;
-};
+}
 
 export const buildOverviewRecords = (rows: DashboardRow[], timelineRows: DashboardRow[]): OverviewRecords | null => {
   const priced = rows.filter((row) => row.costKnown && row.costApprox > 0);
@@ -322,7 +381,9 @@ export const buildOverviewRecords = (rows: DashboardRow[], timelineRows: Dashboa
 
   const byDay = new Map<string, { cost: number; date: Date; sessions: number }>();
   for (const row of rows) {
-    if (row.activeTime == null) continue;
+    if (row.activeTime == null) {
+      continue;
+    }
     const day = startOfDay(new Date(row.activeTime));
     const key = toDateInputValue(day);
     let entry = byDay.get(key);
@@ -330,7 +391,9 @@ export const buildOverviewRecords = (rows: DashboardRow[], timelineRows: Dashboa
       entry = { cost: 0, date: day, sessions: 0 };
       byDay.set(key, entry);
     }
-    if (row.costKnown) entry.cost += row.costApprox;
+    if (row.costKnown) {
+      entry.cost += row.costApprox;
+    }
     entry.sessions++;
   }
   const busiest = [...byDay.values()].reduce<{ cost: number; date: Date; sessions: number } | null>(
@@ -344,10 +407,14 @@ export const buildOverviewRecords = (rows: DashboardRow[], timelineRows: Dashboa
   const streakDays = new Set<string>();
   let lastDay: Date | null = null;
   for (const row of timelineRows) {
-    if (row.activeTime == null) continue;
+    if (row.activeTime == null) {
+      continue;
+    }
     const day = startOfDay(new Date(row.activeTime));
     streakDays.add(toDateInputValue(day));
-    if (!lastDay || day > lastDay) lastDay = day;
+    if (!lastDay || day > lastDay) {
+      lastDay = day;
+    }
   }
   let streak = 0;
   if (lastDay) {
@@ -356,7 +423,9 @@ export const buildOverviewRecords = (rows: DashboardRow[], timelineRows: Dashboa
     }
   }
 
-  if (!topCost && !longest && !busiest && streak === 0) return null;
+  if (!(topCost || longest || busiest) && streak === 0) {
+    return null;
+  }
   return { topCost, longest, busiest, streak, streakEnd: lastDay };
 };
 

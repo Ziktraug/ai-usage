@@ -53,13 +53,16 @@ const provenanceTitle = (facts: ProvenanceMarkerFact[]) =>
   facts.map((fact) => `${fact.label}: ${fact.description}`).join('\n');
 
 export const ProvenanceMarker = (props: { facts: ProvenanceMarkerFact[] }) => {
-  if (!props.facts.length) return null;
+  if (!props.facts.length) {
+    return null;
+  }
   const hasWarning = props.facts.some((fact) => fact.severity === 'warning');
   return (
     <span
-      class={hasWarning ? `${provenanceMarker} ${provenanceMarkerWarning}` : provenanceMarker}
-      title={provenanceTitle(props.facts)}
       aria-label={provenanceTitle(props.facts)}
+      class={hasWarning ? `${provenanceMarker} ${provenanceMarkerWarning}` : provenanceMarker}
+      role="img"
+      title={provenanceTitle(props.facts)}
     >
       !
     </span>
@@ -67,7 +70,9 @@ export const ProvenanceMarker = (props: { facts: ProvenanceMarkerFact[] }) => {
 };
 
 export const CellWithProvenance = (props: { children: JSX.Element; facts: ProvenanceMarkerFact[] }) => {
-  if (!props.facts.length) return <>{props.children}</>;
+  if (!props.facts.length) {
+    return <>{props.children}</>;
+  }
   return (
     <span class={provenanceCell}>
       <span>{props.children}</span>

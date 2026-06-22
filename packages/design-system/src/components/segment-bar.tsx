@@ -1,4 +1,5 @@
 import { css, cx } from '@ai-usage/design-system/css';
+import { For } from 'solid-js';
 
 export const segmentBarTrack = css({
   display: 'flex',
@@ -37,21 +38,27 @@ export const tokenSegmentClasses = {
   output: accentFill,
 };
 
-export type BarSegment = { label: string; value: number; class: string; title?: string };
+export interface BarSegment {
+  class: string;
+  label: string;
+  title?: string;
+  value: number;
+}
 
 export const SegmentBar = (props: { segments: BarSegment[]; ariaLabel?: string }) => {
   const total = () => props.segments.reduce((sum, segment) => sum + segment.value, 0);
+  const visibleSegments = () => props.segments.filter((segment) => segment.value > 0);
   return (
-    <div class={segmentBarTrack} role="img" aria-label={props.ariaLabel}>
-      {props.segments
-        .filter((segment) => segment.value > 0)
-        .map((segment) => (
+    <div aria-label={props.ariaLabel} class={segmentBarTrack} role="img">
+      <For each={visibleSegments()}>
+        {(segment) => (
           <div
             class={cx(segmentBarPart, segment.class)}
             style={{ width: `${(segment.value / Math.max(1, total())) * 100}%` }}
             title={segment.title ?? `${segment.label}: ${segment.value}`}
           />
-        ))}
+        )}
+      </For>
     </div>
   );
 };

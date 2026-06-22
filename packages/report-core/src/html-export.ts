@@ -51,10 +51,16 @@ export const inlineAssetsIntoHTML = (
   result = result.replace(
     /<script\b([^>]*)\bsrc=["']([^"']+)["']([^>]*)>([\s\S]*?)<\/script>/gi,
     (_match, _before: string, src: string, _after: string, body: string) => {
-      if (body.trim()) return _match;
-      if (src.includes('__AI_USAGE_REPORT__')) return _match;
+      if (body.trim()) {
+        return _match;
+      }
+      if (src.includes('__AI_USAGE_REPORT__')) {
+        return _match;
+      }
       const content = readAssetContent(src);
-      if (!content) return _match;
+      if (!content) {
+        return _match;
+      }
       movedScripts.push(`<script>${escapeScriptContent(content)}</script>`);
       return '';
     },
@@ -66,10 +72,10 @@ export const inlineAssetsIntoHTML = (
   // appears after all inline script/style content. Earlier </head> occurrences
   // inside inline JS/template literals are not structural HTML boundaries.
   const lastHeadClose = result.lastIndexOf('</head>');
-  if (lastHeadClose !== -1) {
-    result = result.slice(0, lastHeadClose) + payloadScript + result.slice(lastHeadClose);
-  } else {
+  if (lastHeadClose === -1) {
     result = `${payloadScript}${result}`;
+  } else {
+    result = result.slice(0, lastHeadClose) + payloadScript + result.slice(lastHeadClose);
   }
 
   // Append the moved scripts before </body> so the DOM (#root) is ready.
@@ -88,7 +94,9 @@ export const inlineReportHTML = async ({ html, payload, readAssetContent }: Inli
   await Promise.all(
     discoverHtmlAssetUrls(html).map(async (src) => {
       const content = await readAssetContent(src);
-      if (content) assetContent.set(src, content);
+      if (content) {
+        assetContent.set(src, content);
+      }
     }),
   );
 

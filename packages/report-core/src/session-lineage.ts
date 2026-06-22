@@ -8,22 +8,32 @@ const resolveRootSourceSessionId = (
   rowsBySourceId: Map<string, UsageRowWithOptionalSource>,
 ) => {
   const sourceSessionId = row.source?.sourceSessionId ?? null;
-  if (!sourceSessionId) return null;
+  if (!sourceSessionId) {
+    return null;
+  }
 
   let current = row;
   const seen = new Set<string>();
 
   while (true) {
     const currentSourceId = current.source?.sourceSessionId ?? null;
-    if (!currentSourceId) return sourceSessionId;
-    if (seen.has(currentSourceId)) return sourceSessionId;
+    if (!currentSourceId) {
+      return sourceSessionId;
+    }
+    if (seen.has(currentSourceId)) {
+      return sourceSessionId;
+    }
     seen.add(currentSourceId);
 
     const parentSourceId = current.source?.parentSourceSessionId ?? null;
-    if (!parentSourceId) return currentSourceId;
+    if (!parentSourceId) {
+      return currentSourceId;
+    }
 
     const parent = rowsBySourceId.get(parentSourceId);
-    if (!parent) return sourceSessionId;
+    if (!parent) {
+      return sourceSessionId;
+    }
     current = parent;
   }
 };
@@ -33,7 +43,9 @@ export const normalizeSessionLineage = <T extends UsageRowWithOptionalSource>(ro
 
   for (const row of rows) {
     const sourceSessionId = row.source?.sourceSessionId ?? null;
-    if (!sourceSessionId) continue;
+    if (!sourceSessionId) {
+      continue;
+    }
 
     const groupKey = lineageGroupKey(row);
     const group = groupedRows.get(groupKey) ?? new Map<string, UsageRowWithOptionalSource>();
@@ -42,7 +54,9 @@ export const normalizeSessionLineage = <T extends UsageRowWithOptionalSource>(ro
   }
 
   return rows.map((row) => {
-    if (!row.source) return { ...row };
+    if (!row.source) {
+      return { ...row };
+    }
 
     const rowsBySourceId = groupedRows.get(lineageGroupKey(row)) ?? new Map<string, UsageRowWithOptionalSource>();
     const rootSourceSessionId = resolveRootSourceSessionId(row, rowsBySourceId);

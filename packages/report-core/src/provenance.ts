@@ -21,11 +21,11 @@ export type UsageProvenanceKind =
   | 'unknown-subscription-value';
 
 export interface UsageRowProvenance {
-  kind: UsageProvenanceKind;
   appliesTo: UsageMetricKey[];
-  severity: 'info' | 'warning';
-  label: string;
   description: string;
+  kind: UsageProvenanceKind;
+  label: string;
+  severity: 'info' | 'warning';
 }
 
 export interface UsageProvenanceInput {
@@ -58,8 +58,7 @@ const USAGE_UNAVAILABLE_METRICS: UsageMetricKey[] = [
   'tools',
 ];
 
-const hasOwn = (row: UsageProvenanceInput, key: keyof UsageProvenanceInput) =>
-  Object.prototype.hasOwnProperty.call(row, key);
+const hasOwn = (row: UsageProvenanceInput, key: keyof UsageProvenanceInput) => Object.hasOwn(row, key);
 
 export const provenanceForUsageRow = (row: UsageProvenanceInput): UsageRowProvenance[] => {
   const provenance: UsageRowProvenance[] = [];

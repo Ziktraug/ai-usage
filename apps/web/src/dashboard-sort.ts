@@ -1,32 +1,41 @@
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import type { SortingState } from '@tanstack/solid-table';
+import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from './session-table-schema';
 import type { DashboardRow } from './shared';
 import { fmtMaybeNum, fmtNum, fmtPct } from './shared';
-import { isSessionColumnId, sortValueForSessionColumn, type SessionColumnId } from './session-table-schema';
 
 export const sortValueForRow = (row: DashboardRow, columnId: SessionColumnId): number | string =>
   sortValueForSessionColumn(row, columnId);
 
 export const compareRows = (sorting: SortingState) => (a: DashboardRow, b: DashboardRow) => {
   for (const sort of sorting) {
-    if (!isSessionColumnId(sort.id)) continue;
+    if (!isSessionColumnId(sort.id)) {
+      continue;
+    }
     const av = sortValueForRow(a, sort.id);
     const bv = sortValueForRow(b, sort.id);
-    const result =
-      typeof av === 'string' || typeof bv === 'string'
-        ? String(av).localeCompare(String(bv))
-        : av === bv
-          ? 0
-          : av > bv
-            ? 1
-            : -1;
-    if (result !== 0) return sort.desc ? -result : result;
+    const result = compareSortValues(av, bv);
+    if (result !== 0) {
+      return sort.desc ? -result : result;
+    }
   }
   return 0;
 };
 
+const compareSortValues = (av: number | string, bv: number | string) => {
+  if (typeof av === 'string' || typeof bv === 'string') {
+    return String(av).localeCompare(String(bv));
+  }
+  if (av === bv) {
+    return 0;
+  }
+  return av > bv ? 1 : -1;
+};
+
 export const lineDeltaLabel = (row: SerializedRow) => {
-  if (row.lineDelta == null || row.lineDelta === 0) return '-';
+  if (row.lineDelta == null || row.lineDelta === 0) {
+    return '-';
+  }
   return `+${fmtMaybeNum(row.linesAdded)}/-${fmtMaybeNum(row.linesDeleted)}`;
 };
 

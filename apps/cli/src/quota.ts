@@ -8,14 +8,18 @@ import { clr } from './render/colors';
 import { fmtDate, pad } from './render/format';
 
 export const renderQuota = Effect.gen(function* () {
-  if (!(yield* hasCodexHistory)) return 'No Codex data found at ~/.codex/sessions';
+  if (!(yield* hasCodexHistory)) {
+    return 'No Codex data found at ~/.codex/sessions';
+  }
 
   const latest = yield* findLatestCodexQuotaSnapshot();
-  if (!latest) return 'No quota (rate_limits) snapshot found in recent Codex sessions.';
+  if (!latest) {
+    return 'No quota (rate_limits) snapshot found in recent Codex sessions.';
+  }
 
   const bar = (pct: number) => {
     const n = Math.round(Math.min(100, pct) / 5);
-    const style = pct >= 90 ? clr.redB : pct >= 70 ? clr.yellow : clr.green;
+    const style = quotaColor(pct);
     return style('█'.repeat(n)) + clr.grey('░'.repeat(20 - n));
   };
   const lines = [
@@ -23,7 +27,9 @@ export const renderQuota = Effect.gen(function* () {
     `  plan: ${clr.cyan(latest.planType)}   ${clr.dim(`snapshot ${fmtDate(latest.ts)}`)}`,
   ];
   const win = (label: string, window: CodexQuotaWindow | null) => {
-    if (!window) return;
+    if (!window) {
+      return;
+    }
     const span =
       window.windowMinutes >= 1440
         ? `${Math.round(window.windowMinutes / 1440)}d`
@@ -35,7 +41,9 @@ export const renderQuota = Effect.gen(function* () {
   };
   win('5-hour', latest.primary);
   win('weekly', latest.secondary);
-  if (latest.credits != null) lines.push(`  credits: ${latest.credits}`);
+  if (latest.credits != null) {
+    lines.push(`  credits: ${latest.credits}`);
+  }
   lines.push(
     clr.dim(
       '\n  From the newest local token_count.rate_limits event (Codex CLI/VSCode). Claude/OpenCode/Cursor expose no local quota.',
@@ -43,3 +51,13 @@ export const renderQuota = Effect.gen(function* () {
   );
   return lines.join('\n');
 });
+
+const quotaColor = (pct: number) => {
+  if (pct >= 90) {
+    return clr.redB;
+  }
+  if (pct >= 70) {
+    return clr.yellow;
+  }
+  return clr.green;
+};
