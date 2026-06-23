@@ -21,6 +21,7 @@ import {
   migrationTrendDown,
   migrationTrendUp,
   monthGridline,
+  presetButton,
   timeAxis,
   timeAxisTick,
   timeBucket,
@@ -29,14 +30,15 @@ import {
   timeRangeArrow,
   timeRangeDuration,
   timeRangeHeader,
-  timeRangeHeaderControls,
   timeRangeMeta,
   timeRangePanel,
   timeRangeSummary,
   timeRangeSummaryDates,
   timeRangeTitle,
+  timeRangeViewControls,
   timeSliderBars,
   timeSliderBrushColumn,
+  timeSliderBrushHeader,
   timeSliderBrushTrack,
   timeSliderControl,
   timeSliderDateChip,
@@ -46,6 +48,7 @@ import {
   timeSliderHandleLabelEnd,
   timeSliderHandleLabelStart,
   timeSliderHandleLabels,
+  timeSliderQuickRanges,
   timeSliderRange,
   timeSliderRangeDrag,
   timeSliderRoot,
@@ -642,61 +645,50 @@ export const TimeRangeControl = (props: {
                 <span class={timeRangeDuration}>{selectedRangeDetails(chart()).duration}</span>
               </div>
             </div>
-            <div class={timeRangeHeaderControls}>
-              <SegmentedControl
-                ariaLabel="Date presets"
-                items={dateRangePresets.map((preset) => ({ label: preset.label, value: preset.mode }))}
-                label="Range"
-                onValueChange={(value) => {
-                  const preset = dateRangePresets.find((item) => item.mode === value);
-                  if (preset) {
-                    applyPreset(preset.mode);
-                  }
-                }}
-                value={props.dateRange.mode()}
-              />
-              <SegmentedControl
-                ariaLabel="Timeline dimension"
-                items={DIMENSION_ITEMS}
-                label="Group"
-                onValueChange={(value) => {
-                  setDimension(toTimelineDimension(value));
-                  setShowAll(false);
-                  clearHover();
-                }}
-                value={dimension()}
-              />
-              <SegmentedControl
-                ariaLabel="Timeline granularity"
-                items={GRANULARITY_ITEMS}
-                label="Bucket"
-                onValueChange={(value) => {
-                  setGranularity(toGranularity(value));
-                  clearHover();
-                }}
-                value={granularity()}
-              />
-              <SegmentedControl
-                ariaLabel="Timeline value"
-                items={VALUE_ITEMS}
-                label="Metric"
-                onValueChange={(value) => {
-                  setValueMode(toTimelineValue(value));
-                  clearHover();
-                }}
-                value={valueMode()}
-              />
-              <SegmentedControl
-                ariaLabel="Timeline scale"
-                items={SCALE_ITEMS}
-                label="Scale"
-                onValueChange={(value) => {
-                  setScaleMode(toTimelineScale(value));
-                  clearHover();
-                }}
-                value={scaleMode()}
-              />
-            </div>
+          </div>
+
+          <div class={timeRangeViewControls}>
+            <SegmentedControl
+              ariaLabel="Timeline dimension"
+              items={DIMENSION_ITEMS}
+              label="Group"
+              onValueChange={(value) => {
+                setDimension(toTimelineDimension(value));
+                setShowAll(false);
+                clearHover();
+              }}
+              value={dimension()}
+            />
+            <SegmentedControl
+              ariaLabel="Timeline granularity"
+              items={GRANULARITY_ITEMS}
+              label="Bucket"
+              onValueChange={(value) => {
+                setGranularity(toGranularity(value));
+                clearHover();
+              }}
+              value={granularity()}
+            />
+            <SegmentedControl
+              ariaLabel="Timeline value"
+              items={VALUE_ITEMS}
+              label="Metric"
+              onValueChange={(value) => {
+                setValueMode(toTimelineValue(value));
+                clearHover();
+              }}
+              value={valueMode()}
+            />
+            <SegmentedControl
+              ariaLabel="Timeline scale"
+              items={SCALE_ITEMS}
+              label="Scale"
+              onValueChange={(value) => {
+                setScaleMode(toTimelineScale(value));
+                clearHover();
+              }}
+              value={scaleMode()}
+            />
           </div>
 
           <div class={chartLegendList}>
@@ -776,6 +768,23 @@ export const TimeRangeControl = (props: {
                 </div>
               </div>
               <div class={timeSliderBrushColumn}>
+                <div class={timeSliderBrushHeader}>
+                  <span>Selected window</span>
+                  <div class={timeSliderQuickRanges}>
+                    <For each={dateRangePresets}>
+                      {(preset) => (
+                        <button
+                          class={presetButton}
+                          onClick={() => applyPreset(preset.mode)}
+                          title={`Set range to ${preset.label}`}
+                          type="button"
+                        >
+                          {preset.label}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </div>
                 <div class={timeAxis}>
                   <span>{fmtDateOnly(chart().minDay)}</span>
                   <For each={monthTicksFor(chart()).filter((tick) => tick.pct >= 7 && tick.pct <= 93)}>
