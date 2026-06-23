@@ -36,7 +36,11 @@ import {
   timeRangePanel,
   timeRangeTitle,
   timeSliderBars,
+  timeSliderBrushColumn,
+  timeSliderBrushRow,
+  timeSliderBrushTrack,
   timeSliderControl,
+  timeSliderDateInputs,
   timeSliderDimLeft,
   timeSliderDimRight,
   timeSliderRange,
@@ -673,28 +677,6 @@ export const TimeRangeControl = (props: {
           </div>
 
           <div class={dateEditRow}>
-            <label class={dateFieldGroup}>
-              <span class={inlineFieldLabel}>From</span>
-              <input
-                class={dateInput}
-                max={toDateInputValue(chart().maxDay)}
-                min={toDateInputValue(chart().minDay)}
-                onInput={(event) => applyFromInput(event.currentTarget.value)}
-                type="date"
-                value={props.dateRange.inputValues().from}
-              />
-            </label>
-            <label class={dateFieldGroup}>
-              <span class={inlineFieldLabel}>To</span>
-              <input
-                class={dateInput}
-                max={toDateInputValue(chart().maxDay)}
-                min={toDateInputValue(chart().minDay)}
-                onInput={(event) => applyToInput(event.currentTarget.value)}
-                type="date"
-                value={props.dateRange.inputValues().to}
-              />
-            </label>
             <div class={chartLegendList}>
               <For each={visibleSeries()}>
                 {(entry) => {
@@ -735,11 +717,6 @@ export const TimeRangeControl = (props: {
                 <For each={monthTicksFor(chart())}>
                   {(tick) => <div aria-hidden="true" class={monthGridline} style={{ left: `${tick.pct}%` }} />}
                 </For>
-                <div
-                  aria-hidden="true"
-                  class={timeSliderRange}
-                  style={{ left: 'var(--slider-range-start)', right: 'var(--slider-range-end)' }}
-                />
                 <div aria-hidden="true" class={timeSliderBars}>
                   <For each={bars()}>
                     {(bar) => (
@@ -774,67 +751,102 @@ export const TimeRangeControl = (props: {
                 <Show when={readout()}>
                   {(tip) => <div aria-hidden="true" class={migrationCrosshair} style={{ left: `${tip().pct}%` }} />}
                 </Show>
-                <div aria-hidden="true" class={timeSliderDimLeft} />
-                <div aria-hidden="true" class={timeSliderDimRight} />
-                <button
-                  aria-label="Drag selected date range"
-                  class={timeSliderRangeDrag}
-                  data-dragging={String(draggingSelection())}
-                  onLostPointerCapture={endSelectionDrag}
-                  onPointerCancel={endSelectionDrag}
-                  onPointerDown={(event) => startSelectionDrag(event, chart())}
-                  onPointerMove={moveSelectionDrag}
-                  onPointerUp={endSelectionDrag}
-                  tabIndex={-1}
-                  title="Drag selected range"
-                  type="button"
-                />
-                <button
-                  aria-label="Start date"
-                  aria-valuemax={chart().maxIndex}
-                  aria-valuemin={0}
-                  aria-valuenow={props.dateRange.selectedIndexes()[0]}
-                  aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, props.dateRange.selectedIndexes()[0]))}
-                  class={timeSliderThumb}
-                  onKeyDown={(event) => handleSliderKeyDown(event, 'start')}
-                  onLostPointerCapture={endHandleDrag}
-                  onPointerCancel={endHandleDrag}
-                  onPointerDown={(event) => startHandleDrag(event, 'start', chart())}
-                  onPointerMove={moveHandleDrag}
-                  onPointerUp={endHandleDrag}
-                  role="slider"
-                  style={{ left: 'var(--slider-range-start)' }}
-                  type="button"
-                />
-                <button
-                  aria-label="End date"
-                  aria-valuemax={chart().maxIndex}
-                  aria-valuemin={0}
-                  aria-valuenow={props.dateRange.selectedIndexes()[1]}
-                  aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, props.dateRange.selectedIndexes()[1]))}
-                  class={timeSliderThumb}
-                  onKeyDown={(event) => handleSliderKeyDown(event, 'end')}
-                  onLostPointerCapture={endHandleDrag}
-                  onPointerCancel={endHandleDrag}
-                  onPointerDown={(event) => startHandleDrag(event, 'end', chart())}
-                  onPointerMove={moveHandleDrag}
-                  onPointerUp={endHandleDrag}
-                  role="slider"
-                  style={{ left: 'calc(100% - var(--slider-range-end))' }}
-                  type="button"
-                />
               </div>
             </div>
-            <div class={timeAxis}>
-              <span>{fmtDateOnly(chart().minDay)}</span>
-              <For each={monthTicksFor(chart()).filter((tick) => tick.pct >= 7 && tick.pct <= 93)}>
-                {(tick) => (
-                  <span class={timeAxisTick} style={{ left: `${tick.pct}%` }}>
-                    {tick.label}
-                  </span>
-                )}
-              </For>
-              <span>{fmtDateOnly(chart().maxDay)}</span>
+            <div class={timeSliderBrushRow}>
+              <div class={timeSliderDateInputs}>
+                <label class={dateFieldGroup}>
+                  <span class={inlineFieldLabel}>From</span>
+                  <input
+                    class={dateInput}
+                    max={toDateInputValue(chart().maxDay)}
+                    min={toDateInputValue(chart().minDay)}
+                    onInput={(event) => applyFromInput(event.currentTarget.value)}
+                    type="date"
+                    value={props.dateRange.inputValues().from}
+                  />
+                </label>
+                <label class={dateFieldGroup}>
+                  <span class={inlineFieldLabel}>To</span>
+                  <input
+                    class={dateInput}
+                    max={toDateInputValue(chart().maxDay)}
+                    min={toDateInputValue(chart().minDay)}
+                    onInput={(event) => applyToInput(event.currentTarget.value)}
+                    type="date"
+                    value={props.dateRange.inputValues().to}
+                  />
+                </label>
+              </div>
+              <div class={timeSliderBrushColumn}>
+                <div class={timeAxis}>
+                  <span>{fmtDateOnly(chart().minDay)}</span>
+                  <For each={monthTicksFor(chart()).filter((tick) => tick.pct >= 7 && tick.pct <= 93)}>
+                    {(tick) => (
+                      <span class={timeAxisTick} style={{ left: `${tick.pct}%` }}>
+                        {tick.label}
+                      </span>
+                    )}
+                  </For>
+                  <span>{fmtDateOnly(chart().maxDay)}</span>
+                </div>
+                <div class={timeSliderBrushTrack} style={rangeVars(chart())}>
+                  <div
+                    aria-hidden="true"
+                    class={timeSliderRange}
+                    style={{ left: 'var(--slider-range-start)', right: 'var(--slider-range-end)' }}
+                  />
+                  <div aria-hidden="true" class={timeSliderDimLeft} />
+                  <div aria-hidden="true" class={timeSliderDimRight} />
+                  <button
+                    aria-label="Drag selected date range"
+                    class={timeSliderRangeDrag}
+                    data-dragging={String(draggingSelection())}
+                    onLostPointerCapture={endSelectionDrag}
+                    onPointerCancel={endSelectionDrag}
+                    onPointerDown={(event) => startSelectionDrag(event, chart())}
+                    onPointerMove={moveSelectionDrag}
+                    onPointerUp={endSelectionDrag}
+                    tabIndex={-1}
+                    title="Drag selected range"
+                    type="button"
+                  />
+                  <button
+                    aria-label="Start date"
+                    aria-valuemax={chart().maxIndex}
+                    aria-valuemin={0}
+                    aria-valuenow={props.dateRange.selectedIndexes()[0]}
+                    aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, props.dateRange.selectedIndexes()[0]))}
+                    class={timeSliderThumb}
+                    onKeyDown={(event) => handleSliderKeyDown(event, 'start')}
+                    onLostPointerCapture={endHandleDrag}
+                    onPointerCancel={endHandleDrag}
+                    onPointerDown={(event) => startHandleDrag(event, 'start', chart())}
+                    onPointerMove={moveHandleDrag}
+                    onPointerUp={endHandleDrag}
+                    role="slider"
+                    style={{ left: 'var(--slider-range-start)' }}
+                    type="button"
+                  />
+                  <button
+                    aria-label="End date"
+                    aria-valuemax={chart().maxIndex}
+                    aria-valuemin={0}
+                    aria-valuenow={props.dateRange.selectedIndexes()[1]}
+                    aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, props.dateRange.selectedIndexes()[1]))}
+                    class={timeSliderThumb}
+                    onKeyDown={(event) => handleSliderKeyDown(event, 'end')}
+                    onLostPointerCapture={endHandleDrag}
+                    onPointerCancel={endHandleDrag}
+                    onPointerDown={(event) => startHandleDrag(event, 'end', chart())}
+                    onPointerMove={moveHandleDrag}
+                    onPointerUp={endHandleDrag}
+                    role="slider"
+                    style={{ left: 'calc(100% - var(--slider-range-end))' }}
+                    type="button"
+                  />
+                </div>
+              </div>
             </div>
             <div class={migrationReadout}>
               <Show when={activeReadout()}>
