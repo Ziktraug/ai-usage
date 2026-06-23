@@ -30,6 +30,35 @@ export const timeRangeMeta = css({
   mt: '2px',
 });
 
+export const timeRangeSummary = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  alignItems: 'center',
+  gap: '6px 10px',
+  mt: '6px',
+});
+
+export const timeRangeSummaryDates = css({
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '7px',
+  minW: 0,
+  color: 'ink',
+  fontSize: '13px',
+  fontWeight: 650,
+});
+
+export const timeRangeArrow = css({
+  color: 'faint',
+  fontWeight: 500,
+});
+
+export const timeRangeDuration = css({
+  color: 'muted',
+  fontSize: '11px',
+  fontWeight: 600,
+});
+
 export const presetGroup = css({
   display: 'flex',
   flexWrap: 'wrap',
@@ -75,22 +104,32 @@ export const dateEditRow = css({
 
 export const timeSliderRoot = css({
   display: 'grid',
+  gap: '10px',
+});
+
+export const timeSliderFrame = css({
+  display: 'grid',
   gap: '8px',
+  p: '9px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'md',
+  bg: 'surfaceMuted',
+  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.18)',
 });
 
 export const timeSliderControl = css({
   position: 'relative',
-  h: '128px',
+  h: '118px',
 });
 
 export const timeSliderTrack = css({
   position: 'relative',
-  h: '128px',
-  border: '1px solid token(colors.line)',
+  h: '118px',
+  border: '1px solid rgba(255, 255, 255, 0.04)',
   borderRadius: 'sm',
-  bg: 'surfaceMuted',
+  bg: 'surface',
   overflow: 'hidden',
-  boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.32)',
+  boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.18)',
   _focusWithin: {
     boxShadow: '0 0 0 3px token(colors.focusRing)',
   },
@@ -136,21 +175,23 @@ export const timeBucketSegment = css({
 
 export const timeSliderRange = css({
   position: 'absolute',
-  top: 0,
-  bottom: 0,
+  top: '4px',
+  bottom: '4px',
   zIndex: 3,
-  borderLeft: '2px solid token(colors.accent)',
-  borderRight: '2px solid token(colors.accent)',
+  borderRadius: 'full',
+  bg: 'rgba(177, 78, 18, 0.13)',
+  boxShadow: 'inset 0 0 0 1px rgba(177, 78, 18, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08)',
   pointerEvents: 'none',
 });
 
 export const timeSliderDim = css({
   position: 'absolute',
-  top: 0,
-  bottom: 0,
-  zIndex: 3,
+  top: '4px',
+  bottom: '4px',
+  zIndex: 2,
   bg: 'canvas',
-  opacity: 0.62,
+  borderRadius: 'full',
+  opacity: 0.5,
   pointerEvents: 'none',
 });
 
@@ -179,12 +220,13 @@ export const timeSliderBrushColumn = css({
 
 export const timeSliderBrushTrack = css({
   position: 'relative',
-  h: '28px',
+  h: '26px',
   border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'surfaceMuted',
-  overflow: 'hidden',
+  borderRadius: 'full',
+  bg: 'surface',
+  overflow: 'visible',
   cursor: 'ew-resize',
+  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.12)',
   _focusWithin: {
     boxShadow: '0 0 0 3px token(colors.focusRing)',
   },
@@ -203,8 +245,8 @@ export const monthGridline = css({
 export const timeSliderRangeDrag = css({
   appearance: 'none',
   position: 'absolute',
-  top: 0,
-  h: '18px',
+  top: '4px',
+  bottom: '4px',
   left: 'var(--slider-range-start)',
   right: 'var(--slider-range-end)',
   zIndex: 4,
@@ -213,37 +255,39 @@ export const timeSliderRangeDrag = css({
   bg: 'transparent',
   cursor: 'grab',
   touchAction: 'none',
+  borderRadius: 'full',
   _hover: {
-    bg: 'rgba(177, 78, 18, 0.08)',
+    bg: 'rgba(177, 78, 18, 0.06)',
   },
   '&[data-dragging="true"]': {
     cursor: 'grabbing',
-    bg: 'rgba(177, 78, 18, 0.12)',
+    bg: 'rgba(177, 78, 18, 0.1)',
   },
   _before: {
     content: '""',
     position: 'absolute',
-    top: '3px',
+    top: '50%',
     left: '50%',
-    transform: 'translateX(-50%)',
-    w: '46px',
+    transform: 'translate(-50%, -50%)',
+    w: '38px',
     h: '14px',
-    border: '1px solid token(colors.lineStrong)',
+    border: '1px solid token(colors.line)',
     borderRadius: 'full',
     bg: 'surface',
-    boxShadow: 'card',
-    opacity: 0.9,
+    boxShadow: '0 4px 14px rgba(0, 0, 0, 0.18)',
+    opacity: 0.96,
   },
   _after: {
     content: '""',
     position: 'absolute',
-    top: '8px',
+    top: '50%',
     left: '50%',
-    transform: 'translateX(-50%)',
-    w: '20px',
-    h: '4px',
-    borderTop: '1px solid token(colors.accent)',
-    borderBottom: '1px solid token(colors.accent)',
+    transform: 'translate(-50%, -50%)',
+    w: '14px',
+    h: '6px',
+    borderLeft: '1px solid token(colors.accent)',
+    borderRight: '1px solid token(colors.accent)',
+    boxShadow: '5px 0 0 -4px token(colors.accent), -5px 0 0 -4px token(colors.accent)',
   },
 });
 
@@ -253,8 +297,8 @@ export const timeSliderThumb = css({
   top: '50%',
   transform: 'translate(-50%, -50%)',
   zIndex: 4,
-  w: '28px',
-  h: '28px',
+  w: '34px',
+  h: '34px',
   border: '0',
   borderRadius: 'full',
   bg: 'transparent',
@@ -267,12 +311,12 @@ export const timeSliderThumb = css({
     top: '50%',
     left: '50%',
     transform: 'translate(-50%, -50%)',
-    w: '14px',
-    h: '24px',
+    w: '12px',
+    h: '23px',
     border: '2px solid token(colors.accent)',
     borderRadius: 'full',
     bg: 'surface',
-    boxShadow: 'overlay',
+    boxShadow: '0 7px 18px rgba(0, 0, 0, 0.28)',
   },
   _after: {
     content: '""',
@@ -280,8 +324,8 @@ export const timeSliderThumb = css({
     top: '50%',
     left: '50%',
     transform: 'translate(-50%, -50%)',
-    w: '4px',
-    h: '14px',
+    w: '3px',
+    h: '12px',
     borderLeft: '1px solid token(colors.accent)',
     borderRight: '1px solid token(colors.accent)',
     opacity: 0.75,
@@ -305,6 +349,61 @@ export const timeAxis = css({
   color: 'faint',
   fontSize: '11px',
   fontFamily: 'mono',
+});
+
+export const timeSliderHandleLabels = css({
+  position: 'relative',
+  h: '28px',
+  mt: '-2px',
+});
+
+export const timeSliderHandleLabel = css({
+  position: 'absolute',
+  top: 0,
+  display: 'grid',
+  gap: '2px',
+});
+
+export const timeSliderHandleLabelStart = cx(
+  timeSliderHandleLabel,
+  css({
+    left: 'var(--slider-range-start)',
+    transform: 'translateX(-8px)',
+  }),
+);
+
+export const timeSliderHandleLabelEnd = cx(
+  timeSliderHandleLabel,
+  css({
+    left: 'calc(100% - var(--slider-range-end))',
+    transform: 'translateX(calc(-100% + 8px))',
+  }),
+);
+
+export const timeSliderDateChip = css({
+  appearance: 'none',
+  h: '24px',
+  w: '126px',
+  px: '8px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'full',
+  bg: 'surface',
+  color: 'ink',
+  fontFamily: 'mono',
+  fontSize: '10.5px',
+  fontWeight: 650,
+  lineHeight: 1,
+  outline: 'none',
+  boxShadow: '0 5px 14px rgba(0, 0, 0, 0.18)',
+  transition: 'border-color 0.15s, box-shadow 0.15s, transform 0.15s',
+  _hover: {
+    borderColor: 'accent',
+    transform: 'translateY(-1px)',
+  },
+  _focusVisible: {
+    borderColor: 'accent',
+    boxShadow: '0 0 0 3px token(colors.focusRing), token(shadows.card)',
+  },
 });
 
 export const timeAxisTick = css({

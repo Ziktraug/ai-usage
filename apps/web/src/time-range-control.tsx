@@ -5,11 +5,7 @@ import {
   chartLegendList,
   chartLegendPct,
   chartLegendSwatch,
-  dateEditRow,
-  dateFieldGroup,
-  dateInput,
   dimensionSwatch,
-  inlineFieldLabel,
   migrationCrosshair,
   migrationLegendButton,
   migrationLegendMore,
@@ -30,19 +26,26 @@ import {
   timeBucket,
   timeBucketSegment,
   timelineHoverLayer,
+  timeRangeArrow,
+  timeRangeDuration,
   timeRangeHeader,
   timeRangeHeaderControls,
   timeRangeMeta,
   timeRangePanel,
+  timeRangeSummary,
+  timeRangeSummaryDates,
   timeRangeTitle,
   timeSliderBars,
   timeSliderBrushColumn,
-  timeSliderBrushRow,
   timeSliderBrushTrack,
   timeSliderControl,
-  timeSliderDateInputs,
+  timeSliderDateChip,
   timeSliderDimLeft,
   timeSliderDimRight,
+  timeSliderFrame,
+  timeSliderHandleLabelEnd,
+  timeSliderHandleLabelStart,
+  timeSliderHandleLabels,
   timeSliderRange,
   timeSliderRangeDrag,
   timeSliderRoot,
@@ -80,6 +83,8 @@ type TimelineScale = 'compact' | 'linear';
 
 const monthTickFormatter = new Intl.DateTimeFormat('en', { month: 'short' });
 const monthYearFormatter = new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric' });
+
+const dayCountLabel = (count: number) => `${fmtNum(count)} ${count === 1 ? 'day' : 'days'}`;
 
 const DIMENSION_ITEMS = [
   { label: 'Harness', value: 'harness' },
@@ -600,6 +605,17 @@ export const TimeRangeControl = (props: {
     };
   };
 
+  const selectedRangeDetails = (chart: NonNullable<ReturnType<typeof data>>) => {
+    const [from, to] = props.dateRange.selectedIndexes();
+    const startDate = dateFromIndex(chart.minDay, from);
+    const endDate = dateFromIndex(chart.minDay, to);
+    return {
+      duration: dayCountLabel(to - from + 1),
+      fromLabel: fmtDateOnly(startDate),
+      toLabel: fmtDateOnly(endDate),
+    };
+  };
+
   return (
     <Show
       fallback={
@@ -617,7 +633,14 @@ export const TimeRangeControl = (props: {
           <div class={timeRangeHeader}>
             <div>
               <div class={timeRangeTitle}>Time range</div>
-              <div class={timeRangeMeta}>{props.dateRange.label()}</div>
+              <div class={timeRangeSummary}>
+                <span class={timeRangeSummaryDates}>
+                  <span>{selectedRangeDetails(chart()).fromLabel}</span>
+                  <span class={timeRangeArrow}>→</span>
+                  <span>{selectedRangeDetails(chart()).toLabel}</span>
+                </span>
+                <span class={timeRangeDuration}>{selectedRangeDetails(chart()).duration}</span>
+              </div>
             </div>
             <div class={timeRangeHeaderControls}>
               <SegmentedControl
@@ -676,107 +699,81 @@ export const TimeRangeControl = (props: {
             </div>
           </div>
 
-          <div class={dateEditRow}>
-            <div class={chartLegendList}>
-              <For each={visibleSeries()}>
-                {(entry) => {
-                  const rank = chart().series.findIndex((series) => series.key === entry.key);
-                  const marker = swatch(entry.key, rank);
-                  const useSessions = valueMode() === 'sessions' || usesSessionShare(chart());
-                  const value = useSessions ? entry.sessions : entry.total;
-                  const total = useSessions ? chart().grandSessions : chart().grandTotal;
-                  return (
-                    <button
-                      class={cx(migrationLegendButton, isLegendActive(entry.key) ? migrationReadoutItemActive : '')}
-                      onClick={() => props.onDimensionFilter(dimension(), entry.key)}
-                      onMouseEnter={() => setHoveredKey(entry.key)}
-                      onMouseLeave={() => setHoveredKey(null)}
-                      title={
-                        isLegendActive(entry.key) ? `Clear or replace ${entry.key} filter` : `Filter by ${entry.key}`
-                      }
-                      type="button"
-                    >
-                      <span class={cx(chartLegendSwatch, marker.className)} style={marker.style} />
-                      {entry.key}
-                      <span class={chartLegendPct}>{fmtPct((value / Math.max(1e-9, total)) * 100)}</span>
-                    </button>
-                  );
-                }}
-              </For>
-              <Show when={chart().series.length > LEGEND_LIMIT}>
-                <button class={migrationLegendMore} onClick={() => setShowAll((value) => !value)} type="button">
-                  {showAll() ? 'Show less' : `Show all (${chart().series.length})`}
-                </button>
-              </Show>
-            </div>
+          <div class={chartLegendList}>
+            <For each={visibleSeries()}>
+              {(entry) => {
+                const rank = chart().series.findIndex((series) => series.key === entry.key);
+                const marker = swatch(entry.key, rank);
+                const useSessions = valueMode() === 'sessions' || usesSessionShare(chart());
+                const value = useSessions ? entry.sessions : entry.total;
+                const total = useSessions ? chart().grandSessions : chart().grandTotal;
+                return (
+                  <button
+                    class={cx(migrationLegendButton, isLegendActive(entry.key) ? migrationReadoutItemActive : '')}
+                    onClick={() => props.onDimensionFilter(dimension(), entry.key)}
+                    onMouseEnter={() => setHoveredKey(entry.key)}
+                    onMouseLeave={() => setHoveredKey(null)}
+                    title={
+                      isLegendActive(entry.key) ? `Clear or replace ${entry.key} filter` : `Filter by ${entry.key}`
+                    }
+                    type="button"
+                  >
+                    <span class={cx(chartLegendSwatch, marker.className)} style={marker.style} />
+                    {entry.key}
+                    <span class={chartLegendPct}>{fmtPct((value / Math.max(1e-9, total)) * 100)}</span>
+                  </button>
+                );
+              }}
+            </For>
+            <Show when={chart().series.length > LEGEND_LIMIT}>
+              <button class={migrationLegendMore} onClick={() => setShowAll((value) => !value)} type="button">
+                {showAll() ? 'Show less' : `Show all (${chart().series.length})`}
+              </button>
+            </Show>
           </div>
 
           <div class={timeSliderRoot}>
-            <div class={timeSliderControl}>
-              <div class={timeSliderTrack} style={rangeVars(chart())}>
-                <For each={monthTicksFor(chart())}>
-                  {(tick) => <div aria-hidden="true" class={monthGridline} style={{ left: `${tick.pct}%` }} />}
-                </For>
-                <div aria-hidden="true" class={timeSliderBars}>
-                  <For each={bars()}>
-                    {(bar) => (
-                      <div class={timeBucket} style={{ height: `${barHeight(bar.bucket, chart())}%` }}>
-                        <For each={renderedSegments(bar.segments)}>
-                          {(segment) => {
-                            const marker = swatch(segment.key, segment.rank);
-                            return (
-                              <div
-                                class={cx(timeBucketSegment, marker.className ?? accentFill)}
-                                style={{
-                                  height: `${Math.max(1, segmentHeight(segment.value, bar.total))}%`,
-                                  opacity: segmentOpacity(segment.key),
-                                  ...marker.style,
-                                }}
-                              />
-                            );
-                          }}
-                        </For>
-                      </div>
-                    )}
+            <div class={timeSliderFrame}>
+              <div class={timeSliderControl}>
+                <div class={timeSliderTrack} style={rangeVars(chart())}>
+                  <For each={monthTicksFor(chart())}>
+                    {(tick) => <div aria-hidden="true" class={monthGridline} style={{ left: `${tick.pct}%` }} />}
                   </For>
+                  <div aria-hidden="true" class={timeSliderBars}>
+                    <For each={bars()}>
+                      {(bar) => (
+                        <div class={timeBucket} style={{ height: `${barHeight(bar.bucket, chart())}%` }}>
+                          <For each={renderedSegments(bar.segments)}>
+                            {(segment) => {
+                              const marker = swatch(segment.key, segment.rank);
+                              return (
+                                <div
+                                  class={cx(timeBucketSegment, marker.className ?? accentFill)}
+                                  style={{
+                                    height: `${Math.max(1, segmentHeight(segment.value, bar.total))}%`,
+                                    opacity: segmentOpacity(segment.key),
+                                    ...marker.style,
+                                  }}
+                                />
+                              );
+                            }}
+                          </For>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                  <button
+                    aria-label="Inspect timeline bucket"
+                    class={timelineHoverLayer}
+                    onMouseLeave={clearHover}
+                    onMouseMove={updateHover}
+                    tabIndex={-1}
+                    type="button"
+                  />
+                  <Show when={readout()}>
+                    {(tip) => <div aria-hidden="true" class={migrationCrosshair} style={{ left: `${tip().pct}%` }} />}
+                  </Show>
                 </div>
-                <button
-                  aria-label="Inspect timeline bucket"
-                  class={timelineHoverLayer}
-                  onMouseLeave={clearHover}
-                  onMouseMove={updateHover}
-                  tabIndex={-1}
-                  type="button"
-                />
-                <Show when={readout()}>
-                  {(tip) => <div aria-hidden="true" class={migrationCrosshair} style={{ left: `${tip().pct}%` }} />}
-                </Show>
-              </div>
-            </div>
-            <div class={timeSliderBrushRow}>
-              <div class={timeSliderDateInputs}>
-                <label class={dateFieldGroup}>
-                  <span class={inlineFieldLabel}>From</span>
-                  <input
-                    class={dateInput}
-                    max={toDateInputValue(chart().maxDay)}
-                    min={toDateInputValue(chart().minDay)}
-                    onInput={(event) => applyFromInput(event.currentTarget.value)}
-                    type="date"
-                    value={props.dateRange.inputValues().from}
-                  />
-                </label>
-                <label class={dateFieldGroup}>
-                  <span class={inlineFieldLabel}>To</span>
-                  <input
-                    class={dateInput}
-                    max={toDateInputValue(chart().maxDay)}
-                    min={toDateInputValue(chart().minDay)}
-                    onInput={(event) => applyToInput(event.currentTarget.value)}
-                    type="date"
-                    value={props.dateRange.inputValues().to}
-                  />
-                </label>
               </div>
               <div class={timeSliderBrushColumn}>
                 <div class={timeAxis}>
@@ -845,6 +842,32 @@ export const TimeRangeControl = (props: {
                     style={{ left: 'calc(100% - var(--slider-range-end))' }}
                     type="button"
                   />
+                </div>
+                <div class={timeSliderHandleLabels} style={rangeVars(chart())}>
+                  <label class={timeSliderHandleLabelStart}>
+                    <input
+                      aria-label="Start date"
+                      class={timeSliderDateChip}
+                      max={toDateInputValue(chart().maxDay)}
+                      min={toDateInputValue(chart().minDay)}
+                      onInput={(event) => applyFromInput(event.currentTarget.value)}
+                      title="Start date"
+                      type="date"
+                      value={props.dateRange.inputValues().from}
+                    />
+                  </label>
+                  <label class={timeSliderHandleLabelEnd}>
+                    <input
+                      aria-label="End date"
+                      class={timeSliderDateChip}
+                      max={toDateInputValue(chart().maxDay)}
+                      min={toDateInputValue(chart().minDay)}
+                      onInput={(event) => applyToInput(event.currentTarget.value)}
+                      title="End date"
+                      type="date"
+                      value={props.dateRange.inputValues().to}
+                    />
+                  </label>
                 </div>
               </div>
             </div>
