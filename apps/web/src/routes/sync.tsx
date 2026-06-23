@@ -24,7 +24,7 @@ import {
 import type { DiscoveredLanPeer } from '@ai-usage/lan-pairing';
 import type { LanMergeState, ManualMergeImportResult, TrustedLanPeer } from '@ai-usage/usage-merge';
 import { createFileRoute, Link } from '@tanstack/solid-router';
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
 import type { LanMergeServerResult } from '../server/lan-merge.server';
@@ -209,9 +209,55 @@ const diagnosticsList = css({
   overflowWrap: 'anywhere',
 });
 
+const progressRegion = css({
+  display: 'grid',
+  gap: '6px',
+  mt: '4px',
+});
+
+const progressHeader = css({
+  display: 'flex',
+  justifyContent: 'space-between',
+  gap: '8px',
+  fontSize: '12px',
+  color: 'muted',
+});
+
+const progressTrack = css({
+  position: 'relative',
+  h: '6px',
+  borderRadius: 'full',
+  bg: 'surfaceMuted',
+  border: '1px solid token(colors.line)',
+  overflow: 'hidden',
+});
+
+const progressFill = css({
+  position: 'absolute',
+  insetBlock: 0,
+  left: 0,
+  bg: 'accent',
+  borderRadius: 'full',
+  transition: 'width 0.2s ease',
+});
+
+const progressFillProcessing = css({
+  opacity: 0.55,
+});
+
+const progressHint = css({
+  color: 'muted',
+  fontSize: '11px',
+  lineHeight: 1.5,
+});
+
 type LanStateResult = Awaited<ReturnType<typeof getLanMergeState>>;
 type LanOperationError = Extract<LanStateResult, { ok: false }>['error'];
 type ManualImportResult = LanMergeServerResult<ManualMergeImportResult>;
+
+type ManualImportProgress =
+  | { phase: 'uploading'; fileName: string; fileSize: number; loaded: number; total: number }
+  | { phase: 'processing'; fileName: string; fileSize: number; startedAt: number };
 
 const MetricPanel = (props: { label: string; value: number; detail: string }) => (
   <div class={panel}>
@@ -467,8 +513,81 @@ const DiagnosticsPanel = (props: { state: LanMergeState }) => (
   </details>
 );
 
+const BYTES_PER_UNIT = 1024;
+const SIZE_UNITS = ['KB', 'MB', 'GB', 'TB'] as const;
+
+const formatBytes = (bytes: number) => {
+  if (bytes < BYTES_PER_UNIT) {
+    return `${bytes} B`;
+  }
+  let value = bytes / BYTES_PER_UNIT;
+  let unitIndex = 0;
+  while (value >= BYTES_PER_UNIT && unitIndex < SIZE_UNITS.length - 1) {
+    value /= BYTES_PER_UNIT;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(1)} ${SIZE_UNITS[unitIndex]}`;
+};
+
+const MILLISECONDS_PER_SECOND = 1000;
+
+const ManualImportProgressView = (props: { progress: ManualImportProgress }) => {
+  const [elapsedSeconds, setElapsedSeconds] = createSignal(0);
+  createEffect(() => {
+    const current = props.progress;
+    if (current.phase !== 'processing') {
+      return;
+    }
+    setElapsedSeconds(0);
+    const timer = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - current.startedAt) / MILLISECONDS_PER_SECOND));
+    }, MILLISECONDS_PER_SECOND);
+    onCleanup(() => clearInterval(timer));
+  });
+
+  const isUploading = () => props.progress.phase === 'uploading';
+  const percent = () => {
+    const current = props.progress;
+    if (current.phase === 'uploading' && current.total > 0) {
+      return Math.round((current.loaded / current.total) * 100);
+    }
+    return 100;
+  };
+  const leftLabel = () => {
+    const current = props.progress;
+    if (current.phase === 'uploading') {
+      return `Uploading ${formatBytes(current.loaded)} / ${formatBytes(current.total)}`;
+    }
+    return 'Merging into the local database…';
+  };
+  const rightLabel = () => (isUploading() ? `${percent()}%` : `${elapsedSeconds()}s`);
+
+  return (
+    <div class={progressRegion}>
+      <div class={panelSub}>
+        {props.progress.fileName} · {formatBytes(props.progress.fileSize)}
+      </div>
+      <div class={progressHeader}>
+        <span>{leftLabel()}</span>
+        <span>{rightLabel()}</span>
+      </div>
+      <div class={progressTrack}>
+        <div
+          class={progressFill}
+          classList={{ [progressFillProcessing]: !isUploading() }}
+          style={{ width: `${percent()}%` }}
+        />
+      </div>
+      <Show when={!isUploading()}>
+        <span class={progressHint}>Large files take a moment while each usage row is written and deduplicated.</span>
+      </Show>
+    </div>
+  );
+};
+
 const ManualTransferPanel = (props: {
   pendingOperation: string | null;
+  importProgress: ManualImportProgress | null;
   onExport: () => void;
   onImport: (file: File | undefined) => void;
 }) => (
@@ -495,6 +614,7 @@ const ManualTransferPanel = (props: {
         />
       </label>
     </div>
+    <Show when={props.importProgress}>{(progress) => <ManualImportProgressView progress={progress()} />}</Show>
   </div>
 );
 
@@ -503,6 +623,7 @@ const SyncStateView = (props: {
   scanning: boolean;
   refreshing: boolean;
   pendingOperation: string | null;
+  manualImportProgress: ManualImportProgress | null;
   operationError: LanOperationError | null;
   operationMessage: string | null;
   scanHost: string;
@@ -558,6 +679,7 @@ const SyncStateView = (props: {
 
         <div class={panelStack}>
           <ManualTransferPanel
+            importProgress={props.manualImportProgress}
             onExport={props.onManualExport}
             onImport={props.onManualImport}
             pendingOperation={props.pendingOperation}
@@ -619,23 +741,50 @@ const manualImportMessage = (result: Extract<ManualImportResult, { ok: true }>['
   return `Imported ${result.machine.label}: ${changed.toLocaleString()} changed, ${result.result.unchanged.toLocaleString()} unchanged.`;
 };
 
-const importManualMergeFile = async (file: File): Promise<ManualImportResult> => {
-  const response = await fetch('/sync', {
-    body: file,
-    headers: { 'Content-Type': file.type || 'application/json' },
-    method: 'POST',
-  });
-  if (!response.ok) {
-    return {
-      ok: false,
-      error: {
-        tag: 'HttpError',
-        message: `Manual import failed with HTTP ${response.status}.`,
-      },
-    };
+const HTTP_OK_MIN = 200;
+const HTTP_OK_MAX = 300;
+
+const parseImportResponse = (xhr: XMLHttpRequest): ManualImportResult => {
+  if (xhr.status < HTTP_OK_MIN || xhr.status >= HTTP_OK_MAX) {
+    return { ok: false, error: { tag: 'HttpError', message: `Manual import failed with HTTP ${xhr.status}.` } };
   }
-  return (await response.json()) as ManualImportResult;
+  try {
+    return JSON.parse(xhr.responseText) as ManualImportResult;
+  } catch {
+    return { ok: false, error: { tag: 'InvalidResponse', message: 'The server returned an unreadable response.' } };
+  }
 };
+
+// fetch() cannot report upload progress, so XMLHttpRequest is used to surface
+// the upload phase before the server-side parse + merge takes over.
+const importManualMergeFile = (
+  file: File,
+  onProgress: (progress: ManualImportProgress) => void,
+): Promise<ManualImportResult> =>
+  new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/sync');
+    xhr.setRequestHeader('Content-Type', file.type || 'application/json');
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable) {
+        onProgress({
+          phase: 'uploading',
+          fileName: file.name,
+          fileSize: file.size,
+          loaded: event.loaded,
+          total: event.total,
+        });
+      }
+    });
+    xhr.upload.addEventListener('load', () => {
+      onProgress({ phase: 'processing', fileName: file.name, fileSize: file.size, startedAt: Date.now() });
+    });
+    xhr.addEventListener('load', () => resolve(parseImportResponse(xhr)));
+    xhr.addEventListener('error', () =>
+      resolve({ ok: false, error: { tag: 'NetworkError', message: 'Network error during manual import.' } }),
+    );
+    xhr.send(file);
+  });
 
 function SyncRoute() {
   const loaderResult = Route.useLoaderData();
@@ -647,6 +796,7 @@ function SyncRoute() {
   const [operationMessage, setOperationMessage] = createSignal<string | null>(null);
   const [scanHost, setScanHost] = createSignal('');
   const [pairPassword, setPairPassword] = createSignal('');
+  const [manualImportProgress, setManualImportProgress] = createSignal<ManualImportProgress | null>(null);
   const okResult = createMemo(() => {
     const current = result();
     return current.ok ? current : null;
@@ -785,8 +935,15 @@ function SyncRoute() {
     setPendingOperation('manual-import');
     setOperationError(null);
     setOperationMessage(null);
+    setManualImportProgress({
+      phase: 'uploading',
+      fileName: file.name,
+      fileSize: file.size,
+      loaded: 0,
+      total: file.size,
+    });
     try {
-      const next = await importManualMergeFile(file);
+      const next = await importManualMergeFile(file, setManualImportProgress);
       if (next.ok) {
         setOperationMessage(manualImportMessage(next.data));
         return;
@@ -794,6 +951,7 @@ function SyncRoute() {
       setOperationError(next.error);
     } finally {
       setPendingOperation(null);
+      setManualImportProgress(null);
     }
   };
 
@@ -827,6 +985,7 @@ function SyncRoute() {
         >
           {(okResult) => (
             <SyncStateView
+              manualImportProgress={manualImportProgress()}
               onManualExport={manualExport}
               onManualImport={manualImport}
               onMerge={mergePeer}

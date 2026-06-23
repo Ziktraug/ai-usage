@@ -6,13 +6,6 @@ import {
   anatomyLegendItem,
   anatomyLegendSwatch,
   anatomyLegendValue,
-  chartAxis,
-  chartFillClasses,
-  chartLegendItem,
-  chartLegendList,
-  chartLegendPct,
-  chartLegendSwatch,
-  chartSwatchClasses,
   emptyPanel,
   HarnessBadge,
   harnessSvgFillFor,
@@ -36,11 +29,7 @@ import {
   heroText,
   heroValue,
   inkFill,
-  migrationArea,
-  migrationSvgWrap,
   muted,
-  otherFillClass,
-  otherSwatchClass,
   overviewGrid,
   panel,
   panelHeader,
@@ -75,7 +64,6 @@ import type { CampaignView } from './dashboard-model';
 import { toDateInputValue } from './date-range';
 import {
   buildCalendarHeatmapData,
-  buildModelMigrationData,
   buildOverviewRecords,
   buildPunchcardData,
   buildSessionShapeData,
@@ -97,7 +85,6 @@ import {
 export interface OverviewProps {
   campaigns: CampaignView[];
   onSelectDay: (day: Date) => void;
-  onSelectModel: (modelKey: string) => void;
   onSelectSession: (row: DashboardRow) => void;
   rangeLabel: string;
   rows: DashboardRow[];
@@ -268,89 +255,6 @@ const CalendarHeatmap = (props: { rows: DashboardRow[]; onSelectDay: (day: Date)
               <span style={{ 'margin-left': 'auto' }}>
                 {heat().useCost ? 'scaled by API value' : 'scaled by sessions'}
               </span>
-            </div>
-          </>
-        )}
-      </Show>
-    </Panel>
-  );
-};
-
-// ---------------------------------------------------------------------------
-// Model migration — normalized stacked area of API value share per bucket.
-// This is where opus→fable and gpt-5.4→5.5 transitions become visible.
-
-const migrationFillClass = (key: string, index: number) =>
-  key === 'other' ? otherFillClass : (chartFillClasses[index] ?? otherFillClass);
-
-const migrationSwatchClass = (key: string, index: number) =>
-  key === 'other' ? otherSwatchClass : (chartSwatchClasses[index] ?? otherSwatchClass);
-
-const isActivationKey = (event: KeyboardEvent) => event.key === 'Enter' || event.key === ' ';
-
-const ModelMigration = (props: { rows: DashboardRow[]; onSelectModel: (modelKey: string) => void }) => {
-  const data = createMemo(() => buildModelMigrationData(props.rows));
-
-  return (
-    <Panel sub="Share of API value per model over time" title="Model migration">
-      <Show fallback={<div class={emptyPanel}>Not enough priced sessions in range</div>} when={data()}>
-        {(chart) => (
-          <>
-            <div class={migrationSvgWrap}>
-              <svg height="100%" preserveAspectRatio="none" role="img" viewBox="0 0 100 100" width="100%">
-                <title>Share of API value per model over time</title>
-                <For each={chart().paths}>
-                  {(path, index) => (
-                    // biome-ignore lint/a11y/useSemanticElements: an SVG cannot contain <button>; role is the standard pattern for SVG hit targets
-                    <path
-                      class={cx(migrationFillClass(chart().series[index()]?.key ?? '', index()), migrationArea)}
-                      d={path}
-                      onClick={() => {
-                        const key = chart().series[index()]?.key;
-                        if (key && key !== 'other') {
-                          props.onSelectModel(key);
-                        }
-                      }}
-                      onKeyDown={(event) => {
-                        if (!isActivationKey(event)) {
-                          return;
-                        }
-                        const key = chart().series[index()]?.key;
-                        if (!key || key === 'other') {
-                          return;
-                        }
-                        event.preventDefault();
-                        props.onSelectModel(key);
-                      }}
-                      role="button"
-                      tabIndex={0}
-                    >
-                      <title>
-                        {chart().series[index()]?.key} — {fmtMoney(chart().series[index()]?.total ?? 0)} (
-                        {fmtPct(((chart().series[index()]?.total ?? 0) / Math.max(1e-9, chart().grandTotal)) * 100)})
-                      </title>
-                    </path>
-                  )}
-                </For>
-              </svg>
-            </div>
-            <div class={chartAxis}>
-              <span>{fmtDateOnly(chart().first)}</span>
-              <span>{chart().weekly ? 'weekly buckets' : 'daily buckets'}</span>
-              <span>{fmtDateOnly(chart().last)}</span>
-            </div>
-            <div class={chartLegendList}>
-              <For each={chart().series}>
-                {(entry, index) => (
-                  <span class={chartLegendItem} title={fmtMoney(entry.total)}>
-                    <span class={cx(chartLegendSwatch, migrationSwatchClass(entry.key, index()))} />
-                    {entry.key}
-                    <span class={chartLegendPct}>
-                      {fmtPct((entry.total / Math.max(1e-9, chart().grandTotal)) * 100)}
-                    </span>
-                  </span>
-                )}
-              </For>
             </div>
           </>
         )}
@@ -650,7 +554,6 @@ export const Overview = (props: OverviewProps) => (
       <Hero rangeLabel={props.rangeLabel} summary={props.summary} />
       <CalendarHeatmap onSelectDay={props.onSelectDay} rows={props.timelineRows} />
       <div class={twoColumns}>
-        <ModelMigration onSelectModel={props.onSelectModel} rows={props.rows} />
         <TokenAnatomy summary={props.summary} />
       </div>
       <div class={twoColumns}>
