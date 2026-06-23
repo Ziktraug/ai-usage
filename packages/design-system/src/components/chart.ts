@@ -1,4 +1,5 @@
 import { css } from '@ai-usage/design-system/css';
+import { harnessFillFor } from './badge';
 
 export const chartAxis = css({
   display: 'flex',
@@ -51,6 +52,37 @@ export const chartSwatchClasses = [
 // apart; the fixed saturation/lightness reads on both the paper and graphite
 // surfaces — and these are always the lower-value, thinner segments anyway.
 export const overflowSeriesColor = (index: number) => `hsl(${Math.round((index * 137.508) % 360)} 42% 60%)`;
+
+const stableHueFor = (value: string) => {
+  let hash = 0;
+  for (let index = 0; index < value.length; index++) {
+    hash = (hash * 31 + value.charCodeAt(index)) % 360;
+  }
+  return hash;
+};
+
+export const stableSeriesColor = (value: string) => `hsl(${stableHueFor(value)} 42% 60%)`;
+
+export interface DimensionSwatch {
+  className?: string;
+  style?: { background: string };
+}
+
+export const dimensionSwatch = (
+  dimension: 'harness' | 'model' | 'project' | 'provider',
+  key: string,
+  rankIndex: number,
+): DimensionSwatch => {
+  if (dimension === 'harness') {
+    const className = harnessFillFor(key);
+    return className ? { className } : {};
+  }
+  const className = dimension === 'model' ? chartSwatchClasses[rankIndex] : undefined;
+  if (className) {
+    return { className };
+  }
+  return { style: { background: stableSeriesColor(key) } };
+};
 
 export const scatterGridline = css({
   stroke: 'token(colors.line)',

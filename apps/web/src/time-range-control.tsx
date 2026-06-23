@@ -2,16 +2,34 @@ import { SegmentedControl } from '@ai-usage/design-system';
 import { cx } from '@ai-usage/design-system/css';
 import {
   accentFill,
-  chartLegend,
+  chartLegendList,
+  chartLegendPct,
+  chartLegendSwatch,
   dateEditRow,
   dateFieldGroup,
   dateInput,
+  dimensionSwatch,
   inlineFieldLabel,
+  migrationCrosshair,
+  migrationLegendButton,
+  migrationLegendMore,
+  migrationReadout,
+  migrationReadoutDate,
+  migrationReadoutHint,
+  migrationReadoutItem,
+  migrationReadoutItemActive,
+  migrationReadoutSwatch,
+  migrationReadoutTotal,
+  migrationReadoutValue,
+  migrationTrend,
+  migrationTrendDown,
+  migrationTrendUp,
   monthGridline,
   timeAxis,
   timeAxisTick,
   timeBucket,
   timeBucketSegment,
+  timelineHoverLayer,
   timeRangeHeader,
   timeRangeMeta,
   timeRangePanel,
@@ -33,40 +51,65 @@ import {
   dateIndexFrom,
   dateRangePresets,
   normalizeDateIndexRange,
-  rowTime,
-  shiftCalendarDays,
-  startOfDay,
   type TimeRangePreset,
   toDateInputValue,
 } from './date-range';
 import type { DateRangeController } from './date-range-controller';
-import { type DashboardRow, fmtDateOnly, fmtMoney, fmtNum, HarnessBadge, harnessFillFor } from './shared';
+import {
+  buildTimelineData,
+  type MigrationGranularity,
+  type TimelineBucket,
+  type TimelineDimension,
+  type TimelineValue,
+} from './overview-model';
+import { type DashboardRow, fmtDateOnly, fmtMoney, fmtNum, fmtPct } from './shared';
 
 const track = (..._values: unknown[]) => _values.length;
+const LEGEND_LIMIT = 12;
+const READOUT_LIMIT = 8;
+const MAX_DELTA_PCT = 1000;
 
 type RangeDragPointerEvent = PointerEvent & { currentTarget: HTMLButtonElement };
 type RangeHandle = 'start' | 'end';
-interface TimelinePart {
-  cost: number;
-  harness: string;
-}
-interface TimelineBucket {
-  date: Date;
-  endDate: Date;
-  parts: TimelinePart[];
-  sessions: number;
-  total: number;
-}
-
-const timelineBucketTitle = (bucket: TimelineBucket, weekly: boolean, valueMode: 'cost' | 'sessions') =>
-  [
-    `${weekly ? 'Week of ' : ''}${fmtDateOnly(bucket.date)} — ${
-      valueMode === 'cost' ? fmtMoney(bucket.total) : `${fmtNum(bucket.sessions)} sessions`
-    }`,
-    ...bucket.parts.map((part) => `${part.harness} ${fmtMoney(part.cost)}`),
-  ].join('\n');
 
 const monthTickFormatter = new Intl.DateTimeFormat('en', { month: 'short' });
+const monthYearFormatter = new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric' });
+
+const DIMENSION_ITEMS = [
+  { label: 'Harness', value: 'harness' },
+  { label: 'Model', value: 'model' },
+  { label: 'Provider', value: 'provider' },
+  { label: 'Project', value: 'project' },
+] as const;
+
+const GRANULARITY_ITEMS = [
+  { label: 'Day', value: 'day' },
+  { label: 'Week', value: 'week' },
+  { label: 'Month', value: 'month' },
+] as const;
+
+const VALUE_ITEMS = [
+  { label: 'Value', value: 'cost' },
+  { label: 'Share', value: 'share' },
+  { label: 'Sessions', value: 'sessions' },
+] as const;
+
+const toTimelineDimension = (value: string): TimelineDimension =>
+  value === 'model' || value === 'provider' || value === 'project' ? value : 'harness';
+
+const toGranularity = (value: string): MigrationGranularity => (value === 'week' || value === 'month' ? value : 'day');
+
+const toTimelineValue = (value: string): TimelineValue => (value === 'share' || value === 'sessions' ? value : 'cost');
+
+const bucketLabel = (date: Date, granularity: MigrationGranularity) => {
+  if (granularity === 'month') {
+    return monthYearFormatter.format(date);
+  }
+  if (granularity === 'week') {
+    return `Week of ${fmtDateOnly(date)}`;
+  }
+  return fmtDateOnly(date);
+};
 
 // Month boundaries anchor the brush; the two endpoint labels only give the
 // extremes, which is not enough to aim a selection on a long domain.
@@ -97,10 +140,19 @@ export const TimeRangeControl = (props: {
   rows: DashboardRow[];
   dateRange: DateRangeController;
   activeHarness: string[];
-  onHarnessFilter: (value: string) => void;
+  activeFieldFilters: Partial<Record<Exclude<TimelineDimension, 'harness'>, string>>;
   onDateRangeCommit: () => void;
+  onDimensionFilter: (dimension: TimelineDimension, value: string) => void;
 }) => {
   const [chartDomain, setChartDomain] = createSignal(props.dateRange.domain());
+  const [dimension, setDimension] = createSignal<TimelineDimension>('harness');
+  const [granularity, setGranularity] = createSignal<MigrationGranularity>(
+    (props.dateRange.domain()?.maxIndex ?? 0) > 120 ? 'week' : 'day',
+  );
+  const [valueMode, setValueMode] = createSignal<TimelineValue>('cost');
+  const [hoveredBucket, setHoveredBucket] = createSignal<number | null>(null);
+  const [hoveredKey, setHoveredKey] = createSignal<string | null>(null);
+  const [showAll, setShowAll] = createSignal(false);
   const syncChartDomain = () => setChartDomain(props.dateRange.domain());
   createEffect(() => {
     track(props.rows);
@@ -112,73 +164,181 @@ export const TimeRangeControl = (props: {
     if (!domain) {
       return null;
     }
-    const dated = props.rows
-      .map((row) => ({ row, time: rowTime(row) }))
-      .filter((item): item is { row: DashboardRow; time: number } => item.time != null);
-    const dayCount = domain.maxIndex + 1;
-    // Weekly buckets past ~4 months keep the bars readable (and the DOM small).
-    const weekly = dayCount > 120;
-    const bucketStart = (date: Date) => {
-      const day = startOfDay(date);
-      return weekly ? shiftCalendarDays(day, -((day.getDay() + 6) % 7)) : day;
-    };
-
-    const buckets = new Map<string, TimelineBucket & { byHarness: Map<string, number> }>();
-    for (
-      let cursor = bucketStart(domain.minDay);
-      cursor <= domain.maxDay;
-      cursor = shiftCalendarDays(cursor, weekly ? 7 : 1)
-    ) {
-      buckets.set(toDateInputValue(cursor), {
-        date: cursor,
-        endDate: weekly ? shiftCalendarDays(cursor, 6) : cursor,
-        total: 0,
-        sessions: 0,
-        parts: [],
-        byHarness: new Map(),
-      });
-    }
-    const harnessTotals = new Map<string, number>();
-    for (const { row, time } of dated) {
-      const bucket = buckets.get(toDateInputValue(bucketStart(new Date(time))));
-      if (!bucket) {
-        continue;
-      }
-      bucket.sessions++;
-      if (row.costKnown) {
-        bucket.total += row.costApprox;
-        bucket.byHarness.set(row.harness, (bucket.byHarness.get(row.harness) ?? 0) + row.costApprox);
-        harnessTotals.set(row.harness, (harnessTotals.get(row.harness) ?? 0) + row.costApprox);
-      }
-    }
-    const harnesses = [...harnessTotals.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
-    const list = [...buckets.values()].map((bucket) => ({
-      date: bucket.date,
-      endDate: bucket.endDate > domain.maxDay ? domain.maxDay : bucket.endDate,
-      total: bucket.total,
-      sessions: bucket.sessions,
-      parts: harnesses
-        .map((name) => ({ harness: name, cost: bucket.byHarness.get(name) ?? 0 }))
-        .filter((part) => part.cost > 0),
-    }));
-    const maxTotal = Math.max(...list.map((bucket) => bucket.total));
-    const maxSessions = Math.max(...list.map((bucket) => bucket.sessions));
-    const valueMode: 'cost' | 'sessions' = maxTotal > 0 ? 'cost' : 'sessions';
-    const maxValue = valueMode === 'cost' ? maxTotal : maxSessions;
-    if (maxValue <= 0) {
+    const timeline = buildTimelineData(props.rows, {
+      dimension: dimension(),
+      domain,
+      granularity: granularity(),
+    });
+    if (!timeline) {
       return null;
     }
     return {
-      list,
-      maxValue,
-      valueMode,
-      weekly,
-      harnesses,
+      ...timeline,
       minDay: domain.minDay,
       maxDay: domain.maxDay,
       maxIndex: domain.maxIndex,
     };
   });
+
+  const visibleSeries = createMemo(() => {
+    const chart = data();
+    if (!chart) {
+      return [];
+    }
+    return showAll() ? chart.series : chart.series.slice(0, LEGEND_LIMIT);
+  });
+
+  const usesSessionShare = (chart: NonNullable<ReturnType<typeof data>>) =>
+    valueMode() === 'share' && chart.grandTotal <= 0;
+
+  const bucketValue = (bucket: TimelineBucket, chart: NonNullable<ReturnType<typeof data>>) =>
+    valueMode() === 'sessions' || usesSessionShare(chart) ? bucket.sessions : bucket.total;
+
+  const entryValue = (
+    entry: { cost: number; sessions: number } | undefined,
+    chart: NonNullable<ReturnType<typeof data>>,
+  ) => (valueMode() === 'sessions' || usesSessionShare(chart) ? (entry?.sessions ?? 0) : (entry?.cost ?? 0));
+
+  const maxBucketValue = (chart: NonNullable<ReturnType<typeof data>>) =>
+    valueMode() === 'sessions' || usesSessionShare(chart) ? chart.maxBucketSessions : chart.maxBucketTotal;
+
+  const formatValue = (value: number, useSessions = false) =>
+    valueMode() === 'sessions' || useSessions ? `${fmtNum(value)} sessions` : fmtMoney(value);
+
+  const bars = createMemo(() => {
+    const chart = data();
+    if (!chart) {
+      return [];
+    }
+    return chart.buckets.map((bucket) => {
+      const total = bucketValue(bucket, chart);
+      const segments: { key: string; rank: number; value: number }[] = [];
+      for (let rank = 0; rank < chart.series.length; rank++) {
+        const series = chart.series[rank];
+        if (!series) {
+          continue;
+        }
+        const value = entryValue(bucket.byKey.get(series.key), chart);
+        if (value > 0) {
+          segments.push({ key: series.key, rank, value });
+        }
+      }
+      return { bucket, segments, total };
+    });
+  });
+
+  const barHeight = (bucket: TimelineBucket, chart: NonNullable<ReturnType<typeof data>>) => {
+    const total = bucketValue(bucket, chart);
+    if (valueMode() === 'share') {
+      return total > 0 ? 100 : 0;
+    }
+    const maxValue = maxBucketValue(chart);
+    return maxValue > 0 ? (total / maxValue) * 100 : 0;
+  };
+
+  const segmentHeight = (segmentValue: number, bucketTotal: number) =>
+    bucketTotal > 0 ? (segmentValue / bucketTotal) * 100 : 0;
+
+  const segmentOpacity = (key: string) => {
+    const active = hoveredKey();
+    if (active === null) {
+      return 0.92;
+    }
+    return active === key ? 1 : 0.26;
+  };
+
+  const readout = createMemo(() => {
+    const chart = data();
+    const index = hoveredBucket();
+    if (!chart || index === null) {
+      return null;
+    }
+    const bucket = chart.buckets[index];
+    if (!bucket) {
+      return null;
+    }
+    const previous = index > 0 ? chart.buckets[index - 1] : null;
+    const rows: { delta: number | null; key: string; rank: number; value: number }[] = [];
+    for (let rank = 0; rank < chart.series.length; rank++) {
+      const series = chart.series[rank];
+      if (!series) {
+        continue;
+      }
+      const value = entryValue(bucket.byKey.get(series.key), chart);
+      if (value <= 0) {
+        continue;
+      }
+      const prior = previous ? entryValue(previous.byKey.get(series.key), chart) : 0;
+      const delta = prior > 1e-9 ? ((value - prior) / prior) * 100 : null;
+      rows.push({ delta, key: series.key, rank, value });
+    }
+    rows.sort((a, b) => b.value - a.value);
+    const visible = rows.slice(0, READOUT_LIMIT);
+    return {
+      bucket,
+      hasPrevious: previous !== null,
+      hidden: rows.length - visible.length,
+      pct: ((index + 0.5) / chart.buckets.length) * 100,
+      rows: visible,
+      total: bucketValue(bucket, chart),
+      useSessions: valueMode() === 'sessions' || usesSessionShare(chart),
+    };
+  });
+
+  const updateHover = (event: MouseEvent & { currentTarget: HTMLElement }) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const chart = data();
+    if (!chart || rect.width <= 0 || rect.height <= 0) {
+      return;
+    }
+    const count = chart.buckets.length;
+    const index = Math.max(0, Math.min(count - 1, Math.floor(((event.clientX - rect.left) / rect.width) * count)));
+    setHoveredBucket(index);
+
+    const bucket = chart.buckets[index];
+    if (!bucket) {
+      setHoveredKey(null);
+      return;
+    }
+    const total = bucketValue(bucket, chart);
+    const heightFraction = barHeight(bucket, chart) / 100;
+    const fromBottom = (rect.bottom - event.clientY) / rect.height;
+    if (total <= 0 || heightFraction <= 0 || fromBottom > heightFraction) {
+      setHoveredKey(null);
+      return;
+    }
+    const within = fromBottom / heightFraction;
+    let cumulative = 0;
+    let found: string | null = null;
+    for (const series of chart.series) {
+      const value = entryValue(bucket.byKey.get(series.key), chart);
+      const share = total > 0 ? value / total : 0;
+      if (share <= 0) {
+        continue;
+      }
+      if (within <= cumulative + share) {
+        found = series.key;
+        break;
+      }
+      cumulative += share;
+    }
+    setHoveredKey(found);
+  };
+
+  const clearHover = () => {
+    setHoveredBucket(null);
+    setHoveredKey(null);
+  };
+
+  const swatch = (key: string, rank: number) => dimensionSwatch(dimension(), key, rank);
+
+  const isLegendActive = (key: string) => {
+    const currentDimension = dimension();
+    if (currentDimension === 'harness') {
+      return props.activeHarness.includes(key);
+    }
+    return props.activeFieldFilters[currentDimension] === key;
+  };
 
   const [draggingSelection, setDraggingSelection] = createSignal(false);
   let selectionDrag: {
@@ -412,17 +572,47 @@ export const TimeRangeControl = (props: {
               <div class={timeRangeTitle}>Time range</div>
               <div class={timeRangeMeta}>{props.dateRange.label()}</div>
             </div>
-            <SegmentedControl
-              ariaLabel="Date presets"
-              items={dateRangePresets.map((preset) => ({ label: preset.label, value: preset.mode }))}
-              onValueChange={(value) => {
-                const preset = dateRangePresets.find((item) => item.mode === value);
-                if (preset) {
-                  applyPreset(preset.mode);
-                }
-              }}
-              value={props.dateRange.mode()}
-            />
+            <div class={dateEditRow}>
+              <SegmentedControl
+                ariaLabel="Date presets"
+                items={dateRangePresets.map((preset) => ({ label: preset.label, value: preset.mode }))}
+                onValueChange={(value) => {
+                  const preset = dateRangePresets.find((item) => item.mode === value);
+                  if (preset) {
+                    applyPreset(preset.mode);
+                  }
+                }}
+                value={props.dateRange.mode()}
+              />
+              <SegmentedControl
+                ariaLabel="Timeline dimension"
+                items={DIMENSION_ITEMS}
+                onValueChange={(value) => {
+                  setDimension(toTimelineDimension(value));
+                  setShowAll(false);
+                  clearHover();
+                }}
+                value={dimension()}
+              />
+              <SegmentedControl
+                ariaLabel="Timeline granularity"
+                items={GRANULARITY_ITEMS}
+                onValueChange={(value) => {
+                  setGranularity(toGranularity(value));
+                  clearHover();
+                }}
+                value={granularity()}
+              />
+              <SegmentedControl
+                ariaLabel="Timeline value"
+                items={VALUE_ITEMS}
+                onValueChange={(value) => {
+                  setValueMode(toTimelineValue(value));
+                  clearHover();
+                }}
+                value={valueMode()}
+              />
+            </div>
           </div>
 
           <div class={dateEditRow}>
@@ -448,17 +638,37 @@ export const TimeRangeControl = (props: {
                 value={props.dateRange.inputValues().to}
               />
             </label>
-            <div class={chartLegend}>
-              <For each={chart().harnesses}>
-                {(name) => (
-                  <HarnessBadge
-                    active={props.activeHarness.includes(name)}
-                    name={name}
-                    onClick={() => props.onHarnessFilter(name)}
-                    title={props.activeHarness.includes(name) ? `Clear ${name} filter` : `Filter by ${name}`}
-                  />
-                )}
+            <div class={chartLegendList}>
+              <For each={visibleSeries()}>
+                {(entry) => {
+                  const rank = chart().series.findIndex((series) => series.key === entry.key);
+                  const marker = swatch(entry.key, rank);
+                  const useSessions = valueMode() === 'sessions' || usesSessionShare(chart());
+                  const value = useSessions ? entry.sessions : entry.total;
+                  const total = useSessions ? chart().grandSessions : chart().grandTotal;
+                  return (
+                    <button
+                      class={cx(migrationLegendButton, isLegendActive(entry.key) ? migrationReadoutItemActive : '')}
+                      onClick={() => props.onDimensionFilter(dimension(), entry.key)}
+                      onMouseEnter={() => setHoveredKey(entry.key)}
+                      onMouseLeave={() => setHoveredKey(null)}
+                      title={
+                        isLegendActive(entry.key) ? `Clear or replace ${entry.key} filter` : `Filter by ${entry.key}`
+                      }
+                      type="button"
+                    >
+                      <span class={cx(chartLegendSwatch, marker.className)} style={marker.style} />
+                      {entry.key}
+                      <span class={chartLegendPct}>{fmtPct((value / Math.max(1e-9, total)) * 100)}</span>
+                    </button>
+                  );
+                }}
               </For>
+              <Show when={chart().series.length > LEGEND_LIMIT}>
+                <button class={migrationLegendMore} onClick={() => setShowAll((value) => !value)} type="button">
+                  {showAll() ? 'Show less' : `Show all (${chart().series.length})`}
+                </button>
+              </Show>
             </div>
           </div>
 
@@ -474,31 +684,39 @@ export const TimeRangeControl = (props: {
                   style={{ left: 'var(--slider-range-start)', right: 'var(--slider-range-end)' }}
                 />
                 <div aria-hidden="true" class={timeSliderBars}>
-                  <For each={chart().list}>
-                    {(bucket) => (
-                      <div class={timeBucket} title={timelineBucketTitle(bucket, chart().weekly, chart().valueMode)}>
-                        <Show
-                          fallback={
-                            <div
-                              class={cx(timeBucketSegment, accentFill)}
-                              style={{ height: `${Math.max(2, (bucket.sessions / chart().maxValue) * 100)}%` }}
-                            />
-                          }
-                          when={chart().valueMode === 'cost'}
-                        >
-                          <For each={bucket.parts}>
-                            {(part) => (
+                  <For each={bars()}>
+                    {(bar) => (
+                      <div class={timeBucket} style={{ height: `${barHeight(bar.bucket, chart())}%` }}>
+                        <For each={bar.segments}>
+                          {(segment) => {
+                            const marker = swatch(segment.key, segment.rank);
+                            return (
                               <div
-                                class={cx(timeBucketSegment, harnessFillFor(part.harness) ?? accentFill)}
-                                style={{ height: `${Math.max(2, (part.cost / chart().maxValue) * 100)}%` }}
+                                class={cx(timeBucketSegment, marker.className ?? accentFill)}
+                                style={{
+                                  height: `${Math.max(1, segmentHeight(segment.value, bar.total))}%`,
+                                  opacity: segmentOpacity(segment.key),
+                                  ...marker.style,
+                                }}
                               />
-                            )}
-                          </For>
-                        </Show>
+                            );
+                          }}
+                        </For>
                       </div>
                     )}
                   </For>
                 </div>
+                <button
+                  aria-label="Inspect timeline bucket"
+                  class={timelineHoverLayer}
+                  onMouseLeave={clearHover}
+                  onMouseMove={updateHover}
+                  tabIndex={-1}
+                  type="button"
+                />
+                <Show when={readout()}>
+                  {(tip) => <div aria-hidden="true" class={migrationCrosshair} style={{ left: `${tip().pct}%` }} />}
+                </Show>
                 <div aria-hidden="true" class={timeSliderDimLeft} />
                 <div aria-hidden="true" class={timeSliderDimRight} />
                 <button
@@ -560,6 +778,63 @@ export const TimeRangeControl = (props: {
                 )}
               </For>
               <span>{fmtDateOnly(chart().maxDay)}</span>
+            </div>
+            <div class={migrationReadout}>
+              <Show
+                fallback={
+                  <span class={migrationReadoutHint}>
+                    {fmtDateOnly(chart().first)} – {fmtDateOnly(chart().last)}
+                  </span>
+                }
+                when={readout()}
+              >
+                {(tip) => (
+                  <>
+                    <span class={migrationReadoutDate}>{bucketLabel(tip().bucket.date, granularity())}</span>
+                    <span class={migrationReadoutTotal}>{formatValue(tip().total, tip().useSessions)}</span>
+                    <For each={tip().rows}>
+                      {(row) => {
+                        const marker = swatch(row.key, row.rank);
+                        return (
+                          <span
+                            class={cx(
+                              migrationReadoutItem,
+                              row.key === hoveredKey() ? migrationReadoutItemActive : undefined,
+                            )}
+                          >
+                            <span class={cx(migrationReadoutSwatch, marker.className)} style={marker.style} />
+                            {row.key}
+                            <span class={migrationReadoutValue}>
+                              {formatValue(row.value, tip().useSessions)} ·{' '}
+                              {fmtPct((row.value / Math.max(1e-9, tip().total)) * 100)}
+                            </span>
+                            <Show
+                              when={
+                                tip().hasPrevious &&
+                                row.delta !== null &&
+                                Math.abs(row.delta) >= 1 &&
+                                Math.abs(row.delta) < MAX_DELTA_PCT
+                              }
+                            >
+                              <span
+                                class={cx(
+                                  migrationTrend,
+                                  (row.delta ?? 0) >= 0 ? migrationTrendUp : migrationTrendDown,
+                                )}
+                              >
+                                {(row.delta ?? 0) >= 0 ? '▲' : '▼'} {fmtPct(Math.abs(row.delta ?? 0))}
+                              </span>
+                            </Show>
+                          </span>
+                        );
+                      }}
+                    </For>
+                    <Show when={tip().hidden > 0}>
+                      <span class={migrationReadoutHint}>+{tip().hidden} more</span>
+                    </Show>
+                  </>
+                )}
+              </Show>
             </div>
           </div>
         </section>

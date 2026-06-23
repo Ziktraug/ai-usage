@@ -1,4 +1,5 @@
-import type { CampaignView } from './dashboard-model';
+import { type CampaignView, fieldValueForRow } from './dashboard-model';
+import type { FieldFilterKey } from './dashboard-search';
 import { DAY_MS, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
 import type { DashboardRow } from './shared';
 
@@ -95,24 +96,50 @@ const heatDayValue = (entry: { cost: number; sessions: number } | undefined, use
   return useCost ? entry.cost : entry.sessions;
 };
 
-export interface MigrationBucket {
-  byModel: Map<string, number>;
+export type TimelineDimension = 'harness' | 'model' | 'project' | 'provider';
+export type TimelineValue = 'cost' | 'sessions' | 'share';
+
+export interface TimelineDomain {
+  maxDay: Date;
+  minDay: Date;
+}
+
+export interface TimelineBucketEntry {
+  cost: number;
+  sessions: number;
+}
+
+export interface TimelineBucket {
+  byKey: Map<string, TimelineBucketEntry>;
   date: Date;
+  sessions: number;
   total: number;
 }
 export type MigrationGranularity = 'day' | 'month' | 'week';
-export interface MigrationSeries {
+export interface TimelineSeries {
   key: string;
+  sessions: number;
   total: number;
 }
-export interface ModelMigrationData {
-  buckets: MigrationBucket[];
+export type MigrationSeries = TimelineSeries;
+export interface TimelineData {
+  buckets: TimelineBucket[];
+  dimension: TimelineDimension;
   first: Date;
+  grandSessions: number;
   grandTotal: number;
   granularity: MigrationGranularity;
   last: Date;
+  maxBucketSessions: number;
   maxBucketTotal: number;
-  series: MigrationSeries[];
+  series: TimelineSeries[];
+}
+export interface MigrationBucket extends TimelineBucket {
+  byModel: Map<string, number>;
+}
+export interface ModelMigrationData extends Omit<TimelineData, 'buckets' | 'dimension'> {
+  buckets: MigrationBucket[];
+  dimension: 'model';
 }
 
 const bucketStartFor = (date: Date, granularity: MigrationGranularity) => {
@@ -140,10 +167,45 @@ export const buildModelMigrationData = (
   rows: DashboardRow[],
   granularity: MigrationGranularity = 'day',
 ): ModelMigrationData | null => {
-  const dated = rows.filter((row) => row.activeTime != null && row.costKnown && row.costApprox > 0) as (DashboardRow & {
-    activeTime: number;
-  })[];
-  if (dated.length < 2) {
+  const pricedRows = rows.filter((row) => row.activeTime != null && row.costKnown && row.costApprox > 0);
+  if (pricedRows.length < 2) {
+    return null;
+  }
+  const data = buildTimelineData(pricedRows, { dimension: 'model', granularity });
+  if (!data) {
+    return null;
+  }
+  return {
+    ...data,
+    buckets: data.buckets.map((bucket) => {
+      const byModel = new Map<string, number>();
+      for (const [key, entry] of bucket.byKey) {
+        byModel.set(key, entry.cost);
+      }
+      return { ...bucket, byModel };
+    }),
+    dimension: 'model',
+  };
+};
+
+const fieldKeyForTimelineDimension = (dimension: TimelineDimension): FieldFilterKey | null =>
+  dimension === 'harness' ? null : dimension;
+
+const timelineKeyForRow = (row: DashboardRow, dimension: TimelineDimension) => {
+  const fieldKey = fieldKeyForTimelineDimension(dimension);
+  return fieldKey ? fieldValueForRow(row, fieldKey) : row.harness;
+};
+
+export const buildTimelineData = (
+  rows: DashboardRow[],
+  options: {
+    dimension: TimelineDimension;
+    domain?: TimelineDomain | null;
+    granularity: MigrationGranularity;
+  },
+): TimelineData | null => {
+  const dated = rows.filter((row): row is DashboardRow & { activeTime: number } => row.activeTime != null);
+  if (!dated.length) {
     return null;
   }
 
@@ -153,21 +215,21 @@ export const buildModelMigrationData = (
     minTime = Math.min(minTime, row.activeTime);
     maxTime = Math.max(maxTime, row.activeTime);
   }
-  const bucketStart = (date: Date) => bucketStartFor(date, granularity);
+  const bucketStart = (date: Date) => bucketStartFor(date, options.granularity);
 
-  const firstBucket = bucketStart(new Date(minTime));
-  const lastBucket = bucketStart(new Date(maxTime));
-  const buckets: MigrationBucket[] = [];
+  const firstBucket = bucketStart(options.domain?.minDay ?? new Date(minTime));
+  const lastBucket = bucketStart(options.domain?.maxDay ?? new Date(maxTime));
+  const buckets: TimelineBucket[] = [];
   const bucketIndex = new Map<string, number>();
-  for (let cursor = firstBucket; cursor <= lastBucket; cursor = nextBucketStart(cursor, granularity)) {
+  for (let cursor = firstBucket; cursor <= lastBucket; cursor = nextBucketStart(cursor, options.granularity)) {
     bucketIndex.set(toDateInputValue(cursor), buckets.length);
-    buckets.push({ date: cursor, byModel: new Map(), total: 0 });
+    buckets.push({ date: cursor, byKey: new Map(), sessions: 0, total: 0 });
   }
   if (buckets.length === 0) {
     return null;
   }
 
-  const totals = new Map<string, number>();
+  const totals = new Map<string, TimelineBucketEntry>();
   for (const row of dated) {
     const index = bucketIndex.get(toDateInputValue(bucketStart(new Date(row.activeTime))));
     if (index === undefined) {
@@ -177,22 +239,41 @@ export const buildModelMigrationData = (
     if (!bucket) {
       continue;
     }
-    bucket.byModel.set(row.modelKey, (bucket.byModel.get(row.modelKey) ?? 0) + row.costApprox);
-    bucket.total += row.costApprox;
-    totals.set(row.modelKey, (totals.get(row.modelKey) ?? 0) + row.costApprox);
+    const key = timelineKeyForRow(row, options.dimension);
+    const cost = row.costKnown ? row.costApprox : 0;
+    const entry = bucket.byKey.get(key) ?? { cost: 0, sessions: 0 };
+    entry.cost += cost;
+    entry.sessions++;
+    bucket.byKey.set(key, entry);
+    bucket.total += cost;
+    bucket.sessions++;
+
+    const totalEntry = totals.get(key) ?? { cost: 0, sessions: 0 };
+    totalEntry.cost += cost;
+    totalEntry.sessions++;
+    totals.set(key, totalEntry);
   }
 
-  // Every model gets its own series — no "other" bucket. Largest total first so
+  // Every key gets its own series — no "other" bucket. Largest total first so
   // the dominant model sits at the base of every stacked bar.
-  const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]);
-  const grandTotal = ranked.reduce((sum, [, value]) => sum + value, 0);
-  const series: MigrationSeries[] = ranked.map(([key, total]) => ({ key, total }));
+  const ranked = [...totals.entries()].sort((a, b) => b[1].cost - a[1].cost || b[1].sessions - a[1].sessions);
+  const grandTotal = ranked.reduce((sum, [, value]) => sum + value.cost, 0);
+  const grandSessions = ranked.reduce((sum, [, value]) => sum + value.sessions, 0);
+  const series: TimelineSeries[] = ranked.map(([key, value]) => ({
+    key,
+    sessions: value.sessions,
+    total: value.cost,
+  }));
   const maxBucketTotal = buckets.reduce((max, bucket) => Math.max(max, bucket.total), 0);
+  const maxBucketSessions = buckets.reduce((max, bucket) => Math.max(max, bucket.sessions), 0);
 
   return {
     buckets,
-    granularity,
+    dimension: options.dimension,
     grandTotal,
+    grandSessions,
+    granularity: options.granularity,
+    maxBucketSessions,
     maxBucketTotal,
     series,
     first: buckets[0]?.date ?? firstBucket,

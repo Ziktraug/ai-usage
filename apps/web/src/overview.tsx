@@ -1,4 +1,3 @@
-import { SegmentedControl } from '@ai-usage/design-system';
 import { cx } from '@ai-usage/design-system/css';
 import {
   accentFill,
@@ -7,10 +6,6 @@ import {
   anatomyLegendItem,
   anatomyLegendSwatch,
   anatomyLegendValue,
-  chartLegendList,
-  chartLegendPct,
-  chartLegendSwatch,
-  chartSwatchClasses,
   emptyPanel,
   HarnessBadge,
   harnessSvgFillFor,
@@ -34,34 +29,7 @@ import {
   heroText,
   heroValue,
   inkFill,
-  migrationBar,
-  migrationBars,
-  migrationCrosshair,
-  migrationGrid,
-  migrationGridLabel,
-  migrationGridLine,
-  migrationLegendButton,
-  migrationLegendMore,
-  migrationPlot,
-  migrationReadout,
-  migrationReadoutDate,
-  migrationReadoutHint,
-  migrationReadoutItem,
-  migrationReadoutItemActive,
-  migrationReadoutSwatch,
-  migrationReadoutTotal,
-  migrationReadoutValue,
-  migrationSeg,
-  migrationToolbar,
-  migrationToolbarSpacer,
-  migrationTotal,
-  migrationTrend,
-  migrationTrendDown,
-  migrationTrendUp,
-  migrationXAxis,
-  migrationXTick,
   muted,
-  overflowSeriesColor,
   overviewGrid,
   panel,
   panelHeader,
@@ -91,17 +59,15 @@ import {
   topTitle,
   twoColumns,
 } from '@ai-usage/design-system/report';
-import { createEffect, createMemo, createSignal, For, type JSX, Show } from 'solid-js';
+import { createEffect, createMemo, For, type JSX, Show } from 'solid-js';
 import type { CampaignView } from './dashboard-model';
 import { toDateInputValue } from './date-range';
 import {
   buildCalendarHeatmapData,
-  buildModelMigrationData,
   buildOverviewRecords,
   buildPunchcardData,
   buildSessionShapeData,
   buildTopSessions,
-  type MigrationGranularity,
   PUNCH_DAYS,
 } from './overview-model';
 import {
@@ -119,7 +85,6 @@ import {
 export interface OverviewProps {
   campaigns: CampaignView[];
   onSelectDay: (day: Date) => void;
-  onSelectModel: (modelKey: string) => void;
   onSelectSession: (row: DashboardRow) => void;
   rangeLabel: string;
   rows: DashboardRow[];
@@ -290,418 +255,6 @@ const CalendarHeatmap = (props: { rows: DashboardRow[]; onSelectDay: (day: Date)
               <span style={{ 'margin-left': 'auto' }}>
                 {heat().useCost ? 'scaled by API value' : 'scaled by sessions'}
               </span>
-            </div>
-          </>
-        )}
-      </Show>
-    </Panel>
-  );
-};
-
-// ---------------------------------------------------------------------------
-// Model migration — dense stacked-bar histogram of API value per model over
-// one bar per day/week/month (Day/Week/Month toggle). Value/Share toggle, and
-// a hover readout below the plot (so it never covers the bars). Hovering
-// highlights a model's ribbon across every bar (opencode-style), with each
-// row's change vs the previous bucket.
-
-const GRANULARITY_ITEMS = [
-  { label: 'Day', value: 'day' },
-  { label: 'Week', value: 'week' },
-  { label: 'Month', value: 'month' },
-] as const;
-
-const MIGRATION_MODE_ITEMS = [
-  { label: 'Value', value: 'value' },
-  { label: 'Share', value: 'share' },
-] as const;
-
-// Cap x-axis labels so monthly buckets / very long ranges stay readable.
-const MAX_X_TICKS = 8;
-// Keep the panel compact: only the top models show by default (all stay
-// reachable behind "Show all"), and the hover readout lists the top few.
-const LEGEND_LIMIT = 12;
-const READOUT_LIMIT = 8;
-// Tiny prior buckets make % deltas explode; hide the meaningless ones.
-const MAX_DELTA_PCT = 1000;
-
-const migrationMonthFmt = new Intl.DateTimeFormat('en', { month: 'short' });
-const migrationMonthYearFmt = new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric' });
-
-const toGranularity = (value: string): MigrationGranularity => (value === 'week' || value === 'month' ? value : 'day');
-
-const bucketLabel = (date: Date, granularity: MigrationGranularity) => {
-  if (granularity === 'month') {
-    return migrationMonthYearFmt.format(date);
-  }
-  if (granularity === 'week') {
-    return `Week of ${fmtDateOnly(date)}`;
-  }
-  return fmtDateOnly(date);
-};
-
-// The first six models use the curated brand palette; the rest get a
-// deterministic generated hue so nothing is ever lumped into "other".
-const seriesSwatchClass = (index: number) =>
-  index < chartSwatchClasses.length ? chartSwatchClasses[index] : undefined;
-
-const seriesColorStyle = (index: number): JSX.CSSProperties | undefined =>
-  index < chartSwatchClasses.length ? undefined : { background: overflowSeriesColor(index) };
-
-// Keep edge labels/tooltips from spilling past the plot.
-const edgeTransform = (pct: number) => {
-  if (pct < 6) {
-    return 'translateX(0)';
-  }
-  if (pct > 94) {
-    return 'translateX(-100%)';
-  }
-  return 'translateX(-50%)';
-};
-
-const ModelMigration = (props: { rows: DashboardRow[]; onSelectModel: (modelKey: string) => void }) => {
-  const [granularity, setGranularity] = createSignal<MigrationGranularity>('day');
-  const data = createMemo(() => buildModelMigrationData(props.rows, granularity()));
-  const [mode, setMode] = createSignal<'share' | 'value'>('value');
-  // Which time bucket the cursor is over (drives the tooltip) and which model
-  // segment, by series index (drives the across-chart ribbon highlight).
-  const [hoveredBucket, setHoveredBucket] = createSignal<number | null>(null);
-  const [hoveredModel, setHoveredModel] = createSignal<number | null>(null);
-  const [showAllModels, setShowAllModels] = createSignal(false);
-
-  const visibleSeries = createMemo(() => {
-    const chart = data();
-    if (!chart) {
-      return [];
-    }
-    return showAllModels() ? chart.series : chart.series.slice(0, LEGEND_LIMIT);
-  });
-
-  // Pre-shape each bar's non-empty segments once, keeping the series (rank)
-  // order so the dominant model stays at the base of every bar.
-  const bars = createMemo(() => {
-    const chart = data();
-    if (!chart) {
-      return [];
-    }
-    return chart.buckets.map((bucket) => {
-      const segments: { index: number; value: number }[] = [];
-      for (let index = 0; index < chart.series.length; index++) {
-        const entry = chart.series[index];
-        if (!entry) {
-          continue;
-        }
-        const value = bucket.byModel.get(entry.key) ?? 0;
-        if (value > 0) {
-          segments.push({ index, value });
-        }
-      }
-      return { date: bucket.date, segments, total: bucket.total };
-    });
-  });
-
-  const gridLines = createMemo(() => {
-    const chart = data();
-    if (!chart) {
-      return [] as { label: string; pct: number }[];
-    }
-    if (mode() === 'share') {
-      return [
-        { label: '0%', pct: 0 },
-        { label: '50%', pct: 50 },
-        { label: '100%', pct: 100 },
-      ];
-    }
-    return [
-      { label: '$0', pct: 0 },
-      { label: fmtMoney(chart.maxBucketTotal / 2), pct: 50 },
-      { label: fmtMoney(chart.maxBucketTotal), pct: 100 },
-    ];
-  });
-
-  const monthTicks = createMemo(() => {
-    const chart = data();
-    if (!chart) {
-      return [] as { label: string; pct: number }[];
-    }
-    const count = chart.buckets.length;
-    const ticks: { label: string; pct: number }[] = [];
-    let previousMonth = -1;
-    let previousYear = -1;
-    for (let i = 0; i < count; i++) {
-      const bucket = chart.buckets[i];
-      if (!bucket) {
-        continue;
-      }
-      const month = bucket.date.getMonth();
-      const year = bucket.date.getFullYear();
-      if (month === previousMonth && year === previousYear) {
-        continue;
-      }
-      previousMonth = month;
-      previousYear = year;
-      const label =
-        month === 0
-          ? `${migrationMonthFmt.format(bucket.date)} ’${String(year).slice(-2)}`
-          : migrationMonthFmt.format(bucket.date);
-      ticks.push({ label, pct: ((i + 0.5) / count) * 100 });
-    }
-    if (ticks.length <= MAX_X_TICKS) {
-      return ticks;
-    }
-    const step = Math.ceil(ticks.length / MAX_X_TICKS);
-    return ticks.filter((_, i) => i % step === 0);
-  });
-
-  const readout = createMemo(() => {
-    const chart = data();
-    const index = hoveredBucket();
-    if (!chart || index === null) {
-      return null;
-    }
-    const bucket = chart.buckets[index];
-    if (!bucket) {
-      return null;
-    }
-    // The bar to the left is the reference period for each row's delta.
-    const previous = index > 0 ? chart.buckets[index - 1] : null;
-    const rows: { delta: number | null; index: number; key: string; value: number }[] = [];
-    for (let i = 0; i < chart.series.length; i++) {
-      const entry = chart.series[i];
-      if (!entry) {
-        continue;
-      }
-      const value = bucket.byModel.get(entry.key) ?? 0;
-      if (value <= 0) {
-        continue;
-      }
-      const prior = previous?.byModel.get(entry.key) ?? 0;
-      const delta = prior > 1e-9 ? ((value - prior) / prior) * 100 : null;
-      rows.push({ delta, index: i, key: entry.key, value });
-    }
-    rows.sort((a, b) => b.value - a.value);
-    const visible = rows.slice(0, READOUT_LIMIT);
-    return {
-      bucket,
-      hasPrevious: previous !== null,
-      hidden: rows.length - visible.length,
-      pct: ((index + 0.5) / chart.buckets.length) * 100,
-      rows: visible,
-    };
-  });
-
-  const barHeight = (total: number) => {
-    if (mode() === 'share') {
-      return 100;
-    }
-    const max = data()?.maxBucketTotal ?? 0;
-    return max > 0 ? (total / max) * 100 : 0;
-  };
-
-  const segOpacity = (modelIndex: number) => {
-    const active = hoveredModel();
-    if (active === null) {
-      return 0.92;
-    }
-    return active === modelIndex ? 1 : 0.26;
-  };
-
-  // A single move handler resolves both the bucket (from x) and the model
-  // segment under the cursor (from y, walking the stack), so the ribbon
-  // highlight stays in sync with the tooltip without per-segment listeners.
-  const updateHover = (event: MouseEvent & { currentTarget: HTMLDivElement }) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const chart = data();
-    if (!chart || rect.width <= 0 || rect.height <= 0) {
-      return;
-    }
-    const count = chart.buckets.length;
-    const index = Math.max(0, Math.min(count - 1, Math.floor(((event.clientX - rect.left) / rect.width) * count)));
-    setHoveredBucket(index);
-
-    const bucket = chart.buckets[index];
-    const total = bucket?.total ?? 0;
-    const barFraction = barHeight(total) / 100;
-    const fromBottom = (rect.bottom - event.clientY) / rect.height;
-    if (!bucket || total <= 0 || barFraction <= 0 || fromBottom > barFraction) {
-      setHoveredModel(null);
-      return;
-    }
-    const within = fromBottom / barFraction;
-    let cumulative = 0;
-    let found: number | null = null;
-    for (let i = 0; i < chart.series.length; i++) {
-      const entry = chart.series[i];
-      if (!entry) {
-        continue;
-      }
-      const share = (bucket.byModel.get(entry.key) ?? 0) / total;
-      if (share <= 0) {
-        continue;
-      }
-      if (within <= cumulative + share) {
-        found = i;
-        break;
-      }
-      cumulative += share;
-    }
-    setHoveredModel(found);
-  };
-
-  const clearHover = () => {
-    setHoveredBucket(null);
-    setHoveredModel(null);
-  };
-
-  return (
-    <Panel sub="API value per model over time — hover a model to trace it" title="Model migration">
-      <Show fallback={<div class={emptyPanel}>Not enough priced sessions in range</div>} when={data()}>
-        {(chart) => (
-          <>
-            <div class={migrationToolbar}>
-              <SegmentedControl
-                ariaLabel="Bucket granularity"
-                items={GRANULARITY_ITEMS}
-                onValueChange={(value) => setGranularity(toGranularity(value))}
-                value={granularity()}
-              />
-              <SegmentedControl
-                ariaLabel="Stack mode"
-                items={MIGRATION_MODE_ITEMS}
-                onValueChange={(value) => setMode(value === 'share' ? 'share' : 'value')}
-                value={mode()}
-              />
-              <span class={migrationToolbarSpacer} />
-              <span class={migrationTotal} title="Total API value in range">
-                {fmtMoney(chart().grandTotal)}
-              </span>
-            </div>
-
-            <div class={migrationPlot}>
-              <div aria-hidden="true" class={migrationGrid}>
-                <For each={gridLines()}>
-                  {(line) => (
-                    <div class={migrationGridLine} style={{ top: `${100 - line.pct}%` }}>
-                      <span class={migrationGridLabel}>{line.label}</span>
-                    </div>
-                  )}
-                </For>
-              </div>
-
-              <div aria-hidden="true" class={migrationBars} onMouseLeave={clearHover} onMouseMove={updateHover}>
-                <For each={bars()}>
-                  {(bar) => (
-                    <div class={migrationBar} style={{ height: `${barHeight(bar.total)}%` }}>
-                      <For each={bar.segments}>
-                        {(segment) => (
-                          <div
-                            class={cx(migrationSeg, seriesSwatchClass(segment.index))}
-                            style={{
-                              height: `${bar.total > 0 ? (segment.value / bar.total) * 100 : 0}%`,
-                              opacity: segOpacity(segment.index),
-                              ...seriesColorStyle(segment.index),
-                            }}
-                          />
-                        )}
-                      </For>
-                    </div>
-                  )}
-                </For>
-              </div>
-
-              <Show when={readout()}>
-                {(tip) => <div aria-hidden="true" class={migrationCrosshair} style={{ left: `${tip().pct}%` }} />}
-              </Show>
-            </div>
-
-            <div aria-hidden="true" class={migrationXAxis}>
-              <For each={monthTicks()}>
-                {(tick) => (
-                  <span class={migrationXTick} style={{ left: `${tick.pct}%`, transform: edgeTransform(tick.pct) }}>
-                    {tick.label}
-                  </span>
-                )}
-              </For>
-            </div>
-
-            <div class={migrationReadout}>
-              <Show
-                fallback={
-                  <span class={migrationReadoutHint}>
-                    {fmtDateOnly(chart().first)} – {fmtDateOnly(chart().last)}
-                  </span>
-                }
-                when={readout()}
-              >
-                {(tip) => (
-                  <>
-                    <span class={migrationReadoutDate}>{bucketLabel(tip().bucket.date, granularity())}</span>
-                    <span class={migrationReadoutTotal}>{fmtMoney(tip().bucket.total)}</span>
-                    <For each={tip().rows}>
-                      {(row) => (
-                        <span
-                          class={cx(
-                            migrationReadoutItem,
-                            row.index === hoveredModel() ? migrationReadoutItemActive : undefined,
-                          )}
-                        >
-                          <span
-                            class={cx(migrationReadoutSwatch, seriesSwatchClass(row.index))}
-                            style={seriesColorStyle(row.index)}
-                          />
-                          {row.key}
-                          <span class={migrationReadoutValue}>
-                            {fmtMoney(row.value)} · {fmtPct((row.value / Math.max(1e-9, tip().bucket.total)) * 100)}
-                          </span>
-                          <Show
-                            when={
-                              tip().hasPrevious &&
-                              row.delta !== null &&
-                              Math.abs(row.delta) >= 1 &&
-                              Math.abs(row.delta) < MAX_DELTA_PCT
-                            }
-                          >
-                            <span
-                              class={cx(migrationTrend, (row.delta ?? 0) >= 0 ? migrationTrendUp : migrationTrendDown)}
-                            >
-                              {(row.delta ?? 0) >= 0 ? '▲' : '▼'} {fmtPct(Math.abs(row.delta ?? 0))}
-                            </span>
-                          </Show>
-                        </span>
-                      )}
-                    </For>
-                    <Show when={tip().hidden > 0}>
-                      <span class={migrationReadoutHint}>+{tip().hidden} more</span>
-                    </Show>
-                  </>
-                )}
-              </Show>
-            </div>
-
-            <div class={chartLegendList}>
-              <For each={visibleSeries()}>
-                {(entry, index) => (
-                  <button
-                    class={migrationLegendButton}
-                    onClick={() => props.onSelectModel(entry.key)}
-                    onMouseEnter={() => setHoveredModel(index())}
-                    onMouseLeave={() => setHoveredModel(null)}
-                    title={`Inspect ${entry.key} — ${fmtMoney(entry.total)}`}
-                    type="button"
-                  >
-                    <span class={cx(chartLegendSwatch, seriesSwatchClass(index()))} style={seriesColorStyle(index())} />
-                    {entry.key}
-                    <span class={chartLegendPct}>
-                      {fmtPct((entry.total / Math.max(1e-9, chart().grandTotal)) * 100)}
-                    </span>
-                  </button>
-                )}
-              </For>
-              <Show when={chart().series.length > LEGEND_LIMIT}>
-                <button class={migrationLegendMore} onClick={() => setShowAllModels((value) => !value)} type="button">
-                  {showAllModels() ? 'Show less' : `Show all (${chart().series.length})`}
-                </button>
-              </Show>
             </div>
           </>
         )}
@@ -1001,7 +554,6 @@ export const Overview = (props: OverviewProps) => (
       <Hero rangeLabel={props.rangeLabel} summary={props.summary} />
       <CalendarHeatmap onSelectDay={props.onSelectDay} rows={props.timelineRows} />
       <div class={twoColumns}>
-        <ModelMigration onSelectModel={props.onSelectModel} rows={props.rows} />
         <TokenAnatomy summary={props.summary} />
       </div>
       <div class={twoColumns}>
