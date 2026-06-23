@@ -155,6 +155,9 @@ export const filterTextButton = css({
 
 export const presetButton = css({
   appearance: 'none',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
   h: '30px',
   px: '10px',
   border: '1px solid token(colors.line)',
@@ -163,6 +166,7 @@ export const presetButton = css({
   color: 'muted',
   fontSize: '12px',
   fontWeight: 600,
+  lineHeight: 1,
   cursor: 'pointer',
   whiteSpace: 'nowrap',
   transition: 'border-color 0.15s, color 0.15s, background-color 0.15s',

@@ -95,11 +95,12 @@ const heatDayValue = (entry: { cost: number; sessions: number } | undefined, use
   return useCost ? entry.cost : entry.sessions;
 };
 
-interface MigrationBucket {
+export interface MigrationBucket {
   byModel: Map<string, number>;
   date: Date;
   total: number;
 }
+export type MigrationGranularity = 'day' | 'month' | 'week';
 export interface MigrationSeries {
   key: string;
   total: number;
@@ -108,13 +109,37 @@ export interface ModelMigrationData {
   buckets: MigrationBucket[];
   first: Date;
   grandTotal: number;
+  granularity: MigrationGranularity;
   last: Date;
-  paths: string[];
+  maxBucketTotal: number;
   series: MigrationSeries[];
-  weekly: boolean;
 }
 
-export const buildModelMigrationData = (rows: DashboardRow[]): ModelMigrationData | null => {
+const bucketStartFor = (date: Date, granularity: MigrationGranularity) => {
+  const day = startOfDay(date);
+  if (granularity === 'week') {
+    return shiftCalendarDays(day, -((day.getDay() + 6) % 7));
+  }
+  if (granularity === 'month') {
+    return new Date(day.getFullYear(), day.getMonth(), 1);
+  }
+  return day;
+};
+
+const nextBucketStart = (date: Date, granularity: MigrationGranularity) => {
+  if (granularity === 'week') {
+    return shiftCalendarDays(date, 7);
+  }
+  if (granularity === 'month') {
+    return new Date(date.getFullYear(), date.getMonth() + 1, 1);
+  }
+  return shiftCalendarDays(date, 1);
+};
+
+export const buildModelMigrationData = (
+  rows: DashboardRow[],
+  granularity: MigrationGranularity = 'day',
+): ModelMigrationData | null => {
   const dated = rows.filter((row) => row.activeTime != null && row.costKnown && row.costApprox > 0) as (DashboardRow & {
     activeTime: number;
   })[];
@@ -128,22 +153,17 @@ export const buildModelMigrationData = (rows: DashboardRow[]): ModelMigrationDat
     minTime = Math.min(minTime, row.activeTime);
     maxTime = Math.max(maxTime, row.activeTime);
   }
-  const spanDays = (maxTime - minTime) / DAY_MS;
-  const weekly = spanDays > 42;
-  const bucketStart = (date: Date) => {
-    const day = startOfDay(date);
-    return weekly ? shiftCalendarDays(day, -((day.getDay() + 6) % 7)) : day;
-  };
+  const bucketStart = (date: Date) => bucketStartFor(date, granularity);
 
   const firstBucket = bucketStart(new Date(minTime));
   const lastBucket = bucketStart(new Date(maxTime));
   const buckets: MigrationBucket[] = [];
   const bucketIndex = new Map<string, number>();
-  for (let cursor = firstBucket; cursor <= lastBucket; cursor = shiftCalendarDays(cursor, weekly ? 7 : 1)) {
+  for (let cursor = firstBucket; cursor <= lastBucket; cursor = nextBucketStart(cursor, granularity)) {
     bucketIndex.set(toDateInputValue(cursor), buckets.length);
     buckets.push({ date: cursor, byModel: new Map(), total: 0 });
   }
-  if (buckets.length < 2) {
+  if (buckets.length === 0) {
     return null;
   }
 
@@ -162,53 +182,19 @@ export const buildModelMigrationData = (rows: DashboardRow[]): ModelMigrationDat
     totals.set(row.modelKey, (totals.get(row.modelKey) ?? 0) + row.costApprox);
   }
 
+  // Every model gets its own series — no "other" bucket. Largest total first so
+  // the dominant model sits at the base of every stacked bar.
   const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]);
-  const top = ranked.slice(0, 5);
-  const otherTotal = ranked.slice(5).reduce((sum, [, value]) => sum + value, 0);
   const grandTotal = ranked.reduce((sum, [, value]) => sum + value, 0);
-
-  const series: MigrationSeries[] = top.map(([key, total]) => ({ key, total }));
-  if (otherTotal > 0) {
-    series.push({ key: 'other', total: otherTotal });
-  }
-
-  const x = (index: number) => (index / (buckets.length - 1)) * 100;
-  const topKeys = top.map(([key]) => key);
-  const shareFor = (bucket: MigrationBucket, key: string) => {
-    if (bucket.total <= 0) {
-      return 0;
-    }
-    if (key === 'other') {
-      const topSum = topKeys.reduce((sum, topKey) => sum + (bucket.byModel.get(topKey) ?? 0), 0);
-      return Math.max(0, bucket.total - topSum) / bucket.total;
-    }
-    return (bucket.byModel.get(key) ?? 0) / bucket.total;
-  };
-  const paths = series.map((entry, seriesIdx) => {
-    const upper: string[] = [];
-    const lower: string[] = [];
-    for (let i = 0; i < buckets.length; i++) {
-      const bucket = buckets[i];
-      if (!bucket) {
-        continue;
-      }
-      let cumBefore = 0;
-      for (let k = 0; k < seriesIdx; k++) {
-        cumBefore += shareFor(bucket, series[k]?.key ?? '');
-      }
-      const own = shareFor(bucket, entry.key);
-      upper.push(`${x(i).toFixed(2)},${(100 - (cumBefore + own) * 100).toFixed(2)}`);
-      lower.push(`${x(i).toFixed(2)},${(100 - cumBefore * 100).toFixed(2)}`);
-    }
-    return `M${upper.join(' L')} L${lower.reverse().join(' L')} Z`;
-  });
+  const series: MigrationSeries[] = ranked.map(([key, total]) => ({ key, total }));
+  const maxBucketTotal = buckets.reduce((max, bucket) => Math.max(max, bucket.total), 0);
 
   return {
     buckets,
+    granularity,
     grandTotal,
-    paths,
+    maxBucketTotal,
     series,
-    weekly,
     first: buckets[0]?.date ?? firstBucket,
     last: buckets.at(-1)?.date ?? lastBucket,
   };

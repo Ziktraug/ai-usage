@@ -80,7 +80,7 @@ describe('overview model', () => {
     expect(june10?.level).toBeGreaterThan(0);
   });
 
-  test('builds model migration series and paths', () => {
+  test('builds model migration series per model without an other bucket', () => {
     const rows = [
       row({
         sessionLabel: 'GPT one',
@@ -107,10 +107,11 @@ describe('overview model', () => {
 
     const data = buildModelMigrationData(rows);
 
-    expect(data?.weekly).toBe(false);
+    expect(data?.granularity).toBe('day');
     expect(data?.series.map((series) => series.key)).toEqual(['gpt-5', 'claude-sonnet']);
     expect(data?.grandTotal).toBe(11);
-    expect(data?.paths).toHaveLength(2);
+    // Highest single-bucket total drives the absolute (Value) bar heights.
+    expect(data?.maxBucketTotal).toBe(5);
   });
 
   test('builds session shape chart data for timed priced rows', () => {

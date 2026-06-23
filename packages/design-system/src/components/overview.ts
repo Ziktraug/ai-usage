@@ -224,14 +224,6 @@ export const scatterWrap = css({
   overflow: 'hidden',
 });
 
-export const migrationSvgWrap = css({
-  h: '150px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'surfaceMuted',
-  overflow: 'hidden',
-});
-
 export const punchGrid = css({
   display: 'grid',
   gridTemplateColumns: '34px repeat(24, minmax(10px, 1fr))',
