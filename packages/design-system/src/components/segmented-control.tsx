@@ -1,4 +1,4 @@
-import { RadioGroup } from '@ark-ui/solid/radio-group';
+import { ToggleGroup } from '@ark-ui/solid/toggle-group';
 import { For } from 'solid-js';
 import { presetButton } from './button';
 import { presetGroup } from './time-slider';
@@ -16,23 +16,24 @@ export interface SegmentedControlProps {
 }
 
 export const SegmentedControl = (props: SegmentedControlProps) => (
-  <RadioGroup.Root
+  <ToggleGroup.Root
     aria-label={props.ariaLabel}
     class={presetGroup}
+    deselectable={false}
     onValueChange={(details) => {
-      if (details.value) {
-        props.onValueChange(details.value);
+      const nextValue = details.value[0];
+      if (nextValue) {
+        props.onValueChange(nextValue);
       }
     }}
-    value={props.value}
+    value={[props.value]}
   >
     <For each={props.items}>
       {(item) => (
-        <RadioGroup.Item class={presetButton} value={item.value}>
-          <RadioGroup.ItemHiddenInput />
-          <RadioGroup.ItemText>{item.label}</RadioGroup.ItemText>
-        </RadioGroup.Item>
+        <ToggleGroup.Item class={presetButton} value={item.value}>
+          {item.label}
+        </ToggleGroup.Item>
       )}
     </For>
-  </RadioGroup.Root>
+  </ToggleGroup.Root>
 );

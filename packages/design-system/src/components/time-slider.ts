@@ -33,18 +33,19 @@ export const timeRangeMeta = css({
 export const presetGroup = css({
   display: 'flex',
   flexWrap: 'wrap',
-  gap: '6px',
+  gap: '2px',
   justifyContent: 'flex-start',
   minW: 0,
-  m: 0,
-  p: 0,
-  border: 0,
+  p: '2px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'md',
+  bg: 'surfaceMuted',
 });
 
 export const timeRangeHeaderControls = css({
   display: 'flex',
   flexWrap: 'wrap',
-  gap: '10px',
+  gap: '8px',
   justifyContent: { base: 'flex-start', md: 'flex-end' },
   minW: 0,
 });
