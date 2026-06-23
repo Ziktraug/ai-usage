@@ -72,6 +72,7 @@ const MAX_DELTA_PCT = 1000;
 
 type RangeDragPointerEvent = PointerEvent & { currentTarget: HTMLButtonElement };
 type RangeHandle = 'start' | 'end';
+type TimelineScale = 'compact' | 'linear';
 
 const monthTickFormatter = new Intl.DateTimeFormat('en', { month: 'short' });
 const monthYearFormatter = new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric' });
@@ -95,12 +96,18 @@ const VALUE_ITEMS = [
   { label: 'Sessions', value: 'sessions' },
 ] as const;
 
+const SCALE_ITEMS = [
+  { label: 'Linear', value: 'linear' },
+  { label: 'Compact', value: 'compact' },
+] as const;
+
 const toTimelineDimension = (value: string): TimelineDimension =>
   value === 'model' || value === 'provider' || value === 'project' ? value : 'harness';
 
 const toGranularity = (value: string): MigrationGranularity => (value === 'week' || value === 'month' ? value : 'day');
 
 const toTimelineValue = (value: string): TimelineValue => (value === 'share' || value === 'sessions' ? value : 'cost');
+const toTimelineScale = (value: string): TimelineScale => (value === 'linear' ? 'linear' : 'compact');
 
 const bucketLabel = (date: Date, granularity: MigrationGranularity) => {
   if (granularity === 'month') {
@@ -151,6 +158,7 @@ export const TimeRangeControl = (props: {
     (props.dateRange.domain()?.maxIndex ?? 0) > 120 ? 'week' : 'day',
   );
   const [valueMode, setValueMode] = createSignal<TimelineValue>('cost');
+  const [scaleMode, setScaleMode] = createSignal<TimelineScale>('compact');
   const [hoveredBucket, setHoveredBucket] = createSignal<number | null>(null);
   const [hoveredKey, setHoveredKey] = createSignal<string | null>(null);
   const [showAll, setShowAll] = createSignal(false);
@@ -234,7 +242,11 @@ export const TimeRangeControl = (props: {
       return total > 0 ? 100 : 0;
     }
     const maxValue = maxBucketValue(chart);
-    return maxValue > 0 ? (total / maxValue) * 100 : 0;
+    if (maxValue <= 0) {
+      return 0;
+    }
+    const ratio = total / maxValue;
+    return (scaleMode() === 'compact' ? Math.sqrt(ratio) : ratio) * 100;
   };
 
   const segmentHeight = (segmentValue: number, bucketTotal: number) =>
@@ -607,6 +619,7 @@ export const TimeRangeControl = (props: {
               <SegmentedControl
                 ariaLabel="Date presets"
                 items={dateRangePresets.map((preset) => ({ label: preset.label, value: preset.mode }))}
+                label="Range"
                 onValueChange={(value) => {
                   const preset = dateRangePresets.find((item) => item.mode === value);
                   if (preset) {
@@ -618,6 +631,7 @@ export const TimeRangeControl = (props: {
               <SegmentedControl
                 ariaLabel="Timeline dimension"
                 items={DIMENSION_ITEMS}
+                label="Group"
                 onValueChange={(value) => {
                   setDimension(toTimelineDimension(value));
                   setShowAll(false);
@@ -628,6 +642,7 @@ export const TimeRangeControl = (props: {
               <SegmentedControl
                 ariaLabel="Timeline granularity"
                 items={GRANULARITY_ITEMS}
+                label="Bucket"
                 onValueChange={(value) => {
                   setGranularity(toGranularity(value));
                   clearHover();
@@ -637,11 +652,22 @@ export const TimeRangeControl = (props: {
               <SegmentedControl
                 ariaLabel="Timeline value"
                 items={VALUE_ITEMS}
+                label="Metric"
                 onValueChange={(value) => {
                   setValueMode(toTimelineValue(value));
                   clearHover();
                 }}
                 value={valueMode()}
+              />
+              <SegmentedControl
+                ariaLabel="Timeline scale"
+                items={SCALE_ITEMS}
+                label="Scale"
+                onValueChange={(value) => {
+                  setScaleMode(toTimelineScale(value));
+                  clearHover();
+                }}
+                value={scaleMode()}
               />
             </div>
           </div>
