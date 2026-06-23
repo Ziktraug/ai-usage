@@ -42,6 +42,22 @@ export const presetGroup = css({
   bg: 'surfaceMuted',
 });
 
+export const presetGroupShell = css({
+  display: 'grid',
+  gap: '3px',
+  minW: 0,
+});
+
+export const presetGroupLabel = css({
+  color: 'faint',
+  fontSize: '9px',
+  fontWeight: 700,
+  letterSpacing: '0.08em',
+  lineHeight: 1,
+  px: '3px',
+  textTransform: 'uppercase',
+});
+
 export const timeRangeHeaderControls = css({
   display: 'flex',
   flexWrap: 'wrap',
