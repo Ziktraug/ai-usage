@@ -13,7 +13,7 @@ export const timeRangePanel = css({
 
 export const timeRangeHeader = css({
   display: 'grid',
-  gridTemplateColumns: { base: '1fr', md: 'minmax(0, 1fr) auto' },
+  gridTemplateColumns: { base: '1fr', md: 'max-content minmax(0, 1fr)' },
   gap: '12px',
   alignItems: 'start',
 });
@@ -21,6 +21,7 @@ export const timeRangeHeader = css({
 export const timeRangeTitle = css({
   fontSize: '14px',
   fontWeight: 650,
+  whiteSpace: 'nowrap',
 });
 
 export const timeRangeMeta = css({
@@ -33,11 +34,19 @@ export const presetGroup = css({
   display: 'flex',
   flexWrap: 'wrap',
   gap: '6px',
-  justifyContent: { base: 'flex-start', md: 'flex-end' },
+  justifyContent: 'flex-start',
   minW: 0,
   m: 0,
   p: 0,
   border: 0,
+});
+
+export const timeRangeHeaderControls = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '10px',
+  justifyContent: { base: 'flex-start', md: 'flex-end' },
+  minW: 0,
 });
 
 export const dateEditRow = css({

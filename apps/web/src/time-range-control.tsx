@@ -31,6 +31,7 @@ import {
   timeBucketSegment,
   timelineHoverLayer,
   timeRangeHeader,
+  timeRangeHeaderControls,
   timeRangeMeta,
   timeRangePanel,
   timeRangeTitle,
@@ -247,6 +248,8 @@ export const TimeRangeControl = (props: {
     return active === key ? 1 : 0.26;
   };
 
+  const renderedSegments = (segments: { key: string; rank: number; value: number }[]) => [...segments].reverse();
+
   const readout = createMemo(() => {
     const chart = data();
     const index = hoveredBucket();
@@ -278,12 +281,40 @@ export const TimeRangeControl = (props: {
       bucket,
       hasPrevious: previous !== null,
       hidden: rows.length - visible.length,
+      label: bucketLabel(bucket.date, granularity()),
       pct: ((index + 0.5) / chart.buckets.length) * 100,
       rows: visible,
       total: bucketValue(bucket, chart),
       useSessions: valueMode() === 'sessions' || usesSessionShare(chart),
     };
   });
+
+  const globalReadout = createMemo(() => {
+    const chart = data();
+    if (!chart) {
+      return null;
+    }
+    const useSessions = valueMode() === 'sessions' || usesSessionShare(chart);
+    const rows = chart.series
+      .map((series, rank) => ({
+        delta: null,
+        key: series.key,
+        rank,
+        value: useSessions ? series.sessions : series.total,
+      }))
+      .filter((row) => row.value > 0);
+    const visible = rows.slice(0, READOUT_LIMIT);
+    return {
+      hasPrevious: false,
+      hidden: rows.length - visible.length,
+      label: `${fmtDateOnly(chart.first)} – ${fmtDateOnly(chart.last)}`,
+      rows: visible,
+      total: useSessions ? chart.grandSessions : chart.grandTotal,
+      useSessions,
+    };
+  });
+
+  const activeReadout = createMemo(() => readout() ?? globalReadout());
 
   const updateHover = (event: MouseEvent & { currentTarget: HTMLElement }) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -572,7 +603,7 @@ export const TimeRangeControl = (props: {
               <div class={timeRangeTitle}>Time range</div>
               <div class={timeRangeMeta}>{props.dateRange.label()}</div>
             </div>
-            <div class={dateEditRow}>
+            <div class={timeRangeHeaderControls}>
               <SegmentedControl
                 ariaLabel="Date presets"
                 items={dateRangePresets.map((preset) => ({ label: preset.label, value: preset.mode }))}
@@ -687,7 +718,7 @@ export const TimeRangeControl = (props: {
                   <For each={bars()}>
                     {(bar) => (
                       <div class={timeBucket} style={{ height: `${barHeight(bar.bucket, chart())}%` }}>
-                        <For each={bar.segments}>
+                        <For each={renderedSegments(bar.segments)}>
                           {(segment) => {
                             const marker = swatch(segment.key, segment.rank);
                             return (
@@ -780,17 +811,10 @@ export const TimeRangeControl = (props: {
               <span>{fmtDateOnly(chart().maxDay)}</span>
             </div>
             <div class={migrationReadout}>
-              <Show
-                fallback={
-                  <span class={migrationReadoutHint}>
-                    {fmtDateOnly(chart().first)} – {fmtDateOnly(chart().last)}
-                  </span>
-                }
-                when={readout()}
-              >
+              <Show when={activeReadout()}>
                 {(tip) => (
                   <>
-                    <span class={migrationReadoutDate}>{bucketLabel(tip().bucket.date, granularity())}</span>
+                    <span class={migrationReadoutDate}>{tip().label}</span>
                     <span class={migrationReadoutTotal}>{formatValue(tip().total, tip().useSessions)}</span>
                     <For each={tip().rows}>
                       {(row) => {
