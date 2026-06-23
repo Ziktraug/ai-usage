@@ -71,6 +71,7 @@ import { type DateBounds, shiftCalendarDays, startOfDay, toDateInputValue } from
 import { createDateRangeController } from './date-range-controller';
 import { GroupPanel } from './group-panel';
 import { Overview } from './overview';
+import type { TimelineDimension } from './overview-model';
 import { ProjectGroupEditor } from './project-group-editor';
 import { ProjectSummary } from './project-summary';
 import { RefreshStatus } from './refresh-status';
@@ -479,14 +480,17 @@ export const Dashboard = (props: {
     setSelectedKey(rowKey(row));
     setTab('sessions');
   };
-  const inspectOverviewModel = (modelKey: string) => {
-    setFieldFilter('model', modelKey);
-    setTab('sessions');
-  };
   const setFieldFilters = (updater: Updater<FieldFilters>) =>
     updateSearch((current) => ({ ...current, filters: applyTableUpdate(updater, current.filters) }));
   const setFieldFilter = (key: FieldFilterKey, value: string) =>
     setFieldFilters((current) => ({ ...current, [key]: value }));
+  const setTimelineDimensionFilter = (dimension: TimelineDimension, value: string) => {
+    if (dimension === 'harness') {
+      toggleHarness(value);
+      return;
+    }
+    setFieldFilter(dimension, value);
+  };
   const clearFieldFilter = (key: FieldFilterKey) =>
     setFieldFilters((current) => {
       const next = { ...current };
@@ -649,10 +653,11 @@ export const Dashboard = (props: {
           when={!isDemo}
         >
           <TimeRangeControl
+            activeFieldFilters={fieldFilters()}
             activeHarness={harness()}
             dateRange={dateRange}
             onDateRangeCommit={commitTableDateRange}
-            onHarnessFilter={toggleHarness}
+            onDimensionFilter={setTimelineDimensionFilter}
             rows={timelineRows()}
           />
 
@@ -693,7 +698,6 @@ export const Dashboard = (props: {
                     <Overview
                       campaigns={campaignViews()}
                       onSelectDay={focusDay}
-                      onSelectModel={inspectOverviewModel}
                       onSelectSession={inspectOverviewSession}
                       rangeLabel={dateRange.label()}
                       rows={tableRows()}

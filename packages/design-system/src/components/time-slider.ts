@@ -81,6 +81,18 @@ export const timeSliderBars = css({
   zIndex: 2,
 });
 
+export const timelineHoverLayer = css({
+  appearance: 'none',
+  position: 'absolute',
+  inset: '8px 8px 22px',
+  border: 0,
+  p: 0,
+  bg: 'transparent',
+  cursor: 'default',
+  pointerEvents: 'auto',
+  zIndex: 2,
+});
+
 export const timeBucket = css({
   flex: '1 1 0',
   minW: '2px',
@@ -134,10 +146,10 @@ export const timeSliderRangeDrag = css({
   appearance: 'none',
   position: 'absolute',
   top: 0,
-  bottom: 0,
+  h: '18px',
   left: 'var(--slider-range-start)',
   right: 'var(--slider-range-end)',
-  zIndex: 3,
+  zIndex: 4,
   border: '0',
   p: 0,
   bg: 'transparent',
@@ -153,11 +165,11 @@ export const timeSliderRangeDrag = css({
   _before: {
     content: '""',
     position: 'absolute',
-    top: '12px',
+    top: '3px',
     left: '50%',
     transform: 'translateX(-50%)',
     w: '46px',
-    h: '22px',
+    h: '14px',
     border: '1px solid token(colors.lineStrong)',
     borderRadius: 'full',
     bg: 'surface',
@@ -167,7 +179,7 @@ export const timeSliderRangeDrag = css({
   _after: {
     content: '""',
     position: 'absolute',
-    top: '21px',
+    top: '8px',
     left: '50%',
     transform: 'translateX(-50%)',
     w: '20px',
