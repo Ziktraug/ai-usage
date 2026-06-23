@@ -118,6 +118,56 @@ export const timeSliderControl = css({
   h: '118px',
 });
 
+export const timeChartToolbar = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '6px 10px',
+});
+
+export const timeChartZoomSummary = css({
+  color: 'muted',
+  fontSize: '11px',
+  fontWeight: 600,
+});
+
+export const timeChartZoomControls = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  justifyContent: 'flex-end',
+  gap: '4px',
+});
+
+export const timeChartZoomButton = css({
+  appearance: 'none',
+  h: '24px',
+  px: '8px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'full',
+  bg: 'surface',
+  color: 'muted',
+  cursor: 'pointer',
+  fontSize: '11px',
+  fontWeight: 650,
+  lineHeight: 1,
+  transition: 'border-color 0.15s, color 0.15s, transform 0.15s',
+  _hover: {
+    borderColor: 'accent',
+    color: 'ink',
+    transform: 'translateY(-1px)',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.ink)',
+    outlineOffset: '2px',
+  },
+  _disabled: {
+    cursor: 'not-allowed',
+    opacity: 0.48,
+    transform: 'none',
+  },
+});
+
 export const timeSliderTrack = css({
   position: 'relative',
   h: '118px',
@@ -151,6 +201,12 @@ export const timelineHoverLayer = css({
   cursor: 'default',
   pointerEvents: 'auto',
   zIndex: 2,
+  '&[data-zoomed="true"]': {
+    cursor: 'grab',
+  },
+  '&[data-dragging="true"]': {
+    cursor: 'grabbing',
+  },
 });
 
 export const timeBucket = css({
