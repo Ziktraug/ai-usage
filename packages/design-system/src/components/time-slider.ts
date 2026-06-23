@@ -87,12 +87,13 @@ export const presetGroupLabel = css({
   textTransform: 'uppercase',
 });
 
-export const timeRangeHeaderControls = css({
+export const timeRangeViewControls = css({
   display: 'flex',
   flexWrap: 'wrap',
   gap: '8px',
-  justifyContent: { base: 'flex-start', md: 'flex-end' },
-  minW: 0,
+  alignItems: 'end',
+  justifyContent: 'flex-start',
+  pt: '2px',
 });
 
 export const dateEditRow = css({
@@ -109,12 +110,7 @@ export const timeSliderRoot = css({
 
 export const timeSliderFrame = css({
   display: 'grid',
-  gap: '8px',
-  p: '9px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surfaceMuted',
-  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.18)',
+  gap: '10px',
 });
 
 export const timeSliderControl = css({
@@ -218,6 +214,25 @@ export const timeSliderBrushColumn = css({
   minW: 0,
 });
 
+export const timeSliderBrushHeader = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  alignItems: 'baseline',
+  justifyContent: 'space-between',
+  gap: '6px 12px',
+  color: 'muted',
+  fontSize: '11px',
+  fontWeight: 600,
+});
+
+export const timeSliderQuickRanges = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '2px',
+  justifyContent: 'flex-end',
+  minW: 0,
+});
+
 export const timeSliderBrushTrack = css({
   position: 'relative',
   h: '26px',
@@ -259,9 +274,16 @@ export const timeSliderRangeDrag = css({
   _hover: {
     bg: 'rgba(177, 78, 18, 0.06)',
   },
+  '&:hover::before': {
+    borderColor: 'accent',
+    boxShadow: '0 0 0 3px token(colors.focusRing)',
+  },
   '&[data-dragging="true"]': {
     cursor: 'grabbing',
     bg: 'rgba(177, 78, 18, 0.1)',
+  },
+  '&[data-dragging="true"]::before': {
+    borderColor: 'accent',
   },
   _before: {
     content: '""',
@@ -269,13 +291,14 @@ export const timeSliderRangeDrag = css({
     top: '50%',
     left: '50%',
     transform: 'translate(-50%, -50%)',
-    w: '38px',
-    h: '14px',
+    w: '54px',
+    h: '16px',
     border: '1px solid token(colors.line)',
     borderRadius: 'full',
     bg: 'surface',
-    boxShadow: '0 4px 14px rgba(0, 0, 0, 0.18)',
+    boxShadow: 'none',
     opacity: 0.96,
+    transition: 'border-color 0.15s, box-shadow 0.15s',
   },
   _after: {
     content: '""',
@@ -311,12 +334,12 @@ export const timeSliderThumb = css({
     top: '50%',
     left: '50%',
     transform: 'translate(-50%, -50%)',
-    w: '12px',
-    h: '23px',
+    w: '14px',
+    h: '26px',
     border: '2px solid token(colors.accent)',
     borderRadius: 'full',
     bg: 'surface',
-    boxShadow: '0 7px 18px rgba(0, 0, 0, 0.28)',
+    boxShadow: '0 0 0 1px token(colors.canvas)',
   },
   _after: {
     content: '""',
@@ -332,7 +355,7 @@ export const timeSliderThumb = css({
   },
   _hover: {
     _before: {
-      boxShadow: '0 0 0 4px token(colors.focusRing), token(shadows.overlay)',
+      boxShadow: '0 0 0 4px token(colors.focusRing)',
     },
   },
   _focusVisible: {
@@ -394,7 +417,7 @@ export const timeSliderDateChip = css({
   fontWeight: 650,
   lineHeight: 1,
   outline: 'none',
-  boxShadow: '0 5px 14px rgba(0, 0, 0, 0.18)',
+  boxShadow: 'none',
   transition: 'border-color 0.15s, box-shadow 0.15s, transform 0.15s',
   _hover: {
     borderColor: 'accent',
@@ -402,7 +425,7 @@ export const timeSliderDateChip = css({
   },
   _focusVisible: {
     borderColor: 'accent',
-    boxShadow: '0 0 0 3px token(colors.focusRing), token(shadows.card)',
+    boxShadow: '0 0 0 3px token(colors.focusRing)',
   },
 });
 
