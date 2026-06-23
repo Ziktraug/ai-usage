@@ -158,11 +158,11 @@ export const presetButton = css({
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  h: '30px',
+  h: '26px',
   px: '10px',
-  border: '1px solid token(colors.line)',
+  border: '1px solid transparent',
   borderRadius: 'sm',
-  bg: 'surface',
+  bg: 'transparent',
   color: 'muted',
   fontSize: '12px',
   fontWeight: 600,
@@ -171,10 +171,11 @@ export const presetButton = css({
   whiteSpace: 'nowrap',
   transition: 'border-color 0.15s, color 0.15s, background-color 0.15s',
   _hover: {
-    borderColor: 'accent',
+    bg: 'surface',
+    borderColor: 'line',
     color: 'accent',
   },
-  '&[data-active="true"], &[data-state=checked]': {
+  '&[data-active="true"], &[data-state=checked], &[data-state=on]': {
     bg: 'accentSoft',
     borderColor: 'accent',
     color: 'accent',
