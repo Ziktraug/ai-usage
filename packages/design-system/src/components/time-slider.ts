@@ -90,7 +90,6 @@ export const timeSliderTrack = css({
   borderRadius: 'sm',
   bg: 'surfaceMuted',
   overflow: 'hidden',
-  cursor: 'ew-resize',
   boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.32)',
   _focusWithin: {
     boxShadow: '0 0 0 3px token(colors.focusRing)',
@@ -99,7 +98,7 @@ export const timeSliderTrack = css({
 
 export const timeSliderBars = css({
   position: 'absolute',
-  inset: '8px 8px 22px',
+  inset: '8px',
   display: 'flex',
   alignItems: 'flex-end',
   gap: '2px',
@@ -110,7 +109,7 @@ export const timeSliderBars = css({
 export const timelineHoverLayer = css({
   appearance: 'none',
   position: 'absolute',
-  inset: '8px 8px 22px',
+  inset: '8px',
   border: 0,
   p: 0,
   bg: 'transparent',
@@ -157,6 +156,39 @@ export const timeSliderDim = css({
 
 export const timeSliderDimLeft = cx(timeSliderDim, css({ left: 0, w: 'var(--slider-range-start)' }));
 export const timeSliderDimRight = cx(timeSliderDim, css({ right: 0, w: 'var(--slider-range-end)' }));
+
+export const timeSliderBrushRow = css({
+  display: 'grid',
+  gridTemplateColumns: { base: '1fr', lg: 'max-content minmax(0, 1fr)' },
+  gap: '10px',
+  alignItems: 'end',
+});
+
+export const timeSliderDateInputs = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '10px',
+  alignItems: 'end',
+});
+
+export const timeSliderBrushColumn = css({
+  display: 'grid',
+  gap: '6px',
+  minW: 0,
+});
+
+export const timeSliderBrushTrack = css({
+  position: 'relative',
+  h: '28px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surfaceMuted',
+  overflow: 'hidden',
+  cursor: 'ew-resize',
+  _focusWithin: {
+    boxShadow: '0 0 0 3px token(colors.focusRing)',
+  },
+});
 
 export const monthGridline = css({
   position: 'absolute',
@@ -218,11 +250,11 @@ export const timeSliderRangeDrag = css({
 export const timeSliderThumb = css({
   appearance: 'none',
   position: 'absolute',
-  top: '32px',
-  transform: 'translateX(-50%)',
+  top: '50%',
+  transform: 'translate(-50%, -50%)',
   zIndex: 4,
-  w: '32px',
-  h: '64px',
+  w: '28px',
+  h: '28px',
   border: '0',
   borderRadius: 'full',
   bg: 'transparent',
@@ -235,8 +267,8 @@ export const timeSliderThumb = css({
     top: '50%',
     left: '50%',
     transform: 'translate(-50%, -50%)',
-    w: '18px',
-    h: '52px',
+    w: '14px',
+    h: '24px',
     border: '2px solid token(colors.accent)',
     borderRadius: 'full',
     bg: 'surface',
@@ -248,8 +280,8 @@ export const timeSliderThumb = css({
     top: '50%',
     left: '50%',
     transform: 'translate(-50%, -50%)',
-    w: '5px',
-    h: '28px',
+    w: '4px',
+    h: '14px',
     borderLeft: '1px solid token(colors.accent)',
     borderRight: '1px solid token(colors.accent)',
     opacity: 0.75,
