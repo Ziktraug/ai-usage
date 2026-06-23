@@ -9,7 +9,9 @@ import {
   buildOverviewSessionItems,
   buildPunchcardData,
   buildSessionShapeData,
+  buildTimelineData,
   buildTopSessions,
+  type TimelineDimension,
 } from './overview-model';
 import { enrichReportRow } from './shared';
 
@@ -80,7 +82,7 @@ describe('overview model', () => {
     expect(june10?.level).toBeGreaterThan(0);
   });
 
-  test('builds model migration series and paths', () => {
+  test('builds model migration series per model without an other bucket', () => {
     const rows = [
       row({
         sessionLabel: 'GPT one',
@@ -107,10 +109,93 @@ describe('overview model', () => {
 
     const data = buildModelMigrationData(rows);
 
-    expect(data?.weekly).toBe(false);
+    expect(data?.granularity).toBe('day');
     expect(data?.series.map((series) => series.key)).toEqual(['gpt-5', 'claude-sonnet']);
     expect(data?.grandTotal).toBe(11);
-    expect(data?.paths).toHaveLength(2);
+    // Highest single-bucket total drives the absolute (Value) bar heights.
+    expect(data?.maxBucketTotal).toBe(5);
+  });
+
+  test('builds timeline series for every supported dimension with cost and sessions', () => {
+    const rows = [
+      row({
+        sessionLabel: 'Codex alpha',
+        activeDate: '2026-06-01T12:00:00.000Z',
+        date: '2026-06-01T12:00:00.000Z',
+        harness: 'Codex',
+        model: 'gpt-5',
+        provider: 'Codex API',
+        project: 'alpha',
+        costApprox: 5,
+      }),
+      row({
+        sessionLabel: 'Claude beta',
+        activeDate: '2026-06-02T12:00:00.000Z',
+        date: '2026-06-02T12:00:00.000Z',
+        harness: 'Claude',
+        model: 'claude-sonnet',
+        provider: 'Anthropic',
+        project: 'beta',
+        costApprox: 2,
+      }),
+      row({
+        sessionLabel: 'Codex alpha unpriced',
+        activeDate: '2026-06-03T12:00:00.000Z',
+        date: '2026-06-03T12:00:00.000Z',
+        harness: 'Codex',
+        model: 'gpt-5',
+        provider: 'Codex API',
+        project: 'alpha',
+        costApprox: 0,
+        costKnown: false,
+      }),
+    ];
+
+    const expectations: Record<TimelineDimension, string[]> = {
+      harness: ['Codex', 'Claude'],
+      model: ['gpt-5', 'claude-sonnet'],
+      project: ['alpha', 'beta'],
+      provider: ['Codex API', 'Anthropic'],
+    };
+
+    for (const [dimension, keys] of Object.entries(expectations) as [TimelineDimension, string[]][]) {
+      const data = buildTimelineData(rows, { dimension, granularity: 'day' });
+      const firstKey = keys[0] ?? '';
+
+      expect(data?.dimension).toBe(dimension);
+      expect(data?.series.map((series) => series.key)).toEqual(keys);
+      expect(data?.grandTotal).toBe(7);
+      expect(data?.grandSessions).toBe(3);
+      expect(data?.series.find((series) => series.key === firstKey)?.sessions).toBe(2);
+      expect(data?.buckets[2]?.byKey.get(firstKey)?.sessions).toBe(1);
+      expect(data?.buckets[2]?.byKey.get(firstKey)?.cost).toBe(0);
+    }
+  });
+
+  test('builds timeline data over a forced domain', () => {
+    const rows = [
+      row({
+        sessionLabel: 'Middle',
+        activeDate: '2026-06-10T12:00:00.000Z',
+        date: '2026-06-10T12:00:00.000Z',
+        costApprox: 3,
+      }),
+    ];
+
+    const data = buildTimelineData(rows, {
+      dimension: 'model',
+      domain: {
+        minDay: new Date('2026-06-01T00:00:00.000Z'),
+        maxDay: new Date('2026-06-30T00:00:00.000Z'),
+      },
+      granularity: 'week',
+    });
+
+    expect(data?.first.toISOString()).toBe('2026-06-01T00:00:00.000Z');
+    expect(data?.last.toISOString()).toBe('2026-06-29T00:00:00.000Z');
+    expect(data?.buckets).toHaveLength(5);
+    expect(data?.maxBucketTotal).toBe(3);
+    expect(data?.maxBucketSessions).toBe(1);
   });
 
   test('builds session shape chart data for timed priced rows', () => {
