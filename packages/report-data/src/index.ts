@@ -211,11 +211,16 @@ const selectedStoredHarnessKeys = (request: LocalUsageSelection): HarnessKey[] |
   return harnessKeys.filter((key) => key !== 'cursor');
 };
 
-type ProjectedRow = SourcedRow & {
+export type ProjectedRow = SourcedRow & {
   projectGroupId: string;
   projectSourceId: string;
   rawProject: string;
 };
+
+export interface ProjectedLocalReportRowsResult extends Omit<LocalReportRowsResult, 'rows' | 'warnings'> {
+  rows: ProjectedRow[];
+  warnings: (LocalHistoryWarning | UsageReportWarning)[];
+}
 
 interface ProjectProjection {
   projectGroups: UsageReportProjectGroup[];
@@ -289,6 +294,44 @@ export const collectLocalReportRowsWithWarnings = (
     }),
     (result) => ({
       harnesses: result.collection.harnesses.length,
+      rows: result.rows.length,
+      warnings: result.warnings.length,
+    }),
+  );
+
+export const collectProjectedLocalReportRowsWithWarnings = (
+  request: LocalReportRowsRequest,
+): Effect.Effect<
+  ProjectedLocalReportRowsResult,
+  LocalHistoryError,
+  import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
+> =>
+  withPerfSpan(
+    'aiUsage.report.collectProjectedRowsWithWarnings',
+    Effect.gen(function* () {
+      const { rows, warnings, collection } = yield* collectLocalReportRowsWithWarnings({
+        ...request,
+        keepSource: true,
+      });
+      const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
+      const projection = yield* withPerfSpan(
+        'aiUsage.report.projectGroups',
+        Effect.sync(() =>
+          buildProjectProjection(rows as SourcedRow[], config.projectGroups ?? [], config.projectAliases ?? []),
+        ),
+        (result) => ({
+          groups: result.projectGroups.length,
+          rows: result.rows.length,
+          warnings: result.warnings.length,
+        }),
+      );
+      return {
+        collection,
+        rows: projection.rows,
+        warnings: [...warnings, ...projection.warnings],
+      };
+    }),
+    (result) => ({
       rows: result.rows.length,
       warnings: result.warnings.length,
     }),
