@@ -10,7 +10,7 @@ It does not own filesystem access, local history discovery, SQLite, LAN transpor
 
 ## Public Interface
 
-The package exports the root barrel plus declared subpath exports in `package.json`, including `./analytics`, `./harness-metadata`, `./html-export`, `./pricing`, `./project-alias`, `./report-data`, `./snapshot`, `./types`, and `./usage-row`.
+The package exports the root barrel plus declared subpath exports in `package.json`. The canonical list of public exports and their responsibilities lives in [`docs/public-package-interfaces.md`](../../docs/public-package-interfaces.md#ai-usagereport-core).
 
 ## Depends On
 

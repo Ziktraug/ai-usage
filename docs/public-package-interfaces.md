@@ -6,12 +6,17 @@ The workspace packages expose only these public seams. Cross-package imports mus
 
 - `.`: core barrel for stable domain helpers.
 - `./analytics`: analytics summary/group calculations.
+- `./auth`: authentication/session provenance helpers.
+- `./csv`: CSV serialization for usage rows.
 - `./harness-metadata`: harness keys, labels, and metadata.
 - `./html-export`: static report HTML payload/asset inlining.
 - `./pricing`: editable model pricing and cost approximation support.
+- `./provenance`: usage row provenance attribution helpers.
 - `./project-alias`: project alias config parsing and application.
 - `./project-group`: project grouping config, source identity, and selector matching helpers.
+- `./merge-bundle`: merge bundle serialization and validation types.
 - `./report-data`: serialized usage report payloads and report preparation.
+- `./session-lineage`: parent/root source-session normalization across harnesses.
 - `./snapshot`: multi-machine usage snapshot creation, parsing, and source labels.
 - `./types`: usage row and provenance types.
 - `./usage-row`: usage row derivations such as token totals, active dates, and cost helpers.
