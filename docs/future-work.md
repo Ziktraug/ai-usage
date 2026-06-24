@@ -61,27 +61,25 @@ over-emphasize it or build ROI/break-even features on top of it.
   individual columns/cards carry their own caveats (partial Cursor counters,
   ambiguous reconciliation, usage-unavailable sessions) where they apply.
 - Session intention via `firstPrompt` + parent linking: propagate `firstPrompt`
-  into `UsageRow`, then cluster sessions by intent. Gated by the session-linking
-  work below — orchestrator-spawned sessions fragment today.
+  into `UsageRow`, then cluster sessions by intent. Parent linking is already in
+  place (see below); the remaining work is the intent signal and grouping UI.
 
 ## Session Linking And Titles
 
-- Codex already parses the full parent/child tree (`thread_spawn_edges` SQLite
-  table + `payload.source.subagent.thread_spawn.parent_thread_id` in JSONL) in
-  `packages/local-collectors/src/codex-history.ts` and marks children
-  `subagent: true`, but drops the parent id at the output boundary. Propagating a
-  `parentSessionId` onto `UsageRow` would let an orchestrator + its spawned sessions
-  collapse into one logical "campaign" — the cheapest path to de-fragmenting
-  ambitious multi-session work.
-- Claude Code has no cross-session parent pointer in the raw JSONL — only the
-  in-file `isSidechain` flag and `agent-*` filename convention. Full tree
-  reconstruction is therefore harness-asymmetric; reflect that as a per-metric
-  limitation rather than pretending parity across harnesses.
+- Codex parent-link propagation now exists through `parentSourceSessionId` on
+  `UsageRow.source`, and report normalization derives `rootSourceSessionId` via
+  `packages/report-core/src/session-lineage.ts`. The remaining useful work is
+  around `firstPrompt` propagation, campaign-level intent/title display, and how
+  child sessions inherit or group under parent titles.
+- Claude Code remains harness-asymmetric: raw logs do not expose the same
+  cross-session parent pointer (only the in-file `isSidechain` flag and
+  `agent-*` filename convention). Reflect that as a per-metric limitation
+  rather than pretending parity across harnesses.
 - Titles are already extracted per harness (Claude `ai-title` event, Codex
-  `threads.title`, OpenCode `session.title`, Cursor `composerData.name`) and shown
-  in Top Sessions. Remaining gap is narrower: subagent/orchestrator children fall
-  back to generic ids — once parent linking exists, children could inherit the
-  parent's title.
+  `threads.title`, OpenCode `session.title`, Cursor `composerData.name`) and
+  shown in Top Sessions. Remaining gap is narrower: subagent/orchestrator
+  children fall back to generic ids — children could inherit the parent's title
+  once campaign grouping is surfaced in the UI.
 
 ## Source Logs
 
