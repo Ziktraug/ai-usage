@@ -11,6 +11,7 @@ import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usa
 import { importPeerMergeBundle, usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 import {
+  collectProjectedLocalReportRowsWithWarnings,
   createLocalReportPayload,
   createLocalUsageSnapshot,
   createMergedUsageReport,
@@ -323,6 +324,88 @@ describe('shared reporting', () => {
       });
     } finally {
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('projects configured project groups through the CLI projected-row API', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-projected-rows-'));
+    const configCwd = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-projected-config-'));
+    try {
+      const storage = createLocalHistoryStorage(home);
+      writeAiUsageConfig(home, {
+        projectGroups: [
+          {
+            id: 'exalibur',
+            name: 'exalibur',
+            sources: [
+              { machineId: 'peer-a', sourcePath: '/work/exalibur' },
+              { machineId: 'peer-a', sourcePath: '/work/exalibur2' },
+              { machineId: 'peer-b', sourcePath: '/Users/nathan/exalibur' },
+              { machineId: 'peer-b', sourcePath: '/missing/exalibur3' },
+            ],
+          },
+        ],
+      });
+      writeFileSync(
+        path.join(configCwd, 'ai-usage.config.ts'),
+        `export default { cursor: { usageExportDir: './cursor-exports' } }`,
+      );
+      await Effect.runPromise(
+        importPeerMergeBundle({
+          dbPath: usageStorePath(home),
+          localMachineId: testMachine.id,
+          bundle: createUsageMergeBundle({
+            machine: { id: 'peer-a', label: 'Machine A' },
+            rows: [
+              makeSourcedRow({ project: 'exalibur', sourcePath: '/work/exalibur', sessionId: 'a-exalibur' }),
+              makeSourcedRow({ project: 'exalibur2', sourcePath: '/work/exalibur2', sessionId: 'a-exalibur2' }),
+            ],
+          }),
+        }),
+      );
+      await Effect.runPromise(
+        importPeerMergeBundle({
+          dbPath: usageStorePath(home),
+          localMachineId: testMachine.id,
+          bundle: createUsageMergeBundle({
+            machine: { id: 'peer-b', label: 'Machine B' },
+            rows: [
+              makeSourcedRow({
+                project: 'exalibur',
+                sourcePath: '/Users/nathan/exalibur',
+                sessionId: 'b-exalibur',
+              }),
+            ],
+          }),
+        }),
+      );
+
+      const result = await Effect.runPromise(
+        collectProjectedLocalReportRowsWithWarnings({
+          harness: null,
+          includeCursor: false,
+          configCwd,
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(result.rows).toHaveLength(3);
+      expect(result.rows.every((row) => row.project === 'exalibur')).toBe(true);
+      expect(
+        result.rows.some(
+          (row) =>
+            row.rawProject !== undefined && row.projectGroupId !== undefined && row.projectSourceId !== undefined,
+        ),
+      ).toBe(true);
+      expect(
+        result.warnings.find((warning) => 'reason' in warning && warning.reason === 'partial-group'),
+      ).toMatchObject({
+        groupId: 'exalibur',
+        operation: 'projectGrouping',
+        selectors: [{ machineId: 'peer-b', sourcePath: '/missing/exalibur3' }],
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(configCwd, { recursive: true, force: true });
     }
   });
 

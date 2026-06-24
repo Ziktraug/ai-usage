@@ -7,7 +7,7 @@ import { ensureMachineConfig, writeMachineConfig } from '@ai-usage/local-collect
 import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
 import type { UsageSnapshot } from '@ai-usage/report-core/snapshot';
 import {
-  collectLocalReportRowsWithWarnings,
+  collectProjectedLocalReportRowsWithWarnings,
   createLocalReportPayload,
   createLocalUsageSnapshot,
   createMergedUsageReport,
@@ -154,7 +154,7 @@ export const app = Effect.gen(function* () {
           return yield* Effect.promise(() => renderUsagePayloadForCli(payload, command.args));
         })
       : yield* Effect.gen(function* () {
-          const { rows, warnings } = yield* collectLocalReportRowsWithWarnings(reportRequest);
+          const { rows, warnings } = yield* collectProjectedLocalReportRowsWithWarnings(reportRequest);
           yield* writeFormatWarningsStderr(command.args, warnings);
           return yield* Effect.promise(() => renderUsageReportForCli(rows, command.args, undefined, warnings));
         });
