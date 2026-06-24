@@ -191,6 +191,9 @@ const mergeAiUsageConfig = (base: AiUsageConfig, override: AiUsageConfig): AiUsa
   if (override.projectAliases === undefined && base.projectAliases !== undefined) {
     merged.projectAliases = base.projectAliases;
   }
+  if (override.projectGroups === undefined && base.projectGroups !== undefined) {
+    merged.projectGroups = base.projectGroups;
+  }
   if (base.cursor || override.cursor) {
     merged.cursor = { ...(base.cursor ?? {}), ...(override.cursor ?? {}) };
   }
