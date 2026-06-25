@@ -11,6 +11,7 @@
     "./harness-metadata": "./src/harness-metadata.ts",
     "./html-export": "./src/html-export.ts",
     "./pricing": "./src/pricing.ts",
+    "./model-identity": "./src/model-identity.ts",
     "./provenance": "./src/provenance.ts",
     "./project-alias": "./src/project-alias.ts",
     "./project-group": "./src/project-group.ts",

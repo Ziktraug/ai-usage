@@ -86,4 +86,17 @@ describe('analytics calculation', () => {
     expect(beta?.unpriced).toBe(1);
     expect(beta?.costPerSession).toBeNull();
   });
+
+  test('groups model analytics by shared base model identity', () => {
+    const analytics = calculateAnalytics([
+      row({ model: 'openai/gpt-5.4', costApprox: 2 }),
+      row({ model: 'gpt-5.4-high', costApprox: 3 }),
+      row({ model: 'gpt-5-codex', costApprox: 5 }),
+    ]);
+
+    const gpt54 = analytics.byModel.find((group) => group.key === 'gpt-5.4');
+    expect(gpt54?.sessions).toBe(2);
+    expect(gpt54?.costSum).toBe(5);
+    expect(analytics.byModel.find((group) => group.key === 'gpt-5-codex')?.sessions).toBe(1);
+  });
 });
