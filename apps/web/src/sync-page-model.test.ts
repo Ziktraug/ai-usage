@@ -12,6 +12,8 @@ import {
   mergeBundleUrlForLanPeer,
 } from './sync-page-model';
 
+const MERIDIEM_PATTERN = /\b[AP]M\b/;
+
 const lanState: LanMergeState = {
   localMachine: { id: 'local-1', label: 'Local Workstation' },
   service: { status: 'stopped', urls: ['http://192.168.1.10:3847/lan/merge-bundle'] },
@@ -78,5 +80,14 @@ describe('LAN merge sync page model', () => {
   test('keeps invalid and missing dates readable', () => {
     expect(formatSyncDateTime(undefined)).toBe('Never');
     expect(formatSyncDateTime('not-a-date')).toBe('not-a-date');
+  });
+
+  test('formats sync timestamps with a 24-hour clock', () => {
+    const afternoon = new Date(2026, 5, 19, 13, 30).toISOString();
+    const midnight = new Date(2026, 5, 19, 0, 5).toISOString();
+
+    expect(formatSyncDateTime(afternoon)).toContain('13:30');
+    expect(formatSyncDateTime(afternoon)).not.toMatch(MERIDIEM_PATTERN);
+    expect(formatSyncDateTime(midnight)).toContain('00:05');
   });
 });

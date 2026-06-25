@@ -18,6 +18,7 @@ const dateTimeFormatter = new Intl.DateTimeFormat('en', {
   month: 'short',
   day: '2-digit',
   hour: '2-digit',
+  hourCycle: 'h23',
   minute: '2-digit',
 });
 const dateOnlyFormatter = new Intl.DateTimeFormat('en', {
