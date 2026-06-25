@@ -12,8 +12,8 @@
   "name": "ai-usage",
   "scripts": {
     "cli": "bun apps/cli/src/main.ts",
-    "dev": "bun tools/dev.ts",
-    "dev:once": "bun run --cwd apps/web dev",
+    "dev": "exec turbo watch dev --filter @ai-usage/web --ui=stream --log-order=stream",
+    "dev:once": "bun run --cwd apps/web dev:standalone",
     "preview": "bun run --cwd apps/web preview",
     "html": "bun apps/cli/src/html.ts",
     "build": "turbo run build",
