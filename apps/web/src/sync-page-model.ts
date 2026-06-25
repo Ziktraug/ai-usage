@@ -1,6 +1,15 @@
 import type { DiscoveredLanPeer } from '@ai-usage/lan-pairing';
 import type { LanMergeState, TrustedLanPeer } from '@ai-usage/usage-merge';
 
+const syncDateTimeFormatter = new Intl.DateTimeFormat('en', {
+  day: '2-digit',
+  hour: '2-digit',
+  hourCycle: 'h23',
+  minute: '2-digit',
+  month: 'short',
+  year: 'numeric',
+});
+
 export const formatSyncDateTime = (iso: string | undefined) => {
   if (!iso) {
     return 'Never';
@@ -9,7 +18,7 @@ export const formatSyncDateTime = (iso: string | undefined) => {
   if (Number.isNaN(date.getTime())) {
     return iso;
   }
-  return date.toLocaleString();
+  return syncDateTimeFormatter.format(date);
 };
 
 export interface SyncOperationError {
