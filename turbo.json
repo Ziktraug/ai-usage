@@ -35,6 +35,16 @@
     "format": {
       "outputs": []
     },
+    "@ai-usage/web#dev": {
+      "cache": false,
+      "dependsOn": ["dev:prepare"],
+      "persistent": true
+    },
+    "@ai-usage/web#dev:prepare": {
+      "cache": false,
+      "dependsOn": ["@ai-usage/design-system#build"],
+      "outputs": ["styled-system/**"]
+    },
     "dev": {
       "cache": false,
       "persistent": true
