@@ -1,3 +1,4 @@
+import { modelGroupKey } from './model-identity';
 import type { Row } from './types';
 import {
   usageRowCacheReadTokens,
@@ -237,7 +238,7 @@ export const calculateAnalytics = (rows: Row[], now = Date.now()): AnalyticsSumm
     durationRows: durationRows.length,
     averageDurationMs: durationRows.length ? durationMs / durationRows.length : null,
     recentSessions,
-    byModel: groupBy(rows, (row) => row.model, totalCost),
+    byModel: groupBy(rows, (row) => modelGroupKey(row.model), totalCost),
     byProvider: groupBy(rows, (row) => row.provider, totalCost),
     byHarness: groupBy(rows, (row) => row.harness, totalCost),
   };

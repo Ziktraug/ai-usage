@@ -5,6 +5,7 @@ import {
   buildCampaignTableRows,
   buildCampaignViews,
   buildDashboardMetrics,
+  buildModelGroups,
   buildPreviousPeriodSummary,
   buildProjectGroupRows,
   buildSortedDashboardRows,
@@ -179,6 +180,22 @@ describe('dashboard model', () => {
       'exalibur · Machine A',
       'exalibur · Machine B',
     ]);
+  });
+
+  test('groups model rows by shared base model identity', () => {
+    const bounds: DateBounds = { from: null, to: null };
+    const rows = [
+      row({ model: 'openai/gpt-5.4', costApprox: 2 }),
+      row({ model: 'cursor/gpt-5.4-high', costApprox: 3 }),
+      row({ model: 'gpt-5-codex', costApprox: 5 }),
+    ];
+
+    const groups = buildModelGroups(rows, bounds, 10);
+
+    const gpt54 = groups.find((group) => group.key === 'gpt-5.4');
+    expect(gpt54?.sessions).toBe(2);
+    expect(gpt54?.costSum).toBe(5);
+    expect(groups.find((group) => group.key === 'gpt-5-codex')?.sessions).toBe(1);
   });
 
   test('builds campaign views by machine and root source id without merging rows', () => {

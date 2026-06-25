@@ -1,5 +1,6 @@
 import { cx } from '@ai-usage/design-system/css';
 import { segmentBarPart, segmentBarTrack, unavailableCell } from '@ai-usage/design-system/report';
+import { modelGroupKey } from '@ai-usage/report-core/model-identity';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { For } from 'solid-js';
 
@@ -69,9 +70,9 @@ export const median = (values: number[]) => {
   return sorted.length % 2 ? (sorted[middle] ?? 0) : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
 };
 
-// Harnesses report the same upstream model under different ids
-// (gpt-5.5 vs openai/gpt-5.5); group on the bare id so one model is one line.
-export const normalizeModelKey = (model: string) => model.slice(model.lastIndexOf('/') + 1);
+// Harnesses report the same upstream model under different ids and mode suffixes
+// (gpt-5.4 vs openai/gpt-5.4-high); group on the shared base model.
+export const normalizeModelKey = (model: string) => modelGroupKey(model);
 
 // "(OC)" is collector shorthand for sessions proxied through OpenCode.
 const OPENCODE_PROVIDER_SUFFIX = /\s*\(OC\)\s*$/;
