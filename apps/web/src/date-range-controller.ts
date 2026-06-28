@@ -52,45 +52,6 @@ export const createDateRangeController = (options: {
   const [customFrom, setCustomFrom] = createSignal(options.initialFrom ?? options.defaultFrom);
   const [customTo, setCustomTo] = createSignal(options.initialTo ?? options.defaultTo);
 
-  let boundsCache: {
-    customFrom: string;
-    customTo: string;
-    generatedAtTime: number;
-    mode: DateRangeMode;
-    value: DateBounds;
-  } | null = null;
-  const bounds = () => {
-    const currentMode = mode();
-    const currentFrom = customFrom();
-    const currentTo = customTo();
-    const currentGeneratedAt = generatedAt();
-    const generatedAtTime = currentGeneratedAt.getTime();
-    if (
-      boundsCache &&
-      boundsCache.mode === currentMode &&
-      boundsCache.customFrom === currentFrom &&
-      boundsCache.customTo === currentTo &&
-      boundsCache.generatedAtTime === generatedAtTime
-    ) {
-      return boundsCache.value;
-    }
-
-    const value = dateBoundsForRange(currentMode, currentGeneratedAt, currentFrom, currentTo);
-    boundsCache = {
-      customFrom: currentFrom,
-      customTo: currentTo,
-      generatedAtTime,
-      mode: currentMode,
-      value,
-    };
-    return value;
-  };
-
-  const finiteTime = (date: Date | null) => {
-    const time = date?.getTime();
-    return time != null && Number.isFinite(time) ? time : null;
-  };
-
   let rowSpanCache: {
     maxTime: number | null;
     minTime: number | null;
@@ -115,6 +76,53 @@ export const createDateRangeController = (options: {
 
     rowSpanCache = Number.isFinite(minTime) ? { rows, minTime, maxTime } : { rows, minTime: null, maxTime: null };
     return rowSpanCache;
+  };
+
+  let boundsCache: {
+    customFrom: string;
+    customTo: string;
+    generatedAtTime: number;
+    latestRowTime: number | null;
+    mode: DateRangeMode;
+    value: DateBounds;
+  } | null = null;
+  const bounds = () => {
+    const currentMode = mode();
+    const currentFrom = customFrom();
+    const currentTo = customTo();
+    const currentGeneratedAt = generatedAt();
+    const generatedAtTime = currentGeneratedAt.getTime();
+    const latestRowTime = currentMode === 'today' ? rowTimeSpan().maxTime : null;
+    if (
+      boundsCache &&
+      boundsCache.mode === currentMode &&
+      boundsCache.customFrom === currentFrom &&
+      boundsCache.customTo === currentTo &&
+      boundsCache.generatedAtTime === generatedAtTime &&
+      boundsCache.latestRowTime === latestRowTime
+    ) {
+      return boundsCache.value;
+    }
+
+    const referenceDate =
+      currentMode === 'today' && latestRowTime != null && latestRowTime > generatedAtTime
+        ? new Date(latestRowTime)
+        : currentGeneratedAt;
+    const value = dateBoundsForRange(currentMode, referenceDate, currentFrom, currentTo);
+    boundsCache = {
+      customFrom: currentFrom,
+      customTo: currentTo,
+      generatedAtTime,
+      latestRowTime,
+      mode: currentMode,
+      value,
+    };
+    return value;
+  };
+
+  const finiteTime = (date: Date | null) => {
+    const time = date?.getTime();
+    return time != null && Number.isFinite(time) ? time : null;
   };
 
   let domainCache: {

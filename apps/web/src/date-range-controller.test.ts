@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { createRoot } from 'solid-js';
-import { toDateInputValue } from './date-range';
+import { rowMatchesDateBounds, toDateInputValue } from './date-range';
 import { createDateRangeController } from './date-range-controller';
 
 const rowAt = (activeDate: string): SerializedRow => ({
@@ -94,6 +94,26 @@ describe('date range controller', () => {
       controller.setRange('custom', '2026-06-07', '2026-06-09');
 
       expect(controller.inputValues()).toEqual({ from: '2026-06-07', to: '2026-06-09' });
+
+      dispose();
+    });
+  });
+
+  test('keeps today aligned with newer loaded sessions when generatedAt is stale', () => {
+    createRoot((dispose) => {
+      const todaysRow = rowAt('2026-06-12T12:00:00.000Z');
+      const controller = createDateRangeController({
+        generatedAt: new Date(2026, 5, 11, 12),
+        rows: () => [todaysRow],
+        defaultFrom: '2026-06-05',
+        defaultTo: '2026-06-11',
+        formatDate,
+      });
+
+      controller.setPreset('today');
+
+      expect(controller.inputValues()).toEqual({ from: '2026-06-12', to: '2026-06-12' });
+      expect(rowMatchesDateBounds(todaysRow, controller.bounds())).toBe(true);
 
       dispose();
     });

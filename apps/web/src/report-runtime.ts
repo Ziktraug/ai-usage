@@ -93,6 +93,23 @@ export const loadReportPayload = async () => {
 export const resolveInitialReportPayload = (loaderPayload: UsageReportPayload) =>
   readInjectedReportPayload() ?? loaderPayload;
 
+export type MountReportRefreshAction = 'dev-fallback' | 'fetch-payload' | 'none';
+
+export const mountReportRefreshAction = (input: {
+  canRefresh: boolean;
+  hasInitialPayload: boolean;
+  isDemoPayload: boolean;
+  isDevRuntime: boolean;
+}): MountReportRefreshAction => {
+  if (input.canRefresh) {
+    return 'fetch-payload';
+  }
+  if (input.isDevRuntime && !input.hasInitialPayload && input.isDemoPayload) {
+    return 'dev-fallback';
+  }
+  return 'none';
+};
+
 export const reportRefreshPayload = () =>
   typeof window === 'undefined' || !isDevRuntime()
     ? undefined
