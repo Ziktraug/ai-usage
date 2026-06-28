@@ -76,7 +76,7 @@ import { ProjectGroupEditor } from './project-group-editor';
 import { ProjectSummary } from './project-summary';
 import { RefreshStatus } from './refresh-status';
 import { cursorCommitAttributionFacet } from './report-data';
-import { fetchReportPayload, isDemoReportPayload, readReportPayload } from './report-runtime';
+import { fetchReportPayload, isDemoReportPayload, mountReportRefreshAction, readReportPayload } from './report-runtime';
 import { ReportWarnings } from './report-warnings';
 import { SessionDrawer } from './session-drawer';
 import { SessionTable } from './session-table';
@@ -434,17 +434,19 @@ export const Dashboard = (props: {
     onCleanup(() => window.clearTimeout(timer));
   });
   onMount(() => {
-    if (props.initialPayload) {
-      return;
-    }
-    if (!isDemoReportPayload()) {
-      return;
-    }
-    if (props.fetchPayload) {
+    const action = mountReportRefreshAction({
+      canRefresh,
+      hasInitialPayload: Boolean(props.initialPayload),
+      isDemoPayload: isDemoReportPayload(),
+      isDevRuntime: import.meta.env.DEV,
+    });
+    if (action === 'fetch-payload') {
       refreshPayload(true).catch((error: unknown) => {
         console.error(error);
       });
-    } else if (import.meta.env.DEV) {
+      return;
+    }
+    if (action === 'dev-fallback') {
       fetchReportPayload({ force: true })
         .then(setPayload)
         .catch((error: unknown) => {
