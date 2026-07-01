@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
 import { isProjectGroupConfig } from '@ai-usage/report-core/project-group';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
+import { parseSkillConfigInput, type SkillManagementConfig } from '@ai-usage/skills';
 import { Effect } from 'effect';
 import { LocalHistoryError } from './errors';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
@@ -27,6 +28,15 @@ const isUsageMachine = (value: unknown): value is UsageMachine => {
   }
   const record = value as Record<string, unknown>;
   return typeof record.id === 'string' && record.id.length > 0 && typeof record.label === 'string';
+};
+
+const isSkillManagementConfig = (value: unknown): value is SkillManagementConfig => {
+  try {
+    parseSkillConfigInput(value);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 export const ensureMachineConfig: Effect.Effect<UsageMachine, LocalHistoryError, LocalHistoryStorageService> =
@@ -149,6 +159,11 @@ const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
   }
 
   const sync = config.sync;
+  const skills = config.skills;
+  if (skills !== undefined && !isSkillManagementConfig(skills)) {
+    return false;
+  }
+
   if (sync === undefined) {
     return true;
   }
@@ -179,6 +194,41 @@ const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
   });
 };
 
+const mergeSkillsConfig = (base: unknown, override: unknown): SkillManagementConfig | undefined => {
+  if (base === undefined && override === undefined) {
+    return;
+  }
+
+  const baseSkills = base === undefined ? undefined : parseSkillConfigInput(base);
+  const overrideSkills = override === undefined ? undefined : parseSkillConfigInput(override);
+
+  if (baseSkills === undefined) {
+    return overrideSkills;
+  }
+  if (overrideSkills === undefined) {
+    return baseSkills;
+  }
+
+  const merged: SkillManagementConfig = { ...baseSkills, ...overrideSkills };
+  if (overrideSkills.targets === undefined && baseSkills.targets !== undefined) {
+    merged.targets = baseSkills.targets;
+  } else if (baseSkills.targets !== undefined || overrideSkills.targets !== undefined) {
+    merged.targets = { ...(baseSkills.targets ?? {}), ...(overrideSkills.targets ?? {}) };
+  }
+  if (overrideSkills.connectors === undefined && baseSkills.connectors !== undefined) {
+    merged.connectors = baseSkills.connectors;
+  } else if (baseSkills.connectors !== undefined || overrideSkills.connectors !== undefined) {
+    merged.connectors = { ...(baseSkills.connectors ?? {}), ...(overrideSkills.connectors ?? {}) };
+  }
+  if (overrideSkills.tokenThresholds === undefined && baseSkills.tokenThresholds !== undefined) {
+    merged.tokenThresholds = baseSkills.tokenThresholds;
+  }
+  if (overrideSkills.ignoredTargetFindings === undefined && baseSkills.ignoredTargetFindings !== undefined) {
+    merged.ignoredTargetFindings = baseSkills.ignoredTargetFindings;
+  }
+  return merged;
+};
+
 const parseAiUsageConfig = (value: unknown, filePath: string): AiUsageConfig => {
   if (!isAiUsageConfig(value)) {
     throw new Error(`Invalid ai-usage config: ${filePath}`);
@@ -202,6 +252,10 @@ const mergeAiUsageConfig = (base: AiUsageConfig, override: AiUsageConfig): AiUsa
     if (override.sync?.remotes === undefined && base.sync?.remotes !== undefined) {
       merged.sync.remotes = base.sync.remotes;
     }
+  }
+  const skills = mergeSkillsConfig(base.skills, override.skills);
+  if (skills !== undefined) {
+    merged.skills = skills;
   }
   return merged;
 };

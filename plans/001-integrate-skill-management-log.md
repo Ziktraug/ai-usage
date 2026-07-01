@@ -57,3 +57,31 @@ bun install
 ```
 
 Result: passed; `bun install` saved the workspace lockfile.
+
+### Slice 3: ai-usage Config Integration
+
+- Status: completed
+- Goal: support optional `skills` config in `~/.config/ai-usage/config.json` without breaking existing config fields or merge behavior.
+- Files touched:
+  - `packages/report-core/src/project-alias.ts`
+  - `packages/local-collectors/package.json`
+  - `packages/local-collectors/src/machine-config.ts`
+  - `packages/local-collectors/src/machine-config.test.ts`
+  - `bun.lock`
+- Decisions:
+  - `report-core` exposes `AiUsageConfig.skills` as `unknown` because `report-core` is prohibited from importing workspace packages.
+  - `local-collectors` validates the field with `parseSkillConfigInput` from `@ai-usage/skills`, preserving `@ai-usage/skills` as the owner of the precise config type.
+  - Skills config merge preserves home `targets`, `connectors`, `tokenThresholds`, and ignored findings when repo config omits them.
+- Problems encountered:
+  - The precise `SkillManagementConfig` type cannot be referenced from `report-core` without violating the package graph boundary.
+
+Verification:
+
+```bash
+bun test packages/local-collectors/src/machine-config.test.ts packages/skills/src
+bun run typecheck
+bun install
+bun run lint
+```
+
+Result: passed.
