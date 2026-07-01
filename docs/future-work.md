@@ -22,6 +22,12 @@ Global backlog for known follow-ups that should survive individual refactor logs
 - Consider richer inline editing for remote renames; the current edit form intentionally keeps the remote name fixed.
 - Keep persistent config using `tokenEnv`; raw tokens should remain process-local or one-shot only.
 
+## Skill Management
+
+- Add safe adoption/import flows for unmanaged target skills once the core source scan, diagnostics, and reconciliation flows have settled.
+- Add a skill editor with git diff, bounded text reads, binary-file refusal, and path validation after the `/skills` control plane is stable.
+- Revisit disabled default target locations for Cursor and GitHub Copilot after real local use verifies their system skill paths.
+
 ## Design System
 
 - Audit `@ai-usage/design-system/report` after another app exists or a second report surface appears.
