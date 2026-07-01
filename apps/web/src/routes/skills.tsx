@@ -153,10 +153,10 @@ const actionRow = css({
   alignItems: 'center',
 });
 
-const formGrid = css({
+const sourceRepoGrid = css({
   display: 'grid',
   gap: '12px',
-  gridTemplateColumns: { base: '1fr', md: 'minmax(0, 1fr) auto' },
+  gridTemplateColumns: { base: '1fr', md: 'minmax(0, 1fr) auto auto' },
   alignItems: 'end',
 });
 
@@ -199,6 +199,10 @@ const inputClass = css({
   bg: 'surface',
   color: 'ink',
   fontSize: '13px',
+});
+
+const hiddenInput = css({
+  display: 'none',
 });
 
 const operationPanel = css({
@@ -532,6 +536,17 @@ function ConfigPanel(props: {
   setSourceRepoPath: (value: string) => void;
   sourceRepoPath: string;
 }) {
+  let sourceDirectoryInput: HTMLInputElement | undefined;
+  const [sourceFolderName, setSourceFolderName] = createSignal('');
+
+  const updateSourceFolderName = (files: FileList | null) => {
+    const firstFile = files?.[0];
+    const relativePath = (firstFile as (File & { webkitRelativePath?: string }) | undefined)?.webkitRelativePath;
+    const selectedPath = relativePath || firstFile?.name || '';
+    const folderName = selectedPath.includes('/') ? selectedPath.slice(0, selectedPath.indexOf('/')) : selectedPath;
+    setSourceFolderName(folderName ? `Selected folder: ${folderName}` : '');
+  };
+
   return (
     <section class={panel}>
       <div class={panelHeader}>
@@ -539,7 +554,7 @@ function ConfigPanel(props: {
         <p class={panelSub}>User-local settings in the ai-usage config file.</p>
       </div>
       <div class={configStack}>
-        <div class={formGrid}>
+        <div class={sourceRepoGrid}>
           <label class={formField}>
             <span class={labelText}>Source repository</span>
             <input
@@ -547,8 +562,25 @@ function ConfigPanel(props: {
               onInput={(event) => props.setSourceRepoPath(event.currentTarget.value)}
               value={props.sourceRepoPath}
             />
-            <span class={helpText}>Repository that owns shared skills, expected at `skills/*/SKILL.md`.</span>
+            <span class={helpText}>
+              Repository that owns shared skills, expected at `skills/*/SKILL.md`.
+              {sourceFolderName() ? ` ${sourceFolderName()}.` : ''}
+            </span>
           </label>
+          <input
+            class={hiddenInput}
+            multiple
+            onChange={(event) => updateSourceFolderName(event.currentTarget.files)}
+            ref={(element) => {
+              sourceDirectoryInput = element;
+              element.setAttribute('webkitdirectory', '');
+              element.setAttribute('directory', '');
+            }}
+            type="file"
+          />
+          <button class={ghostButton} onClick={() => sourceDirectoryInput?.click()} type="button">
+            Browse
+          </button>
           <button
             class={commandButton}
             disabled={props.pendingOperation !== null}
