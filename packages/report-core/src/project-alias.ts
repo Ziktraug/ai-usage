@@ -25,6 +25,7 @@ export interface AiUsageConfig {
   };
   projectAliases?: ProjectAliasEntry[];
   projectGroups?: ProjectGroupConfig[];
+  skills?: unknown;
   sync?: {
     remotes?: SyncRemoteConfig[];
   };
