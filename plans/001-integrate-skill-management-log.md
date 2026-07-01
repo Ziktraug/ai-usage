@@ -28,6 +28,32 @@ bun run lint
 
 Result: passed.
 
+### Slice 6: Read-Only Snapshot Workflows
+
+- Status: completed
+- Goal: add package-level workflow functions for snapshots, config writes, toggles, reconcile operations, and target directory creation.
+- Files touched:
+  - `packages/skills/src/index.ts`
+  - `packages/skills/src/snapshot.test.ts`
+  - `plans/001-integrate-skill-management-log.md`
+- Decisions:
+  - Workflow config IO is dependency-injected to avoid a cycle between `@ai-usage/skills` and `@ai-usage/local-collectors`.
+  - Unconfigured snapshots return JSON-safe empty data instead of throwing.
+  - Reconcile-all returns refused actions without applying any mutation if unmanaged content would be touched.
+  - Native rule findings are represented in the snapshot shape but remain empty until the web/server slice has local project-path context.
+- Problems encountered:
+  - `exactOptionalPropertyTypes` required building scan options only when token thresholds are present.
+
+Verification:
+
+```bash
+bun test packages/skills/src
+bun run typecheck
+bun run lint
+```
+
+Result: passed.
+
 ### Slice 5: Target Defaults And Projection Safety
 
 - Status: completed
