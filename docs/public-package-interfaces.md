@@ -44,6 +44,10 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./transport`: snapshot file/HTTP loading and endpoint health checks.
 - `./workflow`: remote registration, selection, token validation, pull, and removal workflow.
 
+## `@ai-usage/skills`
+
+- `.`: skill-management config types, runtime validation, source-state helpers, source scanning, target observation, projection planning/apply, diagnostics, and workflow functions.
+
 ## `@ai-usage/design-system`
 
 - `.`: design-system public barrel.
