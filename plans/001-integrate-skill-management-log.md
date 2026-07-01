@@ -28,6 +28,34 @@ bun run lint
 
 Result: passed.
 
+### Slice 4: Source State And Source Scanning
+
+- Status: completed
+- Goal: add JSON-only source state plus bounded source repository scanning for `skills/*/SKILL.md`.
+- Files touched:
+  - `packages/skills/src/index.ts`
+  - `packages/skills/src/source-state.test.ts`
+  - `packages/skills/src/skill-markdown.test.ts`
+  - `packages/skills/src/source-scan.test.ts`
+  - `plans/001-integrate-skill-management-log.md`
+- Decisions:
+  - Source state lives at `<sourceRepoPath>/.skill-tracker/state.json` and invalid content returns diagnostics with safe defaults.
+  - The scanner ignores generated/vendor directories and enforces file-count and bytes-per-file limits before token counting.
+  - Token counts are explicitly approximate and skip binary files.
+  - Cursor frontmatter extensions `paths` and `disable-model-invocation` are preserved as known extensions; unknown fields produce warnings.
+- Problems encountered:
+  - Bun/TypeScript inferred a `readdir` overload with buffer names; using a structural `name: string` entry type kept the public behavior unchanged.
+
+Verification:
+
+```bash
+bun test packages/skills/src
+bun run typecheck
+bun run lint
+```
+
+Result: passed.
+
 ### Slice 2: Package Scaffold And Domain Validation
 
 - Status: completed
