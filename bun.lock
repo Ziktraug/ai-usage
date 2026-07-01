@@ -96,6 +96,10 @@
         "effect": "^3.21.4",
       },
     },
+    "packages/skills": {
+      "name": "@ai-usage/skills",
+      "version": "0.1.0",
+    },
     "packages/sync": {
       "name": "@ai-usage/sync",
       "version": "0.1.0",
@@ -137,6 +141,8 @@
     "@ai-usage/report-core": ["@ai-usage/report-core@workspace:packages/report-core"],
 
     "@ai-usage/report-data": ["@ai-usage/report-data@workspace:packages/report-data"],
+
+    "@ai-usage/skills": ["@ai-usage/skills@workspace:packages/skills"],
 
     "@ai-usage/sync": ["@ai-usage/sync@workspace:packages/sync"],
 
