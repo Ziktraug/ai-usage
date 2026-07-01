@@ -121,6 +121,30 @@ bun test apps/web/src
 
 Result: passed when `bun test apps/web/src` was run without a concurrent build.
 
+### Slice 9: Editor Deferral And Final Verification
+
+- Status: completed
+- Goal: confirm the editor slice is deferred and run the full done-criteria verification set.
+- Files touched:
+  - `plans/001-integrate-skill-management-log.md`
+  - `plans/README.md`
+- Decisions:
+  - The skill editor remains deferred as future work; no `writeSkillFile`, `readSkillFile`, or `loadSkillDetail` symbols were added.
+- Problems encountered:
+  - None.
+
+Verification:
+
+```bash
+rg -n "writeSkillFile|readSkillFile|loadSkillDetail" apps packages
+bun run test
+bun run typecheck
+bun run lint
+bun run build
+```
+
+Result: passed. The `rg` command exited with no matches.
+
 ### Slice 6: Read-Only Snapshot Workflows
 
 - Status: completed
