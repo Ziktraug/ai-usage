@@ -22,7 +22,7 @@ import {
   title,
   titleBlock,
 } from '@ai-usage/design-system/report';
-import type { SkillManagementSnapshot } from '@ai-usage/skills';
+import type { SkillManagementConfig, SkillManagementSnapshot } from '@ai-usage/skills';
 import { createFileRoute, Link } from '@tanstack/solid-router';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
@@ -142,9 +142,14 @@ const actionRow = css({
 
 const formGrid = css({
   display: 'grid',
-  gap: '10px',
-  gridTemplateColumns: { base: '1fr', md: 'minmax(0, 1fr) minmax(0, 1fr) auto' },
+  gap: '12px',
+  gridTemplateColumns: { base: '1fr', md: 'minmax(0, 1fr) auto' },
   alignItems: 'end',
+});
+
+const configStack = css({
+  display: 'grid',
+  gap: '16px',
 });
 
 const formField = css({
@@ -185,6 +190,22 @@ const operationPanel = css({
   fontSize: '12px',
 });
 
+const projectPathList = css({
+  display: 'grid',
+  gap: '8px',
+});
+
+const projectPathRow = css({
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  gap: '8px',
+  alignItems: 'center',
+  p: '8px 10px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surfaceMuted',
+});
+
 function SkillsRoute() {
   const data = Route.useLoaderData();
   const [result, setResult] = createSignal<SkillSnapshotResult>(skillSnapshotResultFrom(data().skills));
@@ -200,7 +221,8 @@ function SkillsRoute() {
   });
   const summaryTiles = createMemo(() => (snapshot() ? buildSkillSummaryTiles(snapshot()!) : []));
   const [sourceRepoPath, setSourceRepoPath] = createSignal(snapshot()?.config.sourceRepoPath ?? '');
-  const [projectsRootPath, setProjectsRootPath] = createSignal(snapshot()?.config.projectsRootPath ?? '');
+  const [projectPaths, setProjectPaths] = createSignal<readonly string[]>(snapshot()?.config.projectPaths ?? []);
+  const [projectPathDraft, setProjectPathDraft] = createSignal('');
 
   const applySnapshotResult = (next: SkillSnapshotResult, message: string) => {
     setResult(next);
@@ -234,17 +256,29 @@ function SkillsRoute() {
 
   const configInput = () => {
     const current = snapshot()?.config ?? {};
-    const next = { ...current };
+    const { projectPaths: _projectPaths, ...currentWithoutProjectPaths } = current;
+    const next: SkillManagementConfig = currentWithoutProjectPaths;
     const source = sourceRepoPath().trim();
-    const root = projectsRootPath().trim();
     if (source) {
       next.sourceRepoPath = source;
     }
-    if (root) {
-      next.projectsRootPath = root;
+    if (projectPaths().length > 0) {
+      next.projectPaths = projectPaths();
     }
     return next;
   };
+
+  const addProjectPath = () => {
+    const value = projectPathDraft().trim();
+    if (!value || projectPaths().includes(value)) {
+      return;
+    }
+    setProjectPaths([...projectPaths(), value]);
+    setProjectPathDraft('');
+  };
+
+  const removeProjectPath = (value: string) =>
+    setProjectPaths(projectPaths().filter((projectPath) => projectPath !== value));
 
   const saveConfig = () =>
     runOperation('save-config', async () => {
@@ -311,11 +345,14 @@ function SkillsRoute() {
             <Show
               fallback={
                 <UnconfiguredPanel
+                  addProjectPath={addProjectPath}
                   operationMessage={operationMessage()}
                   pendingOperation={pendingOperation()}
-                  projectsRootPath={projectsRootPath()}
+                  projectPathDraft={projectPathDraft()}
+                  projectPaths={projectPaths()}
+                  removeProjectPath={removeProjectPath}
                   saveConfig={saveConfig}
-                  setProjectsRootPath={setProjectsRootPath}
+                  setProjectPathDraft={setProjectPathDraft}
                   setSourceRepoPath={setSourceRepoPath}
                   sourceRepoPath={sourceRepoPath()}
                 />
@@ -326,11 +363,14 @@ function SkillsRoute() {
                 <Show
                   fallback={
                     <UnconfiguredPanel
+                      addProjectPath={addProjectPath}
                       operationMessage={operationMessage()}
                       pendingOperation={pendingOperation()}
-                      projectsRootPath={projectsRootPath()}
+                      projectPathDraft={projectPathDraft()}
+                      projectPaths={projectPaths()}
+                      removeProjectPath={removeProjectPath}
                       saveConfig={saveConfig}
-                      setProjectsRootPath={setProjectsRootPath}
+                      setProjectPathDraft={setProjectPathDraft}
                       setSourceRepoPath={setSourceRepoPath}
                       sourceRepoPath={sourceRepoPath()}
                     />
@@ -338,14 +378,17 @@ function SkillsRoute() {
                   when={loadedSnapshot().configured}
                 >
                   <ConfiguredSnapshot
+                    addProjectPath={addProjectPath}
                     createTargetDirectory={createTargetDirectory}
                     operationMessage={operationMessage()}
                     pendingOperation={pendingOperation()}
-                    projectsRootPath={projectsRootPath()}
+                    projectPathDraft={projectPathDraft()}
+                    projectPaths={projectPaths()}
                     reconcileAll={reconcileAll}
                     reconcileSkill={reconcileSkill}
+                    removeProjectPath={removeProjectPath}
                     saveConfig={saveConfig}
-                    setProjectsRootPath={setProjectsRootPath}
+                    setProjectPathDraft={setProjectPathDraft}
                     setSourceRepoPath={setSourceRepoPath}
                     snapshot={loadedSnapshot()}
                     sourceRepoPath={sourceRepoPath()}
@@ -363,14 +406,17 @@ function SkillsRoute() {
 }
 
 function ConfiguredSnapshot(props: {
+  addProjectPath: () => void;
   createTargetDirectory: (targetId: string) => void;
   operationMessage: string | null;
   pendingOperation: string | null;
-  projectsRootPath: string;
+  projectPathDraft: string;
+  projectPaths: readonly string[];
   reconcileAll: () => void;
   reconcileSkill: (skillName: string) => void;
+  removeProjectPath: (value: string) => void;
   saveConfig: () => void;
-  setProjectsRootPath: (value: string) => void;
+  setProjectPathDraft: (value: string) => void;
   setSourceRepoPath: (value: string) => void;
   snapshot: SkillManagementSnapshot;
   sourceRepoPath: string;
@@ -380,11 +426,14 @@ function ConfiguredSnapshot(props: {
   return (
     <>
       <ConfigPanel
+        addProjectPath={props.addProjectPath}
         operationMessage={props.operationMessage}
         pendingOperation={props.pendingOperation}
-        projectsRootPath={props.projectsRootPath}
+        projectPathDraft={props.projectPathDraft}
+        projectPaths={props.projectPaths}
+        removeProjectPath={props.removeProjectPath}
         saveConfig={props.saveConfig}
-        setProjectsRootPath={props.setProjectsRootPath}
+        setProjectPathDraft={props.setProjectPathDraft}
         setSourceRepoPath={props.setSourceRepoPath}
         sourceRepoPath={props.sourceRepoPath}
       />
@@ -423,7 +472,7 @@ function ConfiguredSnapshot(props: {
             snapshot={props.snapshot}
           />
           <DiagnosticsPanel snapshot={props.snapshot} />
-          <NativeRulesPanel />
+          <NativeRulesPanel snapshot={props.snapshot} />
         </div>
       </section>
     </>
@@ -431,11 +480,14 @@ function ConfiguredSnapshot(props: {
 }
 
 function ConfigPanel(props: {
+  addProjectPath: () => void;
   operationMessage: string | null;
   pendingOperation: string | null;
-  projectsRootPath: string;
+  projectPathDraft: string;
+  projectPaths: readonly string[];
+  removeProjectPath: (value: string) => void;
   saveConfig: () => void;
-  setProjectsRootPath: (value: string) => void;
+  setProjectPathDraft: (value: string) => void;
   setSourceRepoPath: (value: string) => void;
   sourceRepoPath: string;
 }) {
@@ -445,35 +497,72 @@ function ConfigPanel(props: {
         <h2 class={panelTitle}>Configuration</h2>
         <p class={panelSub}>User-local settings in the ai-usage config file.</p>
       </div>
-      <div class={formGrid}>
-        <label class={formField}>
-          <span class={labelText}>Source repository</span>
-          <input
-            class={inputClass}
-            onInput={(event) => props.setSourceRepoPath(event.currentTarget.value)}
-            value={props.sourceRepoPath}
-          />
-          <span class={helpText}>Repository that owns your shared skills, expected at `skills/*/SKILL.md`.</span>
-        </label>
-        <label class={formField}>
-          <span class={labelText}>Projects root</span>
-          <input
-            class={inputClass}
-            onInput={(event) => props.setProjectsRootPath(event.currentTarget.value)}
-            value={props.projectsRootPath}
-          />
-          <span class={helpText}>
-            Optional local folder for project-level diagnostics. Leave empty to avoid broad scans.
-          </span>
-        </label>
-        <button
-          class={commandButton}
-          disabled={props.pendingOperation !== null}
-          onClick={props.saveConfig}
-          type="button"
-        >
-          Save
-        </button>
+      <div class={configStack}>
+        <div class={formGrid}>
+          <label class={formField}>
+            <span class={labelText}>Source repository</span>
+            <input
+              class={inputClass}
+              onInput={(event) => props.setSourceRepoPath(event.currentTarget.value)}
+              value={props.sourceRepoPath}
+            />
+            <span class={helpText}>Repository that owns shared skills, expected at `skills/*/SKILL.md`.</span>
+          </label>
+          <button
+            class={commandButton}
+            disabled={props.pendingOperation !== null}
+            onClick={props.saveConfig}
+            type="button"
+          >
+            Save
+          </button>
+        </div>
+        <div class={stack}>
+          <div class={panelHeader}>
+            <h3 class={panelTitle}>Project paths</h3>
+            <p class={panelSub}>
+              Optional local projects for rule diagnostics. Add explicit paths one by one; there is no broad root scan.
+            </p>
+          </div>
+          <div class={formGrid}>
+            <label class={formField}>
+              <span class={labelText}>Add project</span>
+              <input
+                class={inputClass}
+                onInput={(event) => props.setProjectPathDraft(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    props.addProjectPath();
+                  }
+                }}
+                value={props.projectPathDraft}
+              />
+            </label>
+            <button
+              class={ghostButton}
+              disabled={props.projectPathDraft.trim().length === 0}
+              onClick={props.addProjectPath}
+              type="button"
+            >
+              Add
+            </button>
+          </div>
+          <Show fallback={<p class={meta}>No manual project paths.</p>} when={props.projectPaths.length > 0}>
+            <div class={projectPathList}>
+              <For each={props.projectPaths}>
+                {(projectPath) => (
+                  <div class={projectPathRow}>
+                    <span class={meta}>{projectPath}</span>
+                    <button class={ghostButton} onClick={() => props.removeProjectPath(projectPath)} type="button">
+                      Remove
+                    </button>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
+        </div>
       </div>
       <Show when={props.operationMessage}>{(message) => <div class={operationPanel}>{message()}</div>}</Show>
     </section>
@@ -492,11 +581,14 @@ function ErrorPanel(props: { message: string }) {
 }
 
 function UnconfiguredPanel(props: {
+  addProjectPath: () => void;
   operationMessage: string | null;
   pendingOperation: string | null;
-  projectsRootPath: string;
+  projectPathDraft: string;
+  projectPaths: readonly string[];
+  removeProjectPath: (value: string) => void;
   saveConfig: () => void;
-  setProjectsRootPath: (value: string) => void;
+  setProjectPathDraft: (value: string) => void;
   setSourceRepoPath: (value: string) => void;
   sourceRepoPath: string;
 }) {
@@ -507,11 +599,14 @@ function UnconfiguredPanel(props: {
         source repository.
       </section>
       <ConfigPanel
+        addProjectPath={props.addProjectPath}
         operationMessage={props.operationMessage}
         pendingOperation={props.pendingOperation}
-        projectsRootPath={props.projectsRootPath}
+        projectPathDraft={props.projectPathDraft}
+        projectPaths={props.projectPaths}
+        removeProjectPath={props.removeProjectPath}
         saveConfig={props.saveConfig}
-        setProjectsRootPath={props.setProjectsRootPath}
+        setProjectPathDraft={props.setProjectPathDraft}
         setSourceRepoPath={props.setSourceRepoPath}
         sourceRepoPath={props.sourceRepoPath}
       />
@@ -699,13 +794,21 @@ function DiagnosticsPanel(props: { snapshot: SkillManagementSnapshot }) {
   );
 }
 
-function NativeRulesPanel() {
+function NativeRulesPanel(props: { snapshot: SkillManagementSnapshot }) {
   return (
     <section class={panel}>
       <div class={panelHeader}>
         <h2 class={panelTitle}>Native rules</h2>
-        <p class={panelSub}>Read-only diagnostics will appear here when local project paths are configured.</p>
+        <p class={panelSub}>Read-only diagnostics will appear here for configured local projects.</p>
       </div>
+      <Show
+        fallback={<p class={meta}>No manual project paths.</p>}
+        when={(props.snapshot.config.projectPaths?.length ?? 0) > 0}
+      >
+        <div class={projectPathList}>
+          <For each={props.snapshot.config.projectPaths}>{(projectPath) => <div class={meta}>{projectPath}</div>}</For>
+        </div>
+      </Show>
     </section>
   );
 }
