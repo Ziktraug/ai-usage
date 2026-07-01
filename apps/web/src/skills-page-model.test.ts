@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
-import { buildSkillSummaryTiles, projectionStateLabel, skillProjectionSummary } from './skills-page-model';
+import {
+  buildSkillSummaryTiles,
+  canReconcileAllActiveSkills,
+  canReconcileSkill,
+  projectionStateLabel,
+  skillProjectionSummary,
+} from './skills-page-model';
 
 const snapshot: SkillManagementSnapshot = {
   config: { sourceRepoPath: '/repo/source' },
@@ -63,5 +69,38 @@ describe('skills page model', () => {
       throw new Error('Expected skill fixture');
     }
     expect(skillProjectionSummary(skill, snapshot.projections)).toBe('Not linked');
+  });
+
+  test('disables reconcile all when unmanaged content is present', () => {
+    expect(canReconcileAllActiveSkills(snapshot)).toBe(true);
+    expect(
+      canReconcileAllActiveSkills({
+        ...snapshot,
+        unmanagedEntries: [
+          {
+            diagnostics: [],
+            expectedPath: '/target/local-copy',
+            skillName: 'local-copy',
+            state: 'unmanaged-copy',
+            targetId: 'codex',
+          },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  test('disables individual reconcile for invalid or unsafe skills', () => {
+    const skill = snapshot.skills[0];
+    if (!skill) {
+      throw new Error('Expected skill fixture');
+    }
+    expect(canReconcileSkill(skill, snapshot)).toBe(true);
+    expect(canReconcileSkill({ ...skill, validationStatus: 'invalid' }, snapshot)).toBe(false);
+    expect(
+      canReconcileSkill(skill, {
+        ...snapshot,
+        projections: [{ ...snapshot.projections[0]!, state: 'unmanaged-copy' }],
+      }),
+    ).toBe(false);
   });
 });

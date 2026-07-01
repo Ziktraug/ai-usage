@@ -86,6 +86,41 @@ Next safe slice after unblocking that test runner issue:
 - Step 10 editor deferral verification.
 - Final full `bun run test`, `bun run typecheck`, `bun run lint`, and `bun run build`.
 
+### Slice 8: Controlled Web Mutations
+
+- Status: completed
+- Goal: wire explicit `/skills` mutations for config update, skill toggles, safe reconciliation, reconcile-all, and target directory creation.
+- Files touched:
+  - `packages/skills/src/index.ts`
+  - `packages/skills/src/index.test.ts`
+  - `apps/web/src/server/skills.ts`
+  - `apps/web/src/server/skills.server.ts`
+  - `apps/web/src/server/skills.server.test.ts`
+  - `apps/web/src/skills-page-model.ts`
+  - `apps/web/src/skills-page-model.test.ts`
+  - `apps/web/src/routes/skills.tsx`
+  - `plans/001-integrate-skill-management-log.md`
+  - `plans/README.md`
+- Decisions:
+  - Target directory creation accepts only `targetId` from the client; the server resolves the configured path from the current snapshot.
+  - Reconcile-all is disabled in the UI while unmanaged target content is present, and the workflow still refuses unsafe actions server-side.
+  - Disabling a skill toggles source state and runs safe cleanup for managed symlinks before refreshing the snapshot.
+  - Server function validators use package parsers for config, skill names, target ids, and boolean toggles.
+- Problems encountered:
+  - Running `bun test apps/web/src` concurrently with `bun run build` races on `.output`; rerunning the web tests by themselves passed.
+
+Verification:
+
+```bash
+bun test packages/skills/src apps/web/src/skills-page-model.test.ts apps/web/src/server/skills.server.test.ts
+bun run typecheck
+bun run lint
+bun run build
+bun test apps/web/src
+```
+
+Result: passed when `bun test apps/web/src` was run without a concurrent build.
+
 ### Slice 6: Read-Only Snapshot Workflows
 
 - Status: completed

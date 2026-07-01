@@ -143,6 +143,15 @@ export interface SkillMutationInput {
   targetId: string;
 }
 
+export interface SkillToggleInput {
+  enabled: boolean;
+  skillName: string;
+}
+
+export interface SkillTargetDirectoryInput {
+  targetId: string;
+}
+
 export interface SkillSourceStateResult {
   diagnostics: readonly SkillDiagnostic[];
   state: SkillSourceState;
@@ -522,6 +531,21 @@ export const parseSkillMutationInput = (value: unknown): SkillMutationInput => {
     parsed.enabled = parseBoolean(input.enabled, 'enabled');
   }
   return parsed;
+};
+
+export const parseSkillToggleInput = (value: unknown): SkillToggleInput => {
+  const input = assertRecord(value, 'skill toggle input');
+  return {
+    enabled: parseBoolean(input.enabled, 'enabled'),
+    skillName: parseSkillName(input.skillName),
+  };
+};
+
+export const parseSkillTargetDirectoryInput = (value: unknown): SkillTargetDirectoryInput => {
+  const input = assertRecord(value, 'skill target directory input');
+  return {
+    targetId: parseTargetId(input.targetId),
+  };
 };
 
 export const parseSkillConfigInput = (value: unknown): SkillManagementConfig => {

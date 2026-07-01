@@ -6,6 +6,8 @@ import {
   parseSkillFilePath,
   parseSkillMutationInput,
   parseSkillName,
+  parseSkillTargetDirectoryInput,
+  parseSkillToggleInput,
   parseTargetId,
 } from '.';
 
@@ -79,5 +81,16 @@ describe('skill management domain validation', () => {
         enabled: 'false',
       }),
     ).toThrow('enabled');
+  });
+
+  test('validates toggle and target directory inputs strictly', () => {
+    expect(parseSkillToggleInput({ skillName: 'example-skill', enabled: true })).toEqual({
+      enabled: true,
+      skillName: 'example-skill',
+    });
+    expect(parseSkillTargetDirectoryInput({ targetId: 'codex' })).toEqual({ targetId: 'codex' });
+
+    expect(() => parseSkillToggleInput({ skillName: 'example-skill', enabled: 'true' })).toThrow('enabled');
+    expect(() => parseSkillTargetDirectoryInput({ targetId: 'codex/skills' })).toThrow('target id');
   });
 });

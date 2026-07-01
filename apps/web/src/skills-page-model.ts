@@ -61,3 +61,21 @@ export const skillProjectionSummary = (skill: SourceSkill, projections: readonly
     .map((projection) => projectionStateLabel(projection.state));
   return states.length === 0 ? 'No targets' : states.join(', ');
 };
+
+const unsafeReconcileStates = new Set<Projection['state']>([
+  'disabled-exposed',
+  'duplicate-name-conflict',
+  'unmanaged-copy',
+  'unmanaged-symlink',
+]);
+
+export const canReconcileAllActiveSkills = (snapshot: SkillManagementSnapshot): boolean =>
+  snapshot.unmanagedEntries.length === 0 &&
+  !snapshot.projections.some((projection) => unsafeReconcileStates.has(projection.state));
+
+export const canReconcileSkill = (skill: SourceSkill, snapshot: SkillManagementSnapshot): boolean =>
+  skill.enabled &&
+  skill.validationStatus === 'valid' &&
+  !snapshot.projections.some(
+    (projection) => projection.skillName === skill.name && unsafeReconcileStates.has(projection.state),
+  );
