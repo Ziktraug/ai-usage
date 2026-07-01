@@ -41,7 +41,7 @@ as JSON data, not executable TypeScript:
 ## Discovery Rules
 
 Skill inventory is local-machine only. Project and repository discovery may use
-explicit config and locally observed project paths, but it must not use synced
+explicit `projectPaths` config and locally observed project paths, but it must not use synced
 rows or remote machine data. There is no default broad scan root such as
 `~/Projects`, `~/projects`, or any other personal directory convention. Broad
 root scans must be explicit opt-in configuration.

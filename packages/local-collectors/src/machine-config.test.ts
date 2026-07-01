@@ -173,6 +173,7 @@ describe('machine config', () => {
                 scope: 'system',
               },
             },
+            projectPaths: ['/work/home-project'],
           },
         }),
       );
@@ -187,6 +188,7 @@ describe('machine config', () => {
       );
 
       expect(config.skills).toEqual({
+        projectPaths: ['/work/home-project'],
         sourceRepoPath: '/repo/agent-skills',
         targets: {
           codex: {

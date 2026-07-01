@@ -226,6 +226,9 @@ const mergeSkillsConfig = (base: unknown, override: unknown): SkillManagementCon
   if (overrideSkills.ignoredTargetFindings === undefined && baseSkills.ignoredTargetFindings !== undefined) {
     merged.ignoredTargetFindings = baseSkills.ignoredTargetFindings;
   }
+  if (overrideSkills.projectPaths === undefined && baseSkills.projectPaths !== undefined) {
+    merged.projectPaths = baseSkills.projectPaths;
+  }
   return merged;
 };
 

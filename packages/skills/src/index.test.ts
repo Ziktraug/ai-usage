@@ -15,6 +15,7 @@ describe('skill management domain validation', () => {
   test('accepts valid config input without defaulting project scan roots', () => {
     const config = parseSkillConfigInput({
       sourceRepoPath: '/repo/skills',
+      projectPaths: ['/work/app'],
       targets: {
         codex: {
           enabled: true,
@@ -27,6 +28,7 @@ describe('skill management domain validation', () => {
     });
 
     expect(config.sourceRepoPath).toBe('/repo/skills');
+    expect(config.projectPaths).toEqual(['/work/app']);
     expect(config.projectsRootPath).toBeUndefined();
     expect(config.targets?.codex?.enabled).toBe(true);
   });
@@ -44,6 +46,7 @@ describe('skill management domain validation', () => {
         },
       }),
     ).toThrow('enabled');
+    expect(() => parseSkillConfigInput({ projectPaths: [''] })).toThrow('projectPaths');
   });
 
   test('validates skill names and target ids', () => {
