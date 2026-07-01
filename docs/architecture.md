@@ -58,6 +58,20 @@ Owns application-facing sync modules:
 
 Apps should use this package for sync behavior instead of owning transport, auth, parsing, or remote status logic.
 
+### `@ai-usage/skills`
+
+Owns the native skill-management control plane exposed through `/skills`:
+
+- skill-management config types and runtime validation;
+- JSON-only source repository state parsing and persistence;
+- source skill scans, `SKILL.md` validation, token diagnostics, and scanner limits;
+- agent-runtime target scans, projection planning/apply, and mutation safety checks;
+- workflow functions that compose config, source state, source scans, target observations, and diagnostics.
+
+User-local skill configuration lives under `~/.config/ai-usage/config.json` through the existing ai-usage config path. Portable source repository state lives in the configured source repository as JSON data, not executable TypeScript.
+
+Skill inventory is local-machine scoped. This package must not use synced rows, peer snapshots, remote machine ids, or LAN merge state to decide which repositories to scan. Repository discovery can use explicit config and locally observed project paths, but broad root scans must be opt-in and no personal directory convention such as `~/Projects` may become a default.
+
 ### `apps/cli`
 
 Owns terminal and file output adapters:
@@ -96,8 +110,9 @@ See `docs/generated-tooling-ownership.md` for generated Panda/TanStack/Nitro own
 - Local history adapters live in `@ai-usage/local-collectors`.
 - Report orchestration lives in `@ai-usage/report-data`.
 - Sync transport and workflow modules live in `@ai-usage/sync`.
+- Skill management domain, scanning, diagnostics, workflows, and projection safety live in `@ai-usage/skills`.
 - CLI renderers live in `apps/cli`.
-- Web server functions and browser output adapters live in `apps/web`.
+- Web server functions, browser output adapters, and the `/skills` UI route live in `apps/web`.
 - Design-system exports are consumed through package exports, never through relative package paths.
 
 ## Guardrails
