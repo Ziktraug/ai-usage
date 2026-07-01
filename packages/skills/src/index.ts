@@ -56,10 +56,12 @@ export type SkillValidationStatus = 'valid' | 'warning' | 'invalid';
 
 export type SkillFrontmatterFieldKind = 'standard' | 'known-extension' | 'unknown-extension';
 
+export type JsonValue = boolean | null | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
+
 export interface SkillFrontmatterField {
   key: string;
   kind: SkillFrontmatterFieldKind;
-  value: unknown;
+  value: JsonValue;
 }
 
 export interface SkillManifest {
@@ -395,7 +397,7 @@ const approximateTokenCount = (text: string) => {
 
 const looksBinary = (buffer: Buffer) => buffer.includes(0);
 
-const parseScalarFrontmatterValue = (value: string): unknown => {
+const parseScalarFrontmatterValue = (value: string): JsonValue => {
   const trimmed = value.trim();
   if (trimmed === 'true') {
     return true;
@@ -445,7 +447,7 @@ const parseFrontmatter = (text: string) => {
     }
     const key = line.slice(0, separatorIndex).trim();
     const rawValue = line.slice(separatorIndex + 1).trim();
-    let value: unknown = parseScalarFrontmatterValue(rawValue);
+    let value: JsonValue = parseScalarFrontmatterValue(rawValue);
     if (rawValue.length === 0) {
       const arrayValue: string[] = [];
       while (lines[index + 1]?.trim().startsWith('- ')) {
