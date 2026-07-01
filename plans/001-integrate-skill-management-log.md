@@ -28,6 +28,32 @@ bun run lint
 
 Result: passed.
 
+### Slice 5: Target Defaults And Projection Safety
+
+- Status: completed
+- Goal: add built-in agent runtime targets, target projection classification, health interpretation, and safe projection actions.
+- Files touched:
+  - `packages/skills/src/index.ts`
+  - `packages/skills/src/projection.test.ts`
+  - `plans/001-integrate-skill-management-log.md`
+- Decisions:
+  - Enabled default targets are Standard Agents, Claude Code, Codex, and OpenCode.
+  - GitHub Copilot and Cursor defaults are present but disabled until their local paths are verified by real use.
+  - `linked` is the only healthy projection state; enabled `missing` is visible as attention-needed.
+  - Reconciliation refuses copied directories and unmanaged entries; unlink verifies the symlink resolves to the configured source path.
+- Problems encountered:
+  - TypeScript needed explicit union narrowing for `unlink-managed-symlink`.
+
+Verification:
+
+```bash
+bun test packages/skills/src
+bun run typecheck
+bun run lint
+```
+
+Result: passed.
+
 ### Slice 4: Source State And Source Scanning
 
 - Status: completed
