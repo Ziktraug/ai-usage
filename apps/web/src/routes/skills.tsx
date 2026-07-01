@@ -159,6 +159,12 @@ const labelText = css({
   fontWeight: 650,
 });
 
+const helpText = css({
+  color: 'muted',
+  fontSize: '12px',
+  lineHeight: 1.5,
+});
+
 const inputClass = css({
   h: '36px',
   minW: 0,
@@ -447,6 +453,7 @@ function ConfigPanel(props: {
             onInput={(event) => props.setSourceRepoPath(event.currentTarget.value)}
             value={props.sourceRepoPath}
           />
+          <span class={helpText}>Repository that owns your shared skills, expected at `skills/*/SKILL.md`.</span>
         </label>
         <label class={formField}>
           <span class={labelText}>Projects root</span>
@@ -455,6 +462,9 @@ function ConfigPanel(props: {
             onInput={(event) => props.setProjectsRootPath(event.currentTarget.value)}
             value={props.projectsRootPath}
           />
+          <span class={helpText}>
+            Optional local folder for project-level diagnostics. Leave empty to avoid broad scans.
+          </span>
         </label>
         <button
           class={commandButton}
