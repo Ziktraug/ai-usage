@@ -72,6 +72,20 @@ bun test apps/web/src
 
 Result: failed on existing TSX test imports resolving `react/jsx-dev-runtime`; no skill-route test failed.
 
+## Blocked Stop
+
+Stopped after Slice 7 because the plan's STOP conditions include unrelated
+existing web test failures. The read-only `/skills` slice is implemented and
+passes targeted model/package tests, typecheck, lint, and build, but
+`bun test apps/web/src` currently fails in pre-existing Solid TSX tests because
+Bun resolves those TSX modules through `react/jsx-dev-runtime`.
+
+Next safe slice after unblocking that test runner issue:
+
+- Step 9 controlled mutations in the web route.
+- Step 10 editor deferral verification.
+- Final full `bun run test`, `bun run typecheck`, `bun run lint`, and `bun run build`.
+
 ### Slice 6: Read-Only Snapshot Workflows
 
 - Status: completed
