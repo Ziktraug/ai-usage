@@ -1,3 +1,4 @@
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 export type SkillDiagnosticSeverity = 'info' | 'warning' | 'error';
@@ -140,6 +141,34 @@ export interface SkillMutationInput {
   targetId: string;
 }
 
+export interface SkillSourceStateResult {
+  diagnostics: readonly SkillDiagnostic[];
+  state: SkillSourceState;
+}
+
+export interface ParsedSkillMarkdown {
+  diagnostics: readonly SkillDiagnostic[];
+  manifest: SkillManifest;
+}
+
+export interface SourceSkillScanOptions {
+  ignoredDirectories?: readonly string[];
+  maxFilesPerSkill?: number;
+  maxTextFileBytes?: number;
+  tokenThresholds?: SkillTokenThresholds;
+}
+
+export interface SourceSkillScanInput {
+  options?: SourceSkillScanOptions;
+  sourceRepoPath: string;
+  state?: SkillSourceState;
+}
+
+export interface SourceSkillScan {
+  diagnostics: readonly SkillDiagnostic[];
+  skills: readonly SourceSkill[];
+}
+
 export const defaultTokenThresholds: SkillTokenThresholds = {
   referenceFile: { warn: 5000, high: 12_000 },
   skillMd: { warn: 2000, high: 5000 },
@@ -148,8 +177,16 @@ export const defaultTokenThresholds: SkillTokenThresholds = {
 
 const namePattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const targetIdPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+const frontmatterClosePattern = /^\n---\r?\n?/;
+const lineBreakPattern = /\r?\n/;
+const whitespacePattern = /\s+/;
 const targetKinds = new Set<SkillTargetKind>(['standard-interop', 'native', 'custom']);
 const targetScopes = new Set<SkillTargetScope>(['system', 'project']);
+const knownFrontmatterExtensions = new Set(['paths', 'disable-model-invocation']);
+const standardFrontmatterFields = new Set(['name', 'description']);
+const defaultIgnoredDirectories = new Set(['.git', 'node_modules', 'dist', 'build', '.turbo', 'styled-system']);
+const defaultMaxFilesPerSkill = 200;
+const defaultMaxTextFileBytes = 200_000;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -255,6 +292,127 @@ const parseRequiredNonEmptyString = (value: unknown, label: string): string => {
   return value;
 };
 
+const createDiagnostic = (
+  code: string,
+  severity: SkillDiagnosticSeverity,
+  message: string,
+  details: Omit<SkillDiagnostic, 'code' | 'message' | 'severity'> = {},
+): SkillDiagnostic => ({
+  code,
+  message,
+  severity,
+  ...details,
+});
+
+const isMissingPathError = (error: unknown) =>
+  isRecord(error) && typeof error.code === 'string' && error.code === 'ENOENT';
+
+const isSkillSourceState = (value: unknown): value is SkillSourceState => {
+  if (!isRecord(value) || value.version !== 1 || !isRecord(value.skillEnabledByName)) {
+    return false;
+  }
+  return Object.entries(value.skillEnabledByName).every(
+    ([skillName, enabled]) => namePattern.test(skillName) && typeof enabled === 'boolean',
+  );
+};
+
+const approximateTokenCount = (text: string) => {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return 0;
+  }
+  return Math.ceil(trimmed.split(whitespacePattern).length * 1.35);
+};
+
+const looksBinary = (buffer: Buffer) => buffer.includes(0);
+
+const parseScalarFrontmatterValue = (value: string): unknown => {
+  const trimmed = value.trim();
+  if (trimmed === 'true') {
+    return true;
+  }
+  if (trimmed === 'false') {
+    return false;
+  }
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+};
+
+const classifyFrontmatterField = (key: string): SkillFrontmatterFieldKind => {
+  if (standardFrontmatterFields.has(key)) {
+    return 'standard';
+  }
+  if (knownFrontmatterExtensions.has(key)) {
+    return 'known-extension';
+  }
+  return 'unknown-extension';
+};
+
+const parseFrontmatter = (text: string) => {
+  if (!text.startsWith('---\n')) {
+    return { fields: [] as SkillFrontmatterField[], markdown: text };
+  }
+
+  const endIndex = text.indexOf('\n---', 4);
+  if (endIndex === -1) {
+    return { fields: [] as SkillFrontmatterField[], markdown: text };
+  }
+
+  const frontmatter = text.slice(4, endIndex);
+  const markdown = text.slice(endIndex).replace(frontmatterClosePattern, '');
+  const lines = frontmatter.split(lineBreakPattern);
+  const fields: SkillFrontmatterField[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line === undefined || line.trim().length === 0 || line.startsWith(' ')) {
+      continue;
+    }
+    const separatorIndex = line.indexOf(':');
+    if (separatorIndex === -1) {
+      continue;
+    }
+    const key = line.slice(0, separatorIndex).trim();
+    const rawValue = line.slice(separatorIndex + 1).trim();
+    let value: unknown = parseScalarFrontmatterValue(rawValue);
+    if (rawValue.length === 0) {
+      const arrayValue: string[] = [];
+      while (lines[index + 1]?.trim().startsWith('- ')) {
+        index += 1;
+        const item = lines[index]?.trim().slice(2).trim();
+        if (item) {
+          arrayValue.push(item);
+        }
+      }
+      value = arrayValue;
+    }
+    fields.push({
+      key,
+      kind: classifyFrontmatterField(key),
+      value,
+    });
+  }
+
+  return { fields, markdown };
+};
+
+const textField = (fields: readonly SkillFrontmatterField[], key: string): string | undefined => {
+  const field = fields.find((entry) => entry.key === key);
+  return typeof field?.value === 'string' && field.value.trim().length > 0 ? field.value : undefined;
+};
+
+const validationStatusFor = (diagnostics: readonly SkillDiagnostic[]): SkillValidationStatus => {
+  if (diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
+    return 'invalid';
+  }
+  if (diagnostics.some((diagnostic) => diagnostic.severity === 'warning')) {
+    return 'warning';
+  }
+  return 'valid';
+};
+
 export const parseSkillName = (value: unknown): string => {
   if (typeof value !== 'string' || !namePattern.test(value)) {
     throw new Error('skill name must be lowercase kebab-case');
@@ -323,4 +481,307 @@ export const parseSkillConfigInput = (value: unknown): SkillManagementConfig => 
   }
 
   return parsed;
+};
+
+export const skillSourceStatePath = (sourceRepoPath: string): string =>
+  path.join(sourceRepoPath, '.skill-tracker', 'state.json');
+
+export const loadSkillSourceState = async (sourceRepoPath: string): Promise<SkillSourceStateResult> => {
+  const filePath = skillSourceStatePath(sourceRepoPath);
+  try {
+    const parsed = JSON.parse(await readFile(filePath, 'utf8')) as unknown;
+    if (!isSkillSourceState(parsed)) {
+      return {
+        diagnostics: [
+          createDiagnostic('InvalidSourceState', 'error', 'Source skill state must be JSON version 1', {
+            path: filePath,
+          }),
+        ],
+        state: { version: 1, skillEnabledByName: {} },
+      };
+    }
+    return { diagnostics: [], state: parsed };
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return { diagnostics: [], state: { version: 1, skillEnabledByName: {} } };
+    }
+    return {
+      diagnostics: [
+        createDiagnostic('InvalidSourceState', 'error', 'Source skill state must be readable JSON', {
+          path: filePath,
+        }),
+      ],
+      state: { version: 1, skillEnabledByName: {} },
+    };
+  }
+};
+
+export const writeSkillSourceState = async (sourceRepoPath: string, stateValue: SkillSourceState): Promise<void> => {
+  if (!isSkillSourceState(stateValue)) {
+    throw new Error('source skill state must be JSON version 1');
+  }
+  const filePath = skillSourceStatePath(sourceRepoPath);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(stateValue, null, 2)}\n`, 'utf8');
+};
+
+export const setSkillEnabled = async (
+  sourceRepoPath: string,
+  skillName: string,
+  enabled: boolean,
+): Promise<SkillSourceState> => {
+  const parsedSkillName = parseSkillName(skillName);
+  const current = await loadSkillSourceState(sourceRepoPath);
+  const nextState: SkillSourceState = {
+    version: 1,
+    skillEnabledByName: {
+      ...current.state.skillEnabledByName,
+      [parsedSkillName]: parseBoolean(enabled, 'enabled'),
+    },
+  };
+  await writeSkillSourceState(sourceRepoPath, nextState);
+  return nextState;
+};
+
+export const parseSkillMarkdown = (skillName: string, text: string): ParsedSkillMarkdown => {
+  const parsedSkillName = parseSkillName(skillName);
+  const { fields, markdown } = parseFrontmatter(text);
+  const manifestName = textField(fields, 'name');
+  const description = textField(fields, 'description');
+  const diagnostics: SkillDiagnostic[] = [];
+
+  if (description === undefined) {
+    diagnostics.push(
+      createDiagnostic('MissingSkillDescription', 'warning', 'SKILL.md frontmatter should include description', {
+        skillName: parsedSkillName,
+      }),
+    );
+  }
+  if (manifestName !== undefined && manifestName !== parsedSkillName) {
+    diagnostics.push(
+      createDiagnostic('SkillNameMismatch', 'error', 'SKILL.md frontmatter name does not match directory name', {
+        skillName: parsedSkillName,
+      }),
+    );
+  }
+  for (const field of fields) {
+    if (field.kind === 'unknown-extension') {
+      diagnostics.push(
+        createDiagnostic('UnknownFrontmatterField', 'warning', `Unknown SKILL.md frontmatter field: ${field.key}`, {
+          skillName: parsedSkillName,
+        }),
+      );
+    }
+  }
+
+  const manifest: SkillManifest = {
+    fields,
+    markdown,
+  };
+  if (manifestName !== undefined) {
+    manifest.name = manifestName;
+  }
+  if (description !== undefined) {
+    manifest.description = description;
+  }
+  return { diagnostics, manifest };
+};
+
+const collectSkillFiles = async (directory: string, ignoredDirectories: ReadonlySet<string>): Promise<string[]> => {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (!ignoredDirectories.has(entry.name)) {
+        files.push(...(await collectSkillFiles(entryPath, ignoredDirectories)));
+      }
+      continue;
+    }
+    if (entry.isFile()) {
+      files.push(entryPath);
+    }
+  }
+  return files.sort((left, right) => left.localeCompare(right));
+};
+
+const readTextForTokenCount = async (
+  filePath: string,
+  maxTextFileBytes: number,
+  skillName: string,
+): Promise<{ diagnostics: readonly SkillDiagnostic[]; text: string }> => {
+  const fileStat = await stat(filePath);
+  if (fileStat.size > maxTextFileBytes) {
+    return {
+      diagnostics: [
+        createDiagnostic('SkillFileTooLarge', 'warning', 'Skill file is too large for token counting', {
+          path: filePath,
+          skillName,
+        }),
+      ],
+      text: '',
+    };
+  }
+  const buffer = await readFile(filePath);
+  if (looksBinary(buffer)) {
+    return {
+      diagnostics: [
+        createDiagnostic('BinarySkillFileSkipped', 'info', 'Binary skill file was skipped for token counting', {
+          path: filePath,
+          skillName,
+        }),
+      ],
+      text: '',
+    };
+  }
+  return { diagnostics: [], text: buffer.toString('utf8') };
+};
+
+const scanOneSkill = async (
+  skillDirectory: string,
+  stateValue: SkillSourceState,
+  options: Required<Pick<SourceSkillScanOptions, 'maxFilesPerSkill' | 'maxTextFileBytes'>>,
+  ignoredDirectories: ReadonlySet<string>,
+): Promise<{ diagnostics: readonly SkillDiagnostic[]; skill?: SourceSkill }> => {
+  const skillName = path.basename(skillDirectory);
+  try {
+    parseSkillName(skillName);
+  } catch {
+    return {
+      diagnostics: [
+        createDiagnostic('InvalidSkillDirectoryName', 'error', 'Skill directory name must be lowercase kebab-case', {
+          path: skillDirectory,
+        }),
+      ],
+    };
+  }
+
+  const skillMdPath = path.join(skillDirectory, 'SKILL.md');
+  let skillMdText: string;
+  try {
+    skillMdText = await readFile(skillMdPath, 'utf8');
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return {
+        diagnostics: [
+          createDiagnostic('MissingSkillMarkdown', 'error', 'Skill directory is missing SKILL.md', {
+            path: skillMdPath,
+            skillName,
+          }),
+        ],
+      };
+    }
+    return {
+      diagnostics: [
+        createDiagnostic('UnreadableSkillMarkdown', 'error', 'SKILL.md could not be read', {
+          path: skillMdPath,
+          skillName,
+        }),
+      ],
+    };
+  }
+
+  const parsedMarkdown = parseSkillMarkdown(skillName, skillMdText);
+  const diagnostics: SkillDiagnostic[] = [...parsedMarkdown.diagnostics];
+  let files: string[];
+  try {
+    files = await collectSkillFiles(skillDirectory, ignoredDirectories);
+  } catch {
+    files = [skillMdPath];
+    diagnostics.push(
+      createDiagnostic('UnreadableSkillDirectory', 'warning', 'Skill directory could not be fully scanned', {
+        path: skillDirectory,
+        skillName,
+      }),
+    );
+  }
+
+  if (files.length > options.maxFilesPerSkill) {
+    diagnostics.push(
+      createDiagnostic('SkillFileLimitExceeded', 'warning', 'Skill has more files than the configured scan limit', {
+        path: skillDirectory,
+        skillName,
+      }),
+    );
+  }
+
+  let referenceTokens = 0;
+  for (const filePath of files) {
+    if (path.basename(filePath) === 'SKILL.md') {
+      continue;
+    }
+    const textResult = await readTextForTokenCount(filePath, options.maxTextFileBytes, skillName);
+    diagnostics.push(...textResult.diagnostics);
+    referenceTokens += approximateTokenCount(textResult.text);
+  }
+
+  const skillMdTokens = approximateTokenCount(skillMdText);
+  const skill: SourceSkill = {
+    description: parsedMarkdown.manifest.description ?? '',
+    diagnostics,
+    enabled: stateValue.skillEnabledByName[skillName] ?? true,
+    manifest: parsedMarkdown.manifest,
+    name: skillName,
+    path: skillDirectory,
+    skillMdPath,
+    tokenCount: {
+      approximate: true,
+      references: referenceTokens,
+      skillMd: skillMdTokens,
+      total: skillMdTokens + referenceTokens,
+    },
+    validationStatus: validationStatusFor(diagnostics),
+  };
+
+  return { diagnostics, skill };
+};
+
+export const scanSkillSourceRepository = async (input: SourceSkillScanInput): Promise<SourceSkillScan> => {
+  const sourceRepoPath = parseRequiredNonEmptyString(input.sourceRepoPath, 'sourceRepoPath');
+  const stateResult =
+    input.state === undefined ? await loadSkillSourceState(sourceRepoPath) : { diagnostics: [], state: input.state };
+  const diagnostics: SkillDiagnostic[] = [...stateResult.diagnostics];
+  const skillsDirectory = path.join(sourceRepoPath, 'skills');
+  const ignoredDirectories = new Set([...defaultIgnoredDirectories, ...(input.options?.ignoredDirectories ?? [])]);
+  const options = {
+    maxFilesPerSkill: input.options?.maxFilesPerSkill ?? defaultMaxFilesPerSkill,
+    maxTextFileBytes: input.options?.maxTextFileBytes ?? defaultMaxTextFileBytes,
+  };
+
+  let entries: Array<{ isDirectory: () => boolean; name: string }>;
+  try {
+    entries = await readdir(skillsDirectory, { withFileTypes: true });
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return { diagnostics, skills: [] };
+    }
+    return {
+      diagnostics: [
+        ...diagnostics,
+        createDiagnostic('UnreadableSkillsDirectory', 'error', 'Source skills directory could not be read', {
+          path: skillsDirectory,
+        }),
+      ],
+      skills: [],
+    };
+  }
+
+  const skills: SourceSkill[] = [];
+  for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const result = await scanOneSkill(
+      path.join(skillsDirectory, entry.name),
+      stateResult.state,
+      options,
+      ignoredDirectories,
+    );
+    diagnostics.push(...result.diagnostics);
+    if (result.skill) {
+      skills.push(result.skill);
+    }
+  }
+
+  return { diagnostics, skills };
 };
