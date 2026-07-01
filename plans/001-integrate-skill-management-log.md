@@ -28,6 +28,29 @@ bun test apps/web/src/server/skills.server.test.ts apps/web/src/skills-page-mode
 
 Result: passed.
 
+### Slice 12: Source Repository Folder Input
+
+- Status: completed
+- Goal: add a plain HTML folder picker affordance beside the source repository input.
+- Files touched:
+  - `apps/web/src/routes/skills.tsx`
+  - `plans/001-integrate-skill-management-log.md`
+- Decisions:
+  - Use a hidden `<input type="file">` with directory attributes and a visible `Browse` button so the browser opens the OS-native folder picker.
+  - Keep `skills.sourceRepoPath` as a manual text path because browsers expose selected folder names and relative file paths, not a stable absolute path.
+- Problems encountered:
+  - None.
+
+Verification:
+
+```bash
+bun run typecheck
+bun run lint
+bun run build
+```
+
+Result: passed.
+
 ### Slice 1: Product Boundary Docs
 
 - Status: completed
