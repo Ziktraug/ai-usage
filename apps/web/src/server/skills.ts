@@ -6,8 +6,14 @@ import {
 } from '@ai-usage/skills';
 import { createServerFn } from '@tanstack/solid-start';
 
+export type { KnownSkillProjectPath } from './skills.server';
+
 export const getSkillManagementSnapshot = createServerFn({ method: 'GET' }).handler(() =>
   import('./skills.server').then(({ readSkillManagementSnapshotForServer }) => readSkillManagementSnapshotForServer()),
+);
+
+export const getKnownSkillProjectPaths = createServerFn({ method: 'GET' }).handler(() =>
+  import('./skills.server').then(({ readKnownSkillProjectPathsForServer }) => readKnownSkillProjectPathsForServer()),
 );
 
 export const saveSkillManagementConfig = createServerFn({ method: 'POST' })

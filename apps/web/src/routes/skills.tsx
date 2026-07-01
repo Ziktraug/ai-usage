@@ -29,7 +29,9 @@ import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
 import {
   createManagedSkillTargetDirectory,
+  getKnownSkillProjectPaths,
   getSkillManagementSnapshot,
+  type KnownSkillProjectPath,
   reconcileAllManagedSkills,
   reconcileManagedSkill,
   saveSkillManagementConfig,
@@ -45,6 +47,7 @@ import {
 
 export const Route = createFileRoute('/skills')({
   loader: async () => ({
+    knownProjectPaths: await getKnownSkillProjectPaths(),
     skills: await getSkillManagementSnapshot(),
   }),
   component: SkillsRoute,
@@ -59,6 +62,16 @@ const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
 
 type SkillSnapshotResult =
   | { ok: true; data: SkillManagementSnapshot }
+  | {
+      ok: false;
+      error: {
+        message: string;
+        tag: string;
+      };
+    };
+
+type KnownProjectPathsResult =
+  | { ok: true; data: readonly KnownSkillProjectPath[] }
   | {
       ok: false;
       error: {
@@ -147,6 +160,13 @@ const formGrid = css({
   alignItems: 'end',
 });
 
+const projectPickerGrid = css({
+  display: 'grid',
+  gap: '10px',
+  gridTemplateColumns: { base: '1fr', lg: 'minmax(0, 1fr) minmax(260px, 0.5fr) auto' },
+  alignItems: 'end',
+});
+
 const configStack = css({
   display: 'grid',
   gap: '16px',
@@ -209,6 +229,15 @@ const projectPathRow = css({
 function SkillsRoute() {
   const data = Route.useLoaderData();
   const [result, setResult] = createSignal<SkillSnapshotResult>(skillSnapshotResultFrom(data().skills));
+  const knownProjectPathsResult = createMemo(() => data().knownProjectPaths as KnownProjectPathsResult);
+  const knownProjectPaths = createMemo(() => {
+    const current = knownProjectPathsResult();
+    return current.ok ? current.data : [];
+  });
+  const knownProjectPathsError = createMemo(() => {
+    const current = knownProjectPathsResult();
+    return current.ok ? null : current.error.message;
+  });
   const [pendingOperation, setPendingOperation] = createSignal<string | null>(null);
   const [operationMessage, setOperationMessage] = createSignal<string | null>(null);
   const snapshot = createMemo(() => {
@@ -346,6 +375,8 @@ function SkillsRoute() {
               fallback={
                 <UnconfiguredPanel
                   addProjectPath={addProjectPath}
+                  knownProjectPaths={knownProjectPaths()}
+                  knownProjectPathsError={knownProjectPathsError()}
                   operationMessage={operationMessage()}
                   pendingOperation={pendingOperation()}
                   projectPathDraft={projectPathDraft()}
@@ -364,6 +395,8 @@ function SkillsRoute() {
                   fallback={
                     <UnconfiguredPanel
                       addProjectPath={addProjectPath}
+                      knownProjectPaths={knownProjectPaths()}
+                      knownProjectPathsError={knownProjectPathsError()}
                       operationMessage={operationMessage()}
                       pendingOperation={pendingOperation()}
                       projectPathDraft={projectPathDraft()}
@@ -380,6 +413,8 @@ function SkillsRoute() {
                   <ConfiguredSnapshot
                     addProjectPath={addProjectPath}
                     createTargetDirectory={createTargetDirectory}
+                    knownProjectPaths={knownProjectPaths()}
+                    knownProjectPathsError={knownProjectPathsError()}
                     operationMessage={operationMessage()}
                     pendingOperation={pendingOperation()}
                     projectPathDraft={projectPathDraft()}
@@ -408,6 +443,8 @@ function SkillsRoute() {
 function ConfiguredSnapshot(props: {
   addProjectPath: () => void;
   createTargetDirectory: (targetId: string) => void;
+  knownProjectPaths: readonly KnownSkillProjectPath[];
+  knownProjectPathsError: string | null;
   operationMessage: string | null;
   pendingOperation: string | null;
   projectPathDraft: string;
@@ -427,6 +464,8 @@ function ConfiguredSnapshot(props: {
     <>
       <ConfigPanel
         addProjectPath={props.addProjectPath}
+        knownProjectPaths={props.knownProjectPaths}
+        knownProjectPathsError={props.knownProjectPathsError}
         operationMessage={props.operationMessage}
         pendingOperation={props.pendingOperation}
         projectPathDraft={props.projectPathDraft}
@@ -481,6 +520,8 @@ function ConfiguredSnapshot(props: {
 
 function ConfigPanel(props: {
   addProjectPath: () => void;
+  knownProjectPaths: readonly KnownSkillProjectPath[];
+  knownProjectPathsError: string | null;
   operationMessage: string | null;
   pendingOperation: string | null;
   projectPathDraft: string;
@@ -521,24 +562,39 @@ function ConfigPanel(props: {
           <div class={panelHeader}>
             <h3 class={panelTitle}>Project paths</h3>
             <p class={panelSub}>
-              Optional local projects for rule diagnostics. Add explicit paths one by one; there is no broad root scan.
+              Optional local projects for rule diagnostics. Pick from projects already present in the report, or add a
+              path manually.
             </p>
           </div>
-          <div class={formGrid}>
+          <div class={projectPickerGrid}>
             <label class={formField}>
-              <span class={labelText}>Add project</span>
-              <input
+              <span class={labelText}>Scanned project</span>
+              <select
                 class={inputClass}
                 onInput={(event) => props.setProjectPathDraft(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    props.addProjectPath();
-                  }
-                }}
                 value={props.projectPathDraft}
-              />
+              >
+                <option value="">Select a project</option>
+                <For each={props.knownProjectPaths}>
+                  {(project) => (
+                    <option disabled={props.projectPaths.includes(project.path)} value={project.path}>
+                      {project.label} · {project.path}
+                    </option>
+                  )}
+                </For>
+              </select>
+              <Show
+                fallback={<span class={helpText}>No scanned projects with paths in the current report payload.</span>}
+                when={props.knownProjectPaths.length > 0}
+              >
+                <span class={helpText}>{props.knownProjectPaths.length} scanned projects available.</span>
+              </Show>
             </label>
+            <ManualProjectPathField
+              addProjectPath={props.addProjectPath}
+              projectPathDraft={props.projectPathDraft}
+              setProjectPathDraft={props.setProjectPathDraft}
+            />
             <button
               class={ghostButton}
               disabled={props.projectPathDraft.trim().length === 0}
@@ -548,6 +604,9 @@ function ConfigPanel(props: {
               Add
             </button>
           </div>
+          <Show when={props.knownProjectPathsError}>
+            {(message) => <p class={meta}>Could not load scanned projects: {message()}</p>}
+          </Show>
           <Show fallback={<p class={meta}>No manual project paths.</p>} when={props.projectPaths.length > 0}>
             <div class={projectPathList}>
               <For each={props.projectPaths}>
@@ -569,6 +628,30 @@ function ConfigPanel(props: {
   );
 }
 
+function ManualProjectPathField(props: {
+  addProjectPath: () => void;
+  projectPathDraft: string;
+  setProjectPathDraft: (value: string) => void;
+}) {
+  return (
+    <label class={formField}>
+      <span class={labelText}>Manual path</span>
+      <input
+        class={inputClass}
+        onInput={(event) => props.setProjectPathDraft(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            props.addProjectPath();
+          }
+        }}
+        value={props.projectPathDraft}
+      />
+      <span class={helpText}>Use this when the project has not appeared in the report yet.</span>
+    </label>
+  );
+}
+
 function ErrorPanel(props: { message: string }) {
   return (
     <section class={panel}>
@@ -582,6 +665,8 @@ function ErrorPanel(props: { message: string }) {
 
 function UnconfiguredPanel(props: {
   addProjectPath: () => void;
+  knownProjectPaths: readonly KnownSkillProjectPath[];
+  knownProjectPathsError: string | null;
   operationMessage: string | null;
   pendingOperation: string | null;
   projectPathDraft: string;
@@ -600,6 +685,8 @@ function UnconfiguredPanel(props: {
       </section>
       <ConfigPanel
         addProjectPath={props.addProjectPath}
+        knownProjectPaths={props.knownProjectPaths}
+        knownProjectPathsError={props.knownProjectPathsError}
         operationMessage={props.operationMessage}
         pendingOperation={props.pendingOperation}
         projectPathDraft={props.projectPathDraft}

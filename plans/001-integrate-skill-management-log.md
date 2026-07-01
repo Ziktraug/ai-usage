@@ -2,6 +2,32 @@
 
 ## Slice Log
 
+### Slice 11: Project Path Picker UX
+
+- Status: completed
+- Goal: replace the raw project-path entry with a picker based on projects already present in the local report payload.
+- Files touched:
+  - `apps/web/src/routes/skills.tsx`
+  - `apps/web/src/server/skills.ts`
+  - `apps/web/src/server/skills.server.ts`
+  - `apps/web/src/server/skills.server.test.ts`
+  - `plans/001-integrate-skill-management-log.md`
+- Decisions:
+  - Use report `projectGroups[].sources[].sourcePath` as the primary known-project source, with a fallback to row `source.sourcePath` for older stored payloads.
+  - Filter known project choices to the current machine and to local directories that still exist.
+  - Keep a manual path input because browser directory pickers do not provide a stable absolute local path that can be persisted by this local web app.
+  - Keep configured project paths explicit in `skills.projectPaths`; the picker only helps populate that list and does not reintroduce broad root scans.
+- Problems encountered:
+  - The previous `/skills` page only displayed configured `skills.projectPaths`, so already-scanned report projects were invisible until explicitly added.
+
+Verification:
+
+```bash
+bun test apps/web/src/server/skills.server.test.ts apps/web/src/skills-page-model.test.ts packages/skills/src/index.test.ts packages/local-collectors/src/machine-config.test.ts
+```
+
+Result: passed.
+
 ### Slice 1: Product Boundary Docs
 
 - Status: completed
