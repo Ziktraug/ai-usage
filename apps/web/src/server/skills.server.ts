@@ -1,5 +1,7 @@
+import fs from 'node:fs';
 import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import {
+  ensureMachineConfig,
   readAiUsageConfig,
   readMergedAiUsageConfigFrom,
   writeAiUsageConfig,
@@ -62,6 +64,42 @@ export interface SkillReconcileServerResult {
   snapshot: SkillManagementSnapshot;
 }
 
+interface ProjectPathSource {
+  machineId?: string;
+  machineLabel?: string;
+  project: string;
+  sessions?: number;
+  sourcePath?: string | null;
+}
+
+interface ProjectPathRow {
+  project: string;
+  rawProject?: string;
+  source?: {
+    machineId?: string;
+    machineLabel?: string;
+    sourcePath?: string | null;
+  };
+}
+
+interface ProjectPathSourcePayload {
+  projectGroups?: readonly { sources: readonly ProjectPathSource[] }[];
+  rows: readonly ProjectPathRow[];
+}
+
+export interface KnownSkillProjectPath {
+  label: string;
+  machineLabel?: string;
+  path: string;
+  project: string;
+  sessions: number;
+}
+
+interface KnownSkillProjectPathOptions {
+  directoryExists?: (projectPath: string) => boolean;
+  localMachineId?: string;
+}
+
 export const skillConfigInputFrom = (input: unknown): SkillManagementConfig => parseSkillConfigInput(input);
 
 export const skillToggleInputFrom = (input: unknown): SkillToggleInput => parseSkillToggleInput(input);
@@ -110,6 +148,117 @@ const loadSnapshotForStorage = async (storage: LocalHistoryStorage): Promise<Ski
 
 export const readSkillManagementSnapshotForServer = async (): Promise<SkillsServerResult<SkillManagementSnapshot>> =>
   runWithStorage((storage) => loadSnapshotForStorage(storage));
+
+const pathEntryLabel = (entry: { machineLabel?: string | undefined; project: string }) =>
+  entry.machineLabel ? `${entry.project} · ${entry.machineLabel}` : entry.project;
+
+const addKnownProjectPath = (
+  entries: Map<string, KnownSkillProjectPath>,
+  input: {
+    machineId?: string | undefined;
+    machineLabel?: string | undefined;
+    path?: string | null | undefined;
+    project: string;
+    sessions?: number;
+  },
+  options: KnownSkillProjectPathOptions,
+) => {
+  if (options.localMachineId && input.machineId && input.machineId !== options.localMachineId) {
+    return;
+  }
+  const projectPath = input.path?.trim();
+  if (!projectPath) {
+    return;
+  }
+  if (options.directoryExists && !options.directoryExists(projectPath)) {
+    return;
+  }
+  const existing = entries.get(projectPath);
+  if (existing) {
+    entries.set(projectPath, {
+      ...existing,
+      sessions: existing.sessions + (input.sessions ?? 0),
+    });
+    return;
+  }
+  entries.set(projectPath, {
+    label: pathEntryLabel(input),
+    ...(input.machineLabel ? { machineLabel: input.machineLabel } : {}),
+    path: projectPath,
+    project: input.project,
+    sessions: input.sessions ?? 0,
+  });
+};
+
+export const knownSkillProjectPathsFromReportPayload = (
+  payload: ProjectPathSourcePayload,
+  options: KnownSkillProjectPathOptions = {},
+): readonly KnownSkillProjectPath[] => {
+  const entries = new Map<string, KnownSkillProjectPath>();
+  const groupedSources = payload.projectGroups?.flatMap((group) => group.sources) ?? [];
+
+  if (groupedSources.length > 0) {
+    for (const source of groupedSources) {
+      addKnownProjectPath(
+        entries,
+        {
+          machineId: source.machineId,
+          machineLabel: source.machineLabel,
+          path: source.sourcePath,
+          project: source.project,
+          sessions: source.sessions ?? 0,
+        },
+        options,
+      );
+    }
+  } else {
+    for (const row of payload.rows) {
+      addKnownProjectPath(
+        entries,
+        {
+          machineId: row.source?.machineId,
+          machineLabel: row.source?.machineLabel,
+          path: row.source?.sourcePath,
+          project: row.rawProject ?? row.project,
+          sessions: 1,
+        },
+        options,
+      );
+    }
+  }
+
+  return [...entries.values()].sort(
+    (left, right) => right.sessions - left.sessions || left.label.localeCompare(right.label),
+  );
+};
+
+const localDirectoryExists = (projectPath: string) => {
+  try {
+    return fs.statSync(projectPath).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+export const readKnownSkillProjectPathsForServer = async (): Promise<
+  SkillsServerResult<readonly KnownSkillProjectPath[]>
+> => {
+  try {
+    const [machine, payload] = await Promise.all([
+      Effect.runPromise(ensureMachineConfig.pipe(Effect.provide(LocalHistoryStorageLive))),
+      import('./report-payload.server').then(({ runReportPayloadCollection }) => runReportPayloadCollection()),
+    ]);
+    return {
+      ok: true,
+      data: knownSkillProjectPathsFromReportPayload(payload, {
+        directoryExists: localDirectoryExists,
+        localMachineId: machine.id,
+      }),
+    };
+  } catch (error) {
+    return errorResult(error);
+  }
+};
 
 export const writeSkillManagementConfigForServer = async (
   skills: SkillManagementConfig,
