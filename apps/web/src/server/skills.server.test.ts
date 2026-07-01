@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  knownSkillProjectPathsFromReportPayload,
   skillConfigInputFrom,
   skillNameInputFrom,
   skillTargetDirectoryInputFrom,
@@ -19,5 +20,116 @@ describe('skills server input validation', () => {
 
   test('rejects invalid config paths before workflow calls', () => {
     expect(() => skillConfigInputFrom({ sourceRepoPath: '' })).toThrow('sourceRepoPath');
+  });
+
+  test('extracts known project paths from report project sources', () => {
+    expect(
+      knownSkillProjectPathsFromReportPayload(
+        {
+          projectGroups: [
+            {
+              sources: [
+                {
+                  machineId: 'local-machine',
+                  machineLabel: 'Workstation',
+                  project: 'ai-usage',
+                  sessions: 3,
+                  sourcePath: '/home/nathan/Projects/Github/ai-usage',
+                },
+              ],
+            },
+          ],
+          rows: [],
+        },
+        {
+          directoryExists: () => true,
+          localMachineId: 'local-machine',
+        },
+      ),
+    ).toEqual([
+      {
+        label: 'ai-usage · Workstation',
+        machineLabel: 'Workstation',
+        path: '/home/nathan/Projects/Github/ai-usage',
+        project: 'ai-usage',
+        sessions: 3,
+      },
+    ]);
+  });
+
+  test('falls back to report rows when project groups are absent', () => {
+    expect(
+      knownSkillProjectPathsFromReportPayload(
+        {
+          rows: [
+            {
+              project: 'ai-usage',
+              source: {
+                machineId: 'local-machine',
+                machineLabel: 'Workstation',
+                sourcePath: '/home/nathan/Projects/Github/ai-usage',
+              },
+            },
+            {
+              project: 'ai-usage',
+              source: {
+                machineId: 'local-machine',
+                machineLabel: 'Workstation',
+                sourcePath: '/home/nathan/Projects/Github/ai-usage',
+              },
+            },
+          ],
+        },
+        {
+          directoryExists: () => true,
+          localMachineId: 'local-machine',
+        },
+      ),
+    ).toMatchObject([{ path: '/home/nathan/Projects/Github/ai-usage', sessions: 2 }]);
+  });
+
+  test('filters known project paths to local existing directories', () => {
+    expect(
+      knownSkillProjectPathsFromReportPayload(
+        {
+          projectGroups: [
+            {
+              sources: [
+                {
+                  machineId: 'local-machine',
+                  project: 'local',
+                  sessions: 1,
+                  sourcePath: '/local/project',
+                },
+                {
+                  machineId: 'remote-machine',
+                  project: 'remote',
+                  sessions: 1,
+                  sourcePath: '/remote/project',
+                },
+                {
+                  machineId: 'local-machine',
+                  project: 'file',
+                  sessions: 1,
+                  sourcePath: '/local/export.csv',
+                },
+              ],
+            },
+          ],
+          rows: [],
+        },
+        {
+          directoryExists: (projectPath) => projectPath === '/local/project',
+          localMachineId: 'local-machine',
+        },
+      ),
+    ).toEqual([
+      {
+        label: 'local',
+        path: '/local/project',
+        project: 'local',
+        sessions: 1,
+      },
+    ]);
   });
 });
