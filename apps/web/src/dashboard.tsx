@@ -558,6 +558,9 @@ export const Dashboard = (props: {
               </div>
             </div>
             <div class={headerActions}>
+              <Link class={navButton} to="/skills">
+                Skills
+              </Link>
               <Link class={navButton} to="/sync">
                 Sync
               </Link>

@@ -28,6 +28,50 @@ bun run lint
 
 Result: passed.
 
+### Slice 7: Read-Only `/skills` Web Route
+
+- Status: completed with verification caveat
+- Goal: expose a read-only skill-management snapshot in the web app.
+- Files touched:
+  - `apps/web/package.json`
+  - `apps/web/src/server/skills.ts`
+  - `apps/web/src/server/skills.server.ts`
+  - `apps/web/src/routes/skills.tsx`
+  - `apps/web/src/skills-page-model.ts`
+  - `apps/web/src/skills-page-model.test.ts`
+  - `apps/web/src/dashboard.tsx`
+  - `apps/web/src/routeTree.gen.ts`
+  - `packages/skills/src/index.ts`
+  - `bun.lock`
+  - `plans/001-integrate-skill-management-log.md`
+- Decisions:
+  - Server functions follow the existing facade pattern and keep filesystem/config reads in `skills.server.ts`.
+  - The server facade returns a serializable snapshot; `SkillFrontmatterField.value` is now constrained to JSON values instead of `unknown`.
+  - `/skills` is read-only in this slice: summary tiles, managed skills, targets, unmanaged entries, diagnostics, and native-rules placeholder.
+  - Dashboard navigation now links to `/skills`.
+- Problems encountered:
+  - `bun test apps/web/src` fails in pre-existing TSX tests with `Cannot find module 'react/jsx-dev-runtime'` from Solid TSX modules. The new `apps/web/src/skills-page-model.test.ts` passes, and build/typecheck/lint pass.
+
+Verification:
+
+```bash
+bun test apps/web/src/skills-page-model.test.ts
+bun test packages/skills/src apps/web/src/skills-page-model.test.ts
+bun run typecheck
+bun run build
+bun run lint
+```
+
+Result: passed.
+
+Additional attempted verification:
+
+```bash
+bun test apps/web/src
+```
+
+Result: failed on existing TSX test imports resolving `react/jsx-dev-runtime`; no skill-route test failed.
+
 ### Slice 6: Read-Only Snapshot Workflows
 
 - Status: completed
