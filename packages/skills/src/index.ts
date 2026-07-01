@@ -41,6 +41,7 @@ export interface SkillManagementConnectorConfig {
 export interface SkillManagementConfig {
   connectors?: Record<string, SkillManagementConnectorConfig>;
   ignoredTargetFindings?: readonly string[];
+  projectPaths?: readonly string[];
   projectsRootPath?: string;
   sourceRepoPath?: string;
   targets?: Record<string, SkillManagementTargetConfig>;
@@ -300,6 +301,14 @@ const parseStringArray = (value: unknown, label: string): readonly string[] => {
     throw new Error(`${label} must be an array of strings`);
   }
   return value;
+};
+
+const parseNonEmptyStringArray = (value: unknown, label: string): readonly string[] => {
+  const entries = parseStringArray(value, label);
+  if (entries.some((entry) => entry.trim().length === 0)) {
+    throw new Error(`${label} must contain only non-empty strings`);
+  }
+  return entries;
 };
 
 const parsePositiveNumber = (value: unknown, label: string): number => {
@@ -562,6 +571,9 @@ export const parseSkillConfigInput = (value: unknown): SkillManagementConfig => 
     parsed.projectsRootPath = projectsRootPath;
   }
 
+  if (input.projectPaths !== undefined) {
+    parsed.projectPaths = parseNonEmptyStringArray(input.projectPaths, 'projectPaths');
+  }
   if (input.targets !== undefined) {
     parsed.targets = parseTargets(input.targets);
   }
