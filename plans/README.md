@@ -8,7 +8,7 @@ honor its STOP conditions, and update your row when done.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
-| 001 | Integrate Skill Management Into ai-usage | P1 | L | - | IN PROGRESS |
+| 001 | Integrate Skill Management Into ai-usage | P1 | L | - | BLOCKED (`bun test apps/web/src` resolves existing Solid TSX tests through `react/jsx-dev-runtime`) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
