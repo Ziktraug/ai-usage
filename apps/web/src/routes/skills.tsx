@@ -87,6 +87,8 @@ interface OperationNotice {
   tone: 'error' | 'ok';
 }
 
+const errorMessageFrom = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
 const skillSnapshotResultFrom = (value: unknown): SkillSnapshotResult => {
   if (typeof value !== 'object' || value === null || !('ok' in value)) {
     return { ok: false, error: { message: 'Invalid skills snapshot response', tag: 'InvalidResponse' } };
@@ -328,6 +330,8 @@ function SkillsRoute() {
     setReconcilePlan(null);
     try {
       await action();
+    } catch (error) {
+      setOperationNotice({ message: errorMessageFrom(error), tone: 'error' });
     } finally {
       setPendingOperation(null);
     }
@@ -372,11 +376,11 @@ function SkillsRoute() {
       );
     });
 
-  const saveConfig = () =>
+  const saveConfig = (nextSourceRepoPath: string) =>
     runOperation('save-config', async () => {
       applySnapshotResult(
         skillSnapshotResult(
-          await saveSkillManagementConfig({ data: configInput({ sourceRepoPath: sourceRepoPath() }) }),
+          await saveSkillManagementConfig({ data: configInput({ sourceRepoPath: nextSourceRepoPath }) }),
         ),
         'Skill source saved.',
       );
@@ -548,7 +552,7 @@ function ConfiguredSnapshot(props: {
   reconcilePlan: ReconcilePlanSummary | null;
   reconcileSkill: (skillName: string) => void;
   removeProjectPath: (value: string) => void;
-  saveConfig: () => void;
+  saveConfig: (sourceRepoPath: string) => void;
   setProjectPathDraft: (value: string) => void;
   setSourceRepoPath: (value: string) => void;
   snapshot: SkillManagementSnapshot;
@@ -665,7 +669,7 @@ function ConfigurationFold(props: {
   projectPathDraft: string;
   projectPaths: readonly string[];
   removeProjectPath: (value: string) => void;
-  saveConfig: () => void;
+  saveConfig: (sourceRepoPath: string) => void;
   setProjectPathDraft: (value: string) => void;
   setSourceRepoPath: (value: string) => void;
   snapshot: SkillManagementSnapshot;
@@ -724,11 +728,17 @@ function ConfigPanel(props: {
   projectPathDraft: string;
   projectPaths: readonly string[];
   removeProjectPath: (value: string) => void;
-  saveConfig: () => void;
+  saveConfig: (sourceRepoPath: string) => void;
   setProjectPathDraft: (value: string) => void;
   setSourceRepoPath: (value: string) => void;
   sourceRepoPath: string;
 }) {
+  let sourceRepoPathInput: HTMLInputElement | null = null;
+
+  const submitSourceRepoPath = () => {
+    props.saveConfig(sourceRepoPathInput?.value ?? props.sourceRepoPath);
+  };
+
   return (
     <section class={stack}>
       <div class={configStack}>
@@ -737,7 +747,11 @@ function ConfigPanel(props: {
             <span class={labelText}>Source repository</span>
             <input
               class={inputClass}
+              name="sourceRepoPath"
               onInput={(event) => props.setSourceRepoPath(event.currentTarget.value)}
+              ref={(element) => {
+                sourceRepoPathInput = element;
+              }}
               value={props.sourceRepoPath}
             />
             <span class={helpText}>Repository that owns shared skills, expected at `skills/*/SKILL.md`.</span>
@@ -747,7 +761,7 @@ function ConfigPanel(props: {
             class={cx(commandButton, busyButton)}
             data-pending={props.pendingOperation === 'save-config' ? 'true' : undefined}
             disabled={props.pendingOperation !== null}
-            onClick={props.saveConfig}
+            onClick={submitSourceRepoPath}
             type="button"
           >
             Save source
@@ -956,7 +970,7 @@ function UnconfiguredPanel(props: {
   projectPathDraft: string;
   projectPaths: readonly string[];
   removeProjectPath: (value: string) => void;
-  saveConfig: () => void;
+  saveConfig: (sourceRepoPath: string) => void;
   setProjectPathDraft: (value: string) => void;
   setSourceRepoPath: (value: string) => void;
   sourceRepoPath: string;
