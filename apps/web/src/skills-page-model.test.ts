@@ -14,19 +14,16 @@ import {
   buildSkillMatrix,
   buildSkillTree,
   canReconcileAll,
-  defaultSkillSelection,
   describeReconcileActions,
   filterMatrixRows,
   findProjectSkillRow,
   groupUnmanagedEntries,
-  parseSelectionKey,
   projectionStateLabel,
   projectRouteKey,
   selectionKey,
   skillInvocation,
   skillScopeMatches,
   skillSelectionFromPath,
-  skillSelectionPath,
 } from './skills-page-model';
 
 const target = (id: string, label: string, enabled = true): SkillTarget => ({
@@ -177,8 +174,27 @@ describe('skills page model', () => {
     expect(tree.scopes[1]).toMatchObject({
       issueCount: 1,
       pendingLinkCount: 0,
-      shortPath: '/work/ai-usage',
     });
+    expect(tree.scopes[1]?.shortPath).toBeUndefined();
+  });
+
+  test('shows a short path only when scope labels collide', () => {
+    const snapshot = makeSnapshot({
+      skills: [skill('global-skill')],
+      targets: [target('codex', 'Codex')],
+    });
+    const inventories = [
+      projectInventory('/work/first/Exalibur', [projectObservation('alpha-skill', 'claude-project')]),
+      projectInventory('/work/second/Exalibur', [projectObservation('alpha-skill', 'claude-project')]),
+      projectInventory('/work/solo', [projectObservation('alpha-skill', 'claude-project')]),
+    ];
+
+    const tree = buildSkillTree(snapshot, inventories);
+    const scopeByPath = new Map(tree.scopes.map((scope) => [scope.path, scope]));
+
+    expect(scopeByPath.get('/work/first/Exalibur')?.shortPath).toBe('…/first/Exalibur');
+    expect(scopeByPath.get('/work/second/Exalibur')?.shortPath).toBe('…/second/Exalibur');
+    expect(scopeByPath.get('/work/solo')?.shortPath).toBeUndefined();
   });
 
   test('keeps known projects visible even before a project skill inventory exists', () => {
@@ -200,15 +216,42 @@ describe('skills page model', () => {
     });
   });
 
-  test('chooses the first global skill needing attention as the default selection', () => {
+  test('aggregates project skill inventories under grouped project scopes', () => {
     const snapshot = makeSnapshot({
-      projections: [projection('alpha-skill', 'codex', 'linked'), projection('beta-skill', 'codex', 'broken-link')],
-      skills: [skill('alpha-skill'), skill('beta-skill')],
+      skills: [skill('global-skill')],
       targets: [target('codex', 'Codex')],
     });
+    const inventories = [
+      projectInventory('/work/exalibur', [projectObservation('shared-skill', 'claude-project')]),
+      projectInventory('/work/exalibur2', [projectObservation('other-skill', 'agents-project')]),
+    ];
+    const knownProjects = [
+      {
+        label: 'exalibur',
+        path: 'group:exalibur',
+        routeKey: 'exalibur',
+        sourcePaths: ['/work/exalibur', '/work/exalibur2'],
+      },
+    ];
 
-    expect(defaultSkillSelection(snapshot, [])).toEqual({ skillName: 'beta-skill', type: 'global-skill' });
-    expect(selectionKey({ skillName: 'beta-skill', type: 'global-skill' })).toBe('global:beta-skill');
+    const tree = buildSkillTree(snapshot, inventories, knownProjects);
+
+    expect(tree.scopes.map((scope) => scope.label)).toEqual(['Global', 'exalibur']);
+    expect(tree.scopes[1]?.path).toBe('group:exalibur');
+    expect(tree.scopes[1]?.sourcePaths).toEqual(['/work/exalibur', '/work/exalibur2']);
+    expect(tree.scopes[1]?.skills.map((node) => node.name)).toEqual(['other-skill', 'shared-skill']);
+    expect(projectRouteKey('group:exalibur', knownProjects)).toBe('exalibur');
+    expect(skillSelectionFromPath('/skills/projects/exalibur/shared-skill', knownProjects)).toEqual({
+      projectPath: 'group:exalibur',
+      skillName: 'shared-skill',
+      type: 'project-skill',
+    });
+    expect(
+      findProjectSkillRow(inventories, 'group:exalibur', 'shared-skill', knownProjects)?.observations[0],
+    ).toMatchObject({
+      projectLabel: 'exalibur',
+      projectPath: '/work/exalibur',
+    });
   });
 
   test('treats missing links as pending rather than actionable tree issues', () => {
@@ -224,52 +267,38 @@ describe('skills page model', () => {
       issueCount: 0,
       pendingLinkCount: 1,
     });
-    expect(defaultSkillSelection(snapshot, [])).toEqual({ skillName: 'alpha-skill', type: 'global-skill' });
+    expect(selectionKey({ skillName: 'alpha-skill', type: 'global-skill' })).toBe('global:alpha-skill');
   });
 
-  test('parses selection keys back into selections', () => {
-    expect(parseSelectionKey('global')).toEqual({ type: 'global-scope' });
-    expect(parseSelectionKey('global:alpha-skill')).toEqual({ skillName: 'alpha-skill', type: 'global-skill' });
-    expect(parseSelectionKey('project:/work/ai-usage')).toEqual({
-      projectPath: '/work/ai-usage',
+  test('parses route paths for skill selections', () => {
+    const projectPath = '/Users/nathan/projects/github/Exalibur';
+    const knownProjects = [{ label: 'Exalibur', path: projectPath }];
+
+    expect(skillSelectionFromPath('/skills', knownProjects)).toEqual({ type: 'global-scope' });
+    expect(skillSelectionFromPath('/skills/matrix', knownProjects)).toEqual({ type: 'global-scope' });
+    expect(skillSelectionFromPath('/skills/global/alpha-skill', knownProjects)).toEqual({
+      skillName: 'alpha-skill',
+      type: 'global-skill',
+    });
+    expect(skillSelectionFromPath('/skills/projects/Exalibur', knownProjects)).toEqual({
+      projectPath,
       type: 'project-scope',
     });
-    expect(parseSelectionKey('project:/work/ai-usage:alpha-skill')).toEqual({
-      projectPath: '/work/ai-usage',
-      skillName: 'alpha-skill',
+    expect(skillSelectionFromPath('/skills/projects/Exalibur/no-use-effect', knownProjects)).toEqual({
+      projectPath,
+      skillName: 'no-use-effect',
       type: 'project-skill',
     });
-    expect(parseSelectionKey('global:')).toBeUndefined();
   });
 
-  test('round-trips route paths for skill selections', () => {
-    const knownProjects = [{ label: 'Exalibur', path: '/Users/nathan/projects/github/Exalibur' }];
-    const selections = [
-      { type: 'global-scope' },
-      { skillName: 'alpha-skill', type: 'global-skill' },
-      { projectPath: '/Users/nathan/projects/github/Exalibur', type: 'project-scope' },
-      {
-        projectPath: '/Users/nathan/projects/github/Exalibur',
-        skillName: 'no-use-effect',
-        type: 'project-skill',
-      },
-    ] as const;
-
-    for (const selection of selections) {
-      expect(skillSelectionFromPath(skillSelectionPath(selection), knownProjects)).toEqual(selection);
-    }
-  });
-
-  test('uses the project name as the route key', () => {
+  test('uses the project name as the route key when it is unambiguous', () => {
     const projectPath = '/Users/nathan/projects/github/Exalibur';
 
     expect(projectRouteKey(projectPath)).toBe('Exalibur');
-    expect(skillSelectionPath({ projectPath, skillName: 'exalibur-i18n', type: 'project-skill' })).toBe(
-      '/skills/projects/Exalibur/exalibur-i18n',
-    );
+    expect(projectRouteKey(projectPath, [{ label: 'Exalibur', path: projectPath }])).toBe('Exalibur');
   });
 
-  test('keeps project names in URLs even when project names collide', () => {
+  test('falls back to the full path when project names collide', () => {
     const firstProjectPath = '/Users/nathan/projects/github/Exalibur';
     const secondProjectPath = '/private/tmp/Exalibur';
     const knownProjects = [
@@ -277,9 +306,16 @@ describe('skills page model', () => {
       { label: 'Exalibur', path: secondProjectPath },
     ];
 
-    expect(projectRouteKey(firstProjectPath)).toBe('Exalibur');
+    expect(projectRouteKey(firstProjectPath, knownProjects)).toBe(firstProjectPath);
+    expect(projectRouteKey(secondProjectPath, knownProjects)).toBe(secondProjectPath);
+    expect(skillSelectionFromPath(`/skills/projects/${encodeURIComponent(secondProjectPath)}`, knownProjects)).toEqual({
+      projectPath: secondProjectPath,
+      type: 'project-scope',
+    });
+    // A legacy ambiguous basename key no longer resolves to an arbitrary
+    // project; the unresolved key falls through to the stale-URL fallback.
     expect(skillSelectionFromPath('/skills/projects/Exalibur', knownProjects)).toEqual({
-      projectPath: firstProjectPath,
+      projectPath: 'Exalibur',
       type: 'project-scope',
     });
   });

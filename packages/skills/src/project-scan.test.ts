@@ -28,19 +28,23 @@ describe('project skill scans', () => {
       const agentsSkills = path.join(projectPath, '.agents', 'skills');
       const globalSkill = path.join(sourceRepoPath, 'skills', 'global-skill');
       const foreignSkill = path.join(root, 'foreign', 'foreign-skill');
+      const projectLocalSkill = path.join(projectPath, 'tools', 'local-skill');
 
       await writeSkill(path.join(claudeSkills, 'owned-skill'), 'owned-skill');
       await writeSkill(globalSkill, 'global-skill');
       await writeSkill(foreignSkill, 'foreign-skill');
+      await writeSkill(projectLocalSkill, 'local-skill');
       await mkdir(agentsSkills, { recursive: true });
       await symlink(globalSkill, path.join(agentsSkills, 'global-skill'));
       await symlink(foreignSkill, path.join(agentsSkills, 'foreign-skill'));
+      await symlink(projectLocalSkill, path.join(claudeSkills, 'local-skill'));
 
       const inventories = await scanProjectSkills({ projectPaths: [projectPath], sourceRepoPath });
 
       expect(inventories).toHaveLength(1);
       expect(inventories[0]?.diagnostics).toEqual([]);
       expect(inventories[0]?.observations.map((observation) => [observation.name, observation.placement])).toEqual([
+        ['local-skill', 'project-symlink'],
         ['owned-skill', 'owned-directory'],
         ['foreign-skill', 'external-symlink'],
         ['global-skill', 'symlink-to-source'],

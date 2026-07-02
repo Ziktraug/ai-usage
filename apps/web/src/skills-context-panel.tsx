@@ -13,6 +13,7 @@ import {
   strongCell,
 } from '@ai-usage/design-system/report';
 import type { ProjectionState, SkillManagementSnapshot } from '@ai-usage/skills';
+import { useNavigate } from '@tanstack/solid-router';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import {
   buildGlobalSkillExposure,
@@ -20,7 +21,9 @@ import {
   canReconcileAll,
   findGlobalSkill,
   findProjectSkillRow,
+  type KnownProjectScope,
   projectionStateLabel,
+  projectSourcePathsForScope,
   type ReconcilePlanSummary,
   type SkillCellStateFilter,
   type SkillSelection,
@@ -114,12 +117,12 @@ const projectionLabelForIssue = (state: string) =>
   projectionStateLabel((state === 'not-applicable' ? 'missing' : state) as ProjectionState);
 
 export const SkillsContextPanel = (props: {
+  matrixOpen: boolean;
+  knownProjects: readonly KnownProjectScope[];
   onApplyReconcile: () => void;
   onCancelReconcile: () => void;
   onCellStateFilterChange: (filter: SkillCellStateFilter | undefined) => void;
-  onOpenMatrix: () => void;
   onPreviewReconcile: () => void;
-  onSelect: (selection: SkillSelection) => void;
   pendingOperation: string | null;
   projectInventories: ProjectInventoriesResult | undefined;
   reconcilePlan: ReconcilePlanSummary | null;
@@ -128,6 +131,19 @@ export const SkillsContextPanel = (props: {
   snapshot: SkillManagementSnapshot;
   toggleSkill: (skillName: string, enabled: boolean) => void;
 }) => {
+  const navigate = useNavigate();
+  // Selection changes go through the router so the URL, the tree highlight,
+  // and the detail pane can never disagree.
+  const openFilteredMatrix = (filter: SkillCellStateFilter) => {
+    props.onCellStateFilterChange(filter);
+    navigate({ to: '/skills/matrix' });
+  };
+  const toggleMatrix = () => {
+    navigate({ to: props.matrixOpen ? '/skills' : '/skills/matrix' });
+  };
+  const openOverview = () => {
+    navigate({ to: '/skills' });
+  };
   const health = createMemo(() => buildSkillHealthSummary(props.snapshot));
   const inventories = createMemo(() => (props.projectInventories?.ok ? props.projectInventories.data : []));
   const selectedGlobalSkill = createMemo(() =>
@@ -135,15 +151,22 @@ export const SkillsContextPanel = (props: {
   );
   const selectedProjectSkill = createMemo(() =>
     props.selection.type === 'project-skill'
-      ? findProjectSkillRow(inventories(), props.selection.projectPath, props.selection.skillName)
+      ? findProjectSkillRow(inventories(), props.selection.projectPath, props.selection.skillName, props.knownProjects)
       : undefined,
   );
-  const selectedProjectInventory = createMemo(() => {
+  const selectedProjectInventories = createMemo(() => {
     const selection = props.selection;
-    return selection.type === 'project-scope'
-      ? inventories().find((inventory) => inventory.projectPath === selection.projectPath)
-      : undefined;
+    if (selection.type !== 'project-scope') {
+      return [];
+    }
+    const sourcePaths = new Set(projectSourcePathsForScope(selection.projectPath, props.knownProjects));
+    return inventories().filter((inventory) => sourcePaths.has(inventory.projectPath));
   });
+  const selectedProjectSourcePaths = createMemo(() =>
+    props.selection.type === 'project-scope'
+      ? projectSourcePathsForScope(props.selection.projectPath, props.knownProjects)
+      : [],
+  );
   const exposureIssues = createMemo(() =>
     props.selection.type === 'global-skill'
       ? buildGlobalSkillExposure(props.snapshot, props.selection.skillName).filter((entry) =>
@@ -171,19 +194,15 @@ export const SkillsContextPanel = (props: {
         <p class={panelSub}>{subtitle()}</p>
       </div>
       <div class={stack}>
-        <SourceHealth
-          health={health()}
-          onCellStateFilterChange={props.onCellStateFilterChange}
-          onOpenMatrix={props.onOpenMatrix}
-          onSelect={props.onSelect}
-        />
+        <SourceHealth health={health()} onOpenFilteredMatrix={openFilteredMatrix} onOpenOverview={openOverview} />
         <Show when={props.selection.type === 'global-scope'}>
           <ScopeActions
             canReconcile={canReconcileAll(props.snapshot)}
+            matrixOpen={props.matrixOpen}
             onApplyReconcile={props.onApplyReconcile}
             onCancelReconcile={props.onCancelReconcile}
-            onOpenMatrix={props.onOpenMatrix}
             onPreviewReconcile={props.onPreviewReconcile}
+            onToggleMatrix={toggleMatrix}
             pendingOperation={props.pendingOperation}
             reconcilePlan={props.reconcilePlan}
           />
@@ -199,14 +218,16 @@ export const SkillsContextPanel = (props: {
             />
           )}
         </Show>
-        <Show when={selectedProjectInventory()}>
-          {(inventory) => (
-            <ProjectActions
-              diagnostics={inventory().diagnostics}
-              observedCount={inventory().observations.length}
-              path={inventory().projectPath}
-            />
-          )}
+        <Show when={props.selection.type === 'project-scope'}>
+          <Show when={selectedProjectInventories()}>
+            {(inventories) => (
+              <ProjectActions
+                diagnostics={inventories().flatMap((inventory) => inventory.diagnostics)}
+                observedCount={inventories().reduce((total, inventory) => total + inventory.observations.length, 0)}
+                paths={selectedProjectSourcePaths()}
+              />
+            )}
+          </Show>
         </Show>
         <Show when={selectedProjectSkill()}>
           {(row) => <ProjectSkillActions path={row().observations.at(0)?.path ?? ''} />}
@@ -218,64 +239,51 @@ export const SkillsContextPanel = (props: {
 
 const SourceHealth = (props: {
   health: ReturnType<typeof buildSkillHealthSummary>;
-  onCellStateFilterChange: (filter: SkillCellStateFilter | undefined) => void;
-  onOpenMatrix: () => void;
-  onSelect: (selection: SkillSelection) => void;
-}) => {
-  const openFilteredMatrix = (filter: SkillCellStateFilter) => {
-    props.onSelect({ type: 'global-scope' });
-    props.onCellStateFilterChange(filter);
-    props.onOpenMatrix();
-  };
-  return (
-    <section class={stack}>
-      <div>
-        <div class={strongCell}>Source health</div>
-        <div class={meta}>Managed runtime exposure</div>
-      </div>
-      <div class={metricList}>
-        <button class={metricRow} onClick={() => openFilteredMatrix('linked')} type="button">
-          <span class={meta}>Healthy links</span>
-          <strong>
-            {props.health.healthyLinkCount}/{props.health.expectedLinkCount}
-          </strong>
-        </button>
-        <button class={metricRow} onClick={() => openFilteredMatrix('broken')} type="button">
-          <span class={meta}>To repair</span>
-          <strong>{props.health.toRepairCount}</strong>
-        </button>
-        <button class={metricRow} onClick={() => openFilteredMatrix('blocked')} type="button">
-          <span class={meta}>Blocked</span>
-          <strong>{props.health.blockedCount}</strong>
-        </button>
-        <button
-          class={metricRow}
-          onClick={() => {
-            props.onSelect({ type: 'global-scope' });
-          }}
-          type="button"
-        >
-          <span class={meta}>To consolidate</span>
-          <strong>{props.health.consolidateCount}</strong>
-        </button>
-      </div>
-    </section>
-  );
-};
+  onOpenFilteredMatrix: (filter: SkillCellStateFilter) => void;
+  onOpenOverview: () => void;
+}) => (
+  <section class={stack}>
+    <div>
+      <div class={strongCell}>Source health</div>
+      <div class={meta}>Managed runtime exposure</div>
+    </div>
+    <div class={metricList}>
+      <button class={metricRow} onClick={() => props.onOpenFilteredMatrix('linked')} type="button">
+        <span class={meta}>Healthy links</span>
+        <strong>
+          {props.health.healthyLinkCount}/{props.health.expectedLinkCount}
+        </strong>
+      </button>
+      <button class={metricRow} onClick={() => props.onOpenFilteredMatrix('broken')} type="button">
+        <span class={meta}>To repair</span>
+        <strong>{props.health.toRepairCount}</strong>
+      </button>
+      <button class={metricRow} onClick={() => props.onOpenFilteredMatrix('blocked')} type="button">
+        <span class={meta}>Blocked</span>
+        <strong>{props.health.blockedCount}</strong>
+      </button>
+      <button class={metricRow} onClick={() => props.onOpenOverview()} type="button">
+        <span class={meta}>To consolidate</span>
+        <strong>{props.health.consolidateCount}</strong>
+      </button>
+    </div>
+  </section>
+);
 
 const ScopeActions = (props: {
   canReconcile: boolean;
+  matrixOpen: boolean;
   onApplyReconcile: () => void;
   onCancelReconcile: () => void;
-  onOpenMatrix: () => void;
   onPreviewReconcile: () => void;
+  onToggleMatrix: () => void;
   pendingOperation: string | null;
   reconcilePlan: ReconcilePlanSummary | null;
 }) => (
   <>
     <section class={actionGrid}>
-      <button class={ghostButton} onClick={props.onOpenMatrix} type="button">
-        Exposure matrix
+      <button class={ghostButton} onClick={props.onToggleMatrix} type="button">
+        {props.matrixOpen ? 'Close matrix' : 'Exposure matrix'}
       </button>
       <button
         aria-busy={props.pendingOperation === 'preview-reconcile' ? 'true' : undefined}
@@ -385,10 +393,12 @@ const GlobalSkillActions = (props: {
 const ProjectActions = (props: {
   diagnostics: readonly SkillManagementSnapshot['diagnostics'][number][];
   observedCount: number;
-  path: string;
+  paths: readonly string[];
 }) => (
   <section class={stack}>
-    <CopyButton label="Copy project path" value={props.path} />
+    <Show when={props.paths.length === 1}>
+      <CopyButton label="Copy project path" value={props.paths[0] ?? ''} />
+    </Show>
     <div class={metricList}>
       <div class={metricStaticRow}>
         <span class={meta}>Observed skills</span>

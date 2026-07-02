@@ -18,7 +18,6 @@ import {
   strongCell,
 } from '@ai-usage/design-system/report';
 import type { ProjectSkillInventory, SkillDiagnostic, SkillManagementSnapshot, SourceSkill } from '@ai-usage/skills';
-import { Link } from '@tanstack/solid-router';
 import { createEffect, createMemo, createSignal, For, type JSX, Show } from 'solid-js';
 import { type ProjectRuntimeDirId, projectSkillDirectories } from './project-skill-directories';
 import { getManagedSkillMarkdown, getProjectSkillMarkdown, saveManagedSkillMarkdown } from './server/skills';
@@ -29,16 +28,17 @@ import {
   count,
   findGlobalSkill,
   findProjectSkillRow,
-  globalSkillAttentionCount,
+  globalSkillAttention,
   type KnownProjectScope,
   type ProjectSkillRow,
-  projectRouteKey,
+  projectSourcePathsForScope,
   type SkillSelection,
   type SkillTreeModel,
   selectionKey,
   skillInvocation,
   skillScopeMatches,
 } from './skills-page-model';
+import { SkillSelectionLink } from './skills-selection-link';
 import type { ProjectInventoriesResult } from './skills-workspace';
 
 type SkillMarkdownResult =
@@ -282,7 +282,12 @@ const diagnosticPillClass = (diagnostic: SkillDiagnostic) => {
 };
 
 const exposureStateClass = (state: string) => {
-  if (state === 'linked' || state === 'symlink-to-source' || state === 'owned-directory') {
+  if (
+    state === 'linked' ||
+    state === 'symlink-to-source' ||
+    state === 'project-symlink' ||
+    state === 'owned-directory'
+  ) {
     return stateOk;
   }
   if (state === 'missing') {
@@ -298,10 +303,33 @@ const projectPlacementLabel = (placement: string) => {
   if (placement === 'symlink-to-source') {
     return 'Global skill exposed here';
   }
+  if (placement === 'project-symlink') {
+    return 'Symlink within project';
+  }
   if (placement === 'external-symlink') {
     return 'External symlink';
   }
   return 'Owned project skill';
+};
+
+const attentionPillClass = (skill: SourceSkill, issueCount: number) => {
+  if (!skill.enabled) {
+    return statusPillInfo;
+  }
+  if (skill.validationStatus === 'invalid') {
+    return statusPillDanger;
+  }
+  return issueCount > 0 ? statusPillWarn : statusPillInfo;
+};
+
+const attentionPillText = (skill: SourceSkill, issueCount: number) => {
+  if (!skill.enabled) {
+    return 'disabled';
+  }
+  if (skill.validationStatus === 'invalid') {
+    return 'invalid';
+  }
+  return count(issueCount, 'issue');
 };
 
 const MetadataItem = (props: { label: string; value: JSX.Element }) => (
@@ -324,58 +352,6 @@ const errorResult = (error: unknown) => ({
   error: { message: error instanceof Error ? error.message : String(error), tag: 'ClientRequestError' },
 });
 
-const SkillSelectionLink = (props: {
-  children: JSX.Element;
-  class: string;
-  knownProjects: readonly KnownProjectScope[];
-  selection: SkillSelection;
-}) => {
-  if (props.selection.type === 'global-scope') {
-    return (
-      <Link class={props.class} resetScroll={false} to="/skills">
-        {props.children}
-      </Link>
-    );
-  }
-  if (props.selection.type === 'global-skill') {
-    return (
-      <Link
-        class={props.class}
-        params={{ skillName: props.selection.skillName }}
-        resetScroll={false}
-        to="/skills/global/$skillName"
-      >
-        {props.children}
-      </Link>
-    );
-  }
-  if (props.selection.type === 'project-scope') {
-    return (
-      <Link
-        class={props.class}
-        params={{ projectKey: projectRouteKey(props.selection.projectPath) }}
-        resetScroll={false}
-        to="/skills/projects/$projectKey"
-      >
-        {props.children}
-      </Link>
-    );
-  }
-  return (
-    <Link
-      class={props.class}
-      params={{
-        projectKey: projectRouteKey(props.selection.projectPath),
-        skillName: props.selection.skillName,
-      }}
-      resetScroll={false}
-      to="/skills/projects/$projectKey/$skillName"
-    >
-      {props.children}
-    </Link>
-  );
-};
-
 export const SkillsDetail = (props: {
   configurationPanel: () => JSX.Element;
   consolidatePanel: () => JSX.Element;
@@ -396,15 +372,23 @@ export const SkillsDetail = (props: {
   );
   const selectedProjectInventory = createMemo(() => {
     const selection = props.selection;
-    return selection.type === 'project-scope' || selection.type === 'project-skill'
-      ? inventories().find((inventory) => inventory.projectPath === selection.projectPath)
-      : undefined;
+    if (!(selection.type === 'project-scope' || selection.type === 'project-skill')) {
+      return [];
+    }
+    const sourcePaths = new Set(projectSourcePathsForScope(selection.projectPath, props.knownProjects));
+    return inventories().filter((inventory) => sourcePaths.has(inventory.projectPath));
   });
   const selectedProjectSkill = createMemo(() =>
     props.selection.type === 'project-skill'
-      ? findProjectSkillRow(inventories(), props.selection.projectPath, props.selection.skillName)
+      ? findProjectSkillRow(inventories(), props.selection.projectPath, props.selection.skillName, props.knownProjects)
       : undefined,
   );
+  const selectedProjectScope = createMemo(() => {
+    const selection = props.selection;
+    return selection.type === 'project-scope' || selection.type === 'project-skill'
+      ? props.knownProjects.find((project) => project.path === selection.projectPath)
+      : undefined;
+  });
 
   return (
     <section aria-label="Skill detail" class={cx(panel, detailStack)}>
@@ -432,16 +416,22 @@ export const SkillsDetail = (props: {
       </Show>
       <Show when={props.selection.type === 'project-scope'}>
         <ProjectScopeDetail
-          inventory={selectedProjectInventory()}
+          inventories={selectedProjectInventory()}
           knownProjects={props.knownProjects}
+          label={selectedProjectScope()?.label}
           loading={props.projectInventoriesLoading}
           projectPath={props.selection.type === 'project-scope' ? props.selection.projectPath : ''}
+          sourcePaths={projectSourcePathsForScope(
+            props.selection.type === 'project-scope' ? props.selection.projectPath : '',
+            props.knownProjects,
+          )}
         />
       </Show>
       <Show when={selectedProjectSkill()}>
         {(row) => (
           <ProjectSkillDetail
             knownProjects={props.knownProjects}
+            label={selectedProjectScope()?.label}
             projectPath={props.selection.type === 'project-skill' ? props.selection.projectPath : ''}
             row={row()}
             tree={props.tree}
@@ -461,15 +451,16 @@ const GlobalScopeDetail = (props: {
   const health = createMemo(() => buildSkillHealthSummary(props.snapshot));
   const attentionSkills = createMemo(() =>
     props.snapshot.skills
-      .map((skill) => ({ attentionCount: globalSkillAttentionCount(props.snapshot, skill), skill }))
-      .filter((entry) => entry.attentionCount > 0 || entry.skill.validationStatus !== 'valid' || !entry.skill.enabled)
+      .map((skill) => ({ attention: globalSkillAttention(props.snapshot, skill), skill }))
+      .filter(
+        (entry) => entry.attention.issueCount > 0 || entry.skill.validationStatus !== 'valid' || !entry.skill.enabled,
+      )
       .sort((left, right) => {
-        if (left.attentionCount !== right.attentionCount) {
-          return right.attentionCount - left.attentionCount;
+        if (left.attention.issueCount !== right.attention.issueCount) {
+          return right.attention.issueCount - left.attention.issueCount;
         }
         return left.skill.name.localeCompare(right.skill.name);
       })
-      .map((entry) => entry.skill)
       .slice(0, 6),
   );
   return (
@@ -495,21 +486,24 @@ const GlobalScopeDetail = (props: {
       <section class={section}>
         <div class={panelHeader}>
           <h3 class={panelTitle}>Needs attention</h3>
-          <p class={panelSub}>Invalid or disabled skills show here first.</p>
+          <p class={panelSub}>Exposure issues first, then invalid or disabled skills.</p>
         </div>
-        <Show fallback={<p class={meta}>No disabled or invalid skills.</p>} when={attentionSkills().length > 0}>
+        <Show fallback={<p class={meta}>No skills need attention.</p>} when={attentionSkills().length > 0}>
           <div class={compactList}>
             <For each={attentionSkills()}>
-              {(skill) => {
-                const selection = { skillName: skill.name, type: 'global-skill' } as const;
+              {(entry) => {
+                const selection = { skillName: entry.skill.name, type: 'global-skill' } as const;
                 return (
                   <SkillSelectionLink class={compactRow} knownProjects={props.knownProjects} selection={selection}>
                     <span>
-                      <span class={strongCell}>{skill.name}</span>
-                      <span class={meta}> {skill.description || 'No description'}</span>
+                      <span class={strongCell}>{entry.skill.name}</span>
+                      <span class={meta}> {entry.skill.description || 'No description'}</span>
                     </span>
-                    <span class={cx(statusPill, validationPillClass(skill.validationStatus))}>
-                      {skill.enabled ? skill.validationStatus : 'disabled'}
+                    <span
+                      class={cx(statusPill, attentionPillClass(entry.skill, entry.attention.issueCount))}
+                      title={entry.attention.attentionSummary || undefined}
+                    >
+                      {attentionPillText(entry.skill, entry.attention.issueCount)}
                     </span>
                   </SkillSelectionLink>
                 );
@@ -758,26 +752,34 @@ const SkillMarkdownEditor = (props: { onSnapshot: (snapshot: SkillManagementSnap
 };
 
 const ProjectScopeDetail = (props: {
-  inventory: ProjectSkillInventory | undefined;
+  inventories: readonly ProjectSkillInventory[];
   knownProjects: readonly KnownProjectScope[];
+  label?: string | undefined;
   loading: boolean;
   projectPath: string;
+  sourcePaths: readonly string[];
 }) => {
-  const rows = createMemo(() => (props.inventory ? buildProjectSkillRows(props.inventory) : []));
-  const exposed = createMemo(
-    () => props.inventory?.observations.filter((observation) => observation.placement === 'symlink-to-source') ?? [],
+  const rows = createMemo(() => buildProjectSkillRows(props.inventories, props.knownProjects));
+  const exposed = createMemo(() =>
+    props.inventories.flatMap((inventory) =>
+      inventory.observations.filter((observation) => observation.placement === 'symlink-to-source'),
+    ),
+  );
+  const diagnostics = createMemo(() => props.inventories.flatMap((inventory) => inventory.diagnostics));
+  const title = createMemo(
+    () => props.label ?? props.projectPath.split('/').filter(Boolean).at(-1) ?? props.projectPath,
   );
   return (
     <div class={detailStack}>
       <div class={hero}>
-        <h2 class={skillTitle}>{props.projectPath.split('/').filter(Boolean).at(-1) ?? props.projectPath}</h2>
-        <p class={pathText}>{props.projectPath}</p>
+        <h2 class={skillTitle}>{title()}</h2>
+        <For each={props.sourcePaths}>{(sourcePath) => <p class={pathText}>{sourcePath}</p>}</For>
       </div>
       <Show fallback={<p class={meta}>Loading project skills...</p>} when={!props.loading}>
         <div class={metadataGrid}>
           <MetadataItem label="Observed skills" value={String(rows().length)} />
           <MetadataItem label="Global exposed here" value={String(exposed().length)} />
-          <MetadataItem label="Diagnostics" value={String(props.inventory?.diagnostics.length ?? 0)} />
+          <MetadataItem label="Diagnostics" value={String(diagnostics().length)} />
           <MetadataItem label="Runtime directories" value={String(projectSkillDirectories.length)} />
         </div>
         <section class={section}>
@@ -810,7 +812,7 @@ const ProjectScopeDetail = (props: {
             </div>
           </Show>
         </section>
-        <Diagnostics diagnostics={props.inventory?.diagnostics ?? []} />
+        <Diagnostics diagnostics={diagnostics()} />
       </Show>
     </div>
   );
@@ -818,6 +820,7 @@ const ProjectScopeDetail = (props: {
 
 const ProjectSkillDetail = (props: {
   knownProjects: readonly KnownProjectScope[];
+  label?: string | undefined;
   projectPath: string;
   row: ProjectSkillRow;
   tree: SkillTreeModel;
@@ -845,7 +848,7 @@ const ProjectSkillDetail = (props: {
         <DuplicateSkillLinks knownProjects={props.knownProjects} matches={duplicateMatches()} />
       </div>
       <div class={metadataGrid}>
-        <MetadataItem label="Project" value={props.projectPath} />
+        <MetadataItem label="Project" value={props.label ?? props.projectPath} />
         <MetadataItem label="Tokens" value={props.row.tokenTotal ? `${props.row.tokenTotal} tok` : 'Unknown'} />
         <MetadataItem label="Observed runtimes" value={String(props.row.observations.length)} />
         <MetadataItem label="Diagnostics" value={String(diagnostics().length)} />
@@ -866,12 +869,15 @@ const ProjectSkillDetail = (props: {
                 <div class={pathText} title={observation.skillMdPath}>
                   {observation.skillMdPath}
                 </div>
+                <Show when={props.row.observations.length > 1}>
+                  <div class={pathText}>{observation.projectPath}</div>
+                </Show>
               </div>
             </div>
           )}
         </For>
       </section>
-      <ProjectSkillMarkdownViewer projectPath={props.projectPath} row={props.row} />
+      <ProjectSkillMarkdownViewer row={props.row} />
       <Diagnostics diagnostics={diagnostics()} />
     </div>
   );
@@ -895,7 +901,7 @@ const DuplicateSkillLinks = (props: {
   </Show>
 );
 
-const ProjectSkillMarkdownViewer = (props: { projectPath: string; row: ProjectSkillRow }) => {
+const ProjectSkillMarkdownViewer = (props: { row: ProjectSkillRow }) => {
   const [runtimeDirId, setRuntimeDirId] = createSignal<ProjectRuntimeDirId>(
     props.row.observations.at(0)?.runtimeDirId ?? 'claude-project',
   );
@@ -922,7 +928,7 @@ const ProjectSkillMarkdownViewer = (props: { projectPath: string; row: ProjectSk
     setDocumentLoading(true);
     getProjectSkillMarkdown({
       data: {
-        projectPath: props.projectPath,
+        projectPath: observation.projectPath,
         runtimeDirId: observation.runtimeDirId,
         skillName: props.row.name,
       },
