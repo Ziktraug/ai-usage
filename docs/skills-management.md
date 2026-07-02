@@ -46,6 +46,17 @@ rows or remote machine data. There is no default broad scan root such as
 `~/Projects`, `~/projects`, or any other personal directory convention. Broad
 root scans must be explicit opt-in configuration.
 
+Discovered paths are curated before they become project scopes. The home
+directory is never treated as a project, even when it contains global runtime
+skill directories. A discovered directory must look like a project root: either
+it has a `.git` entry (directory or worktree file) or it contains at least one
+project runtime skill directory such as `.claude/skills` or `.agents/skills`.
+Workspace container folders without those markers are ignored.
+
+Configuration remains sovereign. Any path explicitly listed in
+`skillsConfig.projectPaths` is scanned even if the discovery curation rules
+would have ignored it.
+
 Native rule formats for tools such as Cursor, Copilot, or project-specific rule
 files are read-only diagnostics in this integration. Managed mutations are
 limited to safe skill target reconciliation.
