@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   knownSkillProjectPathsFromReportPayload,
+  projectSkillScanPathsFrom,
   skillConfigInputFrom,
   skillMarkdownWriteInputFrom,
   skillNameInputFrom,
@@ -149,5 +150,14 @@ describe('skills server input validation', () => {
         sessions: 1,
       },
     ]);
+  });
+
+  test('scans configured and known project paths for project skill inventories', () => {
+    expect(
+      projectSkillScanPathsFrom({ projectPaths: ['/configured/project'] }, [
+        { path: '/known/project' },
+        { path: '/configured/project' },
+      ]),
+    ).toEqual(['/configured/project', '/known/project']);
   });
 });

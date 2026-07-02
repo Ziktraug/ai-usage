@@ -243,6 +243,13 @@ export const knownSkillProjectPathsFromReportPayload = (
   );
 };
 
+export const projectSkillScanPathsFrom = (
+  skillsConfig: SkillManagementConfig,
+  knownProjectPaths: readonly Pick<KnownSkillProjectPath, 'path'>[],
+): readonly string[] => [
+  ...new Set([...(skillsConfig.projectPaths ?? []), ...knownProjectPaths.map((projectPath) => projectPath.path)]),
+];
+
 const localDirectoryExists = (projectPath: string) => {
   try {
     return fs.statSync(projectPath).isDirectory();
@@ -380,14 +387,17 @@ export const readSkillProjectInventoriesForServer = async (): Promise<
   runWithStorage(async () => {
     const config = await loadMergedConfig();
     const skillsConfig = parseSkillConfigInput(config.skills ?? {});
-    if ((skillsConfig.projectPaths?.length ?? 0) === 0) {
+    const knownProjectsResult = await readKnownSkillProjectPathsForServer();
+    const knownProjectPaths = knownProjectsResult.ok ? knownProjectsResult.data : [];
+    const projectPaths = projectSkillScanPathsFrom(skillsConfig, knownProjectPaths);
+    if (projectPaths.length === 0) {
       return [];
     }
     return scanProjectSkills({
       ...(skillsConfig.tokenThresholds === undefined
         ? {}
         : { options: { tokenThresholds: skillsConfig.tokenThresholds } }),
-      projectPaths: skillsConfig.projectPaths ?? [],
+      projectPaths,
       ...(skillsConfig.sourceRepoPath === undefined ? {} : { sourceRepoPath: skillsConfig.sourceRepoPath }),
     });
   });
