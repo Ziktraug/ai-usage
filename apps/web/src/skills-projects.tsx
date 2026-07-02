@@ -94,7 +94,9 @@ export const SkillsProjects = (props: { inventories: readonly ProjectSkillInvent
     <Show
       fallback={
         <section class={panel}>
-          <p class={meta}>No configured projects.</p>
+          <p class={meta}>
+            Track skills owned by each project (`.claude/skills` and `.agents/skills`) alongside the global inventory.
+          </p>
         </section>
       }
       when={props.inventories.length > 0}

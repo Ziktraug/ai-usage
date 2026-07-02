@@ -7,7 +7,7 @@ import {
   HarnessBadge,
   muted,
   panel,
-  panelHeader,
+  panelHeaderRow,
   panelSub,
   panelTitle,
   searchInput,
@@ -33,17 +33,10 @@ import {
   filterMatrixRows,
   type MatrixCellState,
   type ReconcilePlanSummary,
+  type SkillCellStateFilter,
   type SkillInvocation,
   type SkillRowFilter,
 } from './skills-page-model';
-
-const headerRow = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '12px',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-});
 
 const filterBar = css({
   display: 'flex',
@@ -57,6 +50,16 @@ const activeFilter = css({
   borderColor: 'accent',
   color: 'accent',
   bg: 'accentTint',
+});
+
+const busyButton = css({
+  position: 'relative',
+  '&[data-pending=true]': {
+    _after: {
+      content: '" ..."',
+      color: 'accent',
+    },
+  },
 });
 
 const matrixTable = css({
@@ -125,12 +128,51 @@ const switchButton = css({
     opacity: 0.5,
     cursor: 'not-allowed',
   },
+  '&[data-pending=true]': {
+    borderColor: 'accent',
+    _before: {
+      content: '"…" ',
+      position: 'absolute',
+      inset: 0,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      color: 'accent',
+      fontSize: '13px',
+      fontWeight: 800,
+      lineHeight: 1,
+    },
+    _after: {
+      opacity: 0.25,
+    },
+  },
 });
 
 const skillName = css({
   overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
+  overflowWrap: 'anywhere',
+  whiteSpace: 'normal',
+  textAlign: 'left',
+  lineHeight: 1.25,
+  maxH: '2.5em',
+});
+
+const skillNameButton = css({
+  appearance: 'none',
+  border: 0,
+  p: 0,
+  bg: 'transparent',
+  color: 'inherit',
+  cursor: 'pointer',
+  _hover: {
+    color: 'accent',
+    textDecoration: 'underline',
+    textUnderlineOffset: '2px',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
 });
 
 const disabledName = css({
@@ -162,13 +204,8 @@ const inactiveCells = css({
 });
 
 const clickableRow = css({
-  cursor: 'pointer',
   _hover: {
     bg: 'surfaceMuted',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '-2px',
   },
 });
 
@@ -185,17 +222,6 @@ const legendItem = css({
   display: 'inline-flex',
   alignItems: 'center',
   gap: '6px',
-});
-
-const operationPanel = css({
-  mt: '12px',
-  p: '10px 12px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'surfaceMuted',
-  color: 'muted',
-  fontSize: '12px',
-  whiteSpace: 'pre-wrap',
 });
 
 const planPanel = css({
@@ -258,6 +284,16 @@ const validationPillClass = (status: string) => {
   return statusPillInfo;
 };
 
+const stateFilterLabels: Record<SkillCellStateFilter, string> = {
+  blocked: 'Blocked',
+  broken: 'Broken',
+  disabled: 'Disabled',
+  linked: 'Linked',
+  'not-linked': 'Not linked',
+};
+
+const stateFilterOrder: readonly SkillCellStateFilter[] = ['linked', 'not-linked', 'broken', 'blocked', 'disabled'];
+
 const dotClassFor = (state: MatrixCellState) => {
   if (state === 'linked') {
     return statusDotLinked;
@@ -296,9 +332,10 @@ const stateLabelForLegend = (state: ProjectionState | 'copy' | 'not-applicable')
   return 'Broken / wrong target';
 };
 
-const FilterButton = (props: { active: boolean; children: JSX.Element; onClick: () => void }) => (
+const FilterButton = (props: { active: boolean; children: JSX.Element; disabled?: boolean; onClick: () => void }) => (
   <button
     class={cx(props.active ? activeFilterButton : filterTextButton, props.active ? activeFilter : undefined)}
+    disabled={props.disabled}
     onClick={props.onClick}
     type="button"
   >
@@ -307,11 +344,12 @@ const FilterButton = (props: { active: boolean; children: JSX.Element; onClick: 
 );
 
 export const SkillsMatrix = (props: {
+  activeCellStateFilter: SkillCellStateFilter | undefined;
   onApplyReconcile: () => void;
   onCancelReconcile: () => void;
+  onCellStateFilterChange: (filter: SkillCellStateFilter | undefined) => void;
   onOpenSkill: (skillName: string, element: HTMLElement) => void;
   onPreviewReconcile: () => void;
-  operationMessage: string | null;
   pendingOperation: string | null;
   reconcilePlan: ReconcilePlanSummary | null;
   snapshot: SkillManagementSnapshot;
@@ -331,6 +369,9 @@ export const SkillsMatrix = (props: {
     if (selectedOrigin !== undefined) {
       nextFilter.origin = selectedOrigin;
     }
+    if (props.activeCellStateFilter !== undefined) {
+      nextFilter.cellState = props.activeCellStateFilter;
+    }
     return nextFilter;
   });
   const rows = createMemo(() => filterMatrixRows(matrix().rows, filter()));
@@ -346,17 +387,32 @@ export const SkillsMatrix = (props: {
       ),
     ].sort(),
   );
+  const stateFilterCounts = createMemo(() => {
+    const counts = new Map<SkillCellStateFilter, number>();
+    for (const stateFilter of stateFilterOrder) {
+      counts.set(stateFilter, filterMatrixRows(matrix().rows, { cellState: stateFilter }).length);
+    }
+    return counts;
+  });
   const canRunReconcile = createMemo(() => canReconcileAll(props.snapshot));
+  const runtimeCopy = createMemo(
+    () => `${matrix().targets.length} enabled / ${props.snapshot.targets.length} configured`,
+  );
+  const toggleStateFilter = (stateFilter: SkillCellStateFilter) => {
+    props.onCellStateFilterChange(props.activeCellStateFilter === stateFilter ? undefined : stateFilter);
+  };
 
   return (
     <section class={panel}>
-      <div class={cx(panelHeader, headerRow)}>
+      <div class={panelHeaderRow}>
         <div>
           <h2 class={panelTitle}>Managed skills — exposure per runtime</h2>
-          <p class={panelSub}>{matrix().targets.length} enabled runtimes</p>
+          <p class={panelSub}>{runtimeCopy()}</p>
         </div>
         <button
-          class={commandButton}
+          aria-busy={props.pendingOperation === 'preview-reconcile' ? 'true' : undefined}
+          class={cx(commandButton, busyButton)}
+          data-pending={props.pendingOperation === 'preview-reconcile' ? 'true' : undefined}
           disabled={props.pendingOperation !== null || !canRunReconcile()}
           onClick={props.onPreviewReconcile}
           type="button"
@@ -384,7 +440,9 @@ export const SkillsMatrix = (props: {
             </Show>
             <div class={planActions}>
               <button
-                class={commandButton}
+                aria-busy={props.pendingOperation === 'reconcile-all' ? 'true' : undefined}
+                class={cx(commandButton, busyButton)}
+                data-pending={props.pendingOperation === 'reconcile-all' ? 'true' : undefined}
                 disabled={props.pendingOperation !== null || plan().apply.length === 0}
                 onClick={props.onApplyReconcile}
                 type="button"
@@ -415,6 +473,20 @@ export const SkillsMatrix = (props: {
             </FilterButton>
           )}
         </For>
+        <For each={stateFilterOrder}>
+          {(stateFilter) => {
+            const filterCount = () => stateFilterCounts().get(stateFilter) ?? 0;
+            return (
+              <FilterButton
+                active={props.activeCellStateFilter === stateFilter}
+                disabled={filterCount() === 0}
+                onClick={() => toggleStateFilter(stateFilter)}
+              >
+                {stateFilterLabels[stateFilter]} {filterCount()}
+              </FilterButton>
+            );
+          }}
+        </For>
         <input
           class={searchInput}
           onInput={(event) => setQuery(event.currentTarget.value)}
@@ -437,76 +509,84 @@ export const SkillsMatrix = (props: {
             </tr>
           </thead>
           <tbody>
-            <For each={rows()}>
-              {(row) => (
-                <tr
-                  class={clickableRow}
-                  onClick={(event) => props.onOpenSkill(row.name, event.currentTarget)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      props.onOpenSkill(row.name, event.currentTarget);
-                    }
-                  }}
-                  tabIndex={0}
-                >
-                  <td class={stickyCol}>
-                    <div class={skillCell}>
-                      <div class={skillTop}>
-                        <button
-                          aria-checked={row.enabled}
-                          aria-label={row.enabled ? `Disable ${row.name}` : `Enable ${row.name}`}
-                          class={switchButton}
-                          disabled={props.pendingOperation !== null}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            props.toggleSkill(row.name, !row.enabled);
-                          }}
-                          role="switch"
-                          title={row.enabled ? 'Disable' : 'Enable'}
-                          type="button"
-                        />
-                        <span class={cx(strongCell, skillName, row.enabled ? undefined : disabledName)}>
-                          {row.name}
-                        </span>
-                        <Show when={row.validationStatus !== 'valid'}>
-                          <span class={cx(statusPill, validationPillClass(row.validationStatus))}>
-                            {row.validationStatus}
-                          </span>
-                        </Show>
-                      </div>
-                      <div class={skillDescription} title={row.description || 'No description'}>
-                        {row.description || 'No description'}
-                      </div>
-                      <div class={badgeRow}>
-                        <span class={cx(statusPill, statusPillInfo)}>
-                          {row.invocation === 'auto' ? 'Auto' : 'Manual'}
-                        </span>
-                        <Show when={row.tokenTotal !== null}>
-                          <span class={cx(statusPill, row.tokenFlag ? statusPillDanger : statusPillInfo)}>
-                            {row.tokenTotal} tok
-                          </span>
-                        </Show>
-                        <Show when={row.origin}>
-                          {(value) => <span class={cx(statusPill, originTone(value()))}>{value()}</span>}
-                        </Show>
-                      </div>
-                    </div>
+            <Show
+              fallback={
+                <tr>
+                  <td class={muted} colspan={matrix().targets.length + 1}>
+                    No skills match the current filter.
                   </td>
-                  <For each={row.cells}>
-                    {(cell) => (
-                      <td class={cx(centerCell, row.enabled ? undefined : inactiveCells)}>
-                        <span
-                          aria-label={cell.label}
-                          class={cx(statusDot, dotClassFor(cell.state))}
-                          role="img"
-                          title={cell.label}
-                        />
-                      </td>
-                    )}
-                  </For>
                 </tr>
-              )}
-            </For>
+              }
+              when={rows().length > 0}
+            >
+              <For each={rows()}>
+                {(row) => (
+                  <tr class={clickableRow}>
+                    <td class={stickyCol}>
+                      <div class={skillCell}>
+                        <div class={skillTop}>
+                          <button
+                            aria-busy={props.pendingOperation === `toggle:${row.name}` ? 'true' : undefined}
+                            aria-checked={row.enabled}
+                            aria-label={row.enabled ? `Disable ${row.name}` : `Enable ${row.name}`}
+                            class={switchButton}
+                            data-pending={props.pendingOperation === `toggle:${row.name}` ? 'true' : undefined}
+                            disabled={props.pendingOperation !== null}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              props.toggleSkill(row.name, !row.enabled);
+                            }}
+                            role="switch"
+                            title={row.enabled ? 'Disable' : 'Enable'}
+                            type="button"
+                          />
+                          <button
+                            class={cx(strongCell, skillName, skillNameButton, row.enabled ? undefined : disabledName)}
+                            onClick={(event) => props.onOpenSkill(row.name, event.currentTarget)}
+                            type="button"
+                          >
+                            {row.name}
+                          </button>
+                          <Show when={row.validationStatus !== 'valid'}>
+                            <span class={cx(statusPill, validationPillClass(row.validationStatus))}>
+                              {row.validationStatus}
+                            </span>
+                          </Show>
+                        </div>
+                        <div class={skillDescription} title={row.description || 'No description'}>
+                          {row.description || 'No description'}
+                        </div>
+                        <div class={badgeRow}>
+                          <span class={cx(statusPill, statusPillInfo)}>
+                            {row.invocation === 'auto' ? 'Auto' : 'Manual'}
+                          </span>
+                          <Show when={row.tokenTotal !== null}>
+                            <span class={cx(statusPill, row.tokenFlag ? statusPillDanger : statusPillInfo)}>
+                              {row.tokenTotal} tok
+                            </span>
+                          </Show>
+                          <Show when={row.origin}>
+                            {(value) => <span class={cx(statusPill, originTone(value()))}>{value()}</span>}
+                          </Show>
+                        </div>
+                      </div>
+                    </td>
+                    <For each={row.cells}>
+                      {(cell) => (
+                        <td class={cx(centerCell, row.enabled ? undefined : inactiveCells)}>
+                          <span
+                            aria-label={cell.label}
+                            class={cx(statusDot, dotClassFor(cell.state))}
+                            role="img"
+                            title={cell.label}
+                          />
+                        </td>
+                      )}
+                    </For>
+                  </tr>
+                )}
+              </For>
+            </Show>
           </tbody>
         </table>
       </div>
@@ -532,10 +612,6 @@ export const SkillsMatrix = (props: {
           {stateLabelForLegend('not-applicable')}
         </span>
       </div>
-      <Show when={props.operationMessage}>{(message) => <div class={operationPanel}>{message()}</div>}</Show>
-      <Show when={rows().length === 0}>
-        <p class={muted}>No skills match the current filter.</p>
-      </Show>
     </section>
   );
 };
