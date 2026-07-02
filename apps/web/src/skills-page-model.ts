@@ -485,6 +485,69 @@ export const selectionKey = (selection: SkillSelection): string => {
   return `project:${selection.projectPath}:${selection.skillName}`;
 };
 
+const safeDecodeURIComponent = (value: string): string => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+export const projectRouteKey = (projectPath: string): string =>
+  projectPath.split('/').filter(Boolean).at(-1) ?? projectPath;
+
+const projectPathFromRouteKey = (projectKey: string, knownProjects: readonly KnownProjectScope[]): string => {
+  const decodedKey = safeDecodeURIComponent(projectKey);
+  const matchingProject = knownProjects.find((project) => {
+    const projectBaseName = project.path.split('/').filter(Boolean).at(-1) ?? project.path;
+    return projectBaseName === decodedKey || project.path === decodedKey;
+  });
+  return matchingProject?.path ?? decodedKey;
+};
+
+export const skillSelectionPath = (selection: SkillSelection): string => {
+  if (selection.type === 'global-scope') {
+    return '/skills';
+  }
+  if (selection.type === 'global-skill') {
+    return `/skills/global/${encodeURIComponent(selection.skillName)}`;
+  }
+  const projectKey = projectRouteKey(selection.projectPath);
+  if (selection.type === 'project-scope') {
+    return `/skills/projects/${projectKey}`;
+  }
+  return `/skills/projects/${projectKey}/${encodeURIComponent(selection.skillName)}`;
+};
+
+export const skillSelectionFromPath = (
+  pathname: string,
+  knownProjects: readonly KnownProjectScope[] = [],
+): SkillSelection | undefined => {
+  const segments = pathname.split('/').filter(Boolean);
+  if (segments.at(0) !== 'skills') {
+    return;
+  }
+  if (segments.length === 1) {
+    return { type: 'global-scope' };
+  }
+  if (segments.at(1) === 'global' && segments.length === 3) {
+    const skillName = safeDecodeURIComponent(segments[2] ?? '');
+    return skillName ? { skillName, type: 'global-skill' } : undefined;
+  }
+  if (segments.at(1) !== 'projects' || segments.length < 3 || segments.length > 4) {
+    return;
+  }
+  const projectPath = projectPathFromRouteKey(segments[2] ?? '', knownProjects);
+  if (!projectPath) {
+    return;
+  }
+  if (segments.length === 3) {
+    return { projectPath, type: 'project-scope' };
+  }
+  const skillName = safeDecodeURIComponent(segments[3] ?? '');
+  return skillName ? { projectPath, skillName, type: 'project-skill' } : undefined;
+};
+
 export const parseSelectionKey = (key: string): SkillSelection | undefined => {
   if (key === 'global') {
     return { type: 'global-scope' };

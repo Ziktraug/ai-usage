@@ -21,9 +21,12 @@ import {
   groupUnmanagedEntries,
   parseSelectionKey,
   projectionStateLabel,
+  projectRouteKey,
   selectionKey,
   skillInvocation,
   skillScopeMatches,
+  skillSelectionFromPath,
+  skillSelectionPath,
 } from './skills-page-model';
 
 const target = (id: string, label: string, enabled = true): SkillTarget => ({
@@ -237,6 +240,48 @@ describe('skills page model', () => {
       type: 'project-skill',
     });
     expect(parseSelectionKey('global:')).toBeUndefined();
+  });
+
+  test('round-trips route paths for skill selections', () => {
+    const knownProjects = [{ label: 'Exalibur', path: '/Users/nathan/projects/github/Exalibur' }];
+    const selections = [
+      { type: 'global-scope' },
+      { skillName: 'alpha-skill', type: 'global-skill' },
+      { projectPath: '/Users/nathan/projects/github/Exalibur', type: 'project-scope' },
+      {
+        projectPath: '/Users/nathan/projects/github/Exalibur',
+        skillName: 'no-use-effect',
+        type: 'project-skill',
+      },
+    ] as const;
+
+    for (const selection of selections) {
+      expect(skillSelectionFromPath(skillSelectionPath(selection), knownProjects)).toEqual(selection);
+    }
+  });
+
+  test('uses the project name as the route key', () => {
+    const projectPath = '/Users/nathan/projects/github/Exalibur';
+
+    expect(projectRouteKey(projectPath)).toBe('Exalibur');
+    expect(skillSelectionPath({ projectPath, skillName: 'exalibur-i18n', type: 'project-skill' })).toBe(
+      '/skills/projects/Exalibur/exalibur-i18n',
+    );
+  });
+
+  test('keeps project names in URLs even when project names collide', () => {
+    const firstProjectPath = '/Users/nathan/projects/github/Exalibur';
+    const secondProjectPath = '/private/tmp/Exalibur';
+    const knownProjects = [
+      { label: 'Exalibur', path: firstProjectPath },
+      { label: 'Exalibur', path: secondProjectPath },
+    ];
+
+    expect(projectRouteKey(firstProjectPath)).toBe('Exalibur');
+    expect(skillSelectionFromPath('/skills/projects/Exalibur', knownProjects)).toEqual({
+      projectPath: firstProjectPath,
+      type: 'project-scope',
+    });
   });
 
   test('finds same-name skills in sibling scopes', () => {
