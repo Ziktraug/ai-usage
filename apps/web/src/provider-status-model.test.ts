@@ -59,8 +59,8 @@ describe('provider status model', () => {
     ]);
 
     expect(views.map((view) => [view.provider.key, view.provider.state])).toEqual([
-      ['claude', 'unsupported'],
       ['codex', 'ok'],
+      ['claude', 'unsupported'],
     ]);
     expect(views.find((view) => view.provider.key === 'codex')?.windowGroups[0]?.key).toBe('5h');
   });
@@ -73,5 +73,97 @@ describe('provider status model', () => {
 
     expect(views).toHaveLength(1);
     expect(views[0]?.provider).toMatchObject({ key: 'cursor', state: 'partial', machineLabel: 'Laptop' });
+  });
+
+  test('falls back to legacy facets when canonical provider status is malformed', () => {
+    const providerStatus = createProviderStatusDataset(
+      [
+        {
+          key: 'codex',
+          label: 'Codex',
+          generatedAt: '2026-01-01T00:00:00.000Z',
+          source: 'local-history',
+          state: 'ok',
+          windows: [],
+        },
+      ],
+      new Date('2026-01-01T00:00:00.000Z'),
+    );
+
+    const views = buildProviderStatusViews(
+      payload({
+        datasets: { providerStatus: { schemaVersion: 1 } as unknown as never },
+        facets: { providerStatus },
+      }),
+      [],
+    );
+
+    expect(views.map((view) => view.provider.key)).toEqual(['codex']);
+  });
+
+  test('explicit provider status only suppresses inferred rows for the same machine scope', () => {
+    const providerStatus = createProviderStatusDataset(
+      [
+        {
+          key: 'codex',
+          label: 'Codex',
+          generatedAt: '2026-01-01T00:00:00.000Z',
+          machineId: 'Laptop',
+          machineLabel: 'Laptop',
+          source: 'local-history',
+          state: 'ok',
+          windows: [],
+        },
+      ],
+      new Date('2026-01-01T00:00:00.000Z'),
+    );
+
+    const views = buildProviderStatusViews(payload({ datasets: { providerStatus } }), [
+      row({ harness: 'Codex', provider: 'Codex sub', machine: 'Laptop' }),
+      row({ harness: 'Codex', provider: 'Codex sub', machine: 'Workstation' }),
+    ]);
+
+    expect(views.map((view) => [view.provider.key, view.machineContext]).sort()).toEqual([
+      ['codex', 'Laptop'],
+      ['codex', 'Workstation'],
+    ]);
+  });
+
+  test('summarizes reset credits with the earliest expiry', () => {
+    const providerStatus = createProviderStatusDataset(
+      [
+        {
+          key: 'codex',
+          label: 'Codex',
+          generatedAt: '2026-01-01T00:00:00.000Z',
+          resetCredits: [
+            {
+              daysLeft: 3,
+              expiresAt: '2026-01-04T00:00:00.000Z',
+              grantedAt: null,
+              status: 'available',
+              title: 'Later',
+            },
+            {
+              daysLeft: 1,
+              expiresAt: '2026-01-02T00:00:00.000Z',
+              grantedAt: null,
+              status: 'available',
+              title: 'Sooner',
+            },
+          ],
+          resetCreditsAvailable: 2,
+          source: 'live-api',
+          state: 'ok',
+          windows: [],
+        },
+      ],
+      new Date('2026-01-01T00:00:00.000Z'),
+    );
+
+    const views = buildProviderStatusViews(payload({ datasets: { providerStatus } }), []);
+
+    expect(views[0]?.creditsSummary).toContain('2 reset credits');
+    expect(views[0]?.creditsSummary).toContain('expires');
   });
 });

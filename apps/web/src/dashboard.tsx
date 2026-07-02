@@ -690,7 +690,9 @@ export const Dashboard = (props: {
 
           <ReportWarnings onCleanupProjectWarning={cleanupProjectWarning} warnings={payload().warnings} />
 
-          <ProviderStatusPanel providers={providerStatusViews()} />
+          <Show when={!isDemo}>
+            <ProviderStatusPanel providers={providerStatusViews()} />
+          </Show>
 
           <div class={metricGrid}>
             <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>

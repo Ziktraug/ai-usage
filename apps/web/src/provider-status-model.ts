@@ -1,4 +1,5 @@
 import {
+  earliestResetCreditExpiry,
   type ProviderLimitWindow,
   type ProviderStatus,
   parseProviderStatusDataset,
@@ -70,7 +71,6 @@ const inferredProviderStatus = (row: DashboardRow, generatedAt: string): Provide
     generatedAt,
     source: 'unsupported',
     state: key === 'claude' ? 'unsupported' : 'partial',
-    warnings: ['No provider quota dataset was collected for this provider.'],
     ...(machineId === undefined ? {} : { machineId }),
     ...(machineLabel === undefined ? {} : { machineLabel }),
     windows: [],
@@ -96,6 +96,16 @@ const GROUP_LABELS: Record<ProviderWindowGroupKey, string> = {
   monthly: 'Monthly',
   other: 'Other windows',
 };
+
+const expiryDateFormatter = new Intl.DateTimeFormat('en', {
+  month: 'short',
+  day: '2-digit',
+  hour: '2-digit',
+  hourCycle: 'h23',
+  minute: '2-digit',
+});
+
+const formatExpiryDate = (value: string) => expiryDateFormatter.format(new Date(value));
 
 const windowGroupsFor = (windows: ProviderLimitWindow[]): ProviderStatusWindowGroup[] => {
   const groups = new Map<ProviderWindowGroupKey, ProviderLimitWindow[]>();
@@ -163,14 +173,18 @@ const sourceLabelFor = (provider: ProviderStatus) => {
 };
 
 const creditsSummaryFor = (provider: ProviderStatus) => {
+  const resetCreditExpiry = earliestResetCreditExpiry(provider.resetCredits ?? []);
+  const expiryLabel = resetCreditExpiry ? ` · expires ${formatExpiryDate(resetCreditExpiry)}` : '';
   if (provider.resetCreditsAvailable !== undefined && provider.resetCreditsAvailable !== null) {
-    return `${provider.resetCreditsAvailable} reset credits`;
+    const label = provider.resetCreditsAvailable === 1 ? 'reset credit' : 'reset credits';
+    return `${provider.resetCreditsAvailable} ${label}${expiryLabel}`;
   }
   if (provider.creditsBalance) {
     return `${provider.creditsBalance} credits`;
   }
   if (provider.resetCredits?.length) {
-    return `${provider.resetCredits.length} reset credits`;
+    const label = provider.resetCredits.length === 1 ? 'reset credit' : 'reset credits';
+    return `${provider.resetCredits.length} ${label}${expiryLabel}`;
   }
   return null;
 };
@@ -192,25 +206,61 @@ const toProviderStatusView = (provider: ProviderStatus): ProviderStatusView => {
 };
 
 const explicitProviderStatuses = (payload: UsageReportPayload): ProviderStatus[] => {
-  const dataset = parseProviderStatusDataset(payload.datasets?.providerStatus ?? payload.facets?.providerStatus);
+  const dataset =
+    parseProviderStatusDataset(payload.datasets?.providerStatus) ??
+    parseProviderStatusDataset(payload.facets?.providerStatus);
   return dataset?.providers ?? [];
+};
+
+const providerFamilyScopeKey = (family: string, machineId: string | null | undefined) => `${family}|${machineId ?? ''}`;
+
+const sortRankFor = (view: ProviderStatusView) => {
+  if (view.tone === 'critical') {
+    return 0;
+  }
+  if (view.windowGroups.length || view.creditsSummary) {
+    return 1;
+  }
+  if (view.provider.state === 'stale') {
+    return 2;
+  }
+  if (view.provider.state === 'partial') {
+    return 3;
+  }
+  if (view.provider.state === 'unsupported') {
+    return 4;
+  }
+  return 5;
 };
 
 export const buildProviderStatusViews = (payload: UsageReportPayload, rows: DashboardRow[]): ProviderStatusView[] => {
   const explicit = explicitProviderStatuses(payload);
-  const explicitFamilies = new Set(explicit.map((provider) => providerFamily(provider.key)));
+  const explicitGlobalFamilies = new Set(
+    explicit.filter((provider) => !provider.machineId).map((provider) => providerFamily(provider.key)),
+  );
+  const explicitFamilyScopes = new Set(
+    explicit.map((provider) => providerFamilyScopeKey(providerFamily(provider.key), provider.machineId)),
+  );
   const inferred = new Map<string, ProviderStatus>();
   for (const row of rows) {
     const key = providerKeyFromRow(row);
-    if (explicitFamilies.has(providerFamily(key)) || inferred.has(key)) {
+    const family = providerFamily(key);
+    const machineId = row.source?.machineId;
+    const inferredKey = providerFamilyScopeKey(key, machineId);
+    if (
+      explicitGlobalFamilies.has(family) ||
+      explicitFamilyScopes.has(providerFamilyScopeKey(family, machineId)) ||
+      inferred.has(inferredKey)
+    ) {
       continue;
     }
-    inferred.set(key, inferredProviderStatus(row, payload.generatedAt));
+    inferred.set(inferredKey, inferredProviderStatus(row, payload.generatedAt));
   }
   return [...explicit, ...inferred.values()]
     .map(toProviderStatusView)
     .sort(
       (a, b) =>
+        sortRankFor(a) - sortRankFor(b) ||
         STATE_RANK[a.provider.state] - STATE_RANK[b.provider.state] ||
         a.provider.label.localeCompare(b.provider.label) ||
         (a.machineContext ?? '').localeCompare(b.machineContext ?? ''),
