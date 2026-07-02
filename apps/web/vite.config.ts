@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { tanstackStart } from '@tanstack/solid-start/plugin/vite';
 import { nitro } from 'nitro/vite';
 import { defineConfig, type Plugin } from 'vite';
@@ -5,6 +6,11 @@ import solid from 'vite-plugin-solid';
 
 type ManualMergeServerModule = typeof import('./src/server/lan-merge.server');
 const manualMergeServerModuleUrl = new URL('./src/server/lan-merge.server.ts', import.meta.url).href;
+const serverFunctionEntrypoints = [
+  './src/server/report-payload.ts',
+  './src/server/skills.ts',
+  './src/server/sync.ts',
+] as const;
 
 const solidDepScanPlugin = (): Plugin => ({
   name: 'ai-usage-solid-dep-scan',
@@ -63,9 +69,59 @@ const manualSyncImportDevPlugin = (): Plugin => ({
   },
 });
 
+const tanStackServerFunctionWarmupPlugin = (): Plugin => ({
+  name: 'ai-usage-tanstack-server-fn-warmup',
+  apply: 'serve',
+  configureServer(server) {
+    let warmupPromise: Promise<void> | undefined;
+
+    const warmup = async () => {
+      const ssrEnvironment = server.environments.ssr;
+      if (!ssrEnvironment) {
+        return;
+      }
+
+      for (const entrypoint of serverFunctionEntrypoints) {
+        const filePath = fileURLToPath(new URL(entrypoint, import.meta.url));
+        await ssrEnvironment.transformRequest(filePath);
+      }
+    };
+
+    const ensureWarmup = () => {
+      warmupPromise ??= warmup();
+      return warmupPromise;
+    };
+
+    server.middlewares.use(async (req, _res, next) => {
+      if (!req.url?.startsWith('/_serverFn/')) {
+        next();
+        return;
+      }
+
+      try {
+        await ensureWarmup();
+        next();
+      } catch (error) {
+        next(error);
+      }
+    });
+
+    server.httpServer?.once('listening', () => {
+      ensureWarmup().catch((error: unknown) => {
+        server.config.logger.warn(
+          `[ai-usage] Failed to warm TanStack server functions: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
+    });
+  },
+});
+
 export default defineConfig({
   plugins: [
     manualSyncImportDevPlugin(),
+    tanStackServerFunctionWarmupPlugin(),
     tanstackStart({
       router: {
         codeSplittingOptions: {
