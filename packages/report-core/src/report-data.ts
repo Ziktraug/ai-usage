@@ -1,4 +1,5 @@
 import { type AnalyticsSummary, calculateAnalytics } from './analytics';
+import type { ReportDatasets } from './datasets';
 import type { ProjectGroupConfig, ProjectGroupingWarningReason, ProjectSourceSelector } from './project-group';
 import type { UsageRow, UsageRowSource, UsageRowWithOptionalSource } from './types';
 import { usageRowActiveDate, usageRowLineDelta, usageRowSessionLabel, usageRowTokenTotal } from './usage-row';
@@ -77,6 +78,7 @@ export interface UsageReportProjectGroup {
 
 export interface UsageReportPayload {
   analytics: AnalyticsSummary;
+  datasets?: ReportDatasets;
   facets?: Record<string, unknown>;
   filters: {
     since: string | null;
@@ -160,6 +162,7 @@ export const createUsageReportPayload = (
   warnings?: UsageReportWarning[],
   projectGroups?: UsageReportProjectGroup[],
   projectGroupConfigs?: ProjectGroupConfig[],
+  datasets?: ReportDatasets,
 ): UsageReportPayload => ({
   generatedAt: generatedAt.toISOString(),
   filters: {
@@ -176,5 +179,6 @@ export const createUsageReportPayload = (
   ...(projectGroups === undefined ? {} : { projectGroups }),
   ...(projectGroupConfigs === undefined ? {} : { projectGroupConfigs }),
   ...(warnings?.length ? { warnings } : {}),
+  ...(datasets && Object.keys(datasets).length ? { datasets } : {}),
   ...(facets && Object.keys(facets).length ? { facets } : {}),
 });

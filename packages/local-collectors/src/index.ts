@@ -1,6 +1,7 @@
 export * from './codex-history';
 export * from './collected-session';
 export * from './collectors';
+export * from './datasets';
 export * from './errors';
 export * from './facets';
 export * from './local-history';

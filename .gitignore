@@ -3,6 +3,7 @@ dist
 .output
 styled-system
 .turbo
+.worktrees/
 .direnv/
 .env
 ai-usage-reports/

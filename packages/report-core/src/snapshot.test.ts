@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { createProviderStatusDataset } from './provider-status';
 import { createUsageSnapshot, mergeUsageSnapshots, parseUsageSnapshot } from './snapshot';
 import type { Row, SourcedRow } from './types';
 
@@ -78,6 +79,40 @@ describe('usage snapshots', () => {
       harness: 'opencode',
       operation: 'sqlite.all',
       message: 'Failed to read OpenCode history',
+    });
+  });
+
+  test('preserves unknown datasets and merges known provider status datasets', () => {
+    const providerStatus = createProviderStatusDataset(
+      [
+        {
+          key: 'codex',
+          label: 'Codex',
+          generatedAt: '2026-01-01T00:00:00.000Z',
+          machineId: 'machine-1',
+          machineLabel: 'Machine 1',
+          source: 'local-history',
+          state: 'ok',
+          windows: [],
+        },
+      ],
+      new Date('2026-01-01T00:00:00.000Z'),
+    );
+    const snapshot = createUsageSnapshot({
+      machine,
+      rows: [row('a', 'session-1')],
+      datasets: { providerStatus, futureSkills: { preserved: true } },
+    });
+
+    const parsed = parseUsageSnapshot(JSON.stringify(snapshot));
+    const merged = mergeUsageSnapshots([parsed]);
+
+    expect(parsed.datasets?.futureSkills).toEqual({ preserved: true });
+    expect(merged.datasets?.futureSkills).toEqual({ preserved: true });
+    expect(merged.datasets?.providerStatus?.providers[0]).toMatchObject({
+      key: 'codex',
+      machineId: 'machine-1',
+      machineLabel: 'Machine 1',
     });
   });
 });

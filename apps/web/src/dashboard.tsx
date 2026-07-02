@@ -74,6 +74,8 @@ import { Overview } from './overview';
 import type { TimelineDimension } from './overview-model';
 import { ProjectGroupEditor } from './project-group-editor';
 import { ProjectSummary } from './project-summary';
+import { buildProviderStatusViews } from './provider-status-model';
+import { ProviderStatusPanel } from './provider-status-panel';
 import { RefreshStatus } from './refresh-status';
 import { cursorCommitAttributionFacet } from './report-data';
 import { fetchReportPayload, isDemoReportPayload, mountReportRefreshAction, readReportPayload } from './report-runtime';
@@ -150,6 +152,7 @@ export const Dashboard = (props: {
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
   let searchInputEl: HTMLInputElement | undefined;
   const cursorCommitRows = createMemo(() => cursorCommitAttributionFacet(payload()));
+  const providerStatusViews = createMemo(() => buildProviderStatusViews(payload(), reportRows()));
   const harnessOptions = createMemo(() => [...new Set(reportRows().map((row) => row.harness))]);
   const machineOptions = createMemo(() => [
     ...new Set(
@@ -686,6 +689,8 @@ export const Dashboard = (props: {
           </div>
 
           <ReportWarnings onCleanupProjectWarning={cleanupProjectWarning} warnings={payload().warnings} />
+
+          <ProviderStatusPanel providers={providerStatusViews()} />
 
           <div class={metricGrid}>
             <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>

@@ -1,25 +1,8 @@
 import { calculateAnalytics } from '@ai-usage/report-core/analytics';
+import { type CursorCommitAttributionRow, isCursorCommitAttributionRow } from '@ai-usage/report-core/datasets';
 import type { SerializedRow, UsageReportPayload } from '@ai-usage/report-core/report-data';
 
-export interface CursorCommitAttributionFacet {
-  blankLinesAdded: number;
-  blankLinesDeleted: number;
-  branchName: string;
-  commitDate: string | null;
-  commitHash: string;
-  commitMessage: string | null;
-  composerLinesAdded: number;
-  composerLinesDeleted: number;
-  humanLinesAdded: number;
-  humanLinesDeleted: number;
-  linesAdded: number;
-  linesDeleted: number;
-  scoredAt: string | null;
-  tabLinesAdded: number;
-  tabLinesDeleted: number;
-  v1AiPercentage: number | null;
-  v2AiPercentage: number | null;
-}
+export type CursorCommitAttributionFacet = CursorCommitAttributionRow;
 
 const demoRows: SerializedRow[] = [
   {
@@ -154,6 +137,29 @@ export const demoReportPayload: UsageReportPayload = {
   tableRows: demoRows,
   omittedRows: 0,
   analytics: calculateAnalytics(demoRowsForAnalytics(), new Date('2026-06-11T12:00:00.000Z').getTime()),
+  datasets: {
+    cursorCommitAttribution: [
+      {
+        commitHash: 'da59e06cc4c9627584edec0f8dc06f7e4cdd199d',
+        branchName: 'main',
+        scoredAt: '2026-03-13T08:28:49.536Z',
+        commitMessage: 'tanstack init',
+        commitDate: 'Fri Mar 6 09:32:20 2026 +0100',
+        linesAdded: 671,
+        linesDeleted: 1,
+        tabLinesAdded: 18,
+        tabLinesDeleted: 0,
+        composerLinesAdded: 0,
+        composerLinesDeleted: 0,
+        humanLinesAdded: 101,
+        humanLinesDeleted: 0,
+        blankLinesAdded: 249,
+        blankLinesDeleted: 0,
+        v1AiPercentage: 2.68,
+        v2AiPercentage: 76.12,
+      },
+    ],
+  },
   facets: {
     cursor: {
       commitAttribution: [
@@ -181,20 +187,10 @@ export const demoReportPayload: UsageReportPayload = {
   },
 };
 
-const isCursorCommitAttribution = (value: unknown): value is CursorCommitAttributionFacet => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.commitHash === 'string' &&
-    typeof record.branchName === 'string' &&
-    typeof record.linesAdded === 'number' &&
-    typeof record.linesDeleted === 'number'
-  );
-};
-
 export const cursorCommitAttributionFacet = (payload: UsageReportPayload): CursorCommitAttributionFacet[] => {
+  if (Array.isArray(payload.datasets?.cursorCommitAttribution)) {
+    return payload.datasets.cursorCommitAttribution.filter(isCursorCommitAttributionRow);
+  }
   const cursor = payload.facets?.cursor;
   if (typeof cursor !== 'object' || cursor === null || Array.isArray(cursor)) {
     return [];
@@ -203,5 +199,5 @@ export const cursorCommitAttributionFacet = (payload: UsageReportPayload): Curso
   if (!Array.isArray(commitAttribution)) {
     return [];
   }
-  return commitAttribution.filter(isCursorCommitAttribution);
+  return commitAttribution.filter(isCursorCommitAttributionRow);
 };

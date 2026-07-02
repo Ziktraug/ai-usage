@@ -1,4 +1,6 @@
 import os from 'node:os';
+import { parseReportDatasets, type ReportDatasets } from './datasets';
+import { mergeProviderStatusDatasets, type ProviderStatusDataset, parseProviderStatusDataset } from './provider-status';
 import { type SerializedUsageRow, serializeUsageRow, type UsageReportWarning } from './report-data';
 import type { CollectedUsageRow, UsageRow, UsageRowSource, UsageRowWithOptionalSource } from './types';
 import { usageRowActiveDate, usageRowTokenTotal } from './usage-row';
@@ -24,6 +26,7 @@ export interface SnapshotUsageRow extends SerializedUsageRow {
 }
 
 export interface UsageSnapshot {
+  datasets?: ReportDatasets;
   facets?: Record<string, unknown>;
   generatedAt: string;
   machine: UsageMachine;
@@ -40,6 +43,7 @@ export interface SnapshotMergeWarning extends UsageReportWarning {
 }
 
 export interface SnapshotMergeResult {
+  datasets?: ReportDatasets;
   duplicatesDropped: number;
   rows: CollectedUsageRow[];
   warnings: SnapshotMergeWarning[];
@@ -63,6 +67,7 @@ export const createUsageSnapshot = (input: {
   appVersion?: string | null;
   warnings?: UsageReportWarning[];
   facets?: Record<string, unknown>;
+  datasets?: ReportDatasets;
 }): UsageSnapshot => {
   const generatedAt = input.generatedAt ?? new Date();
   return {
@@ -77,6 +82,7 @@ export const createUsageSnapshot = (input: {
     },
     rows: input.rows.map((row) => toSnapshotRow(row, input.machine)),
     ...(input.warnings?.length ? { warnings: input.warnings } : {}),
+    ...(input.datasets && Object.keys(input.datasets).length ? { datasets: input.datasets } : {}),
     ...(input.facets && Object.keys(input.facets).length ? { facets: input.facets } : {}),
   };
 };
@@ -174,9 +180,25 @@ const isUsageReportWarnings = (value: unknown): value is UsageReportWarning[] =>
 export const mergeUsageSnapshots = (snapshots: UsageSnapshot[]): SnapshotMergeResult => {
   const byKey = new Map<string, { snapshot: UsageSnapshot; row: SnapshotUsageRow }>();
   const warnings: SnapshotMergeWarning[] = [];
+  const datasetsByKey = new Map<string, { generatedAt: string; value: unknown }>();
+  const providerStatusDatasets: ProviderStatusDataset[] = [];
   let duplicatesDropped = 0;
 
   for (const snapshot of snapshots) {
+    const snapshotDatasets = parseReportDatasets(snapshot.datasets);
+    const providerStatus = parseProviderStatusDataset(snapshotDatasets?.providerStatus);
+    if (providerStatus) {
+      providerStatusDatasets.push(providerStatus);
+    }
+    for (const [key, value] of Object.entries(snapshotDatasets ?? {})) {
+      if (key === 'providerStatus') {
+        continue;
+      }
+      const existing = datasetsByKey.get(key);
+      if (!existing || new Date(snapshot.generatedAt).getTime() >= new Date(existing.generatedAt).getTime()) {
+        datasetsByKey.set(key, { generatedAt: snapshot.generatedAt, value });
+      }
+    }
     if (snapshot.warnings?.length) {
       warnings.push(...snapshot.warnings);
     }
@@ -202,10 +224,19 @@ export const mergeUsageSnapshots = (snapshots: UsageSnapshot[]): SnapshotMergeRe
     }
   }
 
+  const datasets: ReportDatasets = {};
+  for (const [key, { value }] of datasetsByKey) {
+    datasets[key] = value;
+  }
+  const providerStatus = mergeProviderStatusDatasets(providerStatusDatasets);
+  if (providerStatus) {
+    datasets.providerStatus = providerStatus;
+  }
   return {
     rows: [...byKey.values()].map(({ row }) => deserializeSnapshotRow(row)),
     warnings,
     duplicatesDropped,
+    ...(Object.keys(datasets).length ? { datasets } : {}),
   };
 };
 
