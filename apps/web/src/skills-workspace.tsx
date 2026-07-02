@@ -11,7 +11,6 @@ import {
   buildSkillTree,
   defaultSkillSelection,
   groupUnmanagedEntries,
-  parseSelectionKey,
   type ReconcilePlanSummary,
   type SkillCellStateFilter,
   type SkillSelection,
@@ -72,7 +71,6 @@ export const SkillsWorkspace = (props: {
   onCancelReconcile: () => void;
   onCellStateFilterChange: (filter: SkillCellStateFilter | undefined) => void;
   onPreviewReconcile: () => void;
-  onSelectionSearchChange: (sel: string, options?: { replace?: boolean }) => void;
   onSnapshot: (snapshot: SkillManagementSnapshot) => void;
   pendingOperation: string | null;
   knownProjectPaths: readonly KnownProjectPath[];
@@ -80,7 +78,7 @@ export const SkillsWorkspace = (props: {
   projectInventoriesLoading: boolean;
   reconcilePlan: ReconcilePlanSummary | null;
   reconcileSkill: (skillName: string) => void;
-  selectionKey: string | undefined;
+  routeSelection: SkillSelection | undefined;
   snapshot: SkillManagementSnapshot;
   toggleSkill: (skillName: string, enabled: boolean) => void;
 }) => {
@@ -98,10 +96,9 @@ export const SkillsWorkspace = (props: {
       ),
   );
   const initialDefaultSelection = defaultSkillSelection(props.snapshot, projectInventories(), props.knownProjectPaths);
-  const initialSearchSelection = props.selectionKey === undefined ? undefined : parseSelectionKey(props.selectionKey);
   const initialSelection =
-    initialSearchSelection !== undefined && selectionExists(treeKeys(), initialSearchSelection)
-      ? initialSearchSelection
+    props.routeSelection !== undefined && selectionExists(treeKeys(), props.routeSelection)
+      ? props.routeSelection
       : initialDefaultSelection;
   const [selection, setSelection] = createSignal<SkillSelection>(initialSelection);
   const [expandedKeys, setExpandedKeys] = createSignal<ReadonlySet<string>>(
@@ -111,33 +108,32 @@ export const SkillsWorkspace = (props: {
   const unmanagedGroups = createMemo(() => groupUnmanagedEntries(props.snapshot));
 
   createEffect(() => {
-    const searchSelection = props.selectionKey === undefined ? undefined : parseSelectionKey(props.selectionKey);
+    const routeSelection = props.routeSelection;
     if (
-      searchSelection !== undefined &&
-      selectionExists(treeKeys(), searchSelection) &&
-      selectionKey(selection()) !== props.selectionKey
+      routeSelection !== undefined &&
+      selectionExists(treeKeys(), routeSelection) &&
+      selectionKey(selection()) !== selectionKey(routeSelection)
     ) {
-      setSelection(searchSelection);
-      setExpandedKeys((keys) => new Set([...keys, scopeKeyForSelection(searchSelection)]));
+      setSelection(routeSelection);
+      setExpandedKeys((keys) => new Set([...keys, scopeKeyForSelection(routeSelection)]));
       setViewMode('detail');
       return;
     }
-    if (searchSelection !== undefined && selectionExists(treeKeys(), searchSelection)) {
+    if (routeSelection !== undefined && selectionExists(treeKeys(), routeSelection)) {
       return;
     }
     if (
-      searchSelection !== undefined &&
-      !selectionExists(treeKeys(), searchSelection) &&
+      routeSelection !== undefined &&
+      !selectionExists(treeKeys(), routeSelection) &&
       props.projectInventoriesLoading
     ) {
       return;
     }
     const currentSelection = selection();
-    if (!selectionExists(treeKeys(), currentSelection) || props.selectionKey !== undefined) {
+    if (!selectionExists(treeKeys(), currentSelection)) {
       const nextSelection = defaultSkillSelection(props.snapshot, projectInventories(), props.knownProjectPaths);
       setSelection(nextSelection);
       setExpandedKeys((keys) => new Set([...keys, scopeKeyForSelection(nextSelection)]));
-      props.onSelectionSearchChange(selectionKey(nextSelection), { replace: true });
     }
   });
 
@@ -145,7 +141,6 @@ export const SkillsWorkspace = (props: {
     setSelection(nextSelection);
     setExpandedKeys((keys) => new Set([...keys, scopeKeyForSelection(nextSelection)]));
     setViewMode('detail');
-    props.onSelectionSearchChange(selectionKey(nextSelection));
   };
 
   const toggleScope = (scopeKey: string) => {
@@ -166,9 +161,9 @@ export const SkillsWorkspace = (props: {
     <div class={workspaceGrid}>
       <SkillsTree
         expandedKeys={expandedKeys()}
+        knownProjects={props.knownProjectPaths}
         model={tree()}
         onQueryChange={setQuery}
-        onSelect={select}
         onToggleScope={toggleScope}
         query={query()}
         selection={selection()}
@@ -190,7 +185,6 @@ export const SkillsWorkspace = (props: {
                 onApplyReconcile={props.onApplyReconcile}
                 onCancelReconcile={props.onCancelReconcile}
                 onCellStateFilterChange={props.onCellStateFilterChange}
-                onOpenSkill={(skillName) => select({ skillName, type: 'global-skill' })}
                 onPreviewReconcile={props.onPreviewReconcile}
                 pendingOperation={props.pendingOperation}
                 reconcilePlan={props.reconcilePlan}
@@ -204,7 +198,7 @@ export const SkillsWorkspace = (props: {
           <SkillsDetail
             configurationPanel={props.configurationPanel}
             consolidatePanel={consolidatePanel}
-            onSelect={select}
+            knownProjects={props.knownProjectPaths}
             onSnapshot={props.onSnapshot}
             pendingOperation={props.pendingOperation}
             projectInventories={props.projectInventories}

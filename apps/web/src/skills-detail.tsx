@@ -18,7 +18,8 @@ import {
   strongCell,
 } from '@ai-usage/design-system/report';
 import type { ProjectSkillInventory, SkillDiagnostic, SkillManagementSnapshot, SourceSkill } from '@ai-usage/skills';
-import { createEffect, createMemo, createResource, createSignal, For, type JSX, Show } from 'solid-js';
+import { Link } from '@tanstack/solid-router';
+import { createEffect, createMemo, createSignal, For, type JSX, Show } from 'solid-js';
 import { type ProjectRuntimeDirId, projectSkillDirectories } from './project-skill-directories';
 import { getManagedSkillMarkdown, getProjectSkillMarkdown, saveManagedSkillMarkdown } from './server/skills';
 import {
@@ -29,7 +30,9 @@ import {
   findGlobalSkill,
   findProjectSkillRow,
   globalSkillAttentionCount,
+  type KnownProjectScope,
   type ProjectSkillRow,
+  projectRouteKey,
   type SkillSelection,
   type SkillTreeModel,
   selectionKey,
@@ -140,6 +143,16 @@ const editorBlock = css({
   fontFamily: 'mono',
   fontSize: '12px',
   whiteSpace: 'pre-wrap',
+});
+
+const editorLoadingBlock = css({
+  display: 'grid',
+  minH: '360px',
+  placeItems: 'center',
+  p: '10px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surfaceMuted',
 });
 
 const editorArea = css({
@@ -300,12 +313,75 @@ const MetadataItem = (props: { label: string; value: JSX.Element }) => (
 
 const MarkdownPreview = (props: { content: string }) => <pre class={editorBlock}>{props.content}</pre>;
 
+const MarkdownLoading = () => (
+  <div class={editorLoadingBlock}>
+    <p class={meta}>Loading SKILL.md...</p>
+  </div>
+);
+
+const errorResult = (error: unknown) => ({
+  ok: false as const,
+  error: { message: error instanceof Error ? error.message : String(error), tag: 'ClientRequestError' },
+});
+
+const SkillSelectionLink = (props: {
+  children: JSX.Element;
+  class: string;
+  knownProjects: readonly KnownProjectScope[];
+  selection: SkillSelection;
+}) => {
+  if (props.selection.type === 'global-scope') {
+    return (
+      <Link class={props.class} resetScroll={false} to="/skills">
+        {props.children}
+      </Link>
+    );
+  }
+  if (props.selection.type === 'global-skill') {
+    return (
+      <Link
+        class={props.class}
+        params={{ skillName: props.selection.skillName }}
+        resetScroll={false}
+        to="/skills/global/$skillName"
+      >
+        {props.children}
+      </Link>
+    );
+  }
+  if (props.selection.type === 'project-scope') {
+    return (
+      <Link
+        class={props.class}
+        params={{ projectKey: projectRouteKey(props.selection.projectPath) }}
+        resetScroll={false}
+        to="/skills/projects/$projectKey"
+      >
+        {props.children}
+      </Link>
+    );
+  }
+  return (
+    <Link
+      class={props.class}
+      params={{
+        projectKey: projectRouteKey(props.selection.projectPath),
+        skillName: props.selection.skillName,
+      }}
+      resetScroll={false}
+      to="/skills/projects/$projectKey/$skillName"
+    >
+      {props.children}
+    </Link>
+  );
+};
+
 export const SkillsDetail = (props: {
   configurationPanel: () => JSX.Element;
   consolidatePanel: () => JSX.Element;
-  onSelect: (selection: SkillSelection) => void;
   onSnapshot: (snapshot: SkillManagementSnapshot) => void;
   pendingOperation: string | null;
+  knownProjects: readonly KnownProjectScope[];
   projectInventories: ProjectInventoriesResult | undefined;
   projectInventoriesLoading: boolean;
   reconcileSkill: (skillName: string) => void;
@@ -336,14 +412,14 @@ export const SkillsDetail = (props: {
         <GlobalScopeDetail
           configurationPanel={props.configurationPanel}
           consolidatePanel={props.consolidatePanel}
-          onSelect={props.onSelect}
+          knownProjects={props.knownProjects}
           snapshot={props.snapshot}
         />
       </Show>
       <Show when={selectedGlobalSkill()}>
         {(skill) => (
           <GlobalSkillDetail
-            onSelect={props.onSelect}
+            knownProjects={props.knownProjects}
             onSnapshot={props.onSnapshot}
             pendingOperation={props.pendingOperation}
             reconcileSkill={props.reconcileSkill}
@@ -357,15 +433,15 @@ export const SkillsDetail = (props: {
       <Show when={props.selection.type === 'project-scope'}>
         <ProjectScopeDetail
           inventory={selectedProjectInventory()}
+          knownProjects={props.knownProjects}
           loading={props.projectInventoriesLoading}
-          onSelect={props.onSelect}
           projectPath={props.selection.type === 'project-scope' ? props.selection.projectPath : ''}
         />
       </Show>
       <Show when={selectedProjectSkill()}>
         {(row) => (
           <ProjectSkillDetail
-            onSelect={props.onSelect}
+            knownProjects={props.knownProjects}
             projectPath={props.selection.type === 'project-skill' ? props.selection.projectPath : ''}
             row={row()}
             tree={props.tree}
@@ -379,7 +455,7 @@ export const SkillsDetail = (props: {
 const GlobalScopeDetail = (props: {
   configurationPanel: () => JSX.Element;
   consolidatePanel: () => JSX.Element;
-  onSelect: (selection: SkillSelection) => void;
+  knownProjects: readonly KnownProjectScope[];
   snapshot: SkillManagementSnapshot;
 }) => {
   const health = createMemo(() => buildSkillHealthSummary(props.snapshot));
@@ -424,21 +500,20 @@ const GlobalScopeDetail = (props: {
         <Show fallback={<p class={meta}>No disabled or invalid skills.</p>} when={attentionSkills().length > 0}>
           <div class={compactList}>
             <For each={attentionSkills()}>
-              {(skill) => (
-                <button
-                  class={compactRow}
-                  onClick={() => props.onSelect({ skillName: skill.name, type: 'global-skill' })}
-                  type="button"
-                >
-                  <span>
-                    <span class={strongCell}>{skill.name}</span>
-                    <span class={meta}> {skill.description || 'No description'}</span>
-                  </span>
-                  <span class={cx(statusPill, validationPillClass(skill.validationStatus))}>
-                    {skill.enabled ? skill.validationStatus : 'disabled'}
-                  </span>
-                </button>
-              )}
+              {(skill) => {
+                const selection = { skillName: skill.name, type: 'global-skill' } as const;
+                return (
+                  <SkillSelectionLink class={compactRow} knownProjects={props.knownProjects} selection={selection}>
+                    <span>
+                      <span class={strongCell}>{skill.name}</span>
+                      <span class={meta}> {skill.description || 'No description'}</span>
+                    </span>
+                    <span class={cx(statusPill, validationPillClass(skill.validationStatus))}>
+                      {skill.enabled ? skill.validationStatus : 'disabled'}
+                    </span>
+                  </SkillSelectionLink>
+                );
+              }}
             </For>
           </div>
         </Show>
@@ -451,7 +526,7 @@ const GlobalScopeDetail = (props: {
 
 const GlobalSkillDetail = (props: {
   onSnapshot: (snapshot: SkillManagementSnapshot) => void;
-  onSelect: (selection: SkillSelection) => void;
+  knownProjects: readonly KnownProjectScope[];
   pendingOperation: string | null;
   reconcileSkill: (skillName: string) => void;
   skill: SourceSkill;
@@ -483,7 +558,7 @@ const GlobalSkillDetail = (props: {
           </span>
         </div>
         <p class={muted}>{props.skill.description || 'No description'}</p>
-        <DuplicateSkillLinks matches={duplicateMatches()} onSelect={props.onSelect} />
+        <DuplicateSkillLinks knownProjects={props.knownProjects} matches={duplicateMatches()} />
       </div>
       <div class={metadataGrid}>
         <MetadataItem label="Source path" value={props.skill.path} />
@@ -551,10 +626,36 @@ const SkillMarkdownEditor = (props: { onSnapshot: (snapshot: SkillManagementSnap
   const [editing, setEditing] = createSignal(false);
   const [draft, setDraft] = createSignal('');
   const [message, setMessage] = createSignal<string | null>(null);
-  const [document, { mutate, refetch }] = createResource(
-    () => props.skillName,
-    async (skillName) => (await getManagedSkillMarkdown({ data: skillName })) as SkillMarkdownResult,
-  );
+  const [document, setDocument] = createSignal<SkillMarkdownResult>();
+  const [documentLoading, setDocumentLoading] = createSignal(false);
+  let documentRequestId = 0;
+
+  const loadMarkdown = (skillName: string) => {
+    documentRequestId += 1;
+    const requestId = documentRequestId;
+    setDocumentLoading(true);
+    getManagedSkillMarkdown({ data: skillName })
+      .then((result) => {
+        if (requestId === documentRequestId) {
+          setDocument(result as SkillMarkdownResult);
+        }
+      })
+      .catch((error: unknown) => {
+        if (requestId === documentRequestId) {
+          setDocument(errorResult(error));
+        }
+      })
+      .finally(() => {
+        if (requestId === documentRequestId) {
+          setDocumentLoading(false);
+        }
+      });
+  };
+
+  createEffect(() => {
+    loadMarkdown(props.skillName);
+  });
+
   const markdownDocument = createMemo(() => {
     const current = document();
     return current?.ok ? current.data : undefined;
@@ -593,10 +694,10 @@ const SkillMarkdownEditor = (props: { onSnapshot: (snapshot: SkillManagementSnap
       return;
     }
     if (result.data.document) {
-      mutate({ ok: true, data: result.data.document });
+      setDocument({ ok: true, data: result.data.document });
       setDraft(result.data.document.content);
     } else {
-      await refetch();
+      loadMarkdown(props.skillName);
     }
     if (result.data.snapshot) {
       props.onSnapshot(result.data.snapshot);
@@ -611,44 +712,45 @@ const SkillMarkdownEditor = (props: { onSnapshot: (snapshot: SkillManagementSnap
         <h3 class={panelTitle}>SKILL.md</h3>
         <p class={panelSub}>Writes to the source repository only, never into runtime folders.</p>
       </div>
-      <Show fallback={<p class={meta}>Loading SKILL.md...</p>} when={!document.loading}>
-        <Show fallback={<p class={meta}>{markdownError()}</p>} when={markdownDocument()}>
-          {(current) => (
-            <Show
-              fallback={
-                <>
-                  <MarkdownPreview content={current().content} />
-                  <button class={ghostButton} onClick={() => setEditing(true)} type="button">
-                    Edit
-                  </button>
-                </>
-              }
-              when={editing()}
-            >
-              <textarea
-                aria-label={`${props.skillName} SKILL.md`}
-                class={editorArea}
-                onInput={(event) => setDraft(event.currentTarget.value)}
-                value={draft()}
-              />
-              <div class={actionRow}>
-                <button class={commandButton} onClick={saveMarkdown} type="button">
-                  Save
+      <Show
+        fallback={documentLoading() ? <MarkdownLoading /> : <p class={meta}>{markdownError()}</p>}
+        when={markdownDocument()}
+      >
+        {(current) => (
+          <Show
+            fallback={
+              <>
+                <MarkdownPreview content={current().content} />
+                <button class={ghostButton} onClick={() => setEditing(true)} type="button">
+                  Edit
                 </button>
-                <button
-                  class={ghostButton}
-                  onClick={() => {
-                    setDraft(current().content);
-                    setEditing(false);
-                  }}
-                  type="button"
-                >
-                  Cancel
-                </button>
-              </div>
-            </Show>
-          )}
-        </Show>
+              </>
+            }
+            when={editing()}
+          >
+            <textarea
+              aria-label={`${props.skillName} SKILL.md`}
+              class={editorArea}
+              onInput={(event) => setDraft(event.currentTarget.value)}
+              value={draft()}
+            />
+            <div class={actionRow}>
+              <button class={commandButton} onClick={saveMarkdown} type="button">
+                Save
+              </button>
+              <button
+                class={ghostButton}
+                onClick={() => {
+                  setDraft(current().content);
+                  setEditing(false);
+                }}
+                type="button"
+              >
+                Cancel
+              </button>
+            </div>
+          </Show>
+        )}
       </Show>
       <Show when={message()}>{(value) => <p class={meta}>{value()}</p>}</Show>
     </section>
@@ -657,8 +759,8 @@ const SkillMarkdownEditor = (props: { onSnapshot: (snapshot: SkillManagementSnap
 
 const ProjectScopeDetail = (props: {
   inventory: ProjectSkillInventory | undefined;
+  knownProjects: readonly KnownProjectScope[];
   loading: boolean;
-  onSelect: (selection: SkillSelection) => void;
   projectPath: string;
 }) => {
   const rows = createMemo(() => (props.inventory ? buildProjectSkillRows(props.inventory) : []));
@@ -686,23 +788,24 @@ const ProjectScopeDetail = (props: {
           <Show fallback={<p class={meta}>No project-owned skills observed.</p>} when={rows().length > 0}>
             <div class={compactList}>
               <For each={rows()}>
-                {(row) => (
-                  <button
-                    class={compactRow}
-                    onClick={() =>
-                      props.onSelect({ projectPath: props.projectPath, skillName: row.name, type: 'project-skill' })
-                    }
-                    type="button"
-                  >
-                    <span>
-                      <span class={strongCell}>{row.name}</span>
-                      <span class={meta}> {row.description || 'No description'}</span>
-                    </span>
-                    <span class={cx(statusPill, validationPillClass(row.validationStatus))}>
-                      {row.validationStatus}
-                    </span>
-                  </button>
-                )}
+                {(row) => {
+                  const selection = {
+                    projectPath: props.projectPath,
+                    skillName: row.name,
+                    type: 'project-skill',
+                  } as const;
+                  return (
+                    <SkillSelectionLink class={compactRow} knownProjects={props.knownProjects} selection={selection}>
+                      <span>
+                        <span class={strongCell}>{row.name}</span>
+                        <span class={meta}> {row.description || 'No description'}</span>
+                      </span>
+                      <span class={cx(statusPill, validationPillClass(row.validationStatus))}>
+                        {row.validationStatus}
+                      </span>
+                    </SkillSelectionLink>
+                  );
+                }}
               </For>
             </div>
           </Show>
@@ -714,7 +817,7 @@ const ProjectScopeDetail = (props: {
 };
 
 const ProjectSkillDetail = (props: {
-  onSelect: (selection: SkillSelection) => void;
+  knownProjects: readonly KnownProjectScope[];
   projectPath: string;
   row: ProjectSkillRow;
   tree: SkillTreeModel;
@@ -739,7 +842,7 @@ const ProjectSkillDetail = (props: {
           <span class={cx(statusPill, statusPillInfo)}>Project</span>
         </div>
         <p class={muted}>{props.row.description || 'No description'}</p>
-        <DuplicateSkillLinks matches={duplicateMatches()} onSelect={props.onSelect} />
+        <DuplicateSkillLinks knownProjects={props.knownProjects} matches={duplicateMatches()} />
       </div>
       <div class={metadataGrid}>
         <MetadataItem label="Project" value={props.projectPath} />
@@ -775,17 +878,17 @@ const ProjectSkillDetail = (props: {
 };
 
 const DuplicateSkillLinks = (props: {
+  knownProjects: readonly KnownProjectScope[];
   matches: readonly { scopeLabel: string; selection: SkillSelection }[];
-  onSelect: (selection: SkillSelection) => void;
 }) => (
   <Show when={props.matches.length > 0}>
     <div class={chipRow}>
       <span class={meta}>Also present in:</span>
       <For each={props.matches}>
         {(match) => (
-          <button class={chipButton} onClick={() => props.onSelect(match.selection)} type="button">
+          <SkillSelectionLink class={chipButton} knownProjects={props.knownProjects} selection={match.selection}>
             {match.scopeLabel}
-          </button>
+          </SkillSelectionLink>
         )}
       </For>
     </div>
@@ -801,19 +904,46 @@ const ProjectSkillMarkdownViewer = (props: { projectPath: string; row: ProjectSk
       props.row.observations.find((observation) => observation.runtimeDirId === runtimeDirId()) ??
       props.row.observations.at(0),
   );
-  const [document] = createResource(
-    () => {
-      const observation = selectedObservation();
-      return observation === undefined
-        ? undefined
-        : {
-            projectPath: props.projectPath,
-            runtimeDirId: observation.runtimeDirId,
-            skillName: props.row.name,
-          };
-    },
-    async (input) => (await getProjectSkillMarkdown({ data: input })) as ProjectSkillMarkdownResult,
-  );
+  const [document, setDocument] = createSignal<ProjectSkillMarkdownResult>();
+  const [documentLoading, setDocumentLoading] = createSignal(false);
+  let documentRequestId = 0;
+
+  createEffect(() => {
+    const observation = selectedObservation();
+    if (observation === undefined) {
+      documentRequestId += 1;
+      setDocument(undefined);
+      setDocumentLoading(false);
+      return;
+    }
+
+    documentRequestId += 1;
+    const requestId = documentRequestId;
+    setDocumentLoading(true);
+    getProjectSkillMarkdown({
+      data: {
+        projectPath: props.projectPath,
+        runtimeDirId: observation.runtimeDirId,
+        skillName: props.row.name,
+      },
+    })
+      .then((result) => {
+        if (requestId === documentRequestId) {
+          setDocument(result as ProjectSkillMarkdownResult);
+        }
+      })
+      .catch((error: unknown) => {
+        if (requestId === documentRequestId) {
+          setDocument(errorResult(error));
+        }
+      })
+      .finally(() => {
+        if (requestId === documentRequestId) {
+          setDocumentLoading(false);
+        }
+      });
+  });
+
   const markdownDocument = createMemo(() => {
     const current = document();
     return current?.ok ? current.data : undefined;
@@ -857,17 +987,18 @@ const ProjectSkillMarkdownViewer = (props: { projectPath: string; row: ProjectSk
           </select>
         </Show>
       </div>
-      <Show fallback={<p class={meta}>Loading SKILL.md...</p>} when={!document.loading}>
-        <Show fallback={<p class={meta}>{markdownError()}</p>} when={markdownDocument()}>
-          {(current) => (
-            <>
-              <Show when={current().truncated}>
-                <p class={meta}>Preview truncated to 64 KiB.</p>
-              </Show>
-              <MarkdownPreview content={current().content} />
-            </>
-          )}
-        </Show>
+      <Show
+        fallback={documentLoading() ? <MarkdownLoading /> : <p class={meta}>{markdownError()}</p>}
+        when={markdownDocument()}
+      >
+        {(current) => (
+          <>
+            <Show when={current().truncated}>
+              <p class={meta}>Preview truncated to 64 KiB.</p>
+            </Show>
+            <MarkdownPreview content={current().content} />
+          </>
+        )}
       </Show>
     </section>
   );

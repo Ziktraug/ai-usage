@@ -248,7 +248,7 @@ export const refreshIconButton = css({
   border: '0',
   borderRadius: 'xs',
   bg: 'transparent',
-  color: 'faint',
+  color: 'accent',
   fontFamily: 'mono',
   fontSize: '11px',
   fontWeight: 650,
@@ -256,6 +256,10 @@ export const refreshIconButton = css({
   cursor: 'pointer',
   transition: 'color 0.15s, background-color 0.15s',
   _hover: {
+    bg: 'surfaceMuted',
+    color: 'accent',
+  },
+  '&[aria-pressed="true"]': {
     bg: 'surfaceMuted',
     color: 'accent',
   },

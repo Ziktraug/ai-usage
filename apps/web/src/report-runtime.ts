@@ -5,6 +5,7 @@ import { demoReportPayload } from './report-data';
 declare global {
   interface Window {
     __AI_USAGE_REPORT__?: UsageReportPayload;
+    __AI_USAGE_REPORT_STATIC__?: boolean;
   }
 }
 
@@ -16,8 +17,8 @@ const readExportReportPayload = () =>
   typeof globalThis === 'undefined' ? undefined : (globalThis as ReportExportGlobal).__AI_USAGE_REPORT_EXPORT_PAYLOAD__;
 
 const readInjectedReportPayload = () => (typeof window === 'undefined' ? undefined : window.__AI_USAGE_REPORT__);
-
-const isDevRuntime = () => Boolean(import.meta.env?.DEV);
+const isStaticReportPayload = () =>
+  typeof window === 'undefined' ? false : window.__AI_USAGE_REPORT_STATIC__ === true;
 
 const collectReportPayload = async () => {
   const { getReportPayload } = await import('./server/report-payload');
@@ -111,6 +112,4 @@ export const mountReportRefreshAction = (input: {
 };
 
 export const reportRefreshPayload = () =>
-  typeof window === 'undefined' || !isDevRuntime()
-    ? undefined
-    : (options?: { force?: boolean }) => fetchReportPayload(options);
+  isStaticReportPayload() ? undefined : (options?: { force?: boolean }) => fetchReportPayload(options);
