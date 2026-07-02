@@ -17,6 +17,14 @@ export const panelHeader = css({
   gap: '2px',
 });
 
+export const panelHeaderRow = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '12px',
+  alignItems: 'baseline',
+  justifyContent: 'space-between',
+});
+
 export const panelTitle = css({
   fontSize: '14px',
   fontWeight: 650,

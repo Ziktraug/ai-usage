@@ -1,13 +1,54 @@
 import { css, cx } from '@ai-usage/design-system/css';
 import { metricDelta, metricGrid, metricLabel, metricTile, metricValue } from '@ai-usage/design-system/report';
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
-import type { SkillHealthSummary } from './skills-page-model';
+import { count, type SkillCellStateFilter, type SkillHealthSummary } from './skills-page-model';
 
 const dangerValue = css({ color: 'status.danger' });
 const warnValue = css({ color: 'status.warn' });
 
-const Tile = (props: { label: string; sublabel: string; tone?: 'danger' | 'warn'; value: string }) => (
-  <div class={metricTile}>
+const tileButton = css({
+  appearance: 'none',
+  textAlign: 'left',
+  cursor: 'pointer',
+  _hover: {
+    borderColor: 'accent',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+  _disabled: {
+    cursor: 'default',
+    _hover: {
+      borderColor: 'line',
+    },
+  },
+  '&[data-active=true]': {
+    borderColor: 'accent',
+    boxShadow: '0 0 0 1px token(colors.accent)',
+  },
+});
+
+const Tile = (props: {
+  active?: boolean;
+  filter?: SkillCellStateFilter;
+  label: string;
+  onFilterChange: (filter: SkillCellStateFilter) => void;
+  sublabel: string;
+  tone?: 'danger' | 'warn';
+  value: number;
+}) => (
+  <button
+    class={cx(metricTile, tileButton)}
+    data-active={props.active ? 'true' : undefined}
+    disabled={props.filter === undefined || props.value === 0}
+    onClick={() => {
+      if (props.filter !== undefined) {
+        props.onFilterChange(props.filter);
+      }
+    }}
+    type="button"
+  >
     <div class={metricLabel}>{props.label}</div>
     <div>
       <div
@@ -21,38 +62,75 @@ const Tile = (props: { label: string; sublabel: string; tone?: 'danger' | 'warn'
       </div>
       <div class={metricDelta}>{props.sublabel}</div>
     </div>
-  </div>
+  </button>
 );
 
-export const SkillsHealth = (props: { snapshot: SkillManagementSnapshot; summary: SkillHealthSummary }) => {
+export const SkillsHealth = (props: {
+  activeFilter: SkillCellStateFilter | undefined;
+  onFilterChange: (filter: SkillCellStateFilter) => void;
+  snapshot: SkillManagementSnapshot;
+  summary: SkillHealthSummary;
+}) => {
   const activeSkillCount = () =>
     props.snapshot.skills.filter((skill) => skill.enabled && skill.validationStatus !== 'invalid').length;
   const activeRuntimeCount = () => props.snapshot.targets.filter((target) => target.enabled).length;
-  const repairSublabel = () =>
-    props.summary.blockedCount > 0
-      ? `${props.summary.toLinkCount} to link · ${props.summary.blockedCount} blocked`
-      : `${props.summary.toLinkCount} to link`;
 
   return (
     <section class={metricGrid}>
       <Tile
+        active={props.activeFilter === 'linked'}
+        filter="linked"
         label="Healthy links"
-        sublabel={`${activeSkillCount()} active skills · ${activeRuntimeCount()} runtimes`}
-        value={`${props.summary.healthyLinkCount}/${props.summary.expectedLinkCount}`}
+        onFilterChange={props.onFilterChange}
+        sublabel={`${count(activeSkillCount(), 'active skill')} · ${activeRuntimeCount()} enabled / ${
+          props.snapshot.targets.length
+        } configured`}
+        value={props.summary.healthyLinkCount}
       />
       <Tile
-        label="To repair"
-        sublabel={repairSublabel()}
-        value={String(props.summary.toRepairCount)}
+        active={props.activeFilter === 'not-linked'}
+        filter="not-linked"
+        label="To link"
+        onFilterChange={props.onFilterChange}
+        sublabel="Missing runtime links"
+        value={props.summary.toLinkCount}
+      />
+      <Tile
+        active={props.activeFilter === 'broken'}
+        filter="broken"
+        label="Broken"
+        onFilterChange={props.onFilterChange}
+        sublabel="Links to repair"
+        value={props.summary.toRepairCount}
         {...(props.summary.toRepairCount > 0 ? { tone: 'danger' as const } : {})}
       />
       <Tile
+        active={props.activeFilter === 'blocked'}
+        filter="blocked"
+        label="Blocked"
+        onFilterChange={props.onFilterChange}
+        sublabel="Copies in place of links"
+        value={props.summary.blockedCount}
+        {...(props.summary.blockedCount > 0 ? { tone: 'danger' as const } : {})}
+      />
+      <Tile
         label="To consolidate"
-        sublabel="Grouped by runtime"
-        value={String(props.summary.consolidateCount)}
+        onFilterChange={props.onFilterChange}
+        sublabel={`${count(props.summary.consolidateCopies, 'copy', 'copies')} · ${count(
+          props.summary.consolidateSymlinks,
+          'symlink',
+        )}`}
+        value={props.summary.consolidateCount}
         {...(props.summary.consolidateCount > 0 ? { tone: 'warn' as const } : {})}
       />
-      <Tile label="Disabled" sublabel="Kept in source" value={String(props.summary.disabledCount)} />
+      <Tile
+        active={props.activeFilter === 'disabled'}
+        filter="disabled"
+        label="Disabled"
+        onFilterChange={props.onFilterChange}
+        sublabel="Kept in source"
+        value={props.summary.disabledCount}
+      />
     </section>
   );
 };

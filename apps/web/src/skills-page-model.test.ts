@@ -129,7 +129,9 @@ describe('skills page model', () => {
 
     expect(buildSkillHealthSummary(snapshot)).toEqual({
       blockedCount: 1,
+      consolidateCopies: 1,
       consolidateCount: 1,
+      consolidateSymlinks: 0,
       disabledCount: 1,
       expectedLinkCount: 4,
       healthyLinkCount: 1,
@@ -151,6 +153,23 @@ describe('skills page model', () => {
     expect(groupUnmanagedEntries(snapshot)).toEqual([
       {
         copies: 2,
+        entries: [
+          {
+            name: 'copy-one',
+            path: '/targets/codex/copy-one',
+            state: 'unmanaged-copy',
+          },
+          {
+            name: 'copy-two',
+            path: '/targets/codex/copy-two',
+            state: 'unmanaged-copy',
+          },
+          {
+            name: 'link-one',
+            path: '/targets/codex/link-one',
+            state: 'unmanaged-symlink',
+          },
+        ],
         symlinks: 1,
         targetId: 'codex',
         targetLabel: 'Codex',
@@ -163,6 +182,11 @@ describe('skills page model', () => {
   test('filters rows by invocation and description query', () => {
     const rows = buildSkillMatrix(
       makeSnapshot({
+        projections: [
+          projection('alpha-skill', 'codex', 'linked'),
+          projection('beta-skill', 'codex', 'unmanaged-copy'),
+          projection('missing-skill', 'codex', 'missing'),
+        ],
         skills: [
           skill('alpha-skill', { description: 'Reviews pull requests' }),
           skill('beta-skill', {
@@ -174,6 +198,7 @@ describe('skills page model', () => {
               name: 'beta-skill',
             },
           }),
+          skill('missing-skill'),
         ],
         targets: [target('codex', 'Codex')],
       }),
@@ -182,6 +207,9 @@ describe('skills page model', () => {
     expect(filterMatrixRows(rows, { invocation: 'manual' }).map((row) => row.name)).toEqual(['beta-skill']);
     expect(filterMatrixRows(rows, { origin: 'github' }).map((row) => row.name)).toEqual([]);
     expect(filterMatrixRows(rows, { query: 'pull' }).map((row) => row.name)).toEqual(['alpha-skill']);
+    expect(filterMatrixRows(rows, { cellState: 'blocked' }).map((row) => row.name)).toEqual(['beta-skill']);
+    expect(filterMatrixRows(rows, { cellState: 'linked' }).map((row) => row.name)).toEqual(['alpha-skill']);
+    expect(filterMatrixRows(rows, { cellState: 'not-linked' }).map((row) => row.name)).toEqual(['missing-skill']);
   });
 
   test('allows reconcile all with unmanaged entries present when a safe action exists', () => {

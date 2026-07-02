@@ -36,7 +36,9 @@ export interface SkillMatrix {
 
 export interface SkillHealthSummary {
   blockedCount: number;
+  consolidateCopies: number;
   consolidateCount: number;
+  consolidateSymlinks: number;
   disabledCount: number;
   expectedLinkCount: number;
   healthyLinkCount: number;
@@ -44,8 +46,15 @@ export interface SkillHealthSummary {
   toRepairCount: number;
 }
 
+export interface UnmanagedEntry {
+  name: string;
+  path: string;
+  state: 'unmanaged-copy' | 'unmanaged-symlink';
+}
+
 export interface UnmanagedGroup {
   copies: number;
+  entries: readonly UnmanagedEntry[];
   symlinks: number;
   targetId: string;
   targetLabel: string;
@@ -53,7 +62,10 @@ export interface UnmanagedGroup {
   total: number;
 }
 
+export type SkillCellStateFilter = 'blocked' | 'broken' | 'disabled' | 'linked' | 'not-linked';
+
 export interface SkillRowFilter {
+  cellState?: SkillCellStateFilter;
   invocation?: SkillInvocation;
   origin?: string;
   query?: string;
@@ -68,6 +80,9 @@ const blockedStates = new Set<ProjectionState>([
 ]);
 const reconciliableStates = new Set<ProjectionState>(['missing', 'broken-link', 'wrong-target']);
 const tokenDiagnosticCodes = new Set(['SkillFileTooLarge', 'SkillFileLimitExceeded']);
+
+export const count = (value: number, singular: string, plural = `${singular}s`): string =>
+  `${value} ${value === 1 ? singular : plural}`;
 
 export const projectionStateLabel = (state: ProjectionState): string => {
   switch (state) {
@@ -168,9 +183,14 @@ export const buildSkillHealthSummary = (snapshot: SkillManagementSnapshot): Skil
     }
   }
 
+  const consolidateCopies = snapshot.unmanagedEntries.filter((entry) => entry.state === 'unmanaged-copy').length;
+  const consolidateSymlinks = snapshot.unmanagedEntries.filter((entry) => entry.state === 'unmanaged-symlink').length;
+
   return {
     blockedCount,
+    consolidateCopies,
     consolidateCount: snapshot.unmanagedEntries.length,
+    consolidateSymlinks,
     disabledCount: snapshot.skills.filter((skill) => !skill.enabled).length,
     expectedLinkCount: countableSkills.length * activeTargets.length,
     healthyLinkCount,
@@ -186,20 +206,54 @@ export const groupUnmanagedEntries = (snapshot: SkillManagementSnapshot): readon
     const target = targetsById.get(entry.targetId);
     const existing = groups.get(entry.targetId) ?? {
       copies: 0,
+      entries: [],
       symlinks: 0,
       targetId: entry.targetId,
       targetLabel: target?.label ?? entry.targetId,
       targetPath: target?.path ?? '',
       total: 0,
     };
+    const unmanagedEntry =
+      entry.state === 'unmanaged-copy' || entry.state === 'unmanaged-symlink'
+        ? {
+            name: entry.skillName,
+            path: entry.actualPath ?? entry.expectedPath,
+            state: entry.state,
+          }
+        : undefined;
     groups.set(entry.targetId, {
       ...existing,
       copies: existing.copies + (entry.state === 'unmanaged-copy' ? 1 : 0),
+      entries:
+        unmanagedEntry === undefined
+          ? existing.entries
+          : [...existing.entries, unmanagedEntry].sort((left, right) => {
+              if (left.state !== right.state) {
+                return left.state === 'unmanaged-copy' ? -1 : 1;
+              }
+              return left.name.localeCompare(right.name);
+            }),
       symlinks: existing.symlinks + (entry.state === 'unmanaged-symlink' ? 1 : 0),
       total: existing.total + 1,
     });
   }
   return [...groups.values()].sort((left, right) => left.targetLabel.localeCompare(right.targetLabel));
+};
+
+const rowMatchesCellState = (row: SkillMatrixRow, filter: SkillCellStateFilter) => {
+  if (filter === 'disabled') {
+    return !row.enabled;
+  }
+  if (filter === 'linked') {
+    return row.cells.some((cell) => cell.state === 'linked');
+  }
+  if (filter === 'not-linked') {
+    return row.cells.some((cell) => cell.state === 'missing');
+  }
+  if (filter === 'broken') {
+    return row.cells.some((cell) => cell.state !== 'not-applicable' && repairStates.has(cell.state));
+  }
+  return row.cells.some((cell) => cell.state !== 'not-applicable' && blockedStates.has(cell.state));
 };
 
 export const filterMatrixRows = (
@@ -212,6 +266,9 @@ export const filterMatrixRows = (
       return false;
     }
     if (filter.origin !== undefined && row.origin !== filter.origin) {
+      return false;
+    }
+    if (filter.cellState !== undefined && !rowMatchesCellState(row, filter.cellState)) {
       return false;
     }
     if (!query) {
