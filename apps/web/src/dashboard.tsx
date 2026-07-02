@@ -104,18 +104,16 @@ export const Dashboard = (props: {
   const dashboardSearchDefaults = dashboardSearchDefaultsFor(initialPayload.filters.sort);
   const [payload, setPayload] = createSignal<UsageReportPayload>(initialPayload);
   const isDemo = !props.initialPayload && isDemoReportPayload();
-  const canRefresh =
-    !!props.fetchPayload &&
-    !isDemo &&
-    typeof window !== 'undefined' &&
-    ['http:', 'https:'].includes(window.location.protocol);
+  const [clientReady, setClientReady] = createSignal(false);
+  const canRefresh = () =>
+    !!props.fetchPayload && !isDemo && clientReady() && ['http:', 'https:'].includes(window.location.protocol);
   const [refreshing, setRefreshing] = createSignal(false);
   const [lastRefreshError, setLastRefreshError] = createSignal<string | null>(null);
   const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = createSignal<number | null>(null);
   const [refreshErrorCount, setRefreshErrorCount] = createSignal(0);
   const [refreshPaused, setRefreshPaused] = createSignal(false);
   const [nextRefreshAt, setNextRefreshAt] = createSignal<number | null>(
-    canRefresh ? Date.now() + REFRESH_INTERVAL_MS : null,
+    canRefresh() ? Date.now() + REFRESH_INTERVAL_MS : null,
   );
   const search = useSearch({ from: '/' });
   const navigate = useNavigate({ from: '/' });
@@ -416,7 +414,7 @@ export const Dashboard = (props: {
     });
   };
   createEffect(() => {
-    if (!canRefresh || refreshPaused() || refreshing()) {
+    if (!canRefresh() || refreshPaused() || refreshing()) {
       return;
     }
     const next = nextRefreshAt();
@@ -434,8 +432,12 @@ export const Dashboard = (props: {
     onCleanup(() => window.clearTimeout(timer));
   });
   onMount(() => {
+    setClientReady(true);
+    if (canRefresh() && nextRefreshAt() == null) {
+      setNextRefreshAt(Date.now() + REFRESH_INTERVAL_MS);
+    }
     const action = mountReportRefreshAction({
-      canRefresh,
+      canRefresh: canRefresh(),
       hasInitialPayload: Boolean(props.initialPayload),
       isDemoPayload: isDemoReportPayload(),
       isDevRuntime: import.meta.env.DEV,
@@ -606,7 +608,7 @@ export const Dashboard = (props: {
               />
             </Show>
             <RefreshStatus
-              canRefresh={canRefresh}
+              canRefresh={canRefresh()}
               generatedAt={payload().generatedAt}
               lastRefreshError={lastRefreshError()}
               lastSuccessfulRefreshAt={lastSuccessfulRefreshAt()}
@@ -785,7 +787,7 @@ export const Dashboard = (props: {
               {
                 content: () => (
                   <section class={section}>
-                    <ProjectGroupEditor disabled={!canRefresh} onSave={saveProjectGroupConfigs} payload={payload()} />
+                    <ProjectGroupEditor disabled={!canRefresh()} onSave={saveProjectGroupConfigs} payload={payload()} />
                     <ProjectSummary
                       groups={projectGroupRows()}
                       onProjectFilter={(value) => setFieldFilter('project', value)}

@@ -26,6 +26,7 @@ import {
   tableWrap,
 } from '@ai-usage/design-system/report';
 import type { ProjectionState, SkillManagementSnapshot } from '@ai-usage/skills';
+import { Link } from '@tanstack/solid-router';
 import { createMemo, createSignal, For, type JSX, Show } from 'solid-js';
 import {
   buildSkillMatrix,
@@ -348,7 +349,6 @@ export const SkillsMatrix = (props: {
   onApplyReconcile: () => void;
   onCancelReconcile: () => void;
   onCellStateFilterChange: (filter: SkillCellStateFilter | undefined) => void;
-  onOpenSkill: (skillName: string, element: HTMLElement) => void;
   onPreviewReconcile: () => void;
   pendingOperation: string | null;
   reconcilePlan: ReconcilePlanSummary | null;
@@ -540,13 +540,14 @@ export const SkillsMatrix = (props: {
                             title={row.enabled ? 'Disable' : 'Enable'}
                             type="button"
                           />
-                          <button
+                          <Link
                             class={cx(strongCell, skillName, skillNameButton, row.enabled ? undefined : disabledName)}
-                            onClick={(event) => props.onOpenSkill(row.name, event.currentTarget)}
-                            type="button"
+                            params={{ skillName: row.name }}
+                            resetScroll={false}
+                            to="/skills/global/$skillName"
                           >
                             {row.name}
-                          </button>
+                          </Link>
                           <Show when={row.validationStatus !== 'valid'}>
                             <span class={cx(statusPill, validationPillClass(row.validationStatus))}>
                               {row.validationStatus}

@@ -17,7 +17,7 @@ export const serializeForInlineScript = (json: string) =>
     .replace(/\u2029/g, '\\u2029');
 
 export const createReportPayloadScript = (payload: unknown) =>
-  `<script>window.__AI_USAGE_REPORT__=${serializeForInlineScript(JSON.stringify(payload))};</script>`;
+  `<script>window.__AI_USAGE_REPORT_STATIC__=true;window.__AI_USAGE_REPORT__=${serializeForInlineScript(JSON.stringify(payload))};</script>`;
 
 export const discoverHtmlAssetUrls = (html: string) => {
   const scriptSrcs = [...html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["'][^>]*>[\s\S]*?<\/script>/gi)].map(
