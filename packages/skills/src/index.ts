@@ -268,7 +268,7 @@ export const projectSkillDirectories = [
   { id: 'agents-project', label: 'Standard Agents', relativePath: '.agents/skills' },
 ] as const;
 
-export type ProjectSkillPlacement = 'owned-directory' | 'symlink-to-source' | 'external-symlink';
+export type ProjectSkillPlacement = 'owned-directory' | 'symlink-to-source' | 'project-symlink' | 'external-symlink';
 
 export interface ProjectSkillObservation {
   description: string;
@@ -1018,8 +1018,14 @@ export const scanSkillSourceRepository = async (input: SourceSkillScanInput): Pr
 const invocationForFields = (fields: readonly SkillFrontmatterField[]): 'auto' | 'manual' =>
   fields.some((field) => field.key === 'disable-model-invocation' && field.value === true) ? 'manual' : 'auto';
 
+const isPathWithin = (parentPath: string, childPath: string): boolean => {
+  const relative = path.relative(parentPath, childPath);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+};
+
 const projectPlacementFor = async (
   entryPath: string,
+  projectPath: string,
   sourceRepoPath?: string,
 ): Promise<{ pathForScan: string; placement: ProjectSkillPlacement }> => {
   const entryStat = await lstat(entryPath);
@@ -1027,18 +1033,27 @@ const projectPlacementFor = async (
     return { pathForScan: entryPath, placement: 'owned-directory' };
   }
   const resolved = path.resolve(path.dirname(entryPath), await readlink(entryPath));
-  if (sourceRepoPath === undefined) {
+  let resolvedRealPath: string;
+  try {
+    resolvedRealPath = await realpath(resolved);
+  } catch {
     return { pathForScan: entryPath, placement: 'external-symlink' };
   }
-  const sourceSkillsPath = path.join(await realpath(sourceRepoPath), 'skills');
-  const resolvedRealPath = await realpath(resolved);
-  const relative = path.relative(sourceSkillsPath, resolvedRealPath);
+  if (sourceRepoPath !== undefined) {
+    const sourceSkillsPath = path.join(await realpath(sourceRepoPath), 'skills');
+    if (isPathWithin(sourceSkillsPath, resolvedRealPath)) {
+      return { pathForScan: entryPath, placement: 'symlink-to-source' };
+    }
+  }
+  let projectRealPath: string;
+  try {
+    projectRealPath = await realpath(projectPath);
+  } catch {
+    return { pathForScan: entryPath, placement: 'external-symlink' };
+  }
   return {
     pathForScan: entryPath,
-    placement:
-      relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
-        ? 'symlink-to-source'
-        : 'external-symlink',
+    placement: isPathWithin(projectRealPath, resolvedRealPath) ? 'project-symlink' : 'external-symlink',
   };
 };
 
@@ -1087,7 +1102,7 @@ export const scanProjectSkills = async (input: {
         let placement: ProjectSkillPlacement;
         let pathForScan: string;
         try {
-          ({ pathForScan, placement } = await projectPlacementFor(entryPath, input.sourceRepoPath));
+          ({ pathForScan, placement } = await projectPlacementFor(entryPath, projectPath, input.sourceRepoPath));
         } catch {
           diagnostics.push(
             createDiagnostic('UnreadableProjectSkillEntry', 'warning', 'Project skill entry could not be inspected', {

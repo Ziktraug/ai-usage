@@ -83,6 +83,9 @@ describe('skills server input validation', () => {
         {
           projectGroups: [
             {
+              grouped: false,
+              id: 'source:ai-usage',
+              name: 'ai-usage',
               sources: [
                 {
                   machineId: 'local-machine',
@@ -108,6 +111,62 @@ describe('skills server input validation', () => {
         path: '/home/nathan/Projects/Github/ai-usage',
         project: 'ai-usage',
         sessions: 3,
+      },
+    ]);
+  });
+
+  test('keeps project group identity on known skill project paths', () => {
+    expect(
+      knownSkillProjectPathsFromReportPayload(
+        {
+          projectGroups: [
+            {
+              grouped: true,
+              id: 'group:exalibur',
+              name: 'exalibur',
+              sources: [
+                {
+                  machineId: 'local-machine',
+                  machineLabel: 'Workstation',
+                  project: 'exalibur-raw',
+                  sessions: 4,
+                  sourcePath: '/work/exalibur',
+                },
+                {
+                  machineId: 'local-machine',
+                  machineLabel: 'Workstation',
+                  project: 'exalibur2',
+                  sessions: 2,
+                  sourcePath: '/work/exalibur2',
+                },
+              ],
+            },
+          ],
+          rows: [],
+        },
+        {
+          directoryExists: () => true,
+          localMachineId: 'local-machine',
+        },
+      ),
+    ).toEqual([
+      {
+        groupId: 'group:exalibur',
+        groupLabel: 'exalibur',
+        label: 'exalibur',
+        machineLabel: 'Workstation',
+        path: '/work/exalibur',
+        project: 'exalibur-raw',
+        sessions: 4,
+      },
+      {
+        groupId: 'group:exalibur',
+        groupLabel: 'exalibur',
+        label: 'exalibur',
+        machineLabel: 'Workstation',
+        path: '/work/exalibur2',
+        project: 'exalibur2',
+        sessions: 2,
       },
     ]);
   });
@@ -149,6 +208,9 @@ describe('skills server input validation', () => {
         {
           projectGroups: [
             {
+              grouped: false,
+              id: 'source:local',
+              name: 'local',
               sources: [
                 {
                   machineId: 'local-machine',
@@ -194,6 +256,9 @@ describe('skills server input validation', () => {
         {
           projectGroups: [
             {
+              grouped: false,
+              id: 'source:home',
+              name: 'home',
               sources: [
                 {
                   machineId: 'local-machine',
@@ -222,6 +287,9 @@ describe('skills server input validation', () => {
         {
           projectGroups: [
             {
+              grouped: false,
+              id: 'source:Projects',
+              name: 'Projects',
               sources: [
                 {
                   machineId: 'local-machine',
@@ -241,6 +309,44 @@ describe('skills server input validation', () => {
         },
       ),
     ).toEqual([]);
+  });
+
+  test('drops discovered paths under tool data directories', () => {
+    expect(
+      knownSkillProjectPathsFromReportPayload(
+        {
+          projectGroups: [
+            {
+              grouped: false,
+              id: 'source:real-app',
+              name: 'real-app',
+              sources: [
+                {
+                  machineId: 'local-machine',
+                  project: 'misty-cabin',
+                  sessions: 2,
+                  sourcePath: '/home/nathan/.local/share/opencode/worktree/abc123/misty-cabin',
+                },
+                {
+                  machineId: 'local-machine',
+                  project: 'real-app',
+                  sessions: 1,
+                  sourcePath: '/home/nathan/Projects/real-app',
+                },
+              ],
+            },
+          ],
+          rows: [],
+        },
+        {
+          directoryExists: () => true,
+          excludedPathPrefixes: ['/home/nathan/.local/share', '/home/nathan/.cache'],
+          homePath: '/home/nathan',
+          isProjectRoot: () => true,
+          localMachineId: 'local-machine',
+        },
+      ).map((entry) => entry.path),
+    ).toEqual(['/home/nathan/Projects/real-app']);
   });
 
   test('keeps local project roots with .git files or runtime skill directories', async () => {

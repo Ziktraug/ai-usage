@@ -423,6 +423,60 @@ describe('shared reporting', () => {
     }
   });
 
+  test('binds Claude-managed git worktree sessions to the parent project source', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-worktree-home-'));
+    try {
+      const parentPath = '/Users/nathan/projects/github/Exalibur2';
+      const snapshot = createUsageSnapshot({
+        machine: testMachine,
+        rows: [
+          makeSourcedRow({
+            project: 'agent-a15e8356ff54ade2a',
+            sourcePath: `${parentPath}/.claude/worktrees/agent-a15e8356ff54ade2a`,
+            sessionId: 'agent-session-1',
+          }),
+          makeSourcedRow({
+            project: 'agent-a2017811a25de4a7c',
+            sourcePath: `${parentPath}/.claude/worktrees/agent-a2017811a25de4a7c`,
+            sessionId: 'agent-session-2',
+          }),
+        ],
+      });
+
+      const merged = await Effect.runPromise(
+        createMergedUsageReport({
+          snapshots: [snapshot],
+          includeLocal: false,
+          harness: null,
+          includeCursor: false,
+          options: defaultOptions,
+          generatedAt: new Date('2026-01-03T00:00:00.000Z'),
+        }).pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
+      );
+
+      expect(merged.rows).toHaveLength(2);
+      expect(merged.rows.every((row) => row.project === 'Exalibur2 · Test Machine')).toBe(true);
+      expect(merged.rows.map((row) => row.rawProject).sort()).toEqual([
+        'agent-a15e8356ff54ade2a',
+        'agent-a2017811a25de4a7c',
+      ]);
+      expect(merged.payload.projectGroups).toHaveLength(1);
+      expect(merged.payload.projectGroups?.[0]).toMatchObject({
+        grouped: false,
+        name: 'Exalibur2 · Test Machine',
+        sessions: 2,
+        sources: [
+          expect.objectContaining({
+            project: 'Exalibur2',
+            sourcePath: parentPath,
+          }),
+        ],
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('projects configured project groups through the CLI projected-row API', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-projected-rows-'));
     const configCwd = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-projected-config-'));
@@ -694,6 +748,61 @@ describe('shared reporting', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(projectPath, { recursive: true, force: true });
+    }
+  });
+
+  test('reads git metadata from linked worktrees', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-git-worktree-home-'));
+    const parentPath = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-parent-'));
+    const worktreePath = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-worktree-'));
+    try {
+      const commonGitDir = path.join(parentPath, '.git');
+      const worktreeGitDir = path.join(commonGitDir, 'worktrees/worktree');
+      const snapshot = createUsageSnapshot({
+        machine: testMachine,
+        rows: [
+          makeSourcedRow({
+            project: path.basename(worktreePath),
+            sourcePath: worktreePath,
+            sessionId: 'worktree-session',
+          }),
+        ],
+      });
+
+      const sources = await Effect.runPromise(
+        listProjectSources({
+          snapshots: [snapshot],
+          includeLocal: false,
+          harness: null,
+          includeCursor: false,
+          includeGitRemote: true,
+          readGitFile: (filePath) => {
+            if (filePath === path.join(worktreePath, '.git')) {
+              return `gitdir: ${worktreeGitDir}\n`;
+            }
+            if (filePath === path.join(worktreeGitDir, 'commondir')) {
+              return '../..\n';
+            }
+            if (filePath === path.join(commonGitDir, 'config')) {
+              return '[remote "origin"]\n  url = git@github.com:owner/repo.git\n';
+            }
+            return null;
+          },
+        }).pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
+      );
+
+      expect(sources).toEqual([
+        expect.objectContaining({
+          project: path.basename(parentPath),
+          sourcePath: parentPath,
+          gitRemote: 'owner/repo',
+          sessions: 1,
+        }),
+      ]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(parentPath, { recursive: true, force: true });
+      rmSync(worktreePath, { recursive: true, force: true });
     }
   });
 

@@ -51,7 +51,9 @@ directory is never treated as a project, even when it contains global runtime
 skill directories. A discovered directory must look like a project root: either
 it has a `.git` entry (directory or worktree file) or it contains at least one
 project runtime skill directory such as `.claude/skills` or `.agents/skills`.
-Workspace container folders without those markers are ignored.
+Workspace container folders without those markers are ignored, and so are
+paths under tool data directories (`~/.local/share`, `~/.cache`) such as
+agent-managed worktrees, even when they carry a `.git` marker.
 
 Configuration remains sovereign. Any path explicitly listed in
 `skillsConfig.projectPaths` is scanned even if the discovery curation rules

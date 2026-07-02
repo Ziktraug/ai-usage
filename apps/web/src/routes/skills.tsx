@@ -41,6 +41,7 @@ import {
   buildSkillMatrix,
   count,
   describeReconcileActions,
+  type KnownProjectScope,
   type ReconcilePlanSummary,
   type SkillCellStateFilter,
   skillSelectionFromPath,
@@ -235,6 +236,36 @@ const skillSnapshotResult = (value: unknown) => value as SkillSnapshotResult;
 const targetLabel = (snapshot: SkillManagementSnapshot, targetId: string) =>
   snapshot.targets.find((target) => target.id === targetId)?.label ?? targetId;
 
+const projectGroupRoutePrefixPattern = /^group:/;
+const legacyAliasRoutePrefixPattern = /^legacy-alias:/;
+
+const groupRouteKey = (project: KnownSkillProjectPath): string | undefined => {
+  if (project.groupId === undefined) {
+    return;
+  }
+  const withoutPrefix = project.groupId
+    .replace(projectGroupRoutePrefixPattern, '')
+    .replace(legacyAliasRoutePrefixPattern, '');
+  return withoutPrefix || project.groupLabel || project.label;
+};
+
+const knownProjectScopesFromPaths = (projects: readonly KnownSkillProjectPath[]): readonly KnownProjectScope[] => {
+  const scopes = new Map<string, KnownProjectScope>();
+  for (const project of projects) {
+    const scopePath = project.groupId ?? project.path;
+    const existing = scopes.get(scopePath);
+    const routeKey = groupRouteKey(project);
+    const sourcePaths = existing?.sourcePaths ?? [];
+    scopes.set(scopePath, {
+      label: project.groupLabel ?? project.label,
+      path: scopePath,
+      ...(routeKey === undefined ? {} : { routeKey }),
+      sourcePaths: [...sourcePaths, project.path],
+    });
+  }
+  return [...scopes.values()];
+};
+
 const actionNotice = (actions: readonly ProjectionAction[], snapshot: SkillManagementSnapshot, fallback: string) => {
   const applied = actions.filter((action) => action.type !== 'noop' && action.type !== 'refuse-unmanaged-mutation');
   if (applied.length === 0) {
@@ -423,7 +454,29 @@ function SkillsRoute() {
       );
     });
 
-  const routeSelection = createMemo(() => skillSelectionFromPath(location().pathname, knownProjectPaths()));
+  // Route keys resolve against every project the tree can display: discovered
+  // paths plus scanned inventories (which include config-only paths).
+  const selectionProjects = createMemo(() => {
+    const inventories = projectInventories();
+    const knownScopes = knownProjectScopesFromPaths(knownProjectPaths());
+    const knownSourcePaths = new Set(knownScopes.flatMap((project) => project.sourcePaths ?? [project.path]));
+    const inventoryProjects =
+      inventories?.ok === true
+        ? inventories.data
+            .filter((inventory) => !knownSourcePaths.has(inventory.projectPath))
+            .map((inventory) => ({
+              label: inventory.projectPath.split('/').filter(Boolean).at(-1) ?? inventory.projectPath,
+              path: inventory.projectPath,
+            }))
+        : [];
+    const byPath = new Map<string, KnownProjectScope>();
+    for (const project of [...knownScopes, ...inventoryProjects]) {
+      byPath.set(project.path, project);
+    }
+    return [...byPath.values()];
+  });
+
+  const routeSelection = createMemo(() => skillSelectionFromPath(location().pathname, selectionProjects()));
 
   return (
     <main class={page}>
@@ -494,6 +547,7 @@ function SkillsRoute() {
                 projectInventoriesLoading={projectInventories.loading}
                 projectPathDraft={projectPathDraft()}
                 projectPaths={projectPaths()}
+                projectScopes={knownProjectScopesFromPaths(knownProjectPaths())}
                 reconcilePlan={reconcilePlan()}
                 reconcileSkill={reconcileSkill}
                 removeProjectPath={removeProjectPath}
@@ -531,6 +585,7 @@ function ConfiguredSnapshot(props: {
   projectInventoriesLoading: boolean;
   projectPathDraft: string;
   projectPaths: readonly string[];
+  projectScopes: readonly KnownProjectScope[];
   reconcilePlan: ReconcilePlanSummary | null;
   reconcileSkill: (skillName: string) => void;
   removeProjectPath: (value: string) => void;
@@ -583,7 +638,7 @@ function ConfiguredSnapshot(props: {
             />
           </div>
         )}
-        knownProjectPaths={props.knownProjectPaths}
+        knownProjectPaths={props.projectScopes}
         onApplyReconcile={props.onApplyReconcile}
         onCancelReconcile={props.onCancelReconcile}
         onCellStateFilterChange={props.onCellStateFilterChange}

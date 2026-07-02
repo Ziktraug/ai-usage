@@ -1,5 +1,6 @@
 import { css } from '@ai-usage/design-system/css';
 import type { ProjectionAction, ProjectSkillInventory, SkillManagementSnapshot } from '@ai-usage/skills';
+import { useLocation, useNavigate } from '@tanstack/solid-router';
 import { createEffect, createMemo, createSignal, type JSX, Show } from 'solid-js';
 import { SkillsConsolidate } from './skills-consolidate';
 import { SkillsContextPanel } from './skills-context-panel';
@@ -9,8 +10,8 @@ import { SkillsMatrix } from './skills-matrix';
 import {
   buildSkillHealthSummary,
   buildSkillTree,
-  defaultSkillSelection,
   groupUnmanagedEntries,
+  type KnownProjectScope,
   type ReconcilePlanSummary,
   type SkillCellStateFilter,
   type SkillSelection,
@@ -26,11 +27,6 @@ export interface SkillReconcileResult {
 export type ProjectInventoriesResult =
   | { ok: true; data: readonly ProjectSkillInventory[] }
   | { ok: false; error: { message: string; tag: string } };
-
-export interface KnownProjectPath {
-  label: string;
-  path: string;
-}
 
 const workspaceGrid = css({
   display: 'grid',
@@ -73,7 +69,7 @@ export const SkillsWorkspace = (props: {
   onPreviewReconcile: () => void;
   onSnapshot: (snapshot: SkillManagementSnapshot) => void;
   pendingOperation: string | null;
-  knownProjectPaths: readonly KnownProjectPath[];
+  knownProjectPaths: readonly KnownProjectScope[];
   projectInventories: ProjectInventoriesResult | undefined;
   projectInventoriesLoading: boolean;
   reconcilePlan: ReconcilePlanSummary | null;
@@ -83,7 +79,9 @@ export const SkillsWorkspace = (props: {
   toggleSkill: (skillName: string, enabled: boolean) => void;
 }) => {
   const [query, setQuery] = createSignal('');
-  const [viewMode, setViewMode] = createSignal<'detail' | 'matrix'>('detail');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const matrixOpen = createMemo(() => location().pathname === '/skills/matrix');
   const projectInventories = createMemo(() => (props.projectInventories?.ok ? props.projectInventories.data : []));
   const tree = createMemo(() => buildSkillTree(props.snapshot, projectInventories(), props.knownProjectPaths));
   const treeKeys = createMemo(
@@ -95,53 +93,62 @@ export const SkillsWorkspace = (props: {
         ]),
       ),
   );
-  const initialDefaultSelection = defaultSkillSelection(props.snapshot, projectInventories(), props.knownProjectPaths);
-  const initialSelection =
-    props.routeSelection !== undefined && selectionExists(treeKeys(), props.routeSelection)
-      ? props.routeSelection
-      : initialDefaultSelection;
-  const [selection, setSelection] = createSignal<SkillSelection>(initialSelection);
+  // Every scope path the tree knows about, so links can build unambiguous
+  // project keys even for paths that are not in the discovered list.
+  const linkProjects = createMemo<readonly KnownProjectScope[]>(() =>
+    [...tree().scopes, ...tree().emptyScopes].flatMap((scope) =>
+      scope.type === 'project' && scope.path !== undefined
+        ? [
+            {
+              label: scope.label,
+              path: scope.path,
+              ...(scope.routeKey === undefined ? {} : { routeKey: scope.routeKey }),
+              ...(scope.sourcePaths === undefined ? {} : { sourcePaths: scope.sourcePaths }),
+            },
+          ]
+        : [],
+    ),
+  );
+  // The URL is the single source of truth for the selection; while project
+  // inventories load, the URL's intent is honored so the detail pane can show
+  // its loading state instead of flashing the global overview.
+  const selection = createMemo<SkillSelection>(() => {
+    const routeSelection = props.routeSelection;
+    if (routeSelection !== undefined) {
+      if (selectionExists(treeKeys(), routeSelection)) {
+        return routeSelection;
+      }
+      if (
+        props.projectInventoriesLoading &&
+        (routeSelection.type === 'project-scope' || routeSelection.type === 'project-skill')
+      ) {
+        return routeSelection;
+      }
+    }
+    return { type: 'global-scope' };
+  });
   const [expandedKeys, setExpandedKeys] = createSignal<ReadonlySet<string>>(
-    new Set(['global', scopeKeyForSelection(initialSelection)]),
+    new Set(['global', scopeKeyForSelection(selection())]),
   );
   const health = createMemo(() => buildSkillHealthSummary(props.snapshot));
   const unmanagedGroups = createMemo(() => groupUnmanagedEntries(props.snapshot));
 
   createEffect(() => {
-    const routeSelection = props.routeSelection;
-    if (
-      routeSelection !== undefined &&
-      selectionExists(treeKeys(), routeSelection) &&
-      selectionKey(selection()) !== selectionKey(routeSelection)
-    ) {
-      setSelection(routeSelection);
-      setExpandedKeys((keys) => new Set([...keys, scopeKeyForSelection(routeSelection)]));
-      setViewMode('detail');
-      return;
-    }
-    if (routeSelection !== undefined && selectionExists(treeKeys(), routeSelection)) {
-      return;
-    }
-    if (
-      routeSelection !== undefined &&
-      !selectionExists(treeKeys(), routeSelection) &&
-      props.projectInventoriesLoading
-    ) {
-      return;
-    }
-    const currentSelection = selection();
-    if (!selectionExists(treeKeys(), currentSelection)) {
-      const nextSelection = defaultSkillSelection(props.snapshot, projectInventories(), props.knownProjectPaths);
-      setSelection(nextSelection);
-      setExpandedKeys((keys) => new Set([...keys, scopeKeyForSelection(nextSelection)]));
-    }
+    const scopeKey = scopeKeyForSelection(selection());
+    setExpandedKeys((keys) => (keys.has(scopeKey) ? keys : new Set([...keys, scopeKey])));
   });
 
-  const select = (nextSelection: SkillSelection) => {
-    setSelection(nextSelection);
-    setExpandedKeys((keys) => new Set([...keys, scopeKeyForSelection(nextSelection)]));
-    setViewMode('detail');
-  };
+  // A URL that no longer resolves (deleted skill, stale share) falls back to
+  // the scope overview instead of rendering a dead detail pane.
+  createEffect(() => {
+    const routeSelection = props.routeSelection;
+    if (routeSelection === undefined || props.projectInventoriesLoading) {
+      return;
+    }
+    if (!selectionExists(treeKeys(), routeSelection)) {
+      navigate({ replace: true, to: '/skills' });
+    }
+  });
 
   const toggleScope = (scopeKey: string) => {
     setExpandedKeys((keys) => {
@@ -161,7 +168,7 @@ export const SkillsWorkspace = (props: {
     <div class={workspaceGrid}>
       <SkillsTree
         expandedKeys={expandedKeys()}
-        knownProjects={props.knownProjectPaths}
+        knownProjects={linkProjects()}
         model={tree()}
         onQueryChange={setQuery}
         onToggleScope={toggleScope}
@@ -193,12 +200,12 @@ export const SkillsWorkspace = (props: {
               />
             </div>
           }
-          when={viewMode() === 'detail'}
+          when={!matrixOpen()}
         >
           <SkillsDetail
             configurationPanel={props.configurationPanel}
             consolidatePanel={consolidatePanel}
-            knownProjects={props.knownProjectPaths}
+            knownProjects={linkProjects()}
             onSnapshot={props.onSnapshot}
             pendingOperation={props.pendingOperation}
             projectInventories={props.projectInventories}
@@ -213,12 +220,12 @@ export const SkillsWorkspace = (props: {
       </div>
       <div class={mobileContext}>
         <SkillsContextPanel
+          knownProjects={linkProjects()}
+          matrixOpen={matrixOpen()}
           onApplyReconcile={props.onApplyReconcile}
           onCancelReconcile={props.onCancelReconcile}
           onCellStateFilterChange={props.onCellStateFilterChange}
-          onOpenMatrix={() => setViewMode('matrix')}
           onPreviewReconcile={props.onPreviewReconcile}
-          onSelect={select}
           pendingOperation={props.pendingOperation}
           projectInventories={props.projectInventories}
           reconcilePlan={props.reconcilePlan}

@@ -62,9 +62,11 @@ export interface SkillTreeScopeNode {
   label: string;
   path?: string;
   pendingLinkCount: number;
+  routeKey?: string;
   selection: SkillSelection;
   shortPath?: string;
   skills: readonly SkillTreeSkillNode[];
+  sourcePaths?: readonly string[];
   type: 'global' | 'project';
 }
 
@@ -76,13 +78,20 @@ export interface SkillTreeModel {
 export interface KnownProjectScope {
   label: string;
   path: string;
+  routeKey?: string;
+  sourcePaths?: readonly string[];
+}
+
+export interface ProjectSkillRowObservation extends ProjectSkillObservation {
+  projectLabel: string;
+  projectPath: string;
 }
 
 export interface ProjectSkillRow {
   description: string;
   invocation: SkillInvocation;
   name: string;
-  observations: readonly ProjectSkillObservation[];
+  observations: readonly ProjectSkillRowObservation[];
   tokenTotal: number | null;
   validationStatus: SkillValidationStatus;
 }
@@ -208,7 +217,7 @@ const attentionSummary = (counts: readonly [number, string, string?][]): string 
 export const canReconcileProjectionState = (state: MatrixCellState): boolean =>
   state !== 'not-applicable' && reconciliableStates.has(state);
 
-const globalSkillAttention = (snapshot: SkillManagementSnapshot, skill: SourceSkill): AttentionCounts => {
+export const globalSkillAttention = (snapshot: SkillManagementSnapshot, skill: SourceSkill): AttentionCounts => {
   const invalidCount = skill.validationStatus === 'invalid' ? 1 : 0;
   let repairCount = 0;
   let blockedCount = 0;
@@ -274,6 +283,8 @@ const strongestValidationStatus = (
   return 'valid';
 };
 
+const lastPathSegment = (value: string): string => value.split('/').filter(Boolean).at(-1) ?? value;
+
 export const buildSkillMatrix = (snapshot: SkillManagementSnapshot): SkillMatrix => {
   const targets = snapshot.targets.filter((target) => target.enabled);
   const rows = snapshot.skills.toSorted(rowSort).map((skill) => ({
@@ -323,27 +334,54 @@ export const buildGlobalSkillExposure = (
       };
     });
 
-export const buildProjectSkillRows = (inventory: ProjectSkillInventory): readonly ProjectSkillRow[] => {
+export const projectSourcePathsForScope = (
+  projectPath: string,
+  knownProjects: readonly KnownProjectScope[] = [],
+): readonly string[] => knownProjects.find((project) => project.path === projectPath)?.sourcePaths ?? [projectPath];
+
+const projectLabelForPath = (projectPath: string, knownProjects: readonly KnownProjectScope[]): string => {
+  for (const project of knownProjects) {
+    if (project.path === projectPath || project.sourcePaths?.includes(projectPath)) {
+      return project.label;
+    }
+  }
+  return lastPathSegment(projectPath);
+};
+
+export const buildProjectSkillRows = (
+  inventoryInput: ProjectSkillInventory | readonly ProjectSkillInventory[],
+  knownProjects: readonly KnownProjectScope[] = [],
+): readonly ProjectSkillRow[] => {
+  const inventories = Array.isArray(inventoryInput) ? inventoryInput : [inventoryInput];
   const rows = new Map<string, ProjectSkillRow>();
-  for (const observation of inventory.observations) {
-    const existing = rows.get(observation.name) ?? {
-      description: observation.description,
-      invocation: observation.invocation,
-      name: observation.name,
-      observations: [],
-      tokenTotal: observation.tokenCount?.total ?? null,
-      validationStatus: observation.validationStatus,
-    };
-    rows.set(observation.name, {
-      description: existing.description || observation.description,
-      invocation: existing.invocation === 'manual' || observation.invocation === 'manual' ? 'manual' : 'auto',
-      name: existing.name,
-      observations: [...existing.observations, observation].sort((left, right) =>
-        left.runtimeDirId.localeCompare(right.runtimeDirId),
-      ),
-      tokenTotal: existing.tokenTotal ?? observation.tokenCount?.total ?? null,
-      validationStatus: strongestValidationStatus(existing.validationStatus, observation.validationStatus),
-    });
+  for (const inventory of inventories) {
+    const projectLabel = projectLabelForPath(inventory.projectPath, knownProjects);
+    for (const observation of inventory.observations) {
+      const existing = rows.get(observation.name) ?? {
+        description: observation.description,
+        invocation: observation.invocation,
+        name: observation.name,
+        observations: [],
+        tokenTotal: observation.tokenCount?.total ?? null,
+        validationStatus: observation.validationStatus,
+      };
+      const rowObservation = {
+        ...observation,
+        projectLabel,
+        projectPath: inventory.projectPath,
+      };
+      rows.set(observation.name, {
+        description: existing.description || observation.description,
+        invocation: existing.invocation === 'manual' || observation.invocation === 'manual' ? 'manual' : 'auto',
+        name: existing.name,
+        observations: [...existing.observations, rowObservation].sort(
+          (left, right) =>
+            left.projectLabel.localeCompare(right.projectLabel) || left.runtimeDirId.localeCompare(right.runtimeDirId),
+        ),
+        tokenTotal: existing.tokenTotal ?? observation.tokenCount?.total ?? null,
+        validationStatus: strongestValidationStatus(existing.validationStatus, observation.validationStatus),
+      });
+    }
   }
   return [...rows.values()].sort((left, right) => left.name.localeCompare(right.name));
 };
@@ -352,9 +390,11 @@ export const findProjectSkillRow = (
   inventories: readonly ProjectSkillInventory[],
   projectPath: string,
   skillName: string,
+  knownProjects: readonly KnownProjectScope[] = [],
 ): ProjectSkillRow | undefined => {
-  const inventory = inventories.find((entry) => entry.projectPath === projectPath);
-  return inventory === undefined ? undefined : buildProjectSkillRows(inventory).find((row) => row.name === skillName);
+  const sourcePaths = new Set(projectSourcePathsForScope(projectPath, knownProjects));
+  const matchingInventories = inventories.filter((entry) => sourcePaths.has(entry.projectPath));
+  return buildProjectSkillRows(matchingInventories, knownProjects).find((row) => row.name === skillName);
 };
 
 export const findGlobalSkill = (snapshot: SkillManagementSnapshot, skillName: string): SourceSkill | undefined =>
@@ -394,7 +434,24 @@ export const buildSkillTree = (
 
   const inventoriesByPath = new Map(projectInventories.map((inventory) => [inventory.projectPath, inventory]));
   const knownProjectsByPath = new Map(knownProjects.map((project) => [project.path, project]));
-  const projectPaths = new Set([...knownProjectsByPath.keys(), ...inventoriesByPath.keys()]);
+  const knownSourcePaths = new Set(knownProjects.flatMap((project) => project.sourcePaths ?? [project.path]));
+  const projectScopeInputs: KnownProjectScope[] = [
+    ...knownProjects,
+    ...projectInventories
+      .filter((inventory) => !knownSourcePaths.has(inventory.projectPath))
+      .map((inventory) => ({
+        label: lastPathSegment(inventory.projectPath),
+        path: inventory.projectPath,
+      })),
+  ];
+
+  const labelForPath = (projectPath: string) =>
+    knownProjectsByPath.get(projectPath)?.label ?? lastPathSegment(projectPath);
+  const labelCounts = new Map<string, number>();
+  for (const project of projectScopeInputs) {
+    const label = labelForPath(project.path);
+    labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+  }
 
   const shortPathFor = (projectPath: string) => {
     const parts = projectPath.split('/').filter(Boolean);
@@ -404,29 +461,33 @@ export const buildSkillTree = (
     return `…/${parts.slice(-2).join('/')}`;
   };
 
-  const projectScopes = [...projectPaths]
-    .map((projectPath) => {
-      const inventory = inventoriesByPath.get(projectPath);
-      const knownProject = knownProjectsByPath.get(projectPath);
-      const projectRows = inventory === undefined ? [] : buildProjectSkillRows(inventory);
+  const projectScopes = projectScopeInputs
+    .map((project) => {
+      const sourcePaths = project.sourcePaths ?? [project.path];
+      const inventories = sourcePaths.flatMap((projectPath) => {
+        const inventory = inventoriesByPath.get(projectPath);
+        return inventory === undefined ? [] : [inventory];
+      });
+      const projectRows = buildProjectSkillRows(inventories, knownProjects);
       const projectSkills = projectRows
         .map((row) => ({
           ...projectSkillAttention(row),
           description: row.description,
           enabled: true,
-          key: `project:${projectPath}:${row.name}`,
+          key: `project:${project.path}:${row.name}`,
           name: row.name,
           selection: {
-            projectPath,
+            projectPath: project.path,
             skillName: row.name,
             type: 'project-skill',
           } satisfies SkillSelection,
           validationStatus: row.validationStatus,
         }))
         .sort((left, right) => left.name.localeCompare(right.name));
-      const inventoryIssueCount = inventory?.diagnostics.length ?? 0;
+      const inventoryIssueCount = inventories.reduce((total, inventory) => total + inventory.diagnostics.length, 0);
       const skillIssueCount = projectSkills.reduce((total, skill) => total + skill.issueCount, 0);
       const pendingLinkCount = projectSkills.reduce((total, skill) => total + skill.pendingLinkCount, 0);
+      const label = project.label;
       return {
         attentionSummary: attentionSummary([
           [inventoryIssueCount + skillIssueCount, 'issue'],
@@ -434,12 +495,16 @@ export const buildSkillTree = (
         ]),
         hasSkills: projectSkills.length > 0,
         issueCount: inventoryIssueCount + skillIssueCount,
-        key: `project:${projectPath}`,
-        label: knownProject?.label ?? projectPath.split('/').filter(Boolean).at(-1) ?? projectPath,
+        key: `project:${project.path}`,
+        label,
         pendingLinkCount,
-        path: projectPath,
-        selection: { projectPath, type: 'project-scope' } satisfies SkillSelection,
-        shortPath: shortPathFor(projectPath),
+        path: project.path,
+        ...(project.routeKey === undefined ? {} : { routeKey: project.routeKey }),
+        selection: { projectPath: project.path, type: 'project-scope' } satisfies SkillSelection,
+        // The full path stays available via `path` (tooltips); the inline
+        // short path only earns its row space when the label is ambiguous.
+        ...((labelCounts.get(label) ?? 0) > 1 ? { shortPath: shortPathFor(project.path) } : {}),
+        ...(sourcePaths.length === 1 && sourcePaths[0] === project.path ? {} : { sourcePaths }),
         skills: projectSkills,
         type: 'project' as const,
       };
@@ -450,26 +515,6 @@ export const buildSkillTree = (
     emptyScopes: projectScopes.filter((scope) => !scope.hasSkills && scope.issueCount === 0),
     scopes: [globalScope, ...projectScopes.filter((scope) => scope.hasSkills || scope.issueCount > 0)],
   };
-};
-
-export const defaultSkillSelection = (
-  snapshot: SkillManagementSnapshot,
-  projectInventories: readonly ProjectSkillInventory[],
-  knownProjects: readonly KnownProjectScope[] = [],
-): SkillSelection => {
-  const tree = buildSkillTree(snapshot, projectInventories, knownProjects);
-  const firstGlobalAttentionSkill = tree.scopes
-    .find((scope) => scope.type === 'global')
-    ?.skills.find((skill) => skill.issueCount > 0);
-  if (firstGlobalAttentionSkill) {
-    return firstGlobalAttentionSkill.selection;
-  }
-  const firstGlobalSkill = tree.scopes.find((scope) => scope.type === 'global')?.skills.at(0);
-  if (firstGlobalSkill) {
-    return firstGlobalSkill.selection;
-  }
-  const firstProject = tree.scopes.find((scope) => scope.type === 'project');
-  return firstProject?.selection ?? { type: 'global-scope' };
 };
 
 export const selectionKey = (selection: SkillSelection): string => {
@@ -493,30 +538,37 @@ const safeDecodeURIComponent = (value: string): string => {
   }
 };
 
-export const projectRouteKey = (projectPath: string): string =>
-  projectPath.split('/').filter(Boolean).at(-1) ?? projectPath;
+export const projectRouteKey = (projectPath: string, knownProjects: readonly KnownProjectScope[] = []): string => {
+  const knownProject = knownProjects.find((project) => project.path === projectPath);
+  if (knownProject?.routeKey) {
+    const routeKeyOwners = knownProjects.filter(
+      (project) => (project.routeKey ?? lastPathSegment(project.path)) === knownProject.routeKey,
+    );
+    if (routeKeyOwners.length === 1) {
+      return knownProject.routeKey;
+    }
+  }
+  const baseName = lastPathSegment(projectPath);
+  const baseNameOwners = knownProjects.filter((project) => lastPathSegment(project.path) === baseName);
+  const ownedByThisPath =
+    baseNameOwners.length === 0 || (baseNameOwners.length === 1 && baseNameOwners[0]?.path === projectPath);
+  // Same directory name in two places: fall back to the full path so links
+  // stay unambiguous (router params encoding keeps it a single URL segment).
+  return ownedByThisPath ? baseName : projectPath;
+};
 
 const projectPathFromRouteKey = (projectKey: string, knownProjects: readonly KnownProjectScope[]): string => {
   const decodedKey = safeDecodeURIComponent(projectKey);
-  const matchingProject = knownProjects.find((project) => {
-    const projectBaseName = project.path.split('/').filter(Boolean).at(-1) ?? project.path;
-    return projectBaseName === decodedKey || project.path === decodedKey;
-  });
-  return matchingProject?.path ?? decodedKey;
-};
-
-export const skillSelectionPath = (selection: SkillSelection): string => {
-  if (selection.type === 'global-scope') {
-    return '/skills';
+  const exactPath = knownProjects.find((project) => project.path === decodedKey);
+  if (exactPath) {
+    return exactPath.path;
   }
-  if (selection.type === 'global-skill') {
-    return `/skills/global/${encodeURIComponent(selection.skillName)}`;
+  const routeKeyOwners = knownProjects.filter((project) => project.routeKey === decodedKey);
+  if (routeKeyOwners.length === 1) {
+    return routeKeyOwners[0]?.path ?? decodedKey;
   }
-  const projectKey = projectRouteKey(selection.projectPath);
-  if (selection.type === 'project-scope') {
-    return `/skills/projects/${projectKey}`;
-  }
-  return `/skills/projects/${projectKey}/${encodeURIComponent(selection.skillName)}`;
+  const baseNameOwners = knownProjects.filter((project) => lastPathSegment(project.path) === decodedKey);
+  return baseNameOwners.length === 1 ? (baseNameOwners[0]?.path ?? decodedKey) : decodedKey;
 };
 
 export const skillSelectionFromPath = (
@@ -528,6 +580,9 @@ export const skillSelectionFromPath = (
     return;
   }
   if (segments.length === 1) {
+    return { type: 'global-scope' };
+  }
+  if (segments.length === 2 && segments.at(1) === 'matrix') {
     return { type: 'global-scope' };
   }
   if (segments.at(1) === 'global' && segments.length === 3) {
@@ -546,30 +601,6 @@ export const skillSelectionFromPath = (
   }
   const skillName = safeDecodeURIComponent(segments[3] ?? '');
   return skillName ? { projectPath, skillName, type: 'project-skill' } : undefined;
-};
-
-export const parseSelectionKey = (key: string): SkillSelection | undefined => {
-  if (key === 'global') {
-    return { type: 'global-scope' };
-  }
-  if (key.startsWith('global:')) {
-    const skillName = key.slice('global:'.length);
-    return skillName ? { skillName, type: 'global-skill' } : undefined;
-  }
-  if (!key.startsWith('project:')) {
-    return;
-  }
-  const value = key.slice('project:'.length);
-  if (!value) {
-    return;
-  }
-  const lastColon = value.lastIndexOf(':');
-  if (lastColon === -1) {
-    return { projectPath: value, type: 'project-scope' };
-  }
-  const projectPath = value.slice(0, lastColon);
-  const skillName = value.slice(lastColon + 1);
-  return projectPath && skillName ? { projectPath, skillName, type: 'project-skill' } : undefined;
 };
 
 export const skillScopeMatches = (
