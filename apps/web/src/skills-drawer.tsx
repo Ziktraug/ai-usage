@@ -49,6 +49,22 @@ const badgeRow = css({
   gap: '6px',
 });
 
+const inlineActionRow = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '8px',
+  alignItems: 'center',
+});
+
+const busyButton = css({
+  '&[data-pending=true]': {
+    _after: {
+      content: '" ..."',
+      color: 'accent',
+    },
+  },
+});
+
 const exposureRow = css({
   display: 'grid',
   gridTemplateColumns: { base: '1fr', md: 'auto minmax(0, 1fr) auto' },
@@ -147,6 +163,20 @@ const exposureStateClass = (projection: Projection) => {
 
 const canReconcileProjection = (projection: Projection) =>
   projection.state === 'missing' || projection.state === 'broken-link' || projection.state === 'wrong-target';
+
+const divergentActualPath = (projection: Projection) => {
+  if (
+    projection.state !== 'wrong-target' &&
+    projection.state !== 'unmanaged-symlink' &&
+    projection.state !== 'unmanaged-copy'
+  ) {
+    return;
+  }
+  if (projection.actualPath === undefined || projection.actualPath === projection.expectedPath) {
+    return;
+  }
+  return projection.actualPath;
+};
 
 export const SkillsDrawer = (props: {
   finalFocusEl: () => HTMLElement | null;
@@ -258,7 +288,7 @@ export const SkillsDrawer = (props: {
           }}
           type="button"
         >
-          x
+          ×
         </button>
       </div>
       <div class={drawerBody}>
@@ -276,14 +306,18 @@ export const SkillsDrawer = (props: {
             <span class={cx(statusPill, statusPillInfo)}>Global</span>
           </div>
           <p class={muted}>{props.skill.description || 'No description'}</p>
-          <button
-            class={ghostButton}
-            disabled={props.pendingOperation !== null}
-            onClick={() => props.toggleSkill(props.skill.name, !props.skill.enabled)}
-            type="button"
-          >
-            {props.skill.enabled ? 'Disable' : 'Enable'}
-          </button>
+          <div class={inlineActionRow}>
+            <button
+              aria-busy={props.pendingOperation === `toggle:${props.skill.name}` ? 'true' : undefined}
+              class={cx(ghostButton, busyButton)}
+              data-pending={props.pendingOperation === `toggle:${props.skill.name}` ? 'true' : undefined}
+              disabled={props.pendingOperation !== null}
+              onClick={() => props.toggleSkill(props.skill.name, !props.skill.enabled)}
+              type="button"
+            >
+              {props.skill.enabled ? 'Disable' : 'Enable'}
+            </button>
+          </div>
         </div>
 
         <section class={section}>
@@ -299,13 +333,20 @@ export const SkillsDrawer = (props: {
                       {projectionStateLabel(projection.state)}
                     </div>
                     <div class={pathText}>{projection.expectedPath}</div>
-                    <Show when={projection.actualPath === projection.expectedPath ? undefined : projection.actualPath}>
+                    <Show when={divergentActualPath(projection)}>
                       {(actualPath) => <div class={pathText}>Actual: {actualPath()}</div>}
+                    </Show>
+                    <Show when={projection.state === 'unmanaged-copy'}>
+                      <div class={meta}>
+                        Unmanaged copy - reconcile will never overwrite it. Adopt or remove it manually.
+                      </div>
                     </Show>
                   </div>
                   <Show when={canReconcileProjection(projection)}>
                     <button
-                      class={ghostButton}
+                      aria-busy={props.pendingOperation === `reconcile:${props.skill.name}` ? 'true' : undefined}
+                      class={cx(ghostButton, busyButton)}
+                      data-pending={props.pendingOperation === `reconcile:${props.skill.name}` ? 'true' : undefined}
                       disabled={props.pendingOperation !== null}
                       onClick={() => props.reconcileSkill(props.skill.name)}
                       type="button"

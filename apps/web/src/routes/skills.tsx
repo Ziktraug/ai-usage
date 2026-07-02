@@ -1,5 +1,8 @@
 import { css, cx } from '@ai-usage/design-system/css';
 import {
+  banner,
+  bannerError,
+  bannerOk,
   commandButton,
   ghostButton,
   header,
@@ -26,7 +29,7 @@ import type {
   SkillManagementSnapshot,
 } from '@ai-usage/skills';
 import { createFileRoute, Link } from '@tanstack/solid-router';
-import { createMemo, createResource, createSignal, For, Show } from 'solid-js';
+import { createEffect, createMemo, createResource, createSignal, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
 import {
@@ -48,9 +51,11 @@ import { SkillsMatrix } from '../skills-matrix';
 import {
   buildSkillHealthSummary,
   buildSkillMatrix,
+  count,
   describeReconcileActions,
   groupUnmanagedEntries,
   type ReconcilePlanSummary,
+  type SkillCellStateFilter,
 } from '../skills-page-model';
 import { SkillsProjects } from '../skills-projects';
 
@@ -84,6 +89,11 @@ type SkillReconcileServerResult =
 type ProjectInventoriesResult =
   | { ok: true; data: readonly ProjectSkillInventory[] }
   | { ok: false; error: { message: string; tag: string } };
+
+interface OperationNotice {
+  message: string;
+  tone: 'error' | 'ok';
+}
 
 const skillSnapshotResultFrom = (value: unknown): SkillSnapshotResult => {
   if (typeof value !== 'object' || value === null || !('ok' in value)) {
@@ -192,14 +202,13 @@ const inputClass = css({
   fontSize: '13px',
 });
 
-const operationPanel = css({
-  p: '10px 12px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'surfaceMuted',
-  color: 'muted',
-  fontSize: '12px',
-  whiteSpace: 'pre-wrap',
+const busyButton = css({
+  '&[data-pending=true]': {
+    _after: {
+      content: '" ..."',
+      color: 'accent',
+    },
+  },
 });
 
 const projectPathList = css({
@@ -236,17 +245,28 @@ const disabledRow = css({
 
 const skillSnapshotResult = (value: unknown) => value as SkillSnapshotResult;
 
-const actionSummary = (actions: readonly ProjectionAction[]) => {
-  if (actions.length === 0) {
-    return 'no changes';
+const targetLabel = (snapshot: SkillManagementSnapshot, targetId: string) =>
+  snapshot.targets.find((target) => target.id === targetId)?.label ?? targetId;
+
+const actionNotice = (actions: readonly ProjectionAction[], snapshot: SkillManagementSnapshot, fallback: string) => {
+  const applied = actions.filter((action) => action.type !== 'noop' && action.type !== 'refuse-unmanaged-mutation');
+  if (applied.length === 0) {
+    return 'Nothing to change.';
   }
-  return actions
-    .map((action) =>
-      action.type === 'refuse-unmanaged-mutation'
-        ? `skipped: ${action.reason}`
-        : `${action.type}: ${action.skillName} → ${action.targetId}`,
-    )
-    .join('\n');
+  if (applied.length === 1) {
+    const action = applied.at(0);
+    if (action === undefined) {
+      return 'Nothing to change.';
+    }
+    if (action.type === 'create-symlink') {
+      return `${action.skillName} linked to ${targetLabel(snapshot, action.targetId)}.`;
+    }
+    if (action.type === 'repair-symlink') {
+      return `${action.skillName} repaired in ${targetLabel(snapshot, action.targetId)}.`;
+    }
+    return `${action.skillName} unlinked from ${targetLabel(snapshot, action.targetId)}.`;
+  }
+  return `${fallback}: ${count(applied.length, 'change')} applied.`;
 };
 
 function SkillsRoute() {
@@ -262,9 +282,10 @@ function SkillsRoute() {
     return current.ok ? null : current.error.message;
   });
   const [pendingOperation, setPendingOperation] = createSignal<string | null>(null);
-  const [operationMessage, setOperationMessage] = createSignal<string | null>(null);
+  const [operationNotice, setOperationNotice] = createSignal<OperationNotice | null>(null);
   const [reconcilePlan, setReconcilePlan] = createSignal<ReconcilePlanSummary | null>(null);
   const [activeTab, setActiveTab] = createSignal('global');
+  const [activeCellStateFilter, setActiveCellStateFilter] = createSignal<SkillCellStateFilter | undefined>();
   const [selectedSkillName, setSelectedSkillName] = createSignal<string | null>(null);
   let drawerOrigin: HTMLElement | null = null;
   const snapshot = createMemo(() => {
@@ -283,18 +304,26 @@ function SkillsRoute() {
     async () => (await getSkillProjectInventories()) as ProjectInventoriesResult,
   );
 
+  createEffect(() => {
+    const current = snapshot();
+    if (current === undefined) {
+      return;
+    }
+    setProjectPaths(current.config.projectPaths ?? []);
+  });
+
   const applySnapshotResult = (next: SkillSnapshotResult, message: string) => {
     setResult(next);
-    setOperationMessage(next.ok ? message : next.error.message);
+    setOperationNotice(next.ok ? { message, tone: 'ok' } : { message: next.error.message, tone: 'error' });
   };
 
   const applyReconcileResult = (next: SkillReconcileServerResult, fallbackMessage: string) => {
     if (!next.ok) {
-      setOperationMessage(next.error.message);
+      setOperationNotice({ message: next.error.message, tone: 'error' });
       return;
     }
     setResult({ ok: true, data: next.data.snapshot });
-    setOperationMessage(`${fallbackMessage}:\n${actionSummary(next.data.actions)}.`);
+    setOperationNotice({ message: actionNotice(next.data.actions, next.data.snapshot, fallbackMessage), tone: 'ok' });
   };
 
   const runOperation = async (operation: string, action: () => Promise<void>) => {
@@ -302,7 +331,7 @@ function SkillsRoute() {
       return;
     }
     setPendingOperation(operation);
-    setOperationMessage(null);
+    setOperationNotice(null);
     // Any operation invalidates a pending reconcile preview: the planned
     // actions were computed against the pre-operation snapshot.
     setReconcilePlan(null);
@@ -313,16 +342,17 @@ function SkillsRoute() {
     }
   };
 
-  const configInput = () => {
+  const configInput = (overrides: { projectPaths?: readonly string[]; sourceRepoPath?: string } = {}) => {
     const current = snapshot()?.config ?? {};
     const { projectPaths: _projectPaths, ...currentWithoutProjectPaths } = current;
     const next: SkillManagementConfig = currentWithoutProjectPaths;
-    const source = sourceRepoPath().trim();
+    const source = (overrides.sourceRepoPath ?? current.sourceRepoPath ?? '').trim();
     if (source) {
       next.sourceRepoPath = source;
     }
-    if (projectPaths().length > 0) {
-      next.projectPaths = projectPaths();
+    const nextProjectPaths = overrides.projectPaths ?? projectPaths();
+    if (nextProjectPaths.length > 0) {
+      next.projectPaths = nextProjectPaths;
     }
     return next;
   };
@@ -332,18 +362,32 @@ function SkillsRoute() {
     if (!value || projectPaths().includes(value)) {
       return;
     }
-    setProjectPaths([...projectPaths(), value]);
-    setProjectPathDraft('');
+    const nextProjectPaths = [...projectPaths(), value];
+    runOperation(`project:add:${value}`, async () => {
+      applySnapshotResult(
+        skillSnapshotResult(await saveSkillManagementConfig({ data: configInput({ projectPaths: nextProjectPaths }) })),
+        `Project path added: ${value}.`,
+      );
+      setProjectPathDraft('');
+    });
   };
 
   const removeProjectPath = (value: string) =>
-    setProjectPaths(projectPaths().filter((projectPath) => projectPath !== value));
+    runOperation(`project:remove:${value}`, async () => {
+      const nextProjectPaths = projectPaths().filter((projectPath) => projectPath !== value);
+      applySnapshotResult(
+        skillSnapshotResult(await saveSkillManagementConfig({ data: configInput({ projectPaths: nextProjectPaths }) })),
+        `Project path removed: ${value}.`,
+      );
+    });
 
   const saveConfig = () =>
     runOperation('save-config', async () => {
       applySnapshotResult(
-        skillSnapshotResult(await saveSkillManagementConfig({ data: configInput() })),
-        'Skill config saved.',
+        skillSnapshotResult(
+          await saveSkillManagementConfig({ data: configInput({ sourceRepoPath: sourceRepoPath() }) }),
+        ),
+        'Skill source saved.',
       );
     });
 
@@ -367,7 +411,7 @@ function SkillsRoute() {
     runOperation('preview-reconcile', async () => {
       const next = (await previewReconcileAllManagedSkills()) as SkillReconcileServerResult;
       if (!next.ok) {
-        setOperationMessage(next.error.message);
+        setOperationNotice({ message: next.error.message, tone: 'error' });
         return;
       }
       setResult({ ok: true, data: next.data.snapshot });
@@ -434,7 +478,8 @@ function SkillsRoute() {
                   addProjectPath={addProjectPath}
                   knownProjectPaths={knownProjectPaths()}
                   knownProjectPathsError={knownProjectPathsError()}
-                  operationMessage={operationMessage()}
+                  onDismissOperationNotice={() => setOperationNotice(null)}
+                  operationNotice={operationNotice()}
                   pendingOperation={pendingOperation()}
                   projectPathDraft={projectPathDraft()}
                   projectPaths={projectPaths()}
@@ -448,6 +493,7 @@ function SkillsRoute() {
               when={snapshot()?.configured}
             >
               <ConfiguredSnapshot
+                activeCellStateFilter={activeCellStateFilter()}
                 activeTab={activeTab()}
                 addProjectPath={addProjectPath}
                 createTargetDirectory={createTargetDirectory}
@@ -455,12 +501,14 @@ function SkillsRoute() {
                 knownProjectPathsError={knownProjectPathsError()}
                 onApplyReconcile={applyReconcile}
                 onCancelReconcile={cancelReconcile}
+                onCellStateFilterChange={setActiveCellStateFilter}
+                onDismissOperationNotice={() => setOperationNotice(null)}
                 onOpenSkill={(skillName, element) => {
                   drawerOrigin = element;
                   setSelectedSkillName(skillName);
                 }}
                 onPreviewReconcile={previewReconcile}
-                operationMessage={operationMessage()}
+                operationNotice={operationNotice()}
                 pendingOperation={pendingOperation()}
                 projectInventories={projectInventories()}
                 projectInventoriesLoading={projectInventories.loading}
@@ -501,15 +549,18 @@ function SkillsRoute() {
 
 function ConfiguredSnapshot(props: {
   activeTab: string;
+  activeCellStateFilter: SkillCellStateFilter | undefined;
   addProjectPath: () => void;
   createTargetDirectory: (targetId: string) => void;
   knownProjectPaths: readonly KnownSkillProjectPath[];
   knownProjectPathsError: string | null;
   onApplyReconcile: () => void;
   onCancelReconcile: () => void;
+  onCellStateFilterChange: (filter: SkillCellStateFilter | undefined) => void;
+  onDismissOperationNotice: () => void;
   onOpenSkill: (skillName: string, element: HTMLElement) => void;
   onPreviewReconcile: () => void;
-  operationMessage: string | null;
+  operationNotice: OperationNotice | null;
   pendingOperation: string | null;
   projectInventories: ProjectInventoriesResult | undefined;
   projectInventoriesLoading: boolean;
@@ -537,6 +588,7 @@ function ConfiguredSnapshot(props: {
     {
       content: () => (
         <GlobalTab
+          activeCellStateFilter={props.activeCellStateFilter}
           addProjectPath={props.addProjectPath}
           createTargetDirectory={props.createTargetDirectory}
           disabledRows={disabledRows()}
@@ -545,9 +597,11 @@ function ConfiguredSnapshot(props: {
           knownProjectPathsError={props.knownProjectPathsError}
           onApplyReconcile={props.onApplyReconcile}
           onCancelReconcile={props.onCancelReconcile}
+          onCellStateFilterChange={props.onCellStateFilterChange}
+          onDismissOperationNotice={props.onDismissOperationNotice}
           onOpenSkill={props.onOpenSkill}
           onPreviewReconcile={props.onPreviewReconcile}
-          operationMessage={props.operationMessage}
+          operationNotice={props.operationNotice}
           pendingOperation={props.pendingOperation}
           projectPathDraft={props.projectPathDraft}
           projectPaths={props.projectPaths}
@@ -572,17 +626,15 @@ function ConfiguredSnapshot(props: {
           addProjectPath={props.addProjectPath}
           knownProjectPaths={props.knownProjectPaths}
           knownProjectPathsError={props.knownProjectPathsError}
-          operationMessage={props.operationMessage}
+          onDismissOperationNotice={props.onDismissOperationNotice}
+          operationNotice={props.operationNotice}
           pendingOperation={props.pendingOperation}
           projectInventories={props.projectInventories}
           projectInventoriesLoading={props.projectInventoriesLoading}
           projectPathDraft={props.projectPathDraft}
           projectPaths={props.projectPaths}
           removeProjectPath={props.removeProjectPath}
-          saveConfig={props.saveConfig}
           setProjectPathDraft={props.setProjectPathDraft}
-          setSourceRepoPath={props.setSourceRepoPath}
-          sourceRepoPath={props.sourceRepoPath}
         />
       ),
       label: `Projects (${props.projectPaths.length})`,
@@ -596,6 +648,7 @@ function ConfiguredSnapshot(props: {
 }
 
 function GlobalTab(props: {
+  activeCellStateFilter: SkillCellStateFilter | undefined;
   addProjectPath: () => void;
   createTargetDirectory: (targetId: string) => void;
   disabledRows: readonly ReturnType<typeof buildSkillMatrix>['rows'][number][];
@@ -604,9 +657,11 @@ function GlobalTab(props: {
   knownProjectPathsError: string | null;
   onApplyReconcile: () => void;
   onCancelReconcile: () => void;
+  onCellStateFilterChange: (filter: SkillCellStateFilter | undefined) => void;
+  onDismissOperationNotice: () => void;
   onOpenSkill: (skillName: string, element: HTMLElement) => void;
   onPreviewReconcile: () => void;
-  operationMessage: string | null;
+  operationNotice: OperationNotice | null;
   pendingOperation: string | null;
   projectPathDraft: string;
   projectPaths: readonly string[];
@@ -623,13 +678,22 @@ function GlobalTab(props: {
 }) {
   return (
     <div class={stack}>
-      <SkillsHealth snapshot={props.snapshot} summary={props.health} />
+      <OperationBanner notice={props.operationNotice} onDismiss={props.onDismissOperationNotice} />
+      <SkillsHealth
+        activeFilter={props.activeCellStateFilter}
+        onFilterChange={(filter) =>
+          props.onCellStateFilterChange(props.activeCellStateFilter === filter ? undefined : filter)
+        }
+        snapshot={props.snapshot}
+        summary={props.health}
+      />
       <SkillsMatrix
+        activeCellStateFilter={props.activeCellStateFilter}
         onApplyReconcile={props.onApplyReconcile}
         onCancelReconcile={props.onCancelReconcile}
+        onCellStateFilterChange={props.onCellStateFilterChange}
         onOpenSkill={props.onOpenSkill}
         onPreviewReconcile={props.onPreviewReconcile}
-        operationMessage={props.operationMessage}
         pendingOperation={props.pendingOperation}
         reconcilePlan={props.reconcilePlan}
         snapshot={props.snapshot}
@@ -647,7 +711,6 @@ function GlobalTab(props: {
           createTargetDirectory={props.createTargetDirectory}
           knownProjectPaths={props.knownProjectPaths}
           knownProjectPathsError={props.knownProjectPathsError}
-          operationMessage={props.operationMessage}
           pendingOperation={props.pendingOperation}
           projectPathDraft={props.projectPathDraft}
           projectPaths={props.projectPaths}
@@ -668,21 +731,20 @@ function ProjectsTab(props: {
   addProjectPath: () => void;
   knownProjectPaths: readonly KnownSkillProjectPath[];
   knownProjectPathsError: string | null;
-  operationMessage: string | null;
+  onDismissOperationNotice: () => void;
+  operationNotice: OperationNotice | null;
   pendingOperation: string | null;
   projectInventories: ProjectInventoriesResult | undefined;
   projectInventoriesLoading: boolean;
   projectPathDraft: string;
   projectPaths: readonly string[];
   removeProjectPath: (value: string) => void;
-  saveConfig: () => void;
   setProjectPathDraft: (value: string) => void;
-  setSourceRepoPath: (value: string) => void;
-  sourceRepoPath: string;
 }) {
   const inventories = () => (props.projectInventories?.ok ? props.projectInventories.data : []);
   return (
     <div class={stack}>
+      <OperationBanner notice={props.operationNotice} onDismiss={props.onDismissOperationNotice} />
       <Show when={props.projectInventories?.ok === false}>
         <section class={panel}>
           <p class={meta}>{props.projectInventories?.ok === false ? props.projectInventories.error.message : ''}</p>
@@ -698,24 +760,20 @@ function ProjectsTab(props: {
       >
         <SkillsProjects inventories={inventories()} />
       </Show>
-      <details class={cx(panel, fold)}>
+      <details class={cx(panel, fold)} open={props.projectPaths.length === 0}>
         <summary class={foldSummary}>
           <span class={strongCell}>Add a project</span>
         </summary>
         <div class={foldBody}>
-          <ConfigPanel
+          <ProjectPathsPanel
             addProjectPath={props.addProjectPath}
             knownProjectPaths={props.knownProjectPaths}
             knownProjectPathsError={props.knownProjectPathsError}
-            operationMessage={props.operationMessage}
             pendingOperation={props.pendingOperation}
             projectPathDraft={props.projectPathDraft}
             projectPaths={props.projectPaths}
             removeProjectPath={props.removeProjectPath}
-            saveConfig={props.saveConfig}
             setProjectPathDraft={props.setProjectPathDraft}
-            setSourceRepoPath={props.setSourceRepoPath}
-            sourceRepoPath={props.sourceRepoPath}
           />
         </div>
       </details>
@@ -744,7 +802,9 @@ function DisabledFold(props: {
                   <div class={meta}>{row.description || 'No description'}</div>
                 </div>
                 <button
-                  class={ghostButton}
+                  aria-busy={props.pendingOperation === `toggle:${row.name}` ? 'true' : undefined}
+                  class={cx(ghostButton, busyButton)}
+                  data-pending={props.pendingOperation === `toggle:${row.name}` ? 'true' : undefined}
                   disabled={props.pendingOperation !== null}
                   onClick={() => props.toggleSkill(row.name, true)}
                   type="button"
@@ -765,7 +825,6 @@ function ConfigurationFold(props: {
   createTargetDirectory: (targetId: string) => void;
   knownProjectPaths: readonly KnownSkillProjectPath[];
   knownProjectPathsError: string | null;
-  operationMessage: string | null;
   pendingOperation: string | null;
   projectPathDraft: string;
   projectPaths: readonly string[];
@@ -781,14 +840,16 @@ function ConfigurationFold(props: {
     <details class={cx(panel, fold)}>
       <summary class={foldSummary}>
         <span class={strongCell}>Configuration & runtimes</span>
-        <span class={meta}>{props.snapshot.targets.length} runtimes</span>
+        <span class={meta}>
+          {props.snapshot.targets.filter((target) => target.enabled).length} enabled / {props.snapshot.targets.length}{' '}
+          configured
+        </span>
       </summary>
       <div class={foldBody}>
         <ConfigPanel
           addProjectPath={props.addProjectPath}
           knownProjectPaths={props.knownProjectPaths}
           knownProjectPathsError={props.knownProjectPathsError}
-          operationMessage={props.operationMessage}
           pendingOperation={props.pendingOperation}
           projectPathDraft={props.projectPathDraft}
           projectPaths={props.projectPaths}
@@ -823,7 +884,6 @@ function ConfigPanel(props: {
   addProjectPath: () => void;
   knownProjectPaths: readonly KnownSkillProjectPath[];
   knownProjectPathsError: string | null;
-  operationMessage: string | null;
   pendingOperation: string | null;
   projectPathDraft: string;
   projectPaths: readonly string[];
@@ -847,78 +907,112 @@ function ConfigPanel(props: {
             <span class={helpText}>Repository that owns shared skills, expected at `skills/*/SKILL.md`.</span>
           </label>
           <button
-            class={commandButton}
+            aria-busy={props.pendingOperation === 'save-config' ? 'true' : undefined}
+            class={cx(commandButton, busyButton)}
+            data-pending={props.pendingOperation === 'save-config' ? 'true' : undefined}
             disabled={props.pendingOperation !== null}
             onClick={props.saveConfig}
             type="button"
           >
-            Save
+            Save source
           </button>
         </div>
-        <div class={stack}>
-          <div class={panelHeader}>
-            <h3 class={panelTitle}>Project paths</h3>
-            <p class={panelSub}>Pick from projects already present in the report, or add a path manually.</p>
-          </div>
-          <div class={projectPickerGrid}>
-            <label class={formField}>
-              <span class={labelText}>Scanned project</span>
-              <select
-                class={inputClass}
-                onInput={(event) => props.setProjectPathDraft(event.currentTarget.value)}
-                value={props.projectPathDraft}
-              >
-                <option value="">Select a project</option>
-                <For each={props.knownProjectPaths}>
-                  {(project) => (
-                    <option disabled={props.projectPaths.includes(project.path)} value={project.path}>
-                      {project.label} · {project.path}
-                    </option>
-                  )}
-                </For>
-              </select>
-              <Show
-                fallback={<span class={helpText}>No scanned projects with paths in the current report payload.</span>}
-                when={props.knownProjectPaths.length > 0}
-              >
-                <span class={helpText}>{props.knownProjectPaths.length} scanned projects available.</span>
-              </Show>
-            </label>
-            <ManualProjectPathField
-              addProjectPath={props.addProjectPath}
-              projectPathDraft={props.projectPathDraft}
-              setProjectPathDraft={props.setProjectPathDraft}
-            />
-            <button
-              class={ghostButton}
-              disabled={props.projectPathDraft.trim().length === 0}
-              onClick={props.addProjectPath}
-              type="button"
-            >
-              Add
-            </button>
-          </div>
-          <Show when={props.knownProjectPathsError}>
-            {(message) => <p class={meta}>Could not load scanned projects: {message()}</p>}
-          </Show>
-          <Show fallback={<p class={meta}>No manual project paths.</p>} when={props.projectPaths.length > 0}>
-            <div class={projectPathList}>
-              <For each={props.projectPaths}>
-                {(projectPath) => (
-                  <div class={projectPathRow}>
-                    <span class={meta}>{projectPath}</span>
-                    <button class={ghostButton} onClick={() => props.removeProjectPath(projectPath)} type="button">
-                      Remove
-                    </button>
-                  </div>
-                )}
-              </For>
-            </div>
-          </Show>
-        </div>
+        <ProjectPathsPanel
+          addProjectPath={props.addProjectPath}
+          knownProjectPaths={props.knownProjectPaths}
+          knownProjectPathsError={props.knownProjectPathsError}
+          pendingOperation={props.pendingOperation}
+          projectPathDraft={props.projectPathDraft}
+          projectPaths={props.projectPaths}
+          removeProjectPath={props.removeProjectPath}
+          setProjectPathDraft={props.setProjectPathDraft}
+        />
       </div>
-      <Show when={props.operationMessage}>{(message) => <div class={operationPanel}>{message()}</div>}</Show>
     </section>
+  );
+}
+
+function ProjectPathsPanel(props: {
+  addProjectPath: () => void;
+  knownProjectPaths: readonly KnownSkillProjectPath[];
+  knownProjectPathsError: string | null;
+  pendingOperation: string | null;
+  projectPathDraft: string;
+  projectPaths: readonly string[];
+  removeProjectPath: (value: string) => void;
+  setProjectPathDraft: (value: string) => void;
+}) {
+  return (
+    <div class={stack}>
+      <div class={panelHeader}>
+        <h3 class={panelTitle}>Project paths</h3>
+        <p class={panelSub}>Pick from projects already present in the report, or add a path manually.</p>
+      </div>
+      <div class={projectPickerGrid}>
+        <label class={formField}>
+          <span class={labelText}>Scanned project</span>
+          <select
+            class={inputClass}
+            onInput={(event) => props.setProjectPathDraft(event.currentTarget.value)}
+            value={props.projectPathDraft}
+          >
+            <option value="">Select a project</option>
+            <For each={props.knownProjectPaths}>
+              {(project) => (
+                <option disabled={props.projectPaths.includes(project.path)} value={project.path}>
+                  {project.label} · {project.path}
+                </option>
+              )}
+            </For>
+          </select>
+          <Show
+            fallback={<span class={helpText}>No scanned projects with paths in the current report payload.</span>}
+            when={props.knownProjectPaths.length > 0}
+          >
+            <span class={helpText}>{count(props.knownProjectPaths.length, 'scanned project')} available.</span>
+          </Show>
+        </label>
+        <ManualProjectPathField
+          addProjectPath={props.addProjectPath}
+          projectPathDraft={props.projectPathDraft}
+          setProjectPathDraft={props.setProjectPathDraft}
+        />
+        <button
+          aria-busy={props.pendingOperation?.startsWith('project:add:') ? 'true' : undefined}
+          class={cx(ghostButton, busyButton)}
+          data-pending={props.pendingOperation?.startsWith('project:add:') ? 'true' : undefined}
+          disabled={props.pendingOperation !== null || props.projectPathDraft.trim().length === 0}
+          onClick={props.addProjectPath}
+          type="button"
+        >
+          Add
+        </button>
+      </div>
+      <Show when={props.knownProjectPathsError}>
+        {(message) => <p class={meta}>Could not load scanned projects: {message()}</p>}
+      </Show>
+      <Show fallback={<p class={meta}>No manual project paths.</p>} when={props.projectPaths.length > 0}>
+        <div class={projectPathList}>
+          <For each={props.projectPaths}>
+            {(projectPath) => (
+              <div class={projectPathRow}>
+                <span class={meta}>{projectPath}</span>
+                <button
+                  aria-busy={props.pendingOperation === `project:remove:${projectPath}` ? 'true' : undefined}
+                  class={cx(ghostButton, busyButton)}
+                  data-pending={props.pendingOperation === `project:remove:${projectPath}` ? 'true' : undefined}
+                  disabled={props.pendingOperation !== null}
+                  onClick={() => props.removeProjectPath(projectPath)}
+                  type="button"
+                >
+                  Remove
+                </button>
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
   );
 }
 
@@ -955,7 +1049,10 @@ function TargetsPanel(props: {
     <section class={stack}>
       <div class={panelHeader}>
         <h3 class={panelTitle}>Runtimes</h3>
-        <p class={panelSub}>{props.snapshot.summary.targetCount} configured runtime targets</p>
+        <p class={panelSub}>
+          {props.snapshot.targets.filter((target) => target.enabled).length} enabled /{' '}
+          {props.snapshot.summary.targetCount} configured
+        </p>
       </div>
       <For each={props.snapshot.targets}>
         {(target) => (
@@ -967,7 +1064,9 @@ function TargetsPanel(props: {
             </div>
             <Show when={target.missing}>
               <button
-                class={ghostButton}
+                aria-busy={props.pendingOperation === `target:${target.id}` ? 'true' : undefined}
+                class={cx(ghostButton, busyButton)}
+                data-pending={props.pendingOperation === `target:${target.id}` ? 'true' : undefined}
                 disabled={props.pendingOperation !== null}
                 onClick={() => props.createTargetDirectory(target.id)}
                 type="button"
@@ -993,11 +1092,30 @@ function ErrorPanel(props: { message: string }) {
   );
 }
 
+function OperationBanner(props: { notice: OperationNotice | null; onDismiss: () => void }) {
+  return (
+    <Show when={props.notice}>
+      {(notice) => (
+        <div
+          class={cx(banner, notice().tone === 'error' ? bannerError : bannerOk)}
+          role={notice().tone === 'error' ? 'alert' : 'status'}
+        >
+          <span>{notice().message}</span>
+          <button class={ghostButton} onClick={props.onDismiss} type="button">
+            Dismiss
+          </button>
+        </div>
+      )}
+    </Show>
+  );
+}
+
 function UnconfiguredPanel(props: {
   addProjectPath: () => void;
   knownProjectPaths: readonly KnownSkillProjectPath[];
   knownProjectPathsError: string | null;
-  operationMessage: string | null;
+  onDismissOperationNotice: () => void;
+  operationNotice: OperationNotice | null;
   pendingOperation: string | null;
   projectPathDraft: string;
   projectPaths: readonly string[];
@@ -1009,6 +1127,7 @@ function UnconfiguredPanel(props: {
 }) {
   return (
     <div class={stack}>
+      <OperationBanner notice={props.operationNotice} onDismiss={props.onDismissOperationNotice} />
       <section class={emptyState}>
         Configure <span class={strongCell}>skills.sourceRepoPath</span> in the ai-usage config to load the local skill
         source repository.
@@ -1018,7 +1137,6 @@ function UnconfiguredPanel(props: {
           addProjectPath={props.addProjectPath}
           knownProjectPaths={props.knownProjectPaths}
           knownProjectPathsError={props.knownProjectPathsError}
-          operationMessage={props.operationMessage}
           pendingOperation={props.pendingOperation}
           projectPathDraft={props.projectPathDraft}
           projectPaths={props.projectPaths}

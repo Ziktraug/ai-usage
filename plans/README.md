@@ -10,6 +10,7 @@ honor its STOP conditions, and update your row when done.
 | --- | --- | --- | --- | --- | --- |
 | 001 | Integrate Skill Management Into ai-usage | P1 | L | - | DONE |
 | 002 | Skills Inventory UI — Multi-Axis Redesign of `/skills` | P1 | L | 001 | DONE |
+| 003 | Skills UX Polish — Fix the `/skills` Presentation Defects | P2 | M | 002 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -22,6 +23,10 @@ REJECTED (with one-line rationale).
 - Plan 002 builds on plan 001's snapshot and server-function seams. Steps 1–7
   are the core redesign; step 8 (SKILL.md-only editor, superseding plan 001's
   step-10 deferral) and step 9 (origin metadata) are explicitly deferrable.
+- Plan 003 is presentational only (sourced from the 2026-07-02 UI/UX review,
+  artifact `391aa093`): it reads everything from the existing snapshot and must
+  not touch mutation semantics. The "Adopt into source" action it deliberately
+  excludes is the natural plan 004.
 
 ## Findings considered and rejected
 

@@ -45,10 +45,17 @@ export const statusDot = css({
   h: '15px',
   borderRadius: 'full',
   flexShrink: 0,
+  color: 'canvas',
+  fontSize: '10px',
+  fontWeight: 800,
+  lineHeight: 1,
 });
 
 export const statusDotLinked = css({
   bg: 'status.ok',
+  _before: {
+    content: '"✓"',
+  },
 });
 
 export const statusDotMissing = css({
@@ -58,6 +65,10 @@ export const statusDotMissing = css({
 
 export const statusDotBroken = css({
   bg: 'status.danger',
+  borderRadius: 'xs',
+  _before: {
+    content: '"!"',
+  },
 });
 
 export const statusDotCopy = css({
@@ -70,4 +81,27 @@ export const statusDotNone = css({
   h: '2px',
   borderRadius: 'full',
   bg: 'faint',
+});
+
+export const banner = css({
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  gap: '12px',
+  alignItems: 'center',
+  p: '10px 12px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surface',
+  color: 'ink',
+  fontSize: '13px',
+});
+
+export const bannerError = css({
+  bg: 'status.dangerSoft',
+  borderColor: 'status.danger',
+});
+
+export const bannerOk = css({
+  bg: 'status.okSoft',
+  borderColor: 'status.ok',
 });
