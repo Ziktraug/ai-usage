@@ -18,8 +18,8 @@ import {
   strongCell,
 } from '@ai-usage/design-system/report';
 import type { ProjectSkillInventory, SkillDiagnostic, SkillManagementSnapshot, SourceSkill } from '@ai-usage/skills';
-import { projectSkillDirectories } from '@ai-usage/skills';
 import { createEffect, createMemo, createResource, createSignal, For, type JSX, Show } from 'solid-js';
+import { type ProjectRuntimeDirId, projectSkillDirectories } from './project-skill-directories';
 import { getManagedSkillMarkdown, getProjectSkillMarkdown, saveManagedSkillMarkdown } from './server/skills';
 import {
   buildGlobalSkillExposure,
@@ -247,7 +247,6 @@ const stateWarn = css({ color: 'status.warn' });
 const stateDanger = css({ color: 'status.danger' });
 
 const runtimeLabels = new Map(projectSkillDirectories.map((directory) => [directory.id, directory.label]));
-type ProjectRuntimeDirId = (typeof projectSkillDirectories)[number]['id'];
 
 const validationPillClass = (status: string) => {
   if (status === 'invalid') {
