@@ -1,5 +1,6 @@
 import {
   parseSkillConfigInput,
+  parseSkillMarkdownWriteInput,
   parseSkillName,
   parseSkillTargetDirectoryInput,
   parseSkillToggleInput,
@@ -40,10 +41,32 @@ export const reconcileAllManagedSkills = createServerFn({ method: 'POST' }).hand
   import('./skills.server').then(({ reconcileAllActiveSkillsForServer }) => reconcileAllActiveSkillsForServer()),
 );
 
+export const previewReconcileAllManagedSkills = createServerFn({ method: 'GET' }).handler(() =>
+  import('./skills.server').then(({ previewReconcileAllActiveSkillsForServer }) =>
+    previewReconcileAllActiveSkillsForServer(),
+  ),
+);
+
 export const createManagedSkillTargetDirectory = createServerFn({ method: 'POST' })
   .validator((input) => parseSkillTargetDirectoryInput(input))
   .handler(({ data }) =>
     import('./skills.server').then(({ createSkillTargetDirectoryForServer }) =>
       createSkillTargetDirectoryForServer(data),
     ),
+  );
+
+export const getSkillProjectInventories = createServerFn({ method: 'GET' }).handler(() =>
+  import('./skills.server').then(({ readSkillProjectInventoriesForServer }) => readSkillProjectInventoriesForServer()),
+);
+
+export const getManagedSkillMarkdown = createServerFn({ method: 'POST' })
+  .validator((input) => parseSkillName(input))
+  .handler(({ data }) =>
+    import('./skills.server').then(({ readSkillMarkdownForServer }) => readSkillMarkdownForServer(data)),
+  );
+
+export const saveManagedSkillMarkdown = createServerFn({ method: 'POST' })
+  .validator((input) => parseSkillMarkdownWriteInput(input))
+  .handler(({ data }) =>
+    import('./skills.server').then(({ writeSkillMarkdownForServer }) => writeSkillMarkdownForServer(data)),
   );

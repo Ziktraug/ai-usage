@@ -9,8 +9,11 @@ import {
 import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
 import type {
   ProjectionAction,
+  ProjectSkillInventory,
   SkillManagementConfig,
   SkillManagementSnapshot,
+  SkillMarkdownDocument,
+  SkillMarkdownWriteInput,
   SkillTargetDirectoryInput,
   SkillToggleInput,
 } from '@ai-usage/skills';
@@ -18,13 +21,18 @@ import {
   createSkillTargetDirectory,
   loadSkillManagementSnapshot,
   parseSkillConfigInput,
+  parseSkillMarkdownWriteInput,
   parseSkillName,
   parseSkillTargetDirectoryInput,
   parseSkillToggleInput,
+  previewReconcileAllActiveSkills,
+  readSkillMarkdown,
   reconcileAllActiveSkills,
   reconcileSkill,
+  scanProjectSkills,
   toggleSkillEnabled,
   writeSkillManagementConfig,
+  writeSkillMarkdown,
 } from '@ai-usage/skills';
 import { Cause, Effect, Option, Runtime } from 'effect';
 
@@ -116,6 +124,9 @@ export const skillNameInputFrom = (input: unknown): string => {
 
 export const skillTargetDirectoryInputFrom = (input: unknown): SkillTargetDirectoryInput =>
   parseSkillTargetDirectoryInput(input);
+
+export const skillMarkdownWriteInputFrom = (input: unknown): SkillMarkdownWriteInput =>
+  parseSkillMarkdownWriteInput(input);
 
 const runWithStorage = async <T>(
   operation: (storage: LocalHistoryStorage) => Promise<T>,
@@ -333,6 +344,23 @@ export const reconcileAllActiveSkillsForServer = async (): Promise<SkillsServerR
     };
   });
 
+export const previewReconcileAllActiveSkillsForServer = async (): Promise<
+  SkillsServerResult<SkillReconcileServerResult>
+> =>
+  runWithStorage(async (storage) => {
+    const config = await loadMergedConfig();
+    // Planning only — apply re-plans from a fresh snapshot; per-action safety
+    // rules in the workflow remain the real mutation guard.
+    const previewResult = await previewReconcileAllActiveSkills({
+      config: { ...config },
+      homePath: storage.home,
+    });
+    return {
+      actions: previewResult.actions,
+      snapshot: previewResult.snapshot,
+    };
+  });
+
 export const createSkillTargetDirectoryForServer = async (
   input: SkillTargetDirectoryInput,
 ): Promise<SkillsServerResult<SkillManagementSnapshot>> =>
@@ -344,4 +372,59 @@ export const createSkillTargetDirectoryForServer = async (
     }
     await createSkillTargetDirectory({ path: target.path });
     return loadSnapshotForStorage(storage);
+  });
+
+export const readSkillProjectInventoriesForServer = async (): Promise<
+  SkillsServerResult<readonly ProjectSkillInventory[]>
+> =>
+  runWithStorage(async () => {
+    const config = await loadMergedConfig();
+    const skillsConfig = parseSkillConfigInput(config.skills ?? {});
+    if ((skillsConfig.projectPaths?.length ?? 0) === 0) {
+      return [];
+    }
+    return scanProjectSkills({
+      ...(skillsConfig.tokenThresholds === undefined
+        ? {}
+        : { options: { tokenThresholds: skillsConfig.tokenThresholds } }),
+      projectPaths: skillsConfig.projectPaths ?? [],
+      ...(skillsConfig.sourceRepoPath === undefined ? {} : { sourceRepoPath: skillsConfig.sourceRepoPath }),
+    });
+  });
+
+export interface SkillMarkdownSaveResult {
+  document?: SkillMarkdownDocument;
+  reason?: 'conflict' | 'not-found' | 'too-large';
+  snapshot?: SkillManagementSnapshot;
+}
+
+export const readSkillMarkdownForServer = async (
+  skillName: string,
+): Promise<SkillsServerResult<SkillMarkdownDocument>> =>
+  runWithStorage(async () => {
+    const config = await loadMergedConfig();
+    const skillsConfig = parseSkillConfigInput(config.skills ?? {});
+    if (skillsConfig.sourceRepoPath === undefined) {
+      throw new Error('skills.sourceRepoPath is required before reading SKILL.md');
+    }
+    return readSkillMarkdown({ skillName, sourceRepoPath: skillsConfig.sourceRepoPath });
+  });
+
+export const writeSkillMarkdownForServer = async (
+  input: SkillMarkdownWriteInput,
+): Promise<SkillsServerResult<SkillMarkdownSaveResult>> =>
+  runWithStorage(async (storage) => {
+    const config = await loadMergedConfig();
+    const skillsConfig = parseSkillConfigInput(config.skills ?? {});
+    if (skillsConfig.sourceRepoPath === undefined) {
+      throw new Error('skills.sourceRepoPath is required before writing SKILL.md');
+    }
+    const result = await writeSkillMarkdown({ ...input, sourceRepoPath: skillsConfig.sourceRepoPath });
+    if (!result.ok) {
+      return { reason: result.reason };
+    }
+    return {
+      document: await readSkillMarkdown({ skillName: input.skillName, sourceRepoPath: skillsConfig.sourceRepoPath }),
+      snapshot: await loadSnapshotForStorage(storage),
+    };
   });

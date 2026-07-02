@@ -144,6 +144,15 @@ export const aiUsagePreset = definePreset({
             opencode: { fg: dual('#2061B4', '#7FA9E8'), bg: dual('#E3EDF9', '#15263C') },
             gemini: { fg: dual('#0F6FA8', '#5FB5E2'), bg: dual('#E1EFF8', '#102A3A') },
           },
+
+          status: {
+            ok: dual('#2E7D5B', '#5BA97E'),
+            okSoft: dual('#E4F0EA', '#14302A'),
+            warn: dual('#9A6B10', '#D9AC5A'),
+            warnSoft: dual('#F6ECD5', '#35290F'),
+            danger: dual('#B3261E', '#E08A80'),
+            dangerSoft: dual('#F6E1DD', '#3A1E1B'),
+          },
         },
         shadows: {
           card: dual('0 1px 2px rgba(31, 29, 25, 0.05)', '0 1px 3px rgba(0, 0, 0, 0.5)'),

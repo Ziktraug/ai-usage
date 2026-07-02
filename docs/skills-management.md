@@ -49,3 +49,34 @@ root scans must be explicit opt-in configuration.
 Native rule formats for tools such as Cursor, Copilot, or project-specific rule
 files are read-only diagnostics in this integration. Managed mutations are
 limited to safe skill target reconciliation.
+
+## UI design
+
+The `/skills` route is a multi-axis inventory of Agent Skills on this machine.
+It distinguishes global and project-owned scope, auto-invocable and manual
+skills, personal or installed origins when metadata is present, enabled and
+disabled state, and per-runtime exposure as linked, copied, missing, or broken.
+
+The primary presentation is a skills-by-runtimes matrix. Status dots are only
+used inside matrix cells where the runtime column gives them context.
+
+Unmanaged runtime entries are shown as a grouped, collapsed consolidation
+backlog. They are never rendered as a flat list; adopting or importing them into
+the source repository is future work.
+
+Disabling a skill is a first-class toggle. It never requires moving files by
+hand, and the UI keeps disabled skills visible in a collapsed shelf.
+
+Health is reported as separate counters: healthy links, to repair, to
+consolidate, and disabled. The UI does not merge those signals into one "needs
+attention" number.
+
+Skill consumers are called runtimes in UI copy and docs. "Harness" remains
+reserved for usage-report collectors.
+
+Bulk reconciliation is preview-first. "Reconcile all…" plans the actions
+server-side without mutating anything and shows the exact list — actions to
+apply and refused unmanaged mutations with their reasons — before the user
+confirms with "Apply". Applying re-plans from a fresh snapshot; per-action
+safety rules in the workflow remain the real mutation guard. Warning-status
+skills stay reconciliable; only structurally invalid skills are refused.

@@ -25,7 +25,9 @@ Global backlog for known follow-ups that should survive individual refactor logs
 ## Skill Management
 
 - Add safe adoption/import flows for unmanaged target skills once the core source scan, diagnostics, and reconciliation flows have settled.
-- Add a skill editor with git diff, bounded text reads, binary-file refusal, and path validation after the `/skills` control plane is stable.
+- Add a git-diff view for the `SKILL.md` editor after the bounded editor flow has real use.
+- Add editing for non-`SKILL.md` skill files only after there is a clear safety model for reference files and scripts.
+- Add per-target reconcile actions if operators need more granular control than skill-level reconcile.
 - Revisit disabled default target locations for Cursor and GitHub Copilot after real local use verifies their system skill paths.
 
 ## Design System

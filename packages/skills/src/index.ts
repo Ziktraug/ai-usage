@@ -1,4 +1,16 @@
-import { lstat, mkdir, readdir, readFile, readlink, stat, symlink, unlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import {
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  readlink,
+  realpath,
+  stat,
+  symlink,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import path from 'node:path';
 
 export type SkillDiagnosticSeverity = 'info' | 'warning' | 'error';
@@ -50,6 +62,7 @@ export interface SkillManagementConfig {
 
 export interface SkillSourceState {
   skillEnabledByName: Record<string, boolean>;
+  skillOriginByName?: Record<string, string>;
   version: 1;
 }
 
@@ -250,11 +263,52 @@ export interface CreateSkillTargetDirectoryInput {
   path: string;
 }
 
+export const projectSkillDirectories = [
+  { id: 'claude-project', label: 'Claude Code', relativePath: '.claude/skills' },
+  { id: 'agents-project', label: 'Standard Agents', relativePath: '.agents/skills' },
+] as const;
+
+export type ProjectSkillPlacement = 'owned-directory' | 'symlink-to-source' | 'external-symlink';
+
+export interface ProjectSkillObservation {
+  description: string;
+  diagnostics: readonly SkillDiagnostic[];
+  invocation: 'auto' | 'manual';
+  name: string;
+  path: string;
+  placement: ProjectSkillPlacement;
+  runtimeDirId: (typeof projectSkillDirectories)[number]['id'];
+  skillMdPath: string;
+  tokenCount?: SourceSkill['tokenCount'];
+  validationStatus: SkillValidationStatus;
+}
+
+export interface ProjectSkillInventory {
+  diagnostics: readonly SkillDiagnostic[];
+  observations: readonly ProjectSkillObservation[];
+  projectPath: string;
+}
+
+export interface SkillMarkdownDocument {
+  content: string;
+  path: string;
+  sha256: string;
+  skillName: string;
+}
+
+export interface SkillMarkdownWriteInput {
+  baseSha256: string;
+  content: string;
+  skillName: string;
+}
+
 export const defaultTokenThresholds: SkillTokenThresholds = {
   referenceFile: { warn: 5000, high: 12_000 },
   skillMd: { warn: 2000, high: 5000 },
   totalSkill: { warn: 8000, high: 20_000 },
 };
+
+export const maxSkillMarkdownBytes = 262_144;
 
 const namePattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const targetIdPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -381,6 +435,13 @@ const parseRequiredNonEmptyString = (value: unknown, label: string): string => {
   return value;
 };
 
+const parseString = (value: unknown, label: string): string => {
+  if (typeof value !== 'string') {
+    throw new Error(`${label} must be a string`);
+  }
+  return value;
+};
+
 const createDiagnostic = (
   code: string,
   severity: SkillDiagnosticSeverity,
@@ -396,12 +457,71 @@ const createDiagnostic = (
 const isMissingPathError = (error: unknown) =>
   isRecord(error) && typeof error.code === 'string' && error.code === 'ENOENT';
 
-const isSkillSourceState = (value: unknown): value is SkillSourceState => {
+const parseSkillSourceState = (
+  value: unknown,
+  statePath?: string,
+): { diagnostics: readonly SkillDiagnostic[]; state?: SkillSourceState } => {
+  if (!isRecord(value) || value.version !== 1 || !isRecord(value.skillEnabledByName)) {
+    return { diagnostics: [] };
+  }
+  const skillEnabledByName: Record<string, boolean> = {};
+  for (const [skillName, enabled] of Object.entries(value.skillEnabledByName)) {
+    if (!namePattern.test(skillName) || typeof enabled !== 'boolean') {
+      return { diagnostics: [] };
+    }
+    skillEnabledByName[skillName] = enabled;
+  }
+
+  const diagnostics: SkillDiagnostic[] = [];
+  const state: SkillSourceState = { version: 1, skillEnabledByName };
+  if (value.skillOriginByName !== undefined) {
+    if (isRecord(value.skillOriginByName)) {
+      const skillOriginByName: Record<string, string> = {};
+      for (const [skillName, origin] of Object.entries(value.skillOriginByName)) {
+        if (namePattern.test(skillName) && typeof origin === 'string') {
+          skillOriginByName[skillName] = origin;
+          continue;
+        }
+        diagnostics.push(
+          createDiagnostic('InvalidSkillOriginMetadata', 'warning', 'Dropped invalid source skill origin metadata', {
+            ...(statePath === undefined ? {} : { path: statePath }),
+            ...(namePattern.test(skillName) ? { skillName } : {}),
+          }),
+        );
+      }
+      state.skillOriginByName = skillOriginByName;
+    } else {
+      diagnostics.push(
+        createDiagnostic(
+          'InvalidSkillOriginMetadata',
+          'warning',
+          'Source skill origins must be string values',
+          statePath === undefined ? {} : { path: statePath },
+        ),
+      );
+    }
+  }
+  return { diagnostics, state };
+};
+
+const isWritableSkillSourceState = (value: unknown): value is SkillSourceState => {
   if (!isRecord(value) || value.version !== 1 || !isRecord(value.skillEnabledByName)) {
     return false;
   }
-  return Object.entries(value.skillEnabledByName).every(
+  const validEnabled = Object.entries(value.skillEnabledByName).every(
     ([skillName, enabled]) => namePattern.test(skillName) && typeof enabled === 'boolean',
+  );
+  if (!validEnabled) {
+    return false;
+  }
+  if (value.skillOriginByName === undefined) {
+    return true;
+  }
+  return (
+    isRecord(value.skillOriginByName) &&
+    Object.entries(value.skillOriginByName).every(
+      ([skillName, origin]) => namePattern.test(skillName) && typeof origin === 'string',
+    )
   );
 };
 
@@ -597,7 +717,8 @@ export const loadSkillSourceState = async (sourceRepoPath: string): Promise<Skil
   const filePath = skillSourceStatePath(sourceRepoPath);
   try {
     const parsed = JSON.parse(await readFile(filePath, 'utf8')) as unknown;
-    if (!isSkillSourceState(parsed)) {
+    const parsedState = parseSkillSourceState(parsed, filePath);
+    if (parsedState.state === undefined) {
       return {
         diagnostics: [
           createDiagnostic('InvalidSourceState', 'error', 'Source skill state must be JSON version 1', {
@@ -607,7 +728,7 @@ export const loadSkillSourceState = async (sourceRepoPath: string): Promise<Skil
         state: { version: 1, skillEnabledByName: {} },
       };
     }
-    return { diagnostics: [], state: parsed };
+    return { diagnostics: parsedState.diagnostics, state: parsedState.state };
   } catch (error) {
     if (isMissingPathError(error)) {
       return { diagnostics: [], state: { version: 1, skillEnabledByName: {} } };
@@ -624,7 +745,7 @@ export const loadSkillSourceState = async (sourceRepoPath: string): Promise<Skil
 };
 
 export const writeSkillSourceState = async (sourceRepoPath: string, stateValue: SkillSourceState): Promise<void> => {
-  if (!isSkillSourceState(stateValue)) {
+  if (!isWritableSkillSourceState(stateValue)) {
     throw new Error('source skill state must be JSON version 1');
   }
   const filePath = skillSourceStatePath(sourceRepoPath);
@@ -640,6 +761,7 @@ export const setSkillEnabled = async (
   const parsedSkillName = parseSkillName(skillName);
   const current = await loadSkillSourceState(sourceRepoPath);
   const nextState: SkillSourceState = {
+    ...current.state,
     version: 1,
     skillEnabledByName: {
       ...current.state.skillEnabledByName,
@@ -891,6 +1013,112 @@ export const scanSkillSourceRepository = async (input: SourceSkillScanInput): Pr
   }
 
   return { diagnostics, skills };
+};
+
+const invocationForFields = (fields: readonly SkillFrontmatterField[]): 'auto' | 'manual' =>
+  fields.some((field) => field.key === 'disable-model-invocation' && field.value === true) ? 'manual' : 'auto';
+
+const projectPlacementFor = async (
+  entryPath: string,
+  sourceRepoPath?: string,
+): Promise<{ pathForScan: string; placement: ProjectSkillPlacement }> => {
+  const entryStat = await lstat(entryPath);
+  if (!entryStat.isSymbolicLink()) {
+    return { pathForScan: entryPath, placement: 'owned-directory' };
+  }
+  const resolved = path.resolve(path.dirname(entryPath), await readlink(entryPath));
+  if (sourceRepoPath === undefined) {
+    return { pathForScan: entryPath, placement: 'external-symlink' };
+  }
+  const sourceSkillsPath = path.join(await realpath(sourceRepoPath), 'skills');
+  const resolvedRealPath = await realpath(resolved);
+  const relative = path.relative(sourceSkillsPath, resolvedRealPath);
+  return {
+    pathForScan: entryPath,
+    placement:
+      relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
+        ? 'symlink-to-source'
+        : 'external-symlink',
+  };
+};
+
+export const scanProjectSkills = async (input: {
+  options?: SourceSkillScanOptions;
+  projectPaths: readonly string[];
+  sourceRepoPath?: string;
+}): Promise<readonly ProjectSkillInventory[]> => {
+  const inventories: ProjectSkillInventory[] = [];
+  const options = {
+    maxFilesPerSkill: input.options?.maxFilesPerSkill ?? defaultMaxFilesPerSkill,
+    maxTextFileBytes: input.options?.maxTextFileBytes ?? defaultMaxTextFileBytes,
+  };
+  const ignoredDirectories = new Set([...defaultIgnoredDirectories, ...(input.options?.ignoredDirectories ?? [])]);
+  const state: SkillSourceState = { version: 1, skillEnabledByName: {} };
+
+  for (const projectPath of input.projectPaths) {
+    const diagnostics: SkillDiagnostic[] = [];
+    const observations: ProjectSkillObservation[] = [];
+    for (const directory of projectSkillDirectories) {
+      const runtimePath = path.join(projectPath, directory.relativePath);
+      let entries: Array<{ isDirectory: () => boolean; isSymbolicLink: () => boolean; name: string }>;
+      try {
+        entries = await readdir(runtimePath, { withFileTypes: true });
+      } catch (error) {
+        if (!isMissingPathError(error)) {
+          diagnostics.push(
+            createDiagnostic(
+              'UnreadableProjectSkillDirectory',
+              'warning',
+              'Project skill directory could not be read',
+              {
+                path: runtimePath,
+                targetId: directory.id,
+              },
+            ),
+          );
+        }
+        continue;
+      }
+      for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
+        if (!(entry.isDirectory() || entry.isSymbolicLink())) {
+          continue;
+        }
+        const entryPath = path.join(runtimePath, entry.name);
+        let placement: ProjectSkillPlacement;
+        let pathForScan: string;
+        try {
+          ({ pathForScan, placement } = await projectPlacementFor(entryPath, input.sourceRepoPath));
+        } catch {
+          diagnostics.push(
+            createDiagnostic('UnreadableProjectSkillEntry', 'warning', 'Project skill entry could not be inspected', {
+              path: entryPath,
+              targetId: directory.id,
+            }),
+          );
+          continue;
+        }
+        const result = await scanOneSkill(pathForScan, state, options, ignoredDirectories);
+        diagnostics.push(...result.diagnostics);
+        if (result.skill === undefined) {
+          continue;
+        }
+        observations.push({
+          description: result.skill.description,
+          diagnostics: result.skill.diagnostics,
+          invocation: invocationForFields(result.skill.manifest.fields),
+          name: result.skill.name,
+          path: result.skill.path,
+          placement,
+          runtimeDirId: directory.id,
+          skillMdPath: result.skill.skillMdPath,
+          tokenCount: result.skill.tokenCount,
+          validationStatus: result.skill.validationStatus,
+        });
+      }
+    }
+    inventories.push({ diagnostics, observations, projectPath });
+  }
+  return inventories;
 };
 
 export const buildDefaultSkillTargets = (homePath: string): readonly SkillTarget[] => [
@@ -1151,7 +1379,9 @@ export const planProjection = (
     };
   }
 
-  if (skill.validationStatus !== 'valid') {
+  // Warning-status skills (heavy tokens, unknown frontmatter fields…) stay
+  // projectable; only structurally invalid skills are refused.
+  if (skill.validationStatus === 'invalid') {
     return {
       path: projection.expectedPath,
       reason: 'invalid skills cannot be projected',
@@ -1389,10 +1619,12 @@ export const writeSkillManagementConfig = async (
 export const toggleSkillEnabled = async (input: ToggleSkillEnabledInput): Promise<SkillSourceState> =>
   setSkillEnabled(input.sourceRepoPath, input.skillName, input.enabled);
 
-const applyPlannedActions = async (
+const activeSkillPredicate = (skill: SourceSkill): boolean => skill.enabled && skill.validationStatus !== 'invalid';
+
+const planReconcileActions = (
   snapshot: SkillManagementSnapshot,
   predicate: (skill: SourceSkill) => boolean,
-): Promise<SkillReconcileResult> => {
+): ProjectionAction[] => {
   const actions: ProjectionAction[] = [];
   for (const skill of snapshot.skills.filter(predicate)) {
     for (const target of snapshot.targets.filter((candidate) => candidate.enabled)) {
@@ -1405,13 +1637,22 @@ const applyPlannedActions = async (
       }
     }
   }
+  return actions;
+};
 
-  if (actions.some((action) => action.type === 'refuse-unmanaged-mutation')) {
-    return { actions, snapshot };
-  }
-
+const applyPlannedActions = async (
+  snapshot: SkillManagementSnapshot,
+  predicate: (skill: SourceSkill) => boolean,
+): Promise<SkillReconcileResult> => {
+  const actions = planReconcileActions(snapshot, predicate);
   for (const action of actions) {
-    await applyProjectionAction(action);
+    if (
+      action.type === 'create-symlink' ||
+      action.type === 'repair-symlink' ||
+      action.type === 'unlink-managed-symlink'
+    ) {
+      await applyProjectionAction(action);
+    }
   }
   return { actions, snapshot };
 };
@@ -1426,10 +1667,114 @@ export const reconcileAllActiveSkills = async (
   input: LoadSkillManagementSnapshotInput,
 ): Promise<SkillReconcileResult> => {
   const snapshot = await loadSkillManagementSnapshot(input);
-  return applyPlannedActions(snapshot, (skill) => skill.enabled && skill.validationStatus === 'valid');
+  return applyPlannedActions(snapshot, activeSkillPredicate);
+};
+
+export const previewReconcileAllActiveSkills = async (
+  input: LoadSkillManagementSnapshotInput,
+): Promise<SkillReconcileResult> => {
+  const snapshot = await loadSkillManagementSnapshot(input);
+  return { actions: planReconcileActions(snapshot, activeSkillPredicate), snapshot };
 };
 
 export const createSkillTargetDirectory = async (input: CreateSkillTargetDirectoryInput): Promise<void> => {
   const targetPath = parseRequiredNonEmptyString(input.path, 'target path');
   await mkdir(targetPath, { recursive: true });
+};
+
+const sha256 = (buffer: Buffer | string): string => createHash('sha256').update(buffer).digest('hex');
+
+const skillMarkdownPathFor = (sourceRepoPath: string, skillName: string): string =>
+  path.join(sourceRepoPath, 'skills', parseSkillName(skillName), 'SKILL.md');
+
+const isInsideDirectory = (directory: string, candidate: string): boolean => {
+  const relative = path.relative(directory, candidate);
+  return relative === '' || !(relative.startsWith('..') || path.isAbsolute(relative));
+};
+
+const resolveSkillMarkdownPath = async (
+  sourceRepoPath: string,
+  skillName: string,
+): Promise<{ filePath: string; realFilePath: string; realSkillsPath: string } | undefined> => {
+  const filePath = skillMarkdownPathFor(sourceRepoPath, skillName);
+  try {
+    const realSourcePath = await realpath(sourceRepoPath);
+    const realSkillsPath = path.join(realSourcePath, 'skills');
+    const realFilePath = await realpath(filePath);
+    if (!isInsideDirectory(realSkillsPath, realFilePath)) {
+      return;
+    }
+    return { filePath, realFilePath, realSkillsPath };
+  } catch {
+    return;
+  }
+};
+
+export const readSkillMarkdown = async (input: {
+  skillName: string;
+  sourceRepoPath: string;
+}): Promise<SkillMarkdownDocument> => {
+  const skillName = parseSkillName(input.skillName);
+  const resolved = await resolveSkillMarkdownPath(input.sourceRepoPath, skillName);
+  if (resolved === undefined) {
+    throw new Error('skill markdown not found');
+  }
+  const fileStat = await stat(resolved.realFilePath);
+  if (fileStat.size > maxSkillMarkdownBytes) {
+    throw new Error('skill markdown is too large');
+  }
+  const buffer = await readFile(resolved.realFilePath);
+  return {
+    content: buffer.toString('utf8'),
+    path: resolved.filePath,
+    sha256: sha256(buffer),
+    skillName,
+  };
+};
+
+const sha256Pattern = /^[a-f0-9]{64}$/;
+
+export const parseSkillMarkdownWriteInput = (input: unknown): SkillMarkdownWriteInput => {
+  const record = assertRecord(input, 'skill markdown write input');
+  const content = parseString(record.content, 'content');
+  if (Buffer.byteLength(content, 'utf8') > maxSkillMarkdownBytes) {
+    throw new Error('content must be at most 262144 bytes');
+  }
+  const baseSha256 = parseRequiredNonEmptyString(record.baseSha256, 'baseSha256');
+  if (!sha256Pattern.test(baseSha256)) {
+    throw new Error('baseSha256 must be a 64-character lowercase hex string');
+  }
+  return {
+    baseSha256,
+    content,
+    skillName: parseSkillName(record.skillName),
+  };
+};
+
+export const writeSkillMarkdown = async (input: {
+  baseSha256: string;
+  content: string;
+  skillName: string;
+  sourceRepoPath: string;
+}): Promise<{ ok: true } | { ok: false; reason: 'conflict' | 'not-found' | 'too-large' }> => {
+  const skillName = parseSkillName(input.skillName);
+  if (Buffer.byteLength(input.content, 'utf8') > maxSkillMarkdownBytes) {
+    return { ok: false, reason: 'too-large' };
+  }
+  if (!sha256Pattern.test(input.baseSha256)) {
+    throw new Error('baseSha256 must be a 64-character lowercase hex string');
+  }
+  const resolved = await resolveSkillMarkdownPath(input.sourceRepoPath, skillName);
+  if (resolved === undefined) {
+    return { ok: false, reason: 'not-found' };
+  }
+  const current = await readFile(resolved.realFilePath);
+  if (current.length > maxSkillMarkdownBytes) {
+    return { ok: false, reason: 'too-large' };
+  }
+  if (sha256(current) !== input.baseSha256) {
+    return { ok: false, reason: 'conflict' };
+  }
+  await writeFile(resolved.realFilePath, input.content, 'utf8');
+  return { ok: true };
 };
