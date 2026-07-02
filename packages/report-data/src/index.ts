@@ -1,15 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  collectHarnessFacets,
+  collectHarnessDatasets,
   collectSelectedHarnessResults,
   collectSelectedHarnessRows,
   type HarnessSelection,
+  mirrorDatasetsToLegacyFacets,
   type SelectedHarnessCollectionResult,
 } from '@ai-usage/local-collectors';
 import { LocalHistoryError, type LocalHistoryWarning } from '@ai-usage/local-collectors/errors';
 import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-collectors/machine-config';
+import type { ReportDatasets } from '@ai-usage/report-core/datasets';
 import { type HarnessKey, harnessKeys } from '@ai-usage/report-core/harness-metadata';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import {
@@ -20,6 +22,7 @@ import {
   projectSourceId,
   projectSourceSelectorLabel,
 } from '@ai-usage/report-core/project-group';
+import { mergeProviderStatusDatasets, parseProviderStatusDataset } from '@ai-usage/report-core/provider-status';
 import {
   createUsageReportPayload,
   type PreparedUsageReport,
@@ -60,13 +63,21 @@ export interface LocalReportRowsRequest extends LocalUsageSelection {
   keepSource?: boolean;
 }
 
+export interface ReportDatasetSelection {
+  includeCursorCommitAttribution?: boolean;
+  includeLiveProviderStatus?: boolean;
+  includeProviderStatus?: boolean;
+}
+
 export interface LocalReportPayloadRequest extends LocalReportRowsRequest {
+  datasets?: ReportDatasetSelection;
   generatedAt?: Date;
   includeFacets?: boolean;
   options: ReportOptions;
 }
 
 export interface StoredReportPayloadRequest extends LocalUsageSelection {
+  datasets?: ReportDatasetSelection;
   generatedAt?: Date;
   includeFacets?: boolean;
   options: ReportOptions;
@@ -80,6 +91,7 @@ export interface LocalReportRowsResult {
 
 export interface LocalUsageSnapshotRequest extends LocalUsageSelection {
   appVersion?: string | null;
+  datasets?: ReportDatasetSelection;
   generatedAt?: Date;
   includeFacets?: boolean;
   machine?: UsageMachine;
@@ -87,6 +99,7 @@ export interface LocalUsageSnapshotRequest extends LocalUsageSelection {
 
 export interface MergedUsageReportRequest extends LocalUsageSelection {
   appVersion?: string | null;
+  datasets?: ReportDatasetSelection;
   generatedAt?: Date;
   includeFacets?: boolean;
   includeLocal?: boolean;
@@ -142,6 +155,8 @@ const toLocalUsageSnapshotRequest = (request: {
   machine?: UsageMachine;
   generatedAt?: Date;
   appVersion?: string | null;
+  datasets?: ReportDatasetSelection;
+  includeFacets?: boolean;
 }): LocalUsageSnapshotRequest => ({
   harness: request.harness,
   includeCursor: request.includeCursor,
@@ -149,7 +164,72 @@ const toLocalUsageSnapshotRequest = (request: {
   ...(request.machine === undefined ? {} : { machine: request.machine }),
   ...(request.generatedAt === undefined ? {} : { generatedAt: request.generatedAt }),
   ...(request.appVersion === undefined ? {} : { appVersion: request.appVersion }),
+  ...(request.datasets === undefined ? {} : { datasets: request.datasets }),
+  ...(request.includeFacets === undefined ? {} : { includeFacets: request.includeFacets }),
 });
+
+const datasetSelectionFor = (request: {
+  datasets?: ReportDatasetSelection;
+  harness: HarnessKey | null;
+  includeCursor: boolean;
+  includeFacets?: boolean;
+}): ReportDatasetSelection | undefined => {
+  if (request.datasets) {
+    return request.datasets;
+  }
+  if (!request.includeFacets) {
+    return;
+  }
+  return {
+    includeCursorCommitAttribution: request.includeCursor && (!request.harness || request.harness === 'cursor'),
+    includeProviderStatus: true,
+  };
+};
+
+const collectReportDatasets = (request: {
+  datasets?: ReportDatasetSelection;
+  harness: HarnessKey | null;
+  includeCursor: boolean;
+  includeFacets?: boolean;
+  machine?: UsageMachine;
+}) => {
+  const selection = datasetSelectionFor(request);
+  if (!selection) {
+    return Effect.succeed(undefined);
+  }
+  const datasetEffect = collectHarnessDatasets({
+    includeCursor: selection.includeCursorCommitAttribution === true,
+    includeProviderStatus: selection.includeProviderStatus === true,
+    ...(request.machine === undefined ? {} : { machineId: request.machine.id, machineLabel: request.machine.label }),
+  }) as unknown as Effect.Effect<
+    ReportDatasets,
+    LocalHistoryError,
+    import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
+  >;
+  return Effect.map(datasetEffect, (datasets) => (Object.keys(datasets).length ? datasets : undefined));
+};
+
+const mergeReportDatasets = (...datasets: (ReportDatasets | undefined)[]): ReportDatasets | undefined => {
+  const merged: ReportDatasets = {};
+  for (const dataset of datasets) {
+    if (!dataset) {
+      continue;
+    }
+    for (const [key, value] of Object.entries(dataset)) {
+      if (key === 'providerStatus') {
+        continue;
+      }
+      merged[key] = value;
+    }
+  }
+  const providerStatus = mergeProviderStatusDatasets(
+    datasets.map((dataset) => parseProviderStatusDataset(dataset?.providerStatus) ?? undefined),
+  );
+  if (providerStatus) {
+    merged.providerStatus = providerStatus;
+  }
+  return Object.keys(merged).length ? merged : undefined;
+};
 
 const toHarnessSelection = (
   request: LocalReportRowsRequest,
@@ -342,6 +422,7 @@ export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
     'aiUsage.report.createLocalPayload',
     Effect.gen(function* () {
       const { rows, warnings } = yield* collectLocalReportRowsWithWarnings(request);
+      const machine = yield* ensureMachineConfig;
       const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
       const projection = yield* withPerfSpan(
         'aiUsage.report.projectGroups',
@@ -354,15 +435,12 @@ export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
           warnings: result.warnings.length,
         }),
       );
-      const facets = request.includeFacets
-        ? yield* withPerfSpan(
-            'aiUsage.report.collectFacets',
-            collectHarnessFacets({
-              includeCursor: request.includeCursor && (!request.harness || request.harness === 'cursor'),
-            }),
-            (result) => ({ groups: Object.keys(result).length }),
-          )
-        : undefined;
+      const datasets = yield* withPerfSpan(
+        'aiUsage.report.collectDatasets',
+        collectReportDatasets({ ...request, machine }),
+        (result) => ({ datasets: result ? Object.keys(result).length : 0 }),
+      );
+      const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
       const report = yield* withPerfSpan(
         'aiUsage.report.prepare',
         Effect.sync(() => prepareNormalizedUsageReport(projection.rows, request.options)),
@@ -383,6 +461,7 @@ export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
             [...warnings, ...projection.warnings],
             projection.projectGroups,
             config.projectGroups ?? [],
+            datasets,
           ),
         ),
         (payload) => ({
@@ -410,6 +489,7 @@ export const createStoredReportPayload = (
     'aiUsage.report.createStoredPayload',
     Effect.gen(function* () {
       const storage = yield* LocalHistoryStorage;
+      const machine = yield* ensureMachineConfig;
       const dbPath = usageStorePath(storage.home);
       const harnessKeys = selectedStoredHarnessKeys(request);
       const stored = yield* withPerfSpan(
@@ -431,15 +511,12 @@ export const createStoredReportPayload = (
           warnings: result.warnings.length,
         }),
       );
-      const facets = request.includeFacets
-        ? yield* withPerfSpan(
-            'aiUsage.report.collectStoredFacets',
-            collectHarnessFacets({
-              includeCursor: request.includeCursor && (!request.harness || request.harness === 'cursor'),
-            }),
-            (result) => ({ groups: Object.keys(result).length }),
-          )
-        : undefined;
+      const datasets = yield* withPerfSpan(
+        'aiUsage.report.collectStoredDatasets',
+        collectReportDatasets({ ...request, machine }),
+        (result) => ({ datasets: result ? Object.keys(result).length : 0 }),
+      );
+      const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
       const report = yield* withPerfSpan(
         'aiUsage.report.prepareStored',
         Effect.sync(() => prepareNormalizedUsageReport(projection.rows, request.options)),
@@ -460,6 +537,7 @@ export const createStoredReportPayload = (
             projection.warnings,
             projection.projectGroups,
             config.projectGroups ?? [],
+            datasets,
           ),
         ),
         (payload) => ({
@@ -478,11 +556,8 @@ export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
   Effect.gen(function* () {
     const machine = request.machine ?? (yield* ensureMachineConfig);
     const { collection } = yield* collectConfiguredLocalRowsWithWarnings({ ...request, keepSource: true });
-    const facets = request.includeFacets
-      ? yield* collectHarnessFacets({
-          includeCursor: request.includeCursor && (!request.harness || request.harness === 'cursor'),
-        })
-      : undefined;
+    const datasets = yield* collectReportDatasets({ ...request, machine });
+    const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
 
     return createUsageSnapshot({
       machine,
@@ -490,6 +565,7 @@ export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
       ...(request.generatedAt === undefined ? {} : { generatedAt: request.generatedAt }),
       ...(request.appVersion === undefined ? {} : { appVersion: request.appVersion }),
       ...(collection.warnings.length ? { warnings: collection.warnings } : {}),
+      ...(datasets === undefined ? {} : { datasets }),
       ...(facets === undefined ? {} : { facets }),
     });
   });
@@ -517,11 +593,8 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
       }
       return warning;
     });
-    const facets = request.includeFacets
-      ? yield* collectHarnessFacets({
-          includeCursor: request.includeCursor && (!request.harness || request.harness === 'cursor'),
-        })
-      : undefined;
+    const datasets = mergeReportDatasets(merged.datasets);
+    const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
 
     return {
       rows,
@@ -534,6 +607,7 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
         payloadWarnings,
         projection.projectGroups,
         config.projectGroups ?? [],
+        datasets,
       ),
       warnings: allWarnings,
       duplicatesDropped: merged.duplicatesDropped,

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Effect } from 'effect';
-import { findLatestCodexQuotaSnapshot, readCodexUsageSessions } from './codex-history';
+import { findLatestCodexProviderStatus, findLatestCodexQuotaSnapshot, readCodexUsageSessions } from './codex-history';
 import { collectCodex } from './collectors/codex';
 import { createLocalHistoryStorage, LocalHistoryStorage } from './local-history';
 import { TestMemoryStorage } from './test-memory-storage';
@@ -140,6 +140,21 @@ describe('Codex local history', () => {
     expect(quota?.planType).toBe('pro');
     expect(quota?.primary?.usedPercent).toBe(50);
     expect(quota?.primary?.windowMinutes).toBe(300);
+
+    const status = runWithStorage(
+      findLatestCodexProviderStatus({ machineId: 'machine-1', machineLabel: 'Test Machine' }),
+      storage,
+    );
+    expect(status).toMatchObject({
+      key: 'codex',
+      label: 'Codex',
+      machineId: 'machine-1',
+      machineLabel: 'Test Machine',
+      plan: 'pro',
+      source: 'local-history',
+      state: 'ok',
+    });
+    expect(status?.windows[0]).toMatchObject({ id: 'primary', label: '5h', usedPercent: 50, limitSeconds: 18_000 });
 
     const rows = runWithStorage(collectCodex, storage);
     expect(rows).toHaveLength(2);

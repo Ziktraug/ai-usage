@@ -3,7 +3,8 @@ import type { createUsageReportPayload } from '@ai-usage/report-core/report-data
 import { createServerFn } from '@tanstack/solid-start';
 
 type JsonValue = boolean | number | string | null | JsonValue[] | { [key: string]: JsonValue };
-type StartReportPayload = Omit<ReturnType<typeof createUsageReportPayload>, 'facets'> & {
+type StartReportPayload = Omit<ReturnType<typeof createUsageReportPayload>, 'datasets' | 'facets'> & {
+  datasets?: Record<string, JsonValue>;
   facets?: Record<string, JsonValue>;
 };
 

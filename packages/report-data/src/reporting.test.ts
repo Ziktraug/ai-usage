@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import { writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import { createUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
+import { createProviderStatusDataset } from '@ai-usage/report-core/provider-status';
 import { createUsageSnapshot, type UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
@@ -49,6 +50,24 @@ const writeClaudeSession = (home: string, projectPath = '/work/raw') => {
           output_tokens: 5,
           cache_read_input_tokens: 0,
           cache_creation_input_tokens: 0,
+        },
+      },
+    })}\n`,
+  );
+};
+
+const writeCodexQuotaSession = (home: string) => {
+  const codexDir = path.join(home, '.codex/sessions/2026');
+  mkdirSync(codexDir, { recursive: true });
+  writeFileSync(
+    path.join(codexDir, 'quota.jsonl'),
+    `${JSON.stringify({
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: {
+        type: 'token_count',
+        rate_limits: {
+          plan_type: 'pro',
+          primary: { used_percent: 70, window_minutes: 300, resets_at: 1_767_242_800 },
         },
       },
     })}\n`,
@@ -122,6 +141,38 @@ describe('shared reporting', () => {
         tableRows: [],
         omittedRows: 0,
       });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('transports cursor-compatible datasets and local Codex provider status', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-datasets-'));
+    try {
+      const storage = createLocalHistoryStorage(home);
+      writeCodexQuotaSession(home);
+      await Effect.runPromise(
+        writeMachineConfig(testMachine).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      const payload = await Effect.runPromise(
+        createLocalReportPayload({
+          harness: null,
+          includeCursor: false,
+          keepSource: true,
+          includeFacets: true,
+          generatedAt: new Date('2026-01-01T00:00:00.000Z'),
+          options: defaultOptions,
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(payload.datasets?.providerStatus?.providers[0]).toMatchObject({
+        key: 'codex',
+        machineId: 'machine-1',
+        machineLabel: 'Test Machine',
+        plan: 'pro',
+      });
+      expect(payload.facets?.providerStatus).toBeUndefined();
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -244,6 +295,51 @@ describe('shared reporting', () => {
       expect(payload.rows[0]?.rawProject).toBe('peer-project');
       expect(payload.rows[0]?.source?.machineLabel).toBe('Peer Machine');
       expect(payload.rows.find((row) => row.name === 'peer-child')?.source?.rootSourceSessionId).toBe('peer-parent');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('surfaces provider status from remote snapshots when local rows are excluded', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-remote-status-'));
+    try {
+      const remoteStatus = createProviderStatusDataset(
+        [
+          {
+            key: 'codex',
+            label: 'Codex',
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            machineId: 'peer-machine',
+            machineLabel: 'Peer Machine',
+            source: 'local-history',
+            state: 'ok',
+            windows: [],
+          },
+        ],
+        new Date('2026-01-01T00:00:00.000Z'),
+      );
+      const snapshot = createUsageSnapshot({
+        machine: { id: 'peer-machine', label: 'Peer Machine' },
+        rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-parent' })],
+        datasets: { providerStatus: remoteStatus },
+      });
+
+      const result = await Effect.runPromise(
+        createMergedUsageReport({
+          harness: null,
+          includeCursor: false,
+          includeFacets: true,
+          includeLocal: false,
+          snapshots: [snapshot],
+          generatedAt: new Date('2026-01-01T00:00:00.000Z'),
+          options: defaultOptions,
+        }).pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
+      );
+
+      expect(result.payload.datasets?.providerStatus?.providers[0]).toMatchObject({
+        key: 'codex',
+        machineId: 'peer-machine',
+      });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

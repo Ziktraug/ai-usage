@@ -1,27 +1,10 @@
+import type { CursorCommitAttributionRow } from '@ai-usage/report-core/datasets';
 import { Effect } from 'effect';
 import type { LocalHistoryError } from './errors';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
 import { firstExisting, resolvePathCandidates } from './platform-paths';
 
-export interface CursorCommitAttribution {
-  blankLinesAdded: number;
-  blankLinesDeleted: number;
-  branchName: string;
-  commitDate: string | null;
-  commitHash: string;
-  commitMessage: string | null;
-  composerLinesAdded: number;
-  composerLinesDeleted: number;
-  humanLinesAdded: number;
-  humanLinesDeleted: number;
-  linesAdded: number;
-  linesDeleted: number;
-  scoredAt: string | null;
-  tabLinesAdded: number;
-  tabLinesDeleted: number;
-  v1AiPercentage: number | null;
-  v2AiPercentage: number | null;
-}
+export type CursorCommitAttribution = CursorCommitAttributionRow;
 
 export interface HarnessFacets extends Record<string, unknown> {
   cursor?: {
