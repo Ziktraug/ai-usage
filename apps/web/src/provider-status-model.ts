@@ -1,0 +1,218 @@
+import {
+  type ProviderLimitWindow,
+  type ProviderStatus,
+  parseProviderStatusDataset,
+} from '@ai-usage/report-core/provider-status';
+import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
+import type { DashboardRow } from './shared';
+
+export type ProviderWindowGroupKey = '5h' | 'weekly' | 'monthly' | 'other';
+export type ProviderStatusTone = 'critical' | 'warning' | 'muted' | 'ok';
+
+export interface ProviderStatusWindowGroup {
+  key: ProviderWindowGroupKey;
+  label: string;
+  windows: ProviderLimitWindow[];
+}
+
+export interface ProviderStatusView {
+  accountContext: string | null;
+  creditsSummary: string | null;
+  machineContext: string | null;
+  nextResetAt: string | null;
+  provider: ProviderStatus;
+  sourceLabel: string;
+  tone: ProviderStatusTone;
+  windowGroups: ProviderStatusWindowGroup[];
+  worstUsedPercent: number | null;
+}
+
+const STATE_RANK: Record<ProviderStatus['state'], number> = {
+  error: 0,
+  'auth-required': 1,
+  stale: 2,
+  partial: 3,
+  unsupported: 4,
+  ok: 5,
+};
+
+const PROVIDER_KEY_PATTERNS: { key: string; pattern: RegExp }[] = [
+  { key: 'codex', pattern: /codex/i },
+  { key: 'claude', pattern: /claude/i },
+  { key: 'cursor', pattern: /cursor/i },
+  { key: 'opencode', pattern: /opencode/i },
+  { key: 'rtk', pattern: /rtk/i },
+  { key: 'gemini', pattern: /gemini/i },
+];
+
+const providerKeyFromRow = (row: DashboardRow) => {
+  const text = `${row.harness} ${row.provider}`;
+  return PROVIDER_KEY_PATTERNS.find(({ pattern }) => pattern.test(text))?.key ?? text.toLowerCase().trim();
+};
+
+const providerLabelFromKey = (key: string, fallback: string) => {
+  const known = PROVIDER_KEY_PATTERNS.find((provider) => provider.key === key);
+  if (!known) {
+    return fallback;
+  }
+  return known.key === 'rtk' ? 'RTK' : known.key[0]!.toUpperCase() + known.key.slice(1);
+};
+
+const providerFamily = (key: string) => key.split(':')[0] ?? key;
+
+const inferredProviderStatus = (row: DashboardRow, generatedAt: string): ProviderStatus => {
+  const key = providerKeyFromRow(row);
+  const machineId = row.source?.machineId;
+  const machineLabel = row.source?.machineLabel;
+  return {
+    key,
+    label: providerLabelFromKey(key, row.providerDisplay || row.provider || row.harness),
+    generatedAt,
+    source: 'unsupported',
+    state: key === 'claude' ? 'unsupported' : 'partial',
+    warnings: ['No provider quota dataset was collected for this provider.'],
+    ...(machineId === undefined ? {} : { machineId }),
+    ...(machineLabel === undefined ? {} : { machineLabel }),
+    windows: [],
+  };
+};
+
+const groupKeyForWindow = (window: ProviderLimitWindow): ProviderWindowGroupKey => {
+  if (window.group === '5h') {
+    return '5h';
+  }
+  if (window.group === 'weekly') {
+    return 'weekly';
+  }
+  if (window.group === 'monthly') {
+    return 'monthly';
+  }
+  return 'other';
+};
+
+const GROUP_LABELS: Record<ProviderWindowGroupKey, string> = {
+  '5h': '5h',
+  weekly: 'Weekly',
+  monthly: 'Monthly',
+  other: 'Other windows',
+};
+
+const windowGroupsFor = (windows: ProviderLimitWindow[]): ProviderStatusWindowGroup[] => {
+  const groups = new Map<ProviderWindowGroupKey, ProviderLimitWindow[]>();
+  for (const window of windows) {
+    const key = groupKeyForWindow(window);
+    groups.set(key, [...(groups.get(key) ?? []), window]);
+  }
+  return (['5h', 'weekly', 'monthly', 'other'] as const)
+    .map((key) => ({ key, label: GROUP_LABELS[key], windows: groups.get(key) ?? [] }))
+    .filter((group) => group.windows.length > 0);
+};
+
+const nextResetAtFor = (windows: ProviderLimitWindow[]) => {
+  let next: string | null = null;
+  for (const window of windows) {
+    if (!window.resetsAt) {
+      continue;
+    }
+    if (!next || new Date(window.resetsAt).getTime() < new Date(next).getTime()) {
+      next = window.resetsAt;
+    }
+  }
+  return next;
+};
+
+const worstUsedPercentFor = (windows: ProviderLimitWindow[]) => {
+  const values = windows.map((window) => window.usedPercent).filter((value) => value !== null);
+  return values.length ? Math.max(...values) : null;
+};
+
+const toneFor = (provider: ProviderStatus, worstUsedPercent: number | null): ProviderStatusTone => {
+  if (
+    provider.state === 'error' ||
+    provider.state === 'auth-required' ||
+    provider.windows.some((window) => window.blocked)
+  ) {
+    return 'critical';
+  }
+  if (
+    provider.state === 'stale' ||
+    provider.state === 'partial' ||
+    (worstUsedPercent !== null && worstUsedPercent >= 80)
+  ) {
+    return 'warning';
+  }
+  if (provider.state === 'unsupported') {
+    return 'muted';
+  }
+  return 'ok';
+};
+
+const sourceLabelFor = (provider: ProviderStatus) => {
+  switch (provider.source) {
+    case 'live-api':
+      return provider.state === 'stale' ? 'Stale live status' : 'Live status';
+    case 'local-history':
+      return 'Local history';
+    case 'manual':
+      return 'Manual status';
+    case 'unsupported':
+      return 'No quota source';
+    default:
+      return 'Provider status';
+  }
+};
+
+const creditsSummaryFor = (provider: ProviderStatus) => {
+  if (provider.resetCreditsAvailable !== undefined && provider.resetCreditsAvailable !== null) {
+    return `${provider.resetCreditsAvailable} reset credits`;
+  }
+  if (provider.creditsBalance) {
+    return `${provider.creditsBalance} credits`;
+  }
+  if (provider.resetCredits?.length) {
+    return `${provider.resetCredits.length} reset credits`;
+  }
+  return null;
+};
+
+const toProviderStatusView = (provider: ProviderStatus): ProviderStatusView => {
+  const worstUsedPercent = worstUsedPercentFor(provider.windows);
+  const accountParts = [provider.plan, provider.accountLabel].filter((value) => value?.trim());
+  return {
+    provider,
+    worstUsedPercent,
+    windowGroups: windowGroupsFor(provider.windows),
+    nextResetAt: nextResetAtFor(provider.windows),
+    tone: toneFor(provider, worstUsedPercent),
+    sourceLabel: sourceLabelFor(provider),
+    accountContext: accountParts.length ? accountParts.join(' · ') : null,
+    machineContext: provider.machineLabel ?? null,
+    creditsSummary: creditsSummaryFor(provider),
+  };
+};
+
+const explicitProviderStatuses = (payload: UsageReportPayload): ProviderStatus[] => {
+  const dataset = parseProviderStatusDataset(payload.datasets?.providerStatus ?? payload.facets?.providerStatus);
+  return dataset?.providers ?? [];
+};
+
+export const buildProviderStatusViews = (payload: UsageReportPayload, rows: DashboardRow[]): ProviderStatusView[] => {
+  const explicit = explicitProviderStatuses(payload);
+  const explicitFamilies = new Set(explicit.map((provider) => providerFamily(provider.key)));
+  const inferred = new Map<string, ProviderStatus>();
+  for (const row of rows) {
+    const key = providerKeyFromRow(row);
+    if (explicitFamilies.has(providerFamily(key)) || inferred.has(key)) {
+      continue;
+    }
+    inferred.set(key, inferredProviderStatus(row, payload.generatedAt));
+  }
+  return [...explicit, ...inferred.values()]
+    .map(toProviderStatusView)
+    .sort(
+      (a, b) =>
+        STATE_RANK[a.provider.state] - STATE_RANK[b.provider.state] ||
+        a.provider.label.localeCompare(b.provider.label) ||
+        (a.machineContext ?? '').localeCompare(b.machineContext ?? ''),
+    );
+};

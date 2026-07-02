@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { normalizeCodexRateLimitStatus, type ProviderStatus } from '@ai-usage/report-core/provider-status';
 import { actualCost, approximateApiCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import type { CollectedSession } from './collected-session';
@@ -61,6 +62,13 @@ export interface CodexQuotaSnapshot {
   primary: CodexQuotaWindow | null;
   secondary: CodexQuotaWindow | null;
   ts: Date;
+}
+
+export interface CodexProviderStatusOptions {
+  accountId?: string | null;
+  machineId?: string;
+  machineLabel?: string;
+  recentFileLimit?: number;
 }
 
 interface RawCodexRateLimitSnapshot {
@@ -887,31 +895,50 @@ const threadSpawnFromSource = (source: unknown): Record<string, unknown> | null 
   return isRecord(threadSpawn) ? threadSpawn : null;
 };
 
-const normalizeQuotaWindow = (window: unknown): CodexQuotaWindow | null => {
-  if (!isRecord(window)) {
-    return null;
-  }
-  const windowMinutes = Number(window.window_minutes ?? 0);
-  const usedPercent = Number(window.used_percent ?? 0);
-  const resetsAtSeconds = Number(window.resets_at);
-  const resetsAt = Number.isFinite(resetsAtSeconds) ? new Date(resetsAtSeconds * 1000) : null;
-  return { windowMinutes, usedPercent, resetsAt };
-};
-
 export const findLatestCodexQuotaSnapshot = (
   recentFileLimit = 40,
 ): Effect.Effect<CodexQuotaSnapshot | null, LocalHistoryError, LocalHistoryStorageService> =>
   Effect.gen(function* () {
-    const latest = yield* findLatestRawCodexRateLimits(recentFileLimit);
+    const status = yield* findLatestCodexProviderStatus({ recentFileLimit });
+    if (!status) {
+      return null;
+    }
+    const primary = status.windows.find((window) => window.id === 'primary') ?? null;
+    const secondary = status.windows.find((window) => window.id === 'secondary') ?? null;
+    return {
+      ts: new Date(status.generatedAt),
+      planType: status.plan ?? 'unknown',
+      primary: providerWindowToQuotaWindow(primary),
+      secondary: providerWindowToQuotaWindow(secondary),
+      credits: status.resetCreditsAvailable ?? null,
+    };
+  });
+
+const providerWindowToQuotaWindow = (window: ProviderStatus['windows'][number] | null): CodexQuotaWindow | null => {
+  if (!window) {
+    return null;
+  }
+  return {
+    windowMinutes: window.limitSeconds === null ? 0 : window.limitSeconds / 60,
+    usedPercent: window.usedPercent ?? 0,
+    resetsAt: window.resetsAt ? new Date(window.resetsAt) : null,
+  };
+};
+
+export const findLatestCodexProviderStatus = (
+  options: CodexProviderStatusOptions = {},
+): Effect.Effect<ProviderStatus | null, LocalHistoryError, LocalHistoryStorageService> =>
+  Effect.gen(function* () {
+    const latest = yield* findLatestRawCodexRateLimits(options.recentFileLimit ?? 40);
     if (!latest) {
       return null;
     }
-    const { rateLimits, ts } = latest;
-    return {
-      ts,
-      planType: String(rateLimits.plan_type ?? 'unknown'),
-      primary: normalizeQuotaWindow(rateLimits.primary),
-      secondary: normalizeQuotaWindow(rateLimits.secondary),
-      credits: rateLimits.credits == null ? null : Number(rateLimits.credits),
-    };
+    return normalizeCodexRateLimitStatus({
+      rateLimits: latest.rateLimits,
+      generatedAt: latest.ts,
+      source: 'local-history',
+      ...(options.accountId === undefined ? {} : { accountId: options.accountId }),
+      ...(options.machineId === undefined ? {} : { machineId: options.machineId }),
+      ...(options.machineLabel === undefined ? {} : { machineLabel: options.machineLabel }),
+    });
   });
