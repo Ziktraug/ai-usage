@@ -9,6 +9,7 @@ honor its STOP conditions, and update your row when done.
 | Plan | Title | Priority | Effort | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
 | 001 | Integrate Skill Management Into ai-usage | P1 | L | - | DONE |
+| 002 | Skills Inventory UI — Multi-Axis Redesign of `/skills` | P1 | L | 001 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -18,6 +19,9 @@ REJECTED (with one-line rationale).
 - Plan 001 is standalone. It intentionally sequences the work internally:
   boundary docs, package port, read-only UI, controlled mutations, then optional
   editor deferral.
+- Plan 002 builds on plan 001's snapshot and server-function seams. Steps 1–7
+  are the core redesign; step 8 (SKILL.md-only editor, superseding plan 001's
+  step-10 deferral) and step 9 (origin metadata) are explicitly deferrable.
 
 ## Findings considered and rejected
 

@@ -1,13 +1,11 @@
-import { css } from '@ai-usage/design-system/css';
+import { css, cx } from '@ai-usage/design-system/css';
 import {
   commandButton,
-  dateCell,
   ghostButton,
   header,
   headerActions,
   headerTop,
   meta,
-  muted,
   navButton,
   page,
   panel,
@@ -16,34 +14,45 @@ import {
   panelTitle,
   shell,
   strongCell,
-  summaryPill,
-  table,
-  tableWrap,
+  type TabItem,
+  Tabs,
   title,
   titleBlock,
 } from '@ai-usage/design-system/report';
-import type { SkillManagementConfig, SkillManagementSnapshot } from '@ai-usage/skills';
+import type {
+  ProjectionAction,
+  ProjectSkillInventory,
+  SkillManagementConfig,
+  SkillManagementSnapshot,
+} from '@ai-usage/skills';
 import { createFileRoute, Link } from '@tanstack/solid-router';
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import { createMemo, createResource, createSignal, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
 import {
   createManagedSkillTargetDirectory,
   getKnownSkillProjectPaths,
   getSkillManagementSnapshot,
+  getSkillProjectInventories,
   type KnownSkillProjectPath,
+  previewReconcileAllManagedSkills,
   reconcileAllManagedSkills,
   reconcileManagedSkill,
   saveSkillManagementConfig,
   toggleManagedSkill,
 } from '../server/skills';
+import { SkillsConsolidate } from '../skills-consolidate';
+import { SkillsDrawer } from '../skills-drawer';
+import { SkillsHealth } from '../skills-health';
+import { SkillsMatrix } from '../skills-matrix';
 import {
-  buildSkillSummaryTiles,
-  canReconcileAllActiveSkills,
-  canReconcileSkill,
-  projectionStateLabel,
-  skillProjectionSummary,
+  buildSkillHealthSummary,
+  buildSkillMatrix,
+  describeReconcileActions,
+  groupUnmanagedEntries,
+  type ReconcilePlanSummary,
 } from '../skills-page-model';
+import { SkillsProjects } from '../skills-projects';
 
 export const Route = createFileRoute('/skills')({
   loader: async () => ({
@@ -53,47 +62,28 @@ export const Route = createFileRoute('/skills')({
   component: SkillsRoute,
 });
 
-const pageStack = css({
-  display: 'grid',
-  gap: '16px',
-});
-
 const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
 
 type SkillSnapshotResult =
   | { ok: true; data: SkillManagementSnapshot }
-  | {
-      ok: false;
-      error: {
-        message: string;
-        tag: string;
-      };
-    };
+  | { ok: false; error: { message: string; tag: string } };
 
 type KnownProjectPathsResult =
   | { ok: true; data: readonly KnownSkillProjectPath[] }
-  | {
-      ok: false;
-      error: {
-        message: string;
-        tag: string;
-      };
-    };
+  | { ok: false; error: { message: string; tag: string } };
 
 interface SkillReconcileResult {
-  actions: readonly { type: string }[];
+  actions: readonly ProjectionAction[];
   snapshot: SkillManagementSnapshot;
 }
 
 type SkillReconcileServerResult =
   | { ok: true; data: SkillReconcileResult }
-  | {
-      ok: false;
-      error: {
-        message: string;
-        tag: string;
-      };
-    };
+  | { ok: false; error: { message: string; tag: string } };
+
+type ProjectInventoriesResult =
+  | { ok: true; data: readonly ProjectSkillInventory[] }
+  | { ok: false; error: { message: string; tag: string } };
 
 const skillSnapshotResultFrom = (value: unknown): SkillSnapshotResult => {
   if (typeof value !== 'object' || value === null || !('ok' in value)) {
@@ -102,22 +92,46 @@ const skillSnapshotResultFrom = (value: unknown): SkillSnapshotResult => {
   return value as SkillSnapshotResult;
 };
 
-const summaryGrid = css({
+const pageStack = css({
   display: 'grid',
-  gridTemplateColumns: { base: '1fr', md: 'repeat(5, minmax(0, 1fr))' },
-  gap: '12px',
+  gap: '16px',
 });
 
-const sectionGrid = css({
-  display: 'grid',
-  gridTemplateColumns: { base: '1fr', xl: 'minmax(0, 1.15fr) minmax(320px, 0.85fr)' },
-  gap: '16px',
-  alignItems: 'start',
+// The shared headerTop does not wrap; with this page's long title the fixed
+// header actions overflow the 390px viewport, so allow wrapping here.
+const headerWrap = css({
+  flexWrap: 'wrap',
 });
 
 const stack = css({
   display: 'grid',
   gap: '12px',
+});
+
+const fold = css({
+  p: '0',
+  overflow: 'hidden',
+});
+
+const foldSummary = css({
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: '12px',
+  p: '14px 16px',
+  cursor: 'pointer',
+});
+
+const foldBody = css({
+  display: 'grid',
+  gap: '14px',
+  p: '0 16px 16px',
+});
+
+const foldsGrid = css({
+  display: 'grid',
+  gridTemplateColumns: { base: '1fr', xl: 'minmax(0, 0.75fr) minmax(360px, 1.25fr)' },
+  gap: '16px',
 });
 
 const emptyState = css({
@@ -128,29 +142,6 @@ const emptyState = css({
   color: 'muted',
   fontSize: '13px',
   lineHeight: 1.6,
-});
-
-const tableCompact = css({
-  minW: '760px',
-});
-
-const statusText = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  h: '22px',
-  px: '8px',
-  borderRadius: 'full',
-  border: '1px solid token(colors.line)',
-  bg: 'surface',
-  fontSize: '11px',
-  fontWeight: 650,
-});
-
-const actionRow = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '8px',
-  alignItems: 'center',
 });
 
 const formGrid = css({
@@ -208,6 +199,7 @@ const operationPanel = css({
   bg: 'surfaceMuted',
   color: 'muted',
   fontSize: '12px',
+  whiteSpace: 'pre-wrap',
 });
 
 const projectPathList = css({
@@ -226,6 +218,37 @@ const projectPathRow = css({
   bg: 'surfaceMuted',
 });
 
+const targetRow = css({
+  display: 'grid',
+  gap: '5px',
+  p: '10px 0',
+  borderTop: '1px solid token(colors.line)',
+});
+
+const disabledRow = css({
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  gap: '10px',
+  alignItems: 'center',
+  p: '10px 0',
+  borderTop: '1px solid token(colors.line)',
+});
+
+const skillSnapshotResult = (value: unknown) => value as SkillSnapshotResult;
+
+const actionSummary = (actions: readonly ProjectionAction[]) => {
+  if (actions.length === 0) {
+    return 'no changes';
+  }
+  return actions
+    .map((action) =>
+      action.type === 'refuse-unmanaged-mutation'
+        ? `skipped: ${action.reason}`
+        : `${action.type}: ${action.skillName} → ${action.targetId}`,
+    )
+    .join('\n');
+};
+
 function SkillsRoute() {
   const data = Route.useLoaderData();
   const [result, setResult] = createSignal<SkillSnapshotResult>(skillSnapshotResultFrom(data().skills));
@@ -240,6 +263,10 @@ function SkillsRoute() {
   });
   const [pendingOperation, setPendingOperation] = createSignal<string | null>(null);
   const [operationMessage, setOperationMessage] = createSignal<string | null>(null);
+  const [reconcilePlan, setReconcilePlan] = createSignal<ReconcilePlanSummary | null>(null);
+  const [activeTab, setActiveTab] = createSignal('global');
+  const [selectedSkillName, setSelectedSkillName] = createSignal<string | null>(null);
+  let drawerOrigin: HTMLElement | null = null;
   const snapshot = createMemo(() => {
     const current = result();
     return current.ok ? current.data : undefined;
@@ -248,10 +275,13 @@ function SkillsRoute() {
     const current = result();
     return current.ok ? '' : current.error.message;
   });
-  const summaryTiles = createMemo(() => (snapshot() ? buildSkillSummaryTiles(snapshot()!) : []));
   const [sourceRepoPath, setSourceRepoPath] = createSignal(snapshot()?.config.sourceRepoPath ?? '');
   const [projectPaths, setProjectPaths] = createSignal<readonly string[]>(snapshot()?.config.projectPaths ?? []);
   const [projectPathDraft, setProjectPathDraft] = createSignal('');
+  const [projectInventories] = createResource(
+    () => (activeTab() === 'projects' ? true : undefined),
+    async () => (await getSkillProjectInventories()) as ProjectInventoriesResult,
+  );
 
   const applySnapshotResult = (next: SkillSnapshotResult, message: string) => {
     setResult(next);
@@ -264,10 +294,7 @@ function SkillsRoute() {
       return;
     }
     setResult({ ok: true, data: next.data.snapshot });
-    const actionSummary = next.data.actions.length
-      ? next.data.actions.map((action) => action.type).join(', ')
-      : 'no changes';
-    setOperationMessage(`${fallbackMessage}: ${actionSummary}.`);
+    setOperationMessage(`${fallbackMessage}:\n${actionSummary(next.data.actions)}.`);
   };
 
   const runOperation = async (operation: string, action: () => Promise<void>) => {
@@ -276,6 +303,9 @@ function SkillsRoute() {
     }
     setPendingOperation(operation);
     setOperationMessage(null);
+    // Any operation invalidates a pending reconcile preview: the planned
+    // actions were computed against the pre-operation snapshot.
+    setReconcilePlan(null);
     try {
       await action();
     } finally {
@@ -311,40 +341,67 @@ function SkillsRoute() {
 
   const saveConfig = () =>
     runOperation('save-config', async () => {
-      applySnapshotResult(await saveSkillManagementConfig({ data: configInput() }), 'Skill config saved.');
+      applySnapshotResult(
+        skillSnapshotResult(await saveSkillManagementConfig({ data: configInput() })),
+        'Skill config saved.',
+      );
     });
 
   const toggleSkill = (skillName: string, enabled: boolean) =>
     runOperation(`toggle:${skillName}`, async () => {
       applyReconcileResult(
-        await toggleManagedSkill({ data: { enabled, skillName } }),
+        (await toggleManagedSkill({ data: { enabled, skillName } })) as SkillReconcileServerResult,
         enabled ? `Enabled ${skillName}` : `Disabled ${skillName}`,
       );
     });
 
   const reconcileSkill = (skillName: string) =>
     runOperation(`reconcile:${skillName}`, async () => {
-      applyReconcileResult(await reconcileManagedSkill({ data: skillName }), `Reconciled ${skillName}`);
+      applyReconcileResult(
+        (await reconcileManagedSkill({ data: skillName })) as SkillReconcileServerResult,
+        `Reconciled ${skillName}`,
+      );
     });
 
-  const reconcileAll = () =>
-    runOperation('reconcile-all', async () => {
-      applyReconcileResult(await reconcileAllManagedSkills(), 'Reconciled active skills');
+  const previewReconcile = () =>
+    runOperation('preview-reconcile', async () => {
+      const next = (await previewReconcileAllManagedSkills()) as SkillReconcileServerResult;
+      if (!next.ok) {
+        setOperationMessage(next.error.message);
+        return;
+      }
+      setResult({ ok: true, data: next.data.snapshot });
+      setReconcilePlan(describeReconcileActions(next.data.actions, next.data.snapshot.targets));
     });
+
+  const applyReconcile = () =>
+    runOperation('reconcile-all', async () => {
+      applyReconcileResult(
+        (await reconcileAllManagedSkills()) as SkillReconcileServerResult,
+        'Reconciled active skills',
+      );
+    });
+
+  const cancelReconcile = () => setReconcilePlan(null);
 
   const createTargetDirectory = (targetId: string) =>
     runOperation(`target:${targetId}`, async () => {
       applySnapshotResult(
-        await createManagedSkillTargetDirectory({ data: { targetId } }),
+        skillSnapshotResult(await createManagedSkillTargetDirectory({ data: { targetId } })),
         `Created target directory ${targetId}.`,
       );
     });
+
+  const selectedSkill = createMemo(() => {
+    const skillName = selectedSkillName();
+    return snapshot()?.skills.find((skill) => skill.name === skillName);
+  });
 
   return (
     <main class={page}>
       <div class={shell}>
         <header class={header}>
-          <div class={headerTop}>
+          <div class={cx(headerTop, headerWrap)}>
             <div class={titleBlock}>
               <h1 class={title}>Skill management</h1>
               <div class={meta}>
@@ -388,59 +445,322 @@ function SkillsRoute() {
                   sourceRepoPath={sourceRepoPath()}
                 />
               }
-              when={snapshot()}
+              when={snapshot()?.configured}
             >
-              {(loadedSnapshot) => (
-                <Show
-                  fallback={
-                    <UnconfiguredPanel
-                      addProjectPath={addProjectPath}
-                      knownProjectPaths={knownProjectPaths()}
-                      knownProjectPathsError={knownProjectPathsError()}
-                      operationMessage={operationMessage()}
-                      pendingOperation={pendingOperation()}
-                      projectPathDraft={projectPathDraft()}
-                      projectPaths={projectPaths()}
-                      removeProjectPath={removeProjectPath}
-                      saveConfig={saveConfig}
-                      setProjectPathDraft={setProjectPathDraft}
-                      setSourceRepoPath={setSourceRepoPath}
-                      sourceRepoPath={sourceRepoPath()}
-                    />
-                  }
-                  when={loadedSnapshot().configured}
-                >
-                  <ConfiguredSnapshot
-                    addProjectPath={addProjectPath}
-                    createTargetDirectory={createTargetDirectory}
-                    knownProjectPaths={knownProjectPaths()}
-                    knownProjectPathsError={knownProjectPathsError()}
-                    operationMessage={operationMessage()}
-                    pendingOperation={pendingOperation()}
-                    projectPathDraft={projectPathDraft()}
-                    projectPaths={projectPaths()}
-                    reconcileAll={reconcileAll}
-                    reconcileSkill={reconcileSkill}
-                    removeProjectPath={removeProjectPath}
-                    saveConfig={saveConfig}
-                    setProjectPathDraft={setProjectPathDraft}
-                    setSourceRepoPath={setSourceRepoPath}
-                    snapshot={loadedSnapshot()}
-                    sourceRepoPath={sourceRepoPath()}
-                    summaryTiles={summaryTiles()}
-                    toggleSkill={toggleSkill}
-                  />
-                </Show>
-              )}
+              <ConfiguredSnapshot
+                activeTab={activeTab()}
+                addProjectPath={addProjectPath}
+                createTargetDirectory={createTargetDirectory}
+                knownProjectPaths={knownProjectPaths()}
+                knownProjectPathsError={knownProjectPathsError()}
+                onApplyReconcile={applyReconcile}
+                onCancelReconcile={cancelReconcile}
+                onOpenSkill={(skillName, element) => {
+                  drawerOrigin = element;
+                  setSelectedSkillName(skillName);
+                }}
+                onPreviewReconcile={previewReconcile}
+                operationMessage={operationMessage()}
+                pendingOperation={pendingOperation()}
+                projectInventories={projectInventories()}
+                projectInventoriesLoading={projectInventories.loading}
+                projectPathDraft={projectPathDraft()}
+                projectPaths={projectPaths()}
+                reconcilePlan={reconcilePlan()}
+                reconcileSkill={reconcileSkill}
+                removeProjectPath={removeProjectPath}
+                saveConfig={saveConfig}
+                setActiveTab={setActiveTab}
+                setProjectPathDraft={setProjectPathDraft}
+                setSourceRepoPath={setSourceRepoPath}
+                snapshot={snapshot()!}
+                sourceRepoPath={sourceRepoPath()}
+                toggleSkill={toggleSkill}
+              />
             </Show>
           </Show>
         </div>
+        <Show when={selectedSkill()}>
+          {(skill) => (
+            <SkillsDrawer
+              finalFocusEl={() => drawerOrigin}
+              onClose={() => setSelectedSkillName(null)}
+              onSnapshot={(nextSnapshot) => setResult({ ok: true, data: nextSnapshot })}
+              pendingOperation={pendingOperation()}
+              reconcileSkill={reconcileSkill}
+              skill={skill()}
+              snapshot={snapshot()!}
+              toggleSkill={toggleSkill}
+            />
+          )}
+        </Show>
       </div>
     </main>
   );
 }
 
 function ConfiguredSnapshot(props: {
+  activeTab: string;
+  addProjectPath: () => void;
+  createTargetDirectory: (targetId: string) => void;
+  knownProjectPaths: readonly KnownSkillProjectPath[];
+  knownProjectPathsError: string | null;
+  onApplyReconcile: () => void;
+  onCancelReconcile: () => void;
+  onOpenSkill: (skillName: string, element: HTMLElement) => void;
+  onPreviewReconcile: () => void;
+  operationMessage: string | null;
+  pendingOperation: string | null;
+  projectInventories: ProjectInventoriesResult | undefined;
+  projectInventoriesLoading: boolean;
+  projectPathDraft: string;
+  projectPaths: readonly string[];
+  reconcilePlan: ReconcilePlanSummary | null;
+  reconcileSkill: (skillName: string) => void;
+  removeProjectPath: (value: string) => void;
+  saveConfig: () => void;
+  setActiveTab: (value: string) => void;
+  setProjectPathDraft: (value: string) => void;
+  setSourceRepoPath: (value: string) => void;
+  snapshot: SkillManagementSnapshot;
+  sourceRepoPath: string;
+  toggleSkill: (skillName: string, enabled: boolean) => void;
+}) {
+  const health = createMemo(() => buildSkillHealthSummary(props.snapshot));
+  const matrix = createMemo(() => buildSkillMatrix(props.snapshot));
+  const unmanagedGroups = createMemo(() => groupUnmanagedEntries(props.snapshot));
+  const disabledRows = createMemo(() => matrix().rows.filter((row) => !row.enabled));
+  const snapshotDiagnostics = createMemo(() =>
+    props.snapshot.diagnostics.filter((diagnostic) => diagnostic.skillName === undefined),
+  );
+  const projectItems = createMemo<readonly TabItem[]>(() => [
+    {
+      content: () => (
+        <GlobalTab
+          addProjectPath={props.addProjectPath}
+          createTargetDirectory={props.createTargetDirectory}
+          disabledRows={disabledRows()}
+          health={health()}
+          knownProjectPaths={props.knownProjectPaths}
+          knownProjectPathsError={props.knownProjectPathsError}
+          onApplyReconcile={props.onApplyReconcile}
+          onCancelReconcile={props.onCancelReconcile}
+          onOpenSkill={props.onOpenSkill}
+          onPreviewReconcile={props.onPreviewReconcile}
+          operationMessage={props.operationMessage}
+          pendingOperation={props.pendingOperation}
+          projectPathDraft={props.projectPathDraft}
+          projectPaths={props.projectPaths}
+          reconcilePlan={props.reconcilePlan}
+          removeProjectPath={props.removeProjectPath}
+          saveConfig={props.saveConfig}
+          setProjectPathDraft={props.setProjectPathDraft}
+          setSourceRepoPath={props.setSourceRepoPath}
+          snapshot={props.snapshot}
+          snapshotDiagnostics={snapshotDiagnostics()}
+          sourceRepoPath={props.sourceRepoPath}
+          toggleSkill={props.toggleSkill}
+          unmanagedGroups={unmanagedGroups()}
+        />
+      ),
+      label: 'Global',
+      value: 'global',
+    },
+    {
+      content: () => (
+        <ProjectsTab
+          addProjectPath={props.addProjectPath}
+          knownProjectPaths={props.knownProjectPaths}
+          knownProjectPathsError={props.knownProjectPathsError}
+          operationMessage={props.operationMessage}
+          pendingOperation={props.pendingOperation}
+          projectInventories={props.projectInventories}
+          projectInventoriesLoading={props.projectInventoriesLoading}
+          projectPathDraft={props.projectPathDraft}
+          projectPaths={props.projectPaths}
+          removeProjectPath={props.removeProjectPath}
+          saveConfig={props.saveConfig}
+          setProjectPathDraft={props.setProjectPathDraft}
+          setSourceRepoPath={props.setSourceRepoPath}
+          sourceRepoPath={props.sourceRepoPath}
+        />
+      ),
+      label: `Projects (${props.projectPaths.length})`,
+      value: 'projects',
+    },
+  ]);
+
+  return (
+    <Tabs ariaLabel="Skill views" items={projectItems()} onValueChange={props.setActiveTab} value={props.activeTab} />
+  );
+}
+
+function GlobalTab(props: {
+  addProjectPath: () => void;
+  createTargetDirectory: (targetId: string) => void;
+  disabledRows: readonly ReturnType<typeof buildSkillMatrix>['rows'][number][];
+  health: ReturnType<typeof buildSkillHealthSummary>;
+  knownProjectPaths: readonly KnownSkillProjectPath[];
+  knownProjectPathsError: string | null;
+  onApplyReconcile: () => void;
+  onCancelReconcile: () => void;
+  onOpenSkill: (skillName: string, element: HTMLElement) => void;
+  onPreviewReconcile: () => void;
+  operationMessage: string | null;
+  pendingOperation: string | null;
+  projectPathDraft: string;
+  projectPaths: readonly string[];
+  reconcilePlan: ReconcilePlanSummary | null;
+  removeProjectPath: (value: string) => void;
+  saveConfig: () => void;
+  setProjectPathDraft: (value: string) => void;
+  setSourceRepoPath: (value: string) => void;
+  snapshot: SkillManagementSnapshot;
+  snapshotDiagnostics: readonly SkillManagementSnapshot['diagnostics'][number][];
+  sourceRepoPath: string;
+  toggleSkill: (skillName: string, enabled: boolean) => void;
+  unmanagedGroups: ReturnType<typeof groupUnmanagedEntries>;
+}) {
+  return (
+    <div class={stack}>
+      <SkillsHealth snapshot={props.snapshot} summary={props.health} />
+      <SkillsMatrix
+        onApplyReconcile={props.onApplyReconcile}
+        onCancelReconcile={props.onCancelReconcile}
+        onOpenSkill={props.onOpenSkill}
+        onPreviewReconcile={props.onPreviewReconcile}
+        operationMessage={props.operationMessage}
+        pendingOperation={props.pendingOperation}
+        reconcilePlan={props.reconcilePlan}
+        snapshot={props.snapshot}
+        toggleSkill={props.toggleSkill}
+      />
+      <SkillsConsolidate groups={props.unmanagedGroups} total={props.health.consolidateCount} />
+      <div class={foldsGrid}>
+        <DisabledFold
+          disabledRows={props.disabledRows}
+          pendingOperation={props.pendingOperation}
+          toggleSkill={props.toggleSkill}
+        />
+        <ConfigurationFold
+          addProjectPath={props.addProjectPath}
+          createTargetDirectory={props.createTargetDirectory}
+          knownProjectPaths={props.knownProjectPaths}
+          knownProjectPathsError={props.knownProjectPathsError}
+          operationMessage={props.operationMessage}
+          pendingOperation={props.pendingOperation}
+          projectPathDraft={props.projectPathDraft}
+          projectPaths={props.projectPaths}
+          removeProjectPath={props.removeProjectPath}
+          saveConfig={props.saveConfig}
+          setProjectPathDraft={props.setProjectPathDraft}
+          setSourceRepoPath={props.setSourceRepoPath}
+          snapshot={props.snapshot}
+          snapshotDiagnostics={props.snapshotDiagnostics}
+          sourceRepoPath={props.sourceRepoPath}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ProjectsTab(props: {
+  addProjectPath: () => void;
+  knownProjectPaths: readonly KnownSkillProjectPath[];
+  knownProjectPathsError: string | null;
+  operationMessage: string | null;
+  pendingOperation: string | null;
+  projectInventories: ProjectInventoriesResult | undefined;
+  projectInventoriesLoading: boolean;
+  projectPathDraft: string;
+  projectPaths: readonly string[];
+  removeProjectPath: (value: string) => void;
+  saveConfig: () => void;
+  setProjectPathDraft: (value: string) => void;
+  setSourceRepoPath: (value: string) => void;
+  sourceRepoPath: string;
+}) {
+  const inventories = () => (props.projectInventories?.ok ? props.projectInventories.data : []);
+  return (
+    <div class={stack}>
+      <Show when={props.projectInventories?.ok === false}>
+        <section class={panel}>
+          <p class={meta}>{props.projectInventories?.ok === false ? props.projectInventories.error.message : ''}</p>
+        </section>
+      </Show>
+      <Show
+        fallback={
+          <section class={panel}>
+            <p class={meta}>Loading projects…</p>
+          </section>
+        }
+        when={!props.projectInventoriesLoading}
+      >
+        <SkillsProjects inventories={inventories()} />
+      </Show>
+      <details class={cx(panel, fold)}>
+        <summary class={foldSummary}>
+          <span class={strongCell}>Add a project</span>
+        </summary>
+        <div class={foldBody}>
+          <ConfigPanel
+            addProjectPath={props.addProjectPath}
+            knownProjectPaths={props.knownProjectPaths}
+            knownProjectPathsError={props.knownProjectPathsError}
+            operationMessage={props.operationMessage}
+            pendingOperation={props.pendingOperation}
+            projectPathDraft={props.projectPathDraft}
+            projectPaths={props.projectPaths}
+            removeProjectPath={props.removeProjectPath}
+            saveConfig={props.saveConfig}
+            setProjectPathDraft={props.setProjectPathDraft}
+            setSourceRepoPath={props.setSourceRepoPath}
+            sourceRepoPath={props.sourceRepoPath}
+          />
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function DisabledFold(props: {
+  disabledRows: readonly ReturnType<typeof buildSkillMatrix>['rows'][number][];
+  pendingOperation: string | null;
+  toggleSkill: (skillName: string, enabled: boolean) => void;
+}) {
+  return (
+    <details class={cx(panel, fold)}>
+      <summary class={foldSummary}>
+        <span class={strongCell}>Disabled</span>
+        <span class={meta}>{props.disabledRows.length}</span>
+      </summary>
+      <div class={foldBody}>
+        <Show fallback={<p class={meta}>No disabled skills.</p>} when={props.disabledRows.length > 0}>
+          <For each={props.disabledRows}>
+            {(row) => (
+              <div class={disabledRow}>
+                <div>
+                  <div class={strongCell}>{row.name}</div>
+                  <div class={meta}>{row.description || 'No description'}</div>
+                </div>
+                <button
+                  class={ghostButton}
+                  disabled={props.pendingOperation !== null}
+                  onClick={() => props.toggleSkill(row.name, true)}
+                  type="button"
+                >
+                  Enable
+                </button>
+              </div>
+            )}
+          </For>
+        </Show>
+      </div>
+    </details>
+  );
+}
+
+function ConfigurationFold(props: {
   addProjectPath: () => void;
   createTargetDirectory: (targetId: string) => void;
   knownProjectPaths: readonly KnownSkillProjectPath[];
@@ -449,72 +769,53 @@ function ConfiguredSnapshot(props: {
   pendingOperation: string | null;
   projectPathDraft: string;
   projectPaths: readonly string[];
-  reconcileAll: () => void;
-  reconcileSkill: (skillName: string) => void;
   removeProjectPath: (value: string) => void;
   saveConfig: () => void;
   setProjectPathDraft: (value: string) => void;
   setSourceRepoPath: (value: string) => void;
   snapshot: SkillManagementSnapshot;
+  snapshotDiagnostics: readonly SkillManagementSnapshot['diagnostics'][number][];
   sourceRepoPath: string;
-  summaryTiles: readonly ReturnType<typeof buildSkillSummaryTiles>[number][];
-  toggleSkill: (skillName: string, enabled: boolean) => void;
 }) {
   return (
-    <>
-      <ConfigPanel
-        addProjectPath={props.addProjectPath}
-        knownProjectPaths={props.knownProjectPaths}
-        knownProjectPathsError={props.knownProjectPathsError}
-        operationMessage={props.operationMessage}
-        pendingOperation={props.pendingOperation}
-        projectPathDraft={props.projectPathDraft}
-        projectPaths={props.projectPaths}
-        removeProjectPath={props.removeProjectPath}
-        saveConfig={props.saveConfig}
-        setProjectPathDraft={props.setProjectPathDraft}
-        setSourceRepoPath={props.setSourceRepoPath}
-        sourceRepoPath={props.sourceRepoPath}
-      />
-      <section class={summaryGrid}>
-        <For each={props.summaryTiles}>
-          {(tile) => (
-            <div class={panel}>
-              <div class={panelHeader}>
-                <div class={panelSub}>{tile.label}</div>
-                <div class={panelTitle}>{tile.value}</div>
-              </div>
-            </div>
-          )}
-        </For>
-      </section>
-
-      <section class={sectionGrid}>
-        <div class={stack}>
-          <SkillsTable
-            pendingOperation={props.pendingOperation}
-            reconcileSkill={props.reconcileSkill}
-            snapshot={props.snapshot}
-            toggleSkill={props.toggleSkill}
-          />
-          <UnmanagedTable snapshot={props.snapshot} />
-        </div>
-        <div class={stack}>
-          <ActionsPanel
-            pendingOperation={props.pendingOperation}
-            reconcileAll={props.reconcileAll}
-            snapshot={props.snapshot}
-          />
-          <TargetsTable
-            createTargetDirectory={props.createTargetDirectory}
-            pendingOperation={props.pendingOperation}
-            snapshot={props.snapshot}
-          />
-          <DiagnosticsPanel snapshot={props.snapshot} />
-          <NativeRulesPanel snapshot={props.snapshot} />
-        </div>
-      </section>
-    </>
+    <details class={cx(panel, fold)}>
+      <summary class={foldSummary}>
+        <span class={strongCell}>Configuration & runtimes</span>
+        <span class={meta}>{props.snapshot.targets.length} runtimes</span>
+      </summary>
+      <div class={foldBody}>
+        <ConfigPanel
+          addProjectPath={props.addProjectPath}
+          knownProjectPaths={props.knownProjectPaths}
+          knownProjectPathsError={props.knownProjectPathsError}
+          operationMessage={props.operationMessage}
+          pendingOperation={props.pendingOperation}
+          projectPathDraft={props.projectPathDraft}
+          projectPaths={props.projectPaths}
+          removeProjectPath={props.removeProjectPath}
+          saveConfig={props.saveConfig}
+          setProjectPathDraft={props.setProjectPathDraft}
+          setSourceRepoPath={props.setSourceRepoPath}
+          sourceRepoPath={props.sourceRepoPath}
+        />
+        <TargetsPanel
+          createTargetDirectory={props.createTargetDirectory}
+          pendingOperation={props.pendingOperation}
+          snapshot={props.snapshot}
+        />
+        <Show when={props.snapshotDiagnostics.length > 0}>
+          <div class={stack}>
+            <For each={props.snapshotDiagnostics}>
+              {(diagnostic) => (
+                <p class={meta}>
+                  {diagnostic.severity}: {diagnostic.message}
+                </p>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+    </details>
   );
 }
 
@@ -533,11 +834,7 @@ function ConfigPanel(props: {
   sourceRepoPath: string;
 }) {
   return (
-    <section class={panel}>
-      <div class={panelHeader}>
-        <h2 class={panelTitle}>Configuration</h2>
-        <p class={panelSub}>User-local settings in the ai-usage config file.</p>
-      </div>
+    <section class={stack}>
       <div class={configStack}>
         <div class={formGrid}>
           <label class={formField}>
@@ -561,10 +858,7 @@ function ConfigPanel(props: {
         <div class={stack}>
           <div class={panelHeader}>
             <h3 class={panelTitle}>Project paths</h3>
-            <p class={panelSub}>
-              Optional local projects for rule diagnostics. Pick from projects already present in the report, or add a
-              path manually.
-            </p>
+            <p class={panelSub}>Pick from projects already present in the report, or add a path manually.</p>
           </div>
           <div class={projectPickerGrid}>
             <label class={formField}>
@@ -652,6 +946,42 @@ function ManualProjectPathField(props: {
   );
 }
 
+function TargetsPanel(props: {
+  createTargetDirectory: (targetId: string) => void;
+  pendingOperation: string | null;
+  snapshot: SkillManagementSnapshot;
+}) {
+  return (
+    <section class={stack}>
+      <div class={panelHeader}>
+        <h3 class={panelTitle}>Runtimes</h3>
+        <p class={panelSub}>{props.snapshot.summary.targetCount} configured runtime targets</p>
+      </div>
+      <For each={props.snapshot.targets}>
+        {(target) => (
+          <div class={targetRow}>
+            <div class={strongCell}>{target.label}</div>
+            <div class={meta}>
+              {target.enabled ? 'Enabled' : 'Disabled'} · {target.missing ? 'Missing directory' : 'Observed'} ·{' '}
+              {target.path}
+            </div>
+            <Show when={target.missing}>
+              <button
+                class={ghostButton}
+                disabled={props.pendingOperation !== null}
+                onClick={() => props.createTargetDirectory(target.id)}
+                type="button"
+              >
+                Create directory
+              </button>
+            </Show>
+          </div>
+        )}
+      </For>
+    </section>
+  );
+}
+
 function ErrorPanel(props: { message: string }) {
   return (
     <section class={panel}>
@@ -683,219 +1013,22 @@ function UnconfiguredPanel(props: {
         Configure <span class={strongCell}>skills.sourceRepoPath</span> in the ai-usage config to load the local skill
         source repository.
       </section>
-      <ConfigPanel
-        addProjectPath={props.addProjectPath}
-        knownProjectPaths={props.knownProjectPaths}
-        knownProjectPathsError={props.knownProjectPathsError}
-        operationMessage={props.operationMessage}
-        pendingOperation={props.pendingOperation}
-        projectPathDraft={props.projectPathDraft}
-        projectPaths={props.projectPaths}
-        removeProjectPath={props.removeProjectPath}
-        saveConfig={props.saveConfig}
-        setProjectPathDraft={props.setProjectPathDraft}
-        setSourceRepoPath={props.setSourceRepoPath}
-        sourceRepoPath={props.sourceRepoPath}
-      />
+      <section class={panel}>
+        <ConfigPanel
+          addProjectPath={props.addProjectPath}
+          knownProjectPaths={props.knownProjectPaths}
+          knownProjectPathsError={props.knownProjectPathsError}
+          operationMessage={props.operationMessage}
+          pendingOperation={props.pendingOperation}
+          projectPathDraft={props.projectPathDraft}
+          projectPaths={props.projectPaths}
+          removeProjectPath={props.removeProjectPath}
+          saveConfig={props.saveConfig}
+          setProjectPathDraft={props.setProjectPathDraft}
+          setSourceRepoPath={props.setSourceRepoPath}
+          sourceRepoPath={props.sourceRepoPath}
+        />
+      </section>
     </div>
-  );
-}
-
-function SkillsTable(props: {
-  pendingOperation: string | null;
-  reconcileSkill: (skillName: string) => void;
-  snapshot: SkillManagementSnapshot;
-  toggleSkill: (skillName: string, enabled: boolean) => void;
-}) {
-  return (
-    <section>
-      <div class={tableWrap}>
-        <table class={`${table} ${tableCompact}`}>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Description</th>
-              <th>Enabled</th>
-              <th>Tokens</th>
-              <th>Validation</th>
-              <th>Targets</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <For each={props.snapshot.skills}>
-              {(skill) => (
-                <tr>
-                  <td class={strongCell}>{skill.name}</td>
-                  <td>{skill.description || <span class={muted}>No description</span>}</td>
-                  <td>{skill.enabled ? 'Enabled' : 'Disabled'}</td>
-                  <td class={dateCell}>{skill.tokenCount?.total ?? 0} approx</td>
-                  <td>
-                    <span class={statusText}>{skill.validationStatus}</span>
-                  </td>
-                  <td>{skillProjectionSummary(skill, props.snapshot.projections)}</td>
-                  <td>
-                    <div class={actionRow}>
-                      <button
-                        class={ghostButton}
-                        disabled={props.pendingOperation !== null}
-                        onClick={() => props.toggleSkill(skill.name, !skill.enabled)}
-                        type="button"
-                      >
-                        {skill.enabled ? 'Disable' : 'Enable'}
-                      </button>
-                      <button
-                        class={ghostButton}
-                        disabled={props.pendingOperation !== null || !canReconcileSkill(skill, props.snapshot)}
-                        onClick={() => props.reconcileSkill(skill.name)}
-                        type="button"
-                      >
-                        Reconcile
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </For>
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
-function ActionsPanel(props: {
-  pendingOperation: string | null;
-  reconcileAll: () => void;
-  snapshot: SkillManagementSnapshot;
-}) {
-  const canReconcile = createMemo(() => canReconcileAllActiveSkills(props.snapshot));
-  return (
-    <section class={panel}>
-      <div class={panelHeader}>
-        <h2 class={panelTitle}>Reconcile</h2>
-        <p class={panelSub}>Apply safe symlink actions for valid active skills.</p>
-      </div>
-      <div class={actionRow}>
-        <button
-          class={commandButton}
-          disabled={props.pendingOperation !== null || !canReconcile()}
-          onClick={props.reconcileAll}
-          type="button"
-        >
-          Reconcile all
-        </button>
-      </div>
-      <Show when={!canReconcile()}>
-        <p class={meta}>Reconcile all is disabled while unmanaged target content needs review.</p>
-      </Show>
-    </section>
-  );
-}
-
-function TargetsTable(props: {
-  createTargetDirectory: (targetId: string) => void;
-  pendingOperation: string | null;
-  snapshot: SkillManagementSnapshot;
-}) {
-  return (
-    <section class={panel}>
-      <div class={panelHeader}>
-        <h2 class={panelTitle}>Targets</h2>
-        <p class={panelSub}>{props.snapshot.summary.targetCount} configured runtime targets</p>
-      </div>
-      <div class={stack}>
-        <For each={props.snapshot.targets}>
-          {(target) => (
-            <div>
-              <div class={strongCell}>{target.label}</div>
-              <div class={meta}>
-                {target.enabled ? 'Enabled' : 'Disabled'} · {target.missing ? 'Missing directory' : 'Observed'} ·{' '}
-                {target.path}
-              </div>
-              <Show when={target.missing}>
-                <button
-                  class={ghostButton}
-                  disabled={props.pendingOperation !== null}
-                  onClick={() => props.createTargetDirectory(target.id)}
-                  type="button"
-                >
-                  Create directory
-                </button>
-              </Show>
-            </div>
-          )}
-        </For>
-      </div>
-    </section>
-  );
-}
-
-function UnmanagedTable(props: { snapshot: SkillManagementSnapshot }) {
-  return (
-    <section class={panel}>
-      <div class={panelHeader}>
-        <h2 class={panelTitle}>Unmanaged target entries</h2>
-        <p class={panelSub}>{props.snapshot.summary.unmanagedEntryCount} entries outside managed source skills</p>
-      </div>
-      <Show
-        fallback={<p class={meta}>No unmanaged target entries.</p>}
-        when={props.snapshot.unmanagedEntries.length > 0}
-      >
-        <div class={stack}>
-          <For each={props.snapshot.unmanagedEntries}>
-            {(entry) => (
-              <div>
-                <span class={summaryPill}>{projectionStateLabel(entry.state)}</span>
-                <div class={meta}>{entry.expectedPath}</div>
-              </div>
-            )}
-          </For>
-        </div>
-      </Show>
-    </section>
-  );
-}
-
-function DiagnosticsPanel(props: { snapshot: SkillManagementSnapshot }) {
-  return (
-    <section class={panel}>
-      <div class={panelHeader}>
-        <h2 class={panelTitle}>Diagnostics</h2>
-        <p class={panelSub}>{props.snapshot.summary.diagnosticCount} findings</p>
-      </div>
-      <Show fallback={<p class={meta}>No diagnostics.</p>} when={props.snapshot.diagnostics.length > 0}>
-        <div class={stack}>
-          <For each={props.snapshot.diagnostics}>
-            {(diagnostic) => (
-              <div>
-                <span class={summaryPill}>{diagnostic.severity}</span>
-                <div class={strongCell}>{diagnostic.code}</div>
-                <div class={meta}>{diagnostic.message}</div>
-              </div>
-            )}
-          </For>
-        </div>
-      </Show>
-    </section>
-  );
-}
-
-function NativeRulesPanel(props: { snapshot: SkillManagementSnapshot }) {
-  return (
-    <section class={panel}>
-      <div class={panelHeader}>
-        <h2 class={panelTitle}>Native rules</h2>
-        <p class={panelSub}>Read-only diagnostics will appear here for configured local projects.</p>
-      </div>
-      <Show
-        fallback={<p class={meta}>No manual project paths.</p>}
-        when={(props.snapshot.config.projectPaths?.length ?? 0) > 0}
-      >
-        <div class={projectPathList}>
-          <For each={props.snapshot.config.projectPaths}>{(projectPath) => <div class={meta}>{projectPath}</div>}</For>
-        </div>
-      </Show>
-    </section>
   );
 }
