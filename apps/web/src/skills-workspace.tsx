@@ -27,6 +27,11 @@ export type ProjectInventoriesResult =
   | { ok: true; data: readonly ProjectSkillInventory[] }
   | { ok: false; error: { message: string; tag: string } };
 
+export interface KnownProjectPath {
+  label: string;
+  path: string;
+}
+
 const workspaceGrid = css({
   display: 'grid',
   gridTemplateColumns: { base: '1fr', lg: '280px minmax(0, 1fr)', xl: '280px minmax(0, 1fr) 320px' },
@@ -61,6 +66,7 @@ export const SkillsWorkspace = (props: {
   onPreviewReconcile: () => void;
   onSnapshot: (snapshot: SkillManagementSnapshot) => void;
   pendingOperation: string | null;
+  knownProjectPaths: readonly KnownProjectPath[];
   projectInventories: ProjectInventoriesResult | undefined;
   projectInventoriesLoading: boolean;
   reconcilePlan: ReconcilePlanSummary | null;
@@ -71,12 +77,12 @@ export const SkillsWorkspace = (props: {
   const [query, setQuery] = createSignal('');
   const [viewMode, setViewMode] = createSignal<'detail' | 'matrix'>('detail');
   const projectInventories = createMemo(() => (props.projectInventories?.ok ? props.projectInventories.data : []));
-  const tree = createMemo(() => buildSkillTree(props.snapshot, projectInventories()));
+  const tree = createMemo(() => buildSkillTree(props.snapshot, projectInventories(), props.knownProjectPaths));
   const treeKeys = createMemo(
     () => new Set(tree().scopes.flatMap((scope) => [scope.key, ...scope.skills.map((skill) => skill.key)])),
   );
   const [selection, setSelection] = createSignal<SkillSelection>(
-    defaultSkillSelection(props.snapshot, projectInventories()),
+    defaultSkillSelection(props.snapshot, projectInventories(), props.knownProjectPaths),
   );
   const health = createMemo(() => buildSkillHealthSummary(props.snapshot));
   const unmanagedGroups = createMemo(() => groupUnmanagedEntries(props.snapshot));
@@ -84,7 +90,7 @@ export const SkillsWorkspace = (props: {
   createEffect(() => {
     const currentSelection = selection();
     if (!selectionExists(treeKeys(), currentSelection)) {
-      setSelection(defaultSkillSelection(props.snapshot, projectInventories()));
+      setSelection(defaultSkillSelection(props.snapshot, projectInventories(), props.knownProjectPaths));
     }
   });
 

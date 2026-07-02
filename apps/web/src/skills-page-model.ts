@@ -66,6 +66,11 @@ export interface SkillTreeModel {
   scopes: readonly SkillTreeScopeNode[];
 }
 
+export interface KnownProjectScope {
+  label: string;
+  path: string;
+}
+
 export interface ProjectSkillRow {
   description: string;
   invocation: SkillInvocation;
@@ -317,6 +322,7 @@ export const findGlobalSkill = (snapshot: SkillManagementSnapshot, skillName: st
 export const buildSkillTree = (
   snapshot: SkillManagementSnapshot,
   projectInventories: readonly ProjectSkillInventory[],
+  knownProjects: readonly KnownProjectScope[] = [],
 ): SkillTreeModel => {
   const globalSkills = snapshot.skills
     .map((skill) => ({
@@ -339,17 +345,24 @@ export const buildSkillTree = (
     type: 'global',
   };
 
-  const projectScopes = projectInventories
-    .map((inventory) => {
-      const projectSkills = buildProjectSkillRows(inventory)
+  const inventoriesByPath = new Map(projectInventories.map((inventory) => [inventory.projectPath, inventory]));
+  const knownProjectsByPath = new Map(knownProjects.map((project) => [project.path, project]));
+  const projectPaths = new Set([...knownProjectsByPath.keys(), ...inventoriesByPath.keys()]);
+
+  const projectScopes = [...projectPaths]
+    .map((projectPath) => {
+      const inventory = inventoriesByPath.get(projectPath);
+      const knownProject = knownProjectsByPath.get(projectPath);
+      const projectRows = inventory === undefined ? [] : buildProjectSkillRows(inventory);
+      const projectSkills = projectRows
         .map((row) => ({
           attentionCount: projectSkillAttentionCount(row),
           description: row.description,
           enabled: true,
-          key: `project:${inventory.projectPath}:${row.name}`,
+          key: `project:${projectPath}:${row.name}`,
           name: row.name,
           selection: {
-            projectPath: inventory.projectPath,
+            projectPath,
             skillName: row.name,
             type: 'project-skill',
           } satisfies SkillSelection,
@@ -358,11 +371,12 @@ export const buildSkillTree = (
         .sort(attentionThenNameSort);
       return {
         attentionCount:
-          inventory.diagnostics.length + projectSkills.reduce((total, skill) => total + skill.attentionCount, 0),
-        key: `project:${inventory.projectPath}`,
-        label: inventory.projectPath.split('/').filter(Boolean).at(-1) ?? inventory.projectPath,
-        path: inventory.projectPath,
-        selection: { projectPath: inventory.projectPath, type: 'project-scope' } satisfies SkillSelection,
+          (inventory?.diagnostics.length ?? 0) +
+          projectSkills.reduce((total, skill) => total + skill.attentionCount, 0),
+        key: `project:${projectPath}`,
+        label: knownProject?.label ?? projectPath.split('/').filter(Boolean).at(-1) ?? projectPath,
+        path: projectPath,
+        selection: { projectPath, type: 'project-scope' } satisfies SkillSelection,
         skills: projectSkills,
         type: 'project' as const,
       };
@@ -375,8 +389,9 @@ export const buildSkillTree = (
 export const defaultSkillSelection = (
   snapshot: SkillManagementSnapshot,
   projectInventories: readonly ProjectSkillInventory[],
+  knownProjects: readonly KnownProjectScope[] = [],
 ): SkillSelection => {
-  const tree = buildSkillTree(snapshot, projectInventories);
+  const tree = buildSkillTree(snapshot, projectInventories, knownProjects);
   const firstGlobalAttentionSkill = tree.scopes
     .find((scope) => scope.type === 'global')
     ?.skills.find((skill) => skill.attentionCount > 0);

@@ -572,6 +572,7 @@ function ConfiguredSnapshot(props: {
             />
           </div>
         )}
+        knownProjectPaths={props.knownProjectPaths}
         onApplyReconcile={props.onApplyReconcile}
         onCancelReconcile={props.onCancelReconcile}
         onCellStateFilterChange={props.onCellStateFilterChange}
