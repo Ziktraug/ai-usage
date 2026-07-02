@@ -1,6 +1,5 @@
 import { css, cx } from '@ai-usage/design-system/css';
 import {
-  meta,
   panel,
   panelHeader,
   panelSub,
@@ -8,7 +7,6 @@ import {
   searchInput,
   statusPill,
   statusPillDanger,
-  statusPillInfo,
   statusPillWarn,
   strongCell,
 } from '@ai-usage/design-system/report';
@@ -17,9 +15,9 @@ import { type SkillSelection, type SkillTreeModel, selectionKey } from './skills
 
 const treePanel = css({
   alignSelf: 'start',
-  position: { base: 'static', xl: 'sticky' },
+  position: { base: 'static', lg: 'sticky' },
   top: '16px',
-  maxH: { base: 'none', xl: 'calc(100vh - 32px)' },
+  maxH: { base: 'none', lg: 'calc(100vh - 32px)' },
   overflow: 'auto',
 });
 
@@ -31,6 +29,13 @@ const treeStack = css({
 const scopeGroup = css({
   display: 'grid',
   gap: '6px',
+});
+
+const scopeRow = css({
+  display: 'grid',
+  gridTemplateColumns: '32px minmax(0, 1fr)',
+  gap: '4px',
+  alignItems: 'stretch',
 });
 
 const treeButton = css({
@@ -62,12 +67,51 @@ const treeButton = css({
   },
 });
 
+const toggleButton = css({
+  appearance: 'none',
+  display: 'grid',
+  placeItems: 'center',
+  minW: 0,
+  border: '1px solid transparent',
+  borderRadius: 'sm',
+  bg: 'transparent',
+  color: 'muted',
+  cursor: 'pointer',
+  _hover: {
+    bg: 'surfaceMuted',
+    borderColor: 'line',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+});
+
 const skillButton = css({
-  pl: '20px',
+  pl: '36px',
 });
 
 const nodeLabel = css({
-  overflowWrap: 'anywhere',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+});
+
+const scopeLabel = css({
+  display: 'flex',
+  minW: 0,
+  gap: '6px',
+  alignItems: 'baseline',
+  overflow: 'hidden',
+  whiteSpace: 'nowrap',
+});
+
+const scopePath = css({
+  color: 'muted',
+  fontSize: '12px',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
 });
 
 const subtleCount = css({
@@ -81,26 +125,44 @@ const attentionPill = css({
   justifyContent: 'center',
 });
 
+const emptyFold = css({
+  display: 'grid',
+  gap: '6px',
+});
+
+const emptySummary = css({
+  color: 'muted',
+  cursor: 'pointer',
+  fontSize: '13px',
+  fontWeight: 650,
+  listStyle: 'none',
+  _marker: {
+    display: 'none',
+  },
+});
+
 const filterInfo = css({
   color: 'muted',
   fontSize: '12px',
   lineHeight: 1.5,
 });
 
-const statusClass = (attentionCount: number, validationStatus?: string) => {
+const statusClass = (issueCount: number, validationStatus?: string) => {
   if (validationStatus === 'invalid') {
     return statusPillDanger;
   }
-  if (attentionCount > 0) {
+  if (issueCount > 0) {
     return statusPillWarn;
   }
-  return statusPillInfo;
+  return statusPillWarn;
 };
 
 export const SkillsTree = (props: {
+  expandedKeys: ReadonlySet<string>;
   model: SkillTreeModel;
   onQueryChange: (value: string) => void;
   onSelect: (selection: SkillSelection) => void;
+  onToggleScope: (scopeKey: string) => void;
   query: string;
   selection: SkillSelection;
 }) => {
@@ -123,6 +185,16 @@ export const SkillsTree = (props: {
       })
       .filter((scope) => scope !== undefined);
   });
+  const emptyScopes = createMemo(() => {
+    const query = normalizedQuery();
+    if (!query) {
+      return props.model.emptyScopes;
+    }
+    return props.model.emptyScopes.filter(
+      (scope) => scope.label.toLowerCase().includes(query) || (scope.path?.toLowerCase().includes(query) ?? false),
+    );
+  });
+  const hasVisibleScopes = createMemo(() => scopes().length + emptyScopes().length > 0);
 
   return (
     <aside aria-label="Skill scopes" class={cx(panel, treePanel)}>
@@ -138,48 +210,99 @@ export const SkillsTree = (props: {
         value={props.query}
       />
       <div class={treeStack}>
-        <Show fallback={<p class={filterInfo}>No scopes or skills match this filter.</p>} when={scopes().length > 0}>
+        <Show fallback={<p class={filterInfo}>No scopes or skills match this filter.</p>} when={hasVisibleScopes()}>
           <For each={scopes()}>
             {(scope) => (
               <section class={scopeGroup}>
-                <button
-                  aria-current={activeKey() === scope.key ? 'true' : undefined}
-                  class={treeButton}
-                  onClick={() => props.onSelect(scope.selection)}
-                  type="button"
-                >
-                  <span>
-                    <span class={strongCell}>{scope.label}</span>
-                    <Show when={scope.path}>{(path) => <span class={meta}> {path()}</span>}</Show>
-                  </span>
-                  <span class={subtleCount}>{scope.skills.length}</span>
-                </button>
-                <For each={scope.skills}>
-                  {(skill) => (
-                    <button
-                      aria-current={activeKey() === skill.key ? 'true' : undefined}
-                      class={cx(treeButton, skillButton)}
-                      onClick={() => props.onSelect(skill.selection)}
-                      type="button"
-                    >
-                      <span class={nodeLabel}>{skill.name}</span>
-                      <Show when={skill.attentionCount > 0 || skill.validationStatus !== 'valid'}>
-                        <span
-                          class={cx(
-                            statusPill,
-                            statusClass(skill.attentionCount, skill.validationStatus),
-                            attentionPill,
-                          )}
+                {(() => {
+                  const listId = `skill-scope-${scope.key.replaceAll(/[^a-zA-Z0-9_-]/g, '-')}`;
+                  const expanded = () => normalizedQuery().length > 0 || props.expandedKeys.has(scope.key);
+                  return (
+                    <>
+                      <div class={scopeRow}>
+                        <button
+                          aria-controls={listId}
+                          aria-expanded={expanded()}
+                          aria-label={`${expanded() ? 'Collapse' : 'Expand'} ${scope.label}`}
+                          class={toggleButton}
+                          onClick={() => props.onToggleScope(scope.key)}
+                          type="button"
                         >
-                          {skill.validationStatus === 'invalid' ? '!' : skill.attentionCount}
-                        </span>
+                          {expanded() ? 'v' : '>'}
+                        </button>
+                        <button
+                          aria-current={activeKey() === scope.key ? 'true' : undefined}
+                          class={treeButton}
+                          onClick={() => props.onSelect(scope.selection)}
+                          title={scope.path}
+                          type="button"
+                        >
+                          <span class={scopeLabel}>
+                            <span class={strongCell}>{scope.label}</span>
+                            <Show when={scope.shortPath}>
+                              {(shortPath) => <span class={scopePath}>{shortPath()}</span>}
+                            </Show>
+                          </span>
+                          <span class={subtleCount}>{scope.skills.length}</span>
+                        </button>
+                      </div>
+                      <Show when={expanded()}>
+                        <div id={listId}>
+                          <For each={scope.skills}>
+                            {(skill) => (
+                              <button
+                                aria-current={activeKey() === skill.key ? 'true' : undefined}
+                                class={cx(treeButton, skillButton)}
+                                onClick={() => props.onSelect(skill.selection)}
+                                title={skill.name}
+                                type="button"
+                              >
+                                <span class={nodeLabel}>{skill.name}</span>
+                                <Show when={skill.issueCount > 0 || skill.validationStatus === 'invalid'}>
+                                  <span
+                                    class={cx(
+                                      statusPill,
+                                      statusClass(skill.issueCount, skill.validationStatus),
+                                      attentionPill,
+                                    )}
+                                    title={skill.attentionSummary || undefined}
+                                  >
+                                    {skill.validationStatus === 'invalid' ? '!' : skill.issueCount}
+                                  </span>
+                                </Show>
+                              </button>
+                            )}
+                          </For>
+                        </div>
                       </Show>
-                    </button>
-                  )}
-                </For>
+                    </>
+                  );
+                })()}
               </section>
             )}
           </For>
+          <Show when={emptyScopes().length > 0}>
+            <details class={emptyFold}>
+              <summary class={emptySummary}>Projects without skills ({emptyScopes().length})</summary>
+              <For each={emptyScopes()}>
+                {(scope) => (
+                  <button
+                    aria-current={activeKey() === scope.key ? 'true' : undefined}
+                    class={treeButton}
+                    onClick={() => props.onSelect(scope.selection)}
+                    title={scope.path}
+                    type="button"
+                  >
+                    <span class={scopeLabel}>
+                      <span class={strongCell}>{scope.label}</span>
+                      <Show when={scope.shortPath}>{(shortPath) => <span class={scopePath}>{shortPath()}</span>}</Show>
+                    </span>
+                    <span class={subtleCount}>0</span>
+                  </button>
+                )}
+              </For>
+            </details>
+          </Show>
         </Show>
       </div>
     </aside>

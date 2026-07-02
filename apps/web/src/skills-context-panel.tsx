@@ -9,12 +9,11 @@ import {
   panelTitle,
   statusPill,
   statusPillDanger,
-  statusPillInfo,
   statusPillWarn,
   strongCell,
 } from '@ai-usage/design-system/report';
 import type { ProjectionState, SkillManagementSnapshot } from '@ai-usage/skills';
-import { createMemo, For, Show } from 'solid-js';
+import { createMemo, createSignal, For, Show } from 'solid-js';
 import {
   buildGlobalSkillExposure,
   buildSkillHealthSummary,
@@ -23,6 +22,7 @@ import {
   findProjectSkillRow,
   projectionStateLabel,
   type ReconcilePlanSummary,
+  type SkillCellStateFilter,
   type SkillSelection,
 } from './skills-page-model';
 import type { ProjectInventoriesResult } from './skills-workspace';
@@ -51,6 +51,29 @@ const metricList = css({
 });
 
 const metricRow = css({
+  appearance: 'none',
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  gap: '8px',
+  alignItems: 'baseline',
+  border: '1px solid transparent',
+  borderRadius: 'sm',
+  bg: 'transparent',
+  color: 'ink',
+  fontSize: '13px',
+  textAlign: 'left',
+  cursor: 'pointer',
+  _hover: {
+    bg: 'surfaceMuted',
+    borderColor: 'line',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+});
+
+const metricStaticRow = css({
   display: 'grid',
   gridTemplateColumns: 'minmax(0, 1fr) auto',
   gap: '8px',
@@ -93,8 +116,10 @@ const projectionLabelForIssue = (state: string) =>
 export const SkillsContextPanel = (props: {
   onApplyReconcile: () => void;
   onCancelReconcile: () => void;
+  onCellStateFilterChange: (filter: SkillCellStateFilter | undefined) => void;
   onOpenMatrix: () => void;
   onPreviewReconcile: () => void;
+  onSelect: (selection: SkillSelection) => void;
   pendingOperation: string | null;
   projectInventories: ProjectInventoriesResult | undefined;
   reconcilePlan: ReconcilePlanSummary | null;
@@ -126,18 +151,35 @@ export const SkillsContextPanel = (props: {
         )
       : [],
   );
+  const subtitle = createMemo(() => {
+    if (props.selection.type === 'global-scope') {
+      return 'Global source';
+    }
+    if (props.selection.type === 'global-skill') {
+      return 'Global skill';
+    }
+    if (props.selection.type === 'project-scope') {
+      return 'Project scope';
+    }
+    return 'Project skill - read-only';
+  });
 
   return (
     <aside aria-label="Selection actions" class={cx(panel, contextPanel)}>
       <div class={panelHeader}>
-        <h2 class={panelTitle}>Actions</h2>
-        <p class={panelSub}>Context for the current selection</p>
+        <h2 class={panelTitle}>Context</h2>
+        <p class={panelSub}>{subtitle()}</p>
       </div>
       <div class={stack}>
+        <SourceHealth
+          health={health()}
+          onCellStateFilterChange={props.onCellStateFilterChange}
+          onOpenMatrix={props.onOpenMatrix}
+          onSelect={props.onSelect}
+        />
         <Show when={props.selection.type === 'global-scope'}>
           <ScopeActions
             canReconcile={canReconcileAll(props.snapshot)}
-            health={health()}
             onApplyReconcile={props.onApplyReconcile}
             onCancelReconcile={props.onCancelReconcile}
             onOpenMatrix={props.onOpenMatrix}
@@ -167,24 +209,62 @@ export const SkillsContextPanel = (props: {
           )}
         </Show>
         <Show when={selectedProjectSkill()}>
-          {(row) => (
-            <ProjectSkillActions
-              diagnosticsCount={row().observations.reduce(
-                (total, observation) => total + observation.diagnostics.length,
-                0,
-              )}
-              observationCount={row().observations.length}
-            />
-          )}
+          {(row) => <ProjectSkillActions path={row().observations.at(0)?.path ?? ''} />}
         </Show>
       </div>
     </aside>
   );
 };
 
+const SourceHealth = (props: {
+  health: ReturnType<typeof buildSkillHealthSummary>;
+  onCellStateFilterChange: (filter: SkillCellStateFilter | undefined) => void;
+  onOpenMatrix: () => void;
+  onSelect: (selection: SkillSelection) => void;
+}) => {
+  const openFilteredMatrix = (filter: SkillCellStateFilter) => {
+    props.onSelect({ type: 'global-scope' });
+    props.onCellStateFilterChange(filter);
+    props.onOpenMatrix();
+  };
+  return (
+    <section class={stack}>
+      <div>
+        <div class={strongCell}>Source health</div>
+        <div class={meta}>Managed runtime exposure</div>
+      </div>
+      <div class={metricList}>
+        <button class={metricRow} onClick={() => openFilteredMatrix('linked')} type="button">
+          <span class={meta}>Healthy links</span>
+          <strong>
+            {props.health.healthyLinkCount}/{props.health.expectedLinkCount}
+          </strong>
+        </button>
+        <button class={metricRow} onClick={() => openFilteredMatrix('broken')} type="button">
+          <span class={meta}>To repair</span>
+          <strong>{props.health.toRepairCount}</strong>
+        </button>
+        <button class={metricRow} onClick={() => openFilteredMatrix('blocked')} type="button">
+          <span class={meta}>Blocked</span>
+          <strong>{props.health.blockedCount}</strong>
+        </button>
+        <button
+          class={metricRow}
+          onClick={() => {
+            props.onSelect({ type: 'global-scope' });
+          }}
+          type="button"
+        >
+          <span class={meta}>To consolidate</span>
+          <strong>{props.health.consolidateCount}</strong>
+        </button>
+      </div>
+    </section>
+  );
+};
+
 const ScopeActions = (props: {
   canReconcile: boolean;
-  health: ReturnType<typeof buildSkillHealthSummary>;
   onApplyReconcile: () => void;
   onCancelReconcile: () => void;
   onOpenMatrix: () => void;
@@ -193,28 +273,6 @@ const ScopeActions = (props: {
   reconcilePlan: ReconcilePlanSummary | null;
 }) => (
   <>
-    <section class={stack}>
-      <div class={metricList}>
-        <div class={metricRow}>
-          <span class={meta}>Healthy links</span>
-          <strong>
-            {props.health.healthyLinkCount}/{props.health.expectedLinkCount}
-          </strong>
-        </div>
-        <div class={metricRow}>
-          <span class={meta}>To repair</span>
-          <strong>{props.health.toRepairCount}</strong>
-        </div>
-        <div class={metricRow}>
-          <span class={meta}>Blocked</span>
-          <strong>{props.health.blockedCount}</strong>
-        </div>
-        <div class={metricRow}>
-          <span class={meta}>To consolidate</span>
-          <strong>{props.health.consolidateCount}</strong>
-        </div>
-      </div>
-    </section>
     <section class={actionGrid}>
       <button class={ghostButton} onClick={props.onOpenMatrix} type="button">
         Exposure matrix
@@ -330,17 +388,17 @@ const ProjectActions = (props: {
   path: string;
 }) => (
   <section class={stack}>
+    <CopyButton label="Copy project path" value={props.path} />
     <div class={metricList}>
-      <div class={metricRow}>
+      <div class={metricStaticRow}>
         <span class={meta}>Observed skills</span>
         <strong>{props.observedCount}</strong>
       </div>
-      <div class={metricRow}>
+      <div class={metricStaticRow}>
         <span class={meta}>Diagnostics</span>
         <strong>{props.diagnostics.length}</strong>
       </div>
     </div>
-    <p class={meta}>{props.path}</p>
     <For each={props.diagnostics}>
       {(diagnostic) => (
         <div class={issueRow}>
@@ -354,16 +412,26 @@ const ProjectActions = (props: {
   </section>
 );
 
-const ProjectSkillActions = (props: { diagnosticsCount: number; observationCount: number }) => (
-  <section class={metricList}>
-    <div class={metricRow}>
-      <span class={meta}>Runtime observations</span>
-      <strong>{props.observationCount}</strong>
-    </div>
-    <div class={metricRow}>
-      <span class={meta}>Diagnostics</span>
-      <strong>{props.diagnosticsCount}</strong>
-    </div>
-    <span class={cx(statusPill, statusPillInfo)}>Read-only</span>
+const ProjectSkillActions = (props: { path: string }) => (
+  <section class={stack}>
+    <CopyButton label="Copy skill path" value={props.path} />
+    <p class={meta}>Read-only - adopt-into-source arrives in a later plan.</p>
   </section>
 );
+
+const CopyButton = (props: { label: string; value: string }) => {
+  const [copied, setCopied] = createSignal(false);
+  const copyValue = async () => {
+    if (!props.value) {
+      return;
+    }
+    await navigator.clipboard?.writeText(props.value);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button class={ghostButton} disabled={!props.value} onClick={copyValue} type="button">
+      {copied() ? 'Copied' : props.label}
+    </button>
+  );
+};

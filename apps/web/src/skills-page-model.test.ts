@@ -19,9 +19,11 @@ import {
   filterMatrixRows,
   findProjectSkillRow,
   groupUnmanagedEntries,
+  parseSelectionKey,
   projectionStateLabel,
   selectionKey,
   skillInvocation,
+  skillScopeMatches,
 } from './skills-page-model';
 
 const target = (id: string, label: string, enabled = true): SkillTarget => ({
@@ -150,7 +152,7 @@ describe('skills page model', () => {
     expect(matrix.rows[1]?.cells[0]).toEqual({ label: 'Disabled', state: 'not-applicable', targetId: 'codex' });
   });
 
-  test('builds a scope tree with global and project skills sorted by attention', () => {
+  test('builds a scope tree with alphabetized skills and honest attention counters', () => {
     const snapshot = makeSnapshot({
       projections: [projection('healthy-skill', 'codex', 'linked'), projection('repair-skill', 'codex', 'broken-link')],
       skills: [skill('healthy-skill'), skill('repair-skill')],
@@ -166,10 +168,14 @@ describe('skills page model', () => {
     const tree = buildSkillTree(snapshot, inventories);
 
     expect(tree.scopes.map((scope) => scope.label)).toEqual(['Global', 'ai-usage']);
-    expect(tree.scopes[0]?.skills.map((node) => node.name)).toEqual(['repair-skill', 'healthy-skill']);
-    expect(tree.scopes[0]?.attentionCount).toBe(1);
+    expect(tree.scopes[0]?.skills.map((node) => node.name)).toEqual(['healthy-skill', 'repair-skill']);
+    expect(tree.scopes[0]).toMatchObject({ issueCount: 1, pendingLinkCount: 0 });
     expect(tree.scopes[1]?.skills.map((node) => node.name)).toEqual(['external-helper', 'project-owned']);
-    expect(tree.scopes[1]?.attentionCount).toBe(1);
+    expect(tree.scopes[1]).toMatchObject({
+      issueCount: 1,
+      pendingLinkCount: 0,
+      shortPath: '/work/ai-usage',
+    });
   });
 
   test('keeps known projects visible even before a project skill inventory exists', () => {
@@ -180,9 +186,10 @@ describe('skills page model', () => {
 
     const tree = buildSkillTree(snapshot, [], [{ label: 'ai-usage', path: '/work/ai-usage' }]);
 
-    expect(tree.scopes.map((scope) => scope.label)).toEqual(['Global', 'ai-usage']);
-    expect(tree.scopes[1]).toMatchObject({
-      attentionCount: 0,
+    expect(tree.scopes.map((scope) => scope.label)).toEqual(['Global']);
+    expect(tree.emptyScopes.map((scope) => scope.label)).toEqual(['ai-usage']);
+    expect(tree.emptyScopes[0]).toMatchObject({
+      issueCount: 0,
       key: 'project:/work/ai-usage',
       path: '/work/ai-usage',
       skills: [],
@@ -192,13 +199,63 @@ describe('skills page model', () => {
 
   test('chooses the first global skill needing attention as the default selection', () => {
     const snapshot = makeSnapshot({
-      projections: [projection('alpha-skill', 'codex', 'linked'), projection('beta-skill', 'codex', 'missing')],
+      projections: [projection('alpha-skill', 'codex', 'linked'), projection('beta-skill', 'codex', 'broken-link')],
       skills: [skill('alpha-skill'), skill('beta-skill')],
       targets: [target('codex', 'Codex')],
     });
 
     expect(defaultSkillSelection(snapshot, [])).toEqual({ skillName: 'beta-skill', type: 'global-skill' });
     expect(selectionKey({ skillName: 'beta-skill', type: 'global-skill' })).toBe('global:beta-skill');
+  });
+
+  test('treats missing links as pending rather than actionable tree issues', () => {
+    const snapshot = makeSnapshot({
+      projections: [projection('alpha-skill', 'codex', 'missing')],
+      skills: [skill('alpha-skill')],
+      targets: [target('codex', 'Codex')],
+    });
+
+    const tree = buildSkillTree(snapshot, []);
+
+    expect(tree.scopes[0]?.skills[0]).toMatchObject({
+      issueCount: 0,
+      pendingLinkCount: 1,
+    });
+    expect(defaultSkillSelection(snapshot, [])).toEqual({ skillName: 'alpha-skill', type: 'global-skill' });
+  });
+
+  test('parses selection keys back into selections', () => {
+    expect(parseSelectionKey('global')).toEqual({ type: 'global-scope' });
+    expect(parseSelectionKey('global:alpha-skill')).toEqual({ skillName: 'alpha-skill', type: 'global-skill' });
+    expect(parseSelectionKey('project:/work/ai-usage')).toEqual({
+      projectPath: '/work/ai-usage',
+      type: 'project-scope',
+    });
+    expect(parseSelectionKey('project:/work/ai-usage:alpha-skill')).toEqual({
+      projectPath: '/work/ai-usage',
+      skillName: 'alpha-skill',
+      type: 'project-skill',
+    });
+    expect(parseSelectionKey('global:')).toBeUndefined();
+  });
+
+  test('finds same-name skills in sibling scopes', () => {
+    const snapshot = makeSnapshot({
+      skills: [skill('shared-skill')],
+      targets: [target('codex', 'Codex')],
+    });
+    const inventories = [
+      projectInventory('/work/first', [projectObservation('shared-skill', 'claude-project')]),
+      projectInventory('/work/second', [projectObservation('other-skill', 'claude-project')]),
+    ];
+    const tree = buildSkillTree(snapshot, inventories);
+
+    expect(skillScopeMatches(tree, 'shared-skill', 'global:shared-skill')).toEqual([
+      {
+        scopeLabel: 'first',
+        selection: { projectPath: '/work/first', skillName: 'shared-skill', type: 'project-skill' },
+      },
+    ]);
   });
 
   test('builds global exposure rows with synthetic missing projections', () => {

@@ -12,6 +12,7 @@ honor its STOP conditions, and update your row when done.
 | 002 | Skills Inventory UI — Multi-Axis Redesign of `/skills` | P1 | L | 001 | DONE |
 | 003 | Skills UX Polish — Fix the `/skills` Presentation Defects | P2 | M | 002 | DONE |
 | 004 | Skills Tree + Detail Workspace for `/skills` | P1 | L | 003 | DONE |
+| 005 | Skills Tree Curation & Honest Context Panel for `/skills` | P1 | M | 004 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -31,6 +32,12 @@ REJECTED (with one-line rationale).
 - Plan 004 changes the `/skills` information architecture: `Global` and
   projects become peer scopes in a left tree, selected skills render as central
   detail pages, and runtime exposure moves into supporting detail/actions.
+- Plan 005 fixes the post-004 UX review findings: curates discovered project
+  paths (home dir and non-project folders excluded, config paths sovereign),
+  collapses the tree by default, restricts warning pills to actionable issues,
+  gives the context panel permanent health + real actions, adds a read-only
+  project SKILL.md viewer, and makes selection URL-addressable. It adds no
+  mutations; "Adopt into source" remains the natural plan 006.
 
 ## Findings considered and rejected
 

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import {
   ensureMachineConfig,
@@ -26,6 +27,7 @@ import {
   parseSkillTargetDirectoryInput,
   parseSkillToggleInput,
   previewReconcileAllActiveSkills,
+  projectSkillDirectories,
   readSkillMarkdown,
   reconcileAllActiveSkills,
   reconcileSkill,
@@ -72,6 +74,19 @@ export interface SkillReconcileServerResult {
   snapshot: SkillManagementSnapshot;
 }
 
+export interface ProjectSkillMarkdownInput {
+  projectPath: string;
+  runtimeDirId: (typeof projectSkillDirectories)[number]['id'];
+  skillName: string;
+}
+
+export interface ProjectSkillMarkdownDocument {
+  content: string;
+  path: string;
+  skillName: string;
+  truncated: boolean;
+}
+
 interface ProjectPathSource {
   machineId?: string;
   machineLabel?: string;
@@ -105,6 +120,8 @@ export interface KnownSkillProjectPath {
 
 interface KnownSkillProjectPathOptions {
   directoryExists?: (projectPath: string) => boolean;
+  homePath?: string;
+  isProjectRoot?: (projectPath: string) => boolean;
   localMachineId?: string;
 }
 
@@ -127,6 +144,28 @@ export const skillTargetDirectoryInputFrom = (input: unknown): SkillTargetDirect
 
 export const skillMarkdownWriteInputFrom = (input: unknown): SkillMarkdownWriteInput =>
   parseSkillMarkdownWriteInput(input);
+
+const projectRuntimeDirectoryIds = new Set<string>(projectSkillDirectories.map((directory) => directory.id));
+
+export const projectSkillMarkdownInputFrom = (input: unknown): ProjectSkillMarkdownInput => {
+  if (typeof input !== 'object' || input === null) {
+    throw new Error('project skill markdown input must be an object');
+  }
+  const record = input as Record<string, unknown>;
+  const projectPath = typeof record.projectPath === 'string' ? record.projectPath.trim() : '';
+  if (!projectPath) {
+    throw new Error('projectPath is required');
+  }
+  const runtimeDirId = typeof record.runtimeDirId === 'string' ? record.runtimeDirId : '';
+  if (!projectRuntimeDirectoryIds.has(runtimeDirId)) {
+    throw new Error('runtimeDirId is unknown');
+  }
+  return {
+    projectPath,
+    runtimeDirId: runtimeDirId as ProjectSkillMarkdownInput['runtimeDirId'],
+    skillName: parseSkillName(record.skillName),
+  };
+};
 
 const runWithStorage = async <T>(
   operation: (storage: LocalHistoryStorage) => Promise<T>,
@@ -160,8 +199,7 @@ const loadSnapshotForStorage = async (storage: LocalHistoryStorage): Promise<Ski
 export const readSkillManagementSnapshotForServer = async (): Promise<SkillsServerResult<SkillManagementSnapshot>> =>
   runWithStorage((storage) => loadSnapshotForStorage(storage));
 
-const pathEntryLabel = (entry: { machineLabel?: string | undefined; project: string }) =>
-  entry.machineLabel ? `${entry.project} · ${entry.machineLabel}` : entry.project;
+const pathEntryLabel = (entry: { project: string }) => entry.project;
 
 const addKnownProjectPath = (
   entries: Map<string, KnownSkillProjectPath>,
@@ -177,11 +215,18 @@ const addKnownProjectPath = (
   if (options.localMachineId && input.machineId && input.machineId !== options.localMachineId) {
     return;
   }
-  const projectPath = input.path?.trim();
-  if (!projectPath) {
+  const rawProjectPath = input.path?.trim();
+  if (!rawProjectPath) {
+    return;
+  }
+  const projectPath = path.resolve(rawProjectPath);
+  if (options.homePath !== undefined && projectPath === path.resolve(options.homePath)) {
     return;
   }
   if (options.directoryExists && !options.directoryExists(projectPath)) {
+    return;
+  }
+  if (options.isProjectRoot && !options.isProjectRoot(projectPath)) {
     return;
   }
   const existing = entries.get(projectPath);
@@ -258,18 +303,31 @@ const localDirectoryExists = (projectPath: string) => {
   }
 };
 
+export const localProjectRootExists = (projectPath: string) => {
+  const gitPath = path.join(projectPath, '.git');
+  if (fs.existsSync(gitPath)) {
+    return true;
+  }
+  return projectSkillDirectories.some((directory) => fs.existsSync(path.join(projectPath, directory.relativePath)));
+};
+
 export const readKnownSkillProjectPathsForServer = async (): Promise<
   SkillsServerResult<readonly KnownSkillProjectPath[]>
 > => {
   try {
-    const [machine, payload] = await Promise.all([
+    const [machine, payload, homePath] = await Promise.all([
       Effect.runPromise(ensureMachineConfig.pipe(Effect.provide(LocalHistoryStorageLive))),
       import('./report-payload.server').then(({ runReportPayloadCollection }) => runReportPayloadCollection()),
+      Effect.runPromise(
+        Effect.map(LocalHistoryStorage, (storage) => storage.home).pipe(Effect.provide(LocalHistoryStorageLive)),
+      ),
     ]);
     return {
       ok: true,
       data: knownSkillProjectPathsFromReportPayload(payload, {
         directoryExists: localDirectoryExists,
+        homePath,
+        isProjectRoot: localProjectRootExists,
         localMachineId: machine.id,
       }),
     };
@@ -400,6 +458,59 @@ export const readSkillProjectInventoriesForServer = async (): Promise<
       projectPaths,
       ...(skillsConfig.sourceRepoPath === undefined ? {} : { sourceRepoPath: skillsConfig.sourceRepoPath }),
     });
+  });
+
+interface ReadProjectSkillMarkdownOptions {
+  loadConfig?: () => Promise<AiUsageConfig>;
+  readKnownProjectPaths?: () => Promise<SkillsServerResult<readonly KnownSkillProjectPath[]>>;
+}
+
+const maxProjectSkillMarkdownBytes = 65_536;
+
+export const readProjectSkillMarkdownForServer = async (
+  input: ProjectSkillMarkdownInput,
+  options: ReadProjectSkillMarkdownOptions = {},
+): Promise<SkillsServerResult<ProjectSkillMarkdownDocument>> =>
+  runWithStorage(async () => {
+    const config = await (options.loadConfig?.() ?? loadMergedConfig());
+    const skillsConfig = parseSkillConfigInput(config.skills ?? {});
+    const knownProjectsResult = await (options.readKnownProjectPaths?.() ?? readKnownSkillProjectPathsForServer());
+    const knownProjectPaths = knownProjectsResult.ok ? knownProjectsResult.data : [];
+    const allowedProjectPaths = new Set(
+      projectSkillScanPathsFrom(skillsConfig, knownProjectPaths).map((projectPath) => path.resolve(projectPath)),
+    );
+    const projectPath = path.resolve(input.projectPath);
+    if (!allowedProjectPaths.has(projectPath)) {
+      throw new Error('project path is not allowed');
+    }
+    const inventories = await scanProjectSkills({
+      ...(skillsConfig.tokenThresholds === undefined
+        ? {}
+        : { options: { tokenThresholds: skillsConfig.tokenThresholds } }),
+      projectPaths: [projectPath],
+      ...(skillsConfig.sourceRepoPath === undefined ? {} : { sourceRepoPath: skillsConfig.sourceRepoPath }),
+    });
+    const observation = inventories
+      .flatMap((inventory) => inventory.observations)
+      .find((candidate) => candidate.name === input.skillName && candidate.runtimeDirId === input.runtimeDirId);
+    if (observation === undefined) {
+      throw new Error('project skill markdown not found');
+    }
+    const fileStat = await fs.promises.stat(observation.skillMdPath);
+    const truncated = fileStat.size > maxProjectSkillMarkdownBytes;
+    const file = await fs.promises.open(observation.skillMdPath, 'r');
+    try {
+      const buffer = Buffer.alloc(Math.min(fileStat.size, maxProjectSkillMarkdownBytes));
+      await file.read(buffer, 0, buffer.length, 0);
+      return {
+        content: buffer.toString('utf8'),
+        path: observation.skillMdPath,
+        skillName: input.skillName,
+        truncated,
+      };
+    } finally {
+      await file.close();
+    }
   });
 
 export interface SkillMarkdownSaveResult {
