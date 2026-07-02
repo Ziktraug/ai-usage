@@ -18,8 +18,9 @@ import {
   strongCell,
 } from '@ai-usage/design-system/report';
 import type { ProjectSkillInventory, SkillDiagnostic, SkillManagementSnapshot, SourceSkill } from '@ai-usage/skills';
+import { projectSkillDirectories } from '@ai-usage/skills';
 import { createEffect, createMemo, createResource, createSignal, For, type JSX, Show } from 'solid-js';
-import { getManagedSkillMarkdown, saveManagedSkillMarkdown } from './server/skills';
+import { getManagedSkillMarkdown, getProjectSkillMarkdown, saveManagedSkillMarkdown } from './server/skills';
 import {
   buildGlobalSkillExposure,
   buildProjectSkillRows,
@@ -30,7 +31,10 @@ import {
   globalSkillAttentionCount,
   type ProjectSkillRow,
   type SkillSelection,
+  type SkillTreeModel,
+  selectionKey,
   skillInvocation,
+  skillScopeMatches,
 } from './skills-page-model';
 import type { ProjectInventoriesResult } from './skills-workspace';
 
@@ -47,6 +51,10 @@ type SkillMarkdownSaveResult =
         snapshot?: SkillManagementSnapshot;
       };
     }
+  | { ok: false; error: { message: string; tag: string } };
+
+type ProjectSkillMarkdownResult =
+  | { ok: true; data: { content: string; path: string; skillName: string; truncated: boolean } }
   | { ok: false; error: { message: string; tag: string } };
 
 const detailStack = css({
@@ -147,11 +155,48 @@ const editorArea = css({
   resize: 'vertical',
 });
 
+const runtimeSelect = css({
+  h: '34px',
+  maxW: '240px',
+  px: '8px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surface',
+  color: 'ink',
+  fontSize: '13px',
+});
+
 const actionRow = css({
   display: 'flex',
   flexWrap: 'wrap',
   gap: '8px',
   alignItems: 'center',
+});
+
+const chipRow = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '6px',
+  alignItems: 'center',
+});
+
+const chipButton = css({
+  appearance: 'none',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surfaceMuted',
+  color: 'ink',
+  cursor: 'pointer',
+  fontSize: '12px',
+  px: '8px',
+  py: '4px',
+  _hover: {
+    borderColor: 'accent',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
 });
 
 const busyButton = css({
@@ -201,12 +246,8 @@ const stateOk = css({ color: 'status.ok' });
 const stateWarn = css({ color: 'status.warn' });
 const stateDanger = css({ color: 'status.danger' });
 
-const projectSkillDirectories = [
-  { id: 'claude-project', label: 'Claude Code' },
-  { id: 'agents-project', label: 'Standard Agents' },
-] as const;
-
 const runtimeLabels = new Map(projectSkillDirectories.map((directory) => [directory.id, directory.label]));
+type ProjectRuntimeDirId = (typeof projectSkillDirectories)[number]['id'];
 
 const validationPillClass = (status: string) => {
   if (status === 'invalid') {
@@ -258,6 +299,8 @@ const MetadataItem = (props: { label: string; value: JSX.Element }) => (
   </div>
 );
 
+const MarkdownPreview = (props: { content: string }) => <pre class={editorBlock}>{props.content}</pre>;
+
 export const SkillsDetail = (props: {
   configurationPanel: () => JSX.Element;
   consolidatePanel: () => JSX.Element;
@@ -270,6 +313,7 @@ export const SkillsDetail = (props: {
   selection: SkillSelection;
   snapshot: SkillManagementSnapshot;
   toggleSkill: (skillName: string, enabled: boolean) => void;
+  tree: SkillTreeModel;
 }) => {
   const inventories = createMemo(() => (props.projectInventories?.ok ? props.projectInventories.data : []));
   const selectedGlobalSkill = createMemo(() =>
@@ -300,12 +344,14 @@ export const SkillsDetail = (props: {
       <Show when={selectedGlobalSkill()}>
         {(skill) => (
           <GlobalSkillDetail
+            onSelect={props.onSelect}
             onSnapshot={props.onSnapshot}
             pendingOperation={props.pendingOperation}
             reconcileSkill={props.reconcileSkill}
             skill={skill()}
             snapshot={props.snapshot}
             toggleSkill={props.toggleSkill}
+            tree={props.tree}
           />
         )}
       </Show>
@@ -320,8 +366,10 @@ export const SkillsDetail = (props: {
       <Show when={selectedProjectSkill()}>
         {(row) => (
           <ProjectSkillDetail
+            onSelect={props.onSelect}
             projectPath={props.selection.type === 'project-skill' ? props.selection.projectPath : ''}
             row={row()}
+            tree={props.tree}
           />
         )}
       </Show>
@@ -404,13 +452,22 @@ const GlobalScopeDetail = (props: {
 
 const GlobalSkillDetail = (props: {
   onSnapshot: (snapshot: SkillManagementSnapshot) => void;
+  onSelect: (selection: SkillSelection) => void;
   pendingOperation: string | null;
   reconcileSkill: (skillName: string) => void;
   skill: SourceSkill;
   snapshot: SkillManagementSnapshot;
   toggleSkill: (skillName: string, enabled: boolean) => void;
+  tree: SkillTreeModel;
 }) => {
   const exposure = createMemo(() => buildGlobalSkillExposure(props.snapshot, props.skill.name));
+  const duplicateMatches = createMemo(() =>
+    skillScopeMatches(
+      props.tree,
+      props.skill.name,
+      selectionKey({ skillName: props.skill.name, type: 'global-skill' }),
+    ),
+  );
   return (
     <div class={detailStack}>
       <div class={hero}>
@@ -427,6 +484,7 @@ const GlobalSkillDetail = (props: {
           </span>
         </div>
         <p class={muted}>{props.skill.description || 'No description'}</p>
+        <DuplicateSkillLinks matches={duplicateMatches()} onSelect={props.onSelect} />
       </div>
       <div class={metadataGrid}>
         <MetadataItem label="Source path" value={props.skill.path} />
@@ -560,7 +618,7 @@ const SkillMarkdownEditor = (props: { onSnapshot: (snapshot: SkillManagementSnap
             <Show
               fallback={
                 <>
-                  <pre class={editorBlock}>{current().content}</pre>
+                  <MarkdownPreview content={current().content} />
                   <button class={ghostButton} onClick={() => setEditing(true)} type="button">
                     Edit
                   </button>
@@ -656,48 +714,165 @@ const ProjectScopeDetail = (props: {
   );
 };
 
-const ProjectSkillDetail = (props: { projectPath: string; row: ProjectSkillRow }) => (
-  <div class={detailStack}>
-    <div class={hero}>
-      <div class={titleRow}>
-        <h2 class={skillTitle}>{props.row.name}</h2>
-        <span class={cx(statusPill, validationPillClass(props.row.validationStatus))}>
-          {props.row.validationStatus}
-        </span>
-        <span class={cx(statusPill, statusPillInfo)}>{props.row.invocation === 'auto' ? 'Auto' : 'Manual'}</span>
-        <span class={cx(statusPill, statusPillInfo)}>Project</span>
+const ProjectSkillDetail = (props: {
+  onSelect: (selection: SkillSelection) => void;
+  projectPath: string;
+  row: ProjectSkillRow;
+  tree: SkillTreeModel;
+}) => {
+  const diagnostics = createMemo(() => props.row.observations.flatMap((observation) => observation.diagnostics));
+  const duplicateMatches = createMemo(() =>
+    skillScopeMatches(
+      props.tree,
+      props.row.name,
+      selectionKey({ projectPath: props.projectPath, skillName: props.row.name, type: 'project-skill' }),
+    ),
+  );
+  return (
+    <div class={detailStack}>
+      <div class={hero}>
+        <div class={titleRow}>
+          <h2 class={skillTitle}>{props.row.name}</h2>
+          <span class={cx(statusPill, validationPillClass(props.row.validationStatus))}>
+            {props.row.validationStatus}
+          </span>
+          <span class={cx(statusPill, statusPillInfo)}>{props.row.invocation === 'auto' ? 'Auto' : 'Manual'}</span>
+          <span class={cx(statusPill, statusPillInfo)}>Project</span>
+        </div>
+        <p class={muted}>{props.row.description || 'No description'}</p>
+        <DuplicateSkillLinks matches={duplicateMatches()} onSelect={props.onSelect} />
       </div>
-      <p class={muted}>{props.row.description || 'No description'}</p>
-    </div>
-    <div class={metadataGrid}>
-      <MetadataItem label="Project" value={props.projectPath} />
-      <MetadataItem label="Tokens" value={props.row.tokenTotal ? `${props.row.tokenTotal} tok` : 'Unknown'} />
-      <MetadataItem label="Observed runtimes" value={String(props.row.observations.length)} />
-      <MetadataItem label="Edit mode" value="Read-only" />
-    </div>
-    <section class={section}>
-      <div class={panelHeader}>
-        <h3 class={panelTitle}>Project runtime placement</h3>
-        <p class={panelSub}>Project-owned skills are inspected here but not edited yet.</p>
+      <div class={metadataGrid}>
+        <MetadataItem label="Project" value={props.projectPath} />
+        <MetadataItem label="Tokens" value={props.row.tokenTotal ? `${props.row.tokenTotal} tok` : 'Unknown'} />
+        <MetadataItem label="Observed runtimes" value={String(props.row.observations.length)} />
+        <MetadataItem label="Diagnostics" value={String(diagnostics().length)} />
       </div>
-      <For each={props.row.observations}>
-        {(observation) => (
-          <div class={exposureRow}>
-            <HarnessBadge name={runtimeLabels.get(observation.runtimeDirId) ?? observation.runtimeDirId} />
-            <div>
-              <div class={cx(strongCell, exposureStateClass(observation.placement))}>
-                {projectPlacementLabel(observation.placement)}
+      <section class={section}>
+        <div class={panelHeader}>
+          <h3 class={panelTitle}>Project runtime placement</h3>
+          <p class={panelSub}>Project-owned skills are inspected here but not edited yet.</p>
+        </div>
+        <For each={props.row.observations}>
+          {(observation) => (
+            <div class={exposureRow}>
+              <HarnessBadge name={runtimeLabels.get(observation.runtimeDirId) ?? observation.runtimeDirId} />
+              <div>
+                <div class={cx(strongCell, exposureStateClass(observation.placement))}>
+                  {projectPlacementLabel(observation.placement)}
+                </div>
+                <div class={pathText} title={observation.skillMdPath}>
+                  {observation.skillMdPath}
+                </div>
               </div>
-              <div class={pathText}>{observation.path}</div>
-              <div class={pathText}>{observation.skillMdPath}</div>
             </div>
-          </div>
+          )}
+        </For>
+      </section>
+      <ProjectSkillMarkdownViewer projectPath={props.projectPath} row={props.row} />
+      <Diagnostics diagnostics={diagnostics()} />
+    </div>
+  );
+};
+
+const DuplicateSkillLinks = (props: {
+  matches: readonly { scopeLabel: string; selection: SkillSelection }[];
+  onSelect: (selection: SkillSelection) => void;
+}) => (
+  <Show when={props.matches.length > 0}>
+    <div class={chipRow}>
+      <span class={meta}>Also present in:</span>
+      <For each={props.matches}>
+        {(match) => (
+          <button class={chipButton} onClick={() => props.onSelect(match.selection)} type="button">
+            {match.scopeLabel}
+          </button>
         )}
       </For>
-    </section>
-    <Diagnostics diagnostics={props.row.observations.flatMap((observation) => observation.diagnostics)} />
-  </div>
+    </div>
+  </Show>
 );
+
+const ProjectSkillMarkdownViewer = (props: { projectPath: string; row: ProjectSkillRow }) => {
+  const [runtimeDirId, setRuntimeDirId] = createSignal<ProjectRuntimeDirId>(
+    props.row.observations.at(0)?.runtimeDirId ?? 'claude-project',
+  );
+  const selectedObservation = createMemo(
+    () =>
+      props.row.observations.find((observation) => observation.runtimeDirId === runtimeDirId()) ??
+      props.row.observations.at(0),
+  );
+  const [document] = createResource(
+    () => {
+      const observation = selectedObservation();
+      return observation === undefined
+        ? undefined
+        : {
+            projectPath: props.projectPath,
+            runtimeDirId: observation.runtimeDirId,
+            skillName: props.row.name,
+          };
+    },
+    async (input) => (await getProjectSkillMarkdown({ data: input })) as ProjectSkillMarkdownResult,
+  );
+  const markdownDocument = createMemo(() => {
+    const current = document();
+    return current?.ok ? current.data : undefined;
+  });
+  const markdownError = createMemo(() => {
+    const current = document();
+    return current?.ok === false ? current.error.message : 'SKILL.md unavailable.';
+  });
+
+  createEffect(() => {
+    const firstRuntime = props.row.observations.at(0)?.runtimeDirId;
+    if (
+      firstRuntime !== undefined &&
+      !props.row.observations.some((observation) => observation.runtimeDirId === runtimeDirId())
+    ) {
+      setRuntimeDirId(firstRuntime);
+    }
+  });
+
+  return (
+    <section class={section}>
+      <div class={panelHeaderRow}>
+        <div>
+          <h3 class={panelTitle}>SKILL.md - read-only</h3>
+          <p class={panelSub}>Project runtime content is visible here but not edited.</p>
+        </div>
+        <Show when={props.row.observations.length > 1}>
+          <select
+            aria-label="Project skill runtime"
+            class={runtimeSelect}
+            onChange={(event) => setRuntimeDirId(event.currentTarget.value as ProjectRuntimeDirId)}
+            value={runtimeDirId()}
+          >
+            <For each={props.row.observations}>
+              {(observation) => (
+                <option value={observation.runtimeDirId}>
+                  {runtimeLabels.get(observation.runtimeDirId) ?? observation.runtimeDirId}
+                </option>
+              )}
+            </For>
+          </select>
+        </Show>
+      </div>
+      <Show fallback={<p class={meta}>Loading SKILL.md...</p>} when={!document.loading}>
+        <Show fallback={<p class={meta}>{markdownError()}</p>} when={markdownDocument()}>
+          {(current) => (
+            <>
+              <Show when={current().truncated}>
+                <p class={meta}>Preview truncated to 64 KiB.</p>
+              </Show>
+              <MarkdownPreview content={current().content} />
+            </>
+          )}
+        </Show>
+      </Show>
+    </section>
+  );
+};
 
 const Diagnostics = (props: { diagnostics: readonly SkillDiagnostic[] }) => (
   <Show when={props.diagnostics.length > 0}>

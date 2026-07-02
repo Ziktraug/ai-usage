@@ -1,13 +1,32 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   knownSkillProjectPathsFromReportPayload,
+  localProjectRootExists,
+  projectSkillMarkdownInputFrom,
   projectSkillScanPathsFrom,
+  readProjectSkillMarkdownForServer,
   skillConfigInputFrom,
   skillMarkdownWriteInputFrom,
   skillNameInputFrom,
   skillTargetDirectoryInputFrom,
   skillToggleInputFrom,
 } from './skills.server';
+
+const writeProjectSkill = async (directory: string, name: string, content = `# ${name}\n`) => {
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    path.join(directory, 'SKILL.md'),
+    `---
+name: ${name}
+description: Helps with tests
+---
+${content}`,
+    'utf8',
+  );
+};
 
 describe('skills server input validation', () => {
   test('accepts valid skill config inputs', () => {
@@ -41,6 +60,23 @@ describe('skills server input validation', () => {
     ).toThrow('skill name');
   });
 
+  test('rejects invalid project skill markdown reads before workflow calls', () => {
+    expect(() =>
+      projectSkillMarkdownInputFrom({
+        projectPath: '/project',
+        runtimeDirId: 'claude-project',
+        skillName: '../example-skill',
+      }),
+    ).toThrow('skill name');
+    expect(() =>
+      projectSkillMarkdownInputFrom({
+        projectPath: '/project',
+        runtimeDirId: 'unknown-runtime',
+        skillName: 'example-skill',
+      }),
+    ).toThrow('runtimeDirId');
+  });
+
   test('extracts known project paths from report project sources', () => {
     expect(
       knownSkillProjectPathsFromReportPayload(
@@ -67,7 +103,7 @@ describe('skills server input validation', () => {
       ),
     ).toEqual([
       {
-        label: 'ai-usage · Workstation',
+        label: 'ai-usage',
         machineLabel: 'Workstation',
         path: '/home/nathan/Projects/Github/ai-usage',
         project: 'ai-usage',
@@ -152,6 +188,84 @@ describe('skills server input validation', () => {
     ]);
   });
 
+  test('drops discovered home paths before project marker checks', () => {
+    expect(
+      knownSkillProjectPathsFromReportPayload(
+        {
+          projectGroups: [
+            {
+              sources: [
+                {
+                  machineId: 'local-machine',
+                  project: 'home',
+                  sessions: 1,
+                  sourcePath: '/home/nathan',
+                },
+              ],
+            },
+          ],
+          rows: [],
+        },
+        {
+          directoryExists: () => true,
+          homePath: '/home/nathan',
+          isProjectRoot: () => true,
+          localMachineId: 'local-machine',
+        },
+      ),
+    ).toEqual([]);
+  });
+
+  test('drops discovered container directories without project markers', () => {
+    expect(
+      knownSkillProjectPathsFromReportPayload(
+        {
+          projectGroups: [
+            {
+              sources: [
+                {
+                  machineId: 'local-machine',
+                  project: 'Projects',
+                  sessions: 1,
+                  sourcePath: '/home/nathan/Projects',
+                },
+              ],
+            },
+          ],
+          rows: [],
+        },
+        {
+          directoryExists: () => true,
+          isProjectRoot: () => false,
+          localMachineId: 'local-machine',
+        },
+      ),
+    ).toEqual([]);
+  });
+
+  test('keeps local project roots with .git files or runtime skill directories', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-known-projects-'));
+    try {
+      const worktreePath = path.join(root, 'worktree');
+      const runtimeOnlyPath = path.join(root, 'runtime-only');
+      await mkdir(worktreePath, { recursive: true });
+      await writeFile(path.join(worktreePath, '.git'), 'gitdir: ../.git/worktrees/worktree\n', 'utf8');
+      await mkdir(path.join(runtimeOnlyPath, '.claude', 'skills'), { recursive: true });
+
+      expect(localProjectRootExists(worktreePath)).toBe(true);
+      expect(localProjectRootExists(runtimeOnlyPath)).toBe(true);
+      expect(localProjectRootExists(root)).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('does not curate configured project paths from scan paths', () => {
+    expect(projectSkillScanPathsFrom({ projectPaths: ['/configured/container'] }, [])).toEqual([
+      '/configured/container',
+    ]);
+  });
+
   test('scans configured and known project paths for project skill inventories', () => {
     expect(
       projectSkillScanPathsFrom({ projectPaths: ['/configured/project'] }, [
@@ -159,5 +273,62 @@ describe('skills server input validation', () => {
         { path: '/configured/project' },
       ]),
     ).toEqual(['/configured/project', '/known/project']);
+  });
+
+  test('reads project skill markdown from an allowed scanned project only', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-project-markdown-'));
+    try {
+      const projectPath = path.join(root, 'project');
+      await writeProjectSkill(path.join(projectPath, '.claude', 'skills', 'example-skill'), 'example-skill');
+
+      const result = await readProjectSkillMarkdownForServer(
+        {
+          projectPath,
+          runtimeDirId: 'claude-project',
+          skillName: 'example-skill',
+        },
+        {
+          loadConfig: async () => ({ skills: { projectPaths: [projectPath] } }) as never,
+          readKnownProjectPaths: async () => ({ ok: true, data: [] }),
+        },
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        data: {
+          path: path.join(projectPath, '.claude', 'skills', 'example-skill', 'SKILL.md'),
+          skillName: 'example-skill',
+          truncated: false,
+        },
+      });
+      expect(result.ok ? result.data.content : '').toContain('# example-skill');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects project markdown reads for foreign project paths', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-project-markdown-foreign-'));
+    try {
+      const projectPath = path.join(root, 'project');
+      const foreignPath = path.join(root, 'foreign');
+      await writeProjectSkill(path.join(foreignPath, '.claude', 'skills', 'example-skill'), 'example-skill');
+
+      const result = await readProjectSkillMarkdownForServer(
+        {
+          projectPath: foreignPath,
+          runtimeDirId: 'claude-project',
+          skillName: 'example-skill',
+        },
+        {
+          loadConfig: async () => ({ skills: { projectPaths: [projectPath] } }) as never,
+          readKnownProjectPaths: async () => ({ ok: true, data: [] }),
+        },
+      );
+
+      expect(result).toMatchObject({ ok: false, error: { message: 'project path is not allowed' } });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
