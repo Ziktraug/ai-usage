@@ -172,6 +172,24 @@ describe('skills page model', () => {
     expect(tree.scopes[1]?.attentionCount).toBe(1);
   });
 
+  test('keeps known projects visible even before a project skill inventory exists', () => {
+    const snapshot = makeSnapshot({
+      skills: [skill('global-skill')],
+      targets: [target('codex', 'Codex')],
+    });
+
+    const tree = buildSkillTree(snapshot, [], [{ label: 'ai-usage', path: '/work/ai-usage' }]);
+
+    expect(tree.scopes.map((scope) => scope.label)).toEqual(['Global', 'ai-usage']);
+    expect(tree.scopes[1]).toMatchObject({
+      attentionCount: 0,
+      key: 'project:/work/ai-usage',
+      path: '/work/ai-usage',
+      skills: [],
+      type: 'project',
+    });
+  });
+
   test('chooses the first global skill needing attention as the default selection', () => {
     const snapshot = makeSnapshot({
       projections: [projection('alpha-skill', 'codex', 'linked'), projection('beta-skill', 'codex', 'missing')],
