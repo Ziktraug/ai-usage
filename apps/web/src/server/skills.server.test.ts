@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   knownSkillProjectPathsFromReportPayload,
   skillConfigInputFrom,
+  skillMarkdownWriteInputFrom,
   skillNameInputFrom,
   skillTargetDirectoryInputFrom,
   skillToggleInputFrom,
@@ -20,6 +21,23 @@ describe('skills server input validation', () => {
 
   test('rejects invalid config paths before workflow calls', () => {
     expect(() => skillConfigInputFrom({ sourceRepoPath: '' })).toThrow('sourceRepoPath');
+  });
+
+  test('rejects invalid skill markdown writes before workflow calls', () => {
+    expect(() =>
+      skillMarkdownWriteInputFrom({
+        baseSha256: 'not-a-sha',
+        content: '# Edit\n',
+        skillName: 'example-skill',
+      }),
+    ).toThrow('baseSha256');
+    expect(() =>
+      skillMarkdownWriteInputFrom({
+        baseSha256: '0'.repeat(64),
+        content: '# Edit\n',
+        skillName: 'Example Skill',
+      }),
+    ).toThrow('skill name');
   });
 
   test('extracts known project paths from report project sources', () => {
