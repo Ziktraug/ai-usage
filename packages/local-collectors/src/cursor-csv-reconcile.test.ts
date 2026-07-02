@@ -117,6 +117,8 @@ describe('Cursor CSV reconciliation', () => {
 
     expect(sessions).toHaveLength(2);
     expect(sessions.some((session) => session.name.startsWith('Cursor export'))).toBe(true);
-    expect(sessions.find((session) => session.name.startsWith('Cursor export'))?.source.sourcePath).toBe(exportPath);
+    const orphan = sessions.find((session) => session.name.startsWith('Cursor export'));
+    expect(orphan?.project).toBe('Cursor CSV import');
+    expect(orphan?.source.sourcePath).toBeUndefined();
   });
 });

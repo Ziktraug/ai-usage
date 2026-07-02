@@ -10,15 +10,9 @@ import {
   statusPillWarn,
   strongCell,
 } from '@ai-usage/design-system/report';
-import { Link } from '@tanstack/solid-router';
-import { createMemo, For, type JSX, Show } from 'solid-js';
-import {
-  type KnownProjectScope,
-  projectRouteKey,
-  type SkillSelection,
-  type SkillTreeModel,
-  selectionKey,
-} from './skills-page-model';
+import { createMemo, For, Show } from 'solid-js';
+import { type KnownProjectScope, type SkillSelection, type SkillTreeModel, selectionKey } from './skills-page-model';
+import { SkillSelectionLink } from './skills-selection-link';
 
 const treePanel = css({
   alignSelf: 'start',
@@ -68,7 +62,7 @@ const treeButton = css({
     outline: '2px solid token(colors.accent)',
     outlineOffset: '2px',
   },
-  '&[aria-current="true"]': {
+  '&[data-selected="true"]': {
     bg: 'accentTint',
     borderColor: 'accent',
   },
@@ -154,81 +148,7 @@ const filterInfo = css({
   lineHeight: 1.5,
 });
 
-const statusClass = (issueCount: number, validationStatus?: string) => {
-  if (validationStatus === 'invalid') {
-    return statusPillDanger;
-  }
-  if (issueCount > 0) {
-    return statusPillWarn;
-  }
-  return statusPillWarn;
-};
-
-const SkillSelectionLink = (props: {
-  children: JSX.Element;
-  class: string;
-  current: boolean;
-  knownProjects: readonly KnownProjectScope[];
-  selection: SkillSelection;
-  title?: string | undefined;
-}) => {
-  if (props.selection.type === 'global-scope') {
-    return (
-      <Link
-        aria-current={props.current ? 'true' : undefined}
-        class={props.class}
-        resetScroll={false}
-        title={props.title}
-        to="/skills"
-      >
-        {props.children}
-      </Link>
-    );
-  }
-  if (props.selection.type === 'global-skill') {
-    return (
-      <Link
-        aria-current={props.current ? 'true' : undefined}
-        class={props.class}
-        params={{ skillName: props.selection.skillName }}
-        resetScroll={false}
-        title={props.title}
-        to="/skills/global/$skillName"
-      >
-        {props.children}
-      </Link>
-    );
-  }
-  if (props.selection.type === 'project-scope') {
-    return (
-      <Link
-        aria-current={props.current ? 'true' : undefined}
-        class={props.class}
-        params={{ projectKey: projectRouteKey(props.selection.projectPath) }}
-        resetScroll={false}
-        title={props.title}
-        to="/skills/projects/$projectKey"
-      >
-        {props.children}
-      </Link>
-    );
-  }
-  return (
-    <Link
-      aria-current={props.current ? 'true' : undefined}
-      class={props.class}
-      params={{
-        projectKey: projectRouteKey(props.selection.projectPath),
-        skillName: props.selection.skillName,
-      }}
-      resetScroll={false}
-      title={props.title}
-      to="/skills/projects/$projectKey/$skillName"
-    >
-      {props.children}
-    </Link>
-  );
-};
+const statusClass = (validationStatus?: string) => (validationStatus === 'invalid' ? statusPillDanger : statusPillWarn);
 
 export const SkillsTree = (props: {
   expandedKeys: ReadonlySet<string>;
@@ -301,12 +221,12 @@ export const SkillsTree = (props: {
                           onClick={() => props.onToggleScope(scope.key)}
                           type="button"
                         >
-                          {expanded() ? 'v' : '>'}
+                          {expanded() ? '▾' : '▸'}
                         </button>
                         <SkillSelectionLink
                           class={treeButton}
-                          current={activeKey() === scope.key}
                           knownProjects={props.knownProjects}
+                          selected={activeKey() === scope.key}
                           selection={scope.selection}
                           title={scope.path}
                         >
@@ -325,19 +245,15 @@ export const SkillsTree = (props: {
                             {(skill) => (
                               <SkillSelectionLink
                                 class={cx(treeButton, skillButton)}
-                                current={activeKey() === skill.key}
                                 knownProjects={props.knownProjects}
+                                selected={activeKey() === skill.key}
                                 selection={skill.selection}
-                                title={skill.name}
+                                title={skill.description || skill.name}
                               >
                                 <span class={nodeLabel}>{skill.name}</span>
                                 <Show when={skill.issueCount > 0 || skill.validationStatus === 'invalid'}>
                                   <span
-                                    class={cx(
-                                      statusPill,
-                                      statusClass(skill.issueCount, skill.validationStatus),
-                                      attentionPill,
-                                    )}
+                                    class={cx(statusPill, statusClass(skill.validationStatus), attentionPill)}
                                     title={skill.attentionSummary || undefined}
                                   >
                                     {skill.validationStatus === 'invalid' ? '!' : skill.issueCount}
@@ -361,8 +277,8 @@ export const SkillsTree = (props: {
                 {(scope) => (
                   <SkillSelectionLink
                     class={treeButton}
-                    current={activeKey() === scope.key}
                     knownProjects={props.knownProjects}
+                    selected={activeKey() === scope.key}
                     selection={scope.selection}
                     title={scope.path}
                   >

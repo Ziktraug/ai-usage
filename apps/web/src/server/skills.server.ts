@@ -106,11 +106,18 @@ interface ProjectPathRow {
 }
 
 interface ProjectPathSourcePayload {
-  projectGroups?: readonly { sources: readonly ProjectPathSource[] }[];
+  projectGroups?: readonly {
+    grouped?: boolean;
+    id: string;
+    name: string;
+    sources: readonly ProjectPathSource[];
+  }[];
   rows: readonly ProjectPathRow[];
 }
 
 export interface KnownSkillProjectPath {
+  groupId?: string;
+  groupLabel?: string;
   label: string;
   machineLabel?: string;
   path: string;
@@ -120,6 +127,9 @@ export interface KnownSkillProjectPath {
 
 interface KnownSkillProjectPathOptions {
   directoryExists?: (projectPath: string) => boolean;
+  // Tool-managed data locations (agent worktrees, caches) are not user
+  // projects even when they carry a `.git` marker.
+  excludedPathPrefixes?: readonly string[];
   homePath?: string;
   isProjectRoot?: (projectPath: string) => boolean;
   localMachineId?: string;
@@ -204,6 +214,9 @@ const pathEntryLabel = (entry: { project: string }) => entry.project;
 const addKnownProjectPath = (
   entries: Map<string, KnownSkillProjectPath>,
   input: {
+    groupId?: string | undefined;
+    groupLabel?: string | undefined;
+    label?: string | undefined;
     machineId?: string | undefined;
     machineLabel?: string | undefined;
     path?: string | null | undefined;
@@ -223,6 +236,14 @@ const addKnownProjectPath = (
   if (options.homePath !== undefined && projectPath === path.resolve(options.homePath)) {
     return;
   }
+  if (
+    options.excludedPathPrefixes?.some((prefix) => {
+      const resolvedPrefix = path.resolve(prefix);
+      return projectPath === resolvedPrefix || projectPath.startsWith(`${resolvedPrefix}${path.sep}`);
+    })
+  ) {
+    return;
+  }
   if (options.directoryExists && !options.directoryExists(projectPath)) {
     return;
   }
@@ -238,7 +259,9 @@ const addKnownProjectPath = (
     return;
   }
   entries.set(projectPath, {
-    label: pathEntryLabel(input),
+    ...(input.groupId ? { groupId: input.groupId } : {}),
+    ...(input.groupLabel ? { groupLabel: input.groupLabel } : {}),
+    label: input.label ?? pathEntryLabel(input),
     ...(input.machineLabel ? { machineLabel: input.machineLabel } : {}),
     path: projectPath,
     project: input.project,
@@ -254,18 +277,21 @@ export const knownSkillProjectPathsFromReportPayload = (
   const groupedSources = payload.projectGroups?.flatMap((group) => group.sources) ?? [];
 
   if (groupedSources.length > 0) {
-    for (const source of groupedSources) {
-      addKnownProjectPath(
-        entries,
-        {
-          machineId: source.machineId,
-          machineLabel: source.machineLabel,
-          path: source.sourcePath,
-          project: source.project,
-          sessions: source.sessions ?? 0,
-        },
-        options,
-      );
+    for (const group of payload.projectGroups ?? []) {
+      for (const source of group.sources) {
+        addKnownProjectPath(
+          entries,
+          {
+            ...(group.grouped ? { groupId: group.id, groupLabel: group.name, label: group.name } : {}),
+            machineId: source.machineId,
+            machineLabel: source.machineLabel,
+            path: source.sourcePath,
+            project: source.project,
+            sessions: source.sessions ?? 0,
+          },
+          options,
+        );
+      }
     }
   } else {
     for (const row of payload.rows) {
@@ -326,6 +352,7 @@ export const readKnownSkillProjectPathsForServer = async (): Promise<
       ok: true,
       data: knownSkillProjectPathsFromReportPayload(payload, {
         directoryExists: localDirectoryExists,
+        excludedPathPrefixes: [path.join(homePath, '.local', 'share'), path.join(homePath, '.cache')],
         homePath,
         isProjectRoot: localProjectRootExists,
         localMachineId: machine.id,
