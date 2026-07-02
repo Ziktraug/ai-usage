@@ -57,8 +57,22 @@ It distinguishes global and project-owned scope, auto-invocable and manual
 skills, personal or installed origins when metadata is present, enabled and
 disabled state, and per-runtime exposure as linked, copied, missing, or broken.
 
-The primary presentation is a skills-by-runtimes matrix. Status dots are only
-used inside matrix cells where the runtime column gives them context.
+The primary presentation follows the product hierarchy:
+
+```text
+Global / Project -> Skill -> Runtime exposure
+```
+
+Global and configured projects are peer scopes in the left navigation tree.
+Selecting a scope shows an overview; selecting a skill shows its canonical
+detail pane with metadata, source paths, runtime exposure, diagnostics, and the
+global `SKILL.md` editor when the skill is managed from the source repository.
+The right panel is contextual: it carries health counts, reconcile actions,
+enable/disable controls, and project diagnostics for the current selection.
+
+The skills-by-runtimes matrix remains available as a secondary exposure view.
+Status dots are used inside matrix cells where the runtime column gives them
+context, but the matrix is not the default object model of the page.
 
 Unmanaged runtime entries are shown as a grouped, collapsed consolidation
 backlog. They are never rendered as a flat list; adopting or importing them into
