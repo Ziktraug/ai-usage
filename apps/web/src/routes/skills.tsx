@@ -17,17 +17,10 @@ import {
   panelTitle,
   shell,
   strongCell,
-  type TabItem,
-  Tabs,
   title,
   titleBlock,
 } from '@ai-usage/design-system/report';
-import type {
-  ProjectionAction,
-  ProjectSkillInventory,
-  SkillManagementConfig,
-  SkillManagementSnapshot,
-} from '@ai-usage/skills';
+import type { ProjectionAction, SkillManagementConfig, SkillManagementSnapshot } from '@ai-usage/skills';
 import { createFileRoute, Link } from '@tanstack/solid-router';
 import { createEffect, createMemo, createResource, createSignal, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
@@ -44,20 +37,14 @@ import {
   saveSkillManagementConfig,
   toggleManagedSkill,
 } from '../server/skills';
-import { SkillsConsolidate } from '../skills-consolidate';
-import { SkillsDrawer } from '../skills-drawer';
-import { SkillsHealth } from '../skills-health';
-import { SkillsMatrix } from '../skills-matrix';
 import {
-  buildSkillHealthSummary,
   buildSkillMatrix,
   count,
   describeReconcileActions,
-  groupUnmanagedEntries,
   type ReconcilePlanSummary,
   type SkillCellStateFilter,
 } from '../skills-page-model';
-import { SkillsProjects } from '../skills-projects';
+import { type ProjectInventoriesResult, SkillsWorkspace } from '../skills-workspace';
 
 export const Route = createFileRoute('/skills')({
   loader: async () => ({
@@ -84,10 +71,6 @@ interface SkillReconcileResult {
 
 type SkillReconcileServerResult =
   | { ok: true; data: SkillReconcileResult }
-  | { ok: false; error: { message: string; tag: string } };
-
-type ProjectInventoriesResult =
-  | { ok: true; data: readonly ProjectSkillInventory[] }
   | { ok: false; error: { message: string; tag: string } };
 
 interface OperationNotice {
@@ -284,10 +267,7 @@ function SkillsRoute() {
   const [pendingOperation, setPendingOperation] = createSignal<string | null>(null);
   const [operationNotice, setOperationNotice] = createSignal<OperationNotice | null>(null);
   const [reconcilePlan, setReconcilePlan] = createSignal<ReconcilePlanSummary | null>(null);
-  const [activeTab, setActiveTab] = createSignal('global');
   const [activeCellStateFilter, setActiveCellStateFilter] = createSignal<SkillCellStateFilter | undefined>();
-  const [selectedSkillName, setSelectedSkillName] = createSignal<string | null>(null);
-  let drawerOrigin: HTMLElement | null = null;
   const snapshot = createMemo(() => {
     const current = result();
     return current.ok ? current.data : undefined;
@@ -300,7 +280,7 @@ function SkillsRoute() {
   const [projectPaths, setProjectPaths] = createSignal<readonly string[]>(snapshot()?.config.projectPaths ?? []);
   const [projectPathDraft, setProjectPathDraft] = createSignal('');
   const [projectInventories] = createResource(
-    () => (activeTab() === 'projects' ? true : undefined),
+    () => (snapshot()?.configured ? true : undefined),
     async () => (await getSkillProjectInventories()) as ProjectInventoriesResult,
   );
 
@@ -436,11 +416,6 @@ function SkillsRoute() {
       );
     });
 
-  const selectedSkill = createMemo(() => {
-    const skillName = selectedSkillName();
-    return snapshot()?.skills.find((skill) => skill.name === skillName);
-  });
-
   return (
     <main class={page}>
       <div class={shell}>
@@ -494,7 +469,6 @@ function SkillsRoute() {
             >
               <ConfiguredSnapshot
                 activeCellStateFilter={activeCellStateFilter()}
-                activeTab={activeTab()}
                 addProjectPath={addProjectPath}
                 createTargetDirectory={createTargetDirectory}
                 knownProjectPaths={knownProjectPaths()}
@@ -503,11 +477,8 @@ function SkillsRoute() {
                 onCancelReconcile={cancelReconcile}
                 onCellStateFilterChange={setActiveCellStateFilter}
                 onDismissOperationNotice={() => setOperationNotice(null)}
-                onOpenSkill={(skillName, element) => {
-                  drawerOrigin = element;
-                  setSelectedSkillName(skillName);
-                }}
                 onPreviewReconcile={previewReconcile}
+                onSnapshot={(nextSnapshot) => setResult({ ok: true, data: nextSnapshot })}
                 operationNotice={operationNotice()}
                 pendingOperation={pendingOperation()}
                 projectInventories={projectInventories()}
@@ -518,7 +489,6 @@ function SkillsRoute() {
                 reconcileSkill={reconcileSkill}
                 removeProjectPath={removeProjectPath}
                 saveConfig={saveConfig}
-                setActiveTab={setActiveTab}
                 setProjectPathDraft={setProjectPathDraft}
                 setSourceRepoPath={setSourceRepoPath}
                 snapshot={snapshot()!}
@@ -528,27 +498,12 @@ function SkillsRoute() {
             </Show>
           </Show>
         </div>
-        <Show when={selectedSkill()}>
-          {(skill) => (
-            <SkillsDrawer
-              finalFocusEl={() => drawerOrigin}
-              onClose={() => setSelectedSkillName(null)}
-              onSnapshot={(nextSnapshot) => setResult({ ok: true, data: nextSnapshot })}
-              pendingOperation={pendingOperation()}
-              reconcileSkill={reconcileSkill}
-              skill={skill()}
-              snapshot={snapshot()!}
-              toggleSkill={toggleSkill}
-            />
-          )}
-        </Show>
       </div>
     </main>
   );
 }
 
 function ConfiguredSnapshot(props: {
-  activeTab: string;
   activeCellStateFilter: SkillCellStateFilter | undefined;
   addProjectPath: () => void;
   createTargetDirectory: (targetId: string) => void;
@@ -558,7 +513,7 @@ function ConfiguredSnapshot(props: {
   onCancelReconcile: () => void;
   onCellStateFilterChange: (filter: SkillCellStateFilter | undefined) => void;
   onDismissOperationNotice: () => void;
-  onOpenSkill: (skillName: string, element: HTMLElement) => void;
+  onSnapshot: (snapshot: SkillManagementSnapshot) => void;
   onPreviewReconcile: () => void;
   operationNotice: OperationNotice | null;
   pendingOperation: string | null;
@@ -570,178 +525,18 @@ function ConfiguredSnapshot(props: {
   reconcileSkill: (skillName: string) => void;
   removeProjectPath: (value: string) => void;
   saveConfig: () => void;
-  setActiveTab: (value: string) => void;
   setProjectPathDraft: (value: string) => void;
   setSourceRepoPath: (value: string) => void;
   snapshot: SkillManagementSnapshot;
   sourceRepoPath: string;
   toggleSkill: (skillName: string, enabled: boolean) => void;
 }) {
-  const health = createMemo(() => buildSkillHealthSummary(props.snapshot));
   const matrix = createMemo(() => buildSkillMatrix(props.snapshot));
-  const unmanagedGroups = createMemo(() => groupUnmanagedEntries(props.snapshot));
   const disabledRows = createMemo(() => matrix().rows.filter((row) => !row.enabled));
   const snapshotDiagnostics = createMemo(() =>
     props.snapshot.diagnostics.filter((diagnostic) => diagnostic.skillName === undefined),
   );
-  const projectItems = createMemo<readonly TabItem[]>(() => [
-    {
-      content: () => (
-        <GlobalTab
-          activeCellStateFilter={props.activeCellStateFilter}
-          addProjectPath={props.addProjectPath}
-          createTargetDirectory={props.createTargetDirectory}
-          disabledRows={disabledRows()}
-          health={health()}
-          knownProjectPaths={props.knownProjectPaths}
-          knownProjectPathsError={props.knownProjectPathsError}
-          onApplyReconcile={props.onApplyReconcile}
-          onCancelReconcile={props.onCancelReconcile}
-          onCellStateFilterChange={props.onCellStateFilterChange}
-          onDismissOperationNotice={props.onDismissOperationNotice}
-          onOpenSkill={props.onOpenSkill}
-          onPreviewReconcile={props.onPreviewReconcile}
-          operationNotice={props.operationNotice}
-          pendingOperation={props.pendingOperation}
-          projectPathDraft={props.projectPathDraft}
-          projectPaths={props.projectPaths}
-          reconcilePlan={props.reconcilePlan}
-          removeProjectPath={props.removeProjectPath}
-          saveConfig={props.saveConfig}
-          setProjectPathDraft={props.setProjectPathDraft}
-          setSourceRepoPath={props.setSourceRepoPath}
-          snapshot={props.snapshot}
-          snapshotDiagnostics={snapshotDiagnostics()}
-          sourceRepoPath={props.sourceRepoPath}
-          toggleSkill={props.toggleSkill}
-          unmanagedGroups={unmanagedGroups()}
-        />
-      ),
-      label: 'Global',
-      value: 'global',
-    },
-    {
-      content: () => (
-        <ProjectsTab
-          addProjectPath={props.addProjectPath}
-          knownProjectPaths={props.knownProjectPaths}
-          knownProjectPathsError={props.knownProjectPathsError}
-          onDismissOperationNotice={props.onDismissOperationNotice}
-          operationNotice={props.operationNotice}
-          pendingOperation={props.pendingOperation}
-          projectInventories={props.projectInventories}
-          projectInventoriesLoading={props.projectInventoriesLoading}
-          projectPathDraft={props.projectPathDraft}
-          projectPaths={props.projectPaths}
-          removeProjectPath={props.removeProjectPath}
-          setProjectPathDraft={props.setProjectPathDraft}
-        />
-      ),
-      label: `Projects (${props.projectPaths.length})`,
-      value: 'projects',
-    },
-  ]);
 
-  return (
-    <Tabs ariaLabel="Skill views" items={projectItems()} onValueChange={props.setActiveTab} value={props.activeTab} />
-  );
-}
-
-function GlobalTab(props: {
-  activeCellStateFilter: SkillCellStateFilter | undefined;
-  addProjectPath: () => void;
-  createTargetDirectory: (targetId: string) => void;
-  disabledRows: readonly ReturnType<typeof buildSkillMatrix>['rows'][number][];
-  health: ReturnType<typeof buildSkillHealthSummary>;
-  knownProjectPaths: readonly KnownSkillProjectPath[];
-  knownProjectPathsError: string | null;
-  onApplyReconcile: () => void;
-  onCancelReconcile: () => void;
-  onCellStateFilterChange: (filter: SkillCellStateFilter | undefined) => void;
-  onDismissOperationNotice: () => void;
-  onOpenSkill: (skillName: string, element: HTMLElement) => void;
-  onPreviewReconcile: () => void;
-  operationNotice: OperationNotice | null;
-  pendingOperation: string | null;
-  projectPathDraft: string;
-  projectPaths: readonly string[];
-  reconcilePlan: ReconcilePlanSummary | null;
-  removeProjectPath: (value: string) => void;
-  saveConfig: () => void;
-  setProjectPathDraft: (value: string) => void;
-  setSourceRepoPath: (value: string) => void;
-  snapshot: SkillManagementSnapshot;
-  snapshotDiagnostics: readonly SkillManagementSnapshot['diagnostics'][number][];
-  sourceRepoPath: string;
-  toggleSkill: (skillName: string, enabled: boolean) => void;
-  unmanagedGroups: ReturnType<typeof groupUnmanagedEntries>;
-}) {
-  return (
-    <div class={stack}>
-      <OperationBanner notice={props.operationNotice} onDismiss={props.onDismissOperationNotice} />
-      <SkillsHealth
-        activeFilter={props.activeCellStateFilter}
-        onFilterChange={(filter) =>
-          props.onCellStateFilterChange(props.activeCellStateFilter === filter ? undefined : filter)
-        }
-        snapshot={props.snapshot}
-        summary={props.health}
-      />
-      <SkillsMatrix
-        activeCellStateFilter={props.activeCellStateFilter}
-        onApplyReconcile={props.onApplyReconcile}
-        onCancelReconcile={props.onCancelReconcile}
-        onCellStateFilterChange={props.onCellStateFilterChange}
-        onOpenSkill={props.onOpenSkill}
-        onPreviewReconcile={props.onPreviewReconcile}
-        pendingOperation={props.pendingOperation}
-        reconcilePlan={props.reconcilePlan}
-        snapshot={props.snapshot}
-        toggleSkill={props.toggleSkill}
-      />
-      <SkillsConsolidate groups={props.unmanagedGroups} total={props.health.consolidateCount} />
-      <div class={foldsGrid}>
-        <DisabledFold
-          disabledRows={props.disabledRows}
-          pendingOperation={props.pendingOperation}
-          toggleSkill={props.toggleSkill}
-        />
-        <ConfigurationFold
-          addProjectPath={props.addProjectPath}
-          createTargetDirectory={props.createTargetDirectory}
-          knownProjectPaths={props.knownProjectPaths}
-          knownProjectPathsError={props.knownProjectPathsError}
-          pendingOperation={props.pendingOperation}
-          projectPathDraft={props.projectPathDraft}
-          projectPaths={props.projectPaths}
-          removeProjectPath={props.removeProjectPath}
-          saveConfig={props.saveConfig}
-          setProjectPathDraft={props.setProjectPathDraft}
-          setSourceRepoPath={props.setSourceRepoPath}
-          snapshot={props.snapshot}
-          snapshotDiagnostics={props.snapshotDiagnostics}
-          sourceRepoPath={props.sourceRepoPath}
-        />
-      </div>
-    </div>
-  );
-}
-
-function ProjectsTab(props: {
-  addProjectPath: () => void;
-  knownProjectPaths: readonly KnownSkillProjectPath[];
-  knownProjectPathsError: string | null;
-  onDismissOperationNotice: () => void;
-  operationNotice: OperationNotice | null;
-  pendingOperation: string | null;
-  projectInventories: ProjectInventoriesResult | undefined;
-  projectInventoriesLoading: boolean;
-  projectPathDraft: string;
-  projectPaths: readonly string[];
-  removeProjectPath: (value: string) => void;
-  setProjectPathDraft: (value: string) => void;
-}) {
-  const inventories = () => (props.projectInventories?.ok ? props.projectInventories.data : []);
   return (
     <div class={stack}>
       <OperationBanner notice={props.operationNotice} onDismiss={props.onDismissOperationNotice} />
@@ -750,33 +545,46 @@ function ProjectsTab(props: {
           <p class={meta}>{props.projectInventories?.ok === false ? props.projectInventories.error.message : ''}</p>
         </section>
       </Show>
-      <Show
-        fallback={
-          <section class={panel}>
-            <p class={meta}>Loading projects…</p>
-          </section>
-        }
-        when={!props.projectInventoriesLoading}
-      >
-        <SkillsProjects inventories={inventories()} />
-      </Show>
-      <details class={cx(panel, fold)} open={props.projectPaths.length === 0}>
-        <summary class={foldSummary}>
-          <span class={strongCell}>Add a project</span>
-        </summary>
-        <div class={foldBody}>
-          <ProjectPathsPanel
-            addProjectPath={props.addProjectPath}
-            knownProjectPaths={props.knownProjectPaths}
-            knownProjectPathsError={props.knownProjectPathsError}
-            pendingOperation={props.pendingOperation}
-            projectPathDraft={props.projectPathDraft}
-            projectPaths={props.projectPaths}
-            removeProjectPath={props.removeProjectPath}
-            setProjectPathDraft={props.setProjectPathDraft}
-          />
-        </div>
-      </details>
+      <SkillsWorkspace
+        activeCellStateFilter={props.activeCellStateFilter}
+        configurationPanel={() => (
+          <div class={foldsGrid}>
+            <DisabledFold
+              disabledRows={disabledRows()}
+              pendingOperation={props.pendingOperation}
+              toggleSkill={props.toggleSkill}
+            />
+            <ConfigurationFold
+              addProjectPath={props.addProjectPath}
+              createTargetDirectory={props.createTargetDirectory}
+              knownProjectPaths={props.knownProjectPaths}
+              knownProjectPathsError={props.knownProjectPathsError}
+              pendingOperation={props.pendingOperation}
+              projectPathDraft={props.projectPathDraft}
+              projectPaths={props.projectPaths}
+              removeProjectPath={props.removeProjectPath}
+              saveConfig={props.saveConfig}
+              setProjectPathDraft={props.setProjectPathDraft}
+              setSourceRepoPath={props.setSourceRepoPath}
+              snapshot={props.snapshot}
+              snapshotDiagnostics={snapshotDiagnostics()}
+              sourceRepoPath={props.sourceRepoPath}
+            />
+          </div>
+        )}
+        onApplyReconcile={props.onApplyReconcile}
+        onCancelReconcile={props.onCancelReconcile}
+        onCellStateFilterChange={props.onCellStateFilterChange}
+        onPreviewReconcile={props.onPreviewReconcile}
+        onSnapshot={props.onSnapshot}
+        pendingOperation={props.pendingOperation}
+        projectInventories={props.projectInventories}
+        projectInventoriesLoading={props.projectInventoriesLoading}
+        reconcilePlan={props.reconcilePlan}
+        reconcileSkill={props.reconcileSkill}
+        snapshot={props.snapshot}
+        toggleSkill={props.toggleSkill}
+      />
     </div>
   );
 }

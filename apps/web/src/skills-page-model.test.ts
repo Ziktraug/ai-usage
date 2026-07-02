@@ -1,13 +1,26 @@
 import { describe, expect, test } from 'bun:test';
-import type { Projection, ProjectionAction, SkillManagementSnapshot, SkillTarget, SourceSkill } from '@ai-usage/skills';
+import type {
+  Projection,
+  ProjectionAction,
+  ProjectSkillInventory,
+  ProjectSkillObservation,
+  SkillManagementSnapshot,
+  SkillTarget,
+  SourceSkill,
+} from '@ai-usage/skills';
 import {
+  buildGlobalSkillExposure,
   buildSkillHealthSummary,
   buildSkillMatrix,
+  buildSkillTree,
   canReconcileAll,
+  defaultSkillSelection,
   describeReconcileActions,
   filterMatrixRows,
+  findProjectSkillRow,
   groupUnmanagedEntries,
   projectionStateLabel,
+  selectionKey,
   skillInvocation,
 } from './skills-page-model';
 
@@ -41,6 +54,35 @@ const projection = (skillName: string, targetId: string, state: Projection['stat
   skillName,
   state,
   targetId,
+});
+
+const projectObservation = (
+  name: string,
+  runtimeDirId: ProjectSkillObservation['runtimeDirId'],
+  overrides: Partial<ProjectSkillObservation> = {},
+): ProjectSkillObservation => ({
+  description: `${name} project description`,
+  diagnostics: [],
+  invocation: 'auto',
+  name,
+  path: `/project/.claude/skills/${name}`,
+  placement: 'owned-directory',
+  runtimeDirId,
+  skillMdPath: `/project/.claude/skills/${name}/SKILL.md`,
+  tokenCount: { approximate: true, references: 1, skillMd: 2, total: 3 },
+  validationStatus: 'valid',
+  ...overrides,
+});
+
+const projectInventory = (
+  projectPath: string,
+  observations: readonly ProjectSkillObservation[],
+  overrides: Partial<ProjectSkillInventory> = {},
+): ProjectSkillInventory => ({
+  diagnostics: [],
+  observations,
+  projectPath,
+  ...overrides,
 });
 
 const makeSnapshot = (overrides: Partial<SkillManagementSnapshot> = {}): SkillManagementSnapshot => ({
@@ -106,6 +148,84 @@ describe('skills page model', () => {
     expect(matrix.rows.map((row) => row.name)).toEqual(['alpha-skill', 'disabled-skill']);
     expect(matrix.rows[0]).toMatchObject({ origin: 'github', tokenFlag: true, tokenTotal: 9 });
     expect(matrix.rows[1]?.cells[0]).toEqual({ label: 'Disabled', state: 'not-applicable', targetId: 'codex' });
+  });
+
+  test('builds a scope tree with global and project skills sorted by attention', () => {
+    const snapshot = makeSnapshot({
+      projections: [projection('healthy-skill', 'codex', 'linked'), projection('repair-skill', 'codex', 'broken-link')],
+      skills: [skill('healthy-skill'), skill('repair-skill')],
+      targets: [target('codex', 'Codex')],
+    });
+    const inventories = [
+      projectInventory('/work/ai-usage', [
+        projectObservation('project-owned', 'claude-project'),
+        projectObservation('external-helper', 'agents-project', { placement: 'external-symlink' }),
+      ]),
+    ];
+
+    const tree = buildSkillTree(snapshot, inventories);
+
+    expect(tree.scopes.map((scope) => scope.label)).toEqual(['Global', 'ai-usage']);
+    expect(tree.scopes[0]?.skills.map((node) => node.name)).toEqual(['repair-skill', 'healthy-skill']);
+    expect(tree.scopes[0]?.attentionCount).toBe(1);
+    expect(tree.scopes[1]?.skills.map((node) => node.name)).toEqual(['external-helper', 'project-owned']);
+    expect(tree.scopes[1]?.attentionCount).toBe(1);
+  });
+
+  test('chooses the first global skill needing attention as the default selection', () => {
+    const snapshot = makeSnapshot({
+      projections: [projection('alpha-skill', 'codex', 'linked'), projection('beta-skill', 'codex', 'missing')],
+      skills: [skill('alpha-skill'), skill('beta-skill')],
+      targets: [target('codex', 'Codex')],
+    });
+
+    expect(defaultSkillSelection(snapshot, [])).toEqual({ skillName: 'beta-skill', type: 'global-skill' });
+    expect(selectionKey({ skillName: 'beta-skill', type: 'global-skill' })).toBe('global:beta-skill');
+  });
+
+  test('builds global exposure rows with synthetic missing projections', () => {
+    const snapshot = makeSnapshot({
+      projections: [projection('alpha-skill', 'codex', 'linked')],
+      skills: [skill('alpha-skill')],
+      targets: [target('codex', 'Codex'), target('opencode', 'OpenCode')],
+    });
+
+    expect(buildGlobalSkillExposure(snapshot, 'alpha-skill')).toEqual([
+      {
+        canReconcile: false,
+        expectedPath: '/targets/codex/alpha-skill',
+        label: 'Linked',
+        state: 'linked',
+        targetId: 'codex',
+      },
+      {
+        canReconcile: true,
+        expectedPath: '/targets/opencode/alpha-skill',
+        label: 'Not linked',
+        state: 'missing',
+        targetId: 'opencode',
+      },
+    ]);
+  });
+
+  test('groups project skill observations by name', () => {
+    const inventory = projectInventory('/work/ai-usage', [
+      projectObservation('shared-skill', 'claude-project', { invocation: 'manual', validationStatus: 'warning' }),
+      projectObservation('shared-skill', 'agents-project'),
+    ]);
+
+    const row = findProjectSkillRow([inventory], '/work/ai-usage', 'shared-skill');
+
+    expect(row).toMatchObject({
+      invocation: 'manual',
+      name: 'shared-skill',
+      tokenTotal: 3,
+      validationStatus: 'warning',
+    });
+    expect(row?.observations.map((observation) => observation.runtimeDirId)).toEqual([
+      'agents-project',
+      'claude-project',
+    ]);
   });
 
   test('counts every health bucket against countable skills and active targets', () => {
