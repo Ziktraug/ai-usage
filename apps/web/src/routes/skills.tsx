@@ -21,7 +21,7 @@ import {
   titleBlock,
 } from '@ai-usage/design-system/report';
 import type { ProjectionAction, SkillManagementConfig, SkillManagementSnapshot } from '@ai-usage/skills';
-import { createFileRoute, Link } from '@tanstack/solid-router';
+import { createFileRoute, Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import { createEffect, createMemo, createResource, createSignal, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
@@ -41,12 +41,21 @@ import {
   buildSkillMatrix,
   count,
   describeReconcileActions,
+  parseSelectionKey,
   type ReconcilePlanSummary,
   type SkillCellStateFilter,
 } from '../skills-page-model';
 import { type ProjectInventoriesResult, SkillsWorkspace } from '../skills-workspace';
 
+interface SkillsSearch {
+  sel?: string;
+}
+
 export const Route = createFileRoute('/skills')({
+  validateSearch: (search: Record<string, unknown>): SkillsSearch => {
+    const sel = typeof search.sel === 'string' && parseSelectionKey(search.sel) ? search.sel : undefined;
+    return sel === undefined ? {} : { sel };
+  },
   loader: async () => ({
     knownProjectPaths: await getKnownSkillProjectPaths(),
     skills: await getSkillManagementSnapshot(),
@@ -254,6 +263,8 @@ const actionNotice = (actions: readonly ProjectionAction[], snapshot: SkillManag
 
 function SkillsRoute() {
   const data = Route.useLoaderData();
+  const search = useSearch({ from: '/skills' });
+  const navigate = useNavigate({ from: '/skills' });
   const [result, setResult] = createSignal<SkillSnapshotResult>(skillSnapshotResultFrom(data().skills));
   const knownProjectPathsResult = createMemo(() => data().knownProjectPaths as KnownProjectPathsResult);
   const knownProjectPaths = createMemo(() => {
@@ -416,6 +427,16 @@ function SkillsRoute() {
       );
     });
 
+  const updateSelectionSearch = (sel: string, options: { replace?: boolean } = {}) => {
+    navigate({
+      search: { sel },
+      ...(options.replace === undefined ? {} : { replace: options.replace }),
+      resetScroll: false,
+    }).catch((error: unknown) => {
+      console.error(error);
+    });
+  };
+
   return (
     <main class={page}>
       <div class={shell}>
@@ -478,6 +499,7 @@ function SkillsRoute() {
                 onCellStateFilterChange={setActiveCellStateFilter}
                 onDismissOperationNotice={() => setOperationNotice(null)}
                 onPreviewReconcile={previewReconcile}
+                onSelectionSearchChange={updateSelectionSearch}
                 onSnapshot={(nextSnapshot) => setResult({ ok: true, data: nextSnapshot })}
                 operationNotice={operationNotice()}
                 pendingOperation={pendingOperation()}
@@ -489,6 +511,7 @@ function SkillsRoute() {
                 reconcileSkill={reconcileSkill}
                 removeProjectPath={removeProjectPath}
                 saveConfig={saveConfig}
+                selectionKey={search().sel}
                 setProjectPathDraft={setProjectPathDraft}
                 setSourceRepoPath={setSourceRepoPath}
                 snapshot={snapshot()!}
@@ -515,6 +538,7 @@ function ConfiguredSnapshot(props: {
   onDismissOperationNotice: () => void;
   onSnapshot: (snapshot: SkillManagementSnapshot) => void;
   onPreviewReconcile: () => void;
+  onSelectionSearchChange: (sel: string, options?: { replace?: boolean }) => void;
   operationNotice: OperationNotice | null;
   pendingOperation: string | null;
   projectInventories: ProjectInventoriesResult | undefined;
@@ -528,6 +552,7 @@ function ConfiguredSnapshot(props: {
   setProjectPathDraft: (value: string) => void;
   setSourceRepoPath: (value: string) => void;
   snapshot: SkillManagementSnapshot;
+  selectionKey: string | undefined;
   sourceRepoPath: string;
   toggleSkill: (skillName: string, enabled: boolean) => void;
 }) {
@@ -577,12 +602,14 @@ function ConfiguredSnapshot(props: {
         onCancelReconcile={props.onCancelReconcile}
         onCellStateFilterChange={props.onCellStateFilterChange}
         onPreviewReconcile={props.onPreviewReconcile}
+        onSelectionSearchChange={props.onSelectionSearchChange}
         onSnapshot={props.onSnapshot}
         pendingOperation={props.pendingOperation}
         projectInventories={props.projectInventories}
         projectInventoriesLoading={props.projectInventoriesLoading}
         reconcilePlan={props.reconcilePlan}
         reconcileSkill={props.reconcileSkill}
+        selectionKey={props.selectionKey}
         snapshot={props.snapshot}
         toggleSkill={props.toggleSkill}
       />

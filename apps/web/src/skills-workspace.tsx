@@ -11,6 +11,7 @@ import {
   buildSkillTree,
   defaultSkillSelection,
   groupUnmanagedEntries,
+  parseSelectionKey,
   type ReconcilePlanSummary,
   type SkillCellStateFilter,
   type SkillSelection,
@@ -57,6 +58,13 @@ const mobileContext = css({
 const selectionExists = (treeKeys: ReadonlySet<string>, selection: SkillSelection) =>
   treeKeys.has(selectionKey(selection));
 
+const scopeKeyForSelection = (selection: SkillSelection): string => {
+  if (selection.type === 'global-scope' || selection.type === 'global-skill') {
+    return 'global';
+  }
+  return `project:${selection.projectPath}`;
+};
+
 export const SkillsWorkspace = (props: {
   activeCellStateFilter: SkillCellStateFilter | undefined;
   configurationPanel: () => JSX.Element;
@@ -64,6 +72,7 @@ export const SkillsWorkspace = (props: {
   onCancelReconcile: () => void;
   onCellStateFilterChange: (filter: SkillCellStateFilter | undefined) => void;
   onPreviewReconcile: () => void;
+  onSelectionSearchChange: (sel: string, options?: { replace?: boolean }) => void;
   onSnapshot: (snapshot: SkillManagementSnapshot) => void;
   pendingOperation: string | null;
   knownProjectPaths: readonly KnownProjectPath[];
@@ -71,6 +80,7 @@ export const SkillsWorkspace = (props: {
   projectInventoriesLoading: boolean;
   reconcilePlan: ReconcilePlanSummary | null;
   reconcileSkill: (skillName: string) => void;
+  selectionKey: string | undefined;
   snapshot: SkillManagementSnapshot;
   toggleSkill: (skillName: string, enabled: boolean) => void;
 }) => {
@@ -79,31 +89,90 @@ export const SkillsWorkspace = (props: {
   const projectInventories = createMemo(() => (props.projectInventories?.ok ? props.projectInventories.data : []));
   const tree = createMemo(() => buildSkillTree(props.snapshot, projectInventories(), props.knownProjectPaths));
   const treeKeys = createMemo(
-    () => new Set(tree().scopes.flatMap((scope) => [scope.key, ...scope.skills.map((skill) => skill.key)])),
+    () =>
+      new Set(
+        [...tree().scopes, ...tree().emptyScopes].flatMap((scope) => [
+          scope.key,
+          ...scope.skills.map((skill) => skill.key),
+        ]),
+      ),
   );
-  const [selection, setSelection] = createSignal<SkillSelection>(
-    defaultSkillSelection(props.snapshot, projectInventories(), props.knownProjectPaths),
+  const initialDefaultSelection = defaultSkillSelection(props.snapshot, projectInventories(), props.knownProjectPaths);
+  const initialSearchSelection = props.selectionKey === undefined ? undefined : parseSelectionKey(props.selectionKey);
+  const initialSelection =
+    initialSearchSelection !== undefined && selectionExists(treeKeys(), initialSearchSelection)
+      ? initialSearchSelection
+      : initialDefaultSelection;
+  const [selection, setSelection] = createSignal<SkillSelection>(initialSelection);
+  const [expandedKeys, setExpandedKeys] = createSignal<ReadonlySet<string>>(
+    new Set(['global', scopeKeyForSelection(initialSelection)]),
   );
   const health = createMemo(() => buildSkillHealthSummary(props.snapshot));
   const unmanagedGroups = createMemo(() => groupUnmanagedEntries(props.snapshot));
 
   createEffect(() => {
+    const searchSelection = props.selectionKey === undefined ? undefined : parseSelectionKey(props.selectionKey);
+    if (
+      searchSelection !== undefined &&
+      selectionExists(treeKeys(), searchSelection) &&
+      selectionKey(selection()) !== props.selectionKey
+    ) {
+      setSelection(searchSelection);
+      setExpandedKeys((keys) => new Set([...keys, scopeKeyForSelection(searchSelection)]));
+      setViewMode('detail');
+      return;
+    }
+    if (searchSelection !== undefined && selectionExists(treeKeys(), searchSelection)) {
+      return;
+    }
+    if (
+      searchSelection !== undefined &&
+      !selectionExists(treeKeys(), searchSelection) &&
+      props.projectInventoriesLoading
+    ) {
+      return;
+    }
     const currentSelection = selection();
-    if (!selectionExists(treeKeys(), currentSelection)) {
-      setSelection(defaultSkillSelection(props.snapshot, projectInventories(), props.knownProjectPaths));
+    if (!selectionExists(treeKeys(), currentSelection) || props.selectionKey !== undefined) {
+      const nextSelection = defaultSkillSelection(props.snapshot, projectInventories(), props.knownProjectPaths);
+      setSelection(nextSelection);
+      setExpandedKeys((keys) => new Set([...keys, scopeKeyForSelection(nextSelection)]));
+      props.onSelectionSearchChange(selectionKey(nextSelection), { replace: true });
     }
   });
 
   const select = (nextSelection: SkillSelection) => {
     setSelection(nextSelection);
+    setExpandedKeys((keys) => new Set([...keys, scopeKeyForSelection(nextSelection)]));
     setViewMode('detail');
+    props.onSelectionSearchChange(selectionKey(nextSelection));
+  };
+
+  const toggleScope = (scopeKey: string) => {
+    setExpandedKeys((keys) => {
+      const next = new Set(keys);
+      if (next.has(scopeKey)) {
+        next.delete(scopeKey);
+      } else {
+        next.add(scopeKey);
+      }
+      return next;
+    });
   };
 
   const consolidatePanel = () => <SkillsConsolidate groups={unmanagedGroups()} total={health().consolidateCount} />;
 
   return (
     <div class={workspaceGrid}>
-      <SkillsTree model={tree()} onQueryChange={setQuery} onSelect={select} query={query()} selection={selection()} />
+      <SkillsTree
+        expandedKeys={expandedKeys()}
+        model={tree()}
+        onQueryChange={setQuery}
+        onSelect={select}
+        onToggleScope={toggleScope}
+        query={query()}
+        selection={selection()}
+      />
       <div class={centerStack}>
         <Show
           fallback={
@@ -144,6 +213,7 @@ export const SkillsWorkspace = (props: {
             selection={selection()}
             snapshot={props.snapshot}
             toggleSkill={props.toggleSkill}
+            tree={tree()}
           />
         </Show>
       </div>
@@ -151,8 +221,10 @@ export const SkillsWorkspace = (props: {
         <SkillsContextPanel
           onApplyReconcile={props.onApplyReconcile}
           onCancelReconcile={props.onCancelReconcile}
-          onOpenMatrix={() => setViewMode(viewMode() === 'matrix' ? 'detail' : 'matrix')}
+          onCellStateFilterChange={props.onCellStateFilterChange}
+          onOpenMatrix={() => setViewMode('matrix')}
           onPreviewReconcile={props.onPreviewReconcile}
+          onSelect={select}
           pendingOperation={props.pendingOperation}
           projectInventories={props.projectInventories}
           reconcilePlan={props.reconcilePlan}
