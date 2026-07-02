@@ -2,6 +2,8 @@ import type {
   Projection,
   ProjectionAction,
   ProjectionState,
+  ProjectSkillInventory,
+  ProjectSkillObservation,
   SkillManagementSnapshot,
   SkillTarget,
   SkillValidationStatus,
@@ -32,6 +34,54 @@ export interface SkillMatrixRow {
 export interface SkillMatrix {
   rows: readonly SkillMatrixRow[];
   targets: readonly SkillTarget[];
+}
+
+export type SkillSelection =
+  | { type: 'global-scope' }
+  | { skillName: string; type: 'global-skill' }
+  | { projectPath: string; type: 'project-scope' }
+  | { projectPath: string; skillName: string; type: 'project-skill' };
+
+export interface SkillTreeSkillNode {
+  attentionCount: number;
+  description: string;
+  enabled: boolean;
+  key: string;
+  name: string;
+  selection: SkillSelection;
+  validationStatus: SkillValidationStatus;
+}
+
+export interface SkillTreeScopeNode {
+  attentionCount: number;
+  key: string;
+  label: string;
+  path?: string;
+  selection: SkillSelection;
+  skills: readonly SkillTreeSkillNode[];
+  type: 'global' | 'project';
+}
+
+export interface SkillTreeModel {
+  scopes: readonly SkillTreeScopeNode[];
+}
+
+export interface ProjectSkillRow {
+  description: string;
+  invocation: SkillInvocation;
+  name: string;
+  observations: readonly ProjectSkillObservation[];
+  tokenTotal: number | null;
+  validationStatus: SkillValidationStatus;
+}
+
+export interface GlobalSkillExposure {
+  actualPath?: string;
+  canReconcile: boolean;
+  expectedPath: string;
+  label: string;
+  state: MatrixCellState;
+  targetId: string;
 }
 
 export interface SkillHealthSummary {
@@ -80,6 +130,7 @@ const blockedStates = new Set<ProjectionState>([
 ]);
 const reconciliableStates = new Set<ProjectionState>(['missing', 'broken-link', 'wrong-target']);
 const tokenDiagnosticCodes = new Set(['SkillFileTooLarge', 'SkillFileLimitExceeded']);
+const projectAttentionPlacements = new Set<ProjectSkillObservation['placement']>(['external-symlink']);
 
 export const count = (value: number, singular: string, plural = `${singular}s`): string =>
   `${value} ${value === 1 ? singular : plural}`;
@@ -130,6 +181,53 @@ const projectionFor = (
 ): Projection | undefined =>
   projections.find((projection) => projection.skillName === skillName && projection.targetId === targetId);
 
+const isAttentionProjectionState = (state: MatrixCellState) =>
+  state !== 'not-applicable' &&
+  (state === 'missing' || state === 'disabled-exposed' || repairStates.has(state) || blockedStates.has(state));
+
+export const canReconcileProjectionState = (state: MatrixCellState): boolean =>
+  state !== 'not-applicable' && reconciliableStates.has(state);
+
+export const globalSkillAttentionCount = (snapshot: SkillManagementSnapshot, skill: SourceSkill): number => {
+  if (!skill.enabled || skill.validationStatus === 'invalid') {
+    return skill.validationStatus === 'invalid' ? 1 : 0;
+  }
+  return snapshot.targets
+    .filter((target) => target.enabled)
+    .reduce((total, target) => {
+      const state = projectionFor(snapshot.projections, skill.name, target.id)?.state ?? 'missing';
+      return total + (isAttentionProjectionState(state) ? 1 : 0);
+    }, 0);
+};
+
+const projectSkillAttentionCount = (row: ProjectSkillRow): number =>
+  row.observations.filter(
+    (observation) =>
+      observation.validationStatus !== 'valid' ||
+      observation.diagnostics.length > 0 ||
+      projectAttentionPlacements.has(observation.placement),
+  ).length;
+
+const attentionThenNameSort = <T extends { attentionCount: number; name: string }>(left: T, right: T) => {
+  if (left.attentionCount !== right.attentionCount) {
+    return right.attentionCount - left.attentionCount;
+  }
+  return left.name.localeCompare(right.name);
+};
+
+const strongestValidationStatus = (
+  left: SkillValidationStatus,
+  right: SkillValidationStatus,
+): SkillValidationStatus => {
+  if (left === 'invalid' || right === 'invalid') {
+    return 'invalid';
+  }
+  if (left === 'warning' || right === 'warning') {
+    return 'warning';
+  }
+  return 'valid';
+};
+
 export const buildSkillMatrix = (snapshot: SkillManagementSnapshot): SkillMatrix => {
   const targets = snapshot.targets.filter((target) => target.enabled);
   const rows = snapshot.skills.toSorted(rowSort).map((skill) => ({
@@ -158,6 +256,152 @@ export const buildSkillMatrix = (snapshot: SkillManagementSnapshot): SkillMatrix
     validationStatus: skill.validationStatus,
   }));
   return { rows, targets };
+};
+
+export const buildGlobalSkillExposure = (
+  snapshot: SkillManagementSnapshot,
+  skillName: string,
+): readonly GlobalSkillExposure[] =>
+  snapshot.targets
+    .filter((target) => target.enabled)
+    .map((target) => {
+      const projection = projectionFor(snapshot.projections, skillName, target.id);
+      const state = projection?.state ?? 'missing';
+      return {
+        canReconcile: canReconcileProjectionState(state),
+        expectedPath: projection?.expectedPath ?? `${target.path}/${skillName}`,
+        label: projection ? projectionStateLabel(projection.state) : 'Not linked',
+        state,
+        targetId: target.id,
+        ...(projection?.actualPath === undefined ? {} : { actualPath: projection.actualPath }),
+      };
+    });
+
+export const buildProjectSkillRows = (inventory: ProjectSkillInventory): readonly ProjectSkillRow[] => {
+  const rows = new Map<string, ProjectSkillRow>();
+  for (const observation of inventory.observations) {
+    const existing = rows.get(observation.name) ?? {
+      description: observation.description,
+      invocation: observation.invocation,
+      name: observation.name,
+      observations: [],
+      tokenTotal: observation.tokenCount?.total ?? null,
+      validationStatus: observation.validationStatus,
+    };
+    rows.set(observation.name, {
+      description: existing.description || observation.description,
+      invocation: existing.invocation === 'manual' || observation.invocation === 'manual' ? 'manual' : 'auto',
+      name: existing.name,
+      observations: [...existing.observations, observation].sort((left, right) =>
+        left.runtimeDirId.localeCompare(right.runtimeDirId),
+      ),
+      tokenTotal: existing.tokenTotal ?? observation.tokenCount?.total ?? null,
+      validationStatus: strongestValidationStatus(existing.validationStatus, observation.validationStatus),
+    });
+  }
+  return [...rows.values()].sort((left, right) => left.name.localeCompare(right.name));
+};
+
+export const findProjectSkillRow = (
+  inventories: readonly ProjectSkillInventory[],
+  projectPath: string,
+  skillName: string,
+): ProjectSkillRow | undefined => {
+  const inventory = inventories.find((entry) => entry.projectPath === projectPath);
+  return inventory === undefined ? undefined : buildProjectSkillRows(inventory).find((row) => row.name === skillName);
+};
+
+export const findGlobalSkill = (snapshot: SkillManagementSnapshot, skillName: string): SourceSkill | undefined =>
+  snapshot.skills.find((skill) => skill.name === skillName);
+
+export const buildSkillTree = (
+  snapshot: SkillManagementSnapshot,
+  projectInventories: readonly ProjectSkillInventory[],
+): SkillTreeModel => {
+  const globalSkills = snapshot.skills
+    .map((skill) => ({
+      attentionCount: globalSkillAttentionCount(snapshot, skill),
+      description: skill.description,
+      enabled: skill.enabled,
+      key: `global:${skill.name}`,
+      name: skill.name,
+      selection: { skillName: skill.name, type: 'global-skill' } satisfies SkillSelection,
+      validationStatus: skill.validationStatus,
+    }))
+    .sort(attentionThenNameSort);
+
+  const globalScope: SkillTreeScopeNode = {
+    attentionCount: globalSkills.reduce((total, skill) => total + skill.attentionCount, 0),
+    key: 'global',
+    label: 'Global',
+    selection: { type: 'global-scope' },
+    skills: globalSkills,
+    type: 'global',
+  };
+
+  const projectScopes = projectInventories
+    .map((inventory) => {
+      const projectSkills = buildProjectSkillRows(inventory)
+        .map((row) => ({
+          attentionCount: projectSkillAttentionCount(row),
+          description: row.description,
+          enabled: true,
+          key: `project:${inventory.projectPath}:${row.name}`,
+          name: row.name,
+          selection: {
+            projectPath: inventory.projectPath,
+            skillName: row.name,
+            type: 'project-skill',
+          } satisfies SkillSelection,
+          validationStatus: row.validationStatus,
+        }))
+        .sort(attentionThenNameSort);
+      return {
+        attentionCount:
+          inventory.diagnostics.length + projectSkills.reduce((total, skill) => total + skill.attentionCount, 0),
+        key: `project:${inventory.projectPath}`,
+        label: inventory.projectPath.split('/').filter(Boolean).at(-1) ?? inventory.projectPath,
+        path: inventory.projectPath,
+        selection: { projectPath: inventory.projectPath, type: 'project-scope' } satisfies SkillSelection,
+        skills: projectSkills,
+        type: 'project' as const,
+      };
+    })
+    .sort((left, right) => left.label.localeCompare(right.label));
+
+  return { scopes: [globalScope, ...projectScopes] };
+};
+
+export const defaultSkillSelection = (
+  snapshot: SkillManagementSnapshot,
+  projectInventories: readonly ProjectSkillInventory[],
+): SkillSelection => {
+  const tree = buildSkillTree(snapshot, projectInventories);
+  const firstGlobalAttentionSkill = tree.scopes
+    .find((scope) => scope.type === 'global')
+    ?.skills.find((skill) => skill.attentionCount > 0);
+  if (firstGlobalAttentionSkill) {
+    return firstGlobalAttentionSkill.selection;
+  }
+  const firstGlobalSkill = tree.scopes.find((scope) => scope.type === 'global')?.skills.at(0);
+  if (firstGlobalSkill) {
+    return firstGlobalSkill.selection;
+  }
+  const firstProject = tree.scopes.find((scope) => scope.type === 'project');
+  return firstProject?.selection ?? { type: 'global-scope' };
+};
+
+export const selectionKey = (selection: SkillSelection): string => {
+  if (selection.type === 'global-scope') {
+    return 'global';
+  }
+  if (selection.type === 'global-skill') {
+    return `global:${selection.skillName}`;
+  }
+  if (selection.type === 'project-scope') {
+    return `project:${selection.projectPath}`;
+  }
+  return `project:${selection.projectPath}:${selection.skillName}`;
 };
 
 export const buildSkillHealthSummary = (snapshot: SkillManagementSnapshot): SkillHealthSummary => {
