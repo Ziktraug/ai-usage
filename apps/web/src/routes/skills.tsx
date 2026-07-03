@@ -315,8 +315,15 @@ function SkillsRoute() {
   const [sourceRepoPath, setSourceRepoPath] = createSignal(snapshot()?.config.sourceRepoPath ?? '');
   const [projectPaths, setProjectPaths] = createSignal<readonly string[]>(snapshot()?.config.projectPaths ?? []);
   const [projectPathDraft, setProjectPathDraft] = createSignal('');
+  const projectInventoriesKey = createMemo(() => {
+    const current = snapshot();
+    if (current?.configured !== true) {
+      return;
+    }
+    return JSON.stringify([current.config.sourceRepoPath ?? '', ...(current.config.projectPaths ?? [])]);
+  });
   const [projectInventories] = createResource(
-    () => (snapshot()?.configured ? true : undefined),
+    projectInventoriesKey,
     async () => (await getSkillProjectInventories()) as ProjectInventoriesResult,
   );
 

@@ -839,11 +839,36 @@ const readTextForTokenCount = async (
   maxTextFileBytes: number,
   skillName: string,
 ): Promise<{ diagnostics: readonly SkillDiagnostic[]; text: string }> => {
-  const fileStat = await stat(filePath);
-  if (fileStat.size > maxTextFileBytes) {
+  try {
+    const fileStat = await stat(filePath);
+    if (fileStat.size > maxTextFileBytes) {
+      return {
+        diagnostics: [
+          createDiagnostic('SkillFileTooLarge', 'warning', 'Skill file is too large for token counting', {
+            path: filePath,
+            skillName,
+          }),
+        ],
+        text: '',
+      };
+    }
+    const buffer = await readFile(filePath);
+    if (looksBinary(buffer)) {
+      return {
+        diagnostics: [
+          createDiagnostic('BinarySkillFileSkipped', 'info', 'Binary skill file was skipped for token counting', {
+            path: filePath,
+            skillName,
+          }),
+        ],
+        text: '',
+      };
+    }
+    return { diagnostics: [], text: buffer.toString('utf8') };
+  } catch {
     return {
       diagnostics: [
-        createDiagnostic('SkillFileTooLarge', 'warning', 'Skill file is too large for token counting', {
+        createDiagnostic('UnreadableSkillReferenceFile', 'warning', 'Skill reference file could not be read', {
           path: filePath,
           skillName,
         }),
@@ -851,19 +876,6 @@ const readTextForTokenCount = async (
       text: '',
     };
   }
-  const buffer = await readFile(filePath);
-  if (looksBinary(buffer)) {
-    return {
-      diagnostics: [
-        createDiagnostic('BinarySkillFileSkipped', 'info', 'Binary skill file was skipped for token counting', {
-          path: filePath,
-          skillName,
-        }),
-      ],
-      text: '',
-    };
-  }
-  return { diagnostics: [], text: buffer.toString('utf8') };
 };
 
 const scanOneSkill = async (
@@ -935,10 +947,10 @@ const scanOneSkill = async (
   }
 
   let referenceTokens = 0;
-  for (const filePath of files) {
-    if (path.basename(filePath) === 'SKILL.md') {
-      continue;
-    }
+  const referenceFiles = files
+    .filter((filePath) => path.basename(filePath) !== 'SKILL.md')
+    .slice(0, Math.max(0, options.maxFilesPerSkill - 1));
+  for (const filePath of referenceFiles) {
     const textResult = await readTextForTokenCount(filePath, options.maxTextFileBytes, skillName);
     diagnostics.push(...textResult.diagnostics);
     referenceTokens += approximateTokenCount(textResult.text);

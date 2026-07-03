@@ -31,6 +31,7 @@ import {
   globalSkillAttention,
   type KnownProjectScope,
   type ProjectSkillRow,
+  type ProjectSkillRowObservation,
   projectSourcePathsForScope,
   type SkillSelection,
   type SkillTreeModel,
@@ -901,15 +902,34 @@ const DuplicateSkillLinks = (props: {
   </Show>
 );
 
+const projectSkillObservationKey = (observation: ProjectSkillRowObservation): string =>
+  JSON.stringify([observation.projectPath, observation.runtimeDirId]);
+
 const ProjectSkillMarkdownViewer = (props: { row: ProjectSkillRow }) => {
-  const [runtimeDirId, setRuntimeDirId] = createSignal<ProjectRuntimeDirId>(
-    props.row.observations.at(0)?.runtimeDirId ?? 'claude-project',
-  );
+  const firstObservationKey = () => {
+    const observation = props.row.observations.at(0);
+    return observation === undefined ? '' : projectSkillObservationKey(observation);
+  };
+  const [observationKey, setObservationKey] = createSignal(firstObservationKey());
   const selectedObservation = createMemo(
     () =>
-      props.row.observations.find((observation) => observation.runtimeDirId === runtimeDirId()) ??
+      props.row.observations.find((observation) => projectSkillObservationKey(observation) === observationKey()) ??
       props.row.observations.at(0),
   );
+  const duplicateRuntimeIds = createMemo(() => {
+    const counts = new Map<ProjectRuntimeDirId, number>();
+    for (const observation of props.row.observations) {
+      counts.set(observation.runtimeDirId, (counts.get(observation.runtimeDirId) ?? 0) + 1);
+    }
+    return new Set([...counts.entries()].filter(([, value]) => value > 1).map(([runtimeDirId]) => runtimeDirId));
+  });
+  const optionLabel = (observation: ProjectSkillRowObservation) => {
+    const runtimeLabel = runtimeLabels.get(observation.runtimeDirId) ?? observation.runtimeDirId;
+    if (!duplicateRuntimeIds().has(observation.runtimeDirId)) {
+      return runtimeLabel;
+    }
+    return `${runtimeLabel} - ${observation.projectPath}`;
+  };
   const [document, setDocument] = createSignal<ProjectSkillMarkdownResult>();
   const [documentLoading, setDocumentLoading] = createSignal(false);
   let documentRequestId = 0;
@@ -960,12 +980,12 @@ const ProjectSkillMarkdownViewer = (props: { row: ProjectSkillRow }) => {
   });
 
   createEffect(() => {
-    const firstRuntime = props.row.observations.at(0)?.runtimeDirId;
+    const firstKey = firstObservationKey();
     if (
-      firstRuntime !== undefined &&
-      !props.row.observations.some((observation) => observation.runtimeDirId === runtimeDirId())
+      firstKey !== '' &&
+      !props.row.observations.some((observation) => projectSkillObservationKey(observation) === observationKey())
     ) {
-      setRuntimeDirId(firstRuntime);
+      setObservationKey(firstKey);
     }
   });
 
@@ -980,14 +1000,12 @@ const ProjectSkillMarkdownViewer = (props: { row: ProjectSkillRow }) => {
           <select
             aria-label="Project skill runtime"
             class={runtimeSelect}
-            onChange={(event) => setRuntimeDirId(event.currentTarget.value as ProjectRuntimeDirId)}
-            value={runtimeDirId()}
+            onChange={(event) => setObservationKey(event.currentTarget.value)}
+            value={observationKey()}
           >
             <For each={props.row.observations}>
               {(observation) => (
-                <option value={observation.runtimeDirId}>
-                  {runtimeLabels.get(observation.runtimeDirId) ?? observation.runtimeDirId}
-                </option>
+                <option value={projectSkillObservationKey(observation)}>{optionLabel(observation)}</option>
               )}
             </For>
           </select>
