@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { scanSkillSourceRepository } from '.';
@@ -78,18 +78,44 @@ description: Helps with examples
 `,
         'utf8',
       );
-      await writeFile(path.join(skillPath, 'notes.md'), 'one two three\n', 'utf8');
+      await writeFile(path.join(skillPath, 'notes.md'), 'one\n', 'utf8');
+      await writeFile(path.join(skillPath, 'too-large.md'), 'one two three\n', 'utf8');
       await writeFile(path.join(skillPath, '.git', 'ignored.md'), 'ignored\n', 'utf8');
 
       const scan = await scanSkillSourceRepository({
         sourceRepoPath,
-        options: { maxFilesPerSkill: 1, maxTextFileBytes: 4 },
+        options: { maxFilesPerSkill: 2, maxTextFileBytes: 4 },
       });
 
-      expect(scan.diagnostics.map((diagnostic) => diagnostic.code)).toEqual([
-        'SkillFileLimitExceeded',
-        'SkillFileTooLarge',
-      ]);
+      expect(scan.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(['SkillFileLimitExceeded']);
+    } finally {
+      await rm(sourceRepoPath, { recursive: true, force: true });
+    }
+  });
+
+  test('reports unreadable reference files as diagnostics', async () => {
+    const sourceRepoPath = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-scan-'));
+    try {
+      const skillPath = path.join(sourceRepoPath, 'skills', 'example-skill');
+      await mkdir(skillPath, { recursive: true });
+      await writeFile(
+        path.join(skillPath, 'SKILL.md'),
+        `---
+name: example-skill
+description: Helps with examples
+---
+# Example
+`,
+        'utf8',
+      );
+      const referencePath = path.join(skillPath, 'notes.md');
+      await writeFile(referencePath, 'one two three\n', 'utf8');
+      await chmod(referencePath, 0);
+
+      const scan = await scanSkillSourceRepository({ sourceRepoPath });
+
+      expect(scan.skills).toHaveLength(1);
+      expect(scan.diagnostics.map((diagnostic) => diagnostic.code)).toContain('UnreadableSkillReferenceFile');
     } finally {
       await rm(sourceRepoPath, { recursive: true, force: true });
     }
