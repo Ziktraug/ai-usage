@@ -52,8 +52,8 @@ export const Route = createFileRoute('/sync')({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const { importManualMergeBundleForServer } = await import('../server/lan-merge.server');
-        return Response.json(await importManualMergeBundleForServer({ text: await request.text() }));
+        const text = await request.text();
+        return streamManualImportResponse(text);
       },
     },
   },
@@ -62,6 +62,72 @@ export const Route = createFileRoute('/sync')({
   }),
   component: SyncRoute,
 });
+
+const IMPORT_HEARTBEAT_MS = 5000;
+
+const manualImportErrorResult = (error: unknown): ManualImportResult => ({
+  ok: false,
+  error: {
+    tag: 'Error',
+    message: error instanceof Error ? error.message : String(error),
+  },
+});
+
+const streamManualImportResponse = (text: string) => {
+  const encoder = new TextEncoder();
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let finished = false;
+  const enqueueJson = (controller: ReadableStreamDefaultController<Uint8Array>, result: ManualImportResult) => {
+    if (!finished) {
+      controller.enqueue(encoder.encode(JSON.stringify(result)));
+    }
+  };
+  const finish = (controller: ReadableStreamDefaultController<Uint8Array>) => {
+    if (finished) {
+      return;
+    }
+    finished = true;
+    if (heartbeat) {
+      clearInterval(heartbeat);
+    }
+    controller.close();
+  };
+
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(' '));
+        heartbeat = setInterval(() => {
+          if (!finished) {
+            controller.enqueue(encoder.encode(' '));
+          }
+        }, IMPORT_HEARTBEAT_MS);
+
+        const runImport = async () => {
+          try {
+            const { importManualMergeBundleForServer } = await import('../server/lan-merge.server');
+            enqueueJson(controller, await importManualMergeBundleForServer({ text }));
+          } catch (error) {
+            enqueueJson(controller, manualImportErrorResult(error));
+          } finally {
+            finish(controller);
+          }
+        };
+        runImport().catch((error: unknown) => {
+          enqueueJson(controller, manualImportErrorResult(error));
+          finish(controller);
+        });
+      },
+      cancel() {
+        finished = true;
+        if (heartbeat) {
+          clearInterval(heartbeat);
+        }
+      },
+    }),
+    { headers: { 'content-type': 'application/json' } },
+  );
+};
 
 const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
 
