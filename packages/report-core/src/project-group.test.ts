@@ -5,6 +5,9 @@ import {
   matchesProjectSourceSelector,
   parseProjectGroupConfigs,
   projectSourceId,
+  projectSourceSelectorFor,
+  projectSourceSelectorsEqual,
+  uniqueProjectSourceSelectors,
 } from './project-group';
 
 describe('project groups', () => {
@@ -31,6 +34,25 @@ describe('project groups', () => {
     expect(matchesProjectSourceSelector(source, { project: 'exalibur' })).toBe(true);
     expect(matchesProjectSourceSelector(source, { gitRemote: 'nathan/exalibur' })).toBe(true);
     expect(matchesProjectSourceSelector(source, { gitRemote: 'other/exalibur' })).toBe(false);
+  });
+
+  test('owns exact selector identity and deduplication', () => {
+    const selector = projectSourceSelectorFor({
+      gitRemote: 'nathan/exalibur',
+      machineId: 'machine-a',
+      project: 'Exalibur',
+      sourcePath: '/work/exalibur',
+    });
+
+    expect(selector).toEqual({
+      gitRemote: 'nathan/exalibur',
+      machineId: 'machine-a',
+      sourcePath: '/work/exalibur',
+    });
+    expect(projectSourceSelectorsEqual({ project: 'Exalibur' }, { project: 'exalibur' })).toBe(true);
+    expect(uniqueProjectSourceSelectors([{ project: 'Exalibur' }, { project: 'exalibur' }])).toEqual([
+      { project: 'Exalibur' },
+    ]);
   });
 
   test('validates selectors and group configs', () => {

@@ -30,5 +30,6 @@ describe('setup HTML', () => {
     expect(html).not.toContain('<script>alert(1)</script>');
     expect(html).toContain('textContent = alias.name');
     expect(html).toContain('textContent = s.gitRemote');
+    expect(html).toContain("setAttribute('aria-label', 'Select ' + s.project)");
   });
 });

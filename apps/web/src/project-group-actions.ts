@@ -2,6 +2,8 @@ import {
   matchesProjectSourceSelector,
   type ProjectGroupConfig,
   type ProjectSourceSelector,
+  projectSourceSelectorFor,
+  uniqueProjectSourceSelectors,
 } from '@ai-usage/report-core/project-group';
 import type { UsageReportProjectSource } from '@ai-usage/report-core/report-data';
 
@@ -12,31 +14,6 @@ interface MoveProjectSourcesToGroupInput {
   projectSources: UsageReportProjectSource[];
   selectedSources: UsageReportProjectSource[];
 }
-
-export const projectSourceSelector = (source: UsageReportProjectSource): ProjectSourceSelector => ({
-  machineId: source.machineId,
-  ...(source.sourcePath ? { sourcePath: source.sourcePath } : { project: source.project }),
-  ...(source.gitRemote ? { gitRemote: source.gitRemote } : {}),
-});
-
-const selectorKey = (selector: ProjectSourceSelector) =>
-  [selector.machineId ?? '', selector.sourcePath ?? '', selector.project ?? '', selector.gitRemote ?? ''].join('|');
-
-export const projectSourceSelectorEquals = (left: ProjectSourceSelector, right: ProjectSourceSelector) =>
-  selectorKey(left) === selectorKey(right);
-
-const uniqueSelectors = (selectors: ProjectSourceSelector[]) => {
-  const seen = new Set<string>();
-  const result: ProjectSourceSelector[] = [];
-  for (const selector of selectors) {
-    const key = selectorKey(selector);
-    if (!seen.has(key)) {
-      seen.add(key);
-      result.push(selector);
-    }
-  }
-  return result;
-};
 
 const matchesSource = (source: UsageReportProjectSource, selector: ProjectSourceSelector) =>
   matchesProjectSourceSelector(
@@ -64,11 +41,11 @@ const removeSelectedSourcesFromGroup = (
     }
     for (const source of matchingSources) {
       if (!selectedSourceIds.has(source.id)) {
-        sources.push(projectSourceSelector(source));
+        sources.push(projectSourceSelectorFor(source));
       }
     }
   }
-  const uniqueSources = uniqueSelectors(sources);
+  const uniqueSources = uniqueProjectSourceSelectors(sources);
   return uniqueSources.length ? { ...group, sources: uniqueSources } : null;
 };
 
@@ -84,7 +61,10 @@ export const moveProjectSourcesToGroup = ({
   const target: ProjectGroupConfig = {
     id: existingTarget?.id ?? createGroupId,
     name: groupName,
-    sources: uniqueSelectors([...(existingTarget?.sources ?? []), ...selectedSources.map(projectSourceSelector)]),
+    sources: uniqueProjectSourceSelectors([
+      ...(existingTarget?.sources ?? []),
+      ...selectedSources.map(projectSourceSelectorFor),
+    ]),
   };
   const updatedGroupsById = new Map<string, ProjectGroupConfig>();
   for (const group of projectGroups) {

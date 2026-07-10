@@ -26,14 +26,12 @@ export const buildOverviewHeroData = (summary: ReportSummary): OverviewHeroData 
   };
 };
 
-export type HeatmapNavigationKey = 'ArrowDown' | 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'End' | 'Home';
-
 export const nextHeatmapFocusIndex = (currentIndex: number, itemCount: number, key: string): number | null => {
   if (itemCount <= 0) {
     return null;
   }
   const lastIndex = itemCount - 1;
-  switch (key as HeatmapNavigationKey) {
+  switch (key) {
     case 'ArrowLeft':
       return Math.max(0, currentIndex - 7);
     case 'ArrowRight':
@@ -365,6 +363,11 @@ export type OverviewSessionItem =
       sessionCount: number;
     };
 
+type TimedOverviewSessionItem = OverviewSessionItem & { durationMs: number };
+
+const isTimedPricedSession = (item: OverviewSessionItem): item is TimedOverviewSessionItem =>
+  item.durationMs !== null && item.durationMs > 0 && item.costApprox > 0;
+
 export const buildOverviewSessionItems = (
   rows: DashboardRow[],
   campaigns: CampaignView[] = [],
@@ -398,8 +401,8 @@ export const buildOverviewSessionItems = (
 export interface SessionShapeData {
   harnesses: string[];
   harnessSummaries: SessionShapeHarnessSummary[];
-  outliers: (OverviewSessionItem & { durationMs: number })[];
-  points: (OverviewSessionItem & { aggregateCount: number; durationMs: number })[];
+  outliers: TimedOverviewSessionItem[];
+  points: (TimedOverviewSessionItem & { aggregateCount: number })[];
   totalPoints: number;
   xPct: (value: number) => number;
   xTicks: (typeof DURATION_TICKS)[number][];
@@ -421,9 +424,7 @@ export const buildSessionShapeData = (
   rows: DashboardRow[],
   campaigns: CampaignView[] = [],
 ): SessionShapeData | null => {
-  const points = buildOverviewSessionItems(rows, campaigns).filter(
-    (item) => (item.durationMs ?? 0) > 0 && item.costApprox > 0,
-  ) as (OverviewSessionItem & { durationMs: number })[];
+  const points = buildOverviewSessionItems(rows, campaigns).filter(isTimedPricedSession);
   if (points.length < 3) {
     return null;
   }
