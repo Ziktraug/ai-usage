@@ -69,6 +69,59 @@ export const isProjectGroupConfig = (value: unknown): value is ProjectGroupConfi
   );
 };
 
+type ProjectSourceSelectorKey = keyof ProjectSourceSelector;
+
+const SELECTOR_KEYS: ProjectSourceSelectorKey[] = ['gitRemote', 'machineId', 'project', 'sourcePath'];
+
+const selectorValuesConflict = (key: ProjectSourceSelectorKey, left: string | undefined, right: string | undefined) => {
+  if (left === undefined || right === undefined) {
+    return false;
+  }
+  return key === 'project' ? left.toLowerCase() !== right.toLowerCase() : left !== right;
+};
+
+export const projectSourceSelectorsOverlap = (left: ProjectSourceSelector, right: ProjectSourceSelector) =>
+  !SELECTOR_KEYS.some((key) => selectorValuesConflict(key, left[key], right[key]));
+
+export const parseProjectGroupConfigs = (value: unknown): ProjectGroupConfig[] => {
+  if (!(Array.isArray(value) && value.every(isProjectGroupConfig))) {
+    throw new Error('Invalid project groups: every group must have an id, name, and at least one source selector');
+  }
+
+  const groups = value as ProjectGroupConfig[];
+  const groupIds = new Set<string>();
+  for (const group of groups) {
+    if (groupIds.has(group.id)) {
+      throw new Error(`Invalid project groups: duplicate id "${group.id}"`);
+    }
+    groupIds.add(group.id);
+  }
+
+  for (const [leftIndex, leftGroup] of groups.entries()) {
+    for (const rightGroup of groups.slice(leftIndex + 1)) {
+      const overlapping = leftGroup.sources.some((leftSelector) =>
+        rightGroup.sources.some((rightSelector) => projectSourceSelectorsOverlap(leftSelector, rightSelector)),
+      );
+      if (overlapping) {
+        throw new Error(
+          `Invalid project groups: overlapping selectors between "${leftGroup.id}" and "${rightGroup.id}"`,
+        );
+      }
+    }
+  }
+
+  return groups;
+};
+
+export const isProjectGroupConfigArray = (value: unknown): value is ProjectGroupConfig[] => {
+  try {
+    parseProjectGroupConfigs(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const matchesOptional = (actual: string | null | undefined, expected: string | undefined) =>
   expected === undefined || actual === expected;
 

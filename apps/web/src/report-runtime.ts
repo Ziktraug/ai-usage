@@ -1,10 +1,11 @@
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import { createClientPerfTrace, payloadStats } from './client-perf';
 import { demoReportPayload } from './report-data';
+import { toWebReportPayload, type WebReportPayload } from './web-report-payload';
 
 declare global {
   interface Window {
-    __AI_USAGE_REPORT__?: UsageReportPayload;
+    __AI_USAGE_REPORT__?: WebReportPayload;
     __AI_USAGE_REPORT_STATIC__?: boolean;
   }
 }
@@ -20,16 +21,19 @@ const readInjectedReportPayload = () => (typeof window === 'undefined' ? undefin
 const isStaticReportPayload = () =>
   typeof window === 'undefined' ? false : window.__AI_USAGE_REPORT_STATIC__ === true;
 
+const isE2ERuntime = () => import.meta.env?.VITE_AI_USAGE_E2E === '1';
+const demoWebReportPayload = toWebReportPayload(demoReportPayload);
+
 const collectReportPayload = async () => {
   const { getReportPayload } = await import('./server/report-payload');
-  return (await getReportPayload()) as UsageReportPayload;
+  return (await getReportPayload()) as WebReportPayload;
 };
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 const fetchStoredReportPayload = async () => {
   const { getReportPayload } = await import('./server/report-payload');
-  const payload = (await getReportPayload({ data: { force: false } })) as UsageReportPayload;
+  const payload = (await getReportPayload({ data: { force: false } })) as WebReportPayload;
   if (typeof window !== 'undefined') {
     window.__AI_USAGE_REPORT__ = payload;
   }
@@ -52,7 +56,7 @@ const refreshReportPayloadInBackground = async () => {
   }
 };
 
-export const readReportPayload = () => readInjectedReportPayload() ?? demoReportPayload;
+export const readReportPayload = () => readInjectedReportPayload() ?? demoWebReportPayload;
 
 export const isDemoReportPayload = () => !readInjectedReportPayload();
 
@@ -68,7 +72,7 @@ export const fetchReportPayload = async (_options?: { force?: boolean }) => {
 
   const { getReportPayload } = await import('./server/report-payload');
   perfTrace?.mark('serverFnLoaded');
-  const payload = (await getReportPayload({ data: { force: false } })) as UsageReportPayload;
+  const payload = (await getReportPayload({ data: { force: false } })) as WebReportPayload;
   perfTrace?.mark('received', payloadStats(payload));
   if (typeof window !== 'undefined') {
     window.__AI_USAGE_REPORT__ = payload;
@@ -77,10 +81,14 @@ export const fetchReportPayload = async (_options?: { force?: boolean }) => {
   return payload;
 };
 
-export const loadReportPayload = async () => {
+export const loadReportPayload = async (): Promise<WebReportPayload> => {
+  if (isE2ERuntime()) {
+    return demoWebReportPayload;
+  }
+
   const exportPayload = readExportReportPayload();
   if (exportPayload) {
-    return exportPayload;
+    return toWebReportPayload(exportPayload);
   }
 
   const injectedPayload = readInjectedReportPayload();
@@ -91,7 +99,7 @@ export const loadReportPayload = async () => {
   return await collectReportPayload();
 };
 
-export const resolveInitialReportPayload = (loaderPayload: UsageReportPayload) =>
+export const resolveInitialReportPayload = (loaderPayload: WebReportPayload) =>
   readInjectedReportPayload() ?? loaderPayload;
 
 export type MountReportRefreshAction = 'dev-fallback' | 'fetch-payload' | 'none';
@@ -102,7 +110,7 @@ export const mountReportRefreshAction = (input: {
   isDemoPayload: boolean;
   isDevRuntime: boolean;
 }): MountReportRefreshAction => {
-  if (input.canRefresh) {
+  if (input.canRefresh && !input.hasInitialPayload) {
     return 'fetch-payload';
   }
   if (input.isDevRuntime && !input.hasInitialPayload && input.isDemoPayload) {
@@ -112,4 +120,6 @@ export const mountReportRefreshAction = (input: {
 };
 
 export const reportRefreshPayload = () =>
-  isStaticReportPayload() ? undefined : (options?: { force?: boolean }) => fetchReportPayload(options);
+  typeof window === 'undefined' || isStaticReportPayload() || isE2ERuntime()
+    ? undefined
+    : (options?: { force?: boolean }) => fetchReportPayload(options);

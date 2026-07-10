@@ -486,7 +486,9 @@ describe('DB-backed Harness collectors', () => {
       storage,
     );
     const rows = result.rows as Array<
-      (typeof result.rows)[number] & { source?: { sourcePath?: string | null; sourceSessionId: string | null } }
+      (typeof result.rows)[number] & {
+        source?: { artifactPath?: string | null; sourcePath?: string | null; sourceSessionId: string | null };
+      }
     >;
 
     expect(rows).toHaveLength(2);
@@ -501,7 +503,7 @@ describe('DB-backed Harness collectors', () => {
     expect(matched?.tokOut).toBe(5);
     expect(matched?.costQuota).toBe(1.5);
     expect(matched?.linesAdded).toBe(9);
-    expect(orphan?.project).toBe('Cursor CSV import');
+    expect(orphan?.source?.artifactPath).toBe(exportPath);
     expect(orphan?.source?.sourcePath).toBeUndefined();
     expect(orphan?.costActual).toBe(0.4);
     expect(result.harnesses.find((harness) => harness.harness === 'cursor')?.rows).toHaveLength(2);

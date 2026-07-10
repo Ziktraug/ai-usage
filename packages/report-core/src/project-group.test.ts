@@ -3,6 +3,7 @@ import {
   isProjectGroupConfig,
   isProjectSourceSelector,
   matchesProjectSourceSelector,
+  parseProjectGroupConfigs,
   projectSourceId,
 } from './project-group';
 
@@ -46,5 +47,39 @@ describe('project groups', () => {
     ).toBe(true);
     expect(isProjectGroupConfig({ id: 'group-1', name: 'exalibur', sources: [] })).toBe(false);
     expect(isProjectGroupConfig({ id: 'group-1', sources: [{ machineId: 'machine-a' }] })).toBe(false);
+  });
+
+  test('rejects duplicate group ids across the full config', () => {
+    expect(() =>
+      parseProjectGroupConfigs([
+        {
+          id: 'group-1',
+          name: 'frontend',
+          sources: [{ machineId: 'machine-a', sourcePath: '/work/frontend' }],
+        },
+        {
+          id: 'group-1',
+          name: 'backend',
+          sources: [{ machineId: 'machine-a', sourcePath: '/work/backend' }],
+        },
+      ]),
+    ).toThrow('duplicate id "group-1"');
+  });
+
+  test('rejects selectors from different groups that can match the same project source', () => {
+    expect(() =>
+      parseProjectGroupConfigs([
+        {
+          id: 'group-1',
+          name: 'broad',
+          sources: [{ machineId: 'machine-a', project: 'Exalibur' }],
+        },
+        {
+          id: 'group-2',
+          name: 'precise',
+          sources: [{ machineId: 'machine-a', sourcePath: '/work/exalibur' }],
+        },
+      ]),
+    ).toThrow('overlapping selectors');
   });
 });

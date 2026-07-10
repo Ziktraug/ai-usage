@@ -315,12 +315,13 @@ export const buildCampaignTableItems = (
   visibleRows: DashboardRow[],
   sorting: SortingState,
   groupCampaigns: boolean,
+  preparedCampaigns?: CampaignView[],
 ): CampaignTableItem[] => {
   if (!groupCampaigns) {
     return buildSortedDashboardRows(visibleRows, sorting).map((row) => ({ kind: 'session', row }));
   }
 
-  const campaigns = buildCampaignViews(allRows, visibleRows);
+  const campaigns = preparedCampaigns ?? buildCampaignViews(allRows, visibleRows);
   const campaignByKey = new Map(campaigns.map((campaign) => [campaign.campaignKey, campaign]));
   const childKeys = new Set(campaigns.flatMap((campaign) => campaign.allChildren.map(rowKeyForCampaignMembership)));
   const emittedCampaigns = new Set<CampaignKey>();
@@ -415,8 +416,9 @@ export const buildCampaignTableRows = (
   visibleRows: DashboardRow[],
   sorting: SortingState,
   groupCampaigns: boolean,
+  preparedCampaigns?: CampaignView[],
 ): DashboardRow[] =>
-  buildCampaignTableItems(allRows, visibleRows, sorting, groupCampaigns).map((item) =>
+  buildCampaignTableItems(allRows, visibleRows, sorting, groupCampaigns, preparedCampaigns).map((item) =>
     item.kind === 'campaign' ? campaignDisplayRow(item.campaign, sorting) : item.row,
   );
 

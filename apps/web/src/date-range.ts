@@ -29,7 +29,13 @@ export const parseLocalDate = (value: string, endOfDay = false) => {
   if (!match) {
     return null;
   }
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  const date = new Date(year, monthIndex, day);
+  if (date.getFullYear() !== year || date.getMonth() !== monthIndex || date.getDate() !== day) {
+    return null;
+  }
   if (endOfDay) {
     date.setHours(23, 59, 59, 999);
   }

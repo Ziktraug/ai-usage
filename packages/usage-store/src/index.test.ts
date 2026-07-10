@@ -311,6 +311,30 @@ describe('usage-store public boundary', () => {
     }
   });
 
+  test('rejects a peer row forged into another machine namespace before storage', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-forged-peer-'));
+    const dbPath = usageStorePath(home);
+    const forgedBundle: UsageMergeBundle = {
+      ...makeBundle(machineB, []),
+      rows: [toSerializedMergeRow(makeRow({ sourceSessionId: 'forged' }), machineA)],
+    };
+
+    const result = await Effect.runPromise(
+      Effect.either(
+        importPeerMergeBundle({
+          dbPath,
+          localMachineId: 'local-machine',
+          bundle: forgedBundle,
+        }),
+      ),
+    );
+
+    expect(result._tag).toBe('Left');
+    if (result._tag === 'Left') {
+      expect(result.left.reason).toBe('invalid-input');
+    }
+  });
+
   test('updates peer rows with changed content and keeps missing rows from later bundles', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-peer-update-'));
     const dbPath = usageStorePath(home);

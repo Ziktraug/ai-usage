@@ -6,8 +6,13 @@ import {
   parseProviderStatusDataset,
   providerStatusWithFreshness,
 } from '@ai-usage/report-core/provider-status';
-import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import type { DashboardRow } from './shared';
+
+interface ProviderStatusPayload {
+  datasets?: Record<string, unknown>;
+  facets?: Record<string, unknown>;
+  generatedAt: string;
+}
 
 export type ProviderWindowGroupKey = '5h' | 'weekly' | 'monthly' | 'other';
 export type ProviderStatusTone = 'critical' | 'warning' | 'muted' | 'ok';
@@ -206,7 +211,7 @@ const toProviderStatusView = (input: ProviderStatus, now: Date | string): Provid
   };
 };
 
-const explicitProviderStatuses = (payload: UsageReportPayload): ProviderStatus[] => {
+const explicitProviderStatuses = (payload: ProviderStatusPayload): ProviderStatus[] => {
   const dataset =
     parseProviderStatusDataset(payload.datasets?.providerStatus) ??
     parseProviderStatusDataset(payload.facets?.providerStatus);
@@ -235,7 +240,7 @@ const sortRankFor = (view: ProviderStatusView) => {
 };
 
 export const buildProviderStatusViews = (
-  payload: UsageReportPayload,
+  payload: ProviderStatusPayload,
   rows: DashboardRow[],
   now: Date | string,
 ): ProviderStatusView[] => {

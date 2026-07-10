@@ -97,17 +97,109 @@ export const scatterAxisText = css({
 
 export const scatterPoint = css({
   fillOpacity: 0.7,
-  cursor: 'pointer',
   transition: 'fill-opacity 0.1s',
-  _hover: {
-    fillOpacity: 1,
-  },
 });
 
 export const scatterLegend = css({
   display: 'flex',
   flexWrap: 'wrap',
   gap: '6px',
+});
+
+export const scatterSummary = css({
+  color: 'faint',
+  fontFamily: 'mono',
+  fontSize: '10px',
+});
+
+export const scatterDistribution = css({
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surfaceMuted',
+  color: 'muted',
+  fontSize: '11px',
+  '& summary': {
+    display: 'flex',
+    alignItems: 'center',
+    minH: '44px',
+    px: '10px',
+    color: 'ink',
+    cursor: 'pointer',
+    fontWeight: 650,
+  },
+  '& summary:focus-visible': {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+});
+
+export const scatterDistributionList = css({
+  display: 'grid',
+  gap: '6px',
+  m: 0,
+  p: '0 10px 10px',
+  listStyle: 'none',
+});
+
+export const scatterDistributionRow = css({
+  display: 'grid',
+  gap: '3px',
+  p: '8px',
+  borderRadius: 'sm',
+  bg: 'surface',
+});
+
+export const scatterDistributionMeta = css({
+  textStyle: 'numeric',
+  color: 'faint',
+  fontSize: '10px',
+});
+
+export const scatterOutliers = css({
+  display: 'grid',
+  gridTemplateColumns: { base: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
+  gap: '6px',
+});
+
+export const scatterOutlierButton = css({
+  appearance: 'none',
+  display: 'grid',
+  gap: '3px',
+  minW: 0,
+  minH: '44px',
+  p: '8px 10px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surface',
+  color: 'ink',
+  cursor: 'pointer',
+  fontSize: '12px',
+  fontWeight: 650,
+  textAlign: 'left',
+  transition: 'border-color 0.15s, background-color 0.15s',
+  '& > span:first-child': {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  _hover: {
+    borderColor: 'accent',
+    bg: 'accentTint',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+});
+
+export const scatterOutlierMeta = css({
+  textStyle: 'numeric',
+  color: 'muted',
+  fontSize: '10px',
+  fontWeight: 500,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
 });
 
 // --- Model migration histogram -------------------------------------------

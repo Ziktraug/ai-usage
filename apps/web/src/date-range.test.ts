@@ -5,6 +5,7 @@ import {
   dateFromIndex,
   dateIndexFrom,
   normalizeDateIndexRange,
+  parseLocalDate,
   rowMatchesDateBounds,
 } from './date-range';
 
@@ -53,5 +54,11 @@ describe('date range filters', () => {
     expect(dateIndexFrom(new Date(2026, 5, 4), minDay)).toBe(3);
     expect(dateFromIndex(minDay, 3)).toEqual(new Date(2026, 5, 4));
     expect(normalizeDateIndexRange([8.4, -2], 10)).toEqual([0, 8]);
+  });
+
+  test('rejects impossible local calendar dates instead of normalizing them', () => {
+    expect(parseLocalDate('2026-02-29')).toBeNull();
+    expect(parseLocalDate('2026-02-31')).toBeNull();
+    expect(parseLocalDate('2024-02-29')).toEqual(new Date(2024, 1, 29));
   });
 });

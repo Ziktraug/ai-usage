@@ -164,6 +164,7 @@ export interface ReportSummary {
   costQuota: number;
   fresh: number;
   meanCost: number;
+  pricedSessions: number;
   rtkInput: number;
   rtkOutput: number;
   rtkSaved: number;
@@ -184,6 +185,7 @@ const createReportSummary = (): ReportSummary => ({
   cacheWrite: 0,
   fresh: 0,
   meanCost: 0,
+  pricedSessions: 0,
   rtkInput: 0,
   rtkOutput: 0,
   rtkSaved: 0,
@@ -209,6 +211,7 @@ export const buildReportSummary = (rows: DashboardRow[], acceptsRow: (row: Dashb
     if (row.costKnown) {
       summary.totalCost += row.costApprox;
       pricedCount++;
+      summary.pricedSessions++;
     }
     summary.actualCost += row.costActual ?? 0;
     summary.costQuota += row.costQuota ?? 0;

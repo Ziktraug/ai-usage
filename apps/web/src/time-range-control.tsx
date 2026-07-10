@@ -257,6 +257,34 @@ export const timelineBucketLayout = (bucketCount: number) => {
   };
 };
 
+export const buildVisibleTimelineBars = (
+  buckets: TimelineBucket[],
+  seriesKeys: string[],
+  range: VisualZoomRange,
+  useSessions: boolean,
+) => {
+  const rankByKey = new Map(seriesKeys.map((key, rank) => [key, rank]));
+  return buckets.slice(range.from, range.to + 1).map((bucket) => {
+    const segments: { key: string; rank: number; value: number }[] = [];
+    for (const [key, entry] of bucket.byKey) {
+      const rank = rankByKey.get(key);
+      if (rank === undefined) {
+        continue;
+      }
+      const value = useSessions ? entry.sessions : entry.cost;
+      if (value > 0) {
+        segments.push({ key, rank, value });
+      }
+    }
+    segments.sort((left, right) => left.rank - right.rank);
+    return {
+      bucket,
+      segments,
+      total: useSessions ? bucket.sessions : bucket.total,
+    };
+  });
+};
+
 export const TimeRangeControl = (props: {
   rows: DashboardRow[];
   dateRange: DateRangeController;
@@ -377,31 +405,17 @@ export const TimeRangeControl = (props: {
   const formatValue = (value: number, useSessions = false) =>
     valueMode() === 'sessions' || useSessions ? `${fmtNum(value)} sessions` : fmtMoney(value);
 
-  const bars = createMemo(() => {
+  const visibleBars = createMemo(() => {
     const chart = data();
     if (!chart) {
       return [];
     }
-    return chart.buckets.map((bucket) => {
-      const total = bucketValue(bucket, chart);
-      const segments: { key: string; rank: number; value: number }[] = [];
-      for (let rank = 0; rank < chart.series.length; rank++) {
-        const series = chart.series[rank];
-        if (!series) {
-          continue;
-        }
-        const value = entryValue(bucket.byKey.get(series.key), chart);
-        if (value > 0) {
-          segments.push({ key: series.key, rank, value });
-        }
-      }
-      return { bucket, segments, total };
-    });
-  });
-
-  const visibleBars = createMemo(() => {
-    const range = visibleBucketRange();
-    return bars().slice(range.from, range.to + 1);
+    return buildVisibleTimelineBars(
+      chart.buckets,
+      chart.series.map((series) => series.key),
+      visibleBucketRange(),
+      valueMode() === 'sessions' || usesSessionShare(chart),
+    );
   });
 
   const visibleBucketLayout = createMemo(() => timelineBucketLayout(bucketRangeSize(visibleBucketRange())));

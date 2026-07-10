@@ -92,6 +92,7 @@ const toSnapshotRow = (row: UsageRowWithOptionalSource, machine: UsageMachine): 
   return {
     ...serializeUsageRow(row),
     source: {
+      ...(source?.artifactPath === undefined ? {} : { artifactPath: source.artifactPath }),
       harnessKey: source?.harnessKey ?? row.harness.toLowerCase(),
       sourceSessionId: source?.sourceSessionId ?? null,
       ...(source?.parentSourceSessionId === undefined ? {} : { parentSourceSessionId: source.parentSourceSessionId }),
@@ -156,7 +157,13 @@ const isSnapshotRow = (value: unknown): value is SnapshotUsageRow => {
     return false;
   }
   const sourceRecord = source as Record<string, unknown>;
-  return typeof sourceRecord.machineId === 'string' && typeof sourceRecord.machineLabel === 'string';
+  return (
+    (sourceRecord.artifactPath === undefined ||
+      sourceRecord.artifactPath === null ||
+      typeof sourceRecord.artifactPath === 'string') &&
+    typeof sourceRecord.machineId === 'string' &&
+    typeof sourceRecord.machineLabel === 'string'
+  );
 };
 
 const optionalString = (value: unknown) => value === undefined || typeof value === 'string';

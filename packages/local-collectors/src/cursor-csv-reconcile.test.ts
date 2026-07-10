@@ -58,6 +58,7 @@ describe('Cursor CSV reconciliation', () => {
     });
 
     expect(session?.source.sourceSessionId).toBe('2026-06-03T09:00:00.000Z');
+    expect(session?.source.artifactPath).toBe(exportPath);
     expect(session?.projectPath).toBe('/work/project');
     expect(session?.usageUnavailable).toBeUndefined();
     expect(session?.model).toBe('claude-opus-4-8-thinking-high');
@@ -118,7 +119,7 @@ describe('Cursor CSV reconciliation', () => {
     expect(sessions).toHaveLength(2);
     expect(sessions.some((session) => session.name.startsWith('Cursor export'))).toBe(true);
     const orphan = sessions.find((session) => session.name.startsWith('Cursor export'));
-    expect(orphan?.project).toBe('Cursor CSV import');
+    expect(orphan?.source.artifactPath).toBe(exportPath);
     expect(orphan?.source.sourcePath).toBeUndefined();
   });
 });

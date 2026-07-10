@@ -26,7 +26,6 @@ import {
   unavailableTitle,
 } from '@ai-usage/design-system/report';
 import type { ProjectGroupConfig, ProjectSourceSelector } from '@ai-usage/report-core/project-group';
-import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
@@ -87,6 +86,7 @@ import { columnDiffFromVisibility, columnVisibilityFromDiff, sortFromSortingStat
 import { type DashboardRow, enrichReportRow, fmtDate, fmtDateOnly, fmtNum, rowKey } from './shared';
 import { applyTableUpdate } from './table-utils';
 import { TimeRangeControl } from './time-range-control';
+import type { WebReportPayload } from './web-report-payload';
 
 const REFRESH_INTERVAL_MS = 60_000;
 const FORM_CONTROL_TAG_PATTERN = /^(INPUT|SELECT|TEXTAREA)$/;
@@ -100,12 +100,12 @@ const removeSelectors = (sources: ProjectSourceSelector[], selectors: ProjectSou
 };
 
 export const Dashboard = (props: {
-  fetchPayload?: (options?: { force?: boolean }) => Promise<UsageReportPayload>;
-  initialPayload?: UsageReportPayload;
+  fetchPayload?: (options?: { force?: boolean }) => Promise<WebReportPayload>;
+  initialPayload?: WebReportPayload;
 }) => {
   const initialPayload = props.initialPayload ?? readReportPayload();
   const dashboardSearchDefaults = dashboardSearchDefaultsFor(initialPayload.filters.sort);
-  const [payload, setPayload] = createSignal<UsageReportPayload>(initialPayload);
+  const [payload, setPayload] = createSignal<WebReportPayload>(initialPayload);
   const providerStatusClock = createProviderStatusClock({ initialNow: initialPayload.generatedAt });
   onMount(providerStatusClock.start);
   const isDemo = !props.initialPayload && isDemoReportPayload();
@@ -231,18 +231,18 @@ export const Dashboard = (props: {
       (rows) => ({ rows: rows.length }),
     ),
   );
-  const sessionTableRows = createMemo(() =>
-    measureClientPerf(
-      'aiUsage.web.client.compute.sessionTableRows',
-      () => buildCampaignTableRows(reportRows(), tableFilteredRows(), sorting(), groupCampaigns()),
-      (rows) => ({ rows: rows.length }),
-    ),
-  );
   const campaignViews = createMemo(() =>
     measureClientPerf(
       'aiUsage.web.client.compute.campaignViews',
       () => buildCampaignViews(reportRows(), tableFilteredRows()),
       (campaigns) => ({ campaigns: campaigns.length }),
+    ),
+  );
+  const sessionTableRows = createMemo(() =>
+    measureClientPerf(
+      'aiUsage.web.client.compute.sessionTableRows',
+      () => buildCampaignTableRows(reportRows(), tableFilteredRows(), sorting(), groupCampaigns(), campaignViews()),
+      (rows) => ({ rows: rows.length }),
     ),
   );
   // Campaign context rows can select their atomic root even when the root is outside
@@ -390,7 +390,7 @@ export const Dashboard = (props: {
     await saveProjectGroups({ data: { projectGroups } });
     await refreshPayload(true);
   };
-  const cleanupProjectWarning = (warning: NonNullable<UsageReportPayload['warnings']>[number]) => {
+  const cleanupProjectWarning = (warning: NonNullable<WebReportPayload['warnings']>[number]) => {
     const groupId = warning.groupId;
     if (!groupId) {
       return;
