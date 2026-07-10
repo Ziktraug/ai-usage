@@ -119,6 +119,51 @@ describe('machine config', () => {
     }
   });
 
+  test('rejects duplicate ids and overlapping selectors across project groups', async () => {
+    const home = await mkdtemp('ai-usage-machine-config-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      mkdirSync(path.dirname(aiUsageConfigPath(storage)), { recursive: true });
+      writeFileSync(
+        aiUsageConfigPath(storage),
+        JSON.stringify({
+          projectGroups: [
+            {
+              id: 'group-1',
+              name: 'broad',
+              sources: [{ machineId: 'machine-a', project: 'Exalibur' }],
+            },
+            {
+              id: 'group-2',
+              name: 'precise',
+              sources: [{ machineId: 'machine-a', sourcePath: '/work/exalibur' }],
+            },
+          ],
+        }),
+      );
+
+      await expect(
+        Effect.runPromise(readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage))),
+      ).rejects.toThrow('Invalid ai-usage config');
+
+      writeFileSync(
+        aiUsageConfigPath(storage),
+        JSON.stringify({
+          projectGroups: [
+            { id: 'group-1', name: 'one', sources: [{ sourcePath: '/work/one' }] },
+            { id: 'group-1', name: 'two', sources: [{ sourcePath: '/work/two' }] },
+          ],
+        }),
+      );
+
+      await expect(
+        Effect.runPromise(readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage))),
+      ).rejects.toThrow('Invalid ai-usage config');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('preserves home project groups when repo config omits them', async () => {
     const home = await mkdtemp('ai-usage-machine-config-');
     const repo = await mkdtemp('ai-usage-repo-config-');

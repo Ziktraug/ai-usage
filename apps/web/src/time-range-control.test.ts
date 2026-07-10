@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { timelineBucketLayout, timelinePlotLeft } from './time-range-control';
+import { buildVisibleTimelineBars, timelineBucketLayout, timelinePlotLeft } from './time-range-control';
 
 describe('time range control plot positioning', () => {
   test('aligns hovered day-bucket crosshair to the inset plot area', () => {
@@ -13,5 +13,34 @@ describe('time range control plot positioning', () => {
       bucketGap: 'clamp(0px, calc((100% - 758px) / 378), 2px)',
       bucketMinWidth: 'min(2px, calc(100% / 379))',
     });
+  });
+
+  test('projects only visible, non-empty timeline entries in series order', () => {
+    const hidden = {
+      byKey: new Map([['alpha', { cost: 99, sessions: 9 }]]),
+      date: new Date('2026-01-01'),
+      sessions: 9,
+      total: 99,
+    };
+    const visible = {
+      byKey: new Map([
+        ['beta', { cost: 2, sessions: 1 }],
+        ['unknown', { cost: 8, sessions: 1 }],
+        ['alpha', { cost: 3, sessions: 2 }],
+      ]),
+      date: new Date('2026-01-02'),
+      sessions: 4,
+      total: 13,
+    };
+
+    const bars = buildVisibleTimelineBars([hidden, visible], ['alpha', 'beta'], { from: 1, to: 1 }, false);
+
+    expect(bars).toHaveLength(1);
+    expect(bars[0]?.bucket).toBe(visible);
+    expect(bars[0]?.total).toBe(13);
+    expect(bars[0]?.segments).toEqual([
+      { key: 'alpha', rank: 0, value: 3 },
+      { key: 'beta', rank: 1, value: 2 },
+    ]);
   });
 });

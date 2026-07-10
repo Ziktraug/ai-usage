@@ -43,6 +43,28 @@ describe('usage snapshots', () => {
     });
   });
 
+  test('preserves import artifact provenance separately from project paths', () => {
+    const artifactPath = '/imports/cursor-usage.csv';
+    const snapshot = createUsageSnapshot({
+      machine,
+      rows: [
+        {
+          ...row('cursor export', ''),
+          project: '',
+          source: { harnessKey: 'cursor', sourceSessionId: null, artifactPath },
+        },
+      ],
+    });
+
+    const parsed = parseUsageSnapshot(JSON.stringify(snapshot));
+    const [mergedRow] = mergeUsageSnapshots([parsed]).rows;
+
+    expect(parsed.rows[0]?.source.artifactPath).toBe(artifactPath);
+    expect(parsed.rows[0]?.source.sourcePath).toBeUndefined();
+    expect(mergedRow?.source.artifactPath).toBe(artifactPath);
+    expect(mergedRow?.source.sourcePath).toBeUndefined();
+  });
+
   test('parses and dedupes repeated snapshots by source session', () => {
     const older = createUsageSnapshot({
       machine,

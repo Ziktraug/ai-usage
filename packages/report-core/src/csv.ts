@@ -1,9 +1,15 @@
 import type { SerializedRow } from './report-data';
 
-const CSV_ESCAPE_REQUIRED = /[",\n]/;
+const CSV_ESCAPE_REQUIRED = /[",\r\n]/;
 const CSV_QUOTE = /"/g;
+const CSV_FORMULA_PREFIX = /^[=+\-@\t\r]/;
 
 const csvEscape = (value: string) => (CSV_ESCAPE_REQUIRED.test(value) ? `"${value.replace(CSV_QUOTE, '""')}"` : value);
+
+const csvCell = (value: unknown, textual: boolean) => {
+  const text = String(value);
+  return csvEscape(textual && CSV_FORMULA_PREFIX.test(text) ? `'${text}` : text);
+};
 
 export const rtkSavingsPct = (row: Pick<SerializedRow, 'rtkInputTokens' | 'rtkSavedTokens'>) =>
   row.rtkSavedTokens && row.rtkInputTokens ? (row.rtkSavedTokens / row.rtkInputTokens) * 100 : null;
@@ -14,17 +20,17 @@ export const rtkSavingsPct = (row: Pick<SerializedRow, 'rtkInputTokens' | 'rtkSa
  * never drift between outputs.
  */
 export const usageRowCsvColumns = [
-  { header: 'date', value: (row) => row.date },
-  { header: 'end_date', value: (row) => row.endDate },
-  { header: 'active_date', value: (row) => row.activeDate },
-  { header: 'harness', value: (row) => row.harness },
-  { header: 'machine', value: (row) => row.source?.machineLabel },
-  { header: 'machine_id', value: (row) => row.source?.machineId },
-  { header: 'provider', value: (row) => row.provider },
-  { header: 'session', value: (row) => row.name },
-  { header: 'model', value: (row) => row.model },
-  { header: 'models', value: (row) => row.models?.join('|') },
-  { header: 'project', value: (row) => row.project },
+  { header: 'date', textual: true, value: (row) => row.date },
+  { header: 'end_date', textual: true, value: (row) => row.endDate },
+  { header: 'active_date', textual: true, value: (row) => row.activeDate },
+  { header: 'harness', textual: true, value: (row) => row.harness },
+  { header: 'machine', textual: true, value: (row) => row.source?.machineLabel },
+  { header: 'machine_id', textual: true, value: (row) => row.source?.machineId },
+  { header: 'provider', textual: true, value: (row) => row.provider },
+  { header: 'session', textual: true, value: (row) => row.name },
+  { header: 'model', textual: true, value: (row) => row.model },
+  { header: 'models', textual: true, value: (row) => row.models?.join('|') },
+  { header: 'project', textual: true, value: (row) => row.project },
   { header: 'input', value: (row) => row.tokIn },
   { header: 'output', value: (row) => row.tokOut },
   { header: 'cache_read', value: (row) => row.tokCr },
@@ -51,14 +57,13 @@ export const usageRowCsvColumns = [
   { header: 'partial', value: (row) => row.partial ?? false },
   { header: 'usage_unavailable', value: (row) => row.usageUnavailable ?? false },
   { header: 'ambiguous', value: (row) => row.ambiguous ?? false },
-] as const satisfies readonly { header: string; value: (row: SerializedRow) => unknown }[];
+] as const satisfies readonly { header: string; textual?: boolean; value: (row: SerializedRow) => unknown }[];
 
 export const serializedRowsToCSV = (rows: SerializedRow[]): string => {
   const head = usageRowCsvColumns.map((column) => column.header);
   const body = rows.map((row) =>
     usageRowCsvColumns
-      .map((column) => column.value(row) ?? '')
-      .map((item) => csvEscape(String(item)))
+      .map((column) => csvCell(column.value(row) ?? '', 'textual' in column && column.textual))
       .join(','),
   );
   return [head.join(','), ...body].join('\n');

@@ -25,7 +25,7 @@ const collectSetupSources = (snapshotFiles: string[], local: boolean) =>
 
 const scriptJson = (value: unknown) => (JSON.stringify(value) ?? 'null').replace(/</g, '\\u003c');
 
-const setupHTML = (
+export const setupHTML = (
   sources: ProjectSource[],
   aliases: ProjectAliasEntry[],
   warnings: { harness?: string; message: string }[],
@@ -113,27 +113,44 @@ const selectAllEl = document.getElementById('select-all');
 const fmtNum = n => { if (n >= 1e6) return (n/1e6).toFixed(1)+'M'; if (n >= 1e3) return (n/1e3).toFixed(1)+'K'; return String(n); };
 
 function renderSources() {
-  tbody.innerHTML = '';
+  tbody.replaceChildren();
   for (let i = 0; i < sources.length; i++) {
     const s = sources[i];
     const tr = document.createElement('tr');
     if (selected.has(i)) tr.classList.add('row-selected');
-    tr.innerHTML =
-      '<td><input type="checkbox" data-idx="'+i+'" '+(selected.has(i)?'checked':'')+'></td>' +
-      '<td>'+s.project+'</td>' +
-      '<td>'+s.machine+'</td>' +
-      '<td>'+s.harness+'</td>' +
-      '<td class="num">'+fmtNum(s.sessions)+'</td>' +
-      '<td class="num">'+fmtNum(s.tokens)+'</td>' +
-      '<td style="max-width:260px;overflow:hidden;text-overflow:ellipsis">'+(s.sourcePath||'—')+'</td>' +
-      '<td>'+(s.gitRemote||'—')+'</td>';
+    const selectionCell = document.createElement('td');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.dataset.idx = String(i);
+    checkbox.checked = selected.has(i);
+    selectionCell.appendChild(checkbox);
+    tr.appendChild(selectionCell);
+
+    const values = [s.project, s.machine, s.harness, fmtNum(s.sessions), fmtNum(s.tokens)];
+    for (let column = 0; column < values.length; column++) {
+      const cell = document.createElement('td');
+      cell.textContent = String(values[column]);
+      if (column >= 3) cell.className = 'num';
+      tr.appendChild(cell);
+    }
+
+    const sourcePathCell = document.createElement('td');
+    sourcePathCell.textContent = s.sourcePath || '—';
+    sourcePathCell.style.maxWidth = '260px';
+    sourcePathCell.style.overflow = 'hidden';
+    sourcePathCell.style.textOverflow = 'ellipsis';
+    tr.appendChild(sourcePathCell);
+
+    const remoteCell = document.createElement('td');
+    remoteCell.textContent = s.gitRemote || '—';
+    tr.appendChild(remoteCell);
     tbody.appendChild(tr);
   }
   updateCount();
 }
 
 function renderWarnings() {
-  warningsEl.innerHTML = '';
+  warningsEl.replaceChildren();
   if (!warnings.length) return;
   const panel = document.createElement('section');
   panel.className = 'warning-panel';
@@ -173,7 +190,7 @@ function globToRegex(glob) {
 }
 
 function renderAliases() {
-  aliasListEl.innerHTML = '';
+  aliasListEl.replaceChildren();
   if (!aliases.length) {
     aliasListEl.textContent = 'No aliases configured.';
     return;
@@ -181,16 +198,27 @@ function renderAliases() {
   for (const alias of aliases) {
     const div = document.createElement('div');
     div.className = 'alias-item';
-    div.innerHTML =
-      '<span class="alias-name">'+alias.name+'</span>' +
-      '<span class="alias-patterns">'+alias.match.join(', ')+'</span>' +
-      '<button class="alias-delete" data-name="'+alias.name+'" title="Remove alias">&times;</button>';
+    const name = document.createElement('span');
+    name.className = 'alias-name';
+    name.textContent = alias.name;
+    const patterns = document.createElement('span');
+    patterns.className = 'alias-patterns';
+    patterns.textContent = alias.match.join(', ');
+    const deleteButton = document.createElement('button');
+    deleteButton.className = 'alias-delete';
+    deleteButton.dataset.name = alias.name;
+    deleteButton.title = 'Remove alias';
+    deleteButton.type = 'button';
+    deleteButton.textContent = '×';
+    div.appendChild(name);
+    div.appendChild(patterns);
+    div.appendChild(deleteButton);
     aliasListEl.appendChild(div);
   }
 }
 
 function renderSuggestions() {
-  sugEl.innerHTML = '';
+  sugEl.replaceChildren();
   const groups = [];
   const seen = new Set();
 

@@ -121,5 +121,5 @@ See `docs/generated-tooling-ownership.md` for generated Panda/TanStack/Nitro own
 - Relative workspace paths such as `../../packages/...` and `../apps/...` are forbidden.
 - Private package paths such as `@ai-usage/report-core/src/...` are forbidden.
 - Package graph boundaries for LAN merge are enforced by scoped Biome restricted-import rules and `tools/check-package-boundaries.ts`.
-- The package graph policy follows `docs/lan-merge-pairing-plan.md` and the ownership READMEs in each app/package directory.
+- The package graph policy follows the ownership READMEs in each app/package directory.
 - `bun run lint` runs Biome restricted-import rules, `tools/check-workspace-relative-paths.ts`, `tools/check-public-package-exports.ts`, and `tools/check-package-boundaries.ts`.

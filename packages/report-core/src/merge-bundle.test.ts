@@ -40,12 +40,93 @@ describe('usage merge bundles', () => {
     expect(bundle.rows[0]?.contentHash).toHaveLength(64);
   });
 
+  test('preserves import artifact provenance separately from project paths', () => {
+    const artifactPath = '/imports/cursor-usage.csv';
+    const legacy = toSerializedMergeRow(
+      {
+        ...row,
+        project: '',
+        source: { harnessKey: 'cursor', sourceSessionId: null, sourcePath: artifactPath },
+      },
+      machine,
+    );
+    const bundle = createUsageMergeBundle({
+      machine,
+      rows: [
+        {
+          ...row,
+          project: '',
+          source: { harnessKey: 'cursor', sourceSessionId: null, artifactPath },
+        },
+      ],
+    });
+    const parsed = parseUsageMergeBundle(JSON.stringify(bundle));
+
+    expect(parsed.rows[0]?.source.artifactPath).toBe(artifactPath);
+    expect(parsed.rows[0]?.source.sourcePath).toBeUndefined();
+    expect(parsed.rows[0]?.rowKey).toBe(legacy.rowKey);
+    expect(parsed.rows[0]?.sourceFingerprint).toBe(legacy.sourceFingerprint);
+  });
+
   test('parses valid bundles and rejects invalid row provenance', () => {
     const bundle = createUsageMergeBundle({ machine, rows: [{ ...row }] });
     expect(parseUsageMergeBundle(JSON.stringify(bundle)).machine.id).toBe('machine-a');
 
     const invalid = { ...bundle, rows: [{ ...bundle.rows[0], source: { harnessKey: 'codex' } }] };
     expect(() => parseUsageMergeBundle(JSON.stringify(invalid))).toThrow('invalid rows');
+  });
+
+  test('rejects malformed dates, numbers, derived fields, and unknown row fields', () => {
+    const bundle = createUsageMergeBundle({ machine, rows: [{ ...row }] });
+    const serialized = bundle.rows[0]!;
+    const invalidRows = [
+      { ...serialized, date: 'not-a-date' },
+      { ...serialized, tokIn: Number.POSITIVE_INFINITY },
+      { ...serialized, tokenTotal: serialized.tokenTotal + 1 },
+      { ...serialized, unexpected: 'field' },
+    ];
+
+    for (const invalidRow of invalidRows) {
+      expect(() => parseSerializedMergeRow(invalidRow)).toThrow('invalid row');
+    }
+    expect(() => parseUsageMergeBundle(JSON.stringify({ ...bundle, generatedAt: '2026-02-31' }))).toThrow(
+      'invalid generatedAt',
+    );
+  });
+
+  test('rejects correctly hashed rows with impossible negative or fractional metrics', () => {
+    const invalidRows = [
+      toSerializedMergeRow({ ...row, tokIn: -1 }, machine),
+      toSerializedMergeRow({ ...row, calls: 1.5 }, machine),
+      toSerializedMergeRow({ ...row, durationMs: -1 }, machine),
+      toSerializedMergeRow({ ...row, costApprox: -0.01 }, machine),
+      toSerializedMergeRow({ ...row, linesAdded: 0.5 }, machine),
+    ];
+
+    for (const invalidRow of invalidRows) {
+      expect(() => parseSerializedMergeRow(invalidRow)).toThrow('invalid row');
+    }
+  });
+
+  test('rejects tampered identities and content hashes', () => {
+    const bundle = createUsageMergeBundle({ machine, rows: [{ ...row }] });
+    const serialized = bundle.rows[0]!;
+
+    expect(() => parseSerializedMergeRow({ ...serialized, rowKey: `${serialized.rowKey}-forged` })).toThrow(
+      'invalid row',
+    );
+    expect(() => parseSerializedMergeRow({ ...serialized, contentHash: '0'.repeat(64) })).toThrow('invalid row');
+    expect(() => parseSerializedMergeRow({ ...serialized, sourceFingerprint: 'f'.repeat(64) })).toThrow('invalid row');
+  });
+
+  test('rejects rows forged into a different machine namespace', () => {
+    const machineB = { id: 'machine-b', label: 'Machine B' };
+    const bundle = createUsageMergeBundle({ machine: machineB, rows: [] });
+    const forgedRow = toSerializedMergeRow(row, machine);
+
+    expect(() => parseUsageMergeBundle(JSON.stringify({ ...bundle, rows: [forgedRow] }))).toThrow(
+      'machineId does not match',
+    );
   });
 
   test('keeps row keys stable while content hashes change with row content', () => {

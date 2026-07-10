@@ -4,6 +4,7 @@ import {
   createUsageMergeBundle,
   deserializeMergeRow,
   parseSerializedMergeRow,
+  parseUsageMergeBundleValue,
   type SerializedMergeRow,
   toSerializedMergeRow,
   type UsageMergeBundle,
@@ -299,7 +300,20 @@ export const importLocalRows = (input: ImportLocalRowsInput): Effect.Effect<Impo
 export const importPeerMergeBundle = (
   input: ImportPeerMergeBundleInput,
 ): Effect.Effect<ImportResult, UsageStoreError> => {
-  if (input.bundle.machine.id === input.localMachineId) {
+  let bundle: UsageMergeBundle;
+  try {
+    bundle = parseUsageMergeBundleValue(input.bundle);
+  } catch (cause) {
+    return Effect.fail(
+      new UsageStoreError({
+        operation: 'importPeerMergeBundle',
+        message: `Cannot import an invalid peer merge bundle: ${cause instanceof Error ? cause.message : String(cause)}`,
+        reason: 'invalid-input',
+        cause,
+      }),
+    );
+  }
+  if (bundle.machine.id === input.localMachineId) {
     return Effect.fail(
       new UsageStoreError({
         operation: 'importPeerMergeBundle',
@@ -308,7 +322,7 @@ export const importPeerMergeBundle = (
       }),
     );
   }
-  return importMergeRows(input.dbPath, input.bundle.rows, input.importedAt);
+  return importMergeRows(input.dbPath, bundle.rows, input.importedAt);
 };
 
 export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<QueryRowsResult, UsageStoreError> =>

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { makeLanPairingServiceWithOptions } from '@ai-usage/lan-pairing';
@@ -128,6 +128,11 @@ describe('usage-merge public boundary', () => {
       expect(second.path).toBe(path.join(root, '.env'));
       expect(readFileSync(path.join(root, '.env'), 'utf8')).toBe(
         'AI_USAGE_LAN_MERGE_MACHINE_A_TOKEN=new\nOTHER=value\nAI_USAGE_LAN_MERGE_MACHINE_B_TOKEN=secret\n',
+      );
+      expect(statSync(path.join(root, '.env')).mode.toString(8).slice(-3)).toBe('600');
+      expect(() => upsertUsageMergeEnvToken('INVALID_KEY', 'value', appCwd)).toThrow('Invalid usage merge token');
+      expect(() => upsertUsageMergeEnvToken('AI_USAGE_BAD_TOKEN', 'value\ninjected', appCwd)).toThrow(
+        'Invalid usage merge token',
       );
     } finally {
       rmSync(root, { recursive: true, force: true });

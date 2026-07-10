@@ -4,7 +4,7 @@ export const timeRangePanel = css({
   display: 'grid',
   gap: '14px',
   mt: '14px',
-  p: '14px 16px 16px',
+  p: { base: '12px', sm: '14px 16px 16px' },
   border: '1px solid token(colors.line)',
   borderRadius: 'md',
   bg: 'surface',
@@ -39,7 +39,8 @@ export const timeRangeSummary = css({
 });
 
 export const timeRangeSummaryDates = css({
-  display: 'inline-flex',
+  display: 'inline-grid',
+  gridTemplateColumns: 'auto auto auto',
   alignItems: 'center',
   gap: '7px',
   minW: 0,
@@ -75,6 +76,7 @@ export const presetGroupShell = css({
   display: 'grid',
   gap: '3px',
   minW: 0,
+  w: { base: '100%', md: 'auto' },
 });
 
 export const presetGroupLabel = css({
@@ -88,8 +90,8 @@ export const presetGroupLabel = css({
 });
 
 export const timeRangeViewControls = css({
-  display: 'flex',
-  flexWrap: 'wrap',
+  display: 'grid',
+  gridTemplateColumns: { base: '1fr', md: 'repeat(3, max-content)' },
   gap: '8px',
   alignItems: 'end',
   justifyContent: 'flex-start',
@@ -271,7 +273,8 @@ export const timeSliderBrushColumn = css({
 });
 
 export const timeSliderBrushHeader = css({
-  display: 'flex',
+  display: { base: 'grid', sm: 'flex' },
+  gridTemplateColumns: '1fr',
   flexWrap: 'wrap',
   alignItems: 'baseline',
   justifyContent: 'space-between',
@@ -285,7 +288,7 @@ export const timeSliderQuickRanges = css({
   display: 'flex',
   flexWrap: 'wrap',
   gap: '2px',
-  justifyContent: 'flex-end',
+  justifyContent: { base: 'flex-start', sm: 'flex-end' },
   minW: 0,
 });
 
@@ -432,12 +435,15 @@ export const timeAxis = css({
 
 export const timeSliderHandleLabels = css({
   position: 'relative',
-  h: '28px',
+  display: { base: 'grid', md: 'block' },
+  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+  gap: '8px',
+  h: { base: 'auto', md: '28px' },
   mt: '-2px',
 });
 
 export const timeSliderHandleLabel = css({
-  position: 'absolute',
+  position: { base: 'static', md: 'absolute' },
   top: 0,
   display: 'grid',
   gap: '2px',
@@ -446,23 +452,23 @@ export const timeSliderHandleLabel = css({
 export const timeSliderHandleLabelStart = cx(
   timeSliderHandleLabel,
   css({
-    left: 'var(--slider-range-start)',
-    transform: 'translateX(-8px)',
+    left: { base: 'auto', md: 'var(--slider-range-start)' },
+    transform: { base: 'none', md: 'translateX(-8px)' },
   }),
 );
 
 export const timeSliderHandleLabelEnd = cx(
   timeSliderHandleLabel,
   css({
-    left: 'calc(100% - var(--slider-range-end))',
-    transform: 'translateX(calc(-100% + 8px))',
+    left: { base: 'auto', md: 'calc(100% - var(--slider-range-end))' },
+    transform: { base: 'none', md: 'translateX(calc(-100% + 8px))' },
   }),
 );
 
 export const timeSliderDateChip = css({
   appearance: 'none',
   h: '24px',
-  w: '126px',
+  w: { base: '100%', md: '126px' },
   px: '8px',
   border: '1px solid token(colors.line)',
   borderRadius: 'full',
@@ -487,6 +493,7 @@ export const timeSliderDateChip = css({
 
 export const timeAxisTick = css({
   position: 'absolute',
+  display: { base: 'none', sm: 'inline' },
   top: 0,
   transform: 'translateX(-50%)',
   color: 'faint',

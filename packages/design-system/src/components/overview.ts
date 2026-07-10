@@ -138,7 +138,7 @@ export const heatBody = css({
 
 export const heatWeekdays = css({
   display: 'grid',
-  gridTemplateRows: 'repeat(7, 12px)',
+  gridTemplateRows: { base: 'repeat(7, 18px)', md: 'repeat(7, 12px)' },
   gap: '3px',
   pt: '19px',
   color: 'faint',
@@ -155,7 +155,7 @@ export const heatScroll = css({
 export const heatMonths = css({
   display: 'grid',
   gridAutoFlow: 'column',
-  gridAutoColumns: '12px',
+  gridAutoColumns: { base: '18px', md: '12px' },
   gap: '3px',
   h: '16px',
   color: 'faint',
@@ -167,19 +167,19 @@ export const heatMonths = css({
 export const heatGrid = css({
   display: 'grid',
   gridAutoFlow: 'column',
-  gridAutoColumns: '12px',
+  gridAutoColumns: { base: '18px', md: '12px' },
   gap: '3px',
 });
 
 export const heatWeekColumn = css({
   display: 'grid',
-  gridTemplateRows: 'repeat(7, 12px)',
+  gridTemplateRows: { base: 'repeat(7, 18px)', md: 'repeat(7, 12px)' },
   gap: '3px',
 });
 
 export const heatCell = css({
-  w: '12px',
-  h: '12px',
+  w: { base: '18px', md: '12px' },
+  h: { base: '18px', md: '12px' },
   p: 0,
   border: '0',
   borderRadius: '3px',

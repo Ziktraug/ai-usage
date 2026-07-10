@@ -52,8 +52,13 @@ export const Route = createFileRoute('/sync')({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const text = await request.text();
-        return streamManualImportResponse(text);
+        const [{ importManualMergeBundleForServer }, { handleManualMergeUpload }] = await Promise.all([
+          import('../server/lan-merge.server'),
+          import('../server/manual-merge-upload.server'),
+        ]);
+        return handleManualMergeUpload(request, {
+          importBundle: (text) => importManualMergeBundleForServer({ text }),
+        });
       },
     },
   },
@@ -810,8 +815,28 @@ const manualImportMessage = (result: Extract<ManualImportResult, { ok: true }>['
 const HTTP_OK_MIN = 200;
 const HTTP_OK_MAX = 300;
 
+const isManualImportFailure = (value: unknown): value is Extract<ManualImportResult, { ok: false }> => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const result = value as Record<string, unknown>;
+  if (result.ok !== false || typeof result.error !== 'object' || result.error === null || Array.isArray(result.error)) {
+    return false;
+  }
+  const error = result.error as Record<string, unknown>;
+  return typeof error.tag === 'string' && typeof error.message === 'string';
+};
+
 const parseImportResponse = (xhr: XMLHttpRequest): ManualImportResult => {
   if (xhr.status < HTTP_OK_MIN || xhr.status >= HTTP_OK_MAX) {
+    try {
+      const failure = JSON.parse(xhr.responseText) as unknown;
+      if (isManualImportFailure(failure)) {
+        return failure;
+      }
+    } catch {
+      // The status-specific fallback below is more useful than a JSON parse error.
+    }
     return { ok: false, error: { tag: 'HttpError', message: `Manual import failed with HTTP ${xhr.status}.` } };
   }
   try {
@@ -830,7 +855,7 @@ const importManualMergeFile = (
   new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/sync');
-    xhr.setRequestHeader('Content-Type', file.type || 'application/json');
+    xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.upload.addEventListener('progress', (event) => {
       if (event.lengthComputable) {
         onProgress({

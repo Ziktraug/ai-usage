@@ -156,6 +156,13 @@ const parseRange = (value: unknown, fallback: DashboardDateRangeSearch): Dashboa
 
   const from = validDateInput(value.from);
   const to = validDateInput(value.to);
+  const hasInvalidBound =
+    (value.from !== undefined && from === undefined) || (value.to !== undefined && to === undefined);
+  const fromDate = from ? parseLocalDate(from) : null;
+  const toDate = to ? parseLocalDate(to) : null;
+  if (hasInvalidBound || (fromDate && toDate && fromDate > toDate)) {
+    return fallback;
+  }
   return {
     mode,
     ...(from ? { from } : {}),

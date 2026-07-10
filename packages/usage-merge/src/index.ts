@@ -204,6 +204,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const TOKEN_ENV_PATTERN = /^AI_USAGE_[A-Z0-9_]+_TOKEN$/;
+const LINE_BREAK_PATTERN = /[\r\n]/;
+const PRIVATE_FILE_MODE = 0o600;
 
 const isCredential = (value: unknown): value is UsageMergeCredential =>
   isRecord(value) &&
@@ -279,7 +281,16 @@ const findWorkspaceRoot = (cwd = process.cwd()) => {
 };
 
 export const upsertUsageMergeEnvToken = (key: string, value: string, cwd = process.cwd()) => {
+  if (!TOKEN_ENV_PATTERN.test(key)) {
+    throw new Error('Invalid usage merge token environment key');
+  }
+  if (!value || LINE_BREAK_PATTERN.test(value)) {
+    throw new Error('Invalid usage merge token value');
+  }
   const envPath = path.join(findWorkspaceRoot(cwd), '.env');
+  if (fs.existsSync(envPath)) {
+    fs.chmodSync(envPath, PRIVATE_FILE_MODE);
+  }
   const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
   const line = `${key}=${value}`;
   const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -288,7 +299,8 @@ export const upsertUsageMergeEnvToken = (key: string, value: string, cwd = proce
     ? existing.replace(matcher, line)
     : `${existing}${existing && !existing.endsWith('\n') ? '\n' : ''}${line}\n`;
   fs.mkdirSync(path.dirname(envPath), { recursive: true });
-  fs.writeFileSync(envPath, next, 'utf8');
+  fs.writeFileSync(envPath, next, { encoding: 'utf8', mode: PRIVATE_FILE_MODE });
+  fs.chmodSync(envPath, PRIVATE_FILE_MODE);
   process.env[key] = value;
   return { path: envPath };
 };
