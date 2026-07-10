@@ -9,10 +9,15 @@ import {
   panelSub,
   panelTitle,
 } from '@ai-usage/design-system/report';
-import type { ProjectGroupConfig, ProjectSourceSelector } from '@ai-usage/report-core/project-group';
+import {
+  type ProjectGroupConfig,
+  type ProjectSourceSelector,
+  projectSourceSelectorFor,
+  projectSourceSelectorsEqual,
+} from '@ai-usage/report-core/project-group';
 import type { UsageReportProjectSource } from '@ai-usage/report-core/report-data';
 import { createMemo, createSignal, For, Show } from 'solid-js';
-import { moveProjectSourcesToGroup, projectSourceSelector, projectSourceSelectorEquals } from './project-group-actions';
+import { moveProjectSourcesToGroup } from './project-group-actions';
 import type { WebReportPayload } from './web-report-payload';
 
 const editorPanel = css({
@@ -197,7 +202,7 @@ export const ProjectGroupEditor = (props: {
   const sourcesForGroup = (group: ProjectGroupConfig) =>
     group.sources.map((selector) => ({
       selector,
-      source: sources().find((source) => projectSourceSelectorEquals(selector, projectSourceSelector(source))),
+      source: sources().find((source) => projectSourceSelectorsEqual(selector, projectSourceSelectorFor(source))),
     }));
 
   const updateSelected = (sourceId: string, checked: boolean) => {
@@ -258,7 +263,7 @@ export const ProjectGroupEditor = (props: {
     );
 
   const removeSelectorFromGroup = (group: ProjectGroupConfig, selector: ProjectSourceSelector) => {
-    const nextSources = group.sources.filter((candidate) => !projectSourceSelectorEquals(candidate, selector));
+    const nextSources = group.sources.filter((candidate) => !projectSourceSelectorsEqual(candidate, selector));
     if (!nextSources.length) {
       return deleteGroup(group);
     }

@@ -121,6 +121,7 @@ function renderSources() {
     const selectionCell = document.createElement('td');
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
+    checkbox.setAttribute('aria-label', 'Select ' + s.project);
     checkbox.dataset.idx = String(i);
     checkbox.checked = selected.has(i);
     selectionCell.appendChild(checkbox);

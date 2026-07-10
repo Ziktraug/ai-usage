@@ -34,6 +34,36 @@ export interface ProjectGroupingWarning {
 export const projectSourceId = (source: ProjectSourceIdentityInput) =>
   [source.machineId, source.sourcePath || source.project].join('|');
 
+export const projectSourceSelectorFor = (source: ProjectSourceMatchInput): ProjectSourceSelector => ({
+  machineId: source.machineId,
+  ...(source.sourcePath ? { sourcePath: source.sourcePath } : { project: source.project }),
+  ...(source.gitRemote ? { gitRemote: source.gitRemote } : {}),
+});
+
+export const projectSourceSelectorKey = (selector: ProjectSourceSelector) =>
+  JSON.stringify([
+    selector.machineId ?? '',
+    selector.sourcePath ?? '',
+    selector.project?.toLowerCase() ?? '',
+    selector.gitRemote ?? '',
+  ]);
+
+export const projectSourceSelectorsEqual = (left: ProjectSourceSelector, right: ProjectSourceSelector) =>
+  projectSourceSelectorKey(left) === projectSourceSelectorKey(right);
+
+export const uniqueProjectSourceSelectors = (selectors: ProjectSourceSelector[]) => {
+  const seen = new Set<string>();
+  const result: ProjectSourceSelector[] = [];
+  for (const selector of selectors) {
+    const key = projectSourceSelectorKey(selector);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(selector);
+    }
+  }
+  return result;
+};
+
 const isNonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
 
 export const isProjectSourceSelector = (value: unknown): value is ProjectSourceSelector => {

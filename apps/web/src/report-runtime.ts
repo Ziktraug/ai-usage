@@ -26,14 +26,14 @@ const demoWebReportPayload = toWebReportPayload(demoReportPayload);
 
 const collectReportPayload = async () => {
   const { getReportPayload } = await import('./server/report-payload');
-  return (await getReportPayload()) as WebReportPayload;
+  return await getReportPayload();
 };
 
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 const fetchStoredReportPayload = async () => {
   const { getReportPayload } = await import('./server/report-payload');
-  const payload = (await getReportPayload({ data: { force: false } })) as WebReportPayload;
+  const payload = await getReportPayload({ data: { force: false } });
   if (typeof window !== 'undefined') {
     window.__AI_USAGE_REPORT__ = payload;
   }
@@ -72,7 +72,7 @@ export const fetchReportPayload = async (_options?: { force?: boolean }) => {
 
   const { getReportPayload } = await import('./server/report-payload');
   perfTrace?.mark('serverFnLoaded');
-  const payload = (await getReportPayload({ data: { force: false } })) as WebReportPayload;
+  const payload = await getReportPayload({ data: { force: false } });
   perfTrace?.mark('received', payloadStats(payload));
   if (typeof window !== 'undefined') {
     window.__AI_USAGE_REPORT__ = payload;

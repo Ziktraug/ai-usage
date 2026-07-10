@@ -25,7 +25,11 @@ import {
   unavailableText,
   unavailableTitle,
 } from '@ai-usage/design-system/report';
-import type { ProjectGroupConfig, ProjectSourceSelector } from '@ai-usage/report-core/project-group';
+import {
+  type ProjectGroupConfig,
+  type ProjectSourceSelector,
+  projectSourceSelectorKey,
+} from '@ai-usage/report-core/project-group';
 import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
@@ -91,12 +95,9 @@ import type { WebReportPayload } from './web-report-payload';
 const REFRESH_INTERVAL_MS = 60_000;
 const FORM_CONTROL_TAG_PATTERN = /^(INPUT|SELECT|TEXTAREA)$/;
 
-const projectSelectorKey = (selector: ProjectSourceSelector) =>
-  [selector.machineId ?? '', selector.sourcePath ?? '', selector.project ?? '', selector.gitRemote ?? ''].join('|');
-
 const removeSelectors = (sources: ProjectSourceSelector[], selectors: ProjectSourceSelector[]) => {
-  const removed = new Set(selectors.map(projectSelectorKey));
-  return sources.filter((source) => !removed.has(projectSelectorKey(source)));
+  const removed = new Set(selectors.map(projectSourceSelectorKey));
+  return sources.filter((source) => !removed.has(projectSourceSelectorKey(source)));
 };
 
 export const Dashboard = (props: {
