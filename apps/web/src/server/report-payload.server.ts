@@ -1,25 +1,104 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
+import { updateAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
 import { type ProjectGroupConfig, parseProjectGroupConfigs } from '@ai-usage/report-core/project-group';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import { runStoredReportPayload, type StoredReportPayloadRequest } from '@ai-usage/report-data';
+import { Effect } from 'effect';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const reportingPayloadRunner = path.join(rootDir, 'packages/report-data/src/report-payload-runner.ts');
 const execFileAsync = promisify(execFile);
 const rootEnvPath = path.join(rootDir, '.env');
-const userConfigPath = path.join(os.homedir(), '.config', 'ai-usage', 'config.json');
 const LINE_SEPARATOR = /\r?\n/;
 const payloadCacheTtlMs = 10_000;
-let cachedPayload: { payload: UsageReportPayload; storedAt: number } | null = null;
-let inFlightPayload: Promise<UsageReportPayload> | null = null;
 let refreshState: ReportPayloadRefreshState = { runId: 0, status: 'idle' };
 let refreshJob: Promise<void> | null = null;
+
+export interface ReportPayloadCache {
+  collect(options?: { force?: boolean }): Promise<UsageReportPayload>;
+  invalidate(): void;
+}
+
+export interface ReportPayloadCacheOptions {
+  load(options: { force?: boolean }): Promise<UsageReportPayload>;
+  now?: () => number;
+  ttlMs?: number;
+}
+
+export const createReportPayloadCache = ({
+  load,
+  now = Date.now,
+  ttlMs = payloadCacheTtlMs,
+}: ReportPayloadCacheOptions): ReportPayloadCache => {
+  let generation = 0;
+  let cachedPayload: { payload: UsageReportPayload; storedAt: number } | null = null;
+  let inFlightPayload: { generation: number; id: symbol; promise: Promise<UsageReportPayload> } | null = null;
+  let serveStaleAfterRefreshFailure = false;
+
+  const invalidate = () => {
+    generation++;
+    cachedPayload = null;
+    inFlightPayload = null;
+    serveStaleAfterRefreshFailure = false;
+  };
+
+  const collect = (options: { force?: boolean } = {}) => {
+    if (options.force) {
+      generation++;
+      inFlightPayload = null;
+    }
+
+    const requestedAt = now();
+    if (
+      !options.force &&
+      cachedPayload &&
+      (requestedAt - cachedPayload.storedAt < ttlMs || serveStaleAfterRefreshFailure)
+    ) {
+      return Promise.resolve(cachedPayload.payload);
+    }
+
+    if (!options.force && inFlightPayload?.generation === generation) {
+      if (cachedPayload) {
+        return Promise.resolve(cachedPayload.payload);
+      }
+      return inFlightPayload.promise;
+    }
+
+    const requestGeneration = generation;
+    const requestId = Symbol('report-payload-request');
+    const request = (async () => {
+      // Defer execution until `request` and `inFlightPayload` both reference
+      // this run, including when a loader throws synchronously.
+      await Promise.resolve();
+      try {
+        const payload = await load(options);
+        if (generation === requestGeneration) {
+          cachedPayload = { payload, storedAt: now() };
+          serveStaleAfterRefreshFailure = false;
+        }
+        return payload;
+      } catch (error) {
+        if (options.force && generation === requestGeneration && cachedPayload) {
+          serveStaleAfterRefreshFailure = true;
+        }
+        throw error;
+      } finally {
+        if (inFlightPayload?.id === requestId) {
+          inFlightPayload = null;
+        }
+      }
+    })();
+    inFlightPayload = { generation: requestGeneration, id: requestId, promise: request };
+    return request;
+  };
+
+  return { collect, invalidate };
+};
 
 export type ReportPayloadRefreshState =
   | { runId: number; status: 'idle' }
@@ -53,19 +132,15 @@ const perfEnabled = () => perfEnvValue() === '1' || perfEnvValue() === 'true';
 
 export const reportPerfEnabled = () => perfEnabled();
 
-export const saveProjectGroupsForServer = (projectGroups: ProjectGroupConfig[]) => {
+export const saveProjectGroupsForServer = async (projectGroups: ProjectGroupConfig[]) => {
   const validatedProjectGroups = parseProjectGroupConfigs(projectGroups);
-  const config = fs.existsSync(userConfigPath)
-    ? (JSON.parse(fs.readFileSync(userConfigPath, 'utf8')) as AiUsageConfig)
-    : {};
-  fs.mkdirSync(path.dirname(userConfigPath), { recursive: true });
-  fs.writeFileSync(
-    userConfigPath,
-    `${JSON.stringify({ ...config, projectGroups: validatedProjectGroups }, null, 2)}\n`,
-    'utf8',
+  const storage = createLocalHistoryStorage();
+  await Effect.runPromise(
+    updateAiUsageConfig((config) => ({ ...config, projectGroups: validatedProjectGroups })).pipe(
+      Effect.provideService(LocalHistoryStorage, storage),
+    ),
   );
-  cachedPayload = null;
-  inFlightPayload = null;
+  reportPayloadCache.invalidate();
   return { projectGroups: validatedProjectGroups };
 };
 
@@ -190,9 +265,9 @@ export const startReportPayloadRefresh = () => {
     console.error(`[perf] aiUsage.web.reportPayloadRefresh started runId=${runId}`);
   }
 
-  refreshJob = loadFreshPayload()
+  refreshJob = reportPayloadCache
+    .collect({ force: true })
     .then((payload) => {
-      cachedPayload = { payload, storedAt: Date.now() };
       refreshState = { completedAt: Date.now(), runId, startedAt, status: 'completed' };
       if (perfEnabled()) {
         console.error(
@@ -222,39 +297,18 @@ const loadPayload = (options: { force?: boolean }) => {
   return runReportPayloadRunner(options).then(parseRunnerPayload);
 };
 
-export const runReportPayloadCollection = async (options: { force?: boolean } = {}): Promise<UsageReportPayload> => {
-  const now = Date.now();
-  if (!options.force && cachedPayload && now - cachedPayload.storedAt < payloadCacheTtlMs) {
+const loadPayloadWithFreshFallback = async (options: { force?: boolean }) => {
+  const payload = await loadPayload(options);
+  if (!options.force && payload.rows.length === 0) {
     if (perfEnabled()) {
-      console.error(`[perf] aiUsage.web.reportPayloadCache hit ageMs=${now - cachedPayload.storedAt}`);
+      console.error('[perf] aiUsage.web.reportPayloadCache stored-empty-fallback');
     }
-    return cachedPayload.payload;
+    return await loadFreshPayload();
   }
-
-  if (!options.force && inFlightPayload) {
-    if (perfEnabled()) {
-      console.error('[perf] aiUsage.web.reportPayloadCache join');
-    }
-    return inFlightPayload;
-  }
-
-  inFlightPayload = loadPayload(options)
-    .then((payload) => {
-      if (!options.force && payload.rows.length === 0) {
-        if (perfEnabled()) {
-          console.error('[perf] aiUsage.web.reportPayloadCache stored-empty-fallback');
-        }
-        return loadFreshPayload();
-      }
-      return payload;
-    })
-    .then((payload) => {
-      cachedPayload = { payload, storedAt: Date.now() };
-      return payload;
-    })
-    .finally(() => {
-      inFlightPayload = null;
-    });
-
-  return await inFlightPayload;
+  return payload;
 };
+
+const reportPayloadCache = createReportPayloadCache({ load: loadPayloadWithFreshFallback });
+
+export const runReportPayloadCollection = (options: { force?: boolean } = {}): Promise<UsageReportPayload> =>
+  reportPayloadCache.collect(options);

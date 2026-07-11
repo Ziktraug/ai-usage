@@ -1,4 +1,4 @@
-import { cx } from '@ai-usage/design-system/css';
+import { css, cx } from '@ai-usage/design-system/css';
 import {
   accentFill,
   anatomyHeadline,
@@ -499,47 +499,131 @@ const SessionShape = (props: {
 // Punchcard — hour × weekday density. Nightly auto-review bots and weekend
 // streaks show up immediately.
 
+const punchDataDetails = css({
+  mt: '14px',
+  color: 'muted',
+  fontSize: '13px',
+  '& summary': {
+    w: 'fit-content',
+    cursor: 'pointer',
+    fontWeight: 600,
+    color: 'ink',
+  },
+});
+
+const punchDataTableWrap = css({
+  mt: '10px',
+  overflowX: 'auto',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+});
+
+const punchDataTable = css({
+  w: '100%',
+  borderCollapse: 'collapse',
+  fontSize: '12px',
+  '& th': {
+    p: '8px 10px',
+    bg: 'surfaceMuted',
+    color: 'muted',
+    textAlign: 'left',
+    textStyle: 'label',
+  },
+  '& td': {
+    p: '8px 10px',
+    borderTop: '1px solid token(colors.line)',
+  },
+  '& th:nth-child(n+3), & td:nth-child(n+3)': {
+    textAlign: 'right',
+  },
+});
+
 const Punchcard = (props: { rows: DashboardRow[] }) => {
   const data = createMemo(() => buildPunchcardData(props.rows));
+  const populatedCells = createMemo(() =>
+    (data()?.cells ?? []).flatMap((dayCells, dayIndex) =>
+      dayCells.flatMap((cell, hour) =>
+        cell.sessions > 0
+          ? [
+              {
+                cost: cell.cost,
+                day: PUNCH_DAYS[dayIndex] ?? '',
+                hour,
+                sessions: cell.sessions,
+              },
+            ]
+          : [],
+      ),
+    ),
+  );
 
   return (
     <Panel sub="When the sessions happen — hour of day × weekday" title="Punchcard">
       <Show fallback={<div class={emptyPanel}>No dated sessions in range</div>} when={data()}>
         {(punch) => (
-          <div class={punchGrid}>
-            <For each={punch().cells}>
-              {(dayCells, dayIndex) => (
-                <>
-                  <span aria-hidden="true" class={punchDayLabel}>
-                    {PUNCH_DAYS[dayIndex()]}
-                  </span>
-                  <For each={dayCells}>
-                    {(cell, hour) => (
-                      <span
-                        class={punchCell}
-                        title={`${PUNCH_DAYS[dayIndex()]} ${String(hour()).padStart(2, '0')}:00 — ${fmtNum(cell.sessions)} sessions · ${fmtMoney(cell.cost)}`}
-                      >
-                        <Show when={cell.sessions > 0}>
-                          <span
-                            class={cx(punchDot, accentFill)}
-                            style={{
-                              width: `${4 + 9 * Math.sqrt(cell.sessions / punch().maxSessions)}px`,
-                              height: `${4 + 9 * Math.sqrt(cell.sessions / punch().maxSessions)}px`,
-                              opacity: 0.35 + 0.65 * (cell.sessions / punch().maxSessions),
-                            }}
-                          />
-                        </Show>
-                      </span>
-                    )}
-                  </For>
-                </>
-              )}
-            </For>
-            <span />
-            <For each={Array.from({ length: 24 }, (_, hour) => hour)}>
-              {(hour) => <span class={punchHourLabel}>{hour % 3 === 0 ? hour : ''}</span>}
-            </For>
-          </div>
+          <>
+            <div class={punchGrid}>
+              <For each={punch().cells}>
+                {(dayCells, dayIndex) => (
+                  <>
+                    <span aria-hidden="true" class={punchDayLabel}>
+                      {PUNCH_DAYS[dayIndex()]}
+                    </span>
+                    <For each={dayCells}>
+                      {(cell, hour) => (
+                        <span
+                          class={punchCell}
+                          title={`${PUNCH_DAYS[dayIndex()]} ${String(hour()).padStart(2, '0')}:00 — ${fmtNum(cell.sessions)} sessions · ${fmtMoney(cell.cost)}`}
+                        >
+                          <Show when={cell.sessions > 0}>
+                            <span
+                              class={cx(punchDot, accentFill)}
+                              style={{
+                                width: `${4 + 9 * Math.sqrt(cell.sessions / punch().maxSessions)}px`,
+                                height: `${4 + 9 * Math.sqrt(cell.sessions / punch().maxSessions)}px`,
+                                opacity: 0.35 + 0.65 * (cell.sessions / punch().maxSessions),
+                              }}
+                            />
+                          </Show>
+                        </span>
+                      )}
+                    </For>
+                  </>
+                )}
+              </For>
+              <span />
+              <For each={Array.from({ length: 24 }, (_, hour) => hour)}>
+                {(hour) => <span class={punchHourLabel}>{hour % 3 === 0 ? hour : ''}</span>}
+              </For>
+            </div>
+            <details class={punchDataDetails}>
+              <summary>Punchcard data</summary>
+              <div class={punchDataTableWrap}>
+                <table aria-label="Punchcard data" class={punchDataTable}>
+                  <thead>
+                    <tr>
+                      <th scope="col">Day</th>
+                      <th scope="col">Hour</th>
+                      <th scope="col">Sessions</th>
+                      <th scope="col">API value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <For each={populatedCells()}>
+                      {(cell) => (
+                        <tr>
+                          <td>{cell.day}</td>
+                          <td>{String(cell.hour).padStart(2, '0')}:00</td>
+                          <td>{fmtNum(cell.sessions)}</td>
+                          <td>{fmtMoney(cell.cost)}</td>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          </>
         )}
       </Show>
     </Panel>

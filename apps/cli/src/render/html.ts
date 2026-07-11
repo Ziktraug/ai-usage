@@ -4,8 +4,12 @@ import { pathToFileURL } from 'node:url';
 import { inlineReportHTML } from '@ai-usage/report-core/html-export';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 
-const reportAppDistPath = () => path.resolve(import.meta.dir, '../../../report/dist');
-const reportAppOutputPath = () => path.resolve(import.meta.dir, '../../../report/.output');
+const reportAppRootPath = () =>
+  process.env.AI_USAGE_REPORT_APP_DIR
+    ? path.resolve(process.env.AI_USAGE_REPORT_APP_DIR)
+    : path.resolve(import.meta.dir, '../../../web');
+const reportAppDistPath = () => path.join(reportAppRootPath(), 'dist');
+const reportAppOutputPath = () => path.join(reportAppRootPath(), '.output');
 const reportAppServerPath = () => {
   const outputServer = path.join(reportAppOutputPath(), 'server/_ssr/ssr.mjs');
   if (fs.existsSync(outputServer)) {
@@ -16,20 +20,12 @@ const reportAppServerPath = () => {
 };
 const reportAppClientPath = () => {
   const outputPublic = path.join(reportAppOutputPath(), 'public');
-  return fs.existsSync(outputPublic) ? outputPublic : path.join(reportAppDistPath(), 'client');
+  if (fs.existsSync(outputPublic)) {
+    return outputPublic;
+  }
+  const distClient = path.join(reportAppDistPath(), 'client');
+  return fs.existsSync(distClient) ? distClient : undefined;
 };
-
-const missingTemplateHTML = (templatePath: string) =>
-  [
-    '<!doctype html>',
-    '<html lang="en">',
-    '<head><meta charset="utf-8"><title>ai-usage report app not built</title></head>',
-    '<body>',
-    '<h1>ai-usage report app not built</h1>',
-    `<p>Run <code>bun run build</code>, then retry <code>--html</code>. Missing template: <code>${templatePath}</code>.</p>`,
-    '</body>',
-    '</html>',
-  ].join('');
 
 interface StartServerModule {
   default:
@@ -63,7 +59,10 @@ const injectClientAssets = (html: string, clientDir: string) => {
 export const renderReportAppHTML = async (payload: UsageReportPayload) => {
   const serverPath = reportAppServerPath();
   if (!serverPath) {
-    return missingTemplateHTML(path.join(reportAppOutputPath(), 'server/_ssr/ssr.mjs'));
+    const expectedServerPath = path.join(reportAppOutputPath(), 'server/_ssr/ssr.mjs');
+    throw new Error(
+      `Report app build artifact is missing: ${expectedServerPath}. Run \`bun run --cwd apps/web build\`, then retry the HTML export.`,
+    );
   }
 
   const globalPayload = globalThis as { __AI_USAGE_REPORT_EXPORT_PAYLOAD__?: UsageReportPayload | undefined };
@@ -75,6 +74,10 @@ export const renderReportAppHTML = async (payload: UsageReportPayload) => {
     const startServer = (await import(pathToFileURL(serverPath).href)) as StartServerModule;
     const startFetch = typeof startServer.default === 'function' ? startServer.default : startServer.default.fetch;
     const response = await startFetch(new Request('http://localhost/', { headers: { accept: 'text/html' } }));
+    if (!response.ok) {
+      const status = `${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
+      throw new Error(`Report app SSR failed with ${status}`);
+    }
     html = await response.text();
   } finally {
     if (hadPreviousPayload) {
@@ -85,15 +88,21 @@ export const renderReportAppHTML = async (payload: UsageReportPayload) => {
   }
 
   const clientDir = reportAppClientPath();
+  if (!clientDir) {
+    const expectedOutputPath = path.join(reportAppOutputPath(), 'public');
+    const expectedDistPath = path.join(reportAppDistPath(), 'client');
+    throw new Error(
+      `Report app client build artifact is missing. Expected ${expectedOutputPath} or ${expectedDistPath}. Run \`bun run --cwd apps/web build\`, then retry the HTML export.`,
+    );
+  }
   html = injectClientAssets(html, clientDir);
 
   const readAssetContent = (src: string): string => {
     const assetPath = path.join(clientDir, src.replace(LEADING_SLASH, ''));
-    try {
-      return fs.readFileSync(assetPath, 'utf8');
-    } catch {
-      return '';
+    if (!fs.existsSync(assetPath)) {
+      throw new Error(`Report app client artifact is missing: ${assetPath}`);
     }
+    return fs.readFileSync(assetPath, 'utf8');
   };
 
   return inlineReportHTML({ html, payload, readAssetContent });

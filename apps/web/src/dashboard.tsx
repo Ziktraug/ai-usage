@@ -1,4 +1,5 @@
 import { MultiSelect, Tabs } from '@ai-usage/design-system';
+import { css } from '@ai-usage/design-system/css';
 import {
   activeFilters,
   commandButton,
@@ -82,7 +83,13 @@ import { buildProviderStatusViews } from './provider-status-model';
 import { ProviderStatusPanel } from './provider-status-panel';
 import { RefreshStatus } from './refresh-status';
 import { cursorCommitAttributionFacet } from './report-data';
-import { fetchReportPayload, isDemoReportPayload, mountReportRefreshAction, readReportPayload } from './report-runtime';
+import {
+  fetchReportPayload,
+  isDemoReportPayload,
+  isStaticReportRuntime,
+  mountReportRefreshAction,
+  readReportPayload,
+} from './report-runtime';
 import { ReportWarnings } from './report-warnings';
 import { SessionDrawer } from './session-drawer';
 import { SessionTable } from './session-table';
@@ -94,6 +101,58 @@ import type { WebReportPayload } from './web-report-payload';
 
 const REFRESH_INTERVAL_MS = 60_000;
 const FORM_CONTROL_TAG_PATTERN = /^(INPUT|SELECT|TEXTAREA)$/;
+
+const secondaryMetrics = css({
+  my: '20px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'md',
+  bg: 'surface',
+  boxShadow: 'card',
+});
+
+const secondaryMetricsSummary = css({
+  appearance: 'none',
+  display: { base: 'flex', lg: 'none' },
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '12px',
+  w: '100%',
+  p: '14px 16px',
+  border: 0,
+  borderRadius: 'md',
+  bg: 'transparent',
+  color: 'ink',
+  fontWeight: 600,
+  textAlign: 'left',
+  cursor: 'pointer',
+  '&[aria-expanded=true]': {
+    borderBottom: '1px solid token(colors.line)',
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+  },
+  _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+});
+
+const secondaryMetricsGrid = css({
+  display: { base: 'none', lg: 'block' },
+  px: '14px',
+  pb: '14px',
+  '& > div': { my: '14px' },
+  '&[data-open=true]': { display: 'block' },
+});
+
+const dashboardLayout = css({
+  display: 'flex',
+  flexDirection: 'column',
+});
+
+const dashboardView = css({
+  order: { base: 1, lg: 2 },
+});
+
+const dashboardStatus = css({
+  order: { base: 2, lg: 1 },
+});
 
 const removeSelectors = (sources: ProjectSourceSelector[], selectors: ProjectSourceSelector[]) => {
   const removed = new Set(selectors.map(projectSourceSelectorKey));
@@ -107,6 +166,8 @@ export const Dashboard = (props: {
   const initialPayload = props.initialPayload ?? readReportPayload();
   const dashboardSearchDefaults = dashboardSearchDefaultsFor(initialPayload.filters.sort);
   const [payload, setPayload] = createSignal<WebReportPayload>(initialPayload);
+  const [moreMetricsOpen, setMoreMetricsOpen] = createSignal(false);
+  const staticReport = isStaticReportRuntime();
   const providerStatusClock = createProviderStatusClock({ initialNow: initialPayload.generatedAt });
   onMount(providerStatusClock.start);
   const isDemo = !props.initialPayload && isDemoReportPayload();
@@ -569,12 +630,14 @@ export const Dashboard = (props: {
               </div>
             </div>
             <div class={headerActions}>
-              <Link class={navButton} to="/skills">
-                Skills
-              </Link>
-              <Link class={navButton} to="/sync">
-                Sync
-              </Link>
+              <Show when={!staticReport}>
+                <Link class={navButton} to="/skills">
+                  Skills
+                </Link>
+                <Link class={navButton} to="/sync">
+                  Sync
+                </Link>
+              </Show>
               <ThemeToggle />
             </div>
           </div>
@@ -701,128 +764,156 @@ export const Dashboard = (props: {
 
           <ReportWarnings onCleanupProjectWarning={cleanupProjectWarning} warnings={payload().warnings} />
 
-          <Show when={!isDemo}>
-            <ProviderStatusPanel providers={providerStatusViews()} />
-          </Show>
+          <div class={dashboardLayout}>
+            <div class={dashboardView}>
+              <Tabs
+                ariaLabel="Dashboard sections"
+                items={[
+                  {
+                    content: () => (
+                      <section class={section}>
+                        <Overview
+                          campaigns={campaignViews()}
+                          onSelectDay={focusDay}
+                          onSelectSession={inspectOverviewSession}
+                          rangeLabel={dateRange.label()}
+                          rows={tableRows()}
+                          summary={visibleSummary()}
+                          timelineRows={timelineRows()}
+                        />
+                      </section>
+                    ),
+                    label: 'Overview',
+                    value: 'overview',
+                  },
+                  {
+                    content: () => (
+                      <section class={section}>
+                        <SessionTable
+                          columnVisibility={columnVisibility()}
+                          groupCampaigns={groupCampaigns()}
+                          onClearFilters={clearFilters}
+                          onColumnVisibilityChange={handleColumnVisibilityChange}
+                          onFieldFilter={setFieldFilter}
+                          onGroupCampaignsChange={setCampaignGrouping}
+                          onHarnessFilter={toggleHarness}
+                          onSelect={toggleSelected}
+                          onSortingChange={handleSortingChange}
+                          rows={sessionTableRows()}
+                          searchQuery={query()}
+                          selectedKey={selectedKey()}
+                          sorting={sorting()}
+                        />
+                      </section>
+                    ),
+                    label: 'Sessions',
+                    value: 'sessions',
+                  },
+                  {
+                    content: () => (
+                      <section class={section}>
+                        <GroupPanel
+                          countLabel="models"
+                          groups={modelGroups()}
+                          harnessTones
+                          onFilter={(value) => setFieldFilter('model', value)}
+                          title="By model"
+                        />
+                      </section>
+                    ),
+                    label: 'Models',
+                    value: 'models',
+                  },
+                  {
+                    content: () => (
+                      <section class={section}>
+                        <GroupPanel
+                          countLabel="providers"
+                          groups={providerGroups()}
+                          harnessTones
+                          onFilter={(value) => setFieldFilter('provider', value)}
+                          title="By provider"
+                        />
+                      </section>
+                    ),
+                    label: 'Providers',
+                    value: 'providers',
+                  },
+                  {
+                    content: () => (
+                      <section class={section}>
+                        <GroupPanel
+                          countLabel="harnesses"
+                          groups={harnessGroups()}
+                          harnessTones
+                          onFilter={toggleHarness}
+                          title="By harness"
+                        />
+                      </section>
+                    ),
+                    label: 'Harnesses',
+                    value: 'harnesses',
+                  },
+                  {
+                    content: () => (
+                      <section class={section}>
+                        <ProjectGroupEditor
+                          disabled={!canRefresh()}
+                          onSave={saveProjectGroupConfigs}
+                          payload={payload()}
+                        />
+                        <ProjectSummary
+                          groups={projectGroupRows()}
+                          onProjectFilter={(value) => setFieldFilter('project', value)}
+                        />
+                      </section>
+                    ),
+                    label: 'Projects',
+                    value: 'projects',
+                  },
+                  {
+                    content: () => (
+                      <section class={section}>
+                        <CursorAttributionPanel rows={cursorCommitRows()} />
+                      </section>
+                    ),
+                    label: 'Cursor AI',
+                    value: 'cursor-ai',
+                  },
+                ]}
+                onValueChange={setTab}
+                value={search().tab}
+              />
+            </div>
 
-          <div class={metricGrid}>
-            <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>
+            <div class={dashboardStatus}>
+              <section aria-label="Additional report metrics" class={secondaryMetrics}>
+                <button
+                  aria-controls="additional-report-metrics"
+                  aria-expanded={moreMetricsOpen()}
+                  class={secondaryMetricsSummary}
+                  onClick={() => setMoreMetricsOpen((open) => !open)}
+                  type="button"
+                >
+                  <span>More report metrics</span>
+                  <span class={meta}>{metrics().length}</span>
+                </button>
+                <div
+                  class={secondaryMetricsGrid}
+                  data-open={moreMetricsOpen() ? 'true' : undefined}
+                  id="additional-report-metrics"
+                >
+                  <div class={metricGrid}>
+                    <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>
+                  </div>
+                </div>
+              </section>
+
+              <Show when={!isDemo}>
+                <ProviderStatusPanel providers={providerStatusViews()} />
+              </Show>
+            </div>
           </div>
-
-          <Tabs
-            ariaLabel="Dashboard sections"
-            items={[
-              {
-                content: () => (
-                  <section class={section}>
-                    <Overview
-                      campaigns={campaignViews()}
-                      onSelectDay={focusDay}
-                      onSelectSession={inspectOverviewSession}
-                      rangeLabel={dateRange.label()}
-                      rows={tableRows()}
-                      summary={visibleSummary()}
-                      timelineRows={timelineRows()}
-                    />
-                  </section>
-                ),
-                label: 'Overview',
-                value: 'overview',
-              },
-              {
-                content: () => (
-                  <section class={section}>
-                    <SessionTable
-                      columnVisibility={columnVisibility()}
-                      groupCampaigns={groupCampaigns()}
-                      onClearFilters={clearFilters}
-                      onColumnVisibilityChange={handleColumnVisibilityChange}
-                      onFieldFilter={setFieldFilter}
-                      onGroupCampaignsChange={setCampaignGrouping}
-                      onHarnessFilter={toggleHarness}
-                      onSelect={toggleSelected}
-                      onSortingChange={handleSortingChange}
-                      rows={sessionTableRows()}
-                      searchQuery={query()}
-                      selectedKey={selectedKey()}
-                      sorting={sorting()}
-                    />
-                  </section>
-                ),
-                label: 'Sessions',
-                value: 'sessions',
-              },
-              {
-                content: () => (
-                  <section class={section}>
-                    <GroupPanel
-                      countLabel="models"
-                      groups={modelGroups()}
-                      harnessTones
-                      onFilter={(value) => setFieldFilter('model', value)}
-                      title="By model"
-                    />
-                  </section>
-                ),
-                label: 'Models',
-                value: 'models',
-              },
-              {
-                content: () => (
-                  <section class={section}>
-                    <GroupPanel
-                      countLabel="providers"
-                      groups={providerGroups()}
-                      harnessTones
-                      onFilter={(value) => setFieldFilter('provider', value)}
-                      title="By provider"
-                    />
-                  </section>
-                ),
-                label: 'Providers',
-                value: 'providers',
-              },
-              {
-                content: () => (
-                  <section class={section}>
-                    <GroupPanel
-                      countLabel="harnesses"
-                      groups={harnessGroups()}
-                      harnessTones
-                      onFilter={toggleHarness}
-                      title="By harness"
-                    />
-                  </section>
-                ),
-                label: 'Harnesses',
-                value: 'harnesses',
-              },
-              {
-                content: () => (
-                  <section class={section}>
-                    <ProjectGroupEditor disabled={!canRefresh()} onSave={saveProjectGroupConfigs} payload={payload()} />
-                    <ProjectSummary
-                      groups={projectGroupRows()}
-                      onProjectFilter={(value) => setFieldFilter('project', value)}
-                    />
-                  </section>
-                ),
-                label: 'Projects',
-                value: 'projects',
-              },
-              {
-                content: () => (
-                  <section class={section}>
-                    <CursorAttributionPanel rows={cursorCommitRows()} />
-                  </section>
-                ),
-                label: 'Cursor AI',
-                value: 'cursor-ai',
-              },
-            ]}
-            onValueChange={setTab}
-            value={search().tab}
-          />
 
           <Show when={selectedRow()}>
             {(row) => (

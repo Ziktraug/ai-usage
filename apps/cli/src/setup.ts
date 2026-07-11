@@ -1,8 +1,6 @@
 #!/usr/bin/env bun
 import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { readAiUsageConfig } from '@ai-usage/local-collectors';
+import { LocalHistoryStorage, readAiUsageConfig, updateAiUsageConfig } from '@ai-usage/local-collectors';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import { parseUsageSnapshot, type UsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { listProjectSourcesWithWarnings, type ProjectSource } from '@ai-usage/report-data';
@@ -24,6 +22,9 @@ const collectSetupSources = (snapshotFiles: string[], local: boolean) =>
   });
 
 const scriptJson = (value: unknown) => (JSON.stringify(value) ?? 'null').replace(/</g, '\\u003c');
+
+export const saveSetupProjectAliases = (projectAliases: ProjectAliasEntry[]) =>
+  updateAiUsageConfig((config) => ({ ...config, projectAliases }));
 
 export const setupHTML = (
   sources: ProjectSource[],
@@ -334,17 +335,12 @@ export const runSetupServer = (snapshotFiles: string[], local: boolean, port: nu
   Effect.gen(function* () {
     const { sources, warnings } = yield* collectSetupSources(snapshotFiles, local);
     const config = yield* readAiUsageConfig;
+    const storage = yield* LocalHistoryStorage;
     const aliases = config.projectAliases ?? [];
     const html = setupHTML(sources, aliases, warnings);
-    const configDir = path.join(os.homedir(), '.config', 'ai-usage');
-    const configPath = path.join(configDir, 'config.json');
 
-    const writeAliasesSync = (newAliases: ProjectAliasEntry[]) => {
-      const newConfig = { ...config, projectAliases: newAliases };
-      fs.mkdirSync(configDir, { recursive: true });
-      fs.writeFileSync(configPath, `${JSON.stringify(newConfig, null, 2)}\n`, 'utf8');
-      Object.assign(config, newConfig);
-    };
+    const writeAliases = (newAliases: ProjectAliasEntry[]) =>
+      Effect.runPromise(saveSetupProjectAliases(newAliases).pipe(Effect.provideService(LocalHistoryStorage, storage)));
 
     const server = Bun.serve({
       port,
@@ -358,7 +354,7 @@ export const runSetupServer = (snapshotFiles: string[], local: boolean, port: nu
         if (url.pathname === '/api/aliases' && req.method === 'PUT') {
           try {
             const body = (await req.json()) as ProjectAliasEntry[];
-            writeAliasesSync(body);
+            await writeAliases(body);
             return new Response('ok', { status: 200 });
           } catch (err) {
             return new Response(JSON.stringify({ error: String(err) }), {

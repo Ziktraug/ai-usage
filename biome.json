@@ -93,6 +93,36 @@
           }
         }
       }
+    },
+    {
+      "includes": ["packages/skills/src/**/*.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "@ai-usage/*",
+                      "../packages/**",
+                      "../../packages/**",
+                      "../../../packages/**",
+                      "../apps/**",
+                      "../../apps/**",
+                      "../../../apps/**",
+                      "@ai-usage/*/src",
+                      "@ai-usage/*/src/**"
+                    ],
+                    "message": "packages/skills is a self-contained local control plane and cannot import workspace runtime packages."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "extends": [

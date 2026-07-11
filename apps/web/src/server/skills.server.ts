@@ -3,13 +3,11 @@ import path from 'node:path';
 import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import {
   ensureMachineConfig,
-  readAiUsageConfig,
   readMergedAiUsageConfigFrom,
-  writeAiUsageConfig,
+  updateAiUsageConfig,
 } from '@ai-usage/local-collectors/machine-config';
 import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
 import type {
-  ProjectionAction,
   ProjectSkillInventory,
   SkillManagementConfig,
   SkillManagementSnapshot,
@@ -37,16 +35,14 @@ import {
   writeSkillMarkdown,
 } from '@ai-usage/skills';
 import { Cause, Effect, Option, Runtime } from 'effect';
-
-export type SkillsServerResult<T> =
-  | { ok: true; data: T }
-  | {
-      ok: false;
-      error: {
-        message: string;
-        tag: string;
-      };
-    };
+import type {
+  KnownSkillProjectPath,
+  ProjectSkillMarkdownDocument,
+  ProjectSkillMarkdownInput,
+  SkillMarkdownSaveResult,
+  SkillReconcileServerResult,
+  SkillsServerResult,
+} from './skills-contracts';
 
 const toJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -68,24 +64,6 @@ const errorResult = (error: unknown): SkillsServerResult<never> => {
     },
   };
 };
-
-export interface SkillReconcileServerResult {
-  actions: readonly ProjectionAction[];
-  snapshot: SkillManagementSnapshot;
-}
-
-export interface ProjectSkillMarkdownInput {
-  projectPath: string;
-  runtimeDirId: (typeof projectSkillDirectories)[number]['id'];
-  skillName: string;
-}
-
-export interface ProjectSkillMarkdownDocument {
-  content: string;
-  path: string;
-  skillName: string;
-  truncated: boolean;
-}
 
 interface ProjectPathSource {
   machineId?: string;
@@ -113,16 +91,6 @@ interface ProjectPathSourcePayload {
     sources: readonly ProjectPathSource[];
   }[];
   rows: readonly ProjectPathRow[];
-}
-
-export interface KnownSkillProjectPath {
-  groupId?: string;
-  groupLabel?: string;
-  label: string;
-  machineLabel?: string;
-  path: string;
-  project: string;
-  sessions: number;
 }
 
 interface KnownSkillProjectPathOptions {
@@ -206,8 +174,22 @@ const loadSnapshotForStorage = async (storage: LocalHistoryStorage): Promise<Ski
   });
 };
 
+export const skillManagementSnapshotForClient = (snapshot: SkillManagementSnapshot): SkillManagementSnapshot => ({
+  ...snapshot,
+  skills: snapshot.skills.map((skill) => ({
+    ...skill,
+    manifest: {
+      ...skill.manifest,
+      markdown: '',
+    },
+  })),
+});
+
+const loadClientSnapshotForStorage = async (storage: LocalHistoryStorage): Promise<SkillManagementSnapshot> =>
+  skillManagementSnapshotForClient(await loadSnapshotForStorage(storage));
+
 export const readSkillManagementSnapshotForServer = async (): Promise<SkillsServerResult<SkillManagementSnapshot>> =>
-  runWithStorage((storage) => loadSnapshotForStorage(storage));
+  runWithStorage((storage) => loadClientSnapshotForStorage(storage));
 
 const pathEntryLabel = (entry: { project: string }) => entry.project;
 
@@ -367,16 +349,24 @@ export const writeSkillManagementConfigForServer = async (
   skills: SkillManagementConfig,
 ): Promise<SkillsServerResult<SkillManagementSnapshot>> =>
   runWithStorage(async (storage) => {
-    const config = await Effect.runPromise(readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)));
-    await writeSkillManagementConfig({
-      config: { ...config },
-      skills,
-      writeConfig: (nextConfig) =>
-        Effect.runPromise(
-          writeAiUsageConfig(nextConfig as AiUsageConfig).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-        ),
-    });
-    return loadSnapshotForStorage(storage);
+    await Effect.runPromise(
+      updateAiUsageConfig(async (config) => {
+        let updatedConfig: AiUsageConfig | undefined;
+        await writeSkillManagementConfig({
+          config: { ...config },
+          skills,
+          writeConfig: (nextConfig) => {
+            updatedConfig = nextConfig as AiUsageConfig;
+            return Promise.resolve();
+          },
+        });
+        if (updatedConfig === undefined) {
+          throw new Error('Skill config update did not produce a configuration document');
+        }
+        return updatedConfig;
+      }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+    );
+    return loadClientSnapshotForStorage(storage);
   });
 
 export const toggleSkillEnabledForServer = async (
@@ -401,10 +391,10 @@ export const toggleSkillEnabledForServer = async (
       });
       return {
         actions: reconcileResult.actions,
-        snapshot: await loadSnapshotForStorage(storage),
+        snapshot: await loadClientSnapshotForStorage(storage),
       };
     }
-    return { actions: [], snapshot: await loadSnapshotForStorage(storage) };
+    return { actions: [], snapshot: await loadClientSnapshotForStorage(storage) };
   });
 
 export const reconcileSkillForServer = async (
@@ -419,7 +409,7 @@ export const reconcileSkillForServer = async (
     });
     return {
       actions: reconcileResult.actions,
-      snapshot: await loadSnapshotForStorage(storage),
+      snapshot: await loadClientSnapshotForStorage(storage),
     };
   });
 
@@ -432,7 +422,7 @@ export const reconcileAllActiveSkillsForServer = async (): Promise<SkillsServerR
     });
     return {
       actions: reconcileResult.actions,
-      snapshot: await loadSnapshotForStorage(storage),
+      snapshot: await loadClientSnapshotForStorage(storage),
     };
   });
 
@@ -449,7 +439,7 @@ export const previewReconcileAllActiveSkillsForServer = async (): Promise<
     });
     return {
       actions: previewResult.actions,
-      snapshot: previewResult.snapshot,
+      snapshot: skillManagementSnapshotForClient(previewResult.snapshot),
     };
   });
 
@@ -463,7 +453,7 @@ export const createSkillTargetDirectoryForServer = async (
       throw new Error(`Unknown skill target: ${input.targetId}`);
     }
     await createSkillTargetDirectory({ path: target.path });
-    return loadSnapshotForStorage(storage);
+    return loadClientSnapshotForStorage(storage);
   });
 
 export const readSkillProjectInventoriesForServer = async (): Promise<
@@ -605,12 +595,6 @@ export const readProjectSkillMarkdownForServer = async (
     };
   });
 
-export interface SkillMarkdownSaveResult {
-  document?: SkillMarkdownDocument;
-  reason?: 'conflict' | 'not-found' | 'too-large';
-  snapshot?: SkillManagementSnapshot;
-}
-
 export const readSkillMarkdownForServer = async (
   skillName: string,
 ): Promise<SkillsServerResult<SkillMarkdownDocument>> =>
@@ -638,6 +622,6 @@ export const writeSkillMarkdownForServer = async (
     }
     return {
       document: await readSkillMarkdown({ skillName: input.skillName, sourceRepoPath: skillsConfig.sourceRepoPath }),
-      snapshot: await loadSnapshotForStorage(storage),
+      snapshot: await loadClientSnapshotForStorage(storage),
     };
   });

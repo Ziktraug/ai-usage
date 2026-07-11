@@ -32,6 +32,9 @@ jobs:
       - name: Biome
         run: bun run check
 
+      - name: Architecture lint
+        run: bun run lint
+
       - name: Types
         run: bun run typecheck
 
@@ -40,6 +43,9 @@ jobs:
 
       - name: Build
         run: bun run build
+
+      - name: HTML export integration
+        run: bun run test:html-export
 
       - name: Install Playwright browser
         run: bun x playwright install --with-deps chromium
