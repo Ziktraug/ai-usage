@@ -23,6 +23,7 @@ import { createFileRoute, Link } from '@tanstack/solid-router';
 import { createEffect, createSignal, onCleanup, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
+import type { ManualOperationError, ManualOperationResult } from '../manual-transfer-contract';
 import { formatManualImportSummary, formatTransferBytes } from '../manual-transfer-model';
 import { exportManualMergeBundle } from '../server/sync';
 
@@ -115,11 +116,7 @@ const progressHint = css({
   lineHeight: 1.5,
 });
 
-type ManualOperationResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; error: { tag: string; message: string; reason?: string } };
 type ManualImportResult = ManualOperationResult<ManualMergeImportResult>;
-type ManualOperationError = Extract<ManualOperationResult<unknown>, { ok: false }>['error'];
 type PendingOperation = 'manual-export' | 'manual-import';
 
 type ManualImportProgress =

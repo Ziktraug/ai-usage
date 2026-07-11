@@ -7,20 +7,11 @@ import {
 } from '@ai-usage/usage-merge';
 import { usageStorePath } from '@ai-usage/usage-store';
 import { Cause, Effect, Option, Runtime } from 'effect';
+import type { ManualOperationResult } from '../manual-transfer-contract';
 import { runReportPayloadCollection } from './report-payload.server';
 
-export type ManualMergeServerResult<T> =
-  | { ok: true; data: T }
-  | {
-      ok: false;
-      error: {
-        tag: string;
-        message: string;
-        reason?: string;
-      };
-    };
-
-const toJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const unwrapEffectFailure = (error: unknown) => {
   if (!Runtime.isFiberFailure(error)) {
@@ -29,9 +20,9 @@ const unwrapEffectFailure = (error: unknown) => {
   return Option.getOrUndefined(Cause.failureOption(error[Runtime.FiberFailureCauseId])) ?? error;
 };
 
-const errorResult = (error: unknown): ManualMergeServerResult<never> => {
+const errorResult = (error: unknown): ManualOperationResult<never> => {
   const unwrapped = unwrapEffectFailure(error);
-  const record = typeof unwrapped === 'object' && unwrapped !== null ? (unwrapped as Record<string, unknown>) : {};
+  const record = isRecord(unwrapped) ? unwrapped : {};
   return {
     ok: false,
     error: {
@@ -53,20 +44,26 @@ const createService = Effect.gen(function* () {
   });
 });
 
-const getService = () => {
-  servicePromise ??= Effect.runPromise(createService.pipe(Effect.provide(LocalHistoryStorageLive))).catch((error) => {
+const resolveService = async () => {
+  try {
+    return await Effect.runPromise(createService.pipe(Effect.provide(LocalHistoryStorageLive)));
+  } catch (error) {
     servicePromise = undefined;
     throw error;
-  });
+  }
+};
+
+const getService = () => {
+  servicePromise ??= resolveService();
   return servicePromise;
 };
 
 const runService = async <A>(
   operation: (service: UsageFileMergeService) => Effect.Effect<A, unknown>,
-): Promise<ManualMergeServerResult<A>> => {
+): Promise<ManualOperationResult<A>> => {
   try {
     const service = await getService();
-    return { ok: true, data: toJson(await Effect.runPromise(operation(service))) };
+    return { ok: true, data: await Effect.runPromise(operation(service)) };
   } catch (error) {
     return errorResult(error);
   }

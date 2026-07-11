@@ -72,10 +72,22 @@ const boundaryPolicies: BoundaryPolicy[] = [
   },
   {
     packageName: '@ai-usage/usage-merge',
-    forbiddenDependencies: ['@ai-usage/report-data', '@ai-usage/web', '@ai-usage/cli'],
-    forbiddenImports: ['@ai-usage/report-data', '@ai-usage/web', '@ai-usage/cli'],
+    forbiddenDependencies: [
+      '@ai-usage/local-collectors',
+      '@ai-usage/report-data',
+      '@ai-usage/sync',
+      '@ai-usage/web',
+      '@ai-usage/cli',
+    ],
+    forbiddenImports: [
+      '@ai-usage/local-collectors',
+      '@ai-usage/report-data',
+      '@ai-usage/sync',
+      '@ai-usage/web',
+      '@ai-usage/cli',
+    ],
     reason:
-      'usage-merge file-transfer orchestration must not import final report payload orchestration or app adapters.',
+      'usage-merge file-transfer orchestration must not import collectors, network sync, final report payload orchestration, or app adapters.',
   },
 ];
 
