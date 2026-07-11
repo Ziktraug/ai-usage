@@ -52,6 +52,8 @@ const GIT_SECTION_HEADER_PATTERN = /^\s*\[[^\]]+\]\s*$/;
 const GIT_REMOTE_URL_PATTERN = /^\s*url\s*=\s*(.+?)\s*$/;
 const GITHUB_HTTPS_REPO_PATTERN = /github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/;
 const GITHUB_SSH_REPO_PATTERN = /git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/;
+const GITDIR_FILE_PATTERN = /^\s*gitdir:\s*(.+?)\s*$/i;
+const CLAUDE_WORKTREE_PATH_SEGMENT = '/.claude/worktrees/';
 
 export interface LocalUsageSelection {
   configCwd?: string;
@@ -136,6 +138,13 @@ export interface ProjectSourcesResult {
 }
 
 export type ReadGitFile = (filePath: string) => string | null;
+
+interface CanonicalProjectSource {
+  project: string;
+  sourcePath: string;
+}
+
+type CanonicalProjectSourceResolver = (project: string, sourcePath: string) => CanonicalProjectSource;
 
 export interface ProjectSourcesRequest extends LocalUsageSelection {
   appVersion?: string | null;
@@ -657,30 +666,107 @@ const extractRepoName = (url: string): string => {
   return url;
 };
 
+const resolveGitPath = (basePath: string, gitPath: string) =>
+  path.isAbsolute(gitPath) ? path.normalize(gitPath) : path.resolve(basePath, gitPath);
+
+const readGitdirFilePath = (projectPath: string, readGitFile: ReadGitFile): string | null => {
+  const gitFilePath = path.join(projectPath, '.git');
+  const text = readGitFile(gitFilePath);
+  const gitdirMatch = text?.match(GITDIR_FILE_PATTERN);
+  if (!gitdirMatch) {
+    return null;
+  }
+  return resolveGitPath(projectPath, gitdirMatch[1]!);
+};
+
+const readCommonGitDir = (projectPath: string, readGitFile: ReadGitFile): string | null => {
+  const gitdirPath = readGitdirFilePath(projectPath, readGitFile);
+  if (!gitdirPath) {
+    return null;
+  }
+  const commonDirText = readGitFile(path.join(gitdirPath, 'commondir'));
+  if (commonDirText === null) {
+    return null;
+  }
+  return resolveGitPath(gitdirPath, commonDirText.trim());
+};
+
+const mainWorktreePathFromCommonGitDir = (commonGitDir: string) =>
+  path.basename(commonGitDir) === '.git' ? path.dirname(commonGitDir) : null;
+
+const gitWorktreeParentPath = (projectPath: string, readGitFile: ReadGitFile): string | null => {
+  const commonGitDir = readCommonGitDir(projectPath, readGitFile);
+  return commonGitDir === null ? null : mainWorktreePathFromCommonGitDir(commonGitDir);
+};
+
+const managedWorktreeParentPath = (projectPath: string): string | null => {
+  const normalizedPath = projectPath.replaceAll('\\', '/');
+  const markerIndex = normalizedPath.indexOf(CLAUDE_WORKTREE_PATH_SEGMENT);
+  return markerIndex > 0 ? normalizedPath.slice(0, markerIndex) : null;
+};
+
+const canonicalProjectSource = (project: string, sourcePath: string, readGitFile: ReadGitFile) => {
+  if (!sourcePath) {
+    return { project, sourcePath };
+  }
+  const canonicalSourcePath = gitWorktreeParentPath(sourcePath, readGitFile) ?? managedWorktreeParentPath(sourcePath);
+  if (!canonicalSourcePath) {
+    return { project, sourcePath };
+  }
+  return {
+    project: path.basename(canonicalSourcePath) || project,
+    sourcePath: canonicalSourcePath,
+  };
+};
+
+const createCanonicalProjectSourceResolver = (readGitFile: ReadGitFile): CanonicalProjectSourceResolver => {
+  const cache = new Map<string, CanonicalProjectSource>();
+  return (project, sourcePath) => {
+    const key = [project, sourcePath].join('\0');
+    const cached = cache.get(key);
+    if (cached) {
+      return cached;
+    }
+    const canonicalSource = canonicalProjectSource(project, sourcePath, readGitFile);
+    cache.set(key, canonicalSource);
+    return canonicalSource;
+  };
+};
+
 const readGitRemoteUrl = (projectPath: string, readGitFile: ReadGitFile): string => {
-  const text = readGitFile(path.join(projectPath, '.git', 'config'));
+  const text =
+    readGitFile(path.join(projectPath, '.git', 'config')) ?? readGitRemoteFromWorktree(projectPath, readGitFile);
   return text === null ? '' : parseGitConfigRemote(text);
 };
 
-const sourceInputFromRow = (row: SourcedRow) => ({
-  machineId: row.source.machineId ?? '',
-  project: projectFromRow(row),
-  sourcePath: row.source.sourcePath ?? '',
-});
+const readGitRemoteFromWorktree = (projectPath: string, readGitFile: ReadGitFile) => {
+  const commonGitDir = readCommonGitDir(projectPath, readGitFile);
+  return commonGitDir === null ? null : readGitFile(path.join(commonGitDir, 'config'));
+};
 
-const createProjectSourceFromRow = (row: SourcedRow): ProjectSource => {
+const sourceInputFromRow = (row: SourcedRow, resolveCanonicalProjectSource: CanonicalProjectSourceResolver) => {
   const project = projectFromRow(row);
-  const sourcePath = row.source.sourcePath ?? '';
   return {
-    id: projectSourceId({ machineId: row.source.machineId ?? '', project, sourcePath }),
-    project,
+    machineId: row.source.machineId ?? '',
+    ...resolveCanonicalProjectSource(project, row.source.sourcePath ?? ''),
+  };
+};
+
+const createProjectSourceFromRow = (
+  row: SourcedRow,
+  resolveCanonicalProjectSource: CanonicalProjectSourceResolver,
+): ProjectSource => {
+  const source = sourceInputFromRow(row, resolveCanonicalProjectSource);
+  return {
+    id: projectSourceId(source),
+    project: source.project,
     machine: row.source.machineLabel ?? 'Unknown machine',
     machineId: row.source.machineId ?? '',
     harness: row.harness,
     harnessKey: row.source.harnessKey,
     harnesses: [row.harness],
     harnessKeys: [row.source.harnessKey],
-    sourcePath,
+    sourcePath: source.sourcePath,
     gitRemote: '',
     sessions: 0,
     tokens: 0,
@@ -691,11 +777,12 @@ const collectProjectSources = (
   rows: SourcedRow[],
   includeGitRemote: boolean,
   readGitFile: ReadGitFile = defaultReadGitFile,
+  resolveCanonicalProjectSource = createCanonicalProjectSourceResolver(readGitFile),
 ): ProjectSource[] => {
   const summaries = new Map<string, ProjectSource>();
 
   for (const row of rows) {
-    const summary = createProjectSourceFromRow(row);
+    const summary = createProjectSourceFromRow(row, resolveCanonicalProjectSource);
     const key = summary.id;
     const current = summaries.get(key) ?? summary;
     current.sessions++;
@@ -806,11 +893,12 @@ const buildProjectProjection = (
   groups: ProjectGroupConfig[] = [],
   legacyAliases: ProjectAliasEntry[] = [],
 ): ProjectProjection => {
-  const sources = collectProjectSources(rows, false);
+  const resolveCanonicalProjectSource = createCanonicalProjectSourceResolver(defaultReadGitFile);
+  const sources = collectProjectSources(rows, false, defaultReadGitFile, resolveCanonicalProjectSource);
   const sourceById = new Map(sources.map((source) => [source.id, source]));
   const rowsBySourceId = new Map<string, SourcedRow[]>();
   for (const row of rows) {
-    const sourceId = projectSourceId(sourceInputFromRow(row));
+    const sourceId = projectSourceId(sourceInputFromRow(row, resolveCanonicalProjectSource));
     const sourceRows = rowsBySourceId.get(sourceId) ?? [];
     sourceRows.push(row);
     rowsBySourceId.set(sourceId, sourceRows);
@@ -921,7 +1009,7 @@ const buildProjectProjection = (
 
   const projectedRows = rows.map((row) => {
     const rawProject = row.project;
-    const projectSourceIdValue = projectSourceId(sourceInputFromRow(row));
+    const projectSourceIdValue = projectSourceId(sourceInputFromRow(row, resolveCanonicalProjectSource));
     const group = sourceGroupName.get(projectSourceIdValue) ?? {
       groupId: `source:${projectSourceIdValue}`,
       name: projectFromRow(row),

@@ -55,6 +55,70 @@ describe('machine config', () => {
     }
   });
 
+  test('reads valid skills config from user config', async () => {
+    const home = await mkdtemp('ai-usage-machine-config-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      mkdirSync(path.dirname(aiUsageConfigPath(storage)), { recursive: true });
+      writeFileSync(
+        aiUsageConfigPath(storage),
+        JSON.stringify({
+          skills: {
+            sourceRepoPath: '/repo/agent-skills',
+            targets: {
+              codex: {
+                enabled: true,
+                kind: 'standard-interop',
+                path: '/home/user/.codex/skills',
+                scope: 'system',
+              },
+            },
+          },
+        }),
+      );
+
+      const config = await Effect.runPromise(
+        readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(config.skills).toEqual({
+        sourceRepoPath: '/repo/agent-skills',
+        targets: {
+          codex: {
+            enabled: true,
+            kind: 'standard-interop',
+            path: '/home/user/.codex/skills',
+            scope: 'system',
+          },
+        },
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects invalid skills config', async () => {
+    const home = await mkdtemp('ai-usage-machine-config-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      mkdirSync(path.dirname(aiUsageConfigPath(storage)), { recursive: true });
+      writeFileSync(
+        aiUsageConfigPath(storage),
+        JSON.stringify({
+          skills: {
+            projectsRootPath: '',
+          },
+        }),
+      );
+
+      await expect(
+        Effect.runPromise(readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage))),
+      ).rejects.toThrow('Invalid ai-usage config');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('preserves home project groups when repo config omits them', async () => {
     const home = await mkdtemp('ai-usage-machine-config-');
     const repo = await mkdtemp('ai-usage-repo-config-');
@@ -85,6 +149,56 @@ describe('machine config', () => {
 
       expect(config.projectGroups?.[0]?.name).toBe('exalibur');
       expect(config.cursor?.clusterGapMs).toBe(1234);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('merges skills config without inventing a projects root', async () => {
+    const home = await mkdtemp('ai-usage-machine-config-');
+    const repo = await mkdtemp('ai-usage-repo-config-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      mkdirSync(path.dirname(aiUsageConfigPath(storage)), { recursive: true });
+      writeFileSync(
+        aiUsageConfigPath(storage),
+        JSON.stringify({
+          skills: {
+            targets: {
+              codex: {
+                enabled: true,
+                kind: 'standard-interop',
+                path: '/home/user/.codex/skills',
+                scope: 'system',
+              },
+            },
+            projectPaths: ['/work/home-project'],
+          },
+        }),
+      );
+
+      writeFileSync(
+        path.join(repo, 'ai-usage.config.ts'),
+        "export default { skills: { sourceRepoPath: '/repo/agent-skills' } };\n",
+      );
+
+      const config = await Effect.runPromise(
+        readMergedAiUsageConfigFrom(repo).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(config.skills).toEqual({
+        projectPaths: ['/work/home-project'],
+        sourceRepoPath: '/repo/agent-skills',
+        targets: {
+          codex: {
+            enabled: true,
+            kind: 'standard-interop',
+            path: '/home/user/.codex/skills',
+            scope: 'system',
+          },
+        },
+      });
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(repo, { recursive: true, force: true });
