@@ -66,7 +66,7 @@ Reasoning:
 
 - the config already owns machine-local identity and report preferences;
 - different machines can intentionally use different grouping views;
-- grouping should survive refreshes, stored peer imports, and LAN merges;
+- grouping should survive refreshes, imported merge bundles, and snapshot merges;
 - grouping should not be embedded in snapshots or merge bundles.
 
 ## Target Domain Model
@@ -311,13 +311,13 @@ Non-responsibilities:
 
 ### `@ai-usage/usage-merge`
 
-Owns LAN/manual merge workflow only.
+Owns manual merge bundle file workflows only.
 
 Responsibilities:
 
-- authenticate peers;
-- fetch/import merge bundles;
-- update trusted peer state.
+- export local usage as a merge bundle file;
+- parse and import merge bundles copied from another machine;
+- map persistence failures to stable operation errors.
 
 Non-responsibilities:
 

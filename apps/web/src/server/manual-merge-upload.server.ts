@@ -1,23 +1,12 @@
+import type { ManualOperationResult } from '../manual-transfer-contract';
+
 export const MAX_MANUAL_MERGE_UPLOAD_BYTES = 64 * 1024 * 1024;
 export const MAX_MANUAL_MERGE_UPLOAD_ROWS = 50_000;
 const BYTE_COUNT_PATTERN = /^\d+$/;
 const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', '[::1]', 'localhost']);
 
-interface ManualMergeUploadFailure {
-  error: {
-    message: string;
-    reason?: string;
-    tag: string;
-  };
-  ok: false;
-}
-
-interface ManualMergeUploadSuccess {
-  data: unknown;
-  ok: true;
-}
-
-type ManualMergeUploadResult = ManualMergeUploadFailure | ManualMergeUploadSuccess;
+type ManualMergeUploadResult = ManualOperationResult<unknown>;
+type ManualMergeUploadFailure = Extract<ManualMergeUploadResult, { ok: false }>;
 
 interface ManualMergeUploadOptions {
   importBundle: (text: string) => Promise<ManualMergeUploadResult>;

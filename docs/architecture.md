@@ -145,6 +145,6 @@ See `docs/generated-tooling-ownership.md` for generated Panda/TanStack/Nitro own
 - Cross-package imports must use package exports documented in `docs/public-package-interfaces.md`.
 - Relative workspace paths such as `../../packages/...` and `../apps/...` are forbidden.
 - Private package paths such as `@ai-usage/report-core/src/...` are forbidden.
-- Package graph boundaries for file-based merge are enforced by scoped Biome restricted-import rules and `tools/check-package-boundaries.ts`.
+- Package graph boundaries for file-based merge are enforced by `tools/check-package-boundaries.ts`; Biome separately blocks private and relative workspace imports.
 - The package graph policy follows the ownership READMEs in each app/package directory.
 - `bun run lint` runs Biome restricted-import rules, `tools/check-workspace-relative-paths.ts`, `tools/check-public-package-exports.ts`, and `tools/check-package-boundaries.ts`.
