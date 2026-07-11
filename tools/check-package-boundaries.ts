@@ -32,23 +32,14 @@ interface Violation {
   specifier: string;
 }
 
-// packages/lan-pairing is generic LAN mechanics. Importing ai-usage domain packages would make pairing
-// reusable only by this app and would collapse the planned adapter boundary.
 // packages/report-core is pure domain calculation. Workspace runtime imports would make report types depend
-// on collection, storage, LAN, or app execution.
+// on collection, storage, transport, or app execution.
 // packages/usage-store owns SQLite/materialized facts. It must not know about collection, report payloads,
-// LAN runtime, or app adapters.
-// packages/report-data may read peer status through usage-merge, but it must not start or import LAN pairing
-// runtime modules directly while rendering reports.
-// packages/usage-merge is the adapter between generic LAN pairing and ai-usage merge semantics. It must not
-// import app packages or final report payload orchestration.
+// file-transfer orchestration, or app adapters.
+// packages/report-data may read stored imported rows, but it must not depend on app adapters.
+// packages/usage-merge orchestrates manual merge bundle import/export. It must not import app packages or
+// final report payload orchestration.
 const boundaryPolicies: BoundaryPolicy[] = [
-  {
-    packageName: '@ai-usage/lan-pairing',
-    forbiddenDependencies: ['@ai-usage/*'],
-    forbiddenImports: ['@ai-usage/*'],
-    reason: 'lan-pairing must stay project-agnostic.',
-  },
   {
     packageName: '@ai-usage/report-core',
     forbiddenDependencies: ['@ai-usage/*'],
@@ -58,7 +49,6 @@ const boundaryPolicies: BoundaryPolicy[] = [
   {
     packageName: '@ai-usage/usage-store',
     forbiddenDependencies: [
-      '@ai-usage/lan-pairing',
       '@ai-usage/local-collectors',
       '@ai-usage/report-data',
       '@ai-usage/usage-merge',
@@ -66,26 +56,26 @@ const boundaryPolicies: BoundaryPolicy[] = [
       '@ai-usage/cli',
     ],
     forbiddenImports: [
-      '@ai-usage/lan-pairing',
       '@ai-usage/local-collectors',
       '@ai-usage/report-data',
       '@ai-usage/usage-merge',
       '@ai-usage/web',
       '@ai-usage/cli',
     ],
-    reason: 'usage-store must not depend on LAN, collectors, app packages, usage-merge, or report-data.',
+    reason: 'usage-store must not depend on collectors, file-transfer orchestration, app packages, or report-data.',
   },
   {
     packageName: '@ai-usage/report-data',
-    forbiddenDependencies: ['@ai-usage/lan-pairing', '@ai-usage/web', '@ai-usage/cli'],
-    forbiddenImports: ['@ai-usage/lan-pairing', '@ai-usage/web', '@ai-usage/cli'],
-    reason: 'report-data must not import LAN runtime modules or app packages.',
+    forbiddenDependencies: ['@ai-usage/web', '@ai-usage/cli'],
+    forbiddenImports: ['@ai-usage/web', '@ai-usage/cli'],
+    reason: 'report-data must not import app packages.',
   },
   {
     packageName: '@ai-usage/usage-merge',
     forbiddenDependencies: ['@ai-usage/report-data', '@ai-usage/web', '@ai-usage/cli'],
     forbiddenImports: ['@ai-usage/report-data', '@ai-usage/web', '@ai-usage/cli'],
-    reason: 'usage-merge must not import final report payload orchestration or app adapters.',
+    reason:
+      'usage-merge file-transfer orchestration must not import final report payload orchestration or app adapters.',
   },
 ];
 

@@ -6,7 +6,7 @@ Reusable Solid/Panda primitives, report-specific style slots, the Panda preset e
 
 ## Does Not Own
 
-It does not own app routes, report data, local collection, sync or LAN merge behavior, persistence, or domain calculations.
+It does not own app routes, report data, local collection, sync or file-transfer behavior, persistence, or domain calculations.
 
 ## Public Interface
 
@@ -18,7 +18,7 @@ Consumers provide `solid-js`. The package may use Panda tooling for build/check 
 
 ## Must Not Import
 
-It must not import app packages, data/runtime packages, local collectors, sync/LAN modules, private package paths, or relative workspace paths.
+It must not import app packages, data/runtime packages, local collectors, sync or merge orchestration modules, private package paths, or relative workspace paths.
 
 ## Data Boundary
 

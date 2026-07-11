@@ -2,11 +2,11 @@
 
 ## Owns
 
-The Solid/TanStack web runtime, report dashboard routes, `/sync` UI route, server function facades, browser export adapters, and UI read-model presentation.
+The Solid/TanStack web runtime, report dashboard routes, the file-based `/sync` import/export route, server function facades, browser export adapters, and UI read-model presentation.
 
 ## Does Not Own
 
-It does not own local history collection, report-domain calculations, LAN discovery, pairing protocol details, trusted peer persistence, token storage, or usage-store import/export logic.
+It does not own local history collection, report-domain calculations, merge bundle validation, usage-store persistence, or file import/export semantics.
 
 ## Public Interface
 
@@ -14,15 +14,15 @@ The public interface is the app route tree, server functions under `src/server`,
 
 ## Depends On
 
-`apps/web` may depend on `@ai-usage/report-data`, `@ai-usage/report-core`, `@ai-usage/design-system`, `@ai-usage/local-collectors`, `@ai-usage/lan-pairing`, `@ai-usage/usage-merge`, and `@ai-usage/usage-store` through public package exports.
+`apps/web` may depend on `@ai-usage/report-data`, `@ai-usage/report-core`, `@ai-usage/design-system`, `@ai-usage/local-collectors`, `@ai-usage/usage-merge`, and `@ai-usage/usage-store` through public package exports.
 
 ## Must Not Import
 
-It must not import private `@ai-usage/*/src/**` paths, relative workspace paths, future `@ai-usage/lan-pairing` internals directly from UI components, or CLI modules.
+It must not import private `@ai-usage/*/src/**` paths, relative workspace paths, network pairing modules, or CLI modules.
 
 ## Data Boundary
 
-Solid components receive JSON-safe report and LAN merge state. Effect values, filesystem handles, raw tokens, transport URLs, and SQLite handles stay behind server/runtime modules.
+Solid components receive JSON-safe report data and manual merge results. Effect values, filesystem handles, raw file contents, and SQLite handles stay behind server/runtime modules.
 
 ## Test Strategy
 

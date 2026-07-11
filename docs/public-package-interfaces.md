@@ -36,6 +36,14 @@ The workspace packages expose only these public seams. Cross-package imports mus
 
 - `.`: report payload and snapshot assembly seam over core plus local collectors.
 
+## `@ai-usage/usage-store`
+
+- `.`: SQLite-backed normalized usage row import, validated merge bundle import/export, and report-row queries.
+
+## `@ai-usage/usage-merge`
+
+- `.`: explicit merge bundle file export/import workflows and JSON-safe operation results for app adapters.
+
 ## `@ai-usage/sync`
 
 - `.`: sync package barrel.
