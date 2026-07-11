@@ -2,11 +2,11 @@
 
 ## Owns
 
-Application-facing report orchestration: collecting local history through package boundaries, applying aliases, composing warnings, creating compatibility report payloads, and eventually reading report rows through `@ai-usage/usage-store`.
+Application-facing report orchestration: collecting local history through package boundaries, applying aliases, composing warnings, creating compatibility report payloads, and reading local or manually imported report rows through `@ai-usage/usage-store`.
 
 ## Does Not Own
 
-It does not own row normalization primitives, UI rendering, CLI output formatting, LAN service lifecycle, LAN scanning, pairing, peer token exchange, or raw collector implementation details.
+It does not own row normalization primitives, UI rendering, CLI output formatting, merge bundle file transfer, network transport, or raw collector implementation details.
 
 ## Public Interface
 
@@ -14,15 +14,15 @@ The root package export exposes report request/result helpers and compatibility 
 
 ## Depends On
 
-`@ai-usage/report-data` may depend on `@ai-usage/report-core`, `@ai-usage/local-collectors`, and later `@ai-usage/usage-store` plus optional peer status metadata from `@ai-usage/usage-merge`.
+`@ai-usage/report-data` may depend on `@ai-usage/report-core`, `@ai-usage/local-collectors`, and `@ai-usage/usage-store`.
 
 ## Must Not Import
 
-It must not import app packages, private package paths, relative workspace paths, `@ai-usage/lan-pairing`, or network transport modules directly.
+It must not import app packages, private package paths, relative workspace paths, or network transport modules directly.
 
 ## Data Boundary
 
-This package produces report payloads from local and stored usage rows. Report rendering must not perform LAN network work; peer network merge happens through explicit usage-merge actions before reporting.
+This package produces report payloads from local and stored usage rows. File import/export happens through explicit usage-merge actions before reporting; report rendering does not perform transfer work.
 
 ## Test Strategy
 

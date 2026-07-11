@@ -21,7 +21,7 @@
 ## Dependencies
 
 This package should stay independent from app packages, report-data, usage-store,
-usage-merge, and LAN pairing. It may use standard Node filesystem APIs behind
+and usage-merge. It may use standard Node filesystem APIs behind
 workflow functions and should expose JSON-safe data to app callers.
 
 ## Tests
