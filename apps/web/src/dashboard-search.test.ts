@@ -39,7 +39,7 @@ describe('dashboard search params', () => {
       harness: ['Codex'],
       machine: ['work-laptop'],
       q: 'search text',
-      range: { mode: 'custom', from: '2026-06-01' },
+      range: { mode: 'all' },
       sort: { id: 'fresh', desc: false },
       tab: 'models',
     });
@@ -59,5 +59,16 @@ describe('dashboard search params', () => {
         defaults,
       ),
     ).toEqual(defaults);
+  });
+
+  test('falls back when custom dates are impossible or reversed', () => {
+    const defaults = dashboardSearchDefaultsFor('date');
+
+    expect(
+      validateDashboardSearch({ range: { mode: 'custom', from: '2026-02-31', to: '2026-03-03' } }, defaults).range,
+    ).toEqual(defaults.range);
+    expect(
+      validateDashboardSearch({ range: { mode: 'custom', from: '2026-03-03', to: '2026-02-28' } }, defaults).range,
+    ).toEqual(defaults.range);
   });
 });

@@ -5,15 +5,17 @@ import { toDateInputValue } from './date-range';
 import {
   buildCalendarHeatmapData,
   buildModelMigrationData,
+  buildOverviewHeroData,
   buildOverviewRecords,
   buildOverviewSessionItems,
   buildPunchcardData,
   buildSessionShapeData,
   buildTimelineData,
   buildTopSessions,
+  nextHeatmapFocusIndex,
   type TimelineDimension,
 } from './overview-model';
-import { enrichReportRow } from './shared';
+import { buildReportSummary, enrichReportRow } from './shared';
 
 const baseRow: SerializedRow = {
   date: '2026-06-10T12:00:00.000Z',
@@ -49,6 +51,37 @@ const heatDay = (data: NonNullable<ReturnType<typeof buildCalendarHeatmapData>>,
   data.weeks.flatMap((week) => week.days).find((cell) => cell && toDateInputValue(cell.date) === day) ?? null;
 
 describe('overview model', () => {
+  test('presents API-equivalent value and spend coverage without deriving an ROI multiple', () => {
+    const rows = [
+      row({ costActual: 2, costApprox: 12, costKnown: true }),
+      row({ costActual: null, costApprox: 8, costKnown: true }),
+      row({ costActual: null, costApprox: 0, costKnown: false }),
+    ];
+
+    const data = buildOverviewHeroData(buildReportSummary(rows, () => true));
+
+    expect(data).toEqual({
+      actualSpend: 2,
+      actualSpendKnownSessions: 1,
+      apiEquivalentValue: 20,
+      apiPricedSessions: 2,
+      sessionCount: 3,
+      subscriptionValue: 0,
+    });
+  });
+
+  test('moves heatmap focus by day and week while staying inside the calendar', () => {
+    expect(nextHeatmapFocusIndex(10, 30, 'ArrowLeft')).toBe(3);
+    expect(nextHeatmapFocusIndex(10, 30, 'ArrowRight')).toBe(17);
+    expect(nextHeatmapFocusIndex(10, 30, 'ArrowUp')).toBe(9);
+    expect(nextHeatmapFocusIndex(10, 30, 'ArrowDown')).toBe(11);
+    expect(nextHeatmapFocusIndex(2, 30, 'Home')).toBe(0);
+    expect(nextHeatmapFocusIndex(2, 30, 'End')).toBe(29);
+    expect(nextHeatmapFocusIndex(1, 30, 'ArrowLeft')).toBe(0);
+    expect(nextHeatmapFocusIndex(28, 30, 'ArrowRight')).toBe(29);
+    expect(nextHeatmapFocusIndex(10, 30, 'Enter')).toBeNull();
+  });
+
   test('builds calendar heatmap data from dated sessions', () => {
     const rows = [
       row({
@@ -208,9 +241,85 @@ describe('overview model', () => {
     const data = buildSessionShapeData(rows);
 
     expect(data?.points).toHaveLength(3);
+    expect(data?.totalPoints).toBe(3);
+    expect(data?.points.reduce((sum, point) => sum + point.aggregateCount, 0)).toBe(3);
+    expect(data?.outliers.map((point) => point.label)).toEqual(['Long', 'Medium', 'Short']);
     expect(data?.harnesses).toEqual(['Codex', 'Claude']);
     expect(data?.xPct(600_000)).toBeGreaterThan(0);
     expect(data?.yPct(1)).toBeGreaterThan(0);
+  });
+
+  test('aggregates a dense session shape while retaining standout sessions for inspection', () => {
+    const rows = Array.from({ length: 720 }, (_, index) =>
+      row({
+        sessionLabel: `Session ${index}`,
+        durationMs: 60_000 * (1 + (index % 180)),
+        costApprox: 0.01 * (1 + (index % 240)),
+        harness: index % 2 ? 'Claude' : 'Codex',
+      }),
+    );
+
+    const data = buildSessionShapeData(rows);
+
+    expect(data?.totalPoints).toBe(720);
+    expect(data?.points.length).toBeLessThanOrEqual(240);
+    expect(data?.points.reduce((sum, point) => sum + point.aggregateCount, 0)).toBe(720);
+    expect(data?.outliers).toHaveLength(6);
+    expect(data?.outliers.every((point) => rows.includes(point.row))).toBe(true);
+  });
+
+  test('weights campaign bins by sessions and keeps harnesses separate', () => {
+    const codexRoot = row({
+      sessionLabel: 'Codex root',
+      costApprox: 8,
+      durationMs: 600_000,
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        rootSourceSessionId: 'codex-root',
+        sourceSessionId: 'codex-root',
+      },
+    });
+    const codexChild = row({
+      sessionLabel: 'Codex child',
+      costApprox: 2,
+      durationMs: 300_000,
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        parentSourceSessionId: 'codex-root',
+        rootSourceSessionId: 'codex-root',
+        sourceSessionId: 'codex-child',
+      },
+    });
+    const claude = row({ sessionLabel: 'Claude', costApprox: 10, durationMs: 600_000, harness: 'Claude' });
+    const solo = row({ sessionLabel: 'Solo', costApprox: 1, durationMs: 60_000 });
+    const rows = [codexRoot, codexChild, claude, solo];
+
+    const data = buildSessionShapeData(rows, buildCampaignViews(rows, rows));
+
+    expect(data?.totalPoints).toBe(4);
+    expect(data?.points.reduce((sum, point) => sum + point.aggregateCount, 0)).toBe(4);
+    expect(data?.points.some((point) => point.harness === 'Codex' && point.aggregateCount === 2)).toBe(true);
+    expect(data?.points.some((point) => point.harness === 'Claude' && point.aggregateCount === 1)).toBe(true);
+    expect(data?.harnessSummaries.map((summary) => [summary.harness, summary.sessions])).toEqual([
+      ['Codex', 3],
+      ['Claude', 1],
+    ]);
+  });
+
+  test('retains expensive-short and long-cheap axis extremes as standouts', () => {
+    const expensiveShort = row({ sessionLabel: 'Expensive short', costApprox: 1000, durationMs: 60_000 });
+    const longCheap = row({ sessionLabel: 'Long cheap', costApprox: 0.01, durationMs: 360_000_000 });
+    const ordinary = Array.from({ length: 10 }, (_, index) =>
+      row({ sessionLabel: `Ordinary ${index}`, costApprox: 1 + index, durationMs: 600_000 + index * 60_000 }),
+    );
+
+    const data = buildSessionShapeData([expensiveShort, longCheap, ...ordinary]);
+    const labels = data?.outliers.map((point) => point.label) ?? [];
+
+    expect(labels).toContain('Expensive short');
+    expect(labels).toContain('Long cheap');
   });
 
   test('builds punchcard density', () => {

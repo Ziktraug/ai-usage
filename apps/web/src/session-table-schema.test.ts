@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { sessionColumns } from './session-columns';
+import { nextMobileSessionRowLimit } from './session-table';
 import {
   columnDiffFromVisibility,
   columnVisibilityFromDiff,
@@ -8,6 +9,12 @@ import {
 } from './session-table-schema';
 
 describe('session table schema', () => {
+  test('pages mobile session summaries without skipping the remaining rows', () => {
+    expect(nextMobileSessionRowLimit(50, 132)).toBe(100);
+    expect(nextMobileSessionRowLimit(100, 132)).toBe(132);
+    expect(nextMobileSessionRowLimit(132, 132)).toBe(132);
+  });
+
   test('keeps rendered columns aligned with the shared schema', () => {
     expect(sessionColumns.map((column) => column.id)).toEqual(sessionColumnIds);
   });

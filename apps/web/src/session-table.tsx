@@ -1,12 +1,31 @@
 import { Checkbox, Popover } from '@ai-usage/design-system';
 import { cx } from '@ai-usage/design-system/css';
 import {
+  desktopTableSurface,
   empty,
   emptyActions,
   ghostButton,
+  mobileSummarySurface,
   popoverContent,
   popoverGrid,
   popoverHeader,
+  sessionDesktopControl,
+  sessionSummaryCard,
+  sessionSummaryDate,
+  sessionSummaryFilter,
+  sessionSummaryFilters,
+  sessionSummaryFooter,
+  sessionSummaryHeader,
+  sessionSummaryLoadMore,
+  sessionSummaryMobileSort,
+  sessionSummaryMobileSortField,
+  sessionSummaryMobileSortSelect,
+  sessionSummaryOpen,
+  sessionSummaryRow,
+  sessionSummaryStats,
+  sessionSummaryTitle,
+  sessionSummaryValue,
+  sessionSummaryViewport,
   sessionsTable,
   sortArrow,
   sortButton,
@@ -14,17 +33,12 @@ import {
   tableControls,
   tableWrap,
 } from '@ai-usage/design-system/report';
-import type { Column, ExpandedState, OnChangeFn, SortingState, VisibilityState } from '@tanstack/solid-table';
-import {
-  createSolidTable,
-  flexRender,
-  getCoreRowModel,
-  getExpandedRowModel,
-  getSortedRowModel,
-} from '@tanstack/solid-table';
+import type { Column, ExpandedState, OnChangeFn, Row, SortingState, VisibilityState } from '@tanstack/solid-table';
+import { createSolidTable, flexRender, getCoreRowModel, getExpandedRowModel } from '@tanstack/solid-table';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { measureClientPerf } from './client-perf';
 import type { FieldFilterKey } from './dashboard-search';
+import { HighlightedText } from './highlighted-text';
 import {
   defaultColumnVisibility,
   isSessionColumnVisible,
@@ -34,9 +48,99 @@ import {
   sessionColumns,
   visibleSessionColumns,
 } from './session-columns';
-import { type DashboardRow, rowKey } from './shared';
+import {
+  type DashboardRow,
+  fmtCompact,
+  fmtDate,
+  fmtDuration,
+  fmtMoney,
+  HarnessBadge,
+  rowKey,
+  UNKNOWN_PRICE_HINT,
+} from './shared';
 
 const track = (..._values: unknown[]) => _values.length;
+const DESKTOP_ROW_HEIGHT = 43;
+const MOBILE_PAGE_SIZE = 50;
+
+export const nextMobileSessionRowLimit = (currentLimit: number, totalRows: number) =>
+  Math.min(totalRows, currentLimit + MOBILE_PAGE_SIZE);
+
+const MobileSessionSummary = (props: {
+  onFieldFilter: (key: FieldFilterKey, value: string) => void;
+  onHarnessFilter: (value: string) => void;
+  onSelect: (row: DashboardRow) => void;
+  position: number;
+  searchQuery: string;
+  selected: boolean;
+  tableRow: Row<DashboardRow>;
+  total: number;
+}) => {
+  const row = () => props.tableRow.original;
+  const apiValue = () => {
+    if (row().usageUnavailable || !row().costKnown) {
+      return '—';
+    }
+    return fmtMoney(row().costApprox);
+  };
+
+  return (
+    <li aria-posinset={props.position} aria-setsize={props.total} class={sessionSummaryRow}>
+      <article class={sessionSummaryCard} data-depth={props.tableRow.depth} data-selected={String(props.selected)}>
+        <header class={sessionSummaryHeader}>
+          <span class={sessionSummaryDate}>{fmtDate(row().activeDate)}</span>
+          <HarnessBadge name={row().harness} onClick={() => props.onHarnessFilter(row().harness)} />
+        </header>
+        <button
+          aria-label={`Inspect session: ${row().sessionLabel}`}
+          class={sessionSummaryOpen}
+          onClick={() => props.onSelect(row())}
+          type="button"
+        >
+          <span class={sessionSummaryTitle}>
+            <HighlightedText query={props.searchQuery} text={row().sessionLabel} />
+          </span>
+          <span class={sessionSummaryValue} title={row().costKnown ? 'Estimated API value' : UNKNOWN_PRICE_HINT}>
+            {apiValue()}
+          </span>
+        </button>
+        <footer class={sessionSummaryFooter}>
+          <div class={sessionSummaryFilters}>
+            <button
+              class={sessionSummaryFilter}
+              onClick={() => props.onFieldFilter('project', row().projectKey)}
+              title={`Filter by project ${row().projectKey}`}
+              type="button"
+            >
+              {row().projectLabel === '(unknown)' ? 'No project' : row().projectLabel}
+            </button>
+            <button
+              class={sessionSummaryFilter}
+              onClick={() => props.onFieldFilter('model', row().modelKey)}
+              title={`Filter by model ${row().modelKey}`}
+              type="button"
+            >
+              {row().modelLabel}
+            </button>
+            <Show when={props.tableRow.getCanExpand()}>
+              <button
+                class={sessionSummaryFilter}
+                onClick={() => props.tableRow.toggleExpanded()}
+                title={props.tableRow.getIsExpanded() ? 'Collapse campaign' : 'Expand campaign'}
+                type="button"
+              >
+                {props.tableRow.getIsExpanded() ? 'Hide children' : 'Show children'}
+              </button>
+            </Show>
+          </div>
+          <span class={sessionSummaryStats}>
+            {fmtCompact(row().freshTokens)} fresh · {fmtCompact(row().tokCr)} cache · {fmtDuration(row().durationMs)}
+          </span>
+        </footer>
+      </article>
+    </li>
+  );
+};
 
 const SortHeader = (props: { column: Column<DashboardRow, unknown>; label: string }) => {
   const meta = () => props.column.columnDef.meta;
@@ -154,7 +258,6 @@ export const SessionTable = (props: {
     getExpandedRowModel: getExpandedRowModel(),
     getSubRows: (row) => row.children ?? [],
     getRowId: (row) => rowKey(row),
-    getSortedRowModel: getSortedRowModel(),
     meta: {
       onFieldFilter: props.onFieldFilter,
       onHarnessFilter: props.onHarnessFilter,
@@ -179,14 +282,14 @@ export const SessionTable = (props: {
       1040,
       visibleColumns().reduce((sum, { columnDef }) => sum + (columnDef.meta?.widthPx ?? 140), 0),
     );
-  let tableViewportEl: HTMLDivElement | undefined;
-  const rowHeight = 43;
+  let desktopViewportEl: HTMLDivElement | undefined;
   const overscanRows = 8;
+  const [mobileRowLimit, setMobileRowLimit] = createSignal(MOBILE_PAGE_SIZE);
   const [tableViewport, setTableViewport] = createSignal({ height: 520, scrollTop: 0 });
   const updateTableViewport = () => {
     const next = {
-      height: tableViewportEl?.clientHeight ?? 520,
-      scrollTop: tableViewportEl?.scrollTop ?? 0,
+      height: desktopViewportEl?.clientHeight || 520,
+      scrollTop: desktopViewportEl?.scrollTop ?? 0,
     };
     setTableViewport((current) =>
       current.height === next.height && current.scrollTop === next.scrollTop ? current : next,
@@ -200,18 +303,21 @@ export const SessionTable = (props: {
       (rows) => ({ rows: rows.length }),
     );
   });
+  const mobileRows = createMemo(() => rowModelRows().slice(0, mobileRowLimit()));
+  const remainingMobileRows = createMemo(() => Math.max(0, rowModelRows().length - mobileRows().length));
   const visibleColumnCount = () => visibleColumns().length;
   const virtualRows = createMemo(() => {
     const rows = rowModelRows();
     const viewport = tableViewport();
-    const start = Math.max(0, Math.floor(viewport.scrollTop / rowHeight) - overscanRows);
-    const end = Math.min(rows.length, start + Math.ceil(viewport.height / rowHeight) + overscanRows * 2);
+    const virtualRowHeight = DESKTOP_ROW_HEIGHT;
+    const start = Math.max(0, Math.floor(viewport.scrollTop / virtualRowHeight) - overscanRows);
+    const end = Math.min(rows.length, start + Math.ceil(viewport.height / virtualRowHeight) + overscanRows * 2);
     return measureClientPerf(
       'aiUsage.web.client.compute.sessionTableVirtualRows',
       () => ({
-        bottomHeight: Math.max(0, rows.length - end) * rowHeight,
+        bottomHeight: Math.max(0, rows.length - end) * virtualRowHeight,
         rows: rows.slice(start, end),
-        topHeight: start * rowHeight,
+        topHeight: start * virtualRowHeight,
       }),
       (result) => ({ rows: result.rows.length }),
     );
@@ -220,18 +326,28 @@ export const SessionTable = (props: {
   onMount(() => {
     updateTableViewport();
     const observer = new ResizeObserver(updateTableViewport);
-    if (tableViewportEl) {
-      observer.observe(tableViewportEl);
+    if (desktopViewportEl) {
+      observer.observe(desktopViewportEl);
     }
     onCleanup(() => observer.disconnect());
   });
 
   createEffect(() => {
     track(props.rows, props.sorting);
-    if (tableViewportEl) {
-      tableViewportEl.scrollTop = 0;
-    }
+    desktopViewportEl?.scrollTo({ top: 0 });
+    setMobileRowLimit(MOBILE_PAGE_SIZE);
     updateTableViewport();
+  });
+
+  createEffect(() => {
+    const selectedKey = props.selectedKey;
+    if (!selectedKey) {
+      return;
+    }
+    const selectedIndex = rowModelRows().findIndex((row) => row.id === selectedKey);
+    if (selectedIndex >= mobileRowLimit()) {
+      setMobileRowLimit(selectedIndex + 1);
+    }
   });
 
   createEffect(() => {
@@ -252,6 +368,8 @@ export const SessionTable = (props: {
       [rowKey(parent)]: true,
     }));
   });
+
+  const activeSort = () => props.sorting[0] ?? { desc: true, id: 'date' };
 
   return (
     <Show
@@ -277,17 +395,42 @@ export const SessionTable = (props: {
         >
           Group campaigns
         </Checkbox>
-        <ColumnVisibilityControl
-          columnVisibility={props.columnVisibility}
-          hiddenColumnIds={dataHiddenColumnIds()}
-          onColumnVisibilityChange={props.onColumnVisibilityChange}
-        />
+        <div class={sessionDesktopControl}>
+          <ColumnVisibilityControl
+            columnVisibility={props.columnVisibility}
+            hiddenColumnIds={dataHiddenColumnIds()}
+            onColumnVisibilityChange={props.onColumnVisibilityChange}
+          />
+        </div>
+        <div class={sessionSummaryMobileSort}>
+          <label class={sessionSummaryMobileSortField}>
+            <span>Sort by</span>
+            <select
+              aria-label="Sort mobile session summaries"
+              class={sessionSummaryMobileSortSelect}
+              onChange={(event) => props.onSortingChange([{ desc: activeSort().desc, id: event.currentTarget.value }])}
+              value={activeSort().id}
+            >
+              <For each={sessionColumns}>
+                {(column) => <option value={column.id}>{sessionColumnLabel(column)}</option>}
+              </For>
+            </select>
+          </label>
+          <button
+            aria-label={activeSort().desc ? 'Sort ascending' : 'Sort descending'}
+            class={ghostButton}
+            onClick={() => props.onSortingChange([{ desc: !activeSort().desc, id: activeSort().id }])}
+            type="button"
+          >
+            {activeSort().desc ? 'Descending ↓' : 'Ascending ↑'}
+          </button>
+        </div>
       </div>
       <div
-        class={tableWrap}
+        class={cx(tableWrap, desktopTableSurface)}
         onScroll={updateTableViewport}
         ref={(element) => {
-          tableViewportEl = element;
+          desktopViewportEl = element;
         }}
       >
         <table class={cx(table, sessionsTable)} style={{ 'min-width': `${tableMinWidth()}px` }}>
@@ -354,6 +497,33 @@ export const SessionTable = (props: {
           </tbody>
         </table>
       </div>
+      <ul aria-label="Session summaries" class={cx(mobileSummarySurface, sessionSummaryViewport)}>
+        <For each={mobileRows()}>
+          {(tableRow, index) => (
+            <MobileSessionSummary
+              onFieldFilter={props.onFieldFilter}
+              onHarnessFilter={props.onHarnessFilter}
+              onSelect={props.onSelect}
+              position={index() + 1}
+              searchQuery={props.searchQuery}
+              selected={props.selectedKey === tableRow.id}
+              tableRow={tableRow}
+              total={rowModelRows().length}
+            />
+          )}
+        </For>
+      </ul>
+      <Show when={remainingMobileRows() > 0}>
+        <div class={sessionSummaryLoadMore}>
+          <button
+            class={ghostButton}
+            onClick={() => setMobileRowLimit((limit) => nextMobileSessionRowLimit(limit, rowModelRows().length))}
+            type="button"
+          >
+            Show {Math.min(MOBILE_PAGE_SIZE, remainingMobileRows())} more · {remainingMobileRows()} remaining
+          </button>
+        </div>
+      </Show>
     </Show>
   );
 };

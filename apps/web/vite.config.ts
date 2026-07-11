@@ -5,8 +5,8 @@ import { defineConfig, type Plugin } from 'vite';
 import solid from 'vite-plugin-solid';
 import { createRetryableWarmup } from './vite-warmup';
 
-type ManualMergeServerModule = typeof import('./src/server/lan-merge.server');
-const manualMergeServerModuleUrl = new URL('./src/server/lan-merge.server.ts', import.meta.url).href;
+type ManualMergeServerModule = typeof import('./src/server/manual-merge.server');
+const manualMergeServerModuleUrl = new URL('./src/server/manual-merge.server.ts', import.meta.url).href;
 const serverFunctionEntrypoints = [
   './src/server/report-payload.ts',
   './src/server/skills.ts',

@@ -91,6 +91,16 @@ export const tableWrap = css({
   _print: { maxH: 'none', overflow: 'visible', boxShadow: 'none' },
 });
 
+export const desktopTableSurface = css({
+  display: { base: 'none', md: 'block' },
+  _print: { display: 'block' },
+});
+
+export const mobileSummarySurface = css({
+  display: { base: 'grid', md: 'none' },
+  _print: { display: 'none' },
+});
+
 export const tableControls = css({
   display: 'flex',
   flexWrap: 'wrap',
@@ -126,6 +136,262 @@ export const modelCell = css({
 });
 export const projectTable = css({
   minW: '780px',
+});
+
+export const projectSummaryList = css({
+  gap: '10px',
+  m: 0,
+  p: 0,
+  listStyle: 'none',
+});
+
+export const projectSummaryCard = css({
+  display: 'grid',
+  gap: '12px',
+  p: '14px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'md',
+  bg: 'surface',
+  boxShadow: 'card',
+});
+
+export const projectSummaryHeader = css({
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  gap: '12px',
+  alignItems: 'start',
+});
+
+export const projectSummaryHeadline = css({
+  display: 'grid',
+  gap: '3px',
+  justifyItems: 'end',
+  textAlign: 'right',
+});
+
+export const projectSummaryCost = css({
+  textStyle: 'numeric',
+  color: 'ink',
+  fontSize: '14px',
+  fontWeight: 700,
+});
+
+export const projectSummarySessions = css({
+  color: 'muted',
+  fontSize: '11px',
+});
+
+export const projectSummaryMetrics = css({
+  display: 'grid',
+  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+  gap: '8px',
+  m: 0,
+});
+
+export const projectSummaryMetric = css({
+  display: 'grid',
+  gap: '2px',
+  minW: 0,
+  m: 0,
+  '& dt': {
+    color: 'faint',
+    fontSize: '9px',
+    fontWeight: 700,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+  },
+  '& dd': {
+    textStyle: 'numeric',
+    m: 0,
+    color: 'muted',
+    fontSize: '11px',
+    overflowWrap: 'anywhere',
+  },
+});
+
+export const sessionDesktopControl = css({
+  display: { base: 'none', md: 'block' },
+});
+
+export const sessionSummaryMobileSort = css({
+  display: { base: 'flex', md: 'none' },
+  flex: '1 0 100%',
+  alignItems: 'end',
+  justifyContent: 'space-between',
+  gap: '8px',
+  w: '100%',
+  '& > button': {
+    minH: '44px',
+  },
+});
+
+export const sessionSummaryMobileSortField = css({
+  display: 'grid',
+  gap: '3px',
+  minW: 0,
+  flex: '1 1 auto',
+  color: 'faint',
+  fontSize: '9px',
+  fontWeight: 700,
+  letterSpacing: '0.06em',
+  textTransform: 'uppercase',
+});
+
+export const sessionSummaryMobileSortSelect = css({
+  appearance: 'none',
+  w: '100%',
+  minH: '44px',
+  px: '10px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surface',
+  color: 'ink',
+  fontSize: '12px',
+  fontWeight: 600,
+  textTransform: 'none',
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+});
+
+export const sessionSummaryViewport = css({
+  gap: 0,
+  maxH: 'calc(100dvh - 240px)',
+  minH: '320px',
+  overflowY: 'auto',
+  overscrollBehavior: 'contain',
+  m: 0,
+  p: 0,
+  listStyle: 'none',
+});
+
+export const sessionSummaryRow = css({
+  h: '188px',
+  p: '0 0 8px',
+});
+
+export const sessionSummaryCard = css({
+  display: 'grid',
+  gridTemplateRows: 'auto minmax(0, 1fr) auto',
+  gap: '8px',
+  h: '180px',
+  p: '12px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'md',
+  bg: 'surface',
+  boxShadow: 'card',
+  '&[data-selected="true"]': {
+    borderColor: 'accent',
+    bg: 'accentTint',
+  },
+  '&[data-depth="1"]': {
+    ml: '14px',
+    borderLeft: '2px solid token(colors.accent)',
+  },
+});
+
+export const sessionSummaryHeader = css({
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '8px',
+  minW: 0,
+});
+
+export const sessionSummaryDate = css({
+  color: 'muted',
+  fontFamily: 'mono',
+  fontSize: '10px',
+});
+
+export const sessionSummaryOpen = css({
+  appearance: 'none',
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  gap: '10px',
+  alignItems: 'start',
+  minW: 0,
+  minH: '44px',
+  p: 0,
+  border: 0,
+  bg: 'transparent',
+  color: 'ink',
+  cursor: 'pointer',
+  textAlign: 'left',
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '3px',
+  },
+});
+
+export const sessionSummaryTitle = css({
+  lineClamp: 2,
+  fontSize: '13px',
+  fontWeight: 650,
+  lineHeight: 1.35,
+  overflowWrap: 'anywhere',
+});
+
+export const sessionSummaryValue = css({
+  textStyle: 'numeric',
+  color: 'ink',
+  fontSize: '13px',
+  fontWeight: 700,
+  whiteSpace: 'nowrap',
+});
+
+export const sessionSummaryFooter = css({
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr)',
+  gap: '5px',
+  alignItems: 'end',
+});
+
+export const sessionSummaryFilters = css({
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(78px, 1fr))',
+  gap: '6px',
+  minW: 0,
+});
+
+export const sessionSummaryFilter = css({
+  appearance: 'none',
+  display: 'block',
+  minW: 0,
+  minH: '44px',
+  px: '6px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surfaceMuted',
+  color: 'muted',
+  cursor: 'pointer',
+  fontFamily: 'mono',
+  fontSize: '10.5px',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  _hover: { borderColor: 'accent', color: 'accent' },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+});
+
+export const sessionSummaryStats = css({
+  textStyle: 'numeric',
+  color: 'faint',
+  fontSize: '10px',
+  whiteSpace: 'nowrap',
+});
+
+export const sessionSummaryLoadMore = css({
+  display: { base: 'flex', md: 'none' },
+  justifyContent: 'center',
+  pt: '10px',
+  '& button': {
+    minH: '44px',
+  },
 });
 
 export const groupKeyButton = cx(

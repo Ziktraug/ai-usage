@@ -1,4 +1,3 @@
-import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import { createFileRoute, stripSearchParams } from '@tanstack/solid-router';
 import { createMemo, ErrorBoundary } from 'solid-js';
 import { Dashboard } from '../dashboard';
@@ -23,7 +22,7 @@ function IndexRoute() {
   const refreshPayload = reportRefreshPayload();
   const initialPayload = createMemo(() => resolveInitialReportPayload(payload()));
   const refreshProps = refreshPayload
-    ? { fetchPayload: (options?: { force?: boolean }) => refreshPayload(options) as Promise<UsageReportPayload> }
+    ? { fetchPayload: (options?: { force?: boolean }) => refreshPayload(options) }
     : {};
   return (
     <ErrorBoundary fallback={(error) => <pre>{error instanceof Error ? error.message : String(error)}</pre>}>

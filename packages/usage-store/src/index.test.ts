@@ -120,6 +120,35 @@ describe('usage-store public boundary', () => {
     expect(queried.rows[0]?.source.machineId).toBe('machine-a');
   });
 
+  test('skips invalid stored rows instead of failing the whole query', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-corrupt-'));
+    const dbPath = usageStorePath(home);
+
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        machine: machineA,
+        rows: [makeRow({ sourceSessionId: 'good' }), makeRow({ sourceSessionId: 'corrupt' })],
+      }),
+    );
+
+    const { Database } = await import('bun:sqlite');
+    const db = new Database(dbPath);
+    const record = db.query("SELECT row_json FROM usage_rows WHERE source_session_id = 'corrupt'").get() as {
+      row_json: string;
+    };
+    const tampered = JSON.parse(record.row_json) as Record<string, unknown>;
+    tampered.durationMs = -1;
+    db.query("UPDATE usage_rows SET row_json = ? WHERE source_session_id = 'corrupt'").run(JSON.stringify(tampered));
+    db.close();
+
+    const queried = await Effect.runPromise(queryReportRows({ dbPath, originMachineIds: [machineA.id] }));
+
+    expect(queried.rows).toHaveLength(1);
+    expect(queried.skipped).toBe(1);
+    expect(queried.rows[0]?.source.sourceSessionId).toBe('good');
+  });
+
   test('updates rather than duplicates rows without a source session id', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-nosession-'));
     const dbPath = usageStorePath(home);
@@ -308,6 +337,30 @@ describe('usage-store public boundary', () => {
     expect(result._tag).toBe('Left');
     if (result._tag === 'Left') {
       expect(result.left.reason).toBe('self-import');
+    }
+  });
+
+  test('rejects a peer row forged into another machine namespace before storage', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-forged-peer-'));
+    const dbPath = usageStorePath(home);
+    const forgedBundle: UsageMergeBundle = {
+      ...makeBundle(machineB, []),
+      rows: [toSerializedMergeRow(makeRow({ sourceSessionId: 'forged' }), machineA)],
+    };
+
+    const result = await Effect.runPromise(
+      Effect.either(
+        importPeerMergeBundle({
+          dbPath,
+          localMachineId: 'local-machine',
+          bundle: forgedBundle,
+        }),
+      ),
+    );
+
+    expect(result._tag).toBe('Left');
+    if (result._tag === 'Left') {
+      expect(result.left.reason).toBe('invalid-input');
     }
   });
 

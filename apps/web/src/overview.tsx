@@ -47,9 +47,17 @@ import {
   recordValue,
   rtkNote,
   scatterAxisText,
+  scatterDistribution,
+  scatterDistributionList,
+  scatterDistributionMeta,
+  scatterDistributionRow,
   scatterGridline,
   scatterLegend,
+  scatterOutlierButton,
+  scatterOutlierMeta,
+  scatterOutliers,
   scatterPoint,
+  scatterSummary,
   scatterWrap,
   tokenSegmentClasses,
   topList,
@@ -59,15 +67,18 @@ import {
   topTitle,
   twoColumns,
 } from '@ai-usage/design-system/report';
-import { createEffect, createMemo, For, type JSX, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, type JSX, Show } from 'solid-js';
 import type { CampaignView } from './dashboard-model';
 import { toDateInputValue } from './date-range';
 import {
   buildCalendarHeatmapData,
+  buildOverviewHeroData,
   buildOverviewRecords,
   buildPunchcardData,
   buildSessionShapeData,
   buildTopSessions,
+  type HeatDay,
+  nextHeatmapFocusIndex,
   PUNCH_DAYS,
 } from './overview-model';
 import {
@@ -105,62 +116,57 @@ const Panel = (props: { title: string; sub?: string; children: JSX.Element }) =>
 );
 
 // ---------------------------------------------------------------------------
-// Hero — subscription leverage. The single most telling number in the data:
-// what this usage would have cost at API rates versus what was actually paid.
+// Hero — the API-equivalent comparison is useful, but it is neither savings
+// nor ROI. Keep the estimated value and reported spend as separate facts and
+// make both coverage limits explicit.
 
 const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
-  const data = createMemo(() => {
-    const summary = props.summary;
-    if (summary.totalCost <= 0) {
-      return null;
-    }
-    const covered = summary.costQuota || Math.max(0, summary.totalCost - summary.actualCost);
-    const multiple = summary.actualCost > 0.005 ? summary.totalCost / summary.actualCost : null;
-    return { covered, multiple, summary };
-  });
+  const data = createMemo(() => buildOverviewHeroData(props.summary));
 
   return (
     <Show when={data()}>
       {(hero) => (
-        <section aria-label="Subscription leverage" class={heroPanel}>
+        <section aria-label="API-equivalent value" class={heroPanel}>
           <div>
-            <div class={heroLabel}>Subscription leverage</div>
-            <div class={heroValue}>{fmtMoney(hero().covered)}</div>
+            <div class={heroLabel}>Estimated API-equivalent value</div>
+            <div class={heroValue}>{fmtMoney(hero().apiEquivalentValue)}</div>
             <div class={heroText}>
-              of subscription value absorbed by quotas ({props.rangeLabel}) — you actually paid{' '}
-              {fmtMoney(hero().summary.actualCost)} across {fmtNum(hero().summary.sessionCount)} sessions.
+              Standard API-price estimate for {fmtNum(hero().apiPricedSessions)} of {fmtNum(hero().sessionCount)}{' '}
+              sessions ({props.rangeLabel}). This is a comparison value, not savings or ROI.
             </div>
           </div>
           <div class={heroSide}>
-            <Show fallback={<span class={heroMultiple}>fully covered by subscriptions</span>} when={hero().multiple}>
-              {(multiple) => <span class={heroMultiple}>×{fmtNum(multiple())} leverage</span>}
-            </Show>
+            <span class={heroMultiple}>Reported actual spend · {fmtMoney(hero().actualSpend)}</span>
             <SegmentBar
-              ariaLabel="Actual spend versus subscription-covered API value"
+              ariaLabel="Actual-spend reporting coverage by session"
               segments={[
                 {
-                  label: 'Paid out of pocket',
-                  value: hero().summary.actualCost,
-                  class: inkFill,
-                  title: `Paid out of pocket: ${fmtMoney(hero().summary.actualCost)}`,
+                  label: 'Actual spend reported',
+                  value: hero().actualSpendKnownSessions,
+                  class: accentFill,
+                  title: `Actual spend reported for ${fmtNum(hero().actualSpendKnownSessions)} sessions`,
                 },
                 {
-                  label: 'Covered by subscriptions',
-                  value: hero().covered,
-                  class: accentFill,
-                  title: `Covered by subscriptions: ${fmtMoney(hero().covered)}`,
+                  label: 'Actual spend unavailable',
+                  value: hero().sessionCount - hero().actualSpendKnownSessions,
+                  class: inkFill,
+                  title: `Actual spend unavailable for ${fmtNum(hero().sessionCount - hero().actualSpendKnownSessions)} sessions`,
                 },
               ]}
             />
             <div class={heroLegend}>
               <span>
-                Paid
-                <span class={heroLegendValue}>{fmtMoney(hero().summary.actualCost)}</span>
+                Spend coverage
+                <span class={heroLegendValue}>
+                  {fmtNum(hero().actualSpendKnownSessions)}/{fmtNum(hero().sessionCount)} sessions
+                </span>
               </span>
-              <span>
-                API value
-                <span class={heroLegendValue}>{fmtMoney(hero().summary.totalCost)}</span>
-              </span>
+              <Show when={hero().subscriptionValue > 0}>
+                <span>
+                  Quota-covered value reported
+                  <span class={heroLegendValue}>{fmtMoney(hero().subscriptionValue)}</span>
+                </span>
+              </Show>
             </div>
           </div>
         </section>
@@ -178,8 +184,45 @@ const HEAT_OPACITY = [0.28, 0.52, 0.76, 1];
 
 const CalendarHeatmap = (props: { rows: DashboardRow[]; onSelectDay: (day: Date) => void }) => {
   let scrollEl: HTMLDivElement | undefined;
+  const cellElements = new Map<string, HTMLButtonElement>();
+  const [focusedDayKey, setFocusedDayKey] = createSignal<string | null>(null);
 
   const data = createMemo(() => buildCalendarHeatmapData(props.rows));
+  const heatDays = createMemo(
+    () =>
+      data()
+        ?.weeks.flatMap((week) => week.days)
+        .filter((day): day is HeatDay => day !== null) ?? [],
+  );
+
+  createEffect(() => {
+    const days = heatDays();
+    const currentKey = focusedDayKey();
+    if (days.length === 0) {
+      setFocusedDayKey(null);
+      return;
+    }
+    if (!(currentKey && days.some((day) => toDateInputValue(day.date) === currentKey))) {
+      setFocusedDayKey(toDateInputValue(days.at(-1)?.date ?? days[0]?.date ?? new Date()));
+    }
+  });
+
+  const moveHeatmapFocus = (event: KeyboardEvent, currentKey: string) => {
+    const days = heatDays();
+    const currentIndex = days.findIndex((day) => toDateInputValue(day.date) === currentKey);
+    const nextIndex = nextHeatmapFocusIndex(currentIndex, days.length, event.key);
+    if (nextIndex === null) {
+      return;
+    }
+    const nextDay = days[nextIndex];
+    if (!nextDay) {
+      return;
+    }
+    event.preventDefault();
+    const nextKey = toDateInputValue(nextDay.date);
+    setFocusedDayKey(nextKey);
+    cellElements.get(nextKey)?.focus();
+  };
 
   // Most recent activity matters most: keep the right edge in view.
   createEffect(() => {
@@ -215,27 +258,44 @@ const CalendarHeatmap = (props: { rows: DashboardRow[]; onSelectDay: (day: Date)
                 <div aria-hidden="true" class={heatMonths}>
                   <For each={heat().monthLabels}>{(label) => <span>{label}</span>}</For>
                 </div>
-                <div class={heatGrid}>
+                <div
+                  aria-label="Daily activity calendar. Use arrow keys to move by day or week."
+                  class={heatGrid}
+                  role="toolbar"
+                >
                   <For each={heat().weeks}>
                     {(week) => (
                       <div class={heatWeekColumn}>
                         <For each={week.days}>
                           {(day) => (
                             <Show fallback={<span />} when={day}>
-                              {(cell) => (
-                                <button
-                                  aria-label={`Focus on ${fmtDateOnly(cell().date)}`}
-                                  class={cx(
-                                    heatCell,
-                                    cell().level === 0 ? heatCellZero : accentFill,
-                                    toDateInputValue(cell().date) === heat().todayKey ? heatCellToday : undefined,
-                                  )}
-                                  onClick={() => props.onSelectDay(cell().date)}
-                                  style={cell().level > 0 ? { opacity: HEAT_OPACITY[cell().level - 1] } : undefined}
-                                  title={`${fmtDateOnly(cell().date)} — ${fmtMoney(cell().cost)} · ${fmtNum(cell().sessions)} sessions`}
-                                  type="button"
-                                />
-                              )}
+                              {(cell) => {
+                                const key = () => toDateInputValue(cell().date);
+                                const description = () =>
+                                  `${fmtDateOnly(cell().date)} — ${fmtMoney(cell().cost)} · ${fmtNum(cell().sessions)} sessions`;
+                                return (
+                                  <button
+                                    aria-current={key() === heat().todayKey ? 'date' : undefined}
+                                    aria-label={`${description()}. Focus dashboard on this day.`}
+                                    class={cx(
+                                      heatCell,
+                                      cell().level === 0 ? heatCellZero : accentFill,
+                                      key() === heat().todayKey ? heatCellToday : undefined,
+                                    )}
+                                    onClick={() => {
+                                      setFocusedDayKey(key());
+                                      props.onSelectDay(cell().date);
+                                    }}
+                                    onFocus={() => setFocusedDayKey(key())}
+                                    onKeyDown={(event) => moveHeatmapFocus(event, key())}
+                                    ref={(element) => cellElements.set(key(), element)}
+                                    style={cell().level > 0 ? { opacity: HEAT_OPACITY[cell().level - 1] } : undefined}
+                                    tabIndex={focusedDayKey() === key() ? 0 : -1}
+                                    title={description()}
+                                    type="button"
+                                  />
+                                );
+                              }}
                             </Show>
                           )}
                         </For>
@@ -323,13 +383,15 @@ const SessionShape = (props: {
   const data = createMemo(() => buildSessionShapeData(props.rows, props.campaigns));
 
   return (
-    <Panel sub="Duration × API value (log scales) — click a point to inspect the work" title="Session shape">
+    <Panel
+      sub="Duration × API value (log scales) — density is aggregated; inspect standout work below"
+      title="Session shape"
+    >
       <Show fallback={<div class={emptyPanel}>Not enough timed, priced sessions in range</div>} when={data()}>
         {(chart) => (
           <>
             <div class={scatterWrap}>
-              <svg height="100%" role="img" width="100%">
-                <title>Session duration versus API value</title>
+              <svg aria-hidden="true" height="100%" width="100%">
                 <For each={chart().xTicks}>
                   {(tick) => (
                     <>
@@ -364,21 +426,17 @@ const SessionShape = (props: {
                 </For>
                 <For each={chart().points}>
                   {(item) => (
-                    // biome-ignore lint/a11y/useSemanticElements: an SVG cannot contain <button>; role is the standard pattern for SVG hit targets
                     <circle
-                      aria-label={`Inspect ${item.kind === 'campaign' ? 'campaign' : 'session'}: ${item.label}`}
                       class={cx(harnessSvgFillFor(item.harness), scatterPoint)}
                       cx={`${chart().xPct(item.durationMs)}%`}
                       cy={`${chart().yPct(item.costApprox)}%`}
-                      onClick={() => props.onSelectSession(item.row)}
-                      r={item.kind === 'campaign' ? '5' : '3.5'}
-                      role="button"
-                      tabIndex={-1}
+                      r={String(Math.min(8, (item.kind === 'campaign' ? 4 : 3) + Math.log2(item.aggregateCount + 1)))}
                     >
                       <title>
                         {[
                           `${item.label} — ${fmtMoney(item.costApprox)} · ${fmtDuration(item.durationMs)} · ${item.harness}`,
                           item.kind === 'campaign' ? `${fmtNum(item.sessionCount)} sessions` : '',
+                          item.aggregateCount > 1 ? `${fmtNum(item.aggregateCount)} nearby sessions` : '',
                         ]
                           .filter(Boolean)
                           .join(' · ')}
@@ -388,6 +446,45 @@ const SessionShape = (props: {
                 </For>
               </svg>
             </div>
+            <div class={scatterSummary}>
+              {fmtNum(chart().totalPoints)} timed, priced sessions · {fmtNum(chart().points.length)} density marks
+            </div>
+            <details class={scatterDistribution}>
+              <summary>Distribution by harness</summary>
+              <ul class={scatterDistributionList}>
+                <For each={chart().harnessSummaries}>
+                  {(summary) => (
+                    <li class={scatterDistributionRow}>
+                      <span>
+                        <HarnessBadge name={summary.harness} /> · {fmtNum(summary.sessions)} sessions in{' '}
+                        {fmtNum(summary.groups)} {summary.groups === 1 ? 'group' : 'groups'}
+                      </span>
+                      <span class={scatterDistributionMeta}>
+                        Duration {fmtDuration(summary.durationMin)}–{fmtDuration(summary.durationMax)} · API value{' '}
+                        {fmtMoney(summary.costMin)}–{fmtMoney(summary.costMax)}
+                      </span>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </details>
+            <section aria-label="Standout sessions" class={scatterOutliers}>
+              <For each={chart().outliers}>
+                {(item) => (
+                  <button
+                    aria-label={`Inspect ${item.kind === 'campaign' ? 'campaign' : 'session'}: ${item.label}`}
+                    class={scatterOutlierButton}
+                    onClick={() => props.onSelectSession(item.row)}
+                    type="button"
+                  >
+                    <span>{item.label}</span>
+                    <span class={scatterOutlierMeta}>
+                      {fmtMoney(item.costApprox)} · {fmtDuration(item.durationMs)} · {item.harness}
+                    </span>
+                  </button>
+                )}
+              </For>
+            </section>
             <div class={scatterLegend}>
               <For each={chart().harnesses}>{(name) => <HarnessBadge name={name} />}</For>
             </div>

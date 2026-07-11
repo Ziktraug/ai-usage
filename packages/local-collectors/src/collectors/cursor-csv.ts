@@ -13,6 +13,7 @@ export interface CursorCsvOptions {
 }
 
 export interface CursorCsvCluster {
+  artifactPath: string;
   calls: number;
   costActual: number;
   costApprox: number;
@@ -21,19 +22,18 @@ export interface CursorCsvCluster {
   dominantModel: string;
   endDate: Date;
   models: string[];
-  sourcePath: string;
   startDate: Date;
   tokens: TokenCounts;
 }
 
 export interface CursorCsvTurn {
+  artifactPath: string;
   costActual: number;
   costApprox: number;
   costKnown: boolean;
   costQuota: number;
   date: Date;
   model: string;
-  sourcePath: string;
   tokens: TokenCounts;
 }
 
@@ -111,7 +111,7 @@ const parseCsv = (text: string, filePath: string) => {
     headers.forEach((header, index) => {
       row[header] = values[index] ?? '';
     });
-    return { ...row, __sourcePath: filePath };
+    return { ...row, __artifactPath: filePath };
   });
 };
 
@@ -157,7 +157,7 @@ const rowToTurn = (row: Record<string, string>, user?: string): CursorCsvTurn | 
   const { rates, known } = priceFor(model);
   return {
     date,
-    sourcePath: row.__sourcePath ?? '',
+    artifactPath: row.__artifactPath ?? '',
     model,
     tokens,
     costActual: isOnDemand ? cost : 0,
@@ -195,9 +195,9 @@ export const clusterFromTurns = (turns: CursorCsvTurn[]): CursorCsvCluster => {
   }
   const dominantModel = [...modelTokens.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? turns[0]?.model ?? 'cursor';
   return {
+    artifactPath: turns[0]?.artifactPath ?? '',
     startDate: turns[0]?.date ?? new Date(0),
     endDate: turns.at(-1)?.date ?? turns[0]?.date ?? new Date(0),
-    sourcePath: turns[0]?.sourcePath ?? '',
     models,
     dominantModel,
     tokens,

@@ -187,7 +187,10 @@ export const demoReportPayload: UsageReportPayload = {
   },
 };
 
-export const cursorCommitAttributionFacet = (payload: UsageReportPayload): CursorCommitAttributionFacet[] => {
+export const cursorCommitAttributionFacet = (payload: {
+  datasets?: Record<string, unknown>;
+  facets?: Record<string, unknown>;
+}): CursorCommitAttributionFacet[] => {
   if (Array.isArray(payload.datasets?.cursorCommitAttribution)) {
     return payload.datasets.cursorCommitAttribution.filter(isCursorCommitAttributionRow);
   }

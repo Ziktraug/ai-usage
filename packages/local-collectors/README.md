@@ -2,11 +2,11 @@
 
 ## Owns
 
-Local history adapters, harness-specific file/database reads, machine config, project-source discovery, local warning/error mapping, `.env` discovery helpers, and trusted peer config file primitives when introduced.
+Local history adapters, harness-specific file/database reads, machine config, project-source discovery, local warning/error mapping, and `.env` discovery helpers.
 
 ## Does Not Own
 
-It does not own report analytics, report payload creation, LAN transport, pairing sessions, UI state, usage-store schema, or final output rendering.
+It does not own report analytics, report payload creation, network transport, UI state, usage-store schema, or final output rendering.
 
 ## Public Interface
 
@@ -18,7 +18,7 @@ The package exposes local collection orchestration plus declared subpath exports
 
 ## Must Not Import
 
-It must not import `@ai-usage/report-data`, `@ai-usage/usage-store`, `@ai-usage/usage-merge`, `@ai-usage/lan-pairing`, app packages, or CLI/web renderers.
+It must not import `@ai-usage/report-data`, `@ai-usage/usage-store`, `@ai-usage/usage-merge`, app packages, or CLI/web renderers.
 
 ## Data Boundary
 

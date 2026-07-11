@@ -9,7 +9,9 @@
 3. `@ai-usage/report-core` normalizes usage rows, computes derived row values, analytics, report payloads, and usage snapshots.
 4. `@ai-usage/report-data` orchestrates local history collection, project aliases, warnings, usage snapshots, and report payload creation.
 5. `@ai-usage/sync` owns snapshot transport and sync workflow modules that can be used by both app adapters.
-6. `apps/cli` and `apps/web` render the shared data through their own output adapters.
+6. `@ai-usage/usage-store` persists normalized local rows and rows imported from merge bundle files.
+7. `@ai-usage/usage-merge` orchestrates explicit merge bundle export and file import over the store.
+8. `apps/cli` and `apps/web` render the shared data through their own output adapters.
 
 ## Package Ownership
 
@@ -58,6 +60,27 @@ Owns application-facing sync modules:
 
 Apps should use this package for sync behavior instead of owning transport, auth, parsing, or remote status logic.
 
+### `@ai-usage/usage-store`
+
+Owns durable usage facts and merge bundle persistence:
+
+- SQLite schema and migrations;
+- normalized local row import;
+- validated merge bundle import and export;
+- active report-row queries with corrupt-row isolation.
+
+The store does not collect local history, choose files, render import progress, or orchestrate app workflows.
+
+### `@ai-usage/usage-merge`
+
+Owns application-facing file transfer workflows:
+
+- exporting this machine's usage as a portable merge bundle with a suggested filename;
+- parsing and importing a merge bundle copied from another machine;
+- translating store failures into typed, JSON-safe operation results.
+
+Merge actions are explicit and file-based. This package does not discover peers, open a LAN listener, exchange credentials, or render UI.
+
 ### `@ai-usage/skills`
 
 Owns the native skill-management control plane exposed through `/skills`:
@@ -70,7 +93,7 @@ Owns the native skill-management control plane exposed through `/skills`:
 
 User-local skill configuration lives under `~/.config/ai-usage/config.json` through the existing ai-usage config path. Portable source repository state lives in the configured source repository as JSON data, not executable TypeScript.
 
-Skill inventory is local-machine scoped. This package must not use synced rows, peer snapshots, remote machine ids, or LAN merge state to decide which repositories to scan. Repository discovery can use explicit config and locally observed project paths, but broad root scans must be opt-in and no personal directory convention such as `~/Projects` may become a default.
+Skill inventory is local-machine scoped. This package must not use synced or manually imported rows, snapshots from other machines, or remote machine ids to decide which repositories to scan. Repository discovery can use explicit config and locally observed project paths, but broad root scans must be opt-in and no personal directory convention such as `~/Projects` may become a default.
 
 ### `apps/cli`
 
@@ -89,7 +112,7 @@ Owns web runtime and UI:
 
 - TanStack Start server functions and Bun subprocess boundary for local collection under Nitro;
 - report payload runtime/bootstrap/refresh;
-- LAN sync console route and process-local snapshot serve lifecycle;
+- file-based merge bundle import/export on `/sync`, including bounded local upload handling;
 - dashboard, overview, table schema, and UI model modules;
 - browser CSV/HTML export adapters.
 
@@ -110,6 +133,8 @@ See `docs/generated-tooling-ownership.md` for generated Panda/TanStack/Nitro own
 - Local history adapters live in `@ai-usage/local-collectors`.
 - Report orchestration lives in `@ai-usage/report-data`.
 - Sync transport and workflow modules live in `@ai-usage/sync`.
+- Durable normalized usage rows and merge bundle persistence live in `@ai-usage/usage-store`.
+- Manual merge bundle file import/export workflows live in `@ai-usage/usage-merge`.
 - Skill management domain, scanning, diagnostics, workflows, and projection safety live in `@ai-usage/skills`.
 - CLI renderers live in `apps/cli`.
 - Web server functions, browser output adapters, and the `/skills` UI route live in `apps/web`.
@@ -120,6 +145,6 @@ See `docs/generated-tooling-ownership.md` for generated Panda/TanStack/Nitro own
 - Cross-package imports must use package exports documented in `docs/public-package-interfaces.md`.
 - Relative workspace paths such as `../../packages/...` and `../apps/...` are forbidden.
 - Private package paths such as `@ai-usage/report-core/src/...` are forbidden.
-- Package graph boundaries for LAN merge are enforced by scoped Biome restricted-import rules and `tools/check-package-boundaries.ts`.
-- The package graph policy follows `docs/lan-merge-pairing-plan.md` and the ownership READMEs in each app/package directory.
+- Package graph boundaries for file-based merge are enforced by `tools/check-package-boundaries.ts`; Biome separately blocks private and relative workspace imports.
+- The package graph policy follows the ownership READMEs in each app/package directory.
 - `bun run lint` runs Biome restricted-import rules, `tools/check-workspace-relative-paths.ts`, `tools/check-public-package-exports.ts`, and `tools/check-package-boundaries.ts`.

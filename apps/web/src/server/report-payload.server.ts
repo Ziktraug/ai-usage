@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
-import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
+import { type ProjectGroupConfig, parseProjectGroupConfigs } from '@ai-usage/report-core/project-group';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import { runStoredReportPayload, type StoredReportPayloadRequest } from '@ai-usage/report-data';
 
@@ -54,14 +54,19 @@ const perfEnabled = () => perfEnvValue() === '1' || perfEnvValue() === 'true';
 export const reportPerfEnabled = () => perfEnabled();
 
 export const saveProjectGroupsForServer = (projectGroups: ProjectGroupConfig[]) => {
+  const validatedProjectGroups = parseProjectGroupConfigs(projectGroups);
   const config = fs.existsSync(userConfigPath)
     ? (JSON.parse(fs.readFileSync(userConfigPath, 'utf8')) as AiUsageConfig)
     : {};
   fs.mkdirSync(path.dirname(userConfigPath), { recursive: true });
-  fs.writeFileSync(userConfigPath, `${JSON.stringify({ ...config, projectGroups }, null, 2)}\n`, 'utf8');
+  fs.writeFileSync(
+    userConfigPath,
+    `${JSON.stringify({ ...config, projectGroups: validatedProjectGroups }, null, 2)}\n`,
+    'utf8',
+  );
   cachedPayload = null;
   inFlightPayload = null;
-  return { projectGroups };
+  return { projectGroups: validatedProjectGroups };
 };
 
 const payloadModeFromOptions = (options: { force?: boolean }) => (options.force ? 'fresh' : 'stored');

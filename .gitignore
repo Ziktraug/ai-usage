@@ -9,3 +9,5 @@ styled-system
 ai-usage-reports/
 .ai-usage/
 .agent-memory/
+apps/web/playwright-report/
+apps/web/test-results/

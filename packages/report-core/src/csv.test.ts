@@ -49,4 +49,26 @@ describe('usage row CSV projection', () => {
     expect(cells[approxIndex]).toBe('1.2346');
     expect(cells[durationIndex]).toBe('');
   });
+
+  test('neutralizes spreadsheet formulas in textual cells without changing numeric cells', () => {
+    const serialized = serializeUsageRow({
+      ...baseRow,
+      costActual: -1,
+      costApprox: -1,
+      harness: '-dangerous-harness',
+      models: ['@SUM(A1:A2)'],
+      name: '=HYPERLINK("https://example.test")',
+      project: '+cmd',
+    });
+    const cells = serializedRowsToCSV([serialized]).split('\n')[1]?.split(',') ?? [];
+    const cellFor = (header: (typeof usageRowCsvColumns)[number]['header']) =>
+      cells[usageRowCsvColumns.findIndex((column) => column.header === header)];
+
+    expect(cellFor('harness')).toBe("'-dangerous-harness");
+    expect(cellFor('models')).toBe("'@SUM(A1:A2)");
+    expect(cellFor('project')).toBe("'+cmd");
+    expect(cellFor('session')).toStartWith('"\'=HYPERLINK');
+    expect(cellFor('cost_actual')).toBe('-1');
+    expect(cellFor('cost_approx_api')).toBe('-1.0000');
+  });
 });

@@ -20,6 +20,7 @@
     "check": "ultracite check",
     "lint": "biome check --formatter-enabled=false --assist-enabled=false --only=lint/style/noRestrictedImports . && bun tools/check-workspace-relative-paths.ts && bun tools/check-public-package-exports.ts && bun tools/check-package-boundaries.ts",
     "test": "turbo run test",
+    "test:e2e": "bun run --cwd apps/web test:e2e",
     "typecheck": "turbo run check",
     "update": "bun update --interactive --recursive",
     "fix": "ultracite fix",

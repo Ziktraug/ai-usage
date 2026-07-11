@@ -163,7 +163,7 @@ bun run cli -- sync watch macbook --interval 60s
 
 Bidirectional sync is symmetric pull: run `serve` on both machines and configure each machine to pull the other's snapshot.
 
-The interactive report also includes a LAN sync console at `/sync` when served through the report app. Use it to start or stop this machine's snapshot server, discover peers, validate endpoints, add remotes, pull now, enable or disable remotes, and remove remotes without calling CLI code from the web UI.
+The interactive report includes a file-transfer workspace at `/sync`. Use it to export this machine's usage as a JSON merge bundle or import a bundle copied from another machine; LAN pairing and peer discovery are not part of the web UI.
 
 ### 5. See where sessions come from
 
@@ -197,7 +197,7 @@ Create `~/.config/ai-usage/config.json`:
 Or use the live dashboard:
 
 ```sh
-bun run dev:web
+bun run dev
 ```
 
 Then open the Projects tab. The UI shows detected project sources with machine labels and writes project groups to your local config.
@@ -292,7 +292,7 @@ Architecture docs:
 Typecheck:
 
 ```sh
-bun run check
+bun run typecheck
 ```
 
 Lint:
@@ -304,7 +304,19 @@ bun run lint
 Format:
 
 ```sh
-bunx biome format --write .
+bun run fix
+```
+
+Run unit/integration tests:
+
+```sh
+bun run test
+```
+
+Run the deterministic browser suite (after `bun x playwright install chromium` once):
+
+```sh
+bun run test:e2e
 ```
 
 Run the report app in development:
