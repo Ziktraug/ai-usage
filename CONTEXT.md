@@ -24,8 +24,12 @@ _Avoid_: raw event, source row
 The normalized per-session record consumed by table, CSV, JSON, and analytics output. It includes tokens, model, harness, provider, project, cost approximation, and optional partial/subagent markers.
 _Avoid_: raw event, database row
 
+**Collected dataset**:
+A named set of collected and enriched local-machine data that can be transported in a report payload, such as usage rows, provider status, Cursor commit attribution, or collected skills. A collected dataset may come from local history, local config, or an explicit live refresh when the caller opts in.
+_Avoid_: facet, metadata blob, app state
+
 **Report payload**:
-The JSON-serializable aggregate consumed by the interactive report app and static HTML export. It contains serialized usage rows, filters, analytics, facets, and optional local history warnings.
+The JSON-serializable aggregate consumed by the interactive report app and static HTML export. It contains serialized usage rows, filters, analytics, collected datasets, and optional local history warnings.
 _Avoid_: app state, server response blob
 
 **Usage snapshot**:

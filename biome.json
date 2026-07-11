@@ -7,6 +7,7 @@
       "**/*.json",
       "!**/.output",
       "!**/.turbo",
+      "!**/.worktrees",
       "!**/dist",
       "!apps/web/src/routeTree.gen.ts",
       "!**/node_modules",
