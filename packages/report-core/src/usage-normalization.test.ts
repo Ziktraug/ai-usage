@@ -24,6 +24,22 @@ describe('usage row', () => {
     expect(row.linesAdded).toBeNull();
   });
 
+  test('nulls durations where the end precedes the start', () => {
+    const row = normalizeUsageRow({
+      date: new Date('2026-04-01T13:40:17.105Z'),
+      endDate: new Date('2026-04-01T13:40:05.651Z'),
+      harness: 'Cursor',
+      provider: 'Cursor sub',
+      name: 'reversed timestamps',
+      model: 'cursor',
+      tokens: { in: 1, out: 1, cr: 0, cw: 0 },
+      cost: { _tag: 'ActualCost', amount: 0 },
+      calls: 1,
+    });
+
+    expect(row.durationMs).toBeNull();
+  });
+
   test('prices OpenCode Go GLM models from public Z.AI rates', () => {
     const row = normalizeUsageRow({
       date: new Date('2026-01-01T00:00:00.000Z'),

@@ -3,7 +3,7 @@ import path from 'node:path';
 import {
   createUsageMergeBundle,
   deserializeMergeRow,
-  parseSerializedMergeRow,
+  isSerializedMergeRow,
   parseUsageMergeBundleValue,
   type SerializedMergeRow,
   toSerializedMergeRow,
@@ -53,6 +53,8 @@ export interface QueryReportRowsInput {
 
 export interface QueryRowsResult {
   rows: CollectedUsageRow[];
+  /** Stored rows that failed validation and were skipped so a single corrupt row cannot block the report. */
+  skipped: number;
 }
 
 export type UsageStoreErrorReason = 'invalid-input' | 'self-import' | 'storage-failure' | 'migration-failure';
@@ -345,11 +347,17 @@ export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<Quer
 
         sql += " ORDER BY COALESCE(active_date, '') DESC, row_key ASC";
         const records = db.query(sql).all(...params) as StoredRowRecord[];
-        return {
-          rows: records.map((record) =>
-            deserializeMergeRow(parseSerializedMergeRow(JSON.parse(record.row_json) as unknown)),
-          ),
-        };
+        const rows: CollectedUsageRow[] = [];
+        let skipped = 0;
+        for (const record of records) {
+          const parsed = JSON.parse(record.row_json) as unknown;
+          if (isSerializedMergeRow(parsed)) {
+            rows.push(deserializeMergeRow(parsed));
+          } else {
+            skipped += 1;
+          }
+        }
+        return { rows, skipped };
       },
       catch: (cause) => usageStoreError('queryReportRows', input.dbPath, cause, 'storage-failure'),
     }),
