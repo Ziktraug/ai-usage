@@ -39,12 +39,20 @@ interface Violation {
 // packages/report-data may read stored imported rows, but it must not depend on app adapters.
 // packages/usage-merge orchestrates manual merge bundle import/export. It must not import app packages or
 // final report payload orchestration.
+// packages/skills owns a local filesystem control plane. It must remain independent from reporting,
+// persistence, transport, and app packages.
 const boundaryPolicies: BoundaryPolicy[] = [
   {
     packageName: '@ai-usage/report-core',
     forbiddenDependencies: ['@ai-usage/*'],
     forbiddenImports: ['@ai-usage/*'],
     reason: 'report-core must stay pure and independent of workspace runtime packages.',
+  },
+  {
+    packageName: '@ai-usage/skills',
+    forbiddenDependencies: ['@ai-usage/*'],
+    forbiddenImports: ['@ai-usage/*'],
+    reason: 'skills must stay independent of workspace runtime packages.',
   },
   {
     packageName: '@ai-usage/usage-store',

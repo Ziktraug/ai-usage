@@ -25,6 +25,7 @@ import { createFileRoute, Link, useLocation } from '@tanstack/solid-router';
 import { createEffect, createMemo, createResource, createSignal, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
+import { DiscardConfirmationDialog } from '../discard-confirmation-dialog';
 import {
   createManagedSkillTargetDirectory,
   getKnownSkillProjectPaths,
@@ -34,6 +35,7 @@ import {
   previewReconcileAllManagedSkills,
   reconcileAllManagedSkills,
   reconcileManagedSkill,
+  refreshSkillManagementSnapshot,
   saveSkillManagementConfig,
   toggleManagedSkill,
 } from '../server/skills';
@@ -46,7 +48,7 @@ import {
   type SkillCellStateFilter,
   skillSelectionFromPath,
 } from '../skills-page-model';
-import { type ProjectInventoriesResult, SkillsWorkspace } from '../skills-workspace';
+import { type ProjectInventoriesResult, type SkillMarkdownDraftGuard, SkillsWorkspace } from '../skills-workspace';
 
 export const Route = createFileRoute('/skills')({
   staleTime: Number.POSITIVE_INFINITY,
@@ -79,6 +81,12 @@ type SkillReconcileServerResult =
 interface OperationNotice {
   message: string;
   tone: 'error' | 'ok';
+}
+
+interface PendingSnapshotReplacement {
+  completion: 'refresh' | 'snapshot';
+  message: string;
+  snapshot: SkillManagementSnapshot;
 }
 
 const errorMessageFrom = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -290,8 +298,11 @@ const actionNotice = (actions: readonly ProjectionAction[], snapshot: SkillManag
 function SkillsRoute() {
   const data = Route.useLoaderData();
   const location = useLocation();
+  let refreshButtonElement: HTMLButtonElement | undefined;
   const [result, setResult] = createSignal<SkillSnapshotResult>(skillSnapshotResultFrom(data().skills));
-  const knownProjectPathsResult = createMemo(() => data().knownProjectPaths as KnownProjectPathsResult);
+  const [knownProjectPathsResult, setKnownProjectPathsResult] = createSignal<KnownProjectPathsResult>(
+    data().knownProjectPaths as KnownProjectPathsResult,
+  );
   const knownProjectPaths = createMemo(() => {
     const current = knownProjectPathsResult();
     return current.ok ? current.data : [];
@@ -304,6 +315,9 @@ function SkillsRoute() {
   const [operationNotice, setOperationNotice] = createSignal<OperationNotice | null>(null);
   const [reconcilePlan, setReconcilePlan] = createSignal<ReconcilePlanSummary | null>(null);
   const [activeCellStateFilter, setActiveCellStateFilter] = createSignal<SkillCellStateFilter | undefined>();
+  const [markdownRefreshVersion, setMarkdownRefreshVersion] = createSignal(0);
+  const [dirtyMarkdownDraft, setDirtyMarkdownDraft] = createSignal<SkillMarkdownDraftGuard>();
+  const [pendingSnapshotReplacement, setPendingSnapshotReplacement] = createSignal<PendingSnapshotReplacement>();
   const snapshot = createMemo(() => {
     const current = result();
     return current.ok ? current.data : undefined;
@@ -313,6 +327,7 @@ function SkillsRoute() {
     return current.ok ? '' : current.error.message;
   });
   const [sourceRepoPath, setSourceRepoPath] = createSignal(snapshot()?.config.sourceRepoPath ?? '');
+  const [sourceRepoPathDirty, setSourceRepoPathDirty] = createSignal(false);
   const [projectPaths, setProjectPaths] = createSignal<readonly string[]>(snapshot()?.config.projectPaths ?? []);
   const [projectPathDraft, setProjectPathDraft] = createSignal('');
   const projectInventoriesKey = createMemo(() => {
@@ -322,22 +337,41 @@ function SkillsRoute() {
     }
     return JSON.stringify([current.config.sourceRepoPath ?? '', ...(current.config.projectPaths ?? [])]);
   });
-  const [projectInventories] = createResource(
+  const [projectInventories, { refetch: refetchProjectInventories }] = createResource(
     projectInventoriesKey,
     async () => (await getSkillProjectInventories()) as ProjectInventoriesResult,
   );
+
+  createEffect(() => {
+    const loaderData = data();
+    setResult(skillSnapshotResultFrom(loaderData.skills));
+    setKnownProjectPathsResult(loaderData.knownProjectPaths as KnownProjectPathsResult);
+  });
 
   createEffect(() => {
     const current = snapshot();
     if (current === undefined) {
       return;
     }
+    if (!sourceRepoPathDirty()) {
+      setSourceRepoPath(current.config.sourceRepoPath ?? '');
+    }
     setProjectPaths(current.config.projectPaths ?? []);
   });
 
-  const applySnapshotResult = (next: SkillSnapshotResult, message: string) => {
+  const snapshotRemovesDirtySkill = (nextSnapshot: SkillManagementSnapshot): boolean => {
+    const dirtyDraft = dirtyMarkdownDraft();
+    return dirtyDraft?.dirty === true && !nextSnapshot.skills.some((skill) => skill.name === dirtyDraft.skillName);
+  };
+
+  const applySnapshotResult = (next: SkillSnapshotResult, message: string): boolean => {
+    if (next.ok && snapshotRemovesDirtySkill(next.data)) {
+      setPendingSnapshotReplacement({ completion: 'snapshot', message, snapshot: next.data });
+      return false;
+    }
     setResult(next);
     setOperationNotice(next.ok ? { message, tone: 'ok' } : { message: next.error.message, tone: 'error' });
+    return true;
   };
 
   const applyReconcileResult = (next: SkillReconcileServerResult, fallbackMessage: string) => {
@@ -345,8 +379,10 @@ function SkillsRoute() {
       setOperationNotice({ message: next.error.message, tone: 'error' });
       return;
     }
-    setResult({ ok: true, data: next.data.snapshot });
-    setOperationNotice({ message: actionNotice(next.data.actions, next.data.snapshot, fallbackMessage), tone: 'ok' });
+    applySnapshotResult(
+      { data: next.data.snapshot, ok: true },
+      actionNotice(next.data.actions, next.data.snapshot, fallbackMessage),
+    );
   };
 
   const runOperation = async (operation: string, action: () => Promise<void>) => {
@@ -408,12 +444,14 @@ function SkillsRoute() {
 
   const saveConfig = (nextSourceRepoPath: string) =>
     runOperation('save-config', async () => {
-      applySnapshotResult(
-        skillSnapshotResult(
-          await saveSkillManagementConfig({ data: configInput({ sourceRepoPath: nextSourceRepoPath }) }),
-        ),
-        'Skill source saved.',
+      const next = skillSnapshotResult(
+        await saveSkillManagementConfig({ data: configInput({ sourceRepoPath: nextSourceRepoPath }) }),
       );
+      if (next.ok) {
+        setSourceRepoPathDirty(false);
+        setSourceRepoPath(next.data.config.sourceRepoPath ?? '');
+      }
+      applySnapshotResult(next, 'Skill source saved.');
     });
 
   const toggleSkill = (skillName: string, enabled: boolean) =>
@@ -461,6 +499,63 @@ function SkillsRoute() {
       );
     });
 
+  const finalizeSkillsRefresh = async (next: SkillSnapshotResult, message: string): Promise<void> => {
+    setResult(next);
+    setOperationNotice(next.ok ? { message, tone: 'ok' } : { message: next.error.message, tone: 'error' });
+    if (!next.ok) {
+      return;
+    }
+    if (next.data.configured) {
+      await refetchProjectInventories();
+    }
+    setMarkdownRefreshVersion((version) => version + 1);
+  };
+
+  const refreshSkills = () =>
+    runOperation('refresh-skills', async () => {
+      const [nextSnapshot, nextKnownProjectPaths] = await Promise.all([
+        refreshSkillManagementSnapshot(),
+        getKnownSkillProjectPaths(),
+      ]);
+      setKnownProjectPathsResult(nextKnownProjectPaths as KnownProjectPathsResult);
+      const next = skillSnapshotResult(nextSnapshot);
+      if (next.ok && snapshotRemovesDirtySkill(next.data)) {
+        setPendingSnapshotReplacement({
+          completion: 'refresh',
+          message: 'Skills refreshed.',
+          snapshot: next.data,
+        });
+        return;
+      }
+      await finalizeSkillsRefresh(next, 'Skills refreshed.');
+    });
+
+  const updateSourceRepoPath = (value: string): void => {
+    setSourceRepoPath(value);
+    setSourceRepoPathDirty(value !== (snapshot()?.config.sourceRepoPath ?? ''));
+  };
+
+  const keepDirtySnapshot = (): void => {
+    setPendingSnapshotReplacement();
+  };
+
+  const discardDirtySnapshot = async (): Promise<void> => {
+    const pending = pendingSnapshotReplacement();
+    if (pending === undefined) {
+      return;
+    }
+    dirtyMarkdownDraft()?.discard();
+    setPendingSnapshotReplacement();
+    setDirtyMarkdownDraft();
+    const next = { data: pending.snapshot, ok: true } as const;
+    if (pending.completion === 'refresh') {
+      await finalizeSkillsRefresh(next, pending.message);
+      return;
+    }
+    setResult(next);
+    setOperationNotice({ message: pending.message, tone: 'ok' });
+  };
+
   // Route keys resolve against every project the tree can display: discovered
   // paths plus scanned inventories (which include config-only paths).
   const selectionProjects = createMemo(() => {
@@ -503,6 +598,18 @@ function SkillsRoute() {
               </div>
             </div>
             <div class={headerActions}>
+              <button
+                aria-busy={pendingOperation() === 'refresh-skills' ? 'true' : undefined}
+                class={navButton}
+                disabled={pendingOperation() !== null}
+                onClick={refreshSkills}
+                ref={(element) => {
+                  refreshButtonElement = element;
+                }}
+                type="button"
+              >
+                Refresh skills
+              </button>
               <Link class={navButton} search={dashboardSearchDefaults} to="/">
                 Report
               </Link>
@@ -530,7 +637,7 @@ function SkillsRoute() {
                   removeProjectPath={removeProjectPath}
                   saveConfig={saveConfig}
                   setProjectPathDraft={setProjectPathDraft}
-                  setSourceRepoPath={setSourceRepoPath}
+                  setSourceRepoPath={updateSourceRepoPath}
                   sourceRepoPath={sourceRepoPath()}
                 />
               }
@@ -542,10 +649,12 @@ function SkillsRoute() {
                 createTargetDirectory={createTargetDirectory}
                 knownProjectPaths={knownProjectPaths()}
                 knownProjectPathsError={knownProjectPathsError()}
+                markdownRefreshVersion={markdownRefreshVersion()}
                 onApplyReconcile={applyReconcile}
                 onCancelReconcile={cancelReconcile}
                 onCellStateFilterChange={setActiveCellStateFilter}
                 onDismissOperationNotice={() => setOperationNotice(null)}
+                onMarkdownDraftStateChange={setDirtyMarkdownDraft}
                 onPreviewReconcile={previewReconcile}
                 onSnapshot={(nextSnapshot) => setResult({ ok: true, data: nextSnapshot })}
                 operationNotice={operationNotice()}
@@ -561,7 +670,7 @@ function SkillsRoute() {
                 routeSelection={routeSelection()}
                 saveConfig={saveConfig}
                 setProjectPathDraft={setProjectPathDraft}
-                setSourceRepoPath={setSourceRepoPath}
+                setSourceRepoPath={updateSourceRepoPath}
                 snapshot={snapshot()!}
                 sourceRepoPath={sourceRepoPath()}
                 toggleSkill={toggleSkill}
@@ -569,6 +678,15 @@ function SkillsRoute() {
             </Show>
           </Show>
         </div>
+        <Show when={pendingSnapshotReplacement()}>
+          <DiscardConfirmationDialog
+            description="The refreshed snapshot no longer contains this skill. Keep editing to preserve the draft, or discard it to apply the refreshed snapshot."
+            idPrefix="discard-removed-skill-draft"
+            onDiscard={discardDirtySnapshot}
+            onKeep={keepDirtySnapshot}
+            restoreFocus={() => refreshButtonElement?.focus()}
+          />
+        </Show>
       </div>
     </main>
   );
@@ -580,10 +698,12 @@ function ConfiguredSnapshot(props: {
   createTargetDirectory: (targetId: string) => void;
   knownProjectPaths: readonly KnownSkillProjectPath[];
   knownProjectPathsError: string | null;
+  markdownRefreshVersion: number;
   onApplyReconcile: () => void;
   onCancelReconcile: () => void;
   onCellStateFilterChange: (filter: SkillCellStateFilter | undefined) => void;
   onDismissOperationNotice: () => void;
+  onMarkdownDraftStateChange: (guard: SkillMarkdownDraftGuard | undefined) => void;
   onSnapshot: (snapshot: SkillManagementSnapshot) => void;
   onPreviewReconcile: () => void;
   operationNotice: OperationNotice | null;
@@ -646,9 +766,11 @@ function ConfiguredSnapshot(props: {
           </div>
         )}
         knownProjectPaths={props.projectScopes}
+        markdownRefreshVersion={props.markdownRefreshVersion}
         onApplyReconcile={props.onApplyReconcile}
         onCancelReconcile={props.onCancelReconcile}
         onCellStateFilterChange={props.onCellStateFilterChange}
+        onMarkdownDraftStateChange={props.onMarkdownDraftStateChange}
         onPreviewReconcile={props.onPreviewReconcile}
         onSnapshot={props.onSnapshot}
         pendingOperation={props.pendingOperation}

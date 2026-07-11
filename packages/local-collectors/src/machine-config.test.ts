@@ -1,12 +1,153 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { linkSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import { Effect } from 'effect';
 import { createLocalHistoryStorage, LocalHistoryStorage } from './local-history';
-import { aiUsageConfigPath, readAiUsageConfig, readMergedAiUsageConfigFrom } from './machine-config';
+import {
+  aiUsageConfigPath,
+  readAiUsageConfig,
+  readMergedAiUsageConfigFrom,
+  updateAiUsageConfig,
+} from './machine-config';
 
 describe('machine config', () => {
+  test('preserves concurrent config updates', async () => {
+    const home = await mkdtemp('ai-usage-machine-config-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      let releaseFirstUpdate: (() => void) | undefined;
+      const firstUpdateCanFinish = new Promise<void>((resolve) => {
+        releaseFirstUpdate = resolve;
+      });
+      let firstUpdateStarted: (() => void) | undefined;
+      const firstUpdateHasStarted = new Promise<void>((resolve) => {
+        firstUpdateStarted = resolve;
+      });
+      const runUpdate = (update: Parameters<typeof updateAiUsageConfig>[0]) =>
+        Effect.runPromise(updateAiUsageConfig(update).pipe(Effect.provideService(LocalHistoryStorage, storage)));
+
+      const projectAliasesUpdate = runUpdate(async (config) => {
+        firstUpdateStarted?.();
+        await firstUpdateCanFinish;
+        return {
+          ...config,
+          projectAliases: [{ match: ['/work/alpha'], name: 'alpha' }],
+        };
+      });
+      await firstUpdateHasStarted;
+      const cursorUpdate = runUpdate((config) => ({
+        ...config,
+        cursor: { ...(config.cursor ?? {}), clusterGapMs: 1234 },
+      }));
+
+      releaseFirstUpdate?.();
+      await Promise.all([projectAliasesUpdate, cursorUpdate]);
+
+      const config = await Effect.runPromise(
+        readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      expect(config.projectAliases).toEqual([{ match: ['/work/alpha'], name: 'alpha' }]);
+      expect(config.cursor?.clusterGapMs).toBe(1234);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('preserves concurrent config updates across processes', async () => {
+    const home = await mkdtemp('ai-usage-machine-config-process-');
+    try {
+      const readyDirectory = path.join(home, 'ready');
+      const barrierPath = path.join(home, 'go');
+      await mkdir(readyDirectory);
+      const workerPath = path.join(import.meta.dir, 'test-fixtures', 'machine-config-subprocess.ts');
+      const groupIds = Array.from({ length: 6 }, (_, index) => `process-group-${index}`);
+      const workers = groupIds.map((groupId) =>
+        Bun.spawn([process.execPath, workerPath, home, groupId, readyDirectory, barrierPath], {
+          stderr: 'pipe',
+          stdout: 'pipe',
+        }),
+      );
+      while ((await Array.fromAsync(new Bun.Glob('*').scan({ cwd: readyDirectory }))).length < groupIds.length) {
+        await Bun.sleep(5);
+      }
+      await writeFile(barrierPath, 'go', 'utf8');
+
+      const exitCodes = await Promise.all(workers.map((worker) => worker.exited));
+      expect(exitCodes).toEqual(groupIds.map(() => 0));
+      const storage = createLocalHistoryStorage(home);
+      const config = await Effect.runPromise(
+        readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      expect(config.projectGroups?.map((group) => group.id).sort()).toEqual(groupIds);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  test('recovers a config lock left by an exited local process', async () => {
+    const home = await mkdtemp('ai-usage-machine-config-stale-lock-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      const configPath = aiUsageConfigPath(storage);
+      mkdirSync(path.dirname(configPath), { recursive: true });
+      const exitedWorker = Bun.spawn([process.execPath, '-e', 'process.exit(0)']);
+      const exitedPid = exitedWorker.pid;
+      await exitedWorker.exited;
+      writeFileSync(
+        `${configPath}.lock`,
+        `${JSON.stringify({
+          createdAt: new Date().toISOString(),
+          hostname: hostname(),
+          ownerId: 'exited-fixture',
+          pid: exitedPid,
+          version: 1,
+        })}\n`,
+      );
+
+      await Effect.runPromise(
+        updateAiUsageConfig(() => ({ cursor: { clusterGapMs: 1234 } })).pipe(
+          Effect.provideService(LocalHistoryStorage, storage),
+        ),
+      );
+
+      expect(readdirSync(path.dirname(configPath))).toEqual(['config.json']);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('atomically replaces the config file', async () => {
+    const home = await mkdtemp('ai-usage-machine-config-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      const runUpdate = (update: Parameters<typeof updateAiUsageConfig>[0]) =>
+        Effect.runPromise(updateAiUsageConfig(update).pipe(Effect.provideService(LocalHistoryStorage, storage)));
+      await runUpdate(() => ({ cursor: { clusterGapMs: 1234 } }));
+      const configPath = aiUsageConfigPath(storage);
+      const previousConfigPath = path.join(path.dirname(configPath), 'previous-config.json');
+      linkSync(configPath, previousConfigPath);
+
+      await runUpdate((config) => ({
+        ...config,
+        projectAliases: [{ match: ['/work/beta'], name: 'beta' }],
+      }));
+
+      const config = await Effect.runPromise(
+        readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      expect(config).toEqual({
+        cursor: { clusterGapMs: 1234 },
+        projectAliases: [{ match: ['/work/beta'], name: 'beta' }],
+      });
+      expect(JSON.parse(readFileSync(previousConfigPath, 'utf8'))).toEqual({ cursor: { clusterGapMs: 1234 } });
+      expect(readdirSync(path.dirname(configPath)).sort()).toEqual(['config.json', 'previous-config.json']);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('reads valid project groups from user config', async () => {
     const home = await mkdtemp('ai-usage-machine-config-');
     try {

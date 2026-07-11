@@ -71,6 +71,48 @@ const matrixTable = css({
 // a handful of rows, so let it hug its content instead.
 const matrixWrap = css({
   minH: 'auto',
+  display: { base: 'none', md: 'block' },
+});
+
+const mobileCards = css({
+  display: { base: 'grid', md: 'none' },
+  gap: '10px',
+  m: 0,
+  p: 0,
+  listStyle: 'none',
+});
+
+const mobileCard = css({
+  display: 'grid',
+  gap: '12px',
+  p: '12px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surfaceMuted',
+});
+
+const mobileRuntimeList = css({
+  display: 'grid',
+  gap: '7px',
+  m: 0,
+});
+
+const mobileRuntimeRow = css({
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  alignItems: 'center',
+  gap: '8px',
+  p: '7px 0',
+  borderTop: '1px solid token(colors.line)',
+});
+
+const mobileRuntimeState = css({
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '6px',
+  m: 0,
+  color: 'muted',
+  fontSize: '12px',
 });
 
 const stickyCol = css({
@@ -591,6 +633,77 @@ export const SkillsMatrix = (props: {
           </tbody>
         </table>
       </div>
+      <ul aria-label="Managed skills by runtime" class={mobileCards}>
+        <Show fallback={<li class={muted}>No skills match the current filter.</li>} when={rows().length > 0}>
+          <For each={rows()}>
+            {(row) => (
+              <li class={mobileCard}>
+                <div class={skillCell}>
+                  <div class={skillTop}>
+                    <button
+                      aria-busy={props.pendingOperation === `toggle:${row.name}` ? 'true' : undefined}
+                      aria-checked={row.enabled}
+                      aria-label={row.enabled ? `Disable ${row.name}` : `Enable ${row.name}`}
+                      class={switchButton}
+                      data-pending={props.pendingOperation === `toggle:${row.name}` ? 'true' : undefined}
+                      disabled={props.pendingOperation !== null}
+                      onClick={() => props.toggleSkill(row.name, !row.enabled)}
+                      role="switch"
+                      type="button"
+                    />
+                    <Link
+                      class={cx(strongCell, skillName, skillNameButton, row.enabled ? undefined : disabledName)}
+                      params={{ skillName: row.name }}
+                      resetScroll={false}
+                      to="/skills/global/$skillName"
+                    >
+                      {row.name}
+                    </Link>
+                    <Show when={row.validationStatus !== 'valid'}>
+                      <span class={cx(statusPill, validationPillClass(row.validationStatus))}>
+                        {row.validationStatus}
+                      </span>
+                    </Show>
+                  </div>
+                  <div class={skillDescription}>{row.description || 'No description'}</div>
+                  <div class={badgeRow}>
+                    <span class={cx(statusPill, statusPillInfo)}>{row.invocation === 'auto' ? 'Auto' : 'Manual'}</span>
+                    <Show when={row.tokenTotal !== null}>
+                      <span class={cx(statusPill, row.tokenFlag ? statusPillDanger : statusPillInfo)}>
+                        {row.tokenTotal} tok
+                      </span>
+                    </Show>
+                    <Show when={row.origin}>
+                      {(value) => <span class={cx(statusPill, originTone(value()))}>{value()}</span>}
+                    </Show>
+                  </div>
+                </div>
+                <dl class={mobileRuntimeList}>
+                  <For each={row.cells}>
+                    {(cell) => {
+                      const target = () => matrix().targets.find((entry) => entry.id === cell.targetId);
+                      return (
+                        <div class={mobileRuntimeRow}>
+                          <dt>
+                            <HarnessBadge name={target()?.label ?? cell.targetId} />
+                          </dt>
+                          <dd class={mobileRuntimeState}>
+                            <span
+                              aria-hidden="true"
+                              class={cx(statusDot, dotClassFor(cell.state), row.enabled ? undefined : inactiveCells)}
+                            />
+                            {cell.label}
+                          </dd>
+                        </div>
+                      );
+                    }}
+                  </For>
+                </dl>
+              </li>
+            )}
+          </For>
+        </Show>
+      </ul>
       <div class={legend}>
         <span class={legendItem}>
           <span class={cx(statusDot, statusDotLinked)} />

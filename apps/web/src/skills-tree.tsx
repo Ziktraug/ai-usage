@@ -151,7 +151,9 @@ const filterInfo = css({
 const statusClass = (validationStatus?: string) => (validationStatus === 'invalid' ? statusPillDanger : statusPillWarn);
 
 export const SkillsTree = (props: {
+  ariaLabel?: string;
   expandedKeys: ReadonlySet<string>;
+  idPrefix?: string;
   knownProjects: readonly KnownProjectScope[];
   model: SkillTreeModel;
   onQueryChange: (value: string) => void;
@@ -190,7 +192,7 @@ export const SkillsTree = (props: {
   const hasVisibleScopes = createMemo(() => scopes().length + emptyScopes().length > 0);
 
   return (
-    <aside aria-label="Skill scopes" class={cx(panel, treePanel)}>
+    <aside aria-label={props.ariaLabel ?? 'Skill scopes'} class={cx(panel, treePanel)}>
       <div class={panelHeader}>
         <h2 class={panelTitle}>Skills</h2>
         <p class={panelSub}>Global and project scopes</p>
@@ -208,7 +210,7 @@ export const SkillsTree = (props: {
             {(scope) => (
               <section class={scopeGroup}>
                 {(() => {
-                  const listId = `skill-scope-${scope.key.replaceAll(/[^a-zA-Z0-9_-]/g, '-')}`;
+                  const listId = `${props.idPrefix ?? 'skill'}-scope-${scope.key.replaceAll(/[^a-zA-Z0-9_-]/g, '-')}`;
                   const expanded = () => normalizedQuery().length > 0 || props.expandedKeys.has(scope.key);
                   return (
                     <>
