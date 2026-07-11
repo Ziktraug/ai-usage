@@ -65,7 +65,6 @@ export interface LocalReportRowsRequest extends LocalUsageSelection {
 
 export interface ReportDatasetSelection {
   includeCursorCommitAttribution?: boolean;
-  includeLiveProviderStatus?: boolean;
   includeProviderStatus?: boolean;
 }
 
@@ -201,11 +200,7 @@ const collectReportDatasets = (request: {
     includeCursor: selection.includeCursorCommitAttribution === true,
     includeProviderStatus: selection.includeProviderStatus === true,
     ...(request.machine === undefined ? {} : { machineId: request.machine.id, machineLabel: request.machine.label }),
-  }) as unknown as Effect.Effect<
-    ReportDatasets,
-    LocalHistoryError,
-    import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
-  >;
+  });
   return Effect.map(datasetEffect, (datasets) => (Object.keys(datasets).length ? datasets : undefined));
 };
 

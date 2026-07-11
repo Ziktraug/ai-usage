@@ -59,6 +59,7 @@ export interface CodexRateLimitStatusInput {
 }
 
 export const PROVIDER_STATUS_SCHEMA_VERSION = 1 as const;
+export const LIVE_PROVIDER_STATUS_MAX_AGE_MS = 15 * 60 * 1000;
 
 const STATE_RANK: Record<ProviderStatusState, number> = {
   error: 0,
@@ -67,6 +68,20 @@ const STATE_RANK: Record<ProviderStatusState, number> = {
   partial: 3,
   unsupported: 4,
   ok: 5,
+};
+
+const PROVIDER_STATUS_SOURCES: Record<ProviderStatus['source'], true> = {
+  'local-history': true,
+  'live-api': true,
+  manual: true,
+  unsupported: true,
+};
+
+const PROVIDER_LIMIT_WINDOW_SCOPES: Record<ProviderLimitWindowScope, true> = {
+  global: true,
+  model: true,
+  provider: true,
+  unknown: true,
 };
 
 export const normalizeIsoTimestamp = (value: unknown): string | null => {
@@ -79,10 +94,9 @@ export const normalizeIsoTimestamp = (value: unknown): string | null => {
 };
 
 export const normalizeUnixSecondsTimestamp = (value: unknown): string | null => {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    return normalizeIsoTimestamp(value);
-  }
-  return normalizeIsoTimestamp(value * 1000);
+  const numericValue =
+    typeof value === 'number' || (typeof value === 'string' && value.trim()) ? Number(value) : Number.NaN;
+  return Number.isFinite(numericValue) ? normalizeIsoTimestamp(numericValue * 1000) : normalizeIsoTimestamp(value);
 };
 
 export const clampPercent = (value: unknown): number | null => {
@@ -160,7 +174,8 @@ export const normalizeProviderLimitWindow = (input: {
   }
   const limitSeconds = limitSecondsFromWindow(input.raw) ?? input.fallbackLimitSeconds ?? null;
   const usedPercent = clampPercent(input.raw.used_percent);
-  const resetsAt = normalizeIsoTimestamp(input.raw.reset_at) ?? normalizeUnixSecondsTimestamp(input.raw.resets_at);
+  const resetsAt =
+    normalizeUnixSecondsTimestamp(input.raw.reset_at) ?? normalizeUnixSecondsTimestamp(input.raw.resets_at);
   const explicitLabel = optionalString(input.raw.label) ?? optionalString(input.raw.title);
   const blocked = input.blocked === true || blockedFromWindow(input.raw) || usedPercent === 100;
   return {
@@ -364,21 +379,91 @@ export const createProviderStatusDataset = (
 });
 
 const isProviderStatusState = (value: unknown): value is ProviderStatusState =>
-  typeof value === 'string' && value in STATE_RANK;
+  typeof value === 'string' && Object.hasOwn(STATE_RANK, value);
+
+const isProviderStatusSource = (value: unknown): value is ProviderStatus['source'] =>
+  typeof value === 'string' && Object.hasOwn(PROVIDER_STATUS_SOURCES, value);
+
+const isProviderLimitWindowScope = (value: unknown): value is ProviderLimitWindowScope =>
+  typeof value === 'string' && Object.hasOwn(PROVIDER_LIMIT_WINDOW_SCOPES, value);
+
+const rfc3339TimestampPattern =
+  /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
+
+const daysInMonth = (year: number, month: number): number => {
+  if (month === 2) {
+    const isLeapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    return isLeapYear ? 29 : 28;
+  }
+  return new Set([4, 6, 9, 11]).has(month) ? 30 : 31;
+};
+
+const isValidTimestamp = (value: unknown): value is string => {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const match = value.match(rfc3339TimestampPattern);
+  if (!match) {
+    return false;
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  return day >= 1 && day <= daysInMonth(year, month) && Number.isFinite(new Date(value).getTime());
+};
+
+const isNullableTimestamp = (value: unknown): value is string | null => value === null || isValidTimestamp(value);
+
+const isFiniteNumberInRange = (value: unknown, minimum: number, maximum = Number.POSITIVE_INFINITY) =>
+  typeof value === 'number' && Number.isFinite(value) && value >= minimum && value <= maximum;
+
+const isNullablePercentage = (value: unknown): value is number | null =>
+  value === null || isFiniteNumberInRange(value, 0, 100);
+
+const isNullablePositiveNumber = (value: unknown): value is number | null =>
+  value === null || isFiniteNumberInRange(value, Number.MIN_VALUE);
+
+const isNullableNonNegativeNumber = (value: unknown): value is number | null =>
+  value === null || isFiniteNumberInRange(value, 0);
+
+const isOptionalNullableString = (value: unknown): value is string | null | undefined =>
+  value === undefined || value === null || typeof value === 'string';
+
+const isNonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
+
+const isOptionalNonEmptyString = (value: unknown): value is string | undefined =>
+  value === undefined || isNonEmptyString(value);
+
+const isOptionalNonEmptyStringArray = (value: unknown): value is string[] | undefined =>
+  value === undefined || (Array.isArray(value) && value.every(isNonEmptyString));
+
+const isProviderResetCredit = (value: unknown): value is ProviderResetCredit => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    typeof value.title === 'string' &&
+    typeof value.status === 'string' &&
+    isNullableTimestamp(value.grantedAt) &&
+    isNullableTimestamp(value.expiresAt) &&
+    isNullableNonNegativeNumber(value.daysLeft)
+  );
+};
 
 const isProviderLimitWindow = (value: unknown): value is ProviderLimitWindow => {
   if (!isRecord(value)) {
     return false;
   }
   return (
-    typeof value.id === 'string' &&
-    typeof value.label === 'string' &&
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.label) &&
     typeof value.blocked === 'boolean' &&
-    (value.usedPercent === null || typeof value.usedPercent === 'number') &&
-    (value.remainingPercent === null || typeof value.remainingPercent === 'number') &&
-    (value.resetsAt === null || typeof value.resetsAt === 'string') &&
-    (value.limitSeconds === null || typeof value.limitSeconds === 'number') &&
-    (value.group === null || typeof value.group === 'string')
+    isProviderLimitWindowScope(value.scope) &&
+    isNullablePercentage(value.usedPercent) &&
+    isNullablePercentage(value.remainingPercent) &&
+    isNullableTimestamp(value.resetsAt) &&
+    isNullablePositiveNumber(value.limitSeconds) &&
+    (value.group === null || isNonEmptyString(value.group))
   );
 };
 
@@ -388,17 +473,27 @@ export const isProviderStatusDataset = (value: unknown): value is ProviderStatus
   }
   return (
     value.schemaVersion === PROVIDER_STATUS_SCHEMA_VERSION &&
-    typeof value.generatedAt === 'string' &&
+    isValidTimestamp(value.generatedAt) &&
     Array.isArray(value.providers) &&
     value.providers.every((provider) => {
       if (!isRecord(provider)) {
         return false;
       }
       return (
-        typeof provider.key === 'string' &&
-        typeof provider.label === 'string' &&
-        typeof provider.generatedAt === 'string' &&
+        isNonEmptyString(provider.key) &&
+        isNonEmptyString(provider.label) &&
+        isValidTimestamp(provider.generatedAt) &&
+        isProviderStatusSource(provider.source) &&
         isProviderStatusState(provider.state) &&
+        isOptionalNullableString(provider.accountLabel) &&
+        isOptionalNullableString(provider.creditsBalance) &&
+        isOptionalNullableString(provider.plan) &&
+        isOptionalNonEmptyString(provider.machineId) &&
+        isOptionalNonEmptyString(provider.machineLabel) &&
+        isOptionalNonEmptyStringArray(provider.warnings) &&
+        (provider.resetCredits === undefined ||
+          (Array.isArray(provider.resetCredits) && provider.resetCredits.every(isProviderResetCredit))) &&
+        (provider.resetCreditsAvailable === undefined || isNullableNonNegativeNumber(provider.resetCreditsAvailable)) &&
         Array.isArray(provider.windows) &&
         provider.windows.every(isProviderLimitWindow)
       );
@@ -440,8 +535,28 @@ const latestIso = (a: string | null, b: string) => {
   return new Date(b).getTime() >= new Date(a).getTime() ? b : a;
 };
 
+export const providerStatusWithFreshness = (
+  provider: ProviderStatus,
+  now: Date | string,
+  maximumAgeMs = LIVE_PROVIDER_STATUS_MAX_AGE_MS,
+): ProviderStatus => {
+  if (
+    provider.source !== 'live-api' ||
+    provider.state === 'error' ||
+    provider.state === 'auth-required' ||
+    provider.state === 'stale'
+  ) {
+    return provider;
+  }
+  const ageMs = new Date(now).getTime() - new Date(provider.generatedAt).getTime();
+  return Number.isFinite(ageMs) && ageMs > maximumAgeMs ? { ...provider, state: 'stale' } : provider;
+};
+
+export const compareProviderStatusStates = (left: ProviderStatusState, right: ProviderStatusState): number =>
+  STATE_RANK[left] - STATE_RANK[right];
+
 export const providerStatusWorstState = (providers: ProviderStatus[]): ProviderStatusState =>
   providers.reduce<ProviderStatusState>(
-    (worst, provider) => (STATE_RANK[provider.state] < STATE_RANK[worst] ? provider.state : worst),
+    (worst, provider) => (compareProviderStatusStates(provider.state, worst) < 0 ? provider.state : worst),
     'ok',
   );

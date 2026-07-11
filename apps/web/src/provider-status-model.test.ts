@@ -4,9 +4,11 @@ import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import { buildProviderStatusViews } from './provider-status-model';
 import type { DashboardRow } from './shared';
 
+const FIXTURE_NOW = '2026-01-01T00:00:00.000Z';
+
 const payload = (overrides: Partial<UsageReportPayload> = {}): UsageReportPayload =>
   ({
-    generatedAt: '2026-01-01T00:00:00.000Z',
+    generatedAt: FIXTURE_NOW,
     rows: [],
     tableRows: [],
     omittedRows: 0,
@@ -53,10 +55,11 @@ describe('provider status model', () => {
       new Date('2026-01-01T00:00:00.000Z'),
     );
 
-    const views = buildProviderStatusViews(payload({ datasets: { providerStatus } }), [
-      row({ harness: 'Codex', provider: 'Codex sub' }),
-      row({ harness: 'Claude', provider: 'Claude sub' }),
-    ]);
+    const views = buildProviderStatusViews(
+      payload({ datasets: { providerStatus } }),
+      [row({ harness: 'Codex', provider: 'Codex sub' }), row({ harness: 'Claude', provider: 'Claude sub' })],
+      FIXTURE_NOW,
+    );
 
     expect(views.map((view) => [view.provider.key, view.provider.state])).toEqual([
       ['codex', 'ok'],
@@ -69,6 +72,7 @@ describe('provider status model', () => {
     const views = buildProviderStatusViews(
       payload({ datasets: { providerStatus: { schemaVersion: 1 } as unknown as never } }),
       [row({ harness: 'Cursor', provider: 'Cursor local', machine: 'Laptop' })],
+      FIXTURE_NOW,
     );
 
     expect(views).toHaveLength(1);
@@ -96,6 +100,7 @@ describe('provider status model', () => {
         facets: { providerStatus },
       }),
       [],
+      FIXTURE_NOW,
     );
 
     expect(views.map((view) => view.provider.key)).toEqual(['codex']);
@@ -118,10 +123,14 @@ describe('provider status model', () => {
       new Date('2026-01-01T00:00:00.000Z'),
     );
 
-    const views = buildProviderStatusViews(payload({ datasets: { providerStatus } }), [
-      row({ harness: 'Codex', provider: 'Codex sub', machine: 'Laptop' }),
-      row({ harness: 'Codex', provider: 'Codex sub', machine: 'Workstation' }),
-    ]);
+    const views = buildProviderStatusViews(
+      payload({ datasets: { providerStatus } }),
+      [
+        row({ harness: 'Codex', provider: 'Codex sub', machine: 'Laptop' }),
+        row({ harness: 'Codex', provider: 'Codex sub', machine: 'Workstation' }),
+      ],
+      FIXTURE_NOW,
+    );
 
     expect(views.map((view) => [view.provider.key, view.machineContext]).sort()).toEqual([
       ['codex', 'Laptop'],
@@ -161,9 +170,81 @@ describe('provider status model', () => {
       new Date('2026-01-01T00:00:00.000Z'),
     );
 
-    const views = buildProviderStatusViews(payload({ datasets: { providerStatus } }), []);
+    const views = buildProviderStatusViews(payload({ datasets: { providerStatus } }), [], FIXTURE_NOW);
 
     expect(views[0]?.creditsSummary).toContain('2 reset credits');
     expect(views[0]?.creditsSummary).toContain('expires');
+  });
+
+  test('projects old live snapshot status as stale without a past next reset', () => {
+    const providerStatus = createProviderStatusDataset(
+      [
+        {
+          key: 'codex',
+          label: 'Codex',
+          generatedAt: '2026-01-01T00:00:00.000Z',
+          source: 'live-api',
+          state: 'ok',
+          windows: [
+            {
+              id: 'primary',
+              label: '5h',
+              blocked: false,
+              group: '5h',
+              limitSeconds: 18_000,
+              remainingPercent: 75,
+              resetsAt: '2026-01-01T00:30:00.000Z',
+              scope: 'global',
+              usedPercent: 25,
+            },
+          ],
+        },
+      ],
+      new Date('2026-01-01T00:00:00.000Z'),
+    );
+
+    const views = buildProviderStatusViews(
+      payload({ generatedAt: '2026-01-01T01:00:00.000Z', datasets: { providerStatus } }),
+      [],
+      '2026-01-01T01:00:00.000Z',
+    );
+
+    expect(views[0]).toMatchObject({
+      nextResetAt: null,
+      sourceLabel: 'Stale live status',
+      provider: { source: 'live-api', state: 'stale' },
+    });
+  });
+
+  test('ignores malformed reset-credit payloads without crashing provider views', () => {
+    const providerStatus = createProviderStatusDataset(
+      [
+        {
+          key: 'codex',
+          label: 'Codex',
+          generatedAt: '2026-01-01T00:00:00.000Z',
+          source: 'live-api',
+          state: 'ok',
+          windows: [],
+        },
+      ],
+      new Date('2026-01-01T00:00:00.000Z'),
+    );
+
+    const views = buildProviderStatusViews(
+      payload({
+        datasets: {
+          providerStatus: {
+            ...providerStatus,
+            providers: [{ ...providerStatus.providers[0], resetCredits: {} }],
+          } as unknown as never,
+        },
+      }),
+      [row({ harness: 'Codex', provider: 'Codex sub' })],
+      FIXTURE_NOW,
+    );
+
+    expect(views).toHaveLength(1);
+    expect(views[0]?.provider).toMatchObject({ key: 'codex', source: 'unsupported' });
   });
 });

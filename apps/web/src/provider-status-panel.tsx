@@ -3,6 +3,7 @@ import { panel, panelHeader, panelSub, panelTitle } from '@ai-usage/design-syste
 import type { ProviderLimitWindow } from '@ai-usage/report-core/provider-status';
 import { For, Show } from 'solid-js';
 import type { ProviderStatusView } from './provider-status-model';
+import { providerProgressState } from './provider-status-progress';
 import { fmtDate, fmtPct } from './shared';
 
 const panelIntro = css({ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' });
@@ -83,18 +84,35 @@ const windowLabel = css({
 });
 const windowMeta = css({ color: 'muted', fontSize: '11px' });
 const barTrack = css({
+  appearance: 'none',
+  display: 'block',
+  w: 'full',
   h: '8px',
   borderRadius: 'full',
   bg: 'surface',
   overflow: 'hidden',
   border: '1px solid token(colors.line)',
+  '&::-webkit-progress-bar': { bg: 'surface', borderRadius: 'full' },
+  '&::-webkit-progress-value': { borderRadius: 'full' },
+  '&::-moz-progress-bar': { borderRadius: 'full' },
 });
-const barFill = css({ h: '100%', borderRadius: 'full' });
 const barTones: Record<ProviderStatusView['tone'], string> = {
-  critical: css({ bg: 'harness.claude.fg' }),
-  warning: css({ bg: 'accent' }),
-  muted: css({ bg: 'muted' }),
-  ok: css({ bg: 'harness.codex.fg' }),
+  critical: css({
+    '&::-webkit-progress-value': { bg: 'harness.claude.fg' },
+    '&::-moz-progress-bar': { bg: 'harness.claude.fg' },
+  }),
+  warning: css({
+    '&::-webkit-progress-value': { bg: 'accent' },
+    '&::-moz-progress-bar': { bg: 'accent' },
+  }),
+  muted: css({
+    '&::-webkit-progress-value': { bg: 'muted' },
+    '&::-moz-progress-bar': { bg: 'muted' },
+  }),
+  ok: css({
+    '&::-webkit-progress-value': { bg: 'harness.codex.fg' },
+    '&::-moz-progress-bar': { bg: 'harness.codex.fg' },
+  }),
 };
 const warningList = css({
   display: 'grid',
@@ -117,6 +135,24 @@ const windowAriaLabel = (providerLabel: string, window: ProviderLimitWindow) => 
       : `${window.remainingPercent.toFixed(0)} percent remaining`;
   const reset = window.resetsAt ? `resets ${fmtDate(window.resetsAt)}` : 'reset time unknown';
   return `${providerLabel} ${window.label}: ${used}, ${remaining}, ${reset}`;
+};
+
+const ProviderProgress = (props: {
+  providerLabel: string;
+  tone: ProviderStatusView['tone'];
+  window: ProviderLimitWindow;
+}) => {
+  const state = providerProgressState(props.window.usedPercent);
+  const progressProps = {
+    'aria-label': windowAriaLabel(props.providerLabel, props.window),
+    class: cx(barTrack, barTones[props.tone]),
+    max: 100,
+  };
+  return state.kind === 'determinate' ? (
+    <progress {...progressProps} value={state.value} />
+  ) : (
+    <progress {...progressProps} />
+  );
 };
 
 export const ProviderStatusPanel = (props: { providers: ProviderStatusView[] }) => (
@@ -177,19 +213,11 @@ export const ProviderStatusPanel = (props: { providers: ProviderStatusView[] }) 
                                   <span>{window.label}</span>
                                   <strong>{percentLabel(window)}</strong>
                                 </div>
-                                <div
-                                  aria-label={windowAriaLabel(view.provider.label, window)}
-                                  aria-valuemax="100"
-                                  aria-valuemin="0"
-                                  aria-valuenow={window.usedPercent ?? undefined}
-                                  class={barTrack}
-                                  role="progressbar"
-                                >
-                                  <div
-                                    class={cx(barFill, barTones[view.tone])}
-                                    style={{ width: `${window.usedPercent ?? 0}%` }}
-                                  />
-                                </div>
+                                <ProviderProgress
+                                  providerLabel={view.provider.label}
+                                  tone={view.tone}
+                                  window={window}
+                                />
                                 <div class={windowMeta}>
                                   <Show fallback="Reset time unknown" when={window.resetsAt}>
                                     {(resetsAt) => <>Resets {fmtDate(resetsAt())}</>}
