@@ -74,3 +74,14 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   await expect(page.getByRole('list', { name: 'Project summaries' })).toBeVisible();
   await expect(page.getByRole('table')).toHaveCount(0);
 });
+
+test('keeps sync limited to explicit file transfers', async ({ page }) => {
+  await page.goto('/sync');
+
+  await expect(page.getByRole('heading', { level: 1, name: 'Sync' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Export file' })).toBeVisible();
+  await expect(page.getByLabel('Import file')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Start LAN merge' })).toHaveCount(0);
+  await expect(page.getByLabel('Scan host')).toHaveCount(0);
+  await expect(page.getByText('Pair nearby machine')).toHaveCount(0);
+});
