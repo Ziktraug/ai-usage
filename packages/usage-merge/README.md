@@ -2,28 +2,33 @@
 
 ## Owns
 
-The future ai-usage LAN merge domain: adapting machine identity to LAN pairing, encoding ai-usage credential envelopes, trusted peer records, peer freshness state, peer bundle fetch/import orchestration, and first-merge behavior.
+File-based usage transfer orchestration: exporting local usage as a portable merge bundle, parsing and importing a merge bundle from another machine, mapping storage failures to a stable public error, and producing JSON-safe import/export results for app adapters.
 
 ## Does Not Own
 
-It does not own generic LAN pairing mechanics, SQLite schema internals, final report filtering/sorting/analytics, UI rendering, or raw local history collection.
+It does not own network discovery, LAN transport, pairing, peer credentials, SQLite schema internals, final report filtering/sorting/analytics, UI rendering, or raw local history collection.
 
 ## Public Interface
 
-Slice 0 documents the boundary only. Future slices will add Effect-level commands for starting/stopping LAN merge, reading `LanMergeState`, pairing peers, merging peers, forgetting peers, and reading peer statuses.
+`createUsageFileMergeService` creates a `UsageFileMergeService` with two Effect-based operations:
+
+- `exportManualMergeBundle` returns a local `UsageMergeBundle` and a suggested JSON filename.
+- `importManualMergeBundle` validates JSON text, rejects self-imports, imports rows idempotently, and returns count-based results.
+
+Failures use `UsageMergeError` with one of three reasons: `invalid-input`, `self-merge`, or `store-failed`.
 
 ## Depends On
 
-`@ai-usage/usage-merge` may depend on `@ai-usage/lan-pairing`, `@ai-usage/report-core`, `@ai-usage/usage-store`, and narrow local config/env helpers from `@ai-usage/local-collectors` if needed.
+`@ai-usage/usage-merge` depends on `@ai-usage/report-core` for merge bundle types and validation, `@ai-usage/usage-store` for persistence, and Effect for typed operations.
 
 ## Must Not Import
 
-It must not import app packages, CLI/web renderers, private package paths, or `@ai-usage/report-data` payload creation modules.
+It must not import network or pairing packages, local collectors, app packages, CLI/web renderers, private package paths, or `@ai-usage/report-data` payload creation modules.
 
 ## Data Boundary
 
-This package translates between generic LAN pairing credentials and ai-usage merge semantics. It moves `UsageMergeBundle` data into usage-store and exposes JSON-safe merge state to app server facades.
+This package accepts and returns typed `UsageMergeBundle` data. App adapters own reading uploaded text, downloading JSON, and resolving the local machine and usage-store path.
 
 ## Test Strategy
 
-Use fake LAN pairing, fake store, fake clock, and fake token/env adapters for state, pairing, merge, forget, and error-path tests.
+Use temporary SQLite databases and the public service to cover export naming, idempotent import, self-import rejection, and typed errors.
