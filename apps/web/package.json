@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@ai-usage/report-core": "workspace:*",
+    "@ai-usage/skills": "workspace:*",
     "@ai-usage/lan-pairing": "workspace:*",
     "@ai-usage/design-system": "workspace:*",
     "@ai-usage/local-collectors": "workspace:*",
@@ -24,7 +25,7 @@
     "vite-plugin-solid": "^2.11.12"
   },
   "scripts": {
-    "dev": "vite --host 127.0.0.1 --open",
+    "dev": "vite --host 127.0.0.1",
     "dev:prepare": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent",
     "dev:standalone": "bun --filter @ai-usage/design-system build && bun run dev:prepare && bun run dev",
     "build": "bun --filter @ai-usage/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit && rm -rf dist .output && vite build",

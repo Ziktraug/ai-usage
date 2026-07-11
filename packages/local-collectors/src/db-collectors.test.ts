@@ -501,7 +501,8 @@ describe('DB-backed Harness collectors', () => {
     expect(matched?.tokOut).toBe(5);
     expect(matched?.costQuota).toBe(1.5);
     expect(matched?.linesAdded).toBe(9);
-    expect(orphan?.source?.sourcePath).toBe(exportPath);
+    expect(orphan?.project).toBe('Cursor CSV import');
+    expect(orphan?.source?.sourcePath).toBeUndefined();
     expect(orphan?.costActual).toBe(0.4);
     expect(result.harnesses.find((harness) => harness.harness === 'cursor')?.rows).toHaveLength(2);
   });
