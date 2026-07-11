@@ -13,6 +13,7 @@ import { Route as SyncRouteImport } from './routes/sync'
 import { Route as SkillsRouteImport } from './routes/skills'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SkillsMatrixRouteImport } from './routes/skills.matrix'
+import { Route as SkillsGlobalRouteImport } from './routes/skills.global'
 import { Route as SkillsProjectsProjectKeyRouteImport } from './routes/skills.projects.$projectKey'
 import { Route as SkillsGlobalSkillNameRouteImport } from './routes/skills.global.$skillName'
 import { Route as SkillsProjectsProjectKeySkillNameRouteImport } from './routes/skills.projects.$projectKey.$skillName'
@@ -37,6 +38,11 @@ const SkillsMatrixRoute = SkillsMatrixRouteImport.update({
   path: '/matrix',
   getParentRoute: () => SkillsRoute,
 } as any)
+const SkillsGlobalRoute = SkillsGlobalRouteImport.update({
+  id: '/global',
+  path: '/global',
+  getParentRoute: () => SkillsRoute,
+} as any)
 const SkillsProjectsProjectKeyRoute =
   SkillsProjectsProjectKeyRouteImport.update({
     id: '/projects/$projectKey',
@@ -44,9 +50,9 @@ const SkillsProjectsProjectKeyRoute =
     getParentRoute: () => SkillsRoute,
   } as any)
 const SkillsGlobalSkillNameRoute = SkillsGlobalSkillNameRouteImport.update({
-  id: '/global/$skillName',
-  path: '/global/$skillName',
-  getParentRoute: () => SkillsRoute,
+  id: '/$skillName',
+  path: '/$skillName',
+  getParentRoute: () => SkillsGlobalRoute,
 } as any)
 const SkillsProjectsProjectKeySkillNameRoute =
   SkillsProjectsProjectKeySkillNameRouteImport.update({
@@ -59,6 +65,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/skills': typeof SkillsRouteWithChildren
   '/sync': typeof SyncRoute
+  '/skills/global': typeof SkillsGlobalRouteWithChildren
   '/skills/matrix': typeof SkillsMatrixRoute
   '/skills/global/$skillName': typeof SkillsGlobalSkillNameRoute
   '/skills/projects/$projectKey': typeof SkillsProjectsProjectKeyRouteWithChildren
@@ -68,6 +75,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/skills': typeof SkillsRouteWithChildren
   '/sync': typeof SyncRoute
+  '/skills/global': typeof SkillsGlobalRouteWithChildren
   '/skills/matrix': typeof SkillsMatrixRoute
   '/skills/global/$skillName': typeof SkillsGlobalSkillNameRoute
   '/skills/projects/$projectKey': typeof SkillsProjectsProjectKeyRouteWithChildren
@@ -78,6 +86,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/skills': typeof SkillsRouteWithChildren
   '/sync': typeof SyncRoute
+  '/skills/global': typeof SkillsGlobalRouteWithChildren
   '/skills/matrix': typeof SkillsMatrixRoute
   '/skills/global/$skillName': typeof SkillsGlobalSkillNameRoute
   '/skills/projects/$projectKey': typeof SkillsProjectsProjectKeyRouteWithChildren
@@ -89,6 +98,7 @@ export interface FileRouteTypes {
     | '/'
     | '/skills'
     | '/sync'
+    | '/skills/global'
     | '/skills/matrix'
     | '/skills/global/$skillName'
     | '/skills/projects/$projectKey'
@@ -98,6 +108,7 @@ export interface FileRouteTypes {
     | '/'
     | '/skills'
     | '/sync'
+    | '/skills/global'
     | '/skills/matrix'
     | '/skills/global/$skillName'
     | '/skills/projects/$projectKey'
@@ -107,6 +118,7 @@ export interface FileRouteTypes {
     | '/'
     | '/skills'
     | '/sync'
+    | '/skills/global'
     | '/skills/matrix'
     | '/skills/global/$skillName'
     | '/skills/projects/$projectKey'
@@ -149,6 +161,13 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof SkillsMatrixRouteImport
       parentRoute: typeof SkillsRoute
     }
+    '/skills/global': {
+      id: '/skills/global'
+      path: '/global'
+      fullPath: '/skills/global'
+      preLoaderRoute: typeof SkillsGlobalRouteImport
+      parentRoute: typeof SkillsRoute
+    }
     '/skills/projects/$projectKey': {
       id: '/skills/projects/$projectKey'
       path: '/projects/$projectKey'
@@ -158,10 +177,10 @@ declare module '@tanstack/solid-router' {
     }
     '/skills/global/$skillName': {
       id: '/skills/global/$skillName'
-      path: '/global/$skillName'
+      path: '/$skillName'
       fullPath: '/skills/global/$skillName'
       preLoaderRoute: typeof SkillsGlobalSkillNameRouteImport
-      parentRoute: typeof SkillsRoute
+      parentRoute: typeof SkillsGlobalRoute
     }
     '/skills/projects/$projectKey/$skillName': {
       id: '/skills/projects/$projectKey/$skillName'
@@ -172,6 +191,18 @@ declare module '@tanstack/solid-router' {
     }
   }
 }
+
+interface SkillsGlobalRouteChildren {
+  SkillsGlobalSkillNameRoute: typeof SkillsGlobalSkillNameRoute
+}
+
+const SkillsGlobalRouteChildren: SkillsGlobalRouteChildren = {
+  SkillsGlobalSkillNameRoute: SkillsGlobalSkillNameRoute,
+}
+
+const SkillsGlobalRouteWithChildren = SkillsGlobalRoute._addFileChildren(
+  SkillsGlobalRouteChildren,
+)
 
 interface SkillsProjectsProjectKeyRouteChildren {
   SkillsProjectsProjectKeySkillNameRoute: typeof SkillsProjectsProjectKeySkillNameRoute
@@ -189,14 +220,14 @@ const SkillsProjectsProjectKeyRouteWithChildren =
   )
 
 interface SkillsRouteChildren {
+  SkillsGlobalRoute: typeof SkillsGlobalRouteWithChildren
   SkillsMatrixRoute: typeof SkillsMatrixRoute
-  SkillsGlobalSkillNameRoute: typeof SkillsGlobalSkillNameRoute
   SkillsProjectsProjectKeyRoute: typeof SkillsProjectsProjectKeyRouteWithChildren
 }
 
 const SkillsRouteChildren: SkillsRouteChildren = {
+  SkillsGlobalRoute: SkillsGlobalRouteWithChildren,
   SkillsMatrixRoute: SkillsMatrixRoute,
-  SkillsGlobalSkillNameRoute: SkillsGlobalSkillNameRoute,
   SkillsProjectsProjectKeyRoute: SkillsProjectsProjectKeyRouteWithChildren,
 }
 

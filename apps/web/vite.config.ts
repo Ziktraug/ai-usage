@@ -3,6 +3,7 @@ import { tanstackStart } from '@tanstack/solid-start/plugin/vite';
 import { nitro } from 'nitro/vite';
 import { defineConfig, type Plugin } from 'vite';
 import solid from 'vite-plugin-solid';
+import { createRetryableWarmup } from './vite-warmup';
 
 type ManualMergeServerModule = typeof import('./src/server/lan-merge.server');
 const manualMergeServerModuleUrl = new URL('./src/server/lan-merge.server.ts', import.meta.url).href;
@@ -73,8 +74,6 @@ const tanStackServerFunctionWarmupPlugin = (): Plugin => ({
   name: 'ai-usage-tanstack-server-fn-warmup',
   apply: 'serve',
   configureServer(server) {
-    let warmupPromise: Promise<void> | undefined;
-
     const warmup = async () => {
       const ssrEnvironment = server.environments.ssr;
       if (!ssrEnvironment) {
@@ -87,10 +86,7 @@ const tanStackServerFunctionWarmupPlugin = (): Plugin => ({
       }
     };
 
-    const ensureWarmup = () => {
-      warmupPromise ??= warmup();
-      return warmupPromise;
-    };
+    const ensureWarmup = createRetryableWarmup(warmup);
 
     server.middlewares.use(async (req, _res, next) => {
       if (!req.url?.startsWith('/_serverFn/')) {

@@ -18,9 +18,10 @@ import {
   strongCell,
 } from '@ai-usage/design-system/report';
 import type { ProjectSkillInventory, SkillDiagnostic, SkillManagementSnapshot, SourceSkill } from '@ai-usage/skills';
-import { createEffect, createMemo, createSignal, For, type JSX, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, type JSX, onCleanup, Show } from 'solid-js';
 import { type ProjectRuntimeDirId, projectSkillDirectories } from './project-skill-directories';
 import { getManagedSkillMarkdown, getProjectSkillMarkdown, saveManagedSkillMarkdown } from './server/skills';
+import { createSkillMarkdownEditorController, runSkillMarkdownEditorAction } from './skill-markdown-editor-model';
 import {
   buildGlobalSkillExposure,
   buildProjectSkillRows,
@@ -41,21 +42,6 @@ import {
 } from './skills-page-model';
 import { SkillSelectionLink } from './skills-selection-link';
 import type { ProjectInventoriesResult } from './skills-workspace';
-
-type SkillMarkdownResult =
-  | { ok: true; data: { content: string; path: string; sha256: string; skillName: string } }
-  | { ok: false; error: { message: string; tag: string } };
-
-type SkillMarkdownSaveResult =
-  | {
-      ok: true;
-      data: {
-        document?: { content: string; path: string; sha256: string; skillName: string };
-        reason?: 'conflict' | 'not-found' | 'too-large';
-        snapshot?: SkillManagementSnapshot;
-      };
-    }
-  | { ok: false; error: { message: string; tag: string } };
 
 type ProjectSkillMarkdownResult =
   | { ok: true; data: { content: string; path: string; skillName: string; truncated: boolean } }
@@ -618,88 +604,23 @@ const GlobalSkillDetail = (props: {
 };
 
 const SkillMarkdownEditor = (props: { onSnapshot: (snapshot: SkillManagementSnapshot) => void; skillName: string }) => {
-  const [editing, setEditing] = createSignal(false);
-  const [draft, setDraft] = createSignal('');
-  const [message, setMessage] = createSignal<string | null>(null);
-  const [document, setDocument] = createSignal<SkillMarkdownResult>();
-  const [documentLoading, setDocumentLoading] = createSignal(false);
-  let documentRequestId = 0;
-
-  const loadMarkdown = (skillName: string) => {
-    documentRequestId += 1;
-    const requestId = documentRequestId;
-    setDocumentLoading(true);
-    getManagedSkillMarkdown({ data: skillName })
-      .then((result) => {
-        if (requestId === documentRequestId) {
-          setDocument(result as SkillMarkdownResult);
-        }
-      })
-      .catch((error: unknown) => {
-        if (requestId === documentRequestId) {
-          setDocument(errorResult(error));
-        }
-      })
-      .finally(() => {
-        if (requestId === documentRequestId) {
-          setDocumentLoading(false);
-        }
-      });
-  };
+  const controller = createSkillMarkdownEditorController({
+    loadMarkdown: (skillName) => getManagedSkillMarkdown({ data: skillName }),
+    onSnapshot: (snapshot) => props.onSnapshot(snapshot),
+    saveMarkdown: (input) => saveManagedSkillMarkdown({ data: input }),
+  });
+  const [editorState, setEditorState] = createSignal(controller.getState());
+  const unsubscribe = controller.subscribe((state) => setEditorState(state));
+  onCleanup(unsubscribe);
 
   createEffect(() => {
-    loadMarkdown(props.skillName);
+    runSkillMarkdownEditorAction(controller, () => controller.select(props.skillName)).catch(
+      controller.reportUnexpectedError,
+    );
   });
 
-  const markdownDocument = createMemo(() => {
-    const current = document();
-    return current?.ok ? current.data : undefined;
-  });
-  const markdownError = createMemo(() => {
-    const current = document();
-    return current?.ok === false ? current.error.message : 'SKILL.md unavailable.';
-  });
-
-  createEffect(() => {
-    const current = markdownDocument();
-    if (current && !editing()) {
-      setDraft(current.content);
-    }
-  });
-
-  const saveMarkdown = async () => {
-    const current = markdownDocument();
-    if (!current) {
-      return;
-    }
-    setMessage(null);
-    const result = (await saveManagedSkillMarkdown({
-      data: { baseSha256: current.sha256, content: draft(), skillName: props.skillName },
-    })) as SkillMarkdownSaveResult;
-    if (!result.ok) {
-      setMessage(result.error.message);
-      return;
-    }
-    if (result.data.reason === 'conflict') {
-      setMessage('File changed on disk - reload the skill and reapply your edit.');
-      return;
-    }
-    if (result.data.reason) {
-      setMessage(`Could not save SKILL.md: ${result.data.reason}.`);
-      return;
-    }
-    if (result.data.document) {
-      setDocument({ ok: true, data: result.data.document });
-      setDraft(result.data.document.content);
-    } else {
-      loadMarkdown(props.skillName);
-    }
-    if (result.data.snapshot) {
-      props.onSnapshot(result.data.snapshot);
-    }
-    setEditing(false);
-    setMessage('SKILL.md saved.');
-  };
+  const markdownDocument = createMemo(() => editorState().document);
+  const markdownError = createMemo(() => editorState().error ?? 'SKILL.md unavailable.');
 
   return (
     <section class={section}>
@@ -708,7 +629,7 @@ const SkillMarkdownEditor = (props: { onSnapshot: (snapshot: SkillManagementSnap
         <p class={panelSub}>Writes to the source repository only, never into runtime folders.</p>
       </div>
       <Show
-        fallback={documentLoading() ? <MarkdownLoading /> : <p class={meta}>{markdownError()}</p>}
+        fallback={editorState().loading ? <MarkdownLoading /> : <p class={meta}>{markdownError()}</p>}
         when={markdownDocument()}
       >
         {(current) => (
@@ -716,29 +637,35 @@ const SkillMarkdownEditor = (props: { onSnapshot: (snapshot: SkillManagementSnap
             fallback={
               <>
                 <MarkdownPreview content={current().content} />
-                <button class={ghostButton} onClick={() => setEditing(true)} type="button">
+                <button class={ghostButton} onClick={controller.startEditing} type="button">
                   Edit
                 </button>
               </>
             }
-            when={editing()}
+            when={editorState().editing}
           >
             <textarea
-              aria-label={`${props.skillName} SKILL.md`}
+              aria-label={`${editorState().skillName} SKILL.md`}
               class={editorArea}
-              onInput={(event) => setDraft(event.currentTarget.value)}
-              value={draft()}
+              onInput={(event) => controller.setDraft(event.currentTarget.value)}
+              value={editorState().draft}
             />
             <div class={actionRow}>
-              <button class={commandButton} onClick={saveMarkdown} type="button">
+              <button
+                aria-busy={editorState().saving ? 'true' : undefined}
+                class={commandButton}
+                disabled={editorState().saving}
+                onClick={async () => {
+                  await runSkillMarkdownEditorAction(controller, controller.save);
+                }}
+                type="button"
+              >
                 Save
               </button>
               <button
                 class={ghostButton}
-                onClick={() => {
-                  setDraft(current().content);
-                  setEditing(false);
-                }}
+                disabled={editorState().saving}
+                onClick={controller.cancelEditing}
                 type="button"
               >
                 Cancel
@@ -747,7 +674,7 @@ const SkillMarkdownEditor = (props: { onSnapshot: (snapshot: SkillManagementSnap
           </Show>
         )}
       </Show>
-      <Show when={message()}>{(value) => <p class={meta}>{value()}</p>}</Show>
+      <Show when={editorState().message}>{(value) => <p class={meta}>{value()}</p>}</Show>
     </section>
   );
 };

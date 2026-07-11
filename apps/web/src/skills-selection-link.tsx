@@ -16,7 +16,13 @@ export const SkillSelectionLink = (props: {
   const selectedFlag = () => (props.selected ? 'true' : undefined);
   if (props.selection.type === 'global-scope') {
     return (
-      <Link class={props.class} data-selected={selectedFlag()} resetScroll={false} title={props.title} to="/skills">
+      <Link
+        class={props.class}
+        data-selected={selectedFlag()}
+        resetScroll={false}
+        title={props.title}
+        to="/skills/global"
+      >
         {props.children}
       </Link>
     );

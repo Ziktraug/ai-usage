@@ -1,12 +1,11 @@
 import { createServerFn } from '@tanstack/solid-start';
 import { type ProjectRuntimeDirId, projectSkillDirectories } from '../project-skill-directories';
+import { skillNameInputForClient, targetIdInputForClient } from './skill-input-validation';
 
 export type { KnownSkillProjectPath } from './skills.server';
 
 type JsonRecord = Record<string, unknown>;
 
-const skillNamePattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const targetIdPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const sha256Pattern = /^[a-f0-9]{64}$/;
 const maxSkillMarkdownBytes = 256 * 1024;
 
@@ -34,13 +33,6 @@ const parseOptionalStringArray = (input: unknown, label: string): readonly strin
   return input;
 };
 
-const parseSkillNameInput = (input: unknown): string => {
-  if (typeof input !== 'string' || !skillNamePattern.test(input)) {
-    throw new Error('skill name must be lowercase kebab-case');
-  }
-  return input;
-};
-
 const parseSkillConfigInputForClient = (input: unknown) => {
   const record = assertRecord(input, 'skills config');
   if (record.sourceRepoPath !== undefined) {
@@ -61,17 +53,13 @@ const parseSkillToggleInputForClient = (input: unknown) => {
   }
   return {
     enabled: record.enabled,
-    skillName: parseSkillNameInput(record.skillName),
+    skillName: skillNameInputForClient(record.skillName),
   };
 };
 
 const parseSkillTargetDirectoryInputForClient = (input: unknown) => {
   const record = assertRecord(input, 'skill target directory input');
-  const targetId = record.targetId;
-  if (typeof targetId !== 'string' || !targetIdPattern.test(targetId)) {
-    throw new Error('target id must be lowercase kebab-case');
-  }
-  return { targetId };
+  return { targetId: targetIdInputForClient(record.targetId) };
 };
 
 const parseSkillMarkdownWriteInputForClient = (input: unknown) => {
@@ -90,7 +78,7 @@ const parseSkillMarkdownWriteInputForClient = (input: unknown) => {
   return {
     baseSha256,
     content,
-    skillName: parseSkillNameInput(record.skillName),
+    skillName: skillNameInputForClient(record.skillName),
   };
 };
 
@@ -117,7 +105,7 @@ export const toggleManagedSkill = createServerFn({ method: 'POST' })
   );
 
 export const reconcileManagedSkill = createServerFn({ method: 'POST' })
-  .validator((input) => parseSkillNameInput(input))
+  .validator((input) => skillNameInputForClient(input))
   .handler(({ data }) =>
     import('./skills.server').then(({ reconcileSkillForServer }) => reconcileSkillForServer(data)),
   );
@@ -162,7 +150,7 @@ const parseProjectSkillMarkdownInput = (input: unknown) => {
   return {
     projectPath,
     runtimeDirId: runtimeDirId as ProjectRuntimeDirId,
-    skillName: parseSkillNameInput(record.skillName),
+    skillName: skillNameInputForClient(record.skillName),
   };
 };
 
@@ -173,7 +161,7 @@ export const getProjectSkillMarkdown = createServerFn({ method: 'GET' })
   );
 
 export const getManagedSkillMarkdown = createServerFn({ method: 'POST' })
-  .validator((input) => parseSkillNameInput(input))
+  .validator((input) => skillNameInputForClient(input))
   .handler(({ data }) =>
     import('./skills.server').then(({ readSkillMarkdownForServer }) => readSkillMarkdownForServer(data)),
   );

@@ -10,6 +10,7 @@ import { SkillsMatrix } from './skills-matrix';
 import {
   buildSkillHealthSummary,
   buildSkillTree,
+  defaultSkillSelection,
   groupUnmanagedEntries,
   type KnownProjectScope,
   type ReconcilePlanSummary,
@@ -125,7 +126,7 @@ export const SkillsWorkspace = (props: {
         return routeSelection;
       }
     }
-    return { type: 'global-scope' };
+    return defaultSkillSelection(tree());
   });
   const [expandedKeys, setExpandedKeys] = createSignal<ReadonlySet<string>>(
     new Set(['global', scopeKeyForSelection(selection())]),
@@ -146,7 +147,7 @@ export const SkillsWorkspace = (props: {
       return;
     }
     if (!selectionExists(treeKeys(), routeSelection)) {
-      navigate({ replace: true, to: '/skills' });
+      navigate({ replace: true, to: '/skills/global' });
     }
   });
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -7,6 +7,7 @@ import {
   localProjectRootExists,
   projectSkillMarkdownInputFrom,
   projectSkillScanPathsFrom,
+  readBoundedProjectSkillMarkdownFile,
   readProjectSkillMarkdownForServer,
   skillConfigInputFrom,
   skillMarkdownWriteInputFrom,
@@ -14,6 +15,49 @@ import {
   skillTargetDirectoryInputFrom,
   skillToggleInputFrom,
 } from './skills.server';
+
+test('bounded project markdown reads consume short reads through one regular-file handle', async () => {
+  const content = Buffer.from('abcdefgh');
+  let closed = false;
+  const result = await readBoundedProjectSkillMarkdownFile('/project/SKILL.md', 6, {
+    openFile: () =>
+      Promise.resolve({
+        close: () => {
+          closed = true;
+          return Promise.resolve();
+        },
+        read: (buffer, offset, length, position) => {
+          const bytesRead = Math.min(2, length, content.length - position);
+          if (bytesRead > 0) {
+            content.copy(buffer, offset, position, position + bytesRead);
+          }
+          return Promise.resolve({ buffer, bytesRead });
+        },
+        stat: () => Promise.resolve({ isFile: () => true, size: content.length }),
+      }),
+  });
+
+  expect(result).toEqual({ content: 'abcdef', truncated: true });
+  expect(closed).toBe(true);
+});
+
+test('bounded project markdown reads reject non-regular file handles', async () => {
+  let closed = false;
+  await expect(
+    readBoundedProjectSkillMarkdownFile('/project/SKILL.md', 6, {
+      openFile: () =>
+        Promise.resolve({
+          close: () => {
+            closed = true;
+            return Promise.resolve();
+          },
+          read: (buffer) => Promise.resolve({ buffer, bytesRead: 0 }),
+          stat: () => Promise.resolve({ isFile: () => false, size: 0 }),
+        }),
+    }),
+  ).rejects.toThrow('regular file');
+  expect(closed).toBe(true);
+});
 
 const writeProjectSkill = async (directory: string, name: string, content = `# ${name}\n`) => {
   await mkdir(directory, { recursive: true });
@@ -35,6 +79,7 @@ describe('skills server input validation', () => {
 
   test('rejects invalid skill names, target ids, and boolean toggles', () => {
     expect(() => skillNameInputFrom({ skillName: 'Example Skill' })).toThrow('skill name');
+    expect(() => skillNameInputFrom({ skillName: '1-example-skill' })).toThrow('skill name');
     expect(() => skillTargetDirectoryInputFrom({ targetId: 'codex/skills' })).toThrow('target id');
     expect(() => skillToggleInputFrom({ skillName: 'example-skill', enabled: 'false' })).toThrow('enabled');
   });
@@ -413,6 +458,42 @@ describe('skills server input validation', () => {
     }
   });
 
+  test('reads project markdown projected from the configured source repository', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-project-markdown-source-link-'));
+    try {
+      const projectPath = path.join(root, 'project');
+      const sourceRepoPath = path.join(root, 'source');
+      const sourceSkillPath = path.join(sourceRepoPath, 'skills', 'example-skill');
+      const projectSkillsPath = path.join(projectPath, '.claude', 'skills');
+      await writeProjectSkill(sourceSkillPath, 'example-skill', '# Shared source\n');
+      await mkdir(projectSkillsPath, { recursive: true });
+      await symlink(sourceSkillPath, path.join(projectSkillsPath, 'example-skill'), 'dir');
+
+      const result = await readProjectSkillMarkdownForServer(
+        {
+          projectPath,
+          runtimeDirId: 'claude-project',
+          skillName: 'example-skill',
+        },
+        {
+          loadConfig: async () => ({ skills: { projectPaths: [projectPath], sourceRepoPath } }) as never,
+          readKnownProjectPaths: async () => ({ ok: true, data: [] }),
+        },
+      );
+
+      expect(result).toMatchObject({
+        data: {
+          skillName: 'example-skill',
+          truncated: false,
+        },
+        ok: true,
+      });
+      expect(result.ok ? result.data.content : '').toContain('# Shared source');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test('rejects project markdown reads for foreign project paths', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-project-markdown-foreign-'));
     try {
@@ -433,6 +514,65 @@ describe('skills server input validation', () => {
       );
 
       expect(result).toMatchObject({ ok: false, error: { message: 'project path is not allowed' } });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects project markdown reads whose observed skill resolves outside the allowed project', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-project-markdown-symlink-'));
+    try {
+      const projectPath = path.join(root, 'project');
+      const foreignSkillPath = path.join(root, 'foreign', 'example-skill');
+      const projectSkillsPath = path.join(projectPath, '.claude', 'skills');
+      await writeProjectSkill(foreignSkillPath, 'example-skill', '# Foreign secret\n');
+      await mkdir(projectSkillsPath, { recursive: true });
+      await symlink(foreignSkillPath, path.join(projectSkillsPath, 'example-skill'), 'dir');
+
+      const result = await readProjectSkillMarkdownForServer(
+        {
+          projectPath,
+          runtimeDirId: 'claude-project',
+          skillName: 'example-skill',
+        },
+        {
+          loadConfig: async () => ({ skills: { projectPaths: [projectPath] } }) as never,
+          readKnownProjectPaths: async () => ({ ok: true, data: [] }),
+        },
+      );
+
+      expect(result).toMatchObject({
+        error: { message: 'project skill markdown is not readable' },
+        ok: false,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects owned project markdown whose SKILL.md is an external symlink', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-project-markdown-file-symlink-'));
+    try {
+      const projectPath = path.join(root, 'project');
+      const foreignSkillPath = path.join(root, 'foreign', 'example-skill');
+      const ownedSkillPath = path.join(projectPath, '.claude', 'skills', 'example-skill');
+      await writeProjectSkill(foreignSkillPath, 'example-skill', '# Foreign secret\n');
+      await mkdir(ownedSkillPath, { recursive: true });
+      await symlink(path.join(foreignSkillPath, 'SKILL.md'), path.join(ownedSkillPath, 'SKILL.md'), 'file');
+
+      const result = await readProjectSkillMarkdownForServer(
+        {
+          projectPath,
+          runtimeDirId: 'claude-project',
+          skillName: 'example-skill',
+        },
+        {
+          loadConfig: async () => ({ skills: { projectPaths: [projectPath] } }) as never,
+          readKnownProjectPaths: async () => ({ ok: true, data: [] }),
+        },
+      );
+
+      expect(result).toMatchObject({ ok: false });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

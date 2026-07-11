@@ -139,10 +139,10 @@ export const SkillsContextPanel = (props: {
     navigate({ to: '/skills/matrix' });
   };
   const toggleMatrix = () => {
-    navigate({ to: props.matrixOpen ? '/skills' : '/skills/matrix' });
+    navigate({ to: props.matrixOpen ? '/skills/global' : '/skills/matrix' });
   };
   const openOverview = () => {
-    navigate({ to: '/skills' });
+    navigate({ to: '/skills/global' });
   };
   const health = createMemo(() => buildSkillHealthSummary(props.snapshot));
   const inventories = createMemo(() => (props.projectInventories?.ok ? props.projectInventories.data : []));

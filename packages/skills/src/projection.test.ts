@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { lstat, mkdir, mkdtemp, readlink, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -132,4 +132,143 @@ describe('target observation and projections', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  test('refuses to repair a symlink that changed after it was observed', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-project-'));
+    try {
+      const sourcePath = path.join(root, 'source', 'skills', 'example-skill');
+      const firstForeignPath = path.join(root, 'first-foreign');
+      const secondForeignPath = path.join(root, 'second-foreign');
+      const targetPath = path.join(root, 'target');
+      const projectedPath = path.join(targetPath, 'example-skill');
+      await mkdir(sourcePath, { recursive: true });
+      await mkdir(firstForeignPath);
+      await mkdir(secondForeignPath);
+      await mkdir(targetPath);
+      await symlink(firstForeignPath, projectedPath);
+
+      const skill = makeSkill({ path: sourcePath, skillMdPath: path.join(sourcePath, 'SKILL.md') });
+      const target = makeTarget(targetPath);
+      const scan = await scanTargetProjections({ skills: [skill], targets: [target] });
+      const action = planProjection(skill, target, scan.projections[0]);
+      await rm(projectedPath);
+      await symlink(secondForeignPath, projectedPath);
+
+      await expect(applyProjectionAction(action)).rejects.toThrow('changed');
+      await expect(readlink(projectedPath)).resolves.toBe(secondForeignPath);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('preserves the observed symlink when creating its replacement fails', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-project-'));
+    try {
+      const sourcePath = path.join(root, 'source', 'skills', 'example-skill');
+      const foreignPath = path.join(root, 'foreign');
+      const targetPath = path.join(root, 'target');
+      const projectedPath = path.join(targetPath, 'example-skill');
+      await mkdir(sourcePath, { recursive: true });
+      await mkdir(foreignPath);
+      await mkdir(targetPath);
+      await symlink(foreignPath, projectedPath);
+
+      const skill = makeSkill({ path: sourcePath, skillMdPath: path.join(sourcePath, 'SKILL.md') });
+      const target = makeTarget(targetPath);
+      const scan = await scanTargetProjections({ skills: [skill], targets: [target] });
+      const action = planProjection(skill, target, scan.projections[0]);
+      if (action.type !== 'repair-symlink') {
+        throw new Error('expected a repair action');
+      }
+
+      await expect(applyProjectionAction({ ...action, sourcePath: '\0invalid' })).rejects.toThrow();
+      await expect(readlink(projectedPath)).resolves.toBe(foreignPath);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('never overwrites an interloper created during the claim-install gap', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-interloper-'));
+    try {
+      const sourcePath = path.join(root, 'source', 'skills', 'example-skill');
+      const foreignPath = path.join(root, 'foreign');
+      const interloperPath = path.join(root, 'interloper');
+      const targetPath = path.join(root, 'target');
+      const projectedPath = path.join(targetPath, 'example-skill');
+      await mkdir(sourcePath, { recursive: true });
+      await mkdir(foreignPath);
+      await mkdir(interloperPath);
+      await mkdir(targetPath);
+      await symlink(foreignPath, projectedPath);
+      const skill = makeSkill({ path: sourcePath, skillMdPath: path.join(sourcePath, 'SKILL.md') });
+      const target = makeTarget(targetPath);
+      const scan = await scanTargetProjections({ skills: [skill], targets: [target] });
+      const action = planProjection(skill, target, scan.projections[0]);
+      const readyPath = path.join(root, 'interloper-ready');
+      const subprocess = Bun.spawn(
+        [
+          process.execPath,
+          path.join(import.meta.dir, 'test-fixtures', 'projection-interloper-subprocess.ts'),
+          projectedPath,
+          interloperPath,
+          readyPath,
+        ],
+        { stderr: 'pipe', stdout: 'pipe' },
+      );
+      while (true) {
+        try {
+          await lstat(readyPath);
+          break;
+        } catch {
+          await Bun.sleep(1);
+        }
+      }
+
+      await expect(applyProjectionAction(action)).rejects.toThrow();
+      expect(await subprocess.exited).toBe(0);
+      await expect(readlink(projectedPath)).resolves.toBe(interloperPath);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  for (const actionKind of ['repair', 'unlink'] as const) {
+    for (const replacementKind of ['directory', 'file'] as const) {
+      test(`leaves a stale ${replacementKind} visible when a planned ${actionKind} target changed`, async () => {
+        const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-stale-entry-'));
+        try {
+          const sourcePath = path.join(root, 'source', 'skills', 'example-skill');
+          const foreignPath = path.join(root, 'foreign');
+          const targetPath = path.join(root, 'target');
+          const projectedPath = path.join(targetPath, 'example-skill');
+          await mkdir(sourcePath, { recursive: true });
+          await mkdir(foreignPath);
+          await mkdir(targetPath);
+          await symlink(actionKind === 'repair' ? foreignPath : sourcePath, projectedPath);
+          const skill = makeSkill({
+            enabled: actionKind !== 'unlink',
+            path: sourcePath,
+            skillMdPath: path.join(sourcePath, 'SKILL.md'),
+          });
+          const target = makeTarget(targetPath);
+          const scan = await scanTargetProjections({ skills: [skill], targets: [target] });
+          const action = planProjection(skill, target, scan.projections[0]);
+          await rm(projectedPath);
+          if (replacementKind === 'directory') {
+            await mkdir(projectedPath);
+          } else {
+            await writeFile(projectedPath, 'stale external file', 'utf8');
+          }
+
+          await expect(applyProjectionAction(action)).rejects.toThrow('changed');
+          const replacementStat = await lstat(projectedPath);
+          expect(replacementKind === 'directory' ? replacementStat.isDirectory() : replacementStat.isFile()).toBe(true);
+          expect((await readdir(targetPath)).some((entry) => entry.endsWith('.old'))).toBe(false);
+        } finally {
+          await rm(root, { recursive: true, force: true });
+        }
+      });
+    }
+  }
 });
