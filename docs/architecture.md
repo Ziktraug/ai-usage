@@ -91,6 +91,11 @@ Owns the native skill-management control plane exposed through `/skills`:
 - agent-runtime target scans, projection planning/apply, and mutation safety checks;
 - workflow functions that compose config, source state, source scans, target observations, and diagnostics.
 
+The package root is an explicit stable facade. Internally, contracts/config,
+filesystem safety, source state, source and project scans, Markdown IO,
+projections, and application workflows are separate modules. Internal modules
+depend on those narrow seams rather than importing the package facade.
+
 User-local skill configuration lives under `~/.config/ai-usage/config.json` through the existing ai-usage config path. Portable source repository state lives in the configured source repository as JSON data, not executable TypeScript.
 
 Skill inventory is local-machine scoped. This package must not use synced or manually imported rows, snapshots from other machines, or remote machine ids to decide which repositories to scan. Repository discovery can use explicit config and locally observed project paths, but broad root scans must be opt-in and no personal directory convention such as `~/Projects` may become a default.
@@ -145,6 +150,6 @@ See `docs/generated-tooling-ownership.md` for generated Panda/TanStack/Nitro own
 - Cross-package imports must use package exports documented in `docs/public-package-interfaces.md`.
 - Relative workspace paths such as `../../packages/...` and `../apps/...` are forbidden.
 - Private package paths such as `@ai-usage/report-core/src/...` are forbidden.
-- Package graph boundaries for file-based merge are enforced by `tools/check-package-boundaries.ts`; Biome separately blocks private and relative workspace imports.
+- Package graph boundaries for file-based merge and the independent skills control plane are enforced by `tools/check-package-boundaries.ts`; Biome separately blocks private and relative workspace imports.
 - The package graph policy follows the ownership READMEs in each app/package directory.
 - `bun run lint` runs Biome restricted-import rules, `tools/check-workspace-relative-paths.ts`, `tools/check-public-package-exports.ts`, and `tools/check-package-boundaries.ts`.

@@ -281,52 +281,55 @@ const readCodexThreadMetadata: Effect.Effect<
       return new Map<string, CodexThreadMetadata>();
     }
 
-    return yield* Effect.gen(function* () {
-      const db = yield* withPerfSpan('aiUsage.collect.codex.threadMetadata.open', storage.openDatabase(dbPath));
-      const rows = yield* withPerfSpan(
-        'aiUsage.collect.codex.threadMetadata.threads',
-        db.all<CodexThreadMetadataRow>(THREAD_METADATA_SQL),
-        (value) => ({ rows: value.length }),
-      );
-      const edges = yield* withPerfSpan(
-        'aiUsage.collect.codex.threadMetadata.edges',
-        db.all<CodexThreadSpawnEdgeRow>(THREAD_SPAWN_EDGES_SQL),
-        (value) => ({ rows: value.length }),
-      );
-      yield* db.close;
+    return yield* Effect.acquireUseRelease(
+      withPerfSpan('aiUsage.collect.codex.threadMetadata.open', storage.openDatabase(dbPath)),
+      (db) =>
+        Effect.gen(function* () {
+          const rows = yield* withPerfSpan(
+            'aiUsage.collect.codex.threadMetadata.threads',
+            db.all<CodexThreadMetadataRow>(THREAD_METADATA_SQL),
+            (value) => ({ rows: value.length }),
+          );
+          const edges = yield* withPerfSpan(
+            'aiUsage.collect.codex.threadMetadata.edges',
+            db.all<CodexThreadSpawnEdgeRow>(THREAD_SPAWN_EDGES_SQL),
+            (value) => ({ rows: value.length }),
+          );
 
-      const parents = new Map<string, string>();
-      for (const edge of edges) {
-        const child = nonEmpty(edge.child);
-        const parent = nonEmpty(edge.parent);
-        if (child && parent) {
-          parents.set(child, parent);
-        }
-      }
+          const parents = new Map<string, string>();
+          for (const edge of edges) {
+            const child = nonEmpty(edge.child);
+            const parent = nonEmpty(edge.parent);
+            if (child && parent) {
+              parents.set(child, parent);
+            }
+          }
 
-      const metadata = new Map<string, CodexThreadMetadata>();
-      for (const row of rows) {
-        const id = nonEmpty(row.id);
-        if (!id) {
-          continue;
-        }
-        metadata.set(id, {
-          id,
-          parent: parents.get(id) ?? null,
-          cwd: nonEmpty(row.cwd),
-          title: nonEmpty(row.title),
-          firstUser: nonEmpty(row.firstUser),
-          source: nonEmpty(row.source),
-          threadSource: nonEmpty(row.threadSource),
-          agentNickname: agentNicknameFromSource(row.source),
-          model: nonEmpty(row.model),
-          start: unixDate(row.createdAt),
-          end: unixDate(row.updatedAt),
-        });
-      }
+          const metadata = new Map<string, CodexThreadMetadata>();
+          for (const row of rows) {
+            const id = nonEmpty(row.id);
+            if (!id) {
+              continue;
+            }
+            metadata.set(id, {
+              id,
+              parent: parents.get(id) ?? null,
+              cwd: nonEmpty(row.cwd),
+              title: nonEmpty(row.title),
+              firstUser: nonEmpty(row.firstUser),
+              source: nonEmpty(row.source),
+              threadSource: nonEmpty(row.threadSource),
+              agentNickname: agentNicknameFromSource(row.source),
+              model: nonEmpty(row.model),
+              start: unixDate(row.createdAt),
+              end: unixDate(row.updatedAt),
+            });
+          }
 
-      return metadata;
-    }).pipe(Effect.catchAll(() => Effect.succeed(new Map<string, CodexThreadMetadata>())));
+          return metadata;
+        }),
+      (db) => db.close,
+    ).pipe(Effect.catchAll(() => Effect.succeed(new Map<string, CodexThreadMetadata>())));
   }),
   (metadata) => ({ rows: metadata.size }),
 );
@@ -461,31 +464,40 @@ const loadCodexSessionCache = async (storage: LocalHistoryStorageService) => {
   const dbPath = codexSessionCachePath(storage);
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new Database(dbPath) as SqliteDatabase;
-  db.exec('PRAGMA busy_timeout = 5000');
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS codex_session_cache (
-      version INTEGER NOT NULL,
-      file_path TEXT PRIMARY KEY,
-      size INTEGER NOT NULL,
-      mtime_ms REAL NOT NULL,
-      session_json TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_codex_session_cache_version ON codex_session_cache(version);
-  `);
+  try {
+    db.exec('PRAGMA busy_timeout = 5000');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS codex_session_cache (
+        version INTEGER NOT NULL,
+        file_path TEXT PRIMARY KEY,
+        size INTEGER NOT NULL,
+        mtime_ms REAL NOT NULL,
+        session_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_codex_session_cache_version ON codex_session_cache(version);
+    `);
 
-  const entries = new Map<string, CachedCodexSessionRecord>();
-  for (const row of db
-    .query('SELECT file_path, size, mtime_ms, session_json FROM codex_session_cache WHERE version = ?')
-    .all(CODEX_SESSION_CACHE_VERSION) as CodexSessionCacheRow[]) {
-    const session = reviveCachedSession(row.session_json);
-    if (!session) {
-      continue;
+    const entries = new Map<string, CachedCodexSessionRecord>();
+    for (const row of db
+      .query('SELECT file_path, size, mtime_ms, session_json FROM codex_session_cache WHERE version = ?')
+      .all(CODEX_SESSION_CACHE_VERSION) as CodexSessionCacheRow[]) {
+      const session = reviveCachedSession(row.session_json);
+      if (!session) {
+        continue;
+      }
+      entries.set(row.file_path, { mtimeMs: row.mtime_ms, session, size: row.size });
     }
-    entries.set(row.file_path, { mtimeMs: row.mtime_ms, session, size: row.size });
-  }
 
-  return { db, entries };
+    return { db, entries };
+  } catch (error) {
+    try {
+      db.close();
+    } catch {
+      // Preserve the initialization error; there is no usable cache to return.
+    }
+    throw error;
+  }
 };
 
 const writeCodexSessionCache = (
@@ -684,58 +696,72 @@ const readCodexSessions = (
       let readMs = 0;
       let skippedLines = 0;
       const files = yield* listCodexSessionFiles;
-      const cacheReadStartedAt = Date.now();
-      const cache = fs.existsSync(codexSessionsDir(storage))
-        ? yield* Effect.tryPromise({
-            try: () => loadCodexSessionCache(storage),
-            catch: (error) => error,
-          }).pipe(Effect.catchAll(() => Effect.succeed(null)))
-        : null;
-      cacheReadMs = Date.now() - cacheReadStartedAt;
       const parsedForCache: { filePath: string; session: CodexSession; stat: CodexSessionFileStat }[] = [];
 
-      for (const filePath of files) {
-        const stat = cache ? codexFileStat(filePath) : null;
-        const cached = stat ? cache?.entries.get(filePath) : null;
-        if (cached && cached.size === stat?.size && cached.mtimeMs === stat.mtimeMs) {
-          cacheHits++;
-          mergeMetadata(cached.session, cached.session.id ? metadata.get(cached.session.id) : undefined);
-          if (cached.session.id || cached.session.start) {
-            sessions.push(cached.session);
-          }
-          continue;
-        }
+      yield* Effect.acquireUseRelease(
+        Effect.gen(function* () {
+          const cacheReadStartedAt = Date.now();
+          const sessionCache = fs.existsSync(codexSessionsDir(storage))
+            ? yield* Effect.tryPromise({
+                try: () => loadCodexSessionCache(storage),
+                catch: (error) => error,
+              }).pipe(Effect.catchAll(() => Effect.succeed(null)))
+            : null;
+          cacheReadMs = Date.now() - cacheReadStartedAt;
+          return sessionCache;
+        }),
+        (sessionCache) =>
+          Effect.gen(function* () {
+            for (const filePath of files) {
+              const stat = sessionCache ? codexFileStat(filePath) : null;
+              const cached = stat ? sessionCache?.entries.get(filePath) : null;
+              if (cached && cached.size === stat?.size && cached.mtimeMs === stat.mtimeMs) {
+                cacheHits++;
+                mergeMetadata(cached.session, cached.session.id ? metadata.get(cached.session.id) : undefined);
+                if (cached.session.id || cached.session.start) {
+                  sessions.push(cached.session);
+                }
+                continue;
+              }
 
-        cacheMisses++;
-        const readStartedAt = Date.now();
-        const text = yield* storage.readText(filePath);
-        readMs += Date.now() - readStartedAt;
-        bytes += text.length;
+              cacheMisses++;
+              const readStartedAt = Date.now();
+              const text = yield* storage.readText(filePath);
+              readMs += Date.now() - readStartedAt;
+              bytes += text.length;
 
-        const parsed = parseCodexSessionText(text);
-        lines += parsed.lines;
-        parseMs += parsed.parseMs;
-        parsedLines += parsed.parsedLines;
-        skippedLines += parsed.skippedLines;
-        const session = parsed.session;
-        if (stat) {
-          parsedForCache.push({ filePath, session: { ...session }, stat });
-        }
-        mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
-        if (session.id || session.start) {
-          sessions.push(session);
-        }
-      }
+              const parsed = parseCodexSessionText(text);
+              lines += parsed.lines;
+              parseMs += parsed.parseMs;
+              parsedLines += parsed.parsedLines;
+              skippedLines += parsed.skippedLines;
+              const session = parsed.session;
+              if (stat) {
+                parsedForCache.push({ filePath, session: { ...session }, stat });
+              }
+              mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
+              if (session.id || session.start) {
+                sessions.push(session);
+              }
+            }
 
-      if (cache) {
-        const cacheWriteStartedAt = Date.now();
-        yield* Effect.try({
-          try: () => writeCodexSessionCache(cache.db, files, parsedForCache),
-          catch: (error) => error,
-        }).pipe(Effect.ignore);
-        cacheWriteMs = Date.now() - cacheWriteStartedAt;
-        yield* Effect.sync(() => cache.db.close()).pipe(Effect.ignore);
-      }
+            if (sessionCache) {
+              const cacheWriteStartedAt = Date.now();
+              yield* Effect.try({
+                try: () => writeCodexSessionCache(sessionCache.db, files, parsedForCache),
+                catch: (error) => error,
+              }).pipe(Effect.ignore);
+              cacheWriteMs = Date.now() - cacheWriteStartedAt;
+            }
+          }),
+        (sessionCache) =>
+          sessionCache
+            ? Effect.try({
+                try: () => sessionCache.db.close(),
+                catch: (error) => error,
+              }).pipe(Effect.ignore)
+            : Effect.succeed(undefined),
+      );
 
       sessions.sort((a, b) => (a.start?.getTime() ?? 0) - (b.start?.getTime() ?? 0));
       return {

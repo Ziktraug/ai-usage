@@ -6,7 +6,12 @@ import path from 'node:path';
 import { Effect } from 'effect';
 import { findLatestCodexProviderStatus, findLatestCodexQuotaSnapshot, readCodexUsageSessions } from './codex-history';
 import { collectCodex } from './collectors/codex';
-import { createLocalHistoryStorage, LocalHistoryStorage } from './local-history';
+import { LocalHistoryError } from './errors';
+import {
+  createLocalHistoryStorage,
+  LocalHistoryStorage,
+  type LocalHistoryStorage as LocalHistoryStorageService,
+} from './local-history';
 import { TestMemoryStorage } from './test-memory-storage';
 
 const jsonl = (...events: unknown[]) => `${events.map((event) => JSON.stringify(event)).join('\n')}\n`;
@@ -16,6 +21,46 @@ const runWithRealStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorag
   Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))));
 
 describe('Codex local history', () => {
+  test('closes the metadata database when a query fails', async () => {
+    const home = '/home/codex-close-fixture';
+    const stateDbPath = path.join(home, '.codex', 'state_5.sqlite');
+    let closed = false;
+    const storage: LocalHistoryStorageService = {
+      home,
+      exists: (filePath) => Effect.succeed(filePath === stateDbPath),
+      openDatabase: () =>
+        Effect.succeed({
+          all: () =>
+            Effect.fail(
+              new LocalHistoryError({
+                operation: 'sqlite.all',
+                path: stateDbPath,
+                cause: new Error('Fixture query failure'),
+              }),
+            ),
+          close: Effect.sync(() => {
+            closed = true;
+          }),
+        }),
+      readDir: () => Effect.succeed([]),
+      readText: (filePath) =>
+        Effect.fail(
+          new LocalHistoryError({
+            operation: 'readText',
+            path: filePath,
+            cause: new Error('Unexpected fixture read'),
+          }),
+        ),
+    };
+
+    const sessions = await Effect.runPromise(
+      readCodexUsageSessions.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+    );
+
+    expect(sessions).toEqual([]);
+    expect(closed).toBe(true);
+  });
+
   test('parses sessions, child sessions, names, and quota snapshots through fixture storage', () => {
     const storage = new TestMemoryStorage();
     storage.writeText('.codex/session_index.jsonl', jsonl({ id: 'parent-thread', thread_name: 'Fixture thread' }));

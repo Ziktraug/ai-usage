@@ -5,7 +5,7 @@ import { parseUsageSnapshot, type UsageSnapshot } from '@ai-usage/report-core/sn
 import { Effect } from 'effect';
 import { LocalHistoryError, type LocalHistoryWarning } from './errors';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
-import { readAiUsageConfig, writeAiUsageConfig } from './machine-config';
+import { readAiUsageConfig, updateAiUsageConfig } from './machine-config';
 
 export interface StoredSyncedSnapshot {
   fetchedAt: string;
@@ -140,14 +140,15 @@ export const upsertSyncRemote = (
   remote: SyncRemoteConfig,
 ): Effect.Effect<SyncRemoteConfig[], LocalHistoryError, LocalHistoryStorageService> =>
   Effect.gen(function* () {
-    const config = yield* readAiUsageConfig;
-    const remotes = config.sync?.remotes ?? [];
-    const next = [
-      ...remotes.filter((item) => item.name !== remote.name),
-      { ...remote, enabled: remote.enabled ?? true },
-    ];
-    yield* writeAiUsageConfig({ ...config, sync: { ...(config.sync ?? {}), remotes: next } });
-    return next;
+    const updated = yield* updateAiUsageConfig((config) => {
+      const remotes = config.sync?.remotes ?? [];
+      const next = [
+        ...remotes.filter((item) => item.name !== remote.name),
+        { ...remote, enabled: remote.enabled ?? true },
+      ];
+      return { ...config, sync: { ...(config.sync ?? {}), remotes: next } };
+    });
+    return updated.sync?.remotes ?? [];
   });
 
 export const removeSyncRemote = (
@@ -155,10 +156,13 @@ export const removeSyncRemote = (
   options: { removeSnapshot?: boolean } = {},
 ): Effect.Effect<boolean, LocalHistoryError, LocalHistoryStorageService> =>
   Effect.gen(function* () {
-    const config = yield* readAiUsageConfig;
-    const remotes = config.sync?.remotes ?? [];
-    const next = remotes.filter((remote) => remote.name !== name);
-    yield* writeAiUsageConfig({ ...config, sync: { ...(config.sync ?? {}), remotes: next } });
+    let removed = false;
+    yield* updateAiUsageConfig((config) => {
+      const remotes = config.sync?.remotes ?? [];
+      const next = remotes.filter((remote) => remote.name !== name);
+      removed = next.length !== remotes.length;
+      return { ...config, sync: { ...(config.sync ?? {}), remotes: next } };
+    });
     if (options.removeSnapshot ?? true) {
       const storage = yield* LocalHistoryStorage;
       const filePath = syncedSnapshotPath(storage, name);
@@ -171,7 +175,7 @@ export const removeSyncRemote = (
         catch: syncError('removeSyncedSnapshot', filePath),
       });
     }
-    return next.length !== remotes.length;
+    return removed;
   });
 
 export const storeSyncedSnapshot = (input: {

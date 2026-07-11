@@ -1,4 +1,5 @@
-import { css } from '@ai-usage/design-system/css';
+import { css, cx } from '@ai-usage/design-system/css';
+import { meta, panel, strongCell } from '@ai-usage/design-system/report';
 import type { ProjectionAction, ProjectSkillInventory, SkillManagementSnapshot } from '@ai-usage/skills';
 import { useLocation, useNavigate } from '@tanstack/solid-router';
 import { createEffect, createMemo, createSignal, type JSX, Show } from 'solid-js';
@@ -29,6 +30,13 @@ export type ProjectInventoriesResult =
   | { ok: true; data: readonly ProjectSkillInventory[] }
   | { ok: false; error: { message: string; tag: string } };
 
+export interface SkillMarkdownDraftGuard {
+  dirty: boolean;
+  discard: () => void;
+  focus: () => void;
+  skillName: string;
+}
+
 const workspaceGrid = css({
   display: 'grid',
   gridTemplateColumns: { base: '1fr', lg: '280px minmax(0, 1fr)', xl: '280px minmax(0, 1fr) 320px' },
@@ -51,6 +59,47 @@ const mobileContext = css({
   display: { base: 'block', xl: 'contents' },
 });
 
+const desktopTree = css({
+  display: { base: 'none', lg: 'block' },
+});
+
+const mobilePicker = css({
+  display: { base: 'block', lg: 'none' },
+  p: '0',
+  overflow: 'hidden',
+});
+
+const mobilePickerSummary = css({
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: '12px',
+  p: '12px 14px',
+  cursor: 'pointer',
+});
+
+const mobilePickerBody = css({
+  maxH: '70vh',
+  overflow: 'auto',
+  p: '0 10px 10px',
+});
+
+const mobilePickerSelection = css({
+  minW: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+});
+
+const selectedDetail = css({
+  minW: 0,
+  scrollMarginTop: '12px',
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '3px',
+  },
+});
+
 const selectionExists = (treeKeys: ReadonlySet<string>, selection: SkillSelection) =>
   treeKeys.has(selectionKey(selection));
 
@@ -67,10 +116,12 @@ export const SkillsWorkspace = (props: {
   onApplyReconcile: () => void;
   onCancelReconcile: () => void;
   onCellStateFilterChange: (filter: SkillCellStateFilter | undefined) => void;
+  onMarkdownDraftStateChange: (guard: SkillMarkdownDraftGuard | undefined) => void;
   onPreviewReconcile: () => void;
   onSnapshot: (snapshot: SkillManagementSnapshot) => void;
   pendingOperation: string | null;
   knownProjectPaths: readonly KnownProjectScope[];
+  markdownRefreshVersion: number;
   projectInventories: ProjectInventoriesResult | undefined;
   projectInventoriesLoading: boolean;
   reconcilePlan: ReconcilePlanSummary | null;
@@ -133,10 +184,39 @@ export const SkillsWorkspace = (props: {
   );
   const health = createMemo(() => buildSkillHealthSummary(props.snapshot));
   const unmanagedGroups = createMemo(() => groupUnmanagedEntries(props.snapshot));
+  const selectedLabel = createMemo(() => {
+    const current = selection();
+    if (current.type === 'global-scope') {
+      return 'Global skills';
+    }
+    if (current.type === 'global-skill' || current.type === 'project-skill') {
+      return current.skillName;
+    }
+    return linkProjects().find((project) => project.path === current.projectPath)?.label ?? current.projectPath;
+  });
+  let mobilePickerElement: HTMLDetailsElement | undefined;
+  let selectedDetailElement: HTMLElement | undefined;
+  let previousSelectionKey = selectionKey(selection());
 
   createEffect(() => {
     const scopeKey = scopeKeyForSelection(selection());
     setExpandedKeys((keys) => (keys.has(scopeKey) ? keys : new Set([...keys, scopeKey])));
+  });
+
+  createEffect(() => {
+    const currentSelectionKey = selectionKey(selection());
+    if (currentSelectionKey === previousSelectionKey) {
+      return;
+    }
+    previousSelectionKey = currentSelectionKey;
+    if (typeof window === 'undefined' || !window.matchMedia('(max-width: 1023px)').matches) {
+      return;
+    }
+    mobilePickerElement?.removeAttribute('open');
+    window.requestAnimationFrame(() => {
+      selectedDetailElement?.scrollIntoView({ block: 'start' });
+      selectedDetailElement?.focus({ preventScroll: true });
+    });
   });
 
   // A URL that no longer resolves (deleted skill, stale share) falls back to
@@ -167,15 +247,43 @@ export const SkillsWorkspace = (props: {
 
   return (
     <div class={workspaceGrid}>
-      <SkillsTree
-        expandedKeys={expandedKeys()}
-        knownProjects={linkProjects()}
-        model={tree()}
-        onQueryChange={setQuery}
-        onToggleScope={toggleScope}
-        query={query()}
-        selection={selection()}
-      />
+      <div class={desktopTree}>
+        <SkillsTree
+          expandedKeys={expandedKeys()}
+          idPrefix="desktop-skill"
+          knownProjects={linkProjects()}
+          model={tree()}
+          onQueryChange={setQuery}
+          onToggleScope={toggleScope}
+          query={query()}
+          selection={selection()}
+        />
+      </div>
+      <details
+        aria-label="Skill picker"
+        class={cx(panel, mobilePicker)}
+        ref={(element) => {
+          mobilePickerElement = element;
+        }}
+      >
+        <summary class={mobilePickerSummary}>
+          <span class={strongCell}>Browse skills</span>
+          <span class={cx(meta, mobilePickerSelection)}>{selectedLabel()}</span>
+        </summary>
+        <div class={mobilePickerBody}>
+          <SkillsTree
+            ariaLabel="Skill picker scopes"
+            expandedKeys={expandedKeys()}
+            idPrefix="mobile-skill"
+            knownProjects={linkProjects()}
+            model={tree()}
+            onQueryChange={setQuery}
+            onToggleScope={toggleScope}
+            query={query()}
+            selection={selection()}
+          />
+        </div>
+      </details>
       <div class={centerStack}>
         <Show
           fallback={
@@ -203,20 +311,31 @@ export const SkillsWorkspace = (props: {
           }
           when={!matrixOpen()}
         >
-          <SkillsDetail
-            configurationPanel={props.configurationPanel}
-            consolidatePanel={consolidatePanel}
-            knownProjects={linkProjects()}
-            onSnapshot={props.onSnapshot}
-            pendingOperation={props.pendingOperation}
-            projectInventories={props.projectInventories}
-            projectInventoriesLoading={props.projectInventoriesLoading}
-            reconcileSkill={props.reconcileSkill}
-            selection={selection()}
-            snapshot={props.snapshot}
-            toggleSkill={props.toggleSkill}
-            tree={tree()}
-          />
+          <section
+            aria-label="Selected skill detail"
+            class={selectedDetail}
+            ref={(element) => {
+              selectedDetailElement = element;
+            }}
+            tabIndex={-1}
+          >
+            <SkillsDetail
+              configurationPanel={props.configurationPanel}
+              consolidatePanel={consolidatePanel}
+              knownProjects={linkProjects()}
+              markdownRefreshVersion={props.markdownRefreshVersion}
+              onMarkdownDraftStateChange={props.onMarkdownDraftStateChange}
+              onSnapshot={props.onSnapshot}
+              pendingOperation={props.pendingOperation}
+              projectInventories={props.projectInventories}
+              projectInventoriesLoading={props.projectInventoriesLoading}
+              reconcileSkill={props.reconcileSkill}
+              selection={selection()}
+              snapshot={props.snapshot}
+              toggleSkill={props.toggleSkill}
+              tree={tree()}
+            />
+          </section>
         </Show>
       </div>
       <div class={mobileContext}>
