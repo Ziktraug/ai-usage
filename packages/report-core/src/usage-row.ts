@@ -58,8 +58,11 @@ const costActual = (cost: UsageCostInput, costApprox: number) =>
 export const normalizeUsageRow = (input: UsageRowInput): Row => {
   const { rates, known } = priceFor(input.pricingModel ?? input.model);
   const costApprox = input.costApprox ?? approxCost(rates, input.tokens);
-  const durationMs =
+  const computedDurationMs =
     input.durationMs ?? (input.date && input.endDate ? input.endDate.getTime() - input.date.getTime() : null);
+  // A duration where the end precedes the start is not a real elapsed time (clock skew or
+  // reversed source timestamps); treat it as unknown so it never persists as a negative metric.
+  const durationMs = computedDurationMs !== null && computedDurationMs >= 0 ? computedDurationMs : null;
 
   return {
     date: input.date,

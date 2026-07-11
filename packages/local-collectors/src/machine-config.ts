@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
-import { isProjectGroupConfig } from '@ai-usage/report-core/project-group';
+import { isProjectGroupConfigArray } from '@ai-usage/report-core/project-group';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import { parseSkillConfigInput, type SkillManagementConfig } from '@ai-usage/skills';
 import { Effect } from 'effect';
@@ -110,7 +110,7 @@ const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
   }
 
   const projectGroups = config.projectGroups;
-  if (projectGroups !== undefined && !(Array.isArray(projectGroups) && projectGroups.every(isProjectGroupConfig))) {
+  if (projectGroups !== undefined && !isProjectGroupConfigArray(projectGroups)) {
     return false;
   }
 

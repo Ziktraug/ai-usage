@@ -2,9 +2,9 @@
 
 `ai-usage` owns a native skill-management control plane exposed through the web
 route `/skills`. The feature is separate from usage reporting: it inspects and
-reconciles local Agent Skill files, but it does not use usage rows, synced
-snapshots, peer data, remote machine ids, or LAN merge state to decide which
-repositories or runtime targets to scan.
+reconciles local Agent Skill files, but it does not use usage rows, snapshots
+from other machines, synced or manually imported rows, or remote machine ids
+to decide which repositories or runtime targets to scan.
 
 ## Package Boundary
 

@@ -8,7 +8,6 @@
     "./codex-history": "./src/codex-history.ts",
     "./datasets": "./src/datasets.ts",
     "./errors": "./src/errors.ts",
-    "./lan-peers": "./src/lan-peers.ts",
     "./local-history": "./src/local-history.ts",
     "./machine-config": "./src/machine-config.ts",
     "./sync-storage": "./src/sync-storage.ts"

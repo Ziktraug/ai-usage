@@ -6,7 +6,7 @@ The terminal command surface, argument parsing, terminal/CSV/JSON/HTML rendering
 
 ## Does Not Own
 
-It does not own report-domain calculations, local collector implementations, web UI runtime, LAN pairing runtime, trusted peer persistence rules, or usage-store schema.
+It does not own report-domain calculations, local collector implementations, web UI runtime, manual merge-bundle persistence, or usage-store schema.
 
 ## Public Interface
 
@@ -18,7 +18,7 @@ The public interface is the `ai-usage` binary, `bun run cli`, command-line optio
 
 ## Must Not Import
 
-It must not import `apps/web`, private package `src` paths, relative workspace paths, or future LAN pairing internals directly.
+It must not import `apps/web`, private package `src` paths, relative workspace paths, or web-only file-transfer modules directly.
 
 ## Data Boundary
 

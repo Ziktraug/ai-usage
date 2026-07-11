@@ -34,6 +34,36 @@ export interface ProjectGroupingWarning {
 export const projectSourceId = (source: ProjectSourceIdentityInput) =>
   [source.machineId, source.sourcePath || source.project].join('|');
 
+export const projectSourceSelectorFor = (source: ProjectSourceMatchInput): ProjectSourceSelector => ({
+  machineId: source.machineId,
+  ...(source.sourcePath ? { sourcePath: source.sourcePath } : { project: source.project }),
+  ...(source.gitRemote ? { gitRemote: source.gitRemote } : {}),
+});
+
+export const projectSourceSelectorKey = (selector: ProjectSourceSelector) =>
+  JSON.stringify([
+    selector.machineId ?? '',
+    selector.sourcePath ?? '',
+    selector.project?.toLowerCase() ?? '',
+    selector.gitRemote ?? '',
+  ]);
+
+export const projectSourceSelectorsEqual = (left: ProjectSourceSelector, right: ProjectSourceSelector) =>
+  projectSourceSelectorKey(left) === projectSourceSelectorKey(right);
+
+export const uniqueProjectSourceSelectors = (selectors: ProjectSourceSelector[]) => {
+  const seen = new Set<string>();
+  const result: ProjectSourceSelector[] = [];
+  for (const selector of selectors) {
+    const key = projectSourceSelectorKey(selector);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(selector);
+    }
+  }
+  return result;
+};
+
 const isNonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
 
 export const isProjectSourceSelector = (value: unknown): value is ProjectSourceSelector => {
@@ -67,6 +97,59 @@ export const isProjectGroupConfig = (value: unknown): value is ProjectGroupConfi
     record.sources.length > 0 &&
     record.sources.every(isProjectSourceSelector)
   );
+};
+
+type ProjectSourceSelectorKey = keyof ProjectSourceSelector;
+
+const SELECTOR_KEYS: ProjectSourceSelectorKey[] = ['gitRemote', 'machineId', 'project', 'sourcePath'];
+
+const selectorValuesConflict = (key: ProjectSourceSelectorKey, left: string | undefined, right: string | undefined) => {
+  if (left === undefined || right === undefined) {
+    return false;
+  }
+  return key === 'project' ? left.toLowerCase() !== right.toLowerCase() : left !== right;
+};
+
+export const projectSourceSelectorsOverlap = (left: ProjectSourceSelector, right: ProjectSourceSelector) =>
+  !SELECTOR_KEYS.some((key) => selectorValuesConflict(key, left[key], right[key]));
+
+export const parseProjectGroupConfigs = (value: unknown): ProjectGroupConfig[] => {
+  if (!(Array.isArray(value) && value.every(isProjectGroupConfig))) {
+    throw new Error('Invalid project groups: every group must have an id, name, and at least one source selector');
+  }
+
+  const groups = value as ProjectGroupConfig[];
+  const groupIds = new Set<string>();
+  for (const group of groups) {
+    if (groupIds.has(group.id)) {
+      throw new Error(`Invalid project groups: duplicate id "${group.id}"`);
+    }
+    groupIds.add(group.id);
+  }
+
+  for (const [leftIndex, leftGroup] of groups.entries()) {
+    for (const rightGroup of groups.slice(leftIndex + 1)) {
+      const overlapping = leftGroup.sources.some((leftSelector) =>
+        rightGroup.sources.some((rightSelector) => projectSourceSelectorsOverlap(leftSelector, rightSelector)),
+      );
+      if (overlapping) {
+        throw new Error(
+          `Invalid project groups: overlapping selectors between "${leftGroup.id}" and "${rightGroup.id}"`,
+        );
+      }
+    }
+  }
+
+  return groups;
+};
+
+export const isProjectGroupConfigArray = (value: unknown): value is ProjectGroupConfig[] => {
+  try {
+    parseProjectGroupConfigs(value);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 const matchesOptional = (actual: string | null | undefined, expected: string | undefined) =>

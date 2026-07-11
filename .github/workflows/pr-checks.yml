@@ -35,5 +35,14 @@ jobs:
       - name: Types
         run: bun run typecheck
 
+      - name: Tests
+        run: bun run test
+
       - name: Build
         run: bun run build
+
+      - name: Install Playwright browser
+        run: bun x playwright install --with-deps chromium
+
+      - name: Browser tests
+        run: bun run test:e2e

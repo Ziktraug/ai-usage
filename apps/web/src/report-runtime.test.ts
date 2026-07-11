@@ -25,12 +25,23 @@ const withWindow = (windowValue: Window, run: () => void) => {
 };
 
 describe('report runtime refresh decisions', () => {
-  test('refreshes immediately when the app can fetch a fresh payload even with an initial payload', () => {
+  test('uses the loader payload without immediately fetching it a second time', () => {
     expect(
       mountReportRefreshAction({
         canRefresh: true,
         hasInitialPayload: true,
         isDemoPayload: false,
+        isDevRuntime: true,
+      }),
+    ).toBe('none');
+  });
+
+  test('fetches when the app can refresh but no initial payload is available', () => {
+    expect(
+      mountReportRefreshAction({
+        canRefresh: true,
+        hasInitialPayload: false,
+        isDemoPayload: true,
         isDevRuntime: true,
       }),
     ).toBe('fetch-payload');
@@ -63,8 +74,11 @@ describe('report runtime refresh decisions', () => {
   });
 
   test('keeps self-contained HTML exports inert', () => {
-    withWindow({ __AI_USAGE_REPORT__: {} as UsageReportPayload, __AI_USAGE_REPORT_STATIC__: true } as Window, () => {
-      expect(reportRefreshPayload()).toBeUndefined();
-    });
+    withWindow(
+      { __AI_USAGE_REPORT__: {} as UsageReportPayload, __AI_USAGE_REPORT_STATIC__: true } as unknown as Window,
+      () => {
+        expect(reportRefreshPayload()).toBeUndefined();
+      },
+    );
   });
 });

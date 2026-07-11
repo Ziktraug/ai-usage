@@ -1,0 +1,25 @@
+import { defineConfig, devices } from '@playwright/test';
+
+const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+
+export default defineConfig({
+  expect: {
+    timeout: 5000,
+  },
+  fullyParallel: true,
+  reporter: process.env.CI ? 'github' : 'line',
+  testDir: './e2e',
+  use: {
+    baseURL: 'http://127.0.0.1:4174',
+    ...devices['Desktop Chrome'],
+    launchOptions: executablePath ? { executablePath } : {},
+    screenshot: 'only-on-failure',
+    trace: 'retain-on-failure',
+  },
+  webServer: {
+    command: 'BROWSER=none VITE_AI_USAGE_E2E=1 bun run dev:standalone -- --port 4174 --strictPort',
+    reuseExistingServer: !process.env.CI,
+    timeout: 120_000,
+    url: 'http://127.0.0.1:4174',
+  },
+});

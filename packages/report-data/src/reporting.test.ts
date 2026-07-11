@@ -86,6 +86,12 @@ const writeAiUsageConfig = (home: string, config: unknown) => {
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 };
 
+const cursorCsv = (rows: string[]) =>
+  [
+    'Date,User,Cloud Agent ID,Automation ID,Kind,Model,Max Mode,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost',
+    ...rows,
+  ].join('\n');
+
 const makeSourcedRow = (input: {
   project: string;
   sourcePath: string;
@@ -173,6 +179,78 @@ describe('shared reporting', () => {
         plan: 'pro',
       });
       expect(payload.facets?.providerStatus).toBeUndefined();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps orphaned Cursor CSV imports unassigned instead of treating the export file as a project', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-cursor-csv-'));
+    try {
+      const artifactPath = path.join(home, 'cursor-usage.csv');
+      writeFileSync(
+        artifactPath,
+        cursorCsv([
+          '"2026-06-03T12:00:00.000Z","alex@example.com","","","On-Demand","claude-4.5-sonnet","No","0","7","50","3","60","0.40"',
+        ]),
+      );
+      writeAiUsageConfig(home, {
+        cursor: { clusterGapMs: 5 * 60_000, usageExportPaths: [artifactPath], user: 'alex@example.com' },
+      });
+
+      const payload = await Effect.runPromise(
+        createLocalReportPayload({
+          harness: 'cursor',
+          includeCursor: true,
+          keepSource: true,
+          generatedAt: new Date('2026-06-04T00:00:00.000Z'),
+          options: defaultOptions,
+        }).pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
+      );
+
+      expect(payload.rows).toHaveLength(1);
+      expect(payload.rows[0]?.source?.artifactPath).toBe(artifactPath);
+      expect(payload.rows[0]?.source?.sourcePath).toBeUndefined();
+      expect(payload.rows[0]?.rawProject).toBe('');
+      expect(payload.rows[0]?.project.startsWith('(unknown)')).toBe(true);
+      expect(payload.rows[0]?.project).not.toContain('cursor-usage.csv');
+      expect(payload.projectGroups?.[0]?.sources[0]).toMatchObject({
+        project: '(unknown)',
+        sourcePath: '',
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('refuses overlapping project groups before building the report projection', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-overlapping-groups-'));
+    try {
+      writeAiUsageConfig(home, {
+        projectGroups: [
+          {
+            id: 'group-1',
+            name: 'broad',
+            sources: [{ machineId: 'machine-a', project: 'Exalibur' }],
+          },
+          {
+            id: 'group-2',
+            name: 'precise',
+            sources: [{ machineId: 'machine-a', sourcePath: '/work/exalibur' }],
+          },
+        ],
+      });
+
+      await expect(
+        Effect.runPromise(
+          createLocalReportPayload({
+            harness: null,
+            includeCursor: false,
+            keepSource: true,
+            options: defaultOptions,
+          }).pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
+        ),
+      ).rejects.toThrow('Invalid ai-usage config');
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

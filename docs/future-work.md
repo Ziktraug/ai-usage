@@ -88,7 +88,3 @@ over-emphasize it or build ROI/break-even features on top of it.
   shown in Top Sessions. Remaining gap is narrower: subagent/orchestrator
   children fall back to generic ids — children could inherit the parent's title
   once campaign grouping is surfaced in the UI.
-
-## Source Logs
-
-- `docs/report-data-architecture-refactor-log.md` contains the original report-data refactor history and the first set of follow-ups.

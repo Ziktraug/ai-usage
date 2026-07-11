@@ -38,6 +38,113 @@ type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+const hasOnlyKeys = (value: Record<string, unknown>, keys: ReadonlySet<string>) =>
+  Object.keys(value).every((key) => keys.has(key));
+
+const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+const isNonNegativeFiniteNumber = (value: unknown): value is number => isFiniteNumber(value) && value >= 0;
+
+const isNonNegativeSafeInteger = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
+
+const isNullableNonNegativeFiniteNumber = (value: unknown): value is number | null =>
+  value === null || isNonNegativeFiniteNumber(value);
+
+const isNullableNonNegativeSafeInteger = (value: unknown): value is number | null =>
+  value === null || isNonNegativeSafeInteger(value);
+
+const isOptionalNonNegativeSafeInteger = (value: unknown) => value === undefined || isNonNegativeSafeInteger(value);
+
+const isOptionalNullableNonNegativeFiniteNumber = (value: unknown) =>
+  value === undefined || isNullableNonNegativeFiniteNumber(value);
+
+const isOptionalBoolean = (value: unknown) => value === undefined || typeof value === 'boolean';
+
+const isOptionalString = (value: unknown) => value === undefined || typeof value === 'string';
+
+const isIsoTimestamp = (value: unknown): value is string => {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value;
+};
+
+const isNullableIsoTimestamp = (value: unknown): value is string | null => value === null || isIsoTimestamp(value);
+
+const SHA_256_HEX = /^[0-9a-f]{64}$/;
+
+const MACHINE_KEYS = new Set(['id', 'label']);
+const MERGE_SOURCE_KEYS = new Set([
+  'artifactPath',
+  'harnessKey',
+  'machineId',
+  'machineLabel',
+  'parentSourceSessionId',
+  'rootSourceSessionId',
+  'sourcePath',
+  'sourceSessionId',
+]);
+const MERGE_ROW_KEYS = new Set([
+  'activeDate',
+  'ambiguous',
+  'calls',
+  'contentHash',
+  'costActual',
+  'costApprox',
+  'costKnown',
+  'costQuota',
+  'date',
+  'durationMs',
+  'endDate',
+  'freshTokens',
+  'harness',
+  'lineDelta',
+  'linesAdded',
+  'linesDeleted',
+  'model',
+  'models',
+  'name',
+  'partial',
+  'project',
+  'projectGroupId',
+  'projectSourceId',
+  'provider',
+  'rawProject',
+  'rowKey',
+  'rtkCommandCount',
+  'rtkInputTokens',
+  'rtkOutputTokens',
+  'rtkSavedTokens',
+  'sessionLabel',
+  'source',
+  'sourceFingerprint',
+  'status',
+  'subagent',
+  'titleSource',
+  'tokCr',
+  'tokCw',
+  'tokIn',
+  'tokOut',
+  'tokenTotal',
+  'tools',
+  'turns',
+  'usageUnavailable',
+]);
+const WARNING_KEYS = new Set([
+  'groupId',
+  'groupName',
+  'harness',
+  'message',
+  'operation',
+  'path',
+  'reason',
+  'selectors',
+  'sql',
+]);
+const PROJECT_SOURCE_SELECTOR_KEYS = new Set(['gitRemote', 'machineId', 'project', 'sourcePath']);
+const BUNDLE_KEYS = new Set(['generatedAt', 'machine', 'rows', 'version', 'warnings']);
+
 const normalizeJsonValue = (value: unknown): JsonValue => {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
     return value;
@@ -74,7 +181,7 @@ const identityParts = (row: SerializedUsageRow, source: SerializedMergeRow['sour
   name: row.name,
   project: row.project,
   provider: row.provider,
-  sourcePath: source.sourcePath ?? null,
+  sourcePath: source.sourcePath ?? source.artifactPath ?? null,
   tokenTotal: row.tokenTotal,
 });
 
@@ -90,7 +197,7 @@ const stableIdentityParts = (row: SerializedUsageRow, source: SerializedMergeRow
   name: row.name,
   project: row.project,
   provider: row.provider,
-  sourcePath: source.sourcePath ?? null,
+  sourcePath: source.sourcePath ?? source.artifactPath ?? null,
 });
 
 export const mergeRowIdentity = (row: SerializedUsageRow, source: SerializedMergeRow['source']): MergeRowIdentity => {
@@ -115,6 +222,7 @@ export const toSerializedMergeRow = (
     ...(source?.parentSourceSessionId === undefined ? {} : { parentSourceSessionId: source.parentSourceSessionId }),
     ...(source?.rootSourceSessionId === undefined ? {} : { rootSourceSessionId: source.rootSourceSessionId }),
     ...(source?.sourcePath === undefined ? {} : { sourcePath: source.sourcePath }),
+    ...(source?.artifactPath === undefined ? {} : { artifactPath: source.artifactPath }),
     machineId: machine.id,
     machineLabel: machine.label,
   };
@@ -151,7 +259,12 @@ const isMachine = (value: unknown): value is UsageMachine => {
   if (!isRecord(value)) {
     return false;
   }
-  return typeof value.id === 'string' && value.id.length > 0 && typeof value.label === 'string';
+  return (
+    hasOnlyKeys(value, MACHINE_KEYS) &&
+    typeof value.id === 'string' &&
+    value.id.length > 0 &&
+    typeof value.label === 'string'
+  );
 };
 
 const isMergeRowSource = (value: unknown): value is SerializedMergeRow['source'] => {
@@ -159,6 +272,8 @@ const isMergeRowSource = (value: unknown): value is SerializedMergeRow['source']
     return false;
   }
   return (
+    hasOnlyKeys(value, MERGE_SOURCE_KEYS) &&
+    (value.artifactPath === undefined || value.artifactPath === null || typeof value.artifactPath === 'string') &&
     typeof value.harnessKey === 'string' &&
     value.harnessKey.length > 0 &&
     (value.sourceSessionId === null || typeof value.sourceSessionId === 'string') &&
@@ -175,34 +290,136 @@ const isMergeRowSource = (value: unknown): value is SerializedMergeRow['source']
   );
 };
 
+const isProjectSourceSelector = (value: unknown) =>
+  isRecord(value) &&
+  hasOnlyKeys(value, PROJECT_SOURCE_SELECTOR_KEYS) &&
+  ['gitRemote', 'machineId', 'project', 'sourcePath'].every(
+    (key) => value[key] === undefined || (typeof value[key] === 'string' && value[key].length > 0),
+  ) &&
+  Object.keys(value).length > 0;
+
+const PROJECT_GROUPING_WARNING_REASONS = new Set([
+  'broad-selector',
+  'legacy-alias',
+  'partial-group',
+  'unmatched-group',
+]);
+
 const isUsageReportWarnings = (value: unknown): value is UsageReportWarning[] =>
   Array.isArray(value) &&
   value.every(
     (warning) =>
       isRecord(warning) &&
+      hasOnlyKeys(warning, WARNING_KEYS) &&
       typeof warning.message === 'string' &&
-      (warning.harness === undefined || typeof warning.harness === 'string') &&
-      (warning.operation === undefined || typeof warning.operation === 'string') &&
-      (warning.path === undefined || typeof warning.path === 'string') &&
-      (warning.sql === undefined || typeof warning.sql === 'string'),
+      isOptionalString(warning.groupId) &&
+      isOptionalString(warning.groupName) &&
+      isOptionalString(warning.harness) &&
+      isOptionalString(warning.operation) &&
+      isOptionalString(warning.path) &&
+      (warning.reason === undefined ||
+        (typeof warning.reason === 'string' && PROJECT_GROUPING_WARNING_REASONS.has(warning.reason))) &&
+      (warning.selectors === undefined ||
+        (Array.isArray(warning.selectors) && warning.selectors.every(isProjectSourceSelector))) &&
+      isOptionalString(warning.sql),
   );
+
+const isOptionalStringArray = (value: unknown) =>
+  value === undefined || (Array.isArray(value) && value.every((item) => typeof item === 'string'));
+
+const isTitleSource = (value: unknown) =>
+  value === undefined || value === 'ai' || value === 'first-prompt' || value === 'agent-role' || value === 'id';
+
+const hasValidSerializedUsageFields = (
+  value: Record<string, unknown>,
+): value is Record<string, unknown> & SerializedUsageRow & { source: SerializedMergeRow['source'] } =>
+  isNullableIsoTimestamp(value.activeDate) &&
+  isOptionalBoolean(value.ambiguous) &&
+  isNonNegativeSafeInteger(value.calls) &&
+  isNullableNonNegativeFiniteNumber(value.costActual) &&
+  isNonNegativeFiniteNumber(value.costApprox) &&
+  typeof value.costKnown === 'boolean' &&
+  isOptionalNullableNonNegativeFiniteNumber(value.costQuota) &&
+  isNullableIsoTimestamp(value.date) &&
+  isNullableNonNegativeFiniteNumber(value.durationMs) &&
+  isNullableIsoTimestamp(value.endDate) &&
+  isNonNegativeSafeInteger(value.freshTokens) &&
+  typeof value.harness === 'string' &&
+  isNullableNonNegativeSafeInteger(value.lineDelta) &&
+  isNullableNonNegativeSafeInteger(value.linesAdded) &&
+  isNullableNonNegativeSafeInteger(value.linesDeleted) &&
+  typeof value.model === 'string' &&
+  isOptionalStringArray(value.models) &&
+  typeof value.name === 'string' &&
+  isOptionalBoolean(value.partial) &&
+  typeof value.project === 'string' &&
+  isOptionalString(value.projectGroupId) &&
+  isOptionalString(value.projectSourceId) &&
+  typeof value.provider === 'string' &&
+  isOptionalString(value.rawProject) &&
+  isOptionalNonNegativeSafeInteger(value.rtkCommandCount) &&
+  isOptionalNonNegativeSafeInteger(value.rtkInputTokens) &&
+  isOptionalNonNegativeSafeInteger(value.rtkOutputTokens) &&
+  isOptionalNonNegativeSafeInteger(value.rtkSavedTokens) &&
+  typeof value.sessionLabel === 'string' &&
+  isOptionalBoolean(value.subagent) &&
+  isTitleSource(value.titleSource) &&
+  isNonNegativeSafeInteger(value.tokCr) &&
+  isNonNegativeSafeInteger(value.tokCw) &&
+  isNonNegativeSafeInteger(value.tokIn) &&
+  isNonNegativeSafeInteger(value.tokOut) &&
+  isNonNegativeSafeInteger(value.tokenTotal) &&
+  isNonNegativeSafeInteger(value.tools) &&
+  isNonNegativeSafeInteger(value.turns) &&
+  isOptionalBoolean(value.usageUnavailable) &&
+  isMergeRowSource(value.source);
+
+const expectedSessionLabel = (value: Record<string, unknown>) =>
+  `${String(value.name)}${value.partial === true ? ' ~' : ''}${value.subagent === true ? ' ↳' : ''}${
+    value.ambiguous === true ? ' ?' : ''
+  }${value.usageUnavailable === true ? ' (usage unavailable)' : ''}`;
+
+const hasValidDerivedFields = (value: Record<string, unknown>) => {
+  const expectedLineDelta =
+    value.linesAdded === null && value.linesDeleted === null
+      ? null
+      : Number(value.linesAdded ?? 0) + Number(value.linesDeleted ?? 0);
+  return (
+    value.activeDate === (value.endDate ?? value.date) &&
+    value.freshTokens === Number(value.tokIn) + Number(value.tokOut) + Number(value.tokCw) &&
+    value.lineDelta === expectedLineDelta &&
+    value.sessionLabel === expectedSessionLabel(value) &&
+    value.tokenTotal === Number(value.tokIn) + Number(value.tokOut) + Number(value.tokCr) + Number(value.tokCw)
+  );
+};
 
 export const isSerializedMergeRow = (value: unknown): value is SerializedMergeRow => {
   if (!isRecord(value)) {
     return false;
   }
-  return (
-    typeof value.harness === 'string' &&
-    typeof value.provider === 'string' &&
-    typeof value.name === 'string' &&
-    typeof value.model === 'string' &&
+  if (!hasOnlyKeys(value, MERGE_ROW_KEYS)) {
+    return false;
+  }
+  if (!(hasValidSerializedUsageFields(value) && hasValidDerivedFields(value))) {
+    return false;
+  }
+  const hasValidMergeFields =
     typeof value.rowKey === 'string' &&
-    value.rowKey.length > 0 &&
     typeof value.sourceFingerprint === 'string' &&
+    SHA_256_HEX.test(value.sourceFingerprint) &&
     typeof value.contentHash === 'string' &&
-    (value.status === 'active' || value.status === 'superseded' || value.status === 'deleted') &&
-    isMergeRowSource(value.source)
-  );
+    SHA_256_HEX.test(value.contentHash) &&
+    (value.status === 'active' || value.status === 'superseded' || value.status === 'deleted');
+  if (!hasValidMergeFields) {
+    return false;
+  }
+
+  const identity = mergeRowIdentity(value, value.source);
+  if (value.rowKey !== identity.rowKey || value.sourceFingerprint !== identity.sourceFingerprint) {
+    return false;
+  }
+  const { contentHash, ...content } = value;
+  return contentHash === usageContentHash(content);
 };
 
 export const parseSerializedMergeRow = (value: unknown): SerializedMergeRow => {
@@ -212,10 +429,12 @@ export const parseSerializedMergeRow = (value: unknown): SerializedMergeRow => {
   return value;
 };
 
-export const parseUsageMergeBundle = (text: string): UsageMergeBundle => {
-  const value = JSON.parse(text) as unknown;
+export const parseUsageMergeBundleValue = (value: unknown): UsageMergeBundle => {
   if (!isRecord(value)) {
     throw new Error('Usage merge bundle must be an object');
+  }
+  if (!hasOnlyKeys(value, BUNDLE_KEYS)) {
+    throw new Error('Usage merge bundle contains unknown fields');
   }
   if (value.version !== USAGE_MERGE_BUNDLE_VERSION) {
     throw new Error('Unsupported usage merge bundle version');
@@ -223,14 +442,22 @@ export const parseUsageMergeBundle = (text: string): UsageMergeBundle => {
   if (!isMachine(value.machine)) {
     throw new Error('Usage merge bundle missing machine');
   }
-  if (typeof value.generatedAt !== 'string') {
-    throw new Error('Usage merge bundle missing generatedAt');
+  if (!isIsoTimestamp(value.generatedAt)) {
+    throw new Error('Usage merge bundle contains an invalid generatedAt');
   }
   if (!(Array.isArray(value.rows) && value.rows.every(isSerializedMergeRow))) {
     throw new Error('Usage merge bundle contains invalid rows');
   }
   if (!isUsageReportWarnings(value.warnings)) {
     throw new Error('Usage merge bundle contains invalid warnings');
+  }
+  for (const row of value.rows) {
+    if (row.source.machineId !== value.machine.id) {
+      throw new Error('Usage merge bundle row machineId does not match bundle machine');
+    }
+    if (row.source.machineLabel !== value.machine.label) {
+      throw new Error('Usage merge bundle row machineLabel does not match bundle machine');
+    }
   }
   return {
     version: value.version,
@@ -240,6 +467,9 @@ export const parseUsageMergeBundle = (text: string): UsageMergeBundle => {
     warnings: value.warnings,
   };
 };
+
+export const parseUsageMergeBundle = (text: string): UsageMergeBundle =>
+  parseUsageMergeBundleValue(JSON.parse(text) as unknown);
 
 export const deserializeMergeRow = (row: SerializedMergeRow): CollectedUsageRow => ({
   date: row.date ? new Date(row.date) : null,

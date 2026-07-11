@@ -1,7 +1,53 @@
 import { type CampaignView, fieldValueForRow } from './dashboard-model';
 import type { FieldFilterKey } from './dashboard-search';
 import { DAY_MS, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
-import type { DashboardRow } from './shared';
+import type { DashboardRow, ReportSummary } from './shared';
+
+export interface OverviewHeroData {
+  actualSpend: number;
+  actualSpendKnownSessions: number;
+  apiEquivalentValue: number;
+  apiPricedSessions: number;
+  sessionCount: number;
+  subscriptionValue: number;
+}
+
+export const buildOverviewHeroData = (summary: ReportSummary): OverviewHeroData | null => {
+  if (summary.totalCost <= 0) {
+    return null;
+  }
+  return {
+    actualSpend: summary.actualCost,
+    actualSpendKnownSessions: Math.max(0, summary.sessionCount - summary.unknownActual),
+    apiEquivalentValue: summary.totalCost,
+    apiPricedSessions: summary.pricedSessions,
+    sessionCount: summary.sessionCount,
+    subscriptionValue: summary.costQuota,
+  };
+};
+
+export const nextHeatmapFocusIndex = (currentIndex: number, itemCount: number, key: string): number | null => {
+  if (itemCount <= 0) {
+    return null;
+  }
+  const lastIndex = itemCount - 1;
+  switch (key) {
+    case 'ArrowLeft':
+      return Math.max(0, currentIndex - 7);
+    case 'ArrowRight':
+      return Math.min(lastIndex, currentIndex + 7);
+    case 'ArrowUp':
+      return Math.max(0, currentIndex - 1);
+    case 'ArrowDown':
+      return Math.min(lastIndex, currentIndex + 1);
+    case 'Home':
+      return 0;
+    case 'End':
+      return lastIndex;
+    default:
+      return null;
+  }
+};
 
 export interface HeatDay {
   cost: number;
@@ -317,6 +363,11 @@ export type OverviewSessionItem =
       sessionCount: number;
     };
 
+type TimedOverviewSessionItem = OverviewSessionItem & { durationMs: number };
+
+const isTimedPricedSession = (item: OverviewSessionItem): item is TimedOverviewSessionItem =>
+  item.durationMs !== null && item.durationMs > 0 && item.costApprox > 0;
+
 export const buildOverviewSessionItems = (
   rows: DashboardRow[],
   campaigns: CampaignView[] = [],
@@ -349,20 +400,31 @@ export const buildOverviewSessionItems = (
 
 export interface SessionShapeData {
   harnesses: string[];
-  points: (OverviewSessionItem & { durationMs: number })[];
+  harnessSummaries: SessionShapeHarnessSummary[];
+  outliers: TimedOverviewSessionItem[];
+  points: (TimedOverviewSessionItem & { aggregateCount: number })[];
+  totalPoints: number;
   xPct: (value: number) => number;
   xTicks: (typeof DURATION_TICKS)[number][];
   yPct: (value: number) => number;
   yTicks: (typeof COST_TICKS)[number][];
 }
 
+export interface SessionShapeHarnessSummary {
+  costMax: number;
+  costMin: number;
+  durationMax: number;
+  durationMin: number;
+  groups: number;
+  harness: string;
+  sessions: number;
+}
+
 export const buildSessionShapeData = (
   rows: DashboardRow[],
   campaigns: CampaignView[] = [],
 ): SessionShapeData | null => {
-  const points = buildOverviewSessionItems(rows, campaigns).filter(
-    (item) => (item.durationMs ?? 0) > 0 && item.costApprox > 0,
-  ) as (OverviewSessionItem & { durationMs: number })[];
+  const points = buildOverviewSessionItems(rows, campaigns).filter(isTimedPricedSession);
   if (points.length < 3) {
     return null;
   }
@@ -385,13 +447,84 @@ export const buildSessionShapeData = (
   const xPct = (value: number) => 4 + ((lx(value) - xLo) / Math.max(1e-9, xHi - xLo)) * 92;
   const yPct = (value: number) => 92 - ((lx(value) - yLo) / Math.max(1e-9, yHi - yLo)) * 84;
 
+  const xSpan = Math.max(1e-9, xHi - xLo);
+  const ySpan = Math.max(1e-9, yHi - yLo);
+  const normalizedX = (item: OverviewSessionItem & { durationMs: number }) => (lx(item.durationMs) - xLo) / xSpan;
+  const normalizedY = (item: OverviewSessionItem & { durationMs: number }) => (lx(item.costApprox) - yLo) / ySpan;
+  const outlierScore = (item: OverviewSessionItem & { durationMs: number }) => normalizedX(item) + normalizedY(item);
+
+  const harnesses = [...new Set(points.map((item) => item.harness))];
+  const MAX_SCATTER_MARKS = 240;
+  const binsPerHarness = Math.max(1, Math.floor(MAX_SCATTER_MARKS / Math.max(1, harnesses.length)));
+  const scatterColumns = Math.max(1, Math.floor(Math.sqrt(binsPerHarness * 1.6)));
+  const scatterRows = Math.max(1, Math.floor(binsPerHarness / scatterColumns));
+  interface ShapeBin {
+    count: number;
+    representative: OverviewSessionItem & { durationMs: number };
+  }
+  const bins = new Map<string, ShapeBin>();
+  for (const point of points) {
+    const column = Math.min(scatterColumns - 1, Math.max(0, Math.floor(normalizedX(point) * scatterColumns)));
+    const row = Math.min(scatterRows - 1, Math.max(0, Math.floor(normalizedY(point) * scatterRows)));
+    const key = `${point.harness}:${column}:${row}`;
+    const bin = bins.get(key);
+    if (!bin) {
+      bins.set(key, { count: point.sessionCount, representative: point });
+      continue;
+    }
+    bin.count += point.sessionCount;
+    if (outlierScore(point) > outlierScore(bin.representative)) {
+      bin.representative = point;
+    }
+  }
+
+  const plotPoints = [...bins.values()].map((bin) => ({ ...bin.representative, aggregateCount: bin.count }));
+  const rankings = [
+    [...points].sort((left, right) => right.costApprox - left.costApprox || right.durationMs - left.durationMs),
+    [...points].sort((left, right) => right.durationMs - left.durationMs || right.costApprox - left.costApprox),
+    [...points].sort((left, right) => outlierScore(right) - outlierScore(left) || right.costApprox - left.costApprox),
+  ];
+  const outliers: (OverviewSessionItem & { durationMs: number })[] = [];
+  const selectedOutlierRows = new Set<string>();
+  for (let rank = 0; outliers.length < 6 && rank < points.length; rank++) {
+    for (const ranking of rankings) {
+      const point = ranking[rank];
+      if (!point || selectedOutlierRows.has(point.row.rowId)) {
+        continue;
+      }
+      selectedOutlierRows.add(point.row.rowId);
+      outliers.push(point);
+      if (outliers.length === 6) {
+        break;
+      }
+    }
+  }
+
+  const harnessSummaries = harnesses
+    .map((harness): SessionShapeHarnessSummary => {
+      const harnessPoints = points.filter((point) => point.harness === harness);
+      return {
+        costMax: Math.max(...harnessPoints.map((point) => point.costApprox)),
+        costMin: Math.min(...harnessPoints.map((point) => point.costApprox)),
+        durationMax: Math.max(...harnessPoints.map((point) => point.durationMs)),
+        durationMin: Math.min(...harnessPoints.map((point) => point.durationMs)),
+        groups: harnessPoints.length,
+        harness,
+        sessions: harnessPoints.reduce((sum, point) => sum + point.sessionCount, 0),
+      };
+    })
+    .sort((left, right) => right.sessions - left.sessions || left.harness.localeCompare(right.harness));
+
   return {
-    points: points.slice(0, 2000),
+    harnessSummaries,
+    points: plotPoints,
+    outliers,
+    totalPoints: points.reduce((sum, point) => sum + point.sessionCount, 0),
     xPct,
     yPct,
     xTicks: DURATION_TICKS.filter((tick) => tick.value >= xMin && tick.value <= xMax),
     yTicks: COST_TICKS.filter((tick) => tick.value >= yMin && tick.value <= yMax),
-    harnesses: [...new Set(points.map((item) => item.harness))],
+    harnesses,
   };
 };
 

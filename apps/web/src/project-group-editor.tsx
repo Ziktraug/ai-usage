@@ -9,9 +9,16 @@ import {
   panelSub,
   panelTitle,
 } from '@ai-usage/design-system/report';
-import type { ProjectGroupConfig, ProjectSourceSelector } from '@ai-usage/report-core/project-group';
-import type { UsageReportPayload, UsageReportProjectSource } from '@ai-usage/report-core/report-data';
+import {
+  type ProjectGroupConfig,
+  type ProjectSourceSelector,
+  projectSourceSelectorFor,
+  projectSourceSelectorsEqual,
+} from '@ai-usage/report-core/project-group';
+import type { UsageReportProjectSource } from '@ai-usage/report-core/report-data';
 import { createMemo, createSignal, For, Show } from 'solid-js';
+import { moveProjectSourcesToGroup } from './project-group-actions';
+import type { WebReportPayload } from './web-report-payload';
 
 const editorPanel = css({
   mb: '14px',
@@ -155,31 +162,6 @@ const statusText = css({
   minH: '18px',
 });
 
-const sourceSelectorForSource = (source: UsageReportProjectSource): ProjectSourceSelector => ({
-  machineId: source.machineId,
-  ...(source.sourcePath ? { sourcePath: source.sourcePath } : { project: source.project }),
-  ...(source.gitRemote ? { gitRemote: source.gitRemote } : {}),
-});
-
-const selectorKey = (selector: ProjectSourceSelector) =>
-  [selector.machineId ?? '', selector.sourcePath ?? '', selector.project ?? '', selector.gitRemote ?? ''].join('|');
-
-const selectorEquals = (left: ProjectSourceSelector, right: ProjectSourceSelector) =>
-  selectorKey(left) === selectorKey(right);
-
-const uniqueSelectors = (selectors: ProjectSourceSelector[]) => {
-  const seen = new Set<string>();
-  const result: ProjectSourceSelector[] = [];
-  for (const selector of selectors) {
-    const key = selectorKey(selector);
-    if (!seen.has(key)) {
-      seen.add(key);
-      result.push(selector);
-    }
-  }
-  return result;
-};
-
 const projectSourceLabel = (source: UsageReportProjectSource) =>
   source.machineLabel ? `${source.project} · ${source.machineLabel}` : source.project;
 
@@ -192,7 +174,7 @@ const selectorLabel = (selector: ProjectSourceSelector) =>
 export const ProjectGroupEditor = (props: {
   disabled?: boolean;
   onSave: (projectGroups: ProjectGroupConfig[]) => Promise<void>;
-  payload: UsageReportPayload;
+  payload: WebReportPayload;
 }) => {
   const [selectedSourceIds, setSelectedSourceIds] = createSignal<string[]>([]);
   const [draftName, setDraftName] = createSignal('');
@@ -220,7 +202,7 @@ export const ProjectGroupEditor = (props: {
   const sourcesForGroup = (group: ProjectGroupConfig) =>
     group.sources.map((selector) => ({
       selector,
-      source: sources().find((source) => selectorEquals(selector, sourceSelectorForSource(source))),
+      source: sources().find((source) => projectSourceSelectorsEqual(selector, projectSourceSelectorFor(source))),
     }));
 
   const updateSelected = (sourceId: string, checked: boolean) => {
@@ -251,18 +233,13 @@ export const ProjectGroupEditor = (props: {
     if (!(name && selected.length) || saving()) {
       return;
     }
-    const existing = configs().find((group) => group.name.toLowerCase() === name.toLowerCase());
-    const selectedSelectors = selected.map(sourceSelectorForSource);
-    const group: ProjectGroupConfig = existing
-      ? { ...existing, name, sources: uniqueSelectors([...existing.sources, ...selectedSelectors]) }
-      : {
-          id: globalThis.crypto?.randomUUID?.() ?? `project-group-${Date.now()}`,
-          name,
-          sources: uniqueSelectors(selectedSelectors),
-        };
-    const nextGroups = existing
-      ? configs().map((item) => (item.id === existing.id ? group : item))
-      : [...configs(), group];
+    const nextGroups = moveProjectSourcesToGroup({
+      createGroupId: globalThis.crypto?.randomUUID?.() ?? `project-group-${Date.now()}`,
+      groupName: name,
+      projectGroups: configs(),
+      projectSources: sources(),
+      selectedSources: selected,
+    });
     await saveGroups(nextGroups, `Saved ${name}`);
     setDraftName('');
     setSelectedSourceIds([]);
@@ -286,7 +263,7 @@ export const ProjectGroupEditor = (props: {
     );
 
   const removeSelectorFromGroup = (group: ProjectGroupConfig, selector: ProjectSourceSelector) => {
-    const nextSources = group.sources.filter((candidate) => !selectorEquals(candidate, selector));
+    const nextSources = group.sources.filter((candidate) => !projectSourceSelectorsEqual(candidate, selector));
     if (!nextSources.length) {
       return deleteGroup(group);
     }

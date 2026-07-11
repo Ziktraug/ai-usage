@@ -3,7 +3,11 @@ import {
   isProjectGroupConfig,
   isProjectSourceSelector,
   matchesProjectSourceSelector,
+  parseProjectGroupConfigs,
   projectSourceId,
+  projectSourceSelectorFor,
+  projectSourceSelectorsEqual,
+  uniqueProjectSourceSelectors,
 } from './project-group';
 
 describe('project groups', () => {
@@ -32,6 +36,25 @@ describe('project groups', () => {
     expect(matchesProjectSourceSelector(source, { gitRemote: 'other/exalibur' })).toBe(false);
   });
 
+  test('owns exact selector identity and deduplication', () => {
+    const selector = projectSourceSelectorFor({
+      gitRemote: 'nathan/exalibur',
+      machineId: 'machine-a',
+      project: 'Exalibur',
+      sourcePath: '/work/exalibur',
+    });
+
+    expect(selector).toEqual({
+      gitRemote: 'nathan/exalibur',
+      machineId: 'machine-a',
+      sourcePath: '/work/exalibur',
+    });
+    expect(projectSourceSelectorsEqual({ project: 'Exalibur' }, { project: 'exalibur' })).toBe(true);
+    expect(uniqueProjectSourceSelectors([{ project: 'Exalibur' }, { project: 'exalibur' }])).toEqual([
+      { project: 'Exalibur' },
+    ]);
+  });
+
   test('validates selectors and group configs', () => {
     expect(isProjectSourceSelector({})).toBe(false);
     expect(isProjectSourceSelector({ machineId: '' })).toBe(false);
@@ -46,5 +69,39 @@ describe('project groups', () => {
     ).toBe(true);
     expect(isProjectGroupConfig({ id: 'group-1', name: 'exalibur', sources: [] })).toBe(false);
     expect(isProjectGroupConfig({ id: 'group-1', sources: [{ machineId: 'machine-a' }] })).toBe(false);
+  });
+
+  test('rejects duplicate group ids across the full config', () => {
+    expect(() =>
+      parseProjectGroupConfigs([
+        {
+          id: 'group-1',
+          name: 'frontend',
+          sources: [{ machineId: 'machine-a', sourcePath: '/work/frontend' }],
+        },
+        {
+          id: 'group-1',
+          name: 'backend',
+          sources: [{ machineId: 'machine-a', sourcePath: '/work/backend' }],
+        },
+      ]),
+    ).toThrow('duplicate id "group-1"');
+  });
+
+  test('rejects selectors from different groups that can match the same project source', () => {
+    expect(() =>
+      parseProjectGroupConfigs([
+        {
+          id: 'group-1',
+          name: 'broad',
+          sources: [{ machineId: 'machine-a', project: 'Exalibur' }],
+        },
+        {
+          id: 'group-2',
+          name: 'precise',
+          sources: [{ machineId: 'machine-a', sourcePath: '/work/exalibur' }],
+        },
+      ]),
+    ).toThrow('overlapping selectors');
   });
 });

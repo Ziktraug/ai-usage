@@ -384,4 +384,25 @@ describe('dashboard model', () => {
     expect(rows[0]?.freshTokens).toBe(50);
     expect(rows[0]?.children?.map((row) => row.sessionLabel)).toEqual(['child']);
   });
+
+  test('reuses prepared campaign views when projecting table rows', () => {
+    const parent = sourcedRow('prepared parent', { costApprox: 1 });
+    const child = sourcedRow('prepared child', {
+      costApprox: 4,
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        parentSourceSessionId: 'prepared parent',
+        rootSourceSessionId: 'prepared parent',
+        sourceSessionId: 'prepared child',
+      },
+    });
+    const campaigns = buildCampaignViews([parent, child], [parent, child]);
+
+    const rows = buildCampaignTableRows([], [parent, child], [{ id: 'cost', desc: true }], true, campaigns);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.campaignTotalCount).toBe(2);
+    expect(rows[0]?.costApprox).toBe(5);
+  });
 });

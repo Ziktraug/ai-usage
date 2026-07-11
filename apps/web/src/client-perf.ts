@@ -1,4 +1,4 @@
-import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
+import type { WebReportPayload } from './web-report-payload';
 
 type PerfValue = boolean | number | string | null | undefined;
 type PerfFields = Record<string, PerfValue>;
@@ -64,10 +64,9 @@ export const logClientPerf = (label: string, fields?: PerfFields) => {
   console.info(`[perf] ${label}${summary ? ` ${summary}` : ''}`);
 };
 
-export const payloadStats = (payload: UsageReportPayload) => ({
+export const payloadStats = (payload: WebReportPayload) => ({
   bytes: JSON.stringify(payload).length,
   rows: payload.rows.length,
-  tableRows: payload.tableRows.length,
   warnings: payload.warnings?.length ?? 0,
 });
 
@@ -110,7 +109,7 @@ export const createClientPerfTrace = (label: string, fields: PerfFields = {}) =>
   };
 };
 
-export const logNavigationPerf = (payload: UsageReportPayload) => {
+export const logNavigationPerf = (payload: WebReportPayload) => {
   if (!(clientPerfEnabled() && isBrowser())) {
     return;
   }

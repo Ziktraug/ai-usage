@@ -8,6 +8,7 @@ export interface Rates {
 export type TitleSource = 'ai' | 'first-prompt' | 'agent-role' | 'id';
 
 export interface UsageRowSource {
+  artifactPath?: string | null;
   harnessKey: string;
   machineId?: string;
   machineLabel?: string;

@@ -2,15 +2,15 @@
 
 ## Owns
 
-The future SQLite materialized usage store, migrations, local row import, peer merge bundle import, local merge bundle export, status tracking, and report-row queries.
+The SQLite materialized usage store, migrations, local row import, merge bundle file import/export, status tracking, and report-row queries.
 
 ## Does Not Own
 
-It does not own raw local history collection, LAN discovery, pairing, peer credentials, report payload rendering, app routes, or CLI formatting.
+It does not own raw local history collection, file selection or transfer, network transport, report payload rendering, app routes, or CLI formatting.
 
 ## Public Interface
 
-Slice 0 documents the boundary only. Future slices will add typed APIs for importing local rows, exporting local merge bundles, importing peer bundles, querying report rows, and deleting peer rows.
+The root export provides typed APIs for importing local rows, exporting local merge bundles, importing bundles from another machine, and querying report rows.
 
 ## Depends On
 
@@ -18,7 +18,7 @@ Slice 0 documents the boundary only. Future slices will add typed APIs for impor
 
 ## Must Not Import
 
-It must not import `@ai-usage/local-collectors`, `@ai-usage/report-data`, `@ai-usage/usage-merge`, `@ai-usage/lan-pairing`, or app packages.
+It must not import `@ai-usage/local-collectors`, `@ai-usage/report-data`, `@ai-usage/usage-merge`, or app packages.
 
 ## Data Boundary
 

@@ -41,7 +41,7 @@ const mergeClusterIntoSession = (
 ): CollectedSession => {
   const models = modelList(cluster);
   return {
-    source: session.source,
+    source: { ...session.source, artifactPath: cluster.artifactPath },
     ...(session.projectPath === undefined ? {} : { projectPath: session.projectPath }),
     date: session.date ?? cluster.startDate,
     endDate: cluster.endDate,
@@ -67,14 +67,14 @@ const mergeClusterIntoSession = (
 const sessionFromCluster = (cluster: CursorCsvCluster): CollectedSession => {
   const models = modelList(cluster);
   return {
-    source: { harnessKey: 'cursor', sourceSessionId: null },
+    source: { harnessKey: 'cursor', sourceSessionId: null, artifactPath: cluster.artifactPath },
     date: cluster.startDate,
     endDate: cluster.endDate,
     provider: 'Cursor sub',
     name: `Cursor export ${cluster.startDate.toISOString()}`,
     model: cluster.dominantModel,
     ...(models ? { models } : {}),
-    project: 'Cursor CSV import',
+    project: '',
     tokens: cluster.tokens,
     cost: actualCost(cluster.costActual),
     costQuota: cluster.costQuota,
