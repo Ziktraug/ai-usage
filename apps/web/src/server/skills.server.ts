@@ -494,6 +494,62 @@ interface ReadProjectSkillMarkdownOptions {
 
 const maxProjectSkillMarkdownBytes = 65_536;
 
+interface ProjectSkillMarkdownFileHandle {
+  close: () => Promise<void>;
+  read: (
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ) => Promise<{ buffer: Buffer; bytesRead: number }>;
+  stat: () => Promise<{ isFile: () => boolean; size: number }>;
+}
+
+interface ReadBoundedProjectSkillMarkdownFileOptions {
+  openFile?: (filePath: string, flags: number) => Promise<ProjectSkillMarkdownFileHandle>;
+}
+
+export const readBoundedProjectSkillMarkdownFile = async (
+  filePath: string,
+  maxBytes: number,
+  options: ReadBoundedProjectSkillMarkdownFileOptions = {},
+): Promise<{ content: string; truncated: boolean }> => {
+  // biome-ignore lint/suspicious/noBitwiseOperators: Node file flags are bitmasks.
+  const flags = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
+  const file = await (options.openFile?.(filePath, flags) ?? fs.promises.open(filePath, flags));
+  try {
+    const fileStat = await file.stat();
+    if (!fileStat.isFile()) {
+      throw new Error('project skill markdown must be a regular file');
+    }
+
+    const buffer = Buffer.alloc(maxBytes + 1);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const result = await file.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+      if (result.bytesRead === 0) {
+        break;
+      }
+      bytesRead += result.bytesRead;
+    }
+    const truncated = fileStat.size > maxBytes || bytesRead > maxBytes;
+    return {
+      content: buffer.subarray(0, Math.min(bytesRead, maxBytes)).toString('utf8'),
+      truncated,
+    };
+  } finally {
+    await file.close();
+  }
+};
+
+const pathIsWithin = (parentPath: string, candidatePath: string): boolean => {
+  const relativePath = path.relative(parentPath, candidatePath);
+  return (
+    relativePath === '' ||
+    (relativePath !== '..' && !relativePath.startsWith(`..${path.sep}`) && !path.isAbsolute(relativePath))
+  );
+};
+
 export const readProjectSkillMarkdownForServer = async (
   input: ProjectSkillMarkdownInput,
   options: ReadProjectSkillMarkdownOptions = {},
@@ -523,21 +579,30 @@ export const readProjectSkillMarkdownForServer = async (
     if (observation === undefined) {
       throw new Error('project skill markdown not found');
     }
-    const fileStat = await fs.promises.stat(observation.skillMdPath);
-    const truncated = fileStat.size > maxProjectSkillMarkdownBytes;
-    const file = await fs.promises.open(observation.skillMdPath, 'r');
-    try {
-      const buffer = Buffer.alloc(Math.min(fileStat.size, maxProjectSkillMarkdownBytes));
-      await file.read(buffer, 0, buffer.length, 0);
-      return {
-        content: buffer.toString('utf8'),
-        path: observation.skillMdPath,
-        skillName: input.skillName,
-        truncated,
-      };
-    } finally {
-      await file.close();
+    if (!observation.markdownReadable || observation.placement === 'external-symlink') {
+      throw new Error('project skill markdown is not readable');
     }
+    const observedSkillMdPath = path.resolve(observation.skillMdPath);
+    const [canonicalProjectPath, canonicalSkillMdPath] = await Promise.all([
+      fs.promises.realpath(projectPath),
+      fs.promises.realpath(observedSkillMdPath),
+    ]);
+    const isLexicallyInsideProject = pathIsWithin(projectPath, observedSkillMdPath);
+    const isCanonicallyInsideProject = pathIsWithin(canonicalProjectPath, canonicalSkillMdPath);
+    let isCanonicallyInsideSource = false;
+    if (observation.placement === 'symlink-to-source' && skillsConfig.sourceRepoPath !== undefined) {
+      const canonicalSourceRepoPath = await fs.promises.realpath(skillsConfig.sourceRepoPath);
+      isCanonicallyInsideSource = pathIsWithin(path.join(canonicalSourceRepoPath, 'skills'), canonicalSkillMdPath);
+    }
+    if (!(isLexicallyInsideProject && (isCanonicallyInsideProject || isCanonicallyInsideSource))) {
+      throw new Error('project skill markdown resolves outside the allowed project');
+    }
+    const markdown = await readBoundedProjectSkillMarkdownFile(canonicalSkillMdPath, maxProjectSkillMarkdownBytes);
+    return {
+      ...markdown,
+      path: observedSkillMdPath,
+      skillName: input.skillName,
+    };
   });
 
 export interface SkillMarkdownSaveResult {

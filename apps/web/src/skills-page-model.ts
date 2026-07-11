@@ -9,6 +9,7 @@ import type {
   SkillValidationStatus,
   SourceSkill,
 } from '@ai-usage/skills';
+import { skillTokenDiagnosticCodes } from '@ai-usage/skills/shared';
 
 export type SkillInvocation = 'auto' | 'manual';
 export type MatrixCellState = ProjectionState | 'not-applicable';
@@ -150,7 +151,7 @@ const blockedStates = new Set<ProjectionState>([
   'duplicate-same-content',
 ]);
 const reconciliableStates = new Set<ProjectionState>(['missing', 'broken-link', 'wrong-target']);
-const tokenDiagnosticCodes = new Set(['SkillFileTooLarge', 'SkillFileLimitExceeded']);
+const tokenDiagnosticCodes = new Set(['SkillFileTooLarge', 'SkillFileLimitExceeded', ...skillTokenDiagnosticCodes]);
 const projectAttentionPlacements = new Set<ProjectSkillObservation['placement']>(['external-symlink']);
 
 interface AttentionCounts {
@@ -517,6 +518,20 @@ export const buildSkillTree = (
   };
 };
 
+export const defaultSkillSelection = (tree: SkillTreeModel): SkillSelection => {
+  const globalScope = tree.scopes.find((scope) => scope.type === 'global');
+  const globalSkill = globalScope?.skills.find((skill) => skill.issueCount > 0) ?? globalScope?.skills.at(0);
+  if (globalSkill !== undefined) {
+    return globalSkill.selection;
+  }
+
+  const firstProjectScope = [...tree.scopes, ...tree.emptyScopes]
+    .filter((scope) => scope.type === 'project')
+    .toSorted((left, right) => left.label.localeCompare(right.label))
+    .at(0);
+  return firstProjectScope?.selection ?? { type: 'global-scope' };
+};
+
 export const selectionKey = (selection: SkillSelection): string => {
   if (selection.type === 'global-scope') {
     return 'global';
@@ -580,9 +595,12 @@ export const skillSelectionFromPath = (
     return;
   }
   if (segments.length === 1) {
-    return { type: 'global-scope' };
+    return;
   }
   if (segments.length === 2 && segments.at(1) === 'matrix') {
+    return { type: 'global-scope' };
+  }
+  if (segments.length === 2 && segments.at(1) === 'global') {
     return { type: 'global-scope' };
   }
   if (segments.at(1) === 'global' && segments.length === 3) {

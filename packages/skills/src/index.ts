@@ -1,17 +1,26 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
 import {
+  link,
   lstat,
   mkdir,
+  open,
+  opendir,
   readdir,
-  readFile,
   readlink,
   realpath,
+  rename,
   stat,
   symlink,
   unlink,
-  writeFile,
 } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { parseSkillName, parseTargetId, skillNamePattern, skillTokenDiagnosticCodes } from './shared';
+
+export type { SkillTokenDiagnosticCode } from './shared';
+export { parseSkillName, parseTargetId, skillTokenDiagnosticCodes } from './shared';
 
 export type SkillDiagnosticSeverity = 'info' | 'warning' | 'error';
 
@@ -141,7 +150,15 @@ export type ProjectionAction =
       skillName: string;
       sourcePath: string;
       targetId: string;
-      type: 'create-symlink' | 'repair-symlink' | 'unlink-managed-symlink';
+      type: 'create-symlink';
+    }
+  | {
+      observedSourcePath: string;
+      path: string;
+      skillName: string;
+      sourcePath: string;
+      targetId: string;
+      type: 'repair-symlink' | 'unlink-managed-symlink';
     }
   | {
       path: string;
@@ -179,6 +196,8 @@ export interface ParsedSkillMarkdown {
 export interface SourceSkillScanOptions {
   ignoredDirectories?: readonly string[];
   maxFilesPerSkill?: number;
+  maxRuntimeEntries?: number;
+  maxSkills?: number;
   maxTextFileBytes?: number;
   tokenThresholds?: SkillTokenThresholds;
 }
@@ -274,6 +293,7 @@ export interface ProjectSkillObservation {
   description: string;
   diagnostics: readonly SkillDiagnostic[];
   invocation: 'auto' | 'manual';
+  markdownReadable: boolean;
   name: string;
   path: string;
   placement: ProjectSkillPlacement;
@@ -310,8 +330,6 @@ export const defaultTokenThresholds: SkillTokenThresholds = {
 
 export const maxSkillMarkdownBytes = 262_144;
 
-const namePattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
-const targetIdPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const frontmatterClosePattern = /^\n---\r?\n?/;
 const lineBreakPattern = /\r?\n/;
 const whitespacePattern = /\s+/;
@@ -321,7 +339,313 @@ const knownFrontmatterExtensions = new Set(['paths', 'disable-model-invocation']
 const standardFrontmatterFields = new Set(['name', 'description']);
 const defaultIgnoredDirectories = new Set(['.git', 'node_modules', 'dist', 'build', '.turbo', 'styled-system']);
 const defaultMaxFilesPerSkill = 200;
+const defaultMaxRuntimeEntries = 500;
+const defaultMaxSkills = 500;
 const defaultMaxTextFileBytes = 200_000;
+const maxSkillSourceStateBytes = 1_048_576;
+const tokenDiagnosticCodeSet = new Set<string>(skillTokenDiagnosticCodes);
+const mutationLocks = new Map<string, Promise<void>>();
+const fileLockAcquireTimeoutMs = 10_000;
+const fileLockHardExpirationMs = 30_000;
+const fileLockHeartbeatMs = 250;
+const fileLockLeaseMs = 2000;
+const fileLockRetryMs = 10;
+const maxFileLockMetadataBytes = 1024;
+const localHostname = hostname();
+
+// biome-ignore lint/suspicious/noBitwiseOperators: Node filesystem flags are bitmasks.
+const noFollowReadFlags = fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK;
+const exclusiveLockFlags =
+  // biome-ignore lint/suspicious/noBitwiseOperators: Node filesystem flags are bitmasks.
+  fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK;
+
+const withSerializedPathMutation = async <Result>(
+  filePath: string,
+  mutation: () => Promise<Result>,
+): Promise<Result> => {
+  const lockKey = path.resolve(filePath);
+  const previous = mutationLocks.get(lockKey) ?? Promise.resolve();
+  let release = (): void => undefined;
+  const active = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queued = previous.then(
+    () => active,
+    () => active,
+  );
+  mutationLocks.set(lockKey, queued);
+  await previous.catch(() => undefined);
+  try {
+    return await mutation();
+  } finally {
+    release();
+    if (mutationLocks.get(lockKey) === queued) {
+      mutationLocks.delete(lockKey);
+    }
+  }
+};
+
+const sameFileIdentity = (
+  left: { dev: number | bigint; ino: number | bigint },
+  right: { dev: number | bigint; ino: number | bigint },
+): boolean => left.dev === right.dev && left.ino === right.ino;
+
+const removeLockIfUnchanged = async (
+  lockPath: string,
+  expectedStat: { dev: number | bigint; ino: number | bigint },
+): Promise<void> => {
+  try {
+    const currentStat = await lstat(lockPath);
+    if (sameFileIdentity(currentStat, expectedStat)) {
+      await unlink(lockPath);
+    }
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      throw error;
+    }
+  }
+};
+
+interface FileLockMetadata {
+  createdAt: string;
+  heartbeatAt: string;
+  hostname: string;
+  ownerId: string;
+  pid: number;
+  version: 1;
+}
+
+const parseFileLockMetadata = (metadataText: string): FileLockMetadata | undefined => {
+  try {
+    const metadata = JSON.parse(metadataText) as unknown;
+    if (
+      isRecord(metadata) &&
+      metadata.version === 1 &&
+      typeof metadata.createdAt === 'string' &&
+      typeof metadata.heartbeatAt === 'string' &&
+      typeof metadata.hostname === 'string' &&
+      typeof metadata.ownerId === 'string' &&
+      typeof metadata.pid === 'number' &&
+      Number.isSafeInteger(metadata.pid)
+    ) {
+      return metadata as unknown as FileLockMetadata;
+    }
+  } catch {
+    return;
+  }
+  return;
+};
+
+const writeFileLockMetadata = async (
+  lockFile: Awaited<ReturnType<typeof open>>,
+  metadata: FileLockMetadata,
+): Promise<void> => {
+  const serializedMetadata = `${JSON.stringify(metadata)}\n`;
+  await lockFile.truncate(0);
+  await lockFile.write(serializedMetadata, 0, 'utf8');
+  await lockFile.sync();
+};
+
+const isLocalProcessAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(isRecord(error) && error.code === 'ESRCH');
+  }
+};
+
+const tryRemoveStaleLock = async (lockPath: string): Promise<boolean> => {
+  let lockFile: Awaited<ReturnType<typeof open>>;
+  try {
+    lockFile = await open(lockPath, noFollowReadFlags);
+  } catch {
+    return false;
+  }
+  try {
+    const lockStat = await lockFile.stat();
+    if (!lockStat.isFile()) {
+      return false;
+    }
+    let metadata: FileLockMetadata | undefined;
+    if (lockStat.size <= maxFileLockMetadataBytes) {
+      const metadataText = await lockFile.readFile('utf8');
+      metadata = parseFileLockMetadata(metadataText);
+    }
+    const now = Date.now();
+    const heartbeatTimestamp = metadata === undefined ? lockStat.mtimeMs : Date.parse(metadata.heartbeatAt);
+    const createdTimestamp = metadata === undefined ? lockStat.birthtimeMs : Date.parse(metadata.createdAt);
+    const heartbeatAge = now - (Number.isFinite(heartbeatTimestamp) ? heartbeatTimestamp : lockStat.mtimeMs);
+    const hardAge = now - (Number.isFinite(createdTimestamp) ? createdTimestamp : lockStat.birthtimeMs);
+    if (metadata?.hostname === localHostname && metadata.pid > 0 && !isLocalProcessAlive(metadata.pid)) {
+      await removeLockIfUnchanged(lockPath, lockStat);
+      return true;
+    }
+    if (heartbeatAge < fileLockLeaseMs) {
+      return false;
+    }
+    if (hardAge < fileLockHardExpirationMs) {
+      return false;
+    }
+    if (metadata !== undefined || now - lockStat.mtimeMs >= fileLockHardExpirationMs) {
+      await removeLockIfUnchanged(lockPath, lockStat);
+      return true;
+    }
+    return false;
+  } finally {
+    await lockFile.close().catch(() => undefined);
+  }
+};
+
+const runFileLockHeartbeat = async (
+  lockFile: Awaited<ReturnType<typeof open>>,
+  metadata: FileLockMetadata,
+  signal: AbortSignal,
+): Promise<void> => {
+  while (!signal.aborted) {
+    try {
+      await delay(fileLockHeartbeatMs, undefined, { ref: false, signal });
+    } catch (error) {
+      if (signal.aborted) {
+        return;
+      }
+      throw error;
+    }
+    await writeFileLockMetadata(lockFile, { ...metadata, heartbeatAt: new Date().toISOString() });
+  }
+};
+
+const withFileSystemLock = async <Result>(filePath: string, mutation: () => Promise<Result>): Promise<Result> => {
+  const lockPath = `${filePath}.ai-usage.lock`;
+  const deadline = Date.now() + fileLockAcquireTimeoutMs;
+  const createdAt = new Date().toISOString();
+  const lockMetadata: FileLockMetadata = {
+    createdAt,
+    heartbeatAt: createdAt,
+    hostname: localHostname,
+    ownerId: randomUUID(),
+    pid: process.pid,
+    version: 1,
+  };
+  let lockFile: Awaited<ReturnType<typeof open>> | undefined;
+  while (lockFile === undefined) {
+    let candidateLockFile: Awaited<ReturnType<typeof open>>;
+    try {
+      candidateLockFile = await open(lockPath, exclusiveLockFlags, 0o600);
+    } catch (error) {
+      if (!(isRecord(error) && error.code === 'EEXIST')) {
+        throw error;
+      }
+      const lockStat = await lstat(lockPath).catch(() => undefined);
+      if (lockStat?.isSymbolicLink()) {
+        throw new Error(`filesystem mutation lock must not be a symlink: ${lockPath}`);
+      }
+      if (await tryRemoveStaleLock(lockPath)) {
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`timed out waiting for filesystem mutation lock: ${filePath}`);
+      }
+      await delay(fileLockRetryMs);
+      continue;
+    }
+    try {
+      await writeFileLockMetadata(candidateLockFile, lockMetadata);
+      lockFile = candidateLockFile;
+    } catch (error) {
+      const candidateStat = await candidateLockFile.stat().catch(() => undefined);
+      await candidateLockFile.close().catch(() => undefined);
+      if (candidateStat !== undefined) {
+        await removeLockIfUnchanged(lockPath, candidateStat).catch(() => undefined);
+      }
+      throw error;
+    }
+  }
+
+  const lockStat = await lockFile.stat();
+  const heartbeatAbortController = new AbortController();
+  let heartbeatError: unknown;
+  const heartbeat = runFileLockHeartbeat(lockFile, lockMetadata, heartbeatAbortController.signal).catch((error) => {
+    heartbeatError = error;
+  });
+  try {
+    const result = await mutation();
+    if (heartbeatError !== undefined) {
+      throw heartbeatError;
+    }
+    return result;
+  } finally {
+    heartbeatAbortController.abort();
+    await heartbeat;
+    await lockFile.close().catch(() => undefined);
+    await removeLockIfUnchanged(lockPath, lockStat).catch(() => undefined);
+  }
+};
+
+const withSerializedFileMutation = async <Result>(
+  canonicalFilePath: string,
+  mutation: () => Promise<Result>,
+): Promise<Result> =>
+  withSerializedPathMutation(canonicalFilePath, () => withFileSystemLock(canonicalFilePath, mutation));
+
+const existingRegularFileMode = async (filePath: string, defaultMode: number): Promise<number> => {
+  let file: Awaited<ReturnType<typeof open>>;
+  try {
+    file = await open(filePath, noFollowReadFlags);
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return defaultMode;
+    }
+    throw error;
+  }
+  try {
+    const fileStat = await file.stat();
+    if (!fileStat.isFile()) {
+      throw new Error(`atomic write destination must be a regular file: ${filePath}`);
+    }
+    // biome-ignore lint/suspicious/noBitwiseOperators: POSIX modes are bitmasks.
+    return fileStat.mode & 0o777;
+  } finally {
+    await file.close();
+  }
+};
+
+const writeExclusiveFile = async (filePath: string, content: string | Buffer, mode: number): Promise<void> => {
+  let temporaryFile: Awaited<ReturnType<typeof open>> | undefined;
+  let created = false;
+  try {
+    temporaryFile = await open(filePath, 'wx', mode);
+    created = true;
+    await temporaryFile.chmod(mode);
+    await temporaryFile.writeFile(content);
+    await temporaryFile.sync();
+    await temporaryFile.close();
+    temporaryFile = undefined;
+  } catch (error) {
+    await temporaryFile?.close().catch(() => undefined);
+    if (created) {
+      await unlink(filePath).catch(() => undefined);
+    }
+    throw error;
+  }
+};
+
+const writeTemporarySibling = async (filePath: string, content: string | Buffer, mode: number): Promise<string> => {
+  const temporaryPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.tmp`);
+  await writeExclusiveFile(temporaryPath, content, mode);
+  return temporaryPath;
+};
+
+const atomicWriteFile = async (filePath: string, content: string | Buffer, defaultMode = 0o600): Promise<void> => {
+  const mode = await existingRegularFileMode(filePath, defaultMode);
+  const temporaryPath = await writeTemporarySibling(filePath, content, mode);
+  try {
+    await rename(temporaryPath, filePath);
+  } catch (error) {
+    await unlink(temporaryPath).catch(() => undefined);
+    throw error;
+  }
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -466,7 +790,7 @@ const parseSkillSourceState = (
   }
   const skillEnabledByName: Record<string, boolean> = {};
   for (const [skillName, enabled] of Object.entries(value.skillEnabledByName)) {
-    if (!namePattern.test(skillName) || typeof enabled !== 'boolean') {
+    if (!skillNamePattern.test(skillName) || typeof enabled !== 'boolean') {
       return { diagnostics: [] };
     }
     skillEnabledByName[skillName] = enabled;
@@ -478,14 +802,14 @@ const parseSkillSourceState = (
     if (isRecord(value.skillOriginByName)) {
       const skillOriginByName: Record<string, string> = {};
       for (const [skillName, origin] of Object.entries(value.skillOriginByName)) {
-        if (namePattern.test(skillName) && typeof origin === 'string') {
+        if (skillNamePattern.test(skillName) && typeof origin === 'string') {
           skillOriginByName[skillName] = origin;
           continue;
         }
         diagnostics.push(
           createDiagnostic('InvalidSkillOriginMetadata', 'warning', 'Dropped invalid source skill origin metadata', {
             ...(statePath === undefined ? {} : { path: statePath }),
-            ...(namePattern.test(skillName) ? { skillName } : {}),
+            ...(skillNamePattern.test(skillName) ? { skillName } : {}),
           }),
         );
       }
@@ -509,7 +833,7 @@ const isWritableSkillSourceState = (value: unknown): value is SkillSourceState =
     return false;
   }
   const validEnabled = Object.entries(value.skillEnabledByName).every(
-    ([skillName, enabled]) => namePattern.test(skillName) && typeof enabled === 'boolean',
+    ([skillName, enabled]) => skillNamePattern.test(skillName) && typeof enabled === 'boolean',
   );
   if (!validEnabled) {
     return false;
@@ -520,7 +844,7 @@ const isWritableSkillSourceState = (value: unknown): value is SkillSourceState =
   return (
     isRecord(value.skillOriginByName) &&
     Object.entries(value.skillOriginByName).every(
-      ([skillName, origin]) => namePattern.test(skillName) && typeof origin === 'string',
+      ([skillName, origin]) => skillNamePattern.test(skillName) && typeof origin === 'string',
     )
   );
 };
@@ -613,27 +937,17 @@ const textField = (fields: readonly SkillFrontmatterField[], key: string): strin
 };
 
 const validationStatusFor = (diagnostics: readonly SkillDiagnostic[]): SkillValidationStatus => {
-  if (diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
+  if (
+    diagnostics.some((diagnostic) => diagnostic.severity === 'error' && !tokenDiagnosticCodeSet.has(diagnostic.code))
+  ) {
     return 'invalid';
   }
-  if (diagnostics.some((diagnostic) => diagnostic.severity === 'warning')) {
+  if (
+    diagnostics.some((diagnostic) => diagnostic.severity === 'warning' || tokenDiagnosticCodeSet.has(diagnostic.code))
+  ) {
     return 'warning';
   }
   return 'valid';
-};
-
-export const parseSkillName = (value: unknown): string => {
-  if (typeof value !== 'string' || !namePattern.test(value)) {
-    throw new Error('skill name must be lowercase kebab-case');
-  }
-  return value;
-};
-
-export const parseTargetId = (value: unknown): string => {
-  if (typeof value !== 'string' || !targetIdPattern.test(value)) {
-    throw new Error('target id must be lowercase kebab-case');
-  }
-  return value;
 };
 
 export const parseSkillFilePath = (value: unknown, skillDirectory: string): string => {
@@ -713,16 +1027,82 @@ export const parseSkillConfigInput = (value: unknown): SkillManagementConfig => 
 export const skillSourceStatePath = (sourceRepoPath: string): string =>
   path.join(sourceRepoPath, '.skill-tracker', 'state.json');
 
-export const loadSkillSourceState = async (sourceRepoPath: string): Promise<SkillSourceStateResult> => {
-  const filePath = skillSourceStatePath(sourceRepoPath);
+const safeSkillSourceStatePath = async (
+  sourceRepoPath: string,
+  createTracker: boolean,
+): Promise<string | undefined> => {
+  const realSourceRepoPath = await realpath(sourceRepoPath);
+  const trackerPath = path.join(sourceRepoPath, '.skill-tracker');
+  if (createTracker) {
+    try {
+      await mkdir(trackerPath, { mode: 0o700 });
+    } catch (error) {
+      if (!(isRecord(error) && error.code === 'EEXIST')) {
+        throw error;
+      }
+    }
+  }
+
+  let trackerStat: Awaited<ReturnType<typeof lstat>>;
   try {
-    const parsed = JSON.parse(await readFile(filePath, 'utf8')) as unknown;
+    trackerStat = await lstat(trackerPath);
+  } catch (error) {
+    if (!createTracker && isMissingPathError(error)) {
+      return;
+    }
+    throw error;
+  }
+  if (trackerStat.isSymbolicLink()) {
+    throw new Error('source skill state directory must not be a symlink');
+  }
+  if (!trackerStat.isDirectory()) {
+    throw new Error('source skill state directory must be a directory');
+  }
+
+  const realTrackerPath = await realpath(trackerPath);
+  const trackerRelativePath = path.relative(realSourceRepoPath, realTrackerPath);
+  if (trackerRelativePath.startsWith('..') || path.isAbsolute(trackerRelativePath)) {
+    throw new Error('source skill state directory must stay inside the source repository');
+  }
+
+  const filePath = path.join(realTrackerPath, 'state.json');
+  try {
+    const fileStat = await lstat(filePath);
+    if (fileStat.isSymbolicLink()) {
+      throw new Error('source skill state file must not be a symlink');
+    }
+    if (!fileStat.isFile()) {
+      throw new Error('source skill state must be a regular file');
+    }
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      throw error;
+    }
+  }
+  return filePath;
+};
+
+export const loadSkillSourceState = async (sourceRepoPath: string): Promise<SkillSourceStateResult> => {
+  const configuredFilePath = skillSourceStatePath(sourceRepoPath);
+  try {
+    const filePath = await safeSkillSourceStatePath(sourceRepoPath, false);
+    if (filePath === undefined) {
+      return { diagnostics: [], state: { version: 1, skillEnabledByName: {} } };
+    }
+    const fileRead = await readBoundedRegularFile(filePath, maxSkillSourceStateBytes);
+    if (fileRead.kind === 'missing') {
+      return { diagnostics: [], state: { version: 1, skillEnabledByName: {} } };
+    }
+    if (fileRead.kind !== 'ok') {
+      throw new Error('source skill state must be a bounded readable regular file');
+    }
+    const parsed = JSON.parse(fileRead.buffer.toString('utf8')) as unknown;
     const parsedState = parseSkillSourceState(parsed, filePath);
     if (parsedState.state === undefined) {
       return {
         diagnostics: [
           createDiagnostic('InvalidSourceState', 'error', 'Source skill state must be JSON version 1', {
-            path: filePath,
+            path: configuredFilePath,
           }),
         ],
         state: { version: 1, skillEnabledByName: {} },
@@ -736,7 +1116,7 @@ export const loadSkillSourceState = async (sourceRepoPath: string): Promise<Skil
     return {
       diagnostics: [
         createDiagnostic('InvalidSourceState', 'error', 'Source skill state must be readable JSON', {
-          path: filePath,
+          path: configuredFilePath,
         }),
       ],
       state: { version: 1, skillEnabledByName: {} },
@@ -744,14 +1124,32 @@ export const loadSkillSourceState = async (sourceRepoPath: string): Promise<Skil
   }
 };
 
-export const writeSkillSourceState = async (sourceRepoPath: string, stateValue: SkillSourceState): Promise<void> => {
+const writeSkillSourceStateUnlocked = async (filePath: string, stateValue: SkillSourceState): Promise<void> => {
   if (!isWritableSkillSourceState(stateValue)) {
     throw new Error('source skill state must be JSON version 1');
   }
-  const filePath = skillSourceStatePath(sourceRepoPath);
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, `${JSON.stringify(stateValue, null, 2)}\n`, 'utf8');
+  await atomicWriteFile(filePath, `${JSON.stringify(stateValue, null, 2)}\n`);
 };
+
+const withSkillSourceStateMutation = async <Result>(
+  sourceRepoPath: string,
+  mutation: (canonicalStatePath: string) => Promise<Result>,
+): Promise<Result> => {
+  const canonicalStatePath = await safeSkillSourceStatePath(sourceRepoPath, true);
+  if (canonicalStatePath === undefined) {
+    throw new Error('source skill state directory could not be created');
+  }
+  return await withSerializedFileMutation(canonicalStatePath, async () => {
+    const revalidatedStatePath = await safeSkillSourceStatePath(sourceRepoPath, true);
+    if (revalidatedStatePath !== canonicalStatePath) {
+      throw new Error('source skill state path changed while waiting for its mutation lock');
+    }
+    return await mutation(canonicalStatePath);
+  });
+};
+
+export const writeSkillSourceState = async (sourceRepoPath: string, stateValue: SkillSourceState): Promise<void> =>
+  withSkillSourceStateMutation(sourceRepoPath, (filePath) => writeSkillSourceStateUnlocked(filePath, stateValue));
 
 export const setSkillEnabled = async (
   sourceRepoPath: string,
@@ -759,17 +1157,23 @@ export const setSkillEnabled = async (
   enabled: boolean,
 ): Promise<SkillSourceState> => {
   const parsedSkillName = parseSkillName(skillName);
-  const current = await loadSkillSourceState(sourceRepoPath);
-  const nextState: SkillSourceState = {
-    ...current.state,
-    version: 1,
-    skillEnabledByName: {
-      ...current.state.skillEnabledByName,
-      [parsedSkillName]: parseBoolean(enabled, 'enabled'),
-    },
-  };
-  await writeSkillSourceState(sourceRepoPath, nextState);
-  return nextState;
+  const parsedEnabled = parseBoolean(enabled, 'enabled');
+  return await withSkillSourceStateMutation(sourceRepoPath, async (filePath) => {
+    const current = await loadSkillSourceState(sourceRepoPath);
+    if (current.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
+      throw new Error('source skill state must be readable JSON before it can be updated');
+    }
+    const nextState: SkillSourceState = {
+      ...current.state,
+      version: 1,
+      skillEnabledByName: {
+        ...current.state.skillEnabledByName,
+        [parsedSkillName]: parsedEnabled,
+      },
+    };
+    await writeSkillSourceStateUnlocked(filePath, nextState);
+    return nextState;
+  });
 };
 
 export const parseSkillMarkdown = (skillName: string, text: string): ParsedSkillMarkdown => {
@@ -816,22 +1220,114 @@ export const parseSkillMarkdown = (skillName: string, text: string): ParsedSkill
   return { diagnostics, manifest };
 };
 
-const collectSkillFiles = async (directory: string, ignoredDirectories: ReadonlySet<string>): Promise<string[]> => {
-  const entries = await readdir(directory, { withFileTypes: true });
+const maxSkillDirectoryDepth = 64;
+
+interface CollectedSkillFiles {
+  depthLimitExceeded: boolean;
+  fileLimitExceeded: boolean;
+  files: readonly string[];
+  unsupportedPaths: readonly string[];
+}
+
+const collectSkillFiles = async (
+  directory: string,
+  ignoredDirectories: ReadonlySet<string>,
+  maxFiles: number,
+): Promise<CollectedSkillFiles> => {
   const files: string[] = [];
-  for (const entry of entries) {
-    const entryPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      if (!ignoredDirectories.has(entry.name)) {
-        files.push(...(await collectSkillFiles(entryPath, ignoredDirectories)));
-      }
-      continue;
+  const unsupportedPaths: string[] = [];
+  let depthLimitExceeded = false;
+  let fileLimitExceeded = false;
+  let visitedEntryCount = 0;
+
+  const visitDirectory = async (currentDirectory: string, depth: number): Promise<boolean> => {
+    if (depth > maxSkillDirectoryDepth) {
+      depthLimitExceeded = true;
+      return true;
     }
-    if (entry.isFile()) {
+    const directoryHandle = await opendir(currentDirectory);
+    for await (const entry of directoryHandle) {
+      if (visitedEntryCount >= maxFiles) {
+        fileLimitExceeded = true;
+        return false;
+      }
+      visitedEntryCount += 1;
+      const entryPath = path.join(currentDirectory, entry.name);
+      if (entry.isDirectory()) {
+        if (ignoredDirectories.has(entry.name)) {
+          continue;
+        }
+        if (!(await visitDirectory(entryPath, depth + 1))) {
+          return false;
+        }
+        continue;
+      }
+      if (!entry.isFile()) {
+        unsupportedPaths.push(entryPath);
+        continue;
+      }
       files.push(entryPath);
     }
+    return true;
+  };
+
+  await visitDirectory(directory, 0);
+  return {
+    depthLimitExceeded,
+    fileLimitExceeded,
+    files: files.toSorted((left, right) => left.localeCompare(right)),
+    unsupportedPaths: unsupportedPaths.toSorted((left, right) => left.localeCompare(right)),
+  };
+};
+
+type BoundedRegularFileRead =
+  | { buffer: Buffer; identity: { dev: number | bigint; ino: number | bigint }; kind: 'ok' }
+  | { kind: 'missing' | 'too-large' | 'unsupported' | 'unreadable' };
+
+const readBoundedRegularFile = async (filePath: string, maxBytes: number): Promise<BoundedRegularFileRead> => {
+  let file: Awaited<ReturnType<typeof open>>;
+  try {
+    file = await open(filePath, noFollowReadFlags);
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return { kind: 'missing' };
+    }
+    if (isRecord(error) && (error.code === 'ELOOP' || error.code === 'ENXIO')) {
+      return { kind: 'unsupported' };
+    }
+    return { kind: 'unreadable' };
   }
-  return files.sort((left, right) => left.localeCompare(right));
+
+  try {
+    const fileStat = await file.stat();
+    if (!fileStat.isFile()) {
+      return { kind: 'unsupported' };
+    }
+    if (fileStat.size > maxBytes) {
+      return { kind: 'too-large' };
+    }
+    const buffer = Buffer.alloc(maxBytes + 1);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const result = await file.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+      if (result.bytesRead === 0) {
+        break;
+      }
+      bytesRead += result.bytesRead;
+    }
+    if (bytesRead > maxBytes) {
+      return { kind: 'too-large' };
+    }
+    return {
+      buffer: buffer.subarray(0, bytesRead),
+      identity: { dev: fileStat.dev, ino: fileStat.ino },
+      kind: 'ok',
+    };
+  } catch {
+    return { kind: 'unreadable' };
+  } finally {
+    await file.close().catch(() => undefined);
+  }
 };
 
 const readTextForTokenCount = async (
@@ -839,33 +1335,19 @@ const readTextForTokenCount = async (
   maxTextFileBytes: number,
   skillName: string,
 ): Promise<{ diagnostics: readonly SkillDiagnostic[]; text: string }> => {
-  try {
-    const fileStat = await stat(filePath);
-    if (fileStat.size > maxTextFileBytes) {
-      return {
-        diagnostics: [
-          createDiagnostic('SkillFileTooLarge', 'warning', 'Skill file is too large for token counting', {
-            path: filePath,
-            skillName,
-          }),
-        ],
-        text: '',
-      };
-    }
-    const buffer = await readFile(filePath);
-    if (looksBinary(buffer)) {
-      return {
-        diagnostics: [
-          createDiagnostic('BinarySkillFileSkipped', 'info', 'Binary skill file was skipped for token counting', {
-            path: filePath,
-            skillName,
-          }),
-        ],
-        text: '',
-      };
-    }
-    return { diagnostics: [], text: buffer.toString('utf8') };
-  } catch {
+  const result = await readBoundedRegularFile(filePath, maxTextFileBytes);
+  if (result.kind === 'too-large') {
+    return {
+      diagnostics: [
+        createDiagnostic('SkillFileTooLarge', 'warning', 'Skill file is too large for token counting', {
+          path: filePath,
+          skillName,
+        }),
+      ],
+      text: '',
+    };
+  }
+  if (result.kind !== 'ok') {
     return {
       diagnostics: [
         createDiagnostic('UnreadableSkillReferenceFile', 'warning', 'Skill reference file could not be read', {
@@ -876,13 +1358,63 @@ const readTextForTokenCount = async (
       text: '',
     };
   }
+  if (looksBinary(result.buffer)) {
+    return {
+      diagnostics: [
+        createDiagnostic('BinarySkillFileSkipped', 'info', 'Binary skill file was skipped for token counting', {
+          path: filePath,
+          skillName,
+        }),
+      ],
+      text: '',
+    };
+  }
+  return { diagnostics: [], text: result.buffer.toString('utf8') };
+};
+
+type TokenDiagnosticKind = 'markdown' | 'reference' | 'total';
+
+const tokenDiagnosticFor = (
+  kind: TokenDiagnosticKind,
+  tokenCount: number,
+  threshold: SkillTokenThreshold,
+  details: { path: string; skillName: string },
+): SkillDiagnostic | undefined => {
+  const labels: Record<TokenDiagnosticKind, string> = {
+    markdown: 'SKILL.md',
+    reference: 'Skill reference file',
+    total: 'Total skill',
+  };
+  const codePrefixes: Record<TokenDiagnosticKind, string> = {
+    markdown: 'SkillMarkdownToken',
+    reference: 'SkillReferenceToken',
+    total: 'SkillTotalToken',
+  };
+  if (tokenCount >= threshold.high) {
+    return createDiagnostic(
+      `${codePrefixes[kind]}High`,
+      'error',
+      `${labels[kind]} token count reached the configured high threshold`,
+      details,
+    );
+  }
+  if (tokenCount >= threshold.warn) {
+    return createDiagnostic(
+      `${codePrefixes[kind]}Warning`,
+      'warning',
+      `${labels[kind]} token count reached the configured warning threshold`,
+      details,
+    );
+  }
+  return;
 };
 
 const scanOneSkill = async (
   skillDirectory: string,
   stateValue: SkillSourceState,
-  options: Required<Pick<SourceSkillScanOptions, 'maxFilesPerSkill' | 'maxTextFileBytes'>>,
+  options: Required<Pick<SourceSkillScanOptions, 'maxFilesPerSkill' | 'maxTextFileBytes' | 'tokenThresholds'>>,
   ignoredDirectories: ReadonlySet<string>,
+  recoverMarkdownWrites: boolean,
 ): Promise<{ diagnostics: readonly SkillDiagnostic[]; skill?: SourceSkill }> => {
   const skillName = path.basename(skillDirectory);
   try {
@@ -898,37 +1430,82 @@ const scanOneSkill = async (
   }
 
   const skillMdPath = path.join(skillDirectory, 'SKILL.md');
-  let skillMdText: string;
-  try {
-    skillMdText = await readFile(skillMdPath, 'utf8');
-  } catch (error) {
-    if (isMissingPathError(error)) {
+  if (recoverMarkdownWrites) {
+    try {
+      const canonicalSkillDirectory = await realpath(skillDirectory);
+      const canonicalSkillMarkdownPath = path.join(canonicalSkillDirectory, 'SKILL.md');
+      const recoveryStatus = await withSerializedFileMutation(canonicalSkillMarkdownPath, () =>
+        recoverSkillMarkdownWrite(recoveryPathsForMarkdown(canonicalSkillMarkdownPath)),
+      );
+      if (recoveryStatus === 'blocked') {
+        return {
+          diagnostics: [
+            createDiagnostic(
+              'SkillMarkdownRecoveryConflict',
+              'error',
+              'SKILL.md has an unresolved crash-recovery conflict',
+              { path: skillMdPath, skillName },
+            ),
+          ],
+        };
+      }
+    } catch {
       return {
         diagnostics: [
-          createDiagnostic('MissingSkillMarkdown', 'error', 'Skill directory is missing SKILL.md', {
+          createDiagnostic('UnreadableSkillMarkdown', 'error', 'SKILL.md crash recovery could not be checked', {
             path: skillMdPath,
             skillName,
           }),
         ],
       };
     }
+  }
+
+  const skillMdRead = await readBoundedRegularFile(skillMdPath, maxSkillMarkdownBytes);
+  if (skillMdRead.kind === 'missing') {
     return {
       diagnostics: [
-        createDiagnostic('UnreadableSkillMarkdown', 'error', 'SKILL.md could not be read', {
+        createDiagnostic('MissingSkillMarkdown', 'error', 'Skill directory is missing SKILL.md', {
           path: skillMdPath,
           skillName,
         }),
       ],
     };
   }
+  if (skillMdRead.kind === 'too-large') {
+    return {
+      diagnostics: [
+        createDiagnostic('SkillMarkdownTooLarge', 'error', 'SKILL.md is too large to scan safely', {
+          path: skillMdPath,
+          skillName,
+        }),
+      ],
+    };
+  }
+  if (skillMdRead.kind !== 'ok') {
+    return {
+      diagnostics: [
+        createDiagnostic('UnreadableSkillMarkdown', 'error', 'SKILL.md must be a readable regular file', {
+          path: skillMdPath,
+          skillName,
+        }),
+      ],
+    };
+  }
+  const skillMdText = skillMdRead.buffer.toString('utf8');
 
   const parsedMarkdown = parseSkillMarkdown(skillName, skillMdText);
   const diagnostics: SkillDiagnostic[] = [...parsedMarkdown.diagnostics];
-  let files: string[];
+  let collectedFiles: CollectedSkillFiles;
   try {
-    files = await collectSkillFiles(skillDirectory, ignoredDirectories);
+    collectedFiles = await collectSkillFiles(skillDirectory, ignoredDirectories, options.maxFilesPerSkill);
   } catch {
-    files = [skillMdPath];
+    collectedFiles = {
+      depthLimitExceeded: false,
+      fileLimitExceeded: false,
+      files: [skillMdPath],
+      unsupportedPaths: [],
+    };
     diagnostics.push(
       createDiagnostic('UnreadableSkillDirectory', 'warning', 'Skill directory could not be fully scanned', {
         path: skillDirectory,
@@ -937,7 +1514,7 @@ const scanOneSkill = async (
     );
   }
 
-  if (files.length > options.maxFilesPerSkill) {
+  if (collectedFiles.fileLimitExceeded) {
     diagnostics.push(
       createDiagnostic('SkillFileLimitExceeded', 'warning', 'Skill has more files than the configured scan limit', {
         path: skillDirectory,
@@ -945,18 +1522,57 @@ const scanOneSkill = async (
       }),
     );
   }
+  if (collectedFiles.depthLimitExceeded) {
+    diagnostics.push(
+      createDiagnostic('SkillDirectoryDepthExceeded', 'warning', 'Skill directory nesting exceeds the scan limit', {
+        path: skillDirectory,
+        skillName,
+      }),
+    );
+  }
+  for (const unsupportedPath of collectedFiles.unsupportedPaths) {
+    diagnostics.push(
+      createDiagnostic('UnsupportedSkillFile', 'warning', 'Skill scanner skipped a non-regular file', {
+        path: unsupportedPath,
+        skillName,
+      }),
+    );
+  }
 
   let referenceTokens = 0;
-  const referenceFiles = files
-    .filter((filePath) => path.basename(filePath) !== 'SKILL.md')
-    .slice(0, Math.max(0, options.maxFilesPerSkill - 1));
+  const referenceTokenDiagnostics: SkillDiagnostic[] = [];
+  const referenceFiles = collectedFiles.files.filter((filePath) => path.basename(filePath) !== 'SKILL.md');
   for (const filePath of referenceFiles) {
     const textResult = await readTextForTokenCount(filePath, options.maxTextFileBytes, skillName);
     diagnostics.push(...textResult.diagnostics);
-    referenceTokens += approximateTokenCount(textResult.text);
+    const fileTokens = approximateTokenCount(textResult.text);
+    referenceTokens += fileTokens;
+    const tokenDiagnostic = tokenDiagnosticFor('reference', fileTokens, options.tokenThresholds.referenceFile, {
+      path: filePath,
+      skillName,
+    });
+    if (tokenDiagnostic !== undefined) {
+      referenceTokenDiagnostics.push(tokenDiagnostic);
+    }
   }
 
   const skillMdTokens = approximateTokenCount(skillMdText);
+  const totalTokens = skillMdTokens + referenceTokens;
+  const skillMdTokenDiagnostic = tokenDiagnosticFor('markdown', skillMdTokens, options.tokenThresholds.skillMd, {
+    path: skillMdPath,
+    skillName,
+  });
+  if (skillMdTokenDiagnostic !== undefined) {
+    diagnostics.push(skillMdTokenDiagnostic);
+  }
+  diagnostics.push(...referenceTokenDiagnostics);
+  const totalTokenDiagnostic = tokenDiagnosticFor('total', totalTokens, options.tokenThresholds.totalSkill, {
+    path: skillDirectory,
+    skillName,
+  });
+  if (totalTokenDiagnostic !== undefined) {
+    diagnostics.push(totalTokenDiagnostic);
+  }
   const skill: SourceSkill = {
     description: parsedMarkdown.manifest.description ?? '',
     diagnostics,
@@ -969,7 +1585,7 @@ const scanOneSkill = async (
       approximate: true,
       references: referenceTokens,
       skillMd: skillMdTokens,
-      total: skillMdTokens + referenceTokens,
+      total: totalTokens,
     },
     validationStatus: validationStatusFor(diagnostics),
   };
@@ -986,12 +1602,43 @@ export const scanSkillSourceRepository = async (input: SourceSkillScanInput): Pr
   const ignoredDirectories = new Set([...defaultIgnoredDirectories, ...(input.options?.ignoredDirectories ?? [])]);
   const options = {
     maxFilesPerSkill: input.options?.maxFilesPerSkill ?? defaultMaxFilesPerSkill,
+    maxSkills: input.options?.maxSkills ?? defaultMaxSkills,
     maxTextFileBytes: input.options?.maxTextFileBytes ?? defaultMaxTextFileBytes,
+    tokenThresholds: input.options?.tokenThresholds ?? defaultTokenThresholds,
   };
 
-  let entries: Array<{ isDirectory: () => boolean; name: string }>;
+  const skills: SourceSkill[] = [];
   try {
-    entries = await readdir(skillsDirectory, { withFileTypes: true });
+    const skillsDirectoryHandle = await opendir(skillsDirectory);
+    let inspectedEntryCount = 0;
+    for await (const entry of skillsDirectoryHandle) {
+      if (inspectedEntryCount >= options.maxSkills) {
+        diagnostics.push(
+          createDiagnostic(
+            'SourceSkillLimitExceeded',
+            'warning',
+            'Source skills directory has more entries than the configured scan limit',
+            { path: skillsDirectory },
+          ),
+        );
+        break;
+      }
+      inspectedEntryCount += 1;
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      const result = await scanOneSkill(
+        path.join(skillsDirectory, entry.name),
+        stateResult.state,
+        options,
+        ignoredDirectories,
+        true,
+      );
+      diagnostics.push(...result.diagnostics);
+      if (result.skill) {
+        skills.push(result.skill);
+      }
+    }
   } catch (error) {
     if (isMissingPathError(error)) {
       return { diagnostics, skills: [] };
@@ -1006,25 +1653,7 @@ export const scanSkillSourceRepository = async (input: SourceSkillScanInput): Pr
       skills: [],
     };
   }
-
-  const skills: SourceSkill[] = [];
-  for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-    const result = await scanOneSkill(
-      path.join(skillsDirectory, entry.name),
-      stateResult.state,
-      options,
-      ignoredDirectories,
-    );
-    diagnostics.push(...result.diagnostics);
-    if (result.skill) {
-      skills.push(result.skill);
-    }
-  }
-
-  return { diagnostics, skills };
+  return { diagnostics, skills: skills.toSorted((left, right) => left.name.localeCompare(right.name)) };
 };
 
 const invocationForFields = (fields: readonly SkillFrontmatterField[]): 'auto' | 'manual' =>
@@ -1077,7 +1706,9 @@ export const scanProjectSkills = async (input: {
   const inventories: ProjectSkillInventory[] = [];
   const options = {
     maxFilesPerSkill: input.options?.maxFilesPerSkill ?? defaultMaxFilesPerSkill,
+    maxRuntimeEntries: input.options?.maxRuntimeEntries ?? defaultMaxRuntimeEntries,
     maxTextFileBytes: input.options?.maxTextFileBytes ?? defaultMaxTextFileBytes,
+    tokenThresholds: input.options?.tokenThresholds ?? defaultTokenThresholds,
   };
   const ignoredDirectories = new Set([...defaultIgnoredDirectories, ...(input.options?.ignoredDirectories ?? [])]);
   const state: SkillSourceState = { version: 1, skillEnabledByName: {} };
@@ -1085,11 +1716,44 @@ export const scanProjectSkills = async (input: {
   for (const projectPath of input.projectPaths) {
     const diagnostics: SkillDiagnostic[] = [];
     const observations: ProjectSkillObservation[] = [];
+    let projectRealPath: string;
+    try {
+      projectRealPath = await realpath(projectPath);
+    } catch {
+      inventories.push({ diagnostics, observations, projectPath });
+      continue;
+    }
     for (const directory of projectSkillDirectories) {
       const runtimePath = path.join(projectPath, directory.relativePath);
-      let entries: Array<{ isDirectory: () => boolean; isSymbolicLink: () => boolean; name: string }>;
       try {
-        entries = await readdir(runtimePath, { withFileTypes: true });
+        const runtimeRealPath = await realpath(runtimePath);
+        if (!isPathWithin(projectRealPath, runtimeRealPath)) {
+          diagnostics.push(
+            createDiagnostic(
+              'ExternalProjectSkillDirectoryNotScanned',
+              'warning',
+              'External project skill directory symlink was classified without reading its content',
+              { path: runtimePath, targetId: directory.id },
+            ),
+          );
+          continue;
+        }
+      } catch (error) {
+        if (!isMissingPathError(error)) {
+          diagnostics.push(
+            createDiagnostic(
+              'UnreadableProjectSkillDirectory',
+              'warning',
+              'Project skill directory could not be inspected',
+              { path: runtimePath, targetId: directory.id },
+            ),
+          );
+        }
+        continue;
+      }
+      let runtimeDirectoryHandle: Awaited<ReturnType<typeof opendir>>;
+      try {
+        runtimeDirectoryHandle = await opendir(runtimePath);
       } catch (error) {
         if (!isMissingPathError(error)) {
           diagnostics.push(
@@ -1106,7 +1770,20 @@ export const scanProjectSkills = async (input: {
         }
         continue;
       }
-      for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
+      let inspectedRuntimeEntryCount = 0;
+      for await (const entry of runtimeDirectoryHandle) {
+        if (inspectedRuntimeEntryCount >= options.maxRuntimeEntries) {
+          diagnostics.push(
+            createDiagnostic(
+              'ProjectSkillEntryLimitExceeded',
+              'warning',
+              'Project skill runtime has more entries than the configured scan limit',
+              { path: runtimePath, targetId: directory.id },
+            ),
+          );
+          break;
+        }
+        inspectedRuntimeEntryCount += 1;
         if (!(entry.isDirectory() || entry.isSymbolicLink())) {
           continue;
         }
@@ -1124,7 +1801,42 @@ export const scanProjectSkills = async (input: {
           );
           continue;
         }
-        const result = await scanOneSkill(pathForScan, state, options, ignoredDirectories);
+        if (placement === 'external-symlink') {
+          try {
+            parseSkillName(entry.name);
+          } catch {
+            diagnostics.push(
+              createDiagnostic(
+                'InvalidSkillDirectoryName',
+                'error',
+                'Skill directory name must be lowercase kebab-case',
+                { path: entryPath },
+              ),
+            );
+            continue;
+          }
+          const externalDiagnostic = createDiagnostic(
+            'ExternalProjectSkillNotScanned',
+            'warning',
+            'External project skill symlink was classified without reading its content',
+            { path: entryPath, skillName: entry.name, targetId: directory.id },
+          );
+          diagnostics.push(externalDiagnostic);
+          observations.push({
+            description: '',
+            diagnostics: [externalDiagnostic],
+            invocation: 'auto',
+            markdownReadable: false,
+            name: entry.name,
+            path: entryPath,
+            placement,
+            runtimeDirId: directory.id,
+            skillMdPath: path.join(entryPath, 'SKILL.md'),
+            validationStatus: 'warning',
+          });
+          continue;
+        }
+        const result = await scanOneSkill(pathForScan, state, options, ignoredDirectories, false);
         diagnostics.push(...result.diagnostics);
         if (result.skill === undefined) {
           continue;
@@ -1133,6 +1845,7 @@ export const scanProjectSkills = async (input: {
           description: result.skill.description,
           diagnostics: result.skill.diagnostics,
           invocation: invocationForFields(result.skill.manifest.fields),
+          markdownReadable: true,
           name: result.skill.name,
           path: result.skill.path,
           placement,
@@ -1143,7 +1856,16 @@ export const scanProjectSkills = async (input: {
         });
       }
     }
-    inventories.push({ diagnostics, observations, projectPath });
+    const runtimeOrder = new Map(projectSkillDirectories.map((directory, index) => [directory.id, index]));
+    inventories.push({
+      diagnostics,
+      observations: observations.toSorted((left, right) => {
+        const runtimeDifference =
+          (runtimeOrder.get(left.runtimeDirId) ?? 0) - (runtimeOrder.get(right.runtimeDirId) ?? 0);
+        return runtimeDifference === 0 ? left.name.localeCompare(right.name) : runtimeDifference;
+      }),
+      projectPath,
+    });
   }
   return inventories;
 };
@@ -1381,6 +2103,7 @@ export const planProjection = (
       (projection.state === 'disabled-exposed' && projection.actualPath === skill.path)
     ) {
       return {
+        observedSourcePath: projection.actualPath ?? skill.path,
         path: projection.expectedPath,
         skillName: skill.name,
         sourcePath: skill.path,
@@ -1439,7 +2162,17 @@ export const planProjection = (
   }
 
   if (projection.state === 'broken-link' || projection.state === 'wrong-target') {
+    if (projection.actualPath === undefined) {
+      return {
+        path: projection.expectedPath,
+        reason: 'observed symlink target is unavailable',
+        skillName: skill.name,
+        targetId: target.id,
+        type: 'refuse-unmanaged-mutation',
+      };
+    }
     return {
+      observedSourcePath: projection.actualPath,
       path: projection.expectedPath,
       skillName: skill.name,
       sourcePath: skill.path,
@@ -1467,6 +2200,60 @@ export const planProjection = (
   };
 };
 
+const assertObservedProjectionUnchanged = async (projectionPath: string, observedSourcePath: string): Promise<void> => {
+  const projectionStat = await lstat(projectionPath);
+  if (!projectionStat.isSymbolicLink()) {
+    throw new Error('Refusing to mutate a projection that changed after observation');
+  }
+  const actualSourcePath = path.resolve(path.dirname(projectionPath), await readlink(projectionPath));
+  if (actualSourcePath !== path.resolve(observedSourcePath)) {
+    throw new Error('Refusing to mutate a projection that changed after observation');
+  }
+};
+
+const restoreClaimedProjection = async (claimedPath: string, projectedPath: string): Promise<void> => {
+  try {
+    await lstat(projectedPath);
+    throw new Error(`Refusing to overwrite an interloper; claimed projection retained at ${claimedPath}`);
+  } catch (error) {
+    if (!isMissingPathError(error)) {
+      throw error;
+    }
+  }
+
+  const claimedStat = await lstat(claimedPath);
+  if (claimedStat.isSymbolicLink()) {
+    await symlink(await readlink(claimedPath), projectedPath);
+    await unlink(claimedPath);
+    return;
+  }
+  if (claimedStat.isFile()) {
+    await link(claimedPath, projectedPath);
+    await unlink(claimedPath);
+    return;
+  }
+  if (claimedStat.isDirectory()) {
+    await rename(claimedPath, projectedPath);
+    return;
+  }
+  throw new Error(`Unsupported claimed projection retained at ${claimedPath}`);
+};
+
+const claimObservedProjection = async (projectedPath: string, observedSourcePath: string): Promise<string> => {
+  await assertObservedProjectionUnchanged(projectedPath, observedSourcePath);
+  const claimedPath = path.join(path.dirname(projectedPath), `.${path.basename(projectedPath)}.${randomUUID()}.old`);
+  await rename(projectedPath, claimedPath);
+  try {
+    await assertObservedProjectionUnchanged(claimedPath, observedSourcePath);
+    // Yield once so competing filesystem actors can become visible before the exclusive install.
+    await delay(5);
+    return claimedPath;
+  } catch (error) {
+    await restoreClaimedProjection(claimedPath, projectedPath);
+    throw error;
+  }
+};
+
 export const applyProjectionAction = async (action: ProjectionAction): Promise<void> => {
   if (action.type === 'noop' || action.type === 'refuse-unmanaged-mutation') {
     return;
@@ -1479,25 +2266,25 @@ export const applyProjectionAction = async (action: ProjectionAction): Promise<v
   }
 
   if (action.type === 'repair-symlink') {
-    const entryStat = await lstat(action.path);
-    if (!entryStat.isSymbolicLink()) {
-      throw new Error('Can only repair symlink entries');
+    const claimedPath = await claimObservedProjection(action.path, action.observedSourcePath);
+    try {
+      await symlink(action.sourcePath, action.path);
+    } catch (error) {
+      await restoreClaimedProjection(claimedPath, action.path);
+      throw error;
     }
-    await unlink(action.path);
-    await symlink(action.sourcePath, action.path);
+    await unlink(claimedPath);
     return;
   }
 
   if (action.type === 'unlink-managed-symlink') {
-    const entryStat = await lstat(action.path);
-    if (!entryStat.isSymbolicLink()) {
-      return;
+    const claimedPath = await claimObservedProjection(action.path, action.observedSourcePath);
+    try {
+      await unlink(claimedPath);
+    } catch (error) {
+      await restoreClaimedProjection(claimedPath, action.path);
+      throw error;
     }
-    const actualPath = path.resolve(path.dirname(action.path), await readlink(action.path));
-    if (actualPath !== path.resolve(action.sourcePath)) {
-      throw new Error('Refusing to unlink unmanaged symlink');
-    }
-    await unlink(action.path);
   }
 };
 
@@ -1719,19 +2506,24 @@ const isInsideDirectory = (directory: string, candidate: string): boolean => {
   return relative === '' || !(relative.startsWith('..') || path.isAbsolute(relative));
 };
 
-const resolveSkillMarkdownPath = async (
+interface SkillMarkdownLocation {
+  filePath: string;
+  markdownPath: string;
+}
+
+const resolveSkillMarkdownLocation = async (
   sourceRepoPath: string,
   skillName: string,
-): Promise<{ filePath: string; realFilePath: string; realSkillsPath: string } | undefined> => {
+): Promise<SkillMarkdownLocation | undefined> => {
   const filePath = skillMarkdownPathFor(sourceRepoPath, skillName);
   try {
     const realSourcePath = await realpath(sourceRepoPath);
-    const realSkillsPath = path.join(realSourcePath, 'skills');
-    const realFilePath = await realpath(filePath);
-    if (!isInsideDirectory(realSkillsPath, realFilePath)) {
+    const realSkillsPath = await realpath(path.join(realSourcePath, 'skills'));
+    const realSkillPath = await realpath(path.join(realSkillsPath, skillName));
+    if (!(isInsideDirectory(realSourcePath, realSkillsPath) && isInsideDirectory(realSkillsPath, realSkillPath))) {
       return;
     }
-    return { filePath, realFilePath, realSkillsPath };
+    return { filePath, markdownPath: path.join(realSkillPath, 'SKILL.md') };
   } catch {
     return;
   }
@@ -1742,21 +2534,29 @@ export const readSkillMarkdown = async (input: {
   sourceRepoPath: string;
 }): Promise<SkillMarkdownDocument> => {
   const skillName = parseSkillName(input.skillName);
-  const resolved = await resolveSkillMarkdownPath(input.sourceRepoPath, skillName);
-  if (resolved === undefined) {
+  const location = await resolveSkillMarkdownLocation(input.sourceRepoPath, skillName);
+  if (location === undefined) {
     throw new Error('skill markdown not found');
   }
-  const fileStat = await stat(resolved.realFilePath);
-  if (fileStat.size > maxSkillMarkdownBytes) {
-    throw new Error('skill markdown is too large');
-  }
-  const buffer = await readFile(resolved.realFilePath);
-  return {
-    content: buffer.toString('utf8'),
-    path: resolved.filePath,
-    sha256: sha256(buffer),
-    skillName,
-  };
+  return await withSerializedFileMutation(location.markdownPath, async () => {
+    const recoveryPaths = recoveryPathsForMarkdown(location.markdownPath);
+    if ((await recoverSkillMarkdownWrite(recoveryPaths)) === 'blocked') {
+      throw new Error('skill markdown has an unresolved recovery conflict');
+    }
+    const fileRead = await readBoundedRegularFile(location.markdownPath, maxSkillMarkdownBytes);
+    if (fileRead.kind === 'too-large') {
+      throw new Error('skill markdown is too large');
+    }
+    if (fileRead.kind !== 'ok') {
+      throw new Error('skill markdown not found');
+    }
+    return {
+      content: fileRead.buffer.toString('utf8'),
+      path: location.filePath,
+      sha256: sha256(fileRead.buffer),
+      skillName,
+    };
+  });
 };
 
 const sha256Pattern = /^[a-f0-9]{64}$/;
@@ -1778,12 +2578,369 @@ export const parseSkillMarkdownWriteInput = (input: unknown): SkillMarkdownWrite
   };
 };
 
+const linkClaimedMarkdownNoClobber = async (claimedPath: string, markdownPath: string): Promise<boolean> => {
+  try {
+    await link(claimedPath, markdownPath);
+  } catch (error) {
+    if (isRecord(error) && error.code === 'EEXIST') {
+      return false;
+    }
+    throw error;
+  }
+  return true;
+};
+
+type SkillMarkdownWriteResult = { ok: true } | { ok: false; reason: 'conflict' | 'not-found' | 'too-large' };
+
+interface SkillMarkdownWriteJournal {
+  baseSha256: string;
+  newSha256: string;
+  operationId: string;
+  phase: 'claimed' | 'prepared' | 'published';
+  tempName: string;
+  version: 1;
+}
+
+interface SkillMarkdownRecoveryPaths {
+  claimPath: string;
+  journalPath: string;
+  markdownPath: string;
+}
+
+const skillMarkdownJournalMaxBytes = 4096;
+const skillMarkdownTempNamePattern = /^\.SKILL\.md\.ai-usage\.[a-z0-9-]+\.tmp$/;
+
+const recoveryPathsForMarkdown = (markdownPath: string): SkillMarkdownRecoveryPaths => ({
+  claimPath: path.join(path.dirname(markdownPath), '.SKILL.md.ai-usage.claim'),
+  journalPath: path.join(path.dirname(markdownPath), '.SKILL.md.ai-usage.journal.json'),
+  markdownPath,
+});
+
+const parseSkillMarkdownWriteJournal = (value: unknown): SkillMarkdownWriteJournal | undefined => {
+  if (
+    !isRecord(value) ||
+    value.version !== 1 ||
+    typeof value.baseSha256 !== 'string' ||
+    !sha256Pattern.test(value.baseSha256) ||
+    typeof value.newSha256 !== 'string' ||
+    !sha256Pattern.test(value.newSha256) ||
+    typeof value.operationId !== 'string' ||
+    value.operationId.length === 0 ||
+    (value.phase !== 'prepared' && value.phase !== 'claimed' && value.phase !== 'published') ||
+    typeof value.tempName !== 'string' ||
+    !skillMarkdownTempNamePattern.test(value.tempName)
+  ) {
+    return;
+  }
+  if (value.tempName !== `.SKILL.md.ai-usage.${value.operationId}.tmp`) {
+    return;
+  }
+  return value as unknown as SkillMarkdownWriteJournal;
+};
+
+type SkillMarkdownJournalRead =
+  | { kind: 'invalid' }
+  | { kind: 'missing' }
+  | {
+      identity: { dev: number | bigint; ino: number | bigint };
+      journal: SkillMarkdownWriteJournal;
+      kind: 'ok';
+    };
+
+type RecoveryArtifactValidation =
+  | { kind: 'invalid' }
+  | { kind: 'missing' }
+  | { identity: { dev: number | bigint; ino: number | bigint }; kind: 'valid' };
+
+const readSkillMarkdownWriteJournal = async (journalPath: string): Promise<SkillMarkdownJournalRead> => {
+  const journalRead = await readBoundedRegularFile(journalPath, skillMarkdownJournalMaxBytes);
+  if (journalRead.kind === 'missing') {
+    return { kind: 'missing' };
+  }
+  if (journalRead.kind !== 'ok') {
+    return { kind: 'invalid' };
+  }
+  try {
+    const journal = parseSkillMarkdownWriteJournal(JSON.parse(journalRead.buffer.toString('utf8')) as unknown);
+    return journal === undefined ? { kind: 'invalid' } : { identity: journalRead.identity, journal, kind: 'ok' };
+  } catch {
+    return { kind: 'invalid' };
+  }
+};
+
+const writeSkillMarkdownJournal = async (journalPath: string, journal: SkillMarkdownWriteJournal): Promise<void> =>
+  atomicWriteFile(journalPath, `${JSON.stringify(journal)}\n`);
+
+const pathExists = async (filePath: string): Promise<boolean> => {
+  try {
+    await lstat(filePath);
+    return true;
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return false;
+    }
+    throw error;
+  }
+};
+
+const validateRecoveryArtifact = async (
+  artifactPath: string,
+  expectedSha256: string,
+): Promise<RecoveryArtifactValidation> => {
+  const artifactRead = await readBoundedRegularFile(artifactPath, maxSkillMarkdownBytes);
+  if (artifactRead.kind === 'missing') {
+    return { kind: 'missing' };
+  }
+  if (artifactRead.kind !== 'ok' || sha256(artifactRead.buffer) !== expectedSha256) {
+    return { kind: 'invalid' };
+  }
+  return { identity: artifactRead.identity, kind: 'valid' };
+};
+
+const removeArtifactWithIdentity = async (
+  artifactPath: string,
+  identity: { dev: number | bigint; ino: number | bigint },
+): Promise<boolean> => {
+  try {
+    const artifactStat = await lstat(artifactPath);
+    if (!sameFileIdentity(artifactStat, identity)) {
+      return false;
+    }
+    await unlink(artifactPath);
+    return true;
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return false;
+    }
+    throw error;
+  }
+};
+
+const journalsEqual = (left: SkillMarkdownWriteJournal, right: SkillMarkdownWriteJournal): boolean =>
+  left.baseSha256 === right.baseSha256 &&
+  left.newSha256 === right.newSha256 &&
+  left.operationId === right.operationId &&
+  left.phase === right.phase &&
+  left.tempName === right.tempName &&
+  left.version === right.version;
+
+const cleanupValidatedSkillMarkdownJournal = async (
+  paths: SkillMarkdownRecoveryPaths,
+  journal: SkillMarkdownWriteJournal,
+  expected?: {
+    journalIdentity: { dev: number | bigint; ino: number | bigint };
+    tempValidation: RecoveryArtifactValidation;
+  },
+): Promise<boolean> => {
+  const temporaryPath = path.join(path.dirname(paths.markdownPath), journal.tempName);
+  const tempValidation = await validateRecoveryArtifact(temporaryPath, journal.newSha256);
+  if (tempValidation.kind === 'invalid') {
+    return false;
+  }
+  const journalRead = await readSkillMarkdownWriteJournal(paths.journalPath);
+  if (journalRead.kind !== 'ok' || !journalsEqual(journalRead.journal, journal)) {
+    return false;
+  }
+  if (expected !== undefined) {
+    if (!sameFileIdentity(journalRead.identity, expected.journalIdentity)) {
+      return false;
+    }
+    if (expected.tempValidation.kind !== tempValidation.kind) {
+      return false;
+    }
+    if (
+      expected.tempValidation.kind === 'valid' &&
+      tempValidation.kind === 'valid' &&
+      !sameFileIdentity(expected.tempValidation.identity, tempValidation.identity)
+    ) {
+      return false;
+    }
+  }
+  if (tempValidation.kind === 'valid' && !(await removeArtifactWithIdentity(temporaryPath, tempValidation.identity))) {
+    return false;
+  }
+  return await removeArtifactWithIdentity(paths.journalPath, journalRead.identity);
+};
+
+const journalReadIsUnchanged = async (
+  journalPath: string,
+  expected: Extract<SkillMarkdownJournalRead, { kind: 'ok' }>,
+): Promise<boolean> => {
+  const current = await readSkillMarkdownWriteJournal(journalPath);
+  return (
+    current.kind === 'ok' &&
+    sameFileIdentity(current.identity, expected.identity) &&
+    journalsEqual(current.journal, expected.journal)
+  );
+};
+
+const recoverSkillMarkdownWrite = async (paths: SkillMarkdownRecoveryPaths): Promise<'blocked' | 'ready'> => {
+  const journalRead = await readSkillMarkdownWriteJournal(paths.journalPath);
+  if (journalRead.kind === 'invalid') {
+    return 'blocked';
+  }
+  if (journalRead.kind === 'missing') {
+    const claimRead = await readBoundedRegularFile(paths.claimPath, maxSkillMarkdownBytes);
+    if (claimRead.kind === 'missing') {
+      return 'ready';
+    }
+    const markdownRead = await readBoundedRegularFile(paths.markdownPath, maxSkillMarkdownBytes);
+    if (
+      claimRead.kind !== 'ok' ||
+      markdownRead.kind !== 'ok' ||
+      !sameFileIdentity(claimRead.identity, markdownRead.identity)
+    ) {
+      return 'blocked';
+    }
+    const currentMarkdownStat = await lstat(paths.markdownPath);
+    if (!sameFileIdentity(currentMarkdownStat, markdownRead.identity)) {
+      return 'blocked';
+    }
+    return (await removeArtifactWithIdentity(paths.claimPath, claimRead.identity)) ? 'ready' : 'blocked';
+  }
+  const { journal } = journalRead;
+  const tempValidation = await validateRecoveryArtifact(
+    path.join(path.dirname(paths.markdownPath), journal.tempName),
+    journal.newSha256,
+  );
+  if (tempValidation.kind === 'invalid') {
+    return 'blocked';
+  }
+  // The writer persists prepared -> claims Markdown -> persists claimed -> creates temp.
+  // Therefore any prepared journal accompanied by a temp is not an ai-usage state.
+  if (journal.phase === 'prepared' && tempValidation.kind !== 'missing') {
+    return 'blocked';
+  }
+  const cleanupExpected = { journalIdentity: journalRead.identity, tempValidation };
+  const claimValidation = await validateRecoveryArtifact(paths.claimPath, journal.baseSha256);
+  if (claimValidation.kind === 'invalid') {
+    return 'blocked';
+  }
+  const markdownRead = await readBoundedRegularFile(paths.markdownPath, maxSkillMarkdownBytes);
+  if (claimValidation.kind === 'missing') {
+    if (markdownRead.kind !== 'ok') {
+      return 'blocked';
+    }
+    const markdownSha = sha256(markdownRead.buffer);
+    const isPreparedRollback =
+      journal.phase === 'prepared' && tempValidation.kind === 'missing' && markdownSha === journal.baseSha256;
+    const isLaterPublication =
+      journal.phase !== 'prepared' &&
+      markdownSha === journal.newSha256 &&
+      (tempValidation.kind === 'missing' || sameFileIdentity(tempValidation.identity, markdownRead.identity));
+    if (!(isPreparedRollback || isLaterPublication)) {
+      return 'blocked';
+    }
+    return (await cleanupValidatedSkillMarkdownJournal(paths, journal, cleanupExpected)) ? 'ready' : 'blocked';
+  }
+  if (markdownRead.kind === 'missing') {
+    const currentClaimStat = await lstat(paths.claimPath);
+    if (
+      !(
+        sameFileIdentity(currentClaimStat, claimValidation.identity) &&
+        (await journalReadIsUnchanged(paths.journalPath, journalRead))
+      )
+    ) {
+      return 'blocked';
+    }
+    const restored = await linkClaimedMarkdownNoClobber(paths.claimPath, paths.markdownPath);
+    if (!(restored && (await cleanupValidatedSkillMarkdownJournal(paths, journal, cleanupExpected)))) {
+      return 'blocked';
+    }
+    return (await removeArtifactWithIdentity(paths.claimPath, claimValidation.identity)) ? 'ready' : 'blocked';
+  }
+  if (markdownRead.kind !== 'ok') {
+    return 'blocked';
+  }
+  const markdownSha = sha256(markdownRead.buffer);
+  const isPublished =
+    journal.phase !== 'prepared' &&
+    markdownSha === journal.newSha256 &&
+    tempValidation.kind === 'valid' &&
+    sameFileIdentity(tempValidation.identity, markdownRead.identity);
+  const isRollback =
+    markdownSha === journal.baseSha256 && sameFileIdentity(markdownRead.identity, claimValidation.identity);
+  if (!(isPublished || isRollback)) {
+    return 'blocked';
+  }
+  if (!(await journalReadIsUnchanged(paths.journalPath, journalRead))) {
+    return 'blocked';
+  }
+  if (isRollback) {
+    if (!(await cleanupValidatedSkillMarkdownJournal(paths, journal, cleanupExpected))) {
+      return 'blocked';
+    }
+    return (await removeArtifactWithIdentity(paths.claimPath, claimValidation.identity)) ? 'ready' : 'blocked';
+  }
+  if (!(await removeArtifactWithIdentity(paths.claimPath, claimValidation.identity))) {
+    return 'blocked';
+  }
+  return (await cleanupValidatedSkillMarkdownJournal(paths, journal, cleanupExpected)) ? 'ready' : 'blocked';
+};
+
+const claimSkillMarkdown = async (paths: SkillMarkdownRecoveryPaths): Promise<boolean> => {
+  if (await pathExists(paths.claimPath)) {
+    return false;
+  }
+  try {
+    await rename(paths.markdownPath, paths.claimPath);
+    return true;
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return false;
+    }
+    throw error;
+  }
+};
+
+const restoreClaimAndCleanupJournal = async (
+  paths: SkillMarkdownRecoveryPaths,
+  journal: SkillMarkdownWriteJournal,
+  reason: 'conflict' | 'not-found' | 'too-large',
+): Promise<SkillMarkdownWriteResult> => {
+  const journalRead = await readSkillMarkdownWriteJournal(paths.journalPath);
+  const tempValidation = await validateRecoveryArtifact(
+    path.join(path.dirname(paths.markdownPath), journal.tempName),
+    journal.newSha256,
+  );
+  if (journalRead.kind !== 'ok' || !journalsEqual(journalRead.journal, journal) || tempValidation.kind === 'invalid') {
+    return { ok: false, reason: 'conflict' };
+  }
+  const claimValidation = await validateRecoveryArtifact(paths.claimPath, journal.baseSha256);
+  if (claimValidation.kind !== 'valid') {
+    return { ok: false, reason: 'conflict' };
+  }
+  const currentClaimStat = await lstat(paths.claimPath);
+  if (
+    !(
+      sameFileIdentity(currentClaimStat, claimValidation.identity) &&
+      (await journalReadIsUnchanged(paths.journalPath, journalRead))
+    )
+  ) {
+    return { ok: false, reason: 'conflict' };
+  }
+  const restored = await linkClaimedMarkdownNoClobber(paths.claimPath, paths.markdownPath);
+  if (
+    !(
+      restored &&
+      (await cleanupValidatedSkillMarkdownJournal(paths, journal, {
+        journalIdentity: journalRead.identity,
+        tempValidation,
+      })) &&
+      (await removeArtifactWithIdentity(paths.claimPath, claimValidation.identity))
+    )
+  ) {
+    return { ok: false, reason: 'conflict' };
+  }
+  return { ok: false, reason };
+};
+
 export const writeSkillMarkdown = async (input: {
   baseSha256: string;
   content: string;
   skillName: string;
   sourceRepoPath: string;
-}): Promise<{ ok: true } | { ok: false; reason: 'conflict' | 'not-found' | 'too-large' }> => {
+}): Promise<SkillMarkdownWriteResult> => {
   const skillName = parseSkillName(input.skillName);
   if (Buffer.byteLength(input.content, 'utf8') > maxSkillMarkdownBytes) {
     return { ok: false, reason: 'too-large' };
@@ -1791,17 +2948,92 @@ export const writeSkillMarkdown = async (input: {
   if (!sha256Pattern.test(input.baseSha256)) {
     throw new Error('baseSha256 must be a 64-character lowercase hex string');
   }
-  const resolved = await resolveSkillMarkdownPath(input.sourceRepoPath, skillName);
-  if (resolved === undefined) {
+  const location = await resolveSkillMarkdownLocation(input.sourceRepoPath, skillName);
+  if (location === undefined) {
     return { ok: false, reason: 'not-found' };
   }
-  const current = await readFile(resolved.realFilePath);
-  if (current.length > maxSkillMarkdownBytes) {
-    return { ok: false, reason: 'too-large' };
-  }
-  if (sha256(current) !== input.baseSha256) {
-    return { ok: false, reason: 'conflict' };
-  }
-  await writeFile(resolved.realFilePath, input.content, 'utf8');
-  return { ok: true };
+  const recoveryPaths = recoveryPathsForMarkdown(location.markdownPath);
+  return await withSerializedFileMutation(location.markdownPath, async () => {
+    if ((await recoverSkillMarkdownWrite(recoveryPaths)) === 'blocked') {
+      return { ok: false, reason: 'conflict' };
+    }
+    const currentRead = await readBoundedRegularFile(location.markdownPath, maxSkillMarkdownBytes);
+    if (currentRead.kind === 'too-large') {
+      return { ok: false, reason: 'too-large' };
+    }
+    if (currentRead.kind !== 'ok') {
+      return { ok: false, reason: 'not-found' };
+    }
+    if (sha256(currentRead.buffer) !== input.baseSha256) {
+      return { ok: false, reason: 'conflict' };
+    }
+    const operationId = randomUUID();
+    let journal: SkillMarkdownWriteJournal = {
+      baseSha256: input.baseSha256,
+      newSha256: sha256(input.content),
+      operationId,
+      phase: 'prepared',
+      tempName: `.SKILL.md.ai-usage.${operationId}.tmp`,
+      version: 1,
+    };
+    await writeSkillMarkdownJournal(recoveryPaths.journalPath, journal);
+    if (!(await claimSkillMarkdown(recoveryPaths))) {
+      return (await cleanupValidatedSkillMarkdownJournal(recoveryPaths, journal))
+        ? { ok: false, reason: 'not-found' }
+        : { ok: false, reason: 'conflict' };
+    }
+    journal = { ...journal, phase: 'claimed' };
+    await writeSkillMarkdownJournal(recoveryPaths.journalPath, journal);
+    const claimedRead = await readBoundedRegularFile(recoveryPaths.claimPath, maxSkillMarkdownBytes);
+    if (claimedRead.kind === 'too-large') {
+      return await restoreClaimAndCleanupJournal(recoveryPaths, journal, 'too-large');
+    }
+    if (claimedRead.kind !== 'ok') {
+      return await restoreClaimAndCleanupJournal(recoveryPaths, journal, 'not-found');
+    }
+    if (sha256(claimedRead.buffer) !== input.baseSha256) {
+      return await restoreClaimAndCleanupJournal(recoveryPaths, journal, 'conflict');
+    }
+    const temporaryPath = path.join(path.dirname(location.markdownPath), journal.tempName);
+    try {
+      const mode = await existingRegularFileMode(recoveryPaths.claimPath, 0o600);
+      await writeExclusiveFile(temporaryPath, input.content, mode);
+    } catch (error) {
+      await restoreClaimAndCleanupJournal(recoveryPaths, journal, 'conflict');
+      throw error;
+    }
+    try {
+      await link(temporaryPath, location.markdownPath);
+    } catch (error) {
+      if (isRecord(error) && error.code === 'EEXIST') {
+        await cleanupValidatedSkillMarkdownJournal(recoveryPaths, journal);
+        return { ok: false, reason: 'conflict' };
+      }
+      await restoreClaimAndCleanupJournal(recoveryPaths, journal, 'conflict');
+      throw error;
+    }
+    journal = { ...journal, phase: 'published' };
+    await writeSkillMarkdownJournal(recoveryPaths.journalPath, journal);
+    const publishedJournalRead = await readSkillMarkdownWriteJournal(recoveryPaths.journalPath);
+    const publishedTempValidation = await validateRecoveryArtifact(temporaryPath, journal.newSha256);
+    const publishedMarkdownRead = await readBoundedRegularFile(location.markdownPath, maxSkillMarkdownBytes);
+    const claimValidation = await validateRecoveryArtifact(recoveryPaths.claimPath, journal.baseSha256);
+    if (
+      publishedJournalRead.kind !== 'ok' ||
+      !journalsEqual(publishedJournalRead.journal, journal) ||
+      publishedTempValidation.kind !== 'valid' ||
+      publishedMarkdownRead.kind !== 'ok' ||
+      !sameFileIdentity(publishedTempValidation.identity, publishedMarkdownRead.identity) ||
+      claimValidation.kind !== 'valid' ||
+      !(await journalReadIsUnchanged(recoveryPaths.journalPath, publishedJournalRead)) ||
+      !(await removeArtifactWithIdentity(recoveryPaths.claimPath, claimValidation.identity)) ||
+      !(await cleanupValidatedSkillMarkdownJournal(recoveryPaths, journal, {
+        journalIdentity: publishedJournalRead.identity,
+        tempValidation: publishedTempValidation,
+      }))
+    ) {
+      throw new Error('skill markdown recovery artifacts changed before cleanup');
+    }
+    return { ok: true };
+  });
 };

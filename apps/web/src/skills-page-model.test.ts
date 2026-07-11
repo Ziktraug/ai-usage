@@ -14,6 +14,7 @@ import {
   buildSkillMatrix,
   buildSkillTree,
   canReconcileAll,
+  defaultSkillSelection,
   describeReconcileActions,
   filterMatrixRows,
   findProjectSkillRow,
@@ -66,6 +67,7 @@ const projectObservation = (
   description: `${name} project description`,
   diagnostics: [],
   invocation: 'auto',
+  markdownReadable: true,
   name,
   path: `/project/.claude/skills/${name}`,
   placement: 'owned-directory',
@@ -150,6 +152,30 @@ describe('skills page model', () => {
     expect(matrix.rows.map((row) => row.name)).toEqual(['alpha-skill', 'disabled-skill']);
     expect(matrix.rows[0]).toMatchObject({ origin: 'github', tokenFlag: true, tokenTotal: 9 });
     expect(matrix.rows[1]?.cells[0]).toEqual({ label: 'Disabled', state: 'not-applicable', targetId: 'codex' });
+  });
+
+  test('flags every configured token-threshold diagnostic in the matrix', () => {
+    const tokenDiagnosticCodes = [
+      'SkillMarkdownTokenWarning',
+      'SkillMarkdownTokenHigh',
+      'SkillReferenceTokenWarning',
+      'SkillReferenceTokenHigh',
+      'SkillTotalTokenWarning',
+      'SkillTotalTokenHigh',
+    ];
+
+    for (const code of tokenDiagnosticCodes) {
+      const matrix = buildSkillMatrix(
+        makeSnapshot({
+          skills: [
+            skill('token-heavy', {
+              diagnostics: [{ code, message: code, severity: 'warning', skillName: 'token-heavy' }],
+            }),
+          ],
+        }),
+      );
+      expect(matrix.rows[0]?.tokenFlag).toBe(true);
+    }
   });
 
   test('builds a scope tree with alphabetized skills and honest attention counters', () => {
@@ -274,8 +300,9 @@ describe('skills page model', () => {
     const projectPath = '/Users/nathan/projects/github/Exalibur';
     const knownProjects = [{ label: 'Exalibur', path: projectPath }];
 
-    expect(skillSelectionFromPath('/skills', knownProjects)).toEqual({ type: 'global-scope' });
+    expect(skillSelectionFromPath('/skills', knownProjects)).toBeUndefined();
     expect(skillSelectionFromPath('/skills/matrix', knownProjects)).toEqual({ type: 'global-scope' });
+    expect(skillSelectionFromPath('/skills/global', knownProjects)).toEqual({ type: 'global-scope' });
     expect(skillSelectionFromPath('/skills/global/alpha-skill', knownProjects)).toEqual({
       skillName: 'alpha-skill',
       type: 'global-skill',
@@ -289,6 +316,48 @@ describe('skills page model', () => {
       skillName: 'no-use-effect',
       type: 'project-skill',
     });
+  });
+
+  test('defaults to the first global skill with an actionable issue', () => {
+    const snapshot = makeSnapshot({
+      projections: [
+        projection('alpha-healthy', 'codex', 'linked'),
+        projection('beta-needs-repair', 'codex', 'broken-link'),
+      ],
+      skills: [skill('alpha-healthy'), skill('beta-needs-repair')],
+      targets: [target('codex', 'Codex')],
+    });
+
+    expect(defaultSkillSelection(buildSkillTree(snapshot, []))).toEqual({
+      skillName: 'beta-needs-repair',
+      type: 'global-skill',
+    });
+  });
+
+  test('defaults to the first global skill when none need attention', () => {
+    const snapshot = makeSnapshot({
+      projections: [projection('beta-skill', 'codex', 'linked'), projection('alpha-skill', 'codex', 'linked')],
+      skills: [skill('beta-skill'), skill('alpha-skill')],
+      targets: [target('codex', 'Codex')],
+    });
+
+    expect(defaultSkillSelection(buildSkillTree(snapshot, []))).toEqual({
+      skillName: 'alpha-skill',
+      type: 'global-skill',
+    });
+  });
+
+  test('defaults to the first project scope when there are no global skills', () => {
+    const tree = buildSkillTree(
+      makeSnapshot(),
+      [],
+      [
+        { label: 'Zulu', path: '/work/zulu' },
+        { label: 'Alpha', path: '/work/alpha' },
+      ],
+    );
+
+    expect(defaultSkillSelection(tree)).toEqual({ projectPath: '/work/alpha', type: 'project-scope' });
   });
 
   test('uses the project name as the route key when it is unambiguous', () => {
@@ -531,6 +600,7 @@ describe('skills page model', () => {
         type: 'create-symlink',
       },
       {
+        observedSourcePath: '/repo/skills/alpha-skill-old',
         path: '/home/user/.claude/skills/alpha-skill',
         skillName: 'alpha-skill',
         sourcePath: '/repo/skills/alpha-skill',
