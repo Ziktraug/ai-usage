@@ -1,13 +1,89 @@
+import type {
+  ProjectSkillInventory,
+  SkillManagementConfig,
+  SkillManagementSnapshot,
+  SkillMarkdownDocument,
+  SkillMarkdownWriteInput,
+  SkillTargetDirectoryInput,
+  SkillToggleInput,
+} from '@ai-usage/skills';
+import { parseSkillConfigInput } from '@ai-usage/skills/config';
 import { createServerFn } from '@tanstack/solid-start';
 import { type ProjectRuntimeDirId, projectSkillDirectories } from '../project-skill-directories';
 import { skillNameInputForClient, targetIdInputForClient } from './skill-input-validation';
+import type {
+  KnownSkillProjectPath,
+  ProjectSkillMarkdownDocument,
+  ProjectSkillMarkdownInput,
+  SkillMarkdownSaveResult,
+  SkillReconcileServerResult,
+  SkillsServerResult,
+} from './skills-contracts';
 
-export type { KnownSkillProjectPath } from './skills.server';
+export type { KnownSkillProjectPath } from './skills-contracts';
 
 type JsonRecord = Record<string, unknown>;
 
 const sha256Pattern = /^[a-f0-9]{64}$/;
 const maxSkillMarkdownBytes = 256 * 1024;
+
+const isE2ERuntime = () => import.meta.env?.VITE_AI_USAGE_E2E === '1';
+
+type AdapterResult<T> = Promise<SkillsServerResult<T>> | SkillsServerResult<T>;
+
+interface SkillsServerAdapter {
+  createTargetDirectory: (input: SkillTargetDirectoryInput) => AdapterResult<SkillManagementSnapshot>;
+  previewReconcileAll: () => AdapterResult<SkillReconcileServerResult>;
+  readKnownProjectPaths: () => AdapterResult<readonly KnownSkillProjectPath[]>;
+  readMarkdown: (skillName: string) => AdapterResult<SkillMarkdownDocument>;
+  readProjectInventories: () => AdapterResult<readonly ProjectSkillInventory[]>;
+  readProjectMarkdown: (input: ProjectSkillMarkdownInput) => AdapterResult<ProjectSkillMarkdownDocument>;
+  readSnapshot: () => AdapterResult<SkillManagementSnapshot>;
+  reconcileAll: () => AdapterResult<SkillReconcileServerResult>;
+  reconcileSkill: (skillName: string) => AdapterResult<SkillReconcileServerResult>;
+  refreshSnapshot: () => AdapterResult<SkillManagementSnapshot>;
+  saveConfig: (config: SkillManagementConfig) => AdapterResult<SkillManagementSnapshot>;
+  saveMarkdown: (input: SkillMarkdownWriteInput) => AdapterResult<SkillMarkdownSaveResult>;
+  toggleSkill: (input: SkillToggleInput) => AdapterResult<SkillReconcileServerResult>;
+}
+
+const loadSkillsServerAdapter = async (): Promise<SkillsServerAdapter> => {
+  if (isE2ERuntime()) {
+    const fixture = await import('./skills-e2e-fixture.server');
+    return {
+      createTargetDirectory: fixture.createE2ESkillTargetDirectory,
+      previewReconcileAll: fixture.previewE2EReconcileAllSkills,
+      readKnownProjectPaths: fixture.readE2EKnownSkillProjectPaths,
+      readMarkdown: fixture.readE2ESkillMarkdown,
+      readProjectInventories: fixture.readE2ESkillProjectInventories,
+      readProjectMarkdown: fixture.readE2EProjectSkillMarkdown,
+      readSnapshot: fixture.readE2ESkillManagementSnapshot,
+      reconcileAll: fixture.reconcileAllE2ESkills,
+      reconcileSkill: fixture.reconcileE2ESkill,
+      refreshSnapshot: fixture.readE2ERefreshedSkillManagementSnapshot,
+      saveConfig: fixture.writeE2ESkillManagementConfig,
+      saveMarkdown: fixture.writeE2ESkillMarkdown,
+      toggleSkill: fixture.toggleE2ESkill,
+    };
+  }
+
+  const server = await import('./skills.server');
+  return {
+    createTargetDirectory: server.createSkillTargetDirectoryForServer,
+    previewReconcileAll: server.previewReconcileAllActiveSkillsForServer,
+    readKnownProjectPaths: server.readKnownSkillProjectPathsForServer,
+    readMarkdown: server.readSkillMarkdownForServer,
+    readProjectInventories: server.readSkillProjectInventoriesForServer,
+    readProjectMarkdown: server.readProjectSkillMarkdownForServer,
+    readSnapshot: server.readSkillManagementSnapshotForServer,
+    reconcileAll: server.reconcileAllActiveSkillsForServer,
+    reconcileSkill: server.reconcileSkillForServer,
+    refreshSnapshot: server.readSkillManagementSnapshotForServer,
+    saveConfig: server.writeSkillManagementConfigForServer,
+    saveMarkdown: server.writeSkillMarkdownForServer,
+    toggleSkill: server.toggleSkillEnabledForServer,
+  };
+};
 
 const assertRecord = (input: unknown, label: string): JsonRecord => {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
@@ -21,29 +97,6 @@ const parseRequiredString = (input: unknown, label: string): string => {
     throw new Error(`${label} must be a non-empty string`);
   }
   return input;
-};
-
-const parseOptionalStringArray = (input: unknown, label: string): readonly string[] | undefined => {
-  if (input === undefined) {
-    return;
-  }
-  if (!(Array.isArray(input) && input.every((value) => typeof value === 'string' && value.trim().length > 0))) {
-    throw new Error(`${label} must be an array of non-empty strings`);
-  }
-  return input;
-};
-
-const parseSkillConfigInputForClient = (input: unknown) => {
-  const record = assertRecord(input, 'skills config');
-  if (record.sourceRepoPath !== undefined) {
-    parseRequiredString(record.sourceRepoPath, 'sourceRepoPath');
-  }
-  if (record.projectsRootPath !== undefined) {
-    parseRequiredString(record.projectsRootPath, 'projectsRootPath');
-  }
-  parseOptionalStringArray(record.projectPaths, 'projectPaths');
-  parseOptionalStringArray(record.ignoredTargetFindings, 'ignoredTargetFindings');
-  return record;
 };
 
 const parseSkillToggleInputForClient = (input: unknown) => {
@@ -82,55 +135,73 @@ const parseSkillMarkdownWriteInputForClient = (input: unknown) => {
   };
 };
 
-export const getSkillManagementSnapshot = createServerFn({ method: 'GET' }).handler(() =>
-  import('./skills.server').then(({ readSkillManagementSnapshotForServer }) => readSkillManagementSnapshotForServer()),
-);
+export const getSkillManagementSnapshot = createServerFn({ method: 'GET' }).handler(async () => {
+  const server = await loadSkillsServerAdapter();
+  const result = await server.readSnapshot();
+  return result;
+});
 
-export const getKnownSkillProjectPaths = createServerFn({ method: 'GET' }).handler(() =>
-  import('./skills.server').then(({ readKnownSkillProjectPathsForServer }) => readKnownSkillProjectPathsForServer()),
-);
+export const refreshSkillManagementSnapshot = createServerFn({ method: 'GET' }).handler(async () => {
+  const server = await loadSkillsServerAdapter();
+  const result = await server.refreshSnapshot();
+  return result;
+});
+
+export const getKnownSkillProjectPaths = createServerFn({ method: 'GET' }).handler(async () => {
+  const server = await loadSkillsServerAdapter();
+  const result = await server.readKnownProjectPaths();
+  return result;
+});
 
 export const saveSkillManagementConfig = createServerFn({ method: 'POST' })
-  .validator((input) => parseSkillConfigInputForClient(input))
-  .handler(({ data }) =>
-    import('./skills.server').then(({ writeSkillManagementConfigForServer }) =>
-      writeSkillManagementConfigForServer(data),
-    ),
-  );
+  .validator((input) => parseSkillConfigInput(input))
+  .handler(async ({ data }) => {
+    const server = await loadSkillsServerAdapter();
+    const result = await server.saveConfig(data);
+    return result;
+  });
 
 export const toggleManagedSkill = createServerFn({ method: 'POST' })
   .validator((input) => parseSkillToggleInputForClient(input))
-  .handler(({ data }) =>
-    import('./skills.server').then(({ toggleSkillEnabledForServer }) => toggleSkillEnabledForServer(data)),
-  );
+  .handler(async ({ data }) => {
+    const server = await loadSkillsServerAdapter();
+    const result = await server.toggleSkill(data);
+    return result;
+  });
 
 export const reconcileManagedSkill = createServerFn({ method: 'POST' })
   .validator((input) => skillNameInputForClient(input))
-  .handler(({ data }) =>
-    import('./skills.server').then(({ reconcileSkillForServer }) => reconcileSkillForServer(data)),
-  );
+  .handler(async ({ data }) => {
+    const server = await loadSkillsServerAdapter();
+    const result = await server.reconcileSkill(data);
+    return result;
+  });
 
-export const reconcileAllManagedSkills = createServerFn({ method: 'POST' }).handler(() =>
-  import('./skills.server').then(({ reconcileAllActiveSkillsForServer }) => reconcileAllActiveSkillsForServer()),
-);
+export const reconcileAllManagedSkills = createServerFn({ method: 'POST' }).handler(async () => {
+  const server = await loadSkillsServerAdapter();
+  const result = await server.reconcileAll();
+  return result;
+});
 
-export const previewReconcileAllManagedSkills = createServerFn({ method: 'GET' }).handler(() =>
-  import('./skills.server').then(({ previewReconcileAllActiveSkillsForServer }) =>
-    previewReconcileAllActiveSkillsForServer(),
-  ),
-);
+export const previewReconcileAllManagedSkills = createServerFn({ method: 'GET' }).handler(async () => {
+  const server = await loadSkillsServerAdapter();
+  const result = await server.previewReconcileAll();
+  return result;
+});
 
 export const createManagedSkillTargetDirectory = createServerFn({ method: 'POST' })
   .validator((input) => parseSkillTargetDirectoryInputForClient(input))
-  .handler(({ data }) =>
-    import('./skills.server').then(({ createSkillTargetDirectoryForServer }) =>
-      createSkillTargetDirectoryForServer(data),
-    ),
-  );
+  .handler(async ({ data }) => {
+    const server = await loadSkillsServerAdapter();
+    const result = await server.createTargetDirectory(data);
+    return result;
+  });
 
-export const getSkillProjectInventories = createServerFn({ method: 'GET' }).handler(() =>
-  import('./skills.server').then(({ readSkillProjectInventoriesForServer }) => readSkillProjectInventoriesForServer()),
-);
+export const getSkillProjectInventories = createServerFn({ method: 'GET' }).handler(async () => {
+  const server = await loadSkillsServerAdapter();
+  const result = await server.readProjectInventories();
+  return result;
+});
 
 const projectRuntimeDirectoryIds = new Set<string>(projectSkillDirectories.map((directory) => directory.id));
 
@@ -156,18 +227,24 @@ const parseProjectSkillMarkdownInput = (input: unknown) => {
 
 export const getProjectSkillMarkdown = createServerFn({ method: 'GET' })
   .validator((input) => parseProjectSkillMarkdownInput(input))
-  .handler(({ data }) =>
-    import('./skills.server').then(({ readProjectSkillMarkdownForServer }) => readProjectSkillMarkdownForServer(data)),
-  );
+  .handler(async ({ data }) => {
+    const server = await loadSkillsServerAdapter();
+    const result = await server.readProjectMarkdown(data);
+    return result;
+  });
 
 export const getManagedSkillMarkdown = createServerFn({ method: 'POST' })
   .validator((input) => skillNameInputForClient(input))
-  .handler(({ data }) =>
-    import('./skills.server').then(({ readSkillMarkdownForServer }) => readSkillMarkdownForServer(data)),
-  );
+  .handler(async ({ data }) => {
+    const server = await loadSkillsServerAdapter();
+    const result = await server.readMarkdown(data);
+    return result;
+  });
 
 export const saveManagedSkillMarkdown = createServerFn({ method: 'POST' })
   .validator((input) => parseSkillMarkdownWriteInputForClient(input))
-  .handler(({ data }) =>
-    import('./skills.server').then(({ writeSkillMarkdownForServer }) => writeSkillMarkdownForServer(data)),
-  );
+  .handler(async ({ data }) => {
+    const server = await loadSkillsServerAdapter();
+    const result = await server.saveMarkdown(data);
+    return result;
+  });

@@ -20,33 +20,23 @@ import {
   title,
   titleBlock,
 } from '@ai-usage/design-system/report';
-import type { ProjectionAction, SkillManagementConfig, SkillManagementSnapshot } from '@ai-usage/skills';
+import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import { createFileRoute, Link, useLocation } from '@tanstack/solid-router';
-import { createEffect, createMemo, createResource, createSignal, For, Show } from 'solid-js';
+import { createMemo, createSignal, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
-import {
-  createManagedSkillTargetDirectory,
-  getKnownSkillProjectPaths,
-  getSkillManagementSnapshot,
-  getSkillProjectInventories,
-  type KnownSkillProjectPath,
-  previewReconcileAllManagedSkills,
-  reconcileAllManagedSkills,
-  reconcileManagedSkill,
-  saveSkillManagementConfig,
-  toggleManagedSkill,
-} from '../server/skills';
+import { DiscardConfirmationDialog } from '../discard-confirmation-dialog';
+import { getKnownSkillProjectPaths, getSkillManagementSnapshot, type KnownSkillProjectPath } from '../server/skills';
 import {
   buildSkillMatrix,
   count,
-  describeReconcileActions,
   type KnownProjectScope,
   type ReconcilePlanSummary,
   type SkillCellStateFilter,
   skillSelectionFromPath,
 } from '../skills-page-model';
-import { type ProjectInventoriesResult, SkillsWorkspace } from '../skills-workspace';
+import { createSkillsRouteController, type OperationNotice } from '../skills-route-controller';
+import { type ProjectInventoriesResult, type SkillMarkdownDraftGuard, SkillsWorkspace } from '../skills-workspace';
 
 export const Route = createFileRoute('/skills')({
   staleTime: Number.POSITIVE_INFINITY,
@@ -58,37 +48,6 @@ export const Route = createFileRoute('/skills')({
 });
 
 const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
-
-type SkillSnapshotResult =
-  | { ok: true; data: SkillManagementSnapshot }
-  | { ok: false; error: { message: string; tag: string } };
-
-type KnownProjectPathsResult =
-  | { ok: true; data: readonly KnownSkillProjectPath[] }
-  | { ok: false; error: { message: string; tag: string } };
-
-interface SkillReconcileResult {
-  actions: readonly ProjectionAction[];
-  snapshot: SkillManagementSnapshot;
-}
-
-type SkillReconcileServerResult =
-  | { ok: true; data: SkillReconcileResult }
-  | { ok: false; error: { message: string; tag: string } };
-
-interface OperationNotice {
-  message: string;
-  tone: 'error' | 'ok';
-}
-
-const errorMessageFrom = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-
-const skillSnapshotResultFrom = (value: unknown): SkillSnapshotResult => {
-  if (typeof value !== 'object' || value === null || !('ok' in value)) {
-    return { ok: false, error: { message: 'Invalid skills snapshot response', tag: 'InvalidResponse' } };
-  }
-  return value as SkillSnapshotResult;
-};
 
 const pageStack = css({
   display: 'grid',
@@ -231,11 +190,6 @@ const disabledRow = css({
   borderTop: '1px solid token(colors.line)',
 });
 
-const skillSnapshotResult = (value: unknown) => value as SkillSnapshotResult;
-
-const targetLabel = (snapshot: SkillManagementSnapshot, targetId: string) =>
-  snapshot.targets.find((target) => target.id === targetId)?.label ?? targetId;
-
 const projectGroupRoutePrefixPattern = /^group:/;
 const legacyAliasRoutePrefixPattern = /^legacy-alias:/;
 
@@ -266,200 +220,45 @@ const knownProjectScopesFromPaths = (projects: readonly KnownSkillProjectPath[])
   return [...scopes.values()];
 };
 
-const actionNotice = (actions: readonly ProjectionAction[], snapshot: SkillManagementSnapshot, fallback: string) => {
-  const applied = actions.filter((action) => action.type !== 'noop' && action.type !== 'refuse-unmanaged-mutation');
-  if (applied.length === 0) {
-    return 'Nothing to change.';
-  }
-  if (applied.length === 1) {
-    const action = applied.at(0);
-    if (action === undefined) {
-      return 'Nothing to change.';
-    }
-    if (action.type === 'create-symlink') {
-      return `${action.skillName} linked to ${targetLabel(snapshot, action.targetId)}.`;
-    }
-    if (action.type === 'repair-symlink') {
-      return `${action.skillName} repaired in ${targetLabel(snapshot, action.targetId)}.`;
-    }
-    return `${action.skillName} unlinked from ${targetLabel(snapshot, action.targetId)}.`;
-  }
-  return `${fallback}: ${count(applied.length, 'change')} applied.`;
-};
-
 function SkillsRoute() {
   const data = Route.useLoaderData();
   const location = useLocation();
-  const [result, setResult] = createSignal<SkillSnapshotResult>(skillSnapshotResultFrom(data().skills));
-  const knownProjectPathsResult = createMemo(() => data().knownProjectPaths as KnownProjectPathsResult);
-  const knownProjectPaths = createMemo(() => {
-    const current = knownProjectPathsResult();
-    return current.ok ? current.data : [];
-  });
-  const knownProjectPathsError = createMemo(() => {
-    const current = knownProjectPathsResult();
-    return current.ok ? null : current.error.message;
-  });
-  const [pendingOperation, setPendingOperation] = createSignal<string | null>(null);
-  const [operationNotice, setOperationNotice] = createSignal<OperationNotice | null>(null);
-  const [reconcilePlan, setReconcilePlan] = createSignal<ReconcilePlanSummary | null>(null);
+  let refreshButtonElement: HTMLButtonElement | undefined;
   const [activeCellStateFilter, setActiveCellStateFilter] = createSignal<SkillCellStateFilter | undefined>();
-  const snapshot = createMemo(() => {
-    const current = result();
-    return current.ok ? current.data : undefined;
-  });
-  const errorMessage = createMemo(() => {
-    const current = result();
-    return current.ok ? '' : current.error.message;
-  });
-  const [sourceRepoPath, setSourceRepoPath] = createSignal(snapshot()?.config.sourceRepoPath ?? '');
-  const [projectPaths, setProjectPaths] = createSignal<readonly string[]>(snapshot()?.config.projectPaths ?? []);
-  const [projectPathDraft, setProjectPathDraft] = createSignal('');
-  const projectInventoriesKey = createMemo(() => {
-    const current = snapshot();
-    if (current?.configured !== true) {
-      return;
-    }
-    return JSON.stringify([current.config.sourceRepoPath ?? '', ...(current.config.projectPaths ?? [])]);
-  });
-  const [projectInventories] = createResource(
-    projectInventoriesKey,
-    async () => (await getSkillProjectInventories()) as ProjectInventoriesResult,
-  );
-
-  createEffect(() => {
-    const current = snapshot();
-    if (current === undefined) {
-      return;
-    }
-    setProjectPaths(current.config.projectPaths ?? []);
-  });
-
-  const applySnapshotResult = (next: SkillSnapshotResult, message: string) => {
-    setResult(next);
-    setOperationNotice(next.ok ? { message, tone: 'ok' } : { message: next.error.message, tone: 'error' });
-  };
-
-  const applyReconcileResult = (next: SkillReconcileServerResult, fallbackMessage: string) => {
-    if (!next.ok) {
-      setOperationNotice({ message: next.error.message, tone: 'error' });
-      return;
-    }
-    setResult({ ok: true, data: next.data.snapshot });
-    setOperationNotice({ message: actionNotice(next.data.actions, next.data.snapshot, fallbackMessage), tone: 'ok' });
-  };
-
-  const runOperation = async (operation: string, action: () => Promise<void>) => {
-    if (pendingOperation()) {
-      return;
-    }
-    setPendingOperation(operation);
-    setOperationNotice(null);
-    // Any operation invalidates a pending reconcile preview: the planned
-    // actions were computed against the pre-operation snapshot.
-    setReconcilePlan(null);
-    try {
-      await action();
-    } catch (error) {
-      setOperationNotice({ message: errorMessageFrom(error), tone: 'error' });
-    } finally {
-      setPendingOperation(null);
-    }
-  };
-
-  const configInput = (overrides: { projectPaths?: readonly string[]; sourceRepoPath?: string } = {}) => {
-    const current = snapshot()?.config ?? {};
-    const { projectPaths: _projectPaths, ...currentWithoutProjectPaths } = current;
-    const next: SkillManagementConfig = currentWithoutProjectPaths;
-    const source = (overrides.sourceRepoPath ?? current.sourceRepoPath ?? '').trim();
-    if (source) {
-      next.sourceRepoPath = source;
-    }
-    const nextProjectPaths = overrides.projectPaths ?? projectPaths();
-    if (nextProjectPaths.length > 0) {
-      next.projectPaths = nextProjectPaths;
-    }
-    return next;
-  };
-
-  const addProjectPath = () => {
-    const value = projectPathDraft().trim();
-    if (!value || projectPaths().includes(value)) {
-      return;
-    }
-    const nextProjectPaths = [...projectPaths(), value];
-    runOperation(`project:add:${value}`, async () => {
-      applySnapshotResult(
-        skillSnapshotResult(await saveSkillManagementConfig({ data: configInput({ projectPaths: nextProjectPaths }) })),
-        `Project path added: ${value}.`,
-      );
-      setProjectPathDraft('');
-    });
-  };
-
-  const removeProjectPath = (value: string) =>
-    runOperation(`project:remove:${value}`, async () => {
-      const nextProjectPaths = projectPaths().filter((projectPath) => projectPath !== value);
-      applySnapshotResult(
-        skillSnapshotResult(await saveSkillManagementConfig({ data: configInput({ projectPaths: nextProjectPaths }) })),
-        `Project path removed: ${value}.`,
-      );
-    });
-
-  const saveConfig = (nextSourceRepoPath: string) =>
-    runOperation('save-config', async () => {
-      applySnapshotResult(
-        skillSnapshotResult(
-          await saveSkillManagementConfig({ data: configInput({ sourceRepoPath: nextSourceRepoPath }) }),
-        ),
-        'Skill source saved.',
-      );
-    });
-
-  const toggleSkill = (skillName: string, enabled: boolean) =>
-    runOperation(`toggle:${skillName}`, async () => {
-      applyReconcileResult(
-        (await toggleManagedSkill({ data: { enabled, skillName } })) as SkillReconcileServerResult,
-        enabled ? `Enabled ${skillName}` : `Disabled ${skillName}`,
-      );
-    });
-
-  const reconcileSkill = (skillName: string) =>
-    runOperation(`reconcile:${skillName}`, async () => {
-      applyReconcileResult(
-        (await reconcileManagedSkill({ data: skillName })) as SkillReconcileServerResult,
-        `Reconciled ${skillName}`,
-      );
-    });
-
-  const previewReconcile = () =>
-    runOperation('preview-reconcile', async () => {
-      const next = (await previewReconcileAllManagedSkills()) as SkillReconcileServerResult;
-      if (!next.ok) {
-        setOperationNotice({ message: next.error.message, tone: 'error' });
-        return;
-      }
-      setResult({ ok: true, data: next.data.snapshot });
-      setReconcilePlan(describeReconcileActions(next.data.actions, next.data.snapshot.targets));
-    });
-
-  const applyReconcile = () =>
-    runOperation('reconcile-all', async () => {
-      applyReconcileResult(
-        (await reconcileAllManagedSkills()) as SkillReconcileServerResult,
-        'Reconciled active skills',
-      );
-    });
-
-  const cancelReconcile = () => setReconcilePlan(null);
-
-  const createTargetDirectory = (targetId: string) =>
-    runOperation(`target:${targetId}`, async () => {
-      applySnapshotResult(
-        skillSnapshotResult(await createManagedSkillTargetDirectory({ data: { targetId } })),
-        `Created target directory ${targetId}.`,
-      );
-    });
+  const controller = createSkillsRouteController(data);
+  const {
+    addProjectPath,
+    applyReconcile,
+    applyWorkspaceSnapshot,
+    cancelReconcile,
+    createTargetDirectory,
+    discardDirtySnapshot,
+    errorMessage,
+    keepDirtySnapshot,
+    knownProjectPaths,
+    knownProjectPathsError,
+    markdownRefreshVersion,
+    operationNotice,
+    pendingOperation,
+    pendingSnapshotReplacement,
+    previewReconcile,
+    projectInventories,
+    projectPathDraft,
+    projectPaths,
+    reconcilePlan,
+    reconcileSkill,
+    refreshSkills,
+    removeProjectPath,
+    result,
+    saveConfig,
+    setDirtyMarkdownDraft,
+    setOperationNotice,
+    setProjectPathDraft,
+    snapshot,
+    sourceRepoPath,
+    toggleSkill,
+    updateSourceRepoPath,
+  } = controller;
 
   // Route keys resolve against every project the tree can display: discovered
   // paths plus scanned inventories (which include config-only paths).
@@ -503,6 +302,18 @@ function SkillsRoute() {
               </div>
             </div>
             <div class={headerActions}>
+              <button
+                aria-busy={pendingOperation() === 'refresh-skills' ? 'true' : undefined}
+                class={navButton}
+                disabled={pendingOperation() !== null}
+                onClick={refreshSkills}
+                ref={(element) => {
+                  refreshButtonElement = element;
+                }}
+                type="button"
+              >
+                Refresh skills
+              </button>
               <Link class={navButton} search={dashboardSearchDefaults} to="/">
                 Report
               </Link>
@@ -530,7 +341,7 @@ function SkillsRoute() {
                   removeProjectPath={removeProjectPath}
                   saveConfig={saveConfig}
                   setProjectPathDraft={setProjectPathDraft}
-                  setSourceRepoPath={setSourceRepoPath}
+                  setSourceRepoPath={updateSourceRepoPath}
                   sourceRepoPath={sourceRepoPath()}
                 />
               }
@@ -542,12 +353,14 @@ function SkillsRoute() {
                 createTargetDirectory={createTargetDirectory}
                 knownProjectPaths={knownProjectPaths()}
                 knownProjectPathsError={knownProjectPathsError()}
+                markdownRefreshVersion={markdownRefreshVersion()}
                 onApplyReconcile={applyReconcile}
                 onCancelReconcile={cancelReconcile}
                 onCellStateFilterChange={setActiveCellStateFilter}
                 onDismissOperationNotice={() => setOperationNotice(null)}
+                onMarkdownDraftStateChange={setDirtyMarkdownDraft}
                 onPreviewReconcile={previewReconcile}
-                onSnapshot={(nextSnapshot) => setResult({ ok: true, data: nextSnapshot })}
+                onSnapshot={applyWorkspaceSnapshot}
                 operationNotice={operationNotice()}
                 pendingOperation={pendingOperation()}
                 projectInventories={projectInventories()}
@@ -561,7 +374,7 @@ function SkillsRoute() {
                 routeSelection={routeSelection()}
                 saveConfig={saveConfig}
                 setProjectPathDraft={setProjectPathDraft}
-                setSourceRepoPath={setSourceRepoPath}
+                setSourceRepoPath={updateSourceRepoPath}
                 snapshot={snapshot()!}
                 sourceRepoPath={sourceRepoPath()}
                 toggleSkill={toggleSkill}
@@ -569,6 +382,15 @@ function SkillsRoute() {
             </Show>
           </Show>
         </div>
+        <Show when={pendingSnapshotReplacement()}>
+          <DiscardConfirmationDialog
+            description="The refreshed snapshot no longer contains this skill. Keep editing to preserve the draft, or discard it to apply the refreshed snapshot."
+            idPrefix="discard-removed-skill-draft"
+            onDiscard={discardDirtySnapshot}
+            onKeep={keepDirtySnapshot}
+            restoreFocus={() => refreshButtonElement?.focus()}
+          />
+        </Show>
       </div>
     </main>
   );
@@ -580,10 +402,12 @@ function ConfiguredSnapshot(props: {
   createTargetDirectory: (targetId: string) => void;
   knownProjectPaths: readonly KnownSkillProjectPath[];
   knownProjectPathsError: string | null;
+  markdownRefreshVersion: number;
   onApplyReconcile: () => void;
   onCancelReconcile: () => void;
   onCellStateFilterChange: (filter: SkillCellStateFilter | undefined) => void;
   onDismissOperationNotice: () => void;
+  onMarkdownDraftStateChange: (guard: SkillMarkdownDraftGuard | undefined) => void;
   onSnapshot: (snapshot: SkillManagementSnapshot) => void;
   onPreviewReconcile: () => void;
   operationNotice: OperationNotice | null;
@@ -646,9 +470,11 @@ function ConfiguredSnapshot(props: {
           </div>
         )}
         knownProjectPaths={props.projectScopes}
+        markdownRefreshVersion={props.markdownRefreshVersion}
         onApplyReconcile={props.onApplyReconcile}
         onCancelReconcile={props.onCancelReconcile}
         onCellStateFilterChange={props.onCellStateFilterChange}
+        onMarkdownDraftStateChange={props.onMarkdownDraftStateChange}
         onPreviewReconcile={props.onPreviewReconcile}
         onSnapshot={props.onSnapshot}
         pendingOperation={props.pendingOperation}

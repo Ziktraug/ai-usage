@@ -46,6 +46,21 @@ test('preserves JSON datasets at the server-function boundary', () => {
   expect(JSON.stringify(toExportReportPayload(payload).datasets)).toBe(JSON.stringify(demoReportPayload.datasets));
 });
 
+test('drops legacy Cursor attribution when the canonical dataset is present', () => {
+  const cursorCommitAttribution = [...(demoReportPayload.datasets?.cursorCommitAttribution ?? [])];
+  const payload = toWebReportPayload({
+    ...demoReportPayload,
+    datasets: { cursorCommitAttribution },
+    facets: {
+      cursor: { commitAttribution: cursorCommitAttribution },
+      retained: { value: 'keep me' },
+    },
+  });
+
+  expect(JSON.stringify(payload.datasets?.cursorCommitAttribution)).toBe(JSON.stringify(cursorCommitAttribution));
+  expect(payload.facets).toEqual({ retained: { value: 'keep me' } });
+});
+
 test('rejects non-JSON dataset values at the server-function boundary', () => {
   expect(() =>
     toWebReportPayload({

@@ -1,11 +1,12 @@
 import type { SkillManagementSnapshot, SkillMarkdownDocument } from '@ai-usage/skills';
-import type { SkillMarkdownSaveResult as SkillMarkdownSaveData, SkillsServerResult } from './server/skills.server';
+import type { SkillMarkdownSaveResult as SkillMarkdownSaveData, SkillsServerResult } from './server/skills-contracts';
 
 export type SkillMarkdownDocumentResult = SkillsServerResult<SkillMarkdownDocument>;
 
 export type SkillMarkdownSaveResult = SkillsServerResult<SkillMarkdownSaveData>;
 
 export interface SkillMarkdownEditorState {
+  dirty: boolean;
   document: SkillMarkdownDocument | undefined;
   draft: string;
   editing: boolean;
@@ -25,9 +26,10 @@ interface SkillMarkdownEditorDependencies {
 export interface SkillMarkdownEditorController {
   cancelEditing: () => void;
   getState: () => SkillMarkdownEditorState;
+  reload: () => Promise<boolean>;
   reportUnexpectedError: (error: unknown) => void;
   save: () => Promise<void>;
-  select: (skillName: string) => Promise<void>;
+  select: (skillName: string) => Promise<boolean>;
   setDraft: (draft: string) => void;
   startEditing: () => void;
   subscribe: (listener: (state: SkillMarkdownEditorState) => void) => () => void;
@@ -37,7 +39,7 @@ const clientErrorMessage = (error: unknown): string => (error instanceof Error ?
 
 export const runSkillMarkdownEditorAction = async (
   controller: SkillMarkdownEditorController,
-  action: () => Promise<void>,
+  action: () => Promise<unknown>,
 ): Promise<void> => {
   try {
     await action();
@@ -51,6 +53,7 @@ export const createSkillMarkdownEditorController = (
 ): SkillMarkdownEditorController => {
   let selectionVersion = 0;
   let state: SkillMarkdownEditorState = {
+    dirty: false,
     document: undefined,
     draft: '',
     editing: false,
@@ -69,10 +72,11 @@ export const createSkillMarkdownEditorController = (
     }
   };
 
-  const select = async (skillName: string): Promise<void> => {
+  const load = async (skillName: string): Promise<boolean> => {
     selectionVersion += 1;
     const requestVersion = selectionVersion;
     update({
+      dirty: false,
       document: undefined,
       draft: '',
       editing: false,
@@ -86,11 +90,11 @@ export const createSkillMarkdownEditorController = (
     try {
       const result = await dependencies.loadMarkdown(skillName);
       if (requestVersion !== selectionVersion) {
-        return;
+        return true;
       }
       if (!result.ok) {
         update({ error: result.error.message, loading: false });
-        return;
+        return true;
       }
       update({ document: result.data, draft: result.data.content, loading: false });
     } catch (error) {
@@ -98,6 +102,24 @@ export const createSkillMarkdownEditorController = (
         update({ error: clientErrorMessage(error), loading: false });
       }
     }
+    return true;
+  };
+
+  const select = (skillName: string): Promise<boolean> => {
+    if (skillName === state.skillName && state.document !== undefined) {
+      return Promise.resolve(true);
+    }
+    if (state.dirty) {
+      return Promise.resolve(false);
+    }
+    return load(skillName);
+  };
+
+  const reload = (): Promise<boolean> => {
+    if (state.dirty || state.skillName === '') {
+      return Promise.resolve(false);
+    }
+    return load(state.skillName);
   };
 
   const save = async (): Promise<void> => {
@@ -140,9 +162,10 @@ export const createSkillMarkdownEditorController = (
         return;
       }
       if (savedDocument === undefined) {
-        update({ draft: input.content, editing: false, message: 'SKILL.md saved.', saving: false });
+        update({ dirty: false, draft: input.content, editing: false, message: 'SKILL.md saved.', saving: false });
       } else {
         update({
+          dirty: false,
           document: savedDocument,
           draft: savedDocument.content,
           editing: false,
@@ -172,21 +195,22 @@ export const createSkillMarkdownEditorController = (
   return {
     cancelEditing: () => {
       if (state.document !== undefined) {
-        update({ draft: state.document.content, editing: false, message: null });
+        update({ dirty: false, draft: state.document.content, editing: false, message: null });
       }
     },
     getState: () => state,
     reportUnexpectedError,
+    reload,
     save,
     select,
     setDraft: (draft) => {
       if (state.editing && !state.saving) {
-        update({ draft });
+        update({ dirty: draft !== state.document?.content, draft });
       }
     },
     startEditing: () => {
       if (state.document !== undefined) {
-        update({ draft: state.document.content, editing: true, message: null });
+        update({ dirty: false, draft: state.document.content, editing: true, message: null });
       }
     },
     subscribe: (listener) => {

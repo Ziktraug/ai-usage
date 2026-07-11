@@ -15,6 +15,52 @@ test('loads a deterministic report overview', async ({ page }) => {
   await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
 });
 
+test('exposes metric and punchcard context without pointer-only hints', async ({ page }) => {
+  await page.goto('/');
+
+  const apiValueHelp = page.getByRole('button', { name: 'About API value' });
+  await expect(apiValueHelp).toBeVisible();
+  await apiValueHelp.click();
+  await expect(
+    page.getByText('Estimated cost at standard API prices, including usage covered by subscriptions'),
+  ).toBeVisible();
+
+  const punchcardData = page.getByText('Punchcard data', { exact: true });
+  await punchcardData.click();
+  await expect(page.getByRole('table', { name: 'Punchcard data' })).toBeVisible();
+});
+
+test('prioritizes the selected dashboard view before secondary status on mobile', async ({ page }) => {
+  await page.setViewportSize({ height: 800, width: 390 });
+  await page.goto('/');
+
+  const dashboardSections = page.getByRole('tablist', { name: 'Dashboard sections' });
+  const providerStatus = page.getByRole('heading', { level: 2, name: 'Provider status' });
+  const [dashboardBox, providerBox] = await Promise.all([
+    dashboardSections.boundingBox(),
+    providerStatus.boundingBox(),
+  ]);
+
+  expect(dashboardBox?.y).toBeLessThan(providerBox?.y ?? 0);
+  await expect(page.getByRole('button', { name: 'More report metrics' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'About API value' })).not.toBeVisible();
+});
+
+test('keeps report KPIs and provider status ahead of the selected view on desktop', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1280 });
+  await page.goto('/');
+
+  const dashboardSections = page.getByRole('tablist', { name: 'Dashboard sections' });
+  const providerStatus = page.getByRole('heading', { level: 2, name: 'Provider status' });
+  const [dashboardBox, providerBox] = await Promise.all([
+    dashboardSections.boundingBox(),
+    providerStatus.boundingBox(),
+  ]);
+
+  await expect(page.getByRole('button', { name: 'About API value' })).toBeVisible();
+  expect(providerBox?.y).toBeLessThan(dashboardBox?.y ?? 0);
+});
+
 test('persists exploration state in the URL', async ({ page }) => {
   await page.goto('/');
   await page.keyboard.press('/');

@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import { lstat, open, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
 import { isProjectGroupConfigArray } from '@ai-usage/report-core/project-group';
@@ -13,6 +15,191 @@ import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageSer
 
 const machineConfigError = (operation: string, filePath: string) => (cause: unknown) =>
   new LocalHistoryError({ operation, path: filePath, cause });
+
+const aiUsageConfigUpdateTails = new Map<string, Promise<void>>();
+const configLockAcquireTimeoutMs = 15_000;
+const configLockHardExpirationMs = 5 * 60_000;
+const configLockRetryMs = 10;
+const maxConfigLockMetadataBytes = 1024;
+const exclusiveConfigLockFlags = 'wx+';
+const noFollowConfigLockReadFlags = fs.constants.O_NOFOLLOW;
+
+interface ConfigLockMetadata {
+  createdAt: string;
+  hostname: string;
+  ownerId: string;
+  pid: number;
+  version: 1;
+}
+
+interface FileIdentity {
+  dev: number;
+  ino: number;
+}
+
+const errorHasCode = (error: unknown, code: string): boolean =>
+  typeof error === 'object' && error !== null && 'code' in error && error.code === code;
+
+const sameFileIdentity = (left: FileIdentity, right: FileIdentity): boolean =>
+  left.dev === right.dev && left.ino === right.ino;
+
+const removeConfigLockIfUnchanged = async (lockPath: string, identity: FileIdentity): Promise<boolean> => {
+  const current = await lstat(lockPath).catch(() => undefined);
+  if (!(current?.isFile() && sameFileIdentity(current, identity))) {
+    return false;
+  }
+  try {
+    await unlink(lockPath);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const configLockMetadataFrom = (text: string): ConfigLockMetadata | undefined => {
+  try {
+    const value = JSON.parse(text) as unknown;
+    if (
+      typeof value === 'object' &&
+      value !== null &&
+      'version' in value &&
+      value.version === 1 &&
+      'createdAt' in value &&
+      typeof value.createdAt === 'string' &&
+      'hostname' in value &&
+      typeof value.hostname === 'string' &&
+      'ownerId' in value &&
+      typeof value.ownerId === 'string' &&
+      'pid' in value &&
+      typeof value.pid === 'number' &&
+      Number.isSafeInteger(value.pid) &&
+      value.pid > 0
+    ) {
+      return value as ConfigLockMetadata;
+    }
+  } catch {
+    return;
+  }
+  return;
+};
+
+const localProcessIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !errorHasCode(error, 'ESRCH');
+  }
+};
+
+const removeStaleConfigLock = async (lockPath: string): Promise<boolean> => {
+  let lockFile: Awaited<ReturnType<typeof open>>;
+  try {
+    lockFile = await open(lockPath, noFollowConfigLockReadFlags);
+  } catch {
+    return false;
+  }
+  try {
+    const lockStat = await lockFile.stat();
+    if (!lockStat.isFile()) {
+      return false;
+    }
+    const metadata =
+      lockStat.size <= maxConfigLockMetadataBytes ? configLockMetadataFrom(await lockFile.readFile('utf8')) : undefined;
+    const ownerExited = metadata?.hostname === os.hostname() && !localProcessIsAlive(metadata.pid);
+    const malformedLockExpired = metadata === undefined && Date.now() - lockStat.mtimeMs >= configLockHardExpirationMs;
+    if (!(ownerExited || malformedLockExpired)) {
+      return false;
+    }
+    return await removeConfigLockIfUnchanged(lockPath, lockStat);
+  } finally {
+    await lockFile.close().catch(() => undefined);
+  }
+};
+
+const withConfigFileLock = async <A>(filePath: string, update: () => A | Promise<A>): Promise<A> => {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const canonicalFilePath = path.join(fs.realpathSync(path.dirname(filePath)), path.basename(filePath));
+  const lockPath = `${canonicalFilePath}.lock`;
+  const deadline = Date.now() + configLockAcquireTimeoutMs;
+  let lockFile: Awaited<ReturnType<typeof open>> | undefined;
+
+  while (lockFile === undefined) {
+    try {
+      lockFile = await open(lockPath, exclusiveConfigLockFlags, 0o600);
+    } catch (error) {
+      if (!errorHasCode(error, 'EEXIST')) {
+        throw error;
+      }
+      const lockStat = await lstat(lockPath).catch(() => undefined);
+      if (lockStat?.isSymbolicLink()) {
+        throw new Error(`ai-usage config lock must not be a symlink: ${lockPath}`);
+      }
+      if (await removeStaleConfigLock(lockPath)) {
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`timed out waiting for ai-usage config lock: ${canonicalFilePath}`);
+      }
+      await delay(configLockRetryMs);
+    }
+  }
+
+  const metadata: ConfigLockMetadata = {
+    createdAt: new Date().toISOString(),
+    hostname: os.hostname(),
+    ownerId: randomUUID(),
+    pid: process.pid,
+    version: 1,
+  };
+  let lockIdentity: FileIdentity | undefined;
+  try {
+    await lockFile.writeFile(`${JSON.stringify(metadata)}\n`, 'utf8');
+    await lockFile.sync();
+    lockIdentity = await lockFile.stat();
+    return await update();
+  } finally {
+    lockIdentity ??= await lockFile.stat().catch(() => undefined);
+    await lockFile.close().catch(() => undefined);
+    if (lockIdentity) {
+      await removeConfigLockIfUnchanged(lockPath, lockIdentity);
+    }
+  }
+};
+
+const writeJsonAtomically = (filePath: string, value: unknown) => {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx',
+    });
+    fs.renameSync(temporaryPath, filePath);
+  } catch (error) {
+    fs.rmSync(temporaryPath, { force: true });
+    throw error;
+  }
+};
+
+const enqueueAiUsageConfigUpdate = async <A>(filePath: string, update: () => A | Promise<A>): Promise<A> => {
+  const previousTail = aiUsageConfigUpdateTails.get(filePath) ?? Promise.resolve();
+  const result = previousTail.catch(() => undefined).then(() => withConfigFileLock(filePath, update));
+  const currentTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  aiUsageConfigUpdateTails.set(filePath, currentTail);
+
+  try {
+    return await result;
+  } finally {
+    if (aiUsageConfigUpdateTails.get(filePath) === currentTail) {
+      aiUsageConfigUpdateTails.delete(filePath);
+    }
+  }
+};
 
 export const machineConfigPath = (storage: LocalHistoryStorageService) =>
   path.join(storage.home, '.config', 'ai-usage', 'machine.json');
@@ -301,17 +488,39 @@ export const readMergedAiUsageConfigFrom = (
 
 export const readMergedAiUsageConfig = readMergedAiUsageConfigFrom();
 
+export type AiUsageConfigUpdater = (config: AiUsageConfig) => AiUsageConfig | Promise<AiUsageConfig>;
+
+export const updateAiUsageConfig = (
+  update: AiUsageConfigUpdater,
+): Effect.Effect<AiUsageConfig, LocalHistoryError, LocalHistoryStorageService> =>
+  Effect.gen(function* () {
+    const storage = yield* LocalHistoryStorage;
+    const filePath = aiUsageConfigPath(storage);
+    return yield* Effect.tryPromise({
+      try: () =>
+        enqueueAiUsageConfigUpdate(filePath, async () => {
+          const current = fs.existsSync(filePath)
+            ? parseAiUsageConfig(JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown, filePath)
+            : {};
+          const next = parseAiUsageConfig(await update(current), filePath);
+          writeJsonAtomically(filePath, next);
+          return next;
+        }),
+      catch: machineConfigError('updateAiUsageConfig', filePath),
+    });
+  });
+
 export const writeAiUsageConfig = (
   config: AiUsageConfig,
 ): Effect.Effect<void, LocalHistoryError, LocalHistoryStorageService> =>
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
     const filePath = aiUsageConfigPath(storage);
-    yield* Effect.try({
-      try: () => {
-        fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        fs.writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
-      },
+    yield* Effect.tryPromise({
+      try: () =>
+        enqueueAiUsageConfigUpdate(filePath, () => {
+          writeJsonAtomically(filePath, parseAiUsageConfig(config, filePath));
+        }),
       catch: machineConfigError('writeAiUsageConfig', filePath),
     });
   });

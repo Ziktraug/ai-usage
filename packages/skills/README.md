@@ -24,6 +24,20 @@ This package should stay independent from app packages, report-data, usage-store
 and usage-merge. It may use standard Node filesystem APIs behind
 workflow functions and should expose JSON-safe data to app callers.
 
+`src/index.ts` is the explicit public facade. Keep implementation imports on the
+smallest internal seam instead of importing the facade from inside the package:
+
+- `contracts.ts`, `config.ts`, and `validation.ts` own JSON-safe contracts and input parsing;
+- `filesystem.ts` owns bounded reads, cross-process locks, and atomic writes;
+- `source-state.ts`, `source-scan.ts`, and `project-scan.ts` own inventory inputs;
+- `skill-markdown.ts` and `skill-markdown-io.ts` own parsing and transactional editor IO;
+- `projections.ts` owns target observation, planning, and safe projection mutations;
+- `workflows.ts` composes those seams for application adapters.
+
+Workspace-package imports are forbidden by both Biome and
+`tools/check-package-boundaries.ts` so the control plane cannot acquire report,
+store, transport, or app dependencies accidentally.
+
 ## Tests
 
 Tests should exercise public package exports. Source-state, scanner,

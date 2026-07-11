@@ -48,10 +48,14 @@ describe('skill markdown editor controller', () => {
     });
   });
 
-  test('discards the previous draft when selection changes and cannot save it under the next skill', async () => {
+  test('preserves a dirty draft until selection changes are explicitly allowed', async () => {
     const saves: { content: string; skillName: string }[] = [];
+    const loads: string[] = [];
     const controller = createSkillMarkdownEditorController({
-      loadMarkdown: (skillName) => Promise.resolve(documentResult(skillName)),
+      loadMarkdown: (skillName) => {
+        loads.push(skillName);
+        return Promise.resolve(documentResult(skillName));
+      },
       saveMarkdown: (input) => {
         saves.push({ content: input.content, skillName: input.skillName });
         return Promise.resolve({ data: { document: documentResult(input.skillName, input.content).data }, ok: true });
@@ -62,16 +66,58 @@ describe('skill markdown editor controller', () => {
     controller.startEditing();
     controller.setDraft('# Unsaved alpha draft\n');
 
-    await controller.select('beta-skill');
-    await controller.save();
+    const blockedSelection = await controller.select('beta-skill');
 
     expect(controller.getState()).toMatchObject({
+      dirty: true,
+      document: { skillName: 'alpha-skill' },
+      draft: '# Unsaved alpha draft\n',
+      editing: true,
+      skillName: 'alpha-skill',
+    });
+    expect(blockedSelection).toBe(false);
+    expect(loads).toEqual(['alpha-skill']);
+    expect(saves).toEqual([]);
+
+    controller.cancelEditing();
+    const allowedSelection = await controller.select('beta-skill');
+
+    expect(allowedSelection).toBe(true);
+    expect(controller.getState()).toMatchObject({
+      dirty: false,
       document: { skillName: 'beta-skill' },
       draft: '# beta-skill\n',
       editing: false,
       skillName: 'beta-skill',
     });
-    expect(saves).toEqual([]);
+  });
+
+  test('reloads the selected document only after a dirty draft is discarded', async () => {
+    let content = '# Original\n';
+    const controller = createSkillMarkdownEditorController({
+      loadMarkdown: (skillName) => Promise.resolve(documentResult(skillName, content)),
+      saveMarkdown: (): Promise<SkillMarkdownSaveResult> => Promise.resolve({ data: {}, ok: true }),
+    });
+
+    await controller.select('alpha-skill');
+    controller.startEditing();
+    controller.setDraft('# Local draft\n');
+    content = '# Changed on disk\n';
+
+    expect(await controller.reload()).toBe(false);
+    expect(controller.getState()).toMatchObject({
+      dirty: true,
+      draft: '# Local draft\n',
+      document: { content: '# Original\n' },
+    });
+
+    controller.cancelEditing();
+    expect(await controller.reload()).toBe(true);
+    expect(controller.getState()).toMatchObject({
+      dirty: false,
+      draft: '# Changed on disk\n',
+      document: { content: '# Changed on disk\n' },
+    });
   });
 
   test('ignores a stale load that finishes after a newer selection', async () => {
@@ -105,6 +151,7 @@ describe('skill markdown editor controller', () => {
     await controller.select('alpha-skill');
     controller.startEditing();
     controller.setDraft('# Alpha draft\n');
+    controller.cancelEditing();
     await controller.select('beta-skill');
     controller.setDraft('# Late alpha input\n');
     controller.startEditing();
@@ -127,6 +174,7 @@ describe('skill markdown editor controller', () => {
     controller.startEditing();
     controller.setDraft('# Saved alpha edit\n');
     const alphaSave = controller.save();
+    controller.cancelEditing();
     await controller.select('beta-skill');
     pendingSave.resolve({ data: { document: documentResult('alpha-skill', '# Saved alpha edit\n').data }, ok: true });
     await alphaSave;

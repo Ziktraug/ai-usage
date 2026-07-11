@@ -10,11 +10,26 @@ import {
   readBoundedProjectSkillMarkdownFile,
   readProjectSkillMarkdownForServer,
   skillConfigInputFrom,
+  skillManagementSnapshotForClient,
   skillMarkdownWriteInputFrom,
   skillNameInputFrom,
   skillTargetDirectoryInputFrom,
   skillToggleInputFrom,
 } from './skills.server';
+import { readE2ESkillManagementSnapshot } from './skills-e2e-fixture.server';
+
+test('client skill snapshots omit markdown bodies without mutating the domain snapshot', () => {
+  const result = readE2ESkillManagementSnapshot();
+  if (!result.ok) {
+    throw new Error(result.error.message);
+  }
+
+  const clientSnapshot = skillManagementSnapshotForClient(result.data);
+
+  expect(clientSnapshot.skills.map((skill) => skill.manifest.markdown)).toEqual(['', '']);
+  expect(clientSnapshot.skills.map((skill) => skill.manifest.name)).toEqual(['alpha-skill', 'beta-skill']);
+  expect(result.data.skills.map((skill) => skill.manifest.markdown)).toEqual(['# alpha-skill\n', '# beta-skill\n']);
+});
 
 test('bounded project markdown reads consume short reads through one regular-file handle', async () => {
   const content = Buffer.from('abcdefgh');

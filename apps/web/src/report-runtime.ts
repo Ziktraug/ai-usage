@@ -21,6 +21,8 @@ const readInjectedReportPayload = () => (typeof window === 'undefined' ? undefin
 const isStaticReportPayload = () =>
   typeof window === 'undefined' ? false : window.__AI_USAGE_REPORT_STATIC__ === true;
 
+export const isStaticReportRuntime = () => isStaticReportPayload() || readExportReportPayload() !== undefined;
+
 const isE2ERuntime = () => import.meta.env?.VITE_AI_USAGE_E2E === '1';
 const demoWebReportPayload = toWebReportPayload(demoReportPayload);
 
@@ -120,6 +122,6 @@ export const mountReportRefreshAction = (input: {
 };
 
 export const reportRefreshPayload = () =>
-  typeof window === 'undefined' || isStaticReportPayload() || isE2ERuntime()
+  typeof window === 'undefined' || isStaticReportRuntime() || isE2ERuntime()
     ? undefined
     : (options?: { force?: boolean }) => fetchReportPayload(options);
