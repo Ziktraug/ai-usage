@@ -74,8 +74,11 @@ describe('report runtime refresh decisions', () => {
   });
 
   test('keeps self-contained HTML exports inert', () => {
-    withWindow({ __AI_USAGE_REPORT__: {} as UsageReportPayload, __AI_USAGE_REPORT_STATIC__: true } as unknown as Window, () => {
-      expect(reportRefreshPayload()).toBeUndefined();
-    });
+    withWindow(
+      { __AI_USAGE_REPORT__: {} as UsageReportPayload, __AI_USAGE_REPORT_STATIC__: true } as unknown as Window,
+      () => {
+        expect(reportRefreshPayload()).toBeUndefined();
+      },
+    );
   });
 });
