@@ -1,8 +1,10 @@
 import {
+  compareProviderStatusStates,
   earliestResetCreditExpiry,
   type ProviderLimitWindow,
   type ProviderStatus,
   parseProviderStatusDataset,
+  providerStatusWithFreshness,
 } from '@ai-usage/report-core/provider-status';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import type { DashboardRow } from './shared';
@@ -28,15 +30,6 @@ export interface ProviderStatusView {
   worstUsedPercent: number | null;
 }
 
-const STATE_RANK: Record<ProviderStatus['state'], number> = {
-  error: 0,
-  'auth-required': 1,
-  stale: 2,
-  partial: 3,
-  unsupported: 4,
-  ok: 5,
-};
-
 const PROVIDER_KEY_PATTERNS: { key: string; pattern: RegExp }[] = [
   { key: 'codex', pattern: /codex/i },
   { key: 'claude', pattern: /claude/i },
@@ -56,7 +49,7 @@ const providerLabelFromKey = (key: string, fallback: string) => {
   if (!known) {
     return fallback;
   }
-  return known.key === 'rtk' ? 'RTK' : known.key[0]!.toUpperCase() + known.key.slice(1);
+  return known.key === 'rtk' ? 'RTK' : `${known.key.charAt(0).toUpperCase()}${known.key.slice(1)}`;
 };
 
 const providerFamily = (key: string) => key.split(':')[0] ?? key;
@@ -111,20 +104,27 @@ const windowGroupsFor = (windows: ProviderLimitWindow[]): ProviderStatusWindowGr
   const groups = new Map<ProviderWindowGroupKey, ProviderLimitWindow[]>();
   for (const window of windows) {
     const key = groupKeyForWindow(window);
-    groups.set(key, [...(groups.get(key) ?? []), window]);
+    const group = groups.get(key);
+    if (group) {
+      group.push(window);
+    } else {
+      groups.set(key, [window]);
+    }
   }
   return (['5h', 'weekly', 'monthly', 'other'] as const)
     .map((key) => ({ key, label: GROUP_LABELS[key], windows: groups.get(key) ?? [] }))
     .filter((group) => group.windows.length > 0);
 };
 
-const nextResetAtFor = (windows: ProviderLimitWindow[]) => {
+const nextResetAtFor = (windows: ProviderLimitWindow[], now: Date | string) => {
   let next: string | null = null;
+  const nowTime = new Date(now).getTime();
   for (const window of windows) {
     if (!window.resetsAt) {
       continue;
     }
-    if (!next || new Date(window.resetsAt).getTime() < new Date(next).getTime()) {
+    const resetTime = new Date(window.resetsAt).getTime();
+    if (resetTime > nowTime && (!next || resetTime < new Date(next).getTime())) {
       next = window.resetsAt;
     }
   }
@@ -189,14 +189,15 @@ const creditsSummaryFor = (provider: ProviderStatus) => {
   return null;
 };
 
-const toProviderStatusView = (provider: ProviderStatus): ProviderStatusView => {
+const toProviderStatusView = (input: ProviderStatus, now: Date | string): ProviderStatusView => {
+  const provider = providerStatusWithFreshness(input, now);
   const worstUsedPercent = worstUsedPercentFor(provider.windows);
   const accountParts = [provider.plan, provider.accountLabel].filter((value) => value?.trim());
   return {
     provider,
     worstUsedPercent,
     windowGroups: windowGroupsFor(provider.windows),
-    nextResetAt: nextResetAtFor(provider.windows),
+    nextResetAt: nextResetAtFor(provider.windows, now),
     tone: toneFor(provider, worstUsedPercent),
     sourceLabel: sourceLabelFor(provider),
     accountContext: accountParts.length ? accountParts.join(' · ') : null,
@@ -233,7 +234,11 @@ const sortRankFor = (view: ProviderStatusView) => {
   return 5;
 };
 
-export const buildProviderStatusViews = (payload: UsageReportPayload, rows: DashboardRow[]): ProviderStatusView[] => {
+export const buildProviderStatusViews = (
+  payload: UsageReportPayload,
+  rows: DashboardRow[],
+  now: Date | string,
+): ProviderStatusView[] => {
   const explicit = explicitProviderStatuses(payload);
   const explicitGlobalFamilies = new Set(
     explicit.filter((provider) => !provider.machineId).map((provider) => providerFamily(provider.key)),
@@ -257,11 +262,11 @@ export const buildProviderStatusViews = (payload: UsageReportPayload, rows: Dash
     inferred.set(inferredKey, inferredProviderStatus(row, payload.generatedAt));
   }
   return [...explicit, ...inferred.values()]
-    .map(toProviderStatusView)
+    .map((provider) => toProviderStatusView(provider, now))
     .sort(
       (a, b) =>
         sortRankFor(a) - sortRankFor(b) ||
-        STATE_RANK[a.provider.state] - STATE_RANK[b.provider.state] ||
+        compareProviderStatusStates(a.provider.state, b.provider.state) ||
         a.provider.label.localeCompare(b.provider.label) ||
         (a.machineContext ?? '').localeCompare(b.machineContext ?? ''),
     );

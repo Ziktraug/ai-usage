@@ -74,6 +74,7 @@ import { Overview } from './overview';
 import type { TimelineDimension } from './overview-model';
 import { ProjectGroupEditor } from './project-group-editor';
 import { ProjectSummary } from './project-summary';
+import { createProviderStatusClock } from './provider-status-clock';
 import { buildProviderStatusViews } from './provider-status-model';
 import { ProviderStatusPanel } from './provider-status-panel';
 import { RefreshStatus } from './refresh-status';
@@ -105,6 +106,8 @@ export const Dashboard = (props: {
   const initialPayload = props.initialPayload ?? readReportPayload();
   const dashboardSearchDefaults = dashboardSearchDefaultsFor(initialPayload.filters.sort);
   const [payload, setPayload] = createSignal<UsageReportPayload>(initialPayload);
+  const providerStatusClock = createProviderStatusClock({ initialNow: initialPayload.generatedAt });
+  onMount(providerStatusClock.start);
   const isDemo = !props.initialPayload && isDemoReportPayload();
   const canRefresh =
     !!props.fetchPayload &&
@@ -152,7 +155,9 @@ export const Dashboard = (props: {
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
   let searchInputEl: HTMLInputElement | undefined;
   const cursorCommitRows = createMemo(() => cursorCommitAttributionFacet(payload()));
-  const providerStatusViews = createMemo(() => buildProviderStatusViews(payload(), reportRows()));
+  const providerStatusViews = createMemo(() =>
+    buildProviderStatusViews(payload(), reportRows(), providerStatusClock.now()),
+  );
   const harnessOptions = createMemo(() => [...new Set(reportRows().map((row) => row.harness))]);
   const machineOptions = createMemo(() => [
     ...new Set(
