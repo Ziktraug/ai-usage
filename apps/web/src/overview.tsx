@@ -1,6 +1,10 @@
 import { css, cx } from '@ai-usage/design-system/css';
 import {
   accentFill,
+  advancedAnalysis,
+  advancedAnalysisContent,
+  advancedAnalysisSummary,
+  advancedAnalysisSummaryText,
   anatomyHeadline,
   anatomyLegend,
   anatomyLegendItem,
@@ -71,6 +75,7 @@ import { createEffect, createMemo, createSignal, For, type JSX, Show } from 'sol
 import type { CampaignView } from './dashboard-model';
 import { toDateInputValue } from './date-range';
 import {
+  buildAdvancedAnalysisSummary,
   buildCalendarHeatmapData,
   buildOverviewHeroData,
   buildOverviewRecords,
@@ -727,25 +732,47 @@ const TopSessions = (props: {
 
 // ---------------------------------------------------------------------------
 
-export const Overview = (props: OverviewProps) => (
-  <Show fallback={<div class={emptyPanel}>No sessions match the current filters</div>} when={props.rows.length}>
-    <div class={overviewGrid}>
-      <Hero rangeLabel={props.rangeLabel} summary={props.summary} />
-      <CalendarHeatmap onSelectDay={props.onSelectDay} rows={props.timelineRows} />
-      <div class={twoColumns}>
+export const Overview = (props: OverviewProps) => {
+  const advancedSummary = createMemo(() => buildAdvancedAnalysisSummary(props.rows, props.campaigns));
+
+  return (
+    <Show fallback={<div class={emptyPanel}>No sessions match the current filters</div>} when={props.rows.length}>
+      <div class={overviewGrid}>
+        <Hero rangeLabel={props.rangeLabel} summary={props.summary} />
+        <CalendarHeatmap onSelectDay={props.onSelectDay} rows={props.timelineRows} />
         <TokenAnatomy summary={props.summary} />
+        <Records
+          onSelectDay={props.onSelectDay}
+          onSelectSession={props.onSelectSession}
+          rows={props.rows}
+          timelineRows={props.timelineRows}
+        />
+        <TopSessions campaigns={props.campaigns} onSelectSession={props.onSelectSession} rows={props.rows} />
+        <Show when={advancedSummary()}>
+          {(summary) => (
+            <details class={advancedAnalysis}>
+              <summary class={advancedAnalysisSummary}>
+                <span>Advanced analysis</span>
+                <span class={advancedAnalysisSummaryText}>{summary().summary}</span>
+              </summary>
+              <div class={advancedAnalysisContent}>
+                <div class={twoColumns}>
+                  <Show when={summary().hasSessionShape}>
+                    <SessionShape
+                      campaigns={props.campaigns}
+                      onSelectSession={props.onSelectSession}
+                      rows={props.rows}
+                    />
+                  </Show>
+                  <Show when={summary().hasPunchcard}>
+                    <Punchcard rows={props.rows} />
+                  </Show>
+                </div>
+              </div>
+            </details>
+          )}
+        </Show>
       </div>
-      <div class={twoColumns}>
-        <SessionShape campaigns={props.campaigns} onSelectSession={props.onSelectSession} rows={props.rows} />
-        <Punchcard rows={props.rows} />
-      </div>
-      <Records
-        onSelectDay={props.onSelectDay}
-        onSelectSession={props.onSelectSession}
-        rows={props.rows}
-        timelineRows={props.timelineRows}
-      />
-      <TopSessions campaigns={props.campaigns} onSelectSession={props.onSelectSession} rows={props.rows} />
-    </div>
-  </Show>
-);
+    </Show>
+  );
+};

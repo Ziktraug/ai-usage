@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const DATE_HEADER_PATTERN = /Date/;
 const INSPECT_SESSION_PATTERN = /Inspect session/;
+const LEGACY_PROJECT_TAB_URL_PATTERN = /tab=projects/;
 const PROVIDER_DETAILS_PATTERN = /^Provider details \(/;
 const QUERY_URL_PATTERN = /q=ai-usage/;
 const RANGE_URL_PATTERN = /range=/;
@@ -18,6 +19,17 @@ test('loads a deterministic report overview', async ({ page }) => {
   await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
 });
 
+test('opens legacy analysis deep links inside the compact Breakdown navigation', async ({ page }) => {
+  await page.goto('/?tab=projects');
+
+  const primaryTabs = page.getByRole('tablist', { name: 'Dashboard sections' });
+  await expect(primaryTabs.getByRole('tab')).toHaveText(['Overview', 'Sessions', 'Breakdown']);
+  await expect(primaryTabs.getByRole('tab', { name: 'Breakdown' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Projects' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', { level: 2, name: 'Project groups' })).toBeVisible();
+  await expect(page).toHaveURL(LEGACY_PROJECT_TAB_URL_PATTERN);
+});
+
 test('exposes metric and punchcard context without pointer-only hints', async ({ page }) => {
   await page.goto('/');
 
@@ -28,7 +40,11 @@ test('exposes metric and punchcard context without pointer-only hints', async ({
     page.getByText('Estimated cost at standard API prices, including usage covered by subscriptions'),
   ).toBeVisible();
 
+  const advancedAnalysis = page.getByText('Advanced analysis', { exact: true });
   const punchcardData = page.getByText('Punchcard data', { exact: true });
+  await expect(advancedAnalysis).toBeVisible();
+  await expect(punchcardData).not.toBeVisible();
+  await advancedAnalysis.click();
   await punchcardData.click();
   await expect(page.getByRole('table', { name: 'Punchcard data' })).toBeVisible();
 });
@@ -90,6 +106,21 @@ test('persists exploration state in the URL', async ({ page }) => {
   await expect(page).toHaveURL(QUERY_URL_PATTERN);
   await page.reload();
   await expect(search).toHaveValue('ai-usage');
+});
+
+test('shows the text query as a directly removable active filter', async ({ page }) => {
+  await page.goto('/');
+
+  const search = page.getByRole('textbox', {
+    name: 'Filter sessions by title, project, model, provider, or harness',
+  });
+  await search.fill('ai-usage');
+
+  const queryFilter = page.getByRole('button', { name: 'Query: ai-usage ×' });
+  await expect(queryFilter).toBeVisible();
+  await queryFilter.click();
+  await expect(search).toHaveValue('');
+  await expect(page).not.toHaveURL(QUERY_URL_PATTERN);
 });
 
 test('updates the date range and opens a session drawer', async ({ page }) => {
@@ -178,7 +209,10 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('Escape');
 
-  await page.getByRole('tab', { name: 'Projects' }).click();
+  await page.getByRole('tab', { name: 'Breakdown' }).click();
+  const breakdownTabs = page.getByRole('tablist', { name: 'Breakdown dimension' });
+  await expect(breakdownTabs.getByRole('tab', { name: 'Models' })).toHaveAttribute('aria-selected', 'true');
+  await breakdownTabs.getByRole('tab', { name: 'Projects' }).click();
   await expect(page.getByRole('list', { name: 'Project summaries' })).toBeVisible();
   await expect(page.getByRole('table')).toHaveCount(0);
 });

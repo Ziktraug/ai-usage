@@ -5,11 +5,50 @@ export const overviewGrid = css({
   gap: '14px',
 });
 
+export const advancedAnalysis = css({
+  border: '1px solid token(colors.line)',
+  borderRadius: 'md',
+  bg: 'surface',
+  boxShadow: 'card',
+  overflow: 'hidden',
+});
+
+export const advancedAnalysisSummary = css({
+  display: 'grid',
+  gridTemplateColumns: { base: '1fr', sm: 'auto 1fr' },
+  gap: '4px 12px',
+  alignItems: 'center',
+  p: '14px 16px',
+  cursor: 'pointer',
+  color: 'ink',
+  fontWeight: 650,
+  _hover: {
+    bg: 'surfaceMuted',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '-2px',
+  },
+});
+
+export const advancedAnalysisSummaryText = css({
+  color: 'muted',
+  fontSize: '12px',
+  fontWeight: 400,
+});
+
+export const advancedAnalysisContent = css({
+  p: '0 14px 14px',
+});
+
 export const twoColumns = css({
   display: 'grid',
   gridTemplateColumns: { base: '1fr', lg: 'repeat(2, minmax(0, 1fr))' },
   gap: '14px',
   alignItems: 'stretch',
+  '& > :only-child': {
+    gridColumn: '1 / -1',
+  },
 });
 
 export const heroPanel = css({

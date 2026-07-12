@@ -26,6 +26,10 @@ import {
   timeAxisTick,
   timeBucket,
   timeBucketSegment,
+  timeChartOptions,
+  timeChartOptionsCurrent,
+  timeChartOptionsSummary,
+  timeChartOptionsTitle,
   timeChartToolbar,
   timeChartZoomButton,
   timeChartZoomControls,
@@ -126,6 +130,17 @@ const VALUE_ITEMS = [
   { label: 'Share', value: 'share' },
   { label: 'Sessions', value: 'sessions' },
 ] as const;
+
+export const chartOptionsSummary = (
+  dimension: TimelineDimension,
+  granularity: MigrationGranularity,
+  value: TimelineValue,
+) => {
+  const dimensionLabel = DIMENSION_ITEMS.find((item) => item.value === dimension)?.label ?? 'Harness';
+  const granularityLabel = GRANULARITY_ITEMS.find((item) => item.value === granularity)?.label ?? 'Day';
+  const valueLabel = VALUE_ITEMS.find((item) => item.value === value)?.label ?? 'API value';
+  return `${dimensionLabel} · ${granularityLabel} · ${valueLabel}`;
+};
 
 const toTimelineDimension = (value: string): TimelineDimension =>
   value === 'model' || value === 'provider' || value === 'project' ? value : 'harness';
@@ -820,15 +835,15 @@ export const TimeRangeControl = (props: {
 
   const visualZoomLabel = (chart: NonNullable<ReturnType<typeof data>>) => {
     if (!isVisuallyZoomed()) {
-      return 'Graph view: full history';
+      return 'Chart view: full history';
     }
     const range = visibleBucketRange();
     const firstBucket = chart.buckets[range.from];
     const lastBucket = chart.buckets[range.to];
     if (!(firstBucket && lastBucket)) {
-      return 'Graph view: full history';
+      return 'Chart view: full history';
     }
-    return `Graph view: ${bucketLabel(firstBucket.date, granularity())} – ${bucketLabel(lastBucket.date, granularity())}`;
+    return `Chart view: ${bucketLabel(firstBucket.date, granularity())} – ${bucketLabel(lastBucket.date, granularity())}`;
   };
 
   const swatch = (key: string, rank: number) => dimensionSwatch(dimension(), key, rank);
@@ -1067,7 +1082,7 @@ export const TimeRangeControl = (props: {
       fallback={
         <section aria-label="Date range" class={timeRangePanel}>
           <div>
-            <div class={timeRangeTitle}>Time range</div>
+            <div class={timeRangeTitle}>Report range</div>
             <div class={timeRangeMeta}>No dated sessions match the current filters</div>
           </div>
         </section>
@@ -1078,7 +1093,7 @@ export const TimeRangeControl = (props: {
         <section aria-label="Date range" class={timeRangePanel}>
           <div class={timeRangeHeader}>
             <div>
-              <div class={timeRangeTitle}>Time range</div>
+              <div class={timeRangeTitle}>Report range</div>
               <div class={timeRangeSummary}>
                 <span class={timeRangeSummaryDates}>
                   <span>{selectedRangeDetails(chart()).fromLabel}</span>
@@ -1088,43 +1103,65 @@ export const TimeRangeControl = (props: {
                 <span class={timeRangeDuration}>{selectedRangeDetails(chart()).duration}</span>
               </div>
             </div>
+            <div class={timeSliderQuickRanges}>
+              <For each={dateRangePresets}>
+                {(preset) => (
+                  <button
+                    class={presetButton}
+                    onClick={() => applyPreset(preset.mode)}
+                    title={`Set report range to ${preset.label}`}
+                    type="button"
+                  >
+                    {preset.label}
+                  </button>
+                )}
+              </For>
+            </div>
           </div>
 
-          <div class={timeRangeViewControls}>
-            <SegmentedControl
-              ariaLabel="Timeline dimension"
-              items={DIMENSION_ITEMS}
-              label="Group"
-              onValueChange={(value) => {
-                setDimension(toTimelineDimension(value));
-                setShowAll(false);
-                clearHover();
-              }}
-              value={dimension()}
-            />
-            <SegmentedControl
-              ariaLabel="Timeline granularity"
-              items={GRANULARITY_ITEMS}
-              label="Bucket"
-              onValueChange={(value) => {
-                setGranularity(toGranularity(value));
-                setVisualZoom(null);
-                setShowGraphViewControls(false);
-                clearHover();
-              }}
-              value={granularity()}
-            />
-            <SegmentedControl
-              ariaLabel="Timeline value"
-              items={VALUE_ITEMS}
-              label="Metric"
-              onValueChange={(value) => {
-                setValueMode(toTimelineValue(value));
-                clearHover();
-              }}
-              value={valueMode()}
-            />
-          </div>
+          <details aria-label="Chart options" class={timeChartOptions}>
+            <summary class={timeChartOptionsSummary}>
+              <span class={timeChartOptionsTitle}>Chart options</span>
+              <span class={timeChartOptionsCurrent}>
+                {chartOptionsSummary(dimension(), granularity(), valueMode())}
+              </span>
+            </summary>
+            <div class={timeRangeViewControls}>
+              <SegmentedControl
+                ariaLabel="Timeline dimension"
+                items={DIMENSION_ITEMS}
+                label="Group"
+                onValueChange={(value) => {
+                  setDimension(toTimelineDimension(value));
+                  setShowAll(false);
+                  clearHover();
+                }}
+                value={dimension()}
+              />
+              <SegmentedControl
+                ariaLabel="Timeline granularity"
+                items={GRANULARITY_ITEMS}
+                label="Bucket"
+                onValueChange={(value) => {
+                  setGranularity(toGranularity(value));
+                  setVisualZoom(null);
+                  setShowGraphViewControls(false);
+                  clearHover();
+                }}
+                value={granularity()}
+              />
+              <SegmentedControl
+                ariaLabel="Timeline value"
+                items={VALUE_ITEMS}
+                label="Metric"
+                onValueChange={(value) => {
+                  setValueMode(toTimelineValue(value));
+                  clearHover();
+                }}
+                value={valueMode()}
+              />
+            </div>
+          </details>
 
           <div class={chartLegendList}>
             <For each={visibleSeries()}>
@@ -1163,23 +1200,6 @@ export const TimeRangeControl = (props: {
             <div class={timeChartToolbar}>
               <span class={timeChartZoomSummary}>{visualZoomLabel(chart())}</span>
               <div class={timeChartZoomControls}>
-                <button
-                  class={timeChartZoomButton}
-                  onClick={() => zoomChartToLastDays(chart(), 2)}
-                  title="Show the latest 2 days in the graph only"
-                  type="button"
-                >
-                  Latest 2d
-                </button>
-                <button
-                  class={timeChartZoomButton}
-                  disabled={!isVisuallyZoomed()}
-                  onClick={resetVisualZoom}
-                  title="Show the full history in the graph"
-                  type="button"
-                >
-                  Full history
-                </button>
                 <button
                   class={timeChartZoomButton}
                   onClick={() => setShowGraphViewControls((value) => !value)}
@@ -1401,21 +1421,8 @@ export const TimeRangeControl = (props: {
               </Show>
               <div class={timeSliderBrushColumn}>
                 <div class={timeSliderBrushHeader}>
-                  <span>Selected range</span>
-                  <div class={timeSliderQuickRanges}>
-                    <For each={dateRangePresets}>
-                      {(preset) => (
-                        <button
-                          class={presetButton}
-                          onClick={() => applyPreset(preset.mode)}
-                          title={`Set range to ${preset.label}`}
-                          type="button"
-                        >
-                          {preset.label}
-                        </button>
-                      )}
-                    </For>
-                  </div>
+                  <span>Adjust report range</span>
+                  <span>Filters the entire report</span>
                 </div>
                 <div class={timeAxis}>
                   <span>{fmtDateOnly(chart().minDay)}</span>

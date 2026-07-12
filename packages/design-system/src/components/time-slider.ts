@@ -95,7 +95,59 @@ export const timeRangeViewControls = css({
   gap: '8px',
   alignItems: 'end',
   justifyContent: 'flex-start',
-  pt: '2px',
+  p: '10px',
+  borderTop: '1px solid token(colors.line)',
+});
+
+export const timeChartOptions = css({
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  bg: 'surfaceMuted',
+  overflow: 'hidden',
+  '&[open] > summary::before': {
+    transform: 'rotate(90deg)',
+  },
+});
+
+export const timeChartOptionsSummary = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  alignItems: 'center',
+  justifyContent: 'flex-start',
+  gap: '4px 12px',
+  p: '9px 10px',
+  color: 'ink',
+  cursor: 'pointer',
+  fontSize: '12px',
+  fontWeight: 650,
+  listStyle: 'none',
+  _focusVisible: {
+    outline: '2px solid token(colors.ink)',
+    outlineOffset: '-2px',
+  },
+  '&::-webkit-details-marker': {
+    display: 'none',
+  },
+  _before: {
+    content: '"›"',
+    color: 'accent',
+    fontSize: '16px',
+    lineHeight: 1,
+    transition: 'transform 0.15s',
+  },
+});
+
+export const timeChartOptionsTitle = css({
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '7px',
+});
+
+export const timeChartOptionsCurrent = css({
+  color: 'muted',
+  fontSize: '11px',
+  fontWeight: 600,
+  marginInlineStart: 'auto',
 });
 
 export const dateEditRow = css({

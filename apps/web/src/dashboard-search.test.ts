@@ -1,13 +1,23 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  breakdownTabFor,
   dashboardSearchDefaultsFor,
   hasActiveDashboardFilters,
+  primaryDashboardTabFor,
   sortingStateFromSearch,
   toggleExactFieldFilter,
   validateDashboardSearch,
 } from './dashboard-search';
 
 describe('dashboard search params', () => {
+  test('maps legacy analysis tabs into the Breakdown navigation without rewriting deep links', () => {
+    expect(primaryDashboardTabFor('overview')).toBe('overview');
+    expect(primaryDashboardTabFor('sessions')).toBe('sessions');
+    expect(primaryDashboardTabFor('projects')).toBe('breakdown');
+    expect(breakdownTabFor('projects')).toBe('projects');
+    expect(breakdownTabFor('overview')).toBe('models');
+  });
+
   test('fills defaults when params are absent', () => {
     const defaults = dashboardSearchDefaultsFor('cost');
 

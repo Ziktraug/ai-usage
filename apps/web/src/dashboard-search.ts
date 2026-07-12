@@ -34,6 +34,23 @@ export const dashboardTabs = [
 ] as const;
 export type DashboardTab = (typeof dashboardTabs)[number];
 
+// Keep the established URL values while projecting them into a smaller visual navigation.
+// This lets shared links such as `?tab=projects` select Breakdown > Projects without a migration.
+export const breakdownTabs = ['models', 'providers', 'harnesses', 'projects', 'cursor-ai'] as const;
+export type BreakdownTab = (typeof breakdownTabs)[number];
+
+export const primaryDashboardTabs = ['overview', 'sessions', 'breakdown'] as const;
+export type PrimaryDashboardTab = (typeof primaryDashboardTabs)[number];
+
+const breakdownTabSet = new Set<DashboardTab>(breakdownTabs);
+
+export const isBreakdownTab = (tab: DashboardTab): tab is BreakdownTab => breakdownTabSet.has(tab);
+
+export const primaryDashboardTabFor = (tab: DashboardTab): PrimaryDashboardTab =>
+  isBreakdownTab(tab) ? 'breakdown' : tab;
+
+export const breakdownTabFor = (tab: DashboardTab): BreakdownTab => (isBreakdownTab(tab) ? tab : 'models');
+
 type ReportSort = 'date' | 'tokens' | 'cost';
 
 export interface DashboardSort {
