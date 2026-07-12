@@ -14,6 +14,7 @@ honor its STOP conditions, and update your row when done.
 | 004 | Skills Tree + Detail Workspace for `/skills` | P1 | L | 003 | DONE |
 | 005 | Skills Tree Curation & Honest Context Panel for `/skills` | P1 | M | 004 | DONE |
 | 006 | Make `SKILL.md` the Primary, Always-Editable Skills Workspace | P1 | L | 005 | DONE |
+| 007 | Simplify Dashboard Exploration and Dataviz | P1 | L | - | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -44,6 +45,12 @@ REJECTED (with one-line rationale).
   right panel becomes its inspector. It deliberately keeps source Save separate
   from runtime installation and does not implement adoption; adoption is now a
   follow-up plan rather than plan 006.
+- Plan 007 implements the dashboard UI/UX audit in vertical slices: focused
+  session views, compact provider status, three-destination report navigation,
+  unambiguous time controls, progressive disclosure for secondary analysis,
+  stable chart series, and initial-bundle reduction where route boundaries
+  allow it. Existing URL deep links and static report export remain compatibility
+  constraints throughout the work.
 
 ## Findings considered and rejected
 
