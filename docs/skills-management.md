@@ -70,18 +70,28 @@ It distinguishes global and project-owned scope, auto-invocable and manual
 skills, personal or installed origins when metadata is present, enabled and
 disabled state, and per-runtime exposure as linked, copied, missing, or broken.
 
-The primary presentation follows the product hierarchy:
+For a managed global skill, the primary presentation follows the authoring
+flow:
 
 ```text
-Global / Project -> Skill -> Runtime exposure
+Draft -> Source repository -> Runtimes
 ```
 
 Global and configured projects are peer scopes in the left navigation tree.
-Selecting a scope shows an overview; selecting a skill shows its canonical
-detail pane with metadata, source paths, runtime exposure, diagnostics, and the
-global `SKILL.md` editor when the skill is managed from the source repository.
-The right panel is contextual: it carries health counts, reconcile actions,
-enable/disable controls, and project diagnostics for the current selection.
+Selecting a scope shows an overview. Selecting a managed global skill opens its
+canonical `SKILL.md` as the dominant, directly editable document without a
+separate preview or Edit mode. Save is explicit through the visible button or
+`Ctrl+S` / `Cmd+S`; there is no autosave. A successful Save writes only the
+source repository and leaves the document editable. It never installs, repairs,
+enables, disables, or otherwise reconciles a runtime projection.
+
+The right panel becomes the selected global document's Inspector. It contains
+validation and grouped diagnostics, document token and invocation metadata,
+source identity, enabled state, and exposure in each configured runtime. Runtime
+Install or Repair and source Enable or Disable remain explicit actions in that
+Inspector, separate from document Save. Project-owned skills keep their
+read-only `SKILL.md` view until an adoption workflow provides a canonical source
+document.
 
 The skills-by-runtimes matrix remains available as a secondary exposure view.
 Status dots are used inside matrix cells where the runtime column gives them
@@ -101,9 +111,10 @@ attention" number.
 Skill consumers are called runtimes in UI copy and docs. "Harness" remains
 reserved for usage-report collectors.
 
-Bulk reconciliation is preview-first. "Reconcile all…" plans the actions
-server-side without mutating anything and shows the exact list — actions to
-apply and refused unmanaged mutations with their reasons — before the user
-confirms with "Apply". Applying re-plans from a fresh snapshot; per-action
-safety rules in the workflow remain the real mutation guard. Warning-status
-skills stay reconciliable; only structurally invalid skills are refused.
+Bulk runtime reconciliation remains preview-first and is distinct from saving a
+source document. "Reconcile all…" plans the actions server-side without mutating
+anything and shows the exact list — actions to apply and refused unmanaged
+mutations with their reasons — before the user confirms with "Apply". Applying
+re-plans from a fresh snapshot; per-action safety rules in the workflow remain
+the real mutation guard. Warning-status skills stay reconciliable; only
+structurally invalid skills are refused.
