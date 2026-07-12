@@ -1,10 +1,14 @@
 import { expect, test } from '@playwright/test';
 
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
+const DATE_HEADER_PATTERN = /Date/;
 const INSPECT_SESSION_PATTERN = /Inspect session/;
+const LEGACY_PROJECT_TAB_URL_PATTERN = /tab=projects/;
+const PROVIDER_DETAILS_PATTERN = /^Provider details \(/;
 const QUERY_URL_PATTERN = /q=ai-usage/;
 const RANGE_URL_PATTERN = /range=/;
 const SORT_URL_PATTERN = /sort=/;
+const TOP_SESSION_PATTERN = /Top session/;
 
 test('loads a deterministic report overview', async ({ page }) => {
   await page.goto('/');
@@ -13,6 +17,17 @@ test('loads a deterministic report overview', async ({ page }) => {
   await expect(page.getByRole('region', { name: 'Date range' })).toBeVisible();
   await expect(page.getByText('4 / 4 sessions', { exact: true })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('opens legacy analysis deep links inside the compact Breakdown navigation', async ({ page }) => {
+  await page.goto('/?tab=projects');
+
+  const primaryTabs = page.getByRole('tablist', { name: 'Dashboard sections' });
+  await expect(primaryTabs.getByRole('tab')).toHaveText(['Overview', 'Sessions', 'Breakdown']);
+  await expect(primaryTabs.getByRole('tab', { name: 'Breakdown' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Projects' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', { level: 2, name: 'Project groups' })).toBeVisible();
+  await expect(page).toHaveURL(LEGACY_PROJECT_TAB_URL_PATTERN);
 });
 
 test('exposes metric and punchcard context without pointer-only hints', async ({ page }) => {
@@ -25,7 +40,11 @@ test('exposes metric and punchcard context without pointer-only hints', async ({
     page.getByText('Estimated cost at standard API prices, including usage covered by subscriptions'),
   ).toBeVisible();
 
+  const advancedAnalysis = page.getByText('Advanced analysis', { exact: true });
   const punchcardData = page.getByText('Punchcard data', { exact: true });
+  await expect(advancedAnalysis).toBeVisible();
+  await expect(punchcardData).not.toBeVisible();
+  await advancedAnalysis.click();
   await punchcardData.click();
   await expect(page.getByRole('table', { name: 'Punchcard data' })).toBeVisible();
 });
@@ -46,7 +65,7 @@ test('prioritizes the selected dashboard view before secondary status on mobile'
   await expect(page.getByRole('button', { name: 'About API value' })).not.toBeVisible();
 });
 
-test('keeps report KPIs and provider status ahead of the selected view on desktop', async ({ page }) => {
+test('keeps the selected dashboard view ahead of secondary provider status on desktop', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1280 });
   await page.goto('/');
 
@@ -58,7 +77,20 @@ test('keeps report KPIs and provider status ahead of the selected view on deskto
   ]);
 
   await expect(page.getByRole('button', { name: 'About API value' })).toBeVisible();
-  expect(providerBox?.y).toBeLessThan(dashboardBox?.y ?? 0);
+  expect(dashboardBox?.y).toBeLessThan(providerBox?.y ?? 0);
+});
+
+test('keeps provider details collapsed until they are requested', async ({ page }) => {
+  await page.goto('/');
+
+  const providerDetails = page.getByText(PROVIDER_DETAILS_PATTERN);
+  const noQuotaDetail = page.getByText('No quota windows are available for this provider.').first();
+
+  await expect(providerDetails).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Providers requiring attention' })).toBeVisible();
+  await expect(noQuotaDetail).not.toBeVisible();
+  await providerDetails.click();
+  await expect(noQuotaDetail).toBeVisible();
 });
 
 test('persists exploration state in the URL', async ({ page }) => {
@@ -76,6 +108,21 @@ test('persists exploration state in the URL', async ({ page }) => {
   await expect(search).toHaveValue('ai-usage');
 });
 
+test('shows the text query as a directly removable active filter', async ({ page }) => {
+  await page.goto('/');
+
+  const search = page.getByRole('textbox', {
+    name: 'Filter sessions by title, project, model, provider, or harness',
+  });
+  await search.fill('ai-usage');
+
+  const queryFilter = page.getByRole('button', { name: 'Query: ai-usage ×' });
+  await expect(queryFilter).toBeVisible();
+  await queryFilter.click();
+  await expect(search).toHaveValue('');
+  await expect(page).not.toHaveURL(QUERY_URL_PATTERN);
+});
+
 test('updates the date range and opens a session drawer', async ({ page }) => {
   await page.goto('/');
   const range = page.getByRole('region', { name: 'Date range' });
@@ -89,6 +136,52 @@ test('updates the date range and opens a session drawer', async ({ page }) => {
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('opens a session from Overview without leaving the current analysis', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
+
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('starts sessions with focused work columns and switches metric presets', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1024 });
+  await page.goto('/');
+  await page.getByRole('tab', { name: 'Sessions' }).click();
+
+  const columnHeaders = page.getByRole('columnheader');
+  await expect(page.getByRole('button', { exact: true, name: 'Work' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(columnHeaders).toHaveText([
+    DATE_HEADER_PATTERN,
+    'Session',
+    'Harness',
+    'Project',
+    'Model',
+    'API value',
+    'Duration',
+  ]);
+  expect(
+    await page.getByRole('table').evaluate((table) => table.scrollWidth <= (table.parentElement?.clientWidth ?? 0)),
+  ).toBe(true);
+
+  await page.getByRole('button', { exact: true, name: 'Tokens' }).click();
+  await expect(page.getByRole('button', { exact: true, name: 'Tokens' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(columnHeaders).toHaveText([DATE_HEADER_PATTERN, 'Session', 'Input', 'Output', 'Cache', 'Fresh']);
+});
+
+test('adjusts the graph viewport with the keyboard', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('button', { name: 'Adjust view' }).click();
+  const graphStart = page.getByRole('slider', { name: 'Graph view start' });
+  const initialIndex = await graphStart.getAttribute('aria-valuenow');
+  await graphStart.focus();
+  await graphStart.press('ArrowRight');
+
+  await expect(graphStart).not.toHaveAttribute('aria-valuenow', initialIndex ?? '');
 });
 
 test('offers keyboard-safe charts and mobile summaries at a narrow viewport', async ({ page }) => {
@@ -116,7 +209,10 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('Escape');
 
-  await page.getByRole('tab', { name: 'Projects' }).click();
+  await page.getByRole('tab', { name: 'Breakdown' }).click();
+  const breakdownTabs = page.getByRole('tablist', { name: 'Breakdown dimension' });
+  await expect(breakdownTabs.getByRole('tab', { name: 'Models' })).toHaveAttribute('aria-selected', 'true');
+  await breakdownTabs.getByRole('tab', { name: 'Projects' }).click();
   await expect(page.getByRole('list', { name: 'Project summaries' })).toBeVisible();
   await expect(page.getByRole('table')).toHaveCount(0);
 });

@@ -3,6 +3,7 @@ import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { buildCampaignViews } from './dashboard-model';
 import { toDateInputValue } from './date-range';
 import {
+  buildAdvancedAnalysisSummary,
   buildCalendarHeatmapData,
   buildModelMigrationData,
   buildOverviewHeroData,
@@ -51,6 +52,41 @@ const heatDay = (data: NonNullable<ReturnType<typeof buildCalendarHeatmapData>>,
   data.weeks.flatMap((week) => week.days).find((cell) => cell && toDateInputValue(cell.date) === day) ?? null;
 
 describe('overview model', () => {
+  test('summarizes only the advanced analyses supported by the current data', () => {
+    const fullyAnalyzableRows = [
+      row({ sessionLabel: 'A', durationMs: 60_000, costApprox: 1 }),
+      row({ sessionLabel: 'B', durationMs: 120_000, costApprox: 2 }),
+      row({ sessionLabel: 'C', durationMs: 180_000, costApprox: 3 }),
+    ];
+
+    expect(buildAdvancedAnalysisSummary(fullyAnalyzableRows)).toEqual({
+      hasPunchcard: true,
+      hasSessionShape: true,
+      summary: 'Duration/value patterns and weekly/hourly activity · 3 sessions',
+    });
+    expect(
+      buildAdvancedAnalysisSummary([
+        row({ sessionLabel: 'Unpriced', costApprox: 0, costKnown: false, durationMs: null }),
+      ]),
+    ).toEqual({
+      hasPunchcard: true,
+      hasSessionShape: false,
+      summary: 'Weekly/hourly activity · 1 session',
+    });
+    expect(
+      buildAdvancedAnalysisSummary([
+        row({
+          activeDate: null,
+          date: null,
+          sessionLabel: 'Undated',
+          costApprox: 0,
+          costKnown: false,
+          durationMs: null,
+        }),
+      ]),
+    ).toBeNull();
+  });
+
   test('presents API-equivalent value and spend coverage without deriving an ROI multiple', () => {
     const rows = [
       row({ costActual: 2, costApprox: 12, costKnown: true }),
@@ -108,14 +144,36 @@ describe('overview model', () => {
     const data = buildCalendarHeatmapData(rows, new Date('2026-06-11T12:00:00.000Z'));
     const june10 = data ? heatDay(data, '2026-06-10') : null;
 
-    expect(data?.useCost).toBe(true);
     expect(data?.todayKey).toBe('2026-06-11');
     expect(june10?.sessions).toBe(2);
     expect(june10?.cost).toBe(5);
     expect(june10?.level).toBeGreaterThan(0);
   });
 
-  test('builds model migration series per model without an other bucket', () => {
+  test('shows activity for an unpriced day when another day has API-equivalent value', () => {
+    const rows = [
+      row({
+        sessionLabel: 'Priced',
+        activeDate: '2026-06-10T12:00:00.000Z',
+        date: '2026-06-10T12:00:00.000Z',
+        costApprox: 2,
+      }),
+      row({
+        sessionLabel: 'Unpriced',
+        activeDate: '2026-06-11T12:00:00.000Z',
+        date: '2026-06-11T12:00:00.000Z',
+        costApprox: 0,
+        costKnown: false,
+      }),
+    ];
+
+    const data = buildCalendarHeatmapData(rows, new Date('2026-06-11T12:00:00.000Z'));
+    const unpricedDay = data ? heatDay(data, '2026-06-11') : null;
+
+    expect(unpricedDay?.level).toBeGreaterThan(0);
+  });
+
+  test('keeps distinct model migration series below the density limit', () => {
     const rows = [
       row({
         sessionLabel: 'GPT one',
@@ -229,6 +287,28 @@ describe('overview model', () => {
     expect(data?.buckets).toHaveLength(5);
     expect(data?.maxBucketTotal).toBe(3);
     expect(data?.maxBucketSessions).toBe(1);
+  });
+
+  test('aggregates the smallest additive timeline series without changing totals', () => {
+    const rows = Array.from({ length: 15 }, (_, index) =>
+      row({
+        costApprox: index + 1,
+        model: `model-${index + 1}`,
+        sessionLabel: `Session ${index + 1}`,
+      }),
+    );
+
+    const data = buildTimelineData(rows, { dimension: 'model', granularity: 'day' });
+    const aggregate = data?.series.at(-1);
+
+    expect(data?.series).toHaveLength(12);
+    expect(aggregate?.label).toBe('Other');
+    expect(aggregate?.memberKeys).toEqual(['model-4', 'model-3', 'model-2', 'model-1']);
+    expect(aggregate?.sessions).toBe(4);
+    expect(aggregate?.total).toBe(10);
+    expect(data?.buckets[0]?.byKey.get(aggregate?.key ?? '')).toEqual({ cost: 10, sessions: 4 });
+    expect(data?.series.reduce((sum, series) => sum + series.total, 0)).toBe(data?.grandTotal);
+    expect(data?.series.reduce((sum, series) => sum + series.sessions, 0)).toBe(data?.grandSessions);
   });
 
   test('builds session shape chart data for timed priced rows', () => {

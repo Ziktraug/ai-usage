@@ -61,7 +61,6 @@ export interface HeatWeek {
 export interface CalendarHeatmapData {
   monthLabels: string[];
   todayKey: string;
-  useCost: boolean;
   weeks: HeatWeek[];
 }
 
@@ -97,9 +96,8 @@ export const buildCalendarHeatmapData = (rows: DashboardRow[], now = new Date())
   }
   const gridStart = shiftCalendarDays(first, -((first.getDay() + 6) % 7));
 
-  const useCost = [...byDay.values()].some((entry) => entry.cost > 0);
   const sorted = [...byDay.values()]
-    .map((entry) => (useCost ? entry.cost : entry.sessions))
+    .map((entry) => entry.sessions)
     .filter((value) => value > 0)
     .sort((a, b) => a - b);
   const quantile = (p: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] ?? 0;
@@ -118,7 +116,7 @@ export const buildCalendarHeatmapData = (rows: DashboardRow[], now = new Date())
         continue;
       }
       const entry = byDay.get(toDateInputValue(date));
-      const value = heatDayValue(entry, useCost);
+      const value = entry?.sessions ?? 0;
       days.push({
         date,
         cost: entry?.cost ?? 0,
@@ -132,14 +130,7 @@ export const buildCalendarHeatmapData = (rows: DashboardRow[], now = new Date())
     previousMonth = month;
   }
 
-  return { weeks, monthLabels, useCost, todayKey };
-};
-
-const heatDayValue = (entry: { cost: number; sessions: number } | undefined, useCost: boolean) => {
-  if (!entry) {
-    return 0;
-  }
-  return useCost ? entry.cost : entry.sessions;
+  return { weeks, monthLabels, todayKey };
 };
 
 export type TimelineDimension = 'harness' | 'model' | 'project' | 'provider';
@@ -164,6 +155,8 @@ export interface TimelineBucket {
 export type MigrationGranularity = 'day' | 'month' | 'week';
 export interface TimelineSeries {
   key: string;
+  label: string;
+  memberKeys?: readonly string[];
   sessions: number;
   total: number;
 }
@@ -242,6 +235,57 @@ const timelineKeyForRow = (row: DashboardRow, dimension: TimelineDimension) => {
   return fieldKey ? fieldValueForRow(row, fieldKey) : row.harness;
 };
 
+const MAX_TIMELINE_SERIES = 12;
+const OTHER_TIMELINE_SERIES_KEY = '__ai_usage_other__';
+
+const timelineSeriesFrom = (ranked: [string, TimelineBucketEntry][], buckets: TimelineBucket[]): TimelineSeries[] => {
+  if (ranked.length <= MAX_TIMELINE_SERIES) {
+    return ranked.map(([key, value]) => ({ key, label: key, sessions: value.sessions, total: value.cost }));
+  }
+
+  const retained = ranked.slice(0, MAX_TIMELINE_SERIES - 1);
+  const aggregated = ranked.slice(MAX_TIMELINE_SERIES - 1);
+  let aggregateKey = OTHER_TIMELINE_SERIES_KEY;
+  while (ranked.some(([key]) => key === aggregateKey)) {
+    aggregateKey = `_${aggregateKey}`;
+  }
+
+  const memberKeys = aggregated.map(([key]) => key);
+  for (const bucket of buckets) {
+    const aggregateEntry = { cost: 0, sessions: 0 };
+    for (const key of memberKeys) {
+      const entry = bucket.byKey.get(key);
+      if (!entry) {
+        continue;
+      }
+      aggregateEntry.cost += entry.cost;
+      aggregateEntry.sessions += entry.sessions;
+      bucket.byKey.delete(key);
+    }
+    if (aggregateEntry.sessions > 0) {
+      bucket.byKey.set(aggregateKey, aggregateEntry);
+    }
+  }
+
+  const aggregateTotal = aggregated.reduce(
+    (total, [, value]) => ({
+      cost: total.cost + value.cost,
+      sessions: total.sessions + value.sessions,
+    }),
+    { cost: 0, sessions: 0 },
+  );
+  return [
+    ...retained.map(([key, value]) => ({ key, label: key, sessions: value.sessions, total: value.cost })),
+    {
+      key: aggregateKey,
+      label: 'Other',
+      memberKeys,
+      sessions: aggregateTotal.sessions,
+      total: aggregateTotal.cost,
+    },
+  ];
+};
+
 export const buildTimelineData = (
   rows: DashboardRow[],
   options: {
@@ -300,16 +344,12 @@ export const buildTimelineData = (
     totals.set(key, totalEntry);
   }
 
-  // Every key gets its own series — no "other" bucket. Largest total first so
-  // the dominant model sits at the base of every stacked bar.
+  // Largest total first so the dominant model sits at the base of every
+  // stacked bar. Dense additive tails share one honest aggregate.
   const ranked = [...totals.entries()].sort((a, b) => b[1].cost - a[1].cost || b[1].sessions - a[1].sessions);
   const grandTotal = ranked.reduce((sum, [, value]) => sum + value.cost, 0);
   const grandSessions = ranked.reduce((sum, [, value]) => sum + value.sessions, 0);
-  const series: TimelineSeries[] = ranked.map(([key, value]) => ({
-    key,
-    sessions: value.sessions,
-    total: value.cost,
-  }));
+  const series = timelineSeriesFrom(ranked, buckets);
   const maxBucketTotal = buckets.reduce((max, bucket) => Math.max(max, bucket.total), 0);
   const maxBucketSessions = buckets.reduce((max, bucket) => Math.max(max, bucket.sessions), 0);
 
@@ -557,6 +597,38 @@ export const buildPunchcardData = (rows: DashboardRow[]): PunchcardData | null =
     maxSessions = Math.max(maxSessions, cell.sessions);
   }
   return maxSessions > 0 ? { cells, maxSessions } : null;
+};
+
+export interface AdvancedAnalysisSummary {
+  hasPunchcard: boolean;
+  hasSessionShape: boolean;
+  summary: string;
+}
+
+export const buildAdvancedAnalysisSummary = (
+  rows: DashboardRow[],
+  campaigns: CampaignView[] = [],
+): AdvancedAnalysisSummary | null => {
+  const availableAnalyses: string[] = [];
+  const hasSessionShape = buildOverviewSessionItems(rows, campaigns).filter(isTimedPricedSession).length >= 3;
+  const hasPunchcard = rows.some((row) => row.activeTime !== null);
+  if (hasSessionShape) {
+    availableAnalyses.push('Duration/value patterns');
+  }
+  if (hasPunchcard) {
+    availableAnalyses.push('weekly/hourly activity');
+  }
+  if (availableAnalyses.length === 0) {
+    return null;
+  }
+
+  const sessionLabel = rows.length === 1 ? 'session' : 'sessions';
+  const analysisSummary = availableAnalyses.join(' and ');
+  return {
+    hasPunchcard,
+    hasSessionShape,
+    summary: `${analysisSummary.charAt(0).toUpperCase()}${analysisSummary.slice(1)} · ${rows.length} ${sessionLabel}`,
+  };
 };
 
 export interface OverviewRecords {

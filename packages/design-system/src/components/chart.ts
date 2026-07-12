@@ -5,7 +5,7 @@ export const chartAxis = css({
   display: 'flex',
   justifyContent: 'space-between',
   gap: '8px',
-  color: 'faint',
+  color: 'muted',
   fontSize: '11px',
   fontFamily: 'mono',
 });
@@ -34,7 +34,7 @@ export const chartLegendSwatch = css({
 
 export const chartLegendPct = css({
   textStyle: 'numeric',
-  color: 'faint',
+  color: 'muted',
 });
 
 export const chartSwatchClasses = [
@@ -46,11 +46,8 @@ export const chartSwatchClasses = [
   css({ bg: 'chart.c6' }),
 ];
 
-// Beyond the six curated brand colors, fall back to deterministic, evenly
-// spaced hues so every model still gets a distinct swatch (we never collapse
-// the tail into an "other" bucket). Golden-angle spacing keeps neighbours
-// apart; the fixed saturation/lightness reads on both the paper and graphite
-// surfaces — and these are always the lower-value, thinner segments anyway.
+// Keep fallback colors deterministic so a category retains its identity when
+// filters or value rankings change.
 export const overflowSeriesColor = (index: number) => `hsl(${Math.round((index * 137.508) % 360)} 42% 60%)`;
 
 const stableHueFor = (value: string) => {
@@ -63,6 +60,9 @@ const stableHueFor = (value: string) => {
 
 export const stableSeriesColor = (value: string) => `hsl(${stableHueFor(value)} 42% 60%)`;
 
+export const stableSeriesIndex = (value: string, itemCount: number) =>
+  itemCount > 0 ? stableHueFor(value) % itemCount : 0;
+
 export interface DimensionSwatch {
   className?: string;
   style?: { background: string };
@@ -71,13 +71,13 @@ export interface DimensionSwatch {
 export const dimensionSwatch = (
   dimension: 'harness' | 'model' | 'project' | 'provider',
   key: string,
-  rankIndex: number,
 ): DimensionSwatch => {
   if (dimension === 'harness') {
     const className = harnessFillFor(key);
     return className ? { className } : {};
   }
-  const className = dimension === 'model' ? chartSwatchClasses[rankIndex] : undefined;
+  const className =
+    dimension === 'model' ? chartSwatchClasses[stableSeriesIndex(key, chartSwatchClasses.length)] : undefined;
   if (className) {
     return { className };
   }
@@ -90,7 +90,7 @@ export const scatterGridline = css({
 });
 
 export const scatterAxisText = css({
-  fill: 'token(colors.faint)',
+  fill: 'token(colors.muted)',
   fontSize: '10px',
   fontFamily: 'mono',
 });
@@ -107,7 +107,7 @@ export const scatterLegend = css({
 });
 
 export const scatterSummary = css({
-  color: 'faint',
+  color: 'muted',
   fontFamily: 'mono',
   fontSize: '10px',
 });
@@ -151,7 +151,7 @@ export const scatterDistributionRow = css({
 
 export const scatterDistributionMeta = css({
   textStyle: 'numeric',
-  color: 'faint',
+  color: 'muted',
   fontSize: '10px',
 });
 
@@ -248,7 +248,7 @@ export const migrationGridLabel = css({
   top: '2px',
   textStyle: 'numeric',
   fontSize: '10px',
-  color: 'faint',
+  color: 'muted',
   bg: 'surfaceMuted',
   px: '4px',
 });
@@ -308,7 +308,7 @@ export const migrationReadout = css({
 
 export const migrationReadoutDate = css({ textStyle: 'numeric', fontWeight: 600, color: 'ink' });
 export const migrationReadoutTotal = css({ textStyle: 'numeric', color: 'muted', mr: '4px' });
-export const migrationReadoutHint = css({ color: 'faint' });
+export const migrationReadoutHint = css({ color: 'muted' });
 
 export const migrationReadoutItem = css({
   display: 'inline-flex',

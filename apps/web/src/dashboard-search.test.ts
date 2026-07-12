@@ -1,7 +1,23 @@
 import { describe, expect, test } from 'bun:test';
-import { dashboardSearchDefaultsFor, sortingStateFromSearch, validateDashboardSearch } from './dashboard-search';
+import {
+  breakdownTabFor,
+  dashboardSearchDefaultsFor,
+  hasActiveDashboardFilters,
+  primaryDashboardTabFor,
+  sortingStateFromSearch,
+  toggleExactFieldFilter,
+  validateDashboardSearch,
+} from './dashboard-search';
 
 describe('dashboard search params', () => {
+  test('maps legacy analysis tabs into the Breakdown navigation without rewriting deep links', () => {
+    expect(primaryDashboardTabFor('overview')).toBe('overview');
+    expect(primaryDashboardTabFor('sessions')).toBe('sessions');
+    expect(primaryDashboardTabFor('projects')).toBe('breakdown');
+    expect(breakdownTabFor('projects')).toBe('projects');
+    expect(breakdownTabFor('overview')).toBe('models');
+  });
+
   test('fills defaults when params are absent', () => {
     const defaults = dashboardSearchDefaultsFor('cost');
 
@@ -35,6 +51,7 @@ describe('dashboard search params', () => {
     ).toEqual({
       campaigns: 'off',
       cols: ['tokIn'],
+      colsBase: 'auto',
       filters: { model: 'gpt-5', provider: 'Codex API' },
       harness: ['Codex'],
       machine: ['work-laptop'],
@@ -61,6 +78,14 @@ describe('dashboard search params', () => {
     ).toEqual(defaults);
   });
 
+  test('versions column visibility while preserving unversioned legacy links', () => {
+    const defaults = dashboardSearchDefaultsFor('date');
+
+    expect(validateDashboardSearch({ cols: ['machine'] }, defaults).colsBase).toBe('auto');
+    expect(validateDashboardSearch({ cols: [], colsBase: 'legacy' }, defaults).colsBase).toBe('legacy');
+    expect(validateDashboardSearch({ cols: [], colsBase: 'invalid' }, defaults).colsBase).toBe('auto');
+  });
+
   test('falls back when custom dates are impossible or reversed', () => {
     const defaults = dashboardSearchDefaultsFor('date');
 
@@ -70,5 +95,24 @@ describe('dashboard search params', () => {
     expect(
       validateDashboardSearch({ range: { mode: 'custom', from: '2026-03-03', to: '2026-02-28' } }, defaults).range,
     ).toEqual(defaults.range);
+  });
+
+  test('toggles an exact field filter without disturbing the other dimensions', () => {
+    expect(toggleExactFieldFilter({ project: 'ai-usage' }, 'model', 'gpt-5')).toEqual({
+      model: 'gpt-5',
+      project: 'ai-usage',
+    });
+    expect(toggleExactFieldFilter({ model: 'gpt-5', project: 'ai-usage' }, 'model', 'gpt-5')).toEqual({
+      project: 'ai-usage',
+    });
+  });
+
+  test('detects only state that clear filters will reset', () => {
+    const defaults = dashboardSearchDefaultsFor('cost');
+
+    expect(hasActiveDashboardFilters(defaults)).toBe(false);
+    expect(hasActiveDashboardFilters({ ...defaults, q: 'collector' })).toBe(true);
+    expect(hasActiveDashboardFilters({ ...defaults, range: { mode: '30d' } })).toBe(true);
+    expect(hasActiveDashboardFilters({ ...defaults, tab: 'sessions' })).toBe(false);
   });
 });

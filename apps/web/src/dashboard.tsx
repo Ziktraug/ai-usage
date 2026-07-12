@@ -63,12 +63,16 @@ import {
   hiddenSessionCount,
 } from './dashboard-model';
 import {
+  breakdownTabFor,
   type DashboardSearch,
   dashboardSearchDefaultsFor,
   type FieldFilterKey,
   type FieldFilters,
+  hasActiveDashboardFilters,
   isDashboardTab,
+  primaryDashboardTabFor,
   sortingStateFromSearch,
+  toggleExactFieldFilter,
 } from './dashboard-search';
 import { ThemeToggle } from './dashboard-theme';
 import { type DateBounds, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
@@ -93,7 +97,11 @@ import {
 import { ReportWarnings } from './report-warnings';
 import { SessionDrawer } from './session-drawer';
 import { SessionTable } from './session-table';
-import { columnDiffFromVisibility, columnVisibilityFromDiff, sortFromSortingState } from './session-table-schema';
+import {
+  columnVisibilityFromDiff,
+  columnVisibilitySearchForVisibility,
+  sortFromSortingState,
+} from './session-table-schema';
 import { type DashboardRow, enrichReportRow, fmtDate, fmtDateOnly, fmtNum, rowKey } from './shared';
 import { applyTableUpdate } from './table-utils';
 import { TimeRangeControl } from './time-range-control';
@@ -147,11 +155,11 @@ const dashboardLayout = css({
 });
 
 const dashboardView = css({
-  order: { base: 1, lg: 2 },
+  order: 1,
 });
 
 const dashboardStatus = css({
-  order: { base: 2, lg: 1 },
+  order: 2,
 });
 
 const removeSelectors = (sources: ProjectSourceSelector[], selectors: ProjectSourceSelector[]) => {
@@ -201,7 +209,7 @@ export const Dashboard = (props: {
   const machine = () => search().machine;
   const fieldFilters = () => search().filters;
   const sorting = createMemo(() => sortingStateFromSearch(search().sort));
-  const columnVisibility = createMemo(() => columnVisibilityFromDiff(search().cols));
+  const columnVisibility = createMemo(() => columnVisibilityFromDiff(search().cols, search().colsBase));
   const generatedAt = createMemo(() => new Date(payload().generatedAt));
   const reportRows = createMemo(() =>
     measureClientPerf(
@@ -552,12 +560,11 @@ export const Dashboard = (props: {
   };
   const inspectOverviewSession = (row: DashboardRow) => {
     setSelectedKey(rowKey(row));
-    setTab('sessions');
   };
   const setFieldFilters = (updater: Updater<FieldFilters>) =>
     updateSearch((current) => ({ ...current, filters: applyTableUpdate(updater, current.filters) }));
   const setFieldFilter = (key: FieldFilterKey, value: string) =>
-    setFieldFilters((current) => ({ ...current, [key]: value }));
+    setFieldFilters((current) => toggleExactFieldFilter(current, key, value));
   const setTimelineDimensionFilter = (dimension: TimelineDimension, value: string) => {
     if (dimension === 'harness') {
       toggleHarness(value);
@@ -593,8 +600,8 @@ export const Dashboard = (props: {
     }));
   const handleColumnVisibilityChange: OnChangeFn<VisibilityState> = (updater) =>
     updateSearch((current) => {
-      const nextVisibility = applyTableUpdate(updater, columnVisibilityFromDiff(current.cols));
-      return { ...current, cols: columnDiffFromVisibility(nextVisibility) };
+      const nextVisibility = applyTableUpdate(updater, columnVisibilityFromDiff(current.cols, current.colsBase));
+      return { ...current, ...columnVisibilitySearchForVisibility(nextVisibility) };
     });
   const setCampaignGrouping = (enabled: boolean) =>
     updateSearch((current) => ({ ...current, campaigns: enabled ? 'on' : 'off' }));
@@ -603,6 +610,9 @@ export const Dashboard = (props: {
       return;
     }
     updateSearch((current) => ({ ...current, tab }));
+  };
+  const setPrimaryTab = (tab: string) => {
+    setTab(tab === 'breakdown' ? 'models' : tab);
   };
   const metrics = createMemo(() =>
     measureClientPerf('aiUsage.web.client.compute.metrics', () =>
@@ -748,6 +758,9 @@ export const Dashboard = (props: {
               <span>{fmtNum(hiddenCount())} hidden by filters</span>
             </Show>
             <div class={activeFilters}>
+              <Show when={query()}>
+                <FilterPill label="Query" onClear={() => setQuery('')} value={query()} />
+              </Show>
               <For each={harness()}>
                 {(value) => <FilterPill label="Harness" onClear={() => removeHarness(value)} value={value} />}
               </For>
@@ -760,6 +773,11 @@ export const Dashboard = (props: {
                 )}
               </For>
             </div>
+            <Show when={hasActiveDashboardFilters(search())}>
+              <button class={ghostButton} onClick={clearFilters} type="button">
+                Clear all
+              </button>
+            </Show>
           </div>
 
           <ReportWarnings onCleanupProjectWarning={cleanupProjectWarning} warnings={payload().warnings} />
@@ -811,78 +829,91 @@ export const Dashboard = (props: {
                   },
                   {
                     content: () => (
-                      <section class={section}>
-                        <GroupPanel
-                          countLabel="models"
-                          groups={modelGroups()}
-                          harnessTones
-                          onFilter={(value) => setFieldFilter('model', value)}
-                          title="By model"
-                        />
-                      </section>
+                      <Tabs
+                        ariaLabel="Breakdown dimension"
+                        items={[
+                          {
+                            content: () => (
+                              <section class={section}>
+                                <GroupPanel
+                                  countLabel="models"
+                                  groups={modelGroups()}
+                                  harnessTones
+                                  onFilter={(value) => setFieldFilter('model', value)}
+                                  title="By model"
+                                />
+                              </section>
+                            ),
+                            label: 'Models',
+                            value: 'models',
+                          },
+                          {
+                            content: () => (
+                              <section class={section}>
+                                <GroupPanel
+                                  countLabel="providers"
+                                  groups={providerGroups()}
+                                  harnessTones
+                                  onFilter={(value) => setFieldFilter('provider', value)}
+                                  title="By provider"
+                                />
+                              </section>
+                            ),
+                            label: 'Providers',
+                            value: 'providers',
+                          },
+                          {
+                            content: () => (
+                              <section class={section}>
+                                <GroupPanel
+                                  countLabel="harnesses"
+                                  groups={harnessGroups()}
+                                  harnessTones
+                                  onFilter={toggleHarness}
+                                  title="By harness"
+                                />
+                              </section>
+                            ),
+                            label: 'Harnesses',
+                            value: 'harnesses',
+                          },
+                          {
+                            content: () => (
+                              <section class={section}>
+                                <ProjectGroupEditor
+                                  disabled={!canRefresh()}
+                                  onSave={saveProjectGroupConfigs}
+                                  payload={payload()}
+                                />
+                                <ProjectSummary
+                                  groups={projectGroupRows()}
+                                  onProjectFilter={(value) => setFieldFilter('project', value)}
+                                />
+                              </section>
+                            ),
+                            label: 'Projects',
+                            value: 'projects',
+                          },
+                          {
+                            content: () => (
+                              <section class={section}>
+                                <CursorAttributionPanel rows={cursorCommitRows()} />
+                              </section>
+                            ),
+                            label: 'Cursor AI',
+                            value: 'cursor-ai',
+                          },
+                        ]}
+                        onValueChange={setTab}
+                        value={breakdownTabFor(search().tab)}
+                      />
                     ),
-                    label: 'Models',
-                    value: 'models',
-                  },
-                  {
-                    content: () => (
-                      <section class={section}>
-                        <GroupPanel
-                          countLabel="providers"
-                          groups={providerGroups()}
-                          harnessTones
-                          onFilter={(value) => setFieldFilter('provider', value)}
-                          title="By provider"
-                        />
-                      </section>
-                    ),
-                    label: 'Providers',
-                    value: 'providers',
-                  },
-                  {
-                    content: () => (
-                      <section class={section}>
-                        <GroupPanel
-                          countLabel="harnesses"
-                          groups={harnessGroups()}
-                          harnessTones
-                          onFilter={toggleHarness}
-                          title="By harness"
-                        />
-                      </section>
-                    ),
-                    label: 'Harnesses',
-                    value: 'harnesses',
-                  },
-                  {
-                    content: () => (
-                      <section class={section}>
-                        <ProjectGroupEditor
-                          disabled={!canRefresh()}
-                          onSave={saveProjectGroupConfigs}
-                          payload={payload()}
-                        />
-                        <ProjectSummary
-                          groups={projectGroupRows()}
-                          onProjectFilter={(value) => setFieldFilter('project', value)}
-                        />
-                      </section>
-                    ),
-                    label: 'Projects',
-                    value: 'projects',
-                  },
-                  {
-                    content: () => (
-                      <section class={section}>
-                        <CursorAttributionPanel rows={cursorCommitRows()} />
-                      </section>
-                    ),
-                    label: 'Cursor AI',
-                    value: 'cursor-ai',
+                    label: 'Breakdown',
+                    value: 'breakdown',
                   },
                 ]}
-                onValueChange={setTab}
-                value={search().tab}
+                onValueChange={setPrimaryTab}
+                value={primaryDashboardTabFor(search().tab)}
               />
             </div>
 
