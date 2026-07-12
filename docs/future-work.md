@@ -71,6 +71,17 @@ over-emphasize it or build ROI/break-even features on top of it.
 - Session intention via `firstPrompt` + parent linking: propagate `firstPrompt`
   into `UsageRow`, then cluster sessions by intent. Parent linking is already in
   place (see below); the remaining work is the intent signal and grouping UI.
+- Timeline charts now collapse additive tails beyond 12 categories into a
+  non-filterable `Other` series while retaining its member keys in the UI model.
+  Add an explicit expand/drill-down interaction only if users need to inspect
+  those members directly; do not turn `Other` into an exact dimension filter.
+- Add saved dashboard views only if URL-backed state is insufficient in real
+  use. A saved view needs naming, overwrite/delete behavior, schema migration,
+  and a clear distinction from a shareable URL before local persistence is
+  justified.
+- Further split the root report bundle only alongside an HTML-export asset
+  graph that can rewrite and inline dynamic imports for `file://`; Plan 007
+  intentionally splits server-only Skills/Sync components and keeps `/` intact.
 
 ## Session Linking And Titles
 
