@@ -3,13 +3,25 @@ import { type DateRangeMode, parseLocalDate } from './date-range';
 import {
   isSearchableColumnDiffId,
   isSessionColumnId,
+  isSessionColumnVisibilityBase,
   type SearchableColumnDiffId,
   type SessionColumnId,
+  type SessionColumnVisibilityBase,
 } from './session-table-schema';
 
 export const fieldFilterKeys = ['provider', 'model', 'project'] as const;
 export type FieldFilterKey = (typeof fieldFilterKeys)[number];
 export type FieldFilters = Partial<Record<FieldFilterKey, string>>;
+
+export const toggleExactFieldFilter = (filters: FieldFilters, key: FieldFilterKey, value: string): FieldFilters => {
+  const next = { ...filters };
+  if (next[key] === value) {
+    delete next[key];
+    return next;
+  }
+  next[key] = value;
+  return next;
+};
 
 export const dashboardTabs = [
   'overview',
@@ -40,6 +52,7 @@ export type DashboardCampaignMode = 'on' | 'off';
 export interface DashboardSearch {
   campaigns: DashboardCampaignMode;
   cols: SearchableColumnDiffId[];
+  colsBase: SessionColumnVisibilityBase;
   filters: FieldFilters;
   harness: string[];
   machine: string[];
@@ -48,6 +61,13 @@ export interface DashboardSearch {
   sort: DashboardSort;
   tab: DashboardTab;
 }
+
+export const hasActiveDashboardFilters = (search: DashboardSearch): boolean =>
+  search.q !== '' ||
+  search.harness.length > 0 ||
+  search.machine.length > 0 ||
+  Object.keys(search.filters).length > 0 ||
+  search.range.mode !== 'all';
 
 const dateRangeModes: DateRangeMode[] = ['all', 'today', '7d', '30d', 'custom'];
 const dateRangeModeSet = new Set<string>(dateRangeModes);
@@ -93,6 +113,7 @@ export const defaultDashboardSortFor = (sort: ReportSort): DashboardSort => ({
 export const dashboardSearchDefaultsFor = (sort: ReportSort): DashboardSearch => ({
   campaigns: 'on',
   cols: [],
+  colsBase: 'auto',
   filters: {},
   harness: [],
   machine: [],
@@ -186,10 +207,13 @@ export const validateDashboardSearch = (
   defaults: DashboardSearch,
 ): DashboardSearch => {
   const q = cleanString(search.q);
+  const cols = uniqueValidStrings(search.cols, isSearchableColumnDiffId);
+  const colsBase = isSessionColumnVisibilityBase(search.colsBase) ? search.colsBase : defaults.colsBase;
 
   return {
     campaigns: search.campaigns === 'off' ? 'off' : defaults.campaigns,
-    cols: uniqueValidStrings(search.cols, isSearchableColumnDiffId),
+    cols,
+    colsBase,
     filters: parseFilters(search.filters),
     harness: parseStringArray(search.harness),
     machine: parseStringArray(search.machine),

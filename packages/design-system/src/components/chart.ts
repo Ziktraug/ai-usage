@@ -5,7 +5,7 @@ export const chartAxis = css({
   display: 'flex',
   justifyContent: 'space-between',
   gap: '8px',
-  color: 'faint',
+  color: 'muted',
   fontSize: '11px',
   fontFamily: 'mono',
 });
@@ -34,7 +34,7 @@ export const chartLegendSwatch = css({
 
 export const chartLegendPct = css({
   textStyle: 'numeric',
-  color: 'faint',
+  color: 'muted',
 });
 
 export const chartSwatchClasses = [
@@ -90,7 +90,7 @@ export const scatterGridline = css({
 });
 
 export const scatterAxisText = css({
-  fill: 'token(colors.faint)',
+  fill: 'token(colors.muted)',
   fontSize: '10px',
   fontFamily: 'mono',
 });
@@ -107,7 +107,7 @@ export const scatterLegend = css({
 });
 
 export const scatterSummary = css({
-  color: 'faint',
+  color: 'muted',
   fontFamily: 'mono',
   fontSize: '10px',
 });
@@ -151,7 +151,7 @@ export const scatterDistributionRow = css({
 
 export const scatterDistributionMeta = css({
   textStyle: 'numeric',
-  color: 'faint',
+  color: 'muted',
   fontSize: '10px',
 });
 
@@ -248,7 +248,7 @@ export const migrationGridLabel = css({
   top: '2px',
   textStyle: 'numeric',
   fontSize: '10px',
-  color: 'faint',
+  color: 'muted',
   bg: 'surfaceMuted',
   px: '4px',
 });
@@ -308,7 +308,7 @@ export const migrationReadout = css({
 
 export const migrationReadoutDate = css({ textStyle: 'numeric', fontWeight: 600, color: 'ink' });
 export const migrationReadoutTotal = css({ textStyle: 'numeric', color: 'muted', mr: '4px' });
-export const migrationReadoutHint = css({ color: 'faint' });
+export const migrationReadoutHint = css({ color: 'muted' });
 
 export const migrationReadoutItem = css({
   display: 'inline-flex',

@@ -9,6 +9,8 @@ import {
   popoverContent,
   popoverGrid,
   popoverHeader,
+  presetButton,
+  presetGroup,
   sessionDesktopControl,
   sessionSummaryCard,
   sessionSummaryDate,
@@ -49,6 +51,11 @@ import {
   visibleSessionColumns,
 } from './session-columns';
 import {
+  columnVisibilityForSessionPreset,
+  sessionColumnPresetForVisibility,
+  sessionColumnPresets,
+} from './session-table-schema';
+import {
   type DashboardRow,
   fmtCompact,
   fmtDate,
@@ -61,6 +68,7 @@ import {
 
 const track = (..._values: unknown[]) => _values.length;
 const DESKTOP_ROW_HEIGHT = 43;
+const MIN_SESSION_TABLE_WIDTH = 720;
 const MOBILE_PAGE_SIZE = 50;
 
 export const nextMobileSessionRowLimit = (currentLimit: number, totalRows: number) =>
@@ -185,7 +193,7 @@ const ColumnVisibilityControl = (props: {
   return (
     <Popover
       contentClass={popoverContent}
-      trigger={<span>Columns · {visibleCount()} ▾</span>}
+      trigger={<span>Advanced columns · {visibleCount()} ▾</span>}
       triggerClass={ghostButton}
     >
       <div class={popoverHeader}>
@@ -213,6 +221,40 @@ const ColumnVisibilityControl = (props: {
         </For>
       </div>
     </Popover>
+  );
+};
+
+const SessionColumnControls = (props: {
+  columnVisibility: VisibilityState;
+  hiddenColumnIds?: string[];
+  onColumnVisibilityChange: OnChangeFn<VisibilityState>;
+}) => {
+  const activePreset = () => sessionColumnPresetForVisibility(props.columnVisibility);
+
+  return (
+    <fieldset aria-label="Session column presets" class={presetGroup}>
+      <For each={sessionColumnPresets}>
+        {(preset) => {
+          const active = () => activePreset() === preset.id;
+          return (
+            <button
+              aria-pressed={active()}
+              class={presetButton}
+              data-active={String(active())}
+              onClick={() => props.onColumnVisibilityChange(columnVisibilityForSessionPreset(preset.id))}
+              type="button"
+            >
+              {preset.label}
+            </button>
+          );
+        }}
+      </For>
+      <ColumnVisibilityControl
+        columnVisibility={props.columnVisibility}
+        onColumnVisibilityChange={props.onColumnVisibilityChange}
+        {...(props.hiddenColumnIds ? { hiddenColumnIds: props.hiddenColumnIds } : {})}
+      />
+    </fieldset>
   );
 };
 
@@ -279,7 +321,7 @@ export const SessionTable = (props: {
   );
   const tableMinWidth = () =>
     Math.max(
-      1040,
+      MIN_SESSION_TABLE_WIDTH,
       visibleColumns().reduce((sum, { columnDef }) => sum + (columnDef.meta?.widthPx ?? 140), 0),
     );
   let desktopViewportEl: HTMLDivElement | undefined;
@@ -396,7 +438,7 @@ export const SessionTable = (props: {
           Group campaigns
         </Checkbox>
         <div class={sessionDesktopControl}>
-          <ColumnVisibilityControl
+          <SessionColumnControls
             columnVisibility={props.columnVisibility}
             hiddenColumnIds={dataHiddenColumnIds()}
             onColumnVisibilityChange={props.onColumnVisibilityChange}

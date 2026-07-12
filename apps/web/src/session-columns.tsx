@@ -69,6 +69,44 @@ export const sessionColumns: SessionColumnDef[] = [
     meta: { label: 'Date', widthPx: 104, cellClass: dateCell },
   },
   {
+    id: 'session',
+    header: 'Session',
+    accessorFn: (row) => row.sessionLabel.toLowerCase(),
+    cell: (info) => {
+      const campaignLabel = () => campaignBadgeLabelForRow(info.row.original);
+      const titleFacts = () => provenanceFacts(info.row.original, 'title');
+      return (
+        <div class={sessionTitleClamp} style={{ 'padding-left': `${info.row.depth * 14}px` }}>
+          <Show when={info.row.getCanExpand()}>
+            <button
+              class={filterTextButton}
+              onClick={(event) => {
+                event.stopPropagation();
+                info.row.toggleExpanded();
+              }}
+              title={info.row.getIsExpanded() ? 'Collapse campaign' : 'Expand campaign'}
+              type="button"
+            >
+              {info.row.getIsExpanded() ? '▾' : '▸'}
+            </button>
+          </Show>
+          <HighlightedText query={info.table.options.meta?.searchQuery ?? ''} text={info.row.original.sessionLabel} />
+          <ProvenanceMarker facts={titleFacts()} />
+          <Show when={campaignLabel()}>
+            {(label) => (
+              <span class={muted} title={label()}>
+                {' '}
+                {label()}
+              </span>
+            )}
+          </Show>
+        </div>
+      );
+    },
+    enableHiding: false,
+    meta: { label: 'Session', widthPx: 260, cellClass: sessionCell },
+  },
+  {
     id: 'harness',
     header: 'Harness',
     accessorFn: (row) => sortValueForRow(row, 'harness'),
@@ -85,7 +123,7 @@ export const sessionColumns: SessionColumnDef[] = [
     header: 'Machine',
     accessorFn: (row) => sortValueForRow(row, 'machine'),
     cell: (info) => info.row.original.source?.machineLabel || '—',
-    meta: { label: 'Machine', widthPx: 120 },
+    meta: { label: 'Machine', widthPx: 120, defaultVisible: false },
   },
   {
     id: 'provider',
@@ -108,29 +146,7 @@ export const sessionColumns: SessionColumnDef[] = [
         </button>
       );
     },
-    meta: { label: 'Provider', widthPx: 124 },
-  },
-  {
-    id: 'model',
-    header: 'Model',
-    accessorFn: (row) => sortValueForRow(row, 'model'),
-    cell: (info) => {
-      const row = info.row.original;
-      return (
-        <button
-          class={filterTextButton}
-          onClick={(event) => {
-            event.stopPropagation();
-            info.table.options.meta?.onFieldFilter?.('model', row.modelKey);
-          }}
-          title={`Filter by ${row.modelKey}`}
-          type="button"
-        >
-          {row.modelLabel}
-        </button>
-      );
-    },
-    meta: { label: 'Model', widthPx: 168, cellClass: modelCell },
+    meta: { label: 'Provider', widthPx: 124, defaultVisible: false },
   },
   {
     id: 'project',
@@ -154,6 +170,28 @@ export const sessionColumns: SessionColumnDef[] = [
       );
     },
     meta: { label: 'Project', widthPx: 120 },
+  },
+  {
+    id: 'model',
+    header: 'Model',
+    accessorFn: (row) => sortValueForRow(row, 'model'),
+    cell: (info) => {
+      const row = info.row.original;
+      return (
+        <button
+          class={filterTextButton}
+          onClick={(event) => {
+            event.stopPropagation();
+            info.table.options.meta?.onFieldFilter?.('model', row.modelKey);
+          }}
+          title={`Filter by ${row.modelKey}`}
+          type="button"
+        >
+          {row.modelLabel}
+        </button>
+      );
+    },
+    meta: { label: 'Model', widthPx: 168, cellClass: modelCell },
   },
   {
     id: 'tokIn',
@@ -183,6 +221,7 @@ export const sessionColumns: SessionColumnDef[] = [
       widthPx: 84,
       cellClass: numCell,
       headerClass: right,
+      defaultVisible: false,
     },
   },
   {
@@ -212,6 +251,7 @@ export const sessionColumns: SessionColumnDef[] = [
       widthPx: 84,
       cellClass: numCell,
       headerClass: right,
+      defaultVisible: false,
     },
   },
   {
@@ -234,11 +274,12 @@ export const sessionColumns: SessionColumnDef[] = [
       widthPx: 86,
       cellClass: numCell,
       headerClass: right,
+      defaultVisible: false,
     },
   },
   {
     id: 'cost',
-    header: '$API',
+    header: 'API value',
     accessorFn: (row) => sortValueForRow(row, 'cost'),
     cell: (info) => {
       const row = info.row.original;
@@ -256,7 +297,7 @@ export const sessionColumns: SessionColumnDef[] = [
     meta: {
       label: 'API value',
       title: 'Estimated cost at standard API prices',
-      widthPx: 76,
+      widthPx: 92,
       cellClass: numCell,
       headerClass: right,
     },
@@ -307,14 +348,14 @@ export const sessionColumns: SessionColumnDef[] = [
   },
   {
     id: 'duration',
-    header: 'Span',
+    header: 'Duration',
     accessorFn: (row) => row.durationMs ?? 0,
     cell: (info) => fmtDuration(info.row.original.durationMs),
     sortDescFirst: true,
     meta: {
       label: 'Duration',
       title: 'Wall-clock session duration',
-      widthPx: 68,
+      widthPx: 86,
       cellClass: numCell,
       headerClass: right,
     },
@@ -374,44 +415,6 @@ export const sessionColumns: SessionColumnDef[] = [
     cell: (info) => (info.row.original.ambiguous ? 'Yes' : 'No'),
     sortDescFirst: true,
     meta: { label: 'Ambiguous reconciliation', widthPx: 92, defaultVisible: false },
-  },
-  {
-    id: 'session',
-    header: 'Session',
-    accessorFn: (row) => row.sessionLabel.toLowerCase(),
-    cell: (info) => {
-      const campaignLabel = () => campaignBadgeLabelForRow(info.row.original);
-      const titleFacts = () => provenanceFacts(info.row.original, 'title');
-      return (
-        <div class={sessionTitleClamp} style={{ 'padding-left': `${info.row.depth * 14}px` }}>
-          <Show when={info.row.getCanExpand()}>
-            <button
-              class={filterTextButton}
-              onClick={(event) => {
-                event.stopPropagation();
-                info.row.toggleExpanded();
-              }}
-              title={info.row.getIsExpanded() ? 'Collapse campaign' : 'Expand campaign'}
-              type="button"
-            >
-              {info.row.getIsExpanded() ? '▾' : '▸'}
-            </button>
-          </Show>
-          <HighlightedText query={info.table.options.meta?.searchQuery ?? ''} text={info.row.original.sessionLabel} />
-          <ProvenanceMarker facts={titleFacts()} />
-          <Show when={campaignLabel()}>
-            {(label) => (
-              <span class={muted} title={label()}>
-                {' '}
-                {label()}
-              </span>
-            )}
-          </Show>
-        </div>
-      );
-    },
-    enableHiding: false,
-    meta: { label: 'Session', widthPx: 300, cellClass: sessionCell },
   },
 ];
 

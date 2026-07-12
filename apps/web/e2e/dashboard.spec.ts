@@ -1,10 +1,13 @@
 import { expect, test } from '@playwright/test';
 
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
+const DATE_HEADER_PATTERN = /Date/;
 const INSPECT_SESSION_PATTERN = /Inspect session/;
+const PROVIDER_DETAILS_PATTERN = /^Provider details \(/;
 const QUERY_URL_PATTERN = /q=ai-usage/;
 const RANGE_URL_PATTERN = /range=/;
 const SORT_URL_PATTERN = /sort=/;
+const TOP_SESSION_PATTERN = /Top session/;
 
 test('loads a deterministic report overview', async ({ page }) => {
   await page.goto('/');
@@ -46,7 +49,7 @@ test('prioritizes the selected dashboard view before secondary status on mobile'
   await expect(page.getByRole('button', { name: 'About API value' })).not.toBeVisible();
 });
 
-test('keeps report KPIs and provider status ahead of the selected view on desktop', async ({ page }) => {
+test('keeps the selected dashboard view ahead of secondary provider status on desktop', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1280 });
   await page.goto('/');
 
@@ -58,7 +61,20 @@ test('keeps report KPIs and provider status ahead of the selected view on deskto
   ]);
 
   await expect(page.getByRole('button', { name: 'About API value' })).toBeVisible();
-  expect(providerBox?.y).toBeLessThan(dashboardBox?.y ?? 0);
+  expect(dashboardBox?.y).toBeLessThan(providerBox?.y ?? 0);
+});
+
+test('keeps provider details collapsed until they are requested', async ({ page }) => {
+  await page.goto('/');
+
+  const providerDetails = page.getByText(PROVIDER_DETAILS_PATTERN);
+  const noQuotaDetail = page.getByText('No quota windows are available for this provider.').first();
+
+  await expect(providerDetails).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Providers requiring attention' })).toBeVisible();
+  await expect(noQuotaDetail).not.toBeVisible();
+  await providerDetails.click();
+  await expect(noQuotaDetail).toBeVisible();
 });
 
 test('persists exploration state in the URL', async ({ page }) => {
@@ -89,6 +105,52 @@ test('updates the date range and opens a session drawer', async ({ page }) => {
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('opens a session from Overview without leaving the current analysis', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
+
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('starts sessions with focused work columns and switches metric presets', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1024 });
+  await page.goto('/');
+  await page.getByRole('tab', { name: 'Sessions' }).click();
+
+  const columnHeaders = page.getByRole('columnheader');
+  await expect(page.getByRole('button', { exact: true, name: 'Work' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(columnHeaders).toHaveText([
+    DATE_HEADER_PATTERN,
+    'Session',
+    'Harness',
+    'Project',
+    'Model',
+    'API value',
+    'Duration',
+  ]);
+  expect(
+    await page.getByRole('table').evaluate((table) => table.scrollWidth <= (table.parentElement?.clientWidth ?? 0)),
+  ).toBe(true);
+
+  await page.getByRole('button', { exact: true, name: 'Tokens' }).click();
+  await expect(page.getByRole('button', { exact: true, name: 'Tokens' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(columnHeaders).toHaveText([DATE_HEADER_PATTERN, 'Session', 'Input', 'Output', 'Cache', 'Fresh']);
+});
+
+test('adjusts the graph viewport with the keyboard', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('button', { name: 'Adjust view' }).click();
+  const graphStart = page.getByRole('slider', { name: 'Graph view start' });
+  const initialIndex = await graphStart.getAttribute('aria-valuenow');
+  await graphStart.focus();
+  await graphStart.press('ArrowRight');
+
+  await expect(graphStart).not.toHaveAttribute('aria-valuenow', initialIndex ?? '');
 });
 
 test('offers keyboard-safe charts and mobile summaries at a narrow viewport', async ({ page }) => {

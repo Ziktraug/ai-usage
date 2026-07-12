@@ -122,7 +122,7 @@ const GRANULARITY_ITEMS = [
 ] as const;
 
 const VALUE_ITEMS = [
-  { label: 'Value', value: 'cost' },
+  { label: 'API value', value: 'cost' },
   { label: 'Share', value: 'share' },
   { label: 'Sessions', value: 'sessions' },
 ] as const;
@@ -136,6 +136,28 @@ const toTimelineValue = (value: string): TimelineValue => (value === 'share' || 
 const TIMELINE_PLOT_INSET_PX = 8;
 const SPACED_BUCKET_MIN_WIDTH_PX = 2;
 const SPACED_BUCKET_GAP_PX = 2;
+
+const sliderIndexForKey = (key: string, current: number, max: number, step: number): number | null => {
+  if (key === 'ArrowLeft' || key === 'ArrowDown') {
+    return current - step;
+  }
+  if (key === 'ArrowRight' || key === 'ArrowUp') {
+    return current + step;
+  }
+  if (key === 'PageDown') {
+    return current - 30;
+  }
+  if (key === 'PageUp') {
+    return current + 30;
+  }
+  if (key === 'Home') {
+    return 0;
+  }
+  if (key === 'End') {
+    return max;
+  }
+  return null;
+};
 
 const cssNumber = (value: number) => Number(value.toFixed(4)).toString();
 
@@ -991,32 +1013,29 @@ export const TimeRangeControl = (props: {
     const [from, to] = props.dateRange.selectedIndexes();
     const current = handle === 'start' ? from : to;
     const step = event.shiftKey ? 7 : 1;
-    const next = (() => {
-      if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
-        return current - step;
-      }
-      if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
-        return current + step;
-      }
-      if (event.key === 'PageDown') {
-        return current - 30;
-      }
-      if (event.key === 'PageUp') {
-        return current + 30;
-      }
-      if (event.key === 'Home') {
-        return 0;
-      }
-      if (event.key === 'End') {
-        return chart.maxIndex;
-      }
-      return null;
-    })();
+    const next = sliderIndexForKey(event.key, current, chart.maxIndex, step);
     if (next == null) {
       return;
     }
     setHandleIndex(handle, clampNumber(next, 0, chart.maxIndex));
     commitIndexes();
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const handleVisualZoomKeyDown = (
+    event: KeyboardEvent & { currentTarget: HTMLButtonElement },
+    handle: VisualRangeHandle,
+    chart: NonNullable<ReturnType<typeof data>>,
+  ) => {
+    const range = visibleBucketRange();
+    const current = handle === 'start' ? range.from : range.to;
+    const maxIndex = chart.buckets.length - 1;
+    const next = sliderIndexForKey(event.key, current, maxIndex, event.shiftKey ? 7 : 1);
+    if (next == null) {
+      return;
+    }
+    setVisualZoomHandleIndex(chart, handle, clampNumber(next, 0, maxIndex));
     event.preventDefault();
     event.stopPropagation();
   };
@@ -1350,6 +1369,7 @@ export const TimeRangeControl = (props: {
                       aria-valuenow={visibleBucketRange().from}
                       aria-valuetext={fmtDateOnly(chart().buckets[visibleBucketRange().from]?.date ?? chart().minDay)}
                       class={timeSliderThumb}
+                      onKeyDown={(event) => handleVisualZoomKeyDown(event, 'start', chart())}
                       onLostPointerCapture={endVisualZoomHandleDrag}
                       onPointerCancel={endVisualZoomHandleDrag}
                       onPointerDown={(event) => startVisualZoomHandleDrag(event, 'start', chart())}
@@ -1366,6 +1386,7 @@ export const TimeRangeControl = (props: {
                       aria-valuenow={visibleBucketRange().to}
                       aria-valuetext={fmtDateOnly(chart().buckets[visibleBucketRange().to]?.date ?? chart().maxDay)}
                       class={timeSliderThumb}
+                      onKeyDown={(event) => handleVisualZoomKeyDown(event, 'end', chart())}
                       onLostPointerCapture={endVisualZoomHandleDrag}
                       onPointerCancel={endVisualZoomHandleDrag}
                       onPointerDown={(event) => startVisualZoomHandleDrag(event, 'end', chart())}

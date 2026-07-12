@@ -312,9 +312,7 @@ const CalendarHeatmap = (props: { rows: DashboardRow[]; onSelectDay: (day: Date)
                 {(opacity) => <span class={cx(heatLegendCell, accentFill)} style={{ opacity }} />}
               </For>
               <span>More</span>
-              <span style={{ 'margin-left': 'auto' }}>
-                {heat().useCost ? 'scaled by API value' : 'scaled by sessions'}
-              </span>
+              <span style={{ 'margin-left': 'auto' }}>scaled by sessions</span>
             </div>
           </>
         )}
