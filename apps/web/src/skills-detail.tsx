@@ -1,7 +1,5 @@
 import { css, cx } from '@ai-usage/design-system/css';
 import {
-  commandButton,
-  ghostButton,
   HarnessBadge,
   meta,
   muted,
@@ -18,14 +16,11 @@ import {
   strongCell,
 } from '@ai-usage/design-system/report';
 import type { ProjectSkillInventory, SkillDiagnostic, SkillManagementSnapshot, SourceSkill } from '@ai-usage/skills';
-import { useBlocker } from '@tanstack/solid-router';
-import { createEffect, createMemo, createSignal, For, type JSX, onCleanup, Show } from 'solid-js';
-import { DiscardConfirmationDialog } from './discard-confirmation-dialog';
+import { createEffect, createMemo, createSignal, For, type JSX, Show } from 'solid-js';
 import { type ProjectRuntimeDirId, projectSkillDirectories } from './project-skill-directories';
-import { getManagedSkillMarkdown, getProjectSkillMarkdown, saveManagedSkillMarkdown } from './server/skills';
-import { createSkillMarkdownEditorController, runSkillMarkdownEditorAction } from './skill-markdown-editor-model';
+import { getProjectSkillMarkdown } from './server/skills';
+import { SkillMarkdownEditor } from './skill-markdown-editor';
 import {
-  buildGlobalSkillExposure,
   buildProjectSkillRows,
   buildSkillHealthSummary,
   count,
@@ -39,7 +34,6 @@ import {
   type SkillSelection,
   type SkillTreeModel,
   selectionKey,
-  skillInvocation,
   skillScopeMatches,
 } from './skills-page-model';
 import { SkillSelectionLink } from './skills-selection-link';
@@ -144,19 +138,6 @@ const editorLoadingBlock = css({
   bg: 'surfaceMuted',
 });
 
-const editorArea = css({
-  minH: '360px',
-  w: '100%',
-  p: '10px',
-  border: '1px solid token(colors.lineStrong)',
-  borderRadius: 'sm',
-  bg: 'surface',
-  color: 'ink',
-  fontFamily: 'mono',
-  fontSize: '12px',
-  resize: 'vertical',
-});
-
 const runtimeSelect = css({
   h: '34px',
   maxW: '240px',
@@ -166,13 +147,6 @@ const runtimeSelect = css({
   bg: 'surface',
   color: 'ink',
   fontSize: '13px',
-});
-
-const actionRow = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '8px',
-  alignItems: 'center',
 });
 
 const chipRow = css({
@@ -198,15 +172,6 @@ const chipButton = css({
   _focusVisible: {
     outline: '2px solid token(colors.accent)',
     outlineOffset: '2px',
-  },
-});
-
-const busyButton = css({
-  '&[data-pending=true]': {
-    _after: {
-      content: '" ..."',
-      color: 'accent',
-    },
   },
 });
 
@@ -346,15 +311,12 @@ export const SkillsDetail = (props: {
   consolidatePanel: () => JSX.Element;
   onSnapshot: (snapshot: SkillManagementSnapshot) => void;
   onMarkdownDraftStateChange: (guard: SkillMarkdownDraftGuard | undefined) => void;
-  pendingOperation: string | null;
   knownProjects: readonly KnownProjectScope[];
   markdownRefreshVersion: number;
   projectInventories: ProjectInventoriesResult | undefined;
   projectInventoriesLoading: boolean;
-  reconcileSkill: (skillName: string) => void;
   selection: SkillSelection;
   snapshot: SkillManagementSnapshot;
-  toggleSkill: (skillName: string, enabled: boolean) => void;
   tree: SkillTreeModel;
 }) => {
   const inventories = createMemo(() => (props.projectInventories?.ok ? props.projectInventories.data : []));
@@ -398,11 +360,7 @@ export const SkillsDetail = (props: {
             markdownRefreshVersion={props.markdownRefreshVersion}
             onMarkdownDraftStateChange={props.onMarkdownDraftStateChange}
             onSnapshot={props.onSnapshot}
-            pendingOperation={props.pendingOperation}
-            reconcileSkill={props.reconcileSkill}
             skill={skill()}
-            snapshot={props.snapshot}
-            toggleSkill={props.toggleSkill}
             tree={props.tree}
           />
         )}
@@ -516,14 +474,9 @@ const GlobalSkillDetail = (props: {
   onMarkdownDraftStateChange: (guard: SkillMarkdownDraftGuard | undefined) => void;
   knownProjects: readonly KnownProjectScope[];
   markdownRefreshVersion: number;
-  pendingOperation: string | null;
-  reconcileSkill: (skillName: string) => void;
   skill: SourceSkill;
-  snapshot: SkillManagementSnapshot;
-  toggleSkill: (skillName: string, enabled: boolean) => void;
   tree: SkillTreeModel;
 }) => {
-  const exposure = createMemo(() => buildGlobalSkillExposure(props.snapshot, props.skill.name));
   const duplicateMatches = createMemo(() =>
     skillScopeMatches(
       props.tree,
@@ -539,9 +492,6 @@ const GlobalSkillDetail = (props: {
           <span class={cx(statusPill, validationPillClass(props.skill.validationStatus))}>
             {props.skill.validationStatus}
           </span>
-          <span class={cx(statusPill, statusPillInfo)}>
-            {skillInvocation(props.skill) === 'auto' ? 'Auto' : 'Manual'}
-          </span>
           <span class={cx(statusPill, props.skill.enabled ? statusPillOk : statusPillWarn)}>
             {props.skill.enabled ? 'Enabled' : 'Disabled'}
           </span>
@@ -549,241 +499,13 @@ const GlobalSkillDetail = (props: {
         <p class={muted}>{props.skill.description || 'No description'}</p>
         <DuplicateSkillLinks knownProjects={props.knownProjects} matches={duplicateMatches()} />
       </div>
-      <div class={metadataGrid}>
-        <MetadataItem label="Source path" value={props.skill.path} />
-        <MetadataItem label="SKILL.md" value={props.skill.skillMdPath} />
-        <MetadataItem label="Invocation" value={skillInvocation(props.skill) === 'auto' ? 'Auto' : 'Manual'} />
-        <MetadataItem
-          label="Tokens"
-          value={props.skill.tokenCount ? `${props.skill.tokenCount.total} tok` : 'Unknown'}
-        />
-      </div>
-      <section class={section}>
-        <div class={panelHeaderRow}>
-          <div>
-            <h3 class={panelTitle}>Runtime exposure</h3>
-            <p class={panelSub}>Where this source skill is linked or blocked.</p>
-          </div>
-          <button
-            aria-busy={props.pendingOperation === `toggle:${props.skill.name}` ? 'true' : undefined}
-            class={cx(ghostButton, busyButton)}
-            data-pending={props.pendingOperation === `toggle:${props.skill.name}` ? 'true' : undefined}
-            disabled={props.pendingOperation !== null}
-            onClick={() => props.toggleSkill(props.skill.name, !props.skill.enabled)}
-            type="button"
-          >
-            {props.skill.enabled ? 'Disable' : 'Enable'}
-          </button>
-        </div>
-        <For each={exposure()}>
-          {(entry) => {
-            const target = () => props.snapshot.targets.find((item) => item.id === entry.targetId);
-            return (
-              <div class={exposureRow}>
-                <HarnessBadge name={target()?.label ?? entry.targetId} />
-                <div>
-                  <div class={cx(strongCell, exposureStateClass(entry.state))}>{entry.label}</div>
-                  <div class={pathText}>{entry.expectedPath}</div>
-                  <Show when={entry.actualPath}>
-                    {(actualPath) => <div class={pathText}>Actual: {actualPath()}</div>}
-                  </Show>
-                </div>
-                <Show when={entry.canReconcile}>
-                  <button
-                    aria-busy={props.pendingOperation === `reconcile:${props.skill.name}` ? 'true' : undefined}
-                    class={cx(ghostButton, busyButton)}
-                    data-pending={props.pendingOperation === `reconcile:${props.skill.name}` ? 'true' : undefined}
-                    disabled={props.pendingOperation !== null}
-                    onClick={() => props.reconcileSkill(props.skill.name)}
-                    type="button"
-                  >
-                    Reconcile
-                  </button>
-                </Show>
-              </div>
-            );
-          }}
-        </For>
-      </section>
       <SkillMarkdownEditor
         onDraftStateChange={props.onMarkdownDraftStateChange}
         onSnapshot={props.onSnapshot}
         refreshVersion={props.markdownRefreshVersion}
         skillName={props.skill.name}
       />
-      <Diagnostics diagnostics={props.skill.diagnostics} />
     </div>
-  );
-};
-
-const SkillMarkdownEditor = (props: {
-  onDraftStateChange: (guard: SkillMarkdownDraftGuard | undefined) => void;
-  onSnapshot: (snapshot: SkillManagementSnapshot) => void;
-  refreshVersion: number;
-  skillName: string;
-}) => {
-  const controller = createSkillMarkdownEditorController({
-    loadMarkdown: (skillName) => getManagedSkillMarkdown({ data: skillName }),
-    onSnapshot: (snapshot) => props.onSnapshot(snapshot),
-    saveMarkdown: (input) => saveManagedSkillMarkdown({ data: input }),
-  });
-  const [editorState, setEditorState] = createSignal(controller.getState());
-  const [reloadRequested, setReloadRequested] = createSignal(false);
-  let editorElement: HTMLTextAreaElement | undefined;
-  let editorTriggerElement: HTMLButtonElement | undefined;
-  const unsubscribe = controller.subscribe((state) => setEditorState(state));
-  onCleanup(unsubscribe);
-
-  const focusEditor = (): void => {
-    (editorElement ?? editorTriggerElement)?.focus();
-  };
-
-  createEffect(() => {
-    props.onDraftStateChange({
-      discard: controller.cancelEditing,
-      dirty: editorState().dirty,
-      focus: focusEditor,
-      skillName: props.skillName,
-    });
-  });
-  onCleanup(() => props.onDraftStateChange(undefined));
-
-  const navigationBlocker = useBlocker({
-    enableBeforeUnload: () => editorState().dirty,
-    shouldBlockFn: () => editorState().dirty,
-    withResolver: true,
-  });
-
-  createEffect(() => {
-    runSkillMarkdownEditorAction(controller, () => controller.select(props.skillName)).catch(
-      controller.reportUnexpectedError,
-    );
-  });
-
-  let observedRefreshVersion = props.refreshVersion;
-  const reloadFromDisk = async (): Promise<void> => {
-    if (editorState().dirty) {
-      setReloadRequested(true);
-      return;
-    }
-    await runSkillMarkdownEditorAction(controller, controller.reload);
-  };
-
-  const keepEditing = (): void => {
-    setReloadRequested(false);
-    const blocker = navigationBlocker();
-    if (blocker.status === 'blocked') {
-      blocker.reset();
-    }
-  };
-
-  const discardChanges = async (): Promise<void> => {
-    controller.cancelEditing();
-    setReloadRequested(false);
-    const blocker = navigationBlocker();
-    if (blocker.status === 'blocked') {
-      blocker.proceed();
-      return;
-    }
-    await runSkillMarkdownEditorAction(controller, controller.reload);
-  };
-
-  createEffect(() => {
-    const refreshVersion = props.refreshVersion;
-    if (refreshVersion === observedRefreshVersion) {
-      return;
-    }
-    observedRefreshVersion = refreshVersion;
-    reloadFromDisk().catch(controller.reportUnexpectedError);
-  });
-
-  const markdownDocument = createMemo(() => editorState().document);
-  const markdownError = createMemo(() => editorState().error ?? 'SKILL.md unavailable.');
-
-  return (
-    <section class={section}>
-      <div class={panelHeader}>
-        <h3 class={panelTitle}>SKILL.md</h3>
-        <p class={panelSub}>Writes to the source repository only, never into runtime folders.</p>
-      </div>
-      <Show
-        fallback={editorState().loading ? <MarkdownLoading /> : <p class={meta}>{markdownError()}</p>}
-        when={markdownDocument()}
-      >
-        {(current) => (
-          <Show
-            fallback={
-              <>
-                <MarkdownPreview content={current().content} />
-                <div class={actionRow}>
-                  <button
-                    class={ghostButton}
-                    onClick={controller.startEditing}
-                    ref={(element) => {
-                      editorTriggerElement = element;
-                    }}
-                    type="button"
-                  >
-                    Edit
-                  </button>
-                  <button class={ghostButton} onClick={reloadFromDisk} type="button">
-                    Reload from disk
-                  </button>
-                </div>
-              </>
-            }
-            when={editorState().editing}
-          >
-            <textarea
-              aria-label={`${editorState().skillName} SKILL.md`}
-              class={editorArea}
-              onInput={(event) => controller.setDraft(event.currentTarget.value)}
-              ref={(element) => {
-                editorElement = element;
-              }}
-              value={editorState().draft}
-            />
-            <div class={actionRow}>
-              <button
-                aria-busy={editorState().saving ? 'true' : undefined}
-                class={commandButton}
-                disabled={editorState().saving}
-                onClick={async () => {
-                  await runSkillMarkdownEditorAction(controller, controller.save);
-                }}
-                type="button"
-              >
-                Save
-              </button>
-              <button
-                class={ghostButton}
-                disabled={editorState().saving}
-                onClick={controller.cancelEditing}
-                type="button"
-              >
-                Cancel
-              </button>
-              <button class={ghostButton} disabled={editorState().saving} onClick={reloadFromDisk} type="button">
-                Reload from disk
-              </button>
-            </div>
-          </Show>
-        )}
-      </Show>
-      <Show when={editorState().dirty}>
-        <p class={meta}>Unsaved changes — navigation and reload require confirmation.</p>
-      </Show>
-      <Show when={editorState().message}>{(value) => <p class={meta}>{value()}</p>}</Show>
-      <Show when={reloadRequested() || navigationBlocker().status === 'blocked'}>
-        <DiscardConfirmationDialog
-          description="Your SKILL.md draft has not been saved. Discarding it cannot be undone."
-          idPrefix="discard-skill-draft"
-          onDiscard={discardChanges}
-          onKeep={keepEditing}
-          restoreFocus={focusEditor}
-        />
-      </Show>
-    </section>
   );
 };
 

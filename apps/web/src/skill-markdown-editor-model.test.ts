@@ -33,6 +33,185 @@ const deferred = <T>() => {
 };
 
 describe('skill markdown editor controller', () => {
+  test('accepts draft input as soon as a document is loaded', async () => {
+    const controller = createSkillMarkdownEditorController({
+      loadMarkdown: (skillName) => Promise.resolve(documentResult(skillName)),
+      saveMarkdown: (): Promise<SkillMarkdownSaveResult> => Promise.resolve({ data: {}, ok: true }),
+    });
+
+    await controller.select('alpha-skill');
+    controller.setDraft('# Immediate draft\n');
+
+    expect(controller.getState()).toMatchObject({
+      dirty: true,
+      document: { content: '# alpha-skill\n' },
+      draft: '# Immediate draft\n',
+    });
+  });
+
+  test('keeps a successfully saved document ready for another immediate edit', async () => {
+    const saves: { baseSha256: string; content: string; skillName: string }[] = [];
+    const savedDocument = {
+      ...documentResult('alpha-skill', '# Server-confirmed edit\n').data,
+      sha256: 'f'.repeat(64),
+    };
+    const controller = createSkillMarkdownEditorController({
+      loadMarkdown: (skillName) => Promise.resolve(documentResult(skillName)),
+      saveMarkdown: (input) => {
+        saves.push(input);
+        return Promise.resolve({ data: { document: savedDocument }, ok: true });
+      },
+    });
+
+    await controller.select('alpha-skill');
+    controller.setDraft('# Local edit\n');
+    await controller.save();
+
+    expect(saves).toEqual([
+      {
+        baseSha256: documentResult('alpha-skill').data.sha256,
+        content: '# Local edit\n',
+        skillName: 'alpha-skill',
+      },
+    ]);
+    expect(controller.getState()).toMatchObject({
+      dirty: false,
+      document: savedDocument,
+      draft: '# Server-confirmed edit\n',
+      saving: false,
+    });
+
+    controller.setDraft('# Second edit\n');
+
+    expect(controller.getState()).toMatchObject({
+      dirty: true,
+      document: savedDocument,
+      draft: '# Second edit\n',
+      message: null,
+    });
+  });
+
+  test('does not call saveMarkdown for a clean document', async () => {
+    let saveCalls = 0;
+    const controller = createSkillMarkdownEditorController({
+      loadMarkdown: (skillName) => Promise.resolve(documentResult(skillName)),
+      saveMarkdown: (): Promise<SkillMarkdownSaveResult> => {
+        saveCalls += 1;
+        return Promise.resolve({ data: {}, ok: true });
+      },
+    });
+
+    await controller.select('alpha-skill');
+    await controller.save();
+
+    expect(saveCalls).toBe(0);
+    expect(controller.getState()).toMatchObject({ dirty: false, saving: false });
+  });
+
+  test('reverts the draft to the latest server-confirmed content without filesystem IO', async () => {
+    const savedDocument = {
+      ...documentResult('alpha-skill', '# Server-confirmed edit\n').data,
+      sha256: 'f'.repeat(64),
+    };
+    let loadCalls = 0;
+    let saveCalls = 0;
+    const controller = createSkillMarkdownEditorController({
+      loadMarkdown: (skillName) => {
+        loadCalls += 1;
+        return Promise.resolve(documentResult(skillName));
+      },
+      saveMarkdown: () => {
+        saveCalls += 1;
+        return Promise.resolve({ data: { document: savedDocument }, ok: true });
+      },
+    });
+
+    await controller.select('alpha-skill');
+    controller.setDraft('# First local edit\n');
+    await controller.save();
+    controller.setDraft('# Discard this edit\n');
+    controller.reportUnexpectedError(new Error('transient failure'));
+
+    controller.revertDraft();
+
+    expect(controller.getState()).toMatchObject({
+      dirty: false,
+      document: savedDocument,
+      draft: '# Server-confirmed edit\n',
+      message: null,
+    });
+    expect({ loadCalls, saveCalls }).toEqual({ loadCalls: 1, saveCalls: 1 });
+  });
+
+  test('preserves the exact local draft and exposes an explicit conflict state', async () => {
+    const controller = createSkillMarkdownEditorController({
+      loadMarkdown: (skillName) => Promise.resolve(documentResult(skillName, '# Server content\n')),
+      saveMarkdown: (): Promise<SkillMarkdownSaveResult> => Promise.resolve({ data: { reason: 'conflict' }, ok: true }),
+    });
+
+    await controller.select('alpha-skill');
+    controller.setDraft('# Exact local draft\n\nDo not discard.\n');
+    await controller.save();
+
+    expect(controller.getState()).toMatchObject({
+      conflict: true,
+      dirty: true,
+      document: { content: '# Server content\n', skillName: 'alpha-skill' },
+      draft: '# Exact local draft\n\nDo not discard.\n',
+      message: 'Changed on disk',
+      saving: false,
+    });
+
+    controller.revertDraft();
+
+    expect(controller.getState()).toMatchObject({
+      conflict: true,
+      dirty: false,
+      draft: '# Server content\n',
+      message: null,
+    });
+  });
+
+  test('preserves the document and exact draft after another save failure', async () => {
+    const controller = createSkillMarkdownEditorController({
+      loadMarkdown: (skillName) => Promise.resolve(documentResult(skillName, '# Server content\n')),
+      saveMarkdown: (): Promise<SkillMarkdownSaveResult> =>
+        Promise.resolve({ error: { message: 'Storage unavailable', tag: 'storage-error' }, ok: false }),
+    });
+
+    await controller.select('alpha-skill');
+    controller.setDraft('# Exact local draft\n');
+    await controller.save();
+
+    expect(controller.getState()).toMatchObject({
+      conflict: false,
+      dirty: true,
+      document: { content: '# Server content\n', skillName: 'alpha-skill' },
+      draft: '# Exact local draft\n',
+      message: 'Storage unavailable',
+      saving: false,
+    });
+  });
+
+  test('keeps a draft dirty when a save response omits the confirmed document', async () => {
+    const controller = createSkillMarkdownEditorController({
+      loadMarkdown: (skillName) => Promise.resolve(documentResult(skillName, '# Server content\n')),
+      saveMarkdown: (): Promise<SkillMarkdownSaveResult> => Promise.resolve({ data: {}, ok: true }),
+    });
+
+    await controller.select('alpha-skill');
+    controller.setDraft('# Exact local draft\n');
+    await controller.save();
+
+    expect(controller.getState()).toMatchObject({
+      dirty: true,
+      document: { content: '# Server content\n', skillName: 'alpha-skill' },
+      draft: '# Exact local draft\n',
+      message: 'Could not save SKILL.md: server returned no document.',
+      saving: false,
+    });
+  });
+
   test('surfaces an unexpected async action failure in the visible editor state', async () => {
     const controller = createSkillMarkdownEditorController({
       loadMarkdown: (skillName) => Promise.resolve(documentResult(skillName)),
@@ -63,7 +242,6 @@ describe('skill markdown editor controller', () => {
     });
 
     await controller.select('alpha-skill');
-    controller.startEditing();
     controller.setDraft('# Unsaved alpha draft\n');
 
     const blockedSelection = await controller.select('beta-skill');
@@ -72,14 +250,13 @@ describe('skill markdown editor controller', () => {
       dirty: true,
       document: { skillName: 'alpha-skill' },
       draft: '# Unsaved alpha draft\n',
-      editing: true,
       skillName: 'alpha-skill',
     });
     expect(blockedSelection).toBe(false);
     expect(loads).toEqual(['alpha-skill']);
     expect(saves).toEqual([]);
 
-    controller.cancelEditing();
+    controller.revertDraft();
     const allowedSelection = await controller.select('beta-skill');
 
     expect(allowedSelection).toBe(true);
@@ -87,7 +264,6 @@ describe('skill markdown editor controller', () => {
       dirty: false,
       document: { skillName: 'beta-skill' },
       draft: '# beta-skill\n',
-      editing: false,
       skillName: 'beta-skill',
     });
   });
@@ -100,7 +276,6 @@ describe('skill markdown editor controller', () => {
     });
 
     await controller.select('alpha-skill');
-    controller.startEditing();
     controller.setDraft('# Local draft\n');
     content = '# Changed on disk\n';
 
@@ -111,7 +286,7 @@ describe('skill markdown editor controller', () => {
       document: { content: '# Original\n' },
     });
 
-    controller.cancelEditing();
+    controller.revertDraft();
     expect(await controller.reload()).toBe(true);
     expect(controller.getState()).toMatchObject({
       dirty: false,
@@ -149,12 +324,11 @@ describe('skill markdown editor controller', () => {
     });
 
     await controller.select('alpha-skill');
-    controller.startEditing();
     controller.setDraft('# Alpha draft\n');
-    controller.cancelEditing();
-    await controller.select('beta-skill');
+    controller.revertDraft();
+    const betaSelection = controller.select('beta-skill');
     controller.setDraft('# Late alpha input\n');
-    controller.startEditing();
+    await betaSelection;
 
     expect(controller.getState().draft).toBe('# beta-skill\n');
   });
@@ -171,10 +345,9 @@ describe('skill markdown editor controller', () => {
     });
 
     await controller.select('alpha-skill');
-    controller.startEditing();
     controller.setDraft('# Saved alpha edit\n');
     const alphaSave = controller.save();
-    controller.cancelEditing();
+    controller.revertDraft();
     await controller.select('beta-skill');
     pendingSave.resolve({ data: { document: documentResult('alpha-skill', '# Saved alpha edit\n').data }, ok: true });
     await alphaSave;
@@ -183,9 +356,40 @@ describe('skill markdown editor controller', () => {
     expect(controller.getState()).toMatchObject({
       document: { skillName: 'beta-skill' },
       draft: '# beta-skill\n',
-      editing: false,
       message: null,
       skillName: 'beta-skill',
+    });
+  });
+
+  test('ignores draft input while a save is in flight', async () => {
+    const pendingSave = deferred<SkillMarkdownSaveResult>();
+    const controller = createSkillMarkdownEditorController({
+      loadMarkdown: (skillName) => Promise.resolve(documentResult(skillName)),
+      saveMarkdown: () => pendingSave.promise,
+    });
+
+    await controller.select('alpha-skill');
+    controller.setDraft('# Submitted draft\n');
+    const save = controller.save();
+
+    controller.setDraft('# Input during save\n');
+
+    expect(controller.getState()).toMatchObject({
+      dirty: true,
+      draft: '# Submitted draft\n',
+      saving: true,
+    });
+
+    pendingSave.resolve({
+      data: { document: documentResult('alpha-skill', '# Submitted draft\n').data },
+      ok: true,
+    });
+    await save;
+
+    expect(controller.getState()).toMatchObject({
+      dirty: false,
+      draft: '# Submitted draft\n',
+      saving: false,
     });
   });
 });

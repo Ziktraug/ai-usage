@@ -9,12 +9,15 @@ import {
   panelTitle,
   statusPill,
   statusPillDanger,
+  statusPillInfo,
+  statusPillOk,
   statusPillWarn,
   strongCell,
 } from '@ai-usage/design-system/report';
-import type { ProjectionState, SkillManagementSnapshot } from '@ai-usage/skills';
+import type { SkillDiagnosticSeverity, SkillManagementSnapshot, SkillValidationStatus } from '@ai-usage/skills';
 import { useNavigate } from '@tanstack/solid-router';
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
+import { deriveInstallationAction, groupSkillDiagnostics } from './skill-document-inspector-model';
 import {
   buildGlobalSkillExposure,
   buildSkillHealthSummary,
@@ -22,20 +25,19 @@ import {
   findGlobalSkill,
   findProjectSkillRow,
   type KnownProjectScope,
-  projectionStateLabel,
   projectSourcePathsForScope,
   type ReconcilePlanSummary,
   type SkillCellStateFilter,
   type SkillSelection,
+  skillInvocation,
 } from './skills-page-model';
+import { SKILLS_DESKTOP_MEDIA_QUERY } from './skills-responsive';
 import type { ProjectInventoriesResult } from './skills-workspace';
 
 const contextPanel = css({
   alignSelf: 'start',
   position: { base: 'static', xl: 'sticky' },
   top: '16px',
-  maxH: { base: 'none', xl: 'calc(100vh - 32px)' },
-  overflow: 'auto',
 });
 
 const stack = css({
@@ -91,6 +93,73 @@ const issueRow = css({
   borderTop: '1px solid token(colors.line)',
 });
 
+const inspectorSection = css({
+  display: 'grid',
+  gap: '8px',
+  pt: '12px',
+  borderTop: '1px solid token(colors.line)',
+});
+
+const inspectorSummary = css({
+  cursor: 'pointer',
+});
+
+const inspectorHeading = css({
+  fontSize: '13px',
+  fontWeight: 700,
+});
+
+const sourceRow = css({
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  gap: '8px',
+  alignItems: 'center',
+});
+
+const sourceValue = css({
+  display: 'block',
+  minW: 0,
+  overflow: 'hidden',
+  color: 'muted',
+  fontFamily: 'mono',
+  fontSize: '11px',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+});
+
+const runtimeDisclosure = css({
+  borderTop: '1px solid token(colors.line)',
+  _first: {
+    borderTop: '0',
+  },
+});
+
+const runtimeSummary = css({
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  gap: '8px',
+  alignItems: 'center',
+  py: '8px',
+  cursor: 'pointer',
+});
+
+const runtimePaths = css({
+  display: 'grid',
+  gap: '4px',
+  pb: '8px',
+  color: 'muted',
+  fontFamily: 'mono',
+  fontSize: '11px',
+  overflowWrap: 'anywhere',
+});
+
+const diagnosticHeading = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '6px',
+  alignItems: 'center',
+});
+
 const planList = css({
   display: 'grid',
   gap: '3px',
@@ -111,11 +180,6 @@ const busyButton = css({
   },
 });
 
-const unhealthyStates = new Set(['missing', 'broken-link', 'wrong-target', 'missing-target', 'unmanaged-copy']);
-
-const projectionLabelForIssue = (state: string) =>
-  projectionStateLabel((state === 'not-applicable' ? 'missing' : state) as ProjectionState);
-
 export const SkillsContextPanel = (props: {
   matrixOpen: boolean;
   knownProjects: readonly KnownProjectScope[];
@@ -132,6 +196,16 @@ export const SkillsContextPanel = (props: {
   toggleSkill: (skillName: string, enabled: boolean) => void;
 }) => {
   const navigate = useNavigate();
+  const [inspectorSectionsOpen, setInspectorSectionsOpen] = createSignal(false);
+  onMount(() => {
+    const desktopMedia = window.matchMedia(SKILLS_DESKTOP_MEDIA_QUERY);
+    const syncInspectorSections = (): void => {
+      setInspectorSectionsOpen(desktopMedia.matches);
+    };
+    syncInspectorSections();
+    desktopMedia.addEventListener('change', syncInspectorSections);
+    onCleanup(() => desktopMedia.removeEventListener('change', syncInspectorSections));
+  });
   // Selection changes go through the router so the URL, the tree highlight,
   // and the detail pane can never disagree.
   const openFilteredMatrix = (filter: SkillCellStateFilter) => {
@@ -167,13 +241,10 @@ export const SkillsContextPanel = (props: {
       ? projectSourcePathsForScope(props.selection.projectPath, props.knownProjects)
       : [],
   );
-  const exposureIssues = createMemo(() =>
-    props.selection.type === 'global-skill'
-      ? buildGlobalSkillExposure(props.snapshot, props.selection.skillName).filter((entry) =>
-          unhealthyStates.has(entry.state),
-        )
-      : [],
+  const selectedGlobalExposure = createMemo(() =>
+    props.selection.type === 'global-skill' ? buildGlobalSkillExposure(props.snapshot, props.selection.skillName) : [],
   );
+  const isGlobalSkill = createMemo(() => props.selection.type === 'global-skill');
   const subtitle = createMemo(() => {
     if (props.selection.type === 'global-scope') {
       return 'Global source';
@@ -186,15 +257,21 @@ export const SkillsContextPanel = (props: {
     }
     return 'Project skill - read-only';
   });
+  const reviewInstallation = (): void => {
+    props.onPreviewReconcile();
+    navigate({ to: '/skills/matrix' });
+  };
 
   return (
-    <aside aria-label="Selection actions" class={cx(panel, contextPanel)}>
+    <aside aria-label={isGlobalSkill() ? 'Inspector' : 'Selection actions'} class={cx(panel, contextPanel)}>
       <div class={panelHeader}>
-        <h2 class={panelTitle}>Context</h2>
+        <h2 class={panelTitle}>{isGlobalSkill() ? 'Inspector' : 'Context'}</h2>
         <p class={panelSub}>{subtitle()}</p>
       </div>
       <div class={stack}>
-        <SourceHealth health={health()} onOpenFilteredMatrix={openFilteredMatrix} onOpenOverview={openOverview} />
+        <Show when={!isGlobalSkill()}>
+          <SourceHealth health={health()} onOpenFilteredMatrix={openFilteredMatrix} onOpenOverview={openOverview} />
+        </Show>
         <Show when={props.selection.type === 'global-scope'}>
           <ScopeActions
             canReconcile={canReconcileAll(props.snapshot)}
@@ -209,11 +286,14 @@ export const SkillsContextPanel = (props: {
         </Show>
         <Show when={selectedGlobalSkill()}>
           {(skill) => (
-            <GlobalSkillActions
-              exposureIssues={exposureIssues()}
+            <GlobalSkillInspector
+              exposure={selectedGlobalExposure()}
+              onReviewInstallation={reviewInstallation}
               pendingOperation={props.pendingOperation}
               reconcileSkill={props.reconcileSkill}
+              sectionsOpen={inspectorSectionsOpen()}
               skill={skill()}
+              snapshot={props.snapshot}
               toggleSkill={props.toggleSkill}
             />
           )}
@@ -339,53 +419,204 @@ const ScopeActions = (props: {
   </>
 );
 
-const GlobalSkillActions = (props: {
-  exposureIssues: readonly ReturnType<typeof buildGlobalSkillExposure>[number][];
+type GlobalSkillExposure = ReturnType<typeof buildGlobalSkillExposure>[number];
+
+const validationTones = {
+  invalid: statusPillDanger,
+  valid: statusPillOk,
+  warning: statusPillWarn,
+} satisfies Record<SkillValidationStatus, string>;
+
+const diagnosticTones = {
+  error: statusPillDanger,
+  info: statusPillInfo,
+  warning: statusPillWarn,
+} satisfies Record<SkillDiagnosticSeverity, string>;
+
+const exposureTones = {
+  'broken-link': statusPillDanger,
+  'disabled-exposed': statusPillDanger,
+  'duplicate-name-conflict': statusPillDanger,
+  'duplicate-same-content': statusPillDanger,
+  linked: statusPillOk,
+  missing: statusPillWarn,
+  'missing-target': statusPillDanger,
+  'not-applicable': statusPillDanger,
+  'unmanaged-copy': statusPillDanger,
+  'unmanaged-symlink': statusPillDanger,
+  'wrong-target': statusPillDanger,
+} satisfies Record<GlobalSkillExposure['state'], string>;
+
+const GlobalSkillInspector = (props: {
+  exposure: readonly GlobalSkillExposure[];
+  onReviewInstallation: () => void;
   pendingOperation: string | null;
   reconcileSkill: (skillName: string) => void;
+  sectionsOpen: boolean;
   skill: NonNullable<ReturnType<typeof findGlobalSkill>>;
+  snapshot: SkillManagementSnapshot;
   toggleSkill: (skillName: string, enabled: boolean) => void;
 }) => {
-  const hasReconciliableIssue = () => props.exposureIssues.some((issue) => issue.canReconcile);
+  const diagnostics = createMemo(() => groupSkillDiagnostics(props.skill.diagnostics));
+  const installationAction = createMemo(() => deriveInstallationAction(props.skill, props.exposure));
+  const installationOperation = createMemo(() =>
+    installationAction().mode === 'preview' ? 'preview-reconcile' : `reconcile:${props.skill.name}`,
+  );
+  const runInstallationAction = (): void => {
+    if (installationAction().mode === 'preview') {
+      props.onReviewInstallation();
+      return;
+    }
+    if (installationAction().mode === 'direct') {
+      props.reconcileSkill(props.skill.name);
+    }
+  };
+
   return (
     <>
-      <section class={actionGrid}>
-        <button
-          aria-busy={props.pendingOperation === `toggle:${props.skill.name}` ? 'true' : undefined}
-          class={cx(ghostButton, busyButton)}
-          data-pending={props.pendingOperation === `toggle:${props.skill.name}` ? 'true' : undefined}
-          disabled={props.pendingOperation !== null}
-          onClick={() => props.toggleSkill(props.skill.name, !props.skill.enabled)}
-          type="button"
-        >
-          {props.skill.enabled ? 'Disable' : 'Enable'}
-        </button>
-        <button
-          aria-busy={props.pendingOperation === `reconcile:${props.skill.name}` ? 'true' : undefined}
-          class={cx(commandButton, busyButton)}
-          data-pending={props.pendingOperation === `reconcile:${props.skill.name}` ? 'true' : undefined}
-          disabled={props.pendingOperation !== null || !hasReconciliableIssue()}
-          onClick={() => props.reconcileSkill(props.skill.name)}
-          type="button"
-        >
-          Reconcile
-        </button>
-      </section>
-      <section class={stack}>
-        <div class={strongCell}>Issues</div>
-        <Show fallback={<p class={meta}>No runtime exposure issues.</p>} when={props.exposureIssues.length > 0}>
-          <For each={props.exposureIssues}>
-            {(issue) => (
+      <details class={inspectorSection} open={props.sectionsOpen}>
+        <summary class={inspectorSummary}>
+          <h3 class={inspectorHeading}>Validation</h3>
+        </summary>
+        <div>
+          <span class={cx(statusPill, validationTones[props.skill.validationStatus])}>
+            {props.skill.validationStatus}
+          </span>
+        </div>
+        <Show fallback={<p class={meta}>No validation diagnostics.</p>} when={diagnostics().length > 0}>
+          <For each={diagnostics()}>
+            {(diagnostic) => (
               <div class={issueRow}>
-                <span class={cx(statusPill, issue.state === 'missing' ? statusPillWarn : statusPillDanger)}>
-                  {projectionLabelForIssue(issue.state)}
-                </span>
-                <div class={meta}>{issue.expectedPath}</div>
+                <div class={diagnosticHeading}>
+                  <span class={cx(statusPill, diagnosticTones[diagnostic.severity])}>{diagnostic.severity}</span>
+                  <span class={strongCell}>{diagnostic.code}</span>
+                  <Show when={diagnostic.count > 1}>
+                    <span class={meta}>{diagnostic.count} occurrences</span>
+                  </Show>
+                </div>
+                <p class={meta}>{diagnostic.message}</p>
+                <Show when={diagnostic.paths.length > 0}>
+                  <details>
+                    <summary class={meta}>Related paths</summary>
+                    <For each={diagnostic.paths}>
+                      {(path) => (
+                        <code class={sourceValue} title={path}>
+                          {path}
+                        </code>
+                      )}
+                    </For>
+                  </details>
+                </Show>
               </div>
             )}
           </For>
         </Show>
-      </section>
+      </details>
+
+      <details class={inspectorSection} open={props.sectionsOpen}>
+        <summary class={inspectorSummary}>
+          <h3 class={inspectorHeading}>Document</h3>
+        </summary>
+        <div class={metricList}>
+          <div class={metricStaticRow}>
+            <span class={meta}>Total tokens</span>
+            <strong>{props.skill.tokenCount?.total ?? 'Unknown'}</strong>
+          </div>
+          <Show when={props.skill.tokenCount}>
+            {(tokens) => (
+              <div class={metricStaticRow}>
+                <span class={meta}>SKILL.md tokens</span>
+                <strong>{tokens().skillMd}</strong>
+              </div>
+            )}
+          </Show>
+          <div class={metricStaticRow}>
+            <span class={meta}>Invocation</span>
+            <strong>{skillInvocation(props.skill) === 'auto' ? 'Auto' : 'Manual'}</strong>
+          </div>
+          <div class={metricStaticRow}>
+            <span class={meta}>State</span>
+            <strong>{props.skill.enabled ? 'Enabled' : 'Disabled'}</strong>
+          </div>
+        </div>
+      </details>
+
+      <details class={inspectorSection} open={props.sectionsOpen}>
+        <summary class={inspectorSummary}>
+          <h3 class={inspectorHeading}>Source</h3>
+        </summary>
+        <div class={sourceRow}>
+          <div>
+            <div class={meta}>Source path</div>
+            <code class={sourceValue} title={props.skill.path}>
+              {props.skill.path}
+            </code>
+          </div>
+          <CopyButton label="Copy source path" value={props.skill.path} />
+        </div>
+        <div class={sourceRow}>
+          <div>
+            <div class={meta}>SKILL.md</div>
+            <code class={sourceValue} title={props.skill.skillMdPath}>
+              {props.skill.skillMdPath}
+            </code>
+          </div>
+          <CopyButton label="Copy SKILL.md path" value={props.skill.skillMdPath} />
+        </div>
+      </details>
+
+      <details class={inspectorSection} open={props.sectionsOpen}>
+        <summary class={inspectorSummary}>
+          <h3 class={inspectorHeading}>Installed in</h3>
+        </summary>
+        <Show fallback={<p class={meta}>No enabled runtimes.</p>} when={props.exposure.length > 0}>
+          <For each={props.exposure}>
+            {(entry) => {
+              const target = () => props.snapshot.targets.find((candidate) => candidate.id === entry.targetId);
+              return (
+                <details class={runtimeDisclosure}>
+                  <summary class={runtimeSummary}>
+                    <span class={strongCell}>{target()?.label ?? entry.targetId}</span>
+                    <span class={cx(statusPill, exposureTones[entry.state])}>{entry.label}</span>
+                  </summary>
+                  <div class={runtimePaths}>
+                    <div>Expected: {entry.expectedPath}</div>
+                    <Show when={entry.actualPath}>{(actualPath) => <div>Actual: {actualPath()}</div>}</Show>
+                  </div>
+                </details>
+              );
+            }}
+          </For>
+        </Show>
+      </details>
+
+      <details class={inspectorSection} open={props.sectionsOpen}>
+        <summary class={inspectorSummary}>
+          <h3 class={inspectorHeading}>Actions</h3>
+        </summary>
+        <div class={actionGrid}>
+          <button
+            aria-busy={props.pendingOperation === `toggle:${props.skill.name}` ? 'true' : undefined}
+            class={cx(ghostButton, busyButton)}
+            data-pending={props.pendingOperation === `toggle:${props.skill.name}` ? 'true' : undefined}
+            disabled={props.pendingOperation !== null}
+            onClick={() => props.toggleSkill(props.skill.name, !props.skill.enabled)}
+            type="button"
+          >
+            {props.skill.enabled ? 'Disable' : 'Enable'}
+          </button>
+          <button
+            aria-busy={props.pendingOperation === installationOperation() ? 'true' : undefined}
+            class={cx(commandButton, busyButton)}
+            data-pending={props.pendingOperation === installationOperation() ? 'true' : undefined}
+            disabled={props.pendingOperation !== null || installationAction().mode === 'none'}
+            onClick={runInstallationAction}
+            type="button"
+          >
+            {installationAction().label}
+          </button>
+        </div>
+      </details>
     </>
   );
 };
