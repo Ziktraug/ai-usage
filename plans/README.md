@@ -38,7 +38,12 @@ REJECTED (with one-line rationale).
   collapses the tree by default, restricts warning pills to actionable issues,
   gives the context panel permanent health + real actions, adds a read-only
   project SKILL.md viewer, and makes selection URL-addressable. It adds no
-  mutations; "Adopt into source" remains the natural plan 006.
+  mutations; "Adopt into source" remains a future follow-up.
+- Plan 006 supersedes plan 005's presentation hierarchy for a selected managed
+  global skill: `SKILL.md` becomes the always-editable central surface and the
+  right panel becomes its inspector. It deliberately keeps source Save separate
+  from runtime installation and does not implement adoption; adoption is now a
+  follow-up plan rather than plan 006.
 
 ## Findings considered and rejected
 
