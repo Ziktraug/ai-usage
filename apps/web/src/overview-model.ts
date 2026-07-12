@@ -155,6 +155,8 @@ export interface TimelineBucket {
 export type MigrationGranularity = 'day' | 'month' | 'week';
 export interface TimelineSeries {
   key: string;
+  label: string;
+  memberKeys?: readonly string[];
   sessions: number;
   total: number;
 }
@@ -233,6 +235,57 @@ const timelineKeyForRow = (row: DashboardRow, dimension: TimelineDimension) => {
   return fieldKey ? fieldValueForRow(row, fieldKey) : row.harness;
 };
 
+const MAX_TIMELINE_SERIES = 12;
+const OTHER_TIMELINE_SERIES_KEY = '__ai_usage_other__';
+
+const timelineSeriesFrom = (ranked: [string, TimelineBucketEntry][], buckets: TimelineBucket[]): TimelineSeries[] => {
+  if (ranked.length <= MAX_TIMELINE_SERIES) {
+    return ranked.map(([key, value]) => ({ key, label: key, sessions: value.sessions, total: value.cost }));
+  }
+
+  const retained = ranked.slice(0, MAX_TIMELINE_SERIES - 1);
+  const aggregated = ranked.slice(MAX_TIMELINE_SERIES - 1);
+  let aggregateKey = OTHER_TIMELINE_SERIES_KEY;
+  while (ranked.some(([key]) => key === aggregateKey)) {
+    aggregateKey = `_${aggregateKey}`;
+  }
+
+  const memberKeys = aggregated.map(([key]) => key);
+  for (const bucket of buckets) {
+    const aggregateEntry = { cost: 0, sessions: 0 };
+    for (const key of memberKeys) {
+      const entry = bucket.byKey.get(key);
+      if (!entry) {
+        continue;
+      }
+      aggregateEntry.cost += entry.cost;
+      aggregateEntry.sessions += entry.sessions;
+      bucket.byKey.delete(key);
+    }
+    if (aggregateEntry.sessions > 0) {
+      bucket.byKey.set(aggregateKey, aggregateEntry);
+    }
+  }
+
+  const aggregateTotal = aggregated.reduce(
+    (total, [, value]) => ({
+      cost: total.cost + value.cost,
+      sessions: total.sessions + value.sessions,
+    }),
+    { cost: 0, sessions: 0 },
+  );
+  return [
+    ...retained.map(([key, value]) => ({ key, label: key, sessions: value.sessions, total: value.cost })),
+    {
+      key: aggregateKey,
+      label: 'Other',
+      memberKeys,
+      sessions: aggregateTotal.sessions,
+      total: aggregateTotal.cost,
+    },
+  ];
+};
+
 export const buildTimelineData = (
   rows: DashboardRow[],
   options: {
@@ -291,16 +344,12 @@ export const buildTimelineData = (
     totals.set(key, totalEntry);
   }
 
-  // Every key gets its own series — no "other" bucket. Largest total first so
-  // the dominant model sits at the base of every stacked bar.
+  // Largest total first so the dominant model sits at the base of every
+  // stacked bar. Dense additive tails share one honest aggregate.
   const ranked = [...totals.entries()].sort((a, b) => b[1].cost - a[1].cost || b[1].sessions - a[1].sessions);
   const grandTotal = ranked.reduce((sum, [, value]) => sum + value.cost, 0);
   const grandSessions = ranked.reduce((sum, [, value]) => sum + value.sessions, 0);
-  const series: TimelineSeries[] = ranked.map(([key, value]) => ({
-    key,
-    sessions: value.sessions,
-    total: value.cost,
-  }));
+  const series = timelineSeriesFrom(ranked, buckets);
   const maxBucketTotal = buckets.reduce((max, bucket) => Math.max(max, bucket.total), 0);
   const maxBucketSessions = buckets.reduce((max, bucket) => Math.max(max, bucket.sessions), 0);
 
@@ -553,7 +602,6 @@ export const buildPunchcardData = (rows: DashboardRow[]): PunchcardData | null =
 export interface AdvancedAnalysisSummary {
   hasPunchcard: boolean;
   hasSessionShape: boolean;
-  panelCount: number;
   summary: string;
 }
 
@@ -579,7 +627,6 @@ export const buildAdvancedAnalysisSummary = (
   return {
     hasPunchcard,
     hasSessionShape,
-    panelCount: availableAnalyses.length,
     summary: `${analysisSummary.charAt(0).toUpperCase()}${analysisSummary.slice(1)} · ${rows.length} ${sessionLabel}`,
   };
 };

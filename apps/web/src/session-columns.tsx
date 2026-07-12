@@ -34,7 +34,6 @@ import {
 declare module '@tanstack/solid-table' {
   interface ColumnMeta<TData extends RowData, TValue> {
     cellClass?: string;
-    defaultVisible?: boolean;
     headerClass?: string;
     label: string;
     title?: string;
@@ -123,7 +122,7 @@ export const sessionColumns: SessionColumnDef[] = [
     header: 'Machine',
     accessorFn: (row) => sortValueForRow(row, 'machine'),
     cell: (info) => info.row.original.source?.machineLabel || '—',
-    meta: { label: 'Machine', widthPx: 120, defaultVisible: false },
+    meta: { label: 'Machine', widthPx: 120 },
   },
   {
     id: 'provider',
@@ -146,7 +145,7 @@ export const sessionColumns: SessionColumnDef[] = [
         </button>
       );
     },
-    meta: { label: 'Provider', widthPx: 124, defaultVisible: false },
+    meta: { label: 'Provider', widthPx: 124 },
   },
   {
     id: 'project',
@@ -199,7 +198,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => row.tokIn,
     cell: (info) => tokenCell(info.row.original, info.row.original.tokIn),
     sortDescFirst: true,
-    meta: { label: 'Input tokens', widthPx: 90, cellClass: numCell, headerClass: right, defaultVisible: false },
+    meta: { label: 'Input tokens', widthPx: 90, cellClass: numCell, headerClass: right },
   },
   {
     id: 'tokOut',
@@ -207,7 +206,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => row.tokOut,
     cell: (info) => tokenCell(info.row.original, info.row.original.tokOut),
     sortDescFirst: true,
-    meta: { label: 'Output tokens', widthPx: 94, cellClass: numCell, headerClass: right, defaultVisible: false },
+    meta: { label: 'Output tokens', widthPx: 94, cellClass: numCell, headerClass: right },
   },
   {
     id: 'cache',
@@ -221,7 +220,6 @@ export const sessionColumns: SessionColumnDef[] = [
       widthPx: 84,
       cellClass: numCell,
       headerClass: right,
-      defaultVisible: false,
     },
   },
   {
@@ -236,7 +234,6 @@ export const sessionColumns: SessionColumnDef[] = [
       widthPx: 84,
       cellClass: numCell,
       headerClass: right,
-      defaultVisible: false,
     },
   },
   {
@@ -251,7 +248,6 @@ export const sessionColumns: SessionColumnDef[] = [
       widthPx: 84,
       cellClass: numCell,
       headerClass: right,
-      defaultVisible: false,
     },
   },
   {
@@ -260,7 +256,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => row.tokenTotal,
     cell: (info) => tokenCell(info.row.original, info.row.original.tokenTotal),
     sortDescFirst: true,
-    meta: { label: 'Total tokens', widthPx: 90, cellClass: numCell, headerClass: right, defaultVisible: false },
+    meta: { label: 'Total tokens', widthPx: 90, cellClass: numCell, headerClass: right },
   },
   {
     id: 'rtkSaved',
@@ -274,7 +270,6 @@ export const sessionColumns: SessionColumnDef[] = [
       widthPx: 86,
       cellClass: numCell,
       headerClass: right,
-      defaultVisible: false,
     },
   },
   {
@@ -321,7 +316,6 @@ export const sessionColumns: SessionColumnDef[] = [
       widthPx: 88,
       cellClass: numCell,
       headerClass: right,
-      defaultVisible: false,
     },
   },
   {
@@ -343,7 +337,6 @@ export const sessionColumns: SessionColumnDef[] = [
       widthPx: 86,
       cellClass: numCell,
       headerClass: right,
-      defaultVisible: false,
     },
   },
   {
@@ -366,7 +359,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => row.calls,
     cell: (info) => countCell(info.row.original, info.row.original.calls, 'calls'),
     sortDescFirst: true,
-    meta: { label: 'Calls', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
+    meta: { label: 'Calls', widthPx: 76, cellClass: numCell, headerClass: right },
   },
   {
     id: 'turns',
@@ -374,7 +367,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => row.turns,
     cell: (info) => withProvenance(info.row.original, 'turns', fmtNum(info.row.original.turns)),
     sortDescFirst: true,
-    meta: { label: 'Turns', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
+    meta: { label: 'Turns', widthPx: 76, cellClass: numCell, headerClass: right },
   },
   {
     id: 'tools',
@@ -382,7 +375,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => row.tools,
     cell: (info) => countCell(info.row.original, info.row.original.tools, 'tools'),
     sortDescFirst: true,
-    meta: { label: 'Tools', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
+    meta: { label: 'Tools', widthPx: 76, cellClass: numCell, headerClass: right },
   },
   {
     id: 'lines',
@@ -390,7 +383,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => row.lineDelta ?? 0,
     cell: (info) => withProvenance(info.row.original, 'lines', lineDeltaLabel(info.row.original)),
     sortDescFirst: true,
-    meta: { label: 'Lines changed', widthPx: 96, cellClass: numCell, headerClass: right, defaultVisible: false },
+    meta: { label: 'Lines changed', widthPx: 96, cellClass: numCell, headerClass: right },
   },
   {
     id: 'subagent',
@@ -398,7 +391,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => (row.subagent ? 1 : 0),
     cell: (info) => (info.row.original.subagent ? 'Yes' : 'No'),
     sortDescFirst: true,
-    meta: { label: 'Subagent', widthPx: 72, defaultVisible: false },
+    meta: { label: 'Subagent', widthPx: 72 },
   },
   {
     id: 'partial',
@@ -406,7 +399,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => (row.partial ? 1 : 0),
     cell: (info) => (info.row.original.partial ? 'Yes' : 'No'),
     sortDescFirst: true,
-    meta: { label: 'Partial', widthPx: 82, defaultVisible: false },
+    meta: { label: 'Partial', widthPx: 82 },
   },
   {
     id: 'ambiguous',
@@ -414,7 +407,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => (row.ambiguous ? 1 : 0),
     cell: (info) => (info.row.original.ambiguous ? 'Yes' : 'No'),
     sortDescFirst: true,
-    meta: { label: 'Ambiguous reconciliation', widthPx: 92, defaultVisible: false },
+    meta: { label: 'Ambiguous reconciliation', widthPx: 92 },
   },
 ];
 

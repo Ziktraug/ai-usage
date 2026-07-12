@@ -8,43 +8,40 @@ interface SessionColumnSchemaEntry {
   defaultVisible?: boolean;
   hideable?: boolean;
   id: string;
-  label: string;
   sortValue: (row: DashboardRow) => SortValue;
 }
 
 export const sessionColumnSchema = [
-  { id: 'date', label: 'Date', sortValue: (row) => row.sortDate },
-  { id: 'session', label: 'Session', hideable: false, sortValue: (row) => row.sortSession },
-  { id: 'harness', label: 'Harness', sortValue: (row) => row.sortHarness },
-  { id: 'machine', label: 'Machine', defaultVisible: false, sortValue: (row) => row.sortMachine },
-  { id: 'provider', label: 'Provider', defaultVisible: false, sortValue: (row) => row.sortProvider },
-  { id: 'project', label: 'Project', sortValue: (row) => row.sortProject },
-  { id: 'model', label: 'Model', sortValue: (row) => row.sortModel },
-  { id: 'tokIn', label: 'Input tokens', defaultVisible: false, sortValue: (row) => row.tokIn },
-  { id: 'tokOut', label: 'Output tokens', defaultVisible: false, sortValue: (row) => row.tokOut },
-  { id: 'cache', label: 'Cache read', defaultVisible: false, sortValue: (row) => row.tokCr },
-  { id: 'tokCw', label: 'Cache write', defaultVisible: false, sortValue: (row) => row.tokCw },
-  { id: 'fresh', label: 'Fresh tokens', defaultVisible: false, sortValue: (row) => row.freshTokens },
-  { id: 'total', label: 'Total tokens', defaultVisible: false, sortValue: (row) => row.tokenTotal },
-  { id: 'rtkSaved', label: 'RTK savings', defaultVisible: false, sortValue: (row) => rtkSavingsPct(row) ?? 0 },
-  { id: 'cost', label: 'API value', sortValue: (row) => (row.costKnown ? row.costApprox : Number.NEGATIVE_INFINITY) },
+  { id: 'date', sortValue: (row) => row.sortDate },
+  { id: 'session', hideable: false, sortValue: (row) => row.sortSession },
+  { id: 'harness', sortValue: (row) => row.sortHarness },
+  { id: 'machine', defaultVisible: false, sortValue: (row) => row.sortMachine },
+  { id: 'provider', defaultVisible: false, sortValue: (row) => row.sortProvider },
+  { id: 'project', sortValue: (row) => row.sortProject },
+  { id: 'model', sortValue: (row) => row.sortModel },
+  { id: 'tokIn', defaultVisible: false, sortValue: (row) => row.tokIn },
+  { id: 'tokOut', defaultVisible: false, sortValue: (row) => row.tokOut },
+  { id: 'cache', defaultVisible: false, sortValue: (row) => row.tokCr },
+  { id: 'tokCw', defaultVisible: false, sortValue: (row) => row.tokCw },
+  { id: 'fresh', defaultVisible: false, sortValue: (row) => row.freshTokens },
+  { id: 'total', defaultVisible: false, sortValue: (row) => row.tokenTotal },
+  { id: 'rtkSaved', defaultVisible: false, sortValue: (row) => rtkSavingsPct(row) ?? 0 },
+  { id: 'cost', sortValue: (row) => (row.costKnown ? row.costApprox : Number.NEGATIVE_INFINITY) },
   {
     id: 'actual',
-    label: 'Actual cost',
     defaultVisible: false,
     sortValue: (row) => row.costActual ?? Number.NEGATIVE_INFINITY,
   },
-  { id: 'quota', label: 'Subscription value', defaultVisible: false, sortValue: (row) => row.costQuota ?? 0 },
-  { id: 'duration', label: 'Duration', sortValue: (row) => row.durationMs ?? 0 },
-  { id: 'calls', label: 'Calls', defaultVisible: false, sortValue: (row) => row.calls },
-  { id: 'turns', label: 'Turns', defaultVisible: false, sortValue: (row) => row.turns },
-  { id: 'tools', label: 'Tools', defaultVisible: false, sortValue: (row) => row.tools },
-  { id: 'lines', label: 'Lines changed', defaultVisible: false, sortValue: (row) => row.lineDelta ?? 0 },
-  { id: 'subagent', label: 'Subagent', defaultVisible: false, sortValue: (row) => (row.subagent ? 1 : 0) },
-  { id: 'partial', label: 'Partial', defaultVisible: false, sortValue: (row) => (row.partial ? 1 : 0) },
+  { id: 'quota', defaultVisible: false, sortValue: (row) => row.costQuota ?? 0 },
+  { id: 'duration', sortValue: (row) => row.durationMs ?? 0 },
+  { id: 'calls', defaultVisible: false, sortValue: (row) => row.calls },
+  { id: 'turns', defaultVisible: false, sortValue: (row) => row.turns },
+  { id: 'tools', defaultVisible: false, sortValue: (row) => row.tools },
+  { id: 'lines', defaultVisible: false, sortValue: (row) => row.lineDelta ?? 0 },
+  { id: 'subagent', defaultVisible: false, sortValue: (row) => (row.subagent ? 1 : 0) },
+  { id: 'partial', defaultVisible: false, sortValue: (row) => (row.partial ? 1 : 0) },
   {
     id: 'ambiguous',
-    label: 'Ambiguous reconciliation',
     defaultVisible: false,
     sortValue: (row) => (row.ambiguous ? 1 : 0),
   },
@@ -102,7 +99,7 @@ const legacyDefaultVisibleColumnIds = new Set<string>([
   'duration',
 ]);
 
-export const sessionColumnIds = sessionColumnSchema.map((column) => column.id) as SessionColumnId[];
+export const sessionColumnIds: SessionColumnId[] = sessionColumnSchema.map((column) => column.id);
 export const searchableColumnDiffIds = sessionColumnEntries.flatMap((column) =>
   column.hideable === false ? [] : [column.id as SearchableColumnDiffId],
 );
@@ -129,15 +126,19 @@ export const sortValueForSessionColumn = (row: DashboardRow, columnId: SessionCo
   return column.sortValue(row);
 };
 
-export const defaultColumnVisibility = Object.fromEntries(
-  sessionColumnEntries.filter((column) => column.defaultVisible === false).map((column) => [column.id, false]),
-) as VisibilityState;
+const hiddenColumnVisibility = (isHidden: (column: SessionColumnSchemaEntry) => boolean): VisibilityState => {
+  const visibility: VisibilityState = {};
+  for (const column of sessionColumnEntries) {
+    if (isHidden(column)) {
+      visibility[column.id] = false;
+    }
+  }
+  return visibility;
+};
 
-const legacyDefaultColumnVisibility = Object.fromEntries(
-  sessionColumnEntries
-    .filter((column) => !legacyDefaultVisibleColumnIds.has(column.id))
-    .map((column) => [column.id, false]),
-) as VisibilityState;
+export const defaultColumnVisibility = hiddenColumnVisibility((column) => column.defaultVisible === false);
+
+const legacyDefaultColumnVisibility = hiddenColumnVisibility((column) => !legacyDefaultVisibleColumnIds.has(column.id));
 
 export const isSessionColumnVisible = (visibility: VisibilityState, columnId: string) => visibility[columnId] !== false;
 

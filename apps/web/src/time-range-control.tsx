@@ -8,7 +8,6 @@ import {
   dimensionSwatch,
   migrationCrosshair,
   migrationLegendButton,
-  migrationLegendMore,
   migrationReadout,
   migrationReadoutDate,
   migrationReadoutHint,
@@ -80,12 +79,12 @@ import {
   type MigrationGranularity,
   type TimelineBucket,
   type TimelineDimension,
+  type TimelineSeries,
   type TimelineValue,
 } from './overview-model';
 import { type DashboardRow, fmtDateOnly, fmtMoney, fmtNum, fmtPct } from './shared';
 
 const track = (..._values: unknown[]) => _values.length;
-const LEGEND_LIMIT = 12;
 const READOUT_LIMIT = 8;
 const MAX_DELTA_PCT = 1000;
 const CHART_ZOOM_FACTOR = 1.5;
@@ -338,7 +337,6 @@ export const TimeRangeControl = (props: {
   const [valueMode, setValueMode] = createSignal<TimelineValue>('cost');
   const [hoveredBucket, setHoveredBucket] = createSignal<number | null>(null);
   const [hoveredKey, setHoveredKey] = createSignal<string | null>(null);
-  const [showAll, setShowAll] = createSignal(false);
   const [visualZoom, setVisualZoom] = createSignal<VisualZoomRange | null>(null);
   const [showGraphViewControls, setShowGraphViewControls] = createSignal(false);
   const [draggingVisualZoom, setDraggingVisualZoom] = createSignal(false);
@@ -383,14 +381,6 @@ export const TimeRangeControl = (props: {
       maxDay: domain.maxDay,
       maxIndex: domain.maxIndex,
     };
-  });
-
-  const visibleSeries = createMemo(() => {
-    const chart = data();
-    if (!chart) {
-      return [];
-    }
-    return showAll() ? chart.series : chart.series.slice(0, LEGEND_LIMIT);
   });
 
   const visibleBucketRange = createMemo(() => {
@@ -496,7 +486,7 @@ export const TimeRangeControl = (props: {
     const previous = index > 0 ? chart.buckets[index - 1] : null;
     const range = visibleBucketRange();
     const visibleCount = Math.max(1, bucketRangeSize(range));
-    const rows: { delta: number | null; key: string; rank: number; value: number }[] = [];
+    const rows: { delta: number | null; key: string; label: string; rank: number; value: number }[] = [];
     for (let rank = 0; rank < chart.series.length; rank++) {
       const series = chart.series[rank];
       if (!series) {
@@ -508,7 +498,7 @@ export const TimeRangeControl = (props: {
       }
       const prior = previous ? entryValue(previous.byKey.get(series.key), chart) : 0;
       const delta = prior > 1e-9 ? ((value - prior) / prior) * 100 : null;
-      rows.push({ delta, key: series.key, rank, value });
+      rows.push({ delta, key: series.key, label: series.label, rank, value });
     }
     rows.sort((a, b) => b.value - a.value);
     const visible = rows.slice(0, READOUT_LIMIT);
@@ -534,6 +524,7 @@ export const TimeRangeControl = (props: {
       .map((series, rank) => ({
         delta: null,
         key: series.key,
+        label: series.label,
         rank,
         value: useSessions ? series.sessions : series.total,
       }))
@@ -846,7 +837,7 @@ export const TimeRangeControl = (props: {
     return `Chart view: ${bucketLabel(firstBucket.date, granularity())} – ${bucketLabel(lastBucket.date, granularity())}`;
   };
 
-  const swatch = (key: string, rank: number) => dimensionSwatch(dimension(), key, rank);
+  const swatch = (key: string) => dimensionSwatch(dimension(), key);
 
   const isLegendActive = (key: string) => {
     const currentDimension = dimension();
@@ -854,6 +845,14 @@ export const TimeRangeControl = (props: {
       return props.activeHarness.includes(key);
     }
     return props.activeFieldFilters[currentDimension] === key;
+  };
+
+  const legendTitle = (series: TimelineSeries): string => {
+    const aggregateCount = series.memberKeys?.length ?? 0;
+    if (aggregateCount > 0) {
+      return `Aggregates ${aggregateCount} smaller series`;
+    }
+    return isLegendActive(series.key) ? `Clear or replace ${series.label} filter` : `Filter by ${series.label}`;
   };
 
   const [draggingSelection, setDraggingSelection] = createSignal(false);
@@ -1133,7 +1132,6 @@ export const TimeRangeControl = (props: {
                 label="Group"
                 onValueChange={(value) => {
                   setDimension(toTimelineDimension(value));
-                  setShowAll(false);
                   clearHover();
                 }}
                 value={dimension()}
@@ -1164,36 +1162,36 @@ export const TimeRangeControl = (props: {
           </details>
 
           <div class={chartLegendList}>
-            <For each={visibleSeries()}>
+            <For each={chart().series}>
               {(entry) => {
-                const rank = chart().series.findIndex((series) => series.key === entry.key);
-                const marker = swatch(entry.key, rank);
+                const marker = swatch(entry.key);
                 const useSessions = valueMode() === 'sessions' || usesSessionShare(chart());
                 const value = useSessions ? entry.sessions : entry.total;
                 const total = useSessions ? chart().grandSessions : chart().grandTotal;
+                const aggregateCount = entry.memberKeys?.length ?? 0;
+                const isAggregate = aggregateCount > 0;
                 return (
                   <button
+                    aria-label={isAggregate ? `Other: ${aggregateCount} smaller series` : undefined}
                     class={cx(migrationLegendButton, isLegendActive(entry.key) ? migrationReadoutItemActive : '')}
-                    onClick={() => props.onDimensionFilter(dimension(), entry.key)}
+                    disabled={isAggregate}
+                    onClick={() => {
+                      if (!isAggregate) {
+                        props.onDimensionFilter(dimension(), entry.key);
+                      }
+                    }}
                     onMouseEnter={() => setHoveredKey(entry.key)}
                     onMouseLeave={() => setHoveredKey(null)}
-                    title={
-                      isLegendActive(entry.key) ? `Clear or replace ${entry.key} filter` : `Filter by ${entry.key}`
-                    }
+                    title={legendTitle(entry)}
                     type="button"
                   >
                     <span class={cx(chartLegendSwatch, marker.className)} style={marker.style} />
-                    {entry.key}
+                    {entry.label}
                     <span class={chartLegendPct}>{fmtPct((value / Math.max(1e-9, total)) * 100)}</span>
                   </button>
                 );
               }}
             </For>
-            <Show when={chart().series.length > LEGEND_LIMIT}>
-              <button class={migrationLegendMore} onClick={() => setShowAll((value) => !value)} type="button">
-                {showAll() ? 'Show less' : `Show all (${chart().series.length})`}
-              </button>
-            </Show>
           </div>
 
           <div class={timeSliderRoot}>
@@ -1298,7 +1296,7 @@ export const TimeRangeControl = (props: {
                         >
                           <For each={renderedSegments(bar.segments)}>
                             {(segment) => {
-                              const marker = swatch(segment.key, segment.rank);
+                              const marker = swatch(segment.key);
                               return (
                                 <div
                                   class={cx(timeBucketSegment, marker.className ?? accentFill)}
@@ -1527,7 +1525,7 @@ export const TimeRangeControl = (props: {
                     <span class={migrationReadoutTotal}>{formatValue(tip().total, tip().useSessions)}</span>
                     <For each={tip().rows}>
                       {(row) => {
-                        const marker = swatch(row.key, row.rank);
+                        const marker = swatch(row.key);
                         return (
                           <span
                             class={cx(
@@ -1536,7 +1534,7 @@ export const TimeRangeControl = (props: {
                             )}
                           >
                             <span class={cx(migrationReadoutSwatch, marker.className)} style={marker.style} />
-                            {row.key}
+                            {row.label}
                             <span class={migrationReadoutValue}>
                               {formatValue(row.value, tip().useSessions)} ·{' '}
                               {fmtPct((row.value / Math.max(1e-9, tip().total)) * 100)}
