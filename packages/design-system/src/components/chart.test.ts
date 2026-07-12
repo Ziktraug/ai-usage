@@ -9,8 +9,7 @@ describe('categorical chart colors', () => {
     expect(stableSeriesIndex('claude-sonnet', 6)).toBe(4);
   });
 
-  test('keeps a model swatch stable when its value rank changes', () => {
-    expect(dimensionSwatch('model', 'gpt-5', 0)).toEqual(dimensionSwatch('model', 'gpt-5', 5));
-    expect(dimensionSwatch('model', 'gpt-5', 0)).not.toEqual(dimensionSwatch('model', 'claude-sonnet', 0));
+  test('assigns model swatches from stable keys', () => {
+    expect(dimensionSwatch('model', 'gpt-5')).not.toEqual(dimensionSwatch('model', 'claude-sonnet'));
   });
 });

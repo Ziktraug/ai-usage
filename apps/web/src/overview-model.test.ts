@@ -62,7 +62,6 @@ describe('overview model', () => {
     expect(buildAdvancedAnalysisSummary(fullyAnalyzableRows)).toEqual({
       hasPunchcard: true,
       hasSessionShape: true,
-      panelCount: 2,
       summary: 'Duration/value patterns and weekly/hourly activity · 3 sessions',
     });
     expect(
@@ -72,7 +71,6 @@ describe('overview model', () => {
     ).toEqual({
       hasPunchcard: true,
       hasSessionShape: false,
-      panelCount: 1,
       summary: 'Weekly/hourly activity · 1 session',
     });
     expect(
@@ -175,7 +173,7 @@ describe('overview model', () => {
     expect(unpricedDay?.level).toBeGreaterThan(0);
   });
 
-  test('builds model migration series per model without an other bucket', () => {
+  test('keeps distinct model migration series below the density limit', () => {
     const rows = [
       row({
         sessionLabel: 'GPT one',
@@ -289,6 +287,28 @@ describe('overview model', () => {
     expect(data?.buckets).toHaveLength(5);
     expect(data?.maxBucketTotal).toBe(3);
     expect(data?.maxBucketSessions).toBe(1);
+  });
+
+  test('aggregates the smallest additive timeline series without changing totals', () => {
+    const rows = Array.from({ length: 15 }, (_, index) =>
+      row({
+        costApprox: index + 1,
+        model: `model-${index + 1}`,
+        sessionLabel: `Session ${index + 1}`,
+      }),
+    );
+
+    const data = buildTimelineData(rows, { dimension: 'model', granularity: 'day' });
+    const aggregate = data?.series.at(-1);
+
+    expect(data?.series).toHaveLength(12);
+    expect(aggregate?.label).toBe('Other');
+    expect(aggregate?.memberKeys).toEqual(['model-4', 'model-3', 'model-2', 'model-1']);
+    expect(aggregate?.sessions).toBe(4);
+    expect(aggregate?.total).toBe(10);
+    expect(data?.buckets[0]?.byKey.get(aggregate?.key ?? '')).toEqual({ cost: 10, sessions: 4 });
+    expect(data?.series.reduce((sum, series) => sum + series.total, 0)).toBe(data?.grandTotal);
+    expect(data?.series.reduce((sum, series) => sum + series.sessions, 0)).toBe(data?.grandSessions);
   });
 
   test('builds session shape chart data for timed priced rows', () => {

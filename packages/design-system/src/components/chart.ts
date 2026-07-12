@@ -71,7 +71,6 @@ export interface DimensionSwatch {
 export const dimensionSwatch = (
   dimension: 'harness' | 'model' | 'project' | 'provider',
   key: string,
-  _rankIndex: number,
 ): DimensionSwatch => {
   if (dimension === 'harness') {
     const className = harnessFillFor(key);
