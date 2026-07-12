@@ -3,8 +3,8 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { $ } from 'bun';
 
-describe('report app CSS bundle', () => {
-  test('emits generated Panda CSS in the Start client build', async () => {
+describe('report app client bundle', () => {
+  test('emits generated Panda CSS and splits server-only route UI from the report entry', async () => {
     const appDir = path.resolve(import.meta.dir, '..');
     await $`bun run build`.cwd(appDir).quiet();
 
@@ -20,5 +20,11 @@ describe('report app CSS bundle', () => {
     expect(css).toContain('[data-theme=dark]');
     expect(css).toContain('prefers-color-scheme:dark');
     expect(css).not.toContain('@layer reset,base,tokens,recipes,utilities;');
+
+    const javascriptFiles = readdirSync(assetsDir).filter((file) => file.endsWith('.js'));
+    const reportEntry = javascriptFiles.find((file) => file.startsWith('index-'));
+    expect(javascriptFiles.length).toBeGreaterThan(2);
+    expect(reportEntry).toBeTruthy();
+    expect(readFileSync(path.join(assetsDir, reportEntry!)).byteLength).toBeLessThan(720_000);
   }, 30_000);
 });
