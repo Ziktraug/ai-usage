@@ -550,6 +550,40 @@ export const buildPunchcardData = (rows: DashboardRow[]): PunchcardData | null =
   return maxSessions > 0 ? { cells, maxSessions } : null;
 };
 
+export interface AdvancedAnalysisSummary {
+  hasPunchcard: boolean;
+  hasSessionShape: boolean;
+  panelCount: number;
+  summary: string;
+}
+
+export const buildAdvancedAnalysisSummary = (
+  rows: DashboardRow[],
+  campaigns: CampaignView[] = [],
+): AdvancedAnalysisSummary | null => {
+  const availableAnalyses: string[] = [];
+  const hasSessionShape = buildOverviewSessionItems(rows, campaigns).filter(isTimedPricedSession).length >= 3;
+  const hasPunchcard = rows.some((row) => row.activeTime !== null);
+  if (hasSessionShape) {
+    availableAnalyses.push('Duration/value patterns');
+  }
+  if (hasPunchcard) {
+    availableAnalyses.push('weekly/hourly activity');
+  }
+  if (availableAnalyses.length === 0) {
+    return null;
+  }
+
+  const sessionLabel = rows.length === 1 ? 'session' : 'sessions';
+  const analysisSummary = availableAnalyses.join(' and ');
+  return {
+    hasPunchcard,
+    hasSessionShape,
+    panelCount: availableAnalyses.length,
+    summary: `${analysisSummary.charAt(0).toUpperCase()}${analysisSummary.slice(1)} · ${rows.length} ${sessionLabel}`,
+  };
+};
+
 export interface OverviewRecords {
   busiest: { cost: number; date: Date; sessions: number } | null;
   longest: DashboardRow | null;

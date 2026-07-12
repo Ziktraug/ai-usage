@@ -63,12 +63,14 @@ import {
   hiddenSessionCount,
 } from './dashboard-model';
 import {
+  breakdownTabFor,
   type DashboardSearch,
   dashboardSearchDefaultsFor,
   type FieldFilterKey,
   type FieldFilters,
   hasActiveDashboardFilters,
   isDashboardTab,
+  primaryDashboardTabFor,
   sortingStateFromSearch,
   toggleExactFieldFilter,
 } from './dashboard-search';
@@ -609,6 +611,9 @@ export const Dashboard = (props: {
     }
     updateSearch((current) => ({ ...current, tab }));
   };
+  const setPrimaryTab = (tab: string) => {
+    setTab(tab === 'breakdown' ? 'models' : tab);
+  };
   const metrics = createMemo(() =>
     measureClientPerf('aiUsage.web.client.compute.metrics', () =>
       buildDashboardMetrics(visibleSummary(), previousSummary()),
@@ -753,6 +758,9 @@ export const Dashboard = (props: {
               <span>{fmtNum(hiddenCount())} hidden by filters</span>
             </Show>
             <div class={activeFilters}>
+              <Show when={query()}>
+                <FilterPill label="Query" onClear={() => setQuery('')} value={query()} />
+              </Show>
               <For each={harness()}>
                 {(value) => <FilterPill label="Harness" onClear={() => removeHarness(value)} value={value} />}
               </For>
@@ -821,78 +829,91 @@ export const Dashboard = (props: {
                   },
                   {
                     content: () => (
-                      <section class={section}>
-                        <GroupPanel
-                          countLabel="models"
-                          groups={modelGroups()}
-                          harnessTones
-                          onFilter={(value) => setFieldFilter('model', value)}
-                          title="By model"
-                        />
-                      </section>
+                      <Tabs
+                        ariaLabel="Breakdown dimension"
+                        items={[
+                          {
+                            content: () => (
+                              <section class={section}>
+                                <GroupPanel
+                                  countLabel="models"
+                                  groups={modelGroups()}
+                                  harnessTones
+                                  onFilter={(value) => setFieldFilter('model', value)}
+                                  title="By model"
+                                />
+                              </section>
+                            ),
+                            label: 'Models',
+                            value: 'models',
+                          },
+                          {
+                            content: () => (
+                              <section class={section}>
+                                <GroupPanel
+                                  countLabel="providers"
+                                  groups={providerGroups()}
+                                  harnessTones
+                                  onFilter={(value) => setFieldFilter('provider', value)}
+                                  title="By provider"
+                                />
+                              </section>
+                            ),
+                            label: 'Providers',
+                            value: 'providers',
+                          },
+                          {
+                            content: () => (
+                              <section class={section}>
+                                <GroupPanel
+                                  countLabel="harnesses"
+                                  groups={harnessGroups()}
+                                  harnessTones
+                                  onFilter={toggleHarness}
+                                  title="By harness"
+                                />
+                              </section>
+                            ),
+                            label: 'Harnesses',
+                            value: 'harnesses',
+                          },
+                          {
+                            content: () => (
+                              <section class={section}>
+                                <ProjectGroupEditor
+                                  disabled={!canRefresh()}
+                                  onSave={saveProjectGroupConfigs}
+                                  payload={payload()}
+                                />
+                                <ProjectSummary
+                                  groups={projectGroupRows()}
+                                  onProjectFilter={(value) => setFieldFilter('project', value)}
+                                />
+                              </section>
+                            ),
+                            label: 'Projects',
+                            value: 'projects',
+                          },
+                          {
+                            content: () => (
+                              <section class={section}>
+                                <CursorAttributionPanel rows={cursorCommitRows()} />
+                              </section>
+                            ),
+                            label: 'Cursor AI',
+                            value: 'cursor-ai',
+                          },
+                        ]}
+                        onValueChange={setTab}
+                        value={breakdownTabFor(search().tab)}
+                      />
                     ),
-                    label: 'Models',
-                    value: 'models',
-                  },
-                  {
-                    content: () => (
-                      <section class={section}>
-                        <GroupPanel
-                          countLabel="providers"
-                          groups={providerGroups()}
-                          harnessTones
-                          onFilter={(value) => setFieldFilter('provider', value)}
-                          title="By provider"
-                        />
-                      </section>
-                    ),
-                    label: 'Providers',
-                    value: 'providers',
-                  },
-                  {
-                    content: () => (
-                      <section class={section}>
-                        <GroupPanel
-                          countLabel="harnesses"
-                          groups={harnessGroups()}
-                          harnessTones
-                          onFilter={toggleHarness}
-                          title="By harness"
-                        />
-                      </section>
-                    ),
-                    label: 'Harnesses',
-                    value: 'harnesses',
-                  },
-                  {
-                    content: () => (
-                      <section class={section}>
-                        <ProjectGroupEditor
-                          disabled={!canRefresh()}
-                          onSave={saveProjectGroupConfigs}
-                          payload={payload()}
-                        />
-                        <ProjectSummary
-                          groups={projectGroupRows()}
-                          onProjectFilter={(value) => setFieldFilter('project', value)}
-                        />
-                      </section>
-                    ),
-                    label: 'Projects',
-                    value: 'projects',
-                  },
-                  {
-                    content: () => (
-                      <section class={section}>
-                        <CursorAttributionPanel rows={cursorCommitRows()} />
-                      </section>
-                    ),
-                    label: 'Cursor AI',
-                    value: 'cursor-ai',
+                    label: 'Breakdown',
+                    value: 'breakdown',
                   },
                 ]}
-                onValueChange={setTab}
-                value={search().tab}
+                onValueChange={setPrimaryTab}
+                value={primaryDashboardTabFor(search().tab)}
               />
             </div>
 

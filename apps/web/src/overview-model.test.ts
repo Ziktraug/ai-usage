@@ -3,6 +3,7 @@ import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { buildCampaignViews } from './dashboard-model';
 import { toDateInputValue } from './date-range';
 import {
+  buildAdvancedAnalysisSummary,
   buildCalendarHeatmapData,
   buildModelMigrationData,
   buildOverviewHeroData,
@@ -51,6 +52,43 @@ const heatDay = (data: NonNullable<ReturnType<typeof buildCalendarHeatmapData>>,
   data.weeks.flatMap((week) => week.days).find((cell) => cell && toDateInputValue(cell.date) === day) ?? null;
 
 describe('overview model', () => {
+  test('summarizes only the advanced analyses supported by the current data', () => {
+    const fullyAnalyzableRows = [
+      row({ sessionLabel: 'A', durationMs: 60_000, costApprox: 1 }),
+      row({ sessionLabel: 'B', durationMs: 120_000, costApprox: 2 }),
+      row({ sessionLabel: 'C', durationMs: 180_000, costApprox: 3 }),
+    ];
+
+    expect(buildAdvancedAnalysisSummary(fullyAnalyzableRows)).toEqual({
+      hasPunchcard: true,
+      hasSessionShape: true,
+      panelCount: 2,
+      summary: 'Duration/value patterns and weekly/hourly activity · 3 sessions',
+    });
+    expect(
+      buildAdvancedAnalysisSummary([
+        row({ sessionLabel: 'Unpriced', costApprox: 0, costKnown: false, durationMs: null }),
+      ]),
+    ).toEqual({
+      hasPunchcard: true,
+      hasSessionShape: false,
+      panelCount: 1,
+      summary: 'Weekly/hourly activity · 1 session',
+    });
+    expect(
+      buildAdvancedAnalysisSummary([
+        row({
+          activeDate: null,
+          date: null,
+          sessionLabel: 'Undated',
+          costApprox: 0,
+          costKnown: false,
+          durationMs: null,
+        }),
+      ]),
+    ).toBeNull();
+  });
+
   test('presents API-equivalent value and spend coverage without deriving an ROI multiple', () => {
     const rows = [
       row({ costActual: 2, costApprox: 12, costKnown: true }),
