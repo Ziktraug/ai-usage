@@ -6,10 +6,10 @@ export type SkillMarkdownDocumentResult = SkillsServerResult<SkillMarkdownDocume
 export type SkillMarkdownSaveResult = SkillsServerResult<SkillMarkdownSaveData>;
 
 export interface SkillMarkdownEditorState {
+  conflict: boolean;
   dirty: boolean;
   document: SkillMarkdownDocument | undefined;
   draft: string;
-  editing: boolean;
   error: string | null;
   loading: boolean;
   message: string | null;
@@ -24,14 +24,13 @@ interface SkillMarkdownEditorDependencies {
 }
 
 export interface SkillMarkdownEditorController {
-  cancelEditing: () => void;
   getState: () => SkillMarkdownEditorState;
   reload: () => Promise<boolean>;
   reportUnexpectedError: (error: unknown) => void;
+  revertDraft: () => void;
   save: () => Promise<void>;
   select: (skillName: string) => Promise<boolean>;
   setDraft: (draft: string) => void;
-  startEditing: () => void;
   subscribe: (listener: (state: SkillMarkdownEditorState) => void) => () => void;
 }
 
@@ -53,10 +52,10 @@ export const createSkillMarkdownEditorController = (
 ): SkillMarkdownEditorController => {
   let selectionVersion = 0;
   let state: SkillMarkdownEditorState = {
+    conflict: false,
     dirty: false,
     document: undefined,
     draft: '',
-    editing: false,
     error: null,
     loading: false,
     message: null,
@@ -76,10 +75,10 @@ export const createSkillMarkdownEditorController = (
     selectionVersion += 1;
     const requestVersion = selectionVersion;
     update({
+      conflict: false,
       dirty: false,
       document: undefined,
       draft: '',
-      editing: false,
       error: null,
       loading: true,
       message: null,
@@ -124,7 +123,7 @@ export const createSkillMarkdownEditorController = (
 
   const save = async (): Promise<void> => {
     const currentDocument = state.document;
-    if (!(state.editing && currentDocument) || state.saving) {
+    if (currentDocument === undefined || !state.dirty || state.saving) {
       return;
     }
 
@@ -147,7 +146,8 @@ export const createSkillMarkdownEditorController = (
       }
       if (result.data.reason === 'conflict') {
         update({
-          message: 'File changed on disk - reload the skill and reapply your edit.',
+          conflict: true,
+          message: 'Changed on disk',
           saving: false,
         });
         return;
@@ -157,22 +157,22 @@ export const createSkillMarkdownEditorController = (
         return;
       }
       const savedDocument = result.data.document;
-      if (savedDocument !== undefined && savedDocument.skillName !== input.skillName) {
+      if (savedDocument === undefined) {
+        update({ message: 'Could not save SKILL.md: server returned no document.', saving: false });
+        return;
+      }
+      if (savedDocument.skillName !== input.skillName) {
         update({ message: 'Could not save SKILL.md: server returned a different skill.', saving: false });
         return;
       }
-      if (savedDocument === undefined) {
-        update({ dirty: false, draft: input.content, editing: false, message: 'SKILL.md saved.', saving: false });
-      } else {
-        update({
-          dirty: false,
-          document: savedDocument,
-          draft: savedDocument.content,
-          editing: false,
-          message: 'SKILL.md saved.',
-          saving: false,
-        });
-      }
+      update({
+        conflict: false,
+        dirty: false,
+        document: savedDocument,
+        draft: savedDocument.content,
+        message: 'SKILL.md saved.',
+        saving: false,
+      });
       if (result.data.snapshot !== undefined) {
         dependencies.onSnapshot?.(result.data.snapshot);
       }
@@ -193,24 +193,19 @@ export const createSkillMarkdownEditorController = (
   };
 
   return {
-    cancelEditing: () => {
-      if (state.document !== undefined) {
-        update({ dirty: false, draft: state.document.content, editing: false, message: null });
-      }
-    },
     getState: () => state,
     reportUnexpectedError,
     reload,
+    revertDraft: () => {
+      if (state.document !== undefined) {
+        update({ dirty: false, draft: state.document.content, message: null });
+      }
+    },
     save,
     select,
     setDraft: (draft) => {
-      if (state.editing && !state.saving) {
-        update({ dirty: draft !== state.document?.content, draft });
-      }
-    },
-    startEditing: () => {
-      if (state.document !== undefined) {
-        update({ dirty: false, draft: state.document.content, editing: true, message: null });
+      if (state.document !== undefined && !state.saving) {
+        update({ dirty: draft !== state.document.content, draft, message: null });
       }
     },
     subscribe: (listener) => {
