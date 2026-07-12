@@ -13,6 +13,7 @@ honor its STOP conditions, and update your row when done.
 | 003 | Skills UX Polish — Fix the `/skills` Presentation Defects | P2 | M | 002 | DONE |
 | 004 | Skills Tree + Detail Workspace for `/skills` | P1 | L | 003 | DONE |
 | 005 | Skills Tree Curation & Honest Context Panel for `/skills` | P1 | M | 004 | DONE |
+| 006 | Make `SKILL.md` the Primary, Always-Editable Skills Workspace | P1 | L | 005 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).

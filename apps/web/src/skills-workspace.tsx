@@ -19,6 +19,7 @@ import {
   type SkillSelection,
   selectionKey,
 } from './skills-page-model';
+import { SKILLS_MOBILE_MEDIA_QUERY } from './skills-responsive';
 import { SkillsTree } from './skills-tree';
 
 export interface SkillReconcileResult {
@@ -39,7 +40,7 @@ export interface SkillMarkdownDraftGuard {
 
 const workspaceGrid = css({
   display: 'grid',
-  gridTemplateColumns: { base: '1fr', lg: '280px minmax(0, 1fr)', xl: '280px minmax(0, 1fr) 320px' },
+  gridTemplateColumns: { base: '1fr', lg: '240px minmax(0, 1fr)', xl: '240px minmax(0, 1fr) 288px' },
   gap: '16px',
   alignItems: 'start',
 });
@@ -57,6 +58,7 @@ const secondaryMatrix = css({
 
 const mobileContext = css({
   display: { base: 'block', xl: 'contents' },
+  gridColumn: { lg: '2', xl: 'auto' },
 });
 
 const desktopTree = css({
@@ -209,7 +211,7 @@ export const SkillsWorkspace = (props: {
       return;
     }
     previousSelectionKey = currentSelectionKey;
-    if (typeof window === 'undefined' || !window.matchMedia('(max-width: 1023px)').matches) {
+    if (typeof window === 'undefined' || !window.matchMedia(SKILLS_MOBILE_MEDIA_QUERY).matches) {
       return;
     }
     mobilePickerElement?.removeAttribute('open');
@@ -326,13 +328,10 @@ export const SkillsWorkspace = (props: {
               markdownRefreshVersion={props.markdownRefreshVersion}
               onMarkdownDraftStateChange={props.onMarkdownDraftStateChange}
               onSnapshot={props.onSnapshot}
-              pendingOperation={props.pendingOperation}
               projectInventories={props.projectInventories}
               projectInventoriesLoading={props.projectInventoriesLoading}
-              reconcileSkill={props.reconcileSkill}
               selection={selection()}
               snapshot={props.snapshot}
-              toggleSkill={props.toggleSkill}
               tree={tree()}
             />
           </section>
