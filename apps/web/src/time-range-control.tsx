@@ -8,7 +8,6 @@ import {
   dimensionSwatch,
   migrationCrosshair,
   migrationLegendButton,
-  migrationLegendMore,
   migrationReadout,
   migrationReadoutDate,
   migrationReadoutHint,
@@ -26,6 +25,10 @@ import {
   timeAxisTick,
   timeBucket,
   timeBucketSegment,
+  timeChartOptions,
+  timeChartOptionsCurrent,
+  timeChartOptionsSummary,
+  timeChartOptionsTitle,
   timeChartToolbar,
   timeChartZoomButton,
   timeChartZoomControls,
@@ -76,12 +79,12 @@ import {
   type MigrationGranularity,
   type TimelineBucket,
   type TimelineDimension,
+  type TimelineSeries,
   type TimelineValue,
 } from './overview-model';
 import { type DashboardRow, fmtDateOnly, fmtMoney, fmtNum, fmtPct } from './shared';
 
 const track = (..._values: unknown[]) => _values.length;
-const LEGEND_LIMIT = 12;
 const READOUT_LIMIT = 8;
 const MAX_DELTA_PCT = 1000;
 const CHART_ZOOM_FACTOR = 1.5;
@@ -122,10 +125,21 @@ const GRANULARITY_ITEMS = [
 ] as const;
 
 const VALUE_ITEMS = [
-  { label: 'Value', value: 'cost' },
+  { label: 'API value', value: 'cost' },
   { label: 'Share', value: 'share' },
   { label: 'Sessions', value: 'sessions' },
 ] as const;
+
+export const chartOptionsSummary = (
+  dimension: TimelineDimension,
+  granularity: MigrationGranularity,
+  value: TimelineValue,
+) => {
+  const dimensionLabel = DIMENSION_ITEMS.find((item) => item.value === dimension)?.label ?? 'Harness';
+  const granularityLabel = GRANULARITY_ITEMS.find((item) => item.value === granularity)?.label ?? 'Day';
+  const valueLabel = VALUE_ITEMS.find((item) => item.value === value)?.label ?? 'API value';
+  return `${dimensionLabel} · ${granularityLabel} · ${valueLabel}`;
+};
 
 const toTimelineDimension = (value: string): TimelineDimension =>
   value === 'model' || value === 'provider' || value === 'project' ? value : 'harness';
@@ -136,6 +150,28 @@ const toTimelineValue = (value: string): TimelineValue => (value === 'share' || 
 const TIMELINE_PLOT_INSET_PX = 8;
 const SPACED_BUCKET_MIN_WIDTH_PX = 2;
 const SPACED_BUCKET_GAP_PX = 2;
+
+const sliderIndexForKey = (key: string, current: number, max: number, step: number): number | null => {
+  if (key === 'ArrowLeft' || key === 'ArrowDown') {
+    return current - step;
+  }
+  if (key === 'ArrowRight' || key === 'ArrowUp') {
+    return current + step;
+  }
+  if (key === 'PageDown') {
+    return current - 30;
+  }
+  if (key === 'PageUp') {
+    return current + 30;
+  }
+  if (key === 'Home') {
+    return 0;
+  }
+  if (key === 'End') {
+    return max;
+  }
+  return null;
+};
 
 const cssNumber = (value: number) => Number(value.toFixed(4)).toString();
 
@@ -301,7 +337,6 @@ export const TimeRangeControl = (props: {
   const [valueMode, setValueMode] = createSignal<TimelineValue>('cost');
   const [hoveredBucket, setHoveredBucket] = createSignal<number | null>(null);
   const [hoveredKey, setHoveredKey] = createSignal<string | null>(null);
-  const [showAll, setShowAll] = createSignal(false);
   const [visualZoom, setVisualZoom] = createSignal<VisualZoomRange | null>(null);
   const [showGraphViewControls, setShowGraphViewControls] = createSignal(false);
   const [draggingVisualZoom, setDraggingVisualZoom] = createSignal(false);
@@ -346,14 +381,6 @@ export const TimeRangeControl = (props: {
       maxDay: domain.maxDay,
       maxIndex: domain.maxIndex,
     };
-  });
-
-  const visibleSeries = createMemo(() => {
-    const chart = data();
-    if (!chart) {
-      return [];
-    }
-    return showAll() ? chart.series : chart.series.slice(0, LEGEND_LIMIT);
   });
 
   const visibleBucketRange = createMemo(() => {
@@ -459,7 +486,7 @@ export const TimeRangeControl = (props: {
     const previous = index > 0 ? chart.buckets[index - 1] : null;
     const range = visibleBucketRange();
     const visibleCount = Math.max(1, bucketRangeSize(range));
-    const rows: { delta: number | null; key: string; rank: number; value: number }[] = [];
+    const rows: { delta: number | null; key: string; label: string; rank: number; value: number }[] = [];
     for (let rank = 0; rank < chart.series.length; rank++) {
       const series = chart.series[rank];
       if (!series) {
@@ -471,7 +498,7 @@ export const TimeRangeControl = (props: {
       }
       const prior = previous ? entryValue(previous.byKey.get(series.key), chart) : 0;
       const delta = prior > 1e-9 ? ((value - prior) / prior) * 100 : null;
-      rows.push({ delta, key: series.key, rank, value });
+      rows.push({ delta, key: series.key, label: series.label, rank, value });
     }
     rows.sort((a, b) => b.value - a.value);
     const visible = rows.slice(0, READOUT_LIMIT);
@@ -497,6 +524,7 @@ export const TimeRangeControl = (props: {
       .map((series, rank) => ({
         delta: null,
         key: series.key,
+        label: series.label,
         rank,
         value: useSessions ? series.sessions : series.total,
       }))
@@ -798,18 +826,18 @@ export const TimeRangeControl = (props: {
 
   const visualZoomLabel = (chart: NonNullable<ReturnType<typeof data>>) => {
     if (!isVisuallyZoomed()) {
-      return 'Graph view: full history';
+      return 'Chart view: full history';
     }
     const range = visibleBucketRange();
     const firstBucket = chart.buckets[range.from];
     const lastBucket = chart.buckets[range.to];
     if (!(firstBucket && lastBucket)) {
-      return 'Graph view: full history';
+      return 'Chart view: full history';
     }
-    return `Graph view: ${bucketLabel(firstBucket.date, granularity())} – ${bucketLabel(lastBucket.date, granularity())}`;
+    return `Chart view: ${bucketLabel(firstBucket.date, granularity())} – ${bucketLabel(lastBucket.date, granularity())}`;
   };
 
-  const swatch = (key: string, rank: number) => dimensionSwatch(dimension(), key, rank);
+  const swatch = (key: string) => dimensionSwatch(dimension(), key);
 
   const isLegendActive = (key: string) => {
     const currentDimension = dimension();
@@ -817,6 +845,14 @@ export const TimeRangeControl = (props: {
       return props.activeHarness.includes(key);
     }
     return props.activeFieldFilters[currentDimension] === key;
+  };
+
+  const legendTitle = (series: TimelineSeries): string => {
+    const aggregateCount = series.memberKeys?.length ?? 0;
+    if (aggregateCount > 0) {
+      return `Aggregates ${aggregateCount} smaller series`;
+    }
+    return isLegendActive(series.key) ? `Clear or replace ${series.label} filter` : `Filter by ${series.label}`;
   };
 
   const [draggingSelection, setDraggingSelection] = createSignal(false);
@@ -991,32 +1027,29 @@ export const TimeRangeControl = (props: {
     const [from, to] = props.dateRange.selectedIndexes();
     const current = handle === 'start' ? from : to;
     const step = event.shiftKey ? 7 : 1;
-    const next = (() => {
-      if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
-        return current - step;
-      }
-      if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
-        return current + step;
-      }
-      if (event.key === 'PageDown') {
-        return current - 30;
-      }
-      if (event.key === 'PageUp') {
-        return current + 30;
-      }
-      if (event.key === 'Home') {
-        return 0;
-      }
-      if (event.key === 'End') {
-        return chart.maxIndex;
-      }
-      return null;
-    })();
+    const next = sliderIndexForKey(event.key, current, chart.maxIndex, step);
     if (next == null) {
       return;
     }
     setHandleIndex(handle, clampNumber(next, 0, chart.maxIndex));
     commitIndexes();
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const handleVisualZoomKeyDown = (
+    event: KeyboardEvent & { currentTarget: HTMLButtonElement },
+    handle: VisualRangeHandle,
+    chart: NonNullable<ReturnType<typeof data>>,
+  ) => {
+    const range = visibleBucketRange();
+    const current = handle === 'start' ? range.from : range.to;
+    const maxIndex = chart.buckets.length - 1;
+    const next = sliderIndexForKey(event.key, current, maxIndex, event.shiftKey ? 7 : 1);
+    if (next == null) {
+      return;
+    }
+    setVisualZoomHandleIndex(chart, handle, clampNumber(next, 0, maxIndex));
     event.preventDefault();
     event.stopPropagation();
   };
@@ -1048,7 +1081,7 @@ export const TimeRangeControl = (props: {
       fallback={
         <section aria-label="Date range" class={timeRangePanel}>
           <div>
-            <div class={timeRangeTitle}>Time range</div>
+            <div class={timeRangeTitle}>Report range</div>
             <div class={timeRangeMeta}>No dated sessions match the current filters</div>
           </div>
         </section>
@@ -1059,7 +1092,7 @@ export const TimeRangeControl = (props: {
         <section aria-label="Date range" class={timeRangePanel}>
           <div class={timeRangeHeader}>
             <div>
-              <div class={timeRangeTitle}>Time range</div>
+              <div class={timeRangeTitle}>Report range</div>
               <div class={timeRangeSummary}>
                 <span class={timeRangeSummaryDates}>
                   <span>{selectedRangeDetails(chart()).fromLabel}</span>
@@ -1069,98 +1102,102 @@ export const TimeRangeControl = (props: {
                 <span class={timeRangeDuration}>{selectedRangeDetails(chart()).duration}</span>
               </div>
             </div>
+            <div class={timeSliderQuickRanges}>
+              <For each={dateRangePresets}>
+                {(preset) => (
+                  <button
+                    class={presetButton}
+                    onClick={() => applyPreset(preset.mode)}
+                    title={`Set report range to ${preset.label}`}
+                    type="button"
+                  >
+                    {preset.label}
+                  </button>
+                )}
+              </For>
+            </div>
           </div>
 
-          <div class={timeRangeViewControls}>
-            <SegmentedControl
-              ariaLabel="Timeline dimension"
-              items={DIMENSION_ITEMS}
-              label="Group"
-              onValueChange={(value) => {
-                setDimension(toTimelineDimension(value));
-                setShowAll(false);
-                clearHover();
-              }}
-              value={dimension()}
-            />
-            <SegmentedControl
-              ariaLabel="Timeline granularity"
-              items={GRANULARITY_ITEMS}
-              label="Bucket"
-              onValueChange={(value) => {
-                setGranularity(toGranularity(value));
-                setVisualZoom(null);
-                setShowGraphViewControls(false);
-                clearHover();
-              }}
-              value={granularity()}
-            />
-            <SegmentedControl
-              ariaLabel="Timeline value"
-              items={VALUE_ITEMS}
-              label="Metric"
-              onValueChange={(value) => {
-                setValueMode(toTimelineValue(value));
-                clearHover();
-              }}
-              value={valueMode()}
-            />
-          </div>
+          <details aria-label="Chart options" class={timeChartOptions}>
+            <summary class={timeChartOptionsSummary}>
+              <span class={timeChartOptionsTitle}>Chart options</span>
+              <span class={timeChartOptionsCurrent}>
+                {chartOptionsSummary(dimension(), granularity(), valueMode())}
+              </span>
+            </summary>
+            <div class={timeRangeViewControls}>
+              <SegmentedControl
+                ariaLabel="Timeline dimension"
+                items={DIMENSION_ITEMS}
+                label="Group"
+                onValueChange={(value) => {
+                  setDimension(toTimelineDimension(value));
+                  clearHover();
+                }}
+                value={dimension()}
+              />
+              <SegmentedControl
+                ariaLabel="Timeline granularity"
+                items={GRANULARITY_ITEMS}
+                label="Bucket"
+                onValueChange={(value) => {
+                  setGranularity(toGranularity(value));
+                  setVisualZoom(null);
+                  setShowGraphViewControls(false);
+                  clearHover();
+                }}
+                value={granularity()}
+              />
+              <SegmentedControl
+                ariaLabel="Timeline value"
+                items={VALUE_ITEMS}
+                label="Metric"
+                onValueChange={(value) => {
+                  setValueMode(toTimelineValue(value));
+                  clearHover();
+                }}
+                value={valueMode()}
+              />
+            </div>
+          </details>
 
           <div class={chartLegendList}>
-            <For each={visibleSeries()}>
+            <For each={chart().series}>
               {(entry) => {
-                const rank = chart().series.findIndex((series) => series.key === entry.key);
-                const marker = swatch(entry.key, rank);
+                const marker = swatch(entry.key);
                 const useSessions = valueMode() === 'sessions' || usesSessionShare(chart());
                 const value = useSessions ? entry.sessions : entry.total;
                 const total = useSessions ? chart().grandSessions : chart().grandTotal;
+                const aggregateCount = entry.memberKeys?.length ?? 0;
+                const isAggregate = aggregateCount > 0;
                 return (
                   <button
+                    aria-label={isAggregate ? `Other: ${aggregateCount} smaller series` : undefined}
                     class={cx(migrationLegendButton, isLegendActive(entry.key) ? migrationReadoutItemActive : '')}
-                    onClick={() => props.onDimensionFilter(dimension(), entry.key)}
+                    disabled={isAggregate}
+                    onClick={() => {
+                      if (!isAggregate) {
+                        props.onDimensionFilter(dimension(), entry.key);
+                      }
+                    }}
                     onMouseEnter={() => setHoveredKey(entry.key)}
                     onMouseLeave={() => setHoveredKey(null)}
-                    title={
-                      isLegendActive(entry.key) ? `Clear or replace ${entry.key} filter` : `Filter by ${entry.key}`
-                    }
+                    title={legendTitle(entry)}
                     type="button"
                   >
                     <span class={cx(chartLegendSwatch, marker.className)} style={marker.style} />
-                    {entry.key}
+                    {entry.label}
                     <span class={chartLegendPct}>{fmtPct((value / Math.max(1e-9, total)) * 100)}</span>
                   </button>
                 );
               }}
             </For>
-            <Show when={chart().series.length > LEGEND_LIMIT}>
-              <button class={migrationLegendMore} onClick={() => setShowAll((value) => !value)} type="button">
-                {showAll() ? 'Show less' : `Show all (${chart().series.length})`}
-              </button>
-            </Show>
           </div>
 
           <div class={timeSliderRoot}>
             <div class={timeChartToolbar}>
               <span class={timeChartZoomSummary}>{visualZoomLabel(chart())}</span>
               <div class={timeChartZoomControls}>
-                <button
-                  class={timeChartZoomButton}
-                  onClick={() => zoomChartToLastDays(chart(), 2)}
-                  title="Show the latest 2 days in the graph only"
-                  type="button"
-                >
-                  Latest 2d
-                </button>
-                <button
-                  class={timeChartZoomButton}
-                  disabled={!isVisuallyZoomed()}
-                  onClick={resetVisualZoom}
-                  title="Show the full history in the graph"
-                  type="button"
-                >
-                  Full history
-                </button>
                 <button
                   class={timeChartZoomButton}
                   onClick={() => setShowGraphViewControls((value) => !value)}
@@ -1259,7 +1296,7 @@ export const TimeRangeControl = (props: {
                         >
                           <For each={renderedSegments(bar.segments)}>
                             {(segment) => {
-                              const marker = swatch(segment.key, segment.rank);
+                              const marker = swatch(segment.key);
                               return (
                                 <div
                                   class={cx(timeBucketSegment, marker.className ?? accentFill)}
@@ -1350,6 +1387,7 @@ export const TimeRangeControl = (props: {
                       aria-valuenow={visibleBucketRange().from}
                       aria-valuetext={fmtDateOnly(chart().buckets[visibleBucketRange().from]?.date ?? chart().minDay)}
                       class={timeSliderThumb}
+                      onKeyDown={(event) => handleVisualZoomKeyDown(event, 'start', chart())}
                       onLostPointerCapture={endVisualZoomHandleDrag}
                       onPointerCancel={endVisualZoomHandleDrag}
                       onPointerDown={(event) => startVisualZoomHandleDrag(event, 'start', chart())}
@@ -1366,6 +1404,7 @@ export const TimeRangeControl = (props: {
                       aria-valuenow={visibleBucketRange().to}
                       aria-valuetext={fmtDateOnly(chart().buckets[visibleBucketRange().to]?.date ?? chart().maxDay)}
                       class={timeSliderThumb}
+                      onKeyDown={(event) => handleVisualZoomKeyDown(event, 'end', chart())}
                       onLostPointerCapture={endVisualZoomHandleDrag}
                       onPointerCancel={endVisualZoomHandleDrag}
                       onPointerDown={(event) => startVisualZoomHandleDrag(event, 'end', chart())}
@@ -1380,21 +1419,8 @@ export const TimeRangeControl = (props: {
               </Show>
               <div class={timeSliderBrushColumn}>
                 <div class={timeSliderBrushHeader}>
-                  <span>Selected range</span>
-                  <div class={timeSliderQuickRanges}>
-                    <For each={dateRangePresets}>
-                      {(preset) => (
-                        <button
-                          class={presetButton}
-                          onClick={() => applyPreset(preset.mode)}
-                          title={`Set range to ${preset.label}`}
-                          type="button"
-                        >
-                          {preset.label}
-                        </button>
-                      )}
-                    </For>
-                  </div>
+                  <span>Adjust report range</span>
+                  <span>Filters the entire report</span>
                 </div>
                 <div class={timeAxis}>
                   <span>{fmtDateOnly(chart().minDay)}</span>
@@ -1499,7 +1525,7 @@ export const TimeRangeControl = (props: {
                     <span class={migrationReadoutTotal}>{formatValue(tip().total, tip().useSessions)}</span>
                     <For each={tip().rows}>
                       {(row) => {
-                        const marker = swatch(row.key, row.rank);
+                        const marker = swatch(row.key);
                         return (
                           <span
                             class={cx(
@@ -1508,7 +1534,7 @@ export const TimeRangeControl = (props: {
                             )}
                           >
                             <span class={cx(migrationReadoutSwatch, marker.className)} style={marker.style} />
-                            {row.key}
+                            {row.label}
                             <span class={migrationReadoutValue}>
                               {formatValue(row.value, tip().useSessions)} ·{' '}
                               {fmtPct((row.value / Math.max(1e-9, tip().total)) * 100)}

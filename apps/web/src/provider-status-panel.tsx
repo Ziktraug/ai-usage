@@ -1,8 +1,9 @@
 import { css, cx } from '@ai-usage/design-system/css';
 import { panel, panelHeader, panelSub, panelTitle } from '@ai-usage/design-system/report';
 import type { ProviderLimitWindow } from '@ai-usage/report-core/provider-status';
-import { For, Show } from 'solid-js';
+import { createMemo, For, Show } from 'solid-js';
 import type { ProviderStatusView } from './provider-status-model';
+import { buildProviderStatusPanelSummary } from './provider-status-panel-model';
 import { providerProgressState } from './provider-status-progress';
 import { fmtDate, fmtPct } from './shared';
 
@@ -123,6 +124,69 @@ const warningList = css({
   color: 'muted',
   fontSize: '12px',
 });
+const compactOverview = css({ display: 'grid', gap: '10px' });
+const compactProviderList = css({
+  display: 'grid',
+  gridTemplateColumns: { base: '1fr', lg: 'repeat(2, minmax(0, 1fr))' },
+  gap: '8px',
+  m: 0,
+  p: 0,
+  listStyle: 'none',
+});
+const compactProvider = css({
+  display: 'grid',
+  gap: '8px',
+  p: '10px 12px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'md',
+  bg: 'surfaceMuted',
+});
+const compactProviderTop = css({
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '8px',
+  flexWrap: 'wrap',
+});
+const compactProviderName = css({ display: 'grid', gap: '2px', minW: 0 });
+const compactProviderMetrics = css({ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' });
+const compactEmpty = css({ color: 'muted', fontSize: '12px' });
+const issueList = css({
+  display: 'flex',
+  alignItems: 'center',
+  gap: '6px',
+  flexWrap: 'wrap',
+  m: 0,
+  p: 0,
+  listStyle: 'none',
+});
+const issuePill = css({
+  display: 'inline-flex',
+  alignItems: 'center',
+  minH: '24px',
+  px: '9px',
+  borderRadius: 'full',
+  bg: 'surfaceMuted',
+  color: 'muted',
+  fontSize: '11px',
+  fontWeight: 700,
+});
+const attentionProviderName = css({ color: 'ink' });
+const criticalNote = css({ color: 'harness.claude.fg', fontSize: '12px', fontWeight: 600 });
+const detailDisclosure = css({
+  mt: '2px',
+  borderTop: '1px solid token(colors.line)',
+  '&[open] > summary': { mb: '10px' },
+});
+const detailSummary = css({
+  py: '10px',
+  color: 'muted',
+  cursor: 'pointer',
+  fontSize: '12px',
+  fontWeight: 700,
+  _hover: { color: 'ink' },
+  _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px', borderRadius: 'sm' },
+});
 
 const percentLabel = (window: ProviderLimitWindow) =>
   window.usedPercent === null ? 'Unknown usage' : fmtPct(window.usedPercent);
@@ -155,93 +219,191 @@ const ProviderProgress = (props: {
   );
 };
 
-export const ProviderStatusPanel = (props: { providers: ProviderStatusView[] }) => (
-  <Show when={props.providers.length > 0}>
-    <section aria-labelledby="provider-status-title" class={panel}>
-      <div class={panelIntro}>
-        <div class={panelHeader}>
-          <h2 class={panelTitle} id="provider-status-title">
-            Provider status
-          </h2>
-          <div class={panelSub}>Quota windows, reset credits, and provider-specific collection limits.</div>
+const compactProviderContext = (view: ProviderStatusView) =>
+  [view.machineContext, view.accountContext].filter((value) => value !== null).join(' · ');
+
+const ProviderStateBadge = (props: { view: ProviderStatusView }) => (
+  <span class={cx(badge, badgeTones[props.view.tone])}>{props.view.provider.state.replaceAll('-', ' ')}</span>
+);
+
+const ProviderSummaryMetrics = (props: { class: string; view: ProviderStatusView }) => (
+  <div class={props.class}>
+    <Show when={props.view.worstUsedPercent !== null}>
+      <span class={summaryPill}>Peak use {fmtPct(props.view.worstUsedPercent ?? 0)}</span>
+    </Show>
+    <Show when={props.view.nextResetAt}>
+      {(nextResetAt) => <span class={summaryPill}>Next reset {fmtDate(nextResetAt())}</span>}
+    </Show>
+    <Show when={props.view.creditsSummary}>
+      {(creditsSummary) => <span class={summaryPill}>{creditsSummary()}</span>}
+    </Show>
+  </div>
+);
+
+const CompactProviderStatus = (props: { view: ProviderStatusView }) => (
+  <li class={compactProvider}>
+    <div class={compactProviderTop}>
+      <div class={compactProviderName}>
+        <strong class={providerTitle}>{props.view.provider.label}</strong>
+        <Show when={compactProviderContext(props.view)}>
+          {(providerContext) => <span class={contextLine}>{providerContext()}</span>}
+        </Show>
+      </div>
+      <ProviderStateBadge view={props.view} />
+    </div>
+    <ProviderSummaryMetrics class={compactProviderMetrics} view={props.view} />
+    <Show when={props.view.provider.warnings?.[0]}>{(warning) => <div class={criticalNote}>{warning()}</div>}</Show>
+  </li>
+);
+
+const ProviderDetailCard = (props: { view: ProviderStatusView }) => (
+  <li class={providerCard}>
+    <div class={providerTop}>
+      <div>
+        <div class={providerTitleRow}>
+          <div class={providerTitle}>{props.view.provider.label}</div>
+          <ProviderStateBadge view={props.view} />
+        </div>
+        <div class={contextLine}>
+          {props.view.sourceLabel}
+          <Show when={props.view.machineContext}> · {props.view.machineContext}</Show>
+          <Show when={props.view.accountContext}> · {props.view.accountContext}</Show>
         </div>
       </div>
+      <ProviderSummaryMetrics class={summaryGrid} view={props.view} />
+    </div>
 
-      <ul class={statusList}>
-        <For each={props.providers}>
-          {(view) => (
-            <li class={providerCard}>
-              <div class={providerTop}>
-                <div>
-                  <div class={providerTitleRow}>
-                    <div class={providerTitle}>{view.provider.label}</div>
-                    <span class={cx(badge, badgeTones[view.tone])}>{view.provider.state.replaceAll('-', ' ')}</span>
-                  </div>
-                  <div class={contextLine}>
-                    {view.sourceLabel}
-                    <Show when={view.machineContext}> · {view.machineContext}</Show>
-                    <Show when={view.accountContext}> · {view.accountContext}</Show>
-                  </div>
-                </div>
-                <div class={summaryGrid}>
-                  <Show when={view.worstUsedPercent !== null}>
-                    <span class={summaryPill}>Worst use {fmtPct(view.worstUsedPercent ?? 0)}</span>
-                  </Show>
-                  <Show when={view.nextResetAt}>
-                    {(nextResetAt) => <span class={summaryPill}>Next reset {fmtDate(nextResetAt())}</span>}
-                  </Show>
-                  <Show when={view.creditsSummary}>
-                    {(creditsSummary) => <span class={summaryPill}>{creditsSummary()}</span>}
-                  </Show>
-                </div>
-              </div>
-
-              <Show
-                fallback={<div class={contextLine}>No quota windows are available for this provider.</div>}
-                when={view.windowGroups.length > 0}
-              >
-                <div class={windowsGrid}>
-                  <For each={view.windowGroups}>
-                    {(group) => (
-                      <div class={windowGroup}>
-                        <div class={groupLabel}>{group.label}</div>
-                        <div class={windowRows}>
-                          <For each={group.windows}>
-                            {(window) => (
-                              <div>
-                                <div class={windowLabel}>
-                                  <span>{window.label}</span>
-                                  <strong>{percentLabel(window)}</strong>
-                                </div>
-                                <ProviderProgress
-                                  providerLabel={view.provider.label}
-                                  tone={view.tone}
-                                  window={window}
-                                />
-                                <div class={windowMeta}>
-                                  <Show fallback="Reset time unknown" when={window.resetsAt}>
-                                    {(resetsAt) => <>Resets {fmtDate(resetsAt())}</>}
-                                  </Show>
-                                </div>
-                              </div>
-                            )}
-                          </For>
-                        </div>
+    <Show
+      fallback={<div class={contextLine}>No quota windows are available for this provider.</div>}
+      when={props.view.windowGroups.length > 0}
+    >
+      <div class={windowsGrid}>
+        <For each={props.view.windowGroups}>
+          {(group) => (
+            <div class={windowGroup}>
+              <div class={groupLabel}>{group.label}</div>
+              <div class={windowRows}>
+                <For each={group.windows}>
+                  {(window) => (
+                    <div>
+                      <div class={windowLabel}>
+                        <span>{window.label}</span>
+                        <strong>{percentLabel(window)}</strong>
                       </div>
-                    )}
-                  </For>
-                </div>
-              </Show>
-
-              <Show when={view.provider.warnings?.length}>
-                <ul class={warningList}>
-                  <For each={view.provider.warnings}>{(warning) => <li>{warning}</li>}</For>
-                </ul>
-              </Show>
-            </li>
+                      <ProviderProgress
+                        providerLabel={props.view.provider.label}
+                        tone={props.view.tone}
+                        window={window}
+                      />
+                      <div class={windowMeta}>
+                        <Show fallback="Reset time unknown" when={window.resetsAt}>
+                          {(resetsAt) => <>Resets {fmtDate(resetsAt())}</>}
+                        </Show>
+                      </div>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </div>
           )}
         </For>
+      </div>
+    </Show>
+
+    <Show when={props.view.provider.warnings?.length}>
+      <ul class={warningList}>
+        <For each={props.view.provider.warnings}>{(warning) => <li>{warning}</li>}</For>
       </ul>
-    </section>
-  </Show>
+    </Show>
+  </li>
 );
+
+const providerCountLabel = (count: number) => `${count} provider${count === 1 ? '' : 's'}`;
+
+export const ProviderStatusPanel = (props: { providers: ProviderStatusView[] }) => {
+  const summary = createMemo(() => buildProviderStatusPanelSummary(props.providers));
+
+  return (
+    <Show when={props.providers.length > 0}>
+      <section aria-labelledby="provider-status-title" class={panel}>
+        <div class={panelIntro}>
+          <div class={panelHeader}>
+            <h2 class={panelTitle} id="provider-status-title">
+              Provider status
+            </h2>
+            <div class={panelSub}>Quota usage and operational issues at a glance.</div>
+          </div>
+        </div>
+
+        <div class={compactOverview}>
+          <Show
+            fallback={<div class={compactEmpty}>No provider exposes quota windows in this report.</div>}
+            when={summary().quotaProviders.length > 0}
+          >
+            <ul class={compactProviderList}>
+              <For each={summary().quotaProviders}>{(view) => <CompactProviderStatus view={view} />}</For>
+            </ul>
+          </Show>
+
+          <Show when={summary().criticalProvidersWithoutQuota.length > 0}>
+            <ul aria-label="Critical providers" class={compactProviderList}>
+              <For each={summary().criticalProvidersWithoutQuota}>
+                {(view) => <CompactProviderStatus view={view} />}
+              </For>
+            </ul>
+          </Show>
+
+          <Show when={summary().attentionProvidersWithoutQuota.length > 0}>
+            <ul aria-label="Providers requiring attention" class={issueList}>
+              <For each={summary().attentionProvidersWithoutQuota}>
+                {(view) => (
+                  <li class={issuePill}>
+                    <strong class={attentionProviderName}>{view.provider.label}</strong>
+                    <Show when={compactProviderContext(view)}>
+                      {(providerContext) => <span>· {providerContext()}</span>}
+                    </Show>
+                    <span>· {view.provider.state.replaceAll('-', ' ')}</span>
+                    <Show when={view.provider.warnings?.[0]}>{(warning) => <span>· {warning()}</span>}</Show>
+                    <Show when={view.creditsSummary}>{(creditsSummary) => <span>· {creditsSummary()}</span>}</Show>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Show>
+
+          <Show
+            when={
+              summary().warningCount > 0 ||
+              summary().unsupportedProviderCount > 0 ||
+              summary().noWindowProviderCount > 0
+            }
+          >
+            <ul aria-label="Provider status issue counts" class={issueList}>
+              <Show when={summary().warningCount > 0}>
+                <li class={issuePill}>
+                  {summary().warningCount} provider warning{summary().warningCount === 1 ? '' : 's'}
+                </li>
+              </Show>
+              <Show when={summary().unsupportedProviderCount > 0}>
+                <li class={issuePill}>
+                  {summary().unsupportedProviderCount} unsupported provider
+                  {summary().unsupportedProviderCount === 1 ? '' : 's'}
+                </li>
+              </Show>
+              <Show when={summary().noWindowProviderCount > 0}>
+                <li class={issuePill}>{providerCountLabel(summary().noWindowProviderCount)} without quota windows</li>
+              </Show>
+            </ul>
+          </Show>
+        </div>
+
+        <details class={detailDisclosure}>
+          <summary class={detailSummary}>Provider details ({providerCountLabel(props.providers.length)})</summary>
+          <ul class={statusList}>
+            <For each={props.providers}>{(view) => <ProviderDetailCard view={view} />}</For>
+          </ul>
+        </details>
+      </section>
+    </Show>
+  );
+};

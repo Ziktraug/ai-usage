@@ -22,7 +22,7 @@ import {
 } from '@ai-usage/design-system/report';
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import { createFileRoute, Link, useLocation } from '@tanstack/solid-router';
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
 import { DiscardConfirmationDialog } from '../discard-confirmation-dialog';
@@ -224,6 +224,7 @@ function SkillsRoute() {
   const data = Route.useLoaderData();
   const location = useLocation();
   let refreshButtonElement: HTMLButtonElement | undefined;
+  const [hydrated, setHydrated] = createSignal(false);
   const [activeCellStateFilter, setActiveCellStateFilter] = createSignal<SkillCellStateFilter | undefined>();
   const controller = createSkillsRouteController(data);
   const {
@@ -284,8 +285,15 @@ function SkillsRoute() {
 
   const routeSelection = createMemo(() => skillSelectionFromPath(location().pathname, selectionProjects()));
 
+  onMount(() => setHydrated(true));
+
   return (
-    <main class={page}>
+    <main
+      aria-busy={hydrated() ? undefined : 'true'}
+      class={page}
+      data-hydrated={hydrated() ? 'true' : 'false'}
+      inert={!hydrated()}
+    >
       <div class={shell}>
         <header class={header}>
           <div class={cx(headerTop, headerWrap)}>

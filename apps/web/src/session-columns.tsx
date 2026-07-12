@@ -34,7 +34,6 @@ import {
 declare module '@tanstack/solid-table' {
   interface ColumnMeta<TData extends RowData, TValue> {
     cellClass?: string;
-    defaultVisible?: boolean;
     headerClass?: string;
     label: string;
     title?: string;
@@ -67,6 +66,44 @@ export const sessionColumns: SessionColumnDef[] = [
     cell: (info) => fmtDate(info.row.original.activeDate),
     sortDescFirst: true,
     meta: { label: 'Date', widthPx: 104, cellClass: dateCell },
+  },
+  {
+    id: 'session',
+    header: 'Session',
+    accessorFn: (row) => row.sessionLabel.toLowerCase(),
+    cell: (info) => {
+      const campaignLabel = () => campaignBadgeLabelForRow(info.row.original);
+      const titleFacts = () => provenanceFacts(info.row.original, 'title');
+      return (
+        <div class={sessionTitleClamp} style={{ 'padding-left': `${info.row.depth * 14}px` }}>
+          <Show when={info.row.getCanExpand()}>
+            <button
+              class={filterTextButton}
+              onClick={(event) => {
+                event.stopPropagation();
+                info.row.toggleExpanded();
+              }}
+              title={info.row.getIsExpanded() ? 'Collapse campaign' : 'Expand campaign'}
+              type="button"
+            >
+              {info.row.getIsExpanded() ? '▾' : '▸'}
+            </button>
+          </Show>
+          <HighlightedText query={info.table.options.meta?.searchQuery ?? ''} text={info.row.original.sessionLabel} />
+          <ProvenanceMarker facts={titleFacts()} />
+          <Show when={campaignLabel()}>
+            {(label) => (
+              <span class={muted} title={label()}>
+                {' '}
+                {label()}
+              </span>
+            )}
+          </Show>
+        </div>
+      );
+    },
+    enableHiding: false,
+    meta: { label: 'Session', widthPx: 260, cellClass: sessionCell },
   },
   {
     id: 'harness',
@@ -111,28 +148,6 @@ export const sessionColumns: SessionColumnDef[] = [
     meta: { label: 'Provider', widthPx: 124 },
   },
   {
-    id: 'model',
-    header: 'Model',
-    accessorFn: (row) => sortValueForRow(row, 'model'),
-    cell: (info) => {
-      const row = info.row.original;
-      return (
-        <button
-          class={filterTextButton}
-          onClick={(event) => {
-            event.stopPropagation();
-            info.table.options.meta?.onFieldFilter?.('model', row.modelKey);
-          }}
-          title={`Filter by ${row.modelKey}`}
-          type="button"
-        >
-          {row.modelLabel}
-        </button>
-      );
-    },
-    meta: { label: 'Model', widthPx: 168, cellClass: modelCell },
-  },
-  {
     id: 'project',
     header: 'Project',
     accessorFn: (row) => sortValueForRow(row, 'project'),
@@ -156,12 +171,34 @@ export const sessionColumns: SessionColumnDef[] = [
     meta: { label: 'Project', widthPx: 120 },
   },
   {
+    id: 'model',
+    header: 'Model',
+    accessorFn: (row) => sortValueForRow(row, 'model'),
+    cell: (info) => {
+      const row = info.row.original;
+      return (
+        <button
+          class={filterTextButton}
+          onClick={(event) => {
+            event.stopPropagation();
+            info.table.options.meta?.onFieldFilter?.('model', row.modelKey);
+          }}
+          title={`Filter by ${row.modelKey}`}
+          type="button"
+        >
+          {row.modelLabel}
+        </button>
+      );
+    },
+    meta: { label: 'Model', widthPx: 168, cellClass: modelCell },
+  },
+  {
     id: 'tokIn',
     header: 'Input',
     accessorFn: (row) => row.tokIn,
     cell: (info) => tokenCell(info.row.original, info.row.original.tokIn),
     sortDescFirst: true,
-    meta: { label: 'Input tokens', widthPx: 90, cellClass: numCell, headerClass: right, defaultVisible: false },
+    meta: { label: 'Input tokens', widthPx: 90, cellClass: numCell, headerClass: right },
   },
   {
     id: 'tokOut',
@@ -169,7 +206,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => row.tokOut,
     cell: (info) => tokenCell(info.row.original, info.row.original.tokOut),
     sortDescFirst: true,
-    meta: { label: 'Output tokens', widthPx: 94, cellClass: numCell, headerClass: right, defaultVisible: false },
+    meta: { label: 'Output tokens', widthPx: 94, cellClass: numCell, headerClass: right },
   },
   {
     id: 'cache',
@@ -197,7 +234,6 @@ export const sessionColumns: SessionColumnDef[] = [
       widthPx: 84,
       cellClass: numCell,
       headerClass: right,
-      defaultVisible: false,
     },
   },
   {
@@ -220,7 +256,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => row.tokenTotal,
     cell: (info) => tokenCell(info.row.original, info.row.original.tokenTotal),
     sortDescFirst: true,
-    meta: { label: 'Total tokens', widthPx: 90, cellClass: numCell, headerClass: right, defaultVisible: false },
+    meta: { label: 'Total tokens', widthPx: 90, cellClass: numCell, headerClass: right },
   },
   {
     id: 'rtkSaved',
@@ -238,7 +274,7 @@ export const sessionColumns: SessionColumnDef[] = [
   },
   {
     id: 'cost',
-    header: '$API',
+    header: 'API value',
     accessorFn: (row) => sortValueForRow(row, 'cost'),
     cell: (info) => {
       const row = info.row.original;
@@ -256,7 +292,7 @@ export const sessionColumns: SessionColumnDef[] = [
     meta: {
       label: 'API value',
       title: 'Estimated cost at standard API prices',
-      widthPx: 76,
+      widthPx: 92,
       cellClass: numCell,
       headerClass: right,
     },
@@ -280,7 +316,6 @@ export const sessionColumns: SessionColumnDef[] = [
       widthPx: 88,
       cellClass: numCell,
       headerClass: right,
-      defaultVisible: false,
     },
   },
   {
@@ -302,19 +337,18 @@ export const sessionColumns: SessionColumnDef[] = [
       widthPx: 86,
       cellClass: numCell,
       headerClass: right,
-      defaultVisible: false,
     },
   },
   {
     id: 'duration',
-    header: 'Span',
+    header: 'Duration',
     accessorFn: (row) => row.durationMs ?? 0,
     cell: (info) => fmtDuration(info.row.original.durationMs),
     sortDescFirst: true,
     meta: {
       label: 'Duration',
       title: 'Wall-clock session duration',
-      widthPx: 68,
+      widthPx: 86,
       cellClass: numCell,
       headerClass: right,
     },
@@ -325,7 +359,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => row.calls,
     cell: (info) => countCell(info.row.original, info.row.original.calls, 'calls'),
     sortDescFirst: true,
-    meta: { label: 'Calls', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
+    meta: { label: 'Calls', widthPx: 76, cellClass: numCell, headerClass: right },
   },
   {
     id: 'turns',
@@ -333,7 +367,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => row.turns,
     cell: (info) => withProvenance(info.row.original, 'turns', fmtNum(info.row.original.turns)),
     sortDescFirst: true,
-    meta: { label: 'Turns', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
+    meta: { label: 'Turns', widthPx: 76, cellClass: numCell, headerClass: right },
   },
   {
     id: 'tools',
@@ -341,7 +375,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => row.tools,
     cell: (info) => countCell(info.row.original, info.row.original.tools, 'tools'),
     sortDescFirst: true,
-    meta: { label: 'Tools', widthPx: 76, cellClass: numCell, headerClass: right, defaultVisible: false },
+    meta: { label: 'Tools', widthPx: 76, cellClass: numCell, headerClass: right },
   },
   {
     id: 'lines',
@@ -349,7 +383,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => row.lineDelta ?? 0,
     cell: (info) => withProvenance(info.row.original, 'lines', lineDeltaLabel(info.row.original)),
     sortDescFirst: true,
-    meta: { label: 'Lines changed', widthPx: 96, cellClass: numCell, headerClass: right, defaultVisible: false },
+    meta: { label: 'Lines changed', widthPx: 96, cellClass: numCell, headerClass: right },
   },
   {
     id: 'subagent',
@@ -357,7 +391,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => (row.subagent ? 1 : 0),
     cell: (info) => (info.row.original.subagent ? 'Yes' : 'No'),
     sortDescFirst: true,
-    meta: { label: 'Subagent', widthPx: 72, defaultVisible: false },
+    meta: { label: 'Subagent', widthPx: 72 },
   },
   {
     id: 'partial',
@@ -365,7 +399,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => (row.partial ? 1 : 0),
     cell: (info) => (info.row.original.partial ? 'Yes' : 'No'),
     sortDescFirst: true,
-    meta: { label: 'Partial', widthPx: 82, defaultVisible: false },
+    meta: { label: 'Partial', widthPx: 82 },
   },
   {
     id: 'ambiguous',
@@ -373,45 +407,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => (row.ambiguous ? 1 : 0),
     cell: (info) => (info.row.original.ambiguous ? 'Yes' : 'No'),
     sortDescFirst: true,
-    meta: { label: 'Ambiguous reconciliation', widthPx: 92, defaultVisible: false },
-  },
-  {
-    id: 'session',
-    header: 'Session',
-    accessorFn: (row) => row.sessionLabel.toLowerCase(),
-    cell: (info) => {
-      const campaignLabel = () => campaignBadgeLabelForRow(info.row.original);
-      const titleFacts = () => provenanceFacts(info.row.original, 'title');
-      return (
-        <div class={sessionTitleClamp} style={{ 'padding-left': `${info.row.depth * 14}px` }}>
-          <Show when={info.row.getCanExpand()}>
-            <button
-              class={filterTextButton}
-              onClick={(event) => {
-                event.stopPropagation();
-                info.row.toggleExpanded();
-              }}
-              title={info.row.getIsExpanded() ? 'Collapse campaign' : 'Expand campaign'}
-              type="button"
-            >
-              {info.row.getIsExpanded() ? '▾' : '▸'}
-            </button>
-          </Show>
-          <HighlightedText query={info.table.options.meta?.searchQuery ?? ''} text={info.row.original.sessionLabel} />
-          <ProvenanceMarker facts={titleFacts()} />
-          <Show when={campaignLabel()}>
-            {(label) => (
-              <span class={muted} title={label()}>
-                {' '}
-                {label()}
-              </span>
-            )}
-          </Show>
-        </div>
-      );
-    },
-    enableHiding: false,
-    meta: { label: 'Session', widthPx: 300, cellClass: sessionCell },
+    meta: { label: 'Ambiguous reconciliation', widthPx: 92 },
   },
 ];
 

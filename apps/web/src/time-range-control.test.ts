@@ -1,5 +1,17 @@
 import { describe, expect, test } from 'bun:test';
-import { buildVisibleTimelineBars, timelineBucketLayout, timelinePlotLeft } from './time-range-control';
+import {
+  buildVisibleTimelineBars,
+  chartOptionsSummary,
+  timelineBucketLayout,
+  timelinePlotLeft,
+} from './time-range-control';
+
+describe('time range control labels', () => {
+  test('summarizes the selected chart options in plain language', () => {
+    expect(chartOptionsSummary('harness', 'day', 'cost')).toBe('Harness · Day · API value');
+    expect(chartOptionsSummary('project', 'month', 'sessions')).toBe('Project · Month · Sessions');
+  });
+});
 
 describe('time range control plot positioning', () => {
   test('aligns hovered day-bucket crosshair to the inset plot area', () => {

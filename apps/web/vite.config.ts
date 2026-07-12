@@ -121,7 +121,12 @@ export default defineConfig({
     tanstackStart({
       router: {
         codeSplittingOptions: {
-          defaultBehavior: [],
+          // Keep the self-contained report route in the entry chunk: static
+          // HTML export inlines that chunk and cannot fetch lazy assets from
+          // file://. Skills and Sync are server-only destinations and can be
+          // split without changing the exported report runtime.
+          defaultBehavior: [['component']],
+          splitBehavior: ({ routeId }) => (routeId === '/' ? [] : undefined),
         },
       },
     }),
