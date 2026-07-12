@@ -108,11 +108,33 @@ describe('overview model', () => {
     const data = buildCalendarHeatmapData(rows, new Date('2026-06-11T12:00:00.000Z'));
     const june10 = data ? heatDay(data, '2026-06-10') : null;
 
-    expect(data?.useCost).toBe(true);
     expect(data?.todayKey).toBe('2026-06-11');
     expect(june10?.sessions).toBe(2);
     expect(june10?.cost).toBe(5);
     expect(june10?.level).toBeGreaterThan(0);
+  });
+
+  test('shows activity for an unpriced day when another day has API-equivalent value', () => {
+    const rows = [
+      row({
+        sessionLabel: 'Priced',
+        activeDate: '2026-06-10T12:00:00.000Z',
+        date: '2026-06-10T12:00:00.000Z',
+        costApprox: 2,
+      }),
+      row({
+        sessionLabel: 'Unpriced',
+        activeDate: '2026-06-11T12:00:00.000Z',
+        date: '2026-06-11T12:00:00.000Z',
+        costApprox: 0,
+        costKnown: false,
+      }),
+    ];
+
+    const data = buildCalendarHeatmapData(rows, new Date('2026-06-11T12:00:00.000Z'));
+    const unpricedDay = data ? heatDay(data, '2026-06-11') : null;
+
+    expect(unpricedDay?.level).toBeGreaterThan(0);
   });
 
   test('builds model migration series per model without an other bucket', () => {

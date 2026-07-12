@@ -50,7 +50,7 @@ export const timeRangeSummaryDates = css({
 });
 
 export const timeRangeArrow = css({
-  color: 'faint',
+  color: 'muted',
   fontWeight: 500,
 });
 
@@ -80,7 +80,7 @@ export const presetGroupShell = css({
 });
 
 export const presetGroupLabel = css({
-  color: 'faint',
+  color: 'muted',
   fontSize: '9px',
   fontWeight: 700,
   letterSpacing: '0.08em',
@@ -428,7 +428,7 @@ export const timeAxis = css({
   display: 'flex',
   justifyContent: 'space-between',
   gap: '8px',
-  color: 'faint',
+  color: 'muted',
   fontSize: '11px',
   fontFamily: 'mono',
 });
@@ -496,6 +496,6 @@ export const timeAxisTick = css({
   display: { base: 'none', sm: 'inline' },
   top: 0,
   transform: 'translateX(-50%)',
-  color: 'faint',
+  color: 'muted',
   whiteSpace: 'nowrap',
 });

@@ -61,7 +61,6 @@ export interface HeatWeek {
 export interface CalendarHeatmapData {
   monthLabels: string[];
   todayKey: string;
-  useCost: boolean;
   weeks: HeatWeek[];
 }
 
@@ -97,9 +96,8 @@ export const buildCalendarHeatmapData = (rows: DashboardRow[], now = new Date())
   }
   const gridStart = shiftCalendarDays(first, -((first.getDay() + 6) % 7));
 
-  const useCost = [...byDay.values()].some((entry) => entry.cost > 0);
   const sorted = [...byDay.values()]
-    .map((entry) => (useCost ? entry.cost : entry.sessions))
+    .map((entry) => entry.sessions)
     .filter((value) => value > 0)
     .sort((a, b) => a - b);
   const quantile = (p: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] ?? 0;
@@ -118,7 +116,7 @@ export const buildCalendarHeatmapData = (rows: DashboardRow[], now = new Date())
         continue;
       }
       const entry = byDay.get(toDateInputValue(date));
-      const value = heatDayValue(entry, useCost);
+      const value = entry?.sessions ?? 0;
       days.push({
         date,
         cost: entry?.cost ?? 0,
@@ -132,14 +130,7 @@ export const buildCalendarHeatmapData = (rows: DashboardRow[], now = new Date())
     previousMonth = month;
   }
 
-  return { weeks, monthLabels, useCost, todayKey };
-};
-
-const heatDayValue = (entry: { cost: number; sessions: number } | undefined, useCost: boolean) => {
-  if (!entry) {
-    return 0;
-  }
-  return useCost ? entry.cost : entry.sessions;
+  return { weeks, monthLabels, todayKey };
 };
 
 export type TimelineDimension = 'harness' | 'model' | 'project' | 'provider';

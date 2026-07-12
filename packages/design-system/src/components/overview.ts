@@ -141,7 +141,7 @@ export const heatWeekdays = css({
   gridTemplateRows: { base: 'repeat(7, 18px)', md: 'repeat(7, 12px)' },
   gap: '3px',
   pt: '19px',
-  color: 'faint',
+  color: 'muted',
   fontSize: '9px',
   fontFamily: 'mono',
   textAlign: 'right',
@@ -158,7 +158,7 @@ export const heatMonths = css({
   gridAutoColumns: { base: '18px', md: '12px' },
   gap: '3px',
   h: '16px',
-  color: 'faint',
+  color: 'muted',
   fontSize: '10px',
   fontFamily: 'mono',
   whiteSpace: 'nowrap',
@@ -205,7 +205,7 @@ export const heatLegend = css({
   display: 'flex',
   alignItems: 'center',
   gap: '4px',
-  color: 'faint',
+  color: 'muted',
   fontSize: '10px',
 });
 
@@ -232,7 +232,7 @@ export const punchGrid = css({
 });
 
 export const punchDayLabel = css({
-  color: 'faint',
+  color: 'muted',
   fontSize: '9px',
   fontFamily: 'mono',
   textAlign: 'right',
@@ -251,7 +251,7 @@ export const punchDot = css({
 });
 
 export const punchHourLabel = css({
-  color: 'faint',
+  color: 'muted',
   fontSize: '9px',
   fontFamily: 'mono',
   textAlign: 'center',
