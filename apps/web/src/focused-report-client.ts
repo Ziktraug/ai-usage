@@ -338,6 +338,9 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
     if (result.requestFingerprint !== focusedOverviewFingerprint(request)) {
       return { applied: false, reason: 'fingerprint-mismatch' };
     }
+    if (overview() === result) {
+      return { applied: true };
+    }
     batch(() => {
       setSnapshot((current) => ({ ...current, overview: result }));
       setOverviewScopeFingerprint(focusedAdvancedAnalysisFingerprint(request.query));
@@ -355,6 +358,9 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
     }
     if (result.requestFingerprint !== focusedBreakdownFingerprint(request)) {
       return { applied: false, reason: 'fingerprint-mismatch' };
+    }
+    if (breakdown() === result) {
+      return { applied: true };
     }
     setSnapshot((current) => ({ ...current, breakdown: result }));
     return { applied: true };
