@@ -79,7 +79,11 @@ describe('CLI command parsing', () => {
     });
   });
 
-  test('parses setup web command', () => {
+  test('parses setup with file inputs and local collection', () => {
+    expect(Effect.runSync(parseCommand(['setup', 'mac.json', 'team.json']))).toEqual({
+      _tag: 'Setup',
+      args: { files: ['mac.json', 'team.json'], local: false, port: 3456 },
+    });
     expect(Effect.runSync(parseCommand(['setup', '--local', '--port', '8080']))).toEqual({
       _tag: 'Setup',
       args: { files: [], local: true, port: 8080 },
