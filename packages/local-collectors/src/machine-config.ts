@@ -12,6 +12,7 @@ import { parseSkillConfigInput, type SkillManagementConfig } from '@ai-usage/ski
 import { Effect } from 'effect';
 import { LocalHistoryError } from './errors';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
+import { assertPrivateAuthoritativeFile, ensurePrivateDirectory } from './private-storage';
 
 const machineConfigError = (operation: string, filePath: string) => (cause: unknown) =>
   new LocalHistoryError({ operation, path: filePath, cause });
@@ -118,7 +119,7 @@ const removeStaleConfigLock = async (lockPath: string): Promise<boolean> => {
 };
 
 const withConfigFileLock = async <A>(filePath: string, update: () => A | Promise<A>): Promise<A> => {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  ensurePrivateDirectory(path.dirname(filePath));
   const canonicalFilePath = path.join(fs.realpathSync(path.dirname(filePath)), path.basename(filePath));
   const lockPath = `${canonicalFilePath}.lock`;
   const deadline = Date.now() + configLockAcquireTimeoutMs;
@@ -169,8 +170,8 @@ const withConfigFileLock = async <A>(filePath: string, update: () => A | Promise
 
 const writeJsonAtomically = (filePath: string, value: unknown) => {
   const directory = path.dirname(filePath);
-  fs.mkdirSync(directory, { mode: 0o700, recursive: true });
-  fs.chmodSync(directory, 0o700);
+  ensurePrivateDirectory(directory);
+  assertPrivateAuthoritativeFile(filePath);
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   try {
     fs.writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
@@ -179,7 +180,9 @@ const writeJsonAtomically = (filePath: string, value: unknown) => {
       flag: 'wx',
     });
     fs.renameSync(temporaryPath, filePath);
-    fs.chmodSync(filePath, 0o600);
+    if (process.platform !== 'win32') {
+      fs.chmodSync(filePath, 0o600);
+    }
   } catch (error) {
     fs.rmSync(temporaryPath, { force: true });
     throw error;
@@ -237,6 +240,7 @@ export const ensureMachineConfig: Effect.Effect<UsageMachine, LocalHistoryError,
       try: async () =>
         await enqueueAiUsageConfigUpdate(filePath, () => {
           if (fs.existsSync(filePath)) {
+            assertPrivateAuthoritativeFile(filePath);
             const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
             if (!isUsageMachine(parsed)) {
               throw new Error(`Invalid machine config: ${filePath}`);
@@ -419,6 +423,7 @@ export const readAiUsageConfig: Effect.Effect<AiUsageConfig, LocalHistoryError, 
     if (!(yield* storage.exists(filePath).pipe(Effect.catchAll(() => Effect.succeed(false))))) {
       return {};
     }
+    assertPrivateAuthoritativeFile(filePath);
     const parsed = JSON.parse(yield* storage.readText(filePath)) as unknown;
     return parseAiUsageConfig(parsed, filePath);
   });
@@ -461,6 +466,7 @@ export const updateAiUsageConfig = (
     return yield* Effect.tryPromise({
       try: () =>
         enqueueAiUsageConfigUpdate(filePath, async () => {
+          assertPrivateAuthoritativeFile(filePath);
           const current = fs.existsSync(filePath)
             ? parseAiUsageConfig(JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown, filePath)
             : {};

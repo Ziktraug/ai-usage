@@ -33,6 +33,34 @@ describe('shared collector row cache', () => {
     const revived = reloaded?.entries[dbPath]?.rows[0];
     expect(revived?.date).toBeInstanceOf(Date);
     expect(cachedDbRows(reloaded, dbPath, dbStat(dbPath))?.[0]?.name).toBe('fixture');
+    if (process.platform !== 'win32') {
+      const cachePath = path.join(home, '.config', 'ai-usage', 'opencode-db-cache.json');
+      expect(fs.lstatSync(cachePath).mode % 0o1000).toBe(0o600);
+      expect(fs.lstatSync(path.dirname(cachePath)).mode % 0o1000).toBe(0o700);
+    }
+  });
+
+  test('replaces a multiply-linked disposable cache without changing its alias', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'collector-cache-'));
+    const storage = storageAt(home);
+    const cachePath = path.join(home, '.config', 'ai-usage', 'cursor-db-cache.json');
+    fs.mkdirSync(path.dirname(cachePath), { recursive: true });
+    fs.writeFileSync(cachePath, '{"version":1,"entries":{}}\n', { mode: 0o644 });
+    const aliasPath = path.join(home, 'cache-alias.json');
+    fs.linkSync(cachePath, aliasPath);
+
+    const cache = readDbRowCache(storage, 'cursor-db-cache.json', 1);
+    expect(cache?.entries).toEqual({});
+    if (cache) {
+      cache.dirty = true;
+    }
+    expect(writeDbRowCache(storage, 'cursor-db-cache.json', 1, cache)).toBe(true);
+    expect(fs.lstatSync(cachePath).nlink).toBe(1);
+    expect(fs.readFileSync(aliasPath, 'utf8')).toBe('{"version":1,"entries":{}}\n');
+    if (process.platform !== 'win32') {
+      expect(fs.lstatSync(aliasPath).mode % 0o1000).toBe(0o644);
+      expect(fs.lstatSync(cachePath).mode % 0o1000).toBe(0o600);
+    }
   });
 
   test('discards entries written under a different cache version', () => {
