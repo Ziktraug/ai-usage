@@ -243,6 +243,18 @@ const bucketIndexAtOrBefore = (buckets: TimelineBucket[], date: Date) => {
   return matchedIndex;
 };
 
+export const chartVisualRangeForSelection = (
+  chart: Pick<TimelineData, 'buckets'> & { minDay: Date },
+  selectionIndexes: readonly [number, number],
+): TimeRangeIndexRange => {
+  const fromDate = dateFromIndex(chart.minDay, selectionIndexes[0]);
+  const toDate = dateFromIndex(chart.minDay, selectionIndexes[1]);
+  return {
+    from: bucketIndexAtOrBefore(chart.buckets, fromDate),
+    to: bucketIndexAtOrBefore(chart.buckets, toDate),
+  };
+};
+
 export const timelinePlotLeft = (pct: number) => {
   const clampedPct = clampNumber(pct, 0, 100);
   // Bars and hover hit-testing live inside an 8px inset, while the crosshair is
@@ -665,12 +677,10 @@ export const TimeRangeControl = (props: {
   const zoomChartBy = (factor: number, anchorRatio = 0.5) => dispatchControl({ type: 'zoom', anchorRatio, factor });
 
   const zoomChartToSelection = (chart: NonNullable<ReturnType<typeof data>>) => {
-    const [fromIndex, toIndex] = controlState().selectionIndexes;
-    const fromDate = dateFromIndex(chart.minDay, fromIndex);
-    const toDate = dateFromIndex(chart.minDay, toIndex);
-    const from = bucketIndexAtOrBefore(chart.buckets, fromDate);
-    const to = bucketIndexAtOrBefore(chart.buckets, toDate);
-    dispatchControl({ type: 'setVisualRange', range: { from, to } });
+    dispatchControl({
+      type: 'setVisualRange',
+      range: chartVisualRangeForSelection(chart, controlState().selectionIndexes),
+    });
   };
 
   const zoomChartToLastDays = (chart: NonNullable<ReturnType<typeof data>>, days: number) => {
@@ -685,6 +695,16 @@ export const TimeRangeControl = (props: {
   };
 
   const resetVisualZoom = () => dispatchControl({ type: 'resetVisualRange' });
+
+  let initialVisualZoomApplied = false;
+  createEffect(() => {
+    const chart = data();
+    if (initialVisualZoomApplied || !chart) {
+      return;
+    }
+    initialVisualZoomApplied = true;
+    zoomChartToSelection(chart);
+  });
 
   const visualRangeVars = (chart: NonNullable<ReturnType<typeof data>>) => {
     const range = visibleBucketRange();

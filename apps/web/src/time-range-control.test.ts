@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildVisibleTimelineBars,
   chartOptionsSummary,
+  chartVisualRangeForSelection,
   defaultTimelineGranularity,
   timelineBucketLayout,
   timelinePlotLeft,
@@ -12,6 +13,22 @@ describe('time range control labels', () => {
     expect(defaultTimelineGranularity).toBe('day');
     expect(chartOptionsSummary('harness', 'day', 'cost')).toBe('Harness · Day · API value');
     expect(chartOptionsSummary('project', 'month', 'sessions')).toBe('Project · Month · Sessions');
+  });
+});
+
+describe('time range control visual zoom', () => {
+  test('maps the report selection to the matching chart buckets', () => {
+    const buckets = ['2026-05-01', '2026-06-01', '2026-07-01'].map((date) => ({
+      byKey: new Map(),
+      date: new Date(date),
+      sessions: 0,
+      total: 0,
+    }));
+
+    expect(chartVisualRangeForSelection({ buckets, minDay: new Date('2026-05-01') }, [14, 44])).toEqual({
+      from: 0,
+      to: 1,
+    });
   });
 });
 
