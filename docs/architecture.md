@@ -10,7 +10,7 @@
 4. `@ai-usage/report-data` orchestrates local collection, focused project-source reads, compatibility payloads, and usage snapshots.
 5. `@ai-usage/usage-store` persists normalized local rows and rows explicitly imported from merge bundle files, then returns validated stored report rows.
 6. `@ai-usage/usage-merge` orchestrates explicit merge bundle export and file import over the store.
-7. `apps/cli` and `apps/web` render the shared data through their own output adapters. Static HTML and CLI export retain the complete compatibility payload; the served web app uses request-fingerprinted, exact-revision focused queries.
+7. `apps/cli` and `apps/web` render the shared data through their own output adapters. CLI compatible consumers retain the complete compatibility payload; the served web app uses request-fingerprinted, exact-revision focused queries.
 
 ## Package Ownership
 
@@ -20,8 +20,7 @@ Owns pure domain data and deterministic calculations:
 
 - usage row and provenance types;
 - row derivations such as active dates, token totals, line deltas, and cost approximation helpers;
-- pricing, analytics, project aliases, strict report-query requests and results, report payload serialization, and usage snapshot parsing/creation;
-- static report HTML inlining primitives.
+- pricing, analytics, project aliases, strict report-query requests and results, report payload serialization, and usage snapshot parsing/creation.
 
 `@ai-usage/report-core` must not read local history, the filesystem, SQLite, browser globals, or app runtime state.
 
@@ -44,7 +43,7 @@ Owns application-facing report orchestration:
 - project alias application;
 - partial local history warnings;
 - focused local-row and known-project-source request seams;
-- compatibility `UsageReportPayload` creation for CLI and static export;
+- compatibility `UsageReportPayload` creation for CLI consumers;
 - usage snapshot and merge assembly.
 
 Apps should prefer this package over reaching into collectors directly. The known exception is the CLI quota path, which reads the newest Codex quota snapshot through the public `@ai-usage/local-collectors/codex-history` export.
@@ -94,7 +93,7 @@ Skill inventory is local-machine scoped. This package must not use manually impo
 Owns terminal and file output adapters:
 
 - CLI argument parsing;
-- terminal table, CSV, JSON, payload JSON, HTML export rendering;
+- terminal table, CSV, JSON, and payload JSON rendering;
 - machine/setup/project-source commands;
 - bounded portable snapshot files and the quota command.
 
@@ -106,12 +105,11 @@ Owns web runtime and UI:
 
 - TanStack Start server functions and Bun subprocess boundary for local collection under Nitro;
 - immutable report revision manifests, read-only SQLite materializations, and exact-revision focused-result adapters;
-- exact-revision Overview, Breakdown, support, Session page, campaign-child, neighbor, CSV, and HTML queries through bounded Bun artifact runners;
+- exact-revision Overview, Breakdown, support, Session page, campaign-child, and neighbor queries through bounded Bun artifact runners;
 - shared focused/Session request validation, projection, cursor, budget, and fingerprint contracts;
-- a complete compatibility payload only for CLI/static-file export and an explicit served HTML download;
+- a complete compatibility payload for CLI consumers;
 - file-based merge bundle import/export on `/sync`, including bounded local upload handling;
 - dashboard, overview, table schema, and UI model modules;
-- static-local and served exact-revision export adapters.
 
 Client-visible modules must not import `*.server.*`. Shared calculations should live in small model modules such as `dashboard-model.ts`, `overview-model.ts`, and `session-table-schema.ts`.
 
@@ -120,8 +118,8 @@ provider representative rows, provider-status records, and warnings are
 admitted under the shared 512 KiB budget; the result carries exact omission
 counts and the UI identifies the summary as truncated when anything is left
 out. This bootstrap is not a semantic substitute for destination queries:
-Overview, complete Breakdown groups, paged Sessions/campaign/neighbor reads,
-and complete CSV/HTML exports execute separately against the named revision.
+Overview, complete Breakdown groups, and paged Sessions/campaign/neighbor reads
+execute separately against the named revision.
 Omitted support metadata remains identified rather than being presented as
 complete.
 

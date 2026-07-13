@@ -2,7 +2,7 @@
 
 Unified local AI usage report for the coding tools installed on this machine — and across multiple machines via portable snapshots.
 
-The CLI reads local history files and databases written by each tool, then reports per-session token usage, estimated cost, and aggregate analytics — in the terminal or as an interactive single-file HTML app. It never calls provider APIs; everything is computed from local data.
+The CLI reads local history files and databases written by each tool, then reports per-session token usage, estimated cost, and aggregate analytics — in the terminal or the interactive web app. It never calls provider APIs; everything is computed from local data.
 
 ## Supported sources
 
@@ -87,7 +87,7 @@ bun run cli -- machine set-label "MacBook Pro"
 bun run cli -- merge ./mac-usage.json --local
 
 # All normal report options work on merged data
-bun run cli -- merge ./mac-usage.json --local --since 30d --project exalibur --html
+bun run cli -- merge ./mac-usage.json --local --since 30d --project exalibur --csv
 ```
 
 Duplicate sessions (same machine, same harness, same session ID) are deduplicated automatically. The newest snapshot wins.
@@ -100,7 +100,7 @@ Usage snapshots and merge bundles serve different workflows: `snapshot` plus `me
 
 ### 4. See where sessions come from
 
-Merged reports include a `Machine` column (CLI `--wide`, CSV, and HTML dashboard). CSV also includes `machine_id` for scripting.
+Merged reports include a `Machine` column (CLI `--wide`, CSV, and dashboard). CSV also includes `machine_id` for scripting.
 
 Projects with the same name from different machines stay separate by default and are displayed with the machine label.
 If those folders are intentionally the same project, create a project group in the dashboard's Projects tab.
@@ -162,26 +162,13 @@ CSV:
 bun run cli -- --csv
 ```
 
-HTML app report:
-
-```sh
-bun run html export
-```
-
-This builds the report app and writes a dated single-file report to `ai-usage-reports/`, which is ignored by git. Pass normal report filters through the export command:
-
-```sh
-bun run html export --since 30d --limit 20
-```
-
 ### Interactive report
 
-The HTML report is a self-contained Solid app, not a static dump. It opens on Overview and lets you:
+The web report opens on Overview and lets you:
 
 - switch between **Overview, Sessions, and Breakdown**, with Models, Providers, Harnesses, Projects, and Cursor AI inside Breakdown;
 - filter by date range with presets or a custom range, and read the activity timeline;
 - show/hide columns (input/output/cache tokens, RTK savings, durations, turns, tools, line deltas, …), sort, and filter by field;
-- export the current view to CSV.
 
 All exploration state (active view, filters, range, sorting, visible columns) is persisted in the URL, so a report link reopens exactly where you left off.
 
@@ -196,25 +183,25 @@ All exploration state (active view, filters, range, sorting, visible columns) is
 - `--wide`: add Machine, duration, turns, tool calls, and line delta columns
 - `--no-cursor`: skip Cursor
 - `--no-color` / `--color`: control ANSI color output (default: auto)
-- `--json` / `--csv` / `--html`: pick an output format (mutually exclusive)
+- `--json` / `--csv` / `--payload-json`: pick an output format (mutually exclusive)
 
 `merge` accepts one or more snapshot file paths plus the same report options. Add `--local` to include this machine's local history.
 
 `setup [files...] [--local] [--port <number>]` launches the loopback-only project-grouping UI. Supply at least one snapshot file, `--local`, or both; `--port` changes its local listener port.
 
-Merged CSV/JSON/HTML payloads include row provenance (`source.machineLabel`, `source.machineId`, harness key, and source session ID) when available. The terminal table shows `Machine` in `--wide` mode.
+Merged CSV/JSON payloads include row provenance (`source.machineLabel`, `source.machineId`, harness key, and source session ID) when available. The terminal table shows `Machine` in `--wide` mode.
 
 ## Project layout
 
-- `packages/report-core` (`@ai-usage/report-core`): pure row types, pricing, normalization, analytics, report payloads, snapshots, and HTML inlining primitives
+- `packages/report-core` (`@ai-usage/report-core`): pure row types, pricing, normalization, analytics, report payloads, and snapshots
 - `packages/local-collectors` (`@ai-usage/local-collectors`): Effect-based local history collectors for Claude, Codex, OpenCode, Cursor, RTK enrichment, machine identity, and user config
 - `packages/report-data` (`@ai-usage/report-data`): report orchestration seam over core plus local collectors
 - `packages/usage-store` (`@ai-usage/usage-store`): SQLite materialization, merge-bundle persistence, and stored report-row queries
 - `packages/usage-merge` (`@ai-usage/usage-merge`): explicit merge-bundle file import/export workflows
 - `packages/skills` (`@ai-usage/skills`): local skill inventory, validation, projection, and reconciliation workflows
 - `packages/design-system` (`@ai-usage/design-system`): Panda/Solid primitives, report style slots, and generated Panda consumer exports
-- `apps/cli`: terminal CLI, quota/setup commands, portable snapshots, and table/CSV/JSON/HTML output adapters
-- `apps/web`: Solid + TanStack Start/Router/Table + Panda CSS report app, local Skills control plane, file-only `/sync` route, and browser export adapters
+- `apps/cli`: terminal CLI, quota/setup commands, portable snapshots, and table/CSV/JSON/payload output adapters
+- `apps/web`: Solid + TanStack Start/Router/Table + Panda CSS report app, local Skills control plane, and file-only `/sync` route
 
 Architecture docs:
 
@@ -255,15 +242,12 @@ Run the deterministic browser suite (after `bun x playwright install chromium` o
 bun run test:e2e
 ```
 
-After a production build, exercise the loopback production listener, the real
-revision/query subprocess path, the complete HTML export integration, and the
-self-contained `file://` export:
+After a production build, exercise the loopback production listener and the real
+revision/query subprocess path:
 
 ```sh
 bun run test:web-production
 bun run test:e2e-production
-bun run test:html-export
-bun run test:html-file
 ```
 
 Run the report app in development:
@@ -272,7 +256,7 @@ Run the report app in development:
 bun run dev
 ```
 
-The dev server collects this machine's real usage data and refreshes the dashboard through immutable, destination-focused report queries. Its bounded support bootstrap reports omitted-item counts when summary metadata does not fit; row-derived destination queries and complete CSV/HTML exports remain independent of those summary omissions. Static HTML export embeds the complete compatibility payload instead. When local collection fails, development falls back to a demo payload that is flagged in the UI.
+The dev server collects this machine's real usage data and refreshes the dashboard through immutable, destination-focused report queries. Its bounded support bootstrap reports omitted-item counts when summary metadata does not fit; row-derived destination queries remain independent of those summary omissions. When local collection fails, development falls back to a demo payload that is flagged in the UI.
 
 ## Notes
 
