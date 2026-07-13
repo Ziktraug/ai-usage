@@ -1,6 +1,8 @@
 const escapeScriptContent = (content: string) => content.replace(/<\/script/gi, '<\\/script');
 
 const escapeStyleContent = (content: string) => content.replace(/<\/style/gi, '<\\/style');
+const MODULE_SCRIPT_TYPE_PATTERN = /\btype\s*=\s*["']module["']/i;
+const REPORT_PAYLOAD_PLACEHOLDER = '<meta name="ai-usage-report-payload-placeholder">';
 
 export interface InlineReportHtmlInput {
   html: string;
@@ -29,6 +31,14 @@ export const discoverHtmlAssetUrls = (html: string) => {
   return [...new Set([...scriptSrcs, ...stylesheetHrefs])];
 };
 
+const injectPayloadScript = (html: string, payloadScript: string): string => {
+  const lastHeadClose = html.lastIndexOf('</head>');
+  if (lastHeadClose === -1) {
+    return `${payloadScript}${html}`;
+  }
+  return html.slice(0, lastHeadClose) + payloadScript + html.slice(lastHeadClose);
+};
+
 export const inlineAssetsIntoHTML = (
   html: string,
   readAssetContent: (src: string) => string,
@@ -45,12 +55,13 @@ export const inlineAssetsIntoHTML = (
     },
   );
 
-  // Inline scripts: drop type="module" (breaks on file://), move each inline
-  // script from <head> to just before </body> so the DOM is ready when they run.
+  // Inline scripts and move them from <head> to just before </body> so the DOM
+  // is ready when they run. Preserve module semantics because production
+  // client bundles can contain import.meta even after they are self-contained.
   const movedScripts: string[] = [];
   result = result.replace(
     /<script\b([^>]*)\bsrc=["']([^"']+)["']([^>]*)>([\s\S]*?)<\/script>/gi,
-    (_match, _before: string, src: string, _after: string, body: string) => {
+    (_match, before: string, src: string, after: string, body: string) => {
       if (body.trim()) {
         return _match;
       }
@@ -61,7 +72,9 @@ export const inlineAssetsIntoHTML = (
       if (!content) {
         return _match;
       }
-      movedScripts.push(`<script>${escapeScriptContent(content)}</script>`);
+      const attributes = `${before} ${after}`;
+      const scriptType = MODULE_SCRIPT_TYPE_PATTERN.test(attributes) ? ' type="module"' : '';
+      movedScripts.push(`<script${scriptType}>${escapeScriptContent(content)}</script>`);
       return '';
     },
   );
@@ -71,12 +84,7 @@ export const inlineAssetsIntoHTML = (
   // Inject the payload before the *structural* </head> — the last one, which
   // appears after all inline script/style content. Earlier </head> occurrences
   // inside inline JS/template literals are not structural HTML boundaries.
-  const lastHeadClose = result.lastIndexOf('</head>');
-  if (lastHeadClose === -1) {
-    result = `${payloadScript}${result}`;
-  } else {
-    result = result.slice(0, lastHeadClose) + payloadScript + result.slice(lastHeadClose);
-  }
+  result = injectPayloadScript(result, payloadScript);
 
   // Append the moved scripts before </body> so the DOM (#root) is ready.
   if (movedScripts.length > 0) {
@@ -100,5 +108,10 @@ export const inlineReportHTML = async ({ html, payload, readAssetContent }: Inli
     }),
   );
 
-  return inlineAssetsIntoHTML(html, (src) => assetContent.get(src) ?? '', createReportPayloadScript(payload));
+  let result = inlineAssetsIntoHTML(html, (src) => assetContent.get(src) ?? '', REPORT_PAYLOAD_PLACEHOLDER);
+  for (const src of assetContent.keys()) {
+    const inertDataUrl = src.endsWith('.css') ? 'data:text/css,' : 'data:text/javascript,export{}';
+    result = result.replaceAll(src, inertDataUrl);
+  }
+  return result.replace(REPORT_PAYLOAD_PLACEHOLDER, createReportPayloadScript(payload));
 };
