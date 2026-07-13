@@ -1,6 +1,5 @@
 import {
   parseFocusedBreakdownRequest,
-  parseFocusedCsvRequest,
   parseFocusedOverviewRequest,
   parseFocusedRevisionRequest,
 } from '@ai-usage/report-core/focused-report-query';
@@ -72,14 +71,6 @@ export const getFocusedReportBreakdown = createServerFn({ method: 'POST' })
   .handler(({ data }) =>
     import('./focused-report-query-runner.server').then(({ runFocusedReportQueryForServer }) =>
       runFocusedReportQueryForServer('breakdown', data),
-    ),
-  );
-
-export const getFocusedReportCsv = createServerFn({ method: 'POST' })
-  .validator(parseFocusedCsvRequest)
-  .handler(({ data }) =>
-    import('./focused-report-query-runner.server').then(({ runFocusedReportQueryForServer }) =>
-      runFocusedReportQueryForServer('csv', data),
     ),
   );
 

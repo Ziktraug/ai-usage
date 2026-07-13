@@ -8,7 +8,6 @@ import {
   type FocusedReportSupport,
   parseFocusedReportQueryResult,
   projectFocusedBreakdown,
-  projectFocusedCsv,
   projectFocusedHtmlPayload,
   projectFocusedOverview,
   projectFocusedSupport,
@@ -164,7 +163,7 @@ describe('focused report SQLite queries', () => {
     }
   });
 
-  test('serves pruned bootstrap support and complete dedicated exports', async () => {
+  test('serves pruned bootstrap support and complete HTML exports', async () => {
     const { database } = await fixture();
     try {
       const revisionRequest = { revision: 'revision-a' };
@@ -186,8 +185,6 @@ describe('focused report SQLite queries', () => {
       });
       expect(Buffer.byteLength(JSON.stringify(supportResult))).toBeLessThan(512 * 1024);
 
-      const csvRequest = { query: overviewRequest.query, sort: [{ desc: true, id: 'total' as const }] };
-      expect(executeFocusedReportQuery(database, 'csv', csvRequest)).toEqual(projectFocusedCsv(rows, csvRequest));
       expect(executeFocusedReportQuery(database, 'html-payload', revisionRequest)).toEqual(
         projectFocusedHtmlPayload(rows, support, revisionRequest),
       );

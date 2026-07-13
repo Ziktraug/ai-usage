@@ -1,8 +1,6 @@
 import {
   type FocusedBreakdownRequest,
   type FocusedBreakdownResult,
-  type FocusedCsvRequest,
-  type FocusedCsvResult,
   type FocusedHtmlPayloadResult,
   type FocusedOverviewRequest,
   type FocusedOverviewResult,
@@ -10,11 +8,9 @@ import {
   type FocusedRevisionRequest,
   type FocusedSupportResult,
   focusedBreakdownFingerprint,
-  focusedCsvFingerprint,
   focusedOverviewFingerprint,
   focusedRevisionFingerprint,
   parseFocusedBreakdownRequest,
-  parseFocusedCsvRequest,
   parseFocusedOverviewRequest,
   parseFocusedReportQueryResult,
   parseFocusedRevisionRequest,
@@ -26,7 +22,6 @@ import { resolveReportRuntimePaths } from './report-runtime-paths.server';
 
 interface FocusedRequestByKind {
   breakdown: FocusedBreakdownRequest;
-  csv: FocusedCsvRequest;
   'html-payload': FocusedRevisionRequest;
   overview: FocusedOverviewRequest;
   support: FocusedRevisionRequest;
@@ -34,7 +29,6 @@ interface FocusedRequestByKind {
 
 interface FocusedResultByKind {
   breakdown: FocusedBreakdownResult;
-  csv: FocusedCsvResult;
   'html-payload': FocusedHtmlPayloadResult;
   overview: FocusedOverviewResult;
   support: FocusedSupportResult;
@@ -56,9 +50,6 @@ const parseRequest = <Kind extends FocusedReportQueryKind>(
   if (kind === 'breakdown') {
     return parseFocusedBreakdownRequest(input) as FocusedRequestByKind[Kind];
   }
-  if (kind === 'csv') {
-    return parseFocusedCsvRequest(input) as FocusedRequestByKind[Kind];
-  }
   return parseFocusedRevisionRequest(input) as FocusedRequestByKind[Kind];
 };
 
@@ -68,8 +59,8 @@ const requestRevision = <Kind extends FocusedReportQueryKind>(
 ): ReportRevision => {
   const request = parseRequest(kind, input);
   return parseReportRevision(
-    kind === 'overview' || kind === 'breakdown' || kind === 'csv'
-      ? (request as FocusedOverviewRequest | FocusedBreakdownRequest | FocusedCsvRequest).query.revision
+    kind === 'overview' || kind === 'breakdown'
+      ? (request as FocusedOverviewRequest | FocusedBreakdownRequest).query.revision
       : (request as FocusedRevisionRequest).revision,
   );
 };
@@ -84,9 +75,6 @@ const requestFingerprint = <Kind extends FocusedReportQueryKind>(
   }
   if (kind === 'breakdown') {
     return focusedBreakdownFingerprint(request as FocusedBreakdownRequest);
-  }
-  if (kind === 'csv') {
-    return focusedCsvFingerprint(request as FocusedCsvRequest);
   }
   return focusedRevisionFingerprint(kind, request as FocusedRevisionRequest);
 };

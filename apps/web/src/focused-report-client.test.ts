@@ -2,8 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import {
   type FocusedBreakdownRequest,
   type FocusedBreakdownResult,
-  type FocusedCsvRequest,
-  type FocusedCsvResult,
   type FocusedHtmlPayloadResult,
   type FocusedOverviewRequest,
   type FocusedOverviewResult,
@@ -83,8 +81,6 @@ const success = <Result extends { requestFingerprint: string; revision: string }
 const sourceWith = (overrides: Partial<FocusedReportSource>): FocusedReportSource => ({
   getBreakdown: (_request: FocusedBreakdownRequest) =>
     Promise.reject<SessionQueryServerResult<FocusedBreakdownResult>>(new Error('Unexpected breakdown request')),
-  getCsv: (_request: FocusedCsvRequest) =>
-    Promise.reject<SessionQueryServerResult<FocusedCsvResult>>(new Error('Unexpected CSV request')),
   getHtmlPayload: (_request: FocusedRevisionRequest) =>
     Promise.reject<SessionQueryServerResult<FocusedHtmlPayloadResult>>(new Error('Unexpected HTML request')),
   getManifest: () => Promise.resolve(manifest('revision-a')),

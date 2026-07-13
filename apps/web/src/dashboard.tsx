@@ -2,7 +2,6 @@ import { MultiSelect, Tabs } from '@ai-usage/design-system';
 import { css } from '@ai-usage/design-system/css';
 import {
   activeFilters,
-  commandButton,
   demoBadge,
   eyebrow,
   eyebrowRow,
@@ -67,7 +66,7 @@ import {
   resolveClientPerfEnabled,
 } from './client-perf';
 import { CursorAttributionPanel } from './cursor-attribution-panel';
-import { downloadCSV, downloadCSVContent, downloadHTML } from './dashboard-export';
+import { downloadHTML } from './dashboard-export';
 import { FilterPill, fieldFilterLabels } from './dashboard-filters';
 import { MetricTile } from './dashboard-metrics';
 import {
@@ -107,7 +106,6 @@ import {
   createServedFocusedReportSource,
   FocusedRevisionExpiredError,
   fetchFocusedBreakdown,
-  fetchFocusedCsv,
   fetchFocusedHtmlPayload,
   fetchFocusedOverview,
   fetchFocusedReportBootstrap,
@@ -318,84 +316,6 @@ export const Dashboard = (props: {
   const [selectedNavigationRow, setSelectedNavigationRow] = createSignal<DashboardRow | null>(null);
   const [sessionNeighbors, setSessionNeighbors] = createSignal<SessionNeighborResult>();
   const [sessionNeighborsLoading, setSessionNeighborsLoading] = createSignal(false);
-  const [servedPrintRows, setServedPrintRows] = createSignal<DashboardRow[]>();
-  const [servedPrintRowsLoading, setServedPrintRowsLoading] = createSignal(false);
-  let servedPrintRevision: string | undefined;
-  let servedPrintScope: string | undefined;
-  const prepareServedPrintRows = async (): Promise<void> => {
-    if (!(focusedSource && focusedStore) || servedPrintRowsLoading()) {
-      return;
-    }
-    const revision = focusedStore.revision();
-    const printScope = JSON.stringify({
-      bounds: tableDateBounds(),
-      campaigns: groupCampaigns(),
-      filters: filterSnapshot(),
-      sorting: sorting(),
-    });
-    if (servedPrintRevision === revision && servedPrintScope === printScope && servedPrintRows()) {
-      return;
-    }
-    servedPrintRevision = undefined;
-    servedPrintScope = undefined;
-    setServedPrintRows();
-    setServedPrintRowsLoading(true);
-    try {
-      const result = await fetchFocusedHtmlPayload(focusedSource, { revision });
-      if (focusedStore.revision() !== revision) {
-        return;
-      }
-      const allRows = result.payload.rows.map(enrichReportRow);
-      const filteredRows = filterRowsByDateBounds(filterTimelineRows(allRows, filterSnapshot()), tableDateBounds());
-      setServedPrintRows(buildCampaignTableRows(allRows, filteredRows, sorting(), groupCampaigns()));
-      servedPrintRevision = revision;
-      servedPrintScope = printScope;
-    } catch (error) {
-      setLastRefreshError(error instanceof Error ? error.message : 'Failed to prepare complete print rows');
-    } finally {
-      setServedPrintRowsLoading(false);
-    }
-  };
-  const printCompleteReport = async (): Promise<void> => {
-    await prepareServedPrintRows();
-    if (!servedPrintRows()) {
-      throw new Error('Complete print rows are unavailable');
-    }
-    window.print();
-  };
-  onMount(() => {
-    if (!focusedSource) {
-      return;
-    }
-    const onBeforePrint = () => {
-      prepareServedPrintRows().catch((error: unknown) => {
-        setLastRefreshError(error instanceof Error ? error.message : 'Failed to prepare complete print rows');
-      });
-    };
-    const onPrintShortcut = (event: KeyboardEvent) => {
-      if (!(event.key.toLowerCase() === 'p' && (event.ctrlKey || event.metaKey))) {
-        return;
-      }
-      event.preventDefault();
-      printCompleteReport().catch((error: unknown) => {
-        setLastRefreshError(error instanceof Error ? error.message : 'Failed to print complete report');
-      });
-    };
-    window.addEventListener('beforeprint', onBeforePrint);
-    window.addEventListener('keydown', onPrintShortcut);
-    onCleanup(() => {
-      window.removeEventListener('beforeprint', onBeforePrint);
-      window.removeEventListener('keydown', onPrintShortcut);
-    });
-  });
-  createEffect(() => {
-    const revision = focusedStore?.revision();
-    if (servedPrintRevision && servedPrintRevision !== revision) {
-      servedPrintRevision = undefined;
-      servedPrintScope = undefined;
-      setServedPrintRows();
-    }
-  });
   let searchInputEl: HTMLInputElement | undefined;
   const cursorCommitRows = createMemo(() =>
     focusedStore
@@ -972,18 +892,6 @@ export const Dashboard = (props: {
       focusedStore?.overview()?.view.previousSummary ??
       buildPreviousPeriodSummary(timelineRows(), dateRange.bounds(), generatedAt()),
   );
-  const exportRows = () => sortedRows();
-  const downloadCompleteCsv = async (): Promise<void> => {
-    if (!(focusedSource && focusedStore)) {
-      downloadCSV(exportRows(), reportSupport().generatedAt);
-      return;
-    }
-    const result = await fetchFocusedCsv(focusedSource, {
-      query: focusedQueryScope(),
-      sort: [search().sort],
-    });
-    downloadCSVContent(result.csv, reportSupport().generatedAt);
-  };
   const downloadCompleteHtml = async (): Promise<void> => {
     if (!(focusedSource && focusedStore)) {
       await downloadHTML(initialPayload);
@@ -1362,17 +1270,6 @@ export const Dashboard = (props: {
               refreshing={refreshing()}
               refreshPaused={refreshPaused()}
             />
-            <button
-              class={commandButton}
-              onClick={() => {
-                downloadCompleteCsv().catch((error: unknown) => {
-                  setLastRefreshError(error instanceof Error ? error.message : 'Failed to export CSV');
-                });
-              }}
-              type="button"
-            >
-              Export CSV
-            </button>
             <Show when={!import.meta.env.DEV}>
               <button
                 class={ghostButton}
@@ -1384,19 +1281,6 @@ export const Dashboard = (props: {
                 type="button"
               >
                 Export HTML
-              </button>
-            </Show>
-            <Show when={focusedStore}>
-              <button
-                class={ghostButton}
-                onClick={() => {
-                  printCompleteReport().catch((error: unknown) => {
-                    setLastRefreshError(error instanceof Error ? error.message : 'Failed to print complete report');
-                  });
-                }}
-                type="button"
-              >
-                Print complete report
               </button>
             </Show>
           </div>
@@ -1519,12 +1403,6 @@ export const Dashboard = (props: {
                                       );
                                     });
                                   },
-                                }
-                              : {})}
-                            {...(servedSessionQueries
-                              ? {
-                                  printRows: servedPrintRows() ?? [],
-                                  printRowsLoading: servedPrintRowsLoading(),
                                 }
                               : {})}
                             columnVisibility={columnVisibility()}

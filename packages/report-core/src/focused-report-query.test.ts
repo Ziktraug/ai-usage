@@ -1,15 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { serializedRowsToCSV } from './csv';
 import {
   type FocusedOverviewRequest,
   type FocusedReportSupport,
   focusedAdvancedAnalysisFingerprint,
   focusedOverviewFingerprint,
-  parseFocusedCsvRequest,
   parseFocusedOverviewRequest,
   parseFocusedReportQueryResult,
   projectFocusedBreakdown,
-  projectFocusedCsv,
   projectFocusedHtmlPayload,
   projectFocusedOverview,
   projectFocusedSupport,
@@ -137,9 +134,6 @@ describe('focused report query contracts', () => {
     const { includeAdvanced: _includeAdvanced, ...requestWithoutAdvancedMode } = overviewRequest;
     expect(() => parseFocusedOverviewRequest(requestWithoutAdvancedMode)).toThrow('unknown or missing');
     expect(() => parseFocusedOverviewRequest({ ...overviewRequest, extra: true })).toThrow('unknown or missing');
-    expect(() =>
-      parseFocusedCsvRequest({ query: overviewRequest.query, sort: [{ desc: false, id: 'unknown' }] }),
-    ).toThrow('invalid');
   });
 
   test('omits advanced analysis work and results from timeline-only requests', () => {
@@ -310,13 +304,7 @@ describe('focused report query contracts', () => {
     ).toThrow('cursorCommitAttribution');
   });
 
-  test('produces complete filtered CSV and full compatibility HTML payloads', () => {
-    const csvRequest = { query: overviewRequest.query, sort: [{ desc: true, id: 'total' as const }] };
-    const csv = projectFocusedCsv(rows, csvRequest);
-    const expectedRows = [rows[3]!, rows[2]!, rows[1]!];
-
-    expect(csv.rowCount).toBe(3);
-    expect(csv.csv).toBe(serializedRowsToCSV(expectedRows));
+  test('produces full compatibility HTML payloads', () => {
     const html = projectFocusedHtmlPayload(rows, support, { revision: 'revision-a' });
     expect(html.payload.rows).toEqual(rows);
     expect(html.payload.tableRows).toEqual(rows.slice(0, 2));

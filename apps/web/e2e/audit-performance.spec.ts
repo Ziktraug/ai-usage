@@ -48,7 +48,7 @@ test('records deterministic bounded DOM measurements for the audit', async ({ pa
   await expect(advancedAnalysis).toHaveCount(1);
   await expect(page.locator('summary').filter({ hasText: 'Advanced analysis' })).toHaveCount(0);
   const advancedAnalysisNodes = await countDomNodes(advancedAnalysis);
-  await expect(advancedAnalysis.getByText('Punchcard data', { exact: true })).toBeVisible();
+  await expect(advancedAnalysis.getByText('Punchcard data', { exact: true })).toHaveCount(0);
 
   expect(mobile.tableNodes).toBe(0);
   expect(mobile.mobileSummaryNodes).toBeGreaterThan(1);

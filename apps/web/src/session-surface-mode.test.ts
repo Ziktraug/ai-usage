@@ -6,13 +6,9 @@ import {
 } from './session-surface-mode';
 
 describe('session surface mode controller', () => {
-  test('starts pending, follows viewport changes, and restores the viewport after print', () => {
+  test('starts pending and follows viewport changes', () => {
     let mediaMatches = false;
     const mediaListeners = new Set<(event: { matches: boolean }) => void>();
-    const printListeners = {
-      afterprint: new Set<() => void>(),
-      beforeprint: new Set<() => void>(),
-    };
     let requestedQuery = '';
     const controller = createSessionSurfaceModeController({
       matchMedia: (query) => {
@@ -25,10 +21,6 @@ describe('session surface mode controller', () => {
           removeEventListener: (_type, listener) => mediaListeners.delete(listener),
         };
       },
-      printEvents: {
-        addEventListener: (type, listener) => printListeners[type].add(listener),
-        removeEventListener: (type, listener) => printListeners[type].delete(listener),
-      },
     });
     const modes: SessionSurfaceMode[] = [];
 
@@ -38,25 +30,16 @@ describe('session surface mode controller', () => {
     for (const listener of mediaListeners) {
       listener({ matches: true });
     }
-    for (const listener of printListeners.beforeprint) {
-      listener();
-    }
     mediaMatches = false;
     for (const listener of mediaListeners) {
       listener({ matches: false });
     }
-    expect(controller.mode()).toBe('print');
-    for (const listener of printListeners.afterprint) {
-      listener();
-    }
 
     expect(requestedQuery).toBe(SESSION_DESKTOP_MEDIA_QUERY);
-    expect(modes).toEqual(['mobile', 'desktop', 'print', 'mobile']);
+    expect(modes).toEqual(['mobile', 'desktop', 'mobile']);
     stop();
     expect(controller.mode()).toBe('pending');
     expect(mediaListeners.size).toBe(0);
-    expect(printListeners.beforeprint.size).toBe(0);
-    expect(printListeners.afterprint.size).toBe(0);
   });
 
   test('rejects duplicate starts while listeners are active', () => {
@@ -66,10 +49,6 @@ describe('session surface mode controller', () => {
         addEventListener: () => undefined,
         removeEventListener: () => undefined,
       }),
-      printEvents: {
-        addEventListener: () => undefined,
-        removeEventListener: () => undefined,
-      },
     });
     const stop = controller.start(() => undefined);
 

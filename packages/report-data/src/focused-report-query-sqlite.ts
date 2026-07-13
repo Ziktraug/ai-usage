@@ -6,8 +6,6 @@ import {
   buildFocusedTimelineFromAggregates,
   type FocusedBreakdownRequest,
   type FocusedBreakdownResult,
-  type FocusedCsvRequest,
-  type FocusedCsvResult,
   type FocusedDateDomain,
   type FocusedDayAggregate,
   type FocusedHtmlPayloadResult,
@@ -22,13 +20,10 @@ import {
   type FocusedSupportResult,
   type FocusedTimelineAggregate,
   focusedBreakdownFingerprint,
-  focusedCsvFingerprint,
   focusedOverviewFingerprint,
   parseFocusedBreakdownRequest,
-  parseFocusedCsvRequest,
   parseFocusedOverviewRequest,
   parseFocusedRevisionRequest,
-  projectFocusedCsv,
   projectFocusedHtmlPayload,
   projectFocusedOverviewFromPresentationRows,
   projectFocusedSupport,
@@ -42,14 +37,12 @@ import type {
 import { MAX_USAGE_SNAPSHOT_ROWS } from '@ai-usage/report-core/snapshot';
 import {
   buildSessionQuerySqlFilter,
-  buildSessionQuerySqlOrder,
   type SessionQuerySqliteDatabase,
   type SessionQuerySqliteTrace,
 } from './session-query-sqlite';
 
 export type FocusedReportQueryResult =
   | FocusedBreakdownResult
-  | FocusedCsvResult
   | FocusedHtmlPayloadResult
   | FocusedOverviewResult
   | FocusedSupportResult;
@@ -694,31 +687,6 @@ const runBreakdown = (
   };
 };
 
-const runCsv = (
-  database: SessionQuerySqliteDatabase,
-  input: FocusedCsvRequest,
-  trace?: SessionQuerySqliteTrace,
-): FocusedCsvResult => {
-  const request = parseFocusedCsvRequest(input);
-  const filter = buildSessionQuerySqlFilter(sessionRequest(request.query, request.sort));
-  const order = buildSessionQuerySqlOrder(request.sort, 'row_id', 'ordinal');
-  const rows = executeAll<{ source_row_json: string }>(
-    database,
-    `SELECT source_row_json FROM session_rows WHERE ${filter.where} ORDER BY ${order}`,
-    filter.params,
-    trace,
-  ).map(({ source_row_json }) => JSON.parse(source_row_json) as SerializedRow);
-  const result = projectFocusedCsv(rows, {
-    query: {
-      ...request.query,
-      filters: { fields: {}, harness: [], machine: [], query: '' },
-      range: { from: null, to: null },
-    },
-    sort: request.sort,
-  });
-  return { ...result, requestFingerprint: focusedCsvFingerprint(request) };
-};
-
 const runHtmlPayload = (
   database: SessionQuerySqliteDatabase,
   input: FocusedRevisionRequest,
@@ -810,9 +778,6 @@ export const executeFocusedReportQuery = (
   }
   if (kind === 'breakdown') {
     return runBreakdown(database, parseFocusedBreakdownRequest(request), trace);
-  }
-  if (kind === 'csv') {
-    return runCsv(database, parseFocusedCsvRequest(request), trace);
   }
   if (kind === 'html-payload') {
     return runHtmlPayload(database, parseFocusedRevisionRequest(request), trace);

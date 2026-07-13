@@ -22,20 +22,14 @@ const hasOwnerOnlyPermissions = (mode: number): boolean => {
 const isOwnedByCurrentUser = (uid: number): boolean => process.getuid === undefined || uid === process.getuid();
 
 const parseKind = (value: string | undefined): FocusedReportQueryKind => {
-  if (
-    value === 'breakdown' ||
-    value === 'csv' ||
-    value === 'html-payload' ||
-    value === 'overview' ||
-    value === 'support'
-  ) {
+  if (value === 'breakdown' || value === 'html-payload' || value === 'overview' || value === 'support') {
     return value;
   }
   throw new Error('Unknown focused report query kind');
 };
 
 const maximumResultBytes = (kind: FocusedReportQueryKind): number => {
-  if (kind === 'csv' || kind === 'html-payload') {
+  if (kind === 'html-payload') {
     return MAX_REPORT_RUNNER_ARTIFACT_BYTES;
   }
   if (kind === 'breakdown') {

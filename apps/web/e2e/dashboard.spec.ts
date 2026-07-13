@@ -44,13 +44,10 @@ test('shows analysis and report metrics without disclosure gates', async ({ page
 
   const advancedSummary = page.locator('summary').filter({ hasText: 'Advanced analysis' });
   const punchcard = page.getByRole('heading', { level: 2, name: 'Punchcard' });
-  const punchcardData = page.getByText('Punchcard data', { exact: true });
   await expect(page.getByRole('heading', { level: 2, name: 'Advanced analysis' })).toBeVisible();
   await expect(advancedSummary).toHaveCount(0);
   await expect(punchcard).toBeVisible();
-  await expect(punchcardData).toBeVisible();
-  await punchcardData.click();
-  await expect(page.getByRole('table', { name: 'Punchcard data' })).toBeVisible();
+  await expect(page.getByText('Punchcard data', { exact: true })).toHaveCount(0);
 
   const reportMetrics = page.getByRole('region', { name: 'More report metrics' });
   await expect(reportMetrics.getByRole('heading', { level: 2, name: 'More report metrics' })).toBeVisible();
@@ -231,7 +228,7 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   await expect(page.getByRole('table')).toHaveCount(0);
 });
 
-test('mounts one Sessions surface across viewport and print changes without losing state', async ({ page }) => {
+test('mounts one Sessions surface across viewport changes without losing state', async ({ page }) => {
   const hydrationErrors: string[] = [];
   page.on('console', (message) => {
     if (message.type() === 'error' && HYDRATION_ERROR_PATTERN.test(message.text())) {
@@ -267,19 +264,7 @@ test('mounts one Sessions surface across viewport and print changes without losi
   await expect(page.locator('tbody tr[data-depth="1"]')).toHaveCount(1);
   await page.keyboard.press('Escape');
 
-  await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
-  const printSurface = page.locator('[data-session-surface="print"]');
-  await expect(printSurface).toHaveCount(1);
-  await expect(printSurface.locator('[data-virtual-spacer]')).toHaveCount(0);
-  const printedRows = printSurface.locator('tbody tr[data-depth]');
-  await expect(printedRows).toHaveCount(3);
-  await expect(printedRows.first()).not.toHaveText('');
-  await expect(printedRows.nth(2)).not.toHaveText('');
-  await expect(printedRows.last()).not.toHaveText('');
-
-  await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
   await expect(page.locator('[data-session-surface="desktop"]')).toHaveCount(1);
-  await expect(page.locator('[data-session-surface="print"]')).toHaveCount(0);
   expect(hydrationErrors).toEqual([]);
 });
 
