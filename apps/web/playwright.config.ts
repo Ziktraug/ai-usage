@@ -9,7 +9,7 @@ export default defineConfig({
   fullyParallel: true,
   reporter: process.env.CI ? 'github' : 'line',
   testDir: './e2e',
-  testIgnore: ['production-report.spec.ts', 'static-html.spec.ts'],
+  testIgnore: ['production-report.spec.ts'],
   use: {
     baseURL: 'http://127.0.0.1:4174',
     ...devices['Desktop Chrome'],

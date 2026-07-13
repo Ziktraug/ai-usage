@@ -66,7 +66,6 @@ import {
   resolveClientPerfEnabled,
 } from './client-perf';
 import { CursorAttributionPanel } from './cursor-attribution-panel';
-import { downloadHTML } from './dashboard-export';
 import { FilterPill, fieldFilterLabels } from './dashboard-filters';
 import { MetricTile } from './dashboard-metrics';
 import {
@@ -106,7 +105,6 @@ import {
   createServedFocusedReportSource,
   FocusedRevisionExpiredError,
   fetchFocusedBreakdown,
-  fetchFocusedHtmlPayload,
   fetchFocusedOverview,
   fetchFocusedReportBootstrap,
 } from './focused-report-client';
@@ -119,8 +117,7 @@ import { createProviderStatusClock } from './provider-status-clock';
 import { buildProviderStatusViews } from './provider-status-model';
 import { ProviderStatusPanel } from './provider-status-panel';
 import { RefreshStatus } from './refresh-status';
-import { cursorCommitAttributionFacet } from './report-data';
-import { isDemoReportPayload, isStaticReportRuntime, readReportPayload } from './report-runtime';
+import { cursorCommitAttributionFacet, demoReportPayload } from './report-data';
 import { ReportWarnings } from './report-warnings';
 import { SessionDrawer } from './session-drawer';
 import {
@@ -213,7 +210,7 @@ export const Dashboard = (props: {
 }) => {
   const initialPayload =
     props.initialPayload ??
-    (props.servedBootstrap ? payloadForFocusedBootstrap(props.servedBootstrap) : readReportPayload());
+    (props.servedBootstrap ? payloadForFocusedBootstrap(props.servedBootstrap) : toWebReportPayload(demoReportPayload));
   const dashboardSearchDefaults = dashboardSearchDefaultsFor(initialPayload.filters.sort);
   const { rows: _initialRows, ...initialSupport } = initialPayload;
   const focusedStore = props.servedBootstrap ? createFocusedReportStore(props.servedBootstrap) : undefined;
@@ -242,10 +239,9 @@ export const Dashboard = (props: {
     const truncation = focusedStore?.truncation();
     return truncation ? Object.values(truncation).reduce((total, omitted) => total + omitted, 0) : 0;
   });
-  const staticReport = isStaticReportRuntime();
   const providerStatusClock = createProviderStatusClock({ initialNow: initialPayload.generatedAt });
   onMount(providerStatusClock.start);
-  const isDemo = !(props.initialPayload || props.servedBootstrap) && isDemoReportPayload();
+  const isDemo = !(props.initialPayload || props.servedBootstrap);
   const servedSessionQueries = Boolean(focusedStore);
   const [servedSessionState, setServedSessionState] = createSignal<SessionQueryState>();
   const servedSessionFingerprint = () => {
@@ -892,14 +888,6 @@ export const Dashboard = (props: {
       focusedStore?.overview()?.view.previousSummary ??
       buildPreviousPeriodSummary(timelineRows(), dateRange.bounds(), generatedAt()),
   );
-  const downloadCompleteHtml = async (): Promise<void> => {
-    if (!(focusedSource && focusedStore)) {
-      await downloadHTML(initialPayload);
-      return;
-    }
-    const result = await fetchFocusedHtmlPayload(focusedSource, { revision: focusedStore.revision() });
-    await downloadHTML(toWebReportPayload(result.payload));
-  };
   async function commitFocusedRevisionForActiveDestination(bootstrap: FocusedSupportResult): Promise<void> {
     if (!(focusedSource && focusedStore)) {
       throw new Error('Focused report refresh requires a served report store');
@@ -1204,14 +1192,12 @@ export const Dashboard = (props: {
               </div>
             </div>
             <div class={headerActions}>
-              <Show when={!staticReport}>
-                <Link class={navButton} to="/skills">
-                  Skills
-                </Link>
-                <Link class={navButton} to="/sync">
-                  Sync
-                </Link>
-              </Show>
+              <Link class={navButton} to="/skills">
+                Skills
+              </Link>
+              <Link class={navButton} to="/sync">
+                Sync
+              </Link>
               <ThemeToggle />
             </div>
           </div>
@@ -1270,19 +1256,6 @@ export const Dashboard = (props: {
               refreshing={refreshing()}
               refreshPaused={refreshPaused()}
             />
-            <Show when={!import.meta.env.DEV}>
-              <button
-                class={ghostButton}
-                onClick={() => {
-                  downloadCompleteHtml().catch((error: unknown) => {
-                    console.error(error);
-                  });
-                }}
-                type="button"
-              >
-                Export HTML
-              </button>
-            </Show>
           </div>
         </Show>
 
