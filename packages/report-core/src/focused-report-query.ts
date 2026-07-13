@@ -35,6 +35,11 @@ export interface FocusedReportQueryScope {
 export type FocusedTimelineDimension = 'harness' | 'model' | 'project' | 'provider';
 export type FocusedTimelineGranularity = 'day' | 'month' | 'week';
 
+export interface FocusedDateDomain {
+  first: string;
+  last: string;
+}
+
 export interface FocusedOverviewRequest {
   includeAdvanced: boolean;
   query: FocusedReportQueryScope;
@@ -117,6 +122,7 @@ export interface FocusedTimelineAggregate {
 }
 
 export interface FocusedOverviewResult {
+  dateDomain: FocusedDateDomain | null;
   metadata: Pick<FocusedReportSupport, 'filters' | 'generatedAt' | 'omittedRows'>;
   requestFingerprint: string;
   revision: string;
@@ -237,6 +243,7 @@ export interface FocusedBreakdownResult {
 }
 
 export interface FocusedSupportResult {
+  dateDomain: FocusedDateDomain | null;
   filterOptions: { harness: string[]; machine: string[]; truncated: boolean };
   providerRows: SessionPresentationRow[];
   requestFingerprint: string;
@@ -257,6 +264,12 @@ export interface FocusedSupportSourceOmissions {
   harnessOptionsOmitted?: number;
   machineOptionsOmitted?: number;
   providerRowsOmitted?: number;
+}
+
+export interface FocusedSupportProjectionOptions {
+  dateDomain?: FocusedDateDomain | null;
+  providerRows?: SessionPresentationRow[];
+  sourceOmissions?: FocusedSupportSourceOmissions;
 }
 
 export interface FocusedCsvResult {
@@ -397,6 +410,9 @@ export const focusedOverviewFingerprint = (input: FocusedOverviewRequest): strin
   const request = parseFocusedOverviewRequest(input);
   return fingerprint('overview', request);
 };
+
+export const focusedAdvancedAnalysisFingerprint = (input: FocusedReportQueryScope): string =>
+  `focused-advanced-analysis-v1:${fnv1a64(JSON.stringify(parseFocusedReportQueryScope(input)))}`;
 
 export const focusedBreakdownFingerprint = (input: FocusedBreakdownRequest): string => {
   const request = parseFocusedBreakdownRequest(input);
@@ -588,6 +604,19 @@ export const buildFocusedTimelineFromAggregates = (
     maxBucketTotal: buckets.reduce((max, bucket) => Math.max(max, bucket.total), 0),
     series,
   };
+};
+
+export const buildFocusedDateDomain = (times: Iterable<number>): FocusedDateDomain | null => {
+  let first = Number.POSITIVE_INFINITY;
+  let last = Number.NEGATIVE_INFINITY;
+  for (const time of times) {
+    if (!Number.isFinite(time)) {
+      continue;
+    }
+    first = Math.min(first, time);
+    last = Math.max(last, time);
+  }
+  return Number.isFinite(first) ? { first: new Date(first).toISOString(), last: new Date(last).toISOString() } : null;
 };
 
 export const buildFocusedTimeline = (
@@ -1005,6 +1034,9 @@ export const projectFocusedOverviewFromPresentationRows = (
     ...(punchcard ? ['weekly/hourly activity'] : []),
   ];
   return {
+    dateDomain: buildFocusedDateDomain(
+      timelineRows.flatMap((row) => (row.activeTime === null ? [] : [row.activeTime])),
+    ),
     metadata: { filters: support.filters, generatedAt: support.generatedAt, omittedRows: support.omittedRows },
     requestFingerprint: focusedOverviewFingerprint(request),
     revision: request.query.revision,
@@ -1101,10 +1133,10 @@ export const projectFocusedSupport = (
   support: FocusedReportSupport,
   filterOptions: FocusedSupportResult['filterOptions'],
   input: FocusedRevisionRequest,
-  providerRows: SessionPresentationRow[] = [],
-  sourceOmissions: FocusedSupportSourceOmissions = {},
+  options: FocusedSupportProjectionOptions = {},
 ): FocusedSupportResult => {
   const request = parseFocusedRevisionRequest(input);
+  const { dateDomain = null, providerRows = [], sourceOmissions = {} } = options;
   const providerStatus =
     parseProviderStatusDataset(support.datasets?.providerStatus) ??
     parseProviderStatusDataset(support.facets?.providerStatus);
@@ -1133,6 +1165,7 @@ export const projectFocusedSupport = (
   };
 
   const createResult = (): FocusedSupportResult => ({
+    dateDomain,
     filterOptions: {
       harness: acceptedHarnesses,
       machine: acceptedMachines,
@@ -2027,6 +2060,19 @@ const assertSupportTruncation = (value: unknown): void => {
   }
 };
 
+const assertFocusedDateDomain = (value: unknown, label: string): void => {
+  if (value === null) {
+    return;
+  }
+  const domain = requireRecord(value, label);
+  assertExactKeys(domain, ['first', 'last'], label);
+  const first = requireIsoTimestamp(domain.first, `${label}.first`);
+  const last = requireIsoTimestamp(domain.last, `${label}.last`);
+  if (Date.parse(first) > Date.parse(last)) {
+    throw new Error(`${label}.first must not be later than ${label}.last`);
+  }
+};
+
 export function parseFocusedReportQueryResult(
   kind: 'overview',
   value: unknown,
@@ -2066,10 +2112,11 @@ export function parseFocusedReportQueryResult(
     const parsed = parseFocusedOverviewRequest(request);
     const record = assertResultEnvelope(
       value,
-      ['metadata', 'requestFingerprint', 'revision', 'summary', 'timeline', 'view'],
+      ['dateDomain', 'metadata', 'requestFingerprint', 'revision', 'summary', 'timeline', 'view'],
       parsed.query.revision,
       focusedOverviewFingerprint(parsed),
     );
+    assertFocusedDateDomain(record.dateDomain, 'overview dateDomain');
     const metadata = requireRecord(record.metadata, 'overview metadata');
     assertExactKeys(metadata, ['filters', 'generatedAt', 'omittedRows'], 'overview metadata');
     assertReportFilters(metadata.filters, 'overview metadata.filters');
@@ -2121,10 +2168,11 @@ export function parseFocusedReportQueryResult(
   }
   const record = assertResultEnvelope(
     value,
-    ['filterOptions', 'providerRows', 'requestFingerprint', 'revision', 'support', 'truncation'],
+    ['dateDomain', 'filterOptions', 'providerRows', 'requestFingerprint', 'revision', 'support', 'truncation'],
     parsed.revision,
     focusedRevisionFingerprint(kind, parsed),
   );
+  assertFocusedDateDomain(record.dateDomain, 'support dateDomain');
   const options = requireRecord(record.filterOptions, 'support filter options');
   assertExactKeys(options, ['harness', 'machine', 'truncated'], 'support filter options');
   if (

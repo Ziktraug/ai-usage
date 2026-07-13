@@ -44,14 +44,11 @@ test('records deterministic bounded DOM measurements for the audit', async ({ pa
 
   await page.goto('/');
   await expect(page.getByText('4 / 4 sessions', { exact: true })).toBeVisible();
-  const advancedAnalysis = page.locator('details').filter({
-    has: page.getByText('Advanced analysis', { exact: true }),
-  });
+  const advancedAnalysis = page.getByRole('region', { name: 'Advanced analysis' });
   await expect(advancedAnalysis).toHaveCount(1);
-  await expect(advancedAnalysis).not.toHaveAttribute('open', '');
+  await expect(page.locator('summary').filter({ hasText: 'Advanced analysis' })).toHaveCount(0);
   const advancedAnalysisNodes = await countDomNodes(advancedAnalysis);
-  expect(advancedAnalysisNodes).toBeLessThan(10);
-  await expect(advancedAnalysis.getByText('Punchcard data', { exact: true })).toHaveCount(0);
+  await expect(advancedAnalysis.getByText('Punchcard data', { exact: true })).toBeVisible();
 
   expect(mobile.tableNodes).toBe(0);
   expect(mobile.mobileSummaryNodes).toBeGreaterThan(1);
@@ -61,7 +58,7 @@ test('records deterministic bounded DOM measurements for the audit', async ({ pa
   process.stdout.write(
     `${JSON.stringify({
       auditPerformanceDom: {
-        advancedAnalysisClosed: { nodes: advancedAnalysisNodes },
+        advancedAnalysisVisible: { nodes: advancedAnalysisNodes },
         fixture: { sessions: 4, source: 'VITE_AI_USAGE_E2E demo report' },
         sessions: { desktop, mobile },
       },

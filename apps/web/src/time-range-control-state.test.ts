@@ -359,4 +359,20 @@ describe('time range control option transitions', () => {
     expect(changed.state.hover).toEqual({ bucketIndex: null, key: null });
     expect(commandTypes(changed.commands)).toEqual(['clearHover']);
   });
+
+  test('reconciles requested chart options with the last rendered timeline after a failed request', () => {
+    const requested = transitionTimeRangeControl(
+      initialState(),
+      { type: 'optionChanged', option: 'dimension', value: 'model' },
+      context(30, 4),
+    ).state;
+    const result = transitionTimeRangeControl(
+      requested,
+      { type: 'optionsSynchronized', dimension: 'harness', granularity: 'day' },
+      context(30, 4),
+    );
+
+    expect(result.state.options).toEqual({ dimension: 'harness', granularity: 'day', value: 'cost' });
+    expect(result.commands).toEqual([]);
+  });
 });

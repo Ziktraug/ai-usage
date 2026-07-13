@@ -126,6 +126,10 @@ describe('focused report SQLite queries', () => {
         overviewTrace.push(sql),
       );
       expect(overview).toEqual(projectFocusedOverview(rows, support, overviewRequest));
+      expect('dateDomain' in overview ? overview.dateDomain : undefined).toEqual({
+        first: '2026-07-01T10:00:00.000Z',
+        last: '2026-07-04T10:00:00.000Z',
+      });
       expect(overviewTrace).toHaveLength(2);
       expect(overviewTrace.some((sql) => sql.includes('source_row_json'))).toBe(false);
       expect(overviewTrace.some((sql) => sql.includes('LIMIT 50001'))).toBe(true);
@@ -170,9 +174,16 @@ describe('focused report SQLite queries', () => {
           support,
           { harness: ['Claude Code', 'Codex'], machine: ['Machine A'], truncated: false },
           revisionRequest,
-          [enrichSessionPresentationRow(rows[0]!), enrichSessionPresentationRow(rows[1]!)],
+          {
+            dateDomain: { first: '2026-07-01T10:00:00.000Z', last: '2026-07-04T10:00:00.000Z' },
+            providerRows: [enrichSessionPresentationRow(rows[0]!), enrichSessionPresentationRow(rows[1]!)],
+          },
         ),
       );
+      expect('dateDomain' in supportResult ? supportResult.dateDomain : undefined).toEqual({
+        first: '2026-07-01T10:00:00.000Z',
+        last: '2026-07-04T10:00:00.000Z',
+      });
       expect(Buffer.byteLength(JSON.stringify(supportResult))).toBeLessThan(512 * 1024);
 
       const csvRequest = { query: overviewRequest.query, sort: [{ desc: true, id: 'total' as const }] };
@@ -180,6 +191,36 @@ describe('focused report SQLite queries', () => {
       expect(executeFocusedReportQuery(database, 'html-payload', revisionRequest)).toEqual(
         projectFocusedHtmlPayload(rows, support, revisionRequest),
       );
+    } finally {
+      database.close();
+    }
+  });
+
+  test('returns null support and Overview date domains when every session is undated', async () => {
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-undated-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    const undatedRows = rows.map((sourceRow) => ({ ...sourceRow, activeDate: null, date: null }));
+    await materializeSessionQueryDatabase(revisionDirectory, undatedRows, support);
+    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), { readonly: true });
+    assertSessionQueryDatabase(database);
+    try {
+      const revisionRequest = { revision: 'revision-a' };
+      const supportResult = executeFocusedReportQuery(database, 'support', revisionRequest);
+      expect('dateDomain' in supportResult ? supportResult.dateDomain : undefined).toBeNull();
+
+      const request: FocusedOverviewRequest = {
+        ...overviewRequest,
+        includeAdvanced: false,
+        query: { ...overviewRequest.query, range: { from: null, to: null } },
+      };
+      const overview = executeFocusedReportQuery(database, 'overview', request);
+      if (!('summary' in overview)) {
+        throw new Error('The undated focused query fixture must return an Overview result');
+      }
+      expect(overview.dateDomain).toBeNull();
+      expect(overview.timeline).toBeNull();
+      expect(overview.summary.sessionCount).toBe(undatedRows.length);
     } finally {
       database.close();
     }

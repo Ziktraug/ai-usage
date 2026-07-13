@@ -145,6 +145,34 @@ describe('focused report bootstrap and store', () => {
     expect(store.overview()).toBe(result);
   });
 
+  test('retains advanced analysis by query scope across timeline-only chart refreshes', () => {
+    const store = createFocusedReportStore(supportResult());
+    const advancedRequest = { ...overviewRequest(), includeAdvanced: true };
+    const advancedResult = projectFocusedOverview(demoReportPayload.rows, support(), advancedRequest);
+    expect(store.applyOverview(advancedRequest, advancedResult)).toEqual({ applied: true });
+    expect(store.hasAdvancedAnalysis(advancedRequest.query)).toBe(true);
+
+    const timelineRequest: FocusedOverviewRequest = {
+      ...advancedRequest,
+      includeAdvanced: false,
+      timeline: { dimension: 'model', granularity: 'week' },
+    };
+    const timelineResult = projectFocusedOverview(demoReportPayload.rows, support(), timelineRequest);
+    expect(store.applyOverview(timelineRequest, timelineResult)).toEqual({ applied: true });
+    expect(store.overview()?.view.punchcard).toBeNull();
+    expect(store.overviewForDisplay()?.view.punchcard).toEqual(advancedResult.view.punchcard);
+    expect(store.overviewForDisplay()).not.toHaveProperty('requestFingerprint');
+
+    const differentScopeRequest: FocusedOverviewRequest = {
+      ...timelineRequest,
+      query: { ...timelineRequest.query, range: { from: null, to: demoReportPayload.generatedAt } },
+    };
+    const differentScopeResult = projectFocusedOverview(demoReportPayload.rows, support(), differentScopeRequest);
+    expect(store.applyOverview(differentScopeRequest, differentScopeResult)).toEqual({ applied: true });
+    expect(store.hasAdvancedAnalysis(differentScopeRequest.query)).toBe(false);
+    expect(store.overviewForDisplay()?.view.punchcard).toBeNull();
+  });
+
   test('retains the active revision when a staged destination fails validation', () => {
     const store = createFocusedReportStore(supportResult());
     const activeOverview = overviewResult();

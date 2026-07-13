@@ -13,25 +13,23 @@ export const advancedAnalysis = css({
   overflow: 'hidden',
 });
 
-export const advancedAnalysisSummary = css({
+export const advancedAnalysisHeader = css({
   display: 'grid',
   gridTemplateColumns: { base: '1fr', sm: 'auto 1fr' },
   gap: '4px 12px',
   alignItems: 'center',
   p: '14px 16px',
-  cursor: 'pointer',
   color: 'ink',
   fontWeight: 650,
-  _hover: {
-    bg: 'surfaceMuted',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '-2px',
+  '& h2': {
+    fontSize: 'inherit',
+    fontWeight: 'inherit',
+    lineHeight: 'inherit',
+    m: 0,
   },
 });
 
-export const advancedAnalysisSummaryText = css({
+export const advancedAnalysisHeaderText = css({
   color: 'muted',
   fontSize: '12px',
   fontWeight: 400,

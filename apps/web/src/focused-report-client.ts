@@ -6,16 +6,19 @@ import {
   type FocusedHtmlPayloadResult,
   type FocusedOverviewRequest,
   type FocusedOverviewResult,
+  type FocusedOverviewView,
   type FocusedReportQueryKind,
+  type FocusedReportQueryScope,
   type FocusedRevisionRequest,
   type FocusedSupportResult,
+  focusedAdvancedAnalysisFingerprint,
   focusedBreakdownFingerprint,
   focusedCsvFingerprint,
   focusedOverviewFingerprint,
   focusedRevisionFingerprint,
 } from '@ai-usage/report-core/focused-report-query';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
-import { type Accessor, createSignal } from 'solid-js';
+import { type Accessor, batch, createSignal } from 'solid-js';
 import { reportManifestRequestFingerprint, type WebReportRevisionManifestResult } from './web-report-payload';
 
 export interface FocusedReportSource {
@@ -200,13 +203,28 @@ export interface FocusedReportStoreSnapshot {
   overview?: FocusedOverviewResult;
 }
 
+export interface FocusedOverviewDisplayModel {
+  summary: FocusedOverviewResult['summary'];
+  view: FocusedOverviewResult['view'];
+}
+
+type FocusedAdvancedAnalysisView = Pick<FocusedOverviewView, 'advancedSummary' | 'punchcard' | 'sessionShape'>;
+
+interface FocusedAdvancedAnalysisCache {
+  scopeFingerprint: string;
+  view: FocusedAdvancedAnalysisView;
+}
+
 export interface FocusedReportStore {
   applyBreakdown: (request: FocusedBreakdownRequest, result: FocusedBreakdownResult) => FocusedStoreApplyResult;
   applyOverview: (request: FocusedOverviewRequest, result: FocusedOverviewResult) => FocusedStoreApplyResult;
   breakdown: Accessor<FocusedBreakdownResult | undefined>;
   commitRevision: (bootstrap: FocusedSupportResult, destination: FocusedRevisionDestination) => FocusedStoreApplyResult;
+  dateDomain: Accessor<FocusedSupportResult['dateDomain']>;
   filterOptions: Accessor<FocusedSupportResult['filterOptions']>;
+  hasAdvancedAnalysis: (query: FocusedReportQueryScope) => boolean;
   overview: Accessor<FocusedOverviewResult | undefined>;
+  overviewForDisplay: Accessor<FocusedOverviewDisplayModel | undefined>;
   providerRows: Accessor<FocusedSupportResult['providerRows']>;
   revision: Accessor<string>;
   snapshot: Accessor<FocusedReportStoreSnapshot>;
@@ -216,7 +234,10 @@ export interface FocusedReportStore {
 
 export const createFocusedReportStore = (initial: FocusedSupportResult): FocusedReportStore => {
   const [snapshot, setSnapshot] = createSignal<FocusedReportStoreSnapshot>({ bootstrap: initial });
+  const [advancedAnalysisCache, setAdvancedAnalysisCache] = createSignal<FocusedAdvancedAnalysisCache>();
+  const [overviewScopeFingerprint, setOverviewScopeFingerprint] = createSignal<string>();
   const breakdown = (): FocusedBreakdownResult | undefined => snapshot().breakdown;
+  const dateDomain = (): FocusedSupportResult['dateDomain'] => snapshot().bootstrap.dateDomain;
   const filterOptions = (): FocusedSupportResult['filterOptions'] => snapshot().bootstrap.filterOptions;
   const overview = (): FocusedOverviewResult | undefined => snapshot().overview;
   const providerRows = (): FocusedSupportResult['providerRows'] => snapshot().bootstrap.providerRows;
@@ -224,6 +245,38 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
   const support = (): FocusedSupportResult['support'] => snapshot().bootstrap.support;
   const truncation = (): FocusedSupportResult['truncation'] => snapshot().bootstrap.truncation;
   const supersededRevisions = new Set<string>();
+  const hasAdvancedAnalysis = (query: FocusedReportQueryScope): boolean =>
+    advancedAnalysisCache()?.scopeFingerprint === focusedAdvancedAnalysisFingerprint(query);
+  const rememberAdvancedAnalysis = (request: FocusedOverviewRequest, result: FocusedOverviewResult): void => {
+    if (!request.includeAdvanced) {
+      return;
+    }
+    setAdvancedAnalysisCache({
+      scopeFingerprint: focusedAdvancedAnalysisFingerprint(request.query),
+      view: {
+        advancedSummary: result.view.advancedSummary,
+        punchcard: result.view.punchcard,
+        sessionShape: result.view.sessionShape,
+      },
+    });
+  };
+  const overviewForDisplay = (): FocusedOverviewDisplayModel | undefined => {
+    const result = overview();
+    if (!result) {
+      return;
+    }
+    const cache = advancedAnalysisCache();
+    const advancedView = cache && cache.scopeFingerprint === overviewScopeFingerprint() ? cache.view : undefined;
+    return {
+      summary: result.summary,
+      view: {
+        ...result.view,
+        advancedSummary: advancedView?.advancedSummary ?? null,
+        punchcard: advancedView?.punchcard ?? null,
+        sessionShape: advancedView?.sessionShape ?? null,
+      },
+    };
+  };
 
   const commitRevision = (
     bootstrap: FocusedSupportResult,
@@ -261,10 +314,19 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
     if (currentRevision !== bootstrap.revision) {
       supersededRevisions.add(currentRevision);
     }
-    setSnapshot({
-      bootstrap,
-      ...(destination.kind === 'breakdown' ? { breakdown: destination.result } : {}),
-      ...(destination.kind === 'overview' ? { overview: destination.result } : {}),
+    batch(() => {
+      setSnapshot({
+        bootstrap,
+        ...(destination.kind === 'breakdown' ? { breakdown: destination.result } : {}),
+        ...(destination.kind === 'overview' ? { overview: destination.result } : {}),
+      });
+      setAdvancedAnalysisCache(undefined);
+      setOverviewScopeFingerprint(
+        destination.kind === 'overview' ? focusedAdvancedAnalysisFingerprint(destination.request.query) : undefined,
+      );
+      if (destination.kind === 'overview') {
+        rememberAdvancedAnalysis(destination.request, destination.result);
+      }
     });
     return { applied: true };
   };
@@ -276,7 +338,11 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
     if (result.requestFingerprint !== focusedOverviewFingerprint(request)) {
       return { applied: false, reason: 'fingerprint-mismatch' };
     }
-    setSnapshot((current) => ({ ...current, overview: result }));
+    batch(() => {
+      setSnapshot((current) => ({ ...current, overview: result }));
+      setOverviewScopeFingerprint(focusedAdvancedAnalysisFingerprint(request.query));
+      rememberAdvancedAnalysis(request, result);
+    });
     return { applied: true };
   };
 
@@ -298,8 +364,11 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
     applyBreakdown,
     applyOverview,
     breakdown,
+    dateDomain,
     filterOptions,
+    hasAdvancedAnalysis,
     overview,
+    overviewForDisplay,
     providerRows,
     revision,
     commitRevision,

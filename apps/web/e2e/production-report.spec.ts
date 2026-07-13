@@ -81,10 +81,68 @@ const expectExactProtocolIdentity = (
 };
 
 test('renders the report timeline on the initial production Overview', async ({ page }) => {
+  await page.addInitScript(() => {
+    Reflect.set(globalThis, '__aiUsageFalseEmptyRange', false);
+    const recordFalseEmptyRange = () => {
+      if (document.body?.textContent?.includes('No dated sessions match the current filters')) {
+        Reflect.set(globalThis, '__aiUsageFalseEmptyRange', true);
+      }
+    };
+    new MutationObserver(recordFalseEmptyRange).observe(document, {
+      characterData: true,
+      childList: true,
+      subtree: true,
+    });
+    window.addEventListener('DOMContentLoaded', recordFalseEmptyRange, { once: true });
+  });
+  const overviewGate = Promise.withResolvers<void>();
+  await page.route('**/_serverFn/**', async (route) => {
+    await overviewGate.promise;
+    await route.continue();
+  });
   await page.goto('/');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Inspect timeline bucket' })).toBeVisible({ timeout: 5000 });
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  try {
+    await expect(dateRange).toContainText('Jun 01, 2026');
+    await expect(dateRange).toContainText('Jun 29, 2026');
+    await expect(dateRange.getByText('Loading report range…', { exact: true })).toHaveCount(0);
+  } finally {
+    overviewGate.resolve();
+  }
+  await expect(dateRange.getByRole('button', { name: 'Inspect timeline bucket' })).toBeVisible({ timeout: 5000 });
   await expect(page.getByText('No dated sessions match the current filters')).toHaveCount(0);
+  expect(await page.evaluate(() => Reflect.get(globalThis, '__aiUsageFalseEmptyRange'))).toBe(false);
+});
+
+test('keeps the Report range mounted while focused chart options refresh', async ({ page }) => {
+  await page.goto('/');
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const timeline = dateRange.getByRole('button', { name: 'Inspect timeline bucket' });
+  await expect(timeline).toBeVisible({ timeout: 5000 });
+  const advancedAnalysis = page.getByRole('region', { name: 'Advanced analysis' });
+  await expect(advancedAnalysis.getByRole('heading', { level: 2, name: 'Punchcard' })).toBeVisible();
+  await dateRange.evaluate((element) => element.setAttribute('data-stability-marker', 'original-range'));
+  await timeline.evaluate((element) => element.setAttribute('data-stability-marker', 'original-chart'));
+  await advancedAnalysis.evaluate((element) => element.setAttribute('data-stability-marker', 'original-analysis'));
+  await page.route('**/_serverFn/**', async (route) => {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 250);
+    });
+    await route.continue();
+  });
+  const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
+  await chartOptions.locator('summary').click();
+  await chartOptions.getByRole('radio', { exact: true, name: 'Model' }).click();
+  await expect(dateRange).toHaveAttribute('data-stability-marker', 'original-range', { timeout: 1000 });
+  await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
+  await expect(advancedAnalysis).toHaveAttribute('data-stability-marker', 'original-analysis');
+  await expect(dateRange.getByText('Updating chart options…', { exact: true })).toBeVisible();
+  await expect(dateRange.getByText('Updating chart options…', { exact: true })).toHaveCount(0);
+  await expect(dateRange).toHaveAttribute('data-stability-marker', 'original-range');
+  await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
+  await expect(advancedAnalysis).toHaveAttribute('data-stability-marker', 'original-analysis');
+  await expect(advancedAnalysis.getByRole('heading', { level: 2, name: 'Punchcard' })).toBeVisible();
 });
 
 test('hydrates and pages Sessions through the production revision protocol', async ({ page }) => {
@@ -130,14 +188,12 @@ test('hydrates and pages Sessions through the production revision protocol', asy
   await expect(page.getByRole('button', { name: 'Previous session' })).toBeEnabled();
   await expect(report).toHaveAttribute('data-report-revision', revision);
   await expect(report).toHaveAttribute('data-request-fingerprint', requestFingerprint);
-  expect(await overviewResponseCount()).toBe(0);
+  await expect.poll(overviewResponseCount).toBe(1);
 
   await page.keyboard.press('Escape');
   await page.getByRole('tab', { name: 'Overview' }).click();
-  const advancedSummary = page.locator('summary').filter({ hasText: 'Advanced analysis' });
-  await expect(advancedSummary).toBeVisible();
-  await expect.poll(overviewResponseCount).toBe(1);
-  await advancedSummary.click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Advanced analysis' })).toBeVisible();
+  await expect(page.locator('summary').filter({ hasText: 'Advanced analysis' })).toHaveCount(0);
   await expect(page.getByRole('heading', { level: 2, name: 'Punchcard' })).toBeVisible();
   await expect.poll(overviewResponseCount).toBe(2);
 

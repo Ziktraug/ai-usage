@@ -311,6 +311,8 @@ export const TimeRangeControl = (props: {
   activeHarness: string[];
   dateRange: DateRangeController;
   focusedTimeline: FocusedTimelineData | null | undefined;
+  focusedTimelineError: string | null;
+  focusedTimelineLoading: boolean;
   onDateRangeCommit: () => void;
   onDimensionFilter: (dimension: TimelineDimension, value: string) => void;
   onFocusedTimelineRequest?: (options: {
@@ -358,10 +360,8 @@ export const TimeRangeControl = (props: {
         domain,
         granularity: granularity(),
       });
-    } else if (focused && focused.dimension === dimension() && focused.granularity === granularity()) {
-      timeline = focusedTimelineData(focused);
     } else {
-      timeline = null;
+      timeline = focused ? focusedTimelineData(focused) : null;
     }
     if (!timeline) {
       return null;
@@ -421,6 +421,53 @@ export const TimeRangeControl = (props: {
       dispatchControl({ type: 'domainChanged', selectionIndexesFromDates });
     });
   });
+
+  createEffect(() => {
+    const focused = props.focusedTimeline;
+    if (
+      props.focusedTimelineLoading ||
+      !focused ||
+      (focused.dimension === dimension() && focused.granularity === granularity())
+    ) {
+      return;
+    }
+    untrack(() => {
+      dispatchControl({
+        type: 'optionsSynchronized',
+        dimension: focused.dimension,
+        granularity: focused.granularity,
+      });
+    });
+  });
+
+  const renderedDimension = createMemo(() => data()?.dimension ?? dimension());
+  const renderedGranularity = createMemo(() => data()?.granularity ?? granularity());
+  const timelineOptionsPending = createMemo(() => {
+    const focused = props.focusedTimeline;
+    return Boolean(
+      props.focusedTimelineLoading &&
+        focused &&
+        (focused.dimension !== dimension() || focused.granularity !== granularity()),
+    );
+  });
+  const reportRangeStatus = (): string => {
+    if (props.focusedTimelineLoading) {
+      return 'Loading report range…';
+    }
+    if (props.focusedTimelineError) {
+      return `Unable to load report range: ${props.focusedTimelineError}`;
+    }
+    return 'No dated sessions match the current filters';
+  };
+  const timelineStatus = (): string => {
+    if (props.focusedTimelineLoading) {
+      return 'Loading activity…';
+    }
+    if (props.focusedTimelineError) {
+      return `Unable to load activity: ${props.focusedTimelineError}`;
+    }
+    return 'No dated sessions match the current filters';
+  };
 
   const visibleBucketRange = createMemo(() => visualRangeFor(controlState(), controlContext()));
 
@@ -533,7 +580,7 @@ export const TimeRangeControl = (props: {
       bucket,
       hasPrevious: previous !== null,
       hidden: rows.length - visible.length,
-      label: bucketLabel(bucket.date, granularity()),
+      label: bucketLabel(bucket.date, renderedGranularity()),
       pct: ((index - range.from + 0.5) / visibleCount) * 100,
       rows: visible,
       total: bucketValue(bucket, chart),
@@ -763,13 +810,13 @@ export const TimeRangeControl = (props: {
     if (!(firstBucket && lastBucket)) {
       return 'Chart view: full history';
     }
-    return `Chart view: ${bucketLabel(firstBucket.date, granularity())} – ${bucketLabel(lastBucket.date, granularity())}`;
+    return `Chart view: ${bucketLabel(firstBucket.date, renderedGranularity())} – ${bucketLabel(lastBucket.date, renderedGranularity())}`;
   };
 
-  const swatch = (key: string) => dimensionSwatch(dimension(), key);
+  const swatch = (key: string) => dimensionSwatch(renderedDimension(), key);
 
   const isLegendActive = (key: string) => {
-    const currentDimension = dimension();
+    const currentDimension = renderedDimension();
     if (currentDimension === 'harness') {
       return props.activeHarness.includes(key);
     }
@@ -911,7 +958,7 @@ export const TimeRangeControl = (props: {
     };
   };
 
-  const selectedRangeDetails = (chart: NonNullable<ReturnType<typeof data>>) => {
+  const selectedRangeDetails = (chart: { minDay: Date }) => {
     const [from, to] = controlState().selectionIndexes;
     const startDate = dateFromIndex(chart.minDay, from);
     const endDate = dateFromIndex(chart.minDay, to);
@@ -923,29 +970,29 @@ export const TimeRangeControl = (props: {
   };
 
   return (
-    <Show
-      fallback={
-        <section aria-label="Date range" class={timeRangePanel}>
+    <section aria-busy={props.focusedTimelineLoading} aria-label="Date range" class={timeRangePanel}>
+      <Show
+        fallback={
           <div>
             <div class={timeRangeTitle}>Report range</div>
-            <div class={timeRangeMeta}>No dated sessions match the current filters</div>
+            <div aria-live="polite" class={timeRangeMeta}>
+              {reportRangeStatus()}
+            </div>
           </div>
-        </section>
-      }
-      when={data()}
-    >
-      {(chart) => (
-        <section aria-label="Date range" class={timeRangePanel}>
+        }
+        when={chartDomain()}
+      >
+        {(domain) => (
           <div class={timeRangeHeader}>
             <div>
               <div class={timeRangeTitle}>Report range</div>
               <div class={timeRangeSummary}>
                 <span class={timeRangeSummaryDates}>
-                  <span>{selectedRangeDetails(chart()).fromLabel}</span>
+                  <span>{selectedRangeDetails(domain()).fromLabel}</span>
                   <span class={timeRangeArrow}>→</span>
-                  <span>{selectedRangeDetails(chart()).toLabel}</span>
+                  <span>{selectedRangeDetails(domain()).toLabel}</span>
                 </span>
-                <span class={timeRangeDuration}>{selectedRangeDetails(chart()).duration}</span>
+                <span class={timeRangeDuration}>{selectedRangeDetails(domain()).duration}</span>
               </div>
             </div>
             <div class={timeSliderQuickRanges}>
@@ -963,269 +1010,366 @@ export const TimeRangeControl = (props: {
               </For>
             </div>
           </div>
+        )}
+      </Show>
 
-          <details aria-label="Chart options" class={timeChartOptions}>
-            <summary class={timeChartOptionsSummary}>
-              <span class={timeChartOptionsTitle}>Chart options</span>
-              <span class={timeChartOptionsCurrent}>
-                {chartOptionsSummary(dimension(), granularity(), valueMode())}
-              </span>
-            </summary>
-            <div class={timeRangeViewControls}>
-              <SegmentedControl
-                ariaLabel="Timeline dimension"
-                items={DIMENSION_ITEMS}
-                label="Group"
-                onValueChange={(value) => {
-                  dispatchControl({
-                    type: 'optionChanged',
-                    option: 'dimension',
-                    value: toTimelineDimension(value),
-                  });
-                }}
-                value={dimension()}
-              />
-              <SegmentedControl
-                ariaLabel="Timeline granularity"
-                items={GRANULARITY_ITEMS}
-                label="Bucket"
-                onValueChange={(value) => {
-                  const nextGranularity = toGranularity(value);
-                  const domain = chartDomain();
-                  const nextTimeline =
-                    domain && props.focusedTimeline === undefined
-                      ? buildTimelineData(props.rows, {
-                          dimension: dimension(),
-                          domain,
-                          granularity: nextGranularity,
-                        })
-                      : null;
-                  dispatchControl(
-                    {
-                      type: 'optionChanged',
-                      option: 'granularity',
-                      selectionIndexesFromDates: props.dateRange.selectedIndexes(),
-                      value: nextGranularity,
-                    },
-                    {
-                      selectionMaxIndex: domain?.maxIndex ?? 0,
-                      visualBucketMaxIndex: Math.max(0, (nextTimeline?.buckets.length ?? 1) - 1),
-                    },
-                  );
-                }}
-                value={granularity()}
-              />
-              <SegmentedControl
-                ariaLabel="Timeline value"
-                items={VALUE_ITEMS}
-                label="Metric"
-                onValueChange={(value) => {
-                  dispatchControl({
-                    type: 'optionChanged',
-                    option: 'value',
-                    value: toTimelineValue(value),
-                  });
-                }}
-                value={valueMode()}
-              />
-            </div>
-          </details>
-
-          <div class={chartLegendList}>
-            <For each={chart().series}>
-              {(entry) => {
-                const marker = swatch(entry.key);
-                const useSessions = valueMode() === 'sessions' || usesSessionShare(chart());
-                const value = useSessions ? entry.sessions : entry.total;
-                const total = useSessions ? chart().grandSessions : chart().grandTotal;
-                const aggregateCount = entry.memberKeys?.length ?? 0;
-                const isAggregate = aggregateCount > 0;
-                return (
-                  <button
-                    aria-label={isAggregate ? `Other: ${aggregateCount} smaller series` : undefined}
-                    class={cx(migrationLegendButton, isLegendActive(entry.key) ? migrationReadoutItemActive : '')}
-                    disabled={isAggregate}
-                    onClick={() => {
-                      if (!isAggregate) {
-                        props.onDimensionFilter(dimension(), entry.key);
-                      }
-                    }}
-                    onMouseEnter={() =>
-                      dispatchControl({ type: 'hoverChanged', bucketIndex: hoveredBucket(), key: entry.key })
-                    }
-                    onMouseLeave={() =>
-                      dispatchControl({ type: 'hoverChanged', bucketIndex: hoveredBucket(), key: null })
-                    }
-                    title={legendTitle(entry)}
-                    type="button"
-                  >
-                    <span class={cx(chartLegendSwatch, marker.className)} style={marker.style} />
-                    {entry.label}
-                    <span class={chartLegendPct}>{fmtPct((value / Math.max(1e-9, total)) * 100)}</span>
-                  </button>
-                );
-              }}
-            </For>
+      <Show
+        fallback={
+          <div aria-live="polite" class={timeRangeMeta}>
+            {timelineStatus()}
           </div>
-
-          <div class={timeSliderRoot}>
-            <div class={timeChartToolbar}>
-              <span class={timeChartZoomSummary}>{visualZoomLabel(chart())}</span>
-              <div class={timeChartZoomControls}>
-                <button
-                  class={timeChartZoomButton}
-                  onClick={() => dispatchControl({ type: 'viewControlsChanged', open: !showGraphViewControls() })}
-                  title="Open graph view controls"
-                  type="button"
-                >
-                  {showGraphViewControls() ? 'Hide view controls' : 'Adjust view'}
-                </button>
-              </div>
-            </div>
-            <Show when={showGraphViewControls()}>
-              <div class={timeChartToolbar}>
-                <span class={timeChartZoomSummary}>
-                  Only changes graph readability. The selected range below still filters the app.
-                </span>
-                <div class={timeChartZoomControls}>
-                  <For each={VISUAL_VIEW_PRESETS}>
-                    {(preset) => (
-                      <button
-                        class={timeChartZoomButton}
-                        onClick={() => zoomChartToLastDays(chart(), preset.days)}
-                        title={`Show the latest ${preset.days} days in the graph only`}
-                        type="button"
-                      >
-                        {preset.label}
-                      </button>
-                    )}
-                  </For>
-                  <button
-                    class={timeChartZoomButton}
-                    disabled={visualRangeSize(controlState(), controlContext()) <= MIN_VISIBLE_BUCKETS}
-                    onClick={() => zoomChartBy(1 / CHART_ZOOM_FACTOR)}
-                    title="Zoom into the graph without changing the selected range"
-                    type="button"
-                  >
-                    Zoom +
-                  </button>
-                  <button
-                    class={timeChartZoomButton}
-                    disabled={!isVisuallyZoomed()}
-                    onClick={() => zoomChartBy(CHART_ZOOM_FACTOR)}
-                    title="Zoom out without changing the selected range"
-                    type="button"
-                  >
-                    Zoom −
-                  </button>
-                  <button
-                    class={timeChartZoomButton}
-                    disabled={!canMoveVisualZoomLater()}
-                    onClick={moveVisualZoomToLatest}
-                    title="Move the graph view to the latest data"
-                    type="button"
-                  >
-                    Latest data
-                  </button>
-                  <button
-                    class={timeChartZoomButton}
-                    onClick={() => zoomChartToSelection(chart())}
-                    title="Fit the graph to the selected range only visually"
-                    type="button"
-                  >
-                    Fit selected range
-                  </button>
-                  <button
-                    class={timeChartZoomButton}
-                    disabled={!isVisuallyZoomed()}
-                    onClick={resetVisualZoom}
-                    title="Show the full history in the graph"
-                    type="button"
-                  >
-                    Full history
-                  </button>
-                  <button
-                    class={timeChartZoomButton}
-                    onClick={() => dispatchControl({ type: 'viewControlsChanged', open: false })}
-                    type="button"
-                  >
-                    Done
-                  </button>
-                </div>
+        }
+        when={data()}
+      >
+        {(chart) => (
+          <>
+            <Show when={props.focusedTimelineLoading}>
+              <div aria-live="polite" class={timeRangeMeta}>
+                {timelineOptionsPending() ? 'Updating chart options…' : 'Updating chart…'}
               </div>
             </Show>
-            <div class={timeSliderFrame}>
-              <div class={timeSliderControl}>
-                <div class={timeSliderTrack} style={rangeVars(chart())}>
-                  <For each={visibleMonthTicks()}>
-                    {(tick) => (
-                      <div aria-hidden="true" class={monthGridline} style={{ left: timelinePlotLeft(tick.pct) }} />
-                    )}
-                  </For>
-                  <div aria-hidden="true" class={timeSliderBars} style={{ gap: visibleBucketLayout().bucketGap }}>
-                    <For each={visibleBars()}>
-                      {(bar) => (
-                        <div
-                          class={timeBucket}
-                          style={{
-                            height: `${barHeight(bar.bucket, chart())}%`,
-                            'min-width': visibleBucketLayout().bucketMinWidth,
-                          }}
-                        >
-                          <For each={renderedSegments(bar.segments)}>
-                            {(segment) => {
-                              const marker = swatch(segment.key);
-                              return (
-                                <div
-                                  class={cx(timeBucketSegment, marker.className ?? accentFill)}
-                                  style={{
-                                    height: `${Math.max(1, segmentHeight(segment.value, bar.total))}%`,
-                                    opacity: segmentOpacity(segment.key),
-                                    ...marker.style,
-                                  }}
-                                />
-                              );
-                            }}
-                          </For>
-                        </div>
-                      )}
-                    </For>
-                  </div>
+            <Show when={!props.focusedTimelineLoading && props.focusedTimelineError}>
+              <div aria-live="polite" class={timeRangeMeta}>
+                Unable to update activity: {props.focusedTimelineError}
+              </div>
+            </Show>
+            <details aria-label="Chart options" class={timeChartOptions}>
+              <summary class={timeChartOptionsSummary}>
+                <span class={timeChartOptionsTitle}>Chart options</span>
+                <span class={timeChartOptionsCurrent}>
+                  {chartOptionsSummary(dimension(), granularity(), valueMode())}
+                </span>
+              </summary>
+              <div class={timeRangeViewControls}>
+                <SegmentedControl
+                  ariaLabel="Timeline dimension"
+                  items={DIMENSION_ITEMS}
+                  label="Group"
+                  onValueChange={(value) => {
+                    dispatchControl({
+                      type: 'optionChanged',
+                      option: 'dimension',
+                      value: toTimelineDimension(value),
+                    });
+                  }}
+                  value={dimension()}
+                />
+                <SegmentedControl
+                  ariaLabel="Timeline granularity"
+                  items={GRANULARITY_ITEMS}
+                  label="Bucket"
+                  onValueChange={(value) => {
+                    const nextGranularity = toGranularity(value);
+                    const domain = chartDomain();
+                    const nextTimeline =
+                      domain && props.focusedTimeline === undefined
+                        ? buildTimelineData(props.rows, {
+                            dimension: dimension(),
+                            domain,
+                            granularity: nextGranularity,
+                          })
+                        : null;
+                    dispatchControl(
+                      {
+                        type: 'optionChanged',
+                        option: 'granularity',
+                        selectionIndexesFromDates: props.dateRange.selectedIndexes(),
+                        value: nextGranularity,
+                      },
+                      {
+                        selectionMaxIndex: domain?.maxIndex ?? 0,
+                        visualBucketMaxIndex: Math.max(0, (nextTimeline?.buckets.length ?? 1) - 1),
+                      },
+                    );
+                  }}
+                  value={granularity()}
+                />
+                <SegmentedControl
+                  ariaLabel="Timeline value"
+                  items={VALUE_ITEMS}
+                  label="Metric"
+                  onValueChange={(value) => {
+                    dispatchControl({
+                      type: 'optionChanged',
+                      option: 'value',
+                      value: toTimelineValue(value),
+                    });
+                  }}
+                  value={valueMode()}
+                />
+              </div>
+            </details>
+
+            <div class={chartLegendList}>
+              <For each={chart().series}>
+                {(entry) => {
+                  const marker = swatch(entry.key);
+                  const useSessions = valueMode() === 'sessions' || usesSessionShare(chart());
+                  const value = useSessions ? entry.sessions : entry.total;
+                  const total = useSessions ? chart().grandSessions : chart().grandTotal;
+                  const aggregateCount = entry.memberKeys?.length ?? 0;
+                  const isAggregate = aggregateCount > 0;
+                  return (
+                    <button
+                      aria-label={isAggregate ? `Other: ${aggregateCount} smaller series` : undefined}
+                      class={cx(migrationLegendButton, isLegendActive(entry.key) ? migrationReadoutItemActive : '')}
+                      disabled={isAggregate}
+                      onClick={() => {
+                        if (!isAggregate) {
+                          props.onDimensionFilter(renderedDimension(), entry.key);
+                        }
+                      }}
+                      onMouseEnter={() =>
+                        dispatchControl({ type: 'hoverChanged', bucketIndex: hoveredBucket(), key: entry.key })
+                      }
+                      onMouseLeave={() =>
+                        dispatchControl({ type: 'hoverChanged', bucketIndex: hoveredBucket(), key: null })
+                      }
+                      title={legendTitle(entry)}
+                      type="button"
+                    >
+                      <span class={cx(chartLegendSwatch, marker.className)} style={marker.style} />
+                      {entry.label}
+                      <span class={chartLegendPct}>{fmtPct((value / Math.max(1e-9, total)) * 100)}</span>
+                    </button>
+                  );
+                }}
+              </For>
+            </div>
+
+            <div class={timeSliderRoot}>
+              <div class={timeChartToolbar}>
+                <span class={timeChartZoomSummary}>{visualZoomLabel(chart())}</span>
+                <div class={timeChartZoomControls}>
                   <button
-                    aria-label="Inspect timeline bucket"
-                    class={timelineHoverLayer}
-                    data-dragging={String(draggingVisualZoom())}
-                    data-zoomed={String(isVisuallyZoomed())}
-                    onLostPointerCapture={endVisualZoomDrag}
-                    onMouseLeave={clearHover}
-                    onMouseMove={updateHover}
-                    onPointerCancel={endVisualZoomDrag}
-                    onPointerDown={(event) =>
-                      startVisualZoomDrag(event, visualRangeSize(controlState(), controlContext()))
-                    }
-                    onPointerMove={moveVisualZoomDrag}
-                    onPointerUp={endVisualZoomDrag}
-                    onWheel={(event) => handleChartWheel(event, chart())}
-                    tabIndex={-1}
-                    title="Scroll to zoom, then drag to move the visual window"
+                    class={timeChartZoomButton}
+                    onClick={() => dispatchControl({ type: 'viewControlsChanged', open: !showGraphViewControls() })}
+                    title="Open graph view controls"
                     type="button"
-                  />
-                  <Show when={readout()}>
-                    {(tip) => (
-                      <div
-                        aria-hidden="true"
-                        class={migrationCrosshair}
-                        style={{ left: timelinePlotLeft(tip().pct) }}
-                      />
-                    )}
-                  </Show>
+                  >
+                    {showGraphViewControls() ? 'Hide view controls' : 'Adjust view'}
+                  </button>
                 </div>
               </div>
               <Show when={showGraphViewControls()}>
+                <div class={timeChartToolbar}>
+                  <span class={timeChartZoomSummary}>
+                    Only changes graph readability. The selected range below still filters the app.
+                  </span>
+                  <div class={timeChartZoomControls}>
+                    <For each={VISUAL_VIEW_PRESETS}>
+                      {(preset) => (
+                        <button
+                          class={timeChartZoomButton}
+                          onClick={() => zoomChartToLastDays(chart(), preset.days)}
+                          title={`Show the latest ${preset.days} days in the graph only`}
+                          type="button"
+                        >
+                          {preset.label}
+                        </button>
+                      )}
+                    </For>
+                    <button
+                      class={timeChartZoomButton}
+                      disabled={visualRangeSize(controlState(), controlContext()) <= MIN_VISIBLE_BUCKETS}
+                      onClick={() => zoomChartBy(1 / CHART_ZOOM_FACTOR)}
+                      title="Zoom into the graph without changing the selected range"
+                      type="button"
+                    >
+                      Zoom +
+                    </button>
+                    <button
+                      class={timeChartZoomButton}
+                      disabled={!isVisuallyZoomed()}
+                      onClick={() => zoomChartBy(CHART_ZOOM_FACTOR)}
+                      title="Zoom out without changing the selected range"
+                      type="button"
+                    >
+                      Zoom −
+                    </button>
+                    <button
+                      class={timeChartZoomButton}
+                      disabled={!canMoveVisualZoomLater()}
+                      onClick={moveVisualZoomToLatest}
+                      title="Move the graph view to the latest data"
+                      type="button"
+                    >
+                      Latest data
+                    </button>
+                    <button
+                      class={timeChartZoomButton}
+                      onClick={() => zoomChartToSelection(chart())}
+                      title="Fit the graph to the selected range only visually"
+                      type="button"
+                    >
+                      Fit selected range
+                    </button>
+                    <button
+                      class={timeChartZoomButton}
+                      disabled={!isVisuallyZoomed()}
+                      onClick={resetVisualZoom}
+                      title="Show the full history in the graph"
+                      type="button"
+                    >
+                      Full history
+                    </button>
+                    <button
+                      class={timeChartZoomButton}
+                      onClick={() => dispatchControl({ type: 'viewControlsChanged', open: false })}
+                      type="button"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              </Show>
+              <div class={timeSliderFrame}>
+                <div class={timeSliderControl}>
+                  <div class={timeSliderTrack} style={rangeVars(chart())}>
+                    <For each={visibleMonthTicks()}>
+                      {(tick) => (
+                        <div aria-hidden="true" class={monthGridline} style={{ left: timelinePlotLeft(tick.pct) }} />
+                      )}
+                    </For>
+                    <div aria-hidden="true" class={timeSliderBars} style={{ gap: visibleBucketLayout().bucketGap }}>
+                      <For each={visibleBars()}>
+                        {(bar) => (
+                          <div
+                            class={timeBucket}
+                            style={{
+                              height: `${barHeight(bar.bucket, chart())}%`,
+                              'min-width': visibleBucketLayout().bucketMinWidth,
+                            }}
+                          >
+                            <For each={renderedSegments(bar.segments)}>
+                              {(segment) => {
+                                const marker = swatch(segment.key);
+                                return (
+                                  <div
+                                    class={cx(timeBucketSegment, marker.className ?? accentFill)}
+                                    style={{
+                                      height: `${Math.max(1, segmentHeight(segment.value, bar.total))}%`,
+                                      opacity: segmentOpacity(segment.key),
+                                      ...marker.style,
+                                    }}
+                                  />
+                                );
+                              }}
+                            </For>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                    <button
+                      aria-label="Inspect timeline bucket"
+                      class={timelineHoverLayer}
+                      data-dragging={String(draggingVisualZoom())}
+                      data-zoomed={String(isVisuallyZoomed())}
+                      onLostPointerCapture={endVisualZoomDrag}
+                      onMouseLeave={clearHover}
+                      onMouseMove={updateHover}
+                      onPointerCancel={endVisualZoomDrag}
+                      onPointerDown={(event) =>
+                        startVisualZoomDrag(event, visualRangeSize(controlState(), controlContext()))
+                      }
+                      onPointerMove={moveVisualZoomDrag}
+                      onPointerUp={endVisualZoomDrag}
+                      onWheel={(event) => handleChartWheel(event, chart())}
+                      tabIndex={-1}
+                      title="Scroll to zoom, then drag to move the visual window"
+                      type="button"
+                    />
+                    <Show when={readout()}>
+                      {(tip) => (
+                        <div
+                          aria-hidden="true"
+                          class={migrationCrosshair}
+                          style={{ left: timelinePlotLeft(tip().pct) }}
+                        />
+                      )}
+                    </Show>
+                  </div>
+                </div>
+                <Show when={showGraphViewControls()}>
+                  <div class={timeSliderBrushColumn}>
+                    <div class={timeSliderBrushHeader}>
+                      <span>Graph view</span>
+                      <span>Optional reading aid: drag to pan, resize handles to adjust detail</span>
+                    </div>
+                    <div class={timeAxis}>
+                      <span>{fmtDateOnly(chart().minDay)}</span>
+                      <For each={monthTicksFor(chart()).filter((tick) => tick.pct >= 7 && tick.pct <= 93)}>
+                        {(tick) => (
+                          <span class={timeAxisTick} style={{ left: `${tick.pct}%` }}>
+                            {tick.label}
+                          </span>
+                        )}
+                      </For>
+                      <span>{fmtDateOnly(chart().maxDay)}</span>
+                    </div>
+                    <div class={timeSliderBrushTrack} style={visualRangeVars(chart())}>
+                      <div
+                        aria-hidden="true"
+                        class={timeSliderRange}
+                        style={{ left: 'var(--slider-range-start)', right: 'var(--slider-range-end)' }}
+                      />
+                      <div aria-hidden="true" class={timeSliderDimLeft} />
+                      <div aria-hidden="true" class={timeSliderDimRight} />
+                      <button
+                        aria-label="Drag graph view"
+                        class={timeSliderRangeDrag}
+                        data-dragging={String(draggingVisualZoom())}
+                        disabled={!isVisuallyZoomed()}
+                        onLostPointerCapture={endVisualZoomDrag}
+                        onPointerCancel={endVisualZoomDrag}
+                        onPointerDown={(event) => startVisualZoomDrag(event, chart().buckets.length)}
+                        onPointerMove={moveVisualZoomDrag}
+                        onPointerUp={endVisualZoomDrag}
+                        tabIndex={-1}
+                        title="Drag graph view"
+                        type="button"
+                      />
+                      <button
+                        aria-label="Graph view start"
+                        aria-valuemax={controlContext().visualBucketMaxIndex}
+                        aria-valuemin={0}
+                        aria-valuenow={visibleBucketRange().from}
+                        aria-valuetext={fmtDateOnly(chart().buckets[visibleBucketRange().from]?.date ?? chart().minDay)}
+                        class={timeSliderThumb}
+                        onKeyDown={(event) => handleVisualZoomKeyDown(event, 'start')}
+                        onLostPointerCapture={endVisualZoomHandleDrag}
+                        onPointerCancel={endVisualZoomHandleDrag}
+                        onPointerDown={(event) => startVisualZoomHandleDrag(event, 'start')}
+                        onPointerMove={moveVisualZoomHandleDrag}
+                        onPointerUp={endVisualZoomHandleDrag}
+                        role="slider"
+                        style={{ left: 'var(--slider-range-start)' }}
+                        type="button"
+                      />
+                      <button
+                        aria-label="Graph view end"
+                        aria-valuemax={controlContext().visualBucketMaxIndex}
+                        aria-valuemin={0}
+                        aria-valuenow={visibleBucketRange().to}
+                        aria-valuetext={fmtDateOnly(chart().buckets[visibleBucketRange().to]?.date ?? chart().maxDay)}
+                        class={timeSliderThumb}
+                        onKeyDown={(event) => handleVisualZoomKeyDown(event, 'end')}
+                        onLostPointerCapture={endVisualZoomHandleDrag}
+                        onPointerCancel={endVisualZoomHandleDrag}
+                        onPointerDown={(event) => startVisualZoomHandleDrag(event, 'end')}
+                        onPointerMove={moveVisualZoomHandleDrag}
+                        onPointerUp={endVisualZoomHandleDrag}
+                        role="slider"
+                        style={{ left: 'calc(100% - var(--slider-range-end))' }}
+                        type="button"
+                      />
+                    </div>
+                  </div>
+                </Show>
                 <div class={timeSliderBrushColumn}>
                   <div class={timeSliderBrushHeader}>
-                    <span>Graph view</span>
-                    <span>Optional reading aid: drag to pan, resize handles to adjust detail</span>
+                    <span>Adjust report range</span>
+                    <span>Filters the entire report</span>
                   </div>
                   <div class={timeAxis}>
                     <span>{fmtDateOnly(chart().minDay)}</span>
@@ -1238,7 +1382,7 @@ export const TimeRangeControl = (props: {
                     </For>
                     <span>{fmtDateOnly(chart().maxDay)}</span>
                   </div>
-                  <div class={timeSliderBrushTrack} style={visualRangeVars(chart())}>
+                  <div class={timeSliderBrushTrack} style={rangeVars(chart())}>
                     <div
                       aria-hidden="true"
                       class={timeSliderRange}
@@ -1247,209 +1391,135 @@ export const TimeRangeControl = (props: {
                     <div aria-hidden="true" class={timeSliderDimLeft} />
                     <div aria-hidden="true" class={timeSliderDimRight} />
                     <button
-                      aria-label="Drag graph view"
+                      aria-label="Drag selected date range"
                       class={timeSliderRangeDrag}
-                      data-dragging={String(draggingVisualZoom())}
-                      disabled={!isVisuallyZoomed()}
-                      onLostPointerCapture={endVisualZoomDrag}
-                      onPointerCancel={endVisualZoomDrag}
-                      onPointerDown={(event) => startVisualZoomDrag(event, chart().buckets.length)}
-                      onPointerMove={moveVisualZoomDrag}
-                      onPointerUp={endVisualZoomDrag}
+                      data-dragging={String(draggingSelection())}
+                      onLostPointerCapture={endSelectionDrag}
+                      onPointerCancel={endSelectionDrag}
+                      onPointerDown={startSelectionDrag}
+                      onPointerMove={moveSelectionDrag}
+                      onPointerUp={endSelectionDrag}
                       tabIndex={-1}
-                      title="Drag graph view"
+                      title="Drag selected range"
                       type="button"
                     />
                     <button
-                      aria-label="Graph view start"
-                      aria-valuemax={controlContext().visualBucketMaxIndex}
+                      aria-label="Start date"
+                      aria-valuemax={controlContext().selectionMaxIndex}
                       aria-valuemin={0}
-                      aria-valuenow={visibleBucketRange().from}
-                      aria-valuetext={fmtDateOnly(chart().buckets[visibleBucketRange().from]?.date ?? chart().minDay)}
+                      aria-valuenow={controlState().selectionIndexes[0]}
+                      aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, controlState().selectionIndexes[0]))}
                       class={timeSliderThumb}
-                      onKeyDown={(event) => handleVisualZoomKeyDown(event, 'start')}
-                      onLostPointerCapture={endVisualZoomHandleDrag}
-                      onPointerCancel={endVisualZoomHandleDrag}
-                      onPointerDown={(event) => startVisualZoomHandleDrag(event, 'start')}
-                      onPointerMove={moveVisualZoomHandleDrag}
-                      onPointerUp={endVisualZoomHandleDrag}
+                      onKeyDown={(event) => handleSliderKeyDown(event, 'start')}
+                      onLostPointerCapture={endHandleDrag}
+                      onPointerCancel={endHandleDrag}
+                      onPointerDown={(event) => startHandleDrag(event, 'start')}
+                      onPointerMove={moveHandleDrag}
+                      onPointerUp={endHandleDrag}
                       role="slider"
                       style={{ left: 'var(--slider-range-start)' }}
                       type="button"
                     />
                     <button
-                      aria-label="Graph view end"
-                      aria-valuemax={controlContext().visualBucketMaxIndex}
+                      aria-label="End date"
+                      aria-valuemax={controlContext().selectionMaxIndex}
                       aria-valuemin={0}
-                      aria-valuenow={visibleBucketRange().to}
-                      aria-valuetext={fmtDateOnly(chart().buckets[visibleBucketRange().to]?.date ?? chart().maxDay)}
+                      aria-valuenow={controlState().selectionIndexes[1]}
+                      aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, controlState().selectionIndexes[1]))}
                       class={timeSliderThumb}
-                      onKeyDown={(event) => handleVisualZoomKeyDown(event, 'end')}
-                      onLostPointerCapture={endVisualZoomHandleDrag}
-                      onPointerCancel={endVisualZoomHandleDrag}
-                      onPointerDown={(event) => startVisualZoomHandleDrag(event, 'end')}
-                      onPointerMove={moveVisualZoomHandleDrag}
-                      onPointerUp={endVisualZoomHandleDrag}
+                      onKeyDown={(event) => handleSliderKeyDown(event, 'end')}
+                      onLostPointerCapture={endHandleDrag}
+                      onPointerCancel={endHandleDrag}
+                      onPointerDown={(event) => startHandleDrag(event, 'end')}
+                      onPointerMove={moveHandleDrag}
+                      onPointerUp={endHandleDrag}
                       role="slider"
                       style={{ left: 'calc(100% - var(--slider-range-end))' }}
                       type="button"
                     />
                   </div>
-                </div>
-              </Show>
-              <div class={timeSliderBrushColumn}>
-                <div class={timeSliderBrushHeader}>
-                  <span>Adjust report range</span>
-                  <span>Filters the entire report</span>
-                </div>
-                <div class={timeAxis}>
-                  <span>{fmtDateOnly(chart().minDay)}</span>
-                  <For each={monthTicksFor(chart()).filter((tick) => tick.pct >= 7 && tick.pct <= 93)}>
-                    {(tick) => (
-                      <span class={timeAxisTick} style={{ left: `${tick.pct}%` }}>
-                        {tick.label}
-                      </span>
-                    )}
-                  </For>
-                  <span>{fmtDateOnly(chart().maxDay)}</span>
-                </div>
-                <div class={timeSliderBrushTrack} style={rangeVars(chart())}>
-                  <div
-                    aria-hidden="true"
-                    class={timeSliderRange}
-                    style={{ left: 'var(--slider-range-start)', right: 'var(--slider-range-end)' }}
-                  />
-                  <div aria-hidden="true" class={timeSliderDimLeft} />
-                  <div aria-hidden="true" class={timeSliderDimRight} />
-                  <button
-                    aria-label="Drag selected date range"
-                    class={timeSliderRangeDrag}
-                    data-dragging={String(draggingSelection())}
-                    onLostPointerCapture={endSelectionDrag}
-                    onPointerCancel={endSelectionDrag}
-                    onPointerDown={startSelectionDrag}
-                    onPointerMove={moveSelectionDrag}
-                    onPointerUp={endSelectionDrag}
-                    tabIndex={-1}
-                    title="Drag selected range"
-                    type="button"
-                  />
-                  <button
-                    aria-label="Start date"
-                    aria-valuemax={controlContext().selectionMaxIndex}
-                    aria-valuemin={0}
-                    aria-valuenow={controlState().selectionIndexes[0]}
-                    aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, controlState().selectionIndexes[0]))}
-                    class={timeSliderThumb}
-                    onKeyDown={(event) => handleSliderKeyDown(event, 'start')}
-                    onLostPointerCapture={endHandleDrag}
-                    onPointerCancel={endHandleDrag}
-                    onPointerDown={(event) => startHandleDrag(event, 'start')}
-                    onPointerMove={moveHandleDrag}
-                    onPointerUp={endHandleDrag}
-                    role="slider"
-                    style={{ left: 'var(--slider-range-start)' }}
-                    type="button"
-                  />
-                  <button
-                    aria-label="End date"
-                    aria-valuemax={controlContext().selectionMaxIndex}
-                    aria-valuemin={0}
-                    aria-valuenow={controlState().selectionIndexes[1]}
-                    aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, controlState().selectionIndexes[1]))}
-                    class={timeSliderThumb}
-                    onKeyDown={(event) => handleSliderKeyDown(event, 'end')}
-                    onLostPointerCapture={endHandleDrag}
-                    onPointerCancel={endHandleDrag}
-                    onPointerDown={(event) => startHandleDrag(event, 'end')}
-                    onPointerMove={moveHandleDrag}
-                    onPointerUp={endHandleDrag}
-                    role="slider"
-                    style={{ left: 'calc(100% - var(--slider-range-end))' }}
-                    type="button"
-                  />
-                </div>
-                <div class={timeSliderHandleLabels} style={rangeVars(chart())}>
-                  <label class={timeSliderHandleLabelStart}>
-                    <input
-                      aria-label="Start date"
-                      class={timeSliderDateChip}
-                      max={toDateInputValue(chart().maxDay)}
-                      min={toDateInputValue(chart().minDay)}
-                      onInput={(event) => applyFromInput(event.currentTarget.value)}
-                      title="Start date"
-                      type="date"
-                      value={props.dateRange.inputValues().from}
-                    />
-                  </label>
-                  <label class={timeSliderHandleLabelEnd}>
-                    <input
-                      aria-label="End date"
-                      class={timeSliderDateChip}
-                      max={toDateInputValue(chart().maxDay)}
-                      min={toDateInputValue(chart().minDay)}
-                      onInput={(event) => applyToInput(event.currentTarget.value)}
-                      title="End date"
-                      type="date"
-                      value={props.dateRange.inputValues().to}
-                    />
-                  </label>
+                  <div class={timeSliderHandleLabels} style={rangeVars(chart())}>
+                    <label class={timeSliderHandleLabelStart}>
+                      <input
+                        aria-label="Start date"
+                        class={timeSliderDateChip}
+                        max={toDateInputValue(chart().maxDay)}
+                        min={toDateInputValue(chart().minDay)}
+                        onInput={(event) => applyFromInput(event.currentTarget.value)}
+                        title="Start date"
+                        type="date"
+                        value={props.dateRange.inputValues().from}
+                      />
+                    </label>
+                    <label class={timeSliderHandleLabelEnd}>
+                      <input
+                        aria-label="End date"
+                        class={timeSliderDateChip}
+                        max={toDateInputValue(chart().maxDay)}
+                        min={toDateInputValue(chart().minDay)}
+                        onInput={(event) => applyToInput(event.currentTarget.value)}
+                        title="End date"
+                        type="date"
+                        value={props.dateRange.inputValues().to}
+                      />
+                    </label>
+                  </div>
                 </div>
               </div>
-            </div>
-            <div class={migrationReadout}>
-              <Show when={activeReadout()}>
-                {(tip) => (
-                  <>
-                    <span class={migrationReadoutDate}>{tip().label}</span>
-                    <span class={migrationReadoutTotal}>{formatValue(tip().total, tip().useSessions)}</span>
-                    <For each={tip().rows}>
-                      {(row) => {
-                        const marker = swatch(row.key);
-                        return (
-                          <span
-                            class={cx(
-                              migrationReadoutItem,
-                              row.key === hoveredKey() ? migrationReadoutItemActive : undefined,
-                            )}
-                          >
-                            <span class={cx(migrationReadoutSwatch, marker.className)} style={marker.style} />
-                            {row.label}
-                            <span class={migrationReadoutValue}>
-                              {formatValue(row.value, tip().useSessions)} ·{' '}
-                              {fmtPct((row.value / Math.max(1e-9, tip().total)) * 100)}
-                            </span>
-                            <Show
-                              when={
-                                tip().hasPrevious &&
-                                row.delta !== null &&
-                                Math.abs(row.delta) >= 1 &&
-                                Math.abs(row.delta) < MAX_DELTA_PCT
-                              }
+              <div class={migrationReadout}>
+                <Show when={activeReadout()}>
+                  {(tip) => (
+                    <>
+                      <span class={migrationReadoutDate}>{tip().label}</span>
+                      <span class={migrationReadoutTotal}>{formatValue(tip().total, tip().useSessions)}</span>
+                      <For each={tip().rows}>
+                        {(row) => {
+                          const marker = swatch(row.key);
+                          return (
+                            <span
+                              class={cx(
+                                migrationReadoutItem,
+                                row.key === hoveredKey() ? migrationReadoutItemActive : undefined,
+                              )}
                             >
-                              <span
-                                class={cx(
-                                  migrationTrend,
-                                  (row.delta ?? 0) >= 0 ? migrationTrendUp : migrationTrendDown,
-                                )}
-                              >
-                                {(row.delta ?? 0) >= 0 ? '▲' : '▼'} {fmtPct(Math.abs(row.delta ?? 0))}
+                              <span class={cx(migrationReadoutSwatch, marker.className)} style={marker.style} />
+                              {row.label}
+                              <span class={migrationReadoutValue}>
+                                {formatValue(row.value, tip().useSessions)} ·{' '}
+                                {fmtPct((row.value / Math.max(1e-9, tip().total)) * 100)}
                               </span>
-                            </Show>
-                          </span>
-                        );
-                      }}
-                    </For>
-                    <Show when={tip().hidden > 0}>
-                      <span class={migrationReadoutHint}>+{tip().hidden} more</span>
-                    </Show>
-                  </>
-                )}
-              </Show>
+                              <Show
+                                when={
+                                  tip().hasPrevious &&
+                                  row.delta !== null &&
+                                  Math.abs(row.delta) >= 1 &&
+                                  Math.abs(row.delta) < MAX_DELTA_PCT
+                                }
+                              >
+                                <span
+                                  class={cx(
+                                    migrationTrend,
+                                    (row.delta ?? 0) >= 0 ? migrationTrendUp : migrationTrendDown,
+                                  )}
+                                >
+                                  {(row.delta ?? 0) >= 0 ? '▲' : '▼'} {fmtPct(Math.abs(row.delta ?? 0))}
+                                </span>
+                              </Show>
+                            </span>
+                          );
+                        }}
+                      </For>
+                      <Show when={tip().hidden > 0}>
+                        <span class={migrationReadoutHint}>+{tip().hidden} more</span>
+                      </Show>
+                    </>
+                  )}
+                </Show>
+              </div>
             </div>
-          </div>
-        </section>
-      )}
-    </Show>
+          </>
+        )}
+      </Show>
+    </section>
   );
 };
