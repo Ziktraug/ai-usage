@@ -6,7 +6,6 @@ import type { FocusedReportQueryKind } from '@ai-usage/report-core/focused-repor
 import {
   MAX_BREAKDOWN_REFRESH_BYTES,
   MAX_OVERVIEW_REFRESH_BYTES,
-  MAX_REPORT_RUNNER_ARTIFACT_BYTES,
   MAX_SERVED_BOOTSTRAP_BYTES,
 } from '@ai-usage/report-core/report-budgets';
 import { executeFocusedReportQuery } from './focused-report-query-sqlite';
@@ -22,16 +21,13 @@ const hasOwnerOnlyPermissions = (mode: number): boolean => {
 const isOwnedByCurrentUser = (uid: number): boolean => process.getuid === undefined || uid === process.getuid();
 
 const parseKind = (value: string | undefined): FocusedReportQueryKind => {
-  if (value === 'breakdown' || value === 'html-payload' || value === 'overview' || value === 'support') {
+  if (value === 'breakdown' || value === 'overview' || value === 'support') {
     return value;
   }
   throw new Error('Unknown focused report query kind');
 };
 
 const maximumResultBytes = (kind: FocusedReportQueryKind): number => {
-  if (kind === 'html-payload') {
-    return MAX_REPORT_RUNNER_ARTIFACT_BYTES;
-  }
   if (kind === 'breakdown') {
     return MAX_BREAKDOWN_REFRESH_BYTES;
   }

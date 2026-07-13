@@ -11,7 +11,6 @@
     "./datasets": "./src/datasets.ts",
     "./focused-report-query": "./src/focused-report-query.ts",
     "./harness-metadata": "./src/harness-metadata.ts",
-    "./html-export": "./src/html-export.ts",
     "./pricing": "./src/pricing.ts",
     "./provider-status": "./src/provider-status.ts",
     "./model-identity": "./src/model-identity.ts",
