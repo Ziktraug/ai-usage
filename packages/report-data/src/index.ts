@@ -51,9 +51,9 @@ import {
 } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 import { withPerfSpan } from './perf';
-import { assembleReport } from './report-assembly';
+import { assembleReport, captureReport, type ReportAssemblyInput } from './report-assembly';
 
-export { reportCaptureFingerprint } from './report-assembly';
+export { captureReport, reportAssemblyInputFingerprint, reportCaptureFingerprint } from './report-assembly';
 
 const GIT_CONFIG_LINE_SEPARATOR = /\r?\n/;
 const GIT_REMOTE_HEADER_PATTERN = /^\s*\[remote\s+"([^"]+)"\]\s*$/;
@@ -487,9 +487,15 @@ export const collectProjectedLocalReportRowsWithWarnings = (
     }),
   );
 
-export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
+const collectLocalReportAssemblyInput = (
+  request: LocalReportPayloadRequest,
+): Effect.Effect<
+  ReportAssemblyInput<ProjectedRow>,
+  LocalHistoryError,
+  import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
+> =>
   withPerfSpan(
-    'aiUsage.report.createLocalPayload',
+    'aiUsage.report.collectLocalAssemblyInput',
     Effect.gen(function* () {
       const { rows, sourceAuthorities, warnings } = yield* collectLocalReportRowsWithWarnings(request);
       const machine = yield* ensureMachineConfig;
@@ -518,32 +524,57 @@ export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
         (result) => ({ datasets: result ? Object.keys(result).length : 0 }),
       );
       const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
-      return yield* withPerfSpan(
+      return {
+        configuredProjectGroups: config.projectGroups ?? [],
+        datasets,
+        facets,
+        generatedAt: request.generatedAt ?? new Date(),
+        options: request.options,
+        projectGroups: projection.projectGroups,
+        rows: projection.rows,
+        warnings: [...warnings, ...projection.warnings],
+      };
+    }),
+    (input) => ({
+      rows: input.rows.length,
+      warnings: input.warnings.length,
+    }),
+  );
+
+export type LocalReportCaptureResult =
+  | { captureFingerprint: string; payload: UsageReportPayload; status: 'changed' }
+  | { captureFingerprint: string; status: 'unchanged' };
+
+export const createLocalReportCapture = (request: LocalReportPayloadRequest, currentCaptureFingerprint?: string) =>
+  withPerfSpan(
+    'aiUsage.report.createLocalCapture',
+    Effect.gen(function* () {
+      const input = yield* collectLocalReportAssemblyInput(request);
+      const capture = captureReport(input, currentCaptureFingerprint);
+      if (capture.status === 'unchanged') {
+        return capture;
+      }
+      const payload = yield* withPerfSpan(
         'aiUsage.report.serializePayload',
-        Effect.sync(
-          () =>
-            assembleReport({
-              configuredProjectGroups: config.projectGroups ?? [],
-              datasets,
-              facets,
-              generatedAt: request.generatedAt ?? new Date(),
-              options: request.options,
-              projectGroups: projection.projectGroups,
-              rows: projection.rows,
-              warnings: [...warnings, ...projection.warnings],
-            }).payload,
-        ),
-        (payload) => ({
-          rows: payload.rows.length,
-          tableRows: payload.tableRows.length,
-          warnings: payload.warnings?.length ?? 0,
+        Effect.succeed(capture.result.payload),
+        (assembledPayload) => ({
+          rows: assembledPayload.rows.length,
+          tableRows: assembledPayload.tableRows.length,
+          warnings: assembledPayload.warnings?.length ?? 0,
         }),
       );
+      return { captureFingerprint: capture.captureFingerprint, payload, status: 'changed' as const };
     }),
-    (payload) => ({
-      rows: payload.rows.length,
-      tableRows: payload.tableRows.length,
-      warnings: payload.warnings?.length ?? 0,
+    (result) => ({ status: result.status }),
+  );
+
+export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
+  createLocalReportCapture(request).pipe(
+    Effect.map((result) => {
+      if (result.status === 'unchanged') {
+        throw new Error('A local report capture without a comparison fingerprint must contain a payload');
+      }
+      return result.payload;
     }),
   );
 
@@ -1236,6 +1267,14 @@ export const listProjectSources = (request: ProjectSourcesRequest) =>
 
 export const runLocalReportPayload = (request: LocalReportPayloadRequest): Promise<UsageReportPayload> =>
   Effect.runPromise(createLocalReportPayload(request).pipe(Effect.provide(LocalHistoryStorageLive)));
+
+export const runLocalReportCapture = (
+  request: LocalReportPayloadRequest,
+  currentCaptureFingerprint?: string,
+): Promise<LocalReportCaptureResult> =>
+  Effect.runPromise(
+    createLocalReportCapture(request, currentCaptureFingerprint).pipe(Effect.provide(LocalHistoryStorageLive)),
+  );
 
 export const runStoredReportPayload = (request: StoredReportPayloadRequest): Promise<UsageReportPayload> =>
   Effect.runPromise(createStoredReportPayload(request).pipe(Effect.provide(LocalHistoryStorageLive)));

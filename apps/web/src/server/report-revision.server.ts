@@ -37,6 +37,7 @@ const REVISION_MANIFEST_KEYS = [
   'captureFingerprint',
   'expiresAt',
   'generatedAt',
+  'payloadFingerprint',
   'publishedAt',
   'revision',
   'rowsArtifact',
@@ -68,6 +69,7 @@ interface RevisionArtifactManifest {
 }
 
 interface RevisionDiskManifest extends WebReportRevisionManifest {
+  payloadFingerprint: string;
   rowsArtifact: RevisionArtifactManifest;
   schemaVersion: typeof REVISION_SCHEMA_VERSION;
   sessionQueryArtifact?: RevisionArtifactManifest;
@@ -97,7 +99,7 @@ export interface ReportRevisionRegistry {
   dispose(): Promise<void>;
   getCurrentManifest(): Promise<WebReportRevisionManifestResult>;
   invalidateLatest(): Promise<void>;
-  publish(payload: WebReportPayload): Promise<WebReportRevisionManifest>;
+  publish(payload: WebReportPayload, options?: { captureFingerprint?: string }): Promise<WebReportRevisionManifest>;
   readRows(request: WebReportSliceRequest): Promise<WebReportRowsSliceResult>;
   readSupport(request: WebReportSliceRequest): Promise<WebReportSupportSliceResult>;
   renewCurrent(): Promise<WebReportRevisionManifestResult>;
@@ -279,6 +281,8 @@ const parseDiskManifest = (serialized: string, expectedRevision: ReportRevision)
     manifest.schemaVersion !== REVISION_SCHEMA_VERSION ||
     typeof manifest.captureFingerprint !== 'string' ||
     !SHA256_PATTERN.test(manifest.captureFingerprint) ||
+    typeof manifest.payloadFingerprint !== 'string' ||
+    !SHA256_PATTERN.test(manifest.payloadFingerprint) ||
     typeof manifest.generatedAt !== 'string' ||
     manifest.generatedAt.length === 0 ||
     typeof manifest.publishedAt !== 'number' ||
@@ -472,7 +476,10 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
     }
   };
 
-  const publish = async (payload: WebReportPayload): Promise<WebReportRevisionManifest> => {
+  const publish = async (
+    payload: WebReportPayload,
+    publishOptions: { captureFingerprint?: string } = {},
+  ): Promise<WebReportRevisionManifest> => {
     if (disposed) {
       throw new Error('Report revision registry has been disposed');
     }
@@ -486,11 +493,17 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
       throw new Error(`Report revision artifacts exceed the ${MAX_REPORT_RUNNER_ARTIFACT_BYTES}-byte limit`);
     }
 
+    const payloadFingerprint = reportCaptureFingerprintForPayload(payload);
+    const captureFingerprint = publishOptions.captureFingerprint ?? payloadFingerprint;
+    if (!SHA256_PATTERN.test(captureFingerprint)) {
+      throw new Error('Report revision capture fingerprint must be a SHA-256 digest');
+    }
     const publishedAt = now();
     const diskManifest: RevisionDiskManifest = {
-      captureFingerprint: reportCaptureFingerprintForPayload(payload),
+      captureFingerprint,
       expiresAt: publishedAt + ttlMs,
       generatedAt: payload.generatedAt,
+      payloadFingerprint,
       publishedAt,
       revision,
       rowsArtifact: { bytes: rowsBytes, file: ROWS_ARTIFACT_NAME, sha256: sha256(serializedRows) },
@@ -534,7 +547,7 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
         ...validatedSupportSlice,
         rows: validatedRowsSlice,
       });
-      if (validatedCaptureFingerprint !== validatedManifest.captureFingerprint) {
+      if (validatedCaptureFingerprint !== validatedManifest.payloadFingerprint) {
         throw new Error('Report revision artifacts do not match their capture fingerprint');
       }
       if (!Array.isArray(validatedRowsSlice)) {
@@ -635,6 +648,7 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
           captureFingerprint: sourceManifest.captureFingerprint,
           expiresAt: publishedAt + ttlMs,
           generatedAt: sourceManifest.generatedAt,
+          payloadFingerprint: sourceManifest.payloadFingerprint,
           publishedAt,
           revision,
           rowsArtifact,

@@ -29,6 +29,10 @@ export interface ReportAssemblyResult<ReportRow extends Row = Row> {
   rows: ReportRow[];
 }
 
+export type ReportCaptureResult<ReportRow extends Row = Row> =
+  | { captureFingerprint: string; result: ReportAssemblyResult<ReportRow>; status: 'changed' }
+  | { captureFingerprint: string; status: 'unchanged' };
+
 const canonicalJson = (value: unknown): unknown => {
   if (Array.isArray(value)) {
     return value.map(canonicalJson);
@@ -79,6 +83,28 @@ export const reportCaptureFingerprint = (payload: UsageReportPayload): string =>
       ),
     )
     .digest('hex');
+};
+
+/** Fingerprints every deterministic input consumed by the pure assembler, excluding only its explicit clock. */
+export const reportAssemblyInputFingerprint = <ReportRow extends Row>(
+  input: ReportAssemblyInput<ReportRow>,
+): string => {
+  const { generatedAt: _generatedAt, ...semanticInput } = input;
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalJson(semanticInput)))
+    .digest('hex');
+};
+
+/** Performs no report assembly when the complete semantic input matches the current capture. */
+export const captureReport = <ReportRow extends Row>(
+  input: ReportAssemblyInput<ReportRow>,
+  currentCaptureFingerprint?: string,
+): ReportCaptureResult<ReportRow> => {
+  const captureFingerprint = reportAssemblyInputFingerprint(input);
+  if (captureFingerprint === currentCaptureFingerprint) {
+    return { captureFingerprint, status: 'unchanged' };
+  }
+  return { captureFingerprint, result: assembleReport(input), status: 'changed' };
 };
 
 /** Pure, deterministic owner for the final report projection. All I/O happens before this boundary. */

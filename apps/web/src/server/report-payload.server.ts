@@ -48,6 +48,7 @@ let refreshJob: Promise<void> | null = null;
 let refreshRequestedAfterCurrent = false;
 const reportRevisionRegistry = createReportRevisionRegistry({ materialize: materializeSessionQueryRevision });
 const revisionPublicationByPayload = new WeakMap<UsageReportPayload, Promise<WebReportRevisionManifest>>();
+const captureFingerprintByPayload = new WeakMap<UsageReportPayload, string>();
 let revisionCaptureGeneration = 0;
 let forcedRevisionCapturesInProgress = 0;
 let lastCollectedPayload: UsageReportPayload | undefined;
@@ -558,9 +559,12 @@ const loadPayload = async (options: { force?: boolean }): Promise<UsageReportPay
   }
   const result = parseRunnerCaptureResult(await runReportPayloadRunner(options));
   if (result.status === 'changed') {
+    captureFingerprintByPayload.set(result.payload, result.captureFingerprint);
     return result.payload;
   }
-  return lastCollectedPayload ?? (await loadStoredPayloadDirect());
+  const payload = lastCollectedPayload ?? (await loadStoredPayloadDirect());
+  captureFingerprintByPayload.set(payload, result.captureFingerprint);
+  return payload;
 };
 
 const loadPayloadWithFreshFallback = async (options: { force?: boolean }) => {
@@ -587,8 +591,9 @@ const ensurePublishedRevision = async (payload: UsageReportPayload): Promise<Web
   }
 
   const webPayload = toWebReportPayload(payload);
+  const captureFingerprint = captureFingerprintByPayload.get(payload) ?? reportCaptureFingerprintForPayload(webPayload);
   const current = await reportRevisionRegistry.getCurrentManifest();
-  if (current.ok && current.manifest.captureFingerprint === reportCaptureFingerprintForPayload(webPayload)) {
+  if (current.ok && current.manifest.captureFingerprint === captureFingerprint) {
     const manifest =
       current.manifest.expiresAt - Date.now() <= REVISION_RENEWAL_WINDOW_MS
         ? await reportRevisionRegistry.renewCurrent().then((result) => (result.ok ? result.manifest : current.manifest))
@@ -597,7 +602,7 @@ const ensurePublishedRevision = async (payload: UsageReportPayload): Promise<Web
     return manifest;
   }
 
-  const publication = reportRevisionRegistry.publish(webPayload);
+  const publication = reportRevisionRegistry.publish(webPayload, { captureFingerprint });
   revisionPublicationByPayload.set(payload, publication);
   try {
     return await publication;
