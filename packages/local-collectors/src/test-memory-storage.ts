@@ -33,7 +33,7 @@ export class TestMemoryStorage implements LocalHistoryStorage {
     );
   }
 
-  readText(filePath: string) {
+  readText(filePath: string, maxBytes = Number.POSITIVE_INFINITY) {
     const content = this.files.get(filePath);
     if (content == null) {
       return Effect.fail(
@@ -42,6 +42,11 @@ export class TestMemoryStorage implements LocalHistoryStorage {
           path: filePath,
           cause: new Error(`Missing fixture file: ${filePath}`),
         }),
+      );
+    }
+    if (Buffer.byteLength(content, 'utf8') > maxBytes) {
+      return Effect.fail(
+        new LocalHistoryError({ operation: 'readText', path: filePath, cause: new Error('Fixture exceeds limit') }),
       );
     }
     return Effect.succeed(content);
@@ -63,7 +68,12 @@ export class TestMemoryStorage implements LocalHistoryStorage {
     }
     return Effect.succeed(
       [...entries.entries()]
-        .map(([name, isDirectory]) => ({ name, isDirectory }))
+        .map(([name, isDirectory]) => ({
+          name,
+          isDirectory,
+          isRegularFile: !isDirectory,
+          size: isDirectory ? 0 : Buffer.byteLength(this.files.get(path.join(dirPath, name)) ?? '', 'utf8'),
+        }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     );
   }

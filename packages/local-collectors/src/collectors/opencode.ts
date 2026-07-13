@@ -75,7 +75,7 @@ export interface OpenCodeCollectionResult {
   warnings: LocalHistoryWarning[];
 }
 
-const OPENCODE_DB_CACHE_VERSION = 2;
+const OPENCODE_DB_CACHE_VERSION = 3;
 const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 const SESSION_SQL = 'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
 const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE data LIKE '%"type":"tool"%' GROUP BY session_id`;
@@ -290,7 +290,10 @@ const collectFromDb = (
         }),
         (rows) => ({ db: source, rows: rows.length, sessions: rows.length }),
       );
-      storeDbRows(cache, dbPath, stat, sessions);
+      const afterStat = dbStat(dbPath);
+      if (JSON.stringify(stat) === JSON.stringify(afterStat)) {
+        storeDbRows(cache, dbPath, afterStat, sessions);
+      }
       return sessions;
     }),
     (rows) => ({ db: source, rows: rows.length }),

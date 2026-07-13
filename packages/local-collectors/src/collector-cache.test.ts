@@ -76,4 +76,20 @@ describe('shared collector row cache', () => {
     const bumped = readDbRowCache(storage, 'cursor-db-cache.json', 2);
     expect(bumped?.entries).toEqual({});
   });
+
+  test('invalidates on WAL changes but ignores SHM churn', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'collector-cache-'));
+    const dbPath = path.join(home, 'history.db');
+    fs.writeFileSync(dbPath, 'db-bytes');
+    fs.writeFileSync(`${dbPath}-wal`, 'wal-one');
+    const storage = storageAt(home);
+    const cache = readDbRowCache(storage, 'cursor-db-cache.json', 3);
+    storeDbRows(cache, dbPath, dbStat(dbPath), [row('2026-06-01T00:00:00.000Z')]);
+    writeDbRowCache(storage, 'cursor-db-cache.json', 3, cache);
+    const reloaded = readDbRowCache(storage, 'cursor-db-cache.json', 3);
+    fs.writeFileSync(`${dbPath}-shm`, 'coordination');
+    expect(cachedDbRows(reloaded, dbPath, dbStat(dbPath))).toHaveLength(1);
+    fs.appendFileSync(`${dbPath}-wal`, '-changed');
+    expect(cachedDbRows(reloaded, dbPath, dbStat(dbPath))).toBeNull();
+  });
 });

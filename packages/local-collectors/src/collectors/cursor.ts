@@ -53,7 +53,7 @@ const COMPOSER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'compos
 const TOKEN_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"inputTokens\"%'";
 const USER_BUBBLE_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"type\":1%'";
 
-const CURSOR_DB_CACHE_VERSION = 2;
+const CURSOR_DB_CACHE_VERSION = 3;
 const CURSOR_DB_CACHE_FILE = 'cursor-db-cache.json';
 
 export type CursorCsvIngestionOptions = Partial<CursorCsvOptions> & {
@@ -287,7 +287,10 @@ export const collectCursor = withPerfSpan(
     }
     const sessions = yield* collectCursorSessionsFromDb(storage, dbPath);
     const rows = cursorSessionsToRows(sessions);
-    storeDbRows(cache, dbPath, stat, rows);
+    const afterStat = dbStat(dbPath);
+    if (JSON.stringify(stat) === JSON.stringify(afterStat)) {
+      storeDbRows(cache, dbPath, afterStat, rows);
+    }
     yield* withPerfSpan(
       'aiUsage.collect.cursor.cache.write',
       Effect.sync(() => writeDbRowCache(storage, CURSOR_DB_CACHE_FILE, CURSOR_DB_CACHE_VERSION, cache)),

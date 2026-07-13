@@ -40,14 +40,36 @@ export const reviveCollectorRows = (value: unknown): CollectorRow[] => {
 };
 
 export interface DbStat {
+  dev: number;
+  ino: number;
   mtimeMs: number;
   size: number;
+  walDev: number | null;
+  walIno: number | null;
+  walMtimeMs: number | null;
+  walSize: number | null;
 }
 
 export const dbStat = (dbPath: string): DbStat | null => {
   try {
-    const stat = fs.statSync(dbPath);
-    return { mtimeMs: stat.mtimeMs, size: stat.size };
+    const stat = fs.lstatSync(dbPath);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      return null;
+    }
+    const wal = fs.lstatSync(`${dbPath}-wal`, { throwIfNoEntry: false });
+    if (wal && (wal.isSymbolicLink() || !wal.isFile())) {
+      return null;
+    }
+    return {
+      dev: stat.dev,
+      ino: stat.ino,
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      walDev: wal?.dev ?? null,
+      walIno: wal?.ino ?? null,
+      walMtimeMs: wal?.mtimeMs ?? null,
+      walSize: wal?.size ?? null,
+    };
   } catch {
     return null;
   }
@@ -56,10 +78,8 @@ export const dbStat = (dbPath: string): DbStat | null => {
 export const collectorCachePath = (storage: LocalHistoryStorage, fileName: string) =>
   path.join(storage.home, '.config', 'ai-usage', fileName);
 
-export interface DbRowCacheEntry {
-  mtimeMs: number;
+export interface DbRowCacheEntry extends DbStat {
   rows: CollectorRow[];
-  size: number;
 }
 
 export interface DbRowCache {
@@ -80,7 +100,7 @@ export const readDbRowCache = (storage: LocalHistoryStorage, fileName: string, v
     }
     const parsed = readPrivateJson(cachePath, COLLECTOR_CACHE_MAX_BYTES) as
       | {
-          entries?: Record<string, { mtimeMs: number; rows: unknown; size: number }>;
+          entries?: Record<string, DbStat & { rows: unknown }>;
           version?: number;
         }
       | undefined;
@@ -92,10 +112,15 @@ export const readDbRowCache = (storage: LocalHistoryStorage, fileName: string, v
     }
     const entries: Record<string, DbRowCacheEntry> = {};
     for (const [dbPath, entry] of Object.entries(parsed.entries ?? {})) {
-      if (typeof entry.mtimeMs !== 'number' || typeof entry.size !== 'number') {
+      if (
+        typeof entry.dev !== 'number' ||
+        typeof entry.ino !== 'number' ||
+        typeof entry.mtimeMs !== 'number' ||
+        typeof entry.size !== 'number'
+      ) {
         continue;
       }
-      entries[dbPath] = { mtimeMs: entry.mtimeMs, rows: reviveCollectorRows(entry.rows), size: entry.size };
+      entries[dbPath] = { ...entry, rows: reviveCollectorRows(entry.rows) };
     }
     return { dirty: false, entries, version };
   } catch {
@@ -130,7 +155,17 @@ export const cachedDbRows = (cache: DbRowCache | null, dbPath: string, stat: DbS
     return null;
   }
   const cached = cache.entries[dbPath];
-  if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) {
+  if (
+    cached &&
+    cached.dev === stat.dev &&
+    cached.ino === stat.ino &&
+    cached.size === stat.size &&
+    cached.mtimeMs === stat.mtimeMs &&
+    cached.walDev === stat.walDev &&
+    cached.walIno === stat.walIno &&
+    cached.walSize === stat.walSize &&
+    cached.walMtimeMs === stat.walMtimeMs
+  ) {
     return cached.rows;
   }
   return null;
@@ -146,6 +181,6 @@ export const storeDbRows = (
   if (!(cache && stat)) {
     return;
   }
-  cache.entries[dbPath] = { mtimeMs: stat.mtimeMs, rows, size: stat.size };
+  cache.entries[dbPath] = { ...stat, rows };
   cache.dirty = true;
 };
