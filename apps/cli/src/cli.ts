@@ -8,7 +8,7 @@ import type { ReportOptions, SortKey } from '@ai-usage/report-core/report-data';
 import { Effect } from 'effect';
 import { CliArgumentError } from './errors';
 
-export type OutputFormat = 'table' | 'json' | 'csv' | 'html' | 'payload';
+export type OutputFormat = 'table' | 'json' | 'csv' | 'payload';
 
 export interface Args extends ReportOptions {
   color: boolean | null;
@@ -93,7 +93,7 @@ const parseSort = (value: string): Effect.Effect<SortKey, CliArgumentError> => {
 
 const setOutputFormat = (args: Args, format: Exclude<OutputFormat, 'table'>): Effect.Effect<void, CliArgumentError> => {
   if (args.format !== 'table') {
-    return Effect.fail(cliArgumentError('--json, --csv, --html, and --payload-json are mutually exclusive'));
+    return Effect.fail(cliArgumentError('--json, --csv, and --payload-json are mutually exclusive'));
   }
   args.format = format;
   return Effect.void;
@@ -128,8 +128,8 @@ export const helpText =
   '  --wide                 add Dur / Turns / Tools / ±Lines columns\n' +
   '  --no-cursor            skip Cursor (local data is partial)\n' +
   '  --no-color / --color   disable / force ANSI colors (default: auto)\n' +
-  '  --json | --csv | --html\n' +
-  '  --payload-json         full report payload JSON (consumed by the report dev server)\n' +
+  '  --json | --csv\n' +
+  '  --payload-json         full report payload JSON for compatible consumers\n' +
   '\nSnapshot:\n' +
   '  snapshot --out <file>  export local usage rows with machine provenance\n' +
   '\nMerge:\n' +
@@ -176,8 +176,6 @@ export const parseArgs = (argv: string[]): Effect.Effect<Args, CliArgumentError>
         yield* setOutputFormat(args, 'json');
       } else if (arg === '--csv') {
         yield* setOutputFormat(args, 'csv');
-      } else if (arg === '--html') {
-        yield* setOutputFormat(args, 'html');
       } else if (arg === '--payload-json') {
         yield* setOutputFormat(args, 'payload');
       } else if (arg === '--no-cursor') {
@@ -263,8 +261,6 @@ const parseMergeArgs = (argv: string[]): Effect.Effect<MergeArgs, CliArgumentErr
         yield* setOutputFormat(args, 'json');
       } else if (arg === '--csv') {
         yield* setOutputFormat(args, 'csv');
-      } else if (arg === '--html') {
-        yield* setOutputFormat(args, 'html');
       } else if (arg === '--payload-json') {
         yield* setOutputFormat(args, 'payload');
       } else if (arg === '--no-cursor') {
