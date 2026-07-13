@@ -15,7 +15,11 @@ import {
 } from '@ai-usage/report-core/focused-report-query';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
 import { type Accessor, batch, createSignal } from 'solid-js';
-import { reportManifestRequestFingerprint, type WebReportRevisionManifestResult } from './web-report-payload';
+import {
+  reportManifestRequestFingerprint,
+  type WebReportRevisionManifest,
+  type WebReportRevisionManifestResult,
+} from './web-report-payload';
 
 export interface FocusedReportSource {
   getBreakdown: (request: FocusedBreakdownRequest) => Promise<SessionQueryServerResult<FocusedBreakdownResult>>;
@@ -117,35 +121,52 @@ const querySource = async <Kind extends FocusedReportQueryKind>(
   );
 };
 
-const manifestRevision = (manifest: WebReportRevisionManifestResult): string => {
+const validatedManifest = (manifest: WebReportRevisionManifestResult): WebReportRevisionManifest => {
   if (manifest.requestFingerprint !== reportManifestRequestFingerprint) {
     throw new Error('Report manifest request fingerprint mismatch');
   }
   if (!manifest.ok) {
     throw new Error(manifest.error.message);
   }
-  return manifest.manifest.revision;
+  return manifest.manifest;
 };
 
-export const fetchFocusedReportBootstrap = async (
+export interface FocusedReportBootstrapDescriptor {
+  bootstrap: FocusedSupportResult;
+  captureFingerprint: string;
+  revision: string;
+}
+
+export const fetchFocusedReportBootstrapDescriptor = async (
   source: FocusedReportSource,
-  retryExpired = true,
-): Promise<FocusedSupportResult> => {
-  const revision = manifestRevision(await source.getManifest());
+  options: { refresh?: boolean; retryExpired?: boolean } = {},
+): Promise<FocusedReportBootstrapDescriptor> => {
+  if (options.refresh) {
+    await source.refreshRevision?.();
+  }
+  const manifest = validatedManifest(await source.getManifest());
   try {
-    return await querySource(source, 'support', { revision });
+    const bootstrap = await querySource(source, 'support', { revision: manifest.revision });
+    return {
+      bootstrap,
+      captureFingerprint: manifest.captureFingerprint,
+      revision: manifest.revision,
+    };
   } catch (error) {
-    if (retryExpired && error instanceof FocusedRevisionExpiredError) {
-      return await fetchFocusedReportBootstrap(source, false);
+    if ((options.retryExpired ?? true) && error instanceof FocusedRevisionExpiredError) {
+      return await fetchFocusedReportBootstrapDescriptor(source, { retryExpired: false });
     }
     throw error;
   }
 };
 
-export const refreshFocusedReportBootstrap = async (source: FocusedReportSource): Promise<FocusedSupportResult> => {
-  await source.refreshRevision?.();
-  return await fetchFocusedReportBootstrap(source);
-};
+export const fetchFocusedReportBootstrap = async (
+  source: FocusedReportSource,
+  retryExpired = true,
+): Promise<FocusedSupportResult> => (await fetchFocusedReportBootstrapDescriptor(source, { retryExpired })).bootstrap;
+
+export const refreshFocusedReportBootstrap = async (source: FocusedReportSource): Promise<FocusedSupportResult> =>
+  (await fetchFocusedReportBootstrapDescriptor(source, { refresh: true })).bootstrap;
 
 export const fetchFocusedOverview = (source: FocusedReportSource, request: FocusedOverviewRequest) =>
   querySource(source, 'overview', request);

@@ -7,6 +7,7 @@ export default defineConfig({
     timeout: 5000,
   },
   fullyParallel: true,
+  workers: process.env.CI ? 4 : undefined,
   reporter: process.env.CI ? 'github' : 'line',
   testDir: './e2e',
   testIgnore: ['production-report.spec.ts'],

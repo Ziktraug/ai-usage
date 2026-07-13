@@ -123,6 +123,7 @@ test('shows the text query as a directly removable active filter', async ({ page
     name: 'Filter sessions by title, project, model, provider, or harness',
   });
   await search.fill('ai-usage');
+  await expect(page).toHaveURL(QUERY_URL_PATTERN);
 
   const queryFilter = page.getByRole('button', { name: 'Query: ai-usage ×' });
   await expect(queryFilter).toBeVisible();

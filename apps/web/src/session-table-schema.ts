@@ -1,4 +1,3 @@
-import { usageRowCsvColumns } from '@ai-usage/report-core/csv';
 import {
   isSessionSortField,
   type SessionSortField,
@@ -211,5 +210,3 @@ export const sortFromSortingState = (sorting: SortingState, fallbackSort: { id: 
   }
   return { id: sort.id, desc: sort.desc };
 };
-
-export const sessionCsvColumns = usageRowCsvColumns;
