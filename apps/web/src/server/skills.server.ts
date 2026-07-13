@@ -1,17 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import {
-  ensureMachineConfig,
-  readMergedAiUsageConfigFrom,
-  updateAiUsageConfig,
-} from '@ai-usage/local-collectors/machine-config';
+  createLocalHistoryStorage,
+  LocalHistoryStorage,
+  type LocalHistoryStorage as LocalHistoryStorageService,
+} from '@ai-usage/local-collectors/local-history';
+import { readMergedAiUsageConfigFrom, updateAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
 import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
+import {
+  createKnownLocalProjectSources,
+  type KnownLocalProjectSourcesRequest,
+  type KnownLocalProjectSourcesResult,
+} from '@ai-usage/report-data';
 import type {
   ProjectSkillInventory,
   SkillManagementConfig,
   SkillManagementSnapshot,
-  SkillMarkdownDocument,
   SkillMarkdownWriteInput,
   SkillTargetDirectoryInput,
   SkillToggleInput,
@@ -35,12 +39,12 @@ import {
   writeSkillMarkdown,
 } from '@ai-usage/skills';
 import { Cause, Effect, Option, Runtime } from 'effect';
+import { runKnownProjectSourcesRunner } from './known-project-sources-runner.server';
 import type {
   KnownSkillProjectPath,
   ProjectSkillMarkdownDocument,
   ProjectSkillMarkdownInput,
-  SkillMarkdownSaveResult,
-  SkillReconcileServerResult,
+  SkillsServerAdapter,
   SkillsServerResult,
 } from './skills-contracts';
 
@@ -90,7 +94,8 @@ interface ProjectPathSourcePayload {
     name: string;
     sources: readonly ProjectPathSource[];
   }[];
-  rows: readonly ProjectPathRow[];
+  rows?: readonly ProjectPathRow[];
+  sources?: readonly ProjectPathSource[];
 }
 
 interface KnownSkillProjectPathOptions {
@@ -145,35 +150,6 @@ export const projectSkillMarkdownInputFrom = (input: unknown): ProjectSkillMarkd
   };
 };
 
-const runWithStorage = async <T>(
-  operation: (storage: LocalHistoryStorage) => Promise<T>,
-): Promise<SkillsServerResult<T>> => {
-  try {
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const storage = yield* LocalHistoryStorage;
-        return yield* Effect.promise(() => operation(storage));
-      }).pipe(Effect.provide(LocalHistoryStorageLive)),
-    );
-    return { ok: true, data: toJson(result) };
-  } catch (error) {
-    return errorResult(error);
-  }
-};
-
-const loadMergedConfig = () =>
-  Effect.runPromise(readMergedAiUsageConfigFrom().pipe(Effect.provide(LocalHistoryStorageLive)));
-
-const loadSnapshotForStorage = async (storage: LocalHistoryStorage): Promise<SkillManagementSnapshot> => {
-  const config = await Effect.runPromise(
-    readMergedAiUsageConfigFrom().pipe(Effect.provideService(LocalHistoryStorage, storage)),
-  );
-  return loadSkillManagementSnapshot({
-    config: { ...config },
-    homePath: storage.home,
-  });
-};
-
 export const skillManagementSnapshotForClient = (snapshot: SkillManagementSnapshot): SkillManagementSnapshot => ({
   ...snapshot,
   skills: snapshot.skills.map((skill) => ({
@@ -184,12 +160,6 @@ export const skillManagementSnapshotForClient = (snapshot: SkillManagementSnapsh
     },
   })),
 });
-
-const loadClientSnapshotForStorage = async (storage: LocalHistoryStorage): Promise<SkillManagementSnapshot> =>
-  skillManagementSnapshotForClient(await loadSnapshotForStorage(storage));
-
-export const readSkillManagementSnapshotForServer = async (): Promise<SkillsServerResult<SkillManagementSnapshot>> =>
-  runWithStorage((storage) => loadClientSnapshotForStorage(storage));
 
 const pathEntryLabel = (entry: { project: string }) => entry.project;
 
@@ -275,8 +245,22 @@ export const knownSkillProjectPathsFromReportPayload = (
         );
       }
     }
+  } else if (payload.sources && payload.sources.length > 0) {
+    for (const source of payload.sources) {
+      addKnownProjectPath(
+        entries,
+        {
+          machineId: source.machineId,
+          machineLabel: source.machineLabel,
+          path: source.sourcePath,
+          project: source.project,
+          sessions: source.sessions ?? 0,
+        },
+        options,
+      );
+    }
   } else {
-    for (const row of payload.rows) {
+    for (const row of payload.rows ?? []) {
       addKnownProjectPath(
         entries,
         {
@@ -318,164 +302,6 @@ export const localProjectRootExists = (projectPath: string) => {
   }
   return projectSkillDirectories.some((directory) => fs.existsSync(path.join(projectPath, directory.relativePath)));
 };
-
-export const readKnownSkillProjectPathsForServer = async (): Promise<
-  SkillsServerResult<readonly KnownSkillProjectPath[]>
-> => {
-  try {
-    const [machine, payload, homePath] = await Promise.all([
-      Effect.runPromise(ensureMachineConfig.pipe(Effect.provide(LocalHistoryStorageLive))),
-      import('./report-payload.server').then(({ runReportPayloadCollection }) => runReportPayloadCollection()),
-      Effect.runPromise(
-        Effect.map(LocalHistoryStorage, (storage) => storage.home).pipe(Effect.provide(LocalHistoryStorageLive)),
-      ),
-    ]);
-    return {
-      ok: true,
-      data: knownSkillProjectPathsFromReportPayload(payload, {
-        directoryExists: localDirectoryExists,
-        excludedPathPrefixes: [path.join(homePath, '.local', 'share'), path.join(homePath, '.cache')],
-        homePath,
-        isProjectRoot: localProjectRootExists,
-        localMachineId: machine.id,
-      }),
-    };
-  } catch (error) {
-    return errorResult(error);
-  }
-};
-
-export const writeSkillManagementConfigForServer = async (
-  skills: SkillManagementConfig,
-): Promise<SkillsServerResult<SkillManagementSnapshot>> =>
-  runWithStorage(async (storage) => {
-    await Effect.runPromise(
-      updateAiUsageConfig(async (config) => {
-        let updatedConfig: AiUsageConfig | undefined;
-        await writeSkillManagementConfig({
-          config: { ...config },
-          skills,
-          writeConfig: (nextConfig) => {
-            updatedConfig = nextConfig as AiUsageConfig;
-            return Promise.resolve();
-          },
-        });
-        if (updatedConfig === undefined) {
-          throw new Error('Skill config update did not produce a configuration document');
-        }
-        return updatedConfig;
-      }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-    );
-    return loadClientSnapshotForStorage(storage);
-  });
-
-export const toggleSkillEnabledForServer = async (
-  input: SkillToggleInput,
-): Promise<SkillsServerResult<SkillReconcileServerResult>> =>
-  runWithStorage(async (storage) => {
-    const config = await loadMergedConfig();
-    const skillsConfig = parseSkillConfigInput(config.skills ?? {});
-    if (skillsConfig.sourceRepoPath === undefined) {
-      throw new Error('skills.sourceRepoPath is required before toggling skills');
-    }
-    await toggleSkillEnabled({
-      enabled: input.enabled,
-      skillName: input.skillName,
-      sourceRepoPath: skillsConfig.sourceRepoPath,
-    });
-    if (!input.enabled) {
-      const reconcileResult = await reconcileSkill({
-        config: { ...config },
-        homePath: storage.home,
-        skillName: input.skillName,
-      });
-      return {
-        actions: reconcileResult.actions,
-        snapshot: await loadClientSnapshotForStorage(storage),
-      };
-    }
-    return { actions: [], snapshot: await loadClientSnapshotForStorage(storage) };
-  });
-
-export const reconcileSkillForServer = async (
-  skillName: string,
-): Promise<SkillsServerResult<SkillReconcileServerResult>> =>
-  runWithStorage(async (storage) => {
-    const config = await loadMergedConfig();
-    const reconcileResult = await reconcileSkill({
-      config: { ...config },
-      homePath: storage.home,
-      skillName,
-    });
-    return {
-      actions: reconcileResult.actions,
-      snapshot: await loadClientSnapshotForStorage(storage),
-    };
-  });
-
-export const reconcileAllActiveSkillsForServer = async (): Promise<SkillsServerResult<SkillReconcileServerResult>> =>
-  runWithStorage(async (storage) => {
-    const config = await loadMergedConfig();
-    const reconcileResult = await reconcileAllActiveSkills({
-      config: { ...config },
-      homePath: storage.home,
-    });
-    return {
-      actions: reconcileResult.actions,
-      snapshot: await loadClientSnapshotForStorage(storage),
-    };
-  });
-
-export const previewReconcileAllActiveSkillsForServer = async (): Promise<
-  SkillsServerResult<SkillReconcileServerResult>
-> =>
-  runWithStorage(async (storage) => {
-    const config = await loadMergedConfig();
-    // Planning only — apply re-plans from a fresh snapshot; per-action safety
-    // rules in the workflow remain the real mutation guard.
-    const previewResult = await previewReconcileAllActiveSkills({
-      config: { ...config },
-      homePath: storage.home,
-    });
-    return {
-      actions: previewResult.actions,
-      snapshot: skillManagementSnapshotForClient(previewResult.snapshot),
-    };
-  });
-
-export const createSkillTargetDirectoryForServer = async (
-  input: SkillTargetDirectoryInput,
-): Promise<SkillsServerResult<SkillManagementSnapshot>> =>
-  runWithStorage(async (storage) => {
-    const snapshot = await loadSnapshotForStorage(storage);
-    const target = snapshot.targets.find((candidate) => candidate.id === input.targetId);
-    if (!target) {
-      throw new Error(`Unknown skill target: ${input.targetId}`);
-    }
-    await createSkillTargetDirectory({ path: target.path });
-    return loadClientSnapshotForStorage(storage);
-  });
-
-export const readSkillProjectInventoriesForServer = async (): Promise<
-  SkillsServerResult<readonly ProjectSkillInventory[]>
-> =>
-  runWithStorage(async () => {
-    const config = await loadMergedConfig();
-    const skillsConfig = parseSkillConfigInput(config.skills ?? {});
-    const knownProjectsResult = await readKnownSkillProjectPathsForServer();
-    const knownProjectPaths = knownProjectsResult.ok ? knownProjectsResult.data : [];
-    const projectPaths = projectSkillScanPathsFrom(skillsConfig, knownProjectPaths);
-    if (projectPaths.length === 0) {
-      return [];
-    }
-    return scanProjectSkills({
-      ...(skillsConfig.tokenThresholds === undefined
-        ? {}
-        : { options: { tokenThresholds: skillsConfig.tokenThresholds } }),
-      projectPaths,
-      ...(skillsConfig.sourceRepoPath === undefined ? {} : { sourceRepoPath: skillsConfig.sourceRepoPath }),
-    });
-  });
 
 interface ReadProjectSkillMarkdownOptions {
   loadConfig?: () => Promise<AiUsageConfig>;
@@ -540,29 +366,107 @@ const pathIsWithin = (parentPath: string, candidatePath: string): boolean => {
   );
 };
 
-export const readProjectSkillMarkdownForServer = async (
-  input: ProjectSkillMarkdownInput,
-  options: ReadProjectSkillMarkdownOptions = {},
-): Promise<SkillsServerResult<ProjectSkillMarkdownDocument>> =>
-  runWithStorage(async () => {
-    const config = await (options.loadConfig?.() ?? loadMergedConfig());
-    const skillsConfig = parseSkillConfigInput(config.skills ?? {});
-    const knownProjectsResult = await (options.readKnownProjectPaths?.() ?? readKnownSkillProjectPathsForServer());
-    const knownProjectPaths = knownProjectsResult.ok ? knownProjectsResult.data : [];
+interface SkillsConfigReadInput {
+  configCwd: string;
+  storage: LocalHistoryStorageService;
+}
+
+interface SkillsConfigUpdateInput {
+  storage: LocalHistoryStorageService;
+  update: (config: AiUsageConfig) => AiUsageConfig | Promise<AiUsageConfig>;
+}
+
+interface KnownProjectSourcesReadInput {
+  request: KnownLocalProjectSourcesRequest;
+  storage: LocalHistoryStorageService;
+}
+
+export interface SkillsServerAdapterDependencies {
+  configCwd: string;
+  readConfig: (input: SkillsConfigReadInput) => Promise<AiUsageConfig>;
+  readKnownProjectSources: (input: KnownProjectSourcesReadInput) => Promise<KnownLocalProjectSourcesResult>;
+  storage: LocalHistoryStorageService;
+  updateConfig: (input: SkillsConfigUpdateInput) => Promise<AiUsageConfig>;
+  workflows: {
+    createTargetDirectory: typeof createSkillTargetDirectory;
+    loadSnapshot: typeof loadSkillManagementSnapshot;
+    previewReconcileAll: typeof previewReconcileAllActiveSkills;
+    readMarkdown: typeof readSkillMarkdown;
+    reconcileAll: typeof reconcileAllActiveSkills;
+    reconcileSkill: typeof reconcileSkill;
+    scanProjects: typeof scanProjectSkills;
+    toggleSkill: typeof toggleSkillEnabled;
+    writeConfig: typeof writeSkillManagementConfig;
+    writeMarkdown: typeof writeSkillMarkdown;
+  };
+}
+
+const runAdapterOperation = async <T>(operation: () => Promise<T>): Promise<SkillsServerResult<T>> => {
+  try {
+    return { ok: true, data: toJson(await operation()) };
+  } catch (error) {
+    return errorResult(error);
+  }
+};
+
+const projectScanInput = (skillsConfig: SkillManagementConfig, projectPaths: readonly string[]) => ({
+  ...(skillsConfig.tokenThresholds === undefined ? {} : { options: { tokenThresholds: skillsConfig.tokenThresholds } }),
+  projectPaths,
+  ...(skillsConfig.sourceRepoPath === undefined ? {} : { sourceRepoPath: skillsConfig.sourceRepoPath }),
+});
+
+export const createSkillsServerAdapter = (dependencies: SkillsServerAdapterDependencies): SkillsServerAdapter => {
+  const loadConfig = () =>
+    dependencies.readConfig({ configCwd: dependencies.configCwd, storage: dependencies.storage });
+
+  const loadSnapshot = async (): Promise<SkillManagementSnapshot> =>
+    dependencies.workflows.loadSnapshot({
+      config: { ...(await loadConfig()) },
+      homePath: dependencies.storage.home,
+    });
+
+  const loadClientSnapshot = async (): Promise<SkillManagementSnapshot> =>
+    skillManagementSnapshotForClient(await loadSnapshot());
+
+  const readKnownProjectPaths = async (): Promise<readonly KnownSkillProjectPath[]> => {
+    const projectSources = await dependencies.readKnownProjectSources({
+      request: {
+        configCwd: dependencies.configCwd,
+        harness: null,
+        includeCursor: true,
+      },
+      storage: dependencies.storage,
+    });
+    const homePath = dependencies.storage.home;
+    return knownSkillProjectPathsFromReportPayload(projectSources, {
+      directoryExists: localDirectoryExists,
+      excludedPathPrefixes: [path.join(homePath, '.local', 'share'), path.join(homePath, '.cache')],
+      homePath,
+      isProjectRoot: localProjectRootExists,
+    });
+  };
+
+  const readProjectInventories = async (): Promise<readonly ProjectSkillInventory[]> => {
+    const skillsConfig = parseSkillConfigInput((await loadConfig()).skills ?? {});
+    const projectPaths = projectSkillScanPathsFrom(skillsConfig, await readKnownProjectPaths());
+    if (projectPaths.length === 0) {
+      return [];
+    }
+    return dependencies.workflows.scanProjects(projectScanInput(skillsConfig, projectPaths));
+  };
+
+  const readProjectMarkdown = async (input: ProjectSkillMarkdownInput): Promise<ProjectSkillMarkdownDocument> => {
+    const skillsConfig = parseSkillConfigInput((await loadConfig()).skills ?? {});
     const allowedProjectPaths = new Set(
-      projectSkillScanPathsFrom(skillsConfig, knownProjectPaths).map((projectPath) => path.resolve(projectPath)),
+      projectSkillScanPathsFrom(skillsConfig, await readKnownProjectPaths()).map((projectPath) =>
+        path.resolve(projectPath),
+      ),
     );
     const projectPath = path.resolve(input.projectPath);
     if (!allowedProjectPaths.has(projectPath)) {
       throw new Error('project path is not allowed');
     }
-    const inventories = await scanProjectSkills({
-      ...(skillsConfig.tokenThresholds === undefined
-        ? {}
-        : { options: { tokenThresholds: skillsConfig.tokenThresholds } }),
-      projectPaths: [projectPath],
-      ...(skillsConfig.sourceRepoPath === undefined ? {} : { sourceRepoPath: skillsConfig.sourceRepoPath }),
-    });
+    const inventories = await dependencies.workflows.scanProjects(projectScanInput(skillsConfig, [projectPath]));
     const observation = inventories
       .flatMap((inventory) => inventory.observations)
       .find((candidate) => candidate.name === input.skillName && candidate.runtimeDirId === input.runtimeDirId);
@@ -587,41 +491,227 @@ export const readProjectSkillMarkdownForServer = async (
     if (!(isLexicallyInsideProject && (isCanonicallyInsideProject || isCanonicallyInsideSource))) {
       throw new Error('project skill markdown resolves outside the allowed project');
     }
-    const markdown = await readBoundedProjectSkillMarkdownFile(canonicalSkillMdPath, maxProjectSkillMarkdownBytes);
     return {
-      ...markdown,
+      ...(await readBoundedProjectSkillMarkdownFile(canonicalSkillMdPath, maxProjectSkillMarkdownBytes)),
       path: observedSkillMdPath,
       skillName: input.skillName,
     };
-  });
+  };
 
-export const readSkillMarkdownForServer = async (
-  skillName: string,
-): Promise<SkillsServerResult<SkillMarkdownDocument>> =>
-  runWithStorage(async () => {
-    const config = await loadMergedConfig();
-    const skillsConfig = parseSkillConfigInput(config.skills ?? {});
-    if (skillsConfig.sourceRepoPath === undefined) {
-      throw new Error('skills.sourceRepoPath is required before reading SKILL.md');
-    }
-    return readSkillMarkdown({ skillName, sourceRepoPath: skillsConfig.sourceRepoPath });
-  });
+  return {
+    createTargetDirectory: (input) =>
+      runAdapterOperation(async () => {
+        const target = (await loadSnapshot()).targets.find((candidate) => candidate.id === input.targetId);
+        if (!target) {
+          throw new Error(`Unknown skill target: ${input.targetId}`);
+        }
+        await dependencies.workflows.createTargetDirectory({ path: target.path });
+        return loadClientSnapshot();
+      }),
+    previewReconcileAll: () =>
+      runAdapterOperation(async () => {
+        const previewResult = await dependencies.workflows.previewReconcileAll({
+          config: { ...(await loadConfig()) },
+          homePath: dependencies.storage.home,
+        });
+        return {
+          actions: previewResult.actions,
+          snapshot: skillManagementSnapshotForClient(previewResult.snapshot),
+        };
+      }),
+    readKnownProjectPaths: () => runAdapterOperation(readKnownProjectPaths),
+    readMarkdown: (skillName) =>
+      runAdapterOperation(async () => {
+        const skillsConfig = parseSkillConfigInput((await loadConfig()).skills ?? {});
+        if (skillsConfig.sourceRepoPath === undefined) {
+          throw new Error('skills.sourceRepoPath is required before reading SKILL.md');
+        }
+        return dependencies.workflows.readMarkdown({ skillName, sourceRepoPath: skillsConfig.sourceRepoPath });
+      }),
+    readProjectInventories: () => runAdapterOperation(readProjectInventories),
+    readProjectMarkdown: (input) => runAdapterOperation(() => readProjectMarkdown(input)),
+    readSnapshot: () => runAdapterOperation(loadClientSnapshot),
+    reconcileAll: () =>
+      runAdapterOperation(async () => {
+        const reconcileResult = await dependencies.workflows.reconcileAll({
+          config: { ...(await loadConfig()) },
+          homePath: dependencies.storage.home,
+        });
+        return { actions: reconcileResult.actions, snapshot: await loadClientSnapshot() };
+      }),
+    reconcileSkill: (skillName) =>
+      runAdapterOperation(async () => {
+        const reconcileResult = await dependencies.workflows.reconcileSkill({
+          config: { ...(await loadConfig()) },
+          homePath: dependencies.storage.home,
+          skillName,
+        });
+        return { actions: reconcileResult.actions, snapshot: await loadClientSnapshot() };
+      }),
+    refreshSnapshot: () => runAdapterOperation(loadClientSnapshot),
+    saveConfig: (skills) =>
+      runAdapterOperation(async () => {
+        await dependencies.updateConfig({
+          storage: dependencies.storage,
+          update: async (config) => {
+            let updatedConfig: AiUsageConfig | undefined;
+            await dependencies.workflows.writeConfig({
+              config: { ...config },
+              skills,
+              writeConfig: (nextConfig) => {
+                updatedConfig = nextConfig as AiUsageConfig;
+                return Promise.resolve();
+              },
+            });
+            if (updatedConfig === undefined) {
+              throw new Error('Skill config update did not produce a configuration document');
+            }
+            return updatedConfig;
+          },
+        });
+        return loadClientSnapshot();
+      }),
+    saveMarkdown: (input) =>
+      runAdapterOperation(async () => {
+        const skillsConfig = parseSkillConfigInput((await loadConfig()).skills ?? {});
+        if (skillsConfig.sourceRepoPath === undefined) {
+          throw new Error('skills.sourceRepoPath is required before writing SKILL.md');
+        }
+        const result = await dependencies.workflows.writeMarkdown({
+          ...input,
+          sourceRepoPath: skillsConfig.sourceRepoPath,
+        });
+        if (!result.ok) {
+          return { reason: result.reason };
+        }
+        return {
+          document: await dependencies.workflows.readMarkdown({
+            skillName: input.skillName,
+            sourceRepoPath: skillsConfig.sourceRepoPath,
+          }),
+          snapshot: await loadClientSnapshot(),
+        };
+      }),
+    toggleSkill: (input) =>
+      runAdapterOperation(async () => {
+        const config = await loadConfig();
+        const skillsConfig = parseSkillConfigInput(config.skills ?? {});
+        if (skillsConfig.sourceRepoPath === undefined) {
+          throw new Error('skills.sourceRepoPath is required before toggling skills');
+        }
+        await dependencies.workflows.toggleSkill({
+          enabled: input.enabled,
+          skillName: input.skillName,
+          sourceRepoPath: skillsConfig.sourceRepoPath,
+        });
+        if (input.enabled) {
+          return { actions: [], snapshot: await loadClientSnapshot() };
+        }
+        const reconcileResult = await dependencies.workflows.reconcileSkill({
+          config: { ...config },
+          homePath: dependencies.storage.home,
+          skillName: input.skillName,
+        });
+        return { actions: reconcileResult.actions, snapshot: await loadClientSnapshot() };
+      }),
+  };
+};
 
-export const writeSkillMarkdownForServer = async (
-  input: SkillMarkdownWriteInput,
-): Promise<SkillsServerResult<SkillMarkdownSaveResult>> =>
-  runWithStorage(async (storage) => {
-    const config = await loadMergedConfig();
-    const skillsConfig = parseSkillConfigInput(config.skills ?? {});
-    if (skillsConfig.sourceRepoPath === undefined) {
-      throw new Error('skills.sourceRepoPath is required before writing SKILL.md');
-    }
-    const result = await writeSkillMarkdown({ ...input, sourceRepoPath: skillsConfig.sourceRepoPath });
-    if (!result.ok) {
-      return { reason: result.reason };
-    }
-    return {
-      document: await readSkillMarkdown({ skillName: input.skillName, sourceRepoPath: skillsConfig.sourceRepoPath }),
-      snapshot: await loadClientSnapshotForStorage(storage),
-    };
+export const createSkillsServerDependencies = (
+  options: { configCwd?: string; storage?: LocalHistoryStorageService } = {},
+): SkillsServerAdapterDependencies => {
+  const readKnownProjectSources: SkillsServerAdapterDependencies['readKnownProjectSources'] =
+    options.storage === undefined
+      ? ({ request }) => runKnownProjectSourcesRunner(request)
+      : ({ request, storage }) =>
+          Effect.runPromise(
+            createKnownLocalProjectSources(request).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+          );
+
+  return {
+    configCwd: options.configCwd ?? process.cwd(),
+    readConfig: ({ configCwd, storage }) =>
+      Effect.runPromise(
+        readMergedAiUsageConfigFrom(configCwd).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      ),
+    readKnownProjectSources,
+    storage: options.storage ?? createLocalHistoryStorage(),
+    updateConfig: ({ storage, update }) =>
+      Effect.runPromise(updateAiUsageConfig(update).pipe(Effect.provideService(LocalHistoryStorage, storage))),
+    workflows: {
+      createTargetDirectory: createSkillTargetDirectory,
+      loadSnapshot: loadSkillManagementSnapshot,
+      previewReconcileAll: previewReconcileAllActiveSkills,
+      readMarkdown: readSkillMarkdown,
+      reconcileAll: reconcileAllActiveSkills,
+      reconcileSkill,
+      scanProjects: scanProjectSkills,
+      toggleSkill: toggleSkillEnabled,
+      writeConfig: writeSkillManagementConfig,
+      writeMarkdown: writeSkillMarkdown,
+    },
+  };
+};
+
+export const productionSkillsServerAdapter = createSkillsServerAdapter(createSkillsServerDependencies());
+
+export const readSkillManagementSnapshotForServer = () => productionSkillsServerAdapter.readSnapshot();
+export const readKnownSkillProjectPathsForServer = () => productionSkillsServerAdapter.readKnownProjectPaths();
+export const writeSkillManagementConfigForServer = (skills: SkillManagementConfig) =>
+  productionSkillsServerAdapter.saveConfig(skills);
+export const toggleSkillEnabledForServer = (input: SkillToggleInput) =>
+  productionSkillsServerAdapter.toggleSkill(input);
+export const reconcileSkillForServer = (skillName: string) => productionSkillsServerAdapter.reconcileSkill(skillName);
+export const reconcileAllActiveSkillsForServer = () => productionSkillsServerAdapter.reconcileAll();
+export const previewReconcileAllActiveSkillsForServer = () => productionSkillsServerAdapter.previewReconcileAll();
+export const createSkillTargetDirectoryForServer = (input: SkillTargetDirectoryInput) =>
+  productionSkillsServerAdapter.createTargetDirectory(input);
+export const readSkillProjectInventoriesForServer = () => productionSkillsServerAdapter.readProjectInventories();
+export const readSkillMarkdownForServer = (skillName: string) => productionSkillsServerAdapter.readMarkdown(skillName);
+export const writeSkillMarkdownForServer = (input: SkillMarkdownWriteInput) =>
+  productionSkillsServerAdapter.saveMarkdown(input);
+
+export const readProjectSkillMarkdownForServer = (
+  input: ProjectSkillMarkdownInput,
+  options: ReadProjectSkillMarkdownOptions = {},
+): Promise<SkillsServerResult<ProjectSkillMarkdownDocument>> | SkillsServerResult<ProjectSkillMarkdownDocument> => {
+  if (!(options.loadConfig || options.readKnownProjectPaths)) {
+    return productionSkillsServerAdapter.readProjectMarkdown(input);
+  }
+  const dependencies = createSkillsServerDependencies({
+    configCwd: path.dirname(path.resolve(input.projectPath)),
+    storage: createLocalHistoryStorage(path.dirname(path.resolve(input.projectPath))),
   });
+  return createSkillsServerAdapter({
+    ...dependencies,
+    ...(options.loadConfig === undefined ? {} : { readConfig: () => options.loadConfig!() }),
+    ...(options.readKnownProjectPaths === undefined
+      ? {}
+      : {
+          readKnownProjectSources: async () => {
+            const result = await options.readKnownProjectPaths!();
+            if (!result.ok) {
+              throw new Error(result.error.message);
+            }
+            return {
+              projectGroups: [],
+              sources: result.data.map((entry) => ({
+                harness: '',
+                harnesses: [],
+                harnessKey: '',
+                harnessKeys: [],
+                id: entry.path,
+                machine: entry.machineLabel ?? '',
+                machineId: '',
+                project: entry.project,
+                sessions: entry.sessions,
+                sourcePath: entry.path,
+                tokens: 0,
+                gitRemote: '',
+              })),
+              warnings: [],
+            };
+          },
+        }),
+  }).readProjectMarkdown(input);
+};

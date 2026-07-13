@@ -1,24 +1,8 @@
-import type {
-  ProjectSkillInventory,
-  SkillManagementConfig,
-  SkillManagementSnapshot,
-  SkillMarkdownDocument,
-  SkillMarkdownWriteInput,
-  SkillTargetDirectoryInput,
-  SkillToggleInput,
-} from '@ai-usage/skills';
 import { parseSkillConfigInput } from '@ai-usage/skills/config';
 import { createServerFn } from '@tanstack/solid-start';
 import { type ProjectRuntimeDirId, projectSkillDirectories } from '../project-skill-directories';
 import { skillNameInputForClient, targetIdInputForClient } from './skill-input-validation';
-import type {
-  KnownSkillProjectPath,
-  ProjectSkillMarkdownDocument,
-  ProjectSkillMarkdownInput,
-  SkillMarkdownSaveResult,
-  SkillReconcileServerResult,
-  SkillsServerResult,
-} from './skills-contracts';
+import type { SkillsServerAdapter } from './skills-contracts';
 
 export type { KnownSkillProjectPath } from './skills-contracts';
 
@@ -28,24 +12,6 @@ const sha256Pattern = /^[a-f0-9]{64}$/;
 const maxSkillMarkdownBytes = 256 * 1024;
 
 const isE2ERuntime = () => import.meta.env?.VITE_AI_USAGE_E2E === '1';
-
-type AdapterResult<T> = Promise<SkillsServerResult<T>> | SkillsServerResult<T>;
-
-interface SkillsServerAdapter {
-  createTargetDirectory: (input: SkillTargetDirectoryInput) => AdapterResult<SkillManagementSnapshot>;
-  previewReconcileAll: () => AdapterResult<SkillReconcileServerResult>;
-  readKnownProjectPaths: () => AdapterResult<readonly KnownSkillProjectPath[]>;
-  readMarkdown: (skillName: string) => AdapterResult<SkillMarkdownDocument>;
-  readProjectInventories: () => AdapterResult<readonly ProjectSkillInventory[]>;
-  readProjectMarkdown: (input: ProjectSkillMarkdownInput) => AdapterResult<ProjectSkillMarkdownDocument>;
-  readSnapshot: () => AdapterResult<SkillManagementSnapshot>;
-  reconcileAll: () => AdapterResult<SkillReconcileServerResult>;
-  reconcileSkill: (skillName: string) => AdapterResult<SkillReconcileServerResult>;
-  refreshSnapshot: () => AdapterResult<SkillManagementSnapshot>;
-  saveConfig: (config: SkillManagementConfig) => AdapterResult<SkillManagementSnapshot>;
-  saveMarkdown: (input: SkillMarkdownWriteInput) => AdapterResult<SkillMarkdownSaveResult>;
-  toggleSkill: (input: SkillToggleInput) => AdapterResult<SkillReconcileServerResult>;
-}
 
 const loadSkillsServerAdapter = async (): Promise<SkillsServerAdapter> => {
   if (isE2ERuntime()) {
@@ -68,21 +34,7 @@ const loadSkillsServerAdapter = async (): Promise<SkillsServerAdapter> => {
   }
 
   const server = await import('./skills.server');
-  return {
-    createTargetDirectory: server.createSkillTargetDirectoryForServer,
-    previewReconcileAll: server.previewReconcileAllActiveSkillsForServer,
-    readKnownProjectPaths: server.readKnownSkillProjectPathsForServer,
-    readMarkdown: server.readSkillMarkdownForServer,
-    readProjectInventories: server.readSkillProjectInventoriesForServer,
-    readProjectMarkdown: server.readProjectSkillMarkdownForServer,
-    readSnapshot: server.readSkillManagementSnapshotForServer,
-    reconcileAll: server.reconcileAllActiveSkillsForServer,
-    reconcileSkill: server.reconcileSkillForServer,
-    refreshSnapshot: server.readSkillManagementSnapshotForServer,
-    saveConfig: server.writeSkillManagementConfigForServer,
-    saveMarkdown: server.writeSkillMarkdownForServer,
-    toggleSkill: server.toggleSkillEnabledForServer,
-  };
+  return server.productionSkillsServerAdapter;
 };
 
 const assertRecord = (input: unknown, label: string): JsonRecord => {

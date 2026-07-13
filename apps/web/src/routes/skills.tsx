@@ -40,10 +40,10 @@ import { type ProjectInventoriesResult, type SkillMarkdownDraftGuard, SkillsWork
 
 export const Route = createFileRoute('/skills')({
   staleTime: Number.POSITIVE_INFINITY,
-  loader: async () => ({
-    knownProjectPaths: await getKnownSkillProjectPaths(),
-    skills: await getSkillManagementSnapshot(),
-  }),
+  loader: async () => {
+    const [knownProjectPaths, skills] = await Promise.all([getKnownSkillProjectPaths(), getSkillManagementSnapshot()]);
+    return { knownProjectPaths, skills };
+  },
   component: SkillsRoute,
 });
 
@@ -292,6 +292,7 @@ function SkillsRoute() {
       aria-busy={hydrated() ? undefined : 'true'}
       class={page}
       data-hydrated={hydrated() ? 'true' : 'false'}
+      data-known-project-paths-status={data().knownProjectPaths.ok ? 'ok' : 'error'}
       inert={!hydrated()}
     >
       <div class={shell}>

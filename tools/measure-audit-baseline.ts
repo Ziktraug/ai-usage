@@ -3,17 +3,22 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import {
+  IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE,
+  MAX_OVERVIEW_REFRESH_BYTES,
+  MAX_REPORT_RUNNER_ARTIFACT_BYTES,
+  MAX_SERVED_BOOTSTRAP_BYTES,
+  MAX_SESSION_QUERY_PAGE_SIZE,
+  MAX_SESSION_QUERY_RESULT_BYTES,
+  REPORT_AUDIT_FIXTURE_SEED,
+} from '@ai-usage/report-core/report-budgets';
 
-const FIXTURE_SEED = 0x8_a1_1d_17;
 const MEASURED_REPETITIONS = 5;
 const WARMUP_REPETITIONS = 1;
-const IMPORT_LOOKUP_BUDGET_BATCH_SIZE = 400;
-const MAX_SESSION_PAGE_ROWS = 200;
-const MIN_REPORT_ARTIFACT_BUDGET_BYTES = 128 * 1024 * 1024;
-const SERVED_BOOTSTRAP_BUDGET_BYTES = 512 * 1024;
-const OVERVIEW_REFRESH_BUDGET_BYTES = 2 * 1024 * 1024;
-const SESSION_PAGE_REFRESH_BUDGET_BYTES = 2 * 1024 * 1024;
 const FIXTURE_ROW_COUNTS = [1000, 50_000] as const;
+const DATASET_COLLECTION_SPAN_PATTERN = /aiUsage\.report\.collect(?:Stored)?Datasets ok/g;
+const PAYLOAD_SERIALIZATION_SPAN_PATTERN = /aiUsage\.report\.serialize(?:Stored)?Payload ok/g;
+const PROJECT_SOURCE_SPAN_PATTERN = /aiUsage\.report\.knownLocalProjectSources ok/g;
 
 const harnesses = [
   { key: 'codex', label: 'Codex', provider: 'OpenAI', model: 'gpt-5.3-codex' },
@@ -54,6 +59,8 @@ const measure = async (operation: () => Promise<void> | void): Promise<Measureme
 
 const nextPowerOfTwo = (value: number): number => 2 ** Math.ceil(Math.log2(value));
 
+const countObservedSpans = (diagnostics: string, pattern: RegExp): number => [...diagnostics.matchAll(pattern)].length;
+
 const run = async () => {
   const temporaryHome = mkdtempSync(path.join(tmpdir(), 'ai-usage-audit-baseline-'));
   const previousHome = process.env.HOME;
@@ -74,7 +81,7 @@ const run = async () => {
       machineConfig.writeMachineConfig(machine).pipe(Effect.provideService(localHistory.LocalHistoryStorage, storage)),
     );
 
-    let randomState = FIXTURE_SEED;
+    let randomState = REPORT_AUDIT_FIXTURE_SEED;
     const random = (): number => {
       randomState = (Math.imul(randomState, 1_664_525) + 1_013_904_223) % 4_294_967_296;
       if (randomState < 0) {
@@ -174,12 +181,31 @@ const run = async () => {
     );
     const skillsStartedAt = performance.now();
     const skillsServerPath = path.join(process.cwd(), 'apps/web/src/server/skills.server.ts');
-    const skillsServer = await import(pathToFileURL(skillsServerPath).href);
-    const skillsResult = await skillsServer.readKnownSkillProjectPathsForServer();
+    const knownProjectRunnerPath = path.join(
+      process.cwd(),
+      'apps/web/src/server/known-project-sources-runner.server.ts',
+    );
+    const [skillsServer, knownProjectRunner] = await Promise.all([
+      import(pathToFileURL(skillsServerPath).href),
+      import(pathToFileURL(knownProjectRunnerPath).href),
+    ]);
+    let skillsDiagnostics = '';
+    const dependencies = skillsServer.createSkillsServerDependencies();
+    const adapter = skillsServer.createSkillsServerAdapter({
+      ...dependencies,
+      readKnownProjectSources: ({ request }) =>
+        knownProjectRunner.runKnownProjectSourcesRunner(request, {
+          env: { ...process.env, AI_USAGE_PERF: '1' },
+          onStderr: (chunk: string) => {
+            skillsDiagnostics += chunk;
+          },
+        }),
+    });
+    const skillsResult = await adapter.readKnownProjectPaths();
     const skillsFirstLoadMs = Number((performance.now() - skillsStartedAt).toFixed(3));
 
     const artifactHeadroomBytes = Math.ceil(payloadBytes * 1.5);
-    const reportArtifactBudgetBytes = Math.max(MIN_REPORT_ARTIFACT_BUDGET_BYTES, nextPowerOfTwo(artifactHeadroomBytes));
+    const measuredArtifactBudgetBytes = nextPowerOfTwo(artifactHeadroomBytes);
     const output = {
       fixture: {
         campaignSize: 5,
@@ -187,29 +213,30 @@ const run = async () => {
         measuredRepetitions: MEASURED_REPETITIONS,
         projects: projectNames,
         rowCounts: FIXTURE_ROW_COUNTS,
-        seed: FIXTURE_SEED,
+        seed: REPORT_AUDIT_FIXTURE_SEED,
         warmupRepetitions: WARMUP_REPETITIONS,
       },
       frozenBudgets: {
         importExistingRowLookupQueries: Object.fromEntries(
           FIXTURE_ROW_COUNTS.map((rowCount) => [
             String(rowCount),
-            Math.ceil(rowCount / IMPORT_LOOKUP_BUDGET_BATCH_SIZE),
+            Math.ceil(rowCount / IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE),
           ]),
         ),
-        maxReportRunnerArtifactBytes: reportArtifactBudgetBytes,
-        maxSessionPageRows: MAX_SESSION_PAGE_ROWS,
-        overviewRefreshBytes: OVERVIEW_REFRESH_BUDGET_BYTES,
-        servedBootstrapBytes: SERVED_BOOTSTRAP_BUDGET_BYTES,
-        sessionPageRefreshBytes: SESSION_PAGE_REFRESH_BUDGET_BYTES,
+        maxReportRunnerArtifactBytes: MAX_REPORT_RUNNER_ARTIFACT_BYTES,
+        maxSessionPageRows: MAX_SESSION_QUERY_PAGE_SIZE,
+        overviewRefreshBytes: MAX_OVERVIEW_REFRESH_BYTES,
+        servedBootstrapBytes: MAX_SERVED_BOOTSTRAP_BYTES,
+        sessionPageRefreshBytes: MAX_SESSION_QUERY_RESULT_BYTES,
       },
       measurements: {
         importRows: importMeasurements,
-        reportPayload: { bytes: payloadBytes, ...reportPayload },
+        reportPayload: { bytes: payloadBytes, measuredArtifactBudgetBytes, ...reportPayload },
         skillsFirstLoad: {
-          datasetCollectionRuns: true,
+          datasetCollectionRuns: countObservedSpans(skillsDiagnostics, DATASET_COLLECTION_SPAN_PATTERN),
           durationMs: skillsFirstLoadMs,
-          fullPayloadSerializationRuns: true,
+          focusedProjectSourceQueryRuns: countObservedSpans(skillsDiagnostics, PROJECT_SOURCE_SPAN_PATTERN),
+          fullPayloadSerializationRuns: countObservedSpans(skillsDiagnostics, PAYLOAD_SERIALIZATION_SPAN_PATTERN),
           ok: skillsResult.ok,
           projectPaths: skillsResult.ok ? skillsResult.data.length : 0,
         },
