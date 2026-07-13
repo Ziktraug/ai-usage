@@ -75,24 +75,12 @@ export default defineConfig({
     manualSyncImportDevPlugin(),
     tanStackServerFunctionWarmupPlugin(),
     tanstackStart({
-      router: {
-        codeSplittingOptions: {
-          // Keep the self-contained report route in the entry chunk: static
-          // HTML export inlines that chunk and cannot fetch lazy assets from
-          // file://. Skills and Sync are server-only destinations and can be
-          // split without changing the exported report runtime.
-          defaultBehavior: [['component']],
-          splitBehavior: ({ routeId }) => (routeId === '/' ? [] : undefined),
-        },
-      },
+      router: { codeSplittingOptions: { defaultBehavior: [['component']] } },
     }),
     solid({ ssr: true }),
     nitro({ preset: 'node-server' }),
     solidDepScanPlugin(),
   ],
-  build: {
-    cssCodeSplit: false,
-  },
   server: {
     watch: {
       // The design-system package writes Panda helpers in-place during check/build.

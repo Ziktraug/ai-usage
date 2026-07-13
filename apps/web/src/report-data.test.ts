@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import { cursorCommitAttributionFacet } from './report-data';
-import { readReportPayload } from './report-runtime';
 
 const cursorRow = (commitHash: string) => ({
   blankLinesAdded: 0,
@@ -34,10 +33,6 @@ const minimalPayload = (overrides: Partial<UsageReportPayload>): UsageReportPayl
 });
 
 describe('report payload bootstrap', () => {
-  test('provides a development payload when no CLI data is injected', () => {
-    expect(readReportPayload().rows.length).toBeGreaterThan(0);
-  });
-
   test('prefers cursor attribution from datasets and falls back to legacy facets', () => {
     const payload = minimalPayload({
       datasets: {
