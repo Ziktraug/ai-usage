@@ -44,7 +44,19 @@ import {
 import { type SessionNeighborResult, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
 import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
-import { batch, createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
+import {
+  batch,
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  lazy,
+  onCleanup,
+  onMount,
+  Show,
+  Suspense,
+  untrack,
+} from 'solid-js';
 import {
   createClientPerfTrace,
   logClientPerf,
@@ -119,7 +131,6 @@ import {
   type SessionQueryState,
   sessionRowsForState,
 } from './session-query-client';
-import { SessionTable } from './session-table';
 import {
   columnVisibilityFromDiff,
   columnVisibilitySearchForVisibility,
@@ -132,6 +143,10 @@ import { toWebReportPayload, type WebReportPayload, type WebReportPayloadWithout
 
 const REFRESH_INTERVAL_MS = 60_000;
 const FORM_CONTROL_TAG_PATTERN = /^(INPUT|SELECT|TEXTAREA)$/;
+const SessionTable = lazy(async () => {
+  const module = await import('./session-table');
+  return { default: module.SessionTable };
+});
 
 const secondaryMetrics = css({
   my: '20px',
@@ -1431,54 +1446,58 @@ export const Dashboard = (props: {
                   {
                     content: () => (
                       <section class={section}>
-                        <SessionTable
-                          {...(servedSessionState()
-                            ? {
-                                campaignChildren: servedSessionState()!.campaignChildren,
-                                loadingMoreRows: servedSessionState()!.loadingMore,
-                                totalRows: servedSessionState()!.itemCount,
-                              }
-                            : {})}
-                          {...(sessionQueryCoordinator
-                            ? {
-                                onLoadCampaignChildren: (campaignKey: string) => {
-                                  sessionQueryCoordinator.loadCampaignChildren(campaignKey).catch((error: unknown) => {
-                                    setLastRefreshError(
-                                      error instanceof Error ? error.message : 'Failed to load campaign sessions',
-                                    );
-                                  });
-                                },
-                                onLoadMoreRows: () => {
-                                  sessionQueryCoordinator.loadMore().catch((error: unknown) => {
-                                    setLastRefreshError(
-                                      error instanceof Error ? error.message : 'Failed to load sessions',
-                                    );
-                                  });
-                                },
-                              }
-                            : {})}
-                          {...(servedSessionQueries
-                            ? {
-                                printRows: servedPrintRows() ?? [],
-                                printRowsLoading: servedPrintRowsLoading(),
-                              }
-                            : {})}
-                          columnVisibility={columnVisibility()}
-                          groupCampaigns={groupCampaigns()}
-                          hasMoreRows={Boolean(servedSessionState()?.nextCursor)}
-                          loading={sessionQueryLoading()}
-                          onClearFilters={clearFilters}
-                          onColumnVisibilityChange={handleColumnVisibilityChange}
-                          onFieldFilter={setFieldFilter}
-                          onGroupCampaignsChange={setCampaignGrouping}
-                          onHarnessFilter={toggleHarness}
-                          onSelect={toggleSelected}
-                          onSortingChange={handleSortingChange}
-                          rows={visibleSessionTableRows()}
-                          searchQuery={query()}
-                          selectedKey={selectedKey()}
-                          sorting={sorting()}
-                        />
+                        <Suspense fallback={<div class={unavailableText}>Loading sessions…</div>}>
+                          <SessionTable
+                            {...(servedSessionState()
+                              ? {
+                                  campaignChildren: servedSessionState()!.campaignChildren,
+                                  loadingMoreRows: servedSessionState()!.loadingMore,
+                                  totalRows: servedSessionState()!.itemCount,
+                                }
+                              : {})}
+                            {...(sessionQueryCoordinator
+                              ? {
+                                  onLoadCampaignChildren: (campaignKey: string) => {
+                                    sessionQueryCoordinator
+                                      .loadCampaignChildren(campaignKey)
+                                      .catch((error: unknown) => {
+                                        setLastRefreshError(
+                                          error instanceof Error ? error.message : 'Failed to load campaign sessions',
+                                        );
+                                      });
+                                  },
+                                  onLoadMoreRows: () => {
+                                    sessionQueryCoordinator.loadMore().catch((error: unknown) => {
+                                      setLastRefreshError(
+                                        error instanceof Error ? error.message : 'Failed to load sessions',
+                                      );
+                                    });
+                                  },
+                                }
+                              : {})}
+                            {...(servedSessionQueries
+                              ? {
+                                  printRows: servedPrintRows() ?? [],
+                                  printRowsLoading: servedPrintRowsLoading(),
+                                }
+                              : {})}
+                            columnVisibility={columnVisibility()}
+                            groupCampaigns={groupCampaigns()}
+                            hasMoreRows={Boolean(servedSessionState()?.nextCursor)}
+                            loading={sessionQueryLoading()}
+                            onClearFilters={clearFilters}
+                            onColumnVisibilityChange={handleColumnVisibilityChange}
+                            onFieldFilter={setFieldFilter}
+                            onGroupCampaignsChange={setCampaignGrouping}
+                            onHarnessFilter={toggleHarness}
+                            onSelect={toggleSelected}
+                            onSortingChange={handleSortingChange}
+                            rows={visibleSessionTableRows()}
+                            searchQuery={query()}
+                            selectedKey={selectedKey()}
+                            sorting={sorting()}
+                          />
+                        </Suspense>
                       </section>
                     ),
                     label: 'Sessions',

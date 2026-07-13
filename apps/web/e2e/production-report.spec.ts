@@ -110,7 +110,9 @@ test('renders the report timeline on the initial production Overview', async ({ 
   } finally {
     overviewGate.resolve();
   }
-  await expect(dateRange.getByRole('button', { name: 'Inspect timeline bucket' })).toBeVisible({ timeout: 5000 });
+  await expect(
+    dateRange.getByRole('button', { name: 'Inspect activity timeline. Use arrow keys to inspect days.' }),
+  ).toBeVisible({ timeout: 5000 });
   await expect(page.getByText('No dated sessions match the current filters')).toHaveCount(0);
   expect(await page.evaluate(() => Reflect.get(globalThis, '__aiUsageFalseEmptyRange'))).toBe(false);
 });
@@ -118,7 +120,9 @@ test('renders the report timeline on the initial production Overview', async ({ 
 test('keeps the Report range mounted while focused chart options refresh', async ({ page }) => {
   await page.goto('/');
   const dateRange = page.getByRole('region', { name: 'Date range' });
-  const timeline = dateRange.getByRole('button', { name: 'Inspect timeline bucket' });
+  const timeline = dateRange.getByRole('button', {
+    name: 'Inspect activity timeline. Use arrow keys to inspect days.',
+  });
   await expect(timeline).toBeVisible({ timeout: 5000 });
   const advancedAnalysis = page.getByRole('region', { name: 'Advanced analysis' });
   await expect(advancedAnalysis.getByRole('heading', { level: 2, name: 'Punchcard' })).toBeVisible();
@@ -137,8 +141,6 @@ test('keeps the Report range mounted while focused chart options refresh', async
   await expect(dateRange).toHaveAttribute('data-stability-marker', 'original-range', { timeout: 1000 });
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
   await expect(advancedAnalysis).toHaveAttribute('data-stability-marker', 'original-analysis');
-  await expect(dateRange.getByText('Updating chart options…', { exact: true })).toBeVisible();
-  await expect(dateRange.getByText('Updating chart options…', { exact: true })).toHaveCount(0);
   await expect(dateRange).toHaveAttribute('data-stability-marker', 'original-range');
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
   await expect(advancedAnalysis).toHaveAttribute('data-stability-marker', 'original-analysis');

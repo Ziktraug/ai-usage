@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page, test } from '@playwright/test';
 
-const CHART_VIEW_PATTERN = /^Chart view:/;
+const CHART_VIEW_PATTERN = /Chart view:/;
 
 const reportRangeValue = (page: Page): string | null => new URL(page.url()).searchParams.get('range');
 
@@ -28,20 +28,21 @@ test('separates the report range from optional chart controls', async ({ page })
   await expect(dateRange.getByRole('button', { exact: true, name: 'Today' })).toBeVisible();
   await expect(dateRange.getByRole('button', { exact: true, name: '7d' })).toBeVisible();
   await expect(dateRange.getByRole('button', { exact: true, name: '30d' })).toBeVisible();
+  await expect(dateRange.getByRole('button', { exact: true, name: '30d' })).toHaveAttribute('aria-pressed', 'true');
   await expect(dateRange.getByRole('textbox', { name: 'Start date' })).toHaveValue('2026-05-12');
   await expect(dateRange.getByRole('textbox', { name: 'End date' })).toHaveValue('2026-06-11');
   await expect(dateRange.getByText(CHART_VIEW_PATTERN)).toBeVisible();
 
   const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
   await expect(chartOptions).not.toHaveAttribute('open', '');
-  await expect(chartOptions.getByText('Harness · Day · API value', { exact: true })).toBeVisible();
-  await expect(chartOptions.getByText('Group', { exact: true })).not.toBeVisible();
+  await expect(chartOptions.getByText('Harness · Day · Estimated API value', { exact: true })).toBeVisible();
+  await expect(chartOptions.getByText('Group by', { exact: true })).not.toBeVisible();
 
   await chartOptions.locator('summary').click();
 
   await expect(chartOptions).toHaveAttribute('open', '');
-  await expect(chartOptions.getByText('Group', { exact: true })).toBeVisible();
-  await expect(chartOptions.getByText('Bucket', { exact: true })).toBeVisible();
+  await expect(chartOptions.getByText('Group by', { exact: true })).toBeVisible();
+  await expect(chartOptions.getByText('Interval', { exact: true })).toBeVisible();
   await expect(chartOptions.getByText('Metric', { exact: true })).toBeVisible();
 });
 
@@ -60,6 +61,10 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   await expect.poll(() => reportRangeValue(page)).toBeNull();
   await expect(startInput).toHaveValue('2026-05-12');
   await expect(endInput).toHaveValue('2026-06-11');
+
+  await dateRange.getByRole('button', { exact: true, name: '7d' }).click();
+  await expect(startInput).toHaveValue('2026-06-04');
+  await expect(dateRange.getByText('Follows report range', { exact: true })).toBeVisible();
 
   const presetUrl = page.url();
   await startInput.fill('2026-05-25');
@@ -99,10 +104,12 @@ test('keeps keyboard, wheel, pan, resize, and cancellation changes visual-only',
   const dateRange = page.getByRole('region', { name: 'Date range' });
   const reportUrl = page.url();
 
-  await dateRange.getByRole('button', { name: 'Adjust view' }).click();
+  await dateRange.getByRole('button', { name: 'Zoom chart' }).click();
   const graphStart = dateRange.getByRole('slider', { name: 'Graph view start' });
   const graphEnd = dateRange.getByRole('slider', { name: 'Graph view end' });
-  const timeline = dateRange.getByRole('button', { name: 'Inspect timeline bucket' });
+  const timeline = dateRange.getByRole('button', {
+    name: 'Inspect activity timeline. Use arrow keys to inspect days.',
+  });
 
   const keyboardStart = await graphStart.getAttribute('aria-valuenow');
   await graphStart.press('ArrowRight');
@@ -120,7 +127,7 @@ test('keeps keyboard, wheel, pan, resize, and cancellation changes visual-only',
     .not.toBe(`${wheelStart}:${wheelEnd}`);
   await expect(page).toHaveURL(reportUrl);
 
-  await dateRange.getByRole('button', { exact: true, name: '7d' }).last().click();
+  await dateRange.getByRole('button', { exact: true, name: 'View 7d' }).click();
   const graphRange = dateRange.getByRole('button', { name: 'Drag graph view' });
   const panStart = await graphStart.getAttribute('aria-valuenow');
   await dragHorizontally(page, graphRange, -80);
@@ -151,13 +158,13 @@ test('clamps visual and report ranges after granularity and domain changes', asy
   await page.goto('/');
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
-  await dateRange.getByRole('button', { name: 'Adjust view' }).click();
-  await dateRange.getByRole('button', { exact: true, name: '2d' }).click();
+  await dateRange.getByRole('button', { name: 'Zoom chart' }).click();
+  await dateRange.getByRole('button', { exact: true, name: 'View 2d' }).click();
 
   const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
   await chartOptions.locator('summary').click();
   await chartOptions.getByRole('radio', { exact: true, name: 'Month' }).click();
-  await dateRange.getByRole('button', { name: 'Adjust view' }).click();
+  await dateRange.getByRole('button', { name: 'Zoom chart' }).click();
 
   const graphStart = dateRange.getByRole('slider', { name: 'Graph view start' });
   const graphEnd = dateRange.getByRole('slider', { name: 'Graph view end' });
@@ -165,8 +172,8 @@ test('clamps visual and report ranges after granularity and domain changes', asy
   await expect(graphEnd).toHaveAttribute('aria-valuenow', await graphEnd.getAttribute('aria-valuemax'));
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Day' }).click();
-  await dateRange.getByRole('button', { name: 'Adjust view' }).click();
-  await dateRange.getByRole('button', { exact: true, name: '2d' }).click();
+  await dateRange.getByRole('button', { name: 'Zoom chart' }).click();
+  await dateRange.getByRole('button', { exact: true, name: 'View 2d' }).click();
   await dateRange.getByTitle('Filter by Codex').click();
 
   const reportStart = dateRange.getByRole('slider', { name: 'Start date' });

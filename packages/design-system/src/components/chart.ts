@@ -354,8 +354,10 @@ export const migrationXTick = css({
 export const migrationLegendButton = css({
   appearance: 'none',
   bg: 'transparent',
-  border: 0,
-  p: 0,
+  border: '1px solid transparent',
+  borderRadius: 'full',
+  px: '6px',
+  minH: '32px',
   cursor: 'pointer',
   display: 'inline-flex',
   alignItems: 'center',
@@ -364,6 +366,11 @@ export const migrationLegendButton = css({
   color: 'muted',
   fontSize: '11px',
   _hover: { color: 'ink' },
+  '&[data-active=true]': {
+    bg: 'accentSoft',
+    borderColor: 'accent',
+    color: 'ink',
+  },
   _focusVisible: {
     outline: '1px solid token(colors.accent)',
     outlineOffset: '2px',
