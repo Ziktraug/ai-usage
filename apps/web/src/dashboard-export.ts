@@ -1,20 +1,5 @@
-import { serializedRowsToCSV } from '@ai-usage/report-core/csv';
 import { inlineReportHTML } from '@ai-usage/report-core/html-export';
-import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { toExportReportPayload, type WebReportPayload } from './web-report-payload';
-
-export const downloadCSVContent = (csv: string, generatedAt: string) => {
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `ai-usage-report-${generatedAt.slice(0, 10)}.csv`;
-  link.click();
-  URL.revokeObjectURL(url);
-};
-
-export const downloadCSV = (rows: SerializedRow[], generatedAt: string) =>
-  downloadCSVContent(serializedRowsToCSV(rows), generatedAt);
 
 export const downloadHTML = async (payload: WebReportPayload) => {
   const response = await fetch(location.href, { cache: 'no-store' });

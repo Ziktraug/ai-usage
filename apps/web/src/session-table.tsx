@@ -281,8 +281,6 @@ export const SessionTable = (props: {
   onLoadMoreRows?: () => void;
   onSelect: (row: DashboardRow) => void;
   onSortingChange: OnChangeFn<SortingState>;
-  printRows?: DashboardRow[];
-  printRowsLoading?: boolean;
   rows: DashboardRow[];
   searchQuery: string;
   selectedKey: string | null;
@@ -294,9 +292,7 @@ export const SessionTable = (props: {
   // Folding this into the visibility state keeps headers and cells in sync.
   const [expanded, setExpanded] = createSignal<ExpandedState>({});
   const [surfaceMode, setSurfaceMode] = createSignal<SessionSurfaceMode>('pending');
-  const tableData = createMemo(() =>
-    surfaceMode() === 'print' && props.printRows !== undefined ? props.printRows : props.rows,
-  );
+  const tableData = createMemo(() => props.rows);
   const hasRtkData = createMemo(() => tableData().some((row) => row.rtkSavedTokens));
   const effectiveVisibility = createMemo(() =>
     hasRtkData() ? props.columnVisibility : { ...props.columnVisibility, rtkSaved: false },
@@ -394,13 +390,6 @@ export const SessionTable = (props: {
   });
   const virtualRows = createMemo(() => {
     const rows = rowModelRows();
-    if (surfaceMode() === 'print') {
-      return {
-        bottomHeight: 0,
-        rows,
-        topHeight: 0,
-      };
-    }
     if (surfaceMode() !== 'desktop') {
       return {
         bottomHeight: 0,
@@ -523,7 +512,7 @@ export const SessionTable = (props: {
         >
           Group campaigns
         </Checkbox>
-        <Show when={surfaceMode() === 'desktop' || surfaceMode() === 'print'}>
+        <Show when={surfaceMode() === 'desktop'}>
           <div class={sessionDesktopControl}>
             <SessionColumnControls
               columnVisibility={props.columnVisibility}
@@ -565,12 +554,7 @@ export const SessionTable = (props: {
           Preparing sessions…
         </div>
       </Show>
-      <Show when={surfaceMode() === 'desktop' || surfaceMode() === 'print'}>
-        <Show when={surfaceMode() === 'print' && props.printRowsLoading}>
-          <div aria-busy="true" aria-live="polite" class={empty}>
-            Preparing the complete session list for print…
-          </div>
-        </Show>
+      <Show when={surfaceMode() === 'desktop'}>
         <div
           class={cx(tableWrap, surfaceMode() === 'desktop' ? desktopTableSurface : undefined)}
           data-session-surface={surfaceMode()}

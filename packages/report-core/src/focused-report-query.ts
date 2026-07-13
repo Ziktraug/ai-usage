@@ -1,5 +1,4 @@
 import { type AnalyticsGroup, type AnalyticsRowInput, groupAnalytics } from './analytics';
-import { serializedRowsToCSV } from './csv';
 import { type CursorCommitAttributionRow, isCursorCommitAttributionRow } from './datasets';
 import { parseProjectGroupConfigs } from './project-group';
 import { parseProviderStatusDataset } from './provider-status';
@@ -8,14 +7,12 @@ import type { SerializedRow, UsageReportPayload } from './report-data';
 import { isSerializedUsageRowShape, isStrictIsoTimestamp, isUsageReportWarnings } from './serialized-usage-validation';
 import {
   buildSessionCampaignViews,
-  buildSortedSessionPresentationRows,
   enrichSessionPresentationRow,
   parseSessionPresentationRow,
   parseSessionQueryRequest,
   type SessionPresentationRow,
   type SessionQueryFilters,
   type SessionQueryRange,
-  type SessionQuerySort,
 } from './session-query';
 
 export type FocusedReportSupport = Omit<UsageReportPayload, 'rows' | 'tableRows'>;
@@ -48,11 +45,6 @@ export interface FocusedOverviewRequest {
 
 export interface FocusedBreakdownRequest {
   query: FocusedReportQueryScope;
-}
-
-export interface FocusedCsvRequest {
-  query: FocusedReportQueryScope;
-  sort: SessionQuerySort[];
 }
 
 export interface FocusedRevisionRequest {
@@ -272,13 +264,6 @@ export interface FocusedSupportProjectionOptions {
   sourceOmissions?: FocusedSupportSourceOmissions;
 }
 
-export interface FocusedCsvResult {
-  csv: string;
-  requestFingerprint: string;
-  revision: string;
-  rowCount: number;
-}
-
 export interface FocusedHtmlPayloadResult {
   payload: UsageReportPayload;
   requestFingerprint: string;
@@ -286,10 +271,9 @@ export interface FocusedHtmlPayloadResult {
   rowCount: number;
 }
 
-export type FocusedReportQueryKind = 'breakdown' | 'csv' | 'html-payload' | 'overview' | 'support';
+export type FocusedReportQueryKind = 'breakdown' | 'html-payload' | 'overview' | 'support';
 export type FocusedReportQueryResult =
   | FocusedBreakdownResult
-  | FocusedCsvResult
   | FocusedHtmlPayloadResult
   | FocusedOverviewResult
   | FocusedSupportResult;
@@ -371,22 +355,6 @@ export const parseFocusedBreakdownRequest = (value: unknown): FocusedBreakdownRe
   return { query: parseFocusedReportQueryScope(record.query) };
 };
 
-export const parseFocusedCsvRequest = (value: unknown): FocusedCsvRequest => {
-  const record = requireRecord(value, 'CSV request');
-  assertExactKeys(record, ['query', 'sort'], 'CSV request');
-  const query = parseFocusedReportQueryScope(record.query);
-  const parsed = parseSessionQueryRequest({
-    campaigns: false,
-    cursor: null,
-    filters: query.filters,
-    pageSize: 1,
-    range: query.range,
-    revision: query.revision,
-    sort: record.sort,
-  });
-  return { query, sort: parsed.sort };
-};
-
 export const parseFocusedRevisionRequest = (value: unknown): FocusedRevisionRequest => {
   const record = requireRecord(value, 'focused revision request');
   assertExactKeys(record, ['revision'], 'focused revision request');
@@ -417,11 +385,6 @@ export const focusedAdvancedAnalysisFingerprint = (input: FocusedReportQueryScop
 export const focusedBreakdownFingerprint = (input: FocusedBreakdownRequest): string => {
   const request = parseFocusedBreakdownRequest(input);
   return fingerprint('breakdown', request);
-};
-
-export const focusedCsvFingerprint = (input: FocusedCsvRequest): string => {
-  const request = parseFocusedCsvRequest(input);
-  return fingerprint('csv', request);
 };
 
 export const focusedRevisionFingerprint = (kind: 'html-payload' | 'support', input: FocusedRevisionRequest): string =>
@@ -1097,20 +1060,6 @@ export const projectFocusedBreakdown = (
     },
     requestFingerprint: focusedBreakdownFingerprint(request),
     revision: request.query.revision,
-  };
-};
-
-export const projectFocusedCsv = (rows: SerializedRow[], input: FocusedCsvRequest): FocusedCsvResult => {
-  const request = parseFocusedCsvRequest(input);
-  const visible = buildSortedSessionPresentationRows(
-    rows.map(enrichSessionPresentationRow).filter((row) => matchesFocusedReportQuery(row, request.query)),
-    request.sort,
-  );
-  return {
-    csv: serializedRowsToCSV(visible),
-    requestFingerprint: focusedCsvFingerprint(request),
-    revision: request.query.revision,
-    rowCount: visible.length,
   };
 };
 
@@ -2087,11 +2036,6 @@ export function parseFocusedReportQueryResult(
   request: FocusedBreakdownRequest,
 ): FocusedBreakdownResult;
 export function parseFocusedReportQueryResult(
-  kind: 'csv',
-  value: unknown,
-  request: FocusedCsvRequest,
-): FocusedCsvResult;
-export function parseFocusedReportQueryResult(
   kind: 'html-payload',
   value: unknown,
   request: FocusedRevisionRequest,
@@ -2104,12 +2048,12 @@ export function parseFocusedReportQueryResult(
 export function parseFocusedReportQueryResult(
   kind: FocusedReportQueryKind,
   value: unknown,
-  request: FocusedBreakdownRequest | FocusedCsvRequest | FocusedOverviewRequest | FocusedRevisionRequest,
+  request: FocusedBreakdownRequest | FocusedOverviewRequest | FocusedRevisionRequest,
 ): FocusedReportQueryResult;
 export function parseFocusedReportQueryResult(
   kind: FocusedReportQueryKind,
   value: unknown,
-  request: FocusedBreakdownRequest | FocusedCsvRequest | FocusedOverviewRequest | FocusedRevisionRequest,
+  request: FocusedBreakdownRequest | FocusedOverviewRequest | FocusedRevisionRequest,
 ): FocusedReportQueryResult {
   if (kind === 'overview') {
     const parsed = parseFocusedOverviewRequest(request);
@@ -2141,19 +2085,6 @@ export function parseFocusedReportQueryResult(
     assertBreakdownGroups(record.groups);
     assertBreakdownContext(record.context);
     return record as unknown as FocusedBreakdownResult;
-  }
-  if (kind === 'csv') {
-    const parsed = parseFocusedCsvRequest(request);
-    const record = assertResultEnvelope(
-      value,
-      ['csv', 'requestFingerprint', 'revision', 'rowCount'],
-      parsed.query.revision,
-      focusedCsvFingerprint(parsed),
-    );
-    if (typeof record.csv !== 'string' || !Number.isSafeInteger(record.rowCount) || Number(record.rowCount) < 0) {
-      throw new Error('Focused CSV result is invalid');
-    }
-    return record as unknown as FocusedCsvResult;
   }
   const parsed = parseFocusedRevisionRequest(request);
   if (kind === 'html-payload') {

@@ -1,4 +1,4 @@
-import { css, cx } from '@ai-usage/design-system/css';
+import { cx } from '@ai-usage/design-system/css';
 import {
   accentFill,
   advancedAnalysis,
@@ -543,63 +543,8 @@ const SessionShape = (props: {
 // Punchcard — hour × weekday density. Nightly auto-review bots and weekend
 // streaks show up immediately.
 
-const punchDataDetails = css({
-  mt: '14px',
-  color: 'muted',
-  fontSize: '13px',
-  '& summary': {
-    w: 'fit-content',
-    cursor: 'pointer',
-    fontWeight: 600,
-    color: 'ink',
-  },
-});
-
-const punchDataTableWrap = css({
-  mt: '10px',
-  overflowX: 'auto',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-});
-
-const punchDataTable = css({
-  w: '100%',
-  borderCollapse: 'collapse',
-  fontSize: '12px',
-  '& th': {
-    p: '8px 10px',
-    bg: 'surfaceMuted',
-    color: 'muted',
-    textAlign: 'left',
-    textStyle: 'label',
-  },
-  '& td': {
-    p: '8px 10px',
-    borderTop: '1px solid token(colors.line)',
-  },
-  '& th:nth-child(n+3), & td:nth-child(n+3)': {
-    textAlign: 'right',
-  },
-});
-
 const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: DashboardRow[] }) => {
   const data = createMemo(() => (props.focused === undefined ? buildPunchcardData(props.rows) : props.focused));
-  const populatedCells = createMemo(() =>
-    (data()?.cells ?? []).flatMap((dayCells, dayIndex) =>
-      dayCells.flatMap((cell, hour) =>
-        cell.sessions > 0
-          ? [
-              {
-                cost: cell.cost,
-                day: PUNCH_DAYS[dayIndex] ?? '',
-                hour,
-                sessions: cell.sessions,
-              },
-            ]
-          : [],
-      ),
-    ),
-  );
 
   return (
     <Panel sub="When the sessions happen — hour of day × weekday" title="Punchcard">
@@ -640,33 +585,6 @@ const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: 
                 {(hour) => <span class={punchHourLabel}>{hour % 3 === 0 ? hour : ''}</span>}
               </For>
             </div>
-            <details class={punchDataDetails}>
-              <summary>Punchcard data</summary>
-              <div class={punchDataTableWrap}>
-                <table aria-label="Punchcard data" class={punchDataTable}>
-                  <thead>
-                    <tr>
-                      <th scope="col">Day</th>
-                      <th scope="col">Hour</th>
-                      <th scope="col">Sessions</th>
-                      <th scope="col">API value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <For each={populatedCells()}>
-                      {(cell) => (
-                        <tr>
-                          <td>{cell.day}</td>
-                          <td>{String(cell.hour).padStart(2, '0')}:00</td>
-                          <td>{fmtNum(cell.sessions)}</td>
-                          <td>{fmtMoney(cell.cost)}</td>
-                        </tr>
-                      )}
-                    </For>
-                  </tbody>
-                </table>
-              </div>
-            </details>
           </>
         )}
       </Show>

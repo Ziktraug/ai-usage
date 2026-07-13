@@ -1,8 +1,6 @@
 import {
   type FocusedBreakdownRequest,
   type FocusedBreakdownResult,
-  type FocusedCsvRequest,
-  type FocusedCsvResult,
   type FocusedHtmlPayloadResult,
   type FocusedOverviewRequest,
   type FocusedOverviewResult,
@@ -13,7 +11,6 @@ import {
   type FocusedSupportResult,
   focusedAdvancedAnalysisFingerprint,
   focusedBreakdownFingerprint,
-  focusedCsvFingerprint,
   focusedOverviewFingerprint,
   focusedRevisionFingerprint,
 } from '@ai-usage/report-core/focused-report-query';
@@ -23,7 +20,6 @@ import { reportManifestRequestFingerprint, type WebReportRevisionManifestResult 
 
 export interface FocusedReportSource {
   getBreakdown: (request: FocusedBreakdownRequest) => Promise<SessionQueryServerResult<FocusedBreakdownResult>>;
-  getCsv: (request: FocusedCsvRequest) => Promise<SessionQueryServerResult<FocusedCsvResult>>;
   getHtmlPayload: (request: FocusedRevisionRequest) => Promise<SessionQueryServerResult<FocusedHtmlPayloadResult>>;
   getManifest: () => Promise<WebReportRevisionManifestResult>;
   getOverview: (request: FocusedOverviewRequest) => Promise<SessionQueryServerResult<FocusedOverviewResult>>;
@@ -33,7 +29,6 @@ export interface FocusedReportSource {
 
 interface FocusedRequestByKind {
   breakdown: FocusedBreakdownRequest;
-  csv: FocusedCsvRequest;
   'html-payload': FocusedRevisionRequest;
   overview: FocusedOverviewRequest;
   support: FocusedRevisionRequest;
@@ -41,7 +36,6 @@ interface FocusedRequestByKind {
 
 interface FocusedResultByKind {
   breakdown: FocusedBreakdownResult;
-  csv: FocusedCsvResult;
   'html-payload': FocusedHtmlPayloadResult;
   overview: FocusedOverviewResult;
   support: FocusedSupportResult;
@@ -51,8 +45,8 @@ const requestRevision = <Kind extends FocusedReportQueryKind>(
   kind: Kind,
   request: FocusedRequestByKind[Kind],
 ): string =>
-  kind === 'overview' || kind === 'breakdown' || kind === 'csv'
-    ? (request as FocusedOverviewRequest | FocusedBreakdownRequest | FocusedCsvRequest).query.revision
+  kind === 'overview' || kind === 'breakdown'
+    ? (request as FocusedOverviewRequest | FocusedBreakdownRequest).query.revision
     : (request as FocusedRevisionRequest).revision;
 
 const requestFingerprint = <Kind extends FocusedReportQueryKind>(
@@ -64,9 +58,6 @@ const requestFingerprint = <Kind extends FocusedReportQueryKind>(
   }
   if (kind === 'breakdown') {
     return focusedBreakdownFingerprint(request as FocusedBreakdownRequest);
-  }
-  if (kind === 'csv') {
-    return focusedCsvFingerprint(request as FocusedCsvRequest);
   }
   return focusedRevisionFingerprint(kind, request as FocusedRevisionRequest);
 };
@@ -123,13 +114,6 @@ const querySource = async <Kind extends FocusedReportQueryKind>(
       >,
     );
   }
-  if (kind === 'csv') {
-    return validateServerResult(
-      kind,
-      request,
-      (await source.getCsv(request as FocusedCsvRequest)) as SessionQueryServerResult<FocusedResultByKind[Kind]>,
-    );
-  }
   if (kind === 'html-payload') {
     return validateServerResult(
       kind,
@@ -181,9 +165,6 @@ export const fetchFocusedOverview = (source: FocusedReportSource, request: Focus
 
 export const fetchFocusedBreakdown = (source: FocusedReportSource, request: FocusedBreakdownRequest) =>
   querySource(source, 'breakdown', request);
-
-export const fetchFocusedCsv = (source: FocusedReportSource, request: FocusedCsvRequest) =>
-  querySource(source, 'csv', request);
 
 export const fetchFocusedHtmlPayload = (source: FocusedReportSource, request: FocusedRevisionRequest) =>
   querySource(source, 'html-payload', request);
@@ -395,10 +376,6 @@ export const createServedFocusedReportSource = (): FocusedReportSource => {
     getBreakdown: async (request) => {
       const { getFocusedReportBreakdown } = await serverApi();
       return await getFocusedReportBreakdown({ data: request });
-    },
-    getCsv: async (request) => {
-      const { getFocusedReportCsv } = await serverApi();
-      return await getFocusedReportCsv({ data: request });
     },
     getHtmlPayload: async (request) => {
       const { getFocusedReportHtmlPayload } = await serverApi();
