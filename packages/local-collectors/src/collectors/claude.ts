@@ -7,6 +7,7 @@ import { collectorCachePath, reviveCollectorRows } from '../collector-cache';
 import type { LocalHistoryError, LocalHistoryWarning } from '../errors';
 import { COLLECTOR_CACHE_MAX_BYTES } from '../history-budgets';
 import { LocalHistoryStorage, walkFiles } from '../local-history';
+import { addNonNegativeSafeIntegers, parseOptionalNonNegativeSafeInteger } from '../metric-validation';
 import { withPerfSpan } from '../perf';
 import { type HarnessPaths, resolvePaths } from '../platform-paths';
 import { readPrivateJson, writePrivateJson } from '../private-storage';
@@ -377,6 +378,13 @@ export const collectClaude = Effect.gen(function* () {
             if (!usage) {
               continue;
             }
+            const input = parseOptionalNonNegativeSafeInteger(usage.input_tokens);
+            const output = parseOptionalNonNegativeSafeInteger(usage.output_tokens);
+            const cacheRead = parseOptionalNonNegativeSafeInteger(usage.cache_read_input_tokens);
+            const cacheWrite = parseOptionalNonNegativeSafeInteger(usage.cache_creation_input_tokens);
+            if (!(input.ok && output.ok && cacheRead.ok && cacheWrite.ok)) {
+              continue;
+            }
             const id = event.message?.id;
             const key = `${id}:${event.requestId}`;
             if (id && seen.has(key)) {
@@ -385,17 +393,24 @@ export const collectClaude = Effect.gen(function* () {
             if (id) {
               seen.add(key);
             }
-            calls++;
-            const input = usage.input_tokens || 0;
-            const output = usage.output_tokens || 0;
-            const cacheRead = usage.cache_read_input_tokens || 0;
-            const cacheWrite = usage.cache_creation_input_tokens || 0;
-            tokens.in += input;
-            tokens.out += output;
-            tokens.cr += cacheRead;
-            tokens.cw += cacheWrite;
+            const nextCalls = addNonNegativeSafeIntegers(calls, 1);
+            const nextInput = addNonNegativeSafeIntegers(tokens.in, input.value);
+            const nextOutput = addNonNegativeSafeIntegers(tokens.out, output.value);
+            const nextCacheRead = addNonNegativeSafeIntegers(tokens.cr, cacheRead.value);
+            const nextCacheWrite = addNonNegativeSafeIntegers(tokens.cw, cacheWrite.value);
+            if (!(nextCalls.ok && nextInput.ok && nextOutput.ok && nextCacheRead.ok && nextCacheWrite.ok)) {
+              continue;
+            }
+            calls = nextCalls.value;
+            tokens.in = nextInput.value;
+            tokens.out = nextOutput.value;
+            tokens.cr = nextCacheRead.value;
+            tokens.cw = nextCacheWrite.value;
             const model = event.message?.model || 'unknown';
-            byModel.set(model, (byModel.get(model) || 0) + input + output + cacheRead + cacheWrite);
+            byModel.set(
+              model,
+              (byModel.get(model) || 0) + input.value + output.value + cacheRead.value + cacheWrite.value,
+            );
           }
         }
 

@@ -11,6 +11,7 @@ import {
   type LocalHistoryStorage as LocalHistoryStorageService,
   walkFiles,
 } from './local-history';
+import { parseNonNegativeSafeInteger } from './metric-validation';
 import { withPerfSpan } from './perf';
 import { firstExisting, resolvePaths } from './platform-paths';
 import { base, safeJSON, usablePrompt } from './text';
@@ -604,15 +605,24 @@ const parseCodexSessionText = (text: string): CodexSessionParseResult => {
         session.subscription = true;
       }
       const usage = payload.info?.total_token_usage;
-      const total = usage?.total_tokens;
-      if (usage && typeof total === 'number' && Number.isInteger(total) && total > session.maxTotal) {
+      const total = parseNonNegativeSafeInteger(usage?.total_tokens);
+      const input = parseNonNegativeSafeInteger(usage?.input_tokens);
+      const cachedInput = parseNonNegativeSafeInteger(usage?.cached_input_tokens);
+      const output = parseNonNegativeSafeInteger(usage?.output_tokens);
+      if (
+        usage &&
+        total.ok &&
+        input.ok &&
+        cachedInput.ok &&
+        output.ok &&
+        cachedInput.value <= input.value &&
+        total.value > session.maxTotal
+      ) {
         session.hasTokenUsage = true;
-        session.maxTotal = total;
-        const input = usage.input_tokens || 0;
-        const cachedInput = usage.cached_input_tokens || 0;
-        session.tin = Math.max(0, input - cachedInput);
-        session.tcr = cachedInput;
-        session.tout = usage.output_tokens || 0;
+        session.maxTotal = total.value;
+        session.tin = input.value - cachedInput.value;
+        session.tcr = cachedInput.value;
+        session.tout = output.value;
       }
     }
   }

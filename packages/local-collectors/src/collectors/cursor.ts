@@ -5,6 +5,7 @@ import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import { cachedDbRows, dbStat, readDbRowCache, storeDbRows, writeDbRowCache } from '../collector-cache';
 import { type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from '../local-history';
+import { addNonNegativeSafeIntegers, parseOptionalNonNegativeSafeInteger } from '../metric-validation';
 import { withPerfSpan } from '../perf';
 import { firstExisting, resolvePathCandidates } from '../platform-paths';
 import type { CollectorRow } from '../rtk-enrichment';
@@ -108,12 +109,18 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
                 if (!data) {
                   continue;
                 }
+                const created = parseOptionalNonNegativeSafeInteger(data.createdAt);
+                const added = parseOptionalNonNegativeSafeInteger(data.totalLinesAdded);
+                const removed = parseOptionalNonNegativeSafeInteger(data.totalLinesRemoved);
+                if (!(created.ok && added.ok && removed.ok)) {
+                  continue;
+                }
                 comp.set(id, {
                   name: data.name || '',
                   model: data.modelConfig?.modelName || data.modelConfig?.model || 'cursor',
-                  created: data.createdAt || 0,
-                  add: data.totalLinesAdded || 0,
-                  del: data.totalLinesRemoved || 0,
+                  created: created.value,
+                  add: added.value,
+                  del: removed.value,
                 });
               }
             }),
@@ -136,11 +143,20 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
                 if (!(tokenCount && composerId)) {
                   continue;
                 }
-                const input = tokenCount.inputTokens || 0;
-                const output = tokenCount.outputTokens || 0;
-                const cacheRead = tokenCount.cacheReadTokens || 0;
-                const cacheWrite = tokenCount.cacheWriteTokens || 0;
-                if (input + output + cacheRead + cacheWrite === 0) {
+                const input = parseOptionalNonNegativeSafeInteger(tokenCount.inputTokens);
+                const output = parseOptionalNonNegativeSafeInteger(tokenCount.outputTokens);
+                const cacheRead = parseOptionalNonNegativeSafeInteger(tokenCount.cacheReadTokens);
+                const cacheWrite = parseOptionalNonNegativeSafeInteger(tokenCount.cacheWriteTokens);
+                if (!(input.ok && output.ok && cacheRead.ok && cacheWrite.ok)) {
+                  continue;
+                }
+                const inputTotal = addNonNegativeSafeIntegers(input.value, output.value);
+                const cacheTotal = addNonNegativeSafeIntegers(cacheRead.value, cacheWrite.value);
+                const total =
+                  inputTotal.ok && cacheTotal.ok
+                    ? addNonNegativeSafeIntegers(inputTotal.value, cacheTotal.value)
+                    : null;
+                if (!total?.ok || total.value === 0) {
                   continue;
                 }
                 let current = agg.get(composerId);
@@ -148,11 +164,19 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
                   current = { in: 0, out: 0, cr: 0, cw: 0, calls: 0 };
                   agg.set(composerId, current);
                 }
-                current.in += input;
-                current.out += output;
-                current.cr += cacheRead;
-                current.cw += cacheWrite;
-                current.calls++;
+                const nextInput = addNonNegativeSafeIntegers(current.in, input.value);
+                const nextOutput = addNonNegativeSafeIntegers(current.out, output.value);
+                const nextCacheRead = addNonNegativeSafeIntegers(current.cr, cacheRead.value);
+                const nextCacheWrite = addNonNegativeSafeIntegers(current.cw, cacheWrite.value);
+                const nextCalls = addNonNegativeSafeIntegers(current.calls, 1);
+                if (!(nextInput.ok && nextOutput.ok && nextCacheRead.ok && nextCacheWrite.ok && nextCalls.ok)) {
+                  continue;
+                }
+                current.in = nextInput.value;
+                current.out = nextOutput.value;
+                current.cr = nextCacheRead.value;
+                current.cw = nextCacheWrite.value;
+                current.calls = nextCalls.value;
               }
             }),
             () => ({ rows: tokenRows.length, sessions: agg.size }),
