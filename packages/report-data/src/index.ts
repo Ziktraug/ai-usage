@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -42,7 +43,7 @@ import {
 } from '@ai-usage/report-core/snapshot';
 import type { Row, SourcedRow } from '@ai-usage/report-core/types';
 import { usageRowLineDelta, usageRowPricedCost, usageRowTokenTotal } from '@ai-usage/report-core/usage-row';
-import { importLocalRows, queryReportRows, usageStorePath } from '@ai-usage/usage-store';
+import { importLocalRows, queryReportRows, queryUsageStoreGeneration, usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 import { withPerfSpan } from './perf';
 
@@ -54,6 +55,29 @@ const GITHUB_HTTPS_REPO_PATTERN = /github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/;
 const GITHUB_SSH_REPO_PATTERN = /git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/;
 const GITDIR_FILE_PATTERN = /^\s*gitdir:\s*(.+?)\s*$/i;
 const CLAUDE_WORKTREE_PATH_SEGMENT = '/.claude/worktrees/';
+const MAX_STABLE_REPORT_CAPTURE_ATTEMPTS = 3;
+
+const canonicalJsonValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(canonicalJsonValue);
+  }
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) {
+    const child = (value as Record<string, unknown>)[key];
+    if (child !== undefined) {
+      sorted[key] = canonicalJsonValue(child);
+    }
+  }
+  return sorted;
+};
+
+const fingerprintConfig = (config: unknown): string =>
+  createHash('sha256')
+    .update(JSON.stringify(canonicalJsonValue(config)))
+    .digest('hex');
 
 export interface LocalUsageSelection {
   configCwd?: string;
@@ -82,6 +106,11 @@ export interface StoredReportPayloadRequest extends LocalUsageSelection {
   generatedAt?: Date;
   includeFacets?: boolean;
   options: ReportOptions;
+}
+
+export interface StoredReportSourceFingerprint {
+  configFingerprint: string;
+  usageStoreGeneration: number;
 }
 
 export interface LocalReportRowsResult {
@@ -135,6 +164,14 @@ export interface ProjectSource {
 export interface ProjectSourcesResult {
   sources: ProjectSource[];
   warnings: SnapshotMergeWarning[];
+}
+
+export interface KnownLocalProjectSourcesRequest extends LocalUsageSelection {}
+
+export interface KnownLocalProjectSourcesResult {
+  projectGroups: UsageReportProjectGroup[];
+  sources: ProjectSource[];
+  warnings: (LocalHistoryWarning | UsageReportWarning)[];
 }
 
 export type ReadGitFile = (filePath: string) => string | null;
@@ -553,6 +590,71 @@ export const createStoredReportPayload = (
     (payload) => ({
       rows: payload.rows.length,
       tableRows: payload.tableRows.length,
+    }),
+  );
+
+export const readStoredReportSourceFingerprint = (
+  request: Pick<StoredReportPayloadRequest, 'configCwd'>,
+): Effect.Effect<
+  StoredReportSourceFingerprint,
+  LocalHistoryError,
+  import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
+> =>
+  Effect.gen(function* () {
+    const storage = yield* LocalHistoryStorage;
+    const dbPath = usageStorePath(storage.home);
+    const usageStoreGeneration = yield* queryUsageStoreGeneration({ dbPath }).pipe(
+      Effect.mapError(usageStoreLocalHistoryError('usageStore.queryUsageStoreGeneration', dbPath)),
+    );
+    const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
+    return { configFingerprint: fingerprintConfig(config), usageStoreGeneration };
+  });
+
+export const createKnownLocalProjectSources = (
+  request: KnownLocalProjectSourcesRequest,
+): Effect.Effect<
+  KnownLocalProjectSourcesResult,
+  LocalHistoryError,
+  import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
+> =>
+  withPerfSpan(
+    'aiUsage.report.knownLocalProjectSources',
+    Effect.gen(function* () {
+      const storage = yield* LocalHistoryStorage;
+      const machine = yield* ensureMachineConfig;
+      const dbPath = usageStorePath(storage.home);
+      const harnessKeys = selectedStoredHarnessKeys(request);
+      const queryLocalRows = () =>
+        queryReportRows({
+          dbPath,
+          originMachineIds: [machine.id],
+          ...(harnessKeys === undefined ? {} : { harnessKeys }),
+        }).pipe(Effect.mapError(usageStoreLocalHistoryError('usageStore.queryReportRows', dbPath)));
+
+      let stored = yield* queryLocalRows();
+      let collectionWarnings: LocalHistoryWarning[] = [];
+      if (stored.rows.length === 0) {
+        const { collection } = yield* collectConfiguredLocalRowsWithWarnings({ ...request, keepSource: true });
+        collectionWarnings = collection.warnings;
+        yield* importLocalRows({ dbPath, machine, rows: collection.rows }).pipe(
+          Effect.mapError(usageStoreLocalHistoryError('usageStore.importLocalRows', dbPath)),
+        );
+        stored = yield* queryLocalRows();
+      }
+
+      const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
+      const rows = stored.rows as SourcedRow[];
+      const projection = buildProjectProjection(rows, config.projectGroups ?? [], config.projectAliases ?? []);
+      return {
+        projectGroups: projection.projectGroups,
+        sources: collectProjectSources(rows, false, defaultReadGitFile),
+        warnings: [...collectionWarnings, ...projection.warnings],
+      };
+    }),
+    (result) => ({
+      groups: result.projectGroups.length,
+      sources: result.sources.length,
+      warnings: result.warnings.length,
     }),
   );
 
@@ -1075,3 +1177,30 @@ export const runLocalReportPayload = (request: LocalReportPayloadRequest): Promi
 
 export const runStoredReportPayload = (request: StoredReportPayloadRequest): Promise<UsageReportPayload> =>
   Effect.runPromise(createStoredReportPayload(request).pipe(Effect.provide(LocalHistoryStorageLive)));
+
+export const runStoredReportSourceFingerprint = (
+  request: Pick<StoredReportPayloadRequest, 'configCwd'>,
+): Promise<StoredReportSourceFingerprint> =>
+  Effect.runPromise(readStoredReportSourceFingerprint(request).pipe(Effect.provide(LocalHistoryStorageLive)));
+
+export const runConsistentStoredReportPayload = async (
+  request: StoredReportPayloadRequest,
+): Promise<UsageReportPayload> => {
+  for (let attempt = 1; attempt <= MAX_STABLE_REPORT_CAPTURE_ATTEMPTS; attempt += 1) {
+    const before = await runStoredReportSourceFingerprint(request);
+    const payload = await runStoredReportPayload(request);
+    const after = await runStoredReportSourceFingerprint(request);
+    if (
+      before.configFingerprint === after.configFingerprint &&
+      before.usageStoreGeneration === after.usageStoreGeneration
+    ) {
+      return payload;
+    }
+  }
+  throw new Error(`Report source changed during ${MAX_STABLE_REPORT_CAPTURE_ATTEMPTS} consecutive capture attempts`);
+};
+
+export const runKnownLocalProjectSources = (
+  request: KnownLocalProjectSourcesRequest,
+): Promise<KnownLocalProjectSourcesResult> =>
+  Effect.runPromise(createKnownLocalProjectSources(request).pipe(Effect.provide(LocalHistoryStorageLive)));

@@ -13,6 +13,7 @@ import { importPeerMergeBundle, usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 import {
   collectProjectedLocalReportRowsWithWarnings,
+  createKnownLocalProjectSources,
   createLocalReportPayload,
   createLocalUsageSnapshot,
   createMergedUsageReport,
@@ -20,6 +21,7 @@ import {
   listProjectSources,
   listProjectSourcesWithWarnings,
   parseGitConfigRemote,
+  readStoredReportSourceFingerprint,
 } from './index';
 
 const defaultOptions = {
@@ -120,6 +122,56 @@ const makeSourcedRow = (input: {
 });
 
 describe('shared reporting', () => {
+  test('discovers project sources from local rows only and collects once when only imported rows are stored', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-known-local-projects-'));
+    const localProjectPath = mkdtempSync(path.join(tmpdir(), 'ai-usage-known-local-project-'));
+    try {
+      const storage = createLocalHistoryStorage(home);
+      writeClaudeSession(home, localProjectPath);
+      await Effect.runPromise(
+        writeMachineConfig(testMachine).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      await Effect.runPromise(
+        importPeerMergeBundle({
+          dbPath: usageStorePath(home),
+          localMachineId: testMachine.id,
+          bundle: createUsageMergeBundle({
+            machine: { id: 'peer-machine', label: 'Peer Machine' },
+            rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/peer/project', sessionId: 'peer-session' })],
+          }),
+        }),
+      );
+
+      const result = await Effect.runPromise(
+        createKnownLocalProjectSources({ harness: 'claude', includeCursor: false }).pipe(
+          Effect.provideService(LocalHistoryStorage, storage),
+        ),
+      );
+
+      expect(result.sources).toEqual([
+        expect.objectContaining({
+          machineId: testMachine.id,
+          machine: testMachine.label,
+          project: path.basename(localProjectPath),
+          sessions: 1,
+          sourcePath: localProjectPath,
+        }),
+      ]);
+      expect(result.projectGroups).toHaveLength(1);
+      expect(result.projectGroups[0]?.sources).toEqual([
+        expect.objectContaining({
+          machineId: testMachine.id,
+          sourcePath: localProjectPath,
+        }),
+      ]);
+      expect(JSON.stringify(result)).not.toContain('peer-machine');
+      expect(JSON.stringify(result)).not.toContain('/peer/project');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(localProjectPath, { recursive: true, force: true });
+    }
+  });
+
   test('creates the compatibility payload through the shared local history boundary', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-'));
     try {
@@ -373,6 +425,52 @@ describe('shared reporting', () => {
       expect(payload.rows[0]?.rawProject).toBe('peer-project');
       expect(payload.rows[0]?.source?.machineLabel).toBe('Peer Machine');
       expect(payload.rows.find((row) => row.name === 'peer-child')?.source?.rootSourceSessionId).toBe('peer-parent');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('fingerprints the exact stored generation and semantic merged config', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-report-source-fingerprint-'));
+    try {
+      const storage = createLocalHistoryStorage(home);
+      const readFingerprint = () =>
+        Effect.runPromise(
+          readStoredReportSourceFingerprint({}).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+        );
+      writeAiUsageConfig(home, {
+        projectAliases: [{ match: ['/work/raw'], name: 'Raw Project' }],
+        projectGroups: [],
+      });
+      const initial = await readFingerprint();
+
+      writeAiUsageConfig(home, {
+        projectGroups: [],
+        projectAliases: [{ name: 'Raw Project', match: ['/work/raw'] }],
+      });
+      expect(await readFingerprint()).toEqual(initial);
+
+      writeAiUsageConfig(home, {
+        projectAliases: [{ match: ['/work/raw'], name: 'Renamed Project' }],
+        projectGroups: [],
+      });
+      const configChanged = await readFingerprint();
+      expect(configChanged.configFingerprint).not.toBe(initial.configFingerprint);
+      expect(configChanged.usageStoreGeneration).toBe(initial.usageStoreGeneration);
+
+      await Effect.runPromise(
+        importPeerMergeBundle({
+          bundle: createUsageMergeBundle({
+            machine: { id: 'peer-machine', label: 'Peer Machine' },
+            rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-session' })],
+          }),
+          dbPath: usageStorePath(home),
+          localMachineId: testMachine.id,
+        }),
+      );
+      const storeChanged = await readFingerprint();
+      expect(storeChanged.configFingerprint).toBe(configChanged.configFingerprint);
+      expect(storeChanged.usageStoreGeneration).toBe(configChanged.usageStoreGeneration + 1);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

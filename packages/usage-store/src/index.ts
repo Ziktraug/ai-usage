@@ -9,6 +9,7 @@ import {
   toSerializedMergeRow,
   type UsageMergeBundle,
 } from '@ai-usage/report-core/merge-bundle';
+import { IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE } from '@ai-usage/report-core/report-budgets';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow, UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { Data, Effect } from 'effect';
@@ -57,6 +58,10 @@ export interface QueryRowsResult {
   skipped: number;
 }
 
+export interface QueryUsageStoreGenerationInput {
+  dbPath: string;
+}
+
 export type UsageStoreErrorReason = 'invalid-input' | 'self-import' | 'storage-failure' | 'migration-failure';
 
 export class UsageStoreError extends Data.TaggedError('UsageStoreError')<{
@@ -71,6 +76,7 @@ export interface UsageStore {
   importLocalRows(input: ImportLocalRowsInput): Effect.Effect<ImportResult, UsageStoreError>;
   importPeerMergeBundle(input: ImportPeerMergeBundleInput): Effect.Effect<ImportResult, UsageStoreError>;
   queryReportRows(input?: QueryReportRowsInput): Effect.Effect<QueryRowsResult, UsageStoreError>;
+  queryUsageStoreGeneration(input?: QueryUsageStoreGenerationInput): Effect.Effect<number, UsageStoreError>;
 }
 
 interface SqliteStatement {
@@ -87,11 +93,16 @@ interface SqliteDatabase {
 
 interface ExistingRow {
   content_hash: string;
+  row_key: string;
   status: StoredUsageRowStatus;
 }
 
 interface StoredRowRecord {
   row_json: string;
+}
+
+interface UsageStoreGenerationRecord {
+  value: number;
 }
 
 const usageStoreError = (operation: string, dbPath: string, cause: unknown, reason?: UsageStoreErrorReason) =>
@@ -131,6 +142,13 @@ const migrate = (db: SqliteDatabase) => {
     CREATE INDEX IF NOT EXISTS idx_usage_rows_active_date ON usage_rows(active_date);
     CREATE INDEX IF NOT EXISTS idx_usage_rows_project ON usage_rows(project);
     CREATE INDEX IF NOT EXISTS idx_usage_rows_model ON usage_rows(model);
+
+    CREATE TABLE IF NOT EXISTS usage_store_metadata (
+      key TEXT PRIMARY KEY,
+      value INTEGER NOT NULL CHECK (value >= 0)
+    );
+
+    INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('generation', 0);
   `);
 };
 
@@ -169,8 +187,22 @@ const emptyImportResult = (): ImportResult => ({
   warnings: 0,
 });
 
-const insertMergeRow = (db: SqliteDatabase, row: SerializedMergeRow, now: string) => {
-  db.query(`
+const chunkRows = <T>(rows: T[], size: number): T[][] => {
+  const chunks: T[][] = [];
+  for (let offset = 0; offset < rows.length; offset += size) {
+    chunks.push(rows.slice(offset, offset + size));
+  }
+  return chunks;
+};
+
+interface ImportStatements {
+  insert: SqliteStatement;
+  touch: SqliteStatement;
+  update: SqliteStatement;
+}
+
+const prepareImportStatements = (db: SqliteDatabase): ImportStatements => ({
+  insert: db.query(`
     INSERT INTO usage_rows (
       origin_machine_id,
       harness_key,
@@ -189,7 +221,27 @@ const insertMergeRow = (db: SqliteDatabase, row: SerializedMergeRow, now: string
       updated_at,
       superseded_by
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `),
+  touch: db.query('UPDATE usage_rows SET last_seen_at = ? WHERE row_key = ?'),
+  update: db.query(`
+    UPDATE usage_rows
+    SET
+      source_fingerprint = ?,
+      content_hash = ?,
+      row_json = ?,
+      status = ?,
+      active_date = ?,
+      project = ?,
+      model = ?,
+      token_total = ?,
+      last_seen_at = ?,
+      updated_at = ?
+    WHERE row_key = ?
+  `),
+});
+
+const insertMergeRow = (statement: SqliteStatement, row: SerializedMergeRow, now: string) => {
+  statement.run(
     row.source.machineId,
     row.source.harnessKey,
     row.source.sourceSessionId,
@@ -209,22 +261,8 @@ const insertMergeRow = (db: SqliteDatabase, row: SerializedMergeRow, now: string
   );
 };
 
-const updateMergeRow = (db: SqliteDatabase, row: SerializedMergeRow, now: string) => {
-  db.query(`
-    UPDATE usage_rows
-    SET
-      source_fingerprint = ?,
-      content_hash = ?,
-      row_json = ?,
-      status = ?,
-      active_date = ?,
-      project = ?,
-      model = ?,
-      token_total = ?,
-      last_seen_at = ?,
-      updated_at = ?
-    WHERE row_key = ?
-  `).run(
+const updateMergeRow = (statement: SqliteStatement, row: SerializedMergeRow, now: string) => {
+  statement.run(
     row.sourceFingerprint,
     row.contentHash,
     JSON.stringify(row),
@@ -239,8 +277,20 @@ const updateMergeRow = (db: SqliteDatabase, row: SerializedMergeRow, now: string
   );
 };
 
-const touchMergeRow = (db: SqliteDatabase, rowKey: string, now: string) => {
-  db.query('UPDATE usage_rows SET last_seen_at = ? WHERE row_key = ?').run(now, rowKey);
+const touchMergeRow = (statement: SqliteStatement, rowKey: string, now: string) => {
+  statement.run(now, rowKey);
+};
+
+const loadExistingRows = (db: SqliteDatabase, rows: SerializedMergeRow[]): Map<string, ExistingRow> => {
+  const rowKeys = [...new Set(rows.map((row) => row.rowKey))];
+  if (rowKeys.length === 0) {
+    return new Map();
+  }
+  const placeholders = rowKeys.map(() => '?').join(', ');
+  const existingRows = db
+    .query(`SELECT row_key, content_hash, status FROM usage_rows WHERE row_key IN (${placeholders})`)
+    .all(...rowKeys) as ExistingRow[];
+  return new Map(existingRows.map((row) => [row.row_key, row]));
 };
 
 const importMergeRows = (
@@ -253,32 +303,48 @@ const importMergeRows = (
       try: () => {
         const result = emptyImportResult();
         const now = importedAt.toISOString();
-        const selectExisting = db.query('SELECT content_hash, status FROM usage_rows WHERE row_key = ?');
+        const statements = prepareImportStatements(db);
 
         db.exec('BEGIN IMMEDIATE');
         try {
-          for (const row of rows) {
-            const existing = selectExisting.get(row.rowKey) as ExistingRow | null;
-            if (!existing) {
-              insertMergeRow(db, row, now);
-              result.inserted++;
-              continue;
-            }
+          for (const batch of chunkRows(rows, IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE)) {
+            const existingRows = loadExistingRows(db, batch);
+            for (const row of batch) {
+              const existing = existingRows.get(row.rowKey);
+              if (!existing) {
+                insertMergeRow(statements.insert, row, now);
+                existingRows.set(row.rowKey, {
+                  content_hash: row.contentHash,
+                  row_key: row.rowKey,
+                  status: row.status,
+                });
+                result.inserted++;
+                continue;
+              }
 
-            if (existing.content_hash === row.contentHash && existing.status === row.status) {
-              touchMergeRow(db, row.rowKey, now);
-              result.unchanged++;
-              continue;
-            }
+              if (existing.content_hash === row.contentHash && existing.status === row.status) {
+                touchMergeRow(statements.touch, row.rowKey, now);
+                result.unchanged++;
+                continue;
+              }
 
-            updateMergeRow(db, row, now);
-            if (row.status === 'deleted') {
-              result.deleted++;
-            } else if (row.status === 'superseded') {
-              result.superseded++;
-            } else {
-              result.updated++;
+              updateMergeRow(statements.update, row, now);
+              existingRows.set(row.rowKey, {
+                content_hash: row.contentHash,
+                row_key: row.rowKey,
+                status: row.status,
+              });
+              if (row.status === 'deleted') {
+                result.deleted++;
+              } else if (row.status === 'superseded') {
+                result.superseded++;
+              } else {
+                result.updated++;
+              }
             }
+          }
+          if (rows.length > 0) {
+            db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
           }
           db.exec('COMMIT');
         } catch (error) {
@@ -363,6 +429,24 @@ export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<Quer
     }),
   );
 
+export const queryUsageStoreGeneration = (
+  input: QueryUsageStoreGenerationInput,
+): Effect.Effect<number, UsageStoreError> =>
+  withUsageStore(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const record = db
+          .query("SELECT value FROM usage_store_metadata WHERE key = 'generation'")
+          .get() as UsageStoreGenerationRecord | null;
+        if (!(record && Number.isSafeInteger(record.value) && record.value >= 0)) {
+          throw new Error('Usage store generation metadata is missing or invalid');
+        }
+        return record.value;
+      },
+      catch: (cause) => usageStoreError('queryUsageStoreGeneration', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
 export const exportLocalMergeBundle = (
   input: ExportLocalMergeBundleInput,
 ): Effect.Effect<UsageMergeBundle, UsageStoreError> =>
@@ -381,4 +465,6 @@ export const createUsageStore = (dbPath: string): UsageStore => ({
   importLocalRows: (input) => importLocalRows({ ...input, dbPath: input.dbPath ?? dbPath }),
   importPeerMergeBundle: (input) => importPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
   queryReportRows: (input) => queryReportRows({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
+  queryUsageStoreGeneration: (input) =>
+    queryUsageStoreGeneration({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
 });

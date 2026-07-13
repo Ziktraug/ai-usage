@@ -18,6 +18,7 @@ import {
   importLocalRows,
   importPeerMergeBundle,
   queryReportRows,
+  queryUsageStoreGeneration,
   UsageStoreError,
   usageStorePath,
 } from './index';
@@ -118,6 +119,23 @@ describe('usage-store public boundary', () => {
     expect(repeated.unchanged).toBe(1);
     expect(queried.rows).toHaveLength(1);
     expect(queried.rows[0]?.source.machineId).toBe('machine-a');
+  });
+
+  test('advances one atomic source generation per non-empty import', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-generation-'));
+    const dbPath = usageStorePath(home);
+
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(0);
+    await Effect.runPromise(
+      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'generation-row' })] }),
+    );
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(1);
+    await Effect.runPromise(
+      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'generation-row' })] }),
+    );
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(2);
+    await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [] }));
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(2);
   });
 
   test('skips invalid stored rows instead of failing the whole query', async () => {
@@ -425,5 +443,123 @@ describe('usage-store public boundary', () => {
     expect(active.rows).toHaveLength(0);
     expect(tombstones.rows).toHaveLength(1);
     expect(tombstones.rows[0]?.source.sourceSessionId).toBe('peer-1');
+  });
+
+  test('preserves mixed counters and states across more than two lookup batches', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-batches-'));
+    const dbPath = usageStorePath(home);
+    const rowCount = 1205;
+    const rows = Array.from({ length: rowCount }, (_, index) =>
+      makeRow({ sourceSessionId: `peer-batch-${index}`, tokOut: 20 }),
+    );
+    await Effect.runPromise(
+      importPeerMergeBundle({
+        bundle: makeBundle(machineB, rows),
+        dbPath,
+        localMachineId: machineA.id,
+      }),
+    );
+    const serializedRows = rows.map((row, index) => {
+      if (index % 4 === 0) {
+        return toSerializedMergeRow(row, machineB, 'deleted');
+      }
+      if (index % 4 === 1) {
+        return toSerializedMergeRow(row, machineB, 'superseded');
+      }
+      if (index % 4 === 2) {
+        return toSerializedMergeRow({ ...row, tokOut: 99 }, machineB);
+      }
+      return toSerializedMergeRow(row, machineB);
+    });
+
+    const result = await Effect.runPromise(
+      importPeerMergeBundle({
+        bundle: { ...makeBundle(machineB, []), rows: serializedRows },
+        dbPath,
+        localMachineId: machineA.id,
+      }),
+    );
+    const stored = await Effect.runPromise(queryReportRows({ dbPath, statuses: ['active', 'deleted', 'superseded'] }));
+
+    expect(result).toEqual({
+      deleted: serializedRows.filter((row) => row.status === 'deleted').length,
+      inserted: 0,
+      superseded: serializedRows.filter((row) => row.status === 'superseded').length,
+      unchanged: serializedRows.filter((row, index) => row.status === 'active' && index % 4 === 3).length,
+      updated: serializedRows.filter((row, index) => row.status === 'active' && index % 4 === 2).length,
+      warnings: 0,
+    });
+    expect(stored.rows).toHaveLength(rowCount);
+  });
+
+  test('keeps duplicate row keys sequential within one input batch', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-duplicate-batch-'));
+    const dbPath = usageStorePath(home);
+
+    const result = await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        machine: machineA,
+        rows: [
+          makeRow({ sourceSessionId: 'duplicate-key', tokOut: 20 }),
+          makeRow({ sourceSessionId: 'duplicate-key', tokOut: 25 }),
+          makeRow({ sourceSessionId: 'duplicate-key', tokOut: 25 }),
+        ],
+      }),
+    );
+    const stored = await Effect.runPromise(queryReportRows({ dbPath }));
+
+    expect(result).toMatchObject({ inserted: 1, unchanged: 1, updated: 1 });
+    expect(stored.rows).toHaveLength(1);
+    expect(stored.rows[0]?.tokOut).toBe(25);
+  });
+
+  test('keeps duplicate row keys sequential across lookup batch boundaries', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-duplicate-batches-'));
+    const dbPath = usageStorePath(home);
+    const rows = [makeRow({ sourceSessionId: 'cross-batch-duplicate', tokOut: 20 })];
+    rows.push(
+      ...Array.from({ length: 1000 }, (_, index) => makeRow({ sourceSessionId: `cross-batch-filler-${index}` })),
+    );
+    rows.push(makeRow({ sourceSessionId: 'cross-batch-duplicate', tokOut: 30 }));
+
+    const result = await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows }));
+    const stored = await Effect.runPromise(queryReportRows({ dbPath }));
+
+    expect(result).toMatchObject({ inserted: 1001, updated: 1 });
+    expect(stored.rows).toHaveLength(1001);
+    expect(stored.rows.find((row) => row.source.sourceSessionId === 'cross-batch-duplicate')?.tokOut).toBe(30);
+  });
+
+  test('rolls back every batch after a late write failure', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-batch-rollback-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(
+      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'seed' })] }),
+    );
+    const { Database } = await import('bun:sqlite');
+    const db = new Database(dbPath);
+    db.exec(`
+      CREATE TRIGGER reject_late_import
+      BEFORE INSERT ON usage_rows
+      WHEN NEW.source_session_id = 'late-failure'
+      BEGIN
+        SELECT RAISE(ABORT, 'late import failure');
+      END;
+    `);
+    db.close();
+    const rows = Array.from({ length: 1002 }, (_, index) =>
+      makeRow({ sourceSessionId: index === 1001 ? 'late-failure' : `rollback-${index}` }),
+    );
+    const generationBeforeFailure = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+
+    await expect(Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows }))).rejects.toThrow(
+      'late import failure',
+    );
+    const stored = await Effect.runPromise(queryReportRows({ dbPath }));
+
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(generationBeforeFailure);
+    expect(stored.rows).toHaveLength(1);
+    expect(stored.rows[0]?.source.sourceSessionId).toBe('seed');
   });
 });

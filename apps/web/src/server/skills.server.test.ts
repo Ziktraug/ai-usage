@@ -1,8 +1,18 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
+import { writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
+import { createUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
+import type { UsageMachine } from '@ai-usage/report-core/snapshot';
+import type { SourcedRow } from '@ai-usage/report-core/types';
+import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
+import { importPeerMergeBundle, usageStorePath } from '@ai-usage/usage-store';
+import { Effect } from 'effect';
 import {
+  createSkillsServerAdapter,
+  createSkillsServerDependencies,
   knownSkillProjectPathsFromReportPayload,
   localProjectRootExists,
   projectSkillMarkdownInputFrom,
@@ -86,6 +96,276 @@ ${content}`,
     'utf8',
   );
 };
+
+const writeSourceSkill = async (sourceRepoPath: string, skillName: string, content: string) => {
+  const skillPath = path.join(sourceRepoPath, 'skills', skillName);
+  await mkdir(skillPath, { recursive: true });
+  await writeFile(path.join(skillPath, 'SKILL.md'), content, 'utf8');
+};
+
+const makeStoredRow = (input: { project: string; sessionId: string; sourcePath: string }): SourcedRow => ({
+  ...normalizeUsageRow({
+    calls: 1,
+    cost: approximateApiCost,
+    date: new Date('2026-01-01T00:00:00.000Z'),
+    endDate: new Date('2026-01-01T00:01:00.000Z'),
+    harness: 'Claude Code',
+    model: 'claude-sonnet-4-6',
+    name: input.sessionId,
+    project: input.project,
+    provider: 'Claude API',
+    tokens: { cr: 0, cw: 0, in: 10, out: 5 },
+  }),
+  source: {
+    harnessKey: 'claude',
+    sourcePath: input.sourcePath,
+    sourceSessionId: input.sessionId,
+  },
+});
+
+describe('real skills server adapter', () => {
+  test('uses injected temp storage and workflows for the complete management lifecycle', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-server-adapter-'));
+    try {
+      const home = path.join(root, 'home');
+      const sourceRepoPath = path.join(root, 'source');
+      const safeTargetPath = path.join(root, 'targets', 'safe');
+      const unsafeTargetPath = path.join(root, 'targets', 'unsafe');
+      const projectPath = path.join(root, 'project');
+      const configCwd = path.join(root, 'cwd');
+      const configPath = path.join(home, '.config', 'ai-usage', 'config.json');
+      const originalMarkdown = `---
+name: example-skill
+description: Helps with adapter tests
+---
+# Original
+`;
+      await Promise.all([
+        writeSourceSkill(sourceRepoPath, 'example-skill', originalMarkdown),
+        writeProjectSkill(path.join(projectPath, '.claude', 'skills', 'project-skill'), 'project-skill'),
+        writeProjectSkill(path.join(unsafeTargetPath, 'example-skill'), 'example-skill', '# Unmanaged\n'),
+        mkdir(configCwd, { recursive: true }),
+        mkdir(path.dirname(configPath), { recursive: true }),
+      ]);
+      await writeFile(
+        configPath,
+        `${JSON.stringify(
+          {
+            cursor: { user: 'preserved@example.com' },
+            projectAliases: [{ match: ['/legacy/*'], name: 'Preserved alias' }],
+            skills: {
+              projectPaths: [projectPath],
+              sourceRepoPath,
+              targets: {
+                safe: { enabled: true, kind: 'custom', path: safeTargetPath, scope: 'system' },
+                unsafe: { enabled: true, kind: 'custom', path: unsafeTargetPath, scope: 'system' },
+              },
+            },
+          },
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      );
+
+      const storage = createLocalHistoryStorage(home);
+      const baseDependencies = createSkillsServerDependencies({ configCwd, storage });
+      const calls = {
+        configReads: [] as { configCwd: string; home: string }[],
+        configWrites: [] as string[],
+        projectSourceReads: [] as { configCwd?: string; home: string }[],
+        workflowHomes: [] as string[],
+        workflowNames: [] as string[],
+      };
+      const adapter = createSkillsServerAdapter({
+        ...baseDependencies,
+        readConfig: (input) => {
+          calls.configReads.push({ configCwd: input.configCwd, home: input.storage.home });
+          return baseDependencies.readConfig(input);
+        },
+        readKnownProjectSources: (input) => {
+          calls.projectSourceReads.push({
+            ...(input.request.configCwd === undefined ? {} : { configCwd: input.request.configCwd }),
+            home: input.storage.home,
+          });
+          return baseDependencies.readKnownProjectSources(input);
+        },
+        updateConfig: (input) => {
+          calls.configWrites.push(input.storage.home);
+          return baseDependencies.updateConfig(input);
+        },
+        workflows: {
+          ...baseDependencies.workflows,
+          createTargetDirectory: (input) => {
+            calls.workflowNames.push('createTargetDirectory');
+            return baseDependencies.workflows.createTargetDirectory(input);
+          },
+          loadSnapshot: (input) => {
+            calls.workflowHomes.push(input.homePath);
+            calls.workflowNames.push('loadSnapshot');
+            return baseDependencies.workflows.loadSnapshot(input);
+          },
+          previewReconcileAll: (input) => {
+            calls.workflowHomes.push(input.homePath);
+            calls.workflowNames.push('previewReconcileAll');
+            return baseDependencies.workflows.previewReconcileAll(input);
+          },
+          readMarkdown: (input) => {
+            calls.workflowNames.push('readMarkdown');
+            return baseDependencies.workflows.readMarkdown(input);
+          },
+          reconcileAll: (input) => {
+            calls.workflowHomes.push(input.homePath);
+            calls.workflowNames.push('reconcileAll');
+            return baseDependencies.workflows.reconcileAll(input);
+          },
+          reconcileSkill: (input) => {
+            calls.workflowHomes.push(input.homePath);
+            calls.workflowNames.push('reconcileSkill');
+            return baseDependencies.workflows.reconcileSkill(input);
+          },
+          scanProjects: (input) => {
+            calls.workflowNames.push('scanProjects');
+            return baseDependencies.workflows.scanProjects(input);
+          },
+          toggleSkill: (input) => {
+            calls.workflowNames.push('toggleSkill');
+            return baseDependencies.workflows.toggleSkill(input);
+          },
+          writeConfig: (input) => {
+            calls.workflowNames.push('writeConfig');
+            return baseDependencies.workflows.writeConfig(input);
+          },
+          writeMarkdown: (input) => {
+            calls.workflowNames.push('writeMarkdown');
+            return baseDependencies.workflows.writeMarkdown(input);
+          },
+        },
+      });
+
+      const snapshot = await adapter.readSnapshot();
+      expect(snapshot).toMatchObject({ ok: true, data: { configured: true } });
+      expect(snapshot.ok ? snapshot.data.skills[0]?.manifest.markdown : undefined).toBe('');
+
+      const markdown = await adapter.readMarkdown('example-skill');
+      expect(markdown).toMatchObject({ ok: true, data: { content: originalMarkdown } });
+      if (!markdown.ok) {
+        throw new Error(markdown.error.message);
+      }
+
+      const skillsConfig = snapshot.ok ? snapshot.data.config : {};
+      const savedConfig = await adapter.saveConfig({ ...skillsConfig, projectPaths: [projectPath] });
+      expect(savedConfig.ok).toBe(true);
+      const persistedConfig = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
+      expect(persistedConfig.cursor).toEqual({ user: 'preserved@example.com' });
+      expect(persistedConfig.projectAliases).toEqual([{ match: ['/legacy/*'], name: 'Preserved alias' }]);
+
+      const conflict = await adapter.saveMarkdown({
+        baseSha256: '0'.repeat(64),
+        content: originalMarkdown,
+        skillName: 'example-skill',
+      });
+      expect(conflict).toEqual({ ok: true, data: { reason: 'conflict' } });
+
+      const editedMarkdown = originalMarkdown.replace('# Original', '# Edited');
+      const savedMarkdown = await adapter.saveMarkdown({
+        baseSha256: markdown.data.sha256,
+        content: editedMarkdown,
+        skillName: 'example-skill',
+      });
+      expect(savedMarkdown).toMatchObject({ ok: true, data: { document: { content: editedMarkdown } } });
+
+      const unknownTarget = await adapter.createTargetDirectory({ targetId: 'unknown' });
+      expect(unknownTarget).toMatchObject({ ok: false, error: { message: 'Unknown skill target: unknown' } });
+      const createdTarget = await adapter.createTargetDirectory({ targetId: 'safe' });
+      expect(createdTarget.ok).toBe(true);
+
+      const preview = await adapter.previewReconcileAll();
+      expect(preview.ok ? preview.data.actions.map((action) => action.type) : []).toEqual([
+        'create-symlink',
+        'refuse-unmanaged-mutation',
+      ]);
+      const reconciled = await adapter.reconcileAll();
+      expect(reconciled.ok ? reconciled.data.actions.map((action) => action.type) : []).toEqual([
+        'create-symlink',
+        'refuse-unmanaged-mutation',
+      ]);
+      expect((await lstat(path.join(safeTargetPath, 'example-skill'))).isSymbolicLink()).toBe(true);
+
+      const disabled = await adapter.toggleSkill({ enabled: false, skillName: 'example-skill' });
+      expect(disabled.ok ? disabled.data.actions.map((action) => action.type) : []).toEqual([
+        'unlink-managed-symlink',
+        'refuse-unmanaged-mutation',
+      ]);
+      const enabled = await adapter.toggleSkill({ enabled: true, skillName: 'example-skill' });
+      expect(enabled).toMatchObject({ ok: true, data: { actions: [] } });
+      const reconciledSkill = await adapter.reconcileSkill('example-skill');
+      expect(reconciledSkill.ok ? reconciledSkill.data.actions.map((action) => action.type) : []).toContain(
+        'create-symlink',
+      );
+
+      const inventories = await adapter.readProjectInventories();
+      expect(inventories.ok ? inventories.data[0]?.projectPath : undefined).toBe(projectPath);
+      expect(calls.configReads.every((call) => call.configCwd === configCwd && call.home === home)).toBe(true);
+      expect(calls.configWrites).toEqual([home]);
+      expect(calls.projectSourceReads).toEqual([{ configCwd, home }]);
+      expect(calls.workflowHomes.every((workflowHome) => workflowHome === home)).toBe(true);
+      expect(new Set(calls.workflowNames)).toEqual(
+        new Set([
+          'createTargetDirectory',
+          'loadSnapshot',
+          'previewReconcileAll',
+          'readMarkdown',
+          'reconcileAll',
+          'reconcileSkill',
+          'scanProjects',
+          'toggleSkill',
+          'writeConfig',
+          'writeMarkdown',
+        ]),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('excludes imported machine project paths through the real project-source adapter', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-server-imported-'));
+    try {
+      const home = path.join(root, 'home');
+      const configCwd = path.join(root, 'cwd');
+      const importedProjectPath = path.join(root, 'imported-project');
+      const storage = createLocalHistoryStorage(home);
+      const machine: UsageMachine = { id: 'local-machine', label: 'Local Machine' };
+      await Promise.all([
+        mkdir(path.join(importedProjectPath, '.git'), { recursive: true }),
+        mkdir(configCwd, { recursive: true }),
+      ]);
+      await Effect.runPromise(writeMachineConfig(machine).pipe(Effect.provideService(LocalHistoryStorage, storage)));
+      await Effect.runPromise(
+        importPeerMergeBundle({
+          bundle: createUsageMergeBundle({
+            machine: { id: 'imported-machine', label: 'Imported Machine' },
+            rows: [
+              makeStoredRow({
+                project: 'imported-project',
+                sessionId: 'imported-session',
+                sourcePath: importedProjectPath,
+              }),
+            ],
+          }),
+          dbPath: usageStorePath(home),
+          localMachineId: machine.id,
+        }),
+      );
+
+      const adapter = createSkillsServerAdapter(createSkillsServerDependencies({ configCwd, storage }));
+      expect(await adapter.readKnownProjectPaths()).toEqual({ ok: true, data: [] });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('skills server input validation', () => {
   test('accepts valid skill config inputs', () => {
