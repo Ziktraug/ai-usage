@@ -26,12 +26,12 @@ import {
   projectFocusedOverviewFromPresentationRows,
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
+import { MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
 import type {
   SessionPresentationRow,
   SessionQueryRequest,
   SessionQuerySort,
 } from '@ai-usage/report-core/session-query';
-import { MAX_USAGE_SNAPSHOT_ROWS } from '@ai-usage/report-core/snapshot';
 import {
   buildSessionQuerySqlFilter,
   type SessionQuerySqliteDatabase,
@@ -390,12 +390,12 @@ const runAdvancedOverview = (
 ): FocusedOverviewResult => {
   const rowsWithSentinel = executeAll<{ row_json: string }>(
     database,
-    `SELECT row_json FROM session_rows ORDER BY ordinal LIMIT ${MAX_USAGE_SNAPSHOT_ROWS + 1}`,
+    `SELECT row_json FROM session_rows ORDER BY ordinal LIMIT ${MAX_PORTABLE_USAGE_ROWS + 1}`,
     [],
     trace,
   );
-  if (rowsWithSentinel.length > MAX_USAGE_SNAPSHOT_ROWS) {
-    throw new Error(`Advanced Overview exceeds the ${MAX_USAGE_SNAPSHOT_ROWS}-row snapshot ceiling`);
+  if (rowsWithSentinel.length > MAX_PORTABLE_USAGE_ROWS) {
+    throw new Error(`Advanced Overview exceeds the ${MAX_PORTABLE_USAGE_ROWS}-row snapshot ceiling`);
   }
   return projectFocusedOverviewFromPresentationRows(
     rowsWithSentinel.map(({ row_json: rowJson }) => parsePresentationRow(rowJson)),

@@ -12,6 +12,7 @@
     "./focused-report-query": "./src/focused-report-query.ts",
     "./harness-metadata": "./src/harness-metadata.ts",
     "./pricing": "./src/pricing.ts",
+    "./portable-usage": "./src/portable-usage.ts",
     "./provider-status": "./src/provider-status.ts",
     "./model-identity": "./src/model-identity.ts",
     "./provenance": "./src/provenance.ts",

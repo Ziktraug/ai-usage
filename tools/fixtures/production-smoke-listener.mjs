@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 
-const port = Number.parseInt(process.env.PORT ?? '', 10);
+const port = Number.parseInt(process.argv[2] ?? '', 10);
 if (!Number.isSafeInteger(port) || port <= 0) {
   throw new Error('PORT must be a positive integer.');
 }

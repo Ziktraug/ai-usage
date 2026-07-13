@@ -23,7 +23,7 @@ test('cleans up the owned listener and drains its pipes after an assertion failu
   await expect(
     withOwnedProcess(
       {
-        command: ['node', path.join(import.meta.dir, 'fixtures', 'production-smoke-listener.mjs')],
+        command: ['node', path.join(import.meta.dir, 'fixtures', 'production-smoke-listener.mjs'), String(port)],
         cwd: import.meta.dir,
         deadlines: { forceExitMs: 500, gracefulShutdownMs: 1000, logDrainMs: 500 },
         env: { PATH: process.env.PATH ?? '', PORT: String(port) },

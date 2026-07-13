@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { MAX_PORTABLE_USAGE_ROWS } from './portable-usage';
 import { createProviderStatusDataset } from './provider-status';
-import { createUsageSnapshot, MAX_USAGE_SNAPSHOT_ROWS, mergeUsageSnapshots, parseUsageSnapshot } from './snapshot';
+import { createUsageSnapshot, mergeUsageSnapshots, parseUsageSnapshot, serializeUsageSnapshot } from './snapshot';
 import type { Row, SourcedRow } from './types';
 
 const row = (name: string, sourceSessionId: string, overrides: Partial<Row> = {}): SourcedRow => ({
@@ -189,11 +190,20 @@ describe('usage snapshots', () => {
 
   test('accepts the manual-merge row boundary and rejects any row beyond it', () => {
     const snapshot = currentSnapshot();
-    const rows = Array.from({ length: MAX_USAGE_SNAPSHOT_ROWS }, () => snapshot.rows[0]);
+    const rows = Array.from({ length: MAX_PORTABLE_USAGE_ROWS }, () => snapshot.rows[0]);
 
-    expect(parseUsageSnapshot(JSON.stringify({ ...snapshot, rows })).rows).toHaveLength(MAX_USAGE_SNAPSHOT_ROWS);
+    expect(parseUsageSnapshot(JSON.stringify({ ...snapshot, rows })).rows).toHaveLength(MAX_PORTABLE_USAGE_ROWS);
     rows.push(snapshot.rows[0]!);
-    expect(parseSnapshot({ ...snapshot, rows })).toThrow('too many rows');
+    expect(parseSnapshot({ ...snapshot, rows })).toThrow('50001 rows; maximum is 50000');
+  });
+
+  test('serializes one canonical UTF-8 document and enforces its exact byte boundary', () => {
+    const snapshot = currentSnapshot();
+    const text = serializeUsageSnapshot(snapshot);
+    const bytes = new TextEncoder().encode(text).byteLength;
+    expect(text.endsWith('\n')).toBe(true);
+    expect(serializeUsageSnapshot(snapshot, bytes)).toBe(text);
+    expect(() => serializeUsageSnapshot(snapshot, bytes - 1)).toThrow(`${bytes} bytes; maximum is ${bytes - 1}`);
   });
 
   test('preserves import artifact provenance separately from project paths', () => {

@@ -4,6 +4,7 @@ import {
   mergeRowIdentity,
   parseSerializedMergeRow,
   parseUsageMergeBundle,
+  serializeUsageMergeBundle,
   toSerializedMergeRow,
 } from './merge-bundle';
 import { actualCost, normalizeUsageRow } from './usage-row';
@@ -207,5 +208,14 @@ describe('usage merge bundles', () => {
     const [serialized] = createUsageMergeBundle({ machine, rows: [{ ...row }] }).rows;
     expect(parseSerializedMergeRow(serialized).rowKey).toBe(serialized!.rowKey);
     expect(() => parseSerializedMergeRow({ ...serialized, source: { harnessKey: 'codex' } })).toThrow('invalid row');
+  });
+
+  test('serializes canonical merge bytes and rejects limit plus one', () => {
+    const bundle = createUsageMergeBundle({ machine, rows: [{ ...row, name: 'multi-byte café 🚀' }] });
+    const text = serializeUsageMergeBundle(bundle);
+    const bytes = new TextEncoder().encode(text).byteLength;
+    expect(parseUsageMergeBundle(text)).toEqual(bundle);
+    expect(serializeUsageMergeBundle(bundle, bytes)).toBe(text);
+    expect(() => serializeUsageMergeBundle(bundle, bytes - 1)).toThrow(`${bytes} bytes; maximum is ${bytes - 1}`);
   });
 });
