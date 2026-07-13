@@ -83,7 +83,7 @@ bun run cli -- machine set-label "MacBook Pro"
 ### 2. Merge snapshots into a report
 
 ```sh
-# Merge a remote snapshot with this machine's local history
+# Merge a copied snapshot with this machine's local history
 bun run cli -- merge ./mac-usage.json --local
 
 # All normal report options work on merged data
@@ -92,87 +92,20 @@ bun run cli -- merge ./mac-usage.json --local --since 30d --project exalibur --h
 
 Duplicate sessions (same machine, same harness, same session ID) are deduplicated automatically. The newest snapshot wins.
 
-### 3. Merge over LAN (no file transfer)
+### 3. Import or export stored usage in the web app
 
-Instead of copying snapshot files, run a snapshot server on the other machine.
+The interactive report includes a file-only transfer workspace at `/sync`. Export this machine's stored usage as a JSON merge bundle, copy the file with a tool you trust, then import it from `/sync` on the other machine. Imports are explicit and bounded; the application does not open a LAN listener or synchronize in the background.
 
-On the Mac:
+Usage snapshots and merge bundles serve different workflows: `snapshot` plus `merge` creates a one-off combined report without changing stored usage, while `/sync` imports a merge bundle into the local usage store for future reports.
 
-```sh
-# Serve snapshot over LAN (token required when binding outside localhost)
-bun run cli -- serve --host 0.0.0.0 --token mysecret
-```
-
-Keep that command running. It prints one or more `http://...:3847/snapshot` URLs detected from the Mac's network interfaces; use one of those URLs from the other machine. If `macbook.local` does not resolve on your network, use the printed IP address instead.
-
-On the PC:
-
-```sh
-# Fetch and merge in one command, without storing the remote snapshot
-bun run cli -- merge --remote http://macbook.local:3847/snapshot --token mysecret --local
-```
-
-The server collects a fresh snapshot on each request, so you always get the latest data for that command. For localhost-only access (same machine, different terminal), omit `--host` and `--token`:
-
-```sh
-bun run cli -- serve
-# Then in another terminal:
-bun run cli -- merge --remote http://localhost:3847/snapshot --local
-```
-
-### 4. Sync over LAN
-
-For a persistent workflow, register the other machine as a snapshot remote and pull it into local storage:
-
-```sh
-# First, keep the snapshot server running on the other machine:
-bun run cli -- serve --host 0.0.0.0 --token mysecret
-
-# Store this in your shell, ./.env, or ~/.config/ai-usage/.env
-# .env is gitignored in this repo.
-AI_USAGE_SYNC_MACBOOK_TOKEN=mysecret
-
-# Use one of the snapshot URLs printed by the serve command.
-bun run cli -- sync add macbook http://macbook.local:3847/snapshot --token-env AI_USAGE_SYNC_MACBOOK_TOKEN
-bun run cli -- sync pull macbook
-```
-
-If you do not know the host name ahead of time, that is expected: start `serve` first, copy the printed URL, then run `sync add`. To test a URL before saving it as a remote, you can do a one-shot pull:
-
-```sh
-bun run cli -- sync pull --name macbook --remote http://192.168.1.63:3847/snapshot --token-env AI_USAGE_SYNC_MACBOOK_TOKEN
-```
-
-Future reports include synced snapshots by default:
-
-```sh
-bun run cli -- report --wide
-```
-
-Use `--no-synced` to report only this machine's local history:
-
-```sh
-bun run cli -- report --no-synced
-```
-
-You can keep a remote fresh with polling:
-
-```sh
-bun run cli -- sync watch macbook --interval 60s
-```
-
-Bidirectional sync is symmetric pull: run `serve` on both machines and configure each machine to pull the other's snapshot.
-
-The interactive report includes a file-transfer workspace at `/sync`. Use it to export this machine's usage as a JSON merge bundle or import a bundle copied from another machine; LAN pairing and peer discovery are not part of the web UI.
-
-### 5. See where sessions come from
+### 4. See where sessions come from
 
 Merged reports include a `Machine` column (CLI `--wide`, CSV, and HTML dashboard). CSV also includes `machine_id` for scripting.
 
 Projects with the same name from different machines stay separate by default and are displayed with the machine label.
 If those folders are intentionally the same project, create a project group in the dashboard's Projects tab.
 
-### 6. Group project folders across machines
+### 5. Group project folders across machines
 
 The same project often lives at different paths on different machines. Project groups let you merge those sources under one native project name for analytics, filtering, CSV, sessions, and the Projects tab.
 
@@ -205,7 +138,7 @@ Then open the Projects tab. The UI shows detected project sources with machine l
 Legacy `projectAliases` are still supported as broad report-time groups, but new dashboard edits write `projectGroups`.
 Config stays local to your machine and is never read from the repo.
 
-### 5. Discover project sources
+### 6. Discover project sources
 
 See all project folders across machines to decide which ones to alias:
 
@@ -243,9 +176,9 @@ bun run html export --since 30d --limit 20
 
 ### Interactive report
 
-The HTML report is a self-contained Solid app, not a static dump. It opens on the session table and lets you:
+The HTML report is a self-contained Solid app, not a static dump. It opens on Overview and lets you:
 
-- switch between **Sessions, Models, Providers, Harnesses, and Projects** views;
+- switch between **Overview, Sessions, and Breakdown**, with Models, Providers, Harnesses, Projects, and Cursor AI inside Breakdown;
 - filter by date range with presets or a custom range, and read the activity timeline;
 - show/hide columns (input/output/cache tokens, RTK savings, durations, turns, tools, line deltas, …), sort, and filter by field;
 - export the current view to CSV.
@@ -265,9 +198,9 @@ All exploration state (active view, filters, range, sorting, visible columns) is
 - `--no-color` / `--color`: control ANSI color output (default: auto)
 - `--json` / `--csv` / `--html`: pick an output format (mutually exclusive)
 
-`merge` accepts the same report options and adds `--local` to include the current machine's local history, `--remote <url>` to fetch a snapshot from a serve instance, and `--token <secret>` for authentication.
+`merge` accepts one or more snapshot file paths plus the same report options. Add `--local` to include this machine's local history.
 
-`sync` stores remote snapshots locally. `sync add` registers a remote, `sync pull` fetches and stores a snapshot, `sync watch` polls repeatedly, and `sync list` shows remote status. Persistent remotes should use `--token-env <name>` instead of storing raw tokens in config.
+`setup [files...] [--local] [--port <number>]` launches the loopback-only project-grouping UI. Supply at least one snapshot file, `--local`, or both; `--port` changes its local listener port.
 
 Merged CSV/JSON/HTML payloads include row provenance (`source.machineLabel`, `source.machineId`, harness key, and source session ID) when available. The terminal table shows `Machine` in `--wide` mode.
 
@@ -276,9 +209,12 @@ Merged CSV/JSON/HTML payloads include row provenance (`source.machineLabel`, `so
 - `packages/report-core` (`@ai-usage/report-core`): pure row types, pricing, normalization, analytics, report payloads, snapshots, and HTML inlining primitives
 - `packages/local-collectors` (`@ai-usage/local-collectors`): Effect-based local history collectors for Claude, Codex, OpenCode, Cursor, RTK enrichment, machine identity, and user config
 - `packages/report-data` (`@ai-usage/report-data`): report orchestration seam over core plus local collectors
+- `packages/usage-store` (`@ai-usage/usage-store`): SQLite materialization, merge-bundle persistence, and stored report-row queries
+- `packages/usage-merge` (`@ai-usage/usage-merge`): explicit merge-bundle file import/export workflows
+- `packages/skills` (`@ai-usage/skills`): local skill inventory, validation, projection, and reconciliation workflows
 - `packages/design-system` (`@ai-usage/design-system`): Panda/Solid primitives, report style slots, and generated Panda consumer exports
-- `apps/cli`: terminal CLI, quota/setup/serve commands, and table/CSV/JSON/HTML output adapters
-- `apps/web`: Solid + TanStack Start/Router/Table + Panda CSS report app and browser export adapters
+- `apps/cli`: terminal CLI, quota/setup commands, portable snapshots, and table/CSV/JSON/HTML output adapters
+- `apps/web`: Solid + TanStack Start/Router/Table + Panda CSS report app, local Skills control plane, file-only `/sync` route, and browser export adapters
 
 Architecture docs:
 
@@ -319,13 +255,24 @@ Run the deterministic browser suite (after `bun x playwright install chromium` o
 bun run test:e2e
 ```
 
+After a production build, exercise the loopback production listener, the real
+revision/query subprocess path, the complete HTML export integration, and the
+self-contained `file://` export:
+
+```sh
+bun run test:web-production
+bun run test:e2e-production
+bun run test:html-export
+bun run test:html-file
+```
+
 Run the report app in development:
 
 ```sh
 bun run dev
 ```
 
-The dev server injects this machine's real usage data into the app (the same payload `--html` produces, refreshed in the background). When collection fails it falls back to a demo payload, which is flagged in the UI.
+The dev server collects this machine's real usage data and refreshes the dashboard through immutable, destination-focused report queries. Its bounded support bootstrap reports omitted-item counts when summary metadata does not fit; row-derived destination queries and complete CSV/HTML exports remain independent of those summary omissions. Static HTML export embeds the complete compatibility payload instead. When local collection fails, development falls back to a demo payload that is flagged in the UI.
 
 ## Notes
 

@@ -6,12 +6,11 @@
 
 1. Harness local history is read by `@ai-usage/local-collectors`.
 2. Collector adapters emit collected sessions or collected usage rows with local provenance.
-3. `@ai-usage/report-core` normalizes usage rows, computes derived row values, analytics, report payloads, and usage snapshots.
-4. `@ai-usage/report-data` orchestrates local history collection, project aliases, warnings, usage snapshots, and report payload creation.
-5. `@ai-usage/sync` owns snapshot transport and sync workflow modules that can be used by both app adapters.
-6. `@ai-usage/usage-store` persists normalized local rows and rows imported from merge bundle files.
-7. `@ai-usage/usage-merge` orchestrates explicit merge bundle export and file import over the store.
-8. `apps/cli` and `apps/web` render the shared data through their own output adapters.
+3. `@ai-usage/report-core` normalizes usage rows and defines deterministic analytics, portable formats, and shared report-query contracts.
+4. `@ai-usage/report-data` orchestrates local collection, focused project-source reads, compatibility payloads, and usage snapshots.
+5. `@ai-usage/usage-store` persists normalized local rows and rows explicitly imported from merge bundle files, then returns validated stored report rows.
+6. `@ai-usage/usage-merge` orchestrates explicit merge bundle export and file import over the store.
+7. `apps/cli` and `apps/web` render the shared data through their own output adapters. Static HTML and CLI export retain the complete compatibility payload; the served web app uses request-fingerprinted, exact-revision focused queries.
 
 ## Package Ownership
 
@@ -21,7 +20,7 @@ Owns pure domain data and deterministic calculations:
 
 - usage row and provenance types;
 - row derivations such as active dates, token totals, line deltas, and cost approximation helpers;
-- pricing, analytics, project aliases, report payload serialization, and usage snapshot parsing/creation;
+- pricing, analytics, project aliases, strict report-query requests and results, report payload serialization, and usage snapshot parsing/creation;
 - static report HTML inlining primitives.
 
 `@ai-usage/report-core` must not read local history, the filesystem, SQLite, browser globals, or app runtime state.
@@ -44,21 +43,11 @@ Owns application-facing report orchestration:
 - local report row collection requests;
 - project alias application;
 - partial local history warnings;
-- compatibility `UsageReportPayload` creation;
+- focused local-row and known-project-source request seams;
+- compatibility `UsageReportPayload` creation for CLI and static export;
 - usage snapshot and merge assembly.
 
 Apps should prefer this package over reaching into collectors directly. The known exception is the CLI quota path, which reads the newest Codex quota snapshot through the public `@ai-usage/local-collectors/codex-history` export.
-
-### `@ai-usage/sync`
-
-Owns application-facing sync modules:
-
-- snapshot file and HTTP transport;
-- snapshot endpoint health checks;
-- sync workflow and UI-consumable sync state;
-- LAN snapshot server protocol, Bun and Node server adapters, and discovery.
-
-Apps should use this package for sync behavior instead of owning transport, auth, parsing, or remote status logic.
 
 ### `@ai-usage/usage-store`
 
@@ -98,7 +87,7 @@ depend on those narrow seams rather than importing the package facade.
 
 User-local skill configuration lives under `~/.config/ai-usage/config.json` through the existing ai-usage config path. Portable source repository state lives in the configured source repository as JSON data, not executable TypeScript.
 
-Skill inventory is local-machine scoped. This package must not use synced or manually imported rows, snapshots from other machines, or remote machine ids to decide which repositories to scan. Repository discovery can use explicit config and locally observed project paths, but broad root scans must be opt-in and no personal directory convention such as `~/Projects` may become a default.
+Skill inventory is local-machine scoped. This package must not use manually imported rows, snapshots from other machines, or non-local machine ids to decide which repositories to scan. Repository discovery uses explicit config and one focused query of locally observed project paths; it does not create a complete report payload. Broad root scans must be opt-in and no personal directory convention such as `~/Projects` may become a default.
 
 ### `apps/cli`
 
@@ -107,7 +96,7 @@ Owns terminal and file output adapters:
 - CLI argument parsing;
 - terminal table, CSV, JSON, payload JSON, HTML export rendering;
 - machine/setup/project-source commands;
-- serve and quota commands.
+- bounded portable snapshot files and the quota command.
 
 The CLI calls `@ai-usage/report-data` for report data. It should not be called by the report app.
 
@@ -116,12 +105,29 @@ The CLI calls `@ai-usage/report-data` for report data. It should not be called b
 Owns web runtime and UI:
 
 - TanStack Start server functions and Bun subprocess boundary for local collection under Nitro;
-- report payload runtime/bootstrap/refresh;
+- immutable report revision manifests, read-only SQLite materializations, and exact-revision focused-result adapters;
+- exact-revision Overview, Breakdown, support, Session page, campaign-child, neighbor, CSV, and HTML queries through bounded Bun artifact runners;
+- shared focused/Session request validation, projection, cursor, budget, and fingerprint contracts;
+- a complete compatibility payload only for CLI/static-file export and an explicit served HTML download;
 - file-based merge bundle import/export on `/sync`, including bounded local upload handling;
 - dashboard, overview, table schema, and UI model modules;
-- browser CSV/HTML export adapters.
+- static-local and served exact-revision export adapters.
 
 Client-visible modules must not import `*.server.*`. Shared calculations should live in small model modules such as `dashboard-model.ts`, `overview-model.ts`, and `session-table-schema.ts`.
+
+The served root receives only a bounded support bootstrap. Filter options,
+provider representative rows, provider-status records, and warnings are
+admitted under the shared 512 KiB budget; the result carries exact omission
+counts and the UI identifies the summary as truncated when anything is left
+out. This bootstrap is not a semantic substitute for destination queries:
+Overview, complete Breakdown groups, paged Sessions/campaign/neighbor reads,
+and complete CSV/HTML exports execute separately against the named revision.
+Omitted support metadata remains identified rather than being presented as
+complete.
+
+Each completed Bun capture is atomically published as owner-only immutable manifest, rows, and support artifacts. Served reads name the exact revision and canonical request fingerprint. The Node registry bounds retention by age and count, keeps referenced revisions alive through leases, and returns typed unavailable/expired results instead of silently reading a newer revision. Project-group mutations and successful manual imports invalidate only the latest pointer; retained revisions do not change.
+
+Production and setup listeners bind only to numeric loopback. The application does not expose a LAN transport, peer discovery, or credential exchange protocol. Moving usage between machines requires a portable snapshot or merge bundle copied out of band.
 
 ### `@ai-usage/design-system`
 
@@ -137,7 +143,6 @@ See `docs/generated-tooling-ownership.md` for generated Panda/TanStack/Nitro own
 
 - Local history adapters live in `@ai-usage/local-collectors`.
 - Report orchestration lives in `@ai-usage/report-data`.
-- Sync transport and workflow modules live in `@ai-usage/sync`.
 - Durable normalized usage rows and merge bundle persistence live in `@ai-usage/usage-store`.
 - Manual merge bundle file import/export workflows live in `@ai-usage/usage-merge`.
 - Skill management domain, scanning, diagnostics, workflows, and projection safety live in `@ai-usage/skills`.

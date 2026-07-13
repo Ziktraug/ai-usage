@@ -4,10 +4,9 @@ Global backlog for known follow-ups that should survive individual refactor logs
 
 ## Report Data Architecture
 
-- Add fine-grained reporting query functions in `@ai-usage/report-data` for rows, analytics, harness status, facets, quota snapshots, and project/source summaries.
-- Expose those fine-grained queries through TanStack Start server functions without leaking Effect services or collector internals to client code.
-- Move the report UI from one compatibility `UsageReportPayload` signal toward independently loaded slices once the query seams exist.
-- Keep `UsageReportPayload` for static HTML export and current bootstrapping until the app has migrated safely.
+- Preserve the delivered compatibility split: the served app reads exact immutable revisions through focused Overview, Breakdown, bounded-support, Session page, campaign, and neighbor queries, while CLI and self-contained static HTML retain the complete `UsageReportPayload` path.
+- Continue deepening served report surfaces into bounded, destination-specific queries with canonical request fingerprints; do not make the full compatibility payload the live refresh protocol again.
+- Keep static HTML independent of a server, network request, or dynamic chunk. Any further bundle split must include a complete `file://` asset-inlining design.
 - Revisit the CLI quota adapter exception to `@ai-usage/local-collectors/codex-history` if quota output becomes part of shared reporting.
 
 ## Report UI Models
@@ -15,12 +14,11 @@ Global backlog for known follow-ups that should survive individual refactor logs
 - Move the small `Hero` and `TokenAnatomy` presentation calculations out of `Overview.tsx` if those components grow again.
 - Keep adding pure model tests when dashboard or overview calculations change.
 
-## Sync UI
+## Manual Transfer
 
-- Add optional live polling on `/sync` once manual refresh/start/stop flows have had real use.
-- Add copy-to-clipboard affordances for served snapshot URLs if selectable text is not enough in practice.
-- Consider richer inline editing for remote renames; the current edit form intentionally keeps the remote name fixed.
-- Keep persistent config using `tokenEnv`; raw tokens should remain process-local or one-shot only.
+- Improve `/sync` file import review with clearer bundle identity, generated-at, row-count, and conflict summaries before the user confirms a bounded import.
+- Consider a documented encrypted-file workflow for users whose existing file-transfer tools do not already protect merge bundles at rest.
+- Keep transfer explicit and file-based. Do not add machine discovery, a non-loopback listener, credentials, or background replication without a separate security design.
 
 ## Skill Management
 
@@ -81,7 +79,8 @@ over-emphasize it or build ROI/break-even features on top of it.
   justified.
 - Further split the root report bundle only alongside an HTML-export asset
   graph that can rewrite and inline dynamic imports for `file://`; Plan 007
-  intentionally splits server-only Skills/Sync components and keeps `/` intact.
+  intentionally splits server-only Skills and `/sync` file-transfer components
+  and keeps `/` intact.
 
 ## Session Linking And Titles
 

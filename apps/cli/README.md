@@ -2,7 +2,7 @@
 
 ## Owns
 
-The terminal command surface, argument parsing, terminal/CSV/JSON/HTML rendering adapters, setup commands, quota command, and legacy sync command entry points until cleanup.
+The terminal command surface, argument parsing, terminal/CSV/JSON/HTML rendering adapters, bounded portable snapshot files, the loopback-only setup command, and the quota command.
 
 ## Does Not Own
 
@@ -14,7 +14,7 @@ The public interface is the `ai-usage` binary, `bun run cli`, command-line optio
 
 ## Depends On
 
-`apps/cli` may depend on `@ai-usage/report-data`, `@ai-usage/report-core`, `@ai-usage/local-collectors`, and temporary legacy `@ai-usage/sync`.
+`apps/cli` may depend on `@ai-usage/report-data`, `@ai-usage/report-core`, and `@ai-usage/local-collectors` through public package exports.
 
 ## Must Not Import
 
@@ -22,7 +22,7 @@ It must not import `apps/web`, private package `src` paths, relative workspace p
 
 ## Data Boundary
 
-The CLI consumes report payloads, normalized rows, snapshots, and command results from package APIs, then renders terminal/file output. It should not become a shared data source for other apps.
+The CLI consumes report payloads, normalized rows, snapshots, and command results from package APIs, then renders terminal/file output. Snapshot inputs are explicit bounded regular files. The setup listener is numeric-loopback-only. The CLI should not become a shared data source for other apps.
 
 ## Test Strategy
 

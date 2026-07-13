@@ -9,7 +9,7 @@ An installed AI coding tool whose local history can be collected, such as Claude
 _Avoid_: source, tool, integration
 
 **Local history**:
-The files or databases written by a harness on this machine. Local history is the only input for reports; provider APIs are not called.
+The files or databases written by a harness on this machine. It is the only live collection input; a caller may also supply an explicit portable snapshot or previously imported merge bundle. Provider APIs are not called.
 _Avoid_: remote usage, cloud billing data
 
 **Session**:
@@ -25,32 +25,52 @@ The normalized per-session record consumed by table, CSV, JSON, and analytics ou
 _Avoid_: raw event, database row
 
 **Collected dataset**:
-A named set of collected and enriched local-machine data that can be transported in a report payload, such as usage rows, provider status, Cursor commit attribution, or collected skills. A collected dataset may come from local history, local config, or an explicit live refresh when the caller opts in.
+A named set of collected and enriched report data transported alongside usage rows, such as provider status or Cursor commit attribution. Skill inventory is a separate local control-plane query, not a collected report dataset.
 _Avoid_: facet, metadata blob, app state
 
 **Report payload**:
-The JSON-serializable aggregate consumed by the interactive report app and static HTML export. It contains serialized usage rows, filters, analytics, collected datasets, and optional local history warnings.
-_Avoid_: app state, server response blob
+The complete JSON-serializable compatibility aggregate used by CLI/file output and self-contained static HTML export. It contains serialized usage rows, filters, analytics, collected datasets, and optional local history warnings. The served report app reads exact-revision focused results instead of transporting this complete aggregate during refresh.
+_Avoid_: app state, served refresh response
+
+**Focused report result**:
+A JSON-safe, request-fingerprinted projection for one served destination over an immutable report revision, such as Overview, Breakdown, support, a Sessions page, campaign children, or drawer neighbors. The support result is a bounded bootstrap summary and reports exact omission counts when filter options, provider representatives, provider statuses, or warnings do not fit.
+_Avoid_: report payload, live database view, unversioned server response
 
 **Usage snapshot**:
 A portable multi-machine export of usage rows and machine provenance that can be merged with other snapshots or local history.
 _Avoid_: backup, provider export
 
-**Synced usage snapshot**:
-A usage snapshot fetched from another machine and stored locally so future reports can include it without contacting that machine.
-_Avoid_: report cache, raw sync, remote history
+**Merge bundle**:
+A portable, versioned file of normalized machine-scoped usage facts. The `/sync` file-transfer workspace exports and imports merge bundles through the local usage store.
+_Avoid_: usage snapshot, database backup, report payload
 
-**Snapshot remote**:
-A named endpoint that serves a fresh usage snapshot from another machine. A snapshot remote is pulled by this machine; it is not written to by this machine.
-_Avoid_: peer database, cloud account, upstream
+**Manual transfer**:
+An explicit export, out-of-band file copy, and import. It does not imply discovery, a listener available to another machine, or background synchronization.
+_Avoid_: pairing, replication, automatic transfer
 
-**Snapshot peer**:
-A machine discovered on the LAN as exposing snapshot endpoint health. A snapshot peer is not necessarily configured as a snapshot remote yet.
-_Avoid_: sync account, remote database, device
+**Project source**:
+A machine-scoped project path observed in local history or a portable file. Its identity combines the machine and source path so similarly named folders stay distinct.
+_Avoid_: project group, repository scan root
 
-**Sync state**:
-The UI-consumable view of local machine identity, configured snapshot remotes, stored synced usage snapshot summaries, token status, and sync warnings.
-_Avoid_: raw config, sync database, report payload
+**Project group**:
+An explicit local configuration that presents multiple project sources as one named project in reports.
+_Avoid_: project source, inferred alias
+
+**Skill source repository**:
+The configured local repository containing canonical managed Agent Skill documents and portable JSON source state.
+_Avoid_: runtime target, project skill directory
+
+**Runtime**:
+An agent environment that consumes projected skills, such as Codex or Claude Code. Harness remains the term for usage collection.
+_Avoid_: harness, provider
+
+**Projection**:
+A managed exposure of a source skill in a configured runtime target, normally a verified symbolic link. Projection planning and application enforce path and ownership safety.
+_Avoid_: copy, source skill, installation package
+
+**Unmanaged runtime entry**:
+A file or directory found in a runtime target that is not a verified projection managed by ai-usage. It is reported for consolidation but never overwritten automatically.
+_Avoid_: broken projection, source skill
 
 **Provider**:
 The billing or subscription route inferred for a usage row, such as Claude API, Claude sub, Codex API, Codex sub, or Cursor sub.

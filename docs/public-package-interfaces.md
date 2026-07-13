@@ -9,8 +9,10 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./auth`: authentication/session provenance helpers.
 - `./csv`: CSV serialization for usage rows.
 - `./datasets`: typed serialized report datasets carried outside usage rows.
+- `./focused-report-query`: strict Overview, Breakdown, byte-bounded support with omission counts, CSV, and HTML compatibility query/result contracts for immutable report revisions.
 - `./harness-metadata`: harness keys, labels, and metadata.
 - `./html-export`: static report HTML payload/asset inlining.
+- `./model-identity`: normalized model-family and provider identity helpers.
 - `./pricing`: editable model pricing and cost approximation support.
 - `./provider-status`: provider-agnostic status windows, reset credits, parsing, and merge helpers.
 - `./provenance`: usage row provenance attribution helpers.
@@ -18,6 +20,8 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./project-group`: project grouping config, source identity, and selector matching helpers.
 - `./merge-bundle`: merge bundle serialization and validation types.
 - `./report-data`: serialized usage report payloads and report preparation.
+- `./report-budgets`: shared frozen byte, row, artifact, and import-query acceptance budgets.
+- `./session-query`: strict JSON-safe session filter, sort, page, campaign-child, neighbor, cursor, and request-fingerprint contracts.
 - `./session-lineage`: parent/root source-session normalization across harnesses.
 - `./snapshot`: multi-machine usage snapshot creation, parsing, and source labels.
 - `./types`: usage row and provenance types.
@@ -27,32 +31,23 @@ The workspace packages expose only these public seams. Cross-package imports mus
 
 - `.`: local history collection orchestration.
 - `./codex-history`: Codex quota/local history helpers used by CLI quota output.
+- `./datasets`: focused local report-dataset collection helpers.
 - `./errors`: local history error and warning formatting/types.
 - `./local-history`: local history storage service interface/live layer.
-- `./machine-config`: user-local machine, project group, and legacy project alias config helpers.
-- `./sync-storage`: user-local synced snapshot config, env token resolution, and stored snapshot helpers.
+- `./machine-config`: user-local machine, project group, skill-management, and legacy project alias config helpers.
 
 ## `@ai-usage/report-data`
 
-- `.`: report payload and snapshot assembly seam over core plus local collectors.
+- `.`: local report row/payload requests, focused known-project-source discovery, snapshot assembly, and full compatibility payload creation over core plus local collectors.
+- `./report-payload-artifact`: bounded private artifact writing for the Bun-to-Nitro full-payload compatibility handoff.
 
 ## `@ai-usage/usage-store`
 
-- `.`: SQLite-backed normalized usage row import, validated merge bundle import/export, and report-row queries.
+- `.`: SQLite-backed normalized usage row import, validated merge bundle import/export, and stored report-row queries.
 
 ## `@ai-usage/usage-merge`
 
 - `.`: explicit merge bundle file export/import workflows and JSON-safe operation results for app adapters.
-
-## `@ai-usage/sync`
-
-- `.`: sync package barrel.
-- `./discovery`: snapshot remote LAN discovery helpers and peer discovery results.
-- `./errors`: sync error types shared by sync modules.
-- `./server`: snapshot HTTP protocol, LAN host URL helpers, and Bun/Node snapshot server adapters.
-- `./state`: UI-consumable sync state assembled from configured remotes and stored synced snapshots.
-- `./transport`: snapshot file/HTTP loading and endpoint health checks.
-- `./workflow`: remote registration, selection, token validation, pull, and removal workflow.
 
 ## `@ai-usage/skills`
 
