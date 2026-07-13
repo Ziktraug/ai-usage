@@ -1,10 +1,12 @@
 #!/usr/bin/env bun
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
 import type { UsageSnapshot } from '@ai-usage/report-core/snapshot';
+import { serializeUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import {
   collectProjectedLocalReportRowsWithWarnings,
   createLocalReportPayload,
@@ -60,7 +62,7 @@ export const app = Effect.gen(function* () {
       includeCursor: command.args.cursor,
       includeFacets: true,
     });
-    yield* writeFile(command.args.out, `${JSON.stringify(snapshot, null, 2)}\n`);
+    yield* writePortableFile(command.args.out, serializeUsageSnapshot(snapshot));
     yield* writeWarningsStderr(snapshot.warnings);
     yield* Console.log(`Wrote ${command.args.out}`);
     return;
@@ -187,11 +189,21 @@ const fileError = (operation: string, filePath: string) => (cause: unknown) =>
     message: `${operation} ${filePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
   });
 
-const writeFile = (filePath: string, text: string) =>
+const writePortableFile = (filePath: string, text: string) =>
   Effect.try({
     try: () => {
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      fs.writeFileSync(filePath, text, 'utf8');
+      const directory = path.dirname(filePath);
+      fs.mkdirSync(directory, { recursive: true });
+      const temporaryPath = path.join(directory, `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
+      try {
+        fs.writeFileSync(temporaryPath, text, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+        fs.renameSync(temporaryPath, filePath);
+        if (process.platform !== 'win32') {
+          fs.chmodSync(filePath, 0o600);
+        }
+      } finally {
+        fs.rmSync(temporaryPath, { force: true });
+      }
     },
     catch: fileError('writeFile', filePath),
   });

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { assertPortableUsageByteLength, assertPortableUsageRowCount, MAX_PORTABLE_USAGE_BYTES } from './portable-usage';
 import { type SerializedUsageRow, serializeUsageRow, type UsageReportWarning } from './report-data';
 import {
   hasOnlyKeys,
@@ -151,13 +152,16 @@ export const createUsageMergeBundle = (input: {
   rows: UsageRowWithOptionalSource[];
   generatedAt?: Date;
   warnings?: UsageReportWarning[];
-}): UsageMergeBundle => ({
-  version: USAGE_MERGE_BUNDLE_VERSION,
-  machine: input.machine,
-  generatedAt: (input.generatedAt ?? new Date()).toISOString(),
-  rows: input.rows.map((row) => toSerializedMergeRow(row, input.machine)),
-  warnings: input.warnings ?? [],
-});
+}): UsageMergeBundle => {
+  assertPortableUsageRowCount(input.rows, 'Usage merge bundle');
+  return {
+    version: USAGE_MERGE_BUNDLE_VERSION,
+    machine: input.machine,
+    generatedAt: (input.generatedAt ?? new Date()).toISOString(),
+    rows: input.rows.map((row) => toSerializedMergeRow(row, input.machine)),
+    warnings: input.warnings ?? [],
+  };
+};
 
 export const isSerializedMergeRow = (value: unknown): value is SerializedMergeRow => {
   if (!isSerializedUsageRowWithSource(value, MERGE_ROW_KEYS)) {
@@ -205,7 +209,11 @@ export const parseUsageMergeBundleValue = (value: unknown): UsageMergeBundle => 
   if (!isStrictIsoTimestamp(value.generatedAt)) {
     throw new Error('Usage merge bundle contains an invalid generatedAt');
   }
-  if (!(Array.isArray(value.rows) && value.rows.every(isSerializedMergeRow))) {
+  if (!Array.isArray(value.rows)) {
+    throw new Error('Usage merge bundle contains invalid rows');
+  }
+  assertPortableUsageRowCount(value.rows, 'Usage merge bundle');
+  if (!value.rows.every(isSerializedMergeRow)) {
     throw new Error('Usage merge bundle contains invalid rows');
   }
   if (!isUsageReportWarnings(value.warnings)) {
@@ -228,8 +236,17 @@ export const parseUsageMergeBundleValue = (value: unknown): UsageMergeBundle => 
   };
 };
 
-export const parseUsageMergeBundle = (text: string): UsageMergeBundle =>
-  parseUsageMergeBundleValue(JSON.parse(text) as unknown);
+export const parseUsageMergeBundle = (text: string): UsageMergeBundle => {
+  assertPortableUsageByteLength(text, 'Usage merge bundle');
+  return parseUsageMergeBundleValue(JSON.parse(text) as unknown);
+};
+
+export const serializeUsageMergeBundle = (bundle: UsageMergeBundle, maxBytes = MAX_PORTABLE_USAGE_BYTES): string => {
+  const validated = parseUsageMergeBundleValue(bundle);
+  const text = `${JSON.stringify(validated, null, 2)}\n`;
+  assertPortableUsageByteLength(text, 'Usage merge bundle', maxBytes);
+  return text;
+};
 
 export const deserializeMergeRow = (row: SerializedMergeRow): CollectedUsageRow => ({
   date: row.date ? new Date(row.date) : null,

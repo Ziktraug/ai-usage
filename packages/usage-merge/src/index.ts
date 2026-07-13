@@ -1,11 +1,14 @@
-import { parseUsageMergeBundle, type UsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
+import { parseUsageMergeBundle, serializeUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import { exportLocalMergeBundle, type ImportResult, importPeerMergeBundle } from '@ai-usage/usage-store';
 import { Data, Effect } from 'effect';
 
 export interface ManualMergeExportResult {
-  bundle: UsageMergeBundle;
+  bytes: number;
   filename: string;
+  machine: UsageMachine;
+  rows: number;
+  text: string;
 }
 
 export interface ManualMergeImportInput {
@@ -73,10 +76,16 @@ export const createUsageFileMergeService = (options: UsageFileMergeServiceOption
         machine: options.localMachine,
         generatedAt,
       }).pipe(
-        Effect.map((bundle) => ({
-          filename: manualMergeFilenameForMachine(options.localMachine, generatedAt),
-          bundle,
-        })),
+        Effect.map((bundle) => {
+          const text = serializeUsageMergeBundle(bundle);
+          return {
+            bytes: new TextEncoder().encode(text).byteLength,
+            filename: manualMergeFilenameForMachine(options.localMachine, generatedAt),
+            machine: bundle.machine,
+            rows: bundle.rows.length,
+            text,
+          };
+        }),
         Effect.mapError((cause) =>
           usageMergeError('exportManualMergeBundle', 'Could not export local usage merge file.', 'store-failed', cause),
         ),

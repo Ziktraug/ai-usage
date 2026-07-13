@@ -1,5 +1,6 @@
 import os from 'node:os';
 import { isCursorCommitAttributionRow, parseReportDatasets, type ReportDatasets } from './datasets';
+import { assertPortableUsageByteLength, assertPortableUsageRowCount, MAX_PORTABLE_USAGE_BYTES } from './portable-usage';
 import { mergeProviderStatusDatasets, type ProviderStatusDataset, parseProviderStatusDataset } from './provider-status';
 import { type SerializedUsageRow, serializeUsageRow, type UsageReportWarning } from './report-data';
 import {
@@ -17,7 +18,6 @@ import { usageRowActiveDate, usageRowTokenTotal } from './usage-row';
 export const USAGE_SNAPSHOT_SCHEMA_VERSION = 1 as const;
 // Manual merge is measured and supported through 50,000 rows. Keeping the file
 // format at that same boundary bounds validation work without truncating history.
-export const MAX_USAGE_SNAPSHOT_ROWS = 50_000;
 
 const SNAPSHOT_KEYS = new Set([
   'datasets',
@@ -94,6 +94,7 @@ export const createUsageSnapshot = (input: {
   facets?: Record<string, unknown>;
   datasets?: ReportDatasets;
 }): UsageSnapshot => {
+  assertPortableUsageRowCount(input.rows, 'Snapshot');
   const generatedAt = input.generatedAt ?? new Date();
   return {
     schemaVersion: USAGE_SNAPSHOT_SCHEMA_VERSION,
@@ -130,6 +131,7 @@ const toSnapshotRow = (row: UsageRowWithOptionalSource, machine: UsageMachine): 
 };
 
 export const parseUsageSnapshot = (text: string): UsageSnapshot => {
+  assertPortableUsageByteLength(text, 'Snapshot');
   const value = JSON.parse(text) as unknown;
   if (!isRecord(value)) {
     throw new Error('Snapshot must be an object');
@@ -155,9 +157,7 @@ export const parseUsageSnapshot = (text: string): UsageSnapshot => {
   if (!Array.isArray(value.rows)) {
     throw new Error('Snapshot missing rows');
   }
-  if (value.rows.length > MAX_USAGE_SNAPSHOT_ROWS) {
-    throw new Error(`Snapshot contains too many rows; maximum is ${MAX_USAGE_SNAPSHOT_ROWS}`);
-  }
+  assertPortableUsageRowCount(value.rows, 'Snapshot');
   if (!value.rows.every(isSnapshotRow)) {
     throw new Error('Snapshot contains invalid row');
   }
@@ -189,6 +189,13 @@ export const parseUsageSnapshot = (text: string): UsageSnapshot => {
     ...(value.datasets === undefined ? {} : { datasets: value.datasets }),
     ...(value.facets === undefined ? {} : { facets: value.facets }),
   };
+};
+
+export const serializeUsageSnapshot = (snapshot: UsageSnapshot, maxBytes = MAX_PORTABLE_USAGE_BYTES): string => {
+  const validated = parseUsageSnapshot(JSON.stringify(snapshot));
+  const text = `${JSON.stringify(validated, null, 2)}\n`;
+  assertPortableUsageByteLength(text, 'Snapshot', maxBytes);
+  return text;
 };
 
 const isUsageSnapshotSource = (value: unknown): value is UsageSnapshotSource => {

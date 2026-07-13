@@ -222,8 +222,8 @@ const ManualTransferPanel = (props: {
   </div>
 );
 
-const downloadJsonFile = (filename: string, value: unknown) => {
-  const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], { type: 'application/json' });
+const downloadJsonFile = (filename: string, text: string) => {
+  const blob = new Blob([text], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
@@ -313,10 +313,8 @@ function SyncRoute() {
     try {
       const next = await exportManualMergeBundle({ data: {} });
       if (next.ok) {
-        downloadJsonFile(next.data.filename, next.data.bundle);
-        setOperationMessage(
-          `Exported ${next.data.bundle.rows.length.toLocaleString()} rows from ${next.data.bundle.machine.label}.`,
-        );
+        downloadJsonFile(next.data.filename, next.data.text);
+        setOperationMessage(`Exported ${next.data.rows.toLocaleString()} rows from ${next.data.machine.label}.`);
         return;
       }
       setOperationError(next.error);
