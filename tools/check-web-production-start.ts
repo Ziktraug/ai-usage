@@ -6,8 +6,12 @@ import path from 'node:path';
 
 const LOOPBACK_HOST = '127.0.0.1';
 const LOG_LIMIT_BYTES = 64 * 1024;
-const START_DEADLINE_MS = 60_000;
-const REQUEST_TIMEOUT_MS = 15_000;
+const START_DEADLINE_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 5000;
+const GRACEFUL_SHUTDOWN_DEADLINE_MS = 3000;
+const FORCE_EXIT_DEADLINE_MS = 2000;
+const LOG_DRAIN_DEADLINE_MS = 2000;
+const OVERALL_DEADLINE_MS = 30_000;
 const PROJECT_LOADER_ERROR_MARKER = 'Could not load scanned projects:';
 const PROJECT_LOADER_SUCCESS_MARKER = 'data-known-project-paths-status="ok"';
 const RUNNER_FAILURE_PATTERN =
@@ -17,6 +21,22 @@ interface HttpResponse {
   body: string;
   status: number;
 }
+
+const within = async <Value>(phase: string, deadlineMs: number, promise: Promise<Value>): Promise<Value> => {
+  let timeout: Timer | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${phase} exceeded its ${deadlineMs}ms deadline.`)), deadlineMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+};
 
 const reserveFreePort = (): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -96,7 +116,7 @@ const sendHttpRequest = (
       },
     );
     request.setTimeout(REQUEST_TIMEOUT_MS, () => {
-      request.destroy(new Error('HTTP request timed out.'));
+      request.destroy(new Error(`HTTP request exceeded its ${REQUEST_TIMEOUT_MS}ms deadline.`));
     });
     request.once('error', reject);
     request.end(options.body);
@@ -149,12 +169,25 @@ const stopChild = async (child: Bun.Subprocess): Promise<void> => {
     return;
   }
   child.kill('SIGTERM');
-  await Promise.race([child.exited, Bun.sleep(3000)]);
+  await within(
+    'graceful shutdown',
+    GRACEFUL_SHUTDOWN_DEADLINE_MS,
+    Promise.race([child.exited, Bun.sleep(GRACEFUL_SHUTDOWN_DEADLINE_MS)]),
+  );
   if (child.exitCode === null) {
     child.kill('SIGKILL');
-    await child.exited;
+    await within('forced shutdown', FORCE_EXIT_DEADLINE_MS, child.exited);
   }
 };
+
+const assertPortReusable = async (port: number): Promise<void> =>
+  await new Promise<void>((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(port, LOOPBACK_HOST, () => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  });
 
 const rootDir = path.resolve(import.meta.dir, '..');
 const temporaryHome = await mkdtemp(path.join(tmpdir(), 'ai-usage-web-smoke-'));
@@ -169,8 +202,8 @@ try {
     NITRO_PORT: String(port),
     PORT: String(port),
   };
-  const child = Bun.spawn(['bun', 'run', '--cwd', 'apps/web', 'start'], {
-    cwd: rootDir,
+  const child = Bun.spawn(['node', 'start.mjs'], {
+    cwd: path.join(rootDir, 'apps/web'),
     env: childEnv,
     stderr: 'pipe',
     stdout: 'pipe',
@@ -179,51 +212,61 @@ try {
   const stderr = captureLogs(child.stderr);
 
   try {
-    await waitForApplicationPage(port, child, '/', 'Usage report');
-    const skills = await waitForApplicationPage(port, child, '/skills', PROJECT_LOADER_SUCCESS_MARKER);
-    if (skills.body.includes(PROJECT_LOADER_ERROR_MARKER)) {
-      throw new Error('/skills rendered the known project-loader error banner.');
-    }
+    await within(
+      'production smoke',
+      OVERALL_DEADLINE_MS,
+      (async () => {
+        await waitForApplicationPage(port, child, '/', 'Usage report');
+        const skills = await waitForApplicationPage(port, child, '/skills', PROJECT_LOADER_SUCCESS_MARKER);
+        if (skills.body.includes(PROJECT_LOADER_ERROR_MARKER)) {
+          throw new Error('/skills rendered the known project-loader error banner.');
+        }
 
-    const localHost = `localhost:${port}`;
-    await requireRejected(
-      'hostile Host on a read route',
-      sendHttpRequest(port, { headers: { host: 'attacker.example' } }),
-    );
-    await requireRejected(
-      'hostile Origin on a read route',
-      sendHttpRequest(port, { headers: { host: localHost, origin: 'http://attacker.example' } }),
-    );
-    await requireRejected(
-      'cross-site metadata on a mutation route',
-      sendHttpRequest(port, {
-        body: '{}',
-        headers: {
-          'content-type': 'application/json',
-          host: localHost,
-          origin: `http://${localHost}`,
-          'sec-fetch-site': 'cross-site',
-        },
-        method: 'POST',
-        path: '/sync',
-      }),
-    );
-    await requireNonLoopbackConnectionFailure(nonLoopbackIpv4Address(), port);
+        const localHost = `localhost:${port}`;
+        await requireRejected(
+          'hostile Host on a read route',
+          sendHttpRequest(port, { headers: { host: 'attacker.example' } }),
+        );
+        await requireRejected(
+          'hostile Origin on a read route',
+          sendHttpRequest(port, { headers: { host: localHost, origin: 'http://attacker.example' } }),
+        );
+        await requireRejected(
+          'cross-site metadata on a mutation route',
+          sendHttpRequest(port, {
+            body: '{}',
+            headers: {
+              'content-type': 'application/json',
+              host: localHost,
+              origin: `http://${localHost}`,
+              'sec-fetch-site': 'cross-site',
+            },
+            method: 'POST',
+            path: '/sync',
+          }),
+        );
+        await requireNonLoopbackConnectionFailure(nonLoopbackIpv4Address(), port);
 
-    if (child.exitCode !== null) {
-      throw new Error(`Web process exited after production checks (code ${child.exitCode}).`);
-    }
-    const logs = `${stdout.text()}${stderr.text()}`;
-    if (RUNNER_FAILURE_PATTERN.test(logs)) {
-      throw new Error('Production logs contain a report runner or workspace path resolution failure.');
-    }
-    process.stdout.write('Production web routes are healthy, trusted-local only, and bound to IPv4 loopback.\n');
+        if (child.exitCode !== null) {
+          throw new Error(`Web process exited after production checks (code ${child.exitCode}).`);
+        }
+        const logs = `${stdout.text()}${stderr.text()}`;
+        if (RUNNER_FAILURE_PATTERN.test(logs)) {
+          throw new Error('Production logs contain a report runner or workspace path resolution failure.');
+        }
+        process.stdout.write('Production web routes are healthy, trusted-local only, and bound to IPv4 loopback.\n');
+      })(),
+    );
   } catch (error) {
     const logs = `${stdout.text()}${stderr.text()}`.trim();
     throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`);
   } finally {
     await stopChild(child);
-    await Promise.all([stdout.done, stderr.done]);
+    await Promise.all([
+      within('stdout drain', LOG_DRAIN_DEADLINE_MS, stdout.done),
+      within('stderr drain', LOG_DRAIN_DEADLINE_MS, stderr.done),
+    ]);
+    await assertPortReusable(port);
   }
 } finally {
   await rm(temporaryHome, { force: true, recursive: true });
