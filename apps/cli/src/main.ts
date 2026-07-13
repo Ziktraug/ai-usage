@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
@@ -16,6 +15,7 @@ import {
 } from '@ai-usage/report-data';
 import { Console, Effect, Layer } from 'effect';
 import { type Args, helpText, parseCommand } from './cli';
+import { importCursorUsageExportFile } from './cursor-import-file';
 import { type AppError, CliArgumentError, formatAppError } from './errors';
 import { renderQuota } from './quota';
 import { setColor } from './render/colors';
@@ -24,8 +24,6 @@ import { renderUsagePayloadForCli, renderUsageReportForCli, renderWarnings, rend
 import { CliRuntime, CliRuntimeLive } from './runtime';
 import { runSetupServer } from './setup';
 import { readUsageSnapshotFile } from './snapshot-file';
-
-const CURSOR_CSV_LINE_SEPARATOR = /\r?\n/;
 
 export const app = Effect.gen(function* () {
   const runtime = yield* CliRuntime;
@@ -198,39 +196,9 @@ const writeFile = (filePath: string, text: string) =>
     catch: fileError('writeFile', filePath),
   });
 
-const CURSOR_EXPORT_DIR = path.join(process.cwd(), '.ai-usage', 'cursor-exports');
-
-const safeImportName = (filePath: string) => path.basename(filePath).replace(/[^a-zA-Z0-9._-]+/g, '-');
-
-const cursorCsvLooksValid = (text: string) => {
-  const header = text.split(CURSOR_CSV_LINE_SEPARATOR, 1)[0] ?? '';
-  return ['Date', 'User', 'Kind', 'Model', 'Cost'].every((column) => header.includes(column));
-};
-
 const importCursorUsageExport = (filePath: string) =>
   Effect.try({
-    try: () => {
-      const sourcePath = path.resolve(filePath);
-      const content = fs.readFileSync(sourcePath);
-      if (!cursorCsvLooksValid(content.toString('utf8', 0, Math.min(content.length, 4096)))) {
-        throw new Error('not a Cursor usage-events CSV export');
-      }
-      fs.mkdirSync(CURSOR_EXPORT_DIR, { recursive: true });
-      const hash = createHash('sha256').update(content).digest('hex');
-      for (const entry of fs.readdirSync(CURSOR_EXPORT_DIR, { withFileTypes: true })) {
-        if (!(entry.isFile() && entry.name.toLowerCase().endsWith('.csv'))) {
-          continue;
-        }
-        const existingPath = path.join(CURSOR_EXPORT_DIR, entry.name);
-        const existingHash = createHash('sha256').update(fs.readFileSync(existingPath)).digest('hex');
-        if (existingHash === hash) {
-          return { path: existingPath, alreadyImported: true };
-        }
-      }
-      const destination = path.join(CURSOR_EXPORT_DIR, `${hash.slice(0, 12)}-${safeImportName(sourcePath)}`);
-      fs.writeFileSync(destination, content);
-      return { path: destination, alreadyImported: false };
-    },
+    try: () => importCursorUsageExportFile(filePath),
     catch: fileError('cursorImport', filePath),
   });
 

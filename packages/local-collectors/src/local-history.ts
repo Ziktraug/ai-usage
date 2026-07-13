@@ -4,10 +4,18 @@ import path from 'node:path';
 
 import { Context, Effect, Layer } from 'effect';
 import { LocalHistoryError } from './errors';
+import {
+  HISTORY_FILE_MAX_BYTES,
+  HISTORY_SCAN_MAX_BYTES,
+  HISTORY_SCAN_MAX_DEPTH,
+  HISTORY_SCAN_MAX_FILES,
+} from './history-budgets';
 
 export interface LocalHistoryDirEntry {
   isDirectory: boolean;
+  isRegularFile: boolean;
   name: string;
+  size: number;
 }
 
 export interface LocalHistoryDatabase {
@@ -20,7 +28,7 @@ export interface LocalHistoryStorage {
   home: string;
   openDatabase(dbPath: string): Effect.Effect<LocalHistoryDatabase, LocalHistoryError>;
   readDir(dirPath: string): Effect.Effect<LocalHistoryDirEntry[], LocalHistoryError>;
-  readText(filePath: string): Effect.Effect<string, LocalHistoryError>;
+  readText(filePath: string, maxBytes?: number): Effect.Effect<string, LocalHistoryError>;
 }
 
 export const LocalHistoryStorage = Context.GenericTag<LocalHistoryStorage>('@ai-usage/LocalHistoryStorage');
@@ -35,6 +43,45 @@ const localHistoryError =
   (cause: unknown) =>
     new LocalHistoryError({ operation, cause, ...details });
 
+export const readRegularFileText = (filePath: string, maxBytes: number): string => {
+  const before = fs.lstatSync(filePath);
+  if (before.isSymbolicLink() || !before.isFile()) {
+    throw new Error(`History input is not a regular file: ${filePath}`);
+  }
+  if (before.size > maxBytes) {
+    throw new Error(`History input exceeds its ${maxBytes}-byte limit: ${filePath}`);
+  }
+  // biome-ignore lint/suspicious/noBitwiseOperators: Node combines open flags as a bit mask.
+  const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const opened = fs.fstatSync(descriptor);
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) {
+      throw new Error(`History input changed while it was opened: ${filePath}`);
+    }
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    while (totalBytes <= maxBytes) {
+      const chunk = Buffer.alloc(Math.min(64 * 1024, maxBytes + 1 - totalBytes));
+      const bytesRead = fs.readSync(descriptor, chunk, 0, chunk.length, null);
+      if (bytesRead === 0) {
+        break;
+      }
+      chunks.push(chunk.subarray(0, bytesRead));
+      totalBytes += bytesRead;
+    }
+    if (totalBytes > maxBytes) {
+      throw new Error(`History input exceeds its ${maxBytes}-byte limit: ${filePath}`);
+    }
+    const after = fs.lstatSync(filePath);
+    if (after.isSymbolicLink() || after.dev !== opened.dev || after.ino !== opened.ino) {
+      throw new Error(`History input changed while it was read: ${filePath}`);
+    }
+    return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, totalBytes));
+  } finally {
+    fs.closeSync(descriptor);
+  }
+};
+
 export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStorage => ({
   home,
   exists: (filePath) =>
@@ -42,18 +89,28 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
       try: () => fs.existsSync(filePath),
       catch: localHistoryError('exists', { path: filePath }),
     }),
-  readText: (filePath) =>
+  readText: (filePath, maxBytes = HISTORY_FILE_MAX_BYTES) =>
     Effect.try({
-      try: () => fs.readFileSync(filePath, 'utf8'),
+      try: () => readRegularFileText(filePath, maxBytes),
       catch: localHistoryError('readText', { path: filePath }),
     }),
   readDir: (dirPath) =>
     Effect.try({
-      try: () =>
-        fs.readdirSync(dirPath, { withFileTypes: true }).map((entry) => ({
-          name: entry.name,
-          isDirectory: entry.isDirectory(),
-        })),
+      try: () => {
+        const directory = fs.lstatSync(dirPath);
+        if (directory.isSymbolicLink() || !directory.isDirectory()) {
+          throw new Error(`History scan root is not a directory: ${dirPath}`);
+        }
+        return fs.readdirSync(dirPath, { withFileTypes: true }).map((entry) => {
+          const stat = fs.lstatSync(path.join(dirPath, entry.name));
+          return {
+            name: entry.name,
+            isDirectory: stat.isDirectory() && !stat.isSymbolicLink(),
+            isRegularFile: stat.isFile() && !stat.isSymbolicLink(),
+            size: stat.isFile() ? stat.size : 0,
+          };
+        });
+      },
       catch: localHistoryError('readDir', { path: dirPath }),
     }),
   openDatabase: (dbPath) =>
@@ -63,6 +120,7 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
         // Read-only SQLite connections include committed WAL pages without
         // checkpointing or mutating the harness-owned database.
         const db = new Database(dbPath, { readonly: true });
+        db.exec('BEGIN');
         return {
           all: <T extends object = Record<string, unknown>>(sql: string) =>
             Effect.try({
@@ -70,7 +128,10 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
               catch: localHistoryError('sqlite.all', { path: dbPath, sql }),
             }),
           close: Effect.try({
-            try: () => db.close(),
+            try: () => {
+              db.exec('ROLLBACK');
+              db.close();
+            },
             catch: localHistoryError('sqlite.close', { path: dbPath }),
           }).pipe(Effect.ignore),
         };
@@ -88,25 +149,50 @@ export const walkFiles = (
   storage: LocalHistoryStorage,
   dirPath: string,
   include: (fileName: string, filePath: string) => boolean,
+  budgets: { maxBytes?: number; maxDepth?: number; maxFiles?: number } = {},
 ): Effect.Effect<string[], LocalHistoryError> =>
   Effect.gen(function* () {
     if (!(yield* storage.exists(dirPath))) {
       return [];
     }
 
+    const maxBytes = budgets.maxBytes ?? HISTORY_SCAN_MAX_BYTES;
+    const maxDepth = budgets.maxDepth ?? HISTORY_SCAN_MAX_DEPTH;
+    const maxFiles = budgets.maxFiles ?? HISTORY_SCAN_MAX_FILES;
     const files: string[] = [];
-    const walk = (currentPath: string): Effect.Effect<void, LocalHistoryError> =>
-      Effect.gen(function* () {
-        for (const entry of yield* storage.readDir(currentPath)) {
-          const filePath = path.join(currentPath, entry.name);
-          if (entry.isDirectory) {
-            yield* walk(filePath);
-          } else if (include(entry.name, filePath)) {
-            files.push(filePath);
+    const pending = [{ depth: 0, directory: dirPath }];
+    let aggregateBytes = 0;
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (!current) {
+        break;
+      }
+      if (current.depth > maxDepth) {
+        throw new LocalHistoryError({
+          operation: 'walkFiles.depthLimit',
+          path: current.directory,
+          cause: new Error(`History scan exceeds its depth limit of ${maxDepth}.`),
+        });
+      }
+      const entries = (yield* storage.readDir(current.directory)).sort((left, right) =>
+        right.name.localeCompare(left.name),
+      );
+      for (const entry of entries) {
+        const filePath = path.join(current.directory, entry.name);
+        if (entry.isDirectory) {
+          pending.push({ depth: current.depth + 1, directory: filePath });
+        } else if (entry.isRegularFile && include(entry.name, filePath)) {
+          files.push(filePath);
+          aggregateBytes += entry.size;
+          if (files.length > maxFiles || aggregateBytes > maxBytes) {
+            throw new LocalHistoryError({
+              operation: 'walkFiles.completenessLimit',
+              path: dirPath,
+              cause: new Error('History scan exceeds its file or aggregate-byte limit.'),
+            });
           }
         }
-      });
-
-    yield* walk(dirPath);
+      }
+    }
     return files;
   });

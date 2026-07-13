@@ -5,9 +5,11 @@ import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import { collectorCachePath, reviveCollectorRows } from '../collector-cache';
 import type { LocalHistoryError, LocalHistoryWarning } from '../errors';
+import { COLLECTOR_CACHE_MAX_BYTES } from '../history-budgets';
 import { LocalHistoryStorage, walkFiles } from '../local-history';
 import { withPerfSpan } from '../perf';
 import { type HarnessPaths, resolvePaths } from '../platform-paths';
+import { readPrivateJson, writePrivateJson } from '../private-storage';
 import type { CollectorRow } from '../rtk-enrichment';
 import { base, dominant, safeJSON, usablePrompt } from '../text';
 
@@ -65,7 +67,7 @@ interface ClaudeUsage {
   output_tokens?: number;
 }
 
-const CLAUDE_CACHE_VERSION = 2;
+const CLAUDE_CACHE_VERSION = 3;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -81,7 +83,7 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
     if (!fs.existsSync(cachePath)) {
       return { fingerprintKey: null, rows: [], version: CLAUDE_CACHE_VERSION };
     }
-    const parsed = JSON.parse(fs.readFileSync(cachePath, 'utf8')) as {
+    const parsed = readPrivateJson(cachePath, COLLECTOR_CACHE_MAX_BYTES) as {
       fingerprintKey?: unknown;
       rows?: unknown;
       version?: number;
@@ -104,14 +106,20 @@ const writeClaudeCache = (storage: LocalHistoryStorage, fingerprintKey: string |
     return false;
   }
   const cachePath = claudeCachePath(storage);
-  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-  fs.writeFileSync(cachePath, `${JSON.stringify({ fingerprintKey, rows, version: CLAUDE_CACHE_VERSION })}\n`, 'utf8');
+  const value = { fingerprintKey, rows, version: CLAUDE_CACHE_VERSION };
+  if (Buffer.byteLength(JSON.stringify(value), 'utf8') > COLLECTOR_CACHE_MAX_BYTES) {
+    return false;
+  }
+  writePrivateJson(cachePath, value);
   return true;
 };
 
 const fileFingerprint = (filePath: string): FileFingerprint | null => {
   try {
-    const stat = fs.statSync(filePath);
+    const stat = fs.lstatSync(filePath);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      return null;
+    }
     return { mtimeMs: stat.mtimeMs, path: filePath, size: stat.size };
   } catch {
     return null;
