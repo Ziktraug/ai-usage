@@ -1,5 +1,6 @@
 import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
 import {
+  buildFocusedDateDomain,
   buildFocusedHeatmapFromAggregates,
   buildFocusedRecordsFromAggregates,
   buildFocusedTimelineFromAggregates,
@@ -7,6 +8,7 @@ import {
   type FocusedBreakdownResult,
   type FocusedCsvRequest,
   type FocusedCsvResult,
+  type FocusedDateDomain,
   type FocusedDayAggregate,
   type FocusedHtmlPayloadResult,
   type FocusedOverviewRequest,
@@ -129,7 +131,9 @@ interface TimelineRecord {
   cost: number;
   day_key: string;
   first_ordinal: number;
+  first_time: number;
   key: string;
+  last_time: number;
   sessions: number;
 }
 
@@ -239,7 +243,7 @@ const readTimeline = (
   filter: SqlFilter,
   dimension: FocusedOverviewRequest['timeline']['dimension'],
   trace?: SessionQuerySqliteTrace,
-): { days: FocusedDayAggregate[]; timeline: FocusedTimelineAggregate[] } => {
+): { dateDomain: FocusedDateDomain | null; days: FocusedDayAggregate[]; timeline: FocusedTimelineAggregate[] } => {
   const dimensionColumn = timelineDimensionColumn(dimension);
   const records = executeAll<TimelineRecord>(
     database,
@@ -248,6 +252,8 @@ const readTimeline = (
       ${dimensionColumn} AS key,
       SUM(CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END) AS cost,
       COUNT(*) AS sessions,
+      MIN(active_time) AS first_time,
+      MAX(active_time) AS last_time,
       MIN(ordinal) AS first_ordinal
     FROM session_rows
     WHERE ${filter.where} AND active_time IS NOT NULL
@@ -265,7 +271,11 @@ const readTimeline = (
     byDay.set(dayKey, day);
     return { cost, key, sessions, time };
   });
-  return { days: [...byDay.values()], timeline };
+  return {
+    dateDomain: buildFocusedDateDomain(records.flatMap(({ first_time, last_time }) => [first_time, last_time])),
+    days: [...byDay.values()],
+    timeline,
+  };
 };
 
 const readDays = (
@@ -435,6 +445,7 @@ const runOverview = (
   const visibleDays = readDays(database, visibleFilter, trace);
   const candidates = readRecordCandidates(database, visibleFilter, trace);
   return {
+    dateDomain: timelineAggregates.dateDomain,
     metadata: { filters: support.filters, generatedAt: support.generatedAt, omittedRows: support.omittedRows },
     requestFingerprint: focusedOverviewFingerprint(request),
     revision: request.query.revision,
@@ -725,19 +736,23 @@ const runSupport = (
 ): FocusedSupportResult => {
   const request = parseFocusedRevisionRequest(input);
   const optionCounts = executeGet<{
+    first_time: number | null;
     harness_count: number;
+    last_time: number | null;
     machine_count: number;
     provider_scope_count: number;
   }>(
     database,
     `SELECT
+      MIN(active_time) AS first_time,
+      MAX(active_time) AS last_time,
       COUNT(DISTINCT harness) AS harness_count,
       COUNT(DISTINCT CASE WHEN machine_label <> '' THEN machine_label END) AS machine_count,
       COUNT(DISTINCT provider_scope_key) AS provider_scope_count
     FROM session_rows`,
     [],
     trace,
-  ) ?? { harness_count: 0, machine_count: 0, provider_scope_count: 0 };
+  ) ?? { first_time: null, harness_count: 0, last_time: null, machine_count: 0, provider_scope_count: 0 };
   const options = executeAll<{ kind: 'harness' | 'machine'; value: string }>(
     database,
     `SELECT 'harness' AS kind, harness AS value FROM (SELECT DISTINCT harness FROM session_rows ORDER BY harness LIMIT 100)
@@ -770,11 +785,16 @@ const runSupport = (
         optionCounts.harness_count > 100 || optionCounts.machine_count > 100 || optionCounts.provider_scope_count > 100,
     },
     request,
-    providerRows,
     {
-      harnessOptionsOmitted: Math.max(0, optionCounts.harness_count - harness.length),
-      machineOptionsOmitted: Math.max(0, optionCounts.machine_count - machine.length),
-      providerRowsOmitted: Math.max(0, optionCounts.provider_scope_count - providerRows.length),
+      dateDomain: buildFocusedDateDomain(
+        [optionCounts.first_time, optionCounts.last_time].filter((time): time is number => time !== null),
+      ),
+      providerRows,
+      sourceOmissions: {
+        harnessOptionsOmitted: Math.max(0, optionCounts.harness_count - harness.length),
+        machineOptionsOmitted: Math.max(0, optionCounts.machine_count - machine.length),
+        providerRowsOmitted: Math.max(0, optionCounts.provider_scope_count - providerRows.length),
+      },
     },
   );
 };

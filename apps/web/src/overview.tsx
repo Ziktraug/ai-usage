@@ -3,8 +3,8 @@ import {
   accentFill,
   advancedAnalysis,
   advancedAnalysisContent,
-  advancedAnalysisSummary,
-  advancedAnalysisSummaryText,
+  advancedAnalysisHeader,
+  advancedAnalysisHeaderText,
   anatomyHeadline,
   anatomyLegend,
   anatomyLegendItem,
@@ -74,7 +74,6 @@ import {
 import type {
   FocusedCalendarHeatmap,
   FocusedOverviewRecords,
-  FocusedOverviewResult,
   FocusedOverviewSessionItem,
   FocusedPunchcard,
   FocusedSessionShape,
@@ -82,6 +81,7 @@ import type {
 import { createEffect, createMemo, createSignal, For, type JSX, Show } from 'solid-js';
 import type { CampaignView } from './dashboard-model';
 import { toDateInputValue } from './date-range';
+import type { FocusedOverviewDisplayModel } from './focused-report-client';
 import {
   buildAdvancedAnalysisSummary,
   buildCalendarHeatmapData,
@@ -107,10 +107,10 @@ import {
 } from './shared';
 
 export interface OverviewProps {
+  advancedAnalysisError?: string | null;
   advancedAnalysisLoading?: boolean;
   campaigns: CampaignView[];
-  focused?: FocusedOverviewResult | undefined;
-  onAdvancedAnalysisOpenChange?: (open: boolean) => void;
+  focused?: FocusedOverviewDisplayModel | undefined;
   onSelectDay: (day: Date) => void;
   onSelectSession: (row: DashboardRow) => void;
   rangeLabel: string;
@@ -795,7 +795,6 @@ export const Overview = (props: OverviewProps) => {
   const advancedSummaryText = () =>
     advancedSummary()?.summary ?? (props.focused ? 'Session shape and weekly/hourly activity' : '');
   const summary = () => props.focused?.summary ?? props.summary;
-  const [advancedAnalysisOpen, setAdvancedAnalysisOpen] = createSignal(false);
 
   return (
     <Show fallback={<div class={emptyPanel}>No sessions match the current filters</div>} when={summary().sessionCount}>
@@ -820,21 +819,14 @@ export const Overview = (props: OverviewProps) => {
           onSelectSession={props.onSelectSession}
           rows={props.rows}
         />
-        <Show when={props.focused || advancedSummary()}>
-          <details
-            class={advancedAnalysis}
-            onToggle={(event) => {
-              const open = event.currentTarget.open;
-              setAdvancedAnalysisOpen(open);
-              props.onAdvancedAnalysisOpenChange?.(open);
-            }}
-          >
-            <summary class={advancedAnalysisSummary}>
-              <span>Advanced analysis</span>
-              <span class={advancedAnalysisSummaryText}>{advancedSummaryText()}</span>
-            </summary>
-            <Show when={advancedAnalysisOpen()}>
-              <div class={advancedAnalysisContent}>
+        <section aria-labelledby="advanced-analysis-title" class={advancedAnalysis}>
+          <header class={advancedAnalysisHeader}>
+            <h2 id="advanced-analysis-title">Advanced analysis</h2>
+            <span class={advancedAnalysisHeaderText}>{advancedSummaryText()}</span>
+          </header>
+          <div class={advancedAnalysisContent}>
+            <Show
+              fallback={
                 <Show
                   fallback={
                     <Show
@@ -858,16 +850,23 @@ export const Overview = (props: OverviewProps) => {
                       )}
                     </Show>
                   }
-                  when={props.advancedAnalysisLoading}
+                  when={props.advancedAnalysisError}
                 >
-                  <div aria-busy="true" aria-live="polite" class={emptyPanel}>
-                    Loading advanced analysis…
-                  </div>
+                  {(message) => (
+                    <div class={emptyPanel} role="alert">
+                      Advanced analysis could not be loaded: {message()}
+                    </div>
+                  )}
                 </Show>
+              }
+              when={props.advancedAnalysisLoading}
+            >
+              <div aria-busy="true" aria-live="polite" class={emptyPanel}>
+                Loading advanced analysis…
               </div>
             </Show>
-          </details>
-        </Show>
+          </div>
+        </section>
       </div>
     </Show>
   );

@@ -3,6 +3,7 @@ import { serializedRowsToCSV } from './csv';
 import {
   type FocusedOverviewRequest,
   type FocusedReportSupport,
+  focusedAdvancedAnalysisFingerprint,
   focusedOverviewFingerprint,
   parseFocusedCsvRequest,
   parseFocusedOverviewRequest,
@@ -129,6 +130,10 @@ describe('focused report query contracts', () => {
     expect(focusedOverviewFingerprint({ ...overviewRequest, includeAdvanced: false })).not.toBe(
       focusedOverviewFingerprint(overviewRequest),
     );
+    expect(focusedAdvancedAnalysisFingerprint(overviewRequest.query)).toStartWith('focused-advanced-analysis-v1:');
+    expect(focusedAdvancedAnalysisFingerprint(overviewRequest.query)).not.toBe(
+      focusedAdvancedAnalysisFingerprint({ ...overviewRequest.query, revision: 'revision-b' }),
+    );
     const { includeAdvanced: _includeAdvanced, ...requestWithoutAdvancedMode } = overviewRequest;
     expect(() => parseFocusedOverviewRequest(requestWithoutAdvancedMode)).toThrow('unknown or missing');
     expect(() => parseFocusedOverviewRequest({ ...overviewRequest, extra: true })).toThrow('unknown or missing');
@@ -137,7 +142,7 @@ describe('focused report query contracts', () => {
     ).toThrow('invalid');
   });
 
-  test('omits advanced analysis work and results when the disclosure is closed', () => {
+  test('omits advanced analysis work and results from timeline-only requests', () => {
     const result = projectFocusedOverview(rows, support, { ...overviewRequest, includeAdvanced: false });
 
     expect(result.summary.sessionCount).toBe(3);
@@ -150,6 +155,10 @@ describe('focused report query contracts', () => {
   test('projects every bounded Overview aggregate without returning the full row set', () => {
     const result = projectFocusedOverview(rows, support, overviewRequest);
 
+    expect(result.dateDomain).toEqual({
+      first: '2026-07-01T10:00:00.000Z',
+      last: '2026-07-04T10:00:00.000Z',
+    });
     expect(result.summary.sessionCount).toBe(3);
     expect(result.summary.totalCost).toBe(9);
     expect(result.timeline?.grandSessions).toBe(rows.length);
@@ -171,6 +180,34 @@ describe('focused report query contracts', () => {
         overviewRequest,
       ),
     ).toThrow('fingerprint');
+  });
+
+  test('strictly validates Overview date domains and preserves an explicit empty domain', () => {
+    const result = projectFocusedOverview(rows, support, overviewRequest);
+    const invalidDateDomains = [
+      undefined,
+      { first: result.dateDomain?.first },
+      { first: '2026-07-01T10:00:00Z', last: '2026-07-04T10:00:00.000Z' },
+      { first: '2026-07-05T10:00:00.000Z', last: '2026-07-04T10:00:00.000Z' },
+      { first: '2026-07-01T10:00:00.000Z', last: '2026-07-04T10:00:00.000Z', unexpected: true },
+    ];
+
+    for (const dateDomain of invalidDateDomains) {
+      expect(() => parseFocusedReportQueryResult('overview', { ...result, dateDomain }, overviewRequest)).toThrow();
+    }
+
+    const undatedRows = rows.map((sourceRow) => ({ ...sourceRow, activeDate: null, date: null }));
+    const undatedRequest: FocusedOverviewRequest = {
+      ...overviewRequest,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    };
+    const undatedResult = projectFocusedOverview(undatedRows, support, undatedRequest);
+
+    expect(undatedResult.dateDomain).toBeNull();
+    expect(undatedResult.timeline).toBeNull();
+    expect(
+      parseFocusedReportQueryResult('overview', JSON.parse(JSON.stringify(undatedResult)), undatedRequest),
+    ).toEqual(undatedResult);
   });
 
   test('rejects malformed nested Overview timeline data at the transport boundary', () => {
@@ -336,10 +373,12 @@ describe('focused report query contracts', () => {
 
   test('rejects malformed nested bootstrap support at the transport boundary', () => {
     const request = { revision: 'revision-a' };
+    const dateDomain = { first: '2026-07-01T10:00:00.000Z', last: '2026-07-04T10:00:00.000Z' };
     const result = projectFocusedSupport(
       support,
       { harness: ['Claude Code', 'Codex'], machine: ['Machine A'], truncated: false },
       request,
+      { dateDomain },
     );
     const invalidSupportValues = [
       { ...result.support, unexpected: true },
@@ -361,6 +400,7 @@ describe('focused report query contracts', () => {
       },
     ];
 
+    expect(result.dateDomain).toEqual(dateDomain);
     expect(parseFocusedReportQueryResult('support', JSON.parse(JSON.stringify(result)), request)).toEqual(result);
     for (const invalidSupport of invalidSupportValues) {
       expect(() => parseFocusedReportQueryResult('support', { ...result, support: invalidSupport }, request)).toThrow();
@@ -374,6 +414,24 @@ describe('focused report query contracts', () => {
         request,
       ),
     ).toThrow('non-negative safe integer');
+    const invalidDateDomains = [
+      undefined,
+      { first: dateDomain.first },
+      { first: '2026-07-01T10:00:00Z', last: dateDomain.last },
+      { first: '2026-07-05T10:00:00.000Z', last: dateDomain.last },
+      { ...dateDomain, unexpected: true },
+    ];
+    for (const invalidDateDomain of invalidDateDomains) {
+      expect(() =>
+        parseFocusedReportQueryResult('support', { ...result, dateDomain: invalidDateDomain }, request),
+      ).toThrow();
+    }
+
+    const emptyResult = projectFocusedSupport(support, { harness: [], machine: [], truncated: false }, request);
+    expect(emptyResult.dateDomain).toBeNull();
+    expect(parseFocusedReportQueryResult('support', JSON.parse(JSON.stringify(emptyResult)), request)).toEqual(
+      emptyResult,
+    );
   });
 
   test('keeps the supported 50,000-row focused projections inside frozen byte budgets', () => {

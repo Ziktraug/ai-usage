@@ -32,6 +32,7 @@ import {
   type FocusedSupportResult,
   type FocusedTimelineDimension,
   type FocusedTimelineGranularity,
+  focusedAdvancedAnalysisFingerprint,
   focusedBreakdownFingerprint,
   focusedOverviewFingerprint,
 } from '@ai-usage/report-core/focused-report-query';
@@ -139,35 +140,28 @@ const secondaryMetrics = css({
   boxShadow: 'card',
 });
 
-const secondaryMetricsSummary = css({
-  appearance: 'none',
-  display: { base: 'flex', lg: 'none' },
+const secondaryMetricsHeader = css({
+  display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: '12px',
-  w: '100%',
   p: '14px 16px',
-  border: 0,
-  borderRadius: 'md',
-  bg: 'transparent',
   color: 'ink',
   fontWeight: 600,
-  textAlign: 'left',
-  cursor: 'pointer',
-  '&[aria-expanded=true]': {
-    borderBottom: '1px solid token(colors.line)',
-    borderBottomLeftRadius: 0,
-    borderBottomRightRadius: 0,
-  },
-  _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+  borderBottom: '1px solid token(colors.line)',
+});
+
+const secondaryMetricsTitle = css({
+  m: 0,
+  fontSize: 'inherit',
+  fontWeight: 'inherit',
 });
 
 const secondaryMetricsGrid = css({
-  display: { base: 'none', lg: 'block' },
+  display: 'block',
   px: '14px',
   pb: '14px',
   '& > div': { my: '14px' },
-  '&[data-open=true]': { display: 'block' },
 });
 
 const dashboardLayout = css({
@@ -218,6 +212,7 @@ export const Dashboard = (props: {
   const reportSupport = createMemo(() =>
     focusedStore
       ? supportForFocusedBootstrap({
+          dateDomain: focusedStore.dateDomain(),
           filterOptions: focusedStore.filterOptions(),
           providerRows: focusedStore.providerRows(),
           requestFingerprint: '',
@@ -231,7 +226,6 @@ export const Dashboard = (props: {
     const truncation = focusedStore?.truncation();
     return truncation ? Object.values(truncation).reduce((total, omitted) => total + omitted, 0) : 0;
   });
-  const [moreMetricsOpen, setMoreMetricsOpen] = createSignal(false);
   const staticReport = isStaticReportRuntime();
   const providerStatusClock = createProviderStatusClock({ initialNow: initialPayload.generatedAt });
   onMount(providerStatusClock.start);
@@ -406,6 +400,7 @@ export const Dashboard = (props: {
           ),
         ],
   );
+  const groupCampaigns = () => search().campaigns !== 'off';
   const filterSnapshot = createMemo(() => createFilterSnapshot(query(), harness(), machine(), fieldFilters()));
   const timelineRows = createMemo(() =>
     measureClientPerf(
@@ -415,8 +410,12 @@ export const Dashboard = (props: {
     ),
   );
   const focusedDateDomain = createMemo(() => {
-    const timeline = focusedStore?.overview()?.timeline;
-    return timeline ? { maxDay: new Date(timeline.last), minDay: new Date(timeline.first) } : null;
+    if (!focusedStore) {
+      return null;
+    }
+    const overview = focusedStore.overview();
+    const domain = overview ? overview.dateDomain : focusedStore.dateDomain();
+    return domain ? { maxDay: new Date(domain.last), minDay: new Date(domain.first) } : null;
   });
   const initialRange = search().range;
   const dateRange = createDateRangeController({
@@ -435,8 +434,22 @@ export const Dashboard = (props: {
     dimension: FocusedTimelineDimension;
     granularity: FocusedTimelineGranularity;
   }>({ dimension: 'harness', granularity: 'day' });
-  const [advancedAnalysisOpen, setAdvancedAnalysisOpen] = createSignal(false);
+  const [advancedAnalysisFailure, setAdvancedAnalysisFailure] = createSignal<{
+    message: string;
+    scopeFingerprint: string;
+  }>();
+  const [focusedTimelineError, setFocusedTimelineError] = createSignal<string | null>(null);
+  const [focusedTimelineLoading, setFocusedTimelineLoading] = createSignal(Boolean(focusedStore));
   const [advancedAnalysisLoading, setAdvancedAnalysisLoading] = createSignal(false);
+  const requestFocusedTimeline = (options: {
+    dimension: FocusedTimelineDimension;
+    granularity: FocusedTimelineGranularity;
+  }): void => {
+    batch(() => {
+      setFocusedTimelineLoading(true);
+      setFocusedTimelineOptions(options);
+    });
+  };
   const focusedQueryScopeForRevision = (revision: string): FocusedReportQueryScope => {
     if (!focusedStore) {
       throw new Error('Focused report queries require a served report store');
@@ -462,6 +475,16 @@ export const Dashboard = (props: {
     }
     return focusedQueryScopeForRevision(focusedStore.revision());
   };
+  const focusedOverviewForDisplay = createMemo(() => focusedStore?.overviewForDisplay());
+  const advancedAnalysisError = createMemo(() => {
+    if (!focusedStore) {
+      return null;
+    }
+    const failure = advancedAnalysisFailure();
+    return failure?.scopeFingerprint === focusedAdvancedAnalysisFingerprint(focusedQueryScope())
+      ? failure.message
+      : null;
+  });
   const activeSessionQueryScope = () =>
     buildDashboardSessionQueryScope({
       campaigns: groupCampaigns(),
@@ -509,7 +532,6 @@ export const Dashboard = (props: {
     ),
   );
   const tableRows = tableFilteredRows;
-  const groupCampaigns = () => search().campaigns !== 'off';
   // Rows in the table's current sort order — shared by CSV export and the
   // drawer's previous/next navigation so both walk the list the user sees.
   const sortedRows = createMemo(() =>
@@ -538,47 +560,99 @@ export const Dashboard = (props: {
   );
   let overviewQuerySequence = 0;
   createEffect(() => {
-    if (!(clientReady() && focusedSource && focusedStore && primaryDashboardTabFor(search().tab) === 'overview')) {
-      setAdvancedAnalysisLoading(false);
+    if (!(clientReady() && focusedSource && focusedStore)) {
       return;
     }
-    const request: FocusedOverviewRequest = {
-      includeAdvanced: advancedAnalysisOpen(),
-      query: focusedQueryScope(),
-      timeline: focusedTimelineOptions(),
+    const overviewActive = primaryDashboardTabFor(search().tab) === 'overview';
+    const queryScope = focusedQueryScope();
+    const timeline = focusedTimelineOptions();
+    const nextRequestSequence = overviewQuerySequence + 1;
+    overviewQuerySequence = nextRequestSequence;
+    const advancedScopeFingerprint = focusedAdvancedAnalysisFingerprint(queryScope);
+    const advancedAnalysisAvailable = focusedStore.hasAdvancedAnalysis(queryScope);
+    const advancedAnalysisBlocked = advancedAnalysisFailure()?.scopeFingerprint === advancedScopeFingerprint;
+    const timelineOnlyRequest: FocusedOverviewRequest = {
+      includeAdvanced: false,
+      query: queryScope,
+      timeline,
     };
-    if (focusedStore.overview()?.requestFingerprint === focusedOverviewFingerprint(request)) {
+    const advancedRequest: FocusedOverviewRequest = {
+      ...timelineOnlyRequest,
+      includeAdvanced: true,
+    };
+    const currentFingerprint = focusedStore.overview()?.requestFingerprint;
+    const currentTimelineMatches =
+      currentFingerprint === focusedOverviewFingerprint(timelineOnlyRequest) ||
+      currentFingerprint === focusedOverviewFingerprint(advancedRequest);
+    if (currentTimelineMatches && (!overviewActive || advancedAnalysisAvailable || advancedAnalysisBlocked)) {
+      setFocusedTimelineLoading(false);
+      setFocusedTimelineError(null);
       setAdvancedAnalysisLoading(false);
       return;
     }
-    overviewQuerySequence += 1;
-    const sequence = overviewQuerySequence;
-    setAdvancedAnalysisLoading(request.includeAdvanced);
+    const request =
+      overviewActive && !(advancedAnalysisAvailable || advancedAnalysisBlocked) ? advancedRequest : timelineOnlyRequest;
+    if (currentFingerprint === focusedOverviewFingerprint(request)) {
+      setFocusedTimelineLoading(false);
+      setFocusedTimelineError(null);
+      setAdvancedAnalysisLoading(false);
+      return;
+    }
+    const requestNeedsAdvancedAnalysis = request.includeAdvanced && !advancedAnalysisAvailable;
+    setFocusedTimelineLoading(true);
+    setFocusedTimelineError(null);
+    setAdvancedAnalysisLoading(requestNeedsAdvancedAnalysis);
     fetchFocusedOverview(focusedSource, request)
       .then((result) => {
-        if (sequence !== overviewQuerySequence) {
+        if (nextRequestSequence !== overviewQuerySequence) {
           return;
         }
         const applied = focusedStore.applyOverview(request, result);
         if (!applied.applied) {
           throw new Error(`Focused Overview rejected: ${applied.reason}`);
         }
+        if (request.includeAdvanced) {
+          setAdvancedAnalysisFailure(undefined);
+        }
+        setFocusedTimelineLoading(false);
+        setFocusedTimelineError(null);
         setAdvancedAnalysisLoading(false);
       })
       .catch((error: unknown) => {
-        if (sequence !== overviewQuerySequence) {
+        if (nextRequestSequence !== overviewQuerySequence) {
           return;
         }
         if (error instanceof FocusedRevisionExpiredError) {
+          batch(() => {
+            setFocusedTimelineLoading(true);
+            setFocusedTimelineError(null);
+            setAdvancedAnalysisLoading(false);
+          });
           restartFocusedBootstrap().catch((restartError: unknown) => {
-            setLastRefreshError(
-              restartError instanceof Error ? restartError.message : 'Failed to restart the report revision',
-            );
+            const message =
+              restartError instanceof Error ? restartError.message : 'Failed to restart the report revision';
+            if (nextRequestSequence === overviewQuerySequence) {
+              batch(() => {
+                setFocusedTimelineError(message);
+                setFocusedTimelineLoading(false);
+              });
+            }
+            setLastRefreshError(message);
           });
           return;
         }
-        setAdvancedAnalysisLoading(false);
-        setLastRefreshError(error instanceof Error ? error.message : 'Failed to load Overview');
+        const message = error instanceof Error ? error.message : 'Failed to load Overview';
+        batch(() => {
+          setAdvancedAnalysisLoading(false);
+          if (request.includeAdvanced) {
+            setAdvancedAnalysisFailure({ message, scopeFingerprint: advancedScopeFingerprint });
+            setFocusedTimelineLoading(true);
+          } else {
+            setFocusedTimelineError(message);
+            setFocusedTimelineLoading(false);
+          }
+        });
+        setLastRefreshError(message);
       });
   });
   let breakdownQuerySequence = 0;
@@ -865,13 +939,13 @@ export const Dashboard = (props: {
     const destination = primaryDashboardTabFor(search().tab);
     if (destination === 'overview') {
       const request: FocusedOverviewRequest = {
-        includeAdvanced: advancedAnalysisOpen(),
+        includeAdvanced: true,
         query: focusedQueryScopeForRevision(bootstrap.revision),
         timeline: focusedTimelineOptions(),
       };
       const result = await fetchFocusedOverview(focusedSource, request);
       const currentRequest: FocusedOverviewRequest = {
-        includeAdvanced: advancedAnalysisOpen(),
+        includeAdvanced: true,
         query: focusedQueryScopeForRevision(bootstrap.revision),
         timeline: focusedTimelineOptions(),
       };
@@ -1279,11 +1353,13 @@ export const Dashboard = (props: {
           when={!isDemo}
         >
           <TimeRangeControl
-            {...(focusedStore ? { onFocusedTimelineRequest: setFocusedTimelineOptions } : {})}
+            {...(focusedStore ? { onFocusedTimelineRequest: requestFocusedTimeline } : {})}
             activeFieldFilters={fieldFilters()}
             activeHarness={harness()}
             dateRange={dateRange}
-            focusedTimeline={focusedStore ? focusedStore.overview()?.timeline : undefined}
+            focusedTimeline={focusedStore ? (focusedStore.overview()?.timeline ?? null) : undefined}
+            focusedTimelineError={focusedTimelineError()}
+            focusedTimelineLoading={focusedTimelineLoading()}
             onDateRangeCommit={commitTableDateRange}
             onDimensionFilter={setTimelineDimensionFilter}
             rows={timelineRows()}
@@ -1335,10 +1411,10 @@ export const Dashboard = (props: {
                     content: () => (
                       <section class={section}>
                         <Overview
+                          advancedAnalysisError={advancedAnalysisError()}
                           advancedAnalysisLoading={advancedAnalysisLoading()}
                           campaigns={campaignViews()}
-                          focused={focusedStore?.overview()}
-                          onAdvancedAnalysisOpenChange={setAdvancedAnalysisOpen}
+                          focused={focusedOverviewForDisplay()}
                           onSelectDay={focusDay}
                           onSelectSession={inspectOverviewSession}
                           rangeLabel={dateRange.label()}
@@ -1498,22 +1574,14 @@ export const Dashboard = (props: {
             </div>
 
             <div class={dashboardStatus}>
-              <section aria-label="Additional report metrics" class={secondaryMetrics}>
-                <button
-                  aria-controls="additional-report-metrics"
-                  aria-expanded={moreMetricsOpen()}
-                  class={secondaryMetricsSummary}
-                  onClick={() => setMoreMetricsOpen((open) => !open)}
-                  type="button"
-                >
-                  <span>More report metrics</span>
+              <section aria-labelledby="additional-report-metrics-title" class={secondaryMetrics}>
+                <header class={secondaryMetricsHeader}>
+                  <h2 class={secondaryMetricsTitle} id="additional-report-metrics-title">
+                    More report metrics
+                  </h2>
                   <span class={meta}>{metrics().length}</span>
-                </button>
-                <div
-                  class={secondaryMetricsGrid}
-                  data-open={moreMetricsOpen() ? 'true' : undefined}
-                  id="additional-report-metrics"
-                >
+                </header>
+                <div class={secondaryMetricsGrid} id="additional-report-metrics">
                   <div class={metricGrid}>
                     <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>
                   </div>

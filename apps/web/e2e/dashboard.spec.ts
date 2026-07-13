@@ -32,7 +32,7 @@ test('opens legacy analysis deep links inside the compact Breakdown navigation',
   await expect(page).toHaveURL(LEGACY_PROJECT_TAB_URL_PATTERN);
 });
 
-test('exposes metric and punchcard context without pointer-only hints', async ({ page }) => {
+test('shows analysis and report metrics without disclosure gates', async ({ page }) => {
   await page.goto('/');
 
   const apiValueHelp = page.getByRole('button', { name: 'About API value' });
@@ -42,24 +42,20 @@ test('exposes metric and punchcard context without pointer-only hints', async ({
     page.getByText('Estimated cost at standard API prices, including usage covered by subscriptions'),
   ).toBeVisible();
 
-  const advancedAnalysis = page.getByText('Advanced analysis', { exact: true });
   const advancedSummary = page.locator('summary').filter({ hasText: 'Advanced analysis' });
   const punchcard = page.getByRole('heading', { level: 2, name: 'Punchcard' });
   const punchcardData = page.getByText('Punchcard data', { exact: true });
-  await expect(advancedAnalysis).toBeVisible();
-  await expect(punchcard).toHaveCount(0);
-  await expect(punchcardData).toHaveCount(0);
-  await advancedSummary.focus();
-  await advancedSummary.press('Enter');
+  await expect(page.getByRole('heading', { level: 2, name: 'Advanced analysis' })).toBeVisible();
+  await expect(advancedSummary).toHaveCount(0);
   await expect(punchcard).toBeVisible();
   await expect(punchcardData).toBeVisible();
-  await advancedSummary.press('Enter');
-  await expect(punchcard).toHaveCount(0);
-  await expect(punchcardData).toHaveCount(0);
-  await advancedSummary.press('Space');
-  await expect(punchcard).toBeVisible();
   await punchcardData.click();
   await expect(page.getByRole('table', { name: 'Punchcard data' })).toBeVisible();
+
+  const reportMetrics = page.getByRole('region', { name: 'More report metrics' });
+  await expect(reportMetrics.getByRole('heading', { level: 2, name: 'More report metrics' })).toBeVisible();
+  await expect(reportMetrics.getByRole('button', { name: 'More report metrics' })).toHaveCount(0);
+  await expect(reportMetrics.getByText('Fresh tokens', { exact: true })).toBeVisible();
 });
 
 test('prioritizes the selected dashboard view before secondary status on mobile', async ({ page }) => {
@@ -74,8 +70,10 @@ test('prioritizes the selected dashboard view before secondary status on mobile'
   ]);
 
   expect(dashboardBox?.y).toBeLessThan(providerBox?.y ?? 0);
-  await expect(page.getByRole('button', { name: 'More report metrics' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'About API value' })).not.toBeVisible();
+  const reportMetrics = page.getByRole('region', { name: 'More report metrics' });
+  await expect(reportMetrics).toBeVisible();
+  await expect(reportMetrics.getByText('Fresh tokens', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'About API value' })).toBeVisible();
 });
 
 test('keeps the selected dashboard view ahead of secondary provider status on desktop', async ({ page }) => {

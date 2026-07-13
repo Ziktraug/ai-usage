@@ -126,6 +126,11 @@ export type TimeRangeControlEvent =
   | OptionChangedEvent
   | PointerStartEvent
   | {
+      dimension: TimelineDimension;
+      granularity: MigrationGranularity;
+      type: 'optionsSynchronized';
+    }
+  | {
       selectionIndexesFromDates: TimeRangeSelectionIndexes;
       type: 'domainChanged';
     }
@@ -598,6 +603,16 @@ export const transitionTimeRangeControl = (
       };
       return changed(nextState, event.source === 'external' ? [] : [{ type: 'commitReportRange' }]);
     }
+    case 'optionsSynchronized':
+      return changed(
+        clearHoverState({
+          ...state,
+          interaction: IDLE_INTERACTION,
+          options: { ...state.options, dimension: event.dimension, granularity: event.granularity },
+          visualRange: null,
+          viewControlsOpen: false,
+        }),
+      );
     case 'optionChanged': {
       if (event.option === 'granularity') {
         return changed(
