@@ -1,7 +1,6 @@
 import {
   type FocusedBreakdownRequest,
   type FocusedBreakdownResult,
-  type FocusedHtmlPayloadResult,
   type FocusedOverviewRequest,
   type FocusedOverviewResult,
   type FocusedOverviewView,
@@ -20,7 +19,6 @@ import { reportManifestRequestFingerprint, type WebReportRevisionManifestResult 
 
 export interface FocusedReportSource {
   getBreakdown: (request: FocusedBreakdownRequest) => Promise<SessionQueryServerResult<FocusedBreakdownResult>>;
-  getHtmlPayload: (request: FocusedRevisionRequest) => Promise<SessionQueryServerResult<FocusedHtmlPayloadResult>>;
   getManifest: () => Promise<WebReportRevisionManifestResult>;
   getOverview: (request: FocusedOverviewRequest) => Promise<SessionQueryServerResult<FocusedOverviewResult>>;
   getSupport: (request: FocusedRevisionRequest) => Promise<SessionQueryServerResult<FocusedSupportResult>>;
@@ -29,14 +27,12 @@ export interface FocusedReportSource {
 
 interface FocusedRequestByKind {
   breakdown: FocusedBreakdownRequest;
-  'html-payload': FocusedRevisionRequest;
   overview: FocusedOverviewRequest;
   support: FocusedRevisionRequest;
 }
 
 interface FocusedResultByKind {
   breakdown: FocusedBreakdownResult;
-  'html-payload': FocusedHtmlPayloadResult;
   overview: FocusedOverviewResult;
   support: FocusedSupportResult;
 }
@@ -114,15 +110,6 @@ const querySource = async <Kind extends FocusedReportQueryKind>(
       >,
     );
   }
-  if (kind === 'html-payload') {
-    return validateServerResult(
-      kind,
-      request,
-      (await source.getHtmlPayload(request as FocusedRevisionRequest)) as SessionQueryServerResult<
-        FocusedResultByKind[Kind]
-      >,
-    );
-  }
   return validateServerResult(
     kind,
     request,
@@ -165,9 +152,6 @@ export const fetchFocusedOverview = (source: FocusedReportSource, request: Focus
 
 export const fetchFocusedBreakdown = (source: FocusedReportSource, request: FocusedBreakdownRequest) =>
   querySource(source, 'breakdown', request);
-
-export const fetchFocusedHtmlPayload = (source: FocusedReportSource, request: FocusedRevisionRequest) =>
-  querySource(source, 'html-payload', request);
 
 export type FocusedStoreApplyResult =
   | { applied: true }
@@ -376,12 +360,6 @@ export const createServedFocusedReportSource = (): FocusedReportSource => {
     getBreakdown: async (request) => {
       const { getFocusedReportBreakdown } = await serverApi();
       return await getFocusedReportBreakdown({ data: request });
-    },
-    getHtmlPayload: async (request) => {
-      const { getFocusedReportHtmlPayload } = await serverApi();
-      return (await getFocusedReportHtmlPayload({
-        data: request,
-      })) as unknown as SessionQueryServerResult<FocusedHtmlPayloadResult>;
     },
     getManifest: async () => {
       const { getReportRevisionManifest } = await serverApi();

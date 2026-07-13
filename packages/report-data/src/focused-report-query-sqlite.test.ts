@@ -8,7 +8,6 @@ import {
   type FocusedReportSupport,
   parseFocusedReportQueryResult,
   projectFocusedBreakdown,
-  projectFocusedHtmlPayload,
   projectFocusedOverview,
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
@@ -163,7 +162,7 @@ describe('focused report SQLite queries', () => {
     }
   });
 
-  test('serves pruned bootstrap support and complete HTML exports', async () => {
+  test('serves pruned bootstrap support with bounded metadata', async () => {
     const { database } = await fixture();
     try {
       const revisionRequest = { revision: 'revision-a' };
@@ -184,10 +183,6 @@ describe('focused report SQLite queries', () => {
         last: '2026-07-04T10:00:00.000Z',
       });
       expect(Buffer.byteLength(JSON.stringify(supportResult))).toBeLessThan(512 * 1024);
-
-      expect(executeFocusedReportQuery(database, 'html-payload', revisionRequest)).toEqual(
-        projectFocusedHtmlPayload(rows, support, revisionRequest),
-      );
     } finally {
       database.close();
     }

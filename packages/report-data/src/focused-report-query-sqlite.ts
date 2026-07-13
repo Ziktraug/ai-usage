@@ -8,7 +8,6 @@ import {
   type FocusedBreakdownResult,
   type FocusedDateDomain,
   type FocusedDayAggregate,
-  type FocusedHtmlPayloadResult,
   type FocusedOverviewRequest,
   type FocusedOverviewResult,
   type FocusedOverviewSessionItem,
@@ -24,11 +23,9 @@ import {
   parseFocusedBreakdownRequest,
   parseFocusedOverviewRequest,
   parseFocusedRevisionRequest,
-  projectFocusedHtmlPayload,
   projectFocusedOverviewFromPresentationRows,
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
-import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import type {
   SessionPresentationRow,
   SessionQueryRequest,
@@ -41,11 +38,7 @@ import {
   type SessionQuerySqliteTrace,
 } from './session-query-sqlite';
 
-export type FocusedReportQueryResult =
-  | FocusedBreakdownResult
-  | FocusedHtmlPayloadResult
-  | FocusedOverviewResult
-  | FocusedSupportResult;
+export type FocusedReportQueryResult = FocusedBreakdownResult | FocusedOverviewResult | FocusedSupportResult;
 
 const executeAll = <RecordType>(
   database: SessionQuerySqliteDatabase,
@@ -91,14 +84,6 @@ const readSupport = (database: SessionQuerySqliteDatabase, trace?: SessionQueryS
   }
   return support as FocusedReportSupport;
 };
-
-const readAllRows = (database: SessionQuerySqliteDatabase, trace?: SessionQuerySqliteTrace): SerializedRow[] =>
-  executeAll<{ source_row_json: string }>(
-    database,
-    'SELECT source_row_json FROM session_rows ORDER BY ordinal',
-    [],
-    trace,
-  ).map(({ source_row_json }) => JSON.parse(source_row_json) as SerializedRow);
 
 interface SummaryRecord {
   actual_cost: number | null;
@@ -687,16 +672,6 @@ const runBreakdown = (
   };
 };
 
-const runHtmlPayload = (
-  database: SessionQuerySqliteDatabase,
-  input: FocusedRevisionRequest,
-  trace?: SessionQuerySqliteTrace,
-): FocusedHtmlPayloadResult => {
-  const request = parseFocusedRevisionRequest(input);
-  const rows = readAllRows(database, trace);
-  return projectFocusedHtmlPayload(rows, readSupport(database, trace), request);
-};
-
 const runSupport = (
   database: SessionQuerySqliteDatabase,
   input: FocusedRevisionRequest,
@@ -778,9 +753,6 @@ export const executeFocusedReportQuery = (
   }
   if (kind === 'breakdown') {
     return runBreakdown(database, parseFocusedBreakdownRequest(request), trace);
-  }
-  if (kind === 'html-payload') {
-    return runHtmlPayload(database, parseFocusedRevisionRequest(request), trace);
   }
   return runSupport(database, parseFocusedRevisionRequest(request), trace);
 };

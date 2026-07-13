@@ -1,7 +1,6 @@
 import {
   type FocusedBreakdownRequest,
   type FocusedBreakdownResult,
-  type FocusedHtmlPayloadResult,
   type FocusedOverviewRequest,
   type FocusedOverviewResult,
   type FocusedReportQueryKind,
@@ -22,14 +21,12 @@ import { resolveReportRuntimePaths } from './report-runtime-paths.server';
 
 interface FocusedRequestByKind {
   breakdown: FocusedBreakdownRequest;
-  'html-payload': FocusedRevisionRequest;
   overview: FocusedOverviewRequest;
   support: FocusedRevisionRequest;
 }
 
 interface FocusedResultByKind {
   breakdown: FocusedBreakdownResult;
-  'html-payload': FocusedHtmlPayloadResult;
   overview: FocusedOverviewResult;
   support: FocusedSupportResult;
 }

@@ -74,16 +74,6 @@ export const getFocusedReportBreakdown = createServerFn({ method: 'POST' })
     ),
   );
 
-export const getFocusedReportHtmlPayload = createServerFn({ method: 'POST' })
-  .validator(parseFocusedRevisionRequest)
-  .handler(async ({ data }) =>
-    toSerializableJson(
-      await import('./focused-report-query-runner.server').then(({ runFocusedReportQueryForServer }) =>
-        runFocusedReportQueryForServer('html-payload', data),
-      ),
-    ),
-  );
-
 export const startReportPayloadRefresh = createServerFn({ method: 'POST' }).handler(() =>
   import('./report-payload.server').then(({ startReportPayloadRefresh: startRefresh }) => startRefresh()),
 );
