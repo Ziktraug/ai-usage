@@ -42,6 +42,7 @@ import {
   projectSourceSelectorKey,
 } from '@ai-usage/report-core/project-group';
 import { type SessionNeighborResult, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+import { keepPreviousData, useQuery } from '@tanstack/solid-query';
 import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import {
@@ -142,6 +143,7 @@ import { TimeRangeControl } from './time-range-control';
 import { toWebReportPayload, type WebReportPayload, type WebReportPayloadWithoutRows } from './web-report-payload';
 
 const REFRESH_INTERVAL_MS = 60_000;
+const FOCUSED_QUERY_STALE_TIME_MS = 30_000;
 const FORM_CONTROL_TAG_PATTERN = /^(INPUT|SELECT|TEXTAREA)$/;
 const SessionTable = lazy(async () => {
   const module = await import('./session-table');
@@ -296,7 +298,12 @@ export const Dashboard = (props: {
   const machine = () => search().machine;
   const fieldFilters = () => search().filters;
   const sorting = createMemo(() => sortingStateFromSearch(search().sort));
-  const columnVisibility = createMemo(() => columnVisibilityFromDiff(search().cols, search().colsBase));
+  const [columnVisibility, setColumnVisibility] = createSignal(
+    columnVisibilityFromDiff(search().cols, search().colsBase),
+  );
+  createEffect(() => {
+    setColumnVisibility(columnVisibilityFromDiff(search().cols, search().colsBase));
+  });
   const generatedAt = createMemo(() => new Date(reportSupport().generatedAt));
   const reportRows = createMemo(() =>
     measureClientPerf(
@@ -574,162 +581,199 @@ export const Dashboard = (props: {
   const visibleSessionTableRows = createMemo(() =>
     servedSessionQueries ? sessionRowsForState(servedSessionState()) : sessionTableRows(),
   );
-  let overviewQuerySequence = 0;
-  createEffect(() => {
-    if (!(clientReady() && focusedSource && focusedStore)) {
+  const overviewRequest = createMemo<FocusedOverviewRequest | undefined>(() => {
+    if (!(focusedSource && focusedStore)) {
       return;
     }
-    const overviewActive = primaryDashboardTabFor(search().tab) === 'overview';
     const queryScope = focusedQueryScope();
-    const timeline = focusedTimelineOptions();
-    const nextRequestSequence = overviewQuerySequence + 1;
-    overviewQuerySequence = nextRequestSequence;
-    const advancedScopeFingerprint = focusedAdvancedAnalysisFingerprint(queryScope);
-    const advancedAnalysisAvailable = focusedStore.hasAdvancedAnalysis(queryScope);
-    const advancedAnalysisBlocked = advancedAnalysisFailure()?.scopeFingerprint === advancedScopeFingerprint;
     const timelineOnlyRequest: FocusedOverviewRequest = {
       includeAdvanced: false,
       query: queryScope,
-      timeline,
+      timeline: focusedTimelineOptions(),
     };
-    const advancedRequest: FocusedOverviewRequest = {
-      ...timelineOnlyRequest,
-      includeAdvanced: true,
+    const advancedScopeFingerprint = focusedAdvancedAnalysisFingerprint(queryScope);
+    const advancedAnalysisAvailable = focusedStore.hasAdvancedAnalysis(queryScope);
+    const advancedAnalysisBlocked = advancedAnalysisFailure()?.scopeFingerprint === advancedScopeFingerprint;
+    return primaryDashboardTabFor(search().tab) === 'overview' &&
+      !(advancedAnalysisAvailable || advancedAnalysisBlocked)
+      ? { ...timelineOnlyRequest, includeAdvanced: true }
+      : timelineOnlyRequest;
+  });
+  const overviewQuery = useQuery(() => {
+    const request = overviewRequest();
+    const fingerprint = request ? focusedOverviewFingerprint(request) : 'inactive';
+    const current = focusedStore?.overview();
+    return {
+      enabled: clientReady() && Boolean(request && focusedSource),
+      initialData: current?.requestFingerprint === fingerprint ? current : null,
+      initialDataUpdatedAt: current?.requestFingerprint === fingerprint ? Date.now() : 0,
+      placeholderData: keepPreviousData,
+      queryFn: async () => {
+        if (!(request && focusedSource)) {
+          throw new Error('Focused Overview query is unavailable');
+        }
+        return await fetchFocusedOverview(focusedSource, request);
+      },
+      queryKey: ['focused-report', 'overview', request?.query.revision ?? 'inactive', fingerprint],
+      staleTime: FOCUSED_QUERY_STALE_TIME_MS,
     };
-    const currentFingerprint = focusedStore.overview()?.requestFingerprint;
-    const currentTimelineMatches =
-      currentFingerprint === focusedOverviewFingerprint(timelineOnlyRequest) ||
-      currentFingerprint === focusedOverviewFingerprint(advancedRequest);
-    if (currentTimelineMatches && (!overviewActive || advancedAnalysisAvailable || advancedAnalysisBlocked)) {
-      setFocusedTimelineLoading(false);
-      setFocusedTimelineError(null);
-      setAdvancedAnalysisLoading(false);
+  });
+  let handledOverviewError: unknown;
+  createEffect(() => {
+    const request = overviewRequest();
+    if (!(request && focusedStore)) {
       return;
     }
-    const request =
-      overviewActive && !(advancedAnalysisAvailable || advancedAnalysisBlocked) ? advancedRequest : timelineOnlyRequest;
-    if (currentFingerprint === focusedOverviewFingerprint(request)) {
-      setFocusedTimelineLoading(false);
+    const currentOverviewAvailable = Boolean(focusedStore.overview());
+    setFocusedTimelineLoading(!(currentOverviewAvailable || overviewQuery.error));
+    setAdvancedAnalysisLoading(
+      overviewQuery.isFetching && request.includeAdvanced && !focusedStore.hasAdvancedAnalysis(request.query),
+    );
+    const result = overviewQuery.data;
+    if (
+      result &&
+      !overviewQuery.isPlaceholderData &&
+      result.requestFingerprint === focusedOverviewFingerprint(request)
+    ) {
+      const applied = focusedStore.applyOverview(request, result);
+      if (!applied.applied) {
+        setLastRefreshError(`Focused Overview rejected: ${applied.reason}`);
+        return;
+      }
+      if (request.includeAdvanced) {
+        setAdvancedAnalysisFailure(undefined);
+      }
       setFocusedTimelineError(null);
-      setAdvancedAnalysisLoading(false);
+    }
+    const error = overviewQuery.error;
+    if (!error || error === handledOverviewError) {
       return;
     }
-    const requestNeedsAdvancedAnalysis = request.includeAdvanced && !advancedAnalysisAvailable;
-    setFocusedTimelineLoading(true);
-    setFocusedTimelineError(null);
-    setAdvancedAnalysisLoading(requestNeedsAdvancedAnalysis);
-    fetchFocusedOverview(focusedSource, request)
-      .then((result) => {
-        if (nextRequestSequence !== overviewQuerySequence) {
-          return;
-        }
-        const applied = focusedStore.applyOverview(request, result);
-        if (!applied.applied) {
-          throw new Error(`Focused Overview rejected: ${applied.reason}`);
-        }
-        if (request.includeAdvanced) {
-          setAdvancedAnalysisFailure(undefined);
-        }
-        setFocusedTimelineLoading(false);
-        setFocusedTimelineError(null);
-        setAdvancedAnalysisLoading(false);
-      })
-      .catch((error: unknown) => {
-        if (nextRequestSequence !== overviewQuerySequence) {
-          return;
-        }
-        if (error instanceof FocusedRevisionExpiredError) {
-          batch(() => {
-            setFocusedTimelineLoading(true);
-            setFocusedTimelineError(null);
-            setAdvancedAnalysisLoading(false);
-          });
-          restartFocusedBootstrap().catch((restartError: unknown) => {
-            const message =
-              restartError instanceof Error ? restartError.message : 'Failed to restart the report revision';
-            if (nextRequestSequence === overviewQuerySequence) {
-              batch(() => {
-                setFocusedTimelineError(message);
-                setFocusedTimelineLoading(false);
-              });
-            }
-            setLastRefreshError(message);
-          });
-          return;
-        }
-        const message = error instanceof Error ? error.message : 'Failed to load Overview';
-        batch(() => {
-          setAdvancedAnalysisLoading(false);
-          if (request.includeAdvanced) {
-            setAdvancedAnalysisFailure({ message, scopeFingerprint: advancedScopeFingerprint });
-            setFocusedTimelineLoading(true);
-          } else {
-            setFocusedTimelineError(message);
-            setFocusedTimelineLoading(false);
-          }
-        });
+    handledOverviewError = error;
+    if (error instanceof FocusedRevisionExpiredError) {
+      restartFocusedBootstrap().catch((restartError: unknown) => {
+        const message = restartError instanceof Error ? restartError.message : 'Failed to restart the report revision';
+        setFocusedTimelineError(message);
         setLastRefreshError(message);
       });
-  });
-  let breakdownQuerySequence = 0;
-  createEffect(() => {
-    if (!(clientReady() && focusedSource && focusedStore && primaryDashboardTabFor(search().tab) === 'breakdown')) {
       return;
     }
-    const request = { query: focusedQueryScope() };
-    if (focusedStore.breakdown()?.requestFingerprint === focusedBreakdownFingerprint(request)) {
-      return;
-    }
-    breakdownQuerySequence += 1;
-    const sequence = breakdownQuerySequence;
-    fetchFocusedBreakdown(focusedSource, request)
-      .then((result) => {
-        if (sequence !== breakdownQuerySequence) {
-          return;
-        }
-        const applied = focusedStore.applyBreakdown(request, result);
-        if (!applied.applied) {
-          throw new Error(`Focused Breakdown rejected: ${applied.reason}`);
-        }
-      })
-      .catch((error: unknown) => {
-        if (sequence !== breakdownQuerySequence) {
-          return;
-        }
-        if (error instanceof FocusedRevisionExpiredError) {
-          restartFocusedBootstrap().catch((restartError: unknown) => {
-            setLastRefreshError(
-              restartError instanceof Error ? restartError.message : 'Failed to restart the report revision',
-            );
-          });
-          return;
-        }
-        setLastRefreshError(error instanceof Error ? error.message : 'Failed to load Breakdown');
+    const message = error instanceof Error ? error.message : 'Failed to load Overview';
+    if (request.includeAdvanced) {
+      setAdvancedAnalysisFailure({
+        message,
+        scopeFingerprint: focusedAdvancedAnalysisFingerprint(request.query),
       });
+    } else {
+      setFocusedTimelineError(message);
+    }
+    setLastRefreshError(message);
   });
-  let sessionQuerySequence = 0;
+  const breakdownRequest = createMemo(() =>
+    focusedStore && primaryDashboardTabFor(search().tab) === 'breakdown' ? { query: focusedQueryScope() } : undefined,
+  );
+  const breakdownQuery = useQuery(() => {
+    const request = breakdownRequest();
+    const fingerprint = request ? focusedBreakdownFingerprint(request) : 'inactive';
+    const current = focusedStore?.breakdown();
+    return {
+      enabled: clientReady() && Boolean(request && focusedSource),
+      initialData: current?.requestFingerprint === fingerprint ? current : null,
+      initialDataUpdatedAt: current?.requestFingerprint === fingerprint ? Date.now() : 0,
+      placeholderData: keepPreviousData,
+      queryFn: async () => {
+        if (!(request && focusedSource)) {
+          throw new Error('Focused Breakdown query is unavailable');
+        }
+        return await fetchFocusedBreakdown(focusedSource, request);
+      },
+      queryKey: ['focused-report', 'breakdown', request?.query.revision ?? 'inactive', fingerprint],
+      staleTime: FOCUSED_QUERY_STALE_TIME_MS,
+    };
+  });
+  let handledBreakdownError: unknown;
   createEffect(() => {
+    const request = breakdownRequest();
+    if (!(request && focusedStore)) {
+      return;
+    }
+    const result = breakdownQuery.data;
+    if (
+      result &&
+      !breakdownQuery.isPlaceholderData &&
+      result.requestFingerprint === focusedBreakdownFingerprint(request)
+    ) {
+      const applied = focusedStore.applyBreakdown(request, result);
+      if (!applied.applied) {
+        setLastRefreshError(`Focused Breakdown rejected: ${applied.reason}`);
+      }
+    }
+    const error = breakdownQuery.error;
+    if (!error || error === handledBreakdownError) {
+      return;
+    }
+    handledBreakdownError = error;
+    if (error instanceof FocusedRevisionExpiredError) {
+      restartFocusedBootstrap().catch((restartError: unknown) => {
+        setLastRefreshError(
+          restartError instanceof Error ? restartError.message : 'Failed to restart the report revision',
+        );
+      });
+      return;
+    }
+    setLastRefreshError(error instanceof Error ? error.message : 'Failed to load Breakdown');
+  });
+  const sessionQueryDescriptor = createMemo(() => {
     const reportGeneratedAt = reportSupport().generatedAt;
-    if (!(clientReady() && sessionQueryCoordinator && reportGeneratedAt && search().tab === 'sessions')) {
-      setSessionQueryLoading(false);
+    if (!(sessionQueryCoordinator && focusedStore && reportGeneratedAt && search().tab === 'sessions')) {
       return;
     }
     const scope = activeSessionQueryScope();
-    sessionQuerySequence += 1;
-    const sequence = sessionQuerySequence;
-    setSessionQueryLoading(true);
-    sessionQueryCoordinator
-      .start(scope)
-      .catch((error: unknown) => {
-        if (sequence === sessionQuerySequence) {
-          setLastRefreshError(error instanceof Error ? error.message : 'Failed to load sessions');
+    const revision = focusedStore.revision();
+    return {
+      fingerprint: sessionQueryFingerprint({ ...scope, cursor: null, revision }),
+      scope,
+      revision,
+    };
+  });
+  const sessionQuery = useQuery(() => {
+    const descriptor = sessionQueryDescriptor();
+    return {
+      enabled: clientReady() && Boolean(descriptor && sessionQueryCoordinator),
+      initialData: null,
+      placeholderData: keepPreviousData,
+      queryFn: async () => {
+        if (!(descriptor && sessionQueryCoordinator)) {
+          throw new Error('Focused Sessions query is unavailable');
         }
-      })
-      .finally(() => {
-        if (sequence === sessionQuerySequence) {
-          setSessionQueryLoading(false);
+        const state = await sessionQueryCoordinator.start(descriptor.scope);
+        if (!state) {
+          throw new Error('Focused Sessions query was superseded');
         }
-      });
+        return state;
+      },
+      queryKey: [
+        'focused-report',
+        'sessions',
+        descriptor?.revision ?? 'inactive',
+        descriptor?.fingerprint ?? 'inactive',
+      ],
+      staleTime: 0,
+    };
+  });
+  let handledSessionError: unknown;
+  createEffect(() => {
+    if (!sessionQueryDescriptor()) {
+      setSessionQueryLoading(false);
+      return;
+    }
+    setSessionQueryLoading(!(servedSessionState() || sessionQuery.error));
+    const error = sessionQuery.error;
+    if (!error || error === handledSessionError) {
+      return;
+    }
+    handledSessionError = error;
+    setLastRefreshError(error instanceof Error ? error.message : 'Failed to load sessions');
   });
   // Campaign context rows can select their atomic root even when the root is outside
   // the current table filter, so resolve selection against the payload rows.
@@ -1203,11 +1247,13 @@ export const Dashboard = (props: {
         dashboardSearchDefaults.sort,
       ),
     }));
-  const handleColumnVisibilityChange: OnChangeFn<VisibilityState> = (updater) =>
-    updateSearch((current) => {
-      const nextVisibility = applyTableUpdate(updater, columnVisibilityFromDiff(current.cols, current.colsBase));
-      return { ...current, ...columnVisibilitySearchForVisibility(nextVisibility) };
+  const handleColumnVisibilityChange: OnChangeFn<VisibilityState> = (updater) => {
+    const nextVisibility = applyTableUpdate(updater, columnVisibility());
+    setColumnVisibility(nextVisibility);
+    updateSearch((current) => ({ ...current, ...columnVisibilitySearchForVisibility(nextVisibility) }), {
+      replace: true,
     });
+  };
   const setCampaignGrouping = (enabled: boolean) =>
     updateSearch((current) => ({ ...current, campaigns: enabled ? 'on' : 'off' }));
   const setTab = (tab: string) => {

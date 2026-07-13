@@ -38,6 +38,7 @@ import {
 } from '@ai-usage/design-system/report';
 import type { Column, ExpandedState, OnChangeFn, Row, SortingState, VisibilityState } from '@tanstack/solid-table';
 import { createSolidTable, flexRender, getCoreRowModel, getExpandedRowModel } from '@tanstack/solid-table';
+import { createVirtualizer } from '@tanstack/solid-virtual';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { measureClientPerf } from './client-perf';
 import type { FieldFilterKey } from './dashboard-search';
@@ -364,19 +365,8 @@ export const SessionTable = (props: {
       MIN_SESSION_TABLE_WIDTH,
       visibleColumns().reduce((sum, { columnDef }) => sum + (columnDef.meta?.widthPx ?? 140), 0),
     );
-  let desktopViewportEl: HTMLDivElement | undefined;
-  const overscanRows = 8;
+  const [desktopViewportEl, setDesktopViewportEl] = createSignal<HTMLDivElement>();
   const [mobileRowLimit, setMobileRowLimit] = createSignal(MOBILE_PAGE_SIZE);
-  const [tableViewport, setTableViewport] = createSignal({ height: 520, scrollTop: 0 });
-  const updateTableViewport = () => {
-    const next = {
-      height: desktopViewportEl?.clientHeight || 520,
-      scrollTop: desktopViewportEl?.scrollTop ?? 0,
-    };
-    setTableViewport((current) =>
-      current.height === next.height && current.scrollTop === next.scrollTop ? current : next,
-    );
-  };
   const rowModelRows = createMemo(() => {
     track(tableData(), props.sorting);
     return measureClientPerf(
@@ -390,6 +380,18 @@ export const SessionTable = (props: {
     surfaceMode() === 'mobile' ? Math.max(0, rowModelRows().length - mobileRows().length) : 0,
   );
   const visibleColumnCount = () => visibleColumns().length;
+  const rowVirtualizer = createVirtualizer({
+    get count() {
+      return rowModelRows().length;
+    },
+    get enabled() {
+      return surfaceMode() === 'desktop' && Boolean(desktopViewportEl());
+    },
+    estimateSize: () => DESKTOP_ROW_HEIGHT,
+    getScrollElement: () => desktopViewportEl() ?? null,
+    initialRect: { height: 520, width: 0 },
+    overscan: 8,
+  });
   const virtualRows = createMemo(() => {
     const rows = rowModelRows();
     if (surfaceMode() === 'print') {
@@ -406,16 +408,18 @@ export const SessionTable = (props: {
         topHeight: 0,
       };
     }
-    const viewport = tableViewport();
-    const virtualRowHeight = DESKTOP_ROW_HEIGHT;
-    const start = Math.max(0, Math.floor(viewport.scrollTop / virtualRowHeight) - overscanRows);
-    const end = Math.min(rows.length, start + Math.ceil(viewport.height / virtualRowHeight) + overscanRows * 2);
+    const items = rowVirtualizer.getVirtualItems();
+    const firstItem = items[0];
+    const lastItem = items.at(-1);
     return measureClientPerf(
       'aiUsage.web.client.compute.sessionTableVirtualRows',
       () => ({
-        bottomHeight: Math.max(0, rows.length - end) * virtualRowHeight,
-        rows: rows.slice(start, end),
-        topHeight: start * virtualRowHeight,
+        bottomHeight: Math.max(0, rowVirtualizer.getTotalSize() - (lastItem?.end ?? 0)),
+        rows: items.flatMap((item) => {
+          const row = rows[item.index];
+          return row ? [{ item, row }] : [];
+        }),
+        topHeight: firstItem?.start ?? 0,
       }),
       (result) => ({ rows: result.rows.length }),
     );
@@ -427,21 +431,10 @@ export const SessionTable = (props: {
   });
 
   createEffect(() => {
-    if (surfaceMode() !== 'desktop' || !desktopViewportEl) {
-      return;
-    }
-    updateTableViewport();
-    const observer = new ResizeObserver(updateTableViewport);
-    observer.observe(desktopViewportEl);
-    onCleanup(() => observer.disconnect());
-  });
-
-  createEffect(() => {
     track(tableData(), props.sorting);
     setMobileRowLimit(MOBILE_PAGE_SIZE);
     if (surfaceMode() === 'desktop') {
-      desktopViewportEl?.scrollTo({ top: 0 });
-      updateTableViewport();
+      rowVirtualizer.scrollToOffset(0);
     }
   });
 
@@ -581,9 +574,9 @@ export const SessionTable = (props: {
         <div
           class={cx(tableWrap, surfaceMode() === 'desktop' ? desktopTableSurface : undefined)}
           data-session-surface={surfaceMode()}
-          onScroll={surfaceMode() === 'desktop' ? updateTableViewport : undefined}
           ref={(element) => {
-            desktopViewportEl = element;
+            setDesktopViewportEl(element);
+            queueMicrotask(() => rowVirtualizer.measure());
           }}
         >
           <table class={cx(table, sessionsTable)} style={{ 'min-width': `${tableMinWidth()}px` }}>
@@ -612,32 +605,47 @@ export const SessionTable = (props: {
                 </tr>
               </Show>
               <For each={virtualRows().rows}>
-                {(tableRow) => (
-                  <tr
-                    data-depth={tableRow.depth}
-                    data-selected={String(props.selectedKey === tableRow.id)}
-                    onClick={() => props.onSelect(tableRow.original)}
-                    onKeyDown={(event) => {
-                      if (event.target !== event.currentTarget) {
-                        return;
-                      }
-                      if (event.key !== 'Enter' && event.key !== ' ') {
-                        return;
-                      }
-                      event.preventDefault();
-                      props.onSelect(tableRow.original);
-                    }}
-                    tabIndex={0}
-                  >
-                    <For each={tableRow.getVisibleCells()}>
-                      {(cell) => (
-                        <td class={cell.column.columnDef.meta?.cellClass}>
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </td>
-                      )}
-                    </For>
-                  </tr>
-                )}
+                {(virtualRow) => {
+                  const tableRow = 'row' in virtualRow ? virtualRow.row : virtualRow;
+                  const virtualItem = 'item' in virtualRow ? virtualRow.item : null;
+                  return (
+                    <tr
+                      data-depth={tableRow.depth}
+                      data-index={virtualItem?.index}
+                      data-selected={String(props.selectedKey === tableRow.id)}
+                      onClick={() => props.onSelect(tableRow.original)}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) {
+                          return;
+                        }
+                        if (event.key !== 'Enter' && event.key !== ' ') {
+                          return;
+                        }
+                        event.preventDefault();
+                        props.onSelect(tableRow.original);
+                      }}
+                      ref={(element) => {
+                        if (!virtualItem) {
+                          return;
+                        }
+                        queueMicrotask(() => {
+                          if (element.isConnected) {
+                            rowVirtualizer.measureElement(element);
+                          }
+                        });
+                      }}
+                      tabIndex={0}
+                    >
+                      <For each={tableRow.getVisibleCells()}>
+                        {(cell) => (
+                          <td class={cell.column.columnDef.meta?.cellClass}>
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </td>
+                        )}
+                      </For>
+                    </tr>
+                  );
+                }}
               </For>
               <Show when={virtualRows().bottomHeight > 0}>
                 <tr data-virtual-spacer="bottom">

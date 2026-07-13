@@ -147,6 +147,36 @@ test('keeps the Report range mounted while focused chart options refresh', async
   await expect(advancedAnalysis.getByRole('heading', { level: 2, name: 'Punchcard' })).toBeVisible();
 });
 
+test('keeps the last complete report visible while the report range changes', async ({ page }) => {
+  await page.goto('/');
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const timeline = dateRange.getByRole('button', {
+    name: 'Inspect activity timeline. Use arrow keys to inspect days.',
+  });
+  await expect(timeline).toBeVisible({ timeout: 5000 });
+  await dateRange.evaluate((element) => element.setAttribute('data-stability-marker', 'original-range'));
+  await timeline.evaluate((element) => element.setAttribute('data-stability-marker', 'original-chart'));
+
+  const overviewGate = Promise.withResolvers<void>();
+  await page.route('**/_serverFn/**', async (route) => {
+    await overviewGate.promise;
+    await route.continue();
+  });
+
+  try {
+    await dateRange.getByRole('button', { exact: true, name: '7d' }).click();
+    await expect(dateRange).toHaveAttribute('data-stability-marker', 'original-range');
+    await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
+    await expect(dateRange.getByText('Loading report range…', { exact: true })).toHaveCount(0);
+    await expect(dateRange.getByText('No dated sessions match the current filters', { exact: true })).toHaveCount(0);
+  } finally {
+    overviewGate.resolve();
+  }
+
+  await expect(dateRange.getByRole('textbox', { name: 'Start date' })).toHaveValue('2026-06-22');
+  await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
+});
+
 test('hydrates and pages Sessions through the production revision protocol', async ({ page }) => {
   const serverFunctionResponses: CapturedServerFunctionResponse[] = [];
   page.on('response', (response) => {
