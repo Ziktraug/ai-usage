@@ -182,6 +182,21 @@ describe('focused report query contracts', () => {
     ).toThrow('fingerprint');
   });
 
+  test('keeps projected session-shape outliers within the transport bound', () => {
+    const outlierRows = [100, 80, 60, 40, 20, 10, 1, 2, 3, 4, 5, 6].map((cost, index) =>
+      row(`outlier-${index + 1}`, index + 1, cost),
+    );
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    };
+
+    const result = projectFocusedOverview(outlierRows, support, request);
+
+    expect(result.view.sessionShape?.outliers.length).toBeLessThanOrEqual(6);
+    expect(() => parseFocusedReportQueryResult('overview', JSON.parse(JSON.stringify(result)), request)).not.toThrow();
+  });
+
   test('strictly validates Overview date domains and preserves an explicit empty domain', () => {
     const result = projectFocusedOverview(rows, support, overviewRequest);
     const invalidDateDomains = [

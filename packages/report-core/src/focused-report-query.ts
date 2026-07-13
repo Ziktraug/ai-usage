@@ -859,6 +859,9 @@ const buildSessionShape = (items: FocusedOverviewSessionItem[]): FocusedSessionS
       if (item && !selected.has(item.row.rowId)) {
         selected.add(item.row.rowId);
         outliers.push(item);
+        if (outliers.length === 6) {
+          break;
+        }
       }
     }
   }
