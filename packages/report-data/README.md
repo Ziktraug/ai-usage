@@ -2,7 +2,7 @@
 
 ## Owns
 
-Application-facing report orchestration: collecting local history through package boundaries, applying aliases, composing warnings, reading known local project sources without creating a full report, creating compatibility payloads for CLI/static export, and executing strict focused/Session queries over web-supplied immutable revision artifacts.
+Application-facing report orchestration: collecting local history through package boundaries, applying aliases, composing warnings, reading known local project sources without creating a full report, creating compatibility payloads for CLI consumers, and executing strict focused/Session queries over web-supplied immutable revision artifacts.
 
 ## Does Not Own
 
@@ -22,7 +22,7 @@ It must not import app packages, private package paths, relative workspace paths
 
 ## Data Boundary
 
-This package provides focused local-row/project-source reads and produces compatibility report payloads from local and stored usage rows. Its private Bun runners validate query contracts, query only the leased revision's immutable read-only SQLite materialization, and write bounded results for bootstrap support, Overview, complete Breakdown groups, paged Sessions, CSV, and HTML; they do not read live config or the live usage store. Bootstrap projection preserves explicit omission counts when filter options, provider representatives/statuses, or warnings exceed its byte/item budgets. Stable capture compares the atomic usage-store generation and semantic config fingerprint before publication. The web adapter owns revision materialization. CLI and static HTML use the complete compatibility payload directly. File import/export happens through explicit usage-merge actions before reporting; report rendering does not perform transfer work.
+This package provides focused local-row/project-source reads and produces compatibility report payloads from local and stored usage rows. Its private Bun runners validate query contracts, query only the leased revision's immutable read-only SQLite materialization, and write bounded results for bootstrap support, Overview, complete Breakdown groups, and paged Sessions; they do not read live config or the live usage store. Bootstrap projection preserves explicit omission counts when filter options, provider representatives/statuses, or warnings exceed its byte/item budgets. Stable capture compares the atomic usage-store generation and semantic config fingerprint before publication. The web adapter owns revision materialization. CLI consumers use the complete compatibility payload directly. File import/export happens through explicit usage-merge actions before reporting; report rendering does not perform transfer work.
 
 ## Test Strategy
 

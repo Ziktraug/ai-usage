@@ -334,8 +334,7 @@ Add `datasets.providerStatus` as the first transport path:
   interface such as `includeProviderStatus` and `includeLiveProviderStatus`.
 - Include local Codex status by default when safe local datasets are requested.
 - Include live Codex status only when explicitly requested by the app/CLI.
-- Ensure static HTML export and snapshot parsing keep working if the dataset is
-  absent or unknown.
+- Ensure snapshot parsing keeps working if the dataset is absent or unknown.
 - Centralize dataset adapter selection in a dataset assembly module rather than
   repeating selection logic in every
   `packages/report-data/src/index.ts` call site.

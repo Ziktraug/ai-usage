@@ -54,7 +54,7 @@ Project grouping should be calculated by report orchestration after rows are col
 
 `report-data` should apply project grouping config and emit a report payload that includes enough project grouping metadata for the dashboard to render and edit groups.
 
-This keeps grouping deterministic and shared by CLI, HTML export, and the web dashboard without mutating stored usage facts.
+This keeps grouping deterministic and shared by CLI and the web dashboard without mutating stored usage facts.
 
 After `report-data` applies project grouping, downstream apps should see logical projects as native report projects. `apps/web` should not carry grouping rules or reinterpret raw projects independently. Analytics, filtering, global metric views, the session table, and the Projects tab should all consume the same projected project identity.
 
@@ -291,7 +291,7 @@ Responsibilities:
 - project rows so logical grouped projects behave as native report projects;
 - emit `ReportProjectGroup[]` or equivalent payload metadata;
 - emit project grouping warnings for stale or partial config;
-- keep CLI, HTML export, and web dashboard consistent.
+- keep CLI and web dashboard consistent.
 
 ### `@ai-usage/usage-store`
 

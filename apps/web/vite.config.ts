@@ -75,7 +75,14 @@ export default defineConfig({
     manualSyncImportDevPlugin(),
     tanStackServerFunctionWarmupPlugin(),
     tanstackStart({
-      router: { codeSplittingOptions: { defaultBehavior: [['component']] } },
+      router: {
+        codeSplittingOptions: {
+          defaultBehavior: [['component']],
+          // Splitting the root route leaves the served app SSR-only: navigation
+          // never hydrates. Keep this one route eager; nested routes still split.
+          splitBehavior: ({ routeId }) => (routeId === '/' ? [] : undefined),
+        },
+      },
     }),
     solid({ ssr: true }),
     nitro({ preset: 'node-server' }),

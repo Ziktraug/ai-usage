@@ -29,7 +29,7 @@ A named set of collected and enriched report data transported alongside usage ro
 _Avoid_: facet, metadata blob, app state
 
 **Report payload**:
-The complete JSON-serializable compatibility aggregate used by CLI/file output and self-contained static HTML export. It contains serialized usage rows, filters, analytics, collected datasets, and optional local history warnings. The served report app reads exact-revision focused results instead of transporting this complete aggregate during refresh.
+The complete JSON-serializable compatibility aggregate used by CLI output and compatible consumers. It contains serialized usage rows, filters, analytics, collected datasets, and optional local history warnings. The served report app reads exact-revision focused results instead of transporting this complete aggregate during refresh.
 _Avoid_: app state, served refresh response
 
 **Focused report result**:
