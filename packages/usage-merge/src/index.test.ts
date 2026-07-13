@@ -119,6 +119,49 @@ describe('usage file merge public boundary', () => {
     }
   });
 
+  test('previews without mutation and binds confirmation to raw bytes and store state', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'usage-merge-preview-'));
+    try {
+      const dbPath = path.join(home, 'usage.sqlite');
+      const service = createUsageFileMergeService({ dbPath, localMachine, now: () => generatedAt });
+      const bundle = createUsageMergeBundle({
+        machine: peerMachine,
+        rows: [makeSourcedRow({ project: 'peer', sessionId: 'peer-preview', sourcePath: '/peer/project' })],
+        generatedAt,
+      });
+      const text = `${JSON.stringify(bundle)}\n`;
+      const bytes = new TextEncoder().encode(text);
+      const preview = await Effect.runPromise(service.previewManualMergeBundle({ bytes, text }));
+      await expect(Bun.file(dbPath).exists()).resolves.toBe(false);
+      expect(preview.inserted).toBe(1);
+      expect(preview.digest).toHaveLength(64);
+
+      await expect(
+        Effect.runPromise(
+          service.confirmManualMergeBundle({
+            bytes: new TextEncoder().encode(`${text} `),
+            text,
+            expectedDigest: preview.digest,
+            expectedStoreGeneration: preview.storeGeneration,
+            expectedStoreStateToken: preview.storeStateToken,
+          }),
+        ),
+      ).rejects.toThrow('changed after preview');
+      const confirmed = await Effect.runPromise(
+        service.confirmManualMergeBundle({
+          bytes,
+          text,
+          expectedDigest: preview.digest,
+          expectedStoreGeneration: preview.storeGeneration,
+          expectedStoreStateToken: preview.storeStateToken,
+        }),
+      );
+      expect(confirmed.result.inserted).toBe(1);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
   test('rejects manual self-imports', async () => {
     const service = createUsageFileMergeService({
       dbPath: path.join(tmpdir(), 'unused.sqlite'),

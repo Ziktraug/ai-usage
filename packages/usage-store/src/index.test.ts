@@ -13,10 +13,12 @@ import type { UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import {
+  confirmPeerMergeBundle,
   exportLocalMergeBundle,
   type ImportResult,
   importLocalRows,
   importPeerMergeBundle,
+  previewPeerMergeBundle,
   queryReportRows,
   queryUsageStoreGeneration,
   UsageStoreError,
@@ -58,6 +60,32 @@ const makeBundle = (machine: UsageMachine, rows: UsageRowWithOptionalSource[]): 
   });
 
 describe('usage-store public boundary', () => {
+  test('previews an absent store without creating it and confirms against the same state token', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-preview-'));
+    const dbPath = usageStorePath(home);
+    const bundle = createUsageMergeBundle({
+      machine: machineB,
+      rows: [makeRow({ sourceSessionId: 'peer-preview' })],
+      generatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    });
+    const preview = await Effect.runPromise(previewPeerMergeBundle({ bundle, dbPath, localMachineId: machineA.id }));
+    await expect(Bun.file(dbPath).exists()).resolves.toBe(false);
+    expect(preview.inserted).toBe(1);
+    expect(preview.generation).toBe(0);
+
+    const confirmed = await Effect.runPromise(
+      confirmPeerMergeBundle({
+        bundle,
+        dbPath,
+        localMachineId: machineA.id,
+        expectedGeneration: preview.generation,
+        expectedStoreStateToken: preview.storeStateToken,
+      }),
+    );
+    expect(confirmed.inserted).toBe(1);
+    expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(1);
+  });
+
   test('keeps import results count based for UI state', () => {
     const result: ImportResult = {
       deleted: 0,

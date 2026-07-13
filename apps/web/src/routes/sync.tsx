@@ -18,7 +18,7 @@ import {
   title,
   titleBlock,
 } from '@ai-usage/design-system/report';
-import type { ManualMergeImportResult } from '@ai-usage/usage-merge';
+import type { ManualMergeImportResult, ManualMergePreviewResult } from '@ai-usage/usage-merge';
 import { createFileRoute, Link } from '@tanstack/solid-router';
 import { createEffect, createSignal, onCleanup, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
@@ -31,12 +31,19 @@ export const Route = createFileRoute('/sync')({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const [{ importManualMergeBundleForServer }, { handleManualMergeUpload }] = await Promise.all([
+        const [mergeServer, { handleManualMergeUpload }] = await Promise.all([
           import('../server/manual-merge.server'),
           import('../server/manual-merge-upload.server'),
         ]);
         return handleManualMergeUpload(request, {
-          importBundle: (text) => importManualMergeBundleForServer({ text }),
+          previewBundle: (document) => mergeServer.previewManualMergeBundleForServer(document),
+          confirmBundle: (document, expected) =>
+            mergeServer.confirmManualMergeBundleForServer({
+              ...document,
+              expectedDigest: expected.digest,
+              expectedStoreGeneration: expected.generation,
+              expectedStoreStateToken: expected.storeStateToken,
+            }),
         });
       },
     },
@@ -117,7 +124,8 @@ const progressHint = css({
 });
 
 type ManualImportResult = ManualOperationResult<ManualMergeImportResult>;
-type PendingOperation = 'manual-export' | 'manual-import';
+type ManualPreviewResult = ManualOperationResult<ManualMergePreviewResult>;
+type PendingOperation = 'manual-export' | 'manual-preview' | 'manual-confirm';
 
 type ManualImportProgress =
   | { phase: 'uploading'; fileName: string; fileSize: number; loaded: number; total: number }
@@ -194,6 +202,9 @@ const ManualTransferPanel = (props: {
   importProgress: ManualImportProgress | null;
   onExport: () => void;
   onImport: (file: File | undefined) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+  preview: { data: ManualMergePreviewResult; file: File } | null;
 }) => (
   <div class={panel}>
     <div class={panelHeader}>
@@ -218,6 +229,30 @@ const ManualTransferPanel = (props: {
         />
       </label>
     </div>
+    <Show when={props.preview}>
+      {(preview) => (
+        <div class={operationPanel} role="status">
+          <div class={strongCell}>Review import from {preview().data.machine.label}</div>
+          <div>
+            {preview().file.name} · {preview().data.rows.toLocaleString()} rows ·{' '}
+            {formatTransferBytes(preview().data.bytes)}
+          </div>
+          <div>
+            {preview().data.inserted} inserted, {preview().data.updated} updated, {preview().data.unchanged} unchanged,{' '}
+            {preview().data.superseded} superseded, {preview().data.deleted} deleted
+          </div>
+          <div class={panelSub}>Peer provenance is preserved; local history is not replaced wholesale.</div>
+          <div class={actionRow}>
+            <button class={ghostButton} disabled={!!props.pendingOperation} onClick={props.onConfirm} type="button">
+              {props.pendingOperation === 'manual-confirm' ? 'Confirming' : 'Confirm import'}
+            </button>
+            <button class={ghostButton} disabled={!!props.pendingOperation} onClick={props.onCancel} type="button">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </Show>
     <Show when={props.importProgress}>{(progress) => <ManualImportProgressView progress={progress()} />}</Show>
   </div>
 );
@@ -247,7 +282,7 @@ const isManualImportFailure = (value: unknown): value is Extract<ManualImportRes
   return typeof error.tag === 'string' && typeof error.message === 'string';
 };
 
-const parseImportResponse = (xhr: XMLHttpRequest): ManualImportResult => {
+const parseImportResponse = <Value,>(xhr: XMLHttpRequest): ManualOperationResult<Value> => {
   if (xhr.status < HTTP_OK_MIN || xhr.status >= HTTP_OK_MAX) {
     try {
       const failure = JSON.parse(xhr.responseText) as unknown;
@@ -260,7 +295,7 @@ const parseImportResponse = (xhr: XMLHttpRequest): ManualImportResult => {
     return { ok: false, error: { tag: 'HttpError', message: `Manual import failed with HTTP ${xhr.status}.` } };
   }
   try {
-    return JSON.parse(xhr.responseText) as ManualImportResult;
+    return JSON.parse(xhr.responseText) as ManualOperationResult<Value>;
   } catch {
     return { ok: false, error: { tag: 'InvalidResponse', message: 'The server returned an unreadable response.' } };
   }
@@ -268,14 +303,22 @@ const parseImportResponse = (xhr: XMLHttpRequest): ManualImportResult => {
 
 // fetch() cannot report upload progress, so XMLHttpRequest is used to surface
 // the upload phase before the server-side parse + merge takes over.
-const importManualMergeFile = (
+const uploadManualMergeFile = <Value,>(
   file: File,
+  action: 'preview' | 'confirm',
   onProgress: (progress: ManualImportProgress) => void,
-): Promise<ManualImportResult> =>
+  expected?: ManualMergePreviewResult,
+): Promise<ManualOperationResult<Value>> =>
   new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/sync');
     xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.setRequestHeader('X-Ai-Usage-Merge-Action', action);
+    if (expected) {
+      xhr.setRequestHeader('X-Ai-Usage-Merge-Digest', expected.digest);
+      xhr.setRequestHeader('X-Ai-Usage-Store-Generation', String(expected.storeGeneration));
+      xhr.setRequestHeader('X-Ai-Usage-Store-State', expected.storeStateToken);
+    }
     xhr.upload.addEventListener('progress', (event) => {
       if (event.lengthComputable) {
         onProgress({
@@ -290,7 +333,7 @@ const importManualMergeFile = (
     xhr.upload.addEventListener('load', () => {
       onProgress({ phase: 'processing', fileName: file.name, fileSize: file.size, startedAt: Date.now() });
     });
-    xhr.addEventListener('load', () => resolve(parseImportResponse(xhr)));
+    xhr.addEventListener('load', () => resolve(parseImportResponse<Value>(xhr)));
     xhr.addEventListener('error', () =>
       resolve({ ok: false, error: { tag: 'NetworkError', message: 'Network error during manual import.' } }),
     );
@@ -302,6 +345,7 @@ function SyncRoute() {
   const [operationError, setOperationError] = createSignal<ManualOperationError | null>(null);
   const [operationMessage, setOperationMessage] = createSignal<string | null>(null);
   const [manualImportProgress, setManualImportProgress] = createSignal<ManualImportProgress | null>(null);
+  const [manualPreview, setManualPreview] = createSignal<{ data: ManualMergePreviewResult; file: File } | null>(null);
 
   const manualExport = async () => {
     if (pendingOperation()) {
@@ -327,7 +371,7 @@ function SyncRoute() {
     if (!file || pendingOperation()) {
       return;
     }
-    setPendingOperation('manual-import');
+    setPendingOperation('manual-preview');
     setOperationError(null);
     setOperationMessage(null);
     setManualImportProgress({
@@ -338,10 +382,48 @@ function SyncRoute() {
       total: file.size,
     });
     try {
-      const next = await importManualMergeFile(file, setManualImportProgress);
+      const next: ManualPreviewResult = await uploadManualMergeFile(file, 'preview', setManualImportProgress);
       if (next.ok) {
+        setManualPreview({ data: next.data, file });
+        setOperationMessage('Preview ready. Review the changes before confirming.');
+        return;
+      }
+      setOperationError(next.error);
+    } finally {
+      setPendingOperation(null);
+      setManualImportProgress(null);
+    }
+  };
+
+  const confirmManualImport = async () => {
+    const preview = manualPreview();
+    if (!preview || pendingOperation()) {
+      return;
+    }
+    setPendingOperation('manual-confirm');
+    setOperationError(null);
+    setOperationMessage(null);
+    setManualImportProgress({
+      phase: 'uploading',
+      fileName: preview.file.name,
+      fileSize: preview.file.size,
+      loaded: 0,
+      total: preview.file.size,
+    });
+    try {
+      const next: ManualImportResult = await uploadManualMergeFile(
+        preview.file,
+        'confirm',
+        setManualImportProgress,
+        preview.data,
+      );
+      if (next.ok) {
+        setManualPreview(null);
         setOperationMessage(formatManualImportSummary(next.data));
         return;
+      }
+      if (next.error.reason === 'preview-stale') {
+        setManualPreview(null);
       }
       setOperationError(next.error);
     } finally {
@@ -372,9 +454,12 @@ function SyncRoute() {
           <OperationNotice error={operationError()} message={operationMessage()} />
           <ManualTransferPanel
             importProgress={manualImportProgress()}
+            onCancel={() => setManualPreview(null)}
+            onConfirm={confirmManualImport}
             onExport={manualExport}
             onImport={manualImport}
             pendingOperation={pendingOperation()}
+            preview={manualPreview()}
           />
         </div>
       </main>

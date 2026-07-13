@@ -2,6 +2,8 @@ import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-co
 import { ensureMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import {
   createUsageFileMergeService,
+  type ManualMergeConfirmInput,
+  type ManualMergeDocumentInput,
   type ManualMergeImportInput,
   type UsageFileMergeService,
 } from '@ai-usage/usage-merge';
@@ -80,6 +82,17 @@ export const exportManualMergeBundleForServer = async () => {
 
 export const importManualMergeBundleForServer = async (input: ManualMergeImportInput) => {
   const result = await runService((service) => service.importManualMergeBundle(input));
+  if (result.ok) {
+    await invalidateReportPayloadForMutation({ scheduleRefresh: true });
+  }
+  return result;
+};
+
+export const previewManualMergeBundleForServer = (input: ManualMergeDocumentInput) =>
+  runService((service) => service.previewManualMergeBundle(input));
+
+export const confirmManualMergeBundleForServer = async (input: ManualMergeConfirmInput) => {
+  const result = await runService((service) => service.confirmManualMergeBundle(input));
   if (result.ok) {
     await invalidateReportPayloadForMutation({ scheduleRefresh: true });
   }

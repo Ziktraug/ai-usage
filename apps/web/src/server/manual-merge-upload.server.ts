@@ -9,9 +9,14 @@ type ManualMergeUploadResult = ManualOperationResult<unknown>;
 type ManualMergeUploadFailure = Extract<ManualMergeUploadResult, { ok: false }>;
 
 interface ManualMergeUploadOptions {
-  importBundle: (text: string) => Promise<ManualMergeUploadResult>;
+  confirmBundle?: (
+    document: { bytes: Uint8Array; text: string },
+    expected: { digest: string; generation: number; storeStateToken: string },
+  ) => Promise<ManualMergeUploadResult>;
+  importBundle?: (text: string) => Promise<ManualMergeUploadResult>;
   maxBytes?: number;
   maxRows?: number;
+  previewBundle?: (document: { bytes: Uint8Array; text: string }) => Promise<ManualMergeUploadResult>;
 }
 
 const jsonFailure = (status: number, tag: string, message: string, reason?: string) =>
@@ -31,7 +36,7 @@ const validateJsonContentType = (request: Request): Response | null => {
   return null;
 };
 
-type BoundedBodyResult = { text: string } | { response: Response };
+type BoundedBodyResult = { bytes: Uint8Array; text: string } | { response: Response };
 
 const readBoundedBody = async (request: Request, maxBytes: number): Promise<BoundedBodyResult> => {
   const contentLength = request.headers.get('content-length');
@@ -79,7 +84,7 @@ const readBoundedBody = async (request: Request, maxBytes: number): Promise<Boun
     offset += chunk.byteLength;
   }
   try {
-    return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes) };
+    return { bytes, text: new TextDecoder('utf-8', { fatal: true }).decode(bytes) };
   } catch {
     return { response: jsonFailure(400, 'InvalidEncoding', 'Manual import files must contain valid UTF-8 JSON.') };
   }
@@ -186,7 +191,7 @@ const importFailureStatus = (failure: ManualMergeUploadFailure) => {
   if (failure.error.reason === 'invalid-input') {
     return 422;
   }
-  if (failure.error.reason === 'self-merge') {
+  if (failure.error.reason === 'self-merge' || failure.error.reason === 'preview-stale') {
     return 409;
   }
   return 500;
@@ -220,7 +225,24 @@ export const handleManualMergeUpload = async (
   }
 
   try {
-    const result = await options.importBundle(body.text);
+    const action = request.headers.get('x-ai-usage-merge-action') ?? 'import';
+    let result: ManualMergeUploadResult;
+    if (action === 'preview' && options.previewBundle) {
+      result = await options.previewBundle(body);
+    } else if (action === 'confirm' && options.confirmBundle) {
+      const digest = request.headers.get('x-ai-usage-merge-digest') ?? '';
+      const generationText = request.headers.get('x-ai-usage-store-generation') ?? '';
+      const storeStateToken = request.headers.get('x-ai-usage-store-state') ?? '';
+      const generation = Number(generationText);
+      if (!(digest && storeStateToken && Number.isSafeInteger(generation) && generation >= 0)) {
+        return jsonFailure(400, 'InvalidConfirmation', 'Manual import confirmation preconditions are missing.');
+      }
+      result = await options.confirmBundle(body, { digest, generation, storeStateToken });
+    } else if (action === 'import' && options.importBundle) {
+      result = await options.importBundle(body.text);
+    } else {
+      return jsonFailure(400, 'InvalidAction', 'Manual import action is not supported.');
+    }
     return Response.json(result, { status: result.ok ? 200 : importFailureStatus(result) });
   } catch {
     return jsonFailure(500, 'ImportFailed', 'The server could not process the manual import file.');
