@@ -80,6 +80,13 @@ const expectExactProtocolIdentity = (
   }
 };
 
+test('renders the report timeline on the initial production Overview', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Inspect timeline bucket' })).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText('No dated sessions match the current filters')).toHaveCount(0);
+});
+
 test('hydrates and pages Sessions through the production revision protocol', async ({ page }) => {
   const serverFunctionResponses: CapturedServerFunctionResponse[] = [];
   page.on('response', (response) => {
