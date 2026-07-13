@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   breakdownTabFor,
   dashboardSearchDefaultsFor,
+  defaultDashboardDateRangeMode,
   hasActiveDashboardFilters,
   primaryDashboardTabFor,
   sortingStateFromSearch,
@@ -22,6 +23,8 @@ describe('dashboard search params', () => {
     const defaults = dashboardSearchDefaultsFor('cost');
 
     expect(validateDashboardSearch({}, defaults)).toEqual(defaults);
+    expect(defaultDashboardDateRangeMode).toBe('30d');
+    expect(defaults.range).toEqual({ mode: defaultDashboardDateRangeMode });
     expect(sortingStateFromSearch(defaults.sort)).toEqual([{ id: 'cost', desc: true }]);
   });
 
@@ -56,7 +59,7 @@ describe('dashboard search params', () => {
       harness: ['Codex'],
       machine: ['work-laptop'],
       q: 'search text',
-      range: { mode: 'all' },
+      range: { mode: '30d' },
       sort: { id: 'fresh', desc: false },
       tab: 'models',
     });
@@ -97,6 +100,15 @@ describe('dashboard search params', () => {
     ).toEqual(defaults.range);
   });
 
+  test('preserves explicit all-time and custom report ranges from URLs', () => {
+    const defaults = dashboardSearchDefaultsFor('date');
+
+    expect(validateDashboardSearch({ range: { mode: 'all' } }, defaults).range).toEqual({ mode: 'all' });
+    expect(
+      validateDashboardSearch({ range: { mode: 'custom', from: '2026-06-01', to: '2026-06-03' } }, defaults).range,
+    ).toEqual({ mode: 'custom', from: '2026-06-01', to: '2026-06-03' });
+  });
+
   test('toggles an exact field filter without disturbing the other dimensions', () => {
     expect(toggleExactFieldFilter({ project: 'ai-usage' }, 'model', 'gpt-5')).toEqual({
       model: 'gpt-5',
@@ -112,7 +124,7 @@ describe('dashboard search params', () => {
 
     expect(hasActiveDashboardFilters(defaults)).toBe(false);
     expect(hasActiveDashboardFilters({ ...defaults, q: 'collector' })).toBe(true);
-    expect(hasActiveDashboardFilters({ ...defaults, range: { mode: '30d' } })).toBe(true);
+    expect(hasActiveDashboardFilters({ ...defaults, range: { mode: 'all' } })).toBe(true);
     expect(hasActiveDashboardFilters({ ...defaults, tab: 'sessions' })).toBe(false);
   });
 });

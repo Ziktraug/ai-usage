@@ -2,12 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildVisibleTimelineBars,
   chartOptionsSummary,
+  defaultTimelineGranularity,
   timelineBucketLayout,
   timelinePlotLeft,
 } from './time-range-control';
 
 describe('time range control labels', () => {
   test('summarizes the selected chart options in plain language', () => {
+    expect(defaultTimelineGranularity).toBe('day');
     expect(chartOptionsSummary('harness', 'day', 'cost')).toBe('Harness · Day · API value');
     expect(chartOptionsSummary('project', 'month', 'sessions')).toBe('Project · Month · Sessions');
   });

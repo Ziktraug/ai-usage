@@ -103,6 +103,7 @@ import {
 const READOUT_LIMIT = 8;
 const MAX_DELTA_PCT = 1000;
 const CHART_ZOOM_FACTOR = 1.5;
+export const defaultTimelineGranularity: MigrationGranularity = 'day';
 const MIN_VISIBLE_BUCKETS = 1;
 const MAX_VISUAL_TICKS = 14;
 const VISUAL_VIEW_PRESETS = [
@@ -322,7 +323,6 @@ export const TimeRangeControl = (props: {
   rows: DashboardRow[];
 }) => {
   const initialDomain = props.dateRange.domain();
-  const initialGranularity: MigrationGranularity = (initialDomain?.maxIndex ?? 0) > 120 ? 'week' : 'day';
   const [chartDomain, setChartDomain] = createSignal(initialDomain);
   const [controlState, setControlState] = createSignal(
     createTimeRangeControlState({
@@ -330,7 +330,7 @@ export const TimeRangeControl = (props: {
         selectionMaxIndex: initialDomain?.maxIndex ?? 0,
         visualBucketMaxIndex: 0,
       },
-      options: { dimension: 'harness', granularity: initialGranularity, value: 'cost' },
+      options: { dimension: 'harness', granularity: defaultTimelineGranularity, value: 'cost' },
       selectionIndexes: props.dateRange.selectedIndexes(),
     }),
   );
