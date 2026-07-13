@@ -168,7 +168,9 @@ const withConfigFileLock = async <A>(filePath: string, update: () => A | Promise
 };
 
 const writeJsonAtomically = (filePath: string, value: unknown) => {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const directory = path.dirname(filePath);
+  fs.mkdirSync(directory, { mode: 0o700, recursive: true });
+  fs.chmodSync(directory, 0o700);
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   try {
     fs.writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
@@ -177,6 +179,7 @@ const writeJsonAtomically = (filePath: string, value: unknown) => {
       flag: 'wx',
     });
     fs.renameSync(temporaryPath, filePath);
+    fs.chmodSync(filePath, 0o600);
   } catch (error) {
     fs.rmSync(temporaryPath, { force: true });
     throw error;
@@ -230,28 +233,22 @@ export const ensureMachineConfig: Effect.Effect<UsageMachine, LocalHistoryError,
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
     const filePath = machineConfigPath(storage);
-    if (yield* storage.exists(filePath).pipe(Effect.catchAll(() => Effect.succeed(false)))) {
-      const parsed = JSON.parse(yield* storage.readText(filePath)) as unknown;
-      if (!isUsageMachine(parsed)) {
-        throw new Error(`Invalid machine config: ${filePath}`);
-      }
-      return parsed;
-    }
-
-    const machine: UsageMachine = {
-      id: randomUUID(),
-      label: os.hostname() || 'This machine',
-    };
-
-    yield* Effect.try({
-      try: () => {
-        fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        fs.writeFileSync(filePath, `${JSON.stringify(machine, null, 2)}\n`, 'utf8');
-      },
+    return yield* Effect.tryPromise({
+      try: async () =>
+        await enqueueAiUsageConfigUpdate(filePath, () => {
+          if (fs.existsSync(filePath)) {
+            const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as unknown;
+            if (!isUsageMachine(parsed)) {
+              throw new Error(`Invalid machine config: ${filePath}`);
+            }
+            return parsed;
+          }
+          const machine: UsageMachine = { id: randomUUID(), label: os.hostname() || 'This machine' };
+          writeJsonAtomically(filePath, machine);
+          return machine;
+        }),
       catch: machineConfigError('writeMachineConfig', filePath),
     });
-
-    return machine;
   });
 
 export const writeMachineConfig = (
@@ -260,11 +257,11 @@ export const writeMachineConfig = (
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
     const filePath = machineConfigPath(storage);
-    yield* Effect.try({
-      try: () => {
-        fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        fs.writeFileSync(filePath, `${JSON.stringify(machine, null, 2)}\n`, 'utf8');
-      },
+    yield* Effect.tryPromise({
+      try: async () =>
+        await enqueueAiUsageConfigUpdate(filePath, () => {
+          writeJsonAtomically(filePath, machine);
+        }),
       catch: machineConfigError('writeMachineConfig', filePath),
     });
   });
