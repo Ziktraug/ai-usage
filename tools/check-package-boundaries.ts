@@ -1,13 +1,12 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const root = process.cwd();
 const workspacePackageParents = ['apps', 'packages'];
 const dependencyFields = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'] as const;
 const ignoredDirectories = new Set(['.git', '.turbo', '.output', 'dist', 'node_modules', 'styled-system']);
 const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.ts', '.tsx']);
 const workspaceImportPattern =
-  /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"](@ai-usage\/[^'"]+)['"]|\bimport\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)/g;
+  /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"](@ai-usage\/[^'"]+)['"]|\bimport\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)|\brequire\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)/g;
 
 type DependencyField = (typeof dependencyFields)[number];
 
@@ -24,13 +23,16 @@ interface PackageInfo {
   packageName: string;
 }
 
-interface Violation {
+export interface PackageBoundaryViolation {
   file: string;
   line?: number;
   message: string;
   packageName: string;
   specifier: string;
 }
+
+const workspacePackageScope = '@ai-usage/';
+const retiredPackages = [`${workspacePackageScope}lan-pairing`, `${workspacePackageScope}sync`] as const;
 
 // packages/report-core is pure domain calculation. Workspace runtime imports would make report types depend
 // on collection, storage, transport, or app execution.
@@ -83,19 +85,25 @@ const boundaryPolicies: BoundaryPolicy[] = [
     forbiddenDependencies: [
       '@ai-usage/local-collectors',
       '@ai-usage/report-data',
-      '@ai-usage/sync',
+      retiredPackages[1],
       '@ai-usage/web',
       '@ai-usage/cli',
     ],
     forbiddenImports: [
       '@ai-usage/local-collectors',
       '@ai-usage/report-data',
-      '@ai-usage/sync',
+      retiredPackages[1],
       '@ai-usage/web',
       '@ai-usage/cli',
     ],
     reason:
       'usage-merge file-transfer orchestration must not import collectors, network sync, final report payload orchestration, or app adapters.',
+  },
+  {
+    packageName: '@ai-usage/web',
+    forbiddenDependencies: ['@ai-usage/cli', ...retiredPackages],
+    forbiddenImports: ['@ai-usage/cli', ...retiredPackages],
+    reason: 'web must not import CLI or retired network adapter packages.',
   },
 ];
 
@@ -143,7 +151,7 @@ async function readPackageInfo(packageJsonPath: string): Promise<PackageInfo | n
   };
 }
 
-async function discoverWorkspacePackages() {
+async function discoverWorkspacePackages(root: string) {
   const packages = new Map<string, PackageInfo>();
   for (const parent of workspacePackageParents) {
     const parentPath = path.join(root, parent);
@@ -183,13 +191,17 @@ async function collectSourceFiles(directory: string): Promise<string[]> {
 
 const lineNumberFor = (text: string, index: number) => text.slice(0, index).split('\n').length;
 
-function collectDependencyViolations(packages: Map<string, PackageInfo>, policy: BoundaryPolicy) {
+function collectDependencyViolations(
+  root: string,
+  packages: Map<string, PackageInfo>,
+  policy: BoundaryPolicy,
+): PackageBoundaryViolation[] {
   const packageInfo = packages.get(policy.packageName);
   if (!packageInfo) {
     return [];
   }
 
-  const violations: Violation[] = [];
+  const violations: PackageBoundaryViolation[] = [];
   for (const [dependencyName, field] of packageInfo.dependencies) {
     if (!policy.forbiddenDependencies.some((pattern) => matchesPattern(dependencyName, pattern))) {
       continue;
@@ -204,14 +216,18 @@ function collectDependencyViolations(packages: Map<string, PackageInfo>, policy:
   return violations;
 }
 
-async function collectImportViolations(packageInfo: PackageInfo, policy: BoundaryPolicy) {
-  const violations: Violation[] = [];
+async function collectImportViolations(
+  root: string,
+  packageInfo: PackageInfo,
+  policy: BoundaryPolicy,
+): Promise<PackageBoundaryViolation[]> {
+  const violations: PackageBoundaryViolation[] = [];
   const files = await collectSourceFiles(packageInfo.directory);
 
   for (const file of files) {
     const text = await readFile(file, 'utf8');
     for (const match of text.matchAll(workspaceImportPattern)) {
-      const specifier = match[1] ?? match[2];
+      const specifier = match[1] ?? match[2] ?? match[3];
       if (!specifier) {
         continue;
       }
@@ -231,28 +247,63 @@ async function collectImportViolations(packageInfo: PackageInfo, policy: Boundar
   return violations;
 }
 
-async function collectViolations() {
-  const packages = await discoverWorkspacePackages();
-  const violations: Violation[] = [];
+const retiredPackagePolicyFor = (packageName: string): BoundaryPolicy => ({
+  packageName,
+  forbiddenDependencies: [...retiredPackages],
+  forbiddenImports: [...retiredPackages],
+  reason: 'retired workspace packages must not return in manifests or source imports.',
+});
+
+export async function collectViolations(root: string): Promise<PackageBoundaryViolation[]> {
+  const packages = await discoverWorkspacePackages(root);
+  const violations: PackageBoundaryViolation[] = [];
 
   for (const policy of boundaryPolicies) {
     const packageInfo = packages.get(policy.packageName);
-    violations.push(...collectDependencyViolations(packages, policy));
+    violations.push(...collectDependencyViolations(root, packages, policy));
     if (packageInfo) {
-      violations.push(...(await collectImportViolations(packageInfo, policy)));
+      violations.push(...(await collectImportViolations(root, packageInfo, policy)));
     }
   }
 
-  return violations;
+  for (const packageInfo of packages.values()) {
+    if (retiredPackages.includes(packageInfo.packageName as (typeof retiredPackages)[number])) {
+      violations.push({
+        file: path.relative(root, path.join(packageInfo.directory, 'package.json')),
+        message: 'retired workspace packages must not be recreated.',
+        packageName: packageInfo.packageName,
+        specifier: packageInfo.packageName,
+      });
+    }
+    const policy = retiredPackagePolicyFor(packageInfo.packageName);
+    violations.push(...collectDependencyViolations(root, packages, policy));
+    violations.push(...(await collectImportViolations(root, packageInfo, policy)));
+  }
+
+  const uniqueViolations = new Map<string, PackageBoundaryViolation>();
+  for (const violation of violations) {
+    const key = [violation.file, violation.line ?? '', violation.packageName, violation.specifier].join(':');
+    if (!uniqueViolations.has(key)) {
+      uniqueViolations.set(key, violation);
+    }
+  }
+
+  return [...uniqueViolations.values()];
 }
 
-const violations = await collectViolations();
+const reportViolations = (violations: PackageBoundaryViolation[]): void => {
+  if (violations.length === 0) {
+    return;
+  }
 
-if (violations.length > 0) {
   console.error('Workspace package boundaries were violated.');
   for (const violation of violations) {
     const location = violation.line === undefined ? violation.file : `${violation.file}:${violation.line}`;
     console.error(`${location} ${violation.packageName} -> ${violation.specifier} - ${violation.message}`);
   }
   process.exitCode = 1;
+};
+
+if (import.meta.main) {
+  reportViolations(await collectViolations(process.cwd()));
 }

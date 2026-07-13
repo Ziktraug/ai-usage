@@ -15,7 +15,7 @@ honor its STOP conditions, and update your row when done.
 | 005 | Skills Tree Curation & Honest Context Panel for `/skills` | P1 | M | 004 | DONE |
 | 006 | Make `SKILL.md` the Primary, Always-Editable Skills Workspace | P1 | L | 005 | DONE |
 | 007 | Simplify Dashboard Exploration and Dataviz | P1 | L | - | DONE |
-| 008 | Remediate the Full Application Audit and Remove Legacy LAN Sync | P0 | L | - | IN PROGRESS |
+| 008 | Remediate the Full Application Audit and Remove Legacy LAN Sync | P0 | L | - | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).

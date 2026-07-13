@@ -8,7 +8,10 @@
 - **Depends on**: none; plans 001–007 are complete
 - **Category**: security / correctness / performance / architecture / tests
 - **Based on**: commit `7ff9944`, 2026-07-13
-- **Status**: IN PROGRESS
+- **Status**: DONE
+- **Completed**: 2026-07-13
+- **Final implementation commit**: `fea9f77`
+- **Execution log**: [008-comprehensive-audit-remediation-log.md](008-comprehensive-audit-remediation-log.md)
 - **Suggested branch**: `fix/008-comprehensive-audit-remediation`
 
 ## Executor instructions
@@ -1190,40 +1193,40 @@ before committing.
 
 Plan 008 is DONE only when all of the following are true:
 
-- [ ] The supported production command binds only to loopback.
-- [ ] Production `/` and `/skills` return 200 in CI after a real build.
-- [ ] The `setup` UI binds only to loopback.
-- [ ] Host/Origin/fetch-site guards reject DNS rebinding and cross-site reads or
+- [x] The supported production command binds only to loopback.
+- [x] Production `/` and `/skills` return 200 in CI after a real build.
+- [x] The `setup` UI binds only to loopback.
+- [x] Host/Origin/fetch-site guards reject DNS rebinding and cross-site reads or
       mutations; setup bodies are content-type/schema/size bounded.
-- [ ] `packages/sync`, CLI network commands/options, sync-storage, and active
+- [x] `packages/sync`, CLI network commands/options, sync-storage, and active
       sync config types are absent.
-- [ ] File snapshot, merge, project-list, setup, and web `/sync` workflows pass.
-- [ ] Current snapshot output round-trips through strict validation.
-- [ ] Oversized, symlinked, malformed, or forged snapshot files fail atomically.
-- [ ] `/skills` does not build a complete report for known project paths.
-- [ ] Real Skills server mutations pass against isolated temporary storage.
-- [ ] Closed Advanced analysis has no chart DOM.
-- [ ] Only one Sessions surface is mounted for the current viewport; print is a
+- [x] File snapshot, merge, project-list, setup, and web `/sync` workflows pass.
+- [x] Current snapshot output round-trips through strict validation.
+- [x] Oversized, symlinked, malformed, or forged snapshot files fail atomically.
+- [x] `/skills` does not build a complete report for known project paths.
+- [x] Real Skills server mutations pass against isolated temporary storage.
+- [x] Closed Advanced analysis has no chart DOM.
+- [x] Only one Sessions surface is mounted for the current viewport; print is a
       usable table.
-- [ ] Multi-batch SQLite imports preserve rows/counters/rollback, meet the
+- [x] Multi-batch SQLite imports preserve rows/counters/rollback, meet the
       frozen query-count budget, and have no wall-time regression beyond any
       tolerance fixed in Wave 0.
-- [ ] Time-range pure transitions cover pointer, keyboard, cancel, zoom, domain,
+- [x] Time-range pure transitions cover pointer, keyboard, cancel, zoom, domain,
       and URL-commit invariants.
-- [ ] No 64 MiB child-stdout ceiling or equivalent unbounded disk/memory
+- [x] No 64 MiB child-stdout ceiling or equivalent unbounded disk/memory
       buffering remains; the replacement artifact ceiling is explicit/tested.
-- [ ] Served refresh uses immutable retained revisions, exact-revision requests,
+- [x] Served refresh uses immutable retained revisions, exact-revision requests,
       request fingerprints, focused queries, and bounded Sessions cursors.
-- [ ] Campaign expansion, drawer neighbors, and full CSV/HTML exports preserve
+- [x] Campaign expansion, drawer neighbors, and full CSV/HTML exports preserve
       full-result semantics across Sessions pages.
-- [ ] Browser automation opens static HTML under `file://`, exercises it, and
+- [x] Browser automation opens static HTML under `file://`, exercises it, and
       observes no network/dynamic assets or runtime errors.
-- [ ] Retired-package and web-boundary fixtures fail as designed.
-- [ ] Current docs and package interfaces match the implemented graph.
-- [ ] Ultracite, lint, typecheck, unit/integration tests, build, production
+- [x] Retired-package and web-boundary fixtures fail as designed.
+- [x] Current docs and package interfaces match the implemented graph.
+- [x] Ultracite, lint, typecheck, unit/integration tests, build, production
       and setup listener smokes, tool fixtures, Playwright, HTML-export
       integration, and `file://` browser smoke all pass.
-- [ ] The execution log records baseline/final measurements and any justified
+- [x] The execution log records baseline/final measurements and any justified
       deviations from this plan.
 
 ## Explicitly deferred product direction

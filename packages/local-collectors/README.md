@@ -10,11 +10,11 @@ It does not own report analytics, report payload creation, network transport, UI
 
 ## Public Interface
 
-The package exposes local collection orchestration plus declared subpath exports for Codex history, errors, local history storage, machine config, and sync storage while legacy sync exists.
+The package exposes local collection orchestration plus declared subpath exports for Codex history, focused datasets, errors, local history storage, and machine config.
 
 ## Depends On
 
-`@ai-usage/local-collectors` may depend on `@ai-usage/report-core` for normalized row/domain types and pure helpers.
+`@ai-usage/local-collectors` may depend on `@ai-usage/report-core` for normalized row/domain types and pure helpers, and `@ai-usage/skills` for the skill-management config schema embedded in machine config.
 
 ## Must Not Import
 
@@ -22,7 +22,7 @@ It must not import `@ai-usage/report-data`, `@ai-usage/usage-store`, `@ai-usage/
 
 ## Data Boundary
 
-This package reads local raw history and config, then emits normalized row inputs, collected rows, warnings, and config records. It does not produce final reports or exchange data over LAN.
+This package reads local raw history and config, then emits normalized row inputs, collected rows, focused datasets, warnings, and config records. It does not produce final reports or transfer data between machines.
 
 ## Test Strategy
 

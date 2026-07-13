@@ -41,8 +41,17 @@ jobs:
       - name: Tests
         run: bun run test
 
+      - name: Tool tests
+        run: bun run test:tools
+
       - name: Build
         run: bun run build
+
+      - name: Production web listener
+        run: bun run test:web-production
+
+      - name: Setup loopback listener
+        run: bun run test:setup-loopback
 
       - name: HTML export integration
         run: bun run test:html-export
@@ -52,3 +61,9 @@ jobs:
 
       - name: Browser tests
         run: bun run test:e2e
+
+      - name: Production revision browser test
+        run: bun run test:e2e-production
+
+      - name: Static HTML browser test
+        run: bun run test:html-file

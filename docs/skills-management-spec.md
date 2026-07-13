@@ -4,14 +4,14 @@
 
 This document specifies the Skills management work delivered alongside, but independently from, the application-audit follow-ups recorded in `docs/app-audit-2026-07-10.md`.
 
-The feature provides a local control plane for inspecting, editing, enabling, and projecting agent skills. It does not derive inventory from synced usage data and does not mutate native project skill directories or unmanaged runtime entries.
+The feature provides a local control plane for inspecting, editing, enabling, and projecting agent skills. It does not derive inventory from portable or manually imported usage data and does not mutate native project skill directories or unmanaged runtime entries.
 
 ## Requirements
 
 ### Configuration and discovery
 
 - Configure one source repository and optional explicit project paths through the existing user-local ai-usage config.
-- Discover project roots only from explicit configuration or locally observed report paths that pass project-marker and safety checks.
+- Discover project roots only from explicit configuration or one focused query of locally observed project sources that pass project-marker and safety checks. The query must not construct a complete report payload or include imported machines.
 - Keep source state as JSON in the source repository; do not load executable configuration.
 - Bound filesystem traversal and text reads, and report diagnostics instead of failing the complete inventory.
 
@@ -54,10 +54,15 @@ The feature provides a local control plane for inspecting, editing, enabling, an
 ## Verification contract
 
 - `bun x ultracite check`
+- `bun run lint`
 - `bun run typecheck`
 - `bun run test`
+- `bun run test:tools`
 - `bun run build`
+- `bun run test:web-production`
+- `bun run test:setup-loopback`
 - `bun run test:e2e`, including `apps/web/e2e/skills.spec.ts`
-- Package-boundary checks through the root `check` task
+- `bun run test:html-export`
+- `bun run test:html-file`
 
 The filesystem tests must use temporary directories and cover traversal limits, unsafe symlinks, concurrent writers, atomic replacement, stale observations, and unmanaged mutation refusal.
