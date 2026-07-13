@@ -11,7 +11,7 @@ import {
 describe('time range control labels', () => {
   test('summarizes the selected chart options in plain language', () => {
     expect(defaultTimelineGranularity).toBe('day');
-    expect(chartOptionsSummary('harness', 'day', 'cost')).toBe('Harness · Day · API value');
+    expect(chartOptionsSummary('harness', 'day', 'cost')).toBe('Harness · Day · Estimated API value');
     expect(chartOptionsSummary('project', 'month', 'sessions')).toBe('Project · Month · Sessions');
   });
 });

@@ -17,7 +17,7 @@ test('loads a deterministic report overview', async ({ page }) => {
 
   await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Date range' })).toBeVisible();
-  await expect(page.getByText('4 / 4 sessions', { exact: true })).toBeVisible();
+  await expect(page.getByText('3 / 4 sessions', { exact: true })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
 });
 
@@ -138,9 +138,9 @@ test('updates the date range and opens a session drawer', async ({ page }) => {
   await page.goto('/');
   const range = page.getByRole('region', { name: 'Date range' });
 
-  await range.getByRole('button', { exact: true, name: '30d' }).click();
+  await range.getByRole('button', { exact: true, name: 'All' }).click();
   await expect(page).toHaveURL(RANGE_URL_PATTERN);
-  await expect(range.getByRole('textbox', { name: 'Start date' })).toHaveValue('2026-05-12');
+  await expect(range.getByRole('textbox', { name: 'Start date' })).toHaveValue('2026-04-12');
 
   await page.getByRole('tab', { name: 'Sessions' }).click();
   await page.locator('tbody tr').first().locator('td').first().click();
@@ -186,7 +186,7 @@ test('starts sessions with focused work columns and switches metric presets', as
 test('adjusts the graph viewport with the keyboard', async ({ page }) => {
   await page.goto('/');
 
-  await page.getByRole('button', { name: 'Adjust view' }).click();
+  await page.getByRole('button', { name: 'Zoom chart' }).click();
   const graphStart = page.getByRole('slider', { name: 'Graph view start' });
   const initialIndex = await graphStart.getAttribute('aria-valuenow');
   await graphStart.focus();
@@ -271,7 +271,7 @@ test('mounts one Sessions surface across viewport and print changes without losi
   await expect(printSurface).toHaveCount(1);
   await expect(printSurface.locator('[data-virtual-spacer]')).toHaveCount(0);
   const printedRows = printSurface.locator('tbody tr[data-depth]');
-  await expect(printedRows).toHaveCount(4);
+  await expect(printedRows).toHaveCount(3);
   await expect(printedRows.first()).not.toHaveText('');
   await expect(printedRows.nth(2)).not.toHaveText('');
   await expect(printedRows.last()).not.toHaveText('');

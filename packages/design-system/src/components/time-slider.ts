@@ -195,7 +195,7 @@ export const timeChartZoomControls = css({
 
 export const timeChartZoomButton = css({
   appearance: 'none',
-  h: '24px',
+  h: '32px',
   px: '8px',
   border: '1px solid token(colors.line)',
   borderRadius: 'full',
@@ -431,8 +431,8 @@ export const timeSliderThumb = css({
   top: '50%',
   transform: 'translate(-50%, -50%)',
   zIndex: 4,
-  w: '34px',
-  h: '34px',
+  w: '44px',
+  h: '44px',
   border: '0',
   borderRadius: 'full',
   bg: 'transparent',
@@ -519,7 +519,7 @@ export const timeSliderHandleLabelEnd = cx(
 
 export const timeSliderDateChip = css({
   appearance: 'none',
-  h: '24px',
+  h: '32px',
   w: { base: '100%', md: '126px' },
   px: '8px',
   border: '1px solid token(colors.line)',
