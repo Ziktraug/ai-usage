@@ -73,7 +73,9 @@ export const renderReportAppHTML = async (payload: UsageReportPayload) => {
     globalPayload.__AI_USAGE_REPORT_EXPORT_PAYLOAD__ = payload;
     const startServer = (await import(pathToFileURL(serverPath).href)) as StartServerModule;
     const startFetch = typeof startServer.default === 'function' ? startServer.default : startServer.default.fetch;
-    const response = await startFetch(new Request('http://localhost/', { headers: { accept: 'text/html' } }));
+    const response = await startFetch(
+      new Request('http://localhost/', { headers: { accept: 'text/html', host: 'localhost' } }),
+    );
     if (!response.ok) {
       const status = `${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
       throw new Error(`Report app SSR failed with ${status}`);

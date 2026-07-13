@@ -1,36 +1,18 @@
+import { rtkSavingsPct as coreRtkSavingsPct } from '@ai-usage/report-core/csv';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
+import {
+  compareSessionPresentationRows,
+  sortValueForSessionColumn as sortValueForCoreSessionColumn,
+} from '@ai-usage/report-core/session-query';
 import type { SortingState } from '@tanstack/solid-table';
-import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from './session-table-schema';
+import type { SessionColumnId } from './session-table-schema';
 import type { DashboardRow } from './shared';
 import { fmtMaybeNum, fmtNum, fmtPct } from './shared';
 
 export const sortValueForRow = (row: DashboardRow, columnId: SessionColumnId): number | string =>
-  sortValueForSessionColumn(row, columnId);
+  sortValueForCoreSessionColumn(row, columnId);
 
-export const compareRows = (sorting: SortingState) => (a: DashboardRow, b: DashboardRow) => {
-  for (const sort of sorting) {
-    if (!isSessionColumnId(sort.id)) {
-      continue;
-    }
-    const av = sortValueForRow(a, sort.id);
-    const bv = sortValueForRow(b, sort.id);
-    const result = compareSortValues(av, bv);
-    if (result !== 0) {
-      return sort.desc ? -result : result;
-    }
-  }
-  return 0;
-};
-
-const compareSortValues = (av: number | string, bv: number | string) => {
-  if (typeof av === 'string' || typeof bv === 'string') {
-    return String(av).localeCompare(String(bv));
-  }
-  if (av === bv) {
-    return 0;
-  }
-  return av > bv ? 1 : -1;
-};
+export const compareRows = (sorting: SortingState) => compareSessionPresentationRows(sorting);
 
 export const lineDeltaLabel = (row: SerializedRow) => {
   if (row.lineDelta == null || row.lineDelta === 0) {
@@ -39,8 +21,7 @@ export const lineDeltaLabel = (row: SerializedRow) => {
   return `+${fmtMaybeNum(row.linesAdded)}/-${fmtMaybeNum(row.linesDeleted)}`;
 };
 
-export const rtkSavingsPct = (row: SerializedRow) =>
-  row.rtkSavedTokens && row.rtkInputTokens ? (row.rtkSavedTokens / row.rtkInputTokens) * 100 : null;
+export const rtkSavingsPct = (row: SerializedRow) => coreRtkSavingsPct(row);
 
 export const rtkSavedLabel = (row: SerializedRow) => {
   const pct = rtkSavingsPct(row);

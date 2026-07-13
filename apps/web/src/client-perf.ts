@@ -1,4 +1,8 @@
-import type { WebReportPayload } from './web-report-payload';
+import type { WebReportPayload, WebReportPayloadWithoutRows } from './web-report-payload';
+
+interface ReportRowsLike {
+  rows: WebReportPayload['rows'];
+}
 
 type PerfValue = boolean | number | string | null | undefined;
 type PerfFields = Record<string, PerfValue>;
@@ -31,6 +35,10 @@ const storedPerfEnabled = () => {
 export const clientPerfEnabled = () => resolvedPerfEnabled === true || urlPerfEnabled() || storedPerfEnabled();
 
 export const resolveClientPerfEnabled = async () => {
+  if (typeof window !== 'undefined' && window.__AI_USAGE_REPORT_STATIC__ === true) {
+    resolvedPerfEnabled = false;
+    return false;
+  }
   if (clientPerfEnabled()) {
     return true;
   }
@@ -64,11 +72,18 @@ export const logClientPerf = (label: string, fields?: PerfFields) => {
   console.info(`[perf] ${label}${summary ? ` ${summary}` : ''}`);
 };
 
-export const payloadStats = (payload: WebReportPayload) => ({
-  bytes: JSON.stringify(payload).length,
-  rows: payload.rows.length,
-  warnings: payload.warnings?.length ?? 0,
-});
+export const payloadStats = (
+  payloadOrRowsSlice: WebReportPayload | ReportRowsLike,
+  support?: WebReportPayloadWithoutRows,
+) => {
+  const serializedRows = JSON.stringify(payloadOrRowsSlice);
+  const serializedSupport = support === undefined ? '' : JSON.stringify(support);
+  return {
+    bytes: new TextEncoder().encode(serializedRows).byteLength + new TextEncoder().encode(serializedSupport).byteLength,
+    rows: payloadOrRowsSlice.rows.length,
+    warnings: (support ?? ('warnings' in payloadOrRowsSlice ? payloadOrRowsSlice : undefined))?.warnings?.length ?? 0,
+  };
+};
 
 export const measureClientPerf = <A>(
   label: string,

@@ -71,6 +71,14 @@ import {
   topTitle,
   twoColumns,
 } from '@ai-usage/design-system/report';
+import type {
+  FocusedCalendarHeatmap,
+  FocusedOverviewRecords,
+  FocusedOverviewResult,
+  FocusedOverviewSessionItem,
+  FocusedPunchcard,
+  FocusedSessionShape,
+} from '@ai-usage/report-core/focused-report-query';
 import { createEffect, createMemo, createSignal, For, type JSX, Show } from 'solid-js';
 import type { CampaignView } from './dashboard-model';
 import { toDateInputValue } from './date-range';
@@ -99,7 +107,10 @@ import {
 } from './shared';
 
 export interface OverviewProps {
+  advancedAnalysisLoading?: boolean;
   campaigns: CampaignView[];
+  focused?: FocusedOverviewResult | undefined;
+  onAdvancedAnalysisOpenChange?: (open: boolean) => void;
   onSelectDay: (day: Date) => void;
   onSelectSession: (row: DashboardRow) => void;
   rangeLabel: string;
@@ -187,12 +198,26 @@ const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
 
 const HEAT_OPACITY = [0.28, 0.52, 0.76, 1];
 
-const CalendarHeatmap = (props: { rows: DashboardRow[]; onSelectDay: (day: Date) => void }) => {
+const focusedCalendarHeatmap = (data: FocusedCalendarHeatmap | null) =>
+  data && {
+    ...data,
+    weeks: data.weeks.map((week) => ({
+      days: week.days.map((day) => (day ? { ...day, date: new Date(day.date) } : null)),
+    })),
+  };
+
+const CalendarHeatmap = (props: {
+  focused: FocusedCalendarHeatmap | null | undefined;
+  onSelectDay: (day: Date) => void;
+  rows: DashboardRow[];
+}) => {
   let scrollEl: HTMLDivElement | undefined;
   const cellElements = new Map<string, HTMLButtonElement>();
   const [focusedDayKey, setFocusedDayKey] = createSignal<string | null>(null);
 
-  const data = createMemo(() => buildCalendarHeatmapData(props.rows));
+  const data = createMemo(() =>
+    props.focused === undefined ? buildCalendarHeatmapData(props.rows) : focusedCalendarHeatmap(props.focused),
+  );
   const heatDays = createMemo(
     () =>
       data()
@@ -380,10 +405,26 @@ const TokenAnatomy = (props: { summary: ReportSummary }) => {
 
 const SessionShape = (props: {
   campaigns: CampaignView[];
+  focused: FocusedSessionShape | null | undefined;
   rows: DashboardRow[];
   onSelectSession: (row: DashboardRow) => void;
 }) => {
-  const data = createMemo(() => buildSessionShapeData(props.rows, props.campaigns));
+  const data = createMemo(() => {
+    const focused = props.focused;
+    if (focused === undefined) {
+      return buildSessionShapeData(props.rows, props.campaigns);
+    }
+    if (focused === null) {
+      return null;
+    }
+    const logRatio = (value: number, domain: { max: number; min: number }): number =>
+      (Math.log10(Math.max(value, Number.EPSILON)) - domain.min) / Math.max(Number.EPSILON, domain.max - domain.min);
+    return {
+      ...focused,
+      xPct: (value: number) => 4 + logRatio(value, focused.xDomain) * 92,
+      yPct: (value: number) => 92 - logRatio(value, focused.yDomain) * 84,
+    };
+  });
 
   return (
     <Panel
@@ -431,7 +472,7 @@ const SessionShape = (props: {
                   {(item) => (
                     <circle
                       class={cx(harnessSvgFillFor(item.harness), scatterPoint)}
-                      cx={`${chart().xPct(item.durationMs)}%`}
+                      cx={`${chart().xPct(item.durationMs ?? 0)}%`}
                       cy={`${chart().yPct(item.costApprox)}%`}
                       r={String(Math.min(8, (item.kind === 'campaign' ? 4 : 3) + Math.log2(item.aggregateCount + 1)))}
                     >
@@ -541,8 +582,8 @@ const punchDataTable = css({
   },
 });
 
-const Punchcard = (props: { rows: DashboardRow[] }) => {
-  const data = createMemo(() => buildPunchcardData(props.rows));
+const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: DashboardRow[] }) => {
+  const data = createMemo(() => (props.focused === undefined ? buildPunchcardData(props.rows) : props.focused));
   const populatedCells = createMemo(() =>
     (data()?.cells ?? []).flatMap((dayCells, dayIndex) =>
       dayCells.flatMap((cell, hour) =>
@@ -637,12 +678,26 @@ const Punchcard = (props: { rows: DashboardRow[] }) => {
 // Records — small bragging rights, sober clothes.
 
 const Records = (props: {
+  focused: FocusedOverviewRecords | null | undefined;
   rows: DashboardRow[];
   timelineRows: DashboardRow[];
   onSelectSession: (row: DashboardRow) => void;
   onSelectDay: (day: Date) => void;
 }) => {
-  const data = createMemo(() => buildOverviewRecords(props.rows, props.timelineRows));
+  const data = createMemo(() => {
+    if (props.focused === undefined) {
+      return buildOverviewRecords(props.rows, props.timelineRows);
+    }
+    const focused = props.focused;
+    if (!focused) {
+      return null;
+    }
+    return {
+      ...focused,
+      busiest: focused.busiest ? { ...focused.busiest, date: new Date(focused.busiest.date) } : null,
+      streakEnd: focused.streakEnd ? new Date(focused.streakEnd) : null,
+    };
+  });
 
   return (
     <Show when={data()}>
@@ -700,10 +755,11 @@ const Records = (props: {
 
 const TopSessions = (props: {
   campaigns: CampaignView[];
+  focused: FocusedOverviewSessionItem[] | undefined;
   rows: DashboardRow[];
   onSelectSession: (row: DashboardRow) => void;
 }) => {
-  const top = createMemo(() => buildTopSessions(props.rows, 5, props.campaigns));
+  const top = createMemo(() => props.focused ?? buildTopSessions(props.rows, 5, props.campaigns));
 
   return (
     <Show when={top().length}>
@@ -733,44 +789,84 @@ const TopSessions = (props: {
 // ---------------------------------------------------------------------------
 
 export const Overview = (props: OverviewProps) => {
-  const advancedSummary = createMemo(() => buildAdvancedAnalysisSummary(props.rows, props.campaigns));
+  const advancedSummary = createMemo(
+    () => props.focused?.view.advancedSummary ?? buildAdvancedAnalysisSummary(props.rows, props.campaigns),
+  );
+  const advancedSummaryText = () =>
+    advancedSummary()?.summary ?? (props.focused ? 'Session shape and weekly/hourly activity' : '');
+  const summary = () => props.focused?.summary ?? props.summary;
+  const [advancedAnalysisOpen, setAdvancedAnalysisOpen] = createSignal(false);
 
   return (
-    <Show fallback={<div class={emptyPanel}>No sessions match the current filters</div>} when={props.rows.length}>
+    <Show fallback={<div class={emptyPanel}>No sessions match the current filters</div>} when={summary().sessionCount}>
       <div class={overviewGrid}>
-        <Hero rangeLabel={props.rangeLabel} summary={props.summary} />
-        <CalendarHeatmap onSelectDay={props.onSelectDay} rows={props.timelineRows} />
-        <TokenAnatomy summary={props.summary} />
+        <Hero rangeLabel={props.rangeLabel} summary={summary()} />
+        <CalendarHeatmap
+          focused={props.focused?.view.heatmap}
+          onSelectDay={props.onSelectDay}
+          rows={props.timelineRows}
+        />
+        <TokenAnatomy summary={summary()} />
         <Records
+          focused={props.focused?.view.records}
           onSelectDay={props.onSelectDay}
           onSelectSession={props.onSelectSession}
           rows={props.rows}
           timelineRows={props.timelineRows}
         />
-        <TopSessions campaigns={props.campaigns} onSelectSession={props.onSelectSession} rows={props.rows} />
-        <Show when={advancedSummary()}>
-          {(summary) => (
-            <details class={advancedAnalysis}>
-              <summary class={advancedAnalysisSummary}>
-                <span>Advanced analysis</span>
-                <span class={advancedAnalysisSummaryText}>{summary().summary}</span>
-              </summary>
+        <TopSessions
+          campaigns={props.campaigns}
+          focused={props.focused?.view.topSessions}
+          onSelectSession={props.onSelectSession}
+          rows={props.rows}
+        />
+        <Show when={props.focused || advancedSummary()}>
+          <details
+            class={advancedAnalysis}
+            onToggle={(event) => {
+              const open = event.currentTarget.open;
+              setAdvancedAnalysisOpen(open);
+              props.onAdvancedAnalysisOpenChange?.(open);
+            }}
+          >
+            <summary class={advancedAnalysisSummary}>
+              <span>Advanced analysis</span>
+              <span class={advancedAnalysisSummaryText}>{advancedSummaryText()}</span>
+            </summary>
+            <Show when={advancedAnalysisOpen()}>
               <div class={advancedAnalysisContent}>
-                <div class={twoColumns}>
-                  <Show when={summary().hasSessionShape}>
-                    <SessionShape
-                      campaigns={props.campaigns}
-                      onSelectSession={props.onSelectSession}
-                      rows={props.rows}
-                    />
-                  </Show>
-                  <Show when={summary().hasPunchcard}>
-                    <Punchcard rows={props.rows} />
-                  </Show>
-                </div>
+                <Show
+                  fallback={
+                    <Show
+                      fallback={<div class={emptyPanel}>No advanced analysis is available for these filters</div>}
+                      when={advancedSummary()}
+                    >
+                      {(loadedSummary) => (
+                        <div class={twoColumns}>
+                          <Show when={loadedSummary().hasSessionShape}>
+                            <SessionShape
+                              campaigns={props.campaigns}
+                              focused={props.focused?.view.sessionShape}
+                              onSelectSession={props.onSelectSession}
+                              rows={props.rows}
+                            />
+                          </Show>
+                          <Show when={loadedSummary().hasPunchcard}>
+                            <Punchcard focused={props.focused?.view.punchcard} rows={props.rows} />
+                          </Show>
+                        </div>
+                      )}
+                    </Show>
+                  }
+                  when={props.advancedAnalysisLoading}
+                >
+                  <div aria-busy="true" aria-live="polite" class={emptyPanel}>
+                    Loading advanced analysis…
+                  </div>
+                </Show>
               </div>
-            </details>
-          )}
+            </Show>
+          </details>
         </Show>
       </div>
     </Show>

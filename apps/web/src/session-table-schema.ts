@@ -1,53 +1,49 @@
-import { rtkSavingsPct, usageRowCsvColumns } from '@ai-usage/report-core/csv';
+import { usageRowCsvColumns } from '@ai-usage/report-core/csv';
+import {
+  isSessionSortField,
+  type SessionSortField,
+  sessionSortFields,
+  sortValueForSessionColumn as sortValueForCoreSessionColumn,
+} from '@ai-usage/report-core/session-query';
 import type { SortingState, VisibilityState } from '@tanstack/solid-table';
 import type { DashboardRow } from './shared';
 
-type SortValue = number | string;
+export type SessionColumnId = SessionSortField;
 
 interface SessionColumnSchemaEntry {
   defaultVisible?: boolean;
   hideable?: boolean;
-  id: string;
-  sortValue: (row: DashboardRow) => SortValue;
+  id: SessionColumnId;
 }
 
 export const sessionColumnSchema = [
-  { id: 'date', sortValue: (row) => row.sortDate },
-  { id: 'session', hideable: false, sortValue: (row) => row.sortSession },
-  { id: 'harness', sortValue: (row) => row.sortHarness },
-  { id: 'machine', defaultVisible: false, sortValue: (row) => row.sortMachine },
-  { id: 'provider', defaultVisible: false, sortValue: (row) => row.sortProvider },
-  { id: 'project', sortValue: (row) => row.sortProject },
-  { id: 'model', sortValue: (row) => row.sortModel },
-  { id: 'tokIn', defaultVisible: false, sortValue: (row) => row.tokIn },
-  { id: 'tokOut', defaultVisible: false, sortValue: (row) => row.tokOut },
-  { id: 'cache', defaultVisible: false, sortValue: (row) => row.tokCr },
-  { id: 'tokCw', defaultVisible: false, sortValue: (row) => row.tokCw },
-  { id: 'fresh', defaultVisible: false, sortValue: (row) => row.freshTokens },
-  { id: 'total', defaultVisible: false, sortValue: (row) => row.tokenTotal },
-  { id: 'rtkSaved', defaultVisible: false, sortValue: (row) => rtkSavingsPct(row) ?? 0 },
-  { id: 'cost', sortValue: (row) => (row.costKnown ? row.costApprox : Number.NEGATIVE_INFINITY) },
-  {
-    id: 'actual',
-    defaultVisible: false,
-    sortValue: (row) => row.costActual ?? Number.NEGATIVE_INFINITY,
-  },
-  { id: 'quota', defaultVisible: false, sortValue: (row) => row.costQuota ?? 0 },
-  { id: 'duration', sortValue: (row) => row.durationMs ?? 0 },
-  { id: 'calls', defaultVisible: false, sortValue: (row) => row.calls },
-  { id: 'turns', defaultVisible: false, sortValue: (row) => row.turns },
-  { id: 'tools', defaultVisible: false, sortValue: (row) => row.tools },
-  { id: 'lines', defaultVisible: false, sortValue: (row) => row.lineDelta ?? 0 },
-  { id: 'subagent', defaultVisible: false, sortValue: (row) => (row.subagent ? 1 : 0) },
-  { id: 'partial', defaultVisible: false, sortValue: (row) => (row.partial ? 1 : 0) },
-  {
-    id: 'ambiguous',
-    defaultVisible: false,
-    sortValue: (row) => (row.ambiguous ? 1 : 0),
-  },
+  { id: 'date' },
+  { id: 'session', hideable: false },
+  { id: 'harness' },
+  { id: 'machine', defaultVisible: false },
+  { id: 'provider', defaultVisible: false },
+  { id: 'project' },
+  { id: 'model' },
+  { id: 'tokIn', defaultVisible: false },
+  { id: 'tokOut', defaultVisible: false },
+  { id: 'cache', defaultVisible: false },
+  { id: 'tokCw', defaultVisible: false },
+  { id: 'fresh', defaultVisible: false },
+  { id: 'total', defaultVisible: false },
+  { id: 'rtkSaved', defaultVisible: false },
+  { id: 'cost' },
+  { id: 'actual', defaultVisible: false },
+  { id: 'quota', defaultVisible: false },
+  { id: 'duration' },
+  { id: 'calls', defaultVisible: false },
+  { id: 'turns', defaultVisible: false },
+  { id: 'tools', defaultVisible: false },
+  { id: 'lines', defaultVisible: false },
+  { id: 'subagent', defaultVisible: false },
+  { id: 'partial', defaultVisible: false },
+  { id: 'ambiguous', defaultVisible: false },
 ] as const satisfies readonly SessionColumnSchemaEntry[];
 
-export type SessionColumnId = (typeof sessionColumnSchema)[number]['id'];
 export type SearchableColumnDiffId = Exclude<SessionColumnId, 'session'>;
 
 export const sessionColumnVisibilityBases = ['auto', 'work', 'legacy'] as const;
@@ -99,18 +95,15 @@ const legacyDefaultVisibleColumnIds = new Set<string>([
   'duration',
 ]);
 
-export const sessionColumnIds: SessionColumnId[] = sessionColumnSchema.map((column) => column.id);
+export const sessionColumnIds: SessionColumnId[] = [...sessionSortFields];
 export const searchableColumnDiffIds = sessionColumnEntries.flatMap((column) =>
   column.hideable === false ? [] : [column.id as SearchableColumnDiffId],
 );
 
-const sessionColumnIdSet = new Set<string>(sessionColumnIds);
 const searchableColumnDiffIdSet = new Set<string>(searchableColumnDiffIds);
 const sessionColumnVisibilityBaseSet = new Set<string>(sessionColumnVisibilityBases);
-const sessionColumnSchemaById = new Map(sessionColumnSchema.map((column) => [column.id, column]));
 
-export const isSessionColumnId = (value: unknown): value is SessionColumnId =>
-  typeof value === 'string' && sessionColumnIdSet.has(value);
+export const isSessionColumnId = isSessionSortField;
 
 export const isSearchableColumnDiffId = (value: unknown): value is SearchableColumnDiffId =>
   typeof value === 'string' && searchableColumnDiffIdSet.has(value);
@@ -118,13 +111,8 @@ export const isSearchableColumnDiffId = (value: unknown): value is SearchableCol
 export const isSessionColumnVisibilityBase = (value: unknown): value is SessionColumnVisibilityBase =>
   typeof value === 'string' && sessionColumnVisibilityBaseSet.has(value);
 
-export const sortValueForSessionColumn = (row: DashboardRow, columnId: SessionColumnId): SortValue => {
-  const column = sessionColumnSchemaById.get(columnId);
-  if (!column) {
-    throw new Error(`Unknown session column: ${columnId}`);
-  }
-  return column.sortValue(row);
-};
+export const sortValueForSessionColumn = (row: DashboardRow, columnId: SessionColumnId): number | string =>
+  sortValueForCoreSessionColumn(row, columnId);
 
 const hiddenColumnVisibility = (isHidden: (column: SessionColumnSchemaEntry) => boolean): VisibilityState => {
   const visibility: VisibilityState = {};

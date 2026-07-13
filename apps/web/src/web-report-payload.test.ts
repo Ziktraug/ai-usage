@@ -1,6 +1,15 @@
 import { expect, test } from 'bun:test';
 import { demoReportPayload } from './report-data';
-import { toExportReportPayload, toWebReportPayload } from './web-report-payload';
+import {
+  mergeWebReportSlices,
+  parseReportRequestFingerprint,
+  parseReportRevision,
+  parseWebReportSliceRequest,
+  reportSliceRequestFingerprint,
+  splitWebReportPayload,
+  toExportReportPayload,
+  toWebReportPayload,
+} from './web-report-payload';
 
 test('removes duplicated table rows without cloning report rows', () => {
   const payload = toWebReportPayload(demoReportPayload);
@@ -68,4 +77,47 @@ test('rejects non-JSON dataset values at the server-function boundary', () => {
       datasets: { generatedAt: new Date() },
     }),
   ).toThrow('Report datasets must contain only JSON-serializable values');
+});
+
+test('validates opaque report revisions without normalizing their identity', () => {
+  expect(String(parseReportRevision('report-2026.07.13:abc_123'))).toBe('report-2026.07.13:abc_123');
+  expect(() => parseReportRevision('')).toThrow('Report revision');
+  expect(() => parseReportRevision(' revision-with-whitespace')).toThrow('Report revision');
+  expect(() => parseReportRevision(42)).toThrow('Report revision');
+});
+
+test('validates exact-revision slice requests and preserves their canonical fingerprint', () => {
+  const requestFingerprint = reportSliceRequestFingerprint('rows');
+  expect(
+    parseWebReportSliceRequest({
+      requestFingerprint,
+      revision: 'revision-a',
+    }),
+  ).toEqual({ requestFingerprint, revision: parseReportRevision('revision-a') });
+  expect(String(parseReportRequestFingerprint(requestFingerprint))).toBe(requestFingerprint);
+  expect(() => parseWebReportSliceRequest({ requestFingerprint, revision: 'revision-a', unsupported: true })).toThrow(
+    'unsupported fields',
+  );
+  expect(() => parseWebReportSliceRequest({ revision: 'revision-a' })).toThrow('fingerprint');
+});
+
+test('splits and merges a report payload at one exact revision', () => {
+  const payload = toWebReportPayload(demoReportPayload);
+  const revision = parseReportRevision('revision-a');
+  const slices = splitWebReportPayload(payload, revision);
+
+  expect(slices.rowsSlice).toEqual({ revision, rows: payload.rows });
+  expect(slices.rowsSlice.rows).toBe(payload.rows);
+  expect('rows' in slices.supportSlice.payloadWithoutRows).toBe(false);
+  expect(mergeWebReportSlices(slices.rowsSlice, slices.supportSlice)).toEqual(payload);
+});
+
+test('refuses to merge slices from different revisions', () => {
+  const payload = toWebReportPayload(demoReportPayload);
+  const first = splitWebReportPayload(payload, parseReportRevision('revision-a'));
+  const second = splitWebReportPayload(payload, parseReportRevision('revision-b'));
+
+  expect(() => mergeWebReportSlices(first.rowsSlice, second.supportSlice)).toThrow(
+    'Report slices must use the same revision',
+  );
 });

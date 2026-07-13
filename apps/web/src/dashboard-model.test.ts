@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
+import { projectSessionPage } from '@ai-usage/report-core/session-query';
 import {
   buildCampaignTableItems,
   buildCampaignTableRows,
@@ -383,6 +384,42 @@ describe('dashboard model', () => {
     expect(rows[0]?.costApprox).toBe(5);
     expect(rows[0]?.freshTokens).toBe(50);
     expect(rows[0]?.children?.map((row) => row.sessionLabel)).toEqual(['child']);
+  });
+
+  test('keeps the focused report-core session page projection in fixture parity', () => {
+    const parent = sourcedRow('campaign parent', { costApprox: 1, freshTokens: 10, tokenTotal: 10 });
+    const child = sourcedRow('campaign child', {
+      costApprox: 9,
+      freshTokens: 90,
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        parentSourceSessionId: 'campaign parent',
+        rootSourceSessionId: 'campaign parent',
+        sourceSessionId: 'campaign child',
+      },
+      tokenTotal: 90,
+    });
+    const standalone = row({ costApprox: 5, name: 'standalone', sessionLabel: 'standalone' });
+    const input = [parent, child, standalone];
+    const sorting: { desc: boolean; id: 'cost' }[] = [{ desc: true, id: 'cost' }];
+
+    const legacyRows = buildCampaignTableRows(input, input, sorting, true).map(
+      ({ children: _children, ...item }) => item,
+    );
+    const focusedPage = projectSessionPage(input, {
+      campaigns: true,
+      cursor: null,
+      filters: { fields: {}, harness: [], machine: [], query: '' },
+      pageSize: 200,
+      range: { from: null, to: null },
+      revision: 'fixture-revision',
+      sort: sorting,
+    });
+
+    expect(focusedPage.items.map((item) => item.row)).toEqual(legacyRows);
+    expect(focusedPage.itemCount).toBe(2);
+    expect(focusedPage.sessionCount).toBe(3);
   });
 
   test('reuses prepared campaign views when projecting table rows', () => {

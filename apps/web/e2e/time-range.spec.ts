@@ -71,7 +71,17 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
 
   const keyboardUrl = page.url();
   const pointerStart = await startInput.inputValue();
-  await dragHorizontally(page, selectedRange, -50);
+  const selectedRangeBox = await selectedRange.boundingBox();
+  expect(selectedRangeBox).not.toBeNull();
+  if (selectedRangeBox) {
+    const startX = selectedRangeBox.x + selectedRangeBox.width / 2;
+    const startY = selectedRangeBox.y + selectedRangeBox.height / 2;
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX - 50, startY, { steps: 4 });
+    await expect(selectedRange).toHaveAttribute('data-dragging', 'true');
+    await page.mouse.up();
+  }
   await expect(startInput).not.toHaveValue(pointerStart);
   await expect.poll(() => page.url()).not.toBe(keyboardUrl);
 

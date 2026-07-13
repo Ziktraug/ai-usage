@@ -1,5 +1,10 @@
+import type { FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
-import { createClientPerfTrace, payloadStats } from './client-perf';
+import {
+  createServedFocusedReportSource,
+  fetchFocusedReportBootstrap,
+  refreshFocusedReportBootstrap,
+} from './focused-report-client';
 import { demoReportPayload } from './report-data';
 import { toWebReportPayload, type WebReportPayload } from './web-report-payload';
 
@@ -26,83 +31,36 @@ export const isStaticReportRuntime = () => isStaticReportPayload() || readExport
 const isE2ERuntime = () => import.meta.env?.VITE_AI_USAGE_E2E === '1';
 const demoWebReportPayload = toWebReportPayload(demoReportPayload);
 
-const collectReportPayload = async () => {
-  const { getReportPayload } = await import('./server/report-payload');
-  return await getReportPayload();
-};
-
-const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
-
-const fetchStoredReportPayload = async () => {
-  const { getReportPayload } = await import('./server/report-payload');
-  const payload = await getReportPayload({ data: { force: false } });
-  if (typeof window !== 'undefined') {
-    window.__AI_USAGE_REPORT__ = payload;
-  }
-  return payload;
-};
-
-const refreshReportPayloadInBackground = async () => {
-  const { getReportPayloadRefreshState, startReportPayloadRefresh } = await import('./server/report-payload');
-  const started = await startReportPayloadRefresh();
-  while (true) {
-    const state = await getReportPayloadRefreshState();
-    if (state.runId < started.runId || state.status === 'running') {
-      await sleep(300);
-      continue;
-    }
-    if (state.status === 'failed') {
-      throw new Error(state.error);
-    }
-    return fetchStoredReportPayload();
-  }
-};
-
 export const readReportPayload = () => readInjectedReportPayload() ?? demoWebReportPayload;
 
 export const isDemoReportPayload = () => !readInjectedReportPayload();
 
-export const fetchReportPayload = async (_options?: { force?: boolean }) => {
-  const perfTrace = createClientPerfTrace('aiUsage.web.client.fetchPayload', { force: _options?.force === true });
-  if (_options?.force === true) {
-    perfTrace?.mark('refreshStarted');
-    const payload = await refreshReportPayloadInBackground();
-    perfTrace?.mark('received', payloadStats(payload));
-    perfTrace?.end('storedGlobal');
-    return payload;
-  }
+export type ReportLoaderData =
+  | { kind: 'payload'; payload: WebReportPayload }
+  | { bootstrap: FocusedSupportResult; kind: 'served' };
 
-  const { getReportPayload } = await import('./server/report-payload');
-  perfTrace?.mark('serverFnLoaded');
-  const payload = await getReportPayload({ data: { force: false } });
-  perfTrace?.mark('received', payloadStats(payload));
-  if (typeof window !== 'undefined') {
-    window.__AI_USAGE_REPORT__ = payload;
-  }
-  perfTrace?.end('storedGlobal');
-  return payload;
-};
-
-export const loadReportPayload = async (): Promise<WebReportPayload> => {
+export const loadReportPayload = async (): Promise<ReportLoaderData> => {
   if (isE2ERuntime()) {
-    return demoWebReportPayload;
+    return { kind: 'payload', payload: demoWebReportPayload };
   }
 
   const exportPayload = readExportReportPayload();
   if (exportPayload) {
-    return toWebReportPayload(exportPayload);
+    return { kind: 'payload', payload: toWebReportPayload(exportPayload) };
   }
 
   const injectedPayload = readInjectedReportPayload();
   if (injectedPayload) {
-    return injectedPayload;
+    return { kind: 'payload', payload: injectedPayload };
   }
 
-  return await collectReportPayload();
+  return { bootstrap: await fetchFocusedReportBootstrap(createServedFocusedReportSource()), kind: 'served' };
 };
 
-export const resolveInitialReportPayload = (loaderPayload: WebReportPayload) =>
-  readInjectedReportPayload() ?? loaderPayload;
+export const resolveInitialReportPayload = (loaderData: ReportLoaderData): ReportLoaderData => {
+  const injectedPayload = readInjectedReportPayload();
+  return injectedPayload ? { kind: 'payload', payload: injectedPayload } : loaderData;
+};
 
 export type MountReportRefreshAction = 'dev-fallback' | 'fetch-payload' | 'none';
 
@@ -124,4 +82,4 @@ export const mountReportRefreshAction = (input: {
 export const reportRefreshPayload = () =>
   typeof window === 'undefined' || isStaticReportRuntime() || isE2ERuntime()
     ? undefined
-    : (options?: { force?: boolean }) => fetchReportPayload(options);
+    : () => refreshFocusedReportBootstrap(createServedFocusedReportSource());

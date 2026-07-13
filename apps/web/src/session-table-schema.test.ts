@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { sessionSortFields } from '@ai-usage/report-core/session-query';
 import { sessionColumns } from './session-columns';
 import { nextMobileSessionRowLimit } from './session-table';
 import {
@@ -25,6 +26,7 @@ describe('session table schema', () => {
 
   test('keeps rendered columns aligned with the shared schema', () => {
     expect(sessionColumns.map((column) => column.id)).toEqual(sessionColumnIds);
+    expect(sessionColumnIds).toEqual([...sessionSortFields]);
   });
 
   test('starts with the focused Work columns in identity-first order', () => {

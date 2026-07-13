@@ -40,6 +40,7 @@ export interface DateRangeController {
 export const createDateRangeController = (options: {
   generatedAt: Date | Accessor<Date>;
   rows: Accessor<SerializedRow[]>;
+  domain?: Accessor<{ maxDay: Date; minDay: Date } | null>;
   defaultFrom: string;
   defaultTo: string;
   formatDate: (value: Date | string | null) => string;
@@ -59,6 +60,14 @@ export const createDateRangeController = (options: {
   } | null = null;
   const rowTimeSpan = () => {
     const rows = options.rows();
+    const domain = options.domain?.();
+    if (domain) {
+      return {
+        maxTime: domain.maxDay.getTime(),
+        minTime: domain.minDay.getTime(),
+        rows,
+      };
+    }
     if (rowSpanCache?.rows === rows) {
       return rowSpanCache;
     }

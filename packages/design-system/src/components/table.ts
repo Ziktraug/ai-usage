@@ -394,6 +394,15 @@ export const sessionSummaryLoadMore = css({
   },
 });
 
+export const sessionPagingLoadMore = css({
+  display: 'flex',
+  justifyContent: 'center',
+  pt: '10px',
+  '& button': {
+    minH: '44px',
+  },
+});
+
 export const groupKeyButton = cx(
   css({
     appearance: 'none',

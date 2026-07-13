@@ -31,6 +31,13 @@ const demoRows: SerializedRow[] = [
     linesAdded: 860,
     linesDeleted: 120,
     lineDelta: 980,
+    source: {
+      harnessKey: 'codex',
+      machineId: 'fixture-machine',
+      machineLabel: 'Fixture Machine',
+      rootSourceSessionId: 'campaign-root',
+      sourceSessionId: 'campaign-root',
+    },
   },
   {
     date: '2026-06-10T18:15:00.000Z',
@@ -59,6 +66,14 @@ const demoRows: SerializedRow[] = [
     linesDeleted: null,
     lineDelta: null,
     subagent: false,
+    source: {
+      harnessKey: 'codex',
+      machineId: 'fixture-machine',
+      machineLabel: 'Fixture Machine',
+      parentSourceSessionId: 'campaign-root',
+      rootSourceSessionId: 'campaign-root',
+      sourceSessionId: 'campaign-child',
+    },
   },
   {
     date: '2026-05-25T13:05:00.000Z',

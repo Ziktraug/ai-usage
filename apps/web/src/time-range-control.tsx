@@ -62,13 +62,17 @@ import {
   timeSliderThumb,
   timeSliderTrack,
 } from '@ai-usage/design-system/report';
+import type {
+  FocusedTimelineData,
+  FocusedTimelineDimension,
+  FocusedTimelineGranularity,
+} from '@ai-usage/report-core/focused-report-query';
 import { createEffect, createMemo, createSignal, For, Show, untrack } from 'solid-js';
 import {
   clampNumber,
   dateFromIndex,
   dateIndexFrom,
   dateRangePresets,
-  normalizeDateIndexRange,
   shiftCalendarDays,
   type TimeRangePreset,
   toDateInputValue,
@@ -78,13 +82,24 @@ import {
   buildTimelineData,
   type MigrationGranularity,
   type TimelineBucket,
+  type TimelineData,
   type TimelineDimension,
   type TimelineSeries,
   type TimelineValue,
 } from './overview-model';
 import { type DashboardRow, fmtDateOnly, fmtMoney, fmtNum, fmtPct } from './shared';
+import {
+  createTimeRangeControlState,
+  isVisualRangeZoomed,
+  type TimeRangeControlCommand,
+  type TimeRangeControlContext,
+  type TimeRangeControlEvent,
+  type TimeRangeIndexRange,
+  transitionTimeRangeControl,
+  visualRangeFor,
+  visualRangeSize,
+} from './time-range-control-state';
 
-const track = (..._values: unknown[]) => _values.length;
 const READOUT_LIMIT = 8;
 const MAX_DELTA_PCT = 1000;
 const CHART_ZOOM_FACTOR = 1.5;
@@ -98,13 +113,6 @@ const VISUAL_VIEW_PRESETS = [
 
 type RangeDragPointerEvent = PointerEvent & { currentTarget: HTMLButtonElement };
 type TimelinePointerEvent = PointerEvent & { currentTarget: HTMLButtonElement };
-type RangeHandle = 'start' | 'end';
-type VisualRangeHandle = 'start' | 'end';
-
-interface VisualZoomRange {
-  from: number;
-  to: number;
-}
 
 const monthTickFormatter = new Intl.DateTimeFormat('en', { month: 'short' });
 const monthYearFormatter = new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric' });
@@ -151,28 +159,6 @@ const TIMELINE_PLOT_INSET_PX = 8;
 const SPACED_BUCKET_MIN_WIDTH_PX = 2;
 const SPACED_BUCKET_GAP_PX = 2;
 
-const sliderIndexForKey = (key: string, current: number, max: number, step: number): number | null => {
-  if (key === 'ArrowLeft' || key === 'ArrowDown') {
-    return current - step;
-  }
-  if (key === 'ArrowRight' || key === 'ArrowUp') {
-    return current + step;
-  }
-  if (key === 'PageDown') {
-    return current - 30;
-  }
-  if (key === 'PageUp') {
-    return current + 30;
-  }
-  if (key === 'Home') {
-    return 0;
-  }
-  if (key === 'End') {
-    return max;
-  }
-  return null;
-};
-
 const cssNumber = (value: number) => Number(value.toFixed(4)).toString();
 
 const bucketLabel = (date: Date, granularity: MigrationGranularity) => {
@@ -210,19 +196,7 @@ const monthTicksFor = (chart: { minDay: Date; maxDay: Date; maxIndex: number }) 
   return ticks;
 };
 
-const normalizeVisualZoomRange = (range: VisualZoomRange | null, bucketCount: number): VisualZoomRange => {
-  const lastIndex = Math.max(0, bucketCount - 1);
-  if (!range || bucketCount <= 0) {
-    return { from: 0, to: lastIndex };
-  }
-  const from = clampNumber(Math.round(range.from), 0, lastIndex);
-  const to = clampNumber(Math.round(range.to), 0, lastIndex);
-  return from <= to ? { from, to } : { from: to, to: from };
-};
-
-const bucketRangeSize = (range: VisualZoomRange) => range.to - range.from + 1;
-
-const visibleMonthTicksFor = (buckets: TimelineBucket[], range: VisualZoomRange) => {
+const visibleMonthTicksFor = (buckets: TimelineBucket[], range: TimeRangeIndexRange) => {
   const visibleBuckets = buckets.slice(range.from, range.to + 1);
   if (visibleBuckets.length < 8) {
     return [];
@@ -296,7 +270,7 @@ export const timelineBucketLayout = (bucketCount: number) => {
 export const buildVisibleTimelineBars = (
   buckets: TimelineBucket[],
   seriesKeys: string[],
-  range: VisualZoomRange,
+  range: TimeRangeIndexRange,
   useSessions: boolean,
 ) => {
   const rankByKey = new Map(seriesKeys.map((key, rank) => [key, rank]));
@@ -321,57 +295,74 @@ export const buildVisibleTimelineBars = (
   });
 };
 
+const focusedTimelineData = (timeline: FocusedTimelineData): TimelineData => ({
+  ...timeline,
+  buckets: timeline.buckets.map((bucket) => ({
+    ...bucket,
+    byKey: new Map(Object.entries(bucket.byKey)),
+    date: new Date(bucket.date),
+  })),
+  first: new Date(timeline.first),
+  last: new Date(timeline.last),
+});
+
 export const TimeRangeControl = (props: {
-  rows: DashboardRow[];
-  dateRange: DateRangeController;
-  activeHarness: string[];
   activeFieldFilters: Partial<Record<Exclude<TimelineDimension, 'harness'>, string>>;
+  activeHarness: string[];
+  dateRange: DateRangeController;
+  focusedTimeline: FocusedTimelineData | null | undefined;
   onDateRangeCommit: () => void;
   onDimensionFilter: (dimension: TimelineDimension, value: string) => void;
+  onFocusedTimelineRequest?: (options: {
+    dimension: FocusedTimelineDimension;
+    granularity: FocusedTimelineGranularity;
+  }) => void;
+  rows: DashboardRow[];
 }) => {
-  const [chartDomain, setChartDomain] = createSignal(props.dateRange.domain());
-  const [dimension, setDimension] = createSignal<TimelineDimension>('harness');
-  const [granularity, setGranularity] = createSignal<MigrationGranularity>(
-    (props.dateRange.domain()?.maxIndex ?? 0) > 120 ? 'week' : 'day',
+  const initialDomain = props.dateRange.domain();
+  const initialGranularity: MigrationGranularity = (initialDomain?.maxIndex ?? 0) > 120 ? 'week' : 'day';
+  const [chartDomain, setChartDomain] = createSignal(initialDomain);
+  const [controlState, setControlState] = createSignal(
+    createTimeRangeControlState({
+      context: {
+        selectionMaxIndex: initialDomain?.maxIndex ?? 0,
+        visualBucketMaxIndex: 0,
+      },
+      options: { dimension: 'harness', granularity: initialGranularity, value: 'cost' },
+      selectionIndexes: props.dateRange.selectedIndexes(),
+    }),
   );
-  const [valueMode, setValueMode] = createSignal<TimelineValue>('cost');
-  const [hoveredBucket, setHoveredBucket] = createSignal<number | null>(null);
-  const [hoveredKey, setHoveredKey] = createSignal<string | null>(null);
-  const [visualZoom, setVisualZoom] = createSignal<VisualZoomRange | null>(null);
-  const [showGraphViewControls, setShowGraphViewControls] = createSignal(false);
-  const [draggingVisualZoom, setDraggingVisualZoom] = createSignal(false);
-  let visualZoomDrag: {
-    pointerId: number;
-    startFrom: number;
-    startTo: number;
-    startX: number;
-    scaleBuckets: number;
-    trackWidth: number;
-  } | null = null;
-  let visualZoomHandleDrag: {
-    handle: VisualRangeHandle;
-    pointerId: number;
-    startIndex: number;
-    startX: number;
-    trackWidth: number;
-    maxIndex: number;
-  } | null = null;
+  const dimension = createMemo(() => controlState().options.dimension);
+  const granularity = createMemo(() => controlState().options.granularity);
+  const valueMode = createMemo(() => controlState().options.value);
+  const hoveredBucket = () => controlState().hover.bucketIndex;
+  const hoveredKey = () => controlState().hover.key;
+  const showGraphViewControls = () => controlState().viewControlsOpen;
+  const draggingVisualZoom = () => {
+    const interaction = controlState().interaction.type;
+    return interaction === 'view-pan' || interaction === 'view-handle';
+  };
+  const draggingSelection = () => controlState().interaction.type === 'selection-pan';
   const syncChartDomain = () => setChartDomain(props.dateRange.domain());
-  createEffect(() => {
-    track(props.rows);
-    setChartDomain(untrack(() => props.dateRange.domain()));
-  });
 
   const data = createMemo(() => {
     const domain = chartDomain();
     if (!domain) {
       return null;
     }
-    const timeline = buildTimelineData(props.rows, {
-      dimension: dimension(),
-      domain,
-      granularity: granularity(),
-    });
+    const focused = props.focusedTimeline;
+    let timeline: TimelineData | null;
+    if (focused === undefined) {
+      timeline = buildTimelineData(props.rows, {
+        dimension: dimension(),
+        domain,
+        granularity: granularity(),
+      });
+    } else if (focused && focused.dimension === dimension() && focused.granularity === granularity()) {
+      timeline = focusedTimelineData(focused);
+    } else {
+      timeline = null;
+    }
     if (!timeline) {
       return null;
     }
@@ -383,21 +374,57 @@ export const TimeRangeControl = (props: {
     };
   });
 
-  const visibleBucketRange = createMemo(() => {
-    const chart = data();
-    if (!chart) {
-      return { from: 0, to: 0 };
-    }
-    return normalizeVisualZoomRange(visualZoom(), chart.buckets.length);
+  createEffect(() => {
+    props.onFocusedTimelineRequest?.({ dimension: dimension(), granularity: granularity() });
   });
 
-  const isVisuallyZoomed = createMemo(() => {
-    const chart = data();
-    if (!chart) {
-      return false;
-    }
-    return bucketRangeSize(visibleBucketRange()) < chart.buckets.length;
+  const controlContext = (): TimeRangeControlContext => ({
+    selectionMaxIndex: chartDomain()?.maxIndex ?? 0,
+    visualBucketMaxIndex: Math.max(0, (data()?.buckets.length ?? 1) - 1),
   });
+
+  let applyingSelectionIndexes = false;
+  const executeControlCommands = (commands: readonly TimeRangeControlCommand[]) => {
+    for (const command of commands) {
+      if (command.type === 'setSelectionIndexes') {
+        applyingSelectionIndexes = true;
+        try {
+          props.dateRange.setIndexes(command.indexes[0], command.indexes[1]);
+        } finally {
+          applyingSelectionIndexes = false;
+        }
+        continue;
+      }
+      if (command.type === 'commitReportRange') {
+        syncChartDomain();
+        props.onDateRangeCommit();
+      }
+    }
+  };
+  const dispatchControl = (event: TimeRangeControlEvent, context = controlContext()) => {
+    const result = transitionTimeRangeControl(controlState(), event, context);
+    if (result.handled) {
+      setControlState(result.state);
+      executeControlCommands(result.commands);
+    }
+    return result.handled;
+  };
+
+  createEffect(() => {
+    const domain = props.dateRange.domain();
+    const selectionIndexesFromDates = props.dateRange.selectedIndexes();
+    if (applyingSelectionIndexes) {
+      return;
+    }
+    setChartDomain(domain);
+    untrack(() => {
+      dispatchControl({ type: 'domainChanged', selectionIndexesFromDates });
+    });
+  });
+
+  const visibleBucketRange = createMemo(() => visualRangeFor(controlState(), controlContext()));
+
+  const isVisuallyZoomed = createMemo(() => isVisualRangeZoomed(controlState(), controlContext()));
 
   const canMoveVisualZoomLater = createMemo(() => {
     const chart = data();
@@ -445,7 +472,7 @@ export const TimeRangeControl = (props: {
     );
   });
 
-  const visibleBucketLayout = createMemo(() => timelineBucketLayout(bucketRangeSize(visibleBucketRange())));
+  const visibleBucketLayout = createMemo(() => timelineBucketLayout(visualRangeSize(controlState(), controlContext())));
 
   const barHeight = (bucket: TimelineBucket, chart: NonNullable<ReturnType<typeof data>>) => {
     const total = bucketValue(bucket, chart);
@@ -485,7 +512,7 @@ export const TimeRangeControl = (props: {
     }
     const previous = index > 0 ? chart.buckets[index - 1] : null;
     const range = visibleBucketRange();
-    const visibleCount = Math.max(1, bucketRangeSize(range));
+    const visibleCount = Math.max(1, visualRangeSize(controlState(), controlContext()));
     const rows: { delta: number | null; key: string; label: string; rank: number; value: number }[] = [];
     for (let rank = 0; rank < chart.series.length; rank++) {
       const series = chart.series[rank];
@@ -552,21 +579,20 @@ export const TimeRangeControl = (props: {
       return;
     }
     const range = visibleBucketRange();
-    const count = bucketRangeSize(range);
+    const count = visualRangeSize(controlState(), controlContext());
     const localIndex = Math.max(0, Math.min(count - 1, Math.floor(((event.clientX - rect.left) / rect.width) * count)));
     const index = range.from + localIndex;
-    setHoveredBucket(index);
 
     const bucket = chart.buckets[index];
     if (!bucket) {
-      setHoveredKey(null);
+      dispatchControl({ type: 'hoverChanged', bucketIndex: index, key: null });
       return;
     }
     const total = bucketValue(bucket, chart);
     const heightFraction = barHeight(bucket, chart) / 100;
     const fromBottom = (rect.bottom - event.clientY) / rect.height;
     if (total <= 0 || heightFraction <= 0 || fromBottom > heightFraction) {
-      setHoveredKey(null);
+      dispatchControl({ type: 'hoverChanged', bucketIndex: index, key: null });
       return;
     }
     const within = fromBottom / heightFraction;
@@ -584,65 +610,20 @@ export const TimeRangeControl = (props: {
       }
       cumulative += share;
     }
-    setHoveredKey(found);
+    dispatchControl({ type: 'hoverChanged', bucketIndex: index, key: found });
   };
 
-  const clearHover = () => {
-    setHoveredBucket(null);
-    setHoveredKey(null);
-  };
+  const clearHover = () => dispatchControl({ type: 'clearHover' });
 
-  const setVisualZoomRange = (chart: NonNullable<ReturnType<typeof data>>, range: VisualZoomRange) => {
-    const normalized = normalizeVisualZoomRange(range, chart.buckets.length);
-    if (bucketRangeSize(normalized) >= chart.buckets.length) {
-      setVisualZoom(null);
-      return;
-    }
-    setVisualZoom(normalized);
-  };
-
-  const updateVisualZoom = (
-    chart: NonNullable<ReturnType<typeof data>>,
-    visibleBucketCount: number,
-    anchorRatio = 0.5,
-  ) => {
-    const totalBuckets = chart.buckets.length;
-    if (totalBuckets <= MIN_VISIBLE_BUCKETS) {
-      setVisualZoom(null);
-      return;
-    }
-
-    const nextCount = clampNumber(
-      Math.round(visibleBucketCount),
-      MIN_VISIBLE_BUCKETS,
-      Math.max(MIN_VISIBLE_BUCKETS, totalBuckets),
-    );
-    if (nextCount >= totalBuckets) {
-      setVisualZoom(null);
-      return;
-    }
-
-    const currentRange = visibleBucketRange();
-    const boundedAnchor = clampNumber(anchorRatio, 0, 1);
-    const anchor = currentRange.from + (bucketRangeSize(currentRange) - 1) * boundedAnchor;
-    const from = clampNumber(Math.round(anchor - (nextCount - 1) * boundedAnchor), 0, totalBuckets - nextCount);
-    setVisualZoomRange(chart, { from, to: from + nextCount - 1 });
-  };
-
-  const zoomChartBy = (chart: NonNullable<ReturnType<typeof data>>, factor: number, anchorRatio = 0.5) => {
-    const currentCount = bucketRangeSize(visibleBucketRange());
-    updateVisualZoom(chart, currentCount * factor, anchorRatio);
-    clearHover();
-  };
+  const zoomChartBy = (factor: number, anchorRatio = 0.5) => dispatchControl({ type: 'zoom', anchorRatio, factor });
 
   const zoomChartToSelection = (chart: NonNullable<ReturnType<typeof data>>) => {
-    const [fromIndex, toIndex] = props.dateRange.selectedIndexes();
+    const [fromIndex, toIndex] = controlState().selectionIndexes;
     const fromDate = dateFromIndex(chart.minDay, fromIndex);
     const toDate = dateFromIndex(chart.minDay, toIndex);
     const from = bucketIndexAtOrBefore(chart.buckets, fromDate);
     const to = bucketIndexAtOrBefore(chart.buckets, toDate);
-    setVisualZoomRange(chart, { from, to });
-    clearHover();
+    dispatchControl({ type: 'setVisualRange', range: { from, to } });
   };
 
   const zoomChartToLastDays = (chart: NonNullable<ReturnType<typeof data>>, days: number) => {
@@ -653,14 +634,10 @@ export const TimeRangeControl = (props: {
     }
     const firstDate = shiftCalendarDays(lastBucket.date, -(days - 1));
     const from = bucketIndexAtOrBefore(chart.buckets, firstDate);
-    setVisualZoomRange(chart, { from, to: lastIndex });
-    clearHover();
+    dispatchControl({ type: 'setVisualRange', range: { from, to: lastIndex } });
   };
 
-  const resetVisualZoom = () => {
-    setVisualZoom(null);
-    clearHover();
-  };
+  const resetVisualZoom = () => dispatchControl({ type: 'resetVisualRange' });
 
   const visualRangeVars = (chart: NonNullable<ReturnType<typeof data>>) => {
     const range = visibleBucketRange();
@@ -673,136 +650,87 @@ export const TimeRangeControl = (props: {
     };
   };
 
-  const moveVisualZoomTo = (chart: NonNullable<ReturnType<typeof data>>, from: number) => {
-    if (!isVisuallyZoomed()) {
-      return;
-    }
-    const range = visibleBucketRange();
-    const visibleCount = bucketRangeSize(range);
-    const clampedFrom = clampNumber(Math.round(from), 0, chart.buckets.length - visibleCount);
-    setVisualZoomRange(chart, { from: clampedFrom, to: clampedFrom + visibleCount - 1 });
-    clearHover();
-  };
-
-  const moveVisualZoomToLatest = (chart: NonNullable<ReturnType<typeof data>>) => {
-    const visibleCount = bucketRangeSize(visibleBucketRange());
-    moveVisualZoomTo(chart, chart.buckets.length - visibleCount);
-  };
+  const moveVisualZoomToLatest = () => dispatchControl({ type: 'pan', destination: 'end' });
 
   const startVisualZoomDrag = (event: TimelinePointerEvent, scaleBuckets: number) => {
-    if (event.button !== 0 || !isVisuallyZoomed()) {
-      return;
-    }
     const trackRect = event.currentTarget.getBoundingClientRect();
-    if (trackRect.width <= 0) {
+    const handled = dispatchControl({
+      type: 'pointerStart',
+      interaction: 'view-pan',
+      button: event.button,
+      clientX: event.clientX,
+      pointerId: event.pointerId,
+      scaleBucketCount: scaleBuckets,
+      trackWidth: trackRect.width,
+    });
+    if (!handled) {
       return;
     }
-    const range = visibleBucketRange();
-    visualZoomDrag = {
-      pointerId: event.pointerId,
-      startFrom: range.from,
-      startTo: range.to,
-      startX: event.clientX,
-      scaleBuckets,
-      trackWidth: trackRect.width,
-    };
-    setDraggingVisualZoom(true);
-    clearHover();
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
   };
 
-  const moveVisualZoomDrag = (event: TimelinePointerEvent, chart: NonNullable<ReturnType<typeof data>>) => {
-    if (!visualZoomDrag || visualZoomDrag.pointerId !== event.pointerId) {
+  const moveVisualZoomDrag = (event: TimelinePointerEvent) => {
+    if (!dispatchControl({ type: 'pointerMove', clientX: event.clientX, pointerId: event.pointerId })) {
       return;
     }
-    const visibleCount = visualZoomDrag.startTo - visualZoomDrag.startFrom + 1;
-    const delta = Math.round(
-      ((event.clientX - visualZoomDrag.startX) / visualZoomDrag.trackWidth) * visualZoomDrag.scaleBuckets,
-    );
-    const from = clampNumber(visualZoomDrag.startFrom + delta, 0, chart.buckets.length - visibleCount);
-    setVisualZoomRange(chart, { from, to: from + visibleCount - 1 });
     event.preventDefault();
   };
 
-  const endVisualZoomDrag = (event: TimelinePointerEvent) => {
-    if (!visualZoomDrag || visualZoomDrag.pointerId !== event.pointerId) {
+  const pointerFinishType = (event: PointerEvent): 'pointerCancel' | 'pointerCaptureLost' | 'pointerEnd' => {
+    if (event.type === 'pointercancel') {
+      return 'pointerCancel';
+    }
+    if (event.type === 'lostpointercapture') {
+      return 'pointerCaptureLost';
+    }
+    return 'pointerEnd';
+  };
+
+  const finishPointerInteraction = (event: TimelinePointerEvent | RangeDragPointerEvent, stopPropagation: boolean) => {
+    const finishType = pointerFinishType(event);
+    if (!dispatchControl({ type: finishType, pointerId: event.pointerId })) {
       return;
     }
-    visualZoomDrag = null;
-    setDraggingVisualZoom(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+    if (finishType !== 'pointerCaptureLost' && event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     event.preventDefault();
+    if (stopPropagation) {
+      event.stopPropagation();
+    }
   };
 
-  const setVisualZoomHandleIndex = (
-    chart: NonNullable<ReturnType<typeof data>>,
-    handle: VisualRangeHandle,
-    index: number,
-  ) => {
-    const range = visibleBucketRange();
-    const nextIndex = clampNumber(index, 0, chart.buckets.length - 1);
-    if (handle === 'start') {
-      setVisualZoomRange(chart, { from: Math.min(nextIndex, range.to), to: range.to });
-      return;
-    }
-    setVisualZoomRange(chart, { from: range.from, to: Math.max(nextIndex, range.from) });
-  };
+  const endVisualZoomDrag = (event: TimelinePointerEvent) => finishPointerInteraction(event, false);
 
-  const startVisualZoomHandleDrag = (
-    event: TimelinePointerEvent,
-    handle: VisualRangeHandle,
-    chart: NonNullable<ReturnType<typeof data>>,
-  ) => {
-    if (event.button !== 0 || chart.buckets.length <= MIN_VISIBLE_BUCKETS) {
-      return;
-    }
+  const startVisualZoomHandleDrag = (event: TimelinePointerEvent, handle: 'start' | 'end') => {
     const trackRect = event.currentTarget.parentElement?.getBoundingClientRect();
-    if (!trackRect?.width) {
-      return;
-    }
-    const range = visibleBucketRange();
-    visualZoomHandleDrag = {
+    const handled = dispatchControl({
+      type: 'pointerStart',
+      interaction: 'view-handle',
+      button: event.button,
+      clientX: event.clientX,
       handle,
       pointerId: event.pointerId,
-      startIndex: handle === 'start' ? range.from : range.to,
-      startX: event.clientX,
-      trackWidth: trackRect.width,
-      maxIndex: chart.buckets.length - 1,
-    };
-    setDraggingVisualZoom(true);
-    clearHover();
+      trackWidth: trackRect?.width ?? 0,
+    });
+    if (!handled) {
+      return;
+    }
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
     event.stopPropagation();
   };
 
-  const moveVisualZoomHandleDrag = (event: TimelinePointerEvent, chart: NonNullable<ReturnType<typeof data>>) => {
-    if (!visualZoomHandleDrag || visualZoomHandleDrag.pointerId !== event.pointerId) {
+  const moveVisualZoomHandleDrag = (event: TimelinePointerEvent) => {
+    if (!dispatchControl({ type: 'pointerMove', clientX: event.clientX, pointerId: event.pointerId })) {
       return;
     }
-    const delta = Math.round(
-      ((event.clientX - visualZoomHandleDrag.startX) / visualZoomHandleDrag.trackWidth) * visualZoomHandleDrag.maxIndex,
-    );
-    setVisualZoomHandleIndex(chart, visualZoomHandleDrag.handle, visualZoomHandleDrag.startIndex + delta);
     event.preventDefault();
     event.stopPropagation();
   };
 
-  const endVisualZoomHandleDrag = (event: TimelinePointerEvent) => {
-    if (!visualZoomHandleDrag || visualZoomHandleDrag.pointerId !== event.pointerId) {
-      return;
-    }
-    visualZoomHandleDrag = null;
-    setDraggingVisualZoom(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    event.preventDefault();
-    event.stopPropagation();
-  };
+  const endVisualZoomHandleDrag = (event: TimelinePointerEvent) => finishPointerInteraction(event, true);
 
   const handleChartWheel = (
     event: WheelEvent & { currentTarget: HTMLElement },
@@ -820,8 +748,9 @@ export const TimeRangeControl = (props: {
     }
     const anchorRatio = clampNumber((event.clientX - rect.left) / rect.width, 0, 1);
     const factor = event.deltaY < 0 ? 1 / CHART_ZOOM_FACTOR : CHART_ZOOM_FACTOR;
-    zoomChartBy(chart, factor, anchorRatio);
-    event.preventDefault();
+    if (zoomChartBy(factor, anchorRatio)) {
+      event.preventDefault();
+    }
   };
 
   const visualZoomLabel = (chart: NonNullable<ReturnType<typeof data>>) => {
@@ -855,207 +784,124 @@ export const TimeRangeControl = (props: {
     return isLegendActive(series.key) ? `Clear or replace ${series.label} filter` : `Filter by ${series.label}`;
   };
 
-  const [draggingSelection, setDraggingSelection] = createSignal(false);
-  let selectionDrag: {
-    pointerId: number;
-    startX: number;
-    startFrom: number;
-    startTo: number;
-    trackWidth: number;
-    maxIndex: number;
-  } | null = null;
-  let handleDrag: {
-    handle: RangeHandle;
-    pointerId: number;
-    startIndex: number;
-    startX: number;
-    trackWidth: number;
-    maxIndex: number;
-  } | null = null;
-
-  const indexesForValue = (value: number[]): [number, number] | null => {
-    const chart = data();
-    if (!chart) {
-      return null;
-    }
-    return normalizeDateIndexRange(value, chart.maxIndex);
-  };
-
-  const commitIndexes = (value?: number[]) => {
-    if (value) {
-      const nextIndexes = indexesForValue(value);
-      if (nextIndexes) {
-        props.dateRange.setIndexes(nextIndexes[0], nextIndexes[1]);
-      }
-    }
-    syncChartDomain();
-    props.onDateRangeCommit();
-  };
-
   const applyPreset = (mode: TimeRangePreset) => {
     props.dateRange.setPreset(mode);
     syncChartDomain();
-    props.onDateRangeCommit();
+    const selectionIndexes = props.dateRange.selectedIndexes();
+    dispatchControl({ type: 'selectionSynchronized', selectionIndexes, source: 'preset' });
   };
 
   const applyFromInput = (from: string) => {
     props.dateRange.setFromInput(from);
     syncChartDomain();
-    props.onDateRangeCommit();
+    const selectionIndexes = props.dateRange.selectedIndexes();
+    dispatchControl({ type: 'selectionSynchronized', selectionIndexes, source: 'input' });
   };
 
   const applyToInput = (to: string) => {
     props.dateRange.setToInput(to);
     syncChartDomain();
-    props.onDateRangeCommit();
+    const selectionIndexes = props.dateRange.selectedIndexes();
+    dispatchControl({ type: 'selectionSynchronized', selectionIndexes, source: 'input' });
   };
 
-  const startSelectionDrag = (event: RangeDragPointerEvent, chart: NonNullable<ReturnType<typeof data>>) => {
-    if (event.button !== 0) {
-      return;
-    }
+  const startSelectionDrag = (event: RangeDragPointerEvent) => {
     const trackRect = event.currentTarget.parentElement?.getBoundingClientRect();
-    if (!trackRect?.width || chart.maxIndex <= 0) {
+    const handled = dispatchControl({
+      type: 'pointerStart',
+      interaction: 'selection-pan',
+      button: event.button,
+      clientX: event.clientX,
+      pointerId: event.pointerId,
+      trackWidth: trackRect?.width ?? 0,
+    });
+    if (!handled) {
       return;
     }
-    const [startFrom, startTo] = props.dateRange.selectedIndexes();
-    selectionDrag = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startFrom,
-      startTo,
-      trackWidth: trackRect.width,
-      maxIndex: chart.maxIndex,
-    };
-    setDraggingSelection(true);
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
     event.stopPropagation();
   };
 
   const moveSelectionDrag = (event: RangeDragPointerEvent) => {
-    if (!selectionDrag || selectionDrag.pointerId !== event.pointerId) {
+    if (!dispatchControl({ type: 'pointerMove', clientX: event.clientX, pointerId: event.pointerId })) {
       return;
-    }
-    const span = selectionDrag.startTo - selectionDrag.startFrom;
-    const delta = Math.round(
-      ((event.clientX - selectionDrag.startX) / selectionDrag.trackWidth) * selectionDrag.maxIndex,
-    );
-    const from = clampNumber(selectionDrag.startFrom + delta, 0, Math.max(0, selectionDrag.maxIndex - span));
-    props.dateRange.setIndexes(from, from + span);
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-  const endSelectionDrag = (event: RangeDragPointerEvent) => {
-    if (!selectionDrag || selectionDrag.pointerId !== event.pointerId) {
-      return;
-    }
-    selectionDrag = null;
-    commitIndexes();
-    setDraggingSelection(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
     }
     event.preventDefault();
     event.stopPropagation();
   };
 
-  const setHandleIndex = (handle: RangeHandle, index: number) => {
-    const [from, to] = props.dateRange.selectedIndexes();
-    if (handle === 'start') {
-      props.dateRange.setIndexes(Math.min(index, to), to);
-    } else {
-      props.dateRange.setIndexes(from, Math.max(index, from));
-    }
-  };
+  const endSelectionDrag = (event: RangeDragPointerEvent) => finishPointerInteraction(event, true);
 
-  const startHandleDrag = (
-    event: RangeDragPointerEvent,
-    handle: RangeHandle,
-    chart: NonNullable<ReturnType<typeof data>>,
-  ) => {
-    if (event.button !== 0) {
-      return;
-    }
+  const startHandleDrag = (event: RangeDragPointerEvent, handle: 'start' | 'end') => {
     const trackRect = event.currentTarget.parentElement?.getBoundingClientRect();
-    if (!trackRect?.width || chart.maxIndex <= 0) {
-      return;
-    }
-    const [from, to] = props.dateRange.selectedIndexes();
-    handleDrag = {
+    const handled = dispatchControl({
+      type: 'pointerStart',
+      interaction: 'selection-handle',
+      button: event.button,
+      clientX: event.clientX,
       handle,
       pointerId: event.pointerId,
-      startIndex: handle === 'start' ? from : to,
-      startX: event.clientX,
-      trackWidth: trackRect.width,
-      maxIndex: chart.maxIndex,
-    };
+      trackWidth: trackRect?.width ?? 0,
+    });
+    if (!handled) {
+      return;
+    }
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
     event.stopPropagation();
   };
 
   const moveHandleDrag = (event: RangeDragPointerEvent) => {
-    if (!handleDrag || handleDrag.pointerId !== event.pointerId) {
+    if (!dispatchControl({ type: 'pointerMove', clientX: event.clientX, pointerId: event.pointerId })) {
       return;
-    }
-    const delta = Math.round(((event.clientX - handleDrag.startX) / handleDrag.trackWidth) * handleDrag.maxIndex);
-    setHandleIndex(handleDrag.handle, handleDrag.startIndex + delta);
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-  const endHandleDrag = (event: RangeDragPointerEvent) => {
-    if (!handleDrag || handleDrag.pointerId !== event.pointerId) {
-      return;
-    }
-    handleDrag = null;
-    commitIndexes();
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
     }
     event.preventDefault();
     event.stopPropagation();
   };
 
-  const handleSliderKeyDown = (event: KeyboardEvent & { currentTarget: HTMLButtonElement }, handle: RangeHandle) => {
-    const chart = data();
-    if (!chart) {
+  const endHandleDrag = (event: RangeDragPointerEvent) => finishPointerInteraction(event, true);
+
+  const handleSliderKeyDown = (
+    event: KeyboardEvent & { currentTarget: HTMLButtonElement },
+    handle: 'start' | 'end',
+  ) => {
+    if (
+      !dispatchControl({
+        type: 'keyboardMove',
+        axis: 'selection',
+        handle,
+        key: event.key,
+        shiftKey: event.shiftKey,
+      })
+    ) {
       return;
     }
-    const [from, to] = props.dateRange.selectedIndexes();
-    const current = handle === 'start' ? from : to;
-    const step = event.shiftKey ? 7 : 1;
-    const next = sliderIndexForKey(event.key, current, chart.maxIndex, step);
-    if (next == null) {
-      return;
-    }
-    setHandleIndex(handle, clampNumber(next, 0, chart.maxIndex));
-    commitIndexes();
     event.preventDefault();
     event.stopPropagation();
   };
 
   const handleVisualZoomKeyDown = (
     event: KeyboardEvent & { currentTarget: HTMLButtonElement },
-    handle: VisualRangeHandle,
-    chart: NonNullable<ReturnType<typeof data>>,
+    handle: 'start' | 'end',
   ) => {
-    const range = visibleBucketRange();
-    const current = handle === 'start' ? range.from : range.to;
-    const maxIndex = chart.buckets.length - 1;
-    const next = sliderIndexForKey(event.key, current, maxIndex, event.shiftKey ? 7 : 1);
-    if (next == null) {
+    if (
+      !dispatchControl({
+        type: 'keyboardMove',
+        axis: 'visual',
+        handle,
+        key: event.key,
+        shiftKey: event.shiftKey,
+      })
+    ) {
       return;
     }
-    setVisualZoomHandleIndex(chart, handle, clampNumber(next, 0, maxIndex));
     event.preventDefault();
     event.stopPropagation();
   };
 
   const rangeVars = (chart: NonNullable<ReturnType<typeof data>>) => {
-    const [from, to] = props.dateRange.selectedIndexes();
+    const [from, to] = controlState().selectionIndexes;
     const max = Math.max(1, chart.maxIndex);
     const startPct = (from / max) * 100;
     const endPct = 100 - (to / max) * 100;
@@ -1066,7 +912,7 @@ export const TimeRangeControl = (props: {
   };
 
   const selectedRangeDetails = (chart: NonNullable<ReturnType<typeof data>>) => {
-    const [from, to] = props.dateRange.selectedIndexes();
+    const [from, to] = controlState().selectionIndexes;
     const startDate = dateFromIndex(chart.minDay, from);
     const endDate = dateFromIndex(chart.minDay, to);
     return {
@@ -1131,8 +977,11 @@ export const TimeRangeControl = (props: {
                 items={DIMENSION_ITEMS}
                 label="Group"
                 onValueChange={(value) => {
-                  setDimension(toTimelineDimension(value));
-                  clearHover();
+                  dispatchControl({
+                    type: 'optionChanged',
+                    option: 'dimension',
+                    value: toTimelineDimension(value),
+                  });
                 }}
                 value={dimension()}
               />
@@ -1141,10 +990,28 @@ export const TimeRangeControl = (props: {
                 items={GRANULARITY_ITEMS}
                 label="Bucket"
                 onValueChange={(value) => {
-                  setGranularity(toGranularity(value));
-                  setVisualZoom(null);
-                  setShowGraphViewControls(false);
-                  clearHover();
+                  const nextGranularity = toGranularity(value);
+                  const domain = chartDomain();
+                  const nextTimeline =
+                    domain && props.focusedTimeline === undefined
+                      ? buildTimelineData(props.rows, {
+                          dimension: dimension(),
+                          domain,
+                          granularity: nextGranularity,
+                        })
+                      : null;
+                  dispatchControl(
+                    {
+                      type: 'optionChanged',
+                      option: 'granularity',
+                      selectionIndexesFromDates: props.dateRange.selectedIndexes(),
+                      value: nextGranularity,
+                    },
+                    {
+                      selectionMaxIndex: domain?.maxIndex ?? 0,
+                      visualBucketMaxIndex: Math.max(0, (nextTimeline?.buckets.length ?? 1) - 1),
+                    },
+                  );
                 }}
                 value={granularity()}
               />
@@ -1153,8 +1020,11 @@ export const TimeRangeControl = (props: {
                 items={VALUE_ITEMS}
                 label="Metric"
                 onValueChange={(value) => {
-                  setValueMode(toTimelineValue(value));
-                  clearHover();
+                  dispatchControl({
+                    type: 'optionChanged',
+                    option: 'value',
+                    value: toTimelineValue(value),
+                  });
                 }}
                 value={valueMode()}
               />
@@ -1180,8 +1050,12 @@ export const TimeRangeControl = (props: {
                         props.onDimensionFilter(dimension(), entry.key);
                       }
                     }}
-                    onMouseEnter={() => setHoveredKey(entry.key)}
-                    onMouseLeave={() => setHoveredKey(null)}
+                    onMouseEnter={() =>
+                      dispatchControl({ type: 'hoverChanged', bucketIndex: hoveredBucket(), key: entry.key })
+                    }
+                    onMouseLeave={() =>
+                      dispatchControl({ type: 'hoverChanged', bucketIndex: hoveredBucket(), key: null })
+                    }
                     title={legendTitle(entry)}
                     type="button"
                   >
@@ -1200,7 +1074,7 @@ export const TimeRangeControl = (props: {
               <div class={timeChartZoomControls}>
                 <button
                   class={timeChartZoomButton}
-                  onClick={() => setShowGraphViewControls((value) => !value)}
+                  onClick={() => dispatchControl({ type: 'viewControlsChanged', open: !showGraphViewControls() })}
                   title="Open graph view controls"
                   type="button"
                 >
@@ -1228,8 +1102,8 @@ export const TimeRangeControl = (props: {
                   </For>
                   <button
                     class={timeChartZoomButton}
-                    disabled={bucketRangeSize(visibleBucketRange()) <= MIN_VISIBLE_BUCKETS}
-                    onClick={() => zoomChartBy(chart(), 1 / CHART_ZOOM_FACTOR)}
+                    disabled={visualRangeSize(controlState(), controlContext()) <= MIN_VISIBLE_BUCKETS}
+                    onClick={() => zoomChartBy(1 / CHART_ZOOM_FACTOR)}
                     title="Zoom into the graph without changing the selected range"
                     type="button"
                   >
@@ -1238,7 +1112,7 @@ export const TimeRangeControl = (props: {
                   <button
                     class={timeChartZoomButton}
                     disabled={!isVisuallyZoomed()}
-                    onClick={() => zoomChartBy(chart(), CHART_ZOOM_FACTOR)}
+                    onClick={() => zoomChartBy(CHART_ZOOM_FACTOR)}
                     title="Zoom out without changing the selected range"
                     type="button"
                   >
@@ -1247,7 +1121,7 @@ export const TimeRangeControl = (props: {
                   <button
                     class={timeChartZoomButton}
                     disabled={!canMoveVisualZoomLater()}
-                    onClick={() => moveVisualZoomToLatest(chart())}
+                    onClick={moveVisualZoomToLatest}
                     title="Move the graph view to the latest data"
                     type="button"
                   >
@@ -1270,7 +1144,11 @@ export const TimeRangeControl = (props: {
                   >
                     Full history
                   </button>
-                  <button class={timeChartZoomButton} onClick={() => setShowGraphViewControls(false)} type="button">
+                  <button
+                    class={timeChartZoomButton}
+                    onClick={() => dispatchControl({ type: 'viewControlsChanged', open: false })}
+                    type="button"
+                  >
                     Done
                   </button>
                 </div>
@@ -1322,8 +1200,10 @@ export const TimeRangeControl = (props: {
                     onMouseLeave={clearHover}
                     onMouseMove={updateHover}
                     onPointerCancel={endVisualZoomDrag}
-                    onPointerDown={(event) => startVisualZoomDrag(event, bucketRangeSize(visibleBucketRange()))}
-                    onPointerMove={(event) => moveVisualZoomDrag(event, chart())}
+                    onPointerDown={(event) =>
+                      startVisualZoomDrag(event, visualRangeSize(controlState(), controlContext()))
+                    }
+                    onPointerMove={moveVisualZoomDrag}
                     onPointerUp={endVisualZoomDrag}
                     onWheel={(event) => handleChartWheel(event, chart())}
                     tabIndex={-1}
@@ -1374,7 +1254,7 @@ export const TimeRangeControl = (props: {
                       onLostPointerCapture={endVisualZoomDrag}
                       onPointerCancel={endVisualZoomDrag}
                       onPointerDown={(event) => startVisualZoomDrag(event, chart().buckets.length)}
-                      onPointerMove={(event) => moveVisualZoomDrag(event, chart())}
+                      onPointerMove={moveVisualZoomDrag}
                       onPointerUp={endVisualZoomDrag}
                       tabIndex={-1}
                       title="Drag graph view"
@@ -1382,16 +1262,16 @@ export const TimeRangeControl = (props: {
                     />
                     <button
                       aria-label="Graph view start"
-                      aria-valuemax={chart().buckets.length - 1}
+                      aria-valuemax={controlContext().visualBucketMaxIndex}
                       aria-valuemin={0}
                       aria-valuenow={visibleBucketRange().from}
                       aria-valuetext={fmtDateOnly(chart().buckets[visibleBucketRange().from]?.date ?? chart().minDay)}
                       class={timeSliderThumb}
-                      onKeyDown={(event) => handleVisualZoomKeyDown(event, 'start', chart())}
+                      onKeyDown={(event) => handleVisualZoomKeyDown(event, 'start')}
                       onLostPointerCapture={endVisualZoomHandleDrag}
                       onPointerCancel={endVisualZoomHandleDrag}
-                      onPointerDown={(event) => startVisualZoomHandleDrag(event, 'start', chart())}
-                      onPointerMove={(event) => moveVisualZoomHandleDrag(event, chart())}
+                      onPointerDown={(event) => startVisualZoomHandleDrag(event, 'start')}
+                      onPointerMove={moveVisualZoomHandleDrag}
                       onPointerUp={endVisualZoomHandleDrag}
                       role="slider"
                       style={{ left: 'var(--slider-range-start)' }}
@@ -1399,16 +1279,16 @@ export const TimeRangeControl = (props: {
                     />
                     <button
                       aria-label="Graph view end"
-                      aria-valuemax={chart().buckets.length - 1}
+                      aria-valuemax={controlContext().visualBucketMaxIndex}
                       aria-valuemin={0}
                       aria-valuenow={visibleBucketRange().to}
                       aria-valuetext={fmtDateOnly(chart().buckets[visibleBucketRange().to]?.date ?? chart().maxDay)}
                       class={timeSliderThumb}
-                      onKeyDown={(event) => handleVisualZoomKeyDown(event, 'end', chart())}
+                      onKeyDown={(event) => handleVisualZoomKeyDown(event, 'end')}
                       onLostPointerCapture={endVisualZoomHandleDrag}
                       onPointerCancel={endVisualZoomHandleDrag}
-                      onPointerDown={(event) => startVisualZoomHandleDrag(event, 'end', chart())}
-                      onPointerMove={(event) => moveVisualZoomHandleDrag(event, chart())}
+                      onPointerDown={(event) => startVisualZoomHandleDrag(event, 'end')}
+                      onPointerMove={moveVisualZoomHandleDrag}
                       onPointerUp={endVisualZoomHandleDrag}
                       role="slider"
                       style={{ left: 'calc(100% - var(--slider-range-end))' }}
@@ -1447,7 +1327,7 @@ export const TimeRangeControl = (props: {
                     data-dragging={String(draggingSelection())}
                     onLostPointerCapture={endSelectionDrag}
                     onPointerCancel={endSelectionDrag}
-                    onPointerDown={(event) => startSelectionDrag(event, chart())}
+                    onPointerDown={startSelectionDrag}
                     onPointerMove={moveSelectionDrag}
                     onPointerUp={endSelectionDrag}
                     tabIndex={-1}
@@ -1456,15 +1336,15 @@ export const TimeRangeControl = (props: {
                   />
                   <button
                     aria-label="Start date"
-                    aria-valuemax={chart().maxIndex}
+                    aria-valuemax={controlContext().selectionMaxIndex}
                     aria-valuemin={0}
-                    aria-valuenow={props.dateRange.selectedIndexes()[0]}
-                    aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, props.dateRange.selectedIndexes()[0]))}
+                    aria-valuenow={controlState().selectionIndexes[0]}
+                    aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, controlState().selectionIndexes[0]))}
                     class={timeSliderThumb}
                     onKeyDown={(event) => handleSliderKeyDown(event, 'start')}
                     onLostPointerCapture={endHandleDrag}
                     onPointerCancel={endHandleDrag}
-                    onPointerDown={(event) => startHandleDrag(event, 'start', chart())}
+                    onPointerDown={(event) => startHandleDrag(event, 'start')}
                     onPointerMove={moveHandleDrag}
                     onPointerUp={endHandleDrag}
                     role="slider"
@@ -1473,15 +1353,15 @@ export const TimeRangeControl = (props: {
                   />
                   <button
                     aria-label="End date"
-                    aria-valuemax={chart().maxIndex}
+                    aria-valuemax={controlContext().selectionMaxIndex}
                     aria-valuemin={0}
-                    aria-valuenow={props.dateRange.selectedIndexes()[1]}
-                    aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, props.dateRange.selectedIndexes()[1]))}
+                    aria-valuenow={controlState().selectionIndexes[1]}
+                    aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, controlState().selectionIndexes[1]))}
                     class={timeSliderThumb}
                     onKeyDown={(event) => handleSliderKeyDown(event, 'end')}
                     onLostPointerCapture={endHandleDrag}
                     onPointerCancel={endHandleDrag}
-                    onPointerDown={(event) => startHandleDrag(event, 'end', chart())}
+                    onPointerDown={(event) => startHandleDrag(event, 'end')}
                     onPointerMove={moveHandleDrag}
                     onPointerUp={endHandleDrag}
                     role="slider"
