@@ -1,4 +1,6 @@
+import { createHash } from 'node:crypto';
 import { lstat, mkdir } from 'node:fs/promises';
+import path from 'node:path';
 import { parseSkillConfigInput } from './config';
 import type {
   CreateSkillTargetDirectoryInput,
@@ -20,6 +22,7 @@ import type {
   WriteSkillManagementConfigInput,
 } from './contracts';
 import { isMissingPathError } from './diagnostics';
+import { withSerializedFileMutation } from './filesystem';
 import {
   applyProjectionAction,
   buildDefaultSkillTargets,
@@ -236,6 +239,47 @@ export const previewReconcileAllActiveSkills = async (
 };
 
 export const createSkillTargetDirectory = async (input: CreateSkillTargetDirectoryInput): Promise<void> => {
-  const targetPath = parseRequiredNonEmptyString(input.path, 'target path');
-  await mkdir(targetPath, { recursive: true });
+  const targetPath = path.resolve(parseRequiredNonEmptyString(input.path, 'target path'));
+  let existingParent = targetPath;
+  while (true) {
+    try {
+      const parentStat = await lstat(existingParent);
+      if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) {
+        throw new Error(`Skill target ancestor must be a non-symlink directory: ${existingParent}`);
+      }
+      break;
+    } catch (error) {
+      if (!isMissingPathError(error)) {
+        throw error;
+      }
+      const parent = path.dirname(existingParent);
+      if (parent === existingParent) {
+        throw new Error('Skill target has no observable directory ancestor');
+      }
+      existingParent = parent;
+    }
+  }
+
+  const lockKey = path.join(
+    existingParent,
+    `.ai-usage-target-${createHash('sha256').update(targetPath).digest('hex')}`,
+  );
+  await withSerializedFileMutation(lockKey, async () => {
+    let current = existingParent;
+    const missingComponents = path.relative(existingParent, targetPath).split(path.sep).filter(Boolean);
+    for (const component of missingComponents) {
+      current = path.join(current, component);
+      try {
+        await mkdir(current);
+      } catch (error) {
+        if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST')) {
+          throw error;
+        }
+      }
+      const currentStat = await lstat(current);
+      if (currentStat.isSymbolicLink() || !currentStat.isDirectory()) {
+        throw new Error(`Skill target component must be a non-symlink directory: ${current}`);
+      }
+    }
+  });
 };

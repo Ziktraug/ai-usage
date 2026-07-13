@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { link, lstat, mkdir, readdir, readlink, rename, stat, symlink, unlink } from 'node:fs/promises';
+import { link, lstat, readdir, readlink, realpath, rename, stat, symlink, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type {
   Projection,
   ProjectionAction,
   ProjectionState,
+  ProjectionTargetIdentity,
   SkillDiagnostic,
   SkillTarget,
   SourceSkill,
@@ -13,6 +14,7 @@ import type {
   TargetProjectionScanInput,
 } from './contracts';
 import { createDiagnostic, isMissingPathError } from './diagnostics';
+import { withSerializedFileMutation } from './filesystem';
 
 export const buildDefaultSkillTargets = (homePath: string): readonly SkillTarget[] => [
   {
@@ -85,6 +87,7 @@ const projectionFor = (
   options: {
     actualPath?: string;
     diagnostics?: readonly SkillDiagnostic[];
+    targetIdentity?: ProjectionTargetIdentity;
   } = {},
 ): Projection => {
   const projection: Projection = {
@@ -97,11 +100,19 @@ const projectionFor = (
   if (options.actualPath !== undefined) {
     projection.actualPath = options.actualPath;
   }
+  if (options.targetIdentity !== undefined) {
+    projection.targetIdentity = options.targetIdentity;
+  }
   return projection;
 };
 
-const classifyProjectedSkill = async (skill: SourceSkill, target: SkillTarget): Promise<Projection> => {
+const classifyProjectedSkill = async (
+  skill: SourceSkill,
+  target: SkillTarget,
+  targetIdentity?: ProjectionTargetIdentity,
+): Promise<Projection> => {
   const expectedPath = path.join(target.path, skill.name);
+  const identityOptions = targetIdentity === undefined ? {} : { targetIdentity };
   if (target.missing) {
     return projectionFor(skill.name, target.id, expectedPath, 'missing-target', {
       diagnostics: [
@@ -119,7 +130,7 @@ const classifyProjectedSkill = async (skill: SourceSkill, target: SkillTarget): 
     entryStat = await lstat(expectedPath);
   } catch (error) {
     if (isMissingPathError(error)) {
-      return projectionFor(skill.name, target.id, expectedPath, 'missing');
+      return projectionFor(skill.name, target.id, expectedPath, 'missing', identityOptions);
     }
     return projectionFor(skill.name, target.id, expectedPath, 'missing-target', {
       diagnostics: [
@@ -138,18 +149,20 @@ const classifyProjectedSkill = async (skill: SourceSkill, target: SkillTarget): 
     try {
       await stat(actualPath);
     } catch {
-      return projectionFor(skill.name, target.id, expectedPath, 'broken-link', { actualPath });
+      return projectionFor(skill.name, target.id, expectedPath, 'broken-link', { actualPath, ...identityOptions });
     }
     if (path.resolve(skill.path) === actualPath) {
       return projectionFor(skill.name, target.id, expectedPath, skill.enabled ? 'linked' : 'disabled-exposed', {
         actualPath,
+        ...identityOptions,
       });
     }
-    return projectionFor(skill.name, target.id, expectedPath, 'wrong-target', { actualPath });
+    return projectionFor(skill.name, target.id, expectedPath, 'wrong-target', { actualPath, ...identityOptions });
   }
 
   return projectionFor(skill.name, target.id, expectedPath, skill.enabled ? 'unmanaged-copy' : 'disabled-exposed', {
     actualPath: expectedPath,
+    ...identityOptions,
   });
 };
 
@@ -194,9 +207,17 @@ export const scanTargetProjections = async (input: TargetProjectionScanInput): P
 
   for (const target of input.targets) {
     let targetMissing = target.missing;
+    let targetIdentity: ProjectionTargetIdentity | undefined;
     try {
       const targetStat = await lstat(target.path);
       targetMissing = !targetStat.isDirectory();
+      if (!(targetMissing || targetStat.isSymbolicLink())) {
+        targetIdentity = {
+          canonicalPath: await realpath(target.path),
+          dev: String(targetStat.dev),
+          ino: String(targetStat.ino),
+        };
+      }
     } catch (error) {
       if (isMissingPathError(error)) {
         targetMissing = true;
@@ -212,7 +233,7 @@ export const scanTargetProjections = async (input: TargetProjectionScanInput): P
     }
     const observedTarget: SkillTarget = { ...target, missing: targetMissing, observed: !targetMissing };
     for (const skill of input.skills) {
-      projections.push(await classifyProjectedSkill(skill, observedTarget));
+      projections.push(await classifyProjectedSkill(skill, observedTarget, targetIdentity));
     }
     if (!targetMissing) {
       unmanagedEntries.push(...(await scanUnmanagedTargetEntries(observedTarget, managedSkillNames)));
@@ -246,12 +267,16 @@ export const planProjection = (
       projection.state === 'linked' ||
       (projection.state === 'disabled-exposed' && projection.actualPath === skill.path)
     ) {
+      if (projection.targetIdentity === undefined) {
+        throw new Error('Cannot unlink a projection without an observed target identity');
+      }
       return {
         observedSourcePath: projection.actualPath ?? skill.path,
         path: projection.expectedPath,
         skillName: skill.name,
         sourcePath: skill.path,
         targetId: target.id,
+        targetIdentity: projection.targetIdentity,
         type: 'unlink-managed-symlink',
       };
     }
@@ -296,11 +321,15 @@ export const planProjection = (
   }
 
   if (projection.state === 'missing') {
+    if (projection.targetIdentity === undefined) {
+      throw new Error('Cannot plan a projection without an observed target identity');
+    }
     return {
       path: projection.expectedPath,
       skillName: skill.name,
       sourcePath: skill.path,
       targetId: target.id,
+      targetIdentity: projection.targetIdentity,
       type: 'create-symlink',
     };
   }
@@ -315,12 +344,16 @@ export const planProjection = (
         type: 'refuse-unmanaged-mutation',
       };
     }
+    if (projection.targetIdentity === undefined) {
+      throw new Error('Cannot repair a projection without an observed target identity');
+    }
     return {
       observedSourcePath: projection.actualPath,
       path: projection.expectedPath,
       skillName: skill.name,
       sourcePath: skill.path,
       targetId: target.id,
+      targetIdentity: projection.targetIdentity,
       type: 'repair-symlink',
     };
   }
@@ -399,35 +432,54 @@ const claimObservedProjection = async (projectedPath: string, observedSourcePath
 };
 
 export const applyProjectionAction = async (action: ProjectionAction): Promise<void> => {
-  if (action.type === 'noop' || action.type === 'refuse-unmanaged-mutation') {
+  if (
+    action.type !== 'create-symlink' &&
+    action.type !== 'repair-symlink' &&
+    action.type !== 'unlink-managed-symlink'
+  ) {
     return;
   }
-
-  if (action.type === 'create-symlink') {
-    await mkdir(path.dirname(action.path), { recursive: true });
-    await symlink(action.sourcePath, action.path);
-    return;
+  const mutableAction = action;
+  const targetIdentity = mutableAction.targetIdentity;
+  if (targetIdentity === undefined) {
+    throw new Error('Refusing to mutate a projection without an observed target identity');
   }
 
-  if (action.type === 'repair-symlink') {
-    const claimedPath = await claimObservedProjection(action.path, action.observedSourcePath);
-    try {
-      await symlink(action.sourcePath, action.path);
-    } catch (error) {
-      await restoreClaimedProjection(claimedPath, action.path);
-      throw error;
+  const targetPath = path.dirname(mutableAction.path);
+  await withSerializedFileMutation(targetPath, async () => {
+    const targetStat = await lstat(targetPath);
+    if (
+      targetStat.isSymbolicLink() ||
+      !targetStat.isDirectory() ||
+      String(targetStat.dev) !== targetIdentity.dev ||
+      String(targetStat.ino) !== targetIdentity.ino ||
+      (await realpath(targetPath)) !== targetIdentity.canonicalPath
+    ) {
+      throw new Error('Refusing to mutate a projection whose target identity changed after planning');
     }
-    await unlink(claimedPath);
-    return;
-  }
 
-  if (action.type === 'unlink-managed-symlink') {
-    const claimedPath = await claimObservedProjection(action.path, action.observedSourcePath);
+    if (mutableAction.type === 'create-symlink') {
+      await symlink(mutableAction.sourcePath, mutableAction.path);
+      return;
+    }
+
+    const claimedPath = await claimObservedProjection(mutableAction.path, mutableAction.observedSourcePath);
+    if (mutableAction.type === 'repair-symlink') {
+      try {
+        await symlink(mutableAction.sourcePath, mutableAction.path);
+      } catch (error) {
+        await restoreClaimedProjection(claimedPath, mutableAction.path);
+        throw error;
+      }
+      await unlink(claimedPath);
+      return;
+    }
+
     try {
       await unlink(claimedPath);
     } catch (error) {
-      await restoreClaimedProjection(claimedPath, action.path);
+      await restoreClaimedProjection(claimedPath, mutableAction.path);
       throw error;
     }
-  }
+  });
 };

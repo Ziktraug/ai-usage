@@ -17,7 +17,6 @@ import {
   localProjectRootExists,
   projectSkillMarkdownInputFrom,
   projectSkillScanPathsFrom,
-  readBoundedProjectSkillMarkdownFile,
   readProjectSkillMarkdownForServer,
   skillConfigInputFrom,
   skillManagementSnapshotForClient,
@@ -39,49 +38,6 @@ test('client skill snapshots omit markdown bodies without mutating the domain sn
   expect(clientSnapshot.skills.map((skill) => skill.manifest.markdown)).toEqual(['', '']);
   expect(clientSnapshot.skills.map((skill) => skill.manifest.name)).toEqual(['alpha-skill', 'beta-skill']);
   expect(result.data.skills.map((skill) => skill.manifest.markdown)).toEqual(['# alpha-skill\n', '# beta-skill\n']);
-});
-
-test('bounded project markdown reads consume short reads through one regular-file handle', async () => {
-  const content = Buffer.from('abcdefgh');
-  let closed = false;
-  const result = await readBoundedProjectSkillMarkdownFile('/project/SKILL.md', 6, {
-    openFile: () =>
-      Promise.resolve({
-        close: () => {
-          closed = true;
-          return Promise.resolve();
-        },
-        read: (buffer, offset, length, position) => {
-          const bytesRead = Math.min(2, length, content.length - position);
-          if (bytesRead > 0) {
-            content.copy(buffer, offset, position, position + bytesRead);
-          }
-          return Promise.resolve({ buffer, bytesRead });
-        },
-        stat: () => Promise.resolve({ isFile: () => true, size: content.length }),
-      }),
-  });
-
-  expect(result).toEqual({ content: 'abcdef', truncated: true });
-  expect(closed).toBe(true);
-});
-
-test('bounded project markdown reads reject non-regular file handles', async () => {
-  let closed = false;
-  await expect(
-    readBoundedProjectSkillMarkdownFile('/project/SKILL.md', 6, {
-      openFile: () =>
-        Promise.resolve({
-          close: () => {
-            closed = true;
-            return Promise.resolve();
-          },
-          read: (buffer) => Promise.resolve({ buffer, bytesRead: 0 }),
-          stat: () => Promise.resolve({ isFile: () => false, size: 0 }),
-        }),
-    }),
-  ).rejects.toThrow('regular file');
-  expect(closed).toBe(true);
 });
 
 const writeProjectSkill = async (directory: string, name: string, content = `# ${name}\n`) => {
