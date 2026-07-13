@@ -28,6 +28,8 @@ test('separates the report range from optional chart controls', async ({ page })
   await expect(dateRange.getByRole('button', { exact: true, name: 'Today' })).toBeVisible();
   await expect(dateRange.getByRole('button', { exact: true, name: '7d' })).toBeVisible();
   await expect(dateRange.getByRole('button', { exact: true, name: '30d' })).toBeVisible();
+  await expect(dateRange.getByRole('textbox', { name: 'Start date' })).toHaveValue('2026-05-12');
+  await expect(dateRange.getByRole('textbox', { name: 'End date' })).toHaveValue('2026-06-11');
   await expect(dateRange.getByText(CHART_VIEW_PATTERN)).toBeVisible();
 
   const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
@@ -52,8 +54,10 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   const startHandle = dateRange.getByRole('slider', { name: 'Start date' });
   const selectedRange = dateRange.getByRole('button', { name: 'Drag selected date range' });
 
-  await dateRange.getByRole('button', { exact: true, name: '30d' }).click();
+  await dateRange.getByRole('button', { exact: true, name: 'All' }).click();
   await expect.poll(() => reportRangeValue(page)).not.toBeNull();
+  await dateRange.getByRole('button', { exact: true, name: '30d' }).click();
+  await expect.poll(() => reportRangeValue(page)).toBeNull();
   await expect(startInput).toHaveValue('2026-05-12');
   await expect(endInput).toHaveValue('2026-06-11');
 
@@ -93,8 +97,6 @@ test('keeps keyboard, wheel, pan, resize, and cancellation changes visual-only',
   await page.goto('/');
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
-  await dateRange.getByRole('button', { exact: true, name: '30d' }).click();
-  await expect.poll(() => reportRangeValue(page)).not.toBeNull();
   const reportUrl = page.url();
 
   await dateRange.getByRole('button', { name: 'Adjust view' }).click();
@@ -169,10 +171,10 @@ test('clamps visual and report ranges after granularity and domain changes', asy
 
   const reportStart = dateRange.getByRole('slider', { name: 'Start date' });
   const reportEnd = dateRange.getByRole('slider', { name: 'End date' });
-  await expect(reportStart).toHaveAttribute('aria-valuemax', '0');
+  await expect(reportStart).toHaveAttribute('aria-valuemax', '30');
   await expect(reportStart).toHaveAttribute('aria-valuenow', '0');
-  await expect(reportEnd).toHaveAttribute('aria-valuenow', '0');
-  await expect(graphStart).toHaveAttribute('aria-valuemax', '0');
-  await expect(graphStart).toHaveAttribute('aria-valuenow', '0');
-  await expect(graphEnd).toHaveAttribute('aria-valuenow', '0');
+  await expect(reportEnd).toHaveAttribute('aria-valuenow', '30');
+  await expect(graphStart).toHaveAttribute('aria-valuemax', '30');
+  await expect(graphStart).toHaveAttribute('aria-valuenow', '30');
+  await expect(graphEnd).toHaveAttribute('aria-valuenow', '30');
 });

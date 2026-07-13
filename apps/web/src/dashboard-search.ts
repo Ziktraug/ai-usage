@@ -65,6 +65,7 @@ export interface DashboardDateRangeSearch {
 }
 
 export type DashboardCampaignMode = 'on' | 'off';
+export const defaultDashboardDateRangeMode = '30d' as const;
 
 export interface DashboardSearch {
   campaigns: DashboardCampaignMode;
@@ -84,7 +85,7 @@ export const hasActiveDashboardFilters = (search: DashboardSearch): boolean =>
   search.harness.length > 0 ||
   search.machine.length > 0 ||
   Object.keys(search.filters).length > 0 ||
-  search.range.mode !== 'all';
+  search.range.mode !== defaultDashboardDateRangeMode;
 
 const dateRangeModes: DateRangeMode[] = ['all', 'today', '7d', '30d', 'custom'];
 const dateRangeModeSet = new Set<string>(dateRangeModes);
@@ -135,7 +136,7 @@ export const dashboardSearchDefaultsFor = (sort: ReportSort): DashboardSearch =>
   harness: [],
   machine: [],
   q: '',
-  range: { mode: 'all' },
+  range: { mode: defaultDashboardDateRangeMode },
   sort: defaultDashboardSortFor(sort),
   tab: 'overview',
 });

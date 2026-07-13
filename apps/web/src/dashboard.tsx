@@ -77,6 +77,7 @@ import {
   breakdownTabFor,
   type DashboardSearch,
   dashboardSearchDefaultsFor,
+  defaultDashboardDateRangeMode,
   type FieldFilterKey,
   type FieldFilters,
   hasActiveDashboardFilters,
@@ -1168,7 +1169,7 @@ export const Dashboard = (props: {
       return next;
     });
   const clearFilters = () => {
-    dateRange.clear();
+    dateRange.setRange(defaultDashboardDateRangeMode);
     setTableDateBounds(dateRange.bounds());
     updateSearch((current) => ({
       ...current,
@@ -1176,7 +1177,7 @@ export const Dashboard = (props: {
       harness: [],
       machine: [],
       q: '',
-      range: { mode: 'all' },
+      range: { mode: defaultDashboardDateRangeMode },
     }));
   };
   const handleSortingChange: OnChangeFn<SortingState> = (updater) =>
