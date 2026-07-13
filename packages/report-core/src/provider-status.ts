@@ -1,5 +1,28 @@
 import { isRecord } from './datasets';
 
+const CODEX_PROVIDER_PATTERN = /codex/i;
+const CLAUDE_PROVIDER_PATTERN = /claude/i;
+const CURSOR_PROVIDER_PATTERN = /cursor/i;
+const OPENCODE_PROVIDER_PATTERN = /opencode/i;
+const RTK_PROVIDER_PATTERN = /rtk/i;
+const GEMINI_PROVIDER_PATTERN = /gemini/i;
+const PROVIDER_KEY_PATTERNS: { key: string; pattern: RegExp }[] = [
+  { key: 'codex', pattern: CODEX_PROVIDER_PATTERN },
+  { key: 'claude', pattern: CLAUDE_PROVIDER_PATTERN },
+  { key: 'cursor', pattern: CURSOR_PROVIDER_PATTERN },
+  { key: 'opencode', pattern: OPENCODE_PROVIDER_PATTERN },
+  { key: 'rtk', pattern: RTK_PROVIDER_PATTERN },
+  { key: 'gemini', pattern: GEMINI_PROVIDER_PATTERN },
+];
+
+export const providerStatusKeyForUsage = (harness: string, provider: string): string => {
+  const text = `${harness} ${provider}`;
+  return PROVIDER_KEY_PATTERNS.find(({ pattern }) => pattern.test(text))?.key ?? text.toLowerCase().trim();
+};
+
+export const providerStatusScopeKey = (providerKey: string, machineId?: string): string =>
+  `${providerKey.split(':')[0] ?? providerKey}|${machineId ?? ''}`;
+
 export type ProviderStatusState = 'ok' | 'partial' | 'auth-required' | 'unsupported' | 'stale' | 'error';
 
 export type ProviderLimitWindowScope = 'global' | 'model' | 'provider' | 'unknown';
@@ -437,11 +460,44 @@ const isOptionalNonEmptyString = (value: unknown): value is string | undefined =
 const isOptionalNonEmptyStringArray = (value: unknown): value is string[] | undefined =>
   value === undefined || (Array.isArray(value) && value.every(isNonEmptyString));
 
+const PROVIDER_STATUS_DATASET_KEYS = new Set(['generatedAt', 'providers', 'schemaVersion']);
+const PROVIDER_STATUS_KEYS = new Set([
+  'accountLabel',
+  'creditsBalance',
+  'generatedAt',
+  'key',
+  'label',
+  'machineId',
+  'machineLabel',
+  'plan',
+  'resetCredits',
+  'resetCreditsAvailable',
+  'source',
+  'state',
+  'warnings',
+  'windows',
+]);
+const PROVIDER_RESET_CREDIT_KEYS = new Set(['daysLeft', 'expiresAt', 'grantedAt', 'status', 'title']);
+const PROVIDER_LIMIT_WINDOW_KEYS = new Set([
+  'blocked',
+  'group',
+  'id',
+  'label',
+  'limitSeconds',
+  'remainingPercent',
+  'resetsAt',
+  'scope',
+  'usedPercent',
+]);
+const hasOnlyKeys = (value: Record<string, unknown>, keys: ReadonlySet<string>): boolean =>
+  Object.keys(value).every((key) => keys.has(key));
+
 const isProviderResetCredit = (value: unknown): value is ProviderResetCredit => {
   if (!isRecord(value)) {
     return false;
   }
   return (
+    hasOnlyKeys(value, PROVIDER_RESET_CREDIT_KEYS) &&
     typeof value.title === 'string' &&
     typeof value.status === 'string' &&
     isNullableTimestamp(value.grantedAt) &&
@@ -455,6 +511,7 @@ const isProviderLimitWindow = (value: unknown): value is ProviderLimitWindow => 
     return false;
   }
   return (
+    hasOnlyKeys(value, PROVIDER_LIMIT_WINDOW_KEYS) &&
     isNonEmptyString(value.id) &&
     isNonEmptyString(value.label) &&
     typeof value.blocked === 'boolean' &&
@@ -472,6 +529,7 @@ export const isProviderStatusDataset = (value: unknown): value is ProviderStatus
     return false;
   }
   return (
+    hasOnlyKeys(value, PROVIDER_STATUS_DATASET_KEYS) &&
     value.schemaVersion === PROVIDER_STATUS_SCHEMA_VERSION &&
     isValidTimestamp(value.generatedAt) &&
     Array.isArray(value.providers) &&
@@ -480,6 +538,7 @@ export const isProviderStatusDataset = (value: unknown): value is ProviderStatus
         return false;
       }
       return (
+        hasOnlyKeys(provider, PROVIDER_STATUS_KEYS) &&
         isNonEmptyString(provider.key) &&
         isNonEmptyString(provider.label) &&
         isValidTimestamp(provider.generatedAt) &&

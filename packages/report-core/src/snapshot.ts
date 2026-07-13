@@ -1,11 +1,36 @@
 import os from 'node:os';
-import { parseReportDatasets, type ReportDatasets } from './datasets';
+import { isCursorCommitAttributionRow, parseReportDatasets, type ReportDatasets } from './datasets';
 import { mergeProviderStatusDatasets, type ProviderStatusDataset, parseProviderStatusDataset } from './provider-status';
 import { type SerializedUsageRow, serializeUsageRow, type UsageReportWarning } from './report-data';
+import {
+  hasOnlyKeys,
+  isJsonSafeObject,
+  isRecord,
+  isSerializedUsageRowWithSource,
+  isStrictIsoTimestamp,
+  isUsageMachine,
+  isUsageReportWarnings,
+} from './serialized-usage-validation';
 import type { CollectedUsageRow, UsageRow, UsageRowSource, UsageRowWithOptionalSource } from './types';
 import { usageRowActiveDate, usageRowTokenTotal } from './usage-row';
 
 export const USAGE_SNAPSHOT_SCHEMA_VERSION = 1 as const;
+// Manual merge is measured and supported through 50,000 rows. Keeping the file
+// format at that same boundary bounds validation work without truncating history.
+export const MAX_USAGE_SNAPSHOT_ROWS = 50_000;
+
+const SNAPSHOT_KEYS = new Set([
+  'datasets',
+  'facets',
+  'generatedAt',
+  'machine',
+  'rows',
+  'schemaVersion',
+  'snapshotId',
+  'source',
+  'warnings',
+]);
+const SNAPSHOT_SOURCE_KEYS = new Set(['appVersion', 'hostname', 'platform']);
 
 export interface UsageMachine {
   id: string;
@@ -106,83 +131,92 @@ const toSnapshotRow = (row: UsageRowWithOptionalSource, machine: UsageMachine): 
 
 export const parseUsageSnapshot = (text: string): UsageSnapshot => {
   const value = JSON.parse(text) as unknown;
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error('Snapshot must be an object');
   }
-  const record = value as Record<string, unknown>;
-  if (record.schemaVersion !== USAGE_SNAPSHOT_SCHEMA_VERSION) {
+  if (!hasOnlyKeys(value, SNAPSHOT_KEYS)) {
+    throw new Error('Snapshot contains unknown fields');
+  }
+  if (value.schemaVersion !== USAGE_SNAPSHOT_SCHEMA_VERSION) {
     throw new Error('Unsupported snapshot schemaVersion');
   }
-  if (typeof record.snapshotId !== 'string') {
+  if (typeof value.snapshotId !== 'string' || value.snapshotId.length === 0) {
     throw new Error('Snapshot missing snapshotId');
   }
-  if (typeof record.generatedAt !== 'string') {
-    throw new Error('Snapshot missing generatedAt');
+  if (!isStrictIsoTimestamp(value.generatedAt)) {
+    throw new Error('Snapshot contains an invalid generatedAt');
   }
-  if (!isMachine(record.machine)) {
+  if (!isUsageMachine(value.machine)) {
     throw new Error('Snapshot missing machine');
   }
-  if (!Array.isArray(record.rows)) {
+  if (!isUsageSnapshotSource(value.source)) {
+    throw new Error('Snapshot contains an invalid source');
+  }
+  if (!Array.isArray(value.rows)) {
     throw new Error('Snapshot missing rows');
   }
-  for (const row of record.rows) {
-    if (!isSnapshotRow(row)) {
-      throw new Error('Snapshot contains invalid row');
+  if (value.rows.length > MAX_USAGE_SNAPSHOT_ROWS) {
+    throw new Error(`Snapshot contains too many rows; maximum is ${MAX_USAGE_SNAPSHOT_ROWS}`);
+  }
+  if (!value.rows.every(isSnapshotRow)) {
+    throw new Error('Snapshot contains invalid row');
+  }
+  for (const row of value.rows) {
+    if (row.source.machineId !== value.machine.id) {
+      throw new Error('Snapshot row machineId does not match snapshot machine');
+    }
+    if (row.source.machineLabel !== value.machine.label) {
+      throw new Error('Snapshot row machineLabel does not match snapshot machine');
     }
   }
-  if (record.warnings !== undefined && !isUsageReportWarnings(record.warnings)) {
+  if (value.warnings !== undefined && !isUsageReportWarnings(value.warnings)) {
     throw new Error('Snapshot contains invalid warnings');
   }
-  return value as UsageSnapshot;
+  if (value.datasets !== undefined && !isUsageSnapshotDatasets(value.datasets)) {
+    throw new Error('Snapshot contains invalid datasets');
+  }
+  if (value.facets !== undefined && !isJsonSafeObject(value.facets)) {
+    throw new Error('Snapshot contains invalid facets');
+  }
+  return {
+    schemaVersion: value.schemaVersion,
+    snapshotId: value.snapshotId,
+    generatedAt: value.generatedAt,
+    machine: value.machine,
+    source: value.source,
+    rows: value.rows,
+    ...(value.warnings === undefined ? {} : { warnings: value.warnings }),
+    ...(value.datasets === undefined ? {} : { datasets: value.datasets }),
+    ...(value.facets === undefined ? {} : { facets: value.facets }),
+  };
 };
 
-const isMachine = (value: unknown): value is UsageMachine => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+const isUsageSnapshotSource = (value: unknown): value is UsageSnapshotSource => {
+  if (!isRecord(value)) {
     return false;
   }
-  const record = value as Record<string, unknown>;
-  return typeof record.id === 'string' && typeof record.label === 'string';
-};
-
-const isSnapshotRow = (value: unknown): value is SnapshotUsageRow => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const record = value as Record<string, unknown>;
-  const source = record.source;
-  if (typeof record.harness !== 'string' || typeof record.provider !== 'string' || typeof record.name !== 'string') {
-    return false;
-  }
-  if (typeof source !== 'object' || source === null || Array.isArray(source)) {
-    return false;
-  }
-  const sourceRecord = source as Record<string, unknown>;
   return (
-    (sourceRecord.artifactPath === undefined ||
-      sourceRecord.artifactPath === null ||
-      typeof sourceRecord.artifactPath === 'string') &&
-    typeof sourceRecord.machineId === 'string' &&
-    typeof sourceRecord.machineLabel === 'string'
+    hasOnlyKeys(value, SNAPSHOT_SOURCE_KEYS) &&
+    (value.appVersion === null || (typeof value.appVersion === 'string' && value.appVersion.length > 0)) &&
+    (value.hostname === undefined || typeof value.hostname === 'string') &&
+    (value.platform === 'macos' || value.platform === 'linux' || value.platform === 'windows')
   );
 };
 
-const optionalString = (value: unknown) => value === undefined || typeof value === 'string';
+const isSnapshotRow = (value: unknown): value is SnapshotUsageRow => isSerializedUsageRowWithSource(value);
 
-const isUsageReportWarnings = (value: unknown): value is UsageReportWarning[] =>
-  Array.isArray(value) &&
-  value.every((warning) => {
-    if (typeof warning !== 'object' || warning === null || Array.isArray(warning)) {
-      return false;
-    }
-    const record = warning as Record<string, unknown>;
-    return (
-      typeof record.message === 'string' &&
-      optionalString(record.harness) &&
-      optionalString(record.operation) &&
-      optionalString(record.path) &&
-      optionalString(record.sql)
-    );
-  });
+const isUsageSnapshotDatasets = (value: unknown): value is ReportDatasets => {
+  if (!isJsonSafeObject(value)) {
+    return false;
+  }
+  if (
+    value.cursorCommitAttribution !== undefined &&
+    !(Array.isArray(value.cursorCommitAttribution) && value.cursorCommitAttribution.every(isCursorCommitAttributionRow))
+  ) {
+    return false;
+  }
+  return value.providerStatus === undefined || parseProviderStatusDataset(value.providerStatus) !== null;
+};
 
 export const mergeUsageSnapshots = (snapshots: UsageSnapshot[]): SnapshotMergeResult => {
   const byKey = new Map<string, { snapshot: UsageSnapshot; row: SnapshotUsageRow }>();

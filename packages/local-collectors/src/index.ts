@@ -7,4 +7,3 @@ export * from './facets';
 export * from './local-history';
 export * from './machine-config';
 export * from './platform-paths';
-export * from './sync-storage';

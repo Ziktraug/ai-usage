@@ -14,7 +14,6 @@ import {
   listProjectSourcesWithWarnings,
   type ProjectSource,
 } from '@ai-usage/report-data';
-import { fetchRemoteSnapshot, readSnapshotFile } from '@ai-usage/sync/transport';
 import { Console, Effect, Layer } from 'effect';
 import { type Args, helpText, parseCommand } from './cli';
 import { type AppError, CliArgumentError, formatAppError } from './errors';
@@ -23,9 +22,8 @@ import { setColor } from './render/colors';
 import { fmtNum, pad, trunc } from './render/format';
 import { renderUsagePayloadForCli, renderUsageReportForCli, renderWarnings, renderWarningsForStderr } from './report';
 import { CliRuntime, CliRuntimeLive } from './runtime';
-import { runServe } from './serve';
 import { runSetupServer } from './setup';
-import { runSyncCommand } from './sync';
+import { readUsageSnapshotFile } from './snapshot-file';
 
 const CURSOR_CSV_LINE_SEPARATOR = /\r?\n/;
 
@@ -74,10 +72,7 @@ export const app = Effect.gen(function* () {
     yield* Effect.sync(() => setColor(command.args.color === null ? runtime.stdoutIsTTY : command.args.color));
     const snapshots: UsageSnapshot[] = [];
     for (const file of command.args.files) {
-      snapshots.push(yield* readSnapshotFile(file));
-    }
-    for (const url of command.args.remote) {
-      snapshots.push(yield* fetchRemoteSnapshot(url, command.args.token));
+      snapshots.push(yield* readUsageSnapshotFile(file));
     }
     const merged = yield* createMergedUsageReport({
       snapshots,
@@ -96,15 +91,10 @@ export const app = Effect.gen(function* () {
     return;
   }
 
-  if (command._tag === 'Sync') {
-    yield* runSyncCommand(command.args);
-    return;
-  }
-
   if (command._tag === 'ProjectsList') {
     const snapshots: UsageSnapshot[] = [];
     for (const file of command.args.files) {
-      snapshots.push(yield* readSnapshotFile(file));
+      snapshots.push(yield* readUsageSnapshotFile(file));
     }
     const { sources, warnings } = yield* listProjectSourcesWithWarnings({
       snapshots,
@@ -129,11 +119,6 @@ export const app = Effect.gen(function* () {
 
   if (command._tag === 'Setup') {
     yield* runSetupServer(command.args.files, command.args.local, command.args.port);
-    return;
-  }
-
-  if (command._tag === 'Serve') {
-    yield* runServe(command.args);
     return;
   }
 

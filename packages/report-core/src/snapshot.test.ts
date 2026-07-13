@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createProviderStatusDataset } from './provider-status';
-import { createUsageSnapshot, mergeUsageSnapshots, parseUsageSnapshot } from './snapshot';
+import { createUsageSnapshot, MAX_USAGE_SNAPSHOT_ROWS, mergeUsageSnapshots, parseUsageSnapshot } from './snapshot';
 import type { Row, SourcedRow } from './types';
 
 const row = (name: string, sourceSessionId: string, overrides: Partial<Row> = {}): SourcedRow => ({
@@ -30,6 +30,16 @@ const row = (name: string, sourceSessionId: string, overrides: Partial<Row> = {}
 
 const machine = { id: 'machine-1', label: 'Machine 1' };
 
+const currentSnapshot = () =>
+  createUsageSnapshot({
+    appVersion: null,
+    generatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    machine,
+    rows: [row('a', 'session-1')],
+  });
+
+const parseSnapshot = (snapshot: unknown) => () => parseUsageSnapshot(JSON.stringify(snapshot));
+
 describe('usage snapshots', () => {
   test('serializes rows with machine provenance', () => {
     const snapshot = createUsageSnapshot({ machine, rows: [row('a', 'session-1')] });
@@ -41,6 +51,149 @@ describe('usage snapshots', () => {
       harnessKey: 'codex',
       sourceSessionId: 'session-1',
     });
+  });
+
+  test('round-trips snapshots emitted without an application version', () => {
+    const snapshot = currentSnapshot();
+
+    expect(parseUsageSnapshot(JSON.stringify(snapshot))).toEqual(snapshot);
+    expect(snapshot.source.appVersion).toBeNull();
+  });
+
+  test('rejects unknown top-level fields and malformed snapshot identity', () => {
+    const snapshot = currentSnapshot();
+    const invalidSnapshots = [
+      [{ ...snapshot, unexpected: true }, 'unknown fields'],
+      [{ ...snapshot, schemaVersion: 2 }, 'schemaVersion'],
+      [{ ...snapshot, snapshotId: '' }, 'snapshotId'],
+      [{ ...snapshot, generatedAt: '2026-01-01T00:00:00Z' }, 'generatedAt'],
+      [{ ...snapshot, machine: { ...snapshot.machine, id: '' } }, 'machine'],
+      [{ ...snapshot, machine: { ...snapshot.machine, extra: true } }, 'machine'],
+    ] as const;
+
+    for (const [invalidSnapshot, message] of invalidSnapshots) {
+      expect(parseSnapshot(invalidSnapshot)).toThrow(message);
+    }
+  });
+
+  test('validates source platform, hostname, and application version shapes', () => {
+    const snapshot = currentSnapshot();
+    const withSource = (source: unknown) => ({ ...snapshot, source });
+    const invalidSources = [
+      { ...snapshot.source, appVersion: '' },
+      { ...snapshot.source, appVersion: 1 },
+      { ...snapshot.source, hostname: 1 },
+      { ...snapshot.source, platform: 'freebsd' },
+      { ...snapshot.source, unexpected: true },
+      null,
+    ];
+
+    for (const source of invalidSources) {
+      expect(parseSnapshot(withSource(source))).toThrow('source');
+    }
+
+    expect(parseUsageSnapshot(JSON.stringify(withSource({ appVersion: '0.1.0', platform: 'linux' }))).source).toEqual({
+      appVersion: '0.1.0',
+      platform: 'linux',
+    });
+  });
+
+  test('rejects malformed metrics, timestamps, and derived row fields atomically', () => {
+    const snapshot = currentSnapshot();
+    const serialized = snapshot.rows[0]!;
+    const invalidRows = [
+      { ...serialized, date: 'not-a-date' },
+      { ...serialized, endDate: '2026-01-01T00:01:00Z' },
+      { ...serialized, tokIn: -1 },
+      { ...serialized, tokOut: Number.POSITIVE_INFINITY },
+      { ...serialized, calls: 1.5 },
+      { ...serialized, durationMs: -1 },
+      { ...serialized, costApprox: -0.01 },
+      { ...serialized, costActual: -0.01 },
+      { ...serialized, linesAdded: 0.5 },
+      { ...serialized, activeDate: serialized.date },
+      { ...serialized, freshTokens: serialized.freshTokens + 1 },
+      { ...serialized, lineDelta: 1 },
+      { ...serialized, sessionLabel: 'forged' },
+      { ...serialized, tokenTotal: serialized.tokenTotal + 1 },
+      { ...serialized, unexpected: true },
+    ];
+
+    for (const invalidRow of invalidRows) {
+      expect(parseSnapshot({ ...snapshot, rows: [invalidRow] })).toThrow('invalid row');
+    }
+    expect(() =>
+      parseUsageSnapshot(JSON.stringify(snapshot).replace('"costActual":0.1', '"costActual":1e400')),
+    ).toThrow('invalid row');
+  });
+
+  test('requires strict row source identity and matching machine provenance', () => {
+    const snapshot = currentSnapshot();
+    const serialized = snapshot.rows[0]!;
+    const source = serialized.source;
+    const invalidSources = [
+      { ...source, harnessKey: '' },
+      { ...source, sourceSessionId: 1 },
+      { ...source, sourceSessionId: undefined },
+      { ...source, machineId: 'forged-machine' },
+      { ...source, machineLabel: 'Forged machine' },
+      { ...source, unexpected: true },
+    ];
+
+    for (const invalidSource of invalidSources) {
+      expect(parseSnapshot({ ...snapshot, rows: [{ ...serialized, source: invalidSource }] })).toThrow('row');
+    }
+  });
+
+  test('validates warnings through the merge-bundle warning contract', () => {
+    const snapshot = currentSnapshot();
+    const validWarning = {
+      groupId: 'group-1',
+      groupName: 'Group 1',
+      harness: 'codex',
+      message: 'Grouping needs attention',
+      operation: 'groupProjects',
+      path: '/tmp/history.jsonl',
+      reason: 'partial-group' as const,
+      selectors: [{ machineId: 'machine-1', project: 'ai-usage' }],
+      sql: 'select 1',
+    };
+
+    expect(parseUsageSnapshot(JSON.stringify({ ...snapshot, warnings: [validWarning] })).warnings).toEqual([
+      validWarning,
+    ]);
+
+    const invalidWarnings = [
+      { ...validWarning, message: 1 },
+      { ...validWarning, reason: 'invented-reason' },
+      { ...validWarning, selectors: [{}] },
+      { ...validWarning, unexpected: true },
+    ];
+    for (const warning of invalidWarnings) {
+      expect(parseSnapshot({ ...snapshot, warnings: [warning] })).toThrow('warnings');
+    }
+  });
+
+  test('requires JSON-safe object facets', () => {
+    const snapshot = currentSnapshot();
+    const facets = { nested: { enabled: true, nullable: null }, values: ['a', 1] };
+
+    expect(parseUsageSnapshot(JSON.stringify({ ...snapshot, facets })).facets).toEqual(facets);
+    for (const invalidFacets of [null, [], 'facet']) {
+      expect(parseSnapshot({ ...snapshot, facets: invalidFacets })).toThrow('facets');
+    }
+    expect(() =>
+      parseUsageSnapshot(JSON.stringify(snapshot).replace('"rows"', '"facets":{"value":1e400},"rows"')),
+    ).toThrow('facets');
+  });
+
+  test('accepts the manual-merge row boundary and rejects any row beyond it', () => {
+    const snapshot = currentSnapshot();
+    const rows = Array.from({ length: MAX_USAGE_SNAPSHOT_ROWS }, () => snapshot.rows[0]);
+
+    expect(parseUsageSnapshot(JSON.stringify({ ...snapshot, rows })).rows).toHaveLength(MAX_USAGE_SNAPSHOT_ROWS);
+    rows.push(snapshot.rows[0]!);
+    expect(parseSnapshot({ ...snapshot, rows })).toThrow('too many rows');
   });
 
   test('preserves import artifact provenance separately from project paths', () => {
@@ -136,5 +289,68 @@ describe('usage snapshots', () => {
       machineId: 'machine-1',
       machineLabel: 'Machine 1',
     });
+  });
+
+  test('rejects malformed known datasets while retaining JSON-safe future datasets', () => {
+    const snapshot = currentSnapshot();
+    const cursorCommitAttribution = {
+      blankLinesAdded: 0,
+      blankLinesDeleted: 0,
+      branchName: 'main',
+      commitDate: '2026-01-01T00:00:00.000Z',
+      commitHash: 'abc123',
+      commitMessage: 'Implement snapshot validation',
+      composerLinesAdded: 1,
+      composerLinesDeleted: 0,
+      humanLinesAdded: 0,
+      humanLinesDeleted: 0,
+      linesAdded: 1,
+      linesDeleted: 0,
+      scoredAt: '2026-01-01T00:01:00.000Z',
+      tabLinesAdded: 0,
+      tabLinesDeleted: 0,
+      v1AiPercentage: 100,
+      v2AiPercentage: null,
+    };
+    const futureDataset = { schemaVersion: 2, payload: { values: [1, true, null] } };
+    const providerStatus = createProviderStatusDataset([
+      {
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        key: 'codex',
+        label: 'Codex',
+        source: 'local-history',
+        state: 'ok',
+        windows: [],
+      },
+    ]);
+
+    const datasets = { cursorCommitAttribution: [cursorCommitAttribution], futureDataset };
+    expect(parseUsageSnapshot(JSON.stringify({ ...snapshot, datasets })).datasets).toEqual(datasets);
+
+    const invalidDatasets = [
+      null,
+      [],
+      { cursorCommitAttribution: null },
+      { cursorCommitAttribution: [{ commitHash: 'missing-required-fields' }] },
+      { cursorCommitAttribution: [{ ...cursorCommitAttribution, linesAdded: -1 }] },
+      { cursorCommitAttribution: [{ ...cursorCommitAttribution, commitDate: 'not-a-timestamp' }] },
+      { cursorCommitAttribution: [{ ...cursorCommitAttribution, scoredAt: 'not-a-timestamp' }] },
+      { cursorCommitAttribution: [{ ...cursorCommitAttribution, v1AiPercentage: 101 }] },
+      { cursorCommitAttribution: [{ ...cursorCommitAttribution, unexpected: true }] },
+      { providerStatus: { generatedAt: snapshot.generatedAt, providers: [], schemaVersion: 2 } },
+      { providerStatus: { ...providerStatus, unexpected: true } },
+      {
+        providerStatus: {
+          ...providerStatus,
+          providers: [{ ...providerStatus.providers[0], unexpected: true }],
+        },
+      },
+    ];
+    for (const datasets of invalidDatasets) {
+      expect(parseSnapshot({ ...snapshot, datasets })).toThrow('datasets');
+    }
+    expect(() =>
+      parseUsageSnapshot(JSON.stringify(snapshot).replace('"rows"', '"datasets":{"future":1e400},"rows"')),
+    ).toThrow('datasets');
   });
 });

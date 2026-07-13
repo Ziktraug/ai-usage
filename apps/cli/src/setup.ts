@@ -1,16 +1,206 @@
 #!/usr/bin/env bun
-import fs from 'node:fs';
 import { LocalHistoryStorage, readAiUsageConfig, updateAiUsageConfig } from '@ai-usage/local-collectors';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
-import { parseUsageSnapshot, type UsageSnapshot } from '@ai-usage/report-core/snapshot';
+import type { UsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { listProjectSourcesWithWarnings, type ProjectSource } from '@ai-usage/report-data';
 import { Console, Effect } from 'effect';
+import { readUsageSnapshotFile } from './snapshot-file';
 
-const collectSetupSources = (snapshotFiles: string[], local: boolean) =>
+export const SETUP_SERVER_HOSTNAME = '127.0.0.1';
+export const MAX_SETUP_ALIAS_BODY_BYTES = 256 * 1024;
+export const MAX_SETUP_ALIASES = 500;
+export const MAX_SETUP_ALIAS_MATCHES = 500;
+const BYTE_COUNT_PATTERN = /^\d+$/;
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', '[::1]', 'localhost']);
+
+interface SetupServerOptions {
+  aliases: ProjectAliasEntry[];
+  maxAliasBodyBytes?: number;
+  port: number;
+  sources: ProjectSource[];
+  warnings: { harness?: string; message: string }[];
+  writeAliases: (aliases: ProjectAliasEntry[]) => Promise<unknown>;
+}
+
+export interface SetupServerHandle {
+  hostname: string;
+  port: number;
+  stop: (closeActiveConnections?: boolean) => Promise<void>;
+}
+
+const setupJsonFailure = (status: number, tag: string, message: string): Response =>
+  Response.json({ error: { tag, message } }, { status });
+
+const isTrustedSetupHost = (host: string): boolean => {
+  try {
+    const parsedHost = new URL(`http://${host}`);
+    return (
+      parsedHost.username === '' &&
+      parsedHost.password === '' &&
+      parsedHost.pathname === '/' &&
+      parsedHost.search === '' &&
+      parsedHost.hash === '' &&
+      LOOPBACK_HOSTNAMES.has(parsedHost.hostname)
+    );
+  } catch {
+    return false;
+  }
+};
+
+const validateSetupHost = (request: Request): Response | null => {
+  const host = request.headers.get('host')?.trim();
+  if (!host) {
+    return setupJsonFailure(400, 'MissingHost', 'Setup requests require a Host header.');
+  }
+  if (!isTrustedSetupHost(host)) {
+    return setupJsonFailure(403, 'UntrustedHost', 'Setup requests are only accepted on loopback.');
+  }
+  return null;
+};
+
+const validateSetupMutationOrigin = (request: Request): Response | null => {
+  const fetchSite = request.headers.get('sec-fetch-site')?.trim().toLowerCase();
+  if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') {
+    return setupJsonFailure(403, 'CrossOriginRequest', 'Setup changes are only accepted from this application.');
+  }
+
+  const origin = request.headers.get('origin')?.trim();
+  if (!origin) {
+    return setupJsonFailure(403, 'MissingOrigin', 'Setup changes require same-origin request metadata.');
+  }
+
+  const requestUrl = new URL(request.url);
+  const forwardedProtocol = request.headers.get('x-forwarded-proto')?.trim().toLowerCase();
+  if (forwardedProtocol && forwardedProtocol !== requestUrl.protocol.slice(0, -1)) {
+    return setupJsonFailure(403, 'UntrustedForwardedProtocol', 'Forwarded protocol metadata is not trusted.');
+  }
+
+  try {
+    const host = request.headers.get('host')?.trim() ?? '';
+    const parsedOrigin = new URL(origin);
+    const expectedOrigin = new URL(`${requestUrl.protocol}//${host}`).origin;
+    if (origin !== parsedOrigin.origin) {
+      return setupJsonFailure(400, 'InvalidOrigin', 'The request Origin header is invalid.');
+    }
+    if (parsedOrigin.origin !== expectedOrigin) {
+      return setupJsonFailure(403, 'CrossOriginRequest', 'Setup changes are only accepted from this application.');
+    }
+  } catch {
+    return setupJsonFailure(400, 'InvalidOrigin', 'The request Origin or Host header is invalid.');
+  }
+  return null;
+};
+
+const validateSetupJsonContentType = (request: Request): Response | null => {
+  const contentType = request.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+  return contentType === 'application/json'
+    ? null
+    : setupJsonFailure(415, 'UnsupportedMediaType', 'Alias updates require Content-Type: application/json.');
+};
+
+type SetupBodyResult = { text: string } | { response: Response };
+
+const readBoundedSetupBody = async (request: Request, maxBytes: number): Promise<SetupBodyResult> => {
+  const contentLength = request.headers.get('content-length');
+  if (contentLength !== null) {
+    if (!BYTE_COUNT_PATTERN.test(contentLength)) {
+      return { response: setupJsonFailure(400, 'InvalidContentLength', 'Content-Length must be a byte count.') };
+    }
+    if (Number(contentLength) > maxBytes) {
+      return {
+        response: setupJsonFailure(413, 'BodyTooLarge', `Alias updates must not exceed ${maxBytes} bytes.`),
+      };
+    }
+  }
+
+  if (!request.body) {
+    return { response: setupJsonFailure(400, 'EmptyBody', 'Alias updates require a JSON body.') };
+  }
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) {
+      break;
+    }
+    byteLength += chunk.value.byteLength;
+    if (byteLength > maxBytes) {
+      await reader.cancel();
+      return {
+        response: setupJsonFailure(413, 'BodyTooLarge', `Alias updates must not exceed ${maxBytes} bytes.`),
+      };
+    }
+    chunks.push(chunk.value);
+  }
+
+  if (byteLength === 0) {
+    return { response: setupJsonFailure(400, 'EmptyBody', 'Alias updates require a JSON body.') };
+  }
+
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes) };
+  } catch {
+    return { response: setupJsonFailure(400, 'InvalidEncoding', 'Alias updates must contain UTF-8 JSON.') };
+  }
+};
+
+type AliasParseResult = { aliases: ProjectAliasEntry[] } | { response: Response };
+
+const parseSetupAliases = (text: string): AliasParseResult => {
+  let value: unknown;
+  try {
+    value = JSON.parse(text) as unknown;
+  } catch {
+    return { response: setupJsonFailure(400, 'MalformedJson', 'The alias update is not valid JSON.') };
+  }
+  if (!Array.isArray(value)) {
+    return { response: setupJsonFailure(422, 'InvalidAliases', 'Aliases must be a JSON array.') };
+  }
+  if (value.length > MAX_SETUP_ALIASES) {
+    return {
+      response: setupJsonFailure(413, 'TooManyAliases', `Alias updates support at most ${MAX_SETUP_ALIASES} aliases.`),
+    };
+  }
+  for (const alias of value) {
+    if (typeof alias !== 'object' || alias === null || Array.isArray(alias)) {
+      return { response: setupJsonFailure(422, 'InvalidAliases', 'Every alias must be an object.') };
+    }
+    const record = alias as Record<string, unknown>;
+    if (
+      typeof record.name !== 'string' ||
+      !Array.isArray(record.match) ||
+      !record.match.every((pattern) => typeof pattern === 'string')
+    ) {
+      return {
+        response: setupJsonFailure(422, 'InvalidAliases', 'Every alias requires a string name and string match array.'),
+      };
+    }
+    if (record.match.length > MAX_SETUP_ALIAS_MATCHES) {
+      return {
+        response: setupJsonFailure(
+          413,
+          'TooManyAliasMatches',
+          `Each alias supports at most ${MAX_SETUP_ALIAS_MATCHES} match patterns.`,
+        ),
+      };
+    }
+  }
+  return { aliases: value as ProjectAliasEntry[] };
+};
+
+export const collectSetupSources = (snapshotFiles: string[], local: boolean) =>
   Effect.gen(function* () {
     const snapshots: UsageSnapshot[] = [];
     for (const file of snapshotFiles) {
-      snapshots.push(parseUsageSnapshot(fs.readFileSync(file, 'utf8')));
+      snapshots.push(yield* readUsageSnapshotFile(file));
     }
     return yield* listProjectSourcesWithWarnings({
       snapshots,
@@ -77,13 +267,14 @@ export const setupHTML = (
   <span id="selected-count">0 selected</span>
   <label>Alias name: <input id="alias-name" type="text" placeholder="my-project"></label>
   <button id="merge-btn" disabled>Merge into alias</button>
-  <span id="save-status"></span>
+  <span id="save-status" role="status" aria-live="polite"></span>
+  <span id="alias-name-error" role="alert"></span>
 </div>
 <h2>Sources</h2>
 <div style="overflow-x:auto; max-height:60vh;">
 <table id="sources-table">
   <thead><tr>
-    <th><input type="checkbox" id="select-all"></th>
+    <th><input type="checkbox" id="select-all" aria-label="Select all project sources"></th>
     <th>Project</th><th>Machine</th><th>Harness</th><th class="num">Sessions</th><th class="num">Tokens</th><th>Path</th><th>Git Remote</th>
   </tr></thead>
   <tbody id="sources-body"></tbody>
@@ -107,6 +298,7 @@ const nameInput = document.getElementById('alias-name');
 const mergeBtn = document.getElementById('merge-btn');
 const countEl = document.getElementById('selected-count');
 const statusEl = document.getElementById('save-status');
+const nameErrorEl = document.getElementById('alias-name-error');
 const sugEl = document.getElementById('suggestions');
 const aliasListEl = document.getElementById('aliases-list');
 const selectAllEl = document.getElementById('select-all');
@@ -209,6 +401,7 @@ function renderAliases() {
     const deleteButton = document.createElement('button');
     deleteButton.className = 'alias-delete';
     deleteButton.dataset.name = alias.name;
+    deleteButton.setAttribute('aria-label', 'Remove alias ' + alias.name);
     deleteButton.title = 'Remove alias';
     deleteButton.type = 'button';
     deleteButton.textContent = '×';
@@ -254,15 +447,17 @@ function renderSuggestions() {
   }
 
   for (const group of groups) {
-    const span = document.createElement('span');
-    span.className = 'suggestion';
-    span.textContent = group.label;
-    span.onclick = () => {
+    const suggestionButton = document.createElement('button');
+    suggestionButton.type = 'button';
+    suggestionButton.className = 'suggestion';
+    suggestionButton.textContent = group.label;
+    suggestionButton.onclick = () => {
       for (const idx of group.idxs) selected.add(idx);
       nameInput.value = group.name;
+      nameErrorEl.textContent = '';
       renderSources();
     };
-    sugEl.appendChild(span);
+    sugEl.appendChild(suggestionButton);
   }
   if (!sugEl.children.length) sugEl.textContent = 'No obvious suggestions found. Select sources manually.';
 }
@@ -283,7 +478,12 @@ selectAllEl.addEventListener('change', () => {
 
 mergeBtn.addEventListener('click', async () => {
   const name = nameInput.value.trim();
-  if (!name) { alert('Enter an alias name'); return; }
+  if (!name) {
+    nameErrorEl.textContent = 'Enter an alias name.';
+    nameInput.focus();
+    return;
+  }
+  nameErrorEl.textContent = '';
   const matchedSources = [...selected].map(i => sources[i]);
   const paths = [...new Set(matchedSources.map(s => s.sourcePath).filter(Boolean))];
   const basenames = [...new Set(matchedSources.map(s => s.project))];
@@ -297,6 +497,10 @@ mergeBtn.addEventListener('click', async () => {
   renderSources();
   renderAliases();
   renderSuggestions();
+});
+
+nameInput.addEventListener('input', () => {
+  nameErrorEl.textContent = '';
 });
 
 aliasListEl.addEventListener('click', async (e) => {
@@ -331,48 +535,98 @@ renderSuggestions();
 </html>`;
 };
 
+export const createSetupServer = ({
+  aliases,
+  maxAliasBodyBytes = MAX_SETUP_ALIAS_BODY_BYTES,
+  port,
+  sources,
+  warnings,
+  writeAliases,
+}: SetupServerOptions): SetupServerHandle => {
+  const html = setupHTML(sources, aliases, warnings);
+  const server = Bun.serve({
+    hostname: SETUP_SERVER_HOSTNAME,
+    port,
+    async fetch(request) {
+      const hostFailure = validateSetupHost(request);
+      if (hostFailure) {
+        return hostFailure;
+      }
+
+      const url = new URL(request.url);
+      if (url.pathname === '/' || url.pathname === '/index.html') {
+        return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+      }
+
+      if (url.pathname === '/api/aliases' && request.method === 'PUT') {
+        const originFailure = validateSetupMutationOrigin(request);
+        if (originFailure) {
+          return originFailure;
+        }
+        const contentTypeFailure = validateSetupJsonContentType(request);
+        if (contentTypeFailure) {
+          return contentTypeFailure;
+        }
+        const body = await readBoundedSetupBody(request, maxAliasBodyBytes);
+        if ('response' in body) {
+          return body.response;
+        }
+        const parsed = parseSetupAliases(body.text);
+        if ('response' in parsed) {
+          return parsed.response;
+        }
+        try {
+          await writeAliases(parsed.aliases);
+          return new Response('ok');
+        } catch {
+          return setupJsonFailure(500, 'ConfigWriteFailed', 'The alias configuration could not be saved.');
+        }
+      }
+
+      if (url.pathname === '/api/sources') {
+        return Response.json(sources);
+      }
+
+      return new Response('not found', { status: 404 });
+    },
+  });
+  if (server.port === undefined) {
+    server.stop(true).catch(() => undefined);
+    throw new Error('The setup server did not open a TCP port.');
+  }
+  return {
+    hostname: server.hostname ?? SETUP_SERVER_HOSTNAME,
+    port: server.port,
+    stop: async (closeActiveConnections) => {
+      await server.stop(closeActiveConnections);
+    },
+  };
+};
+
 export const runSetupServer = (snapshotFiles: string[], local: boolean, port: number) =>
   Effect.gen(function* () {
     const { sources, warnings } = yield* collectSetupSources(snapshotFiles, local);
     const config = yield* readAiUsageConfig;
     const storage = yield* LocalHistoryStorage;
     const aliases = config.projectAliases ?? [];
-    const html = setupHTML(sources, aliases, warnings);
-
-    const writeAliases = (newAliases: ProjectAliasEntry[]) =>
-      Effect.runPromise(saveSetupProjectAliases(newAliases).pipe(Effect.provideService(LocalHistoryStorage, storage)));
-
-    const server = Bun.serve({
+    const server = createSetupServer({
+      aliases,
       port,
-      async fetch(req) {
-        const url = new URL(req.url);
-
-        if (url.pathname === '/' || url.pathname === '/index.html') {
-          return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
-        }
-
-        if (url.pathname === '/api/aliases' && req.method === 'PUT') {
-          try {
-            const body = (await req.json()) as ProjectAliasEntry[];
-            await writeAliases(body);
-            return new Response('ok', { status: 200 });
-          } catch (err) {
-            return new Response(JSON.stringify({ error: String(err) }), {
-              status: 400,
-              headers: { 'content-type': 'application/json' },
-            });
-          }
-        }
-
-        if (url.pathname === '/api/sources') {
-          return Response.json(sources);
-        }
-
-        return new Response('not found', { status: 404 });
-      },
+      sources,
+      warnings,
+      writeAliases: (newAliases) =>
+        Effect.runPromise(
+          saveSetupProjectAliases(newAliases).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+        ),
     });
 
-    yield* Console.log(`Setup UI: http://localhost:${server.port}`);
+    yield* Console.log(`Setup UI: http://${SETUP_SERVER_HOSTNAME}:${server.port}`);
     yield* Console.log('Press Ctrl+C to stop.');
-    yield* Effect.never;
+    yield* Effect.never.pipe(
+      Effect.ensuring(
+        Effect.promise(async () => {
+          await server.stop(true);
+        }),
+      ),
+    );
   });

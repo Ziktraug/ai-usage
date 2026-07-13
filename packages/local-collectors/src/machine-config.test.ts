@@ -341,6 +341,43 @@ describe('machine config', () => {
     }
   });
 
+  test('keeps legacy sync config inert and preserves it during unrelated updates', async () => {
+    const home = await mkdtemp('ai-usage-machine-config-legacy-sync-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      const configPath = aiUsageConfigPath(storage);
+      const legacySync = {
+        remotes: [
+          {
+            enabled: true,
+            name: 'old-macbook',
+            tokenEnv: 'AI_USAGE_OLD_TOKEN',
+            url: 'http://192.0.2.1:3847/snapshot',
+          },
+        ],
+        unknownNestedState: { lastPulledAt: '2026-01-01T00:00:00.000Z' },
+      };
+      mkdirSync(path.dirname(configPath), { recursive: true });
+      writeFileSync(configPath, JSON.stringify({ cursor: { clusterGapMs: 1234 }, sync: legacySync }));
+
+      const read = await Effect.runPromise(readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)));
+      await Effect.runPromise(
+        updateAiUsageConfig((config) => ({
+          ...config,
+          projectAliases: [{ match: ['/work/alpha'], name: 'alpha' }],
+        })).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      const persisted = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+
+      expect((read as Record<string, unknown>).sync).toEqual(legacySync);
+      expect(persisted.sync).toEqual(legacySync);
+      expect(persisted.projectAliases).toEqual([{ match: ['/work/alpha'], name: 'alpha' }]);
+      expect(persisted.cursor).toEqual({ clusterGapMs: 1234 });
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
   test('merges skills config without inventing a projects root', async () => {
     const home = await mkdtemp('ai-usage-machine-config-');
     const repo = await mkdtemp('ai-usage-repo-config-');

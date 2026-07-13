@@ -32,8 +32,10 @@
     "check": "bun --filter @ai-usage/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit",
     "test": "bun --filter @ai-usage/design-system build && bun test src",
     "test:e2e": "playwright test",
+    "test:e2e-production": "playwright test --config playwright.production.config.ts e2e/production-report.spec.ts",
+    "test:html-file": "playwright test --config playwright.static.config.ts e2e/static-html.spec.ts",
     "preview": "vite preview --host 127.0.0.1",
-    "start": "node .output/server/index.mjs",
+    "start": "node start.mjs",
     "lint": "biome check .",
     "format": "biome format --write ."
   }

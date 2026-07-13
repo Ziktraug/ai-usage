@@ -82,6 +82,9 @@ describe('usage merge bundles', () => {
     const invalidRows = [
       { ...serialized, date: 'not-a-date' },
       { ...serialized, tokIn: Number.POSITIVE_INFINITY },
+      { ...serialized, models: ['gpt-5', 1] },
+      { ...serialized, costQuota: -1 },
+      { ...serialized, subagent: 'yes' },
       { ...serialized, tokenTotal: serialized.tokenTotal + 1 },
       { ...serialized, unexpected: 'field' },
     ];
@@ -92,6 +95,36 @@ describe('usage merge bundles', () => {
     expect(() => parseUsageMergeBundle(JSON.stringify({ ...bundle, generatedAt: '2026-02-31' }))).toThrow(
       'invalid generatedAt',
     );
+  });
+
+  test('keeps strict source and warning validation after sharing serialized usage validators', () => {
+    const warning = {
+      groupId: 'group-1',
+      groupName: 'Group 1',
+      harness: 'codex',
+      message: 'Grouping needs attention',
+      operation: 'groupProjects',
+      path: '/tmp/history.jsonl',
+      reason: 'partial-group' as const,
+      selectors: [{ machineId: machine.id, project: 'ai-usage' }],
+      sql: 'select 1',
+    };
+    const bundle = createUsageMergeBundle({ machine, rows: [{ ...row }], warnings: [warning] });
+
+    expect(parseUsageMergeBundle(JSON.stringify(bundle)).warnings).toEqual([warning]);
+
+    const serialized = bundle.rows[0]!;
+    const invalidSources = [
+      { ...serialized.source, harnessKey: '' },
+      { ...serialized.source, sourceSessionId: undefined },
+      { ...serialized.source, unexpected: true },
+    ];
+    for (const source of invalidSources) {
+      expect(() => parseSerializedMergeRow({ ...serialized, source })).toThrow('invalid row');
+    }
+    expect(() =>
+      parseUsageMergeBundle(JSON.stringify({ ...bundle, warnings: [{ ...warning, unexpected: true }] })),
+    ).toThrow('invalid warnings');
   });
 
   test('rejects correctly hashed rows with impossible negative or fractional metrics', () => {
