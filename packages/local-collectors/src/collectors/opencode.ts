@@ -12,6 +12,12 @@ import {
 } from '../collector-cache';
 import { type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
 import { LocalHistoryStorage } from '../local-history';
+import {
+  addNonNegativeFiniteNumbers,
+  addNonNegativeSafeIntegers,
+  parseOptionalNonNegativeFiniteNumber,
+  parseOptionalNonNegativeSafeInteger,
+} from '../metric-validation';
 import { withPerfSpan } from '../perf';
 import { resolvePathCandidates } from '../platform-paths';
 import type { CollectorRow } from '../rtk-enrichment';
@@ -185,18 +191,42 @@ const collectFromDb = (
                     };
                     agg.set(row.session_id, current);
                   }
-                  const input = tokens.input || 0;
-                  const output = tokens.output || 0;
-                  const cacheRead = tokens.cache?.read || 0;
-                  const cacheWrite = tokens.cache?.write || 0;
-                  const reasoning = tokens.reasoning || 0;
-                  current.tin += input;
-                  current.tout += output;
-                  current.tcr += cacheRead;
-                  current.tcw += cacheWrite;
-                  current.reason += reasoning;
-                  current.cost += data.cost || 0;
-                  current.calls++;
+                  const input = parseOptionalNonNegativeSafeInteger(tokens.input);
+                  const output = parseOptionalNonNegativeSafeInteger(tokens.output);
+                  const cacheRead = parseOptionalNonNegativeSafeInteger(tokens.cache?.read);
+                  const cacheWrite = parseOptionalNonNegativeSafeInteger(tokens.cache?.write);
+                  const reasoning = parseOptionalNonNegativeSafeInteger(tokens.reasoning);
+                  const cost = parseOptionalNonNegativeFiniteNumber(data.cost);
+                  if (!(input.ok && output.ok && cacheRead.ok && cacheWrite.ok && reasoning.ok && cost.ok)) {
+                    continue;
+                  }
+                  const nextInput = addNonNegativeSafeIntegers(current.tin, input.value);
+                  const nextOutput = addNonNegativeSafeIntegers(current.tout, output.value);
+                  const nextCacheRead = addNonNegativeSafeIntegers(current.tcr, cacheRead.value);
+                  const nextCacheWrite = addNonNegativeSafeIntegers(current.tcw, cacheWrite.value);
+                  const nextReasoning = addNonNegativeSafeIntegers(current.reason, reasoning.value);
+                  const nextCalls = addNonNegativeSafeIntegers(current.calls, 1);
+                  const nextCost = addNonNegativeFiniteNumbers(current.cost, cost.value);
+                  if (
+                    !(
+                      nextInput.ok &&
+                      nextOutput.ok &&
+                      nextCacheRead.ok &&
+                      nextCacheWrite.ok &&
+                      nextReasoning.ok &&
+                      nextCalls.ok &&
+                      nextCost.ok
+                    )
+                  ) {
+                    continue;
+                  }
+                  current.tin = nextInput.value;
+                  current.tout = nextOutput.value;
+                  current.tcr = nextCacheRead.value;
+                  current.tcw = nextCacheWrite.value;
+                  current.reason = nextReasoning.value;
+                  current.cost = nextCost.value;
+                  current.calls = nextCalls.value;
                   const created = data.time?.created;
                   if (created) {
                     const date = new Date(created);
@@ -211,7 +241,7 @@ const collectFromDb = (
                       current.end = date;
                     }
                   }
-                  const total = input + output + cacheRead + cacheWrite;
+                  const total = input.value + output.value + cacheRead.value + cacheWrite.value;
                   current.prov.set(data.providerID || '?', (current.prov.get(data.providerID || '?') || 0) + total);
                   current.model.set(data.modelID || '?', (current.model.get(data.modelID || '?') || 0) + total);
                 }

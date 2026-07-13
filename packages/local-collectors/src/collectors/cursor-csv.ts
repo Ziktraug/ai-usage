@@ -4,6 +4,7 @@ import type { TokenCounts } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { LocalHistoryError } from '../errors';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from '../local-history';
+import { addNonNegativeSafeIntegers, parseNonNegativeFiniteNumber } from '../metric-validation';
 
 export interface CursorCsvOptions {
   clusterGapMs: number;
@@ -115,21 +116,45 @@ const parseCsv = (text: string, filePath: string) => {
   });
 };
 
-const parseInteger = (value: string) => {
-  const normalized = value.trim().replaceAll(',', '');
-  if (!normalized) {
+const INTEGER_FIELD_PATTERN = /^\s*(?:\d+|\d{1,3}(?:,\d{3})+)\s*$/;
+const COST_FIELD_PATTERN = /^\s*\$?\d+(?:\.\d+)?\s*$/;
+
+const parseInteger = (value: string): number | null => {
+  if (!value.trim()) {
     return 0;
   }
-  const parsed = Number.parseInt(normalized, 10);
-  return Number.isFinite(parsed) ? parsed : 0;
+  if (!INTEGER_FIELD_PATTERN.test(value)) {
+    return null;
+  }
+  const normalized = value.trim().replaceAll(',', '');
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 };
 
-const parseCost = (value: string) => {
-  const parsed = Number.parseFloat(value.trim());
-  return Number.isFinite(parsed) ? parsed : 0;
+const parseCost = (value: string): number | null => {
+  if (!value.trim()) {
+    return 0;
+  }
+  if (!COST_FIELD_PATTERN.test(value)) {
+    return null;
+  }
+  const parsed = Number(value.trim().replace('$', ''));
+  const validated = parseNonNegativeFiniteNumber(parsed);
+  return validated.ok ? validated.value : null;
 };
 
-const tokenTotal = (tokens: TokenCounts) => tokens.in + tokens.out + tokens.cr + tokens.cw;
+const tokenTotal = (tokens: TokenCounts): number | null => {
+  const input = addNonNegativeSafeIntegers(tokens.in, tokens.out);
+  if (!input.ok) {
+    return null;
+  }
+  const cache = addNonNegativeSafeIntegers(tokens.cr, tokens.cw);
+  if (!cache.ok) {
+    return null;
+  }
+  const total = addNonNegativeSafeIntegers(input.value, cache.value);
+  return total.ok ? total.value : null;
+};
 
 const rowToTurn = (row: Record<string, string>, user?: string): CursorCsvTurn | null => {
   if (user && row.User !== user) {
@@ -140,17 +165,26 @@ const rowToTurn = (row: Record<string, string>, user?: string): CursorCsvTurn | 
     return null;
   }
   const model = row.Model?.trim() || 'cursor';
-  const tokens = {
-    in: parseInteger(row['Input (w/o Cache Write)'] ?? ''),
-    out: parseInteger(row['Output Tokens'] ?? ''),
-    cr: parseInteger(row['Cache Read'] ?? ''),
-    cw: parseInteger(row['Input (w/ Cache Write)'] ?? ''),
-  };
-  if (tokenTotal(tokens) === 0) {
+  const parsedTokens = [
+    parseInteger(row['Input (w/o Cache Write)'] ?? ''),
+    parseInteger(row['Output Tokens'] ?? ''),
+    parseInteger(row['Cache Read'] ?? ''),
+    parseInteger(row['Input (w/ Cache Write)'] ?? ''),
+  ];
+  if (parsedTokens.some((value) => value === null)) {
+    return null;
+  }
+  const [input = 0, output = 0, cacheRead = 0, cacheWrite = 0] = parsedTokens as number[];
+  const tokens = { in: input, out: output, cr: cacheRead, cw: cacheWrite };
+  const total = tokenTotal(tokens);
+  if (total === null || total === 0) {
     return null;
   }
 
   const cost = parseCost(row.Cost ?? '');
+  if (cost === null) {
+    return null;
+  }
   const kind = row.Kind ?? '';
   const isOnDemand = kind === 'On-Demand';
   const isIncluded = kind === 'Included';
@@ -186,7 +220,7 @@ export const clusterFromTurns = (turns: CursorCsvTurn[]): CursorCsvCluster => {
     if (!modelTokens.has(turn.model)) {
       models.push(turn.model);
     }
-    modelTokens.set(turn.model, (modelTokens.get(turn.model) ?? 0) + tokenTotal(turn.tokens));
+    modelTokens.set(turn.model, (modelTokens.get(turn.model) ?? 0) + (tokenTotal(turn.tokens) ?? 0));
     tokens = addTokens(tokens, turn.tokens);
     costActual += turn.costActual;
     costQuota += turn.costQuota;

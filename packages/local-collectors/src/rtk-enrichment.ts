@@ -3,6 +3,7 @@ import type { UsageRow, UsageRowSource, UsageRowWithOptionalSource } from '@ai-u
 import { Effect } from 'effect';
 import { type LocalHistoryError, type LocalHistoryWarning, localHistoryWarningFromError } from './errors';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
+import { addNonNegativeSafeIntegers, parseNonNegativeSafeInteger } from './metric-validation';
 import { withPerfSpan } from './perf';
 import { firstExisting, resolvePathCandidates } from './platform-paths';
 
@@ -127,20 +128,36 @@ export const enrichCollectorRowsWithRtkSavingsResult = (
       }
 
       const totals = new Map<number, { saved: number; input: number; output: number; commands: number }>();
+      let rejectedMetricRecords = 0;
       const readResult = yield* Effect.acquireUseRelease(
         storage.openDatabase(dbPath),
         (db) =>
           Effect.gen(function* () {
             for (const command of yield* db.all<RtkCommandRow>(RTK_COMMANDS_SQL)) {
+              const saved = parseNonNegativeSafeInteger(command.saved_tokens);
+              const input = parseNonNegativeSafeInteger(command.input_tokens);
+              const output = parseNonNegativeSafeInteger(command.output_tokens);
+              if (!(saved.ok && input.ok && output.ok)) {
+                rejectedMetricRecords++;
+                continue;
+              }
               const candidate = bestCandidateForCommand(command, candidates);
               if (!candidate) {
                 continue;
               }
               const current = totals.get(candidate.index) ?? { saved: 0, input: 0, output: 0, commands: 0 };
-              current.saved += Number(command.saved_tokens) || 0;
-              current.input += Number(command.input_tokens) || 0;
-              current.output += Number(command.output_tokens) || 0;
-              current.commands++;
+              const nextSaved = addNonNegativeSafeIntegers(current.saved, saved.value);
+              const nextInput = addNonNegativeSafeIntegers(current.input, input.value);
+              const nextOutput = addNonNegativeSafeIntegers(current.output, output.value);
+              const nextCommands = addNonNegativeSafeIntegers(current.commands, 1);
+              if (!(nextSaved.ok && nextInput.ok && nextOutput.ok && nextCommands.ok)) {
+                rejectedMetricRecords++;
+                continue;
+              }
+              current.saved = nextSaved.value;
+              current.input = nextInput.value;
+              current.output = nextOutput.value;
+              current.commands = nextCommands.value;
               totals.set(candidate.index, current);
             }
           }),
@@ -164,8 +181,17 @@ export const enrichCollectorRowsWithRtkSavingsResult = (
         };
       }
 
+      const metricWarnings = rejectedMetricRecords
+        ? [
+            {
+              harness: 'rtk',
+              operation: 'metricValidation',
+              message: `Rejected ${rejectedMetricRecords} malformed RTK metric record(s).`,
+            },
+          ]
+        : [];
       if (!totals.size) {
-        return { rows, warnings: [] };
+        return { rows, warnings: metricWarnings };
       }
       return {
         rows: rows.map((row, index) => {
@@ -181,7 +207,7 @@ export const enrichCollectorRowsWithRtkSavingsResult = (
             rtkCommandCount: total.commands,
           };
         }),
-        warnings: [],
+        warnings: metricWarnings,
       };
     }).pipe(
       Effect.catchAll((error: LocalHistoryError) =>
