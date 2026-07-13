@@ -81,11 +81,10 @@ export const app = Effect.gen(function* () {
       includeCursor: command.args.cursor,
       options: command.args,
     });
-    const output = yield* Effect.promise(() =>
-      command.args.format === 'html' || command.args.format === 'payload'
-        ? renderUsagePayloadForCli(merged.payload, command.args)
-        : renderUsageReportForCli(merged.rows, command.args, undefined, merged.payload.warnings),
-    );
+    const output =
+      command.args.format === 'payload'
+        ? renderUsagePayloadForCli(merged.payload)
+        : renderUsageReportForCli(merged.rows, command.args, undefined, merged.payload.warnings);
     yield* writeFormatWarningsStderr(command.args, merged.payload.warnings);
     yield* writeStdout(`${output}\n`);
     return;
@@ -129,19 +128,19 @@ export const app = Effect.gen(function* () {
     keepSource: true,
   };
   const output =
-    command.args.format === 'html' || command.args.format === 'payload'
+    command.args.format === 'payload'
       ? yield* Effect.gen(function* () {
           const payload = yield* createLocalReportPayload({
             ...reportRequest,
             options: command.args,
             includeFacets: true,
           });
-          return yield* Effect.promise(() => renderUsagePayloadForCli(payload, command.args));
+          return renderUsagePayloadForCli(payload);
         })
       : yield* Effect.gen(function* () {
           const { rows, warnings } = yield* collectProjectedLocalReportRowsWithWarnings(reportRequest);
           yield* writeFormatWarningsStderr(command.args, warnings);
-          return yield* Effect.promise(() => renderUsageReportForCli(rows, command.args, undefined, warnings));
+          return renderUsageReportForCli(rows, command.args, undefined, warnings);
         });
   yield* writeStdout(`${output}\n`);
 });
