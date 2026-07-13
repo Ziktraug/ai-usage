@@ -16,7 +16,11 @@ import {
   type WebReportRevisionManifest,
   type WebReportRevisionManifestResult,
 } from '../web-report-payload';
-import { createReportRevisionRegistry, type ReportRevisionLeaseResult } from './report-revision.server';
+import {
+  createReportRevisionRegistry,
+  type ReportRevisionLeaseResult,
+  reportCaptureFingerprintForPayload,
+} from './report-revision.server';
 import { resolveReportRuntimePaths } from './report-runtime-paths.server';
 import { materializeSessionQueryRevision } from './session-query-materializer.server';
 
@@ -27,6 +31,7 @@ const { reportingPayloadRunner, rootDir, rootEnvPath } = resolveReportRuntimePat
 });
 const LINE_SEPARATOR = /\r?\n/;
 const payloadCacheTtlMs = 10_000;
+export const REVISION_RENEWAL_WINDOW_MS = 60_000;
 const REPORT_RUNNER_ARTIFACT_READ_CHUNK_BYTES = 64 * 1024;
 export const MAX_REPORT_RUNNER_STDERR_TAIL_BYTES = 64 * 1024;
 const artifactCreateFlags =
@@ -45,6 +50,14 @@ const reportRevisionRegistry = createReportRevisionRegistry({ materialize: mater
 const revisionPublicationByPayload = new WeakMap<UsageReportPayload, Promise<WebReportRevisionManifest>>();
 let revisionCaptureGeneration = 0;
 let forcedRevisionCapturesInProgress = 0;
+let lastCollectedPayload: UsageReportPayload | undefined;
+
+export const MAX_UNCHANGED_CAPTURE_RESULT_BYTES = 64 * 1024;
+const CAPTURE_FINGERPRINT_PATTERN = /^[a-f0-9]{64}$/;
+
+type ReportRunnerCaptureResult =
+  | { captureFingerprint: string; payload: UsageReportPayload; status: 'changed'; version: 1 }
+  | { captureFingerprint: string; metadata?: Record<string, unknown>; status: 'unchanged'; version: 1 };
 
 export interface ReportPayloadCache {
   collect(options?: { force?: boolean }): Promise<UsageReportPayload>;
@@ -383,14 +396,16 @@ export const runReportPayloadRunner = async (options: { force?: boolean; signal?
   };
 
   try {
+    const current = options.force ? await reportRevisionRegistry.getCurrentManifest() : undefined;
+    const currentCaptureFingerprint = current?.ok ? current.manifest.captureFingerprint : '';
     const result = await runReportPayloadArtifactProcess({
-      args: [reportingPayloadRunner, mode, rootDir],
+      args: [reportingPayloadRunner, mode, rootDir, currentCaptureFingerprint],
       command: 'bun',
       cwd: rootDir,
       env,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       validate: (serializedPayload) => {
-        parseRunnerPayload(serializedPayload);
+        parseRunnerCaptureResult(serializedPayload);
       },
     });
     if (perfEnabled()) {
@@ -415,18 +430,80 @@ export const runReportPayloadRunner = async (options: { force?: boolean; signal?
 };
 
 export const parseRunnerPayload = (stdout: string): UsageReportPayload => {
+  const parsed = parseJsonRunnerOutput(stdout);
+  if (
+    typeof parsed === 'object' &&
+    parsed !== null &&
+    !Array.isArray(parsed) &&
+    (Object.hasOwn(parsed, 'status') || Object.hasOwn(parsed, 'version'))
+  ) {
+    const result = parseRunnerCaptureResult(stdout);
+    if (result.status === 'unchanged') {
+      throw new Error('Unchanged report capture does not contain a payload');
+    }
+    return result.payload;
+  }
+  return parsed as UsageReportPayload;
+};
+
+const parseJsonRunnerOutput = (stdout: string): unknown => {
   try {
-    return JSON.parse(stdout) as UsageReportPayload;
+    return JSON.parse(stdout) as unknown;
   } catch (error) {
     const jsonStart = stdout.lastIndexOf('\n{');
     if (jsonStart >= 0) {
-      return JSON.parse(stdout.slice(jsonStart + 1)) as UsageReportPayload;
+      return JSON.parse(stdout.slice(jsonStart + 1)) as unknown;
     }
     throw error;
   }
 };
 
-const loadFreshPayload = () => runReportPayloadRunner({ force: true }).then(parseRunnerPayload);
+export const parseRunnerCaptureResult = (serialized: string): ReportRunnerCaptureResult => {
+  const value = parseJsonRunnerOutput(serialized);
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('Report capture result must be an object');
+  }
+  const result = value as Record<string, unknown>;
+  const validFingerprint =
+    typeof result.captureFingerprint === 'string' && CAPTURE_FINGERPRINT_PATTERN.test(result.captureFingerprint);
+  if (result.version !== 1 || !validFingerprint || (result.status !== 'changed' && result.status !== 'unchanged')) {
+    throw new Error('Report capture result is malformed');
+  }
+  if (result.status === 'unchanged') {
+    if (Buffer.byteLength(serialized) > MAX_UNCHANGED_CAPTURE_RESULT_BYTES) {
+      throw new Error(`Unchanged report capture result exceeds the ${MAX_UNCHANGED_CAPTURE_RESULT_BYTES}-byte limit`);
+    }
+    const keys = Object.keys(result).sort().join(',');
+    if (keys !== 'captureFingerprint,status,version' && keys !== 'captureFingerprint,metadata,status,version') {
+      throw new Error('Unchanged report capture result contains unknown fields');
+    }
+    if (
+      result.metadata !== undefined &&
+      (typeof result.metadata !== 'object' || result.metadata === null || Array.isArray(result.metadata))
+    ) {
+      throw new Error('Unchanged report capture metadata must be an object');
+    }
+    return {
+      captureFingerprint: result.captureFingerprint as string,
+      ...(result.metadata === undefined ? {} : { metadata: result.metadata as Record<string, unknown> }),
+      status: 'unchanged',
+      version: 1,
+    };
+  }
+  if (Object.keys(result).sort().join(',') !== 'captureFingerprint,payload,status,version') {
+    throw new Error('Changed report capture result contains unknown fields');
+  }
+  const payload = result.payload as Partial<UsageReportPayload> | undefined;
+  if (!(payload && Array.isArray(payload.rows) && typeof payload.generatedAt === 'string')) {
+    throw new Error('Changed report capture result payload is malformed');
+  }
+  return {
+    captureFingerprint: result.captureFingerprint as string,
+    payload: payload as UsageReportPayload,
+    status: 'changed',
+    version: 1,
+  };
+};
 
 const formatRefreshError = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -475,11 +552,15 @@ export const startReportPayloadRefresh = () => {
   return refreshState;
 };
 
-const loadPayload = (options: { force?: boolean }) => {
+const loadPayload = async (options: { force?: boolean }): Promise<UsageReportPayload> => {
   if (!options.force && isBunRuntime()) {
-    return loadStoredPayloadDirect();
+    return await loadStoredPayloadDirect();
   }
-  return runReportPayloadRunner(options).then(parseRunnerPayload);
+  const result = parseRunnerCaptureResult(await runReportPayloadRunner(options));
+  if (result.status === 'changed') {
+    return result.payload;
+  }
+  return lastCollectedPayload ?? (await loadStoredPayloadDirect());
 };
 
 const loadPayloadWithFreshFallback = async (options: { force?: boolean }) => {
@@ -488,7 +569,7 @@ const loadPayloadWithFreshFallback = async (options: { force?: boolean }) => {
     if (perfEnabled()) {
       console.error('[perf] aiUsage.web.reportPayloadCache stored-empty-fallback');
     }
-    return await loadFreshPayload();
+    return await loadPayload({ force: true });
   }
   return payload;
 };
@@ -505,7 +586,18 @@ const ensurePublishedRevision = async (payload: UsageReportPayload): Promise<Web
     }
   }
 
-  const publication = reportRevisionRegistry.publish(toWebReportPayload(payload));
+  const webPayload = toWebReportPayload(payload);
+  const current = await reportRevisionRegistry.getCurrentManifest();
+  if (current.ok && current.manifest.captureFingerprint === reportCaptureFingerprintForPayload(webPayload)) {
+    const manifest =
+      current.manifest.expiresAt - Date.now() <= REVISION_RENEWAL_WINDOW_MS
+        ? await reportRevisionRegistry.renewCurrent().then((result) => (result.ok ? result.manifest : current.manifest))
+        : current.manifest;
+    revisionPublicationByPayload.set(payload, Promise.resolve(manifest));
+    return manifest;
+  }
+
+  const publication = reportRevisionRegistry.publish(webPayload);
   revisionPublicationByPayload.set(payload, publication);
   try {
     return await publication;
@@ -527,14 +619,12 @@ export const runReportPayloadCollection = async (options: { force?: boolean } = 
     forcedRevisionCapturesInProgress++;
   }
   try {
-    if (options.force) {
-      await reportRevisionRegistry.invalidateLatest();
-    }
     const payload = await reportPayloadCache.collect(options);
     const noNewerCaptureExists = captureGeneration === revisionCaptureGeneration;
     const canPublishStoredCapture = options.force || forcedRevisionCapturesInProgress === 0;
     if (noNewerCaptureExists && canPublishStoredCapture) {
       await ensurePublishedRevision(payload);
+      lastCollectedPayload = payload;
     }
     return payload;
   } finally {

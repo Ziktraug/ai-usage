@@ -137,6 +137,7 @@ type MergeRowClassification = 'inserted' | 'updated' | 'unchanged' | 'superseded
 
 interface ClassifiedMergeRow {
   classification: MergeRowClassification;
+  reportProjectionChanged: boolean;
   row: SerializedMergeRow;
 }
 
@@ -382,17 +383,23 @@ const classifyMergeRows = (
     } else {
       classification = 'updated';
     }
+    const reportProjectionChanged =
+      existing?.status === 'active'
+        ? row.status !== 'active' ||
+          existing.content_hash !== row.contentHash ||
+          existing.source_authority !== incomingAuthority
+        : row.status === 'active';
     existingRows.set(row.rowKey, {
       content_hash: row.contentHash,
       row_key: row.rowKey,
       source_authority: incomingAuthority,
       status: row.status,
     });
-    return { classification, row };
+    return { classification, reportProjectionChanged, row };
   });
 };
 
-const summarizeClassifications = (classifiedRows: ClassifiedMergeRow[]): ImportResult => {
+const summarizeClassifications = (classifiedRows: Pick<ClassifiedMergeRow, 'classification'>[]): ImportResult => {
   const result = emptyImportResult();
   for (const { classification } of classifiedRows) {
     result[classification]++;
@@ -432,7 +439,7 @@ const importMergeRows = (
             updateMergeRow(statements.update, row, now, authority);
             result[classification]++;
           }
-          if (rows.length > 0) {
+          if (classifiedRows.some(({ reportProjectionChanged }) => reportProjectionChanged)) {
             db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
           }
           db.exec('COMMIT');

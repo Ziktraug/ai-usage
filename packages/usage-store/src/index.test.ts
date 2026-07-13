@@ -174,7 +174,7 @@ describe('usage-store public boundary', () => {
     expect(queried.rows[0]?.source.machineId).toBe('machine-a');
   });
 
-  test('advances one atomic source generation per non-empty import', async () => {
+  test('advances generation only when the active report projection changes', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-generation-'));
     const dbPath = usageStorePath(home);
 
@@ -185,6 +185,14 @@ describe('usage-store public boundary', () => {
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(1);
     await Effect.runPromise(
       importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'generation-row' })] }),
+    );
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(1);
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        machine: machineA,
+        rows: [makeRow({ sourceSessionId: 'generation-row', tokOut: 21 })],
+      }),
     );
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(2);
     await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [] }));

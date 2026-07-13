@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { access, mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { demoReportPayload } from '../report-data';
@@ -128,6 +128,45 @@ describe('report revision registry', () => {
         );
         const current = await registry.getCurrentManifest();
         expect(current.ok && current.manifest.revision).toBe(second.revision);
+      },
+    );
+  });
+
+  test('renews validated immutable artifacts without rematerializing Session SQLite', async () => {
+    let materializations = 0;
+    let now = 1000;
+    const revisionIds = ['revision-a', 'revision-b'];
+    await withRegistry(
+      {
+        materialize: async (directory) => {
+          materializations++;
+          await writeFile(path.join(directory, 'sessions.sqlite'), Buffer.from([0, 255, 1, 128]), { mode: 0o600 });
+        },
+        now: () => now,
+        revisionId: () => revisionIds.shift() ?? 'unexpected',
+        ttlMs: 120_000,
+      },
+      async (registry, rootDirectory) => {
+        const published = await registry.publish(payloadFor('2026-07-13T12:00:00.000Z', 2));
+        now += 60_000;
+        const renewed = await registry.renewCurrent();
+        if (!renewed.ok) {
+          throw new Error('Expected the current report revision to renew');
+        }
+
+        expect(materializations).toBe(1);
+        expect(renewed.manifest.revision).not.toBe(published.revision);
+        expect(renewed.manifest.captureFingerprint).toBe(published.captureFingerprint);
+        expect(renewed.manifest.generatedAt).toBe(published.generatedAt);
+        expect(renewed.manifest.expiresAt).toBe(now + 120_000);
+        for (const artifact of ['rows.json', 'support.json', 'sessions.sqlite']) {
+          const original = await readFile(path.join(rootDirectory, String(published.revision), artifact));
+          const copy = await readFile(path.join(rootDirectory, String(renewed.manifest.revision), artifact));
+          expect(copy).toEqual(original);
+          expect(
+            privateMode((await stat(path.join(rootDirectory, String(renewed.manifest.revision), artifact))).mode),
+          ).toBe(0o400);
+        }
       },
     );
   });
