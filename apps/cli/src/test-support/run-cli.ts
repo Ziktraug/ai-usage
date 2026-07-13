@@ -22,8 +22,8 @@ export const withCliSandbox = async <Value>(
   const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-cli-'));
   const profile = path.join(root, 'profile');
   const runCli = async (argv: string[]): Promise<CliRunResult> => {
-    const child = Bun.spawn(['bun', 'src/main.ts', ...argv], {
-      cwd: cliRoot,
+    const child = Bun.spawn(['bun', path.join(cliRoot, 'src', 'main.ts'), ...argv], {
+      cwd: root,
       env: {
         ...processEnvironment(),
         APPDATA: profile,
