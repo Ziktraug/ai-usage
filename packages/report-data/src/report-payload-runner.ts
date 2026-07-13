@@ -3,7 +3,7 @@ import {
   type LocalReportPayloadRequest,
   reportCaptureFingerprint,
   runConsistentStoredReportPayload,
-  runLocalReportPayload,
+  runLocalReportCapture,
 } from './index';
 import { writeReportPayloadArtifact } from './report-payload-artifact';
 
@@ -43,16 +43,21 @@ const withStdoutRedirectedToStderr = async <A>(run: () => Promise<A>) => {
   }
 };
 
-const payload = await withStdoutRedirectedToStderr(async () => {
+const capture = await withStdoutRedirectedToStderr(async () => {
   if (mode === 'fresh') {
-    return await runLocalReportPayload(request);
+    return await runLocalReportCapture(request, currentCaptureFingerprint);
   }
-  return await runConsistentStoredReportPayload(request);
+  const payload = await runConsistentStoredReportPayload(request);
+  return { captureFingerprint: reportCaptureFingerprint(payload), payload, status: 'changed' as const };
 });
 
-const captureFingerprint = reportCaptureFingerprint(payload);
 const result =
-  mode === 'fresh' && currentCaptureFingerprint === captureFingerprint
-    ? { captureFingerprint, status: 'unchanged' as const, version: 1 as const }
-    : { captureFingerprint, payload, status: 'changed' as const, version: 1 as const };
+  capture.status === 'unchanged'
+    ? { captureFingerprint: capture.captureFingerprint, status: 'unchanged' as const, version: 1 as const }
+    : {
+        captureFingerprint: capture.captureFingerprint,
+        payload: capture.payload,
+        status: 'changed' as const,
+        version: 1 as const,
+      };
 await writeReportPayloadArtifact(outputPath, JSON.stringify(result));
