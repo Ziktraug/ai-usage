@@ -24,16 +24,13 @@ import {
   projectSourceSelectorLabel,
 } from '@ai-usage/report-core/project-group';
 import { mergeProviderStatusDatasets, parseProviderStatusDataset } from '@ai-usage/report-core/provider-status';
-import {
-  createUsageReportPayload,
-  type PreparedUsageReport,
-  prepareUsageReport,
-  type ReportOptions,
-  type UsageReportPayload,
-  type UsageReportProjectGroup,
-  type UsageReportWarning,
+import type {
+  PreparedUsageReport,
+  ReportOptions,
+  UsageReportPayload,
+  UsageReportProjectGroup,
+  UsageReportWarning,
 } from '@ai-usage/report-core/report-data';
-import { normalizeSessionLineage } from '@ai-usage/report-core/session-lineage';
 import {
   createUsageSnapshot,
   deserializeSnapshotRow,
@@ -45,9 +42,18 @@ import {
 } from '@ai-usage/report-core/snapshot';
 import type { Row, SourcedRow } from '@ai-usage/report-core/types';
 import { usageRowLineDelta, usageRowPricedCost, usageRowTokenTotal } from '@ai-usage/report-core/usage-row';
-import { importLocalRows, queryReportRows, queryUsageStoreGeneration, usageStorePath } from '@ai-usage/usage-store';
+import {
+  importLocalRows,
+  queryReportRows,
+  queryUsageStoreGeneration,
+  type StoredSourceAuthority,
+  usageStorePath,
+} from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 import { withPerfSpan } from './perf';
+import { assembleReport } from './report-assembly';
+
+export { reportCaptureFingerprint } from './report-assembly';
 
 const GIT_CONFIG_LINE_SEPARATOR = /\r?\n/;
 const GIT_REMOTE_HEADER_PATTERN = /^\s*\[remote\s+"([^"]+)"\]\s*$/;
@@ -118,6 +124,7 @@ export interface StoredReportSourceFingerprint {
 export interface LocalReportRowsResult {
   collection: SelectedHarnessCollectionResult;
   rows: Row[];
+  sourceAuthorities: StoredSourceAuthority[];
   warnings: LocalHistoryWarning[];
 }
 
@@ -365,9 +372,6 @@ interface ProjectProjection {
   warnings: UsageReportWarning[];
 }
 
-const prepareNormalizedUsageReport = (rows: Row[], options: ReportOptions) =>
-  prepareUsageReport(normalizeSessionLineage(rows), options);
-
 export const collectLocalReportRows = (request: LocalReportRowsRequest) =>
   Effect.gen(function* () {
     const { rows } = yield* collectConfiguredLocalRows(request);
@@ -425,6 +429,7 @@ export const collectLocalReportRowsWithWarnings = (
       }));
       return {
         rows: stored.rows,
+        sourceAuthorities: stored.sourceAuthorities,
         warnings: collection.warnings,
         collection: { ...collection, rows: stored.rows, harnesses },
       };
@@ -446,7 +451,7 @@ export const collectProjectedLocalReportRowsWithWarnings = (
   withPerfSpan(
     'aiUsage.report.collectProjectedRowsWithWarnings',
     Effect.gen(function* () {
-      const { rows, warnings, collection } = yield* collectLocalReportRowsWithWarnings({
+      const { rows, sourceAuthorities, warnings, collection } = yield* collectLocalReportRowsWithWarnings({
         ...request,
         keepSource: true,
       });
@@ -455,7 +460,10 @@ export const collectProjectedLocalReportRowsWithWarnings = (
         'aiUsage.report.projectGroups',
         Effect.sync(() =>
           buildProjectProjection(
-            authorizeRows(rows as SourcedRow[], 'local-observed'),
+            (rows as SourcedRow[]).map((row, index) => ({
+              authority: sourceAuthorities[index] ?? 'portable-opaque',
+              row,
+            })),
             config.projectGroups ?? [],
             config.projectAliases ?? [],
           ),
@@ -469,6 +477,7 @@ export const collectProjectedLocalReportRowsWithWarnings = (
       return {
         collection,
         rows: projection.rows,
+        sourceAuthorities,
         warnings: [...warnings, ...projection.warnings],
       };
     }),
@@ -482,14 +491,17 @@ export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
   withPerfSpan(
     'aiUsage.report.createLocalPayload',
     Effect.gen(function* () {
-      const { rows, warnings } = yield* collectLocalReportRowsWithWarnings(request);
+      const { rows, sourceAuthorities, warnings } = yield* collectLocalReportRowsWithWarnings(request);
       const machine = yield* ensureMachineConfig;
       const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
       const projection = yield* withPerfSpan(
         'aiUsage.report.projectGroups',
         Effect.sync(() =>
           buildProjectProjection(
-            authorizeRows(rows as SourcedRow[], 'local-observed'),
+            (rows as SourcedRow[]).map((row, index) => ({
+              authority: sourceAuthorities[index] ?? 'portable-opaque',
+              row,
+            })),
             config.projectGroups ?? [],
             config.projectAliases ?? [],
           ),
@@ -506,28 +518,20 @@ export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
         (result) => ({ datasets: result ? Object.keys(result).length : 0 }),
       );
       const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
-      const report = yield* withPerfSpan(
-        'aiUsage.report.prepare',
-        Effect.sync(() => prepareNormalizedUsageReport(projection.rows, request.options)),
-        (prepared) => ({
-          omittedRows: prepared.omittedRows,
-          rows: prepared.rows.length,
-          tableRows: prepared.tableRows.length,
-        }),
-      );
       return yield* withPerfSpan(
         'aiUsage.report.serializePayload',
-        Effect.sync(() =>
-          createUsageReportPayload(
-            report,
-            request.options,
-            request.generatedAt ?? new Date(),
-            facets,
-            [...warnings, ...projection.warnings],
-            projection.projectGroups,
-            config.projectGroups ?? [],
-            datasets,
-          ),
+        Effect.sync(
+          () =>
+            assembleReport({
+              configuredProjectGroups: config.projectGroups ?? [],
+              datasets,
+              facets,
+              generatedAt: request.generatedAt ?? new Date(),
+              options: request.options,
+              projectGroups: projection.projectGroups,
+              rows: projection.rows,
+              warnings: [...warnings, ...projection.warnings],
+            }).payload,
         ),
         (payload) => ({
           rows: payload.rows.length,
@@ -589,28 +593,20 @@ export const createStoredReportPayload = (
         (result) => ({ datasets: result ? Object.keys(result).length : 0 }),
       );
       const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
-      const report = yield* withPerfSpan(
-        'aiUsage.report.prepareStored',
-        Effect.sync(() => prepareNormalizedUsageReport(projection.rows, request.options)),
-        (prepared) => ({
-          omittedRows: prepared.omittedRows,
-          rows: prepared.rows.length,
-          tableRows: prepared.tableRows.length,
-        }),
-      );
       return yield* withPerfSpan(
         'aiUsage.report.serializeStoredPayload',
-        Effect.sync(() =>
-          createUsageReportPayload(
-            report,
-            request.options,
-            request.generatedAt ?? new Date(),
-            facets,
-            projection.warnings,
-            projection.projectGroups,
-            config.projectGroups ?? [],
-            datasets,
-          ),
+        Effect.sync(
+          () =>
+            assembleReport({
+              configuredProjectGroups: config.projectGroups ?? [],
+              datasets,
+              facets,
+              generatedAt: request.generatedAt ?? new Date(),
+              options: request.options,
+              projectGroups: projection.projectGroups,
+              rows: projection.rows,
+              warnings: projection.warnings,
+            }).payload,
         ),
         (payload) => ({
           rows: payload.rows.length,
@@ -750,8 +746,6 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
     const authorizedRows = mergeAuthorizedSnapshotRows(authorizedSnapshots);
     const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
     const projection = buildProjectProjection(authorizedRows, config.projectGroups ?? [], config.projectAliases ?? []);
-    const rows = normalizeSessionLineage(projection.rows);
-    const report = prepareUsageReport(rows, request.options);
     const allWarnings = [...merged.warnings, ...projection.warnings];
     const payloadWarnings = allWarnings.map((warning) => {
       if ('key' in warning) {
@@ -766,19 +760,20 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
     const datasets = mergeReportDatasets(merged.datasets);
     const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
 
+    const assembly = assembleReport({
+      configuredProjectGroups: config.projectGroups ?? [],
+      datasets,
+      facets,
+      generatedAt: request.generatedAt ?? new Date(),
+      options: request.options,
+      projectGroups: projection.projectGroups,
+      rows: projection.rows,
+      warnings: payloadWarnings,
+    });
     return {
-      rows,
-      report,
-      payload: createUsageReportPayload(
-        report,
-        request.options,
-        request.generatedAt ?? new Date(),
-        facets,
-        payloadWarnings,
-        projection.projectGroups,
-        config.projectGroups ?? [],
-        datasets,
-      ),
+      rows: assembly.rows,
+      report: assembly.report,
+      payload: assembly.payload,
       warnings: allWarnings,
       duplicatesDropped: merged.duplicatesDropped,
     };

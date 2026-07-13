@@ -1,10 +1,16 @@
 #!/usr/bin/env bun
-import { type LocalReportPayloadRequest, runConsistentStoredReportPayload, runLocalReportPayload } from './index';
+import {
+  type LocalReportPayloadRequest,
+  reportCaptureFingerprint,
+  runConsistentStoredReportPayload,
+  runLocalReportPayload,
+} from './index';
 import { writeReportPayloadArtifact } from './report-payload-artifact';
 
 const mode = process.argv[2] === 'fresh' || process.argv[2] === 'stored' ? process.argv[2] : 'fresh';
 const configCwd = process.argv[3] ?? process.argv[2] ?? process.cwd();
-const outputPath = process.argv[4];
+const currentCaptureFingerprint = process.argv[4] || undefined;
+const outputPath = process.argv[5];
 
 if (!outputPath) {
   throw new Error('The report payload runner requires a server-created output path');
@@ -38,16 +44,15 @@ const withStdoutRedirectedToStderr = async <A>(run: () => Promise<A>) => {
 };
 
 const payload = await withStdoutRedirectedToStderr(async () => {
-  const freshPayload = mode === 'fresh' ? await runLocalReportPayload(request) : undefined;
-  const storedPayload = await runConsistentStoredReportPayload(request);
-  const collectionWarnings = freshPayload?.warnings?.filter((warning) => 'operation' in warning) ?? [];
-  if (collectionWarnings.length === 0) {
-    return storedPayload;
+  if (mode === 'fresh') {
+    return await runLocalReportPayload(request);
   }
-  const warningsByValue = new Map(
-    [...(storedPayload.warnings ?? []), ...collectionWarnings].map((warning) => [JSON.stringify(warning), warning]),
-  );
-  return { ...storedPayload, warnings: [...warningsByValue.values()] };
+  return await runConsistentStoredReportPayload(request);
 });
 
-await writeReportPayloadArtifact(outputPath, JSON.stringify(payload));
+const captureFingerprint = reportCaptureFingerprint(payload);
+const result =
+  mode === 'fresh' && currentCaptureFingerprint === captureFingerprint
+    ? { captureFingerprint, status: 'unchanged' as const, version: 1 as const }
+    : { captureFingerprint, payload, status: 'changed' as const, version: 1 as const };
+await writeReportPayloadArtifact(outputPath, JSON.stringify(result));
