@@ -1,4 +1,13 @@
 export {
+  createSkillsApplication,
+  readBoundedProjectSkillMarkdown,
+  type SkillsApplication,
+  type SkillsApplicationPorts,
+  type SkillsApplicationWorkflows,
+  type SkillsProjectMarkdownDocument,
+  type SkillsProjectMarkdownInput,
+} from './application';
+export {
   parseSkillConfigInput,
   parseSkillMutationInput,
   parseSkillTargetDirectoryInput,
@@ -12,6 +21,7 @@ export type {
   Projection,
   ProjectionAction,
   ProjectionState,
+  ProjectionTargetIdentity,
   ProjectSkillInventory,
   ProjectSkillObservation,
   ProjectSkillPlacement,

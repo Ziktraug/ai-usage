@@ -21,7 +21,8 @@ const isMissingPathError = (error: unknown): boolean => isRecord(error) && error
 
 export type BoundedRegularFileRead =
   | { buffer: Buffer; identity: { dev: number | bigint; ino: number | bigint }; kind: 'ok' }
-  | { kind: 'missing' | 'too-large' | 'unsupported' | 'unreadable' };
+  | { buffer: Buffer; kind: 'too-large' }
+  | { kind: 'missing' | 'unsupported' | 'unreadable' };
 
 export const readBoundedRegularFile = async (filePath: string, maxBytes: number): Promise<BoundedRegularFileRead> => {
   let file: Awaited<ReturnType<typeof open>>;
@@ -42,9 +43,6 @@ export const readBoundedRegularFile = async (filePath: string, maxBytes: number)
     if (!fileStat.isFile()) {
       return { kind: 'unsupported' };
     }
-    if (fileStat.size > maxBytes) {
-      return { kind: 'too-large' };
-    }
     const buffer = Buffer.alloc(maxBytes + 1);
     let bytesRead = 0;
     while (bytesRead < buffer.length) {
@@ -55,7 +53,7 @@ export const readBoundedRegularFile = async (filePath: string, maxBytes: number)
       bytesRead += result.bytesRead;
     }
     if (bytesRead > maxBytes) {
-      return { kind: 'too-large' };
+      return { buffer: buffer.subarray(0, maxBytes), kind: 'too-large' };
     }
     return {
       buffer: buffer.subarray(0, bytesRead),

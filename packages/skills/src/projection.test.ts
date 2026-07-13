@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { lstat, mkdir, mkdtemp, readdir, readlink, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -91,6 +91,30 @@ describe('target observation and projections', () => {
       expect(await readlink(path.join(targetPath, 'example-skill'))).toBe(sourcePath);
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects a target directory identity swap without touching the replacement tree', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-target-swap-'));
+    try {
+      const sourcePath = path.join(root, 'source');
+      const targetPath = path.join(root, 'target');
+      const originalPath = path.join(root, 'target-original');
+      await mkdir(sourcePath);
+      await mkdir(targetPath);
+      const skill = makeSkill({ path: sourcePath, skillMdPath: path.join(sourcePath, 'SKILL.md') });
+      const target = makeTarget(targetPath);
+      const scan = await scanTargetProjections({ skills: [skill], targets: [target] });
+      const action = planProjection(skill, target, scan.projections[0]);
+
+      await Bun.write(path.join(sourcePath, 'SKILL.md'), '# safe\n');
+      await rename(targetPath, originalPath);
+      await mkdir(targetPath);
+
+      await expect(applyProjectionAction(action)).rejects.toThrow('identity changed');
+      expect(await readdir(targetPath)).toEqual([]);
+    } finally {
+      await rm(root, { force: true, recursive: true });
     }
   });
 

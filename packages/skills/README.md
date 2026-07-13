@@ -8,8 +8,8 @@
 - JSON-only source repository state.
 - Source repository scans and `SKILL.md` validation.
 - Agent-runtime target observation.
-- Projection planning, safe reconciliation, and diagnostics.
-- Workflow functions consumed by app adapters.
+- Identity-capturing projection planning, locked reconciliation, and diagnostics.
+- A deep application facade consumed by app adapters.
 
 ## Non-Ownership
 
@@ -32,7 +32,7 @@ smallest internal seam instead of importing the facade from inside the package:
 - `source-state.ts`, `source-scan.ts`, and `project-scan.ts` own inventory inputs;
 - `skill-markdown.ts` and `skill-markdown-io.ts` own parsing and transactional editor IO;
 - `projections.ts` owns target observation, planning, and safe projection mutations;
-- `workflows.ts` composes those seams for application adapters.
+- `workflows.ts` composes filesystem-safe use cases and `application.ts` exposes their narrow application facade.
 
 Workspace-package imports are forbidden by both Biome and
 `tools/check-package-boundaries.ts` so the control plane cannot acquire report,
