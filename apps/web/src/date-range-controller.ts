@@ -137,6 +137,8 @@ export const createDateRangeController = (options: {
   let domainCache: {
     boundsFrom: number | null;
     boundsTo: number | null;
+    rowMaxTime: number | null;
+    rowMinTime: number | null;
     rows: SerializedRow[];
     value: DateRangeDomain | null;
   } | null = null;
@@ -150,7 +152,9 @@ export const createDateRangeController = (options: {
       domainCache &&
       domainCache.rows === rows &&
       domainCache.boundsFrom === boundsFrom &&
-      domainCache.boundsTo === boundsTo
+      domainCache.boundsTo === boundsTo &&
+      domainCache.rowMinTime === rowSpan.minTime &&
+      domainCache.rowMaxTime === rowSpan.maxTime
     ) {
       return domainCache.value;
     }
@@ -159,6 +163,8 @@ export const createDateRangeController = (options: {
       domainCache = {
         boundsFrom,
         boundsTo,
+        rowMaxTime: rowSpan.maxTime,
+        rowMinTime: rowSpan.minTime,
         rows,
         value: null,
       };
@@ -178,6 +184,8 @@ export const createDateRangeController = (options: {
     domainCache = {
       boundsFrom,
       boundsTo,
+      rowMaxTime: rowSpan.maxTime,
+      rowMinTime: rowSpan.minTime,
       rows,
       value,
     };

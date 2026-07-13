@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
-import { createRoot } from 'solid-js';
+import { createRoot, createSignal } from 'solid-js';
 import { rowMatchesDateBounds, toDateInputValue } from './date-range';
 import { createDateRangeController } from './date-range-controller';
 
@@ -114,6 +114,33 @@ describe('date range controller', () => {
 
       expect(controller.inputValues()).toEqual({ from: '2026-06-12', to: '2026-06-12' });
       expect(rowMatchesDateBounds(todaysRow, controller.bounds())).toBe(true);
+
+      dispose();
+    });
+  });
+
+  test('reacts when a focused report date domain arrives after hydration', () => {
+    createRoot((dispose) => {
+      const [focusedDomain, setFocusedDomain] = createSignal<{ maxDay: Date; minDay: Date } | null>(null);
+      const rows: SerializedRow[] = [];
+      const controller = createDateRangeController({
+        domain: focusedDomain,
+        generatedAt: new Date(2026, 5, 30, 12),
+        rows: () => rows,
+        defaultFrom: '2026-06-24',
+        defaultTo: '2026-06-30',
+        formatDate,
+      });
+
+      expect(controller.domain()).toBeNull();
+
+      setFocusedDomain({
+        minDay: new Date(2026, 5, 1),
+        maxDay: new Date(2026, 5, 28),
+      });
+
+      expect(controller.inputValues()).toEqual({ from: '2026-06-01', to: '2026-06-28' });
+      expect(controller.selectedIndexes()).toEqual([0, 27]);
 
       dispose();
     });
