@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 import {
   createUsageMergeBundle,
@@ -45,6 +47,18 @@ export interface ImportPeerMergeBundleInput {
   localMachineId: string;
 }
 
+export interface PreviewPeerMergeBundleInput extends ImportPeerMergeBundleInput {}
+
+export interface PreviewPeerMergeBundleResult extends ImportResult {
+  generation: number;
+  storeStateToken: string;
+}
+
+export interface ConfirmPeerMergeBundleInput extends ImportPeerMergeBundleInput {
+  expectedGeneration: number;
+  expectedStoreStateToken: string;
+}
+
 export interface QueryReportRowsInput {
   dbPath: string;
   harnessKeys?: string[];
@@ -62,7 +76,12 @@ export interface QueryUsageStoreGenerationInput {
   dbPath: string;
 }
 
-export type UsageStoreErrorReason = 'invalid-input' | 'self-import' | 'storage-failure' | 'migration-failure';
+export type UsageStoreErrorReason =
+  | 'invalid-input'
+  | 'self-import'
+  | 'storage-failure'
+  | 'migration-failure'
+  | 'preview-stale';
 
 export class UsageStoreError extends Data.TaggedError('UsageStoreError')<{
   readonly operation: string;
@@ -72,9 +91,13 @@ export class UsageStoreError extends Data.TaggedError('UsageStoreError')<{
 }> {}
 
 export interface UsageStore {
+  confirmPeerMergeBundle(input: ConfirmPeerMergeBundleInput): Effect.Effect<ImportResult, UsageStoreError>;
   exportLocalMergeBundle(input: ExportLocalMergeBundleInput): Effect.Effect<UsageMergeBundle, UsageStoreError>;
   importLocalRows(input: ImportLocalRowsInput): Effect.Effect<ImportResult, UsageStoreError>;
   importPeerMergeBundle(input: ImportPeerMergeBundleInput): Effect.Effect<ImportResult, UsageStoreError>;
+  previewPeerMergeBundle(
+    input: PreviewPeerMergeBundleInput,
+  ): Effect.Effect<PreviewPeerMergeBundleResult, UsageStoreError>;
   queryReportRows(input?: QueryReportRowsInput): Effect.Effect<QueryRowsResult, UsageStoreError>;
   queryUsageStoreGeneration(input?: QueryUsageStoreGenerationInput): Effect.Effect<number, UsageStoreError>;
 }
@@ -103,6 +126,13 @@ interface StoredRowRecord {
 
 interface UsageStoreGenerationRecord {
   value: number;
+}
+
+type MergeRowClassification = 'inserted' | 'updated' | 'unchanged' | 'superseded' | 'deleted';
+
+interface ClassifiedMergeRow {
+  classification: MergeRowClassification;
+  row: SerializedMergeRow;
 }
 
 const usageStoreError = (operation: string, dbPath: string, cause: unknown, reason?: UsageStoreErrorReason) =>
@@ -294,6 +324,40 @@ const loadExistingRows = (db: SqliteDatabase, rows: SerializedMergeRow[]): Map<s
   return new Map(existingRows.map((row) => [row.row_key, row]));
 };
 
+const classifyMergeRows = (db: SqliteDatabase, rows: SerializedMergeRow[]): ClassifiedMergeRow[] => {
+  const existingRows = new Map<string, ExistingRow>();
+  for (const batch of chunkRows(rows, IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE)) {
+    for (const [key, value] of loadExistingRows(db, batch)) {
+      existingRows.set(key, value);
+    }
+  }
+  return rows.map((row) => {
+    const existing = existingRows.get(row.rowKey);
+    let classification: MergeRowClassification;
+    if (!existing) {
+      classification = 'inserted';
+    } else if (existing.content_hash === row.contentHash && existing.status === row.status) {
+      classification = 'unchanged';
+    } else if (row.status === 'deleted') {
+      classification = 'deleted';
+    } else if (row.status === 'superseded') {
+      classification = 'superseded';
+    } else {
+      classification = 'updated';
+    }
+    existingRows.set(row.rowKey, { content_hash: row.contentHash, row_key: row.rowKey, status: row.status });
+    return { classification, row };
+  });
+};
+
+const summarizeClassifications = (classifiedRows: ClassifiedMergeRow[]): ImportResult => {
+  const result = emptyImportResult();
+  for (const { classification } of classifiedRows) {
+    result[classification]++;
+  }
+  return result;
+};
+
 const importMergeRows = (
   dbPath: string,
   rows: SerializedMergeRow[],
@@ -308,41 +372,22 @@ const importMergeRows = (
 
         db.exec('BEGIN IMMEDIATE');
         try {
-          for (const batch of chunkRows(rows, IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE)) {
-            const existingRows = loadExistingRows(db, batch);
-            for (const row of batch) {
-              const existing = existingRows.get(row.rowKey);
-              if (!existing) {
-                insertMergeRow(statements.insert, row, now);
-                existingRows.set(row.rowKey, {
-                  content_hash: row.contentHash,
-                  row_key: row.rowKey,
-                  status: row.status,
-                });
-                result.inserted++;
-                continue;
-              }
-
-              if (existing.content_hash === row.contentHash && existing.status === row.status) {
-                touchMergeRow(statements.touch, row.rowKey, now);
-                result.unchanged++;
-                continue;
-              }
-
-              updateMergeRow(statements.update, row, now);
-              existingRows.set(row.rowKey, {
-                content_hash: row.contentHash,
-                row_key: row.rowKey,
-                status: row.status,
-              });
-              if (row.status === 'deleted') {
-                result.deleted++;
-              } else if (row.status === 'superseded') {
-                result.superseded++;
-              } else {
-                result.updated++;
-              }
+          const classifiedRows = classifyMergeRows(db, rows);
+          for (const { classification, row } of classifiedRows) {
+            if (classification === 'inserted') {
+              insertMergeRow(statements.insert, row, now);
+              result.inserted++;
+              continue;
             }
+
+            if (classification === 'unchanged') {
+              touchMergeRow(statements.touch, row.rowKey, now);
+              result.unchanged++;
+              continue;
+            }
+
+            updateMergeRow(statements.update, row, now);
+            result[classification]++;
           }
           if (rows.length > 0) {
             db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
@@ -393,6 +438,111 @@ export const importPeerMergeBundle = (
   }
   return importMergeRows(input.dbPath, bundle.rows, input.importedAt);
 };
+
+const validatePeerBundle = (
+  bundleInput: UsageMergeBundle,
+  localMachineId: string,
+): Effect.Effect<UsageMergeBundle, UsageStoreError> => {
+  try {
+    const bundle = parseUsageMergeBundleValue(bundleInput);
+    if (bundle.machine.id === localMachineId) {
+      return Effect.fail(
+        new UsageStoreError({
+          operation: 'previewPeerMergeBundle',
+          message: 'Cannot import a peer merge bundle from the local machine.',
+          reason: 'self-import',
+        }),
+      );
+    }
+    return Effect.succeed(bundle);
+  } catch (cause) {
+    return Effect.fail(
+      new UsageStoreError({
+        operation: 'previewPeerMergeBundle',
+        message: `Cannot preview an invalid peer merge bundle: ${cause instanceof Error ? cause.message : String(cause)}`,
+        reason: 'invalid-input',
+        cause,
+      }),
+    );
+  }
+};
+
+const storeIdentity = (dbPath: string, generation: number): string => {
+  const identity = [dbPath, `${dbPath}-wal`].map((filePath) => {
+    const stat = fs.lstatSync(filePath, { throwIfNoEntry: false });
+    return stat ? { dev: stat.dev, ino: stat.ino, mtimeMs: stat.mtimeMs, size: stat.size } : null;
+  });
+  return createHash('sha256').update(JSON.stringify({ generation, identity })).digest('hex');
+};
+
+const readStorePreview = async (dbPath: string, rows: SerializedMergeRow[]): Promise<PreviewPeerMergeBundleResult> => {
+  if (!fs.existsSync(dbPath)) {
+    return {
+      ...summarizeClassifications(rows.map((row) => ({ classification: 'inserted', row }))),
+      generation: 0,
+      storeStateToken: createHash('sha256').update('absent').digest('hex'),
+    };
+  }
+  if (fs.existsSync(`${dbPath}-wal`) && !fs.existsSync(`${dbPath}-shm`)) {
+    throw new Error('Usage store preview is unavailable while WAL coordination state is absent.');
+  }
+  const { Database } = await import('bun:sqlite');
+  const db = new Database(dbPath, { readonly: true }) as SqliteDatabase;
+  try {
+    db.exec('BEGIN');
+    const record = db
+      .query("SELECT value FROM usage_store_metadata WHERE key = 'generation'")
+      .get() as UsageStoreGenerationRecord | null;
+    if (!(record && Number.isSafeInteger(record.value) && record.value >= 0)) {
+      throw new Error('Usage store generation metadata is missing or invalid.');
+    }
+    const result = summarizeClassifications(classifyMergeRows(db, rows));
+    db.exec('ROLLBACK');
+    return { ...result, generation: record.value, storeStateToken: storeIdentity(dbPath, record.value) };
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      // The original preview error remains authoritative.
+    }
+    throw error;
+  } finally {
+    db.close();
+  }
+};
+
+export const previewPeerMergeBundle = (
+  input: PreviewPeerMergeBundleInput,
+): Effect.Effect<PreviewPeerMergeBundleResult, UsageStoreError> =>
+  validatePeerBundle(input.bundle, input.localMachineId).pipe(
+    Effect.flatMap((bundle) =>
+      Effect.tryPromise({
+        try: () => readStorePreview(input.dbPath, bundle.rows),
+        catch: (cause) => usageStoreError('previewPeerMergeBundle', input.dbPath, cause, 'storage-failure'),
+      }),
+    ),
+  );
+
+export const confirmPeerMergeBundle = (
+  input: ConfirmPeerMergeBundleInput,
+): Effect.Effect<ImportResult, UsageStoreError> =>
+  previewPeerMergeBundle(input).pipe(
+    Effect.flatMap((preview) => {
+      if (
+        preview.generation !== input.expectedGeneration ||
+        preview.storeStateToken !== input.expectedStoreStateToken
+      ) {
+        return Effect.fail(
+          new UsageStoreError({
+            operation: 'confirmPeerMergeBundle',
+            message: 'The usage-store state changed after preview; create a new preview before confirming.',
+            reason: 'preview-stale',
+          }),
+        );
+      }
+      return importPeerMergeBundle(input);
+    }),
+  );
 
 export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<QueryRowsResult, UsageStoreError> =>
   withUsageStore(input.dbPath, (db) =>
@@ -465,6 +615,8 @@ export const createUsageStore = (dbPath: string): UsageStore => ({
   exportLocalMergeBundle: (input) => exportLocalMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
   importLocalRows: (input) => importLocalRows({ ...input, dbPath: input.dbPath ?? dbPath }),
   importPeerMergeBundle: (input) => importPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
+  previewPeerMergeBundle: (input) => previewPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
+  confirmPeerMergeBundle: (input) => confirmPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
   queryReportRows: (input) => queryReportRows({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryUsageStoreGeneration: (input) =>
     queryUsageStoreGeneration({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
