@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { LocalHistoryStorage } from './local-history';
+import { writePrivateJson } from './private-storage';
 import type { CollectorRow } from './rtk-enrichment';
 
 /**
@@ -107,8 +108,7 @@ export const writeDbRowCache = (
     return false;
   }
   const cachePath = collectorCachePath(storage, fileName);
-  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-  fs.writeFileSync(cachePath, `${JSON.stringify({ entries: cache.entries, version })}\n`, 'utf8');
+  writePrivateJson(cachePath, { entries: cache.entries, version });
   cache.dirty = false;
   return true;
 };

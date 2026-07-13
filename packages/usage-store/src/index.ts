@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import {
   createUsageMergeBundle,
@@ -13,6 +12,7 @@ import { IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE } from '@ai-usage/report-core/rep
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow, UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { Data, Effect } from 'effect';
+import { preparePrivateStoreFile } from './private-storage';
 
 export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
 
@@ -155,12 +155,13 @@ const migrate = (db: SqliteDatabase) => {
 const openUsageStoreDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
   Effect.tryPromise({
     try: async () => {
-      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+      preparePrivateStoreFile(dbPath);
       const { Database } = await import('bun:sqlite');
       const db = new Database(dbPath) as SqliteDatabase;
       db.exec('PRAGMA busy_timeout = 5000');
       db.exec('PRAGMA journal_mode = WAL');
       migrate(db);
+      preparePrivateStoreFile(dbPath);
       return db;
     },
     catch: (cause) => usageStoreError('openUsageStore', dbPath, cause, 'storage-failure'),
