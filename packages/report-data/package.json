@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./report-payload-artifact": "./src/report-payload-artifact.ts"
   },
   "dependencies": {
     "@ai-usage/report-core": "workspace:*",

@@ -1,8 +1,14 @@
 #!/usr/bin/env bun
-import { type LocalReportPayloadRequest, runLocalReportPayload, runStoredReportPayload } from './index';
+import { type LocalReportPayloadRequest, runConsistentStoredReportPayload, runLocalReportPayload } from './index';
+import { writeReportPayloadArtifact } from './report-payload-artifact';
 
 const mode = process.argv[2] === 'fresh' || process.argv[2] === 'stored' ? process.argv[2] : 'fresh';
 const configCwd = process.argv[3] ?? process.argv[2] ?? process.cwd();
+const outputPath = process.argv[4];
+
+if (!outputPath) {
+  throw new Error('The report payload runner requires a server-created output path');
+}
 
 const request: LocalReportPayloadRequest = {
   harness: null,
@@ -31,8 +37,17 @@ const withStdoutRedirectedToStderr = async <A>(run: () => Promise<A>) => {
   }
 };
 
-const payload = await withStdoutRedirectedToStderr(() =>
-  mode === 'stored' ? runStoredReportPayload(request) : runLocalReportPayload(request),
-);
+const payload = await withStdoutRedirectedToStderr(async () => {
+  const freshPayload = mode === 'fresh' ? await runLocalReportPayload(request) : undefined;
+  const storedPayload = await runConsistentStoredReportPayload(request);
+  const collectionWarnings = freshPayload?.warnings?.filter((warning) => 'operation' in warning) ?? [];
+  if (collectionWarnings.length === 0) {
+    return storedPayload;
+  }
+  const warningsByValue = new Map(
+    [...(storedPayload.warnings ?? []), ...collectionWarnings].map((warning) => [JSON.stringify(warning), warning]),
+  );
+  return { ...storedPayload, warnings: [...warningsByValue.values()] };
+});
 
-process.stdout.write(JSON.stringify(payload));
+await writeReportPayloadArtifact(outputPath, JSON.stringify(payload));
