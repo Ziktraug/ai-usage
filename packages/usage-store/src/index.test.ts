@@ -86,6 +86,31 @@ describe('usage-store public boundary', () => {
     expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(1);
   });
 
+  test('keeps portable authority opaque, blocks local collisions, and permits a genuine local upgrade', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-authority-'));
+    const dbPath = usageStorePath(home);
+    const sourceRow = makeRow({ sourceSessionId: 'authority-row' });
+    const portableBundle = createUsageMergeBundle({ machine: machineA, rows: [sourceRow] });
+
+    expect(
+      (await Effect.runPromise(importPeerMergeBundle({ bundle: portableBundle, dbPath, localMachineId: machineB.id })))
+        .inserted,
+    ).toBe(1);
+    const opaque = await Effect.runPromise(queryReportRows({ dbPath }));
+    expect(opaque.sourceAuthorities).toEqual(['portable-opaque']);
+    expect((await Effect.runPromise(exportLocalMergeBundle({ dbPath, machine: machineA }))).rows).toHaveLength(0);
+
+    const upgraded = await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [sourceRow] }));
+    expect(upgraded.updated).toBe(1);
+    const local = await Effect.runPromise(queryReportRows({ dbPath }));
+    expect(local.sourceAuthorities).toEqual(['local-observed']);
+    expect((await Effect.runPromise(exportLocalMergeBundle({ dbPath, machine: machineA }))).rows).toHaveLength(1);
+
+    await expect(
+      Effect.runPromise(previewPeerMergeBundle({ bundle: portableBundle, dbPath, localMachineId: machineB.id })),
+    ).rejects.toThrow('collides with locally observed usage');
+  });
+
   test('keeps import results count based for UI state', () => {
     const result: ImportResult = {
       deleted: 0,
