@@ -145,6 +145,18 @@ describe('focused report bootstrap and store', () => {
     expect(store.overview()).toBe(result);
   });
 
+  test('does not publish the same Overview result twice', () => {
+    const store = createFocusedReportStore(supportResult());
+    const request = overviewRequest();
+    const result = overviewResult();
+
+    expect(store.applyOverview(request, result)).toEqual({ applied: true });
+    const appliedSnapshot = store.snapshot();
+
+    expect(store.applyOverview(request, result)).toEqual({ applied: true });
+    expect(store.snapshot()).toBe(appliedSnapshot);
+  });
+
   test('retains advanced analysis by query scope across timeline-only chart refreshes', () => {
     const store = createFocusedReportStore(supportResult());
     const advancedRequest = { ...overviewRequest(), includeAdvanced: true };
