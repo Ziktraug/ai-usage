@@ -22,7 +22,7 @@ import { executeFocusedReportQuery } from './focused-report-query-sqlite';
 import { materializeSessionQueryDatabase, SESSION_QUERY_DATABASE_NAME } from './session-query-materialization';
 import { assertSessionQueryDatabase } from './session-query-sqlite';
 
-const runnerPath = path.join(import.meta.dir, 'focused-report-query-runner.ts');
+const runnerPath = path.join(import.meta.dir, 'revision-query-runner.ts');
 const UNBOUNDED_PRESENTATION_SCAN_PATTERN = /SELECT\s+row_json\s+FROM\s+session_rows\s+ORDER BY/u;
 const temporaryDirectories = new Set<string>();
 
