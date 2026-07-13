@@ -27,13 +27,23 @@ import {
   unavailableTitle,
 } from '@ai-usage/design-system/report';
 import {
+  type FocusedOverviewRequest,
+  type FocusedReportQueryScope,
+  type FocusedSupportResult,
+  type FocusedTimelineDimension,
+  type FocusedTimelineGranularity,
+  focusedBreakdownFingerprint,
+  focusedOverviewFingerprint,
+} from '@ai-usage/report-core/focused-report-query';
+import {
   type ProjectGroupConfig,
   type ProjectSourceSelector,
   projectSourceSelectorKey,
 } from '@ai-usage/report-core/project-group';
+import { type SessionNeighborResult, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
 import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
+import { batch, createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
 import {
   createClientPerfTrace,
   logClientPerf,
@@ -43,7 +53,7 @@ import {
   resolveClientPerfEnabled,
 } from './client-perf';
 import { CursorAttributionPanel } from './cursor-attribution-panel';
-import { downloadCSV, downloadHTML } from './dashboard-export';
+import { downloadCSV, downloadCSVContent, downloadHTML } from './dashboard-export';
 import { FilterPill, fieldFilterLabels } from './dashboard-filters';
 import { MetricTile } from './dashboard-metrics';
 import {
@@ -77,6 +87,16 @@ import {
 import { ThemeToggle } from './dashboard-theme';
 import { type DateBounds, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
 import { createDateRangeController } from './date-range-controller';
+import {
+  createFocusedReportStore,
+  createServedFocusedReportSource,
+  FocusedRevisionExpiredError,
+  fetchFocusedBreakdown,
+  fetchFocusedCsv,
+  fetchFocusedHtmlPayload,
+  fetchFocusedOverview,
+  fetchFocusedReportBootstrap,
+} from './focused-report-client';
 import { GroupPanel } from './group-panel';
 import { Overview } from './overview';
 import type { TimelineDimension } from './overview-model';
@@ -87,15 +107,16 @@ import { buildProviderStatusViews } from './provider-status-model';
 import { ProviderStatusPanel } from './provider-status-panel';
 import { RefreshStatus } from './refresh-status';
 import { cursorCommitAttributionFacet } from './report-data';
-import {
-  fetchReportPayload,
-  isDemoReportPayload,
-  isStaticReportRuntime,
-  mountReportRefreshAction,
-  readReportPayload,
-} from './report-runtime';
+import { isDemoReportPayload, isStaticReportRuntime, readReportPayload } from './report-runtime';
 import { ReportWarnings } from './report-warnings';
 import { SessionDrawer } from './session-drawer';
+import {
+  buildDashboardSessionQueryScope,
+  createServedSessionQuerySource,
+  createSessionQueryCoordinator,
+  type SessionQueryState,
+  sessionRowsForState,
+} from './session-query-client';
 import { SessionTable } from './session-table';
 import {
   columnVisibilityFromDiff,
@@ -105,7 +126,7 @@ import {
 import { type DashboardRow, enrichReportRow, fmtDate, fmtDateOnly, fmtNum, rowKey } from './shared';
 import { applyTableUpdate } from './table-utils';
 import { TimeRangeControl } from './time-range-control';
-import type { WebReportPayload } from './web-report-payload';
+import { toWebReportPayload, type WebReportPayload, type WebReportPayloadWithoutRows } from './web-report-payload';
 
 const REFRESH_INTERVAL_MS = 60_000;
 const FORM_CONTROL_TAG_PATTERN = /^(INPUT|SELECT|TEXTAREA)$/;
@@ -167,21 +188,76 @@ const removeSelectors = (sources: ProjectSourceSelector[], selectors: ProjectSou
   return sources.filter((source) => !removed.has(projectSourceSelectorKey(source)));
 };
 
+const payloadForFocusedBootstrap = (bootstrap: FocusedSupportResult): WebReportPayload =>
+  toWebReportPayload({ ...bootstrap.support, rows: [], tableRows: [] });
+
+const supportForFocusedBootstrap = (bootstrap: FocusedSupportResult): WebReportPayloadWithoutRows => {
+  const { rows: _rows, ...support } = payloadForFocusedBootstrap(bootstrap);
+  return support;
+};
+
 export const Dashboard = (props: {
-  fetchPayload?: (options?: { force?: boolean }) => Promise<WebReportPayload>;
   initialPayload?: WebReportPayload;
+  refreshBootstrap?: () => Promise<FocusedSupportResult>;
+  servedBootstrap?: FocusedSupportResult;
 }) => {
-  const initialPayload = props.initialPayload ?? readReportPayload();
+  const initialPayload =
+    props.initialPayload ??
+    (props.servedBootstrap ? payloadForFocusedBootstrap(props.servedBootstrap) : readReportPayload());
   const dashboardSearchDefaults = dashboardSearchDefaultsFor(initialPayload.filters.sort);
-  const [payload, setPayload] = createSignal<WebReportPayload>(initialPayload);
+  const { rows: _initialRows, ...initialSupport } = initialPayload;
+  const focusedStore = props.servedBootstrap ? createFocusedReportStore(props.servedBootstrap) : undefined;
+  const focusedSource = focusedStore ? createServedFocusedReportSource() : undefined;
+  const restartFocusedBootstrap = async (): Promise<void> => {
+    if (!(focusedSource && focusedStore)) {
+      return;
+    }
+    const bootstrap = await fetchFocusedReportBootstrap(focusedSource);
+    await commitFocusedRevisionForActiveDestination(bootstrap);
+  };
+  const reportSupport = createMemo(() =>
+    focusedStore
+      ? supportForFocusedBootstrap({
+          filterOptions: focusedStore.filterOptions(),
+          providerRows: focusedStore.providerRows(),
+          requestFingerprint: '',
+          revision: focusedStore.revision(),
+          support: focusedStore.support(),
+          truncation: focusedStore.truncation(),
+        })
+      : initialSupport,
+  );
+  const supportOmissionCount = createMemo(() => {
+    const truncation = focusedStore?.truncation();
+    return truncation ? Object.values(truncation).reduce((total, omitted) => total + omitted, 0) : 0;
+  });
   const [moreMetricsOpen, setMoreMetricsOpen] = createSignal(false);
   const staticReport = isStaticReportRuntime();
   const providerStatusClock = createProviderStatusClock({ initialNow: initialPayload.generatedAt });
   onMount(providerStatusClock.start);
-  const isDemo = !props.initialPayload && isDemoReportPayload();
+  const isDemo = !(props.initialPayload || props.servedBootstrap) && isDemoReportPayload();
+  const servedSessionQueries = Boolean(focusedStore);
+  const [servedSessionState, setServedSessionState] = createSignal<SessionQueryState>();
+  const servedSessionFingerprint = () => {
+    const state = servedSessionState();
+    return state ? sessionQueryFingerprint(state.query) : undefined;
+  };
+  const [sessionQueryLoading, setSessionQueryLoading] = createSignal(false);
+  const sessionQueryCoordinator = servedSessionQueries
+    ? createSessionQueryCoordinator({
+        onStateChange: setServedSessionState,
+        ...(focusedStore
+          ? {
+              onRevisionExpired: () => restartFocusedBootstrap(),
+              revision: focusedStore.revision,
+            }
+          : {}),
+        source: createServedSessionQuerySource(),
+      })
+    : undefined;
   const [clientReady, setClientReady] = createSignal(false);
   const canRefresh = () =>
-    !!props.fetchPayload && !isDemo && clientReady() && ['http:', 'https:'].includes(window.location.protocol);
+    !!props.refreshBootstrap && !isDemo && clientReady() && ['http:', 'https:'].includes(window.location.protocol);
   const [refreshing, setRefreshing] = createSignal(false);
   const [lastRefreshError, setLastRefreshError] = createSignal<string | null>(null);
   const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = createSignal<number | null>(null);
@@ -191,6 +267,7 @@ export const Dashboard = (props: {
     canRefresh() ? Date.now() + REFRESH_INTERVAL_MS : null,
   );
   const search = useSearch({ from: '/' });
+  const servedSessionViewActive = () => servedSessionQueries && search().tab === 'sessions';
   const navigate = useNavigate({ from: '/' });
   const updateSearch = (
     updater: (current: DashboardSearch) => DashboardSearch,
@@ -210,30 +287,125 @@ export const Dashboard = (props: {
   const fieldFilters = () => search().filters;
   const sorting = createMemo(() => sortingStateFromSearch(search().sort));
   const columnVisibility = createMemo(() => columnVisibilityFromDiff(search().cols, search().colsBase));
-  const generatedAt = createMemo(() => new Date(payload().generatedAt));
+  const generatedAt = createMemo(() => new Date(reportSupport().generatedAt));
   const reportRows = createMemo(() =>
     measureClientPerf(
       'aiUsage.web.client.compute.reportRows',
-      () => payload().rows.map(enrichReportRow),
+      () => initialPayload.rows.map(enrichReportRow),
       (rows) => ({
         rows: rows.length,
       }),
     ),
   );
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
+  const [selectedNavigationRow, setSelectedNavigationRow] = createSignal<DashboardRow | null>(null);
+  const [sessionNeighbors, setSessionNeighbors] = createSignal<SessionNeighborResult>();
+  const [sessionNeighborsLoading, setSessionNeighborsLoading] = createSignal(false);
+  const [servedPrintRows, setServedPrintRows] = createSignal<DashboardRow[]>();
+  const [servedPrintRowsLoading, setServedPrintRowsLoading] = createSignal(false);
+  let servedPrintRevision: string | undefined;
+  let servedPrintScope: string | undefined;
+  const prepareServedPrintRows = async (): Promise<void> => {
+    if (!(focusedSource && focusedStore) || servedPrintRowsLoading()) {
+      return;
+    }
+    const revision = focusedStore.revision();
+    const printScope = JSON.stringify({
+      bounds: tableDateBounds(),
+      campaigns: groupCampaigns(),
+      filters: filterSnapshot(),
+      sorting: sorting(),
+    });
+    if (servedPrintRevision === revision && servedPrintScope === printScope && servedPrintRows()) {
+      return;
+    }
+    servedPrintRevision = undefined;
+    servedPrintScope = undefined;
+    setServedPrintRows();
+    setServedPrintRowsLoading(true);
+    try {
+      const result = await fetchFocusedHtmlPayload(focusedSource, { revision });
+      if (focusedStore.revision() !== revision) {
+        return;
+      }
+      const allRows = result.payload.rows.map(enrichReportRow);
+      const filteredRows = filterRowsByDateBounds(filterTimelineRows(allRows, filterSnapshot()), tableDateBounds());
+      setServedPrintRows(buildCampaignTableRows(allRows, filteredRows, sorting(), groupCampaigns()));
+      servedPrintRevision = revision;
+      servedPrintScope = printScope;
+    } catch (error) {
+      setLastRefreshError(error instanceof Error ? error.message : 'Failed to prepare complete print rows');
+    } finally {
+      setServedPrintRowsLoading(false);
+    }
+  };
+  const printCompleteReport = async (): Promise<void> => {
+    await prepareServedPrintRows();
+    if (!servedPrintRows()) {
+      throw new Error('Complete print rows are unavailable');
+    }
+    window.print();
+  };
+  onMount(() => {
+    if (!focusedSource) {
+      return;
+    }
+    const onBeforePrint = () => {
+      prepareServedPrintRows().catch((error: unknown) => {
+        setLastRefreshError(error instanceof Error ? error.message : 'Failed to prepare complete print rows');
+      });
+    };
+    const onPrintShortcut = (event: KeyboardEvent) => {
+      if (!(event.key.toLowerCase() === 'p' && (event.ctrlKey || event.metaKey))) {
+        return;
+      }
+      event.preventDefault();
+      printCompleteReport().catch((error: unknown) => {
+        setLastRefreshError(error instanceof Error ? error.message : 'Failed to print complete report');
+      });
+    };
+    window.addEventListener('beforeprint', onBeforePrint);
+    window.addEventListener('keydown', onPrintShortcut);
+    onCleanup(() => {
+      window.removeEventListener('beforeprint', onBeforePrint);
+      window.removeEventListener('keydown', onPrintShortcut);
+    });
+  });
+  createEffect(() => {
+    const revision = focusedStore?.revision();
+    if (servedPrintRevision && servedPrintRevision !== revision) {
+      servedPrintRevision = undefined;
+      servedPrintScope = undefined;
+      setServedPrintRows();
+    }
+  });
   let searchInputEl: HTMLInputElement | undefined;
-  const cursorCommitRows = createMemo(() => cursorCommitAttributionFacet(payload()));
-  const providerStatusViews = createMemo(() =>
-    buildProviderStatusViews(payload(), reportRows(), providerStatusClock.now()),
+  const cursorCommitRows = createMemo(() =>
+    focusedStore
+      ? (focusedStore.breakdown()?.context.cursorCommitAttribution ?? [])
+      : cursorCommitAttributionFacet(reportSupport()),
   );
-  const harnessOptions = createMemo(() => [...new Set(reportRows().map((row) => row.harness))]);
-  const machineOptions = createMemo(() => [
-    ...new Set(
-      reportRows()
-        .map((row) => row.source?.machineLabel ?? '')
-        .filter((label) => label !== ''),
+  const providerStatusViews = createMemo(() =>
+    buildProviderStatusViews(
+      reportSupport(),
+      focusedStore ? focusedStore.providerRows() : reportRows(),
+      providerStatusClock.now(),
     ),
-  ]);
+  );
+  const harnessOptions = createMemo(() =>
+    focusedStore ? focusedStore.filterOptions().harness : [...new Set(reportRows().map((row) => row.harness))],
+  );
+  const machineOptions = createMemo(() =>
+    focusedStore
+      ? focusedStore.filterOptions().machine
+      : [
+          ...new Set(
+            reportRows()
+              .map((row) => row.source?.machineLabel ?? '')
+              .filter((label) => label !== ''),
+          ),
+        ],
+  );
   const filterSnapshot = createMemo(() => createFilterSnapshot(query(), harness(), machine(), fieldFilters()));
   const timelineRows = createMemo(() =>
     measureClientPerf(
@@ -242,8 +414,13 @@ export const Dashboard = (props: {
       (rows) => ({ rows: rows.length }),
     ),
   );
+  const focusedDateDomain = createMemo(() => {
+    const timeline = focusedStore?.overview()?.timeline;
+    return timeline ? { maxDay: new Date(timeline.last), minDay: new Date(timeline.first) } : null;
+  });
   const initialRange = search().range;
   const dateRange = createDateRangeController({
+    ...(focusedStore ? { domain: focusedDateDomain } : {}),
     generatedAt,
     rows: timelineRows,
     defaultFrom: toDateInputValue(startOfDay(shiftCalendarDays(generatedAt(), -6))),
@@ -254,6 +431,47 @@ export const Dashboard = (props: {
     ...(initialRange.to ? { initialTo: initialRange.to } : {}),
   });
   const [tableDateBounds, setTableDateBounds] = createSignal<DateBounds>(dateRange.bounds());
+  const [focusedTimelineOptions, setFocusedTimelineOptions] = createSignal<{
+    dimension: FocusedTimelineDimension;
+    granularity: FocusedTimelineGranularity;
+  }>({ dimension: 'harness', granularity: 'day' });
+  const [advancedAnalysisOpen, setAdvancedAnalysisOpen] = createSignal(false);
+  const [advancedAnalysisLoading, setAdvancedAnalysisLoading] = createSignal(false);
+  const focusedQueryScopeForRevision = (revision: string): FocusedReportQueryScope => {
+    if (!focusedStore) {
+      throw new Error('Focused report queries require a served report store');
+    }
+    const sessionScope = buildDashboardSessionQueryScope({
+      campaigns: groupCampaigns(),
+      fields: fieldFilters(),
+      harness: harness(),
+      machine: machine(),
+      query: query(),
+      range: tableDateBounds(),
+      sorting: sorting(),
+    });
+    return {
+      filters: sessionScope.filters,
+      range: sessionScope.range,
+      revision,
+    };
+  };
+  const focusedQueryScope = (): FocusedReportQueryScope => {
+    if (!focusedStore) {
+      throw new Error('Focused report queries require a served report store');
+    }
+    return focusedQueryScopeForRevision(focusedStore.revision());
+  };
+  const activeSessionQueryScope = () =>
+    buildDashboardSessionQueryScope({
+      campaigns: groupCampaigns(),
+      fields: fieldFilters(),
+      harness: harness(),
+      machine: machine(),
+      query: query(),
+      range: tableDateBounds(),
+      sorting: sorting(),
+    });
   const searchRangeFromDateRange = (): DashboardSearch['range'] => {
     const mode = dateRange.mode();
     if (mode !== 'custom') {
@@ -315,10 +533,139 @@ export const Dashboard = (props: {
       (rows) => ({ rows: rows.length }),
     ),
   );
+  const visibleSessionTableRows = createMemo(() =>
+    servedSessionQueries ? sessionRowsForState(servedSessionState()) : sessionTableRows(),
+  );
+  let overviewQuerySequence = 0;
+  createEffect(() => {
+    if (!(clientReady() && focusedSource && focusedStore && primaryDashboardTabFor(search().tab) === 'overview')) {
+      setAdvancedAnalysisLoading(false);
+      return;
+    }
+    const request: FocusedOverviewRequest = {
+      includeAdvanced: advancedAnalysisOpen(),
+      query: focusedQueryScope(),
+      timeline: focusedTimelineOptions(),
+    };
+    if (focusedStore.overview()?.requestFingerprint === focusedOverviewFingerprint(request)) {
+      setAdvancedAnalysisLoading(false);
+      return;
+    }
+    overviewQuerySequence += 1;
+    const sequence = overviewQuerySequence;
+    setAdvancedAnalysisLoading(request.includeAdvanced);
+    fetchFocusedOverview(focusedSource, request)
+      .then((result) => {
+        if (sequence !== overviewQuerySequence) {
+          return;
+        }
+        const applied = focusedStore.applyOverview(request, result);
+        if (!applied.applied) {
+          throw new Error(`Focused Overview rejected: ${applied.reason}`);
+        }
+        setAdvancedAnalysisLoading(false);
+      })
+      .catch((error: unknown) => {
+        if (sequence !== overviewQuerySequence) {
+          return;
+        }
+        if (error instanceof FocusedRevisionExpiredError) {
+          restartFocusedBootstrap().catch((restartError: unknown) => {
+            setLastRefreshError(
+              restartError instanceof Error ? restartError.message : 'Failed to restart the report revision',
+            );
+          });
+          return;
+        }
+        setAdvancedAnalysisLoading(false);
+        setLastRefreshError(error instanceof Error ? error.message : 'Failed to load Overview');
+      });
+  });
+  let breakdownQuerySequence = 0;
+  createEffect(() => {
+    if (!(clientReady() && focusedSource && focusedStore && primaryDashboardTabFor(search().tab) === 'breakdown')) {
+      return;
+    }
+    const request = { query: focusedQueryScope() };
+    if (focusedStore.breakdown()?.requestFingerprint === focusedBreakdownFingerprint(request)) {
+      return;
+    }
+    breakdownQuerySequence += 1;
+    const sequence = breakdownQuerySequence;
+    fetchFocusedBreakdown(focusedSource, request)
+      .then((result) => {
+        if (sequence !== breakdownQuerySequence) {
+          return;
+        }
+        const applied = focusedStore.applyBreakdown(request, result);
+        if (!applied.applied) {
+          throw new Error(`Focused Breakdown rejected: ${applied.reason}`);
+        }
+      })
+      .catch((error: unknown) => {
+        if (sequence !== breakdownQuerySequence) {
+          return;
+        }
+        if (error instanceof FocusedRevisionExpiredError) {
+          restartFocusedBootstrap().catch((restartError: unknown) => {
+            setLastRefreshError(
+              restartError instanceof Error ? restartError.message : 'Failed to restart the report revision',
+            );
+          });
+          return;
+        }
+        setLastRefreshError(error instanceof Error ? error.message : 'Failed to load Breakdown');
+      });
+  });
+  let sessionQuerySequence = 0;
+  createEffect(() => {
+    const reportGeneratedAt = reportSupport().generatedAt;
+    if (!(clientReady() && sessionQueryCoordinator && reportGeneratedAt && search().tab === 'sessions')) {
+      setSessionQueryLoading(false);
+      return;
+    }
+    const scope = activeSessionQueryScope();
+    sessionQuerySequence += 1;
+    const sequence = sessionQuerySequence;
+    setSessionQueryLoading(true);
+    sessionQueryCoordinator
+      .start(scope)
+      .catch((error: unknown) => {
+        if (sequence === sessionQuerySequence) {
+          setLastRefreshError(error instanceof Error ? error.message : 'Failed to load sessions');
+        }
+      })
+      .finally(() => {
+        if (sequence === sessionQuerySequence) {
+          setSessionQueryLoading(false);
+        }
+      });
+  });
   // Campaign context rows can select their atomic root even when the root is outside
   // the current table filter, so resolve selection against the payload rows.
-  const selectedRow = createMemo(() => reportRows().find((row) => rowKey(row) === selectedKey()) ?? null);
+  const selectedRow = createMemo(() => {
+    const key = selectedKey();
+    if (!key) {
+      return null;
+    }
+    if (!servedSessionQueries) {
+      return reportRows().find((row) => rowKey(row) === key) ?? null;
+    }
+    const servedRow = visibleSessionTableRows()
+      .flatMap((row) => [row, ...(row.children ?? [])])
+      .find((row) => rowKey(row) === key);
+    const navigationRow = selectedNavigationRow();
+    return (
+      servedRow ??
+      (navigationRow?.rowId === key ? navigationRow : null) ??
+      reportRows().find((row) => rowKey(row) === key) ??
+      null
+    );
+  });
   const selectedCampaign = createMemo(() => {
+    if (servedSessionViewActive() && servedSessionState()) {
+      return null;
+    }
     const row = selectedRow();
     if (!row) {
       return null;
@@ -329,6 +676,15 @@ export const Dashboard = (props: {
     );
   });
   const navigateSelected = (delta: number) => {
+    if (servedSessionViewActive() && servedSessionState()) {
+      const next = delta > 0 ? sessionNeighbors()?.next : sessionNeighbors()?.previous;
+      if (next) {
+        setSelectedNavigationRow(next);
+        setSelectedKey(rowKey(next));
+        sessionQueryCoordinator?.select(rowKey(next));
+      }
+      return;
+    }
     const rows = sortedRows();
     const key = selectedKey();
     const index = rows.findIndex((row) => rowKey(row) === key);
@@ -340,6 +696,36 @@ export const Dashboard = (props: {
       setSelectedKey(rowKey(next));
     }
   };
+  let neighborRequestSequence = 0;
+  createEffect(() => {
+    const row = selectedRow();
+    if (!(servedSessionQueries && sessionQueryCoordinator && servedSessionState() && row)) {
+      setSessionNeighbors();
+      setSessionNeighborsLoading(false);
+      return;
+    }
+    neighborRequestSequence += 1;
+    const sequence = neighborRequestSequence;
+    setSessionNeighbors();
+    setSessionNeighborsLoading(true);
+    sessionQueryCoordinator
+      .loadNeighbors(row.rowId)
+      .then((neighbors) => {
+        if (sequence === neighborRequestSequence) {
+          setSessionNeighbors(neighbors);
+        }
+      })
+      .catch((error: unknown) => {
+        if (sequence === neighborRequestSequence) {
+          setLastRefreshError(error instanceof Error ? error.message : 'Failed to load session neighbors');
+        }
+      })
+      .finally(() => {
+        if (sequence === neighborRequestSequence) {
+          setSessionNeighborsLoading(false);
+        }
+      });
+  });
   createEffect(() => {
     if (!selectedRow()) {
       return;
@@ -384,63 +770,180 @@ export const Dashboard = (props: {
         if (!enabled) {
           return;
         }
-        logNavigationPerf(payload());
+        logNavigationPerf(initialPayload);
         requestAnimationFrame(() => {
-          logClientPerf('aiUsage.web.client.initialFrame', payloadStats(payload()));
+          logClientPerf('aiUsage.web.client.initialFrame', payloadStats(initialPayload));
         });
       })
       .catch((error: unknown) => {
         console.error(error);
       });
   });
-  const visibleSummary = createMemo(() =>
-    measureClientPerf('aiUsage.web.client.compute.visibleSummary', () =>
-      buildVisibleSummary(timelineRows(), dateRange.bounds()),
-    ),
+  const visibleSummary = createMemo(
+    () =>
+      focusedStore?.overview()?.summary ??
+      measureClientPerf('aiUsage.web.client.compute.visibleSummary', () =>
+        buildVisibleSummary(timelineRows(), dateRange.bounds()),
+      ),
   );
   const modelGroups = createMemo(() => {
     if (search().tab !== 'models') {
       return [];
     }
-    return buildModelGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost);
+    return (
+      focusedStore?.breakdown()?.groups.models ??
+      buildModelGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost)
+    );
   });
   const providerGroups = createMemo(() => {
     if (search().tab !== 'providers') {
       return [];
     }
-    return buildProviderGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost);
+    return (
+      focusedStore?.breakdown()?.groups.providers ??
+      buildProviderGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost)
+    );
   });
   const harnessGroups = createMemo(() => {
     if (search().tab !== 'harnesses') {
       return [];
     }
-    return buildHarnessGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost);
+    return (
+      focusedStore?.breakdown()?.groups.harnesses ??
+      buildHarnessGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost)
+    );
   });
   const projectGroupRows = createMemo(() => {
     if (search().tab !== 'projects') {
       return [];
     }
-    return buildProjectGroupRows(timelineRows(), dateRange.bounds());
+    return focusedStore?.breakdown()?.groups.projects ?? buildProjectGroupRows(timelineRows(), dateRange.bounds());
   });
-  const hiddenCount = createMemo(() => hiddenSessionCount(reportRows().length, visibleSummary().sessionCount));
-  const previousSummary = createMemo(() =>
-    buildPreviousPeriodSummary(timelineRows(), dateRange.bounds(), generatedAt()),
+  const projectGroupPayload = createMemo(() => {
+    if (!focusedStore) {
+      return reportSupport();
+    }
+    const context = focusedStore.breakdown()?.context;
+    return {
+      ...(context?.projectGroupConfigs ? { projectGroupConfigs: context.projectGroupConfigs } : {}),
+      ...(context?.projectGroups ? { projectGroups: context.projectGroups } : {}),
+    };
+  });
+  const totalSessionCount = () => (focusedStore ? focusedStore.support().analytics.sessionCount : reportRows().length);
+  const visibleSessionCount = () =>
+    servedSessionViewActive() ? (servedSessionState()?.sessionCount ?? 0) : visibleSummary().sessionCount;
+  const hiddenCount = createMemo(() => hiddenSessionCount(totalSessionCount(), visibleSessionCount()));
+  const previousSummary = createMemo(
+    () =>
+      focusedStore?.overview()?.view.previousSummary ??
+      buildPreviousPeriodSummary(timelineRows(), dateRange.bounds(), generatedAt()),
   );
   const exportRows = () => sortedRows();
+  const downloadCompleteCsv = async (): Promise<void> => {
+    if (!(focusedSource && focusedStore)) {
+      downloadCSV(exportRows(), reportSupport().generatedAt);
+      return;
+    }
+    const result = await fetchFocusedCsv(focusedSource, {
+      query: focusedQueryScope(),
+      sort: [search().sort],
+    });
+    downloadCSVContent(result.csv, reportSupport().generatedAt);
+  };
+  const downloadCompleteHtml = async (): Promise<void> => {
+    if (!(focusedSource && focusedStore)) {
+      await downloadHTML(initialPayload);
+      return;
+    }
+    const result = await fetchFocusedHtmlPayload(focusedSource, { revision: focusedStore.revision() });
+    await downloadHTML(toWebReportPayload(result.payload));
+  };
+  async function commitFocusedRevisionForActiveDestination(bootstrap: FocusedSupportResult): Promise<void> {
+    if (!(focusedSource && focusedStore)) {
+      throw new Error('Focused report refresh requires a served report store');
+    }
+    const destination = primaryDashboardTabFor(search().tab);
+    if (destination === 'overview') {
+      const request: FocusedOverviewRequest = {
+        includeAdvanced: advancedAnalysisOpen(),
+        query: focusedQueryScopeForRevision(bootstrap.revision),
+        timeline: focusedTimelineOptions(),
+      };
+      const result = await fetchFocusedOverview(focusedSource, request);
+      const currentRequest: FocusedOverviewRequest = {
+        includeAdvanced: advancedAnalysisOpen(),
+        query: focusedQueryScopeForRevision(bootstrap.revision),
+        timeline: focusedTimelineOptions(),
+      };
+      if (
+        primaryDashboardTabFor(search().tab) !== destination ||
+        focusedOverviewFingerprint(currentRequest) !== focusedOverviewFingerprint(request)
+      ) {
+        throw new Error('The active Overview changed while the refreshed revision was loading');
+      }
+      const applied = focusedStore.commitRevision(bootstrap, { kind: 'overview', request, result });
+      if (!applied.applied) {
+        throw new Error(`Focused report refresh rejected: ${applied.reason}`);
+      }
+      return;
+    }
+    if (destination === 'breakdown') {
+      const request = { query: focusedQueryScopeForRevision(bootstrap.revision) };
+      const result = await fetchFocusedBreakdown(focusedSource, request);
+      const currentRequest = { query: focusedQueryScopeForRevision(bootstrap.revision) };
+      if (
+        primaryDashboardTabFor(search().tab) !== destination ||
+        focusedBreakdownFingerprint(currentRequest) !== focusedBreakdownFingerprint(request)
+      ) {
+        throw new Error('The active Breakdown changed while the refreshed revision was loading');
+      }
+      const applied = focusedStore.commitRevision(bootstrap, { kind: 'breakdown', request, result });
+      if (!applied.applied) {
+        throw new Error(`Focused report refresh rejected: ${applied.reason}`);
+      }
+      return;
+    }
+    if (!sessionQueryCoordinator) {
+      throw new Error('Focused Sessions refresh requires a session query coordinator');
+    }
+    const scope = activeSessionQueryScope();
+    const prepared = await sessionQueryCoordinator.prepare(scope, bootstrap.revision);
+    const currentFingerprint = sessionQueryFingerprint({
+      ...activeSessionQueryScope(),
+      cursor: null,
+      revision: bootstrap.revision,
+    });
+    if (
+      primaryDashboardTabFor(search().tab) !== destination ||
+      currentFingerprint !== sessionQueryFingerprint(prepared.state.query) ||
+      !sessionQueryCoordinator.canCommitPrepared(prepared)
+    ) {
+      throw new Error('The active Sessions query changed while the refreshed revision was loading');
+    }
+    batch(() => {
+      const applied = focusedStore.commitRevision(bootstrap, { kind: 'sessions' });
+      if (!applied.applied) {
+        throw new Error(`Focused report refresh rejected: ${applied.reason}`);
+      }
+      if (!sessionQueryCoordinator.commitPrepared(prepared)) {
+        throw new Error('The prepared Sessions query was superseded before commit');
+      }
+    });
+  }
   const refreshPayload = async (force = false) => {
-    if (!props.fetchPayload || refreshing()) {
+    if (!(props.refreshBootstrap && focusedStore) || refreshing()) {
       return;
     }
     const perfTrace = createClientPerfTrace('aiUsage.web.client.refresh', { force });
     setRefreshing(true);
     perfTrace?.mark('started');
     try {
-      const nextPayload = await props.fetchPayload!({ force });
-      perfTrace?.mark('payloadReceived', payloadStats(nextPayload));
-      setPayload(nextPayload);
+      const nextBootstrap = await props.refreshBootstrap();
+      perfTrace?.mark('payloadReceived', { revision: nextBootstrap.revision });
+      await commitFocusedRevisionForActiveDestination(nextBootstrap);
       perfTrace?.mark('stateUpdated');
       requestAnimationFrame(() => {
-        perfTrace?.end('frame', payloadStats(payload()));
+        perfTrace?.end('frame', { revision: focusedStore.revision() });
       });
       setLastRefreshError(null);
       setLastSuccessfulRefreshAt(Date.now());
@@ -460,15 +963,31 @@ export const Dashboard = (props: {
     await saveProjectGroups({ data: { projectGroups } });
     await refreshPayload(true);
   };
-  const cleanupProjectWarning = (warning: NonNullable<WebReportPayload['warnings']>[number]) => {
+  const [cleanupWarningGroupId, setCleanupWarningGroupId] = createSignal<string>();
+  const cleanupProjectWarningForServer = async (
+    warning: NonNullable<WebReportPayload['warnings']>[number],
+  ): Promise<void> => {
     const groupId = warning.groupId;
     if (!groupId) {
-      return;
+      throw new Error('This project-group warning does not identify a group to clean up');
     }
-    const configs = payload().projectGroupConfigs ?? [];
+    let configs = reportSupport().projectGroupConfigs ?? [];
+    if (focusedStore && focusedSource) {
+      let breakdown = focusedStore.breakdown();
+      if (!breakdown?.context.projectGroupConfigs) {
+        const request = { query: focusedQueryScope() };
+        const result = await fetchFocusedBreakdown(focusedSource, request);
+        const applied = focusedStore.applyBreakdown(request, result);
+        if (!applied.applied) {
+          throw new Error(`Project-group context rejected: ${applied.reason}`);
+        }
+        breakdown = result;
+      }
+      configs = breakdown.context.projectGroupConfigs ?? [];
+    }
     const target = configs.find((group) => group.id === groupId);
     if (!target) {
-      return;
+      throw new Error(`Project group ${groupId} is no longer available to clean up`);
     }
     const nextGroups =
       warning.reason === 'unmatched-group'
@@ -479,9 +998,19 @@ export const Dashboard = (props: {
             }
             return { ...group, sources: removeSelectors(group.sources, warning.selectors ?? []) };
           });
-    saveProjectGroupConfigs(nextGroups.filter((group) => group.sources.length > 0)).catch((error: unknown) => {
-      console.error(error);
-    });
+    await saveProjectGroupConfigs(nextGroups.filter((group) => group.sources.length > 0));
+  };
+  const cleanupProjectWarning = (warning: NonNullable<WebReportPayload['warnings']>[number]) => {
+    const groupId = warning.groupId;
+    if (!groupId || cleanupWarningGroupId()) {
+      return;
+    }
+    setCleanupWarningGroupId(groupId);
+    cleanupProjectWarningForServer(warning)
+      .catch((error: unknown) => {
+        setLastRefreshError(error instanceof Error ? error.message : 'Failed to clean up the project group');
+      })
+      .finally(() => setCleanupWarningGroupId());
   };
   const toggleRefreshPause = () => {
     setRefreshPaused((paused) => {
@@ -514,29 +1043,13 @@ export const Dashboard = (props: {
     if (canRefresh() && nextRefreshAt() == null) {
       setNextRefreshAt(Date.now() + REFRESH_INTERVAL_MS);
     }
-    const action = mountReportRefreshAction({
-      canRefresh: canRefresh(),
-      hasInitialPayload: Boolean(props.initialPayload),
-      isDemoPayload: isDemoReportPayload(),
-      isDevRuntime: import.meta.env.DEV,
-    });
-    if (action === 'fetch-payload') {
-      refreshPayload(true).catch((error: unknown) => {
-        console.error(error);
-      });
-      return;
-    }
-    if (action === 'dev-fallback') {
-      fetchReportPayload({ force: true })
-        .then(setPayload)
-        .catch((error: unknown) => {
-          setLastRefreshError(error instanceof Error ? error.message : 'Failed to refresh report payload');
-          setRefreshErrorCount((count) => count + 1);
-        });
-    }
   });
-  const toggleSelected = (row: DashboardRow) =>
-    setSelectedKey((current) => (current === rowKey(row) ? null : rowKey(row)));
+  const toggleSelected = (row: DashboardRow) => {
+    const next = selectedKey() === rowKey(row) ? null : rowKey(row);
+    setSelectedNavigationRow(next ? row : null);
+    setSelectedKey(next);
+    sessionQueryCoordinator?.select(next);
+  };
   let activeQueryEdit = false;
   const commitQueryEdit = () => {
     activeQueryEdit = false;
@@ -559,7 +1072,9 @@ export const Dashboard = (props: {
     setTab('sessions');
   };
   const inspectOverviewSession = (row: DashboardRow) => {
+    setSelectedNavigationRow(row);
     setSelectedKey(rowKey(row));
+    sessionQueryCoordinator?.select(rowKey(row));
   };
   const setFieldFilters = (updater: Updater<FieldFilters>) =>
     updateSearch((current) => ({ ...current, filters: applyTableUpdate(updater, current.filters) }));
@@ -621,7 +1136,12 @@ export const Dashboard = (props: {
   );
 
   return (
-    <main class={page}>
+    <main
+      class={page}
+      data-hydrated={clientReady() ? 'true' : 'false'}
+      data-report-revision={servedSessionState()?.query.revision}
+      data-request-fingerprint={servedSessionFingerprint()}
+    >
       <div class={shell}>
         <header class={header}>
           <div class={headerTop}>
@@ -635,7 +1155,7 @@ export const Dashboard = (props: {
               <h1 class={title}>Usage report</h1>
               <div class={meta}>
                 <Show fallback="Report payload unavailable" when={!isDemo}>
-                  Generated {fmtDate(payload().generatedAt)}
+                  Generated {fmtDate(reportSupport().generatedAt)}
                 </Show>
               </div>
             </div>
@@ -691,7 +1211,7 @@ export const Dashboard = (props: {
             </Show>
             <RefreshStatus
               canRefresh={canRefresh()}
-              generatedAt={payload().generatedAt}
+              generatedAt={reportSupport().generatedAt}
               lastRefreshError={lastRefreshError()}
               lastSuccessfulRefreshAt={lastSuccessfulRefreshAt()}
               nextRefreshAt={nextRefreshAt()}
@@ -708,7 +1228,11 @@ export const Dashboard = (props: {
             />
             <button
               class={commandButton}
-              onClick={() => downloadCSV(exportRows(), payload().generatedAt)}
+              onClick={() => {
+                downloadCompleteCsv().catch((error: unknown) => {
+                  setLastRefreshError(error instanceof Error ? error.message : 'Failed to export CSV');
+                });
+              }}
               type="button"
             >
               Export CSV
@@ -717,13 +1241,26 @@ export const Dashboard = (props: {
               <button
                 class={ghostButton}
                 onClick={() => {
-                  downloadHTML(payload()).catch((error: unknown) => {
+                  downloadCompleteHtml().catch((error: unknown) => {
                     console.error(error);
                   });
                 }}
                 type="button"
               >
                 Export HTML
+              </button>
+            </Show>
+            <Show when={focusedStore}>
+              <button
+                class={ghostButton}
+                onClick={() => {
+                  printCompleteReport().catch((error: unknown) => {
+                    setLastRefreshError(error instanceof Error ? error.message : 'Failed to print complete report');
+                  });
+                }}
+                type="button"
+              >
+                Print complete report
               </button>
             </Show>
           </div>
@@ -742,9 +1279,11 @@ export const Dashboard = (props: {
           when={!isDemo}
         >
           <TimeRangeControl
+            {...(focusedStore ? { onFocusedTimelineRequest: setFocusedTimelineOptions } : {})}
             activeFieldFilters={fieldFilters()}
             activeHarness={harness()}
             dateRange={dateRange}
+            focusedTimeline={focusedStore ? focusedStore.overview()?.timeline : undefined}
             onDateRangeCommit={commitTableDateRange}
             onDimensionFilter={setTimelineDimensionFilter}
             rows={timelineRows()}
@@ -752,7 +1291,7 @@ export const Dashboard = (props: {
 
           <div class={filterSummary}>
             <span aria-live="polite" class={summaryPill}>
-              {fmtNum(visibleSummary().sessionCount)} / {fmtNum(reportRows().length)} sessions
+              {fmtNum(visibleSessionCount())} / {fmtNum(totalSessionCount())} sessions
             </span>
             <Show when={hiddenCount() > 0}>
               <span>{fmtNum(hiddenCount())} hidden by filters</span>
@@ -780,7 +1319,12 @@ export const Dashboard = (props: {
             </Show>
           </div>
 
-          <ReportWarnings onCleanupProjectWarning={cleanupProjectWarning} warnings={payload().warnings} />
+          <ReportWarnings
+            cleaningProjectWarningGroupId={cleanupWarningGroupId()}
+            omittedSupportItemCount={supportOmissionCount()}
+            onCleanupProjectWarning={cleanupProjectWarning}
+            warnings={reportSupport().warnings}
+          />
 
           <div class={dashboardLayout}>
             <div class={dashboardView}>
@@ -791,7 +1335,10 @@ export const Dashboard = (props: {
                     content: () => (
                       <section class={section}>
                         <Overview
+                          advancedAnalysisLoading={advancedAnalysisLoading()}
                           campaigns={campaignViews()}
+                          focused={focusedStore?.overview()}
+                          onAdvancedAnalysisOpenChange={setAdvancedAnalysisOpen}
                           onSelectDay={focusDay}
                           onSelectSession={inspectOverviewSession}
                           rangeLabel={dateRange.label()}
@@ -808,8 +1355,41 @@ export const Dashboard = (props: {
                     content: () => (
                       <section class={section}>
                         <SessionTable
+                          {...(servedSessionState()
+                            ? {
+                                campaignChildren: servedSessionState()!.campaignChildren,
+                                loadingMoreRows: servedSessionState()!.loadingMore,
+                                totalRows: servedSessionState()!.itemCount,
+                              }
+                            : {})}
+                          {...(sessionQueryCoordinator
+                            ? {
+                                onLoadCampaignChildren: (campaignKey: string) => {
+                                  sessionQueryCoordinator.loadCampaignChildren(campaignKey).catch((error: unknown) => {
+                                    setLastRefreshError(
+                                      error instanceof Error ? error.message : 'Failed to load campaign sessions',
+                                    );
+                                  });
+                                },
+                                onLoadMoreRows: () => {
+                                  sessionQueryCoordinator.loadMore().catch((error: unknown) => {
+                                    setLastRefreshError(
+                                      error instanceof Error ? error.message : 'Failed to load sessions',
+                                    );
+                                  });
+                                },
+                              }
+                            : {})}
+                          {...(servedSessionQueries
+                            ? {
+                                printRows: servedPrintRows() ?? [],
+                                printRowsLoading: servedPrintRowsLoading(),
+                              }
+                            : {})}
                           columnVisibility={columnVisibility()}
                           groupCampaigns={groupCampaigns()}
+                          hasMoreRows={Boolean(servedSessionState()?.nextCursor)}
+                          loading={sessionQueryLoading()}
                           onClearFilters={clearFilters}
                           onColumnVisibilityChange={handleColumnVisibilityChange}
                           onFieldFilter={setFieldFilter}
@@ -817,7 +1397,7 @@ export const Dashboard = (props: {
                           onHarnessFilter={toggleHarness}
                           onSelect={toggleSelected}
                           onSortingChange={handleSortingChange}
-                          rows={sessionTableRows()}
+                          rows={visibleSessionTableRows()}
                           searchQuery={query()}
                           selectedKey={selectedKey()}
                           sorting={sorting()}
@@ -883,7 +1463,7 @@ export const Dashboard = (props: {
                                 <ProjectGroupEditor
                                   disabled={!canRefresh()}
                                   onSave={saveProjectGroupConfigs}
-                                  payload={payload()}
+                                  payload={projectGroupPayload()}
                                 />
                                 <ProjectSummary
                                   groups={projectGroupRows()}
@@ -949,13 +1529,31 @@ export const Dashboard = (props: {
           <Show when={selectedRow()}>
             {(row) => (
               <SessionDrawer
+                {...(servedSessionViewActive() && servedSessionState()
+                  ? {
+                      navigation: {
+                        loading: sessionNeighborsLoading(),
+                        next: sessionNeighbors()?.next ?? null,
+                        previous: sessionNeighbors()?.previous ?? null,
+                        total: servedSessionState()?.sessionCount ?? 0,
+                      },
+                    }
+                  : {})}
                 onClearFilters={clearFilters}
-                onClose={() => setSelectedKey(null)}
+                onClose={() => {
+                  setSelectedNavigationRow(null);
+                  setSelectedKey(null);
+                  sessionQueryCoordinator?.select(null);
+                }}
                 onFieldFilter={setFieldFilter}
                 onNavigate={navigateSelected}
-                onSelectSession={(session) => setSelectedKey(rowKey(session))}
+                onSelectSession={(session) => {
+                  setSelectedNavigationRow(session);
+                  setSelectedKey(rowKey(session));
+                  sessionQueryCoordinator?.select(rowKey(session));
+                }}
                 row={row()}
-                rows={sortedRows()}
+                rows={servedSessionViewActive() ? visibleSessionTableRows() : sortedRows()}
                 selectedCampaign={selectedCampaign()}
               />
             )}

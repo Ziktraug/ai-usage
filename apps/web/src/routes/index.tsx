@@ -18,15 +18,17 @@ export const Route = createFileRoute('/')({
 });
 
 function IndexRoute() {
-  const payload = Route.useLoaderData();
+  const loaderData = Route.useLoaderData();
   const refreshPayload = reportRefreshPayload();
-  const initialPayload = createMemo(() => resolveInitialReportPayload(payload()));
-  const refreshProps = refreshPayload
-    ? { fetchPayload: (options?: { force?: boolean }) => refreshPayload(options) }
-    : {};
+  const initial = createMemo(() => resolveInitialReportPayload(loaderData()));
+  const refreshProps = refreshPayload ? { refreshBootstrap: () => refreshPayload() } : {};
+  const initialProps = createMemo(() => {
+    const value = initial();
+    return value.kind === 'payload' ? { initialPayload: value.payload } : { servedBootstrap: value.bootstrap };
+  });
   return (
     <ErrorBoundary fallback={(error) => <pre>{error instanceof Error ? error.message : String(error)}</pre>}>
-      <Dashboard initialPayload={initialPayload()} {...refreshProps} />
+      <Dashboard {...initialProps()} {...refreshProps} />
     </ErrorBoundary>
   );
 }

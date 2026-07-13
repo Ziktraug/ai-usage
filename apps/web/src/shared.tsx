@@ -1,7 +1,7 @@
 import { cx } from '@ai-usage/design-system/css';
 import { segmentBarPart, segmentBarTrack, unavailableCell } from '@ai-usage/design-system/report';
 import { modelGroupKey } from '@ai-usage/report-core/model-identity';
-import type { SerializedRow } from '@ai-usage/report-core/report-data';
+import { enrichSessionPresentationRow, type SessionPresentationRow } from '@ai-usage/report-core/session-query';
 import { For } from 'solid-js';
 
 export {
@@ -79,81 +79,9 @@ const OPENCODE_PROVIDER_SUFFIX = /\s*\(OC\)\s*$/;
 
 export const providerLabel = (provider: string) => provider.replace(OPENCODE_PROVIDER_SUFFIX, ' · via OpenCode');
 
-export type DashboardRow = SerializedRow & {
-  activeTime: number | null;
-  campaignKey?: string;
-  campaignTotalCount?: number;
-  campaignVisibleCount?: number;
-  children?: DashboardRow[];
-  modelLabel: string;
-  modelKey: string;
-  projectLabel: string;
-  projectKey: string;
-  providerDisplay: string;
-  rowId: string;
-  searchText: string;
-  sortDate: number;
-  sortHarness: string;
-  sortMachine: string;
-  sortModel: string;
-  sortProject: string;
-  sortProvider: string;
-  sortSession: string;
-};
+export type DashboardRow = SessionPresentationRow;
 
-const timeFromRowDate = (row: SerializedRow) => {
-  const value = row.activeDate ?? row.date;
-  if (!value) {
-    return null;
-  }
-  const time = new Date(value).getTime();
-  return Number.isFinite(time) ? time : null;
-};
-
-const buildRowId = (row: SerializedRow) =>
-  [
-    row.source?.machineId ?? '',
-    row.source?.sourceSessionId ?? '',
-    row.activeDate ?? row.date ?? '',
-    row.harness,
-    row.provider,
-    row.model,
-    row.models?.join('+') ?? '',
-    row.project,
-    row.sessionLabel,
-  ].join('|');
-
-const modelLabelForRow = (row: SerializedRow) => (row.models?.length ? row.models.join(' + ') : row.model);
-
-export const enrichReportRow = (row: SerializedRow): DashboardRow => {
-  const activeTime = timeFromRowDate(row);
-  const modelLabel = modelLabelForRow(row);
-  const modelKey = normalizeModelKey(row.model);
-  const projectLabel = row.project || '(unknown)';
-  const projectKey = projectLabel;
-  const providerDisplay = providerLabel(row.provider);
-  const machineLabel = row.source?.machineLabel ?? '';
-
-  return {
-    ...row,
-    activeTime,
-    modelLabel,
-    modelKey,
-    projectLabel,
-    projectKey,
-    providerDisplay,
-    rowId: buildRowId(row),
-    searchText:
-      `${row.sessionLabel} ${row.project} ${row.rawProject ?? ''} ${projectKey} ${modelLabel} ${row.provider} ${providerDisplay} ${row.harness} ${machineLabel}`.toLowerCase(),
-    sortDate: activeTime ?? 0,
-    sortHarness: row.harness.toLowerCase(),
-    sortMachine: machineLabel.toLowerCase(),
-    sortModel: modelKey.toLowerCase(),
-    sortProject: projectKey.toLowerCase(),
-    sortProvider: providerDisplay.toLowerCase(),
-    sortSession: row.sessionLabel.toLowerCase(),
-  };
-};
+export const enrichReportRow = enrichSessionPresentationRow;
 
 export const rowKey = (row: DashboardRow) => row.rowId;
 

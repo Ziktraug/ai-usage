@@ -18,7 +18,7 @@ import {
 import type { UsageReportProjectSource } from '@ai-usage/report-core/report-data';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { moveProjectSourcesToGroup } from './project-group-actions';
-import type { WebReportPayload } from './web-report-payload';
+import type { WebReportPayloadWithoutRows } from './web-report-payload';
 
 const editorPanel = css({
   mb: '14px',
@@ -174,7 +174,7 @@ const selectorLabel = (selector: ProjectSourceSelector) =>
 export const ProjectGroupEditor = (props: {
   disabled?: boolean;
   onSave: (projectGroups: ProjectGroupConfig[]) => Promise<void>;
-  payload: WebReportPayload;
+  payload: Pick<WebReportPayloadWithoutRows, 'projectGroupConfigs' | 'projectGroups'>;
 }) => {
   const [selectedSourceIds, setSelectedSourceIds] = createSignal<string[]>([]);
   const [draftName, setDraftName] = createSignal('');

@@ -66,14 +66,20 @@ const campaignSessionSummary = (row: DashboardRow) =>
   ].join(' · ');
 
 export const SessionDrawer = (props: {
+  onClose: () => void;
+  onClearFilters: () => void;
+  onFieldFilter: (key: FieldFilterKey, value: string) => void;
+  onNavigate: (delta: number) => void;
+  onSelectSession: (row: DashboardRow) => void;
+  navigation?: {
+    loading: boolean;
+    next: DashboardRow | null;
+    previous: DashboardRow | null;
+    total: number;
+  };
   row: DashboardRow;
   rows: DashboardRow[];
   selectedCampaign?: CampaignView | null;
-  onClose: () => void;
-  onNavigate: (delta: number) => void;
-  onSelectSession: (row: DashboardRow) => void;
-  onFieldFilter: (key: FieldFilterKey, value: string) => void;
-  onClearFilters: () => void;
 }) => {
   let closeButton: HTMLButtonElement | undefined;
   const previousFocus = typeof document === 'undefined' ? null : document.activeElement;
@@ -91,6 +97,10 @@ export const SessionDrawer = (props: {
   const durationRatio = () =>
     (props.row.durationMs ?? 0) > 0 && medianDuration() > 0 ? (props.row.durationMs ?? 0) / medianDuration() : null;
   const isInNavigation = () => position() >= 0;
+  const previousAvailable = () =>
+    props.navigation ? props.navigation.previous !== null : isInNavigation() && position() > 0;
+  const nextAvailable = () =>
+    props.navigation ? props.navigation.next !== null : isInNavigation() && position() < props.rows.length - 1;
 
   const anatomySegments = () => [
     { label: 'Cache read', value: props.row.tokCr, class: tokenSegmentClasses.cacheRead },
@@ -132,14 +142,16 @@ export const SessionDrawer = (props: {
         <HarnessBadge name={props.row.harness} />
         <div class={drawerNav}>
           <span class={drawerPosition}>
-            <Show fallback="Outside filters" when={isInNavigation()}>
-              {fmtNum(position() + 1)} / {fmtNum(props.rows.length)}
+            <Show fallback="Outside filters" when={props.navigation || isInNavigation()}>
+              {props.navigation
+                ? `${fmtNum(props.navigation.total)} matching sessions`
+                : `${fmtNum(position() + 1)} / ${fmtNum(props.rows.length)}`}
             </Show>
           </span>
           <button
             aria-label="Previous session (k)"
             class={drawerClose}
-            disabled={!isInNavigation() || position() <= 0}
+            disabled={props.navigation?.loading || !previousAvailable()}
             onClick={() => props.onNavigate(-1)}
             title="Previous session (k)"
             type="button"
@@ -149,7 +161,7 @@ export const SessionDrawer = (props: {
           <button
             aria-label="Next session (j)"
             class={drawerClose}
-            disabled={!isInNavigation() || position() >= props.rows.length - 1}
+            disabled={props.navigation?.loading || !nextAvailable()}
             onClick={() => props.onNavigate(1)}
             title="Next session (j)"
             type="button"

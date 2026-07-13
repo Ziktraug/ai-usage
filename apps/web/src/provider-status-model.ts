@@ -4,6 +4,8 @@ import {
   type ProviderLimitWindow,
   type ProviderStatus,
   parseProviderStatusDataset,
+  providerStatusKeyForUsage,
+  providerStatusScopeKey,
   providerStatusWithFreshness,
 } from '@ai-usage/report-core/provider-status';
 import type { DashboardRow } from './shared';
@@ -35,26 +37,15 @@ export interface ProviderStatusView {
   worstUsedPercent: number | null;
 }
 
-const PROVIDER_KEY_PATTERNS: { key: string; pattern: RegExp }[] = [
-  { key: 'codex', pattern: /codex/i },
-  { key: 'claude', pattern: /claude/i },
-  { key: 'cursor', pattern: /cursor/i },
-  { key: 'opencode', pattern: /opencode/i },
-  { key: 'rtk', pattern: /rtk/i },
-  { key: 'gemini', pattern: /gemini/i },
-];
+const KNOWN_PROVIDER_KEYS = new Set(['claude', 'codex', 'cursor', 'gemini', 'opencode', 'rtk']);
 
-const providerKeyFromRow = (row: DashboardRow) => {
-  const text = `${row.harness} ${row.provider}`;
-  return PROVIDER_KEY_PATTERNS.find(({ pattern }) => pattern.test(text))?.key ?? text.toLowerCase().trim();
-};
+const providerKeyFromRow = (row: DashboardRow) => providerStatusKeyForUsage(row.harness, row.provider);
 
 const providerLabelFromKey = (key: string, fallback: string) => {
-  const known = PROVIDER_KEY_PATTERNS.find((provider) => provider.key === key);
-  if (!known) {
+  if (!KNOWN_PROVIDER_KEYS.has(key)) {
     return fallback;
   }
-  return known.key === 'rtk' ? 'RTK' : `${known.key.charAt(0).toUpperCase()}${known.key.slice(1)}`;
+  return key === 'rtk' ? 'RTK' : `${key.charAt(0).toUpperCase()}${key.slice(1)}`;
 };
 
 const providerFamily = (key: string) => key.split(':')[0] ?? key;
@@ -218,7 +209,8 @@ const explicitProviderStatuses = (payload: ProviderStatusPayload): ProviderStatu
   return dataset?.providers ?? [];
 };
 
-const providerFamilyScopeKey = (family: string, machineId: string | null | undefined) => `${family}|${machineId ?? ''}`;
+const providerFamilyScopeKey = (family: string, machineId: string | null | undefined) =>
+  providerStatusScopeKey(family, machineId ?? undefined);
 
 const sortRankFor = (view: ProviderStatusView) => {
   if (view.tone === 'critical') {

@@ -42,34 +42,50 @@ const warningCanCleanup = (warning: UsageReportWarning) =>
   Boolean(warning.groupId);
 
 export const ReportWarnings = (props: {
+  cleaningProjectWarningGroupId?: string | undefined;
+  omittedSupportItemCount?: number;
   onCleanupProjectWarning?: (warning: UsageReportWarning) => void;
   warnings: UsageReportWarning[] | undefined;
 }) => {
   const warnings = () => props.warnings ?? [];
   return (
-    <Show when={warnings().length > 0}>
+    <Show when={warnings().length > 0 || (props.omittedSupportItemCount ?? 0) > 0}>
       <section class={cx(panel, warningPanel)}>
         <div class={panelHeader}>
           <h2 class={panelTitle}>Report warnings</h2>
           <p class={panelSub}>Some report inputs could not be fully processed. Totals use available rows only.</p>
+          <Show when={(props.omittedSupportItemCount ?? 0) > 0}>
+            <p class={panelSub} role="status">
+              {props.omittedSupportItemCount} additional support{' '}
+              {props.omittedSupportItemCount === 1 ? 'item is' : 'items are'} omitted from this bounded summary. Exact
+              report queries and complete exports remain available.
+            </p>
+          </Show>
         </div>
-        <ul class={warningList}>
-          <For each={warnings()}>
-            {(warning) => (
-              <li class={warningItem}>
-                <span class={warningMessage}>
-                  <Show when={warning.harness}>{(harness) => <span class={warningHarness}>{harness()}: </span>}</Show>
-                  {warning.message}
-                </span>
-                <Show when={props.onCleanupProjectWarning && warningCanCleanup(warning)}>
-                  <button class={ghostButton} onClick={() => props.onCleanupProjectWarning?.(warning)} type="button">
-                    Cleanup
-                  </button>
-                </Show>
-              </li>
-            )}
-          </For>
-        </ul>
+        <Show when={warnings().length > 0}>
+          <ul class={warningList}>
+            <For each={warnings()}>
+              {(warning) => (
+                <li class={warningItem}>
+                  <span class={warningMessage}>
+                    <Show when={warning.harness}>{(harness) => <span class={warningHarness}>{harness()}: </span>}</Show>
+                    {warning.message}
+                  </span>
+                  <Show when={props.onCleanupProjectWarning && warningCanCleanup(warning)}>
+                    <button
+                      class={ghostButton}
+                      disabled={props.cleaningProjectWarningGroupId === warning.groupId}
+                      onClick={() => props.onCleanupProjectWarning?.(warning)}
+                      type="button"
+                    >
+                      {props.cleaningProjectWarningGroupId === warning.groupId ? 'Cleaning…' : 'Cleanup'}
+                    </button>
+                  </Show>
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
       </section>
     </Show>
   );

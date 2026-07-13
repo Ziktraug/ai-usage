@@ -1,9 +1,13 @@
 import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
+import {
+  buildSessionCampaignTotals,
+  buildSortedSessionPresentationRows,
+  type SessionCampaignTotals,
+} from '@ai-usage/report-core/session-query';
 import type { SortingState } from '@tanstack/solid-table';
 import { buildAnalyticsGroups, buildProjectGroups, type ProjectGroup } from './dashboard-analytics';
 import type { Metric, MetricDelta } from './dashboard-metrics';
 import type { FieldFilterKey, FieldFilters } from './dashboard-search';
-import { compareRows } from './dashboard-sort';
 import { DAY_MS, type DateBounds, endOfDay, rowMatchesDateBounds } from './date-range';
 import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from './session-table-schema';
 import {
@@ -58,33 +62,11 @@ export const filterRowsByDateBounds = (rows: DashboardRow[], bounds: DateBounds)
   rows.filter((row) => rowMatchesDateBounds(row, bounds));
 
 export const buildSortedDashboardRows = (rows: DashboardRow[], sorting: SortingState) =>
-  [...rows].sort(compareRows(sorting));
+  buildSortedSessionPresentationRows(rows, sorting);
 
 export type CampaignKey = string;
 
-export interface CampaignTotals {
-  actualCost: number;
-  cacheRead: number;
-  cacheWrite: number;
-  calls: number;
-  costKnown: boolean;
-  costQuota: number;
-  durationMs: number | null;
-  freshTokens: number;
-  lineDelta: number | null;
-  linesAdded: number | null;
-  linesDeleted: number | null;
-  rtkCommandCount: number;
-  rtkInputTokens: number;
-  rtkOutputTokens: number;
-  rtkSavedTokens: number;
-  tokenTotal: number;
-  tokIn: number;
-  tokOut: number;
-  tools: number;
-  totalCost: number;
-  turns: number;
-}
+export type CampaignTotals = SessionCampaignTotals;
 
 export interface CampaignView {
   allChildren: DashboardRow[];
@@ -116,50 +98,7 @@ const campaignIdentityForRow = (row: DashboardRow) => {
   return { campaignKey: campaignKeyFor(row, rootSourceSessionId), rootSourceSessionId, sourceSessionId };
 };
 
-const sumNullable = (rows: DashboardRow[], value: (row: DashboardRow) => number | null | undefined) => {
-  let present = false;
-  let total = 0;
-  for (const row of rows) {
-    const next = value(row);
-    if (next == null) {
-      continue;
-    }
-    present = true;
-    total += next;
-  }
-  return present ? total : null;
-};
-
-export const buildCampaignTotals = (rows: DashboardRow[]): CampaignTotals => {
-  const durationMs = sumNullable(rows, (row) => row.durationMs);
-  const linesAdded = sumNullable(rows, (row) => row.linesAdded);
-  const linesDeleted = sumNullable(rows, (row) => row.linesDeleted);
-  const lineDelta = sumNullable(rows, (row) => row.lineDelta);
-
-  return {
-    actualCost: rows.reduce((sum, row) => sum + (row.costActual ?? 0), 0),
-    cacheRead: rows.reduce((sum, row) => sum + row.tokCr, 0),
-    cacheWrite: rows.reduce((sum, row) => sum + row.tokCw, 0),
-    calls: rows.reduce((sum, row) => sum + row.calls, 0),
-    costKnown: rows.every((row) => row.costKnown),
-    costQuota: rows.reduce((sum, row) => sum + (row.costQuota ?? 0), 0),
-    durationMs,
-    freshTokens: rows.reduce((sum, row) => sum + row.freshTokens, 0),
-    lineDelta,
-    linesAdded,
-    linesDeleted,
-    rtkInputTokens: rows.reduce((sum, row) => sum + (row.rtkInputTokens ?? 0), 0),
-    rtkCommandCount: rows.reduce((sum, row) => sum + (row.rtkCommandCount ?? 0), 0),
-    rtkOutputTokens: rows.reduce((sum, row) => sum + (row.rtkOutputTokens ?? 0), 0),
-    rtkSavedTokens: rows.reduce((sum, row) => sum + (row.rtkSavedTokens ?? 0), 0),
-    tokenTotal: rows.reduce((sum, row) => sum + row.tokenTotal, 0),
-    tokIn: rows.reduce((sum, row) => sum + row.tokIn, 0),
-    tokOut: rows.reduce((sum, row) => sum + row.tokOut, 0),
-    tools: rows.reduce((sum, row) => sum + row.tools, 0),
-    totalCost: rows.reduce((sum, row) => sum + (row.costKnown ? row.costApprox : 0), 0),
-    turns: rows.reduce((sum, row) => sum + row.turns, 0),
-  };
-};
+export const buildCampaignTotals = (rows: DashboardRow[]): CampaignTotals => buildSessionCampaignTotals(rows);
 
 export const buildCampaignViews = (allRows: DashboardRow[], visibleRows: DashboardRow[]): CampaignView[] => {
   const visibleKeys = new Set(visibleRows.map(rowKeyForCampaignMembership));

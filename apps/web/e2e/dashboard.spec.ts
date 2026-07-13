@@ -1,7 +1,9 @@
 import { expect, test } from '@playwright/test';
 
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
+const COLUMN_URL_PATTERN = /cols=/;
 const DATE_HEADER_PATTERN = /Date/;
+const HYDRATION_ERROR_PATTERN = /hydrat/i;
 const INSPECT_SESSION_PATTERN = /Inspect session/;
 const LEGACY_PROJECT_TAB_URL_PATTERN = /tab=projects/;
 const PROVIDER_DETAILS_PATTERN = /^Provider details \(/;
@@ -41,10 +43,21 @@ test('exposes metric and punchcard context without pointer-only hints', async ({
   ).toBeVisible();
 
   const advancedAnalysis = page.getByText('Advanced analysis', { exact: true });
+  const advancedSummary = page.locator('summary').filter({ hasText: 'Advanced analysis' });
+  const punchcard = page.getByRole('heading', { level: 2, name: 'Punchcard' });
   const punchcardData = page.getByText('Punchcard data', { exact: true });
   await expect(advancedAnalysis).toBeVisible();
-  await expect(punchcardData).not.toBeVisible();
-  await advancedAnalysis.click();
+  await expect(punchcard).toHaveCount(0);
+  await expect(punchcardData).toHaveCount(0);
+  await advancedSummary.focus();
+  await advancedSummary.press('Enter');
+  await expect(punchcard).toBeVisible();
+  await expect(punchcardData).toBeVisible();
+  await advancedSummary.press('Enter');
+  await expect(punchcard).toHaveCount(0);
+  await expect(punchcardData).toHaveCount(0);
+  await advancedSummary.press('Space');
+  await expect(punchcard).toBeVisible();
   await punchcardData.click();
   await expect(page.getByRole('table', { name: 'Punchcard data' })).toBeVisible();
 });
@@ -200,6 +213,8 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   await page.getByRole('tab', { name: 'Sessions' }).click();
   const sessionSummaries = page.getByRole('list', { name: 'Session summaries' });
   await expect(sessionSummaries).toBeVisible();
+  await expect(page.locator('[data-session-surface="mobile"]')).toHaveCount(1);
+  await expect(page.locator('[data-session-surface="desktop"]')).toHaveCount(0);
   await expect(page.getByRole('table')).toHaveCount(0);
   const mobileSort = page.getByRole('combobox', { name: 'Sort mobile session summaries' });
   await mobileSort.selectOption('fresh');
@@ -215,6 +230,58 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   await breakdownTabs.getByRole('tab', { name: 'Projects' }).click();
   await expect(page.getByRole('list', { name: 'Project summaries' })).toBeVisible();
   await expect(page.getByRole('table')).toHaveCount(0);
+});
+
+test('mounts one Sessions surface across viewport and print changes without losing state', async ({ page }) => {
+  const hydrationErrors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error' && HYDRATION_ERROR_PATTERN.test(message.text())) {
+      hydrationErrors.push(message.text());
+    }
+  });
+  await page.setViewportSize({ height: 800, width: 361 });
+  await page.goto('/');
+  await page.getByRole('tab', { name: 'Sessions' }).click();
+  await page.getByRole('button', { name: 'Show children' }).click();
+  const mobileSort = page.getByRole('combobox', { name: 'Sort mobile session summaries' });
+  await mobileSort.selectOption('fresh');
+
+  await expect(page.locator('[data-session-surface="mobile"]')).toHaveCount(1);
+  await expect(page.locator('[data-session-surface="desktop"]')).toHaveCount(0);
+  await page.setViewportSize({ height: 900, width: 1024 });
+  await expect(page.locator('[data-session-surface="desktop"]')).toHaveCount(1);
+  await expect(page.locator('[data-session-surface="mobile"]')).toHaveCount(0);
+  await expect(page.locator('tbody tr[data-depth="1"]')).toHaveCount(1);
+  await expect(page).toHaveURL(SORT_URL_PATTERN);
+  await page.getByRole('button', { exact: true, name: 'Tokens' }).click();
+  await expect(page).toHaveURL(COLUMN_URL_PATTERN);
+  await page.locator('tbody tr[data-depth]').first().locator('td').last().click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+
+  await page.setViewportSize({ height: 800, width: 361 });
+  await expect(page.locator('[data-session-surface="mobile"]')).toHaveCount(1);
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page).toHaveURL(SORT_URL_PATTERN);
+  await expect(page).toHaveURL(COLUMN_URL_PATTERN);
+  await page.setViewportSize({ height: 900, width: 1024 });
+  await expect(page.getByRole('button', { exact: true, name: 'Tokens' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('tbody tr[data-depth="1"]')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+
+  await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+  const printSurface = page.locator('[data-session-surface="print"]');
+  await expect(printSurface).toHaveCount(1);
+  await expect(printSurface.locator('[data-virtual-spacer]')).toHaveCount(0);
+  const printedRows = printSurface.locator('tbody tr[data-depth]');
+  await expect(printedRows).toHaveCount(4);
+  await expect(printedRows.first()).not.toHaveText('');
+  await expect(printedRows.nth(2)).not.toHaveText('');
+  await expect(printedRows.last()).not.toHaveText('');
+
+  await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
+  await expect(page.locator('[data-session-surface="desktop"]')).toHaveCount(1);
+  await expect(page.locator('[data-session-surface="print"]')).toHaveCount(0);
+  expect(hydrationErrors).toEqual([]);
 });
 
 test('keeps sync limited to explicit file transfers', async ({ page }) => {

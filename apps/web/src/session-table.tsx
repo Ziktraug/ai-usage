@@ -12,6 +12,7 @@ import {
   presetButton,
   presetGroup,
   sessionDesktopControl,
+  sessionPagingLoadMore,
   sessionSummaryCard,
   sessionSummaryDate,
   sessionSummaryFilter,
@@ -50,6 +51,11 @@ import {
   sessionColumns,
   visibleSessionColumns,
 } from './session-columns';
+import {
+  browserSessionSurfaceModeEnvironment,
+  createSessionSurfaceModeController,
+  type SessionSurfaceMode,
+} from './session-surface-mode';
 import {
   columnVisibilityForSessionPreset,
   sessionColumnPresetForVisibility,
@@ -259,32 +265,45 @@ const SessionColumnControls = (props: {
 };
 
 export const SessionTable = (props: {
-  rows: DashboardRow[];
-  groupCampaigns: boolean;
-  selectedKey: string | null;
-  searchQuery: string;
-  sorting: SortingState;
+  campaignChildren?: ReadonlyMap<string, { loading: boolean; nextCursor: string | null }>;
   columnVisibility: VisibilityState;
-  onSortingChange: OnChangeFn<SortingState>;
+  groupCampaigns: boolean;
+  hasMoreRows?: boolean;
+  loading?: boolean;
+  loadingMoreRows?: boolean;
   onColumnVisibilityChange: OnChangeFn<VisibilityState>;
-  onGroupCampaignsChange: (enabled: boolean) => void;
-  onSelect: (row: DashboardRow) => void;
-  onHarnessFilter: (value: string) => void;
-  onFieldFilter: (key: FieldFilterKey, value: string) => void;
   onClearFilters: () => void;
+  onFieldFilter: (key: FieldFilterKey, value: string) => void;
+  onGroupCampaignsChange: (enabled: boolean) => void;
+  onHarnessFilter: (value: string) => void;
+  onLoadCampaignChildren?: (campaignKey: string) => void;
+  onLoadMoreRows?: () => void;
+  onSelect: (row: DashboardRow) => void;
+  onSortingChange: OnChangeFn<SortingState>;
+  printRows?: DashboardRow[];
+  printRowsLoading?: boolean;
+  rows: DashboardRow[];
+  searchQuery: string;
+  selectedKey: string | null;
+  sorting: SortingState;
+  totalRows?: number;
 }) => {
   // A column whose every visible row reads "—" is dead weight; RTK savings
   // only earns its slot when the filtered set actually carries RTK data.
   // Folding this into the visibility state keeps headers and cells in sync.
-  const hasRtkData = createMemo(() => props.rows.some((row) => row.rtkSavedTokens));
   const [expanded, setExpanded] = createSignal<ExpandedState>({});
+  const [surfaceMode, setSurfaceMode] = createSignal<SessionSurfaceMode>('pending');
+  const tableData = createMemo(() =>
+    surfaceMode() === 'print' && props.printRows !== undefined ? props.printRows : props.rows,
+  );
+  const hasRtkData = createMemo(() => tableData().some((row) => row.rtkSavedTokens));
   const effectiveVisibility = createMemo(() =>
     hasRtkData() ? props.columnVisibility : { ...props.columnVisibility, rtkSaved: false },
   );
   const dataHiddenColumnIds = () => (hasRtkData() ? [] : ['rtkSaved']);
   const sessionTable = createSolidTable<DashboardRow>({
     get data() {
-      return props.rows;
+      return tableData();
     },
     columns: sessionColumns,
     get state() {
@@ -299,6 +318,11 @@ export const SessionTable = (props: {
     getCoreRowModel: getCoreRowModel(),
     getExpandedRowModel: getExpandedRowModel(),
     getSubRows: (row) => row.children ?? [],
+    getRowCanExpand: (row) =>
+      Boolean(
+        row.original.children?.length ||
+          (props.groupCampaigns && row.original.campaignKey && props.onLoadCampaignChildren),
+      ),
     getRowId: (row) => rowKey(row),
     meta: {
       onFieldFilter: props.onFieldFilter,
@@ -309,7 +333,23 @@ export const SessionTable = (props: {
     },
     onColumnVisibilityChange: props.onColumnVisibilityChange,
     onExpandedChange: (updater) =>
-      setExpanded((current) => (typeof updater === 'function' ? updater(current) : updater)),
+      setExpanded((current) => {
+        const next = typeof updater === 'function' ? updater(current) : updater;
+        if (typeof next !== 'object') {
+          return next;
+        }
+        const currentRecord = typeof current === 'object' ? current : {};
+        for (const [rowId, isExpanded] of Object.entries(next)) {
+          if (!(isExpanded && !currentRecord[rowId])) {
+            continue;
+          }
+          const campaignKey = props.rows.find((row) => rowKey(row) === rowId)?.campaignKey;
+          if (campaignKey) {
+            props.onLoadCampaignChildren?.(campaignKey);
+          }
+        }
+        return next;
+      }),
     onSortingChange: props.onSortingChange,
   });
   const visibleColumns = createMemo(() =>
@@ -338,18 +378,34 @@ export const SessionTable = (props: {
     );
   };
   const rowModelRows = createMemo(() => {
-    track(props.rows, props.sorting);
+    track(tableData(), props.sorting);
     return measureClientPerf(
       'aiUsage.web.client.compute.sessionTableRowModel',
       () => sessionTable.getRowModel().rows,
       (rows) => ({ rows: rows.length }),
     );
   });
-  const mobileRows = createMemo(() => rowModelRows().slice(0, mobileRowLimit()));
-  const remainingMobileRows = createMemo(() => Math.max(0, rowModelRows().length - mobileRows().length));
+  const mobileRows = createMemo(() => (surfaceMode() === 'mobile' ? rowModelRows().slice(0, mobileRowLimit()) : []));
+  const remainingMobileRows = createMemo(() =>
+    surfaceMode() === 'mobile' ? Math.max(0, rowModelRows().length - mobileRows().length) : 0,
+  );
   const visibleColumnCount = () => visibleColumns().length;
   const virtualRows = createMemo(() => {
     const rows = rowModelRows();
+    if (surfaceMode() === 'print') {
+      return {
+        bottomHeight: 0,
+        rows,
+        topHeight: 0,
+      };
+    }
+    if (surfaceMode() !== 'desktop') {
+      return {
+        bottomHeight: 0,
+        rows: [],
+        topHeight: 0,
+      };
+    }
     const viewport = tableViewport();
     const virtualRowHeight = DESKTOP_ROW_HEIGHT;
     const start = Math.max(0, Math.floor(viewport.scrollTop / virtualRowHeight) - overscanRows);
@@ -366,22 +422,33 @@ export const SessionTable = (props: {
   });
 
   onMount(() => {
+    const controller = createSessionSurfaceModeController(browserSessionSurfaceModeEnvironment());
+    onCleanup(controller.start(setSurfaceMode));
+  });
+
+  createEffect(() => {
+    if (surfaceMode() !== 'desktop' || !desktopViewportEl) {
+      return;
+    }
     updateTableViewport();
     const observer = new ResizeObserver(updateTableViewport);
-    if (desktopViewportEl) {
-      observer.observe(desktopViewportEl);
-    }
+    observer.observe(desktopViewportEl);
     onCleanup(() => observer.disconnect());
   });
 
   createEffect(() => {
-    track(props.rows, props.sorting);
-    desktopViewportEl?.scrollTo({ top: 0 });
+    track(tableData(), props.sorting);
     setMobileRowLimit(MOBILE_PAGE_SIZE);
-    updateTableViewport();
+    if (surfaceMode() === 'desktop') {
+      desktopViewportEl?.scrollTo({ top: 0 });
+      updateTableViewport();
+    }
   });
 
   createEffect(() => {
+    if (surfaceMode() !== 'mobile') {
+      return;
+    }
     const selectedKey = props.selectedKey;
     if (!selectedKey) {
       return;
@@ -390,6 +457,23 @@ export const SessionTable = (props: {
     if (selectedIndex >= mobileRowLimit()) {
       setMobileRowLimit(selectedIndex + 1);
     }
+  });
+
+  const expandedCampaignLoads = createMemo(() => {
+    const expansion = expanded();
+    if (typeof expansion !== 'object') {
+      return [];
+    }
+    return props.rows.flatMap((row) => {
+      const campaignKey = row.campaignKey;
+      if (!(campaignKey && expansion[rowKey(row)])) {
+        return [];
+      }
+      const state = props.campaignChildren?.get(campaignKey);
+      return state?.loading || state?.nextCursor
+        ? [{ campaignKey, loading: state?.loading === true, sessionLabel: row.sessionLabel }]
+        : [];
+    });
   });
 
   createEffect(() => {
@@ -416,14 +500,23 @@ export const SessionTable = (props: {
   return (
     <Show
       fallback={
-        <div class={empty}>
-          <div class={emptyActions}>
-            <span>No sessions match the current filters</span>
-            <button class={ghostButton} onClick={() => props.onClearFilters()} type="button">
-              Clear filters
-            </button>
+        <Show
+          fallback={
+            <div class={empty}>
+              <div class={emptyActions}>
+                <span>No sessions match the current filters</span>
+                <button class={ghostButton} onClick={() => props.onClearFilters()} type="button">
+                  Clear filters
+                </button>
+              </div>
+            </div>
+          }
+          when={props.loading}
+        >
+          <div aria-busy="true" aria-live="polite" class={empty}>
+            Loading sessions…
           </div>
-        </div>
+        </Show>
       }
       when={props.rows.length}
     >
@@ -437,132 +530,191 @@ export const SessionTable = (props: {
         >
           Group campaigns
         </Checkbox>
-        <div class={sessionDesktopControl}>
-          <SessionColumnControls
-            columnVisibility={props.columnVisibility}
-            hiddenColumnIds={dataHiddenColumnIds()}
-            onColumnVisibilityChange={props.onColumnVisibilityChange}
-          />
-        </div>
-        <div class={sessionSummaryMobileSort}>
-          <label class={sessionSummaryMobileSortField}>
-            <span>Sort by</span>
-            <select
-              aria-label="Sort mobile session summaries"
-              class={sessionSummaryMobileSortSelect}
-              onChange={(event) => props.onSortingChange([{ desc: activeSort().desc, id: event.currentTarget.value }])}
-              value={activeSort().id}
+        <Show when={surfaceMode() === 'desktop' || surfaceMode() === 'print'}>
+          <div class={sessionDesktopControl}>
+            <SessionColumnControls
+              columnVisibility={props.columnVisibility}
+              hiddenColumnIds={dataHiddenColumnIds()}
+              onColumnVisibilityChange={props.onColumnVisibilityChange}
+            />
+          </div>
+        </Show>
+        <Show when={surfaceMode() === 'mobile'}>
+          <div class={sessionSummaryMobileSort}>
+            <label class={sessionSummaryMobileSortField}>
+              <span>Sort by</span>
+              <select
+                aria-label="Sort mobile session summaries"
+                class={sessionSummaryMobileSortSelect}
+                onChange={(event) =>
+                  props.onSortingChange([{ desc: activeSort().desc, id: event.currentTarget.value }])
+                }
+                value={activeSort().id}
+              >
+                <For each={sessionColumns}>
+                  {(column) => <option value={column.id}>{sessionColumnLabel(column)}</option>}
+                </For>
+              </select>
+            </label>
+            <button
+              aria-label={activeSort().desc ? 'Sort ascending' : 'Sort descending'}
+              class={ghostButton}
+              onClick={() => props.onSortingChange([{ desc: !activeSort().desc, id: activeSort().id }])}
+              type="button"
             >
-              <For each={sessionColumns}>
-                {(column) => <option value={column.id}>{sessionColumnLabel(column)}</option>}
-              </For>
-            </select>
-          </label>
-          <button
-            aria-label={activeSort().desc ? 'Sort ascending' : 'Sort descending'}
-            class={ghostButton}
-            onClick={() => props.onSortingChange([{ desc: !activeSort().desc, id: activeSort().id }])}
-            type="button"
-          >
-            {activeSort().desc ? 'Descending ↓' : 'Ascending ↑'}
-          </button>
-        </div>
+              {activeSort().desc ? 'Descending ↓' : 'Ascending ↑'}
+            </button>
+          </div>
+        </Show>
       </div>
-      <div
-        class={cx(tableWrap, desktopTableSurface)}
-        onScroll={updateTableViewport}
-        ref={(element) => {
-          desktopViewportEl = element;
-        }}
-      >
-        <table class={cx(table, sessionsTable)} style={{ 'min-width': `${tableMinWidth()}px` }}>
-          <thead>
-            <tr>
-              <For each={visibleColumns()}>
-                {({ columnDef, tableColumn }) => (
-                  <th
-                    class={columnDef.meta?.headerClass}
-                    style={{ width: `${columnDef.meta?.widthPx ?? 140}px` }}
-                    title={columnDef.meta?.title}
+      <Show when={surfaceMode() === 'pending'}>
+        <div aria-busy="true" class={tableWrap} data-session-surface="pending">
+          Preparing sessions…
+        </div>
+      </Show>
+      <Show when={surfaceMode() === 'desktop' || surfaceMode() === 'print'}>
+        <Show when={surfaceMode() === 'print' && props.printRowsLoading}>
+          <div aria-busy="true" aria-live="polite" class={empty}>
+            Preparing the complete session list for print…
+          </div>
+        </Show>
+        <div
+          class={cx(tableWrap, surfaceMode() === 'desktop' ? desktopTableSurface : undefined)}
+          data-session-surface={surfaceMode()}
+          onScroll={surfaceMode() === 'desktop' ? updateTableViewport : undefined}
+          ref={(element) => {
+            desktopViewportEl = element;
+          }}
+        >
+          <table class={cx(table, sessionsTable)} style={{ 'min-width': `${tableMinWidth()}px` }}>
+            <thead>
+              <tr>
+                <For each={visibleColumns()}>
+                  {({ columnDef, tableColumn }) => (
+                    <th
+                      class={columnDef.meta?.headerClass}
+                      style={{ width: `${columnDef.meta?.widthPx ?? 140}px` }}
+                      title={columnDef.meta?.title}
+                    >
+                      <SortHeader column={tableColumn} label={sessionColumnHeader(columnDef)} />
+                    </th>
+                  )}
+                </For>
+              </tr>
+            </thead>
+            <tbody>
+              <Show when={virtualRows().topHeight > 0}>
+                <tr data-virtual-spacer="top">
+                  <td
+                    colSpan={visibleColumnCount()}
+                    style={{ height: `${virtualRows().topHeight}px`, padding: '0', border: '0' }}
+                  />
+                </tr>
+              </Show>
+              <For each={virtualRows().rows}>
+                {(tableRow) => (
+                  <tr
+                    data-depth={tableRow.depth}
+                    data-selected={String(props.selectedKey === tableRow.id)}
+                    onClick={() => props.onSelect(tableRow.original)}
+                    onKeyDown={(event) => {
+                      if (event.target !== event.currentTarget) {
+                        return;
+                      }
+                      if (event.key !== 'Enter' && event.key !== ' ') {
+                        return;
+                      }
+                      event.preventDefault();
+                      props.onSelect(tableRow.original);
+                    }}
+                    tabIndex={0}
                   >
-                    <SortHeader column={tableColumn} label={sessionColumnHeader(columnDef)} />
-                  </th>
+                    <For each={tableRow.getVisibleCells()}>
+                      {(cell) => (
+                        <td class={cell.column.columnDef.meta?.cellClass}>
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      )}
+                    </For>
+                  </tr>
                 )}
               </For>
-            </tr>
-          </thead>
-          <tbody>
-            <Show when={virtualRows().topHeight > 0}>
-              <tr>
-                <td
-                  colSpan={visibleColumnCount()}
-                  style={{ height: `${virtualRows().topHeight}px`, padding: '0', border: '0' }}
-                />
-              </tr>
-            </Show>
-            <For each={virtualRows().rows}>
-              {(tableRow) => (
-                <tr
-                  data-depth={tableRow.depth}
-                  data-selected={String(props.selectedKey === tableRow.id)}
-                  onClick={() => props.onSelect(tableRow.original)}
-                  onKeyDown={(event) => {
-                    if (event.target !== event.currentTarget) {
-                      return;
-                    }
-                    if (event.key !== 'Enter' && event.key !== ' ') {
-                      return;
-                    }
-                    event.preventDefault();
-                    props.onSelect(tableRow.original);
-                  }}
-                  tabIndex={0}
-                >
-                  <For each={tableRow.getVisibleCells()}>
-                    {(cell) => (
-                      <td class={cell.column.columnDef.meta?.cellClass}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    )}
-                  </For>
+              <Show when={virtualRows().bottomHeight > 0}>
+                <tr data-virtual-spacer="bottom">
+                  <td
+                    colSpan={visibleColumnCount()}
+                    style={{ height: `${virtualRows().bottomHeight}px`, padding: '0', border: '0' }}
+                  />
                 </tr>
-              )}
-            </For>
-            <Show when={virtualRows().bottomHeight > 0}>
-              <tr>
-                <td
-                  colSpan={visibleColumnCount()}
-                  style={{ height: `${virtualRows().bottomHeight}px`, padding: '0', border: '0' }}
-                />
-              </tr>
-            </Show>
-          </tbody>
-        </table>
-      </div>
-      <ul aria-label="Session summaries" class={cx(mobileSummarySurface, sessionSummaryViewport)}>
-        <For each={mobileRows()}>
-          {(tableRow, index) => (
-            <MobileSessionSummary
-              onFieldFilter={props.onFieldFilter}
-              onHarnessFilter={props.onHarnessFilter}
-              onSelect={props.onSelect}
-              position={index() + 1}
-              searchQuery={props.searchQuery}
-              selected={props.selectedKey === tableRow.id}
-              tableRow={tableRow}
-              total={rowModelRows().length}
-            />
-          )}
-        </For>
-      </ul>
-      <Show when={remainingMobileRows() > 0}>
-        <div class={sessionSummaryLoadMore}>
+              </Show>
+            </tbody>
+          </table>
+        </div>
+      </Show>
+      <Show when={surfaceMode() === 'mobile'}>
+        <ul
+          aria-label="Session summaries"
+          class={cx(mobileSummarySurface, sessionSummaryViewport)}
+          data-session-surface="mobile"
+        >
+          <For each={mobileRows()}>
+            {(tableRow, index) => (
+              <MobileSessionSummary
+                onFieldFilter={props.onFieldFilter}
+                onHarnessFilter={props.onHarnessFilter}
+                onSelect={props.onSelect}
+                position={index() + 1}
+                searchQuery={props.searchQuery}
+                selected={props.selectedKey === tableRow.id}
+                tableRow={tableRow}
+                total={props.totalRows ?? rowModelRows().length}
+              />
+            )}
+          </For>
+        </ul>
+        <Show when={remainingMobileRows() > 0}>
+          <div class={sessionSummaryLoadMore}>
+            <button
+              class={ghostButton}
+              onClick={() => setMobileRowLimit((limit) => nextMobileSessionRowLimit(limit, rowModelRows().length))}
+              type="button"
+            >
+              Show {Math.min(MOBILE_PAGE_SIZE, remainingMobileRows())} more · {remainingMobileRows()} remaining
+            </button>
+          </div>
+        </Show>
+      </Show>
+      <For each={expandedCampaignLoads()}>
+        {(campaign) => (
+          <div class={sessionPagingLoadMore}>
+            <button
+              aria-label={`Load more sessions in campaign ${campaign.sessionLabel}`}
+              class={ghostButton}
+              disabled={campaign.loading}
+              onClick={() => props.onLoadCampaignChildren?.(campaign.campaignKey)}
+              type="button"
+            >
+              {campaign.loading ? 'Loading campaign sessions…' : `Load more sessions in ${campaign.sessionLabel}`}
+            </button>
+          </div>
+        )}
+      </For>
+      <Show
+        when={
+          props.hasMoreRows &&
+          (surfaceMode() === 'desktop' ||
+            surfaceMode() === 'pending' ||
+            (surfaceMode() === 'mobile' && remainingMobileRows() === 0))
+        }
+      >
+        <div class={sessionPagingLoadMore}>
           <button
             class={ghostButton}
-            onClick={() => setMobileRowLimit((limit) => nextMobileSessionRowLimit(limit, rowModelRows().length))}
+            disabled={props.loadingMoreRows}
+            onClick={() => props.onLoadMoreRows?.()}
             type="button"
           >
-            Show {Math.min(MOBILE_PAGE_SIZE, remainingMobileRows())} more · {remainingMobileRows()} remaining
+            {props.loadingMoreRows ? 'Loading more sessions…' : 'Load more sessions'}
           </button>
         </div>
       </Show>
