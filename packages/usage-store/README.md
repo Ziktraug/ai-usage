@@ -10,7 +10,7 @@ It does not own raw local history collection, file selection or transfer, networ
 
 ## Public Interface
 
-The root export provides typed APIs for importing local rows, exporting local merge bundles, importing bundles copied from another machine, and querying stored report rows.
+The root export provides typed APIs for importing local rows, previewing/confirming portable bundles against a store-state token, exporting local merge bundles, and querying stored report rows plus semantic generation.
 
 ## Depends On
 
@@ -22,7 +22,7 @@ It must not import `@ai-usage/local-collectors`, `@ai-usage/report-data`, `@ai-u
 
 ## Data Boundary
 
-SQLite stores normalized machine-scoped usage facts keyed by origin machine ID. It exports/imports typed merge bundles and returns validated rows with corrupt-row isolation for report-data orchestration.
+SQLite stores normalized machine-scoped usage facts keyed by origin machine ID and records whether provenance is locally observed or portable/opaque. Generation advances only when the active report projection changes; observation timestamps and identical imports do not invalidate report captures.
 
 ## Test Strategy
 

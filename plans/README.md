@@ -20,17 +20,17 @@ branch or open a pull request unless the user explicitly asks.
 | 007 | Simplify Dashboard Exploration and Dataviz | P1 | L | - | DONE |
 | 008 | Remediate the Full Application Audit and Remove Legacy LAN Sync | P0 | L | - | DONE |
 | 009 | Remove HTML Export End to End | P0 | M | - | DONE |
-| 010 | Fix Production Smoke Lifecycle and Add Stateful CLI Integration Coverage | P1 | M | 009 | TODO |
-| 011 | Make Machine Identity Atomic and Protect Private Local State | P1 | M | 009 | TODO |
-| 012 | Make Local-History Reads WAL-Coherent, Bounded, and No-Follow | P1 | L | 010, 011 | TODO |
-| 013 | Validate Collector Metrics at Runtime Before Aggregation | P1 | L | 012 | TODO |
-| 014 | Enforce Symmetric Portable-Transfer Limits and Add a Safe Import Preview | P1 | L | 011 | TODO |
-| 015 | Treat Portable Source Paths as Opaque Provenance | P1 | M | 011, 013, 014 | TODO |
-| 016 | Consolidate Exact-Revision Runners and Localize the Session SQLite Schema | P2 | L | 009 | TODO |
-| 017 | Skip Semantically Unchanged Refreshes and Unify Report Assembly | P1 | L | 010-016 | TODO |
-| 018 | Give Served Revision Coordination One Browser-Side Owner | P2 | L | 016, 017 | TODO |
-| 019 | Deepen Skills Workflows and Harden Projection Parents | P1 | L | 009 | TODO |
-| 020 | Align Commit Tooling, Bun Runtime, Dead CSV Claims, and Final Documentation | P2 | M | 009-019 | TODO |
+| 010 | Fix Production Smoke Lifecycle and Add Stateful CLI Integration Coverage | P1 | M | 009 | DONE |
+| 011 | Make Machine Identity Atomic and Protect Private Local State | P1 | M | 009 | DONE |
+| 012 | Make Local-History Reads WAL-Coherent, Bounded, and No-Follow | P1 | L | 010, 011 | DONE |
+| 013 | Validate Collector Metrics at Runtime Before Aggregation | P1 | L | 012 | DONE |
+| 014 | Enforce Symmetric Portable-Transfer Limits and Add a Safe Import Preview | P1 | L | 011 | DONE |
+| 015 | Treat Portable Source Paths as Opaque Provenance | P1 | M | 011, 013, 014 | DONE |
+| 016 | Consolidate Exact-Revision Runners and Localize the Session SQLite Schema | P2 | L | 009 | DONE |
+| 017 | Skip Semantically Unchanged Refreshes and Unify Report Assembly | P1 | L | 010-016 | DONE |
+| 018 | Give Served Revision Coordination One Browser-Side Owner | P2 | L | 016, 017 | DONE |
+| 019 | Deepen Skills Workflows and Harden Projection Parents | P1 | L | 009 | DONE |
+| 020 | Align Commit Tooling, Bun Runtime, Dead CSV Claims, and Final Documentation | P2 | M | 009-019 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
