@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 import { Context, Effect, Layer } from 'effect';
 import { LocalHistoryError } from './errors';
@@ -60,17 +59,10 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
   openDatabase: (dbPath) =>
     Effect.tryPromise({
       try: async () => {
-        const { constants, Database } = await import('bun:sqlite');
-        // bun:sqlite in readonly mode fails on WAL databases when the -shm file
-        // doesn't exist: it can't create the shared-memory file while readonly,
-        // so prepare() throws SQLITE_CANTOPEN. ?immutable=1 bypasses WAL/shm
-        // entirely and is safe because we never write to these databases.
-        const url = pathToFileURL(dbPath);
-        url.searchParams.set('immutable', '1');
-        // SQLITE_OPEN_URI is needed for the ?immutable=1 query param to be
-        // honored; DatabaseOptions exposes no `uri` flag, so open with the
-        // numeric flag constants instead.
-        const db = new Database(url.href, constants.SQLITE_OPEN_READONLY + constants.SQLITE_OPEN_URI);
+        const { Database } = await import('bun:sqlite');
+        // Read-only SQLite connections include committed WAL pages without
+        // checkpointing or mutating the harness-owned database.
+        const db = new Database(dbPath, { readonly: true });
         return {
           all: <T extends object = Record<string, unknown>>(sql: string) =>
             Effect.try({
