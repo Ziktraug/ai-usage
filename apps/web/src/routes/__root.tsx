@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/solid-query';
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/solid-router';
 import type { JSX } from 'solid-js';
 import { HydrationScript } from 'solid-js/web';
@@ -32,5 +33,25 @@ export const Route = createRootRoute({
     ],
   }),
   errorComponent: (props) => <pre>{props.error instanceof Error ? props.error.message : String(props.error)}</pre>,
-  component: () => <Outlet />,
+  component: RootRoute,
 });
+
+function RootRoute() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        gcTime: 10 * 60 * 1000,
+        refetchOnReconnect: false,
+        refetchOnWindowFocus: false,
+        retry: false,
+        staleTime: (query) => (query.state.data === null ? 0 : Number.POSITIVE_INFINITY),
+      },
+    },
+  });
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Outlet />
+    </QueryClientProvider>
+  );
+}

@@ -31,8 +31,6 @@ import {
   timeChartOptionsSummary,
   timeChartOptionsTitle,
   timeChartToolbar,
-  timeChartZoomButton,
-  timeChartZoomControls,
   timeChartZoomSummary,
   timelineHoverLayer,
   timeRangeArrow,
@@ -71,7 +69,6 @@ import {
   dateFromIndex,
   dateIndexFrom,
   dateRangePresets,
-  shiftCalendarDays,
   type TimeRangePreset,
   toDateInputValue,
 } from './date-range';
@@ -88,30 +85,19 @@ import {
 import { type DashboardRow, fmtDateOnly, fmtMoney, fmtNum, fmtPct } from './shared';
 import {
   createTimeRangeControlState,
-  isVisualRangeZoomed,
   type TimeRangeControlCommand,
   type TimeRangeControlContext,
   type TimeRangeControlEvent,
   type TimeRangeIndexRange,
   transitionTimeRangeControl,
-  visualRangeFor,
-  visualRangeSize,
 } from './time-range-control-state';
 
 const READOUT_LIMIT = 8;
 const MAX_DELTA_PCT = 1000;
-const CHART_ZOOM_FACTOR = 1.5;
 export const defaultTimelineGranularity: MigrationGranularity = 'day';
-const MIN_VISIBLE_BUCKETS = 1;
 const MAX_VISUAL_TICKS = 14;
-const VISUAL_VIEW_PRESETS = [
-  { days: 2, label: '2d' },
-  { days: 7, label: '7d' },
-  { days: 30, label: '30d' },
-] as const;
 
 type RangeDragPointerEvent = PointerEvent & { currentTarget: HTMLButtonElement };
-type TimelinePointerEvent = PointerEvent & { currentTarget: HTMLButtonElement };
 
 const monthTickFormatter = new Intl.DateTimeFormat('en', { month: 'short' });
 const monthYearFormatter = new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric' });
@@ -241,7 +227,7 @@ const bucketIndexAtOrBefore = (buckets: TimelineBucket[], date: Date) => {
   return matchedIndex;
 };
 
-export const chartVisualRangeForSelection = (
+export const chartRangeForSelection = (
   chart: Pick<TimelineData, 'buckets'> & { minDay: Date },
   selectionIndexes: readonly [number, number],
 ): TimeRangeIndexRange => {
@@ -350,12 +336,10 @@ export const TimeRangeControl = (props: {
 }) => {
   const initialDomain = props.dateRange.domain();
   const [chartDomain, setChartDomain] = createSignal(initialDomain);
-  const [chartViewFollowsReport, setChartViewFollowsReport] = createSignal(true);
   const [controlState, setControlState] = createSignal(
     createTimeRangeControlState({
       context: {
         selectionMaxIndex: initialDomain?.maxIndex ?? 0,
-        visualBucketMaxIndex: 0,
       },
       options: { dimension: 'harness', granularity: defaultTimelineGranularity, value: 'cost' },
       selectionIndexes: props.dateRange.selectedIndexes(),
@@ -366,11 +350,6 @@ export const TimeRangeControl = (props: {
   const valueMode = createMemo(() => controlState().options.value);
   const hoveredBucket = () => controlState().hover.bucketIndex;
   const hoveredKey = () => controlState().hover.key;
-  const showGraphViewControls = () => controlState().viewControlsOpen;
-  const draggingVisualZoom = () => {
-    const interaction = controlState().interaction.type;
-    return interaction === 'view-pan' || interaction === 'view-handle';
-  };
   const draggingSelection = () => controlState().interaction.type === 'selection-pan';
   const syncChartDomain = () => setChartDomain(props.dateRange.domain());
 
@@ -407,7 +386,6 @@ export const TimeRangeControl = (props: {
 
   const controlContext = (): TimeRangeControlContext => ({
     selectionMaxIndex: chartDomain()?.maxIndex ?? 0,
-    visualBucketMaxIndex: Math.max(0, (data()?.buckets.length ?? 1) - 1),
   });
 
   let applyingSelectionIndexes = false;
@@ -488,21 +466,14 @@ export const TimeRangeControl = (props: {
     return 'No dated sessions match the current filters';
   };
 
-  const visibleBucketRange = createMemo(() => visualRangeFor(controlState(), controlContext()));
-
   const reportBucketRange = createMemo(() => {
     const chart = data();
-    return chart ? chartVisualRangeForSelection(chart, controlState().selectionIndexes) : { from: 0, to: 0 };
+    return chart ? chartRangeForSelection(chart, controlState().selectionIndexes) : { from: 0, to: 0 };
   });
-
-  const isVisuallyZoomed = createMemo(() => isVisualRangeZoomed(controlState(), controlContext()));
-
-  const canMoveVisualZoomLater = createMemo(() => {
-    const chart = data();
-    if (!chart) {
-      return false;
-    }
-    return isVisuallyZoomed() && visibleBucketRange().to < chart.buckets.length - 1;
+  const visibleBucketRange = reportBucketRange;
+  const visibleBucketCount = createMemo(() => {
+    const range = visibleBucketRange();
+    return Math.max(1, range.to - range.from + 1);
   });
 
   const visibleMonthTicks = createMemo(() => {
@@ -564,7 +535,7 @@ export const TimeRangeControl = (props: {
     );
   });
 
-  const visibleBucketLayout = createMemo(() => timelineBucketLayout(visualRangeSize(controlState(), controlContext())));
+  const visibleBucketLayout = createMemo(() => timelineBucketLayout(visibleBucketCount()));
 
   const barHeight = (bucket: TimelineBucket, chart: NonNullable<ReturnType<typeof data>>) => {
     const total = bucketValue(bucket, chart);
@@ -604,7 +575,7 @@ export const TimeRangeControl = (props: {
     }
     const previous = index > 0 ? chart.buckets[index - 1] : null;
     const range = visibleBucketRange();
-    const visibleCount = Math.max(1, visualRangeSize(controlState(), controlContext()));
+    const visibleCount = visibleBucketCount();
     const rows: { delta: number | null; key: string; label: string; rank: number; value: number }[] = [];
     for (let rank = 0; rank < chart.series.length; rank++) {
       const series = chart.series[rank];
@@ -663,16 +634,13 @@ export const TimeRangeControl = (props: {
   const activeReadout = createMemo(() => readout() ?? globalReadout());
 
   const updateHover = (event: MouseEvent & { currentTarget: HTMLElement }) => {
-    if (draggingVisualZoom()) {
-      return;
-    }
     const rect = event.currentTarget.getBoundingClientRect();
     const chart = data();
     if (!chart || rect.width <= 0 || rect.height <= 0) {
       return;
     }
     const range = visibleBucketRange();
-    const count = visualRangeSize(controlState(), controlContext());
+    const count = visibleBucketCount();
     const localIndex = Math.max(0, Math.min(count - 1, Math.floor(((event.clientX - rect.left) / rect.width) * count)));
     const index = range.from + localIndex;
 
@@ -732,90 +700,6 @@ export const TimeRangeControl = (props: {
     event.preventDefault();
   };
 
-  const zoomChartBy = (factor: number, anchorRatio = 0.5) => {
-    setChartViewFollowsReport(false);
-    return dispatchControl({ type: 'zoom', anchorRatio, factor });
-  };
-
-  const zoomChartToSelection = (chart: NonNullable<ReturnType<typeof data>>) => {
-    setChartViewFollowsReport(true);
-    dispatchControl({
-      type: 'setVisualRange',
-      range: chartVisualRangeForSelection(chart, controlState().selectionIndexes),
-    });
-  };
-
-  const zoomChartToLastDays = (chart: NonNullable<ReturnType<typeof data>>, days: number) => {
-    setChartViewFollowsReport(false);
-    const lastIndex = chart.buckets.length - 1;
-    const lastBucket = chart.buckets[lastIndex];
-    if (!lastBucket) {
-      return;
-    }
-    const firstDate = shiftCalendarDays(lastBucket.date, -(days - 1));
-    const from = bucketIndexAtOrBefore(chart.buckets, firstDate);
-    dispatchControl({ type: 'setVisualRange', range: { from, to: lastIndex } });
-  };
-
-  const resetVisualZoom = () => {
-    setChartViewFollowsReport(false);
-    dispatchControl({ type: 'resetVisualRange' });
-  };
-
-  createEffect(() => {
-    const chart = data();
-    if (!(chart && chartViewFollowsReport())) {
-      return;
-    }
-    const target = chartVisualRangeForSelection(chart, controlState().selectionIndexes);
-    const current = visibleBucketRange();
-    if (target.from !== current.from || target.to !== current.to) {
-      dispatchControl({ type: 'setVisualRange', range: target });
-    }
-  });
-
-  const visualRangeVars = (chart: NonNullable<ReturnType<typeof data>>) => {
-    const range = visibleBucketRange();
-    const max = Math.max(1, chart.buckets.length - 1);
-    const startPct = (range.from / max) * 100;
-    const endPct = 100 - (range.to / max) * 100;
-    return {
-      '--slider-range-start': `${startPct}%`,
-      '--slider-range-end': `${endPct}%`,
-    };
-  };
-
-  const moveVisualZoomToLatest = () => {
-    setChartViewFollowsReport(false);
-    dispatchControl({ type: 'pan', destination: 'end' });
-  };
-
-  const startVisualZoomDrag = (event: TimelinePointerEvent, scaleBuckets: number) => {
-    const trackRect = event.currentTarget.getBoundingClientRect();
-    const handled = dispatchControl({
-      type: 'pointerStart',
-      interaction: 'view-pan',
-      button: event.button,
-      clientX: event.clientX,
-      pointerId: event.pointerId,
-      scaleBucketCount: scaleBuckets,
-      trackWidth: trackRect.width,
-    });
-    if (!handled) {
-      return;
-    }
-    setChartViewFollowsReport(false);
-    event.currentTarget.setPointerCapture(event.pointerId);
-    event.preventDefault();
-  };
-
-  const moveVisualZoomDrag = (event: TimelinePointerEvent) => {
-    if (!dispatchControl({ type: 'pointerMove', clientX: event.clientX, pointerId: event.pointerId })) {
-      return;
-    }
-    event.preventDefault();
-  };
-
   const pointerFinishType = (event: PointerEvent): 'pointerCancel' | 'pointerCaptureLost' | 'pointerEnd' => {
     if (event.type === 'pointercancel') {
       return 'pointerCancel';
@@ -826,7 +710,7 @@ export const TimeRangeControl = (props: {
     return 'pointerEnd';
   };
 
-  const finishPointerInteraction = (event: TimelinePointerEvent | RangeDragPointerEvent, stopPropagation: boolean) => {
+  const finishPointerInteraction = (event: RangeDragPointerEvent, stopPropagation: boolean) => {
     const finishType = pointerFinishType(event);
     if (!dispatchControl({ type: finishType, pointerId: event.pointerId })) {
       return;
@@ -838,72 +722,6 @@ export const TimeRangeControl = (props: {
     if (stopPropagation) {
       event.stopPropagation();
     }
-  };
-
-  const endVisualZoomDrag = (event: TimelinePointerEvent) => finishPointerInteraction(event, false);
-
-  const startVisualZoomHandleDrag = (event: TimelinePointerEvent, handle: 'start' | 'end') => {
-    const trackRect = event.currentTarget.parentElement?.getBoundingClientRect();
-    const handled = dispatchControl({
-      type: 'pointerStart',
-      interaction: 'view-handle',
-      button: event.button,
-      clientX: event.clientX,
-      handle,
-      pointerId: event.pointerId,
-      trackWidth: trackRect?.width ?? 0,
-    });
-    if (!handled) {
-      return;
-    }
-    setChartViewFollowsReport(false);
-    event.currentTarget.setPointerCapture(event.pointerId);
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-  const moveVisualZoomHandleDrag = (event: TimelinePointerEvent) => {
-    if (!dispatchControl({ type: 'pointerMove', clientX: event.clientX, pointerId: event.pointerId })) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-  const endVisualZoomHandleDrag = (event: TimelinePointerEvent) => finishPointerInteraction(event, true);
-
-  const handleChartWheel = (
-    event: WheelEvent & { currentTarget: HTMLElement },
-    chart: NonNullable<ReturnType<typeof data>>,
-  ) => {
-    if (chart.buckets.length <= MIN_VISIBLE_BUCKETS) {
-      return;
-    }
-    if (event.deltaY >= 0 && !isVisuallyZoomed()) {
-      return;
-    }
-    const rect = event.currentTarget.getBoundingClientRect();
-    if (rect.width <= 0) {
-      return;
-    }
-    const anchorRatio = clampNumber((event.clientX - rect.left) / rect.width, 0, 1);
-    const factor = event.deltaY < 0 ? 1 / CHART_ZOOM_FACTOR : CHART_ZOOM_FACTOR;
-    if (zoomChartBy(factor, anchorRatio)) {
-      event.preventDefault();
-    }
-  };
-
-  const visualZoomLabel = (chart: NonNullable<ReturnType<typeof data>>) => {
-    if (!isVisuallyZoomed()) {
-      return 'Chart view: full history';
-    }
-    const range = visibleBucketRange();
-    const firstBucket = chart.buckets[range.from];
-    const lastBucket = chart.buckets[range.to];
-    if (!(firstBucket && lastBucket)) {
-      return 'Chart view: full history';
-    }
-    return `Chart view: ${bucketLabel(firstBucket.date, renderedGranularity())} – ${bucketLabel(lastBucket.date, renderedGranularity())}`;
   };
 
   const swatch = (key: string) => dimensionSwatch(renderedDimension(), key);
@@ -1010,29 +828,6 @@ export const TimeRangeControl = (props: {
       !dispatchControl({
         type: 'keyboardMove',
         axis: 'selection',
-        handle,
-        key: event.key,
-        shiftKey: event.shiftKey,
-      })
-    ) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-  const handleVisualZoomKeyDown = (
-    event: KeyboardEvent & { currentTarget: HTMLButtonElement },
-    handle: 'start' | 'end',
-  ) => {
-    if (!['ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'End', 'Home', 'PageDown', 'PageUp'].includes(event.key)) {
-      return;
-    }
-    setChartViewFollowsReport(false);
-    if (
-      !dispatchControl({
-        type: 'keyboardMove',
-        axis: 'visual',
         handle,
         key: event.key,
         shiftKey: event.shiftKey,
@@ -1188,14 +983,6 @@ export const TimeRangeControl = (props: {
                   onValueChange={(value) => {
                     const nextGranularity = toGranularity(value);
                     const domain = chartDomain();
-                    const nextTimeline =
-                      domain && props.focusedTimeline === undefined
-                        ? buildTimelineData(props.rows, {
-                            dimension: dimension(),
-                            domain,
-                            granularity: nextGranularity,
-                          })
-                        : null;
                     dispatchControl(
                       {
                         type: 'optionChanged',
@@ -1205,7 +992,6 @@ export const TimeRangeControl = (props: {
                       },
                       {
                         selectionMaxIndex: domain?.maxIndex ?? 0,
-                        visualBucketMaxIndex: Math.max(0, (nextTimeline?.buckets.length ?? 1) - 1),
                       },
                     );
                   }}
@@ -1275,97 +1061,12 @@ export const TimeRangeControl = (props: {
                 <div>
                   <div class={timeRangeTitle}>Activity over time</div>
                   <span class={timeChartZoomSummary}>
-                    Daily estimated API value by harness · {visualZoomLabel(chart())}
-                    {' · '}
-                    <span>{chartViewFollowsReport() ? 'Follows report range' : 'Custom chart view'}</span>
+                    Daily estimated API value by harness · <span>Follows report range</span>
                     {' · Visible max '}
                     {formatValue(visibleMaximum(), valueMode() === 'sessions' || usesSessionShare(chart()))}
                   </span>
                 </div>
-                <div class={timeChartZoomControls}>
-                  <button
-                    aria-expanded={showGraphViewControls()}
-                    class={timeChartZoomButton}
-                    onClick={() => dispatchControl({ type: 'viewControlsChanged', open: !showGraphViewControls() })}
-                    title="Open graph view controls"
-                    type="button"
-                  >
-                    {showGraphViewControls() ? 'Hide chart zoom' : 'Zoom chart'}
-                  </button>
-                </div>
               </div>
-              <Show when={showGraphViewControls()}>
-                <div class={timeChartToolbar}>
-                  <span class={timeChartZoomSummary}>
-                    Only changes chart readability. Report range still filters the app.
-                  </span>
-                  <div class={timeChartZoomControls}>
-                    <For each={VISUAL_VIEW_PRESETS}>
-                      {(preset) => (
-                        <button
-                          class={timeChartZoomButton}
-                          onClick={() => zoomChartToLastDays(chart(), preset.days)}
-                          title={`Show the latest ${preset.days} days in the graph only`}
-                          type="button"
-                        >
-                          View {preset.label}
-                        </button>
-                      )}
-                    </For>
-                    <button
-                      class={timeChartZoomButton}
-                      disabled={visualRangeSize(controlState(), controlContext()) <= MIN_VISIBLE_BUCKETS}
-                      onClick={() => zoomChartBy(1 / CHART_ZOOM_FACTOR)}
-                      title="Zoom into the graph without changing the selected range"
-                      type="button"
-                    >
-                      Zoom +
-                    </button>
-                    <button
-                      class={timeChartZoomButton}
-                      disabled={!isVisuallyZoomed()}
-                      onClick={() => zoomChartBy(CHART_ZOOM_FACTOR)}
-                      title="Zoom out without changing the selected range"
-                      type="button"
-                    >
-                      Zoom −
-                    </button>
-                    <button
-                      class={timeChartZoomButton}
-                      disabled={!canMoveVisualZoomLater()}
-                      onClick={moveVisualZoomToLatest}
-                      title="Move the graph view to the latest data"
-                      type="button"
-                    >
-                      Latest data
-                    </button>
-                    <button
-                      class={timeChartZoomButton}
-                      onClick={() => zoomChartToSelection(chart())}
-                      title="Fit the graph to the selected range only visually"
-                      type="button"
-                    >
-                      Fit report range
-                    </button>
-                    <button
-                      class={timeChartZoomButton}
-                      disabled={!isVisuallyZoomed()}
-                      onClick={resetVisualZoom}
-                      title="Show the full history in the graph"
-                      type="button"
-                    >
-                      Full history
-                    </button>
-                    <button
-                      class={timeChartZoomButton}
-                      onClick={() => dispatchControl({ type: 'viewControlsChanged', open: false })}
-                      type="button"
-                    >
-                      Done
-                    </button>
-                  </div>
-                </div>
-              </Show>
               <div class={timeSliderFrame}>
                 <div class={timeSliderControl}>
                   <div class={timeSliderTrack} style={rangeVars(chart())}>
@@ -1406,21 +1107,11 @@ export const TimeRangeControl = (props: {
                     <button
                       aria-label="Inspect activity timeline. Use arrow keys to inspect days."
                       class={timelineHoverLayer}
-                      data-dragging={String(draggingVisualZoom())}
-                      data-zoomed={String(isVisuallyZoomed())}
                       onClick={updateHover}
                       onKeyDown={inspectTimelineWithKeyboard}
-                      onLostPointerCapture={endVisualZoomDrag}
                       onMouseLeave={clearHover}
                       onMouseMove={updateHover}
-                      onPointerCancel={endVisualZoomDrag}
-                      onPointerDown={(event) =>
-                        startVisualZoomDrag(event, visualRangeSize(controlState(), controlContext()))
-                      }
-                      onPointerMove={moveVisualZoomDrag}
-                      onPointerUp={endVisualZoomDrag}
-                      onWheel={(event) => handleChartWheel(event, chart())}
-                      title="Scroll to zoom, then drag to move the visual window"
+                      title="Inspect activity in the selected report range"
                       type="button"
                     />
                     <Show when={readout()}>
@@ -1495,82 +1186,6 @@ export const TimeRangeControl = (props: {
                     )}
                   </Show>
                 </div>
-                <Show when={showGraphViewControls()}>
-                  <div class={timeSliderBrushColumn}>
-                    <div class={timeSliderBrushHeader}>
-                      <span>Graph view</span>
-                      <span>Optional reading aid: drag to pan, resize handles to adjust detail</span>
-                    </div>
-                    <div class={timeAxis}>
-                      <span>{fmtDateOnly(chart().minDay)}</span>
-                      <For each={monthTicksFor(chart()).filter((tick) => tick.pct >= 7 && tick.pct <= 93)}>
-                        {(tick) => (
-                          <span class={timeAxisTick} style={{ left: `${tick.pct}%` }}>
-                            {tick.label}
-                          </span>
-                        )}
-                      </For>
-                      <span>{fmtDateOnly(chart().maxDay)}</span>
-                    </div>
-                    <div class={timeSliderBrushTrack} style={visualRangeVars(chart())}>
-                      <div
-                        aria-hidden="true"
-                        class={timeSliderRange}
-                        style={{ left: 'var(--slider-range-start)', right: 'var(--slider-range-end)' }}
-                      />
-                      <div aria-hidden="true" class={timeSliderDimLeft} />
-                      <div aria-hidden="true" class={timeSliderDimRight} />
-                      <button
-                        aria-label="Drag graph view"
-                        class={timeSliderRangeDrag}
-                        data-dragging={String(draggingVisualZoom())}
-                        disabled={!isVisuallyZoomed()}
-                        onLostPointerCapture={endVisualZoomDrag}
-                        onPointerCancel={endVisualZoomDrag}
-                        onPointerDown={(event) => startVisualZoomDrag(event, chart().buckets.length)}
-                        onPointerMove={moveVisualZoomDrag}
-                        onPointerUp={endVisualZoomDrag}
-                        tabIndex={-1}
-                        title="Drag graph view"
-                        type="button"
-                      />
-                      <button
-                        aria-label="Graph view start"
-                        aria-valuemax={controlContext().visualBucketMaxIndex}
-                        aria-valuemin={0}
-                        aria-valuenow={visibleBucketRange().from}
-                        aria-valuetext={fmtDateOnly(chart().buckets[visibleBucketRange().from]?.date ?? chart().minDay)}
-                        class={timeSliderThumb}
-                        onKeyDown={(event) => handleVisualZoomKeyDown(event, 'start')}
-                        onLostPointerCapture={endVisualZoomHandleDrag}
-                        onPointerCancel={endVisualZoomHandleDrag}
-                        onPointerDown={(event) => startVisualZoomHandleDrag(event, 'start')}
-                        onPointerMove={moveVisualZoomHandleDrag}
-                        onPointerUp={endVisualZoomHandleDrag}
-                        role="slider"
-                        style={{ left: 'var(--slider-range-start)' }}
-                        type="button"
-                      />
-                      <button
-                        aria-label="Graph view end"
-                        aria-valuemax={controlContext().visualBucketMaxIndex}
-                        aria-valuemin={0}
-                        aria-valuenow={visibleBucketRange().to}
-                        aria-valuetext={fmtDateOnly(chart().buckets[visibleBucketRange().to]?.date ?? chart().maxDay)}
-                        class={timeSliderThumb}
-                        onKeyDown={(event) => handleVisualZoomKeyDown(event, 'end')}
-                        onLostPointerCapture={endVisualZoomHandleDrag}
-                        onPointerCancel={endVisualZoomHandleDrag}
-                        onPointerDown={(event) => startVisualZoomHandleDrag(event, 'end')}
-                        onPointerMove={moveVisualZoomHandleDrag}
-                        onPointerUp={endVisualZoomHandleDrag}
-                        role="slider"
-                        style={{ left: 'calc(100% - var(--slider-range-end))' }}
-                        type="button"
-                      />
-                    </div>
-                  </div>
-                </Show>
                 <div class={timeSliderBrushColumn}>
                   <div class={timeSliderBrushHeader}>
                     <span>Adjust report range</span>

@@ -178,21 +178,22 @@ test('starts sessions with focused work columns and switches metric presets', as
     await page.getByRole('table').evaluate((table) => table.scrollWidth <= (table.parentElement?.clientWidth ?? 0)),
   ).toBe(true);
 
+  await page.getByRole('table').evaluate((table) => table.setAttribute('data-stability-marker', 'session-table'));
   await page.getByRole('button', { exact: true, name: 'Tokens' }).click();
   await expect(page.getByRole('button', { exact: true, name: 'Tokens' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('table')).toHaveAttribute('data-stability-marker', 'session-table');
+  await expect(page.getByText('Preparing sessions…', { exact: true })).toHaveCount(0);
   await expect(columnHeaders).toHaveText([DATE_HEADER_PATTERN, 'Session', 'Input', 'Output', 'Cache', 'Fresh']);
 });
 
-test('adjusts the graph viewport with the keyboard', async ({ page }) => {
+test('uses the report range as the only graph viewport', async ({ page }) => {
   await page.goto('/');
 
-  await page.getByRole('button', { name: 'Zoom chart' }).click();
-  const graphStart = page.getByRole('slider', { name: 'Graph view start' });
-  const initialIndex = await graphStart.getAttribute('aria-valuenow');
-  await graphStart.focus();
-  await graphStart.press('ArrowRight');
-
-  await expect(graphStart).not.toHaveAttribute('aria-valuenow', initialIndex ?? '');
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  await expect(dateRange.getByRole('button', { name: 'Zoom chart' })).toHaveCount(0);
+  await expect(dateRange.getByRole('slider', { name: 'Graph view start' })).toHaveCount(0);
+  await expect(dateRange.getByText('Custom chart view', { exact: true })).toHaveCount(0);
+  await expect(dateRange.getByText('Follows report range', { exact: true })).toBeVisible();
 });
 
 test('offers keyboard-safe charts and mobile summaries at a narrow viewport', async ({ page }) => {

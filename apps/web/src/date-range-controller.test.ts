@@ -119,6 +119,28 @@ describe('date range controller', () => {
     });
   });
 
+  test('anchors rolling presets to the last available report day', () => {
+    createRoot((dispose) => {
+      const controller = createDateRangeController({
+        domain: () => ({
+          minDay: new Date(2026, 5, 13),
+          maxDay: new Date(2026, 5, 29),
+        }),
+        generatedAt: new Date(2026, 6, 13, 12),
+        rows: () => [],
+        defaultFrom: '2026-07-07',
+        defaultTo: '2026-07-13',
+        formatDate,
+      });
+
+      controller.setPreset('7d');
+
+      expect(controller.inputValues()).toEqual({ from: '2026-06-22', to: '2026-06-29' });
+
+      dispose();
+    });
+  });
+
   test('reacts when a focused report date domain arrives after hydration', () => {
     createRoot((dispose) => {
       const [focusedDomain, setFocusedDomain] = createSignal<{ maxDay: Date; minDay: Date } | null>(null);

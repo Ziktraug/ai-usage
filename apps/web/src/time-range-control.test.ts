@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildVisibleTimelineBars,
   chartOptionsSummary,
-  chartVisualRangeForSelection,
+  chartRangeForSelection,
   defaultTimelineGranularity,
   timelineBucketLayout,
   timelinePlotLeft,
@@ -16,7 +16,7 @@ describe('time range control labels', () => {
   });
 });
 
-describe('time range control visual zoom', () => {
+describe('time range control report viewport', () => {
   test('maps the report selection to the matching chart buckets', () => {
     const buckets = ['2026-05-01', '2026-06-01', '2026-07-01'].map((date) => ({
       byKey: new Map(),
@@ -25,7 +25,7 @@ describe('time range control visual zoom', () => {
       total: 0,
     }));
 
-    expect(chartVisualRangeForSelection({ buckets, minDay: new Date('2026-05-01') }, [14, 44])).toEqual({
+    expect(chartRangeForSelection({ buckets, minDay: new Date('2026-05-01') }, [14, 44])).toEqual({
       from: 0,
       to: 1,
     });

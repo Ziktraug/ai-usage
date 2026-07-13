@@ -101,7 +101,8 @@ export const createDateRangeController = (options: {
     const currentTo = customTo();
     const currentGeneratedAt = generatedAt();
     const generatedAtTime = currentGeneratedAt.getTime();
-    const latestRowTime = currentMode === 'today' ? rowTimeSpan().maxTime : null;
+    const usesLatestReportDay = currentMode === '7d' || currentMode === '30d';
+    const latestRowTime = currentMode === 'today' || usesLatestReportDay ? rowTimeSpan().maxTime : null;
     if (
       boundsCache &&
       boundsCache.mode === currentMode &&
@@ -113,10 +114,9 @@ export const createDateRangeController = (options: {
       return boundsCache.value;
     }
 
-    const referenceDate =
-      currentMode === 'today' && latestRowTime != null && latestRowTime > generatedAtTime
-        ? new Date(latestRowTime)
-        : currentGeneratedAt;
+    const shouldUseLatestReportDay =
+      latestRowTime != null && (usesLatestReportDay || (currentMode === 'today' && latestRowTime > generatedAtTime));
+    const referenceDate = shouldUseLatestReportDay ? new Date(latestRowTime) : currentGeneratedAt;
     const value = dateBoundsForRange(currentMode, referenceDate, currentFrom, currentTo);
     boundsCache = {
       customFrom: currentFrom,
