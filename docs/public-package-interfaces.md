@@ -50,7 +50,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 
 ## `@ai-usage/skills`
 
-- `.`: explicit facade for skill-management config types, runtime validation, source-state helpers, source scanning, target observation, projection planning/apply, diagnostics, and workflow functions.
+- `.`: explicit facade including the deep Skills application factory, config/contracts, source scanning, target observation, identity-checked projection workflows, and diagnostics.
 - `./config`: browser-safe skill-management config and mutation input validation.
 - `./shared`: browser-safe skill name, target id, and token diagnostic contracts.
 

@@ -2,7 +2,7 @@
 
 ## Owns
 
-The Solid/TanStack web runtime, report dashboard and `/skills` routes, the file-based `/sync` import/export route, immutable report revision/focused-query adapters, exact-revision report query server functions, and UI read-model presentation.
+The Solid/TanStack web runtime, report dashboard and `/skills` routes, the preview/confirm file-based `/sync` route, immutable report revisions, a unified exact-revision server executor, a browser served-session coordinator, and UI read models.
 
 ## Does Not Own
 

@@ -49,7 +49,7 @@ An explicit export, out-of-band file copy, and import. It does not imply discove
 _Avoid_: pairing, replication, automatic transfer
 
 **Project source**:
-A machine-scoped project path observed in local history or a portable file. Its identity combines the machine and source path so similarly named folders stay distinct.
+A machine-scoped project path carried by a usage row. Locally observed paths may be canonicalized and inspected; paths from snapshots or merge bundles are opaque labels and never authorize local filesystem access. Its identity combines the machine and source path so similarly named folders stay distinct.
 _Avoid_: project group, repository scan root
 
 **Project group**:
@@ -65,7 +65,7 @@ An agent environment that consumes projected skills, such as Codex or Claude Cod
 _Avoid_: harness, provider
 
 **Projection**:
-A managed exposure of a source skill in a configured runtime target, normally a verified symbolic link. Projection planning and application enforce path and ownership safety.
+A managed exposure of a source skill in a configured runtime target, normally a verified symbolic link. A plan captures target identity; application revalidates it under a cooperating-process lock before mutation.
 _Avoid_: copy, source skill, installation package
 
 **Unmanaged runtime entry**:

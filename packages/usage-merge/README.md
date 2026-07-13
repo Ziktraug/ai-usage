@@ -10,10 +10,11 @@ It does not own network discovery, LAN transport, pairing, peer credentials, SQL
 
 ## Public Interface
 
-`createUsageFileMergeService` creates a `UsageFileMergeService` with two Effect-based operations:
+`createUsageFileMergeService` creates a `UsageFileMergeService` with explicit Effect-based operations:
 
 - `exportManualMergeBundle` returns a local `UsageMergeBundle` and a suggested JSON filename.
-- `importManualMergeBundle` validates JSON text, rejects self-imports, imports rows idempotently, and returns count-based results.
+- preview validates exact bytes/rows and returns count-based effects plus generation/state token without mutation;
+- confirm requires that exact digest/generation/state token before importing idempotently.
 
 Failures use `UsageMergeError` with one of three reasons: `invalid-input`, `self-merge`, or `store-failed`.
 

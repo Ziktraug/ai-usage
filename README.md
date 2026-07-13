@@ -94,7 +94,7 @@ Duplicate sessions (same machine, same harness, same session ID) are deduplicate
 
 ### 3. Import or export stored usage in the web app
 
-The interactive report includes a file-only transfer workspace at `/sync`. Export this machine's stored usage as a JSON merge bundle, copy the file with a tool you trust, then import it from `/sync` on the other machine. Imports are explicit and bounded; the application does not open a LAN listener or synchronize in the background.
+The interactive report includes a file-only transfer workspace at `/sync`. Export this machine's stored usage as a JSON merge bundle, copy the file with a tool you trust, then preview the exact insert/update/delete effects and confirm that same digest/store generation on the other machine. Imports are explicit and bounded; the application does not open a LAN listener or synchronize in the background.
 
 Usage snapshots and merge bundles serve different workflows: `snapshot` plus `merge` creates a one-off combined report without changing stored usage, while `/sync` imports a merge bundle into the local usage store for future reports.
 

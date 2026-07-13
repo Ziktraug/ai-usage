@@ -2,7 +2,7 @@
 
 ## Owns
 
-The terminal command surface, argument parsing, terminal/CSV/JSON/HTML rendering adapters, bounded portable snapshot files, the loopback-only setup command, and the quota command.
+The terminal command surface, argument parsing, terminal/CSV/JSON/payload rendering adapters, bounded portable snapshot files, the loopback-only setup command, and the quota command.
 
 ## Does Not Own
 
