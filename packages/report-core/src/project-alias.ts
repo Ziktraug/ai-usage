@@ -7,13 +7,6 @@ export interface ProjectAliasEntry {
   name: string;
 }
 
-export interface SyncRemoteConfig {
-  enabled?: boolean;
-  name: string;
-  tokenEnv?: string;
-  url: string;
-}
-
 export interface AiUsageConfig {
   cursor?: {
     usageExportPaths?: string[];
@@ -26,9 +19,6 @@ export interface AiUsageConfig {
   projectAliases?: ProjectAliasEntry[];
   projectGroups?: ProjectGroupConfig[];
   skills?: unknown;
-  sync?: {
-    remotes?: SyncRemoteConfig[];
-  };
 }
 
 const escapeRegex = (value: string) => value.replace(/[.+^${}()|[\]\\]/g, '\\$&');

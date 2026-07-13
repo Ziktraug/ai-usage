@@ -1,9 +1,9 @@
 import type { ManualOperationResult } from '../manual-transfer-contract';
+import { validateTrustedLocalRequest } from './local-request-trust.server';
 
 export const MAX_MANUAL_MERGE_UPLOAD_BYTES = 64 * 1024 * 1024;
 export const MAX_MANUAL_MERGE_UPLOAD_ROWS = 50_000;
 const BYTE_COUNT_PATTERN = /^\d+$/;
-const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', '[::1]', 'localhost']);
 
 type ManualMergeUploadResult = ManualOperationResult<unknown>;
 type ManualMergeUploadFailure = Extract<ManualMergeUploadResult, { ok: false }>;
@@ -22,51 +22,6 @@ const jsonFailure = (status: number, tag: string, message: string, reason?: stri
     } satisfies ManualMergeUploadFailure,
     { status },
   );
-
-const firstForwardedValue = (value: string | null) => value?.split(',')[0]?.trim();
-
-const isTrustedLocalHost = (host: string) => {
-  try {
-    return LOOPBACK_HOSTNAMES.has(new URL(`http://${host}`).hostname);
-  } catch {
-    return false;
-  }
-};
-
-const validateRequestOrigin = (request: Request): Response | null => {
-  const host = request.headers.get('host')?.trim();
-  if (!host) {
-    return jsonFailure(400, 'MissingHost', 'Manual imports require a Host header.');
-  }
-  if (!isTrustedLocalHost(host)) {
-    return jsonFailure(403, 'UntrustedHost', 'Manual imports are only accepted by the local application.');
-  }
-
-  const fetchSite = request.headers.get('sec-fetch-site')?.toLowerCase();
-  if (fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none') {
-    return jsonFailure(403, 'CrossOriginRequest', 'Manual imports are only accepted from this application.');
-  }
-
-  const origin = request.headers.get('origin');
-  if (!origin) {
-    return null;
-  }
-
-  try {
-    const requestUrl = new URL(request.url);
-    const forwardedProtocol = firstForwardedValue(request.headers.get('x-forwarded-proto'));
-    const protocol =
-      forwardedProtocol === 'http' || forwardedProtocol === 'https' ? `${forwardedProtocol}:` : requestUrl.protocol;
-    const expectedOrigin = new URL(`${protocol}//${host}`).origin;
-    if (new URL(origin).origin !== expectedOrigin) {
-      return jsonFailure(403, 'CrossOriginRequest', 'Manual imports are only accepted from this application.');
-    }
-  } catch {
-    return jsonFailure(400, 'InvalidOrigin', 'The request Origin or Host header is invalid.');
-  }
-
-  return null;
-};
 
 const validateJsonContentType = (request: Request): Response | null => {
   const contentType = request.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
@@ -161,7 +116,7 @@ export const handleManualMergeUpload = async (
   request: Request,
   options: ManualMergeUploadOptions,
 ): Promise<Response> => {
-  const originFailure = validateRequestOrigin(request);
+  const originFailure = validateTrustedLocalRequest(request);
   if (originFailure) {
     return originFailure;
   }

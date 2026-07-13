@@ -345,40 +345,11 @@ const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
     }
   }
 
-  const sync = config.sync;
   const skills = config.skills;
   if (skills !== undefined && !isSkillManagementConfig(skills)) {
     return false;
   }
-
-  if (sync === undefined) {
-    return true;
-  }
-  if (typeof sync !== 'object' || sync === null || Array.isArray(sync)) {
-    return false;
-  }
-  const syncConfig = sync as Record<string, unknown>;
-  const remotes = syncConfig.remotes;
-  if (remotes === undefined) {
-    return true;
-  }
-  if (!Array.isArray(remotes)) {
-    return false;
-  }
-  return remotes.every((remote) => {
-    if (typeof remote !== 'object' || remote === null || Array.isArray(remote)) {
-      return false;
-    }
-    const record = remote as Record<string, unknown>;
-    return (
-      typeof record.name === 'string' &&
-      record.name.length > 0 &&
-      typeof record.url === 'string' &&
-      record.url.length > 0 &&
-      (record.tokenEnv === undefined || typeof record.tokenEnv === 'string') &&
-      (record.enabled === undefined || typeof record.enabled === 'boolean')
-    );
-  });
+  return true;
 };
 
 const mergeSkillsConfig = (base: unknown, override: unknown): SkillManagementConfig | undefined => {
@@ -436,12 +407,6 @@ const mergeAiUsageConfig = (base: AiUsageConfig, override: AiUsageConfig): AiUsa
   }
   if (base.cursor || override.cursor) {
     merged.cursor = { ...(base.cursor ?? {}), ...(override.cursor ?? {}) };
-  }
-  if (base.sync || override.sync) {
-    merged.sync = { ...(base.sync ?? {}), ...(override.sync ?? {}) };
-    if (override.sync?.remotes === undefined && base.sync?.remotes !== undefined) {
-      merged.sync.remotes = base.sync.remotes;
-    }
   }
   const skills = mergeSkillsConfig(base.skills, override.skills);
   if (skills !== undefined) {

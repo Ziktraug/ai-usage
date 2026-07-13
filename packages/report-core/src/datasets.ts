@@ -28,31 +28,69 @@ export interface ReportDatasets extends Record<string, unknown> {
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+const CURSOR_COMMIT_ATTRIBUTION_KEYS = new Set([
+  'blankLinesAdded',
+  'blankLinesDeleted',
+  'branchName',
+  'commitDate',
+  'commitHash',
+  'commitMessage',
+  'composerLinesAdded',
+  'composerLinesDeleted',
+  'humanLinesAdded',
+  'humanLinesDeleted',
+  'linesAdded',
+  'linesDeleted',
+  'scoredAt',
+  'tabLinesAdded',
+  'tabLinesDeleted',
+  'v1AiPercentage',
+  'v2AiPercentage',
+]);
+
 const isNullableString = (value: unknown): value is string | null => value === null || typeof value === 'string';
-const isNullableNumber = (value: unknown): value is number | null => value === null || typeof value === 'number';
+const isNullablePercentage = (value: unknown): value is number | null =>
+  value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100);
+const isNonNegativeSafeInteger = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
+const isStrictIsoTimestamp = (value: unknown): value is string => {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value;
+};
+const isNullableStrictIsoTimestamp = (value: unknown): value is string | null =>
+  value === null || isStrictIsoTimestamp(value);
+const isNullableParseableTimestamp = (value: unknown): value is string | null =>
+  value === null || (typeof value === 'string' && value.length > 0 && Number.isFinite(Date.parse(value)));
+const hasOnlyKeys = (value: Record<string, unknown>, keys: ReadonlySet<string>): boolean =>
+  Object.keys(value).every((key) => keys.has(key));
 
 export const isCursorCommitAttributionRow = (value: unknown): value is CursorCommitAttributionRow => {
   if (!isRecord(value)) {
     return false;
   }
   return (
+    hasOnlyKeys(value, CURSOR_COMMIT_ATTRIBUTION_KEYS) &&
     typeof value.commitHash === 'string' &&
+    value.commitHash.length > 0 &&
     typeof value.branchName === 'string' &&
-    isNullableString(value.scoredAt) &&
+    value.branchName.length > 0 &&
+    isNullableStrictIsoTimestamp(value.scoredAt) &&
     isNullableString(value.commitMessage) &&
-    isNullableString(value.commitDate) &&
-    typeof value.linesAdded === 'number' &&
-    typeof value.linesDeleted === 'number' &&
-    typeof value.tabLinesAdded === 'number' &&
-    typeof value.tabLinesDeleted === 'number' &&
-    typeof value.composerLinesAdded === 'number' &&
-    typeof value.composerLinesDeleted === 'number' &&
-    typeof value.humanLinesAdded === 'number' &&
-    typeof value.humanLinesDeleted === 'number' &&
-    typeof value.blankLinesAdded === 'number' &&
-    typeof value.blankLinesDeleted === 'number' &&
-    isNullableNumber(value.v1AiPercentage) &&
-    isNullableNumber(value.v2AiPercentage)
+    isNullableParseableTimestamp(value.commitDate) &&
+    isNonNegativeSafeInteger(value.linesAdded) &&
+    isNonNegativeSafeInteger(value.linesDeleted) &&
+    isNonNegativeSafeInteger(value.tabLinesAdded) &&
+    isNonNegativeSafeInteger(value.tabLinesDeleted) &&
+    isNonNegativeSafeInteger(value.composerLinesAdded) &&
+    isNonNegativeSafeInteger(value.composerLinesDeleted) &&
+    isNonNegativeSafeInteger(value.humanLinesAdded) &&
+    isNonNegativeSafeInteger(value.humanLinesDeleted) &&
+    isNonNegativeSafeInteger(value.blankLinesAdded) &&
+    isNonNegativeSafeInteger(value.blankLinesDeleted) &&
+    isNullablePercentage(value.v1AiPercentage) &&
+    isNullablePercentage(value.v2AiPercentage)
   );
 };
 

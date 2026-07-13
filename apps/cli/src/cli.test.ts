@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { applyPullTokenEnvOverride } from '@ai-usage/sync/workflow';
 import { Effect } from 'effect';
 import { parseCommand } from './cli';
 
@@ -90,90 +89,25 @@ describe('CLI command parsing', () => {
     });
   });
 
-  test('parses serve command with defaults', () => {
-    expect(Effect.runSync(parseCommand(['serve']))).toEqual({
-      _tag: 'Serve',
-      args: { host: 'localhost', port: 3847, token: null, harness: null, cursor: true },
-    });
-  });
+  test('rejects the stale setup --web spelling', () => {
+    const error = Effect.runSync(Effect.flip(parseCommand(['setup', '--web'])));
 
-  test('parses serve command with LAN options', () => {
-    expect(Effect.runSync(parseCommand(['serve', '--host', '0.0.0.0', '--port', '9999', '--token', 's3cret']))).toEqual(
-      {
-        _tag: 'Serve',
-        args: { host: '0.0.0.0', port: 9999, token: 's3cret', harness: null, cursor: true },
-      },
-    );
-  });
-
-  test('serve rejects LAN binding without token', () => {
-    const error = Effect.runSync(Effect.flip(parseCommand(['serve', '--host', '0.0.0.0'])));
-    expect(error.message).toBe('serve requires --token when binding outside localhost');
-  });
-
-  test('parses merge --remote', () => {
-    expect(
-      Effect.runSync(parseCommand(['merge', '--remote', 'http://mac:3847/snapshot', '--token', 'abc', '--local'])),
-    ).toMatchObject({
-      _tag: 'Merge',
-      args: { remote: ['http://mac:3847/snapshot'], token: 'abc', local: true },
-    });
+    expect(error.message).toBe('Unknown option for setup: --web');
   });
 
   test('merge rejects no input', () => {
     const error = Effect.runSync(Effect.flip(parseCommand(['merge'])));
-    expect(error.message).toBe('merge expects files, --remote, or --local');
+    expect(error.message).toBe('merge expects files or --local');
   });
 
-  test('parses sync commands', () => {
-    expect(
-      Effect.runSync(
-        parseCommand([
-          'sync',
-          'add',
-          'macbook',
-          'http://192.168.1.63:3847/snapshot',
-          '--token-env',
-          'AI_USAGE_SYNC_MACBOOK_TOKEN',
-        ]),
-      ),
-    ).toEqual({
-      _tag: 'Sync',
-      args: {
-        action: 'add',
-        name: 'macbook',
-        url: 'http://192.168.1.63:3847/snapshot',
-        tokenEnv: 'AI_USAGE_SYNC_MACBOOK_TOKEN',
-      },
-    });
-    expect(Effect.runSync(parseCommand(['sync', 'pull', 'macbook']))).toEqual({
-      _tag: 'Sync',
-      args: { action: 'pull', name: 'macbook', all: false, remote: null, tokenEnv: null },
-    });
-    expect(Effect.runSync(parseCommand(['sync', 'pull', 'macbook', '--token-env', 'AI_USAGE_SYNC_TOKEN']))).toEqual({
-      _tag: 'Sync',
-      args: { action: 'pull', name: 'macbook', all: false, remote: null, tokenEnv: 'AI_USAGE_SYNC_TOKEN' },
-    });
-    expect(Effect.runSync(parseCommand(['sync', 'watch', '--all', '--interval', '60s']))).toEqual({
-      _tag: 'Sync',
-      args: { action: 'watch', name: null, all: true, intervalMs: 60_000 },
-    });
-  });
-
-  test('sync pull token env overrides configured remotes without mutating storage shape', () => {
-    expect(
-      applyPullTokenEnvOverride([{ name: 'macbook', url: 'http://mac:3847/snapshot' }], 'AI_USAGE_SYNC_TOKEN'),
-    ).toEqual([{ name: 'macbook', url: 'http://mac:3847/snapshot', tokenEnv: 'AI_USAGE_SYNC_TOKEN' }]);
-    expect(
-      applyPullTokenEnvOverride(
-        [{ name: 'macbook', url: 'http://mac:3847/snapshot', tokenEnv: 'CONFIGURED_TOKEN' }],
-        'AI_USAGE_SYNC_TOKEN',
-      ),
-    ).toEqual([{ name: 'macbook', url: 'http://mac:3847/snapshot', tokenEnv: 'AI_USAGE_SYNC_TOKEN' }]);
-  });
-
-  test('sync watch rejects too-small intervals', () => {
-    const error = Effect.runSync(Effect.flip(parseCommand(['sync', 'watch', '--interval', '5s'])));
-    expect(error.message).toBe('sync watch --interval must be at least 30s');
+  test('rejects retired LAN commands and merge options', () => {
+    expect(Effect.runSync(Effect.flip(parseCommand(['serve']))).message).toBe('Unknown option: serve');
+    expect(Effect.runSync(Effect.flip(parseCommand(['sync']))).message).toBe('Unknown option: sync');
+    expect(Effect.runSync(Effect.flip(parseCommand(['merge', '--remote', 'http://mac:3847/snapshot']))).message).toBe(
+      'Unknown option for merge: --remote',
+    );
+    expect(Effect.runSync(Effect.flip(parseCommand(['merge', '--token', 'secret']))).message).toBe(
+      'Unknown option for merge: --token',
+    );
   });
 });
