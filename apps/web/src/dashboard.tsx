@@ -26,14 +26,11 @@ import {
   unavailableTitle,
 } from '@ai-usage/design-system/report';
 import {
-  type FocusedOverviewRequest,
   type FocusedReportQueryScope,
   type FocusedSupportResult,
   type FocusedTimelineDimension,
   type FocusedTimelineGranularity,
   focusedAdvancedAnalysisFingerprint,
-  focusedBreakdownFingerprint,
-  focusedOverviewFingerprint,
 } from '@ai-usage/report-core/focused-report-query';
 import {
   type ProjectGroupConfig,
@@ -41,7 +38,6 @@ import {
   projectSourceSelectorKey,
 } from '@ai-usage/report-core/project-group';
 import { type SessionNeighborResult, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
-import { keepPreviousData, useQuery } from '@tanstack/solid-query';
 import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import {
@@ -97,16 +93,14 @@ import {
   sortingStateFromSearch,
   toggleExactFieldFilter,
 } from './dashboard-search';
+import { createDashboardServedReportSession, type DashboardServedDestination } from './dashboard-served-report-session';
 import { ThemeToggle } from './dashboard-theme';
 import { type DateBounds, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
 import { createDateRangeController } from './date-range-controller';
 import {
   createFocusedReportStore,
   createServedFocusedReportSource,
-  FocusedRevisionExpiredError,
   fetchFocusedBreakdown,
-  fetchFocusedOverview,
-  fetchFocusedReportBootstrap,
 } from './focused-report-client';
 import { GroupPanel } from './group-panel';
 import { Overview } from './overview';
@@ -138,7 +132,6 @@ import { TimeRangeControl } from './time-range-control';
 import { toWebReportPayload, type WebReportPayload, type WebReportPayloadWithoutRows } from './web-report-payload';
 
 const REFRESH_INTERVAL_MS = 60_000;
-const FOCUSED_QUERY_STALE_TIME_MS = 30_000;
 const FORM_CONTROL_TAG_PATTERN = /^(INPUT|SELECT|TEXTAREA)$/;
 const SessionTable = lazy(async () => {
   const module = await import('./session-table');
@@ -215,13 +208,7 @@ export const Dashboard = (props: {
   const { rows: _initialRows, ...initialSupport } = initialPayload;
   const focusedStore = props.servedBootstrap ? createFocusedReportStore(props.servedBootstrap) : undefined;
   const focusedSource = focusedStore ? createServedFocusedReportSource() : undefined;
-  const restartFocusedBootstrap = async (): Promise<void> => {
-    if (!(focusedSource && focusedStore)) {
-      return;
-    }
-    const bootstrap = await fetchFocusedReportBootstrap(focusedSource);
-    await commitFocusedRevisionForActiveDestination(bootstrap);
-  };
+  let restartServedDestination = (): Promise<void> => Promise.resolve();
   const reportSupport = createMemo(() =>
     focusedStore
       ? supportForFocusedBootstrap({
@@ -254,7 +241,7 @@ export const Dashboard = (props: {
         onStateChange: setServedSessionState,
         ...(focusedStore
           ? {
-              onRevisionExpired: () => restartFocusedBootstrap(),
+              onRevisionExpired: () => restartServedDestination(),
               revision: focusedStore.revision,
             }
           : {}),
@@ -471,8 +458,7 @@ export const Dashboard = (props: {
     ),
   );
   const tableRows = tableFilteredRows;
-  // Rows in the table's current sort order — shared by CSV export and the
-  // drawer's previous/next navigation so both walk the list the user sees.
+  // Rows in the table's current sort order drive drawer previous/next navigation.
   const sortedRows = createMemo(() =>
     measureClientPerf(
       'aiUsage.web.client.compute.sortedRows',
@@ -497,200 +483,82 @@ export const Dashboard = (props: {
   const visibleSessionTableRows = createMemo(() =>
     servedSessionQueries ? sessionRowsForState(servedSessionState()) : sessionTableRows(),
   );
-  const overviewRequest = createMemo<FocusedOverviewRequest | undefined>(() => {
-    if (!(focusedSource && focusedStore)) {
+  const servedReportSession =
+    focusedSource && focusedStore && sessionQueryCoordinator
+      ? createDashboardServedReportSession({ focusedSource, focusedStore, sessionCoordinator: sessionQueryCoordinator })
+      : undefined;
+  const servedDestination = createMemo<DashboardServedDestination | undefined>(() => {
+    if (!(focusedStore && servedReportSession)) {
       return;
     }
-    const queryScope = focusedQueryScope();
-    const timelineOnlyRequest: FocusedOverviewRequest = {
-      includeAdvanced: false,
-      query: queryScope,
-      timeline: focusedTimelineOptions(),
-    };
-    const advancedScopeFingerprint = focusedAdvancedAnalysisFingerprint(queryScope);
-    const advancedAnalysisAvailable = focusedStore.hasAdvancedAnalysis(queryScope);
-    const advancedAnalysisBlocked = advancedAnalysisFailure()?.scopeFingerprint === advancedScopeFingerprint;
-    return primaryDashboardTabFor(search().tab) === 'overview' &&
-      !(advancedAnalysisAvailable || advancedAnalysisBlocked)
-      ? { ...timelineOnlyRequest, includeAdvanced: true }
-      : timelineOnlyRequest;
+    const { revision: _revision, ...queryScope } = focusedQueryScope();
+    const timeline = focusedTimelineOptions();
+    const destination = primaryDashboardTabFor(search().tab);
+    if (destination === 'overview') {
+      const advancedFingerprint = focusedAdvancedAnalysisFingerprint(focusedQueryScope());
+      return {
+        includeAdvanced: advancedAnalysisFailure()?.scopeFingerprint !== advancedFingerprint,
+        kind: 'overview',
+        query: queryScope,
+        timeline,
+      };
+    }
+    if (destination === 'breakdown') {
+      return { kind: 'breakdown', query: queryScope, timeline };
+    }
+    return { kind: 'sessions', query: queryScope, sessions: activeSessionQueryScope(), timeline };
   });
-  const overviewQuery = useQuery(() => {
-    const request = overviewRequest();
-    const fingerprint = request ? focusedOverviewFingerprint(request) : 'inactive';
-    const current = focusedStore?.overview();
-    return {
-      enabled: clientReady() && Boolean(request && focusedSource),
-      initialData: current?.requestFingerprint === fingerprint ? current : null,
-      initialDataUpdatedAt: current?.requestFingerprint === fingerprint ? Date.now() : 0,
-      placeholderData: keepPreviousData,
-      queryFn: async () => {
-        if (!(request && focusedSource)) {
-          throw new Error('Focused Overview query is unavailable');
-        }
-        return await fetchFocusedOverview(focusedSource, request);
-      },
-      queryKey: ['focused-report', 'overview', request?.query.revision ?? 'inactive', fingerprint],
-      staleTime: FOCUSED_QUERY_STALE_TIME_MS,
-    };
-  });
-  let handledOverviewError: unknown;
-  createEffect(() => {
-    const request = overviewRequest();
-    if (!(request && focusedStore)) {
+  const refreshServedDestination = async (refreshRevision = false): Promise<void> => {
+    const destination = servedDestination();
+    if (!(destination && servedReportSession)) {
       return;
     }
-    const currentOverviewAvailable = Boolean(focusedStore.overview());
-    setFocusedTimelineLoading(!(currentOverviewAvailable || overviewQuery.error));
-    setAdvancedAnalysisLoading(
-      overviewQuery.isFetching && request.includeAdvanced && !focusedStore.hasAdvancedAnalysis(request.query),
-    );
-    const result = overviewQuery.data;
-    if (
-      result &&
-      !overviewQuery.isPlaceholderData &&
-      result.requestFingerprint === focusedOverviewFingerprint(request)
-    ) {
-      const applied = focusedStore.applyOverview(request, result);
-      if (!applied.applied) {
-        setLastRefreshError(`Focused Overview rejected: ${applied.reason}`);
-        return;
+    const outcome = await servedReportSession.refresh(destination, { refreshRevision });
+    if (outcome.status === 'superseded') {
+      return;
+    }
+    if (outcome.status === 'failed-preserving-previous') {
+      const message = outcome.error instanceof Error ? outcome.error.message : 'Failed to load report destination';
+      setFocusedTimelineError(message);
+      setLastRefreshError(message);
+      if (destination.kind === 'overview' && destination.includeAdvanced) {
+        setAdvancedAnalysisFailure({
+          message,
+          scopeFingerprint: focusedAdvancedAnalysisFingerprint({
+            ...destination.query,
+            revision: focusedStore?.revision() ?? 'unavailable',
+          }),
+        });
       }
-      if (request.includeAdvanced) {
+      return;
+    }
+    batch(() => {
+      setFocusedTimelineError(null);
+      setFocusedTimelineLoading(false);
+      setAdvancedAnalysisLoading(false);
+      setSessionQueryLoading(false);
+      if (destination.kind === 'overview' && destination.includeAdvanced) {
         setAdvancedAnalysisFailure(undefined);
       }
-      setFocusedTimelineError(null);
-    }
-    const error = overviewQuery.error;
-    if (!error || error === handledOverviewError) {
-      return;
-    }
-    handledOverviewError = error;
-    if (error instanceof FocusedRevisionExpiredError) {
-      restartFocusedBootstrap().catch((restartError: unknown) => {
-        const message = restartError instanceof Error ? restartError.message : 'Failed to restart the report revision';
-        setFocusedTimelineError(message);
-        setLastRefreshError(message);
-      });
-      return;
-    }
-    const message = error instanceof Error ? error.message : 'Failed to load Overview';
-    if (request.includeAdvanced) {
-      setAdvancedAnalysisFailure({
-        message,
-        scopeFingerprint: focusedAdvancedAnalysisFingerprint(request.query),
-      });
-    } else {
-      setFocusedTimelineError(message);
-    }
-    setLastRefreshError(message);
-  });
-  const breakdownRequest = createMemo(() =>
-    focusedStore && primaryDashboardTabFor(search().tab) === 'breakdown' ? { query: focusedQueryScope() } : undefined,
-  );
-  const breakdownQuery = useQuery(() => {
-    const request = breakdownRequest();
-    const fingerprint = request ? focusedBreakdownFingerprint(request) : 'inactive';
-    const current = focusedStore?.breakdown();
-    return {
-      enabled: clientReady() && Boolean(request && focusedSource),
-      initialData: current?.requestFingerprint === fingerprint ? current : null,
-      initialDataUpdatedAt: current?.requestFingerprint === fingerprint ? Date.now() : 0,
-      placeholderData: keepPreviousData,
-      queryFn: async () => {
-        if (!(request && focusedSource)) {
-          throw new Error('Focused Breakdown query is unavailable');
-        }
-        return await fetchFocusedBreakdown(focusedSource, request);
-      },
-      queryKey: ['focused-report', 'breakdown', request?.query.revision ?? 'inactive', fingerprint],
-      staleTime: FOCUSED_QUERY_STALE_TIME_MS,
-    };
-  });
-  let handledBreakdownError: unknown;
+    });
+  };
+  restartServedDestination = () => refreshServedDestination();
   createEffect(() => {
-    const request = breakdownRequest();
-    if (!(request && focusedStore)) {
+    const destination = servedDestination();
+    if (!(clientReady() && destination && servedReportSession)) {
       return;
     }
-    const result = breakdownQuery.data;
-    if (
-      result &&
-      !breakdownQuery.isPlaceholderData &&
-      result.requestFingerprint === focusedBreakdownFingerprint(request)
-    ) {
-      const applied = focusedStore.applyBreakdown(request, result);
-      if (!applied.applied) {
-        setLastRefreshError(`Focused Breakdown rejected: ${applied.reason}`);
-      }
-    }
-    const error = breakdownQuery.error;
-    if (!error || error === handledBreakdownError) {
-      return;
-    }
-    handledBreakdownError = error;
-    if (error instanceof FocusedRevisionExpiredError) {
-      restartFocusedBootstrap().catch((restartError: unknown) => {
-        setLastRefreshError(
-          restartError instanceof Error ? restartError.message : 'Failed to restart the report revision',
-        );
-      });
-      return;
-    }
-    setLastRefreshError(error instanceof Error ? error.message : 'Failed to load Breakdown');
+    batch(() => {
+      setFocusedTimelineLoading(!focusedStore?.overview());
+      setAdvancedAnalysisLoading(destination.kind === 'overview' && destination.includeAdvanced);
+      setSessionQueryLoading(destination.kind === 'sessions' && !servedSessionState());
+    });
+    refreshServedDestination().catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : 'Failed to coordinate report destination';
+      setLastRefreshError(message);
+    });
   });
-  const sessionQueryDescriptor = createMemo(() => {
-    const reportGeneratedAt = reportSupport().generatedAt;
-    if (!(sessionQueryCoordinator && focusedStore && reportGeneratedAt && search().tab === 'sessions')) {
-      return;
-    }
-    const scope = activeSessionQueryScope();
-    const revision = focusedStore.revision();
-    return {
-      fingerprint: sessionQueryFingerprint({ ...scope, cursor: null, revision }),
-      scope,
-      revision,
-    };
-  });
-  const sessionQuery = useQuery(() => {
-    const descriptor = sessionQueryDescriptor();
-    return {
-      enabled: clientReady() && Boolean(descriptor && sessionQueryCoordinator),
-      initialData: null,
-      placeholderData: keepPreviousData,
-      queryFn: async () => {
-        if (!(descriptor && sessionQueryCoordinator)) {
-          throw new Error('Focused Sessions query is unavailable');
-        }
-        const state = await sessionQueryCoordinator.start(descriptor.scope);
-        if (!state) {
-          throw new Error('Focused Sessions query was superseded');
-        }
-        return state;
-      },
-      queryKey: [
-        'focused-report',
-        'sessions',
-        descriptor?.revision ?? 'inactive',
-        descriptor?.fingerprint ?? 'inactive',
-      ],
-      staleTime: 0,
-    };
-  });
-  let handledSessionError: unknown;
-  createEffect(() => {
-    if (!sessionQueryDescriptor()) {
-      setSessionQueryLoading(false);
-      return;
-    }
-    setSessionQueryLoading(!(servedSessionState() || sessionQuery.error));
-    const error = sessionQuery.error;
-    if (!error || error === handledSessionError) {
-      return;
-    }
-    handledSessionError = error;
-    setLastRefreshError(error instanceof Error ? error.message : 'Failed to load sessions');
-  });
+  onCleanup(() => servedReportSession?.abort());
   // Campaign context rows can select their atomic root even when the root is outside
   // the current table filter, so resolve selection against the payload rows.
   const selectedRow = createMemo(() => {
@@ -888,89 +756,16 @@ export const Dashboard = (props: {
       focusedStore?.overview()?.view.previousSummary ??
       buildPreviousPeriodSummary(timelineRows(), dateRange.bounds(), generatedAt()),
   );
-  async function commitFocusedRevisionForActiveDestination(bootstrap: FocusedSupportResult): Promise<void> {
-    if (!(focusedSource && focusedStore)) {
-      throw new Error('Focused report refresh requires a served report store');
-    }
-    const destination = primaryDashboardTabFor(search().tab);
-    if (destination === 'overview') {
-      const request: FocusedOverviewRequest = {
-        includeAdvanced: true,
-        query: focusedQueryScopeForRevision(bootstrap.revision),
-        timeline: focusedTimelineOptions(),
-      };
-      const result = await fetchFocusedOverview(focusedSource, request);
-      const currentRequest: FocusedOverviewRequest = {
-        includeAdvanced: true,
-        query: focusedQueryScopeForRevision(bootstrap.revision),
-        timeline: focusedTimelineOptions(),
-      };
-      if (
-        primaryDashboardTabFor(search().tab) !== destination ||
-        focusedOverviewFingerprint(currentRequest) !== focusedOverviewFingerprint(request)
-      ) {
-        throw new Error('The active Overview changed while the refreshed revision was loading');
-      }
-      const applied = focusedStore.commitRevision(bootstrap, { kind: 'overview', request, result });
-      if (!applied.applied) {
-        throw new Error(`Focused report refresh rejected: ${applied.reason}`);
-      }
-      return;
-    }
-    if (destination === 'breakdown') {
-      const request = { query: focusedQueryScopeForRevision(bootstrap.revision) };
-      const result = await fetchFocusedBreakdown(focusedSource, request);
-      const currentRequest = { query: focusedQueryScopeForRevision(bootstrap.revision) };
-      if (
-        primaryDashboardTabFor(search().tab) !== destination ||
-        focusedBreakdownFingerprint(currentRequest) !== focusedBreakdownFingerprint(request)
-      ) {
-        throw new Error('The active Breakdown changed while the refreshed revision was loading');
-      }
-      const applied = focusedStore.commitRevision(bootstrap, { kind: 'breakdown', request, result });
-      if (!applied.applied) {
-        throw new Error(`Focused report refresh rejected: ${applied.reason}`);
-      }
-      return;
-    }
-    if (!sessionQueryCoordinator) {
-      throw new Error('Focused Sessions refresh requires a session query coordinator');
-    }
-    const scope = activeSessionQueryScope();
-    const prepared = await sessionQueryCoordinator.prepare(scope, bootstrap.revision);
-    const currentFingerprint = sessionQueryFingerprint({
-      ...activeSessionQueryScope(),
-      cursor: null,
-      revision: bootstrap.revision,
-    });
-    if (
-      primaryDashboardTabFor(search().tab) !== destination ||
-      currentFingerprint !== sessionQueryFingerprint(prepared.state.query) ||
-      !sessionQueryCoordinator.canCommitPrepared(prepared)
-    ) {
-      throw new Error('The active Sessions query changed while the refreshed revision was loading');
-    }
-    batch(() => {
-      const applied = focusedStore.commitRevision(bootstrap, { kind: 'sessions' });
-      if (!applied.applied) {
-        throw new Error(`Focused report refresh rejected: ${applied.reason}`);
-      }
-      if (!sessionQueryCoordinator.commitPrepared(prepared)) {
-        throw new Error('The prepared Sessions query was superseded before commit');
-      }
-    });
-  }
   const refreshPayload = async (force = false) => {
-    if (!(props.refreshBootstrap && focusedStore) || refreshing()) {
+    if (!(servedReportSession && focusedStore) || refreshing()) {
       return;
     }
     const perfTrace = createClientPerfTrace('aiUsage.web.client.refresh', { force });
     setRefreshing(true);
     perfTrace?.mark('started');
     try {
-      const nextBootstrap = await props.refreshBootstrap();
-      perfTrace?.mark('payloadReceived', { revision: nextBootstrap.revision });
-      await commitFocusedRevisionForActiveDestination(nextBootstrap);
+      await refreshServedDestination(true);
+      perfTrace?.mark('payloadReceived', { revision: focusedStore.revision() });
       perfTrace?.mark('stateUpdated');
       requestAnimationFrame(() => {
         perfTrace?.end('frame', { revision: focusedStore.revision() });

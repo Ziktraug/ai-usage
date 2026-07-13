@@ -14,7 +14,6 @@ import {
   sessionColumnPresetForVisibility,
   sessionColumnPresets,
   sessionColumnSchema,
-  sessionCsvColumns,
 } from './session-table-schema';
 
 describe('session table schema', () => {
@@ -120,17 +119,6 @@ describe('session table schema', () => {
       'machine',
       'tokIn',
       'cost',
-    ]);
-  });
-
-  test('owns report CSV column order', () => {
-    expect(sessionCsvColumns.map((column) => column.header).slice(0, 6)).toEqual([
-      'date',
-      'end_date',
-      'active_date',
-      'harness',
-      'machine',
-      'machine_id',
     ]);
   });
 });
