@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { COLLECTOR_CACHE_MAX_BYTES } from './history-budgets';
 import type { LocalHistoryStorage } from './local-history';
-import { writePrivateJson } from './private-storage';
+import { readPrivateJson, writePrivateJson } from './private-storage';
 import type { CollectorRow } from './rtk-enrichment';
 
 /**
@@ -77,10 +78,15 @@ export const readDbRowCache = (storage: LocalHistoryStorage, fileName: string, v
     if (!fs.existsSync(cachePath)) {
       return { dirty: false, entries: {}, version };
     }
-    const parsed = JSON.parse(fs.readFileSync(cachePath, 'utf8')) as {
-      entries?: Record<string, { mtimeMs: number; rows: unknown; size: number }>;
-      version?: number;
-    };
+    const parsed = readPrivateJson(cachePath, COLLECTOR_CACHE_MAX_BYTES) as
+      | {
+          entries?: Record<string, { mtimeMs: number; rows: unknown; size: number }>;
+          version?: number;
+        }
+      | undefined;
+    if (!parsed) {
+      return { dirty: false, entries: {}, version };
+    }
     if (parsed.version !== version) {
       return { dirty: false, entries: {}, version };
     }
@@ -108,7 +114,12 @@ export const writeDbRowCache = (
     return false;
   }
   const cachePath = collectorCachePath(storage, fileName);
-  writePrivateJson(cachePath, { entries: cache.entries, version });
+  const value = { entries: cache.entries, version };
+  if (Buffer.byteLength(JSON.stringify(value), 'utf8') > COLLECTOR_CACHE_MAX_BYTES) {
+    cache.dirty = false;
+    return false;
+  }
+  writePrivateJson(cachePath, value);
   cache.dirty = false;
   return true;
 };
