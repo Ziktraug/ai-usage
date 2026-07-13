@@ -17,6 +17,7 @@ import { Data, Effect } from 'effect';
 import { preparePrivateStoreFile } from './private-storage';
 
 export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
+export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
 
 export interface ImportResult {
   deleted: number;
@@ -63,6 +64,7 @@ export interface QueryReportRowsInput {
   dbPath: string;
   harnessKeys?: string[];
   originMachineIds?: string[];
+  sourceAuthorities?: StoredSourceAuthority[];
   statuses?: StoredUsageRowStatus[];
 }
 
@@ -70,6 +72,7 @@ export interface QueryRowsResult {
   rows: CollectedUsageRow[];
   /** Stored rows that failed validation and were skipped so a single corrupt row cannot block the report. */
   skipped: number;
+  sourceAuthorities: StoredSourceAuthority[];
 }
 
 export interface QueryUsageStoreGenerationInput {
@@ -117,11 +120,13 @@ interface SqliteDatabase {
 interface ExistingRow {
   content_hash: string;
   row_key: string;
+  source_authority: StoredSourceAuthority;
   status: StoredUsageRowStatus;
 }
 
 interface StoredRowRecord {
   row_json: string;
+  source_authority: StoredSourceAuthority;
 }
 
 interface UsageStoreGenerationRecord {
@@ -152,6 +157,7 @@ const migrate = (db: SqliteDatabase) => {
       harness_key TEXT NOT NULL,
       source_session_id TEXT,
       source_fingerprint TEXT NOT NULL,
+      source_authority TEXT NOT NULL DEFAULT 'portable-opaque' CHECK (source_authority IN ('local-observed', 'portable-opaque')),
       row_key TEXT PRIMARY KEY,
       content_hash TEXT NOT NULL,
       row_json TEXT NOT NULL,
@@ -180,6 +186,12 @@ const migrate = (db: SqliteDatabase) => {
 
     INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('generation', 0);
   `);
+  const columns = db.query('PRAGMA table_info(usage_rows)').all() as Array<{ name?: unknown }>;
+  if (!columns.some((column) => column.name === 'source_authority')) {
+    db.exec(
+      "ALTER TABLE usage_rows ADD COLUMN source_authority TEXT NOT NULL DEFAULT 'portable-opaque' CHECK (source_authority IN ('local-observed', 'portable-opaque'))",
+    );
+  }
 };
 
 const openUsageStoreDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
@@ -239,6 +251,7 @@ const prepareImportStatements = (db: SqliteDatabase): ImportStatements => ({
       harness_key,
       source_session_id,
       source_fingerprint,
+      source_authority,
       row_key,
       content_hash,
       row_json,
@@ -251,13 +264,14 @@ const prepareImportStatements = (db: SqliteDatabase): ImportStatements => ({
       last_seen_at,
       updated_at,
       superseded_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   touch: db.query('UPDATE usage_rows SET last_seen_at = ? WHERE row_key = ?'),
   update: db.query(`
     UPDATE usage_rows
     SET
       source_fingerprint = ?,
+      source_authority = ?,
       content_hash = ?,
       row_json = ?,
       status = ?,
@@ -271,12 +285,18 @@ const prepareImportStatements = (db: SqliteDatabase): ImportStatements => ({
   `),
 });
 
-const insertMergeRow = (statement: SqliteStatement, row: SerializedMergeRow, now: string) => {
+const insertMergeRow = (
+  statement: SqliteStatement,
+  row: SerializedMergeRow,
+  now: string,
+  authority: StoredSourceAuthority,
+) => {
   statement.run(
     row.source.machineId,
     row.source.harnessKey,
     row.source.sourceSessionId,
     row.sourceFingerprint,
+    authority,
     row.rowKey,
     row.contentHash,
     JSON.stringify(row),
@@ -292,9 +312,15 @@ const insertMergeRow = (statement: SqliteStatement, row: SerializedMergeRow, now
   );
 };
 
-const updateMergeRow = (statement: SqliteStatement, row: SerializedMergeRow, now: string) => {
+const updateMergeRow = (
+  statement: SqliteStatement,
+  row: SerializedMergeRow,
+  now: string,
+  authority: StoredSourceAuthority,
+) => {
   statement.run(
     row.sourceFingerprint,
+    authority,
     row.contentHash,
     JSON.stringify(row),
     row.status,
@@ -319,12 +345,16 @@ const loadExistingRows = (db: SqliteDatabase, rows: SerializedMergeRow[]): Map<s
   }
   const placeholders = rowKeys.map(() => '?').join(', ');
   const existingRows = db
-    .query(`SELECT row_key, content_hash, status FROM usage_rows WHERE row_key IN (${placeholders})`)
+    .query(`SELECT row_key, content_hash, status, source_authority FROM usage_rows WHERE row_key IN (${placeholders})`)
     .all(...rowKeys) as ExistingRow[];
   return new Map(existingRows.map((row) => [row.row_key, row]));
 };
 
-const classifyMergeRows = (db: SqliteDatabase, rows: SerializedMergeRow[]): ClassifiedMergeRow[] => {
+const classifyMergeRows = (
+  db: SqliteDatabase,
+  rows: SerializedMergeRow[],
+  incomingAuthority: StoredSourceAuthority,
+): ClassifiedMergeRow[] => {
   const existingRows = new Map<string, ExistingRow>();
   for (const batch of chunkRows(rows, IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE)) {
     for (const [key, value] of loadExistingRows(db, batch)) {
@@ -333,10 +363,17 @@ const classifyMergeRows = (db: SqliteDatabase, rows: SerializedMergeRow[]): Clas
   }
   return rows.map((row) => {
     const existing = existingRows.get(row.rowKey);
+    if (existing?.source_authority === 'local-observed' && incomingAuthority === 'portable-opaque') {
+      throw new Error('A portable row collides with locally observed usage.');
+    }
     let classification: MergeRowClassification;
     if (!existing) {
       classification = 'inserted';
-    } else if (existing.content_hash === row.contentHash && existing.status === row.status) {
+    } else if (
+      existing.content_hash === row.contentHash &&
+      existing.status === row.status &&
+      existing.source_authority === incomingAuthority
+    ) {
       classification = 'unchanged';
     } else if (row.status === 'deleted') {
       classification = 'deleted';
@@ -345,7 +382,12 @@ const classifyMergeRows = (db: SqliteDatabase, rows: SerializedMergeRow[]): Clas
     } else {
       classification = 'updated';
     }
-    existingRows.set(row.rowKey, { content_hash: row.contentHash, row_key: row.rowKey, status: row.status });
+    existingRows.set(row.rowKey, {
+      content_hash: row.contentHash,
+      row_key: row.rowKey,
+      source_authority: incomingAuthority,
+      status: row.status,
+    });
     return { classification, row };
   });
 };
@@ -362,6 +404,7 @@ const importMergeRows = (
   dbPath: string,
   rows: SerializedMergeRow[],
   importedAt = new Date(),
+  authority: StoredSourceAuthority = 'portable-opaque',
 ): Effect.Effect<ImportResult, UsageStoreError> =>
   withUsageStore(dbPath, (db) =>
     Effect.try({
@@ -372,10 +415,10 @@ const importMergeRows = (
 
         db.exec('BEGIN IMMEDIATE');
         try {
-          const classifiedRows = classifyMergeRows(db, rows);
+          const classifiedRows = classifyMergeRows(db, rows, authority);
           for (const { classification, row } of classifiedRows) {
             if (classification === 'inserted') {
-              insertMergeRow(statements.insert, row, now);
+              insertMergeRow(statements.insert, row, now, authority);
               result.inserted++;
               continue;
             }
@@ -386,7 +429,7 @@ const importMergeRows = (
               continue;
             }
 
-            updateMergeRow(statements.update, row, now);
+            updateMergeRow(statements.update, row, now, authority);
             result[classification]++;
           }
           if (rows.length > 0) {
@@ -409,6 +452,7 @@ export const importLocalRows = (input: ImportLocalRowsInput): Effect.Effect<Impo
     input.dbPath,
     input.rows.map((row) => toSerializedMergeRow(row, input.machine)),
     input.importedAt,
+    'local-observed',
   );
 
 export const importPeerMergeBundle = (
@@ -436,7 +480,7 @@ export const importPeerMergeBundle = (
       }),
     );
   }
-  return importMergeRows(input.dbPath, bundle.rows, input.importedAt);
+  return importMergeRows(input.dbPath, bundle.rows, input.importedAt, 'portable-opaque');
 };
 
 const validatePeerBundle = (
@@ -496,7 +540,7 @@ const readStorePreview = async (dbPath: string, rows: SerializedMergeRow[]): Pro
     if (!(record && Number.isSafeInteger(record.value) && record.value >= 0)) {
       throw new Error('Usage store generation metadata is missing or invalid.');
     }
-    const result = summarizeClassifications(classifyMergeRows(db, rows));
+    const result = summarizeClassifications(classifyMergeRows(db, rows, 'portable-opaque'));
     db.exec('ROLLBACK');
     return { ...result, generation: record.value, storeStateToken: storeIdentity(dbPath, record.value) };
   } catch (error) {
@@ -550,7 +594,7 @@ export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<Quer
       try: () => {
         const statuses = input.statuses?.length ? input.statuses : (['active'] satisfies StoredUsageRowStatus[]);
         const params: unknown[] = [...statuses];
-        let sql = `SELECT row_json FROM usage_rows WHERE status IN (${statuses.map(() => '?').join(', ')})`;
+        let sql = `SELECT row_json, source_authority FROM usage_rows WHERE status IN (${statuses.map(() => '?').join(', ')})`;
 
         if (input.originMachineIds?.length) {
           sql += ` AND origin_machine_id IN (${input.originMachineIds.map(() => '?').join(', ')})`;
@@ -562,19 +606,26 @@ export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<Quer
           params.push(...input.harnessKeys);
         }
 
+        if (input.sourceAuthorities?.length) {
+          sql += ` AND source_authority IN (${input.sourceAuthorities.map(() => '?').join(', ')})`;
+          params.push(...input.sourceAuthorities);
+        }
+
         sql += " ORDER BY COALESCE(active_date, '') DESC, row_key ASC";
         const records = db.query(sql).all(...params) as StoredRowRecord[];
         const rows: CollectedUsageRow[] = [];
+        const sourceAuthorities: StoredSourceAuthority[] = [];
         let skipped = 0;
         for (const record of records) {
           const parsed = JSON.parse(record.row_json) as unknown;
           if (isSerializedMergeRow(parsed)) {
             rows.push(deserializeMergeRow(parsed));
+            sourceAuthorities.push(record.source_authority);
           } else {
             skipped += 1;
           }
         }
-        return { rows, skipped };
+        return { rows, skipped, sourceAuthorities };
       },
       catch: (cause) => usageStoreError('queryReportRows', input.dbPath, cause, 'storage-failure'),
     }),
@@ -601,7 +652,11 @@ export const queryUsageStoreGeneration = (
 export const exportLocalMergeBundle = (
   input: ExportLocalMergeBundleInput,
 ): Effect.Effect<UsageMergeBundle, UsageStoreError> =>
-  queryReportRows({ dbPath: input.dbPath, originMachineIds: [input.machine.id] }).pipe(
+  queryReportRows({
+    dbPath: input.dbPath,
+    originMachineIds: [input.machine.id],
+    sourceAuthorities: ['local-observed'],
+  }).pipe(
     Effect.map((result) =>
       createUsageMergeBundle({
         machine: input.machine,

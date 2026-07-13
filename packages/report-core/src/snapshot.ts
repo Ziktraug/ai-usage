@@ -251,7 +251,7 @@ export const mergeUsageSnapshots = (snapshots: UsageSnapshot[]): SnapshotMergeRe
       warnings.push(...snapshot.warnings);
     }
     for (const row of snapshot.rows) {
-      const key = dedupeKey(row);
+      const key = usageSnapshotRowDedupeKey(row);
       const existing = byKey.get(key);
       if (!existing) {
         byKey.set(key, { snapshot, row });
@@ -322,7 +322,7 @@ export const deserializeSnapshotRow = (row: SnapshotUsageRow): CollectedUsageRow
   source: row.source,
 });
 
-const dedupeKey = (row: SnapshotUsageRow) => {
+export const usageSnapshotRowDedupeKey = (row: SnapshotUsageRow) => {
   const sessionId = row.source.sourceSessionId;
   if (sessionId) {
     return [row.source.machineId, row.source.harnessKey, sessionId].join('|');

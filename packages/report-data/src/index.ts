@@ -36,10 +36,12 @@ import {
 import { normalizeSessionLineage } from '@ai-usage/report-core/session-lineage';
 import {
   createUsageSnapshot,
+  deserializeSnapshotRow,
   mergeUsageSnapshots,
   type SnapshotMergeWarning,
   type UsageMachine,
   type UsageSnapshot,
+  usageSnapshotRowDedupeKey,
 } from '@ai-usage/report-core/snapshot';
 import type { Row, SourcedRow } from '@ai-usage/report-core/types';
 import { usageRowLineDelta, usageRowPricedCost, usageRowTokenTotal } from '@ai-usage/report-core/usage-row';
@@ -181,7 +183,21 @@ interface CanonicalProjectSource {
   sourcePath: string;
 }
 
-type CanonicalProjectSourceResolver = (project: string, sourcePath: string) => CanonicalProjectSource;
+type SourceAuthority = 'local-observed' | 'portable-opaque';
+
+interface AuthorizedSourceRow {
+  authority: SourceAuthority;
+  row: SourcedRow;
+}
+
+const authorizeRows = (rows: SourcedRow[], authority: SourceAuthority): AuthorizedSourceRow[] =>
+  rows.map((row) => ({ authority, row }));
+
+type CanonicalProjectSourceResolver = (
+  project: string,
+  sourcePath: string,
+  authority: SourceAuthority,
+) => CanonicalProjectSource;
 
 export interface ProjectSourcesRequest extends LocalUsageSelection {
   appVersion?: string | null;
@@ -438,7 +454,11 @@ export const collectProjectedLocalReportRowsWithWarnings = (
       const projection = yield* withPerfSpan(
         'aiUsage.report.projectGroups',
         Effect.sync(() =>
-          buildProjectProjection(rows as SourcedRow[], config.projectGroups ?? [], config.projectAliases ?? []),
+          buildProjectProjection(
+            authorizeRows(rows as SourcedRow[], 'local-observed'),
+            config.projectGroups ?? [],
+            config.projectAliases ?? [],
+          ),
         ),
         (result) => ({
           groups: result.projectGroups.length,
@@ -468,7 +488,11 @@ export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
       const projection = yield* withPerfSpan(
         'aiUsage.report.projectGroups',
         Effect.sync(() =>
-          buildProjectProjection(rows as SourcedRow[], config.projectGroups ?? [], config.projectAliases ?? []),
+          buildProjectProjection(
+            authorizeRows(rows as SourcedRow[], 'local-observed'),
+            config.projectGroups ?? [],
+            config.projectAliases ?? [],
+          ),
         ),
         (result) => ({
           groups: result.projectGroups.length,
@@ -544,7 +568,14 @@ export const createStoredReportPayload = (
       const projection = yield* withPerfSpan(
         'aiUsage.report.projectStoredGroups',
         Effect.sync(() =>
-          buildProjectProjection(stored.rows as SourcedRow[], config.projectGroups ?? [], config.projectAliases ?? []),
+          buildProjectProjection(
+            (stored.rows as SourcedRow[]).map((row, index) => ({
+              authority: stored.sourceAuthorities[index] ?? 'portable-opaque',
+              row,
+            })),
+            config.projectGroups ?? [],
+            config.projectAliases ?? [],
+          ),
         ),
         (result) => ({
           groups: result.projectGroups.length,
@@ -628,6 +659,7 @@ export const createKnownLocalProjectSources = (
         queryReportRows({
           dbPath,
           originMachineIds: [machine.id],
+          sourceAuthorities: ['local-observed'],
           ...(harnessKeys === undefined ? {} : { harnessKeys }),
         }).pipe(Effect.mapError(usageStoreLocalHistoryError('usageStore.queryReportRows', dbPath)));
 
@@ -644,10 +676,15 @@ export const createKnownLocalProjectSources = (
 
       const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
       const rows = stored.rows as SourcedRow[];
-      const projection = buildProjectProjection(rows, config.projectGroups ?? [], config.projectAliases ?? []);
+      const localCandidates = authorizeRows(rows, 'local-observed');
+      const projection = buildProjectProjection(
+        localCandidates,
+        config.projectGroups ?? [],
+        config.projectAliases ?? [],
+      );
       return {
         projectGroups: projection.projectGroups,
-        sources: collectProjectSources(rows, false, defaultReadGitFile),
+        sources: collectProjectSources(localCandidates, false, defaultReadGitFile),
         warnings: [...collectionWarnings, ...projection.warnings],
       };
     }),
@@ -676,16 +713,43 @@ export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
     });
   });
 
+const mergeAuthorizedSnapshotRows = (
+  snapshots: Array<{ authority: SourceAuthority; snapshot: UsageSnapshot }>,
+): AuthorizedSourceRow[] => {
+  const winners = new Map<string, { candidate: AuthorizedSourceRow; generatedAt: number }>();
+  for (const { authority, snapshot } of snapshots) {
+    const generatedAt = new Date(snapshot.generatedAt).getTime();
+    for (const serializedRow of snapshot.rows) {
+      const key = usageSnapshotRowDedupeKey(serializedRow);
+      const existing = winners.get(key);
+      if (!existing || generatedAt >= existing.generatedAt) {
+        winners.set(key, { candidate: { authority, row: deserializeSnapshotRow(serializedRow) }, generatedAt });
+      }
+    }
+  }
+  return [...winners.values()].map((winner) => winner.candidate);
+};
+
 export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
   Effect.gen(function* () {
-    const snapshots = [...request.snapshots];
+    const authorizedSnapshots: Array<{ authority: SourceAuthority; snapshot: UsageSnapshot }> = request.snapshots.map(
+      (snapshot) => ({
+        authority: 'portable-opaque',
+        snapshot,
+      }),
+    );
     if (request.includeLocal) {
-      snapshots.push(yield* createLocalUsageSnapshot(toLocalUsageSnapshotRequest(request)));
+      authorizedSnapshots.push({
+        authority: 'local-observed',
+        snapshot: yield* createLocalUsageSnapshot(toLocalUsageSnapshotRequest(request)),
+      });
     }
 
+    const snapshots = authorizedSnapshots.map((candidate) => candidate.snapshot);
     const merged = mergeUsageSnapshots(snapshots);
+    const authorizedRows = mergeAuthorizedSnapshotRows(authorizedSnapshots);
     const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
-    const projection = buildProjectProjection(merged.rows, config.projectGroups ?? [], config.projectAliases ?? []);
+    const projection = buildProjectProjection(authorizedRows, config.projectGroups ?? [], config.projectAliases ?? []);
     const rows = normalizeSessionLineage(projection.rows);
     const report = prepareUsageReport(rows, request.options);
     const allWarnings = [...merged.warnings, ...projection.warnings];
@@ -807,8 +871,13 @@ const managedWorktreeParentPath = (projectPath: string): string | null => {
   return markerIndex > 0 ? normalizedPath.slice(0, markerIndex) : null;
 };
 
-const canonicalProjectSource = (project: string, sourcePath: string, readGitFile: ReadGitFile) => {
-  if (!sourcePath) {
+const canonicalProjectSource = (
+  project: string,
+  sourcePath: string,
+  authority: SourceAuthority,
+  readGitFile: ReadGitFile,
+) => {
+  if (!sourcePath || authority === 'portable-opaque') {
     return { project, sourcePath };
   }
   const canonicalSourcePath = gitWorktreeParentPath(sourcePath, readGitFile) ?? managedWorktreeParentPath(sourcePath);
@@ -823,13 +892,13 @@ const canonicalProjectSource = (project: string, sourcePath: string, readGitFile
 
 const createCanonicalProjectSourceResolver = (readGitFile: ReadGitFile): CanonicalProjectSourceResolver => {
   const cache = new Map<string, CanonicalProjectSource>();
-  return (project, sourcePath) => {
-    const key = [project, sourcePath].join('\0');
+  return (project, sourcePath, authority) => {
+    const key = [project, sourcePath, authority].join('\0');
     const cached = cache.get(key);
     if (cached) {
       return cached;
     }
-    const canonicalSource = canonicalProjectSource(project, sourcePath, readGitFile);
+    const canonicalSource = canonicalProjectSource(project, sourcePath, authority, readGitFile);
     cache.set(key, canonicalSource);
     return canonicalSource;
   };
@@ -846,19 +915,24 @@ const readGitRemoteFromWorktree = (projectPath: string, readGitFile: ReadGitFile
   return commonGitDir === null ? null : readGitFile(path.join(commonGitDir, 'config'));
 };
 
-const sourceInputFromRow = (row: SourcedRow, resolveCanonicalProjectSource: CanonicalProjectSourceResolver) => {
+const sourceInputFromRow = (
+  row: SourcedRow,
+  authority: SourceAuthority,
+  resolveCanonicalProjectSource: CanonicalProjectSourceResolver,
+) => {
   const project = projectFromRow(row);
   return {
     machineId: row.source.machineId ?? '',
-    ...resolveCanonicalProjectSource(project, row.source.sourcePath ?? ''),
+    ...resolveCanonicalProjectSource(project, row.source.sourcePath ?? '', authority),
   };
 };
 
 const createProjectSourceFromRow = (
   row: SourcedRow,
+  authority: SourceAuthority,
   resolveCanonicalProjectSource: CanonicalProjectSourceResolver,
 ): ProjectSource => {
-  const source = sourceInputFromRow(row, resolveCanonicalProjectSource);
+  const source = sourceInputFromRow(row, authority, resolveCanonicalProjectSource);
   return {
     id: projectSourceId(source),
     project: source.project,
@@ -876,15 +950,15 @@ const createProjectSourceFromRow = (
 };
 
 const collectProjectSources = (
-  rows: SourcedRow[],
+  candidates: AuthorizedSourceRow[],
   includeGitRemote: boolean,
   readGitFile: ReadGitFile = defaultReadGitFile,
   resolveCanonicalProjectSource = createCanonicalProjectSourceResolver(readGitFile),
 ): ProjectSource[] => {
   const summaries = new Map<string, ProjectSource>();
 
-  for (const row of rows) {
-    const summary = createProjectSourceFromRow(row, resolveCanonicalProjectSource);
+  for (const { authority, row } of candidates) {
+    const summary = createProjectSourceFromRow(row, authority, resolveCanonicalProjectSource);
     const key = summary.id;
     const current = summaries.get(key) ?? summary;
     current.sessions++;
@@ -897,6 +971,9 @@ const collectProjectSources = (
       current.harnessKeys.push(row.source.harnessKey);
       current.harnessKey = current.harnessKeys.join(',');
     }
+    if (includeGitRemote && authority === 'local-observed' && !current.gitRemote && current.sourcePath) {
+      current.gitRemote = readGitRemoteUrl(current.sourcePath, readGitFile);
+    }
     summaries.set(key, current);
   }
 
@@ -905,9 +982,6 @@ const collectProjectSources = (
       a.project.localeCompare(b.project) || a.machine.localeCompare(b.machine) || a.harness.localeCompare(b.harness),
   );
 
-  if (includeGitRemote) {
-    enrichGitRemotes(result, readGitFile);
-  }
   return result;
 };
 
@@ -991,16 +1065,16 @@ const projectGroupingWarning = (
 });
 
 const buildProjectProjection = (
-  rows: SourcedRow[],
+  candidates: AuthorizedSourceRow[],
   groups: ProjectGroupConfig[] = [],
   legacyAliases: ProjectAliasEntry[] = [],
 ): ProjectProjection => {
   const resolveCanonicalProjectSource = createCanonicalProjectSourceResolver(defaultReadGitFile);
-  const sources = collectProjectSources(rows, false, defaultReadGitFile, resolveCanonicalProjectSource);
+  const sources = collectProjectSources(candidates, false, defaultReadGitFile, resolveCanonicalProjectSource);
   const sourceById = new Map(sources.map((source) => [source.id, source]));
   const rowsBySourceId = new Map<string, SourcedRow[]>();
-  for (const row of rows) {
-    const sourceId = projectSourceId(sourceInputFromRow(row, resolveCanonicalProjectSource));
+  for (const { authority, row } of candidates) {
+    const sourceId = projectSourceId(sourceInputFromRow(row, authority, resolveCanonicalProjectSource));
     const sourceRows = rowsBySourceId.get(sourceId) ?? [];
     sourceRows.push(row);
     rowsBySourceId.set(sourceId, sourceRows);
@@ -1109,9 +1183,9 @@ const buildProjectProjection = (
     sourceGroupName.set(source.id, { groupId, name: groupName });
   }
 
-  const projectedRows = rows.map((row) => {
+  const projectedRows = candidates.map(({ authority, row }) => {
     const rawProject = row.project;
-    const projectSourceIdValue = projectSourceId(sourceInputFromRow(row, resolveCanonicalProjectSource));
+    const projectSourceIdValue = projectSourceId(sourceInputFromRow(row, authority, resolveCanonicalProjectSource));
     const group = sourceGroupName.get(projectSourceIdValue) ?? {
       groupId: `source:${projectSourceIdValue}`,
       name: projectFromRow(row),
@@ -1132,23 +1206,6 @@ const buildProjectProjection = (
   };
 };
 
-const enrichGitRemotes = (sources: ProjectSource[], readGitFile: ReadGitFile) => {
-  const cache = new Map<string, string>();
-  for (const source of sources) {
-    if (!source.sourcePath) {
-      continue;
-    }
-    const cached = cache.get(source.sourcePath);
-    if (cached !== undefined) {
-      source.gitRemote = cached;
-      continue;
-    }
-    const gitRemote = readGitRemoteUrl(source.sourcePath, readGitFile);
-    cache.set(source.sourcePath, gitRemote);
-    source.gitRemote = gitRemote;
-  }
-};
-
 export const listProjectSourcesWithWarnings = (
   request: ProjectSourcesRequest,
 ): Effect.Effect<
@@ -1157,14 +1214,24 @@ export const listProjectSourcesWithWarnings = (
   import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
 > =>
   Effect.gen(function* () {
-    const snapshots = [...request.snapshots];
+    const authorizedSnapshots: Array<{ authority: SourceAuthority; snapshot: UsageSnapshot }> = request.snapshots.map(
+      (snapshot) => ({ authority: 'portable-opaque', snapshot }),
+    );
     if (request.includeLocal) {
-      snapshots.push(yield* createLocalUsageSnapshot(toLocalUsageSnapshotRequest(request)));
+      authorizedSnapshots.push({
+        authority: 'local-observed',
+        snapshot: yield* createLocalUsageSnapshot(toLocalUsageSnapshotRequest(request)),
+      });
     }
 
+    const snapshots = authorizedSnapshots.map((candidate) => candidate.snapshot);
     const merged = mergeUsageSnapshots(snapshots);
     return {
-      sources: collectProjectSources(merged.rows, request.includeGitRemote ?? false, request.readGitFile),
+      sources: collectProjectSources(
+        mergeAuthorizedSnapshotRows(authorizedSnapshots),
+        request.includeGitRemote ?? false,
+        request.readGitFile,
+      ),
       warnings: merged.warnings,
     };
   });
