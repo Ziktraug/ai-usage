@@ -15,6 +15,7 @@ honor its STOP conditions, and update your row when done.
 | 005 | Skills Tree Curation & Honest Context Panel for `/skills` | P1 | M | 004 | DONE |
 | 006 | Make `SKILL.md` the Primary, Always-Editable Skills Workspace | P1 | L | 005 | DONE |
 | 007 | Simplify Dashboard Exploration and Dataviz | P1 | L | - | DONE |
+| 008 | Remediate the Full Application Audit and Remove Legacy LAN Sync | P0 | L | - | IN PROGRESS |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -51,6 +52,13 @@ REJECTED (with one-line rationale).
   stable chart series, and initial-bundle reduction where route boundaries
   allow it. Existing URL deep links and static report export remain compatibility
   constraints throughout the work.
+- Plan 008 consolidates every unresolved application-audit finding at commit
+  `7ff9944`. It first fixes the production start and loopback listeners, then
+  removes the complete legacy LAN snapshot stack while preserving explicit file
+  exchange. Snapshot validation, Skills query/test seams, UI and SQLite costs,
+  time-range architecture, report refresh transport, boundary guards, and docs
+  follow in dependency order. It is intentionally one tracked program delivered
+  as small independently verified commits.
 
 ## Findings considered and rejected
 
