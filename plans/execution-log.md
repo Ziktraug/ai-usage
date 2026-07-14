@@ -91,3 +91,15 @@ Preuves du correctif :
 - test de régression rouge puis vert sur `collectHarnessDatasets -> walkFiles` ;
 - reproduction réelle `/` passée de HTTP 500 à HTTP 200 sur deux instances ;
 - Ultracite sans erreur, typecheck 16/16 et 76 tests ciblés réussis.
+
+Après retour utilisateur, la dégradation gracieuse a été remplacée par la
+correction de capacité attendue : le volume total historique n’est plus traité
+comme de la mémoire résidente. Le scan reste borné en profondeur/nombre de
+fichiers, les JSONL sont lus séquentiellement avec un plafond de 1 Gio par
+session et de 8 Mio par ligne, et les formats non streamés gardent leurs limites
+plus basses.
+
+Un rafraîchissement forcé sur l’historique réel de 2,55 Gio a ensuite réussi en
+3,6 s : 997 sessions Codex ont été analysées (922 hits de cache, 75 fichiers
+relus), 13 nouvelles lignes ont été insérées et aucun avertissement Codex n’a
+été produit.
