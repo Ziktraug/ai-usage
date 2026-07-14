@@ -1,9 +1,7 @@
 export {
   createSkillsApplication,
-  readBoundedProjectSkillMarkdown,
   type SkillsApplication,
   type SkillsApplicationPorts,
-  type SkillsApplicationWorkflows,
   type SkillsProjectMarkdownDocument,
   type SkillsProjectMarkdownInput,
 } from './application';
@@ -61,27 +59,8 @@ export type {
   WriteSkillManagementConfigInput,
 } from './contracts';
 export { defaultTokenThresholds, maxSkillMarkdownBytes, projectSkillDirectories } from './contracts';
-export { scanProjectSkills } from './project-scan';
-export {
-  applyProjectionAction,
-  buildDefaultSkillTargets,
-  isProjectionHealthy,
-  planProjection,
-  scanTargetProjections,
-} from './projections';
 export type { SkillTokenDiagnosticCode } from './shared';
 export { parseSkillName, parseTargetId, skillTokenDiagnosticCodes } from './shared';
 export { parseSkillFilePath } from './skill-file-input';
 export { parseSkillMarkdown } from './skill-markdown';
-export { parseSkillMarkdownWriteInput, readSkillMarkdown, writeSkillMarkdown } from './skill-markdown-io';
-export { scanSkillSourceRepository } from './source-scan';
-export { loadSkillSourceState, setSkillEnabled, skillSourceStatePath, writeSkillSourceState } from './source-state';
-export {
-  createSkillTargetDirectory,
-  loadSkillManagementSnapshot,
-  previewReconcileAllActiveSkills,
-  reconcileAllActiveSkills,
-  reconcileSkill,
-  toggleSkillEnabled,
-  writeSkillManagementConfig,
-} from './workflows';
+export { parseSkillMarkdownWriteInput } from './skill-markdown-io';

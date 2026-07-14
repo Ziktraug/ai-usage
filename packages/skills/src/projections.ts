@@ -14,7 +14,7 @@ import type {
   TargetProjectionScanInput,
 } from './contracts';
 import { createDiagnostic, isMissingPathError } from './diagnostics';
-import { withSerializedFileMutation } from './filesystem';
+import { withSkillProjectionLock } from './projection-lock';
 
 export const buildDefaultSkillTargets = (homePath: string): readonly SkillTarget[] => [
   {
@@ -431,7 +431,10 @@ const claimObservedProjection = async (projectedPath: string, observedSourcePath
   }
 };
 
-export const applyProjectionAction = async (action: ProjectionAction): Promise<void> => {
+export const applyProjectionAction = async (
+  action: ProjectionAction,
+  options: { privateStatePath: string },
+): Promise<void> => {
   if (
     action.type !== 'create-symlink' &&
     action.type !== 'repair-symlink' &&
@@ -446,7 +449,7 @@ export const applyProjectionAction = async (action: ProjectionAction): Promise<v
   }
 
   const targetPath = path.dirname(mutableAction.path);
-  await withSerializedFileMutation(targetPath, async () => {
+  await withSkillProjectionLock(options.privateStatePath, targetIdentity.canonicalPath, async () => {
     const targetStat = await lstat(targetPath);
     if (
       targetStat.isSymbolicLink() ||

@@ -229,8 +229,7 @@ const runFileLockHeartbeat = async (
   }
 };
 
-const withFileSystemLock = async <Result>(filePath: string, mutation: () => Promise<Result>): Promise<Result> => {
-  const lockPath = `${filePath}.ai-usage.lock`;
+const withFileSystemLock = async <Result>(lockPath: string, mutation: () => Promise<Result>): Promise<Result> => {
   const deadline = Date.now() + fileLockAcquireTimeoutMs;
   const createdAt = new Date().toISOString();
   const lockMetadata: FileLockMetadata = {
@@ -258,7 +257,7 @@ const withFileSystemLock = async <Result>(filePath: string, mutation: () => Prom
         continue;
       }
       if (Date.now() >= deadline) {
-        throw new Error(`timed out waiting for filesystem mutation lock: ${filePath}`);
+        throw new Error(`timed out waiting for filesystem mutation lock: ${lockPath}`);
       }
       await delay(fileLockRetryMs);
       continue;
@@ -300,7 +299,14 @@ export const withSerializedFileMutation = async <Result>(
   canonicalFilePath: string,
   mutation: () => Promise<Result>,
 ): Promise<Result> =>
-  withSerializedPathMutation(canonicalFilePath, () => withFileSystemLock(canonicalFilePath, mutation));
+  withSerializedPathMutation(canonicalFilePath, () =>
+    withFileSystemLock(`${canonicalFilePath}.ai-usage.lock`, mutation),
+  );
+
+export const withSerializedMutationLock = async <Result>(
+  lockPath: string,
+  mutation: () => Promise<Result>,
+): Promise<Result> => withSerializedPathMutation(lockPath, () => withFileSystemLock(lockPath, mutation));
 
 export const existingRegularFileMode = async (filePath: string, defaultMode: number): Promise<number> => {
   let file: Awaited<ReturnType<typeof open>>;

@@ -2,15 +2,14 @@ import { describe, expect, test } from 'bun:test';
 import { lstat, mkdir, mkdtemp, readdir, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import type { SkillTarget, SourceSkill } from './contracts';
 import {
   applyProjectionAction,
   buildDefaultSkillTargets,
   isProjectionHealthy,
   planProjection,
-  type SkillTarget,
-  type SourceSkill,
   scanTargetProjections,
-} from '.';
+} from './projections';
 
 const makeSkill = (overrides: Partial<SourceSkill> = {}): SourceSkill => ({
   description: 'Helps with examples',
@@ -86,7 +85,7 @@ describe('target observation and projections', () => {
       const target = makeTarget(targetPath);
       const scan = await scanTargetProjections({ skills: [skill], targets: [target] });
       const action = planProjection(skill, target, scan.projections[0]);
-      await applyProjectionAction(action);
+      await applyProjectionAction(action, { privateStatePath: path.join(root, 'state') });
 
       expect(await readlink(path.join(targetPath, 'example-skill'))).toBe(sourcePath);
     } finally {
@@ -111,7 +110,9 @@ describe('target observation and projections', () => {
       await rename(targetPath, originalPath);
       await mkdir(targetPath);
 
-      await expect(applyProjectionAction(action)).rejects.toThrow('identity changed');
+      await expect(applyProjectionAction(action, { privateStatePath: path.join(root, 'state') })).rejects.toThrow(
+        'identity changed',
+      );
       expect(await readdir(targetPath)).toEqual([]);
     } finally {
       await rm(root, { force: true, recursive: true });
@@ -149,7 +150,7 @@ describe('target observation and projections', () => {
       const target = makeTarget(targetPath);
       const scan = await scanTargetProjections({ skills: [skill], targets: [target] });
       const action = planProjection(skill, target, scan.projections[0]);
-      await applyProjectionAction(action);
+      await applyProjectionAction(action, { privateStatePath: path.join(root, 'state') });
 
       await expect(lstat(projectedPath)).rejects.toThrow();
     } finally {
@@ -178,7 +179,9 @@ describe('target observation and projections', () => {
       await rm(projectedPath);
       await symlink(secondForeignPath, projectedPath);
 
-      await expect(applyProjectionAction(action)).rejects.toThrow('changed');
+      await expect(applyProjectionAction(action, { privateStatePath: path.join(root, 'state') })).rejects.toThrow(
+        'changed',
+      );
       await expect(readlink(projectedPath)).resolves.toBe(secondForeignPath);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -205,7 +208,9 @@ describe('target observation and projections', () => {
         throw new Error('expected a repair action');
       }
 
-      await expect(applyProjectionAction({ ...action, sourcePath: '\0invalid' })).rejects.toThrow();
+      await expect(
+        applyProjectionAction({ ...action, sourcePath: '\0invalid' }, { privateStatePath: path.join(root, 'state') }),
+      ).rejects.toThrow();
       await expect(readlink(projectedPath)).resolves.toBe(foreignPath);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -249,7 +254,7 @@ describe('target observation and projections', () => {
         }
       }
 
-      await expect(applyProjectionAction(action)).rejects.toThrow();
+      await expect(applyProjectionAction(action, { privateStatePath: path.join(root, 'state') })).rejects.toThrow();
       expect(await subprocess.exited).toBe(0);
       await expect(readlink(projectedPath)).resolves.toBe(interloperPath);
     } finally {
@@ -285,7 +290,9 @@ describe('target observation and projections', () => {
             await writeFile(projectedPath, 'stale external file', 'utf8');
           }
 
-          await expect(applyProjectionAction(action)).rejects.toThrow('changed');
+          await expect(applyProjectionAction(action, { privateStatePath: path.join(root, 'state') })).rejects.toThrow(
+            'changed',
+          );
           const replacementStat = await lstat(projectedPath);
           expect(replacementKind === 'directory' ? replacementStat.isDirectory() : replacementStat.isFile()).toBe(true);
           expect((await readdir(targetPath)).some((entry) => entry.endsWith('.old'))).toBe(false);

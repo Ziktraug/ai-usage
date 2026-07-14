@@ -3,6 +3,8 @@ import { Effect } from 'effect';
 import { LocalHistoryError } from './errors';
 import type { LocalHistoryDatabase, LocalHistoryDirEntry, LocalHistoryStorage } from './local-history';
 
+const LINE_SEPARATOR = /\r?\n/;
+
 export class TestMemoryStorage implements LocalHistoryStorage {
   readonly home: string;
   private readonly files = new Map<string, string>();
@@ -50,6 +52,36 @@ export class TestMemoryStorage implements LocalHistoryStorage {
       );
     }
     return Effect.succeed(content);
+  }
+
+  readLines(
+    filePath: string,
+    visit: (line: string) => void,
+    limits: { maxBytes?: number; maxLineBytes?: number } = {},
+  ) {
+    const content = this.files.get(filePath);
+    if (content == null) {
+      return Effect.fail(
+        new LocalHistoryError({ operation: 'readLines', path: filePath, cause: new Error('Missing fixture file') }),
+      );
+    }
+    return Effect.try({
+      try: () => {
+        if (Buffer.byteLength(content, 'utf8') > (limits.maxBytes ?? Number.POSITIVE_INFINITY)) {
+          throw new Error('Fixture exceeds limit');
+        }
+        let lines = 0;
+        for (const line of content.split(LINE_SEPARATOR)) {
+          if (Buffer.byteLength(line, 'utf8') > (limits.maxLineBytes ?? Number.POSITIVE_INFINITY)) {
+            throw new Error('Fixture line exceeds limit');
+          }
+          visit(line);
+          lines++;
+        }
+        return { bytes: Buffer.byteLength(content, 'utf8'), lines };
+      },
+      catch: (cause) => new LocalHistoryError({ operation: 'readLines', path: filePath, cause }),
+    });
   }
 
   readDir(dirPath: string): Effect.Effect<LocalHistoryDirEntry[], LocalHistoryError> {

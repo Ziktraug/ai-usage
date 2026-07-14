@@ -21,7 +21,7 @@ import {
 import { withPerfSpan } from '../perf';
 import { resolvePathCandidates } from '../platform-paths';
 import type { CollectorRow } from '../rtk-enrichment';
-import { base, dominant, safeJSON } from '../text';
+import { base, dominant, isJsonObject, safeJSON } from '../text';
 
 const DEFAULT_ACP_SESSION_TITLE = /^(new session\s*[.…]*|acp(?: session)?)$/i;
 
@@ -56,26 +56,6 @@ interface MessageRow {
   data: string;
   session_id: string;
 }
-interface OpenCodeMessageData {
-  cost?: number;
-  modelID?: string;
-  providerID?: string;
-  role?: string;
-  time?: {
-    completed?: string | number | Date;
-    created?: string | number | Date;
-  };
-  tokens?: {
-    cache?: {
-      read?: number;
-      write?: number;
-    };
-    input?: number;
-    output?: number;
-    reasoning?: number;
-  };
-}
-
 export interface OpenCodeCollectionResult {
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
@@ -159,7 +139,7 @@ const collectFromDb = (
                 let tokenRows = 0;
                 let userRows = 0;
                 for (const row of messageRows) {
-                  const data = safeJSON<OpenCodeMessageData>(row.data);
+                  const data = safeJSON(row.data);
                   if (data?.role === 'user') {
                     userRows++;
                     turnCount.set(row.session_id, (turnCount.get(row.session_id) || 0) + 1);
@@ -169,7 +149,7 @@ const collectFromDb = (
                     continue;
                   }
                   assistantRows++;
-                  const tokens = data.tokens;
+                  const tokens = isJsonObject(data.tokens) ? data.tokens : null;
                   if (!tokens) {
                     continue;
                   }
@@ -193,8 +173,9 @@ const collectFromDb = (
                   }
                   const input = parseOptionalNonNegativeSafeInteger(tokens.input);
                   const output = parseOptionalNonNegativeSafeInteger(tokens.output);
-                  const cacheRead = parseOptionalNonNegativeSafeInteger(tokens.cache?.read);
-                  const cacheWrite = parseOptionalNonNegativeSafeInteger(tokens.cache?.write);
+                  const cache = isJsonObject(tokens.cache) ? tokens.cache : null;
+                  const cacheRead = parseOptionalNonNegativeSafeInteger(cache?.read);
+                  const cacheWrite = parseOptionalNonNegativeSafeInteger(cache?.write);
                   const reasoning = parseOptionalNonNegativeSafeInteger(tokens.reasoning);
                   const cost = parseOptionalNonNegativeFiniteNumber(data.cost);
                   if (!(input.ok && output.ok && cacheRead.ok && cacheWrite.ok && reasoning.ok && cost.ok)) {
@@ -227,23 +208,26 @@ const collectFromDb = (
                   current.reason = nextReasoning.value;
                   current.cost = nextCost.value;
                   current.calls = nextCalls.value;
-                  const created = data.time?.created;
-                  if (created) {
+                  const time = isJsonObject(data.time) ? data.time : null;
+                  const created = time?.created;
+                  if (typeof created === 'string' || typeof created === 'number') {
                     const date = new Date(created);
                     if (!current.start || date < current.start) {
                       current.start = date;
                     }
                   }
-                  const completed = data.time?.completed || data.time?.created;
-                  if (completed) {
+                  const completed = time?.completed || time?.created;
+                  if (typeof completed === 'string' || typeof completed === 'number') {
                     const date = new Date(completed);
                     if (!current.end || date > current.end) {
                       current.end = date;
                     }
                   }
                   const total = input.value + output.value + cacheRead.value + cacheWrite.value;
-                  current.prov.set(data.providerID || '?', (current.prov.get(data.providerID || '?') || 0) + total);
-                  current.model.set(data.modelID || '?', (current.model.get(data.modelID || '?') || 0) + total);
+                  const providerId = typeof data.providerID === 'string' ? data.providerID : '?';
+                  const modelId = typeof data.modelID === 'string' ? data.modelID : '?';
+                  current.prov.set(providerId, (current.prov.get(providerId) || 0) + total);
+                  current.model.set(modelId, (current.model.get(modelId) || 0) + total);
                 }
                 return { assistantRows, tokenRows, userRows };
               }),

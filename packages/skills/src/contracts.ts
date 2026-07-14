@@ -263,6 +263,7 @@ export interface SkillReconcileResult {
 
 export interface CreateSkillTargetDirectoryInput {
   path: string;
+  privateStatePath: string;
 }
 
 export const projectSkillDirectories = [

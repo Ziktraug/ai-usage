@@ -525,30 +525,30 @@ export const startReportPayloadRefresh = () => {
     console.error(`[perf] aiUsage.web.reportPayloadRefresh started runId=${runId}`);
   }
 
-  refreshJob = runReportPayloadCollection({ force: true })
-    .then((payload) => {
+  refreshJob = (async () => {
+    try {
+      const payload = await runReportPayloadCollection({ force: true });
       refreshState = { completedAt: Date.now(), runId, startedAt, status: 'completed' };
       if (perfEnabled()) {
         console.error(
           `[perf] aiUsage.web.reportPayloadRefresh completed runId=${runId} durationMs=${Date.now() - startedAt} rows=${payload.rows.length}`,
         );
       }
-    })
-    .catch((error: unknown) => {
+    } catch (error) {
       refreshState = { error: formatRefreshError(error), failedAt: Date.now(), runId, startedAt, status: 'failed' };
       if (perfEnabled()) {
         console.error(
           `[perf] aiUsage.web.reportPayloadRefresh failed runId=${runId} durationMs=${Date.now() - startedAt}`,
         );
       }
-    })
-    .finally(() => {
+    } finally {
       refreshJob = null;
       if (refreshRequestedAfterCurrent) {
         refreshRequestedAfterCurrent = false;
         startReportPayloadRefresh();
       }
-    });
+    }
+  })();
 
   return refreshState;
 };
@@ -594,10 +594,13 @@ const ensurePublishedRevision = async (payload: UsageReportPayload): Promise<Web
   const captureFingerprint = captureFingerprintByPayload.get(payload) ?? reportCaptureFingerprintForPayload(webPayload);
   const current = await reportRevisionRegistry.getCurrentManifest();
   if (current.ok && current.manifest.captureFingerprint === captureFingerprint) {
-    const manifest =
-      current.manifest.expiresAt - Date.now() <= REVISION_RENEWAL_WINDOW_MS
-        ? await reportRevisionRegistry.renewCurrent().then((result) => (result.ok ? result.manifest : current.manifest))
-        : current.manifest;
+    let manifest = current.manifest;
+    if (current.manifest.expiresAt - Date.now() <= REVISION_RENEWAL_WINDOW_MS) {
+      const renewal = await reportRevisionRegistry.renewCurrent();
+      if (renewal.ok) {
+        manifest = renewal.manifest;
+      }
+    }
     revisionPublicationByPayload.set(payload, Promise.resolve(manifest));
     return manifest;
   }

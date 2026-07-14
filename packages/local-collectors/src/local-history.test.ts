@@ -24,6 +24,29 @@ test('reads exact-limit regular UTF-8 files and rejects limit+1 and symlinks', (
   }
 });
 
+test('visits UTF-8 lines incrementally and rejects oversized or invalid lines', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-lines-'));
+  try {
+    const filePath = path.join(root, 'history.jsonl');
+    fs.writeFileSync(filePath, 'first\r\nsecond\nlast');
+    const storage = createLocalHistoryStorage(root);
+    const visited: string[] = [];
+    const result = await Effect.runPromise(
+      storage.readLines(filePath, (line) => visited.push(line), { maxBytes: 18, maxLineBytes: 6 }),
+    );
+    expect(visited).toEqual(['first', 'second', 'last']);
+    expect(result).toEqual({ bytes: 18, lines: 3 });
+
+    await expect(
+      Effect.runPromise(storage.readLines(filePath, () => undefined, { maxBytes: 18, maxLineBytes: 5 })),
+    ).rejects.toThrow();
+    fs.writeFileSync(filePath, Uint8Array.from([0xff, 0x0a]));
+    await expect(Effect.runPromise(storage.readLines(filePath, () => undefined))).rejects.toThrow();
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test('bounds iterative history traversal and ignores symlink entries', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-walk-'));
   try {

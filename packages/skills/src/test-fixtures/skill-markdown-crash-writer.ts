@@ -1,5 +1,5 @@
 import { access, writeFile } from 'node:fs/promises';
-import { writeSkillMarkdown } from '../index';
+import { writeSkillMarkdown } from '../skill-markdown-io';
 
 const [sourceRepoPath, baseSha256, readyPath, barrierPath] = Bun.argv.slice(2);
 if (!(sourceRepoPath && baseSha256 && readyPath && barrierPath)) {
