@@ -6,10 +6,13 @@ import { Context, Effect, Layer } from 'effect';
 import { LocalHistoryError } from './errors';
 import {
   HISTORY_FILE_MAX_BYTES,
+  HISTORY_LINE_MAX_BYTES,
   HISTORY_SCAN_MAX_BYTES,
   HISTORY_SCAN_MAX_DEPTH,
   HISTORY_SCAN_MAX_FILES,
 } from './history-budgets';
+
+const TRAILING_CARRIAGE_RETURN = /\r$/;
 
 export interface LocalHistoryDirEntry {
   isDirectory: boolean;
@@ -28,6 +31,11 @@ export interface LocalHistoryStorage {
   home: string;
   openDatabase(dbPath: string): Effect.Effect<LocalHistoryDatabase, LocalHistoryError>;
   readDir(dirPath: string): Effect.Effect<LocalHistoryDirEntry[], LocalHistoryError>;
+  readLines(
+    filePath: string,
+    visit: (line: string) => void,
+    limits?: { maxBytes?: number; maxLineBytes?: number },
+  ): Effect.Effect<{ bytes: number; lines: number }, LocalHistoryError>;
   readText(filePath: string, maxBytes?: number): Effect.Effect<string, LocalHistoryError>;
 }
 
@@ -82,6 +90,75 @@ export const readRegularFileText = (filePath: string, maxBytes: number): string 
   }
 };
 
+export const visitRegularFileLines = (
+  filePath: string,
+  visit: (line: string) => void,
+  maxBytes: number,
+  maxLineBytes: number,
+): { bytes: number; lines: number } => {
+  const before = fs.lstatSync(filePath);
+  if (before.isSymbolicLink() || !before.isFile()) {
+    throw new Error(`History input is not a regular file: ${filePath}`);
+  }
+  if (before.size > maxBytes) {
+    throw new Error(`History input exceeds its ${maxBytes}-byte limit: ${filePath}`);
+  }
+  // biome-ignore lint/suspicious/noBitwiseOperators: Node combines open flags as a bit mask.
+  const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  let bytes = 0;
+  let lines = 0;
+  let pending = '';
+  const emitCompleteLines = (): void => {
+    let separatorIndex = pending.indexOf('\n');
+    while (separatorIndex >= 0) {
+      const line = pending.slice(0, separatorIndex).replace(TRAILING_CARRIAGE_RETURN, '');
+      if (Buffer.byteLength(line, 'utf8') > maxLineBytes) {
+        throw new Error(`History input contains a line exceeding its ${maxLineBytes}-byte limit: ${filePath}`);
+      }
+      visit(line);
+      lines++;
+      pending = pending.slice(separatorIndex + 1);
+      separatorIndex = pending.indexOf('\n');
+    }
+    if (Buffer.byteLength(pending, 'utf8') > maxLineBytes) {
+      throw new Error(`History input contains a line exceeding its ${maxLineBytes}-byte limit: ${filePath}`);
+    }
+  };
+  try {
+    const opened = fs.fstatSync(descriptor);
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) {
+      throw new Error(`History input changed while it was opened: ${filePath}`);
+    }
+    while (bytes <= maxBytes) {
+      const chunk = Buffer.alloc(Math.min(64 * 1024, maxBytes + 1 - bytes));
+      const bytesRead = fs.readSync(descriptor, chunk, 0, chunk.length, null);
+      if (bytesRead === 0) {
+        break;
+      }
+      bytes += bytesRead;
+      if (bytes > maxBytes) {
+        throw new Error(`History input exceeds its ${maxBytes}-byte limit: ${filePath}`);
+      }
+      pending += decoder.decode(chunk.subarray(0, bytesRead), { stream: true });
+      emitCompleteLines();
+    }
+    pending += decoder.decode();
+    emitCompleteLines();
+    if (pending.length > 0) {
+      visit(pending.replace(TRAILING_CARRIAGE_RETURN, ''));
+      lines++;
+    }
+    const after = fs.lstatSync(filePath);
+    if (after.isSymbolicLink() || after.dev !== opened.dev || after.ino !== opened.ino) {
+      throw new Error(`History input changed while it was read: ${filePath}`);
+    }
+    return { bytes, lines };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+};
+
 export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStorage => ({
   home,
   exists: (filePath) =>
@@ -93,6 +170,17 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
     Effect.try({
       try: () => readRegularFileText(filePath, maxBytes),
       catch: localHistoryError('readText', { path: filePath }),
+    }),
+  readLines: (filePath, visit, limits = {}) =>
+    Effect.try({
+      try: () =>
+        visitRegularFileLines(
+          filePath,
+          visit,
+          limits.maxBytes ?? HISTORY_FILE_MAX_BYTES,
+          limits.maxLineBytes ?? HISTORY_LINE_MAX_BYTES,
+        ),
+      catch: localHistoryError('readLines', { path: filePath }),
     }),
   readDir: (dirPath) =>
     Effect.try({

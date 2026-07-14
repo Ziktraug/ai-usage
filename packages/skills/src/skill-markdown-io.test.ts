@@ -17,7 +17,8 @@ import {
 } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
-import { maxSkillMarkdownBytes, parseSkillMarkdownWriteInput, readSkillMarkdown, writeSkillMarkdown } from '.';
+import { maxSkillMarkdownBytes } from './contracts';
+import { parseSkillMarkdownWriteInput, readSkillMarkdown, writeSkillMarkdown } from './skill-markdown-io';
 
 const writeSourceSkill = async (sourceRepoPath: string, skillName: string, content = '# Skill\n') => {
   const skillPath = path.join(sourceRepoPath, 'skills', skillName);

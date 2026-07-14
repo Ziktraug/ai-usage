@@ -130,8 +130,6 @@ description: Helps with adapter tests
         configReads: [] as { configCwd: string; home: string }[],
         configWrites: [] as string[],
         projectSourceReads: [] as { configCwd?: string; home: string }[],
-        workflowHomes: [] as string[],
-        workflowNames: [] as string[],
       };
       const adapter = createSkillsServerAdapter({
         ...baseDependencies,
@@ -149,53 +147,6 @@ description: Helps with adapter tests
         updateConfig: (input) => {
           calls.configWrites.push(input.storage.home);
           return baseDependencies.updateConfig(input);
-        },
-        workflows: {
-          ...baseDependencies.workflows,
-          createTargetDirectory: (input) => {
-            calls.workflowNames.push('createTargetDirectory');
-            return baseDependencies.workflows.createTargetDirectory(input);
-          },
-          loadSnapshot: (input) => {
-            calls.workflowHomes.push(input.homePath);
-            calls.workflowNames.push('loadSnapshot');
-            return baseDependencies.workflows.loadSnapshot(input);
-          },
-          previewReconcileAll: (input) => {
-            calls.workflowHomes.push(input.homePath);
-            calls.workflowNames.push('previewReconcileAll');
-            return baseDependencies.workflows.previewReconcileAll(input);
-          },
-          readMarkdown: (input) => {
-            calls.workflowNames.push('readMarkdown');
-            return baseDependencies.workflows.readMarkdown(input);
-          },
-          reconcileAll: (input) => {
-            calls.workflowHomes.push(input.homePath);
-            calls.workflowNames.push('reconcileAll');
-            return baseDependencies.workflows.reconcileAll(input);
-          },
-          reconcileSkill: (input) => {
-            calls.workflowHomes.push(input.homePath);
-            calls.workflowNames.push('reconcileSkill');
-            return baseDependencies.workflows.reconcileSkill(input);
-          },
-          scanProjects: (input) => {
-            calls.workflowNames.push('scanProjects');
-            return baseDependencies.workflows.scanProjects(input);
-          },
-          toggleSkill: (input) => {
-            calls.workflowNames.push('toggleSkill');
-            return baseDependencies.workflows.toggleSkill(input);
-          },
-          writeConfig: (input) => {
-            calls.workflowNames.push('writeConfig');
-            return baseDependencies.workflows.writeConfig(input);
-          },
-          writeMarkdown: (input) => {
-            calls.workflowNames.push('writeMarkdown');
-            return baseDependencies.workflows.writeMarkdown(input);
-          },
         },
       });
 
@@ -265,21 +216,6 @@ description: Helps with adapter tests
       expect(calls.configReads.every((call) => call.configCwd === configCwd && call.home === home)).toBe(true);
       expect(calls.configWrites).toEqual([home]);
       expect(calls.projectSourceReads).toEqual([{ configCwd, home }]);
-      expect(calls.workflowHomes.every((workflowHome) => workflowHome === home)).toBe(true);
-      expect(new Set(calls.workflowNames)).toEqual(
-        new Set([
-          'createTargetDirectory',
-          'loadSnapshot',
-          'previewReconcileAll',
-          'readMarkdown',
-          'reconcileAll',
-          'reconcileSkill',
-          'scanProjects',
-          'toggleSkill',
-          'writeConfig',
-          'writeMarkdown',
-        ]),
-      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

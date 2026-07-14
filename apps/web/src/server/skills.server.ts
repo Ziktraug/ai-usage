@@ -17,28 +17,17 @@ import type {
   SkillManagementConfigDocument,
   SkillManagementSnapshot,
   SkillMarkdownWriteInput,
-  SkillsApplicationWorkflows,
   SkillTargetDirectoryInput,
   SkillToggleInput,
 } from '@ai-usage/skills';
 import {
   createSkillsApplication,
-  createSkillTargetDirectory,
-  loadSkillManagementSnapshot,
   parseSkillConfigInput,
   parseSkillMarkdownWriteInput,
   parseSkillName,
   parseSkillTargetDirectoryInput,
   parseSkillToggleInput,
-  previewReconcileAllActiveSkills,
   projectSkillDirectories,
-  readSkillMarkdown,
-  reconcileAllActiveSkills,
-  reconcileSkill,
-  scanProjectSkills,
-  toggleSkillEnabled,
-  writeSkillManagementConfig,
-  writeSkillMarkdown,
 } from '@ai-usage/skills';
 import { Cause, Effect, Option, Runtime } from 'effect';
 import { runKnownProjectSourcesRunner } from './known-project-sources-runner.server';
@@ -331,7 +320,6 @@ export interface SkillsServerAdapterDependencies {
   readKnownProjectSources: (input: KnownProjectSourcesReadInput) => Promise<KnownLocalProjectSourcesResult>;
   storage: LocalHistoryStorageService;
   updateConfig: (input: SkillsConfigUpdateInput) => Promise<AiUsageConfig>;
-  workflows: SkillsApplicationWorkflows;
 }
 
 const runAdapterOperation = async <T>(operation: () => Promise<T>): Promise<SkillsServerResult<T>> => {
@@ -364,20 +352,17 @@ export const createSkillsServerAdapter = (dependencies: SkillsServerAdapterDepen
     });
   };
 
-  const application = createSkillsApplication(
-    {
-      homePath: dependencies.storage.home,
-      projectPaths: async () => (await readKnownProjectPaths()).map((project) => project.path),
-      readConfig: async (): Promise<SkillManagementConfigDocument> => ({ ...(await loadConfig()) }),
-      writeConfig: async (nextConfig: SkillManagementConfigDocument) => {
-        await dependencies.updateConfig({
-          storage: dependencies.storage,
-          update: (currentConfig) => ({ ...currentConfig, skills: nextConfig.skills }),
-        });
-      },
+  const application = createSkillsApplication({
+    homePath: dependencies.storage.home,
+    projectPaths: async () => (await readKnownProjectPaths()).map((project) => project.path),
+    readConfig: async (): Promise<SkillManagementConfigDocument> => ({ ...(await loadConfig()) }),
+    writeConfig: async (nextConfig: SkillManagementConfigDocument) => {
+      await dependencies.updateConfig({
+        storage: dependencies.storage,
+        update: (currentConfig) => ({ ...currentConfig, skills: nextConfig.skills }),
+      });
     },
-    dependencies.workflows,
-  );
+  });
 
   const clientReconcileResult = (result: Awaited<ReturnType<typeof application.reconcileAll>>) => ({
     actions: result.actions,
@@ -439,18 +424,6 @@ export const createSkillsServerDependencies = (
     storage: options.storage ?? createLocalHistoryStorage(),
     updateConfig: ({ storage, update }) =>
       Effect.runPromise(updateAiUsageConfig(update).pipe(Effect.provideService(LocalHistoryStorage, storage))),
-    workflows: {
-      createTargetDirectory: createSkillTargetDirectory,
-      loadSnapshot: loadSkillManagementSnapshot,
-      previewReconcileAll: previewReconcileAllActiveSkills,
-      readMarkdown: readSkillMarkdown,
-      reconcileAll: reconcileAllActiveSkills,
-      reconcileSkill,
-      scanProjects: scanProjectSkills,
-      toggleSkill: toggleSkillEnabled,
-      writeConfig: writeSkillManagementConfig,
-      writeMarkdown: writeSkillMarkdown,
-    },
   };
 };
 

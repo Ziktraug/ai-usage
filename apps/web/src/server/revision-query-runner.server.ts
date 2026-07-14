@@ -37,23 +37,23 @@ import { runReportPayloadArtifactProcess, withReportRevisionDirectoryForServer }
 import { resolveReportRuntimePaths } from './report-runtime-paths.server';
 
 export type RevisionQueryKind = FocusedReportQueryKind | 'campaign-children' | 'neighbors' | 'sessions';
+type RevisionQueryResult =
+  | FocusedBreakdownResult
+  | FocusedOverviewResult
+  | FocusedSupportResult
+  | SessionCampaignChildrenResult
+  | SessionNeighborResult
+  | SessionPageResult;
 
-interface RevisionRequestByKind {
-  breakdown: FocusedBreakdownRequest;
-  'campaign-children': SessionCampaignChildrenRequest;
-  neighbors: SessionNeighborRequest;
-  overview: FocusedOverviewRequest;
-  sessions: SessionQueryRequest;
-  support: FocusedRevisionRequest;
+interface ParsedRevisionRequest<Result extends RevisionQueryResult> {
+  fingerprint: string;
+  parseResult(serialized: string): Result;
+  revision: ReportRevision;
+  serializedRequest: string;
 }
 
-interface RevisionResultByKind {
-  breakdown: FocusedBreakdownResult;
-  'campaign-children': SessionCampaignChildrenResult;
-  neighbors: SessionNeighborResult;
-  overview: FocusedOverviewResult;
-  sessions: SessionPageResult;
-  support: FocusedSupportResult;
+interface RevisionQuerySpec<Result extends RevisionQueryResult> {
+  parse(input: unknown): ParsedRevisionRequest<Result>;
 }
 
 const configuredRoot = process.env.AI_USAGE_ROOT_DIR;
@@ -62,125 +62,146 @@ const { revisionQueryRunner, rootDir } = resolveReportRuntimePaths({
   ...(configuredRoot === undefined ? {} : { configuredRoot }),
 });
 
-const parseRequest = <Kind extends RevisionQueryKind>(
-  kind: Kind,
-  input: RevisionRequestByKind[Kind],
-): RevisionRequestByKind[Kind] => {
-  if (kind === 'breakdown') {
-    return parseFocusedBreakdownRequest(input) as RevisionRequestByKind[Kind];
-  }
-  if (kind === 'overview') {
-    return parseFocusedOverviewRequest(input) as RevisionRequestByKind[Kind];
-  }
-  if (kind === 'support') {
-    return parseFocusedRevisionRequest(input) as RevisionRequestByKind[Kind];
-  }
-  if (kind === 'sessions') {
-    return parseSessionQueryRequest(input) as RevisionRequestByKind[Kind];
-  }
-  if (kind === 'campaign-children') {
-    return parseSessionCampaignChildrenRequest(input) as RevisionRequestByKind[Kind];
-  }
-  return parseSessionNeighborRequest(input) as RevisionRequestByKind[Kind];
+const jsonValue = (serialized: string): unknown => JSON.parse(serialized);
+
+const revisionQuerySpecs: {
+  breakdown: RevisionQuerySpec<FocusedBreakdownResult>;
+  'campaign-children': RevisionQuerySpec<SessionCampaignChildrenResult>;
+  neighbors: RevisionQuerySpec<SessionNeighborResult>;
+  overview: RevisionQuerySpec<FocusedOverviewResult>;
+  sessions: RevisionQuerySpec<SessionPageResult>;
+  support: RevisionQuerySpec<FocusedSupportResult>;
+} = {
+  breakdown: {
+    parse: (input) => {
+      const request = parseFocusedBreakdownRequest(input);
+      return {
+        fingerprint: focusedBreakdownFingerprint(request),
+        parseResult: (serialized) => parseFocusedReportQueryResult('breakdown', jsonValue(serialized), request),
+        revision: parseReportRevision(request.query.revision),
+        serializedRequest: JSON.stringify(request),
+      };
+    },
+  },
+  'campaign-children': {
+    parse: (input) => {
+      const request = parseSessionCampaignChildrenRequest(input);
+      return {
+        fingerprint: sessionCampaignChildrenFingerprint(request),
+        parseResult: (serialized) => parseSessionCampaignChildrenResult(jsonValue(serialized), request),
+        revision: parseReportRevision(request.query.revision),
+        serializedRequest: JSON.stringify(request),
+      };
+    },
+  },
+  neighbors: {
+    parse: (input) => {
+      const request = parseSessionNeighborRequest(input);
+      return {
+        fingerprint: sessionNeighborFingerprint(request),
+        parseResult: (serialized) => parseSessionNeighborResult(jsonValue(serialized), request),
+        revision: parseReportRevision(request.query.revision),
+        serializedRequest: JSON.stringify(request),
+      };
+    },
+  },
+  overview: {
+    parse: (input) => {
+      const request = parseFocusedOverviewRequest(input);
+      return {
+        fingerprint: focusedOverviewFingerprint(request),
+        parseResult: (serialized) => parseFocusedReportQueryResult('overview', jsonValue(serialized), request),
+        revision: parseReportRevision(request.query.revision),
+        serializedRequest: JSON.stringify(request),
+      };
+    },
+  },
+  sessions: {
+    parse: (input) => {
+      const request = parseSessionQueryRequest(input);
+      return {
+        fingerprint: sessionQueryFingerprint(request),
+        parseResult: (serialized) => parseSessionPageResult(jsonValue(serialized), request),
+        revision: parseReportRevision(request.revision),
+        serializedRequest: JSON.stringify(request),
+      };
+    },
+  },
+  support: {
+    parse: (input) => {
+      const request = parseFocusedRevisionRequest(input);
+      return {
+        fingerprint: focusedRevisionFingerprint('support', request),
+        parseResult: (serialized) => parseFocusedReportQueryResult('support', jsonValue(serialized), request),
+        revision: parseReportRevision(request.revision),
+        serializedRequest: JSON.stringify(request),
+      };
+    },
+  },
 };
 
-const requestRevision = <Kind extends RevisionQueryKind>(
-  kind: Kind,
-  request: RevisionRequestByKind[Kind],
-): ReportRevision => {
-  if (kind === 'sessions') {
-    return parseReportRevision((request as SessionQueryRequest).revision);
-  }
-  if (kind === 'campaign-children') {
-    return parseReportRevision((request as SessionCampaignChildrenRequest).query.revision);
-  }
-  if (kind === 'neighbors') {
-    return parseReportRevision((request as SessionNeighborRequest).query.revision);
-  }
-  if (kind === 'overview' || kind === 'breakdown') {
-    return parseReportRevision((request as FocusedOverviewRequest | FocusedBreakdownRequest).query.revision);
-  }
-  return parseReportRevision((request as FocusedRevisionRequest).revision);
-};
-
-const requestFingerprint = <Kind extends RevisionQueryKind>(
-  kind: Kind,
-  request: RevisionRequestByKind[Kind],
-): string => {
-  if (kind === 'sessions') {
-    return sessionQueryFingerprint(request as SessionQueryRequest);
-  }
-  if (kind === 'campaign-children') {
-    return sessionCampaignChildrenFingerprint(request as SessionCampaignChildrenRequest);
-  }
-  if (kind === 'neighbors') {
-    return sessionNeighborFingerprint(request as SessionNeighborRequest);
-  }
-  if (kind === 'overview') {
-    return focusedOverviewFingerprint(request as FocusedOverviewRequest);
-  }
-  if (kind === 'breakdown') {
-    return focusedBreakdownFingerprint(request as FocusedBreakdownRequest);
-  }
-  return focusedRevisionFingerprint(kind, request as FocusedRevisionRequest);
-};
-
-const parseResult = <Kind extends RevisionQueryKind>(
-  kind: Kind,
-  request: RevisionRequestByKind[Kind],
-  serialized: string,
-): RevisionResultByKind[Kind] => {
-  const value: unknown = JSON.parse(serialized);
-  if (kind === 'sessions') {
-    return parseSessionPageResult(value, request as SessionQueryRequest) as RevisionResultByKind[Kind];
-  }
-  if (kind === 'campaign-children') {
-    return parseSessionCampaignChildrenResult(
-      value,
-      request as SessionCampaignChildrenRequest,
-    ) as RevisionResultByKind[Kind];
-  }
-  if (kind === 'neighbors') {
-    return parseSessionNeighborResult(value, request as SessionNeighborRequest) as RevisionResultByKind[Kind];
-  }
-  return parseFocusedReportQueryResult(
-    kind,
-    value,
-    request as FocusedOverviewRequest | FocusedBreakdownRequest | FocusedRevisionRequest,
-  ) as RevisionResultByKind[Kind];
-};
-
-export const runRevisionQueryForServer = async <Kind extends RevisionQueryKind>(
-  kind: Kind,
-  input: RevisionRequestByKind[Kind],
-): Promise<SessionQueryServerResult<RevisionResultByKind[Kind]>> => {
-  const request = parseRequest(kind, input);
-  const revision = requestRevision(kind, request);
-  const fingerprint = requestFingerprint(kind, request);
+export function runRevisionQueryForServer(
+  kind: 'breakdown',
+  input: FocusedBreakdownRequest,
+): Promise<SessionQueryServerResult<FocusedBreakdownResult>>;
+export function runRevisionQueryForServer(
+  kind: 'campaign-children',
+  input: SessionCampaignChildrenRequest,
+): Promise<SessionQueryServerResult<SessionCampaignChildrenResult>>;
+export function runRevisionQueryForServer(
+  kind: 'neighbors',
+  input: SessionNeighborRequest,
+): Promise<SessionQueryServerResult<SessionNeighborResult>>;
+export function runRevisionQueryForServer(
+  kind: 'overview',
+  input: FocusedOverviewRequest,
+): Promise<SessionQueryServerResult<FocusedOverviewResult>>;
+export function runRevisionQueryForServer(
+  kind: 'sessions',
+  input: SessionQueryRequest,
+): Promise<SessionQueryServerResult<SessionPageResult>>;
+export function runRevisionQueryForServer(
+  kind: 'support',
+  input: FocusedRevisionRequest,
+): Promise<SessionQueryServerResult<FocusedSupportResult>>;
+export async function runRevisionQueryForServer(
+  kind: RevisionQueryKind,
+  input: unknown,
+): Promise<SessionQueryServerResult<RevisionQueryResult>> {
+  const request = revisionQuerySpecs[kind].parse(input);
   try {
-    const lease = await withReportRevisionDirectoryForServer(revision, async (revisionDirectory) => {
+    const lease = await withReportRevisionDirectoryForServer(request.revision, async (revisionDirectory) => {
       const result = await runReportPayloadArtifactProcess({
-        args: [revisionQueryRunner, revisionDirectory, kind, JSON.stringify(request)],
+        args: [revisionQueryRunner, revisionDirectory, kind, request.serializedRequest],
         command: 'bun',
         cwd: rootDir,
       });
-      return parseResult(kind, request, result.serializedPayload);
+      return request.parseResult(result.serializedPayload);
     });
     if (!lease.ok) {
       return {
-        error: { message: lease.error.message, revision, tag: 'RevisionExpired' },
+        error: { message: lease.error.message, revision: request.revision, tag: 'RevisionExpired' },
         ok: false,
-        requestFingerprint: fingerprint,
-        revision,
+        requestFingerprint: request.fingerprint,
+        revision: request.revision,
       };
     }
-    return { data: lease.value, ok: true, requestFingerprint: fingerprint, revision };
+    return {
+      data: lease.value,
+      ok: true,
+      requestFingerprint: request.fingerprint,
+      revision: request.revision,
+    };
   } catch (error) {
     return {
-      error: { message: error instanceof Error ? error.message : String(error), revision, tag: 'QueryFailed' },
+      error: {
+        message: error instanceof Error ? error.message : String(error),
+        revision: request.revision,
+        tag: 'QueryFailed',
+      },
       ok: false,
-      requestFingerprint: fingerprint,
-      revision,
+      requestFingerprint: request.fingerprint,
+      revision: request.revision,
     };
   }
-};
+}

@@ -183,7 +183,14 @@ const ManualImportProgressView = (props: { progress: ManualImportProgress }) => 
         <span>{leftLabel()}</span>
         <span>{rightLabel()}</span>
       </div>
-      <div class={progressTrack}>
+      <div
+        aria-label={isUploading() ? 'Manual import upload progress' : 'Manual import processing'}
+        aria-valuemax={100}
+        aria-valuemin={0}
+        aria-valuenow={isUploading() ? percent() : undefined}
+        class={progressTrack}
+        role="progressbar"
+      >
         <div
           class={progressFill}
           classList={{ [progressFillProcessing]: !isUploading() }}
@@ -270,6 +277,42 @@ const downloadJsonFile = (filename: string, text: string) => {
 const HTTP_OK_MIN = 200;
 const HTTP_OK_MAX = 300;
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const isNonNegativeSafeInteger = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
+
+const isImportResult = (value: unknown): boolean =>
+  isRecord(value) &&
+  ['deleted', 'inserted', 'superseded', 'unchanged', 'updated', 'warnings'].every((key) =>
+    isNonNegativeSafeInteger(value[key]),
+  );
+
+const isMachine = (value: unknown): boolean =>
+  isRecord(value) && typeof value.id === 'string' && value.id.length > 0 && typeof value.label === 'string';
+
+const isManualPreviewData = (value: unknown): value is ManualMergePreviewResult =>
+  isImportResult(value) &&
+  isRecord(value) &&
+  isNonNegativeSafeInteger(value.bytes) &&
+  typeof value.digest === 'string' &&
+  typeof value.generatedAt === 'string' &&
+  isMachine(value.machine) &&
+  isNonNegativeSafeInteger(value.rows) &&
+  isNonNegativeSafeInteger(value.storeGeneration) &&
+  typeof value.storeStateToken === 'string' &&
+  isNonNegativeSafeInteger(value.warningCount) &&
+  Array.isArray(value.warningItems) &&
+  value.warningItems.every((item) => typeof item === 'string');
+
+const isManualImportData = (value: unknown): value is ManualMergeImportResult =>
+  isRecord(value) &&
+  typeof value.generatedAt === 'string' &&
+  isMachine(value.machine) &&
+  isImportResult(value.result) &&
+  isNonNegativeSafeInteger(value.rows) &&
+  isNonNegativeSafeInteger(value.warnings);
+
 const isManualImportFailure = (value: unknown): value is Extract<ManualImportResult, { ok: false }> => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
@@ -282,7 +325,10 @@ const isManualImportFailure = (value: unknown): value is Extract<ManualImportRes
   return typeof error.tag === 'string' && typeof error.message === 'string';
 };
 
-const parseImportResponse = <Value,>(xhr: XMLHttpRequest): ManualOperationResult<Value> => {
+const parseImportResponse = <Value,>(
+  xhr: XMLHttpRequest,
+  isValue: (value: unknown) => value is Value,
+): ManualOperationResult<Value> => {
   if (xhr.status < HTTP_OK_MIN || xhr.status >= HTTP_OK_MAX) {
     try {
       const failure = JSON.parse(xhr.responseText) as unknown;
@@ -295,7 +341,14 @@ const parseImportResponse = <Value,>(xhr: XMLHttpRequest): ManualOperationResult
     return { ok: false, error: { tag: 'HttpError', message: `Manual import failed with HTTP ${xhr.status}.` } };
   }
   try {
-    return JSON.parse(xhr.responseText) as ManualOperationResult<Value>;
+    const response = JSON.parse(xhr.responseText) as unknown;
+    if (isManualImportFailure(response)) {
+      return response;
+    }
+    if (isRecord(response) && response.ok === true && isValue(response.data)) {
+      return { ok: true, data: response.data };
+    }
+    return { ok: false, error: { tag: 'InvalidResponse', message: 'The server returned an invalid response.' } };
   } catch {
     return { ok: false, error: { tag: 'InvalidResponse', message: 'The server returned an unreadable response.' } };
   }
@@ -307,6 +360,7 @@ const uploadManualMergeFile = <Value,>(
   file: File,
   action: 'preview' | 'confirm',
   onProgress: (progress: ManualImportProgress) => void,
+  isValue: (value: unknown) => value is Value,
   expected?: ManualMergePreviewResult,
 ): Promise<ManualOperationResult<Value>> =>
   new Promise((resolve) => {
@@ -333,7 +387,7 @@ const uploadManualMergeFile = <Value,>(
     xhr.upload.addEventListener('load', () => {
       onProgress({ phase: 'processing', fileName: file.name, fileSize: file.size, startedAt: Date.now() });
     });
-    xhr.addEventListener('load', () => resolve(parseImportResponse<Value>(xhr)));
+    xhr.addEventListener('load', () => resolve(parseImportResponse(xhr, isValue)));
     xhr.addEventListener('error', () =>
       resolve({ ok: false, error: { tag: 'NetworkError', message: 'Network error during manual import.' } }),
     );
@@ -382,7 +436,12 @@ function SyncRoute() {
       total: file.size,
     });
     try {
-      const next: ManualPreviewResult = await uploadManualMergeFile(file, 'preview', setManualImportProgress);
+      const next: ManualPreviewResult = await uploadManualMergeFile(
+        file,
+        'preview',
+        setManualImportProgress,
+        isManualPreviewData,
+      );
       if (next.ok) {
         setManualPreview({ data: next.data, file });
         setOperationMessage('Preview ready. Review the changes before confirming.');
@@ -415,6 +474,7 @@ function SyncRoute() {
         preview.file,
         'confirm',
         setManualImportProgress,
+        isManualImportData,
         preview.data,
       );
       if (next.ok) {

@@ -43,6 +43,14 @@ describe('Codex local history', () => {
           }),
         }),
       readDir: () => Effect.succeed([]),
+      readLines: (filePath) =>
+        Effect.fail(
+          new LocalHistoryError({
+            operation: 'readLines',
+            path: filePath,
+            cause: new Error('Unexpected fixture read'),
+          }),
+        ),
       readText: (filePath) =>
         Effect.fail(
           new LocalHistoryError({

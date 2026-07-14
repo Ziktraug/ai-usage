@@ -154,7 +154,10 @@ export const createSkillsApplication = (
       if (!target) {
         throw new Error(`Unknown skill target: ${targetId}`);
       }
-      await workflows.createTargetDirectory({ path: target.path });
+      await workflows.createTargetDirectory({
+        path: target.path,
+        privateStatePath: path.join(ports.homePath, '.config', 'ai-usage'),
+      });
       return readSnapshot();
     },
     previewReconcile: async () => workflows.previewReconcileAll(await snapshotInput()),

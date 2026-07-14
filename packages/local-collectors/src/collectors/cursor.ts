@@ -9,7 +9,7 @@ import { addNonNegativeSafeIntegers, parseOptionalNonNegativeSafeInteger } from 
 import { withPerfSpan } from '../perf';
 import { firstExisting, resolvePathCandidates } from '../platform-paths';
 import type { CollectorRow } from '../rtk-enrichment';
-import { safeJSON, usablePrompt } from '../text';
+import { isJsonObject, safeJSON, usablePrompt } from '../text';
 import { type CursorCsvOptions, collectCursorCsvTurns } from './cursor-csv';
 import { reconcileCursorSessions } from './cursor-reconcile';
 
@@ -17,29 +17,6 @@ interface KeyValueRow {
   key: string;
   value: string;
 }
-interface CursorBubbleData {
-  text?: string;
-  type?: number;
-}
-interface CursorComposerData {
-  createdAt?: number;
-  modelConfig?: {
-    model?: string;
-    modelName?: string;
-  };
-  name?: string;
-  totalLinesAdded?: number;
-  totalLinesRemoved?: number;
-}
-interface CursorTokenData {
-  tokenCount?: {
-    cacheReadTokens?: number;
-    cacheWriteTokens?: number;
-    inputTokens?: number;
-    outputTokens?: number;
-  };
-}
-
 const cursorTitleSource = (aiTitle: string | null | undefined, firstPrompt: string | null | undefined): TitleSource => {
   if (aiTitle) {
     return 'ai';
@@ -105,7 +82,7 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
             Effect.sync(() => {
               for (const row of composerRows) {
                 const id = row.key.slice('composerData:'.length);
-                const data = safeJSON<CursorComposerData>(row.value);
+                const data = safeJSON(row.value);
                 if (!data) {
                   continue;
                 }
@@ -115,9 +92,12 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
                 if (!(created.ok && added.ok && removed.ok)) {
                   continue;
                 }
+                const modelConfig = isJsonObject(data.modelConfig) ? data.modelConfig : null;
                 comp.set(id, {
-                  name: data.name || '',
-                  model: data.modelConfig?.modelName || data.modelConfig?.model || 'cursor',
+                  name: typeof data.name === 'string' ? data.name : '',
+                  model:
+                    (typeof modelConfig?.modelName === 'string' ? modelConfig.modelName : null) ??
+                    (typeof modelConfig?.model === 'string' ? modelConfig.model : 'cursor'),
                   created: created.value,
                   add: added.value,
                   del: removed.value,
@@ -138,8 +118,8 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
               for (const row of tokenRows) {
                 const parts = String(row.key).split(':');
                 const composerId = parts[1];
-                const data = safeJSON<CursorTokenData>(row.value);
-                const tokenCount = data?.tokenCount;
+                const data = safeJSON(row.value);
+                const tokenCount = isJsonObject(data?.tokenCount) ? data.tokenCount : null;
                 if (!(tokenCount && composerId)) {
                   continue;
                 }
@@ -196,14 +176,14 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
                 if (!(composerId && namedComposerIds.has(composerId))) {
                   continue;
                 }
-                const data = safeJSON<CursorBubbleData>(row.value);
+                const data = safeJSON(row.value);
                 if (data?.type !== 1) {
                   continue;
                 }
                 const current = naming.get(composerId) ?? { turns: 0, first: null };
                 current.turns++;
                 if (!current.first) {
-                  current.first = usablePrompt(data.text);
+                  current.first = usablePrompt(typeof data.text === 'string' ? data.text : null);
                 }
                 naming.set(composerId, current);
               }

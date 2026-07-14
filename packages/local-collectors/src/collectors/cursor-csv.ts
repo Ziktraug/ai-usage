@@ -94,27 +94,33 @@ const parseCsvLine = (line: string): string[] => {
   return cells;
 };
 
-const LINE_SEPARATOR = /\r?\n/;
-
-const parseCsv = (text: string, filePath: string) => {
-  const lines = text.split(LINE_SEPARATOR).filter((line) => line.length > 0);
-  if (!lines.length) {
-    return [];
-  }
-  const headers = parseCsvLine(lines[0] ?? '');
-  const missing = REQUIRED_HEADERS.filter((header) => !headers.includes(header));
-  if (missing.length) {
-    throw new Error(`Missing Cursor CSV columns: ${missing.join(', ')}`);
-  }
-  return lines.slice(1).map((line) => {
-    const values = parseCsvLine(line);
-    const row: Record<string, string> = {};
-    headers.forEach((header, index) => {
-      row[header] = values[index] ?? '';
+const visitCsvRows = (
+  storage: LocalHistoryStorageService,
+  filePath: string,
+  visit: (row: Record<string, string>) => void,
+): Effect.Effect<void, LocalHistoryError> =>
+  Effect.gen(function* () {
+    let headers: string[] | null = null;
+    yield* storage.readLines(filePath, (line) => {
+      if (line.length === 0) {
+        return;
+      }
+      if (headers === null) {
+        headers = parseCsvLine(line);
+        const missing = REQUIRED_HEADERS.filter((header) => !headers?.includes(header));
+        if (missing.length) {
+          throw new Error(`Missing Cursor CSV columns: ${missing.join(', ')}`);
+        }
+        return;
+      }
+      const values = parseCsvLine(line);
+      const row: Record<string, string> = {};
+      for (const [index, header] of headers.entries()) {
+        row[header] = values[index] ?? '';
+      }
+      visit({ ...row, __artifactPath: filePath });
     });
-    return { ...row, __artifactPath: filePath };
   });
-};
 
 const INTEGER_FIELD_PATTERN = /^\s*(?:\d+|\d{1,3}(?:,\d{3})+)\s*$/;
 const COST_FIELD_PATTERN = /^\s*\$?\d+(?:\.\d+)?\s*$/;
@@ -274,23 +280,18 @@ export const collectCursorCsvTurns = (
       if (!(yield* storage.exists(filePath).pipe(Effect.catchAll(() => Effect.succeed(false))))) {
         continue;
       }
-      const text = yield* storage.readText(filePath);
-      const rows = yield* Effect.try({
-        try: () => parseCsv(text, filePath),
-        catch: (cause) => csvError('parseCursorCsv', filePath, cause),
-      });
-      for (const row of rows) {
+      yield* visitCsvRows(storage, filePath, (row) => {
         const turn = rowToTurn(row, options.user);
         if (!turn) {
-          continue;
+          return;
         }
         const key = `${turn.date.toISOString()}|${turn.model}|${tokenTotal(turn.tokens)}|${turn.costActual}|${turn.costQuota}`;
         if (seen.has(key)) {
-          continue;
+          return;
         }
         seen.add(key);
         turns.push(turn);
-      }
+      }).pipe(Effect.mapError((error) => csvError('parseCursorCsv', filePath, error)));
     }
     return turns.sort((a, b) => a.date.getTime() - b.date.getTime());
   });

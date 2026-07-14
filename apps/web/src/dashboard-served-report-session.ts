@@ -101,14 +101,35 @@ export const createDashboardServedReportSession = (options: {
       return descriptor;
     },
     commit: (prepared, descriptor, destination) => {
+      const overviewDestination = { kind: 'overview' as const, ...prepared.overview };
+      const overviewValidation = options.focusedStore.canCommitRevision(descriptor.bootstrap, overviewDestination);
+      if (!overviewValidation.applied) {
+        throw new Error(`Focused report destination rejected: ${overviewValidation.reason}`);
+      }
+      if (prepared.breakdown) {
+        const currentRevisionValidation = options.focusedStore.canCommitRevision(descriptor.bootstrap, {
+          kind: 'sessions',
+        });
+        const breakdownValidation = options.focusedStore.canApplyBreakdown(
+          prepared.breakdown.request,
+          prepared.breakdown.result,
+          descriptor.revision,
+        );
+        if (!(currentRevisionValidation.applied && breakdownValidation.applied)) {
+          let reason = 'revision-mismatch';
+          if (!currentRevisionValidation.applied) {
+            reason = currentRevisionValidation.reason;
+          } else if (!breakdownValidation.applied) {
+            reason = breakdownValidation.reason;
+          }
+          throw new Error(`Focused Breakdown rejected: ${reason}`);
+        }
+      }
       if (prepared.sessions && !options.sessionCoordinator.canCommitPrepared(prepared.sessions)) {
         throw new Error('The prepared Sessions destination was superseded before commit');
       }
       batch(() => {
-        const overviewCommit = options.focusedStore.commitRevision(descriptor.bootstrap, {
-          kind: 'overview',
-          ...prepared.overview,
-        });
+        const overviewCommit = options.focusedStore.commitRevision(descriptor.bootstrap, overviewDestination);
         if (!overviewCommit.applied) {
           throw new Error(`Focused report destination rejected: ${overviewCommit.reason}`);
         }

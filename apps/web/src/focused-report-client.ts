@@ -205,6 +205,15 @@ export interface FocusedReportStore {
   applyBreakdown: (request: FocusedBreakdownRequest, result: FocusedBreakdownResult) => FocusedStoreApplyResult;
   applyOverview: (request: FocusedOverviewRequest, result: FocusedOverviewResult) => FocusedStoreApplyResult;
   breakdown: Accessor<FocusedBreakdownResult | undefined>;
+  canApplyBreakdown: (
+    request: FocusedBreakdownRequest,
+    result: FocusedBreakdownResult,
+    revision?: string,
+  ) => FocusedStoreApplyResult;
+  canCommitRevision: (
+    bootstrap: FocusedSupportResult,
+    destination: FocusedRevisionDestination,
+  ) => FocusedStoreApplyResult;
   commitRevision: (bootstrap: FocusedSupportResult, destination: FocusedRevisionDestination) => FocusedStoreApplyResult;
   dateDomain: Accessor<FocusedSupportResult['dateDomain']>;
   filterOptions: Accessor<FocusedSupportResult['filterOptions']>;
@@ -268,6 +277,35 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
     bootstrap: FocusedSupportResult,
     destination: FocusedRevisionDestination,
   ): FocusedStoreApplyResult => {
+    const validation = canCommitRevision(bootstrap, destination);
+    if (!validation.applied) {
+      return validation;
+    }
+    const currentRevision = revision();
+    if (currentRevision !== bootstrap.revision) {
+      supersededRevisions.add(currentRevision);
+    }
+    batch(() => {
+      setSnapshot({
+        bootstrap,
+        ...(destination.kind === 'breakdown' ? { breakdown: destination.result } : {}),
+        ...(destination.kind === 'overview' ? { overview: destination.result } : {}),
+      });
+      setAdvancedAnalysisCache(undefined);
+      setOverviewScopeFingerprint(
+        destination.kind === 'overview' ? focusedAdvancedAnalysisFingerprint(destination.request.query) : undefined,
+      );
+      if (destination.kind === 'overview') {
+        rememberAdvancedAnalysis(destination.request, destination.result);
+      }
+    });
+    return { applied: true };
+  };
+
+  function canCommitRevision(
+    bootstrap: FocusedSupportResult,
+    destination: FocusedRevisionDestination,
+  ): FocusedStoreApplyResult {
     if (bootstrap.requestFingerprint !== focusedRevisionFingerprint('support', { revision: bootstrap.revision })) {
       return { applied: false, reason: 'fingerprint-mismatch' };
     }
@@ -296,26 +334,8 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
         return { applied: false, reason: 'fingerprint-mismatch' };
       }
     }
-    const currentRevision = revision();
-    if (currentRevision !== bootstrap.revision) {
-      supersededRevisions.add(currentRevision);
-    }
-    batch(() => {
-      setSnapshot({
-        bootstrap,
-        ...(destination.kind === 'breakdown' ? { breakdown: destination.result } : {}),
-        ...(destination.kind === 'overview' ? { overview: destination.result } : {}),
-      });
-      setAdvancedAnalysisCache(undefined);
-      setOverviewScopeFingerprint(
-        destination.kind === 'overview' ? focusedAdvancedAnalysisFingerprint(destination.request.query) : undefined,
-      );
-      if (destination.kind === 'overview') {
-        rememberAdvancedAnalysis(destination.request, destination.result);
-      }
-    });
     return { applied: true };
-  };
+  }
 
   const applyOverview = (request: FocusedOverviewRequest, result: FocusedOverviewResult): FocusedStoreApplyResult => {
     if (result.revision !== revision() || request.query.revision !== revision()) {
@@ -339,11 +359,9 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
     request: FocusedBreakdownRequest,
     result: FocusedBreakdownResult,
   ): FocusedStoreApplyResult => {
-    if (result.revision !== revision() || request.query.revision !== revision()) {
-      return { applied: false, reason: 'revision-mismatch' };
-    }
-    if (result.requestFingerprint !== focusedBreakdownFingerprint(request)) {
-      return { applied: false, reason: 'fingerprint-mismatch' };
+    const validation = canApplyBreakdown(request, result);
+    if (!validation.applied) {
+      return validation;
     }
     if (breakdown() === result) {
       return { applied: true };
@@ -352,10 +370,26 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
     return { applied: true };
   };
 
+  const canApplyBreakdown = (
+    request: FocusedBreakdownRequest,
+    result: FocusedBreakdownResult,
+    expectedRevision = revision(),
+  ): FocusedStoreApplyResult => {
+    if (result.revision !== expectedRevision || request.query.revision !== expectedRevision) {
+      return { applied: false, reason: 'revision-mismatch' };
+    }
+    if (result.requestFingerprint !== focusedBreakdownFingerprint(request)) {
+      return { applied: false, reason: 'fingerprint-mismatch' };
+    }
+    return { applied: true };
+  };
+
   return {
     applyBreakdown,
     applyOverview,
     breakdown,
+    canApplyBreakdown,
+    canCommitRevision,
     dateDomain,
     filterOptions,
     hasAdvancedAnalysis,

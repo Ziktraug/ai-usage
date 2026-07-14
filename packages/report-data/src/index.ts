@@ -123,7 +123,7 @@ export interface StoredReportSourceFingerprint {
 
 export interface LocalReportRowsResult {
   collection: SelectedHarnessCollectionResult;
-  rows: Row[];
+  rows: SourcedRow[];
   sourceAuthorities: StoredSourceAuthority[];
   warnings: LocalHistoryWarning[];
 }
@@ -460,7 +460,7 @@ export const collectProjectedLocalReportRowsWithWarnings = (
         'aiUsage.report.projectGroups',
         Effect.sync(() =>
           buildProjectProjection(
-            (rows as SourcedRow[]).map((row, index) => ({
+            rows.map((row, index) => ({
               authority: sourceAuthorities[index] ?? 'portable-opaque',
               row,
             })),
@@ -504,7 +504,7 @@ const collectLocalReportAssemblyInput = (
         'aiUsage.report.projectGroups',
         Effect.sync(() =>
           buildProjectProjection(
-            (rows as SourcedRow[]).map((row, index) => ({
+            rows.map((row, index) => ({
               authority: sourceAuthorities[index] ?? 'portable-opaque',
               row,
             })),
@@ -604,7 +604,7 @@ export const createStoredReportPayload = (
         'aiUsage.report.projectStoredGroups',
         Effect.sync(() =>
           buildProjectProjection(
-            (stored.rows as SourcedRow[]).map((row, index) => ({
+            stored.rows.map((row, index) => ({
               authority: stored.sourceAuthorities[index] ?? 'portable-opaque',
               row,
             })),
@@ -702,7 +702,7 @@ export const createKnownLocalProjectSources = (
       }
 
       const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
-      const rows = stored.rows as SourcedRow[];
+      const rows = stored.rows;
       const localCandidates = authorizeRows(rows, 'local-observed');
       const projection = buildProjectProjection(
         localCandidates,
