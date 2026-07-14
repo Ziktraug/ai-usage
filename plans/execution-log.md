@@ -36,7 +36,7 @@ Exécutées sur la branche dédiée après les changements fonctionnels :
 - `bun x ultracite check` : succès, 356 fichiers, aucun correctif requis ;
 - `bun run lint` : succès ;
 - `bun run typecheck` : 16 tâches sur 16 ;
-- `bun run test` : 601 tests de packages et 8 tests d’outillage, aucun échec ;
+- `bun run test` : 603 tests de packages et 8 tests d’outillage, aucun échec ;
 - `bun run build` : 9 tâches sur 9 ;
 - `CI=1 bun run test:e2e` : 32 scénarios sur 32 ;
 - `CI=1 bun run test:e2e-production` : 4 scénarios sur 4 ;
@@ -79,12 +79,10 @@ Le lancement réel a révélé un défaut que les fixtures bornées ne déclench
 pas : un historique Codex supérieur au budget agrégé de 2 Gio faisait répondre
 la route `/` en HTTP 500 avec le seul message `An error has occurred`.
 
-La limite elle-même est conservée : elle protège la complétude et la mémoire du
-collecteur. Le défaut venait de `walkFiles`, qui lançait les dépassements de
-profondeur/complétude comme des défauts Effect non récupérables. Ils sont
-maintenant retournés dans le canal typé `LocalHistoryError`. Les couches
-collecteur/dataset peuvent donc produire l’avertissement Codex prévu et laisser
-le reste du rapport démarrer.
+Dans un premier correctif conservateur, la limite a été conservée et les
+dépassements de profondeur/complétude lancés par `walkFiles` ont été déplacés
+vers le canal typé `LocalHistoryError`. Les couches collecteur/dataset pouvaient
+ainsi produire un avertissement Codex et laisser le reste du rapport démarrer.
 
 Preuves du correctif :
 
@@ -103,3 +101,16 @@ Un rafraîchissement forcé sur l’historique réel de 2,55 Gio a ensuite réus
 3,6 s : 997 sessions Codex ont été analysées (922 hits de cache, 75 fichiers
 relus), 13 nouvelles lignes ont été insérées et aucun avertissement Codex n’a
 été produit.
+
+La revue croisée finale a ajouté deux garanties au correctif de capacité :
+
+- l’index `session_index.jsonl`, qui n’est pas un historique de session, garde
+  son plafond explicite de 1 Mio ;
+- un test traverse le collecteur Codex complet avec quatre sessions simulées de
+  600 Mio chacune, soit 2,4 Gio cumulés, et vérifie que les quatre lignes
+  d’usage sont publiées.
+
+Après ces garanties, un nouveau rafraîchissement forcé du chemin de démarrage
+réel a terminé en 2,18 s avec 3 724 lignes, dont 882 lignes Codex visibles, sans
+avertissement Codex. Ultracite, lint, typecheck 16/16, les 603 tests de packages,
+les 8 tests d’outillage et le build 9/9 passent.

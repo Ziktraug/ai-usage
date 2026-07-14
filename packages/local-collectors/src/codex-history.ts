@@ -5,6 +5,7 @@ import { actualCost, approximateApiCost } from '@ai-usage/report-core/usage-row'
 import { Effect } from 'effect';
 import type { CollectedSession } from './collected-session';
 import type { LocalHistoryError } from './errors';
+import { SMALL_HISTORY_JSON_MAX_BYTES } from './history-budgets';
 import {
   historyPath,
   LocalHistoryStorage,
@@ -167,12 +168,16 @@ const readCodexThreadNames: Effect.Effect<
       return names;
     }
 
-    yield* storage.readLines(indexPath, (line) => {
-      const event = safeJSON(line);
-      if (typeof event?.id === 'string' && typeof event.thread_name === 'string') {
-        names.set(event.id, event.thread_name);
-      }
-    });
+    yield* storage.readLines(
+      indexPath,
+      (line) => {
+        const event = safeJSON(line);
+        if (typeof event?.id === 'string' && typeof event.thread_name === 'string') {
+          names.set(event.id, event.thread_name);
+        }
+      },
+      { maxBytes: SMALL_HISTORY_JSON_MAX_BYTES },
+    );
     return names;
   }),
   (names) => ({ names: names.size }),
