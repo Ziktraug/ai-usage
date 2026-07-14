@@ -6,6 +6,8 @@ import path from 'node:path';
 import { Effect } from 'effect';
 import { createLocalHistoryStorage, readRegularFileText, walkFiles } from './local-history';
 
+const PREVIOUS_AGGREGATE_HISTORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024;
+
 test('reads exact-limit regular UTF-8 files and rejects limit+1 and symlinks', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-read-'));
   try {
@@ -62,6 +64,31 @@ test('bounds iterative history traversal and ignores symlink entries', async () 
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
   }
+});
+
+test('discovers large streaming histories without treating total bytes as resident memory', async () => {
+  const root = '/virtual/large-history';
+  const storage = {
+    ...createLocalHistoryStorage(root),
+    exists: () => Effect.succeed(true),
+    readDir: () =>
+      Effect.succeed([
+        {
+          isDirectory: false,
+          isRegularFile: true,
+          name: 'large-session.jsonl',
+          size: PREVIOUS_AGGREGATE_HISTORY_LIMIT_BYTES + 1,
+        },
+      ]),
+  };
+
+  await expect(Effect.runPromise(walkFiles(storage, root, () => true))).resolves.toEqual([
+    path.join(root, 'large-session.jsonl'),
+  ]);
+  const explicitlyBounded = await Effect.runPromise(
+    Effect.either(walkFiles(storage, root, () => true, { maxBytes: PREVIOUS_AGGREGATE_HISTORY_LIMIT_BYTES })),
+  );
+  expect(explicitlyBounded._tag).toBe('Left');
 });
 
 test('keeps one read-only SQLite snapshot and sees committed WAL rows', async () => {

@@ -6,8 +6,8 @@ import { Context, Effect, Layer } from 'effect';
 import { LocalHistoryError } from './errors';
 import {
   HISTORY_FILE_MAX_BYTES,
+  HISTORY_JSONL_MAX_BYTES,
   HISTORY_LINE_MAX_BYTES,
-  HISTORY_SCAN_MAX_BYTES,
   HISTORY_SCAN_MAX_DEPTH,
   HISTORY_SCAN_MAX_FILES,
 } from './history-budgets';
@@ -177,7 +177,7 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
         visitRegularFileLines(
           filePath,
           visit,
-          limits.maxBytes ?? HISTORY_FILE_MAX_BYTES,
+          limits.maxBytes ?? HISTORY_JSONL_MAX_BYTES,
           limits.maxLineBytes ?? HISTORY_LINE_MAX_BYTES,
         ),
       catch: localHistoryError('readLines', { path: filePath }),
@@ -244,7 +244,7 @@ export const walkFiles = (
       return [];
     }
 
-    const maxBytes = budgets.maxBytes ?? HISTORY_SCAN_MAX_BYTES;
+    const maxBytes = budgets.maxBytes;
     const maxDepth = budgets.maxDepth ?? HISTORY_SCAN_MAX_DEPTH;
     const maxFiles = budgets.maxFiles ?? HISTORY_SCAN_MAX_FILES;
     const files: string[] = [];
@@ -274,7 +274,7 @@ export const walkFiles = (
         } else if (entry.isRegularFile && include(entry.name, filePath)) {
           files.push(filePath);
           aggregateBytes += entry.size;
-          if (files.length > maxFiles || aggregateBytes > maxBytes) {
+          if (files.length > maxFiles || (maxBytes !== undefined && aggregateBytes > maxBytes)) {
             return yield* Effect.fail(
               new LocalHistoryError({
                 operation: 'walkFiles.completenessLimit',

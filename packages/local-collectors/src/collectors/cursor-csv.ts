@@ -3,6 +3,7 @@ import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import type { TokenCounts } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { LocalHistoryError } from '../errors';
+import { CURSOR_CSV_MAX_BYTES } from '../history-budgets';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from '../local-history';
 import { addNonNegativeSafeIntegers, parseNonNegativeFiniteNumber } from '../metric-validation';
 
@@ -101,25 +102,29 @@ const visitCsvRows = (
 ): Effect.Effect<void, LocalHistoryError> =>
   Effect.gen(function* () {
     let headers: string[] | null = null;
-    yield* storage.readLines(filePath, (line) => {
-      if (line.length === 0) {
-        return;
-      }
-      if (headers === null) {
-        headers = parseCsvLine(line);
-        const missing = REQUIRED_HEADERS.filter((header) => !headers?.includes(header));
-        if (missing.length) {
-          throw new Error(`Missing Cursor CSV columns: ${missing.join(', ')}`);
+    yield* storage.readLines(
+      filePath,
+      (line) => {
+        if (line.length === 0) {
+          return;
         }
-        return;
-      }
-      const values = parseCsvLine(line);
-      const row: Record<string, string> = {};
-      for (const [index, header] of headers.entries()) {
-        row[header] = values[index] ?? '';
-      }
-      visit({ ...row, __artifactPath: filePath });
-    });
+        if (headers === null) {
+          headers = parseCsvLine(line);
+          const missing = REQUIRED_HEADERS.filter((header) => !headers?.includes(header));
+          if (missing.length) {
+            throw new Error(`Missing Cursor CSV columns: ${missing.join(', ')}`);
+          }
+          return;
+        }
+        const values = parseCsvLine(line);
+        const row: Record<string, string> = {};
+        for (const [index, header] of headers.entries()) {
+          row[header] = values[index] ?? '';
+        }
+        visit({ ...row, __artifactPath: filePath });
+      },
+      { maxBytes: CURSOR_CSV_MAX_BYTES },
+    );
   });
 
 const INTEGER_FIELD_PATTERN = /^\s*(?:\d+|\d{1,3}(?:,\d{3})+)\s*$/;

@@ -12,6 +12,20 @@
 - **Status**: DONE
 - **Suggested branch**: `fix/012-local-history-io`
 
+## Post-implementation capacity amendment — 2026-07-14
+
+The initial 2 GiB aggregate discovery budget was removed after a real Codex
+history reached 2.55 GiB across roughly one thousand sessions. Aggregate bytes
+on disk are not resident memory now that JSONL parsing is incremental, and the
+limit excluded exactly the long-running sessions the product exists to report.
+
+Traversal remains bounded by depth and file count. JSONL files are visited one
+at a time with fatal UTF-8 decoding, an 8 MiB decoded-line ceiling, and a 1 GiB
+per-session file ceiling. Small JSON, caches, and Cursor CSV retain their own
+smaller explicit limits. Callers that need a task-specific aggregate byte limit
+may still inject `walkFiles(..., { maxBytes })`; such failures remain typed and
+recoverable.
+
 ## Executor instructions
 
 Read this plan completely. Compare the current commit with `17bcf28` and plan
