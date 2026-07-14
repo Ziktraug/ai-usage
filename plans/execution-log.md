@@ -44,3 +44,31 @@ Exécutées sur la branche dédiée après les changements fonctionnels :
 
 Les seuls messages non bloquants sont les avertissements Playwright/Bun sur la
 combinaison `NO_COLOR` et `FORCE_COLOR`.
+
+## Revue de clôture et corrections — 2026-07-14
+
+Une revue croisée Standards/Spécification a été exécutée après la première
+clôture. Elle a identifié des implémentations partielles qui auraient rendu la
+mention « tous les plans terminés » inexacte. Le commit `8e984a2` les corrige :
+
+- plan 012 : les JSONL Claude/Codex et les CSV Cursor passent désormais par un
+  visiteur UTF-8 incrémental, borné par fichier et par ligne, sans reconstruire
+  le fichier ou la liste complète des lignes ;
+- plan 013 : `safeJSON<T>` et son cast de confiance ont disparu ; les objets et
+  champs imbriqués provenant de JSON sont rétrécis à l’exécution avant usage ;
+- plan 014 : la réponse XHR d’import manuel est validée jusqu’aux données de
+  preview/confirmation, et la progression expose la sémantique ARIA attendue ;
+- plans 016–018 : le runner exact-révision associe chaque requête à son résultat
+  sans casts croisés, le rafraîchissement utilise `async/await`, et toutes les
+  destinations préparées sont validées avant le premier commit visible ;
+- plan 019 : création et application utilisent la même identité de verrou dans
+  `skills-projection-locks/` sous l’état privé, les parents sont revalidés sous
+  verrou, et les mutations brutes ne sont plus exportées par la racine du
+  package ni orchestrées par l’adaptateur web ;
+- les assertions `Row[] -> SourcedRow[]` ont été remplacées par le type réel du
+  résultat stocké.
+
+Contrôles ciblés après correction : Ultracite sans erreur, typecheck 16/16 et
+108 tests à risque (collecteurs, report-data, Skills et serveur web) réussis.
+Les preuves de suite complète ci-dessus sont rejouées une dernière fois après
+ce correctif avant la remise finale.
