@@ -72,3 +72,22 @@ Contrôles ciblés après correction : Ultracite sans erreur, typecheck 16/16 et
 108 tests à risque (collecteurs, report-data, Skills et serveur web) réussis.
 Les preuves de suite complète ci-dessus sont rejouées une dernière fois après
 ce correctif avant la remise finale.
+
+## Correctif de démarrage sur historique hors budget — 2026-07-14
+
+Le lancement réel a révélé un défaut que les fixtures bornées ne déclenchaient
+pas : un historique Codex supérieur au budget agrégé de 2 Gio faisait répondre
+la route `/` en HTTP 500 avec le seul message `An error has occurred`.
+
+La limite elle-même est conservée : elle protège la complétude et la mémoire du
+collecteur. Le défaut venait de `walkFiles`, qui lançait les dépassements de
+profondeur/complétude comme des défauts Effect non récupérables. Ils sont
+maintenant retournés dans le canal typé `LocalHistoryError`. Les couches
+collecteur/dataset peuvent donc produire l’avertissement Codex prévu et laisser
+le reste du rapport démarrer.
+
+Preuves du correctif :
+
+- test de régression rouge puis vert sur `collectHarnessDatasets -> walkFiles` ;
+- reproduction réelle `/` passée de HTTP 500 à HTTP 200 sur deux instances ;
+- Ultracite sans erreur, typecheck 16/16 et 76 tests ciblés réussis.
