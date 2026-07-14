@@ -33,10 +33,10 @@ Les décisions conditionnelles du plan 016 et les preuves spécifiques du plan
 
 Exécutées sur la branche dédiée après les changements fonctionnels :
 
-- `bun x ultracite check` : succès, 355 fichiers, aucun correctif requis ;
+- `bun x ultracite check` : succès, 356 fichiers, aucun correctif requis ;
 - `bun run lint` : succès ;
 - `bun run typecheck` : 16 tâches sur 16 ;
-- `bun run test` : 600 tests de packages et 8 tests d’outillage, aucun échec ;
+- `bun run test` : 601 tests de packages et 8 tests d’outillage, aucun échec ;
 - `bun run build` : 9 tâches sur 9 ;
 - `CI=1 bun run test:e2e` : 32 scénarios sur 32 ;
 - `CI=1 bun run test:e2e-production` : 4 scénarios sur 4 ;
