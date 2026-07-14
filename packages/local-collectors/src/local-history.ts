@@ -256,11 +256,13 @@ export const walkFiles = (
         break;
       }
       if (current.depth > maxDepth) {
-        throw new LocalHistoryError({
-          operation: 'walkFiles.depthLimit',
-          path: current.directory,
-          cause: new Error(`History scan exceeds its depth limit of ${maxDepth}.`),
-        });
+        return yield* Effect.fail(
+          new LocalHistoryError({
+            operation: 'walkFiles.depthLimit',
+            path: current.directory,
+            cause: new Error(`History scan exceeds its depth limit of ${maxDepth}.`),
+          }),
+        );
       }
       const entries = (yield* storage.readDir(current.directory)).sort((left, right) =>
         right.name.localeCompare(left.name),
@@ -273,11 +275,13 @@ export const walkFiles = (
           files.push(filePath);
           aggregateBytes += entry.size;
           if (files.length > maxFiles || aggregateBytes > maxBytes) {
-            throw new LocalHistoryError({
-              operation: 'walkFiles.completenessLimit',
-              path: dirPath,
-              cause: new Error('History scan exceeds its file or aggregate-byte limit.'),
-            });
+            return yield* Effect.fail(
+              new LocalHistoryError({
+                operation: 'walkFiles.completenessLimit',
+                path: dirPath,
+                cause: new Error('History scan exceeds its file or aggregate-byte limit.'),
+              }),
+            );
           }
         }
       }
