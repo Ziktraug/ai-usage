@@ -7,6 +7,7 @@ import { Effect } from 'effect';
 import { createLocalHistoryStorage, readRegularFileText, walkFiles } from './local-history';
 
 const PREVIOUS_AGGREGATE_HISTORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024;
+const SIMULATED_LARGE_SESSION_BYTES = 600 * 1024 * 1024;
 
 test('reads exact-limit regular UTF-8 files and rejects limit+1 and symlinks', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-read-'));
@@ -72,19 +73,20 @@ test('discovers large streaming histories without treating total bytes as reside
     ...createLocalHistoryStorage(root),
     exists: () => Effect.succeed(true),
     readDir: () =>
-      Effect.succeed([
-        {
+      Effect.succeed(
+        ['one', 'two', 'three', 'four'].map((name) => ({
           isDirectory: false,
           isRegularFile: true,
-          name: 'large-session.jsonl',
-          size: PREVIOUS_AGGREGATE_HISTORY_LIMIT_BYTES + 1,
-        },
-      ]),
+          name: `${name}.jsonl`,
+          size: SIMULATED_LARGE_SESSION_BYTES,
+        })),
+      ),
   };
 
-  await expect(Effect.runPromise(walkFiles(storage, root, () => true))).resolves.toEqual([
-    path.join(root, 'large-session.jsonl'),
-  ]);
+  const discovered = await Effect.runPromise(walkFiles(storage, root, () => true));
+  expect(discovered.sort()).toEqual(
+    ['four', 'one', 'three', 'two'].map((name) => path.join(root, `${name}.jsonl`)).sort(),
+  );
   const explicitlyBounded = await Effect.runPromise(
     Effect.either(walkFiles(storage, root, () => true, { maxBytes: PREVIOUS_AGGREGATE_HISTORY_LIMIT_BYTES })),
   );
