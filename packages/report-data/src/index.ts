@@ -59,14 +59,13 @@ import { Effect } from 'effect';
 import { withPerfSpan } from './perf';
 import { assembleReport, captureReport, type ReportAssemblyInput } from './report-assembly';
 
-export { captureReport, reportAssemblyInputFingerprint, reportCaptureFingerprint } from './report-assembly';
-
 export type {
   ProviderQuotaRefreshInput,
   ProviderQuotaRefreshResult,
   QueryLocalProviderQuotaHistoryInput,
 } from './provider-quota';
 export { queryLocalProviderQuotaHistory, refreshLocalProviderQuotas } from './provider-quota';
+export { captureReport, reportAssemblyInputFingerprint, reportCaptureFingerprint } from './report-assembly';
 
 const GIT_CONFIG_LINE_SEPARATOR = /\r?\n/;
 const GIT_REMOTE_HEADER_PATTERN = /^\s*\[remote\s+"([^"]+)"\]\s*$/;

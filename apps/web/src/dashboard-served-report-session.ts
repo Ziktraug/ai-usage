@@ -68,6 +68,21 @@ const overviewRequestFor = (destination: DashboardServedDestination, revision: s
   timeline: destination.timeline,
 });
 
+export const dashboardDestinationTimelineMatches = (
+  destination: DashboardServedDestination,
+  revision: string,
+  requestFingerprint: string | undefined,
+): boolean => {
+  if (!requestFingerprint) {
+    return false;
+  }
+  const request = overviewRequestFor(destination, revision);
+  return (
+    requestFingerprint === focusedOverviewFingerprint({ ...request, includeAdvanced: false }) ||
+    requestFingerprint === focusedOverviewFingerprint({ ...request, includeAdvanced: true })
+  );
+};
+
 const destinationFingerprint = (destination: DashboardServedDestination): string => {
   const fingerprintRevision = 'destination-snapshot';
   const overview = focusedOverviewFingerprint(overviewRequestFor(destination, fingerprintRevision));

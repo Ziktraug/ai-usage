@@ -34,6 +34,29 @@ test('uses one report range for the dashboard and activity chart', async ({ page
   await expect(chartOptions.getByText('Metric', { exact: true })).toBeVisible();
 });
 
+test('changes every chart option from its segmented controls', async ({ page }) => {
+  await page.goto('/');
+
+  const chartOptions = page.getByRole('region', { name: 'Date range' }).locator('details[aria-label="Chart options"]');
+  await chartOptions.locator('summary').click();
+
+  for (const option of ['Model', 'Provider', 'Project', 'Harness']) {
+    await chartOptions.getByRole('radio', { exact: true, name: option }).click();
+    await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
+  }
+
+  for (const option of ['Week', 'Month', 'Day']) {
+    await chartOptions.getByRole('radio', { exact: true, name: option }).click();
+    await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
+  }
+
+  for (const option of ['Share', 'Sessions', 'Estimated API value']) {
+    await chartOptions.getByRole('radio', { exact: true, name: option }).click();
+    await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
+  }
+  await expect(chartOptions.getByText('Harness · Day · Estimated API value', { exact: true })).toBeVisible();
+});
+
 test('commits preset, text, keyboard, and pointer report ranges to the URL', async ({ page }) => {
   await page.goto('/');
 

@@ -95,7 +95,11 @@ import {
   sortingStateFromSearch,
   toggleExactFieldFilter,
 } from './dashboard-search';
-import { createDashboardServedReportSession, type DashboardServedDestination } from './dashboard-served-report-session';
+import {
+  createDashboardServedReportSession,
+  type DashboardServedDestination,
+  dashboardDestinationTimelineMatches,
+} from './dashboard-served-report-session';
 import { ThemeToggle } from './dashboard-theme';
 import { type DateBounds, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
 import { createDateRangeController } from './date-range-controller';
@@ -671,11 +675,17 @@ export const Dashboard = (props: {
   restartServedDestination = () => refreshServedDestination();
   createEffect(() => {
     const destination = servedDestination();
-    if (!(clientReady() && destination && servedReportSession)) {
+    if (!(clientReady() && destination && servedReportSession && focusedStore)) {
       return;
     }
     batch(() => {
-      setFocusedTimelineLoading(!focusedStore?.overview());
+      setFocusedTimelineLoading(
+        !dashboardDestinationTimelineMatches(
+          destination,
+          focusedStore.revision(),
+          focusedStore.overview()?.requestFingerprint,
+        ),
+      );
       setAdvancedAnalysisLoading(destination.kind === 'overview' && destination.includeAdvanced);
       setSessionQueryLoading(destination.kind === 'sessions' && !servedSessionState());
     });
