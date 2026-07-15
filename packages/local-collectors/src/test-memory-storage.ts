@@ -54,6 +54,12 @@ export class TestMemoryStorage implements LocalHistoryStorage {
     return Effect.succeed(content);
   }
 
+  readConfigText(filePath: string, maxBytes?: number) {
+    // The in-memory fixture store has no symlinks, so config reads behave
+    // exactly like plain reads.
+    return this.readText(filePath, maxBytes);
+  }
+
   readLines(
     filePath: string,
     visit: (line: string) => void,

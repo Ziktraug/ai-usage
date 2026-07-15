@@ -27,6 +27,25 @@ test('reads exact-limit regular UTF-8 files and rejects limit+1 and symlinks', (
   }
 });
 
+test('readConfigText follows config symlinks while keeping the hardened target read', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-config-'));
+  try {
+    const storage = createLocalHistoryStorage(root);
+    const targetPath = path.join(root, 'settings.json');
+    fs.writeFileSync(targetPath, '{"cleanupPeriodDays":9999}');
+    const linkPath = path.join(root, 'settings-link.json');
+    fs.symlinkSync(targetPath, linkPath);
+
+    // Dotfiles managers install configs as symlinks; the config read resolves
+    // them where the history read (below) must keep rejecting them.
+    expect(Effect.runSync(storage.readConfigText(linkPath))).toBe('{"cleanupPeriodDays":9999}');
+    expect(() => Effect.runSync(storage.readConfigText(linkPath, 4))).toThrow();
+    expect(() => Effect.runSync(storage.readText(linkPath))).toThrow();
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test('visits UTF-8 lines incrementally and rejects oversized or invalid lines', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-lines-'));
   try {

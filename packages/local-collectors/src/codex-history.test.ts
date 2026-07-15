@@ -79,6 +79,14 @@ describe('Codex local history', () => {
             cause: new Error('Unexpected fixture read'),
           }),
         ),
+      readConfigText: (filePath) =>
+        Effect.fail(
+          new LocalHistoryError({
+            operation: 'readConfigText',
+            path: filePath,
+            cause: new Error('Unexpected fixture read'),
+          }),
+        ),
     };
 
     const sessions = await Effect.runPromise(
