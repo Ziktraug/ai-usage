@@ -1,3 +1,5 @@
+import type { LocalHistoryWarning } from './errors';
+
 export type MetricValidation<Value> = { ok: true; value: Value } | { ok: false };
 
 const invalidMetric: MetricValidation<never> = { ok: false };
@@ -44,3 +46,12 @@ export const parseFiniteTimestamp = (value: unknown): MetricValidation<Date> => 
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? { ok: true, value: date } : invalidMetric;
 };
+
+export const metricValidationWarning = (harness: string, rejectedMetricRecords: number): LocalHistoryWarning | null =>
+  rejectedMetricRecords > 0
+    ? {
+        harness,
+        operation: 'metricValidation',
+        message: `Rejected ${rejectedMetricRecords} malformed ${harness} metric record(s).`,
+      }
+    : null;

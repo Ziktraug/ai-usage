@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import { updateAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
 import { type ProjectGroupConfig, parseProjectGroupConfigs } from '@ai-usage/report-core/project-group';
-import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
+import { parseUsageReportPayload, type UsageReportPayload } from '@ai-usage/report-core/report-data';
 import { runConsistentStoredReportPayload, type StoredReportPayloadRequest } from '@ai-usage/report-data';
 import { MAX_REPORT_RUNNER_ARTIFACT_BYTES } from '@ai-usage/report-data/report-payload-artifact';
 import { Effect } from 'effect';
@@ -444,7 +444,7 @@ export const parseRunnerPayload = (stdout: string): UsageReportPayload => {
     }
     return result.payload;
   }
-  return parsed as UsageReportPayload;
+  return parseUsageReportPayload(parsed);
 };
 
 const parseJsonRunnerOutput = (stdout: string): unknown => {
@@ -494,13 +494,10 @@ export const parseRunnerCaptureResult = (serialized: string): ReportRunnerCaptur
   if (Object.keys(result).sort().join(',') !== 'captureFingerprint,payload,status,version') {
     throw new Error('Changed report capture result contains unknown fields');
   }
-  const payload = result.payload as Partial<UsageReportPayload> | undefined;
-  if (!(payload && Array.isArray(payload.rows) && typeof payload.generatedAt === 'string')) {
-    throw new Error('Changed report capture result payload is malformed');
-  }
+  const payload = parseUsageReportPayload(result.payload);
   return {
     captureFingerprint: result.captureFingerprint as string,
-    payload: payload as UsageReportPayload,
+    payload,
     status: 'changed',
     version: 1,
   };

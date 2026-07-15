@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  collectHarnessDatasets,
+  collectHarnessDatasetsResult,
   collectSelectedHarnessResults,
   collectSelectedHarnessRows,
   type HarnessSelection,
@@ -62,6 +62,7 @@ const GIT_REMOTE_URL_PATTERN = /^\s*url\s*=\s*(.+?)\s*$/;
 const GITHUB_HTTPS_REPO_PATTERN = /github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/;
 const GITHUB_SSH_REPO_PATTERN = /git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/;
 const GITDIR_FILE_PATTERN = /^\s*gitdir:\s*(.+?)\s*$/i;
+const METRIC_VALIDATION_MESSAGE_PATTERN = /^Rejected (\d+) malformed (.+) metric record\(s\)\.$/;
 const CLAUDE_WORKTREE_PATH_SEGMENT = '/.claude/worktrees/';
 const MAX_STABLE_REPORT_CAPTURE_ATTEMPTS = 3;
 
@@ -122,9 +123,9 @@ export interface StoredReportSourceFingerprint {
 }
 
 export interface LocalReportRowsResult {
+  authorizedRows: AuthorizedSourceRow[];
   collection: SelectedHarnessCollectionResult;
   rows: SourcedRow[];
-  sourceAuthorities: StoredSourceAuthority[];
   warnings: LocalHistoryWarning[];
 }
 
@@ -200,6 +201,22 @@ interface AuthorizedSourceRow {
 const authorizeRows = (rows: SourcedRow[], authority: SourceAuthority): AuthorizedSourceRow[] =>
   rows.map((row) => ({ authority, row }));
 
+const authorizeStoredRows = (stored: {
+  rows: SourcedRow[];
+  sourceAuthorities: StoredSourceAuthority[];
+}): AuthorizedSourceRow[] => {
+  if (stored.rows.length !== stored.sourceAuthorities.length) {
+    throw new Error('Stored report rows and source authorities must have the same length');
+  }
+  return stored.rows.map((row, index) => {
+    const authority = stored.sourceAuthorities[index];
+    if (!authority) {
+      throw new Error(`Stored report row ${index} is missing its source authority`);
+    }
+    return { authority, row };
+  });
+};
+
 type CanonicalProjectSourceResolver = (
   project: string,
   sourcePath: string,
@@ -263,14 +280,48 @@ const collectReportDatasets = (request: {
 }) => {
   const selection = datasetSelectionFor(request);
   if (!selection) {
-    return Effect.succeed(undefined);
+    return Effect.succeed({ datasets: undefined, warnings: [] as LocalHistoryWarning[] });
   }
-  const datasetEffect = collectHarnessDatasets({
+  const datasetEffect = collectHarnessDatasetsResult({
     includeCursor: selection.includeCursorCommitAttribution === true,
     includeProviderStatus: selection.includeProviderStatus === true,
     ...(request.machine === undefined ? {} : { machineId: request.machine.id, machineLabel: request.machine.label }),
   });
-  return Effect.map(datasetEffect, (datasets) => (Object.keys(datasets).length ? datasets : undefined));
+  return Effect.map(datasetEffect, ({ datasets, warnings }) => ({
+    datasets: Object.keys(datasets).length ? datasets : undefined,
+    warnings,
+  }));
+};
+
+const coalesceMetricValidationWarnings = (
+  warnings: (LocalHistoryWarning | UsageReportWarning)[],
+): (LocalHistoryWarning | UsageReportWarning)[] => {
+  const metricCounts = new Map<string, number>();
+  const otherWarnings: (LocalHistoryWarning | UsageReportWarning)[] = [];
+  for (const warning of warnings) {
+    const match =
+      warning.operation === 'metricValidation' ? warning.message.match(METRIC_VALIDATION_MESSAGE_PATTERN) : null;
+    const count = match?.[1] ? Number(match[1]) : Number.NaN;
+    const messageHarness = match?.[2];
+    if (!(warning.harness && messageHarness === warning.harness && Number.isSafeInteger(count) && count > 0)) {
+      otherWarnings.push(warning);
+      continue;
+    }
+    const combined = (metricCounts.get(warning.harness) ?? 0) + count;
+    if (!Number.isSafeInteger(combined)) {
+      otherWarnings.push(warning);
+      continue;
+    }
+    metricCounts.set(warning.harness, combined);
+  }
+  return [
+    ...otherWarnings,
+    ...[...metricCounts.entries()].map(([harness, count]) => ({
+      harness,
+      operation: 'metricValidation',
+      message: `Rejected ${count} malformed ${harness} metric record(s).`,
+    })),
+  ];
 };
 
 const mergeReportDatasets = (...datasets: (ReportDatasets | undefined)[]): ReportDatasets | undefined => {
@@ -361,7 +412,8 @@ export type ProjectedRow = SourcedRow & {
   rawProject: string;
 };
 
-export interface ProjectedLocalReportRowsResult extends Omit<LocalReportRowsResult, 'rows' | 'warnings'> {
+export interface ProjectedLocalReportRowsResult
+  extends Omit<LocalReportRowsResult, 'authorizedRows' | 'rows' | 'warnings'> {
   rows: ProjectedRow[];
   warnings: (LocalHistoryWarning | UsageReportWarning)[];
 }
@@ -428,8 +480,8 @@ export const collectLocalReportRowsWithWarnings = (
         rows: stored.rows.filter((row) => row.harness === harness.label),
       }));
       return {
+        authorizedRows: authorizeStoredRows(stored),
         rows: stored.rows,
-        sourceAuthorities: stored.sourceAuthorities,
         warnings: collection.warnings,
         collection: { ...collection, rows: stored.rows, harnesses },
       };
@@ -451,7 +503,7 @@ export const collectProjectedLocalReportRowsWithWarnings = (
   withPerfSpan(
     'aiUsage.report.collectProjectedRowsWithWarnings',
     Effect.gen(function* () {
-      const { rows, sourceAuthorities, warnings, collection } = yield* collectLocalReportRowsWithWarnings({
+      const { authorizedRows, warnings, collection } = yield* collectLocalReportRowsWithWarnings({
         ...request,
         keepSource: true,
       });
@@ -459,14 +511,7 @@ export const collectProjectedLocalReportRowsWithWarnings = (
       const projection = yield* withPerfSpan(
         'aiUsage.report.projectGroups',
         Effect.sync(() =>
-          buildProjectProjection(
-            rows.map((row, index) => ({
-              authority: sourceAuthorities[index] ?? 'portable-opaque',
-              row,
-            })),
-            config.projectGroups ?? [],
-            config.projectAliases ?? [],
-          ),
+          buildProjectProjection(authorizedRows, config.projectGroups ?? [], config.projectAliases ?? []),
         ),
         (result) => ({
           groups: result.projectGroups.length,
@@ -477,7 +522,6 @@ export const collectProjectedLocalReportRowsWithWarnings = (
       return {
         collection,
         rows: projection.rows,
-        sourceAuthorities,
         warnings: [...warnings, ...projection.warnings],
       };
     }),
@@ -497,20 +541,13 @@ const collectLocalReportAssemblyInput = (
   withPerfSpan(
     'aiUsage.report.collectLocalAssemblyInput',
     Effect.gen(function* () {
-      const { rows, sourceAuthorities, warnings } = yield* collectLocalReportRowsWithWarnings(request);
+      const { authorizedRows, warnings } = yield* collectLocalReportRowsWithWarnings(request);
       const machine = yield* ensureMachineConfig;
       const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
       const projection = yield* withPerfSpan(
         'aiUsage.report.projectGroups',
         Effect.sync(() =>
-          buildProjectProjection(
-            rows.map((row, index) => ({
-              authority: sourceAuthorities[index] ?? 'portable-opaque',
-              row,
-            })),
-            config.projectGroups ?? [],
-            config.projectAliases ?? [],
-          ),
+          buildProjectProjection(authorizedRows, config.projectGroups ?? [], config.projectAliases ?? []),
         ),
         (result) => ({
           groups: result.projectGroups.length,
@@ -518,11 +555,12 @@ const collectLocalReportAssemblyInput = (
           warnings: result.warnings.length,
         }),
       );
-      const datasets = yield* withPerfSpan(
+      const datasetResult = yield* withPerfSpan(
         'aiUsage.report.collectDatasets',
         collectReportDatasets({ ...request, machine }),
-        (result) => ({ datasets: result ? Object.keys(result).length : 0 }),
+        (result) => ({ datasets: result.datasets ? Object.keys(result.datasets).length : 0 }),
       );
+      const { datasets } = datasetResult;
       const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
       return {
         configuredProjectGroups: config.projectGroups ?? [],
@@ -532,7 +570,7 @@ const collectLocalReportAssemblyInput = (
         options: request.options,
         projectGroups: projection.projectGroups,
         rows: projection.rows,
-        warnings: [...warnings, ...projection.warnings],
+        warnings: coalesceMetricValidationWarnings([...warnings, ...datasetResult.warnings, ...projection.warnings]),
       };
     }),
     (input) => ({
@@ -603,14 +641,7 @@ export const createStoredReportPayload = (
       const projection = yield* withPerfSpan(
         'aiUsage.report.projectStoredGroups',
         Effect.sync(() =>
-          buildProjectProjection(
-            stored.rows.map((row, index) => ({
-              authority: stored.sourceAuthorities[index] ?? 'portable-opaque',
-              row,
-            })),
-            config.projectGroups ?? [],
-            config.projectAliases ?? [],
-          ),
+          buildProjectProjection(authorizeStoredRows(stored), config.projectGroups ?? [], config.projectAliases ?? []),
         ),
         (result) => ({
           groups: result.projectGroups.length,
@@ -618,11 +649,12 @@ export const createStoredReportPayload = (
           warnings: result.warnings.length,
         }),
       );
-      const datasets = yield* withPerfSpan(
+      const datasetResult = yield* withPerfSpan(
         'aiUsage.report.collectStoredDatasets',
         collectReportDatasets({ ...request, machine }),
-        (result) => ({ datasets: result ? Object.keys(result).length : 0 }),
+        (result) => ({ datasets: result.datasets ? Object.keys(result.datasets).length : 0 }),
       );
+      const { datasets } = datasetResult;
       const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
       return yield* withPerfSpan(
         'aiUsage.report.serializeStoredPayload',
@@ -636,7 +668,7 @@ export const createStoredReportPayload = (
               options: request.options,
               projectGroups: projection.projectGroups,
               rows: projection.rows,
-              warnings: projection.warnings,
+              warnings: [...datasetResult.warnings, ...projection.warnings],
             }).payload,
         ),
         (payload) => ({
@@ -726,7 +758,8 @@ export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
   Effect.gen(function* () {
     const machine = request.machine ?? (yield* ensureMachineConfig);
     const { collection } = yield* collectConfiguredLocalRowsWithWarnings({ ...request, keepSource: true });
-    const datasets = yield* collectReportDatasets({ ...request, machine });
+    const datasetResult = yield* collectReportDatasets({ ...request, machine });
+    const { datasets } = datasetResult;
     const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
 
     return createUsageSnapshot({
@@ -734,7 +767,9 @@ export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
       rows: collection.rows,
       ...(request.generatedAt === undefined ? {} : { generatedAt: request.generatedAt }),
       ...(request.appVersion === undefined ? {} : { appVersion: request.appVersion }),
-      ...(collection.warnings.length ? { warnings: collection.warnings } : {}),
+      ...(collection.warnings.length || datasetResult.warnings.length
+        ? { warnings: coalesceMetricValidationWarnings([...collection.warnings, ...datasetResult.warnings]) }
+        : {}),
       ...(datasets === undefined ? {} : { datasets }),
       ...(facets === undefined ? {} : { facets }),
     });

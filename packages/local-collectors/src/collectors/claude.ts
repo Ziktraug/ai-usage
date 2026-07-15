@@ -3,11 +3,16 @@ import path from 'node:path';
 import { actualCost, approximateApiCost, tokenTotal } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
-import { collectorCachePath, reviveCollectorRows } from '../collector-cache';
+import { collectorCachePath, reviveCollectorRowsResult } from '../collector-cache';
 import type { LocalHistoryError, LocalHistoryWarning } from '../errors';
 import { COLLECTOR_CACHE_MAX_BYTES, SMALL_HISTORY_JSON_MAX_BYTES } from '../history-budgets';
 import { LocalHistoryStorage, walkFiles } from '../local-history';
-import { addNonNegativeSafeIntegers, parseOptionalNonNegativeSafeInteger } from '../metric-validation';
+import {
+  addNonNegativeSafeIntegers,
+  metricValidationWarning,
+  parseNonNegativeSafeInteger,
+  parseOptionalNonNegativeSafeInteger,
+} from '../metric-validation';
 import { withPerfSpan } from '../perf';
 import { type HarnessPaths, resolvePaths } from '../platform-paths';
 import { readPrivateJson, writePrivateJson } from '../private-storage';
@@ -29,10 +34,11 @@ interface FileFingerprint {
 }
 interface ClaudeCache {
   fingerprintKey: string | null;
+  rejectedMetricRecords: number;
   rows: CollectorRow[];
   version: number;
 }
-const CLAUDE_CACHE_VERSION = 3;
+const CLAUDE_CACHE_VERSION = 4;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -46,19 +52,26 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
     }
     const cachePath = claudeCachePath(storage);
     if (!fs.existsSync(cachePath)) {
-      return { fingerprintKey: null, rows: [], version: CLAUDE_CACHE_VERSION };
+      return { fingerprintKey: null, rejectedMetricRecords: 0, rows: [], version: CLAUDE_CACHE_VERSION };
     }
     const parsed = readPrivateJson(cachePath, COLLECTOR_CACHE_MAX_BYTES) as {
       fingerprintKey?: unknown;
+      rejectedMetricRecords?: unknown;
       rows?: unknown;
       version?: number;
     };
     if (parsed.version !== CLAUDE_CACHE_VERSION) {
-      return { fingerprintKey: null, rows: [], version: CLAUDE_CACHE_VERSION };
+      return { fingerprintKey: null, rejectedMetricRecords: 0, rows: [], version: CLAUDE_CACHE_VERSION };
+    }
+    const revived = reviveCollectorRowsResult(parsed.rows);
+    const rejectedMetricRecords = parseNonNegativeSafeInteger(parsed.rejectedMetricRecords);
+    if (!(rejectedMetricRecords.ok && revived.valid && revived.rejectedMetricRecords === 0)) {
+      return { fingerprintKey: null, rejectedMetricRecords: 0, rows: [], version: CLAUDE_CACHE_VERSION };
     }
     return {
       fingerprintKey: typeof parsed.fingerprintKey === 'string' ? parsed.fingerprintKey : null,
-      rows: reviveCollectorRows(parsed.rows),
+      rejectedMetricRecords: rejectedMetricRecords.value,
+      rows: revived.rows,
       version: CLAUDE_CACHE_VERSION,
     };
   } catch {
@@ -66,12 +79,17 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
   }
 };
 
-const writeClaudeCache = (storage: LocalHistoryStorage, fingerprintKey: string | null, rows: CollectorRow[]) => {
+const writeClaudeCache = (
+  storage: LocalHistoryStorage,
+  fingerprintKey: string | null,
+  rows: CollectorRow[],
+  rejectedMetricRecords: number,
+) => {
   if (!fingerprintKey) {
     return false;
   }
   const cachePath = claudeCachePath(storage);
-  const value = { fingerprintKey, rows, version: CLAUDE_CACHE_VERSION };
+  const value = { fingerprintKey, rejectedMetricRecords, rows, version: CLAUDE_CACHE_VERSION };
   if (Buffer.byteLength(JSON.stringify(value), 'utf8') > COLLECTOR_CACHE_MAX_BYTES) {
     return false;
   }
@@ -246,7 +264,12 @@ export const collectClaudeRetentionWarnings: Effect.Effect<LocalHistoryWarning[]
     ];
   });
 
-export const collectClaude = Effect.gen(function* () {
+export interface ClaudeCollectionResult {
+  rows: CollectorRow[];
+  warnings: LocalHistoryWarning[];
+}
+
+export const collectClaudeResult = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
   const paths = resolvePaths(storage);
   const dir = paths.claude.projectsDir;
@@ -266,9 +289,12 @@ export const collectClaude = Effect.gen(function* () {
     (value) => ({ enabled: value !== null, rows: value?.rows.length ?? 0 }),
   );
   if (cache?.fingerprintKey && cache.fingerprintKey === fingerprintKey) {
-    return yield* withPerfSpan('aiUsage.collect.claude.cache.hit', Effect.succeed(cache.rows), (rows) => ({
-      rows: rows.length,
-    }));
+    const warning = metricValidationWarning('claude', cache.rejectedMetricRecords);
+    return yield* withPerfSpan(
+      'aiUsage.collect.claude.cache.hit',
+      Effect.succeed({ rows: cache.rows, warnings: warning ? [warning] : [] }),
+      (result) => ({ rows: result.rows.length, warnings: result.warnings.length }),
+    );
   }
 
   let provider = 'Claude sub';
@@ -285,6 +311,7 @@ export const collectClaude = Effect.gen(function* () {
   const sessions: CollectedSession[] = [];
   const existingSessionIds = new Set(files.map((filePath) => path.basename(filePath, '.jsonl')));
   const seen = new Set<string>();
+  let rejectedMetricRecords = 0;
 
   yield* withPerfSpan(
     'aiUsage.collect.claude.parseFiles',
@@ -372,6 +399,7 @@ export const collectClaude = Effect.gen(function* () {
             const cacheRead = parseOptionalNonNegativeSafeInteger(usage.cache_read_input_tokens);
             const cacheWrite = parseOptionalNonNegativeSafeInteger(usage.cache_creation_input_tokens);
             if (!(input.ok && output.ok && cacheRead.ok && cacheWrite.ok)) {
+              rejectedMetricRecords++;
               return;
             }
             const id = typeof message?.id === 'string' ? message.id : undefined;
@@ -388,6 +416,7 @@ export const collectClaude = Effect.gen(function* () {
             const nextCacheRead = addNonNegativeSafeIntegers(tokens.cr, cacheRead.value);
             const nextCacheWrite = addNonNegativeSafeIntegers(tokens.cw, cacheWrite.value);
             if (!(nextCalls.ok && nextInput.ok && nextOutput.ok && nextCacheRead.ok && nextCacheWrite.ok)) {
+              rejectedMetricRecords++;
               return;
             }
             calls = nextCalls.value;
@@ -478,8 +507,11 @@ export const collectClaude = Effect.gen(function* () {
   const rows = sessions.map(sessionToUsageRow);
   yield* withPerfSpan(
     'aiUsage.collect.claude.cache.write',
-    Effect.sync(() => writeClaudeCache(storage, fingerprintKey, rows)),
+    Effect.sync(() => writeClaudeCache(storage, fingerprintKey, rows, rejectedMetricRecords)),
     (wrote) => ({ wrote }),
   );
-  return rows;
+  const warning = metricValidationWarning('claude', rejectedMetricRecords);
+  return { rows, warnings: warning ? [warning] : [] };
 });
+
+export const collectClaude = collectClaudeResult.pipe(Effect.map((result) => result.rows));

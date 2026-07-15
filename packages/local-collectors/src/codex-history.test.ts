@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Effect } from 'effect';
 import { findLatestCodexProviderStatus, findLatestCodexQuotaSnapshot, readCodexUsageSessions } from './codex-history';
-import { collectCodex } from './collectors/codex';
+import { collectCodex, collectCodexResult } from './collectors/codex';
 import { LocalHistoryError } from './errors';
 import {
   createLocalHistoryStorage,
@@ -310,6 +310,63 @@ describe('Codex local history', () => {
     expect(rows.every((row) => row.tokIn === 8 && row.tokCr === 2 && row.tokOut === 5)).toBe(true);
   });
 
+  test('keeps the last valid Codex snapshot and reports malformed metrics once', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/metrics.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'metrics-thread', cwd: '/work/metrics' },
+        },
+        {
+          timestamp: '2026-01-01T00:01:00.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: {
+                total_tokens: 20,
+                input_tokens: 12,
+                cached_input_tokens: 2,
+                output_tokens: 8,
+              },
+            },
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:02:00.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: {
+                total_tokens: 30,
+                input_tokens: 'private-invalid-value',
+                cached_input_tokens: 3,
+                output_tokens: 10,
+              },
+            },
+          },
+        },
+      ),
+    );
+
+    const result = runWithStorage(collectCodexResult, storage);
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.tokIn).toBe(10);
+    expect(result.rows[0]?.tokCr).toBe(2);
+    expect(result.rows[0]?.tokOut).toBe(8);
+    expect(result.warnings).toEqual([
+      {
+        harness: 'codex',
+        operation: 'metricValidation',
+        message: 'Rejected 1 malformed codex metric record(s).',
+      },
+    ]);
+    expect(JSON.stringify(result.warnings)).not.toContain('private-invalid-value');
+  });
+
   test('caches parsed Codex session files by mtime and size', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-cache-'));
     try {
@@ -343,17 +400,40 @@ describe('Codex local history', () => {
               },
             },
           },
+          {
+            timestamp: '2026-01-01T00:03:00.000Z',
+            type: 'event_msg',
+            payload: {
+              type: 'token_count',
+              info: {
+                total_token_usage: {
+                  total_tokens: 43,
+                  input_tokens: 'private-invalid-cache-value',
+                  cached_input_tokens: 10,
+                  output_tokens: 13,
+                },
+              },
+            },
+          },
         ),
       );
 
-      const first = await runWithRealStorage(collectCodex, home);
-      const second = await runWithRealStorage(collectCodex, home);
+      const first = await runWithRealStorage(collectCodexResult, home);
+      const second = await runWithRealStorage(collectCodexResult, home);
 
       expect(second).toEqual(first);
-      expect(second[0]?.name).toBe('codex cached-t');
-      expect(second[0]?.tokIn).toBe(20);
-      expect(second[0]?.tokCr).toBe(10);
-      expect(second[0]?.tokOut).toBe(12);
+      expect(second.rows[0]?.name).toBe('codex cached-t');
+      expect(second.rows[0]?.tokIn).toBe(20);
+      expect(second.rows[0]?.tokCr).toBe(10);
+      expect(second.rows[0]?.tokOut).toBe(12);
+      expect(second.warnings).toEqual([
+        {
+          harness: 'codex',
+          operation: 'metricValidation',
+          message: 'Rejected 1 malformed codex metric record(s).',
+        },
+      ]);
+      expect(JSON.stringify(second.warnings)).not.toContain('private-invalid-cache-value');
 
       const db = new Database(path.join(home, '.config', 'ai-usage', 'codex-session-cache.sqlite'));
       try {

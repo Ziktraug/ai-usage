@@ -15,8 +15,8 @@ import {
   stripCollectorMetadata,
   stripProjectPath,
 } from '../rtk-enrichment';
-import { collectClaude, collectClaudeRetentionWarnings } from './claude';
-import { collectCodex } from './codex';
+import { collectClaude, collectClaudeResult, collectClaudeRetentionWarnings } from './claude';
+import { collectCodex, collectCodexResult } from './codex';
 import { collectCursor, collectCursorResult } from './cursor';
 import type { CursorCsvOptions } from './cursor-csv';
 import { collectOpenCode, collectOpenCodeResult } from './opencode';
@@ -58,10 +58,10 @@ export interface HarnessSelection {
 }
 
 export const HARNESS_ADAPTERS: Record<HarnessKey, HarnessAdapter> = {
-  claude: { metadata: HARNESS_METADATA.claude, collect: collectClaude },
-  codex: { metadata: HARNESS_METADATA.codex, collect: collectCodex },
+  claude: { metadata: HARNESS_METADATA.claude, collect: collectClaude, collectResult: collectClaudeResult },
+  codex: { metadata: HARNESS_METADATA.codex, collect: collectCodex, collectResult: collectCodexResult },
   opencode: { metadata: HARNESS_METADATA.opencode, collect: collectOpenCode, collectResult: collectOpenCodeResult },
-  cursor: { metadata: HARNESS_METADATA.cursor, collect: collectCursor },
+  cursor: { metadata: HARNESS_METADATA.cursor, collect: collectCursor, collectResult: collectCursorResult() },
 };
 
 const hasCursorCsvInput = (cursorCsv: HarnessSelection['cursorCsv']) =>

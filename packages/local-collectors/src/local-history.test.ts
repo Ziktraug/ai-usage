@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Effect } from 'effect';
-import { createLocalHistoryStorage, readRegularFileText, walkFiles } from './local-history';
+import { createLocalHistoryStorage, readConfigFileText, readRegularFileText, walkFiles } from './local-history';
 
 const PREVIOUS_AGGREGATE_HISTORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024;
 const SIMULATED_LARGE_SESSION_BYTES = 600 * 1024 * 1024;
@@ -41,6 +41,14 @@ test('readConfigText follows config symlinks while keeping the hardened target r
     expect(Effect.runSync(storage.readConfigText(linkPath))).toBe('{"cleanupPeriodDays":9999}');
     expect(() => Effect.runSync(storage.readConfigText(linkPath, 4))).toThrow();
     expect(() => Effect.runSync(storage.readText(linkPath))).toThrow();
+
+    const secondLinkPath = path.join(root, 'settings-link-2.json');
+    fs.symlinkSync(linkPath, secondLinkPath);
+    expect(readConfigFileText(secondLinkPath)).toBe('{"cleanupPeriodDays":9999}');
+
+    const cyclePath = path.join(root, 'cycle.json');
+    fs.symlinkSync(cyclePath, cyclePath);
+    expect(() => readConfigFileText(cyclePath)).toThrow('cyclic');
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
   }
