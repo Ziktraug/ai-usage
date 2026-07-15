@@ -1,10 +1,16 @@
 #!/usr/bin/env bun
-import { type LocalReportPayloadRequest, runConsistentStoredReportPayload, runLocalReportPayload } from './index';
+import {
+  type LocalReportPayloadRequest,
+  reportCaptureFingerprint,
+  runConsistentStoredReportPayload,
+  runLocalReportCapture,
+} from './index';
 import { writeReportPayloadArtifact } from './report-payload-artifact';
 
 const mode = process.argv[2] === 'fresh' || process.argv[2] === 'stored' ? process.argv[2] : 'fresh';
 const configCwd = process.argv[3] ?? process.argv[2] ?? process.cwd();
-const outputPath = process.argv[4];
+const currentCaptureFingerprint = process.argv[4] || undefined;
+const outputPath = process.argv[5];
 
 if (!outputPath) {
   throw new Error('The report payload runner requires a server-created output path');
@@ -37,17 +43,21 @@ const withStdoutRedirectedToStderr = async <A>(run: () => Promise<A>) => {
   }
 };
 
-const payload = await withStdoutRedirectedToStderr(async () => {
-  const freshPayload = mode === 'fresh' ? await runLocalReportPayload(request) : undefined;
-  const storedPayload = await runConsistentStoredReportPayload(request);
-  const collectionWarnings = freshPayload?.warnings?.filter((warning) => 'operation' in warning) ?? [];
-  if (collectionWarnings.length === 0) {
-    return storedPayload;
+const capture = await withStdoutRedirectedToStderr(async () => {
+  if (mode === 'fresh') {
+    return await runLocalReportCapture(request, currentCaptureFingerprint);
   }
-  const warningsByValue = new Map(
-    [...(storedPayload.warnings ?? []), ...collectionWarnings].map((warning) => [JSON.stringify(warning), warning]),
-  );
-  return { ...storedPayload, warnings: [...warningsByValue.values()] };
+  const payload = await runConsistentStoredReportPayload(request);
+  return { captureFingerprint: reportCaptureFingerprint(payload), payload, status: 'changed' as const };
 });
 
-await writeReportPayloadArtifact(outputPath, JSON.stringify(payload));
+const result =
+  capture.status === 'unchanged'
+    ? { captureFingerprint: capture.captureFingerprint, status: 'unchanged' as const, version: 1 as const }
+    : {
+        captureFingerprint: capture.captureFingerprint,
+        payload: capture.payload,
+        status: 'changed' as const,
+        version: 1 as const,
+      };
+await writeReportPayloadArtifact(outputPath, JSON.stringify(result));

@@ -1,6 +1,7 @@
 import { access, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { setSkillEnabled, writeSkillMarkdown } from '../index';
+import { writeSkillMarkdown } from '../skill-markdown-io';
+import { setSkillEnabled } from '../source-state';
 
 const waitForBarrier = async (readyDirectory: string, barrierPath: string, label: string): Promise<void> => {
   await writeFile(path.join(readyDirectory, label), 'ready', 'utf8');

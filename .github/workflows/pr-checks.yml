@@ -24,7 +24,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.11
+          bun-version: 1.3.13
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -53,9 +53,6 @@ jobs:
       - name: Setup loopback listener
         run: bun run test:setup-loopback
 
-      - name: HTML export integration
-        run: bun run test:html-export
-
       - name: Install Playwright browser
         run: bun x playwright install --with-deps chromium
 
@@ -64,6 +61,3 @@ jobs:
 
       - name: Production revision browser test
         run: bun run test:e2e-production
-
-      - name: Static HTML browser test
-        run: bun run test:html-file

@@ -1,16 +1,15 @@
 import { describe, expect, test } from 'bun:test';
-import { lstat, mkdir, mkdtemp, readdir, readlink, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import type { SkillTarget, SourceSkill } from './contracts';
 import {
   applyProjectionAction,
   buildDefaultSkillTargets,
   isProjectionHealthy,
   planProjection,
-  type SkillTarget,
-  type SourceSkill,
   scanTargetProjections,
-} from '.';
+} from './projections';
 
 const makeSkill = (overrides: Partial<SourceSkill> = {}): SourceSkill => ({
   description: 'Helps with examples',
@@ -86,11 +85,37 @@ describe('target observation and projections', () => {
       const target = makeTarget(targetPath);
       const scan = await scanTargetProjections({ skills: [skill], targets: [target] });
       const action = planProjection(skill, target, scan.projections[0]);
-      await applyProjectionAction(action);
+      await applyProjectionAction(action, { privateStatePath: path.join(root, 'state') });
 
       expect(await readlink(path.join(targetPath, 'example-skill'))).toBe(sourcePath);
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects a target directory identity swap without touching the replacement tree', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-target-swap-'));
+    try {
+      const sourcePath = path.join(root, 'source');
+      const targetPath = path.join(root, 'target');
+      const originalPath = path.join(root, 'target-original');
+      await mkdir(sourcePath);
+      await mkdir(targetPath);
+      const skill = makeSkill({ path: sourcePath, skillMdPath: path.join(sourcePath, 'SKILL.md') });
+      const target = makeTarget(targetPath);
+      const scan = await scanTargetProjections({ skills: [skill], targets: [target] });
+      const action = planProjection(skill, target, scan.projections[0]);
+
+      await Bun.write(path.join(sourcePath, 'SKILL.md'), '# safe\n');
+      await rename(targetPath, originalPath);
+      await mkdir(targetPath);
+
+      await expect(applyProjectionAction(action, { privateStatePath: path.join(root, 'state') })).rejects.toThrow(
+        'identity changed',
+      );
+      expect(await readdir(targetPath)).toEqual([]);
+    } finally {
+      await rm(root, { force: true, recursive: true });
     }
   });
 
@@ -125,7 +150,7 @@ describe('target observation and projections', () => {
       const target = makeTarget(targetPath);
       const scan = await scanTargetProjections({ skills: [skill], targets: [target] });
       const action = planProjection(skill, target, scan.projections[0]);
-      await applyProjectionAction(action);
+      await applyProjectionAction(action, { privateStatePath: path.join(root, 'state') });
 
       await expect(lstat(projectedPath)).rejects.toThrow();
     } finally {
@@ -154,7 +179,9 @@ describe('target observation and projections', () => {
       await rm(projectedPath);
       await symlink(secondForeignPath, projectedPath);
 
-      await expect(applyProjectionAction(action)).rejects.toThrow('changed');
+      await expect(applyProjectionAction(action, { privateStatePath: path.join(root, 'state') })).rejects.toThrow(
+        'changed',
+      );
       await expect(readlink(projectedPath)).resolves.toBe(secondForeignPath);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -181,7 +208,9 @@ describe('target observation and projections', () => {
         throw new Error('expected a repair action');
       }
 
-      await expect(applyProjectionAction({ ...action, sourcePath: '\0invalid' })).rejects.toThrow();
+      await expect(
+        applyProjectionAction({ ...action, sourcePath: '\0invalid' }, { privateStatePath: path.join(root, 'state') }),
+      ).rejects.toThrow();
       await expect(readlink(projectedPath)).resolves.toBe(foreignPath);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -205,28 +234,13 @@ describe('target observation and projections', () => {
       const target = makeTarget(targetPath);
       const scan = await scanTargetProjections({ skills: [skill], targets: [target] });
       const action = planProjection(skill, target, scan.projections[0]);
-      const readyPath = path.join(root, 'interloper-ready');
-      const subprocess = Bun.spawn(
-        [
-          process.execPath,
-          path.join(import.meta.dir, 'test-fixtures', 'projection-interloper-subprocess.ts'),
-          projectedPath,
-          interloperPath,
-          readyPath,
-        ],
-        { stderr: 'pipe', stdout: 'pipe' },
-      );
-      while (true) {
-        try {
-          await lstat(readyPath);
-          break;
-        } catch {
-          await Bun.sleep(1);
-        }
-      }
-
-      await expect(applyProjectionAction(action)).rejects.toThrow();
-      expect(await subprocess.exited).toBe(0);
+      await expect(
+        applyProjectionAction(
+          action,
+          { privateStatePath: path.join(root, 'state') },
+          { afterClaim: async () => await symlink(interloperPath, projectedPath) },
+        ),
+      ).rejects.toThrow();
       await expect(readlink(projectedPath)).resolves.toBe(interloperPath);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -261,7 +275,9 @@ describe('target observation and projections', () => {
             await writeFile(projectedPath, 'stale external file', 'utf8');
           }
 
-          await expect(applyProjectionAction(action)).rejects.toThrow('changed');
+          await expect(applyProjectionAction(action, { privateStatePath: path.join(root, 'state') })).rejects.toThrow(
+            'changed',
+          );
           const replacementStat = await lstat(projectedPath);
           expect(replacementKind === 'directory' ? replacementStat.isDirectory() : replacementStat.isFile()).toBe(true);
           expect((await readdir(targetPath)).some((entry) => entry.endsWith('.old'))).toBe(false);

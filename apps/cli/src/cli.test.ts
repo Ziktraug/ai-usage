@@ -27,19 +27,16 @@ describe('CLI command parsing', () => {
     });
   });
 
-  test('parses html as an exclusive output format', () => {
-    expect(Effect.runSync(parseCommand(['--html']))).toMatchObject({
-      _tag: 'Report',
-      args: { format: 'html' },
-    });
-
+  test('parses payload JSON as an exclusive output format and rejects HTML', () => {
     expect(Effect.runSync(parseCommand(['--payload-json']))).toMatchObject({
       _tag: 'Report',
       args: { format: 'payload' },
     });
 
-    const error = Effect.runSync(Effect.flip(parseCommand(['--csv', '--html'])));
-    expect(error.message).toBe('--json, --csv, --html, and --payload-json are mutually exclusive');
+    expect(Effect.runSync(Effect.flip(parseCommand(['--html']))).message).toBe('Unknown option: --html');
+    expect(Effect.runSync(Effect.flip(parseCommand(['merge', 'mac.json', '--html']))).message).toBe(
+      'Unknown option for merge: --html',
+    );
   });
 
   test('parses snapshot export command', () => {
@@ -50,9 +47,11 @@ describe('CLI command parsing', () => {
   });
 
   test('parses merge command with files and local rows', () => {
-    expect(Effect.runSync(parseCommand(['merge', 'mac.json', '--local', '--html', '--since', '30d']))).toMatchObject({
+    expect(
+      Effect.runSync(parseCommand(['merge', 'mac.json', '--local', '--payload-json', '--since', '30d'])),
+    ).toMatchObject({
       _tag: 'Merge',
-      args: { files: ['mac.json'], local: true, format: 'html' },
+      args: { files: ['mac.json'], local: true, format: 'payload' },
     });
   });
 

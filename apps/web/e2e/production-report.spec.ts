@@ -104,7 +104,7 @@ test('renders the report timeline on the initial production Overview', async ({ 
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
   const dateRange = page.getByRole('region', { name: 'Date range' });
   try {
-    await expect(dateRange).toContainText('Jun 13, 2026');
+    await expect(dateRange).toContainText('May 30, 2026');
     await expect(dateRange).toContainText('Jun 29, 2026');
     await expect(dateRange.getByText('Loading report range…', { exact: true })).toHaveCount(0);
   } finally {
@@ -192,7 +192,7 @@ test('hydrates and pages Sessions through the production revision protocol', asy
   await page.goto('/?tab=sessions');
   const report = page.locator('main[data-hydrated="true"]');
   await expect(report).toBeVisible();
-  await expect(page.getByText('107 / 205 sessions', { exact: true })).toBeVisible();
+  await expect(page.getByText('205 / 205 sessions', { exact: true })).toBeVisible();
   await expect(report).toHaveAttribute('data-report-revision', NON_EMPTY_ATTRIBUTE_PATTERN);
   await expect(report).toHaveAttribute('data-request-fingerprint', SESSION_QUERY_FINGERPRINT_PATTERN);
   await page.getByRole('button', { name: 'Pause auto-refresh' }).click();

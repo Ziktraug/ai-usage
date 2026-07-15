@@ -7,9 +7,10 @@ export default defineConfig({
     timeout: 5000,
   },
   fullyParallel: true,
+  workers: process.env.CI ? 4 : undefined,
   reporter: process.env.CI ? 'github' : 'line',
   testDir: './e2e',
-  testIgnore: ['production-report.spec.ts', 'static-html.spec.ts'],
+  testIgnore: ['production-report.spec.ts'],
   use: {
     baseURL: 'http://127.0.0.1:4174',
     ...devices['Desktop Chrome'],

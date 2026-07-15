@@ -270,6 +270,15 @@ export const isSerializedUsageRowShape = (
   allowedKeys: ReadonlySet<string> = SERIALIZED_USAGE_ROW_KEYS,
 ): boolean => isRecord(value) && hasOnlyKeys(value, allowedKeys) && hasValidSerializedUsageFields(value, false);
 
+export const isSerializedUsageRow = (
+  value: unknown,
+  allowedKeys: ReadonlySet<string> = SERIALIZED_USAGE_ROW_KEYS,
+): value is SerializedUsageRow =>
+  isRecord(value) &&
+  hasOnlyKeys(value, allowedKeys) &&
+  hasValidSerializedUsageFields(value, false) &&
+  hasValidDerivedFields(value);
+
 export const isJsonSafeValue = (value: unknown): value is JsonValue => {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {
     return true;

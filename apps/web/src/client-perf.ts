@@ -35,10 +35,6 @@ const storedPerfEnabled = () => {
 export const clientPerfEnabled = () => resolvedPerfEnabled === true || urlPerfEnabled() || storedPerfEnabled();
 
 export const resolveClientPerfEnabled = async () => {
-  if (typeof window !== 'undefined' && window.__AI_USAGE_REPORT_STATIC__ === true) {
-    resolvedPerfEnabled = false;
-    return false;
-  }
   if (clientPerfEnabled()) {
     return true;
   }

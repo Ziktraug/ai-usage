@@ -6,8 +6,8 @@ import {
 } from '@ai-usage/report-core/provider-status';
 import { Effect } from 'effect';
 import { findLatestCodexProviderStatus } from './codex-history';
-import type { LocalHistoryError } from './errors';
-import { collectCursorCommitAttribution, type HarnessFacets } from './facets';
+import { type LocalHistoryError, type LocalHistoryWarning, localHistoryWarningFromError } from './errors';
+import { collectCursorCommitAttributionResult, type HarnessFacets } from './facets';
 import type { LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
 
 export interface HarnessDatasetSelection {
@@ -20,6 +20,11 @@ export interface HarnessDatasetSelection {
 export interface HarnessDatasets extends ReportDatasets {
   cursorCommitAttribution?: CursorCommitAttributionRow[];
   providerStatus?: ProviderStatusDataset;
+}
+
+export interface HarnessDatasetsResult {
+  datasets: HarnessDatasets;
+  warnings: LocalHistoryWarning[];
 }
 
 export const mirrorDatasetsToLegacyFacets = (datasets: ReportDatasets | undefined): HarnessFacets | undefined => {
@@ -45,15 +50,29 @@ const codexCollectionErrorStatus = (selection: HarnessDatasetSelection): Provide
   windows: [],
 });
 
-export const collectHarnessDatasets = (
+export const collectHarnessDatasetsResult = (
   selection: HarnessDatasetSelection,
-): Effect.Effect<HarnessDatasets, LocalHistoryError, LocalHistoryStorageService> =>
+): Effect.Effect<HarnessDatasetsResult, never, LocalHistoryStorageService> =>
   Effect.gen(function* () {
     const datasets: HarnessDatasets = {};
+    const warnings: LocalHistoryWarning[] = [];
     if (selection.includeCursor) {
-      const commitAttribution = yield* collectCursorCommitAttribution.pipe(Effect.catchAll(() => Effect.succeed([])));
-      if (commitAttribution.length) {
-        datasets.cursorCommitAttribution = commitAttribution;
+      const result = yield* collectCursorCommitAttributionResult.pipe(
+        Effect.catchAll((error: LocalHistoryError) =>
+          Effect.succeed({
+            rows: [],
+            warnings: [
+              localHistoryWarningFromError(error, {
+                harness: 'cursor',
+                message: 'Failed to collect Cursor commit attribution',
+              }),
+            ],
+          }),
+        ),
+      );
+      warnings.push(...result.warnings);
+      if (result.rows.length) {
+        datasets.cursorCommitAttribution = result.rows;
       }
     }
     if (selection.includeProviderStatus) {
@@ -65,5 +84,10 @@ export const collectHarnessDatasets = (
         datasets.providerStatus = createProviderStatusDataset([codex]);
       }
     }
-    return datasets;
+    return { datasets, warnings };
   });
+
+export const collectHarnessDatasets = (
+  selection: HarnessDatasetSelection,
+): Effect.Effect<HarnessDatasets, never, LocalHistoryStorageService> =>
+  collectHarnessDatasetsResult(selection).pipe(Effect.map((result) => result.datasets));

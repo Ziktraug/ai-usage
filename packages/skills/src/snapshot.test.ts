@@ -10,7 +10,7 @@ import {
   reconcileSkill,
   toggleSkillEnabled,
   writeSkillManagementConfig,
-} from '.';
+} from './workflows';
 
 describe('skill management workflows', () => {
   test('returns a UI-safe unconfigured snapshot', async () => {
@@ -110,7 +110,13 @@ description: Helps with examples
       );
 
       await toggleSkillEnabled({ enabled: true, skillName: 'example-skill', sourceRepoPath });
-      await createSkillTargetDirectory({ path: targetPath });
+      await Promise.all([
+        createSkillTargetDirectory({ path: targetPath, privateStatePath: path.join(root, 'state') }),
+        createSkillTargetDirectory({ path: targetPath, privateStatePath: path.join(root, 'state') }),
+      ]);
+      const lockDirectory = path.join(root, 'state', 'skills-projection-locks');
+      expect((await lstat(lockDirectory)).isDirectory()).toBe(true);
+      expect(targetPath.startsWith(lockDirectory)).toBe(false);
       const result = await reconcileAllActiveSkills({
         config: {
           skills: {

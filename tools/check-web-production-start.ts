@@ -6,8 +6,12 @@ import path from 'node:path';
 
 const LOOPBACK_HOST = '127.0.0.1';
 const LOG_LIMIT_BYTES = 64 * 1024;
-const START_DEADLINE_MS = 60_000;
-const REQUEST_TIMEOUT_MS = 15_000;
+const START_DEADLINE_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 5000;
+const GRACEFUL_SHUTDOWN_DEADLINE_MS = 3000;
+const FORCE_EXIT_DEADLINE_MS = 2000;
+const LOG_DRAIN_DEADLINE_MS = 2000;
+const OVERALL_DEADLINE_MS = 30_000;
 const PROJECT_LOADER_ERROR_MARKER = 'Could not load scanned projects:';
 const PROJECT_LOADER_SUCCESS_MARKER = 'data-known-project-paths-status="ok"';
 const RUNNER_FAILURE_PATTERN =
@@ -17,6 +21,22 @@ interface HttpResponse {
   body: string;
   status: number;
 }
+
+const within = async <Value>(phase: string, deadlineMs: number, promise: Promise<Value>): Promise<Value> => {
+  let timeout: Timer | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${phase} exceeded its ${deadlineMs}ms deadline.`)), deadlineMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+};
 
 const reserveFreePort = (): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -96,7 +116,7 @@ const sendHttpRequest = (
       },
     );
     request.setTimeout(REQUEST_TIMEOUT_MS, () => {
-      request.destroy(new Error('HTTP request timed out.'));
+      request.destroy(new Error(`HTTP request exceeded its ${REQUEST_TIMEOUT_MS}ms deadline.`));
     });
     request.once('error', reject);
     request.end(options.body);
@@ -144,87 +164,165 @@ const requireNonLoopbackConnectionFailure = async (host: string, port: number): 
   throw new Error(`Production listener unexpectedly accepted a connection through ${host}:${port}.`);
 };
 
-const stopChild = async (child: Bun.Subprocess): Promise<void> => {
+export interface OwnedProcessDeadlines {
+  forceExitMs: number;
+  gracefulShutdownMs: number;
+  logDrainMs: number;
+}
+
+export interface OwnedProcessResult {
+  stderr: string;
+  stdout: string;
+}
+
+const defaultOwnedProcessDeadlines: OwnedProcessDeadlines = {
+  forceExitMs: FORCE_EXIT_DEADLINE_MS,
+  gracefulShutdownMs: GRACEFUL_SHUTDOWN_DEADLINE_MS,
+  logDrainMs: LOG_DRAIN_DEADLINE_MS,
+};
+
+const stopChild = async (child: Bun.Subprocess, deadlines: OwnedProcessDeadlines): Promise<void> => {
   if (child.exitCode !== null) {
     return;
   }
   child.kill('SIGTERM');
-  await Promise.race([child.exited, Bun.sleep(3000)]);
+  await within(
+    'graceful shutdown',
+    deadlines.gracefulShutdownMs,
+    Promise.race([child.exited, Bun.sleep(deadlines.gracefulShutdownMs)]),
+  );
   if (child.exitCode === null) {
     child.kill('SIGKILL');
-    await child.exited;
+    await within('forced shutdown', deadlines.forceExitMs, child.exited);
   }
 };
 
-const rootDir = path.resolve(import.meta.dir, '..');
-const temporaryHome = await mkdtemp(path.join(tmpdir(), 'ai-usage-web-smoke-'));
-try {
-  const port = await reserveFreePort();
-  const inheritedEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => name !== 'AI_USAGE_ROOT_DIR'));
-  const childEnv: Record<string, string> = {
-    ...inheritedEnv,
-    HOME: temporaryHome,
-    HOST: '0.0.0.0',
-    NITRO_HOST: '0.0.0.0',
-    NITRO_PORT: String(port),
-    PORT: String(port),
-  };
-  const child = Bun.spawn(['bun', 'run', '--cwd', 'apps/web', 'start'], {
-    cwd: rootDir,
-    env: childEnv,
+const assertPortReusable = async (port: number): Promise<void> =>
+  await new Promise<void>((resolve, reject) => {
+    const server = createServer();
+    server.once('error', reject);
+    server.listen(port, LOOPBACK_HOST, () => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  });
+
+export const withOwnedProcess = async (
+  options: {
+    command: string[];
+    cwd: string;
+    deadlines?: OwnedProcessDeadlines;
+    env: Record<string, string>;
+    port: number;
+  },
+  verify: (child: Bun.Subprocess, logs: OwnedProcessResult) => Promise<void>,
+): Promise<OwnedProcessResult> => {
+  const deadlines = options.deadlines ?? defaultOwnedProcessDeadlines;
+  const child = Bun.spawn(options.command, {
+    cwd: options.cwd,
+    env: options.env,
     stderr: 'pipe',
     stdout: 'pipe',
   });
   const stdout = captureLogs(child.stdout);
   const stderr = captureLogs(child.stderr);
-
+  const logs = { stderr: '', stdout: '' };
   try {
-    await waitForApplicationPage(port, child, '/', 'Usage report');
-    const skills = await waitForApplicationPage(port, child, '/skills', PROJECT_LOADER_SUCCESS_MARKER);
-    if (skills.body.includes(PROJECT_LOADER_ERROR_MARKER)) {
-      throw new Error('/skills rendered the known project-loader error banner.');
-    }
-
-    const localHost = `localhost:${port}`;
-    await requireRejected(
-      'hostile Host on a read route',
-      sendHttpRequest(port, { headers: { host: 'attacker.example' } }),
-    );
-    await requireRejected(
-      'hostile Origin on a read route',
-      sendHttpRequest(port, { headers: { host: localHost, origin: 'http://attacker.example' } }),
-    );
-    await requireRejected(
-      'cross-site metadata on a mutation route',
-      sendHttpRequest(port, {
-        body: '{}',
-        headers: {
-          'content-type': 'application/json',
-          host: localHost,
-          origin: `http://${localHost}`,
-          'sec-fetch-site': 'cross-site',
-        },
-        method: 'POST',
-        path: '/sync',
-      }),
-    );
-    await requireNonLoopbackConnectionFailure(nonLoopbackIpv4Address(), port);
-
-    if (child.exitCode !== null) {
-      throw new Error(`Web process exited after production checks (code ${child.exitCode}).`);
-    }
-    const logs = `${stdout.text()}${stderr.text()}`;
-    if (RUNNER_FAILURE_PATTERN.test(logs)) {
-      throw new Error('Production logs contain a report runner or workspace path resolution failure.');
-    }
-    process.stdout.write('Production web routes are healthy, trusted-local only, and bound to IPv4 loopback.\n');
-  } catch (error) {
-    const logs = `${stdout.text()}${stderr.text()}`.trim();
-    throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`);
+    await verify(child, logs);
+    return logs;
   } finally {
-    await stopChild(child);
-    await Promise.all([stdout.done, stderr.done]);
+    await stopChild(child, deadlines);
+    await Promise.all([
+      within('stdout drain', deadlines.logDrainMs, stdout.done),
+      within('stderr drain', deadlines.logDrainMs, stderr.done),
+    ]);
+    logs.stdout = stdout.text();
+    logs.stderr = stderr.text();
+    await assertPortReusable(options.port);
   }
-} finally {
-  await rm(temporaryHome, { force: true, recursive: true });
+};
+
+const rootDir = path.resolve(import.meta.dir, '..');
+const runProductionSmoke = async (): Promise<void> => {
+  const temporaryHome = await mkdtemp(path.join(tmpdir(), 'ai-usage-web-smoke-'));
+  try {
+    const port = await reserveFreePort();
+    const inheritedEnv = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => name !== 'AI_USAGE_ROOT_DIR'),
+    );
+    const childEnv: Record<string, string> = {
+      ...inheritedEnv,
+      HOME: temporaryHome,
+      HOST: '0.0.0.0',
+      NITRO_HOST: '0.0.0.0',
+      NITRO_PORT: String(port),
+      PORT: String(port),
+    };
+    let processLogs: OwnedProcessResult | undefined;
+    try {
+      processLogs = await withOwnedProcess(
+        {
+          command: ['node', 'start.mjs'],
+          cwd: path.join(rootDir, 'apps/web'),
+          env: childEnv,
+          port,
+        },
+        async (child, logs) =>
+          await within(
+            'production smoke',
+            OVERALL_DEADLINE_MS,
+            (async () => {
+              await waitForApplicationPage(port, child, '/', 'Usage report');
+              const skills = await waitForApplicationPage(port, child, '/skills', PROJECT_LOADER_SUCCESS_MARKER);
+              if (skills.body.includes(PROJECT_LOADER_ERROR_MARKER)) {
+                throw new Error('/skills rendered the known project-loader error banner.');
+              }
+
+              const localHost = `localhost:${port}`;
+              await requireRejected(
+                'hostile Host on a read route',
+                sendHttpRequest(port, { headers: { host: 'attacker.example' } }),
+              );
+              await requireRejected(
+                'hostile Origin on a read route',
+                sendHttpRequest(port, { headers: { host: localHost, origin: 'http://attacker.example' } }),
+              );
+              await requireRejected(
+                'cross-site metadata on a mutation route',
+                sendHttpRequest(port, {
+                  body: '{}',
+                  headers: {
+                    'content-type': 'application/json',
+                    host: localHost,
+                    origin: `http://${localHost}`,
+                    'sec-fetch-site': 'cross-site',
+                  },
+                  method: 'POST',
+                  path: '/sync',
+                }),
+              );
+              await requireNonLoopbackConnectionFailure(nonLoopbackIpv4Address(), port);
+
+              if (child.exitCode !== null) {
+                throw new Error(`Web process exited after production checks (code ${child.exitCode}).`);
+              }
+              if (RUNNER_FAILURE_PATTERN.test(`${logs.stdout}${logs.stderr}`)) {
+                throw new Error('Production logs contain a report runner or workspace path resolution failure.');
+              }
+              process.stdout.write(
+                'Production web routes are healthy, trusted-local only, and bound to IPv4 loopback.\n',
+              );
+            })(),
+          ),
+      );
+    } catch (error) {
+      const logs = `${processLogs?.stdout ?? ''}${processLogs?.stderr ?? ''}`.trim();
+      throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`);
+    }
+  } finally {
+    await rm(temporaryHome, { force: true, recursive: true });
+  }
+};
+
+if (import.meta.main) {
+  await runProductionSmoke();
 }

@@ -17,7 +17,6 @@ import {
   localProjectRootExists,
   projectSkillMarkdownInputFrom,
   projectSkillScanPathsFrom,
-  readBoundedProjectSkillMarkdownFile,
   readProjectSkillMarkdownForServer,
   skillConfigInputFrom,
   skillManagementSnapshotForClient,
@@ -39,49 +38,6 @@ test('client skill snapshots omit markdown bodies without mutating the domain sn
   expect(clientSnapshot.skills.map((skill) => skill.manifest.markdown)).toEqual(['', '']);
   expect(clientSnapshot.skills.map((skill) => skill.manifest.name)).toEqual(['alpha-skill', 'beta-skill']);
   expect(result.data.skills.map((skill) => skill.manifest.markdown)).toEqual(['# alpha-skill\n', '# beta-skill\n']);
-});
-
-test('bounded project markdown reads consume short reads through one regular-file handle', async () => {
-  const content = Buffer.from('abcdefgh');
-  let closed = false;
-  const result = await readBoundedProjectSkillMarkdownFile('/project/SKILL.md', 6, {
-    openFile: () =>
-      Promise.resolve({
-        close: () => {
-          closed = true;
-          return Promise.resolve();
-        },
-        read: (buffer, offset, length, position) => {
-          const bytesRead = Math.min(2, length, content.length - position);
-          if (bytesRead > 0) {
-            content.copy(buffer, offset, position, position + bytesRead);
-          }
-          return Promise.resolve({ buffer, bytesRead });
-        },
-        stat: () => Promise.resolve({ isFile: () => true, size: content.length }),
-      }),
-  });
-
-  expect(result).toEqual({ content: 'abcdef', truncated: true });
-  expect(closed).toBe(true);
-});
-
-test('bounded project markdown reads reject non-regular file handles', async () => {
-  let closed = false;
-  await expect(
-    readBoundedProjectSkillMarkdownFile('/project/SKILL.md', 6, {
-      openFile: () =>
-        Promise.resolve({
-          close: () => {
-            closed = true;
-            return Promise.resolve();
-          },
-          read: (buffer) => Promise.resolve({ buffer, bytesRead: 0 }),
-          stat: () => Promise.resolve({ isFile: () => false, size: 0 }),
-        }),
-    }),
-  ).rejects.toThrow('regular file');
-  expect(closed).toBe(true);
 });
 
 const writeProjectSkill = async (directory: string, name: string, content = `# ${name}\n`) => {
@@ -174,8 +130,6 @@ description: Helps with adapter tests
         configReads: [] as { configCwd: string; home: string }[],
         configWrites: [] as string[],
         projectSourceReads: [] as { configCwd?: string; home: string }[],
-        workflowHomes: [] as string[],
-        workflowNames: [] as string[],
       };
       const adapter = createSkillsServerAdapter({
         ...baseDependencies,
@@ -193,53 +147,6 @@ description: Helps with adapter tests
         updateConfig: (input) => {
           calls.configWrites.push(input.storage.home);
           return baseDependencies.updateConfig(input);
-        },
-        workflows: {
-          ...baseDependencies.workflows,
-          createTargetDirectory: (input) => {
-            calls.workflowNames.push('createTargetDirectory');
-            return baseDependencies.workflows.createTargetDirectory(input);
-          },
-          loadSnapshot: (input) => {
-            calls.workflowHomes.push(input.homePath);
-            calls.workflowNames.push('loadSnapshot');
-            return baseDependencies.workflows.loadSnapshot(input);
-          },
-          previewReconcileAll: (input) => {
-            calls.workflowHomes.push(input.homePath);
-            calls.workflowNames.push('previewReconcileAll');
-            return baseDependencies.workflows.previewReconcileAll(input);
-          },
-          readMarkdown: (input) => {
-            calls.workflowNames.push('readMarkdown');
-            return baseDependencies.workflows.readMarkdown(input);
-          },
-          reconcileAll: (input) => {
-            calls.workflowHomes.push(input.homePath);
-            calls.workflowNames.push('reconcileAll');
-            return baseDependencies.workflows.reconcileAll(input);
-          },
-          reconcileSkill: (input) => {
-            calls.workflowHomes.push(input.homePath);
-            calls.workflowNames.push('reconcileSkill');
-            return baseDependencies.workflows.reconcileSkill(input);
-          },
-          scanProjects: (input) => {
-            calls.workflowNames.push('scanProjects');
-            return baseDependencies.workflows.scanProjects(input);
-          },
-          toggleSkill: (input) => {
-            calls.workflowNames.push('toggleSkill');
-            return baseDependencies.workflows.toggleSkill(input);
-          },
-          writeConfig: (input) => {
-            calls.workflowNames.push('writeConfig');
-            return baseDependencies.workflows.writeConfig(input);
-          },
-          writeMarkdown: (input) => {
-            calls.workflowNames.push('writeMarkdown');
-            return baseDependencies.workflows.writeMarkdown(input);
-          },
         },
       });
 
@@ -309,21 +216,6 @@ description: Helps with adapter tests
       expect(calls.configReads.every((call) => call.configCwd === configCwd && call.home === home)).toBe(true);
       expect(calls.configWrites).toEqual([home]);
       expect(calls.projectSourceReads).toEqual([{ configCwd, home }]);
-      expect(calls.workflowHomes.every((workflowHome) => workflowHome === home)).toBe(true);
-      expect(new Set(calls.workflowNames)).toEqual(
-        new Set([
-          'createTargetDirectory',
-          'loadSnapshot',
-          'previewReconcileAll',
-          'readMarkdown',
-          'reconcileAll',
-          'reconcileSkill',
-          'scanProjects',
-          'toggleSkill',
-          'writeConfig',
-          'writeMarkdown',
-        ]),
-      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

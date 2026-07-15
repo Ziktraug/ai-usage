@@ -37,6 +37,7 @@ const REVISION_MANIFEST_KEYS = [
   'captureFingerprint',
   'expiresAt',
   'generatedAt',
+  'payloadFingerprint',
   'publishedAt',
   'revision',
   'rowsArtifact',
@@ -68,6 +69,7 @@ interface RevisionArtifactManifest {
 }
 
 interface RevisionDiskManifest extends WebReportRevisionManifest {
+  payloadFingerprint: string;
   rowsArtifact: RevisionArtifactManifest;
   schemaVersion: typeof REVISION_SCHEMA_VERSION;
   sessionQueryArtifact?: RevisionArtifactManifest;
@@ -97,9 +99,10 @@ export interface ReportRevisionRegistry {
   dispose(): Promise<void>;
   getCurrentManifest(): Promise<WebReportRevisionManifestResult>;
   invalidateLatest(): Promise<void>;
-  publish(payload: WebReportPayload): Promise<WebReportRevisionManifest>;
+  publish(payload: WebReportPayload, options?: { captureFingerprint?: string }): Promise<WebReportRevisionManifest>;
   readRows(request: WebReportSliceRequest): Promise<WebReportRowsSliceResult>;
   readSupport(request: WebReportSliceRequest): Promise<WebReportSupportSliceResult>;
+  renewCurrent(): Promise<WebReportRevisionManifestResult>;
   withRevisionDirectory<Result>(
     revision: ReportRevision,
     operation: (directory: string, manifest: WebReportRevisionManifest) => Promise<Result>,
@@ -117,6 +120,28 @@ const isMissingFileError = (error: unknown): boolean =>
   typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === 'ENOENT';
 
 const sha256 = (serialized: string): string => createHash('sha256').update(serialized).digest('hex');
+
+const canonicalJson = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(canonicalJson);
+  }
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([, child]) => child !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, canonicalJson(child)]),
+  );
+};
+
+export const reportCaptureFingerprintForPayload = (payload: WebReportPayload): string => {
+  const { generatedAt: _generatedAt, ...semanticPayload } = payload;
+  return createHash('sha256')
+    .update(JSON.stringify(canonicalJson(semanticPayload)))
+    .digest('hex');
+};
 
 const hasExactKeys = (record: Record<string, unknown>, keys: readonly string[]): boolean =>
   Object.keys(record).length === keys.length && keys.every((key) => Object.hasOwn(record, key));
@@ -256,6 +281,8 @@ const parseDiskManifest = (serialized: string, expectedRevision: ReportRevision)
     manifest.schemaVersion !== REVISION_SCHEMA_VERSION ||
     typeof manifest.captureFingerprint !== 'string' ||
     !SHA256_PATTERN.test(manifest.captureFingerprint) ||
+    typeof manifest.payloadFingerprint !== 'string' ||
+    !SHA256_PATTERN.test(manifest.payloadFingerprint) ||
     typeof manifest.generatedAt !== 'string' ||
     manifest.generatedAt.length === 0 ||
     typeof manifest.publishedAt !== 'number' ||
@@ -327,6 +354,45 @@ const inspectPrivateArtifact = async (
   } finally {
     await handle.close();
   }
+};
+
+const copyValidatedPrivateArtifact = async (
+  sourcePath: string,
+  destinationPath: string,
+  expected: RevisionArtifactManifest,
+  maximumBytes: number,
+): Promise<RevisionArtifactManifest> => {
+  const inspectedSource = await inspectPrivateArtifact(sourcePath, expected.file, maximumBytes);
+  if (inspectedSource.bytes !== expected.bytes || inspectedSource.sha256 !== expected.sha256) {
+    throw new Error(`Report revision ${expected.file} artifact does not match its manifest`);
+  }
+  const source = await open(sourcePath, readFileFlags);
+  const destination = await open(destinationPath, createFileFlags, 0o600);
+  try {
+    let copiedBytes = 0;
+    while (copiedBytes <= maximumBytes) {
+      const remainingBytes = maximumBytes + 1 - copiedBytes;
+      const buffer = Buffer.alloc(Math.min(ARTIFACT_READ_CHUNK_BYTES, remainingBytes));
+      const { bytesRead } = await source.read(buffer, 0, buffer.byteLength, null);
+      if (bytesRead === 0) {
+        break;
+      }
+      await destination.write(buffer.subarray(0, bytesRead));
+      copiedBytes += bytesRead;
+    }
+    if (copiedBytes > maximumBytes) {
+      throw new Error(`Report revision artifact exceeds the ${maximumBytes}-byte limit`);
+    }
+    await destination.sync();
+  } finally {
+    await Promise.all([source.close(), destination.close()]);
+  }
+  await chmod(destinationPath, 0o600);
+  const copied = await inspectPrivateArtifact(destinationPath, expected.file, maximumBytes);
+  if (copied.bytes !== expected.bytes || copied.sha256 !== expected.sha256) {
+    throw new Error(`Copied report revision ${expected.file} artifact does not match its source`);
+  }
+  return copied;
 };
 
 export const createReportRevisionRegistry = (options: ReportRevisionRegistryOptions = {}): ReportRevisionRegistry => {
@@ -410,7 +476,10 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
     }
   };
 
-  const publish = async (payload: WebReportPayload): Promise<WebReportRevisionManifest> => {
+  const publish = async (
+    payload: WebReportPayload,
+    publishOptions: { captureFingerprint?: string } = {},
+  ): Promise<WebReportRevisionManifest> => {
     if (disposed) {
       throw new Error('Report revision registry has been disposed');
     }
@@ -424,15 +493,17 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
       throw new Error(`Report revision artifacts exceed the ${MAX_REPORT_RUNNER_ARTIFACT_BYTES}-byte limit`);
     }
 
+    const payloadFingerprint = reportCaptureFingerprintForPayload(payload);
+    const captureFingerprint = publishOptions.captureFingerprint ?? payloadFingerprint;
+    if (!SHA256_PATTERN.test(captureFingerprint)) {
+      throw new Error('Report revision capture fingerprint must be a SHA-256 digest');
+    }
     const publishedAt = now();
     const diskManifest: RevisionDiskManifest = {
-      captureFingerprint: createHash('sha256')
-        .update(serializedRows)
-        .update('\0')
-        .update(serializedSupport)
-        .digest('hex'),
+      captureFingerprint,
       expiresAt: publishedAt + ttlMs,
       generatedAt: payload.generatedAt,
+      payloadFingerprint,
       publishedAt,
       revision,
       rowsArtifact: { bytes: rowsBytes, file: ROWS_ARTIFACT_NAME, sha256: sha256(serializedRows) },
@@ -470,18 +541,19 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
         readValidatedArtifact(stagingDirectory, validatedManifest.rowsArtifact),
         readValidatedArtifact(stagingDirectory, validatedManifest.supportArtifact),
       ]);
-      const validatedCaptureFingerprint = createHash('sha256')
-        .update(validatedRows)
-        .update('\0')
-        .update(validatedSupport)
-        .digest('hex');
-      if (validatedCaptureFingerprint !== validatedManifest.captureFingerprint) {
+      const validatedRowsSlice = JSON.parse(validatedRows) as WebReportPayload['rows'];
+      const validatedSupportSlice = JSON.parse(validatedSupport) as WebReportPayloadWithoutRows;
+      const validatedCaptureFingerprint = reportCaptureFingerprintForPayload({
+        ...validatedSupportSlice,
+        rows: validatedRowsSlice,
+      });
+      if (validatedCaptureFingerprint !== validatedManifest.payloadFingerprint) {
         throw new Error('Report revision artifacts do not match their capture fingerprint');
       }
-      if (!Array.isArray(JSON.parse(validatedRows))) {
+      if (!Array.isArray(validatedRowsSlice)) {
         throw new Error('Report revision rows artifact must contain an array');
       }
-      const support = JSON.parse(validatedSupport) as unknown;
+      const support: unknown = validatedSupportSlice;
       if (typeof support !== 'object' || support === null || Array.isArray(support) || Object.hasOwn(support, 'rows')) {
         throw new Error('Report revision support artifact must contain payload context without rows');
       }
@@ -528,6 +600,99 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
       await removeRevisionDirectory(stagingDirectory);
     }
   };
+
+  const renewCurrent = (): Promise<WebReportRevisionManifestResult> =>
+    withLock(async () => {
+      await cleanupLocked();
+      const sourceEntry = currentRevision === undefined ? undefined : entries.get(currentRevision);
+      if (!sourceEntry) {
+        return {
+          error: { message: 'No current report revision is available.', tag: 'RevisionUnavailable' },
+          ok: false,
+          requestFingerprint: reportManifestRequestFingerprint,
+        };
+      }
+      const sourceManifest = parseDiskManifest(
+        await readPrivateArtifact(path.join(sourceEntry.directory, MANIFEST_ARTIFACT_NAME), 64 * 1024),
+        sourceEntry.manifest.revision,
+      );
+      const revision = parseReportRevision(createRevisionId());
+      const publishedAt = now();
+      const rootDirectory = await rootDirectoryPromise;
+      const stagingDirectory = path.join(rootDirectory, `.staging-${revision}`);
+      const revisionDirectory = path.join(rootDirectory, String(revision));
+      await mkdir(stagingDirectory, { mode: 0o700 });
+      await chmod(stagingDirectory, 0o700);
+      try {
+        const rowsArtifact = await copyValidatedPrivateArtifact(
+          path.join(sourceEntry.directory, sourceManifest.rowsArtifact.file),
+          path.join(stagingDirectory, ROWS_ARTIFACT_NAME),
+          sourceManifest.rowsArtifact,
+          MAX_REPORT_RUNNER_ARTIFACT_BYTES,
+        );
+        const supportArtifact = await copyValidatedPrivateArtifact(
+          path.join(sourceEntry.directory, sourceManifest.supportArtifact.file),
+          path.join(stagingDirectory, SUPPORT_ARTIFACT_NAME),
+          sourceManifest.supportArtifact,
+          MAX_REPORT_RUNNER_ARTIFACT_BYTES,
+        );
+        const sessionQueryArtifact = sourceManifest.sessionQueryArtifact
+          ? await copyValidatedPrivateArtifact(
+              path.join(sourceEntry.directory, sourceManifest.sessionQueryArtifact.file),
+              path.join(stagingDirectory, SESSION_QUERY_ARTIFACT_NAME),
+              sourceManifest.sessionQueryArtifact,
+              MAX_SESSION_QUERY_DATABASE_BYTES,
+            )
+          : undefined;
+        const renewedManifest: RevisionDiskManifest = {
+          captureFingerprint: sourceManifest.captureFingerprint,
+          expiresAt: publishedAt + ttlMs,
+          generatedAt: sourceManifest.generatedAt,
+          payloadFingerprint: sourceManifest.payloadFingerprint,
+          publishedAt,
+          revision,
+          rowsArtifact,
+          rowsBytes: rowsArtifact.bytes,
+          schemaVersion: REVISION_SCHEMA_VERSION,
+          ...(sessionQueryArtifact === undefined
+            ? {}
+            : { sessionQueryArtifact, sessionQueryBytes: sessionQueryArtifact.bytes }),
+          supportArtifact,
+          supportBytes: supportArtifact.bytes,
+        };
+        await writePrivateArtifact(
+          path.join(stagingDirectory, MANIFEST_ARTIFACT_NAME),
+          JSON.stringify(renewedManifest),
+        );
+        const validatedManifest = parseDiskManifest(
+          await readPrivateArtifact(path.join(stagingDirectory, MANIFEST_ARTIFACT_NAME), 64 * 1024),
+          revision,
+        );
+        const artifactNames = [ROWS_ARTIFACT_NAME, SUPPORT_ARTIFACT_NAME, MANIFEST_ARTIFACT_NAME];
+        if (sessionQueryArtifact) {
+          artifactNames.push(SESSION_QUERY_ARTIFACT_NAME);
+        }
+        for (const artifactName of artifactNames) {
+          const artifactPath = path.join(stagingDirectory, artifactName);
+          await chmod(artifactPath, 0o400);
+          await syncFile(artifactPath);
+        }
+        await chmod(stagingDirectory, 0o500);
+        await syncDirectory(stagingDirectory);
+        await rename(stagingDirectory, revisionDirectory);
+        await syncDirectory(rootDirectory);
+        entries.set(revision, { directory: revisionDirectory, manifest: validatedManifest, references: 0 });
+        currentRevision = revision;
+        await cleanupLocked();
+        return {
+          manifest: publicManifest(validatedManifest),
+          ok: true,
+          requestFingerprint: reportManifestRequestFingerprint,
+        };
+      } finally {
+        await removeRevisionDirectory(stagingDirectory);
+      }
+    });
 
   const getCurrentManifest = (): Promise<WebReportRevisionManifestResult> =>
     withLock(async () => {
@@ -683,6 +848,7 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
         await cleanupLocked();
       }),
     publish,
+    renewCurrent,
     readRows,
     readSupport,
     withRevisionDirectory,

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { loadSkillSourceState, setSkillEnabled, skillSourceStatePath, writeSkillSourceState } from '.';
+import { loadSkillSourceState, setSkillEnabled, skillSourceStatePath, writeSkillSourceState } from './source-state';
 
 describe('skill source state', () => {
   test('missing state defaults to version 1 with no toggles', async () => {

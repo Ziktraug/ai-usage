@@ -2,43 +2,25 @@ import type { TitleSource } from '@ai-usage/report-core/types';
 import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
-import { cachedDbRows, dbStat, readDbRowCache, storeDbRows, writeDbRowCache } from '../collector-cache';
+import { cachedDbCollection, dbStat, readDbRowCache, storeDbRows, writeDbRowCache } from '../collector-cache';
 import { type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from '../local-history';
+import {
+  addNonNegativeSafeIntegers,
+  metricValidationWarning,
+  parseOptionalNonNegativeSafeInteger,
+} from '../metric-validation';
 import { withPerfSpan } from '../perf';
 import { firstExisting, resolvePathCandidates } from '../platform-paths';
 import type { CollectorRow } from '../rtk-enrichment';
-import { safeJSON, usablePrompt } from '../text';
-import { type CursorCsvOptions, collectCursorCsvTurns } from './cursor-csv';
+import { isJsonObject, safeJSON, usablePrompt } from '../text';
+import { type CursorCsvOptions, collectCursorCsvTurnsResult } from './cursor-csv';
 import { reconcileCursorSessions } from './cursor-reconcile';
 
 interface KeyValueRow {
   key: string;
   value: string;
 }
-interface CursorBubbleData {
-  text?: string;
-  type?: number;
-}
-interface CursorComposerData {
-  createdAt?: number;
-  modelConfig?: {
-    model?: string;
-    modelName?: string;
-  };
-  name?: string;
-  totalLinesAdded?: number;
-  totalLinesRemoved?: number;
-}
-interface CursorTokenData {
-  tokenCount?: {
-    cacheReadTokens?: number;
-    cacheWriteTokens?: number;
-    inputTokens?: number;
-    outputTokens?: number;
-  };
-}
-
 const cursorTitleSource = (aiTitle: string | null | undefined, firstPrompt: string | null | undefined): TitleSource => {
   if (aiTitle) {
     return 'ai';
@@ -53,7 +35,7 @@ const COMPOSER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'compos
 const TOKEN_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"inputTokens\"%'";
 const USER_BUBBLE_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"type\":1%'";
 
-const CURSOR_DB_CACHE_VERSION = 2;
+const CURSOR_DB_CACHE_VERSION = 4;
 const CURSOR_DB_CACHE_FILE = 'cursor-db-cache.json';
 
 export type CursorCsvIngestionOptions = Partial<CursorCsvOptions> & {
@@ -64,6 +46,12 @@ export type CursorCsvIngestionOptions = Partial<CursorCsvOptions> & {
 export interface CursorCollectionResult {
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
+}
+
+interface CursorDbCollectionResult {
+  rejectedMetricRecords: number;
+  rows: CollectorRow[] | null;
+  sessions: CollectedSession[];
 }
 
 const hasCursorCsvInput = (cursorCsv: CursorCsvIngestionOptions | undefined) =>
@@ -89,6 +77,7 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
     const comp = new Map<string, { name: string; model: string; created: number; add: number; del: number }>();
     const agg = new Map<string, { in: number; out: number; cr: number; cw: number; calls: number }>();
     const naming = new Map<string, { turns: number; first: string | null }>();
+    let rejectedMetricRecords = 0;
 
     yield* Effect.acquireUseRelease(
       withPerfSpan('aiUsage.collect.cursor.db.open', storage.openDatabase(dbPath)),
@@ -104,16 +93,26 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
             Effect.sync(() => {
               for (const row of composerRows) {
                 const id = row.key.slice('composerData:'.length);
-                const data = safeJSON<CursorComposerData>(row.value);
+                const data = safeJSON(row.value);
                 if (!data) {
                   continue;
                 }
+                const created = parseOptionalNonNegativeSafeInteger(data.createdAt);
+                const added = parseOptionalNonNegativeSafeInteger(data.totalLinesAdded);
+                const removed = parseOptionalNonNegativeSafeInteger(data.totalLinesRemoved);
+                if (!(created.ok && added.ok && removed.ok)) {
+                  rejectedMetricRecords++;
+                  continue;
+                }
+                const modelConfig = isJsonObject(data.modelConfig) ? data.modelConfig : null;
                 comp.set(id, {
-                  name: data.name || '',
-                  model: data.modelConfig?.modelName || data.modelConfig?.model || 'cursor',
-                  created: data.createdAt || 0,
-                  add: data.totalLinesAdded || 0,
-                  del: data.totalLinesRemoved || 0,
+                  name: typeof data.name === 'string' ? data.name : '',
+                  model:
+                    (typeof modelConfig?.modelName === 'string' ? modelConfig.modelName : null) ??
+                    (typeof modelConfig?.model === 'string' ? modelConfig.model : 'cursor'),
+                  created: created.value,
+                  add: added.value,
+                  del: removed.value,
                 });
               }
             }),
@@ -131,16 +130,30 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
               for (const row of tokenRows) {
                 const parts = String(row.key).split(':');
                 const composerId = parts[1];
-                const data = safeJSON<CursorTokenData>(row.value);
-                const tokenCount = data?.tokenCount;
+                const data = safeJSON(row.value);
+                const tokenCount = isJsonObject(data?.tokenCount) ? data.tokenCount : null;
                 if (!(tokenCount && composerId)) {
                   continue;
                 }
-                const input = tokenCount.inputTokens || 0;
-                const output = tokenCount.outputTokens || 0;
-                const cacheRead = tokenCount.cacheReadTokens || 0;
-                const cacheWrite = tokenCount.cacheWriteTokens || 0;
-                if (input + output + cacheRead + cacheWrite === 0) {
+                const input = parseOptionalNonNegativeSafeInteger(tokenCount.inputTokens);
+                const output = parseOptionalNonNegativeSafeInteger(tokenCount.outputTokens);
+                const cacheRead = parseOptionalNonNegativeSafeInteger(tokenCount.cacheReadTokens);
+                const cacheWrite = parseOptionalNonNegativeSafeInteger(tokenCount.cacheWriteTokens);
+                if (!(input.ok && output.ok && cacheRead.ok && cacheWrite.ok)) {
+                  rejectedMetricRecords++;
+                  continue;
+                }
+                const inputTotal = addNonNegativeSafeIntegers(input.value, output.value);
+                const cacheTotal = addNonNegativeSafeIntegers(cacheRead.value, cacheWrite.value);
+                const total =
+                  inputTotal.ok && cacheTotal.ok
+                    ? addNonNegativeSafeIntegers(inputTotal.value, cacheTotal.value)
+                    : null;
+                if (!total?.ok) {
+                  rejectedMetricRecords++;
+                  continue;
+                }
+                if (total.value === 0) {
                   continue;
                 }
                 let current = agg.get(composerId);
@@ -148,11 +161,20 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
                   current = { in: 0, out: 0, cr: 0, cw: 0, calls: 0 };
                   agg.set(composerId, current);
                 }
-                current.in += input;
-                current.out += output;
-                current.cr += cacheRead;
-                current.cw += cacheWrite;
-                current.calls++;
+                const nextInput = addNonNegativeSafeIntegers(current.in, input.value);
+                const nextOutput = addNonNegativeSafeIntegers(current.out, output.value);
+                const nextCacheRead = addNonNegativeSafeIntegers(current.cr, cacheRead.value);
+                const nextCacheWrite = addNonNegativeSafeIntegers(current.cw, cacheWrite.value);
+                const nextCalls = addNonNegativeSafeIntegers(current.calls, 1);
+                if (!(nextInput.ok && nextOutput.ok && nextCacheRead.ok && nextCacheWrite.ok && nextCalls.ok)) {
+                  rejectedMetricRecords++;
+                  continue;
+                }
+                current.in = nextInput.value;
+                current.out = nextOutput.value;
+                current.cr = nextCacheRead.value;
+                current.cw = nextCacheWrite.value;
+                current.calls = nextCalls.value;
               }
             }),
             () => ({ rows: tokenRows.length, sessions: agg.size }),
@@ -172,14 +194,14 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
                 if (!(composerId && namedComposerIds.has(composerId))) {
                   continue;
                 }
-                const data = safeJSON<CursorBubbleData>(row.value);
+                const data = safeJSON(row.value);
                 if (data?.type !== 1) {
                   continue;
                 }
                 const current = naming.get(composerId) ?? { turns: 0, first: null };
                 current.turns++;
                 if (!current.first) {
-                  current.first = usablePrompt(data.text);
+                  current.first = usablePrompt(typeof data.text === 'string' ? data.text : null);
                 }
                 naming.set(composerId, current);
               }
@@ -190,7 +212,7 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
       (db) => db.close,
     );
 
-    return yield* withPerfSpan(
+    const sessions = yield* withPerfSpan(
       'aiUsage.collect.cursor.mapSessions',
       Effect.sync(() => {
         const sessions: CollectedSession[] = [];
@@ -258,6 +280,42 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
       }),
       (sessions) => ({ rows: sessions.length }),
     );
+    return { rejectedMetricRecords, sessions };
+  });
+
+const collectCursorRowsFromDb = (
+  storage: LocalHistoryStorageService,
+  dbPath: string,
+): Effect.Effect<
+  { rejectedMetricRecords: number; rows: CollectorRow[] },
+  import('../errors').LocalHistoryError,
+  never
+> =>
+  Effect.gen(function* () {
+    const cache = yield* withPerfSpan(
+      'aiUsage.collect.cursor.cache.read',
+      Effect.sync(() => readDbRowCache(storage, CURSOR_DB_CACHE_FILE, CURSOR_DB_CACHE_VERSION)),
+      (value) => ({ enabled: value !== null, entries: value ? Object.keys(value.entries).length : 0 }),
+    );
+    const stat = dbStat(dbPath);
+    const cached = cachedDbCollection(cache, dbPath, stat);
+    if (cached) {
+      return yield* withPerfSpan('aiUsage.collect.cursor.cache.hit', Effect.succeed(cached), (result) => ({
+        rows: result.rows.length,
+      }));
+    }
+    const result = yield* collectCursorSessionsFromDb(storage, dbPath);
+    const rows = cursorSessionsToRows(result.sessions);
+    const afterStat = dbStat(dbPath);
+    if (JSON.stringify(stat) === JSON.stringify(afterStat)) {
+      storeDbRows(cache, dbPath, afterStat, rows, result.rejectedMetricRecords);
+    }
+    yield* withPerfSpan(
+      'aiUsage.collect.cursor.cache.write',
+      Effect.sync(() => writeDbRowCache(storage, CURSOR_DB_CACHE_FILE, CURSOR_DB_CACHE_VERSION, cache)),
+      (wrote) => ({ wrote }),
+    );
+    return { rejectedMetricRecords: result.rejectedMetricRecords, rows };
   });
 
 export const collectCursor = withPerfSpan(
@@ -272,28 +330,8 @@ export const collectCursor = withPerfSpan(
     if (!dbPath) {
       return [];
     }
-
-    const cache = yield* withPerfSpan(
-      'aiUsage.collect.cursor.cache.read',
-      Effect.sync(() => readDbRowCache(storage, CURSOR_DB_CACHE_FILE, CURSOR_DB_CACHE_VERSION)),
-      (value) => ({ enabled: value !== null, entries: value ? Object.keys(value.entries).length : 0 }),
-    );
-    const stat = dbStat(dbPath);
-    const cachedRows = cachedDbRows(cache, dbPath, stat);
-    if (cachedRows) {
-      return yield* withPerfSpan('aiUsage.collect.cursor.cache.hit', Effect.succeed(cachedRows), (rows) => ({
-        rows: rows.length,
-      }));
-    }
-    const sessions = yield* collectCursorSessionsFromDb(storage, dbPath);
-    const rows = cursorSessionsToRows(sessions);
-    storeDbRows(cache, dbPath, stat, rows);
-    yield* withPerfSpan(
-      'aiUsage.collect.cursor.cache.write',
-      Effect.sync(() => writeDbRowCache(storage, CURSOR_DB_CACHE_FILE, CURSOR_DB_CACHE_VERSION, cache)),
-      (wrote) => ({ wrote }),
-    );
-    return rows;
+    const result = yield* collectCursorRowsFromDb(storage, dbPath);
+    return result.rows;
   }),
   (rows) => ({ rows: rows.length }),
 );
@@ -312,12 +350,28 @@ export const collectCursorResult = (
       );
       const warnings: LocalHistoryWarning[] = [];
       let sessions: CollectedSession[] = [];
+      let rows: CollectorRow[] | null = null;
+      let rejectedMetricRecords = 0;
+      const hasCsvInput = Boolean(cursorCsv && hasCursorCsvInput(cursorCsv));
 
       if (dbPath) {
-        const dbResult = yield* collectCursorSessionsFromDb(storage, dbPath).pipe(
+        const collection = hasCsvInput
+          ? collectCursorSessionsFromDb(storage, dbPath).pipe(
+              Effect.map(
+                (result): CursorDbCollectionResult => ({
+                  rejectedMetricRecords: result.rejectedMetricRecords,
+                  rows: null,
+                  sessions: result.sessions,
+                }),
+              ),
+            )
+          : collectCursorRowsFromDb(storage, dbPath).pipe(
+              Effect.map((result): CursorDbCollectionResult => ({ ...result, sessions: [] })),
+            );
+        const dbResult = yield* collection.pipe(
           Effect.match({
             onFailure: (error) => ({ _tag: 'failure' as const, error }),
-            onSuccess: (dbSessions) => ({ _tag: 'success' as const, dbSessions }),
+            onSuccess: (result) => ({ _tag: 'success' as const, result }),
           }),
         );
 
@@ -329,20 +383,22 @@ export const collectCursorResult = (
             }),
           );
         } else {
-          sessions = dbResult.dbSessions;
+          sessions = dbResult.result.sessions;
+          rows = dbResult.result.rows;
+          rejectedMetricRecords += dbResult.result.rejectedMetricRecords;
         }
       }
 
-      if (cursorCsv && hasCursorCsvInput(cursorCsv)) {
+      if (cursorCsv && hasCsvInput) {
         const turnsResult = yield* withPerfSpan(
           'aiUsage.collect.cursorCsv',
-          collectCursorCsvTurns(cursorCsvTurnsOptions(cursorCsv)).pipe(
+          collectCursorCsvTurnsResult(cursorCsvTurnsOptions(cursorCsv)).pipe(
             Effect.match({
               onFailure: (error) => ({ _tag: 'failure' as const, error }),
-              onSuccess: (turns) => ({ _tag: 'success' as const, turns }),
+              onSuccess: (result) => ({ _tag: 'success' as const, result }),
             }),
           ),
-          (result) => ({ status: result._tag, turns: result._tag === 'success' ? result.turns.length : 0 }),
+          (result) => ({ status: result._tag, turns: result._tag === 'success' ? result.result.turns.length : 0 }),
         );
 
         if (turnsResult._tag === 'failure') {
@@ -353,11 +409,16 @@ export const collectCursorResult = (
             }),
           );
         } else {
-          sessions = reconcileCursorSessions(sessions, turnsResult.turns, cursorCsvReconcileOptions(cursorCsv));
+          rejectedMetricRecords += turnsResult.result.rejectedMetricRecords;
+          sessions = reconcileCursorSessions(sessions, turnsResult.result.turns, cursorCsvReconcileOptions(cursorCsv));
         }
       }
 
-      return { rows: cursorSessionsToRows(sessions), warnings };
+      const metricWarning = metricValidationWarning('cursor', rejectedMetricRecords);
+      if (metricWarning) {
+        warnings.push(metricWarning);
+      }
+      return { rows: rows ?? cursorSessionsToRows(sessions), warnings };
     }),
     (result) => ({ rows: result.rows.length, warnings: result.warnings.length }),
   );

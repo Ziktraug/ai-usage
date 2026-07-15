@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { chmod, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { scanProjectSkills } from '.';
+import { scanProjectSkills } from './project-scan';
 
 const writeSkill = async (directory: string, name: string, description = 'Helps with examples') => {
   await mkdir(directory, { recursive: true });

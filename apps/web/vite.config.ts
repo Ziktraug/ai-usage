@@ -12,6 +12,26 @@ const serverFunctionEntrypoints = [
   './src/server/sync.ts',
 ] as const;
 
+const clientOptimizeDeps = [
+  '@pandacss/dev',
+  '@solid-primitives/refs',
+  '@tanstack/history',
+  '@tanstack/query-core',
+  '@tanstack/router-core',
+  '@tanstack/router-core/isServer',
+  '@tanstack/router-core/scroll-restoration-script',
+  '@tanstack/router-core/ssr/client',
+  '@tanstack/solid-query',
+  '@tanstack/solid-virtual',
+  'effect',
+  'seroval',
+  'solid-js',
+  'solid-js/h',
+  'solid-js/html',
+  'solid-js/store',
+  'solid-js/web',
+] as const;
+
 const solidDepScanPlugin = (): Plugin => ({
   name: 'ai-usage-solid-dep-scan',
   enforce: 'post',
@@ -71,17 +91,19 @@ const tanStackServerFunctionWarmupPlugin = (): Plugin => ({
 });
 
 export default defineConfig({
+  optimizeDeps: {
+    entries: ['src/routes/**/*.tsx'],
+    include: [...clientOptimizeDeps],
+  },
   plugins: [
     manualSyncImportDevPlugin(),
     tanStackServerFunctionWarmupPlugin(),
     tanstackStart({
       router: {
         codeSplittingOptions: {
-          // Keep the self-contained report route in the entry chunk: static
-          // HTML export inlines that chunk and cannot fetch lazy assets from
-          // file://. Skills and Sync are server-only destinations and can be
-          // split without changing the exported report runtime.
           defaultBehavior: [['component']],
+          // Splitting the root route leaves the served app SSR-only: navigation
+          // never hydrates. Keep this one route eager; nested routes still split.
           splitBehavior: ({ routeId }) => (routeId === '/' ? [] : undefined),
         },
       },
@@ -90,9 +112,6 @@ export default defineConfig({
     nitro({ preset: 'node-server' }),
     solidDepScanPlugin(),
   ],
-  build: {
-    cssCodeSplit: false,
-  },
   server: {
     watch: {
       // The design-system package writes Panda helpers in-place during check/build.

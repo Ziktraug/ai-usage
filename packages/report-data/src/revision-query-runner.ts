@@ -2,7 +2,14 @@
 import { lstat, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { MAX_SESSION_QUERY_RESULT_BYTES } from '@ai-usage/report-core/report-budgets';
+import type { FocusedReportQueryKind } from '@ai-usage/report-core/focused-report-query';
+import {
+  MAX_BREAKDOWN_REFRESH_BYTES,
+  MAX_OVERVIEW_REFRESH_BYTES,
+  MAX_SERVED_BOOTSTRAP_BYTES,
+  MAX_SESSION_QUERY_RESULT_BYTES,
+} from '@ai-usage/report-core/report-budgets';
+import { executeFocusedReportQuery } from './focused-report-query-sqlite';
 import { writeReportPayloadArtifact } from './report-payload-artifact';
 import { SESSION_QUERY_DATABASE_NAME } from './session-query-materialization';
 import {
@@ -12,6 +19,8 @@ import {
   type SessionQuerySqliteDatabase,
 } from './session-query-sqlite';
 
+type RevisionQueryKind = FocusedReportQueryKind | SessionQueryKind;
+
 const hasOwnerOnlyPermissions = (mode: number): boolean => {
   // biome-ignore lint/suspicious/noBitwiseOperators: Unix permission bits are a documented bitmask API.
   return (mode & 0o077) === 0;
@@ -19,11 +28,34 @@ const hasOwnerOnlyPermissions = (mode: number): boolean => {
 
 const isOwnedByCurrentUser = (uid: number): boolean => process.getuid === undefined || uid === process.getuid();
 
-const parseKind = (value: string | undefined): SessionQueryKind => {
-  if (value === 'campaign-children' || value === 'neighbors' || value === 'sessions') {
+const parseKind = (value: string | undefined): RevisionQueryKind => {
+  if (
+    value === 'breakdown' ||
+    value === 'overview' ||
+    value === 'support' ||
+    value === 'campaign-children' ||
+    value === 'neighbors' ||
+    value === 'sessions'
+  ) {
     return value;
   }
-  throw new Error('Unknown report session query kind');
+  throw new Error('Unknown report revision query kind');
+};
+
+const isFocusedKind = (kind: RevisionQueryKind): kind is FocusedReportQueryKind =>
+  kind === 'breakdown' || kind === 'overview' || kind === 'support';
+
+const maximumResultBytes = (kind: RevisionQueryKind): number => {
+  if (kind === 'breakdown') {
+    return MAX_BREAKDOWN_REFRESH_BYTES;
+  }
+  if (kind === 'overview') {
+    return MAX_OVERVIEW_REFRESH_BYTES;
+  }
+  if (kind === 'support') {
+    return MAX_SERVED_BOOTSTRAP_BYTES;
+  }
+  return MAX_SESSION_QUERY_RESULT_BYTES;
 };
 
 const assertPrivateOwnedPath = async (filePath: string, expected: 'directory' | 'file'): Promise<void> => {
@@ -53,7 +85,6 @@ const openReadOnlyDatabase = async (
   databaseUrl.searchParams.set('immutable', '1');
   const database = new Database(
     databaseUrl.href,
-    // SQLite open flags are a documented bitmask API.
     // biome-ignore lint/suspicious/noBitwiseOperators: No writable database handle is permitted here.
     constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI,
   ) as SessionQuerySqliteDatabase & { close(): void; exec(sql: string): unknown };
@@ -66,17 +97,17 @@ const kind = parseKind(process.argv[3]);
 const serializedRequest = process.argv[4];
 const outputPath = process.argv[5];
 if (!(revisionDirectory && serializedRequest && outputPath)) {
-  throw new Error('Report session query runner requires a revision, request, and server-created output path');
+  throw new Error('Report revision query runner requires a revision, request, and server-created output path');
 }
 
 const request: unknown = JSON.parse(serializedRequest);
 const database = await openReadOnlyDatabase(revisionDirectory);
 try {
   assertSessionQueryDatabase(database);
-  const result = executeMaterializedSessionQuery(database, kind, request);
-  await writeReportPayloadArtifact(outputPath, JSON.stringify(result), {
-    maximumBytes: MAX_SESSION_QUERY_RESULT_BYTES,
-  });
+  const result = isFocusedKind(kind)
+    ? executeFocusedReportQuery(database, kind, request)
+    : executeMaterializedSessionQuery(database, kind, request);
+  await writeReportPayloadArtifact(outputPath, JSON.stringify(result), { maximumBytes: maximumResultBytes(kind) });
 } finally {
   database.close();
 }

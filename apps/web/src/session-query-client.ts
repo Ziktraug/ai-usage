@@ -166,6 +166,13 @@ export interface SessionQueryCoordinator {
   state: () => SessionQueryState | undefined;
 }
 
+export class SessionRevisionExpiredError extends Error {
+  constructor() {
+    super('The session report revision expired');
+    this.name = 'SessionRevisionExpiredError';
+  }
+}
+
 export const createSessionQueryCoordinator = (options: {
   onStateChange?: (state: SessionQueryState | undefined) => void;
   onRevisionExpired?: () => Promise<void>;
@@ -264,7 +271,7 @@ export const createSessionQueryCoordinator = (options: {
     const request = parseSessionQueryRequest({ ...scope, cursor: null, revision });
     const page = await readPage(request);
     if (page === 'expired') {
-      throw new Error('Report revision expired while preparing the session query');
+      throw new SessionRevisionExpiredError();
     }
     return {
       generation: preparedGeneration,
