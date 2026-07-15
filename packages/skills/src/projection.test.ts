@@ -234,28 +234,13 @@ describe('target observation and projections', () => {
       const target = makeTarget(targetPath);
       const scan = await scanTargetProjections({ skills: [skill], targets: [target] });
       const action = planProjection(skill, target, scan.projections[0]);
-      const readyPath = path.join(root, 'interloper-ready');
-      const subprocess = Bun.spawn(
-        [
-          process.execPath,
-          path.join(import.meta.dir, 'test-fixtures', 'projection-interloper-subprocess.ts'),
-          projectedPath,
-          interloperPath,
-          readyPath,
-        ],
-        { stderr: 'pipe', stdout: 'pipe' },
-      );
-      while (true) {
-        try {
-          await lstat(readyPath);
-          break;
-        } catch {
-          await Bun.sleep(1);
-        }
-      }
-
-      await expect(applyProjectionAction(action, { privateStatePath: path.join(root, 'state') })).rejects.toThrow();
-      expect(await subprocess.exited).toBe(0);
+      await expect(
+        applyProjectionAction(
+          action,
+          { privateStatePath: path.join(root, 'state') },
+          { afterClaim: async () => await symlink(interloperPath, projectedPath) },
+        ),
+      ).rejects.toThrow();
       await expect(readlink(projectedPath)).resolves.toBe(interloperPath);
     } finally {
       await rm(root, { recursive: true, force: true });
