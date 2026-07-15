@@ -1,6 +1,6 @@
 # Architecture
 
-`ai-usage` reports usage from local history only. Provider APIs are not called. The main architecture rule is that collection, normalization, reporting, and output adapters stay behind separate package seams.
+`ai-usage` reports session usage from local history only. The served Codex quota-history feature is the narrow exception: it invokes the installed Codex CLI's supported local app-server interface, leaving provider communication and authentication inside Codex. `ai-usage` does not read credentials or call private provider HTTP endpoints. The main architecture rule is that collection, normalization, reporting, and output adapters stay behind separate package seams.
 
 ## Data Flow
 
@@ -11,6 +11,8 @@
 5. `@ai-usage/usage-store` persists normalized local rows and rows explicitly imported from merge bundle files, then returns validated stored report rows.
 6. `@ai-usage/usage-merge` orchestrates explicit merge bundle export and file import over the store.
 7. `apps/cli` and `apps/web` render the shared data through their own output adapters. CLI compatible consumers retain the complete compatibility payload; the served web app uses request-fingerprinted, exact-revision focused queries.
+
+Codex quota history follows a separate, bounded path: app-server polling and rollout backfill emit provider-neutral observation batches, `@ai-usage/report-data` imports them transactionally through `@ai-usage/usage-store`, and the served web app reads them through a dedicated history query. History is not part of `UsageReportPayload`, report revisions, snapshots, or merge bundles.
 
 ## Package Ownership
 
@@ -32,6 +34,7 @@ Owns local history adapters:
 - machine identity and user-local config reading;
 - local history warnings and errors;
 - the collected session seam before rows become normalized usage rows.
+- the Codex app-server batch adapter and bounded incremental rollout quota backfill, both producing normalized provider-quota observations.
 
 History files are read through explicit byte/file/depth budgets, no-follow regular-file checks, strict UTF-8 decoding, and WAL-aware SQLite snapshots. Usage-bearing values are validated as finite, non-negative runtime data before aggregation. Private ai-usage state is owner-only; harness-owned files are never chmodded.
 
@@ -48,6 +51,7 @@ Owns application-facing report orchestration:
 - compatibility `UsageReportPayload` creation for CLI consumers;
 - usage snapshot and merge assembly.
 - one pure final report assembler shared by local, stored, merged, and fresh paths.
+- provider-quota refresh orchestration, five-minute due checks, source checkpoint composition, latest-status projection, and bounded history queries.
 
 Apps should prefer this package over reaching into collectors directly. The known exception is the CLI quota path, which reads the newest Codex quota snapshot through the public `@ai-usage/local-collectors/codex-history` export.
 
@@ -60,6 +64,7 @@ Owns durable usage facts and merge bundle persistence:
 - validated merge bundle import and export;
 - active report-row queries with corrupt-row isolation.
 - local-observed versus portable-opaque source authority and semantic generation changes only when the active report projection changes.
+- normalized append-only provider-quota observations/windows, duplicate coalescing, coverage heartbeats, source-event idempotency, and atomic source checkpoints.
 
 The store does not collect local history, choose files, render import progress, or orchestrate app workflows.
 
@@ -118,6 +123,7 @@ Owns web runtime and UI:
 - a complete compatibility payload for CLI consumers;
 - file-based merge bundle import/export on `/sync`, including bounded local upload handling;
 - dashboard, overview, table schema, and UI model modules;
+- served-only opportunistic quota polling, a dedicated bounded Bun history runner, and the Codex history drawer.
 
 Client-visible modules must not import `*.server.*`. Shared calculations should live in small model modules such as `dashboard-model.ts`, `overview-model.ts`, and `session-table-schema.ts`.
 
@@ -132,6 +138,8 @@ Overview, complete Breakdown groups, and paged Sessions/campaign/neighbor reads
 execute separately against the named revision.
 Omitted support metadata remains identified rather than being presented as
 complete.
+
+Quota polling is independent of the one-minute report refresh. A served HTTP(S) dashboard requests a refresh on mount and every five minutes while visible, pauses while hidden, and keeps the last successful chart on failure. The server and persisted source state provide singleflight and cross-process due checks. Demo runtimes never start the Codex subprocess.
 
 Each completed Bun capture is atomically published as owner-only immutable manifest, rows, and support artifacts. Served reads name the exact revision and canonical request fingerprint. The Node registry bounds retention by age and count, keeps referenced revisions alive through leases, and returns typed unavailable/expired results instead of silently reading a newer revision. Project-group mutations and successful manual imports invalidate only the latest pointer; retained revisions do not change.
 

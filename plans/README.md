@@ -31,6 +31,7 @@ branch or open a pull request unless the user explicitly asks.
 | 018 | Give Served Revision Coordination One Browser-Side Owner | P2 | L | 016, 017 | DONE |
 | 019 | Deepen Skills Workflows and Harden Projection Parents | P1 | L | 009 | DONE |
 | 020 | Align Commit Tooling, Bun Runtime, Dead CSV Claims, and Final Documentation | P2 | M | 009-019 | DONE |
+| 021 | Persist and visualize Codex quota history behind a provider-neutral seam | P1 | L | - | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -109,6 +110,12 @@ REJECTED (with one-line rationale).
 - Plan 020 runs last. It makes pre-commit staged-only, aligns Bun with the pinned
   Nix runtime, deletes stale web CSV residue, reconciles current docs, and closes
   this index with actual implementation results.
+- Plan 021 adds a Codex-only quota-history vertical slice while keeping the
+  normalized observation, SQLite ingestion, history query, and UI series
+  provider-neutral. Codex live polling uses the official local app-server;
+  rollout JSONL supplies bounded incremental backfill. Other provider adapters,
+  daemons, multi-machine history sync, and static-history embedding are
+  deliberately deferred.
 
 ## Remediation waves
 
@@ -177,6 +184,13 @@ sequence overlapping files and rebase/re-read before execution.
 - Remove the explicit CI tool-test step solely because the root test currently
   also reaches tools: rejected without evidence of harmful cost; explicit wiring
   is not a correctness issue.
+- Call Codex `/wham/usage` directly: rejected because `codex app-server`
+  provides the supported local authentication and rate-limit interface without
+  exposing OAuth credentials to `ai-usage`.
+- Define one universal poll/watch/backfill provider lifecycle now: rejected as a
+  shallow speculative interface. Plan 021 standardizes normalized ingestion and
+  keeps source-specific lifecycle behind focused adapters until a second real
+  provider proves what must vary.
 
 ## Product directions explicitly deferred
 

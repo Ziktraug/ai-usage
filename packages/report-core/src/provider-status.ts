@@ -157,7 +157,7 @@ export const labelForLimitWindow = (limitSeconds: number | null, fallback = 'Quo
   return fallback;
 };
 
-const windowGroupForLimitSeconds = (limitSeconds: number | null): string | null => {
+export const windowGroupForLimitSeconds = (limitSeconds: number | null): string | null => {
   if (limitSeconds === 18_000) {
     return '5h';
   }
@@ -523,6 +523,9 @@ const isProviderLimitWindow = (value: unknown): value is ProviderLimitWindow => 
     (value.group === null || isNonEmptyString(value.group))
   );
 };
+
+export const parseProviderLimitWindow = (value: unknown): ProviderLimitWindow | null =>
+  isProviderLimitWindow(value) ? value : null;
 
 export const isProviderStatusDataset = (value: unknown): value is ProviderStatusDataset => {
   if (!isRecord(value)) {

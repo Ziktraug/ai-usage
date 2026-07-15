@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./provider-quota": "./src/provider-quota.ts",
     "./report-payload-artifact": "./src/report-payload-artifact.ts"
   },
   "dependencies": {
