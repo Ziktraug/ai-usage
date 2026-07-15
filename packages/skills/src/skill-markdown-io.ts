@@ -110,6 +110,10 @@ const linkClaimedMarkdownNoClobber = async (claimedPath: string, markdownPath: s
 
 type SkillMarkdownWriteResult = { ok: true } | { ok: false; reason: 'conflict' | 'not-found' | 'too-large' };
 
+export interface SkillMarkdownWriteHooks {
+  afterClaim?: (paths: SkillMarkdownRecoveryPaths) => Promise<void>;
+}
+
 interface SkillMarkdownWriteJournal {
   baseSha256: string;
   newSha256: string;
@@ -453,12 +457,15 @@ const restoreClaimAndCleanupJournal = async (
   return { ok: false, reason };
 };
 
-export const writeSkillMarkdown = async (input: {
-  baseSha256: string;
-  content: string;
-  skillName: string;
-  sourceRepoPath: string;
-}): Promise<SkillMarkdownWriteResult> => {
+export const writeSkillMarkdownWithHooks = async (
+  input: {
+    baseSha256: string;
+    content: string;
+    skillName: string;
+    sourceRepoPath: string;
+  },
+  hooks: SkillMarkdownWriteHooks,
+): Promise<SkillMarkdownWriteResult> => {
   const skillName = parseSkillName(input.skillName);
   if (Buffer.byteLength(input.content, 'utf8') > maxSkillMarkdownBytes) {
     return { ok: false, reason: 'too-large' };
@@ -500,6 +507,7 @@ export const writeSkillMarkdown = async (input: {
         ? { ok: false, reason: 'not-found' }
         : { ok: false, reason: 'conflict' };
     }
+    await hooks.afterClaim?.(recoveryPaths);
     journal = { ...journal, phase: 'claimed' };
     await writeSkillMarkdownJournal(recoveryPaths.journalPath, journal);
     const claimedRead = await readBoundedRegularFile(recoveryPaths.claimPath, maxSkillMarkdownBytes);
@@ -555,3 +563,10 @@ export const writeSkillMarkdown = async (input: {
     return { ok: true };
   });
 };
+
+export const writeSkillMarkdown = async (input: {
+  baseSha256: string;
+  content: string;
+  skillName: string;
+  sourceRepoPath: string;
+}): Promise<SkillMarkdownWriteResult> => await writeSkillMarkdownWithHooks(input, {});
