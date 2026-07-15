@@ -310,7 +310,6 @@ describe('skill markdown IO', () => {
       const skillPath = path.join(sourceRepoPath, 'skills', 'example-skill');
       const claimPath = path.join(skillPath, '.SKILL.md.ai-usage.claim');
       const readyPath = path.join(sourceRepoPath, 'writer-ready');
-      const barrierPath = path.join(sourceRepoPath, 'writer-go');
       const killerReadyPath = path.join(sourceRepoPath, 'killer-ready');
       const killedPath = path.join(sourceRepoPath, 'writer-killed');
       const writer = Bun.spawn(
@@ -320,7 +319,6 @@ describe('skill markdown IO', () => {
           sourceRepoPath,
           markdownSha256(originalContent),
           readyPath,
-          barrierPath,
         ],
         { stderr: 'pipe', stdout: 'pipe' },
       );
@@ -349,7 +347,6 @@ describe('skill markdown IO', () => {
       ) {
         await Bun.sleep(1);
       }
-      await writeFile(barrierPath, 'go', 'utf8');
       expect(await killer.exited).toBe(0);
       expect(await writer.exited).not.toBe(0);
       await expect(stat(killedPath)).resolves.toBeDefined();
