@@ -78,6 +78,23 @@ describe('usage row', () => {
     expect(row.costActual).toBe(row.costApprox);
   });
 
+  test('uses the session date for prices with a validity window', () => {
+    const row = normalizeUsageRow({
+      date: new Date('2026-09-01T00:00:00.000Z'),
+      endDate: new Date('2026-09-01T00:02:00.000Z'),
+      harness: 'Claude',
+      provider: 'Anthropic API',
+      name: 'fixture',
+      model: 'claude-sonnet-5',
+      tokens: { in: 1_000_000, out: 1_000_000, cr: 0, cw: 0 },
+      cost: approximateApiCost,
+      calls: 1,
+    });
+
+    expect(row.costKnown).toBe(true);
+    expect(row.costApprox).toBe(18);
+  });
+
   test('owns active date and marker labels', () => {
     const row = normalizeUsageRow({
       date: new Date('2026-01-01T00:00:00.000Z'),

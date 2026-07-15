@@ -211,7 +211,7 @@ const rowToTurn = (row: Record<string, string>, user?: string): CursorCsvRowResu
   const kind = row.Kind ?? '';
   const isOnDemand = kind === 'On-Demand';
   const isIncluded = kind === 'Included';
-  const { rates, known } = priceFor(model);
+  const { rates, known } = priceFor(model, { at: date });
   return {
     status: 'valid',
     turn: {
