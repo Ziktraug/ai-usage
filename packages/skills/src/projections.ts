@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { link, lstat, readdir, readlink, realpath, rename, stat, symlink, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import type {
   Projection,
   ProjectionAction,
@@ -422,8 +421,6 @@ const claimObservedProjection = async (projectedPath: string, observedSourcePath
   await rename(projectedPath, claimedPath);
   try {
     await assertObservedProjectionUnchanged(claimedPath, observedSourcePath);
-    // Yield once so competing filesystem actors can become visible before the exclusive install.
-    await delay(5);
     return claimedPath;
   } catch (error) {
     await restoreClaimedProjection(claimedPath, projectedPath);
@@ -434,6 +431,7 @@ const claimObservedProjection = async (projectedPath: string, observedSourcePath
 export const applyProjectionAction = async (
   action: ProjectionAction,
   options: { privateStatePath: string },
+  hooks: { afterClaim?: (claimedPath: string) => Promise<void> } = {},
 ): Promise<void> => {
   if (
     action.type !== 'create-symlink' &&
@@ -467,6 +465,7 @@ export const applyProjectionAction = async (
     }
 
     const claimedPath = await claimObservedProjection(mutableAction.path, mutableAction.observedSourcePath);
+    await hooks.afterClaim?.(claimedPath);
     if (mutableAction.type === 'repair-symlink') {
       try {
         await symlink(mutableAction.sourcePath, mutableAction.path);
