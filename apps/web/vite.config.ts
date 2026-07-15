@@ -12,6 +12,26 @@ const serverFunctionEntrypoints = [
   './src/server/sync.ts',
 ] as const;
 
+const clientOptimizeDeps = [
+  '@pandacss/dev',
+  '@solid-primitives/refs',
+  '@tanstack/history',
+  '@tanstack/query-core',
+  '@tanstack/router-core',
+  '@tanstack/router-core/isServer',
+  '@tanstack/router-core/scroll-restoration-script',
+  '@tanstack/router-core/ssr/client',
+  '@tanstack/solid-query',
+  '@tanstack/solid-virtual',
+  'effect',
+  'seroval',
+  'solid-js',
+  'solid-js/h',
+  'solid-js/html',
+  'solid-js/store',
+  'solid-js/web',
+] as const;
+
 const solidDepScanPlugin = (): Plugin => ({
   name: 'ai-usage-solid-dep-scan',
   enforce: 'post',
@@ -71,6 +91,10 @@ const tanStackServerFunctionWarmupPlugin = (): Plugin => ({
 });
 
 export default defineConfig({
+  optimizeDeps: {
+    entries: ['src/routes/**/*.tsx'],
+    include: [...clientOptimizeDeps],
+  },
   plugins: [
     manualSyncImportDevPlugin(),
     tanStackServerFunctionWarmupPlugin(),
