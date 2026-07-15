@@ -2,7 +2,7 @@
 
 Unified local AI usage report for the coding tools installed on this machine — and across multiple machines via portable snapshots.
 
-The CLI reads local history files and databases written by each tool, then reports per-session token usage, estimated cost, and aggregate analytics — in the terminal or the interactive web app. It never calls provider APIs; everything is computed from local data.
+The CLI reads local history files and databases written by each tool, then reports per-session token usage, estimated cost, and aggregate analytics — in the terminal or the interactive web app. Normal report collection never calls provider APIs; everything is computed from local data. When the served dashboard is open, its optional Codex quota-history surface may invoke the installed `codex app-server`, which owns any provider communication and authentication refresh. `ai-usage` never reads or stores Codex credentials or raw app-server responses.
 
 ## Supported sources
 
@@ -60,6 +60,8 @@ Show Codex subscription quota (5h / 7d windows) from the newest local rate-limit
 ```sh
 bun run cli -- quota
 ```
+
+The served dashboard also retains normalized Codex quota observations in the local usage-store SQLite database and refreshes them at most every five minutes while the page is visible. Static HTML remains read-only: it can show current provider status from its embedded report payload, but it does not poll Codex or embed interactive persisted history.
 
 ## Multi-machine usage
 

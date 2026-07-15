@@ -8,6 +8,7 @@ import {
   toSerializedMergeRow,
   type UsageMergeBundle,
 } from '@ai-usage/report-core/merge-bundle';
+import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
@@ -19,6 +20,9 @@ import {
   importLocalRows,
   importPeerMergeBundle,
   previewPeerMergeBundle,
+  importProviderQuotaBatch,
+  queryProviderQuotaObservations,
+  queryProviderQuotaSourceState,
   queryReportRows,
   queryUsageStoreGeneration,
   UsageStoreError,
@@ -622,5 +626,104 @@ describe('usage-store public boundary', () => {
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(generationBeforeFailure);
     expect(stored.rows).toHaveLength(1);
     expect(stored.rows[0]?.source.sourceSessionId).toBe('seed');
+  });
+});
+
+const quotaObservation = (observedAt: string, usedPercent = 25): ProviderQuotaObservation => ({
+  accountScope: 'account-digest',
+  machineId: machineA.id,
+  machineLabel: machineA.label,
+  observedAt,
+  plan: 'plus',
+  providerGeneratedAt: null,
+  providerKey: 'codex',
+  providerLabel: 'Codex',
+  source: { confidence: 'authoritative', key: 'codex-app-server', mode: 'poll' },
+  state: 'ok',
+  windows: [
+    {
+      blocked: false,
+      group: '5h',
+      id: 'codex:primary',
+      label: '5h',
+      limitSeconds: 18_000,
+      remainingPercent: 100 - usedPercent,
+      resetsAt: '2026-07-15T15:00:00.000Z',
+      scope: 'provider',
+      usedPercent,
+    },
+  ],
+});
+
+describe('provider quota storage', () => {
+  test('coalesces adjacent content, retains heartbeats, and commits checkpoints atomically', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-quota-'));
+    const dbPath = usageStorePath(home);
+
+    const first = await Effect.runPromise(
+      importProviderQuotaBatch({
+        checkpointUpdates: [],
+        dbPath,
+        items: [{ observation: quotaObservation('2026-07-15T10:00:00.000Z'), sourceEventKey: 'live-1' }],
+      }),
+    );
+    const adjacent = await Effect.runPromise(
+      importProviderQuotaBatch({
+        checkpointUpdates: [],
+        dbPath,
+        items: [{ observation: quotaObservation('2026-07-15T10:05:00.000Z'), sourceEventKey: 'live-2' }],
+      }),
+    );
+    const repeatedEvent = await Effect.runPromise(
+      importProviderQuotaBatch({
+        checkpointUpdates: [],
+        dbPath,
+        items: [{ observation: quotaObservation('2026-07-15T10:05:00.000Z'), sourceEventKey: 'live-2' }],
+      }),
+    );
+    const heartbeat = await Effect.runPromise(
+      importProviderQuotaBatch({
+        checkpointUpdates: [
+          {
+            cursor: { offset: 42 },
+            cursorKey: 'rollout.jsonl',
+            machineId: machineA.id,
+            providerKey: 'codex',
+            sourceKey: 'codex-rollout',
+          },
+        ],
+        dbPath,
+        items: [{ observation: quotaObservation('2026-07-15T10:31:00.000Z'), sourceEventKey: 'live-3' }],
+      }),
+    );
+
+    const queried = await Effect.runPromise(
+      queryProviderQuotaObservations({
+        dbPath,
+        from: '2026-07-15T10:10:00.000Z',
+        machineId: machineA.id,
+        providerKey: 'codex',
+        to: '2026-07-15T11:00:00.000Z',
+      }),
+    );
+    const checkpoint = await Effect.runPromise(
+      queryProviderQuotaSourceState({
+        cursorKey: 'rollout.jsonl',
+        dbPath,
+        machineId: machineA.id,
+        providerKey: 'codex',
+        sourceKey: 'codex-rollout',
+      }),
+    );
+
+    expect(first).toMatchObject({ coalesced: 0, inserted: 1, unchanged: 0 });
+    expect(adjacent).toMatchObject({ coalesced: 1, inserted: 0, unchanged: 0 });
+    expect(repeatedEvent).toMatchObject({ coalesced: 0, inserted: 0, unchanged: 1 });
+    expect(heartbeat).toMatchObject({ coalesced: 0, inserted: 1, unchanged: 0 });
+    expect(queried.observations).toHaveLength(2);
+    expect(queried.observations[0]?.firstObservedAt).toBe('2026-07-15T10:00:00.000Z');
+    expect(queried.observations[0]?.lastObservedAt).toBe('2026-07-15T10:05:00.000Z');
+    expect(queried.observations[1]?.firstObservedAt).toBe('2026-07-15T10:31:00.000Z');
+    expect(checkpoint?.cursor).toEqual({ offset: 42 });
   });
 });

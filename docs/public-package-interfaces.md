@@ -14,6 +14,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./model-identity`: normalized model-family and provider identity helpers.
 - `./pricing`: editable model pricing and cost approximation support.
 - `./provider-status`: provider-agnostic status windows, reset credits, parsing, and merge helpers.
+- `./provider-quota`: strict provider-neutral observation, history, normalization, segmentation, and downsampling contracts.
 - `./provenance`: usage row provenance attribution helpers.
 - `./project-alias`: project alias config parsing and application.
 - `./project-group`: project grouping config, source identity, and selector matching helpers.
@@ -28,7 +29,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 
 ## `@ai-usage/local-collectors`
 
-- `.`: local history collection orchestration.
+- `.`: local history collection orchestration, including the high-level Codex app-server and rollout quota batch collectors.
 - `./codex-history`: Codex quota/local history helpers used by CLI quota output.
 - `./datasets`: focused local report-dataset collection helpers.
 - `./errors`: local history error and warning formatting/types.
@@ -38,11 +39,12 @@ The workspace packages expose only these public seams. Cross-package imports mus
 ## `@ai-usage/report-data`
 
 - `.`: local report row/payload requests, focused known-project-source discovery, snapshot assembly, and full compatibility payload creation over core plus local collectors.
+- `./provider-quota`: local provider-quota refresh and bounded history-query orchestration.
 - `./report-payload-artifact`: bounded private artifact writing for the Bun-to-Nitro full-payload compatibility handoff.
 
 ## `@ai-usage/usage-store`
 
-- `.`: SQLite-backed normalized usage row import, validated merge bundle import/export, and stored report-row queries.
+- `.`: SQLite-backed normalized usage row and provider-quota import/query operations, atomic source checkpoints, and validated merge bundle import/export.
 
 ## `@ai-usage/usage-merge`
 

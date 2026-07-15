@@ -23,7 +23,12 @@ import {
   projectSourceId,
   projectSourceSelectorLabel,
 } from '@ai-usage/report-core/project-group';
-import { mergeProviderStatusDatasets, parseProviderStatusDataset } from '@ai-usage/report-core/provider-status';
+import { projectProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
+import {
+  createProviderStatusDataset,
+  mergeProviderStatusDatasets,
+  parseProviderStatusDataset,
+} from '@ai-usage/report-core/provider-status';
 import type {
   PreparedUsageReport,
   ReportOptions,
@@ -44,6 +49,7 @@ import type { Row, SourcedRow } from '@ai-usage/report-core/types';
 import { usageRowLineDelta, usageRowPricedCost, usageRowTokenTotal } from '@ai-usage/report-core/usage-row';
 import {
   importLocalRows,
+  queryLatestProviderQuotaObservations,
   queryReportRows,
   queryUsageStoreGeneration,
   type StoredSourceAuthority,
@@ -54,6 +60,13 @@ import { withPerfSpan } from './perf';
 import { assembleReport, captureReport, type ReportAssemblyInput } from './report-assembly';
 
 export { captureReport, reportAssemblyInputFingerprint, reportCaptureFingerprint } from './report-assembly';
+
+export type {
+  ProviderQuotaRefreshInput,
+  ProviderQuotaRefreshResult,
+  QueryLocalProviderQuotaHistoryInput,
+} from './provider-quota';
+export { queryLocalProviderQuotaHistory, refreshLocalProviderQuotas } from './provider-quota';
 
 const GIT_CONFIG_LINE_SEPARATOR = /\r?\n/;
 const GIT_REMOTE_HEADER_PATTERN = /^\s*\[remote\s+"([^"]+)"\]\s*$/;
@@ -654,7 +667,19 @@ export const createStoredReportPayload = (
         collectReportDatasets({ ...request, machine }),
         (result) => ({ datasets: result.datasets ? Object.keys(result.datasets).length : 0 }),
       );
-      const { datasets } = datasetResult;
+      const storedQuota = datasetSelectionFor(request)?.includeProviderStatus
+        ? yield* queryLatestProviderQuotaObservations({ dbPath, machineId: machine.id }).pipe(
+            Effect.mapError(usageStoreLocalHistoryError('usageStore.queryLatestProviderQuotaObservations', dbPath)),
+          )
+        : undefined;
+      const storedQuotaDataset = storedQuota?.observations.length
+        ? {
+            providerStatus: createProviderStatusDataset(
+              storedQuota.observations.map(({ observation }) => projectProviderQuotaObservation(observation)),
+            ),
+          }
+        : undefined;
+      const datasets = mergeReportDatasets(datasetResult.datasets, storedQuotaDataset);
       const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
       return yield* withPerfSpan(
         'aiUsage.report.serializeStoredPayload',

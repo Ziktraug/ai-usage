@@ -1,5 +1,12 @@
 # Provider Status Windows Plan
 
+> **Superseded live-source guidance:** The direct Codex `/wham/*` and `auth.json`
+> approach below is retained only as historical design context. It must not be
+> implemented. Live Codex quota collection now uses the supported local
+> `codex app-server` JSON-RPC `account/rateLimits/read` interface; `ai-usage`
+> neither reads Codex credentials nor calls private HTTP endpoints. See Plan 021
+> and `docs/architecture.md` for the active persistence and polling design.
+
 ## Goal
 
 Add a dashboard surface that shows operational status for every AI provider or

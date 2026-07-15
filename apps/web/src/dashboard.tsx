@@ -37,7 +37,9 @@ import {
   type ProjectSourceSelector,
   projectSourceSelectorKey,
 } from '@ai-usage/report-core/project-group';
+import type { ProviderQuotaHistoryPoint, ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
 import { type SessionNeighborResult, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+import type { ProviderQuotaRefreshResult } from '@ai-usage/report-data/provider-quota';
 import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import {
@@ -107,6 +109,13 @@ import { Overview } from './overview';
 import type { TimelineDimension } from './overview-model';
 import { ProjectGroupEditor } from './project-group-editor';
 import { ProjectSummary } from './project-summary';
+import {
+  createProviderQuotaPoller,
+  createServedProviderQuotaSource,
+  type ProviderQuotaSource,
+} from './provider-quota-client';
+import { type ProviderQuotaHistoryRange, providerQuotaHistoryRequest } from './provider-quota-history-model';
+import { ProviderQuotaHistoryPanel } from './provider-quota-history-panel';
 import { createProviderStatusClock } from './provider-status-clock';
 import { buildProviderStatusViews } from './provider-status-model';
 import { ProviderStatusPanel } from './provider-status-panel';
@@ -137,6 +146,75 @@ const SessionTable = lazy(async () => {
   const module = await import('./session-table');
   return { default: module.SessionTable };
 });
+
+const fixtureQuotaPoint = (input: {
+  at: string;
+  resetAt: string;
+  usedPercent: number;
+  window: '5h' | 'weekly';
+}): ProviderQuotaHistoryPoint => ({
+  accountScope: 'fixture-account',
+  blocked: false,
+  firstObservedAt: input.at,
+  group: input.window,
+  lastObservedAt: input.at,
+  limitSeconds: input.window === '5h' ? 18_000 : 604_800,
+  machineId: 'fixture-machine',
+  machineLabel: 'Fixture Machine',
+  providerKey: 'codex',
+  providerLabel: 'Codex',
+  resetAt: input.resetAt,
+  source: { confidence: 'authoritative', key: 'codex-app-server', mode: 'poll' },
+  usedPercent: input.usedPercent,
+  windowId: `codex:${input.window}`,
+  windowLabel: input.window === '5h' ? '5h' : 'Weekly',
+});
+
+const e2eQuotaHistoryFixture: ProviderQuotaHistoryResult = {
+  coverage: [],
+  generatedAt: '2026-07-15T10:40:00.000Z',
+  latest: [],
+  points: [
+    fixtureQuotaPoint({
+      at: '2026-07-15T09:00:00.000Z',
+      resetAt: '2026-07-15T12:00:00.000Z',
+      usedPercent: 22,
+      window: '5h',
+    }),
+    fixtureQuotaPoint({
+      at: '2026-07-15T09:05:00.000Z',
+      resetAt: '2026-07-15T12:00:00.000Z',
+      usedPercent: 28,
+      window: '5h',
+    }),
+    fixtureQuotaPoint({
+      at: '2026-07-15T09:30:00.000Z',
+      resetAt: '2026-07-15T12:00:00.000Z',
+      usedPercent: 35,
+      window: '5h',
+    }),
+    fixtureQuotaPoint({
+      at: '2026-07-15T09:35:00.000Z',
+      resetAt: '2026-07-15T17:00:00.000Z',
+      usedPercent: 4,
+      window: '5h',
+    }),
+    fixtureQuotaPoint({
+      at: '2026-07-15T09:00:00.000Z',
+      resetAt: '2026-07-21T00:00:00.000Z',
+      usedPercent: 61,
+      window: 'weekly',
+    }),
+    fixtureQuotaPoint({
+      at: '2026-07-15T09:35:00.000Z',
+      resetAt: '2026-07-21T00:00:00.000Z',
+      usedPercent: 63,
+      window: 'weekly',
+    }),
+  ],
+  skipped: 0,
+  truncated: false,
+};
 
 const secondaryMetrics = css({
   my: '20px',
@@ -198,6 +276,8 @@ const supportForFocusedBootstrap = (bootstrap: FocusedSupportResult): WebReportP
 
 export const Dashboard = (props: {
   initialPayload?: WebReportPayload;
+  quotaHistoryFixture?: ProviderQuotaHistoryResult;
+  quotaSource?: ProviderQuotaSource;
   refreshBootstrap?: () => Promise<FocusedSupportResult>;
   servedBootstrap?: FocusedSupportResult;
 }) => {
@@ -229,6 +309,52 @@ export const Dashboard = (props: {
   const providerStatusClock = createProviderStatusClock({ initialNow: initialPayload.generatedAt });
   onMount(providerStatusClock.start);
   const isDemo = !(props.initialPayload || props.servedBootstrap);
+  const quotaFixture =
+    props.quotaHistoryFixture ?? (import.meta.env?.VITE_AI_USAGE_E2E === '1' ? e2eQuotaHistoryFixture : undefined);
+  const quotaSource = props.quotaSource ?? (props.servedBootstrap ? createServedProviderQuotaSource() : undefined);
+  const [quotaHistory, setQuotaHistory] = createSignal<ProviderQuotaHistoryResult | null>(quotaFixture ?? null);
+  const [quotaRefresh, setQuotaRefresh] = createSignal<ProviderQuotaRefreshResult | null>(null);
+  const [quotaHistoryError, setQuotaHistoryError] = createSignal<string | null>(null);
+  const [quotaHistoryLoading, setQuotaHistoryLoading] = createSignal(false);
+  const [quotaHistoryOpen, setQuotaHistoryOpen] = createSignal(false);
+  const [quotaHistoryRange, setQuotaHistoryRange] = createSignal<ProviderQuotaHistoryRange>('24h');
+  const quotaRequest = () => providerQuotaHistoryRequest(quotaHistoryRange(), new Date(), { providerKey: 'codex' });
+  const loadQuotaRange = async (range: ProviderQuotaHistoryRange): Promise<void> => {
+    setQuotaHistoryRange(range);
+    if (!(quotaSource && !quotaFixture)) {
+      return;
+    }
+    setQuotaHistoryLoading(true);
+    try {
+      const result = await quotaSource.history(
+        providerQuotaHistoryRequest(range, new Date(), { providerKey: 'codex' }),
+      );
+      setQuotaHistory(result);
+      setQuotaHistoryError(null);
+    } catch (error) {
+      setQuotaHistoryError(error instanceof Error ? error.message : 'Quota history query failed');
+    } finally {
+      setQuotaHistoryLoading(false);
+    }
+  };
+  onMount(() => {
+    if (!(quotaSource && !quotaFixture && ['http:', 'https:'].includes(window.location.protocol))) {
+      return;
+    }
+    const poller = createProviderQuotaPoller({
+      document,
+      onError: (error) => setQuotaHistoryError(error instanceof Error ? error.message : 'Quota refresh failed'),
+      onResult: (result, refresh) => {
+        setQuotaHistory(result);
+        setQuotaRefresh(refresh);
+        setQuotaHistoryError(null);
+      },
+      request: quotaRequest,
+      source: quotaSource,
+    });
+    poller.start();
+    onCleanup(poller.stop);
+  });
   const servedSessionQueries = Boolean(focusedStore);
   const [servedSessionState, setServedSessionState] = createSignal<SessionQueryState>();
   const servedSessionFingerprint = () => {
@@ -1301,7 +1427,11 @@ export const Dashboard = (props: {
               </section>
 
               <Show when={!isDemo}>
-                <ProviderStatusPanel providers={providerStatusViews()} />
+                <ProviderStatusPanel
+                  historyAvailable={(quotaHistory()?.points.length ?? 0) > 0}
+                  onViewHistory={() => setQuotaHistoryOpen(true)}
+                  providers={providerStatusViews()}
+                />
               </Show>
             </div>
           </div>
@@ -1337,6 +1467,21 @@ export const Dashboard = (props: {
                 selectedCampaign={selectedCampaign()}
               />
             )}
+          </Show>
+          <Show when={quotaHistoryOpen()}>
+            <ProviderQuotaHistoryPanel
+              error={quotaHistoryError()}
+              loading={quotaHistoryLoading()}
+              onClose={() => setQuotaHistoryOpen(false)}
+              onRangeChange={(range) => {
+                loadQuotaRange(range).catch((error: unknown) => {
+                  setQuotaHistoryError(error instanceof Error ? error.message : 'Quota history query failed');
+                });
+              }}
+              range={quotaHistoryRange()}
+              refresh={quotaRefresh()}
+              result={quotaHistory()}
+            />
           </Show>
         </Show>
       </div>

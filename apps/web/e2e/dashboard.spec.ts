@@ -10,6 +10,8 @@ const LEGACY_PROJECT_TAB_URL_PATTERN = /tab=projects/;
 const PROVIDER_DETAILS_PATTERN = /^Provider details \(/;
 const QUERY_URL_PATTERN = /q=ai-usage/;
 const RANGE_URL_PATTERN = /range=/;
+const RESET_COUNT_PATTERN = /1 reset/;
+const GAP_COUNT_PATTERN = /1 collection gap/;
 const SORT_URL_PATTERN = /sort=/;
 const TOP_SESSION_PATTERN = /Top session/;
 
@@ -101,6 +103,28 @@ test('keeps provider details collapsed until they are requested', async ({ page 
   await expect(noQuotaDetail).not.toBeVisible();
   await providerDetails.click();
   await expect(noQuotaDetail).toBeVisible();
+});
+
+test('Codex quota history shows reset and gap-aware ranges on desktop and mobile', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('button', { name: 'View Codex history' }).click();
+  const history = page.getByRole('dialog', { name: 'Codex quota history' });
+  await expect(history.getByRole('heading', { name: 'Codex quota history' })).toBeVisible();
+  await expect(history.getByText('5h', { exact: true }).first()).toBeVisible();
+  await expect(history.getByText('Weekly', { exact: true }).first()).toBeVisible();
+  await expect(history.getByText(RESET_COUNT_PATTERN).first()).toBeVisible();
+  await expect(history.getByText(GAP_COUNT_PATTERN).first()).toBeVisible();
+  await history.getByRole('button', { name: '7d' }).click();
+  await expect(history.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('Escape');
+  await expect(history).not.toBeVisible();
+
+  await page.setViewportSize({ height: 800, width: 390 });
+  await page.getByRole('button', { name: 'View Codex history' }).click();
+  await expect(page.getByRole('dialog', { name: 'Codex quota history' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Codex quota history' })).not.toBeVisible();
 });
 
 test('persists exploration state in the URL', async ({ page }) => {

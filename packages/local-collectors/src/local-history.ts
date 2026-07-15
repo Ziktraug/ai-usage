@@ -26,6 +26,16 @@ export interface LocalHistoryDatabase {
   close: Effect.Effect<void>;
 }
 
+export interface LocalHistoryFileMetadata {
+  mtimeMs: number;
+  size: number;
+}
+
+export interface LocalHistoryTextRange {
+  bytesRead: number;
+  text: string;
+}
+
 export interface LocalHistoryStorage {
   exists(filePath: string): Effect.Effect<boolean, LocalHistoryError>;
   home: string;
@@ -38,12 +48,18 @@ export interface LocalHistoryStorage {
    */
   readConfigText(filePath: string, maxBytes?: number): Effect.Effect<string, LocalHistoryError>;
   readDir(dirPath: string): Effect.Effect<LocalHistoryDirEntry[], LocalHistoryError>;
+  readFileMetadata?(filePath: string): Effect.Effect<LocalHistoryFileMetadata, LocalHistoryError>;
   readLines(
     filePath: string,
     visit: (line: string) => void,
     limits?: { maxBytes?: number; maxLineBytes?: number },
   ): Effect.Effect<{ bytes: number; lines: number }, LocalHistoryError>;
   readText(filePath: string, maxBytes?: number): Effect.Effect<string, LocalHistoryError>;
+  readTextRange?(
+    filePath: string,
+    offset: number,
+    maximumBytes: number,
+  ): Effect.Effect<LocalHistoryTextRange, LocalHistoryError>;
 }
 
 export const LocalHistoryStorage = Context.GenericTag<LocalHistoryStorage>('@ai-usage/LocalHistoryStorage');
@@ -92,6 +108,48 @@ export const readRegularFileText = (filePath: string, maxBytes: number): string 
       throw new Error(`History input changed while it was read: ${filePath}`);
     }
     return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, totalBytes));
+  } finally {
+    fs.closeSync(descriptor);
+  }
+};
+
+export const readRegularFileMetadata = (filePath: string): LocalHistoryFileMetadata => {
+  const metadata = fs.lstatSync(filePath);
+  if (metadata.isSymbolicLink() || !metadata.isFile()) {
+    throw new Error(`History input is not a regular file: ${filePath}`);
+  }
+  return { mtimeMs: metadata.mtimeMs, size: metadata.size };
+};
+
+export const readRegularFileTextRange = (
+  filePath: string,
+  offset: number,
+  maximumBytes: number,
+): LocalHistoryTextRange => {
+  if (!(Number.isSafeInteger(offset) && offset >= 0 && Number.isSafeInteger(maximumBytes) && maximumBytes >= 0)) {
+    throw new Error(`History range is invalid for ${filePath}`);
+  }
+  const before = fs.lstatSync(filePath);
+  if (before.isSymbolicLink() || !before.isFile()) {
+    throw new Error(`History input is not a regular file: ${filePath}`);
+  }
+  // biome-ignore lint/suspicious/noBitwiseOperators: Node combines open flags as a bit mask.
+  const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const opened = fs.fstatSync(descriptor);
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) {
+      throw new Error(`History input changed while it was opened: ${filePath}`);
+    }
+    const buffer = Buffer.alloc(Math.min(maximumBytes, Math.max(0, opened.size - offset)));
+    const bytesRead = buffer.length === 0 ? 0 : fs.readSync(descriptor, buffer, 0, buffer.length, offset);
+    const after = fs.lstatSync(filePath);
+    if (after.isSymbolicLink() || after.dev !== opened.dev || after.ino !== opened.ino) {
+      throw new Error(`History input changed while it was read: ${filePath}`);
+    }
+    return {
+      bytesRead,
+      text: new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, bytesRead)),
+    };
   } finally {
     fs.closeSync(descriptor);
   }
@@ -219,6 +277,16 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
           limits.maxLineBytes ?? HISTORY_LINE_MAX_BYTES,
         ),
       catch: localHistoryError('readLines', { path: filePath }),
+    }),
+  readFileMetadata: (filePath) =>
+    Effect.try({
+      try: () => readRegularFileMetadata(filePath),
+      catch: localHistoryError('readFileMetadata', { path: filePath }),
+    }),
+  readTextRange: (filePath, offset, maximumBytes) =>
+    Effect.try({
+      try: () => readRegularFileTextRange(filePath, offset, maximumBytes),
+      catch: localHistoryError('readTextRange', { path: filePath }),
     }),
   readDir: (dirPath) =>
     Effect.try({

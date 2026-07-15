@@ -151,6 +151,19 @@ const compactProviderTop = css({
 const compactProviderName = css({ display: 'grid', gap: '2px', minW: 0 });
 const compactProviderMetrics = css({ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' });
 const compactEmpty = css({ color: 'muted', fontSize: '12px' });
+const historyButton = css({
+  justifySelf: 'start',
+  px: '10px',
+  py: '6px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'md',
+  bg: 'surface',
+  color: 'ink',
+  cursor: 'pointer',
+  fontSize: '12px',
+  fontWeight: 700,
+  _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+});
 const issueList = css({
   display: 'flex',
   alignItems: 'center',
@@ -240,7 +253,11 @@ const ProviderSummaryMetrics = (props: { class: string; view: ProviderStatusView
   </div>
 );
 
-const CompactProviderStatus = (props: { view: ProviderStatusView }) => (
+const CompactProviderStatus = (props: {
+  historyAvailable?: boolean | undefined;
+  onViewHistory?: (() => void) | undefined;
+  view: ProviderStatusView;
+}) => (
   <li class={compactProvider}>
     <div class={compactProviderTop}>
       <div class={compactProviderName}>
@@ -253,6 +270,11 @@ const CompactProviderStatus = (props: { view: ProviderStatusView }) => (
     </div>
     <ProviderSummaryMetrics class={compactProviderMetrics} view={props.view} />
     <Show when={props.view.provider.warnings?.[0]}>{(warning) => <div class={criticalNote}>{warning()}</div>}</Show>
+    <Show when={props.historyAvailable && props.view.provider.key.split(':')[0] === 'codex'}>
+      <button class={historyButton} onClick={() => props.onViewHistory?.()} type="button">
+        View history
+      </button>
+    </Show>
   </li>
 );
 
@@ -320,7 +342,11 @@ const ProviderDetailCard = (props: { view: ProviderStatusView }) => (
 
 const providerCountLabel = (count: number) => `${count} provider${count === 1 ? '' : 's'}`;
 
-export const ProviderStatusPanel = (props: { providers: ProviderStatusView[] }) => {
+export const ProviderStatusPanel = (props: {
+  historyAvailable?: boolean | undefined;
+  onViewHistory?: (() => void) | undefined;
+  providers: ProviderStatusView[];
+}) => {
   const summary = createMemo(() => buildProviderStatusPanelSummary(props.providers));
 
   return (
@@ -333,6 +359,11 @@ export const ProviderStatusPanel = (props: { providers: ProviderStatusView[] }) 
             </h2>
             <div class={panelSub}>Quota usage and operational issues at a glance.</div>
           </div>
+          <Show when={props.historyAvailable}>
+            <button class={historyButton} onClick={() => props.onViewHistory?.()} type="button">
+              View Codex history
+            </button>
+          </Show>
         </div>
 
         <div class={compactOverview}>
@@ -341,14 +372,28 @@ export const ProviderStatusPanel = (props: { providers: ProviderStatusView[] }) 
             when={summary().quotaProviders.length > 0}
           >
             <ul class={compactProviderList}>
-              <For each={summary().quotaProviders}>{(view) => <CompactProviderStatus view={view} />}</For>
+              <For each={summary().quotaProviders}>
+                {(view) => (
+                  <CompactProviderStatus
+                    historyAvailable={props.historyAvailable}
+                    onViewHistory={props.onViewHistory}
+                    view={view}
+                  />
+                )}
+              </For>
             </ul>
           </Show>
 
           <Show when={summary().criticalProvidersWithoutQuota.length > 0}>
             <ul aria-label="Critical providers" class={compactProviderList}>
               <For each={summary().criticalProvidersWithoutQuota}>
-                {(view) => <CompactProviderStatus view={view} />}
+                {(view) => (
+                  <CompactProviderStatus
+                    historyAvailable={props.historyAvailable}
+                    onViewHistory={props.onViewHistory}
+                    view={view}
+                  />
+                )}
               </For>
             </ul>
           </Show>

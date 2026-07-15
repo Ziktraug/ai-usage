@@ -14,6 +14,7 @@
     "./pricing": "./src/pricing.ts",
     "./portable-usage": "./src/portable-usage.ts",
     "./provider-status": "./src/provider-status.ts",
+    "./provider-quota": "./src/provider-quota.ts",
     "./model-identity": "./src/model-identity.ts",
     "./provenance": "./src/provenance.ts",
     "./project-alias": "./src/project-alias.ts",
