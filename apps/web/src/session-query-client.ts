@@ -311,16 +311,18 @@ export const createSessionQueryCoordinator = (options: {
     const scope: SessionQueryScope = (({ cursor: _cursor, revision: _revision, ...value }) => value)(state.query);
     loadMoreInFlight = true;
     publish({ ...state, loadingMore: true });
+    let nextState: SessionQueryState | undefined;
     try {
       const request = parseSessionQueryRequest({ ...state.query, cursor: state.nextCursor });
       const page = await readPage(request);
       if (page === 'expired') {
+        loadMoreInFlight = false;
         return await restartCurrentGeneration(scope, targetGeneration);
       }
       if (generation !== targetGeneration || currentState?.query.revision !== request.revision) {
         return currentState;
       }
-      const nextState: SessionQueryState = {
+      nextState = {
         ...currentState,
         itemCount: page.itemCount,
         items: appendUniqueItems(currentState.items, page.items),
@@ -329,14 +331,14 @@ export const createSessionQueryCoordinator = (options: {
         selectedRowId,
         sessionCount: page.sessionCount,
       };
-      publish(nextState);
-      return nextState;
     } finally {
       loadMoreInFlight = false;
-      if (currentState?.loadingMore) {
+      if (!nextState && currentState?.loadingMore) {
         publish({ ...currentState, loadingMore: false });
       }
     }
+    publish(nextState);
+    return nextState;
   };
 
   const loadCampaignChildren = async (campaignKey: string): Promise<SessionQueryState | undefined> => {
