@@ -27,6 +27,7 @@ interface CodexSession {
   maxTotal: number;
   model: string;
   parent: string | null;
+  rejectedMetricRecords: number;
   source: string | null;
   start: Date | null;
   subscription: boolean;
@@ -89,6 +90,7 @@ interface CodexSessionReadResult {
   parsedLines: number;
   parseMs: number;
   readMs: number;
+  rejectedMetricRecords: number;
   sessions: CodexSession[];
   skippedLines: number;
 }
@@ -97,6 +99,7 @@ interface CodexSessionParseResult {
   lines: number;
   parsedLines: number;
   parseMs: number;
+  rejectedMetricRecords: number;
   session: CodexSession;
   skippedLines: number;
 }
@@ -129,7 +132,7 @@ interface SqliteDatabase {
   query(sql: string): SqliteStatement;
 }
 
-const CODEX_SESSION_CACHE_VERSION = 3;
+const CODEX_SESSION_CACHE_VERSION = 4;
 
 export const codexSessionsDir = (storage: LocalHistoryStorageService) => {
   const paths = resolvePaths(storage);
@@ -317,6 +320,7 @@ const readCodexThreadMetadata: Effect.Effect<
 const emptySession = (): CodexSession => ({
   id: null,
   parent: null,
+  rejectedMetricRecords: 0,
   start: null,
   end: null,
   cwd: null,
@@ -409,26 +413,55 @@ const reviveDate = (value: unknown): Date | null => {
 
 const reviveCachedSession = (json: string): CodexSession | null => {
   try {
-    const value = JSON.parse(json) as Partial<CodexSession>;
+    const value = JSON.parse(json) as unknown;
+    if (!isRecord(value)) {
+      return null;
+    }
+    const counters = [
+      value.turns,
+      value.tools,
+      value.maxTotal,
+      value.tin,
+      value.tcr,
+      value.tout,
+      value.rejectedMetricRecords,
+    ].map(parseNonNegativeSafeInteger);
+    const start = reviveDate(value.start);
+    const end = reviveDate(value.end);
+    if (
+      !counters.every((counter) => counter.ok) ||
+      (value.start !== null && start === null) ||
+      (value.end !== null && end === null) ||
+      typeof value.model !== 'string' ||
+      typeof value.subscription !== 'boolean' ||
+      typeof value.hasTokenUsage !== 'boolean'
+    ) {
+      return null;
+    }
+    const [turns, tools, maxTotal, tin, tcr, tout, rejectedMetricRecords] = counters;
+    if (!(turns?.ok && tools?.ok && maxTotal?.ok && tin?.ok && tcr?.ok && tout?.ok && rejectedMetricRecords?.ok)) {
+      return null;
+    }
     return {
       id: typeof value.id === 'string' ? value.id : null,
       parent: typeof value.parent === 'string' ? value.parent : null,
-      start: reviveDate(value.start),
-      end: reviveDate(value.end),
+      start,
+      end,
       cwd: typeof value.cwd === 'string' ? value.cwd : null,
-      model: typeof value.model === 'string' ? value.model : 'codex',
+      model: value.model,
       source: typeof value.source === 'string' ? value.source : null,
       threadSource: typeof value.threadSource === 'string' ? value.threadSource : null,
       agentNickname: typeof value.agentNickname === 'string' ? value.agentNickname : null,
-      subscription: value.subscription === true,
+      subscription: value.subscription,
       firstUser: typeof value.firstUser === 'string' ? value.firstUser : null,
-      turns: typeof value.turns === 'number' ? value.turns : 0,
-      tools: typeof value.tools === 'number' ? value.tools : 0,
-      maxTotal: typeof value.maxTotal === 'number' ? value.maxTotal : 0,
-      tin: typeof value.tin === 'number' ? value.tin : 0,
-      tcr: typeof value.tcr === 'number' ? value.tcr : 0,
-      tout: typeof value.tout === 'number' ? value.tout : 0,
-      hasTokenUsage: value.hasTokenUsage === true,
+      turns: turns.value,
+      tools: tools.value,
+      maxTotal: maxTotal.value,
+      tin: tin.value,
+      tcr: tcr.value,
+      tout: tout.value,
+      rejectedMetricRecords: rejectedMetricRecords.value,
+      hasTokenUsage: value.hasTokenUsage,
     };
   } catch {
     return null;
@@ -589,15 +622,11 @@ const createCodexSessionParser = () => {
       const input = parseNonNegativeSafeInteger(usage?.input_tokens);
       const cachedInput = parseNonNegativeSafeInteger(usage?.cached_input_tokens);
       const output = parseNonNegativeSafeInteger(usage?.output_tokens);
-      if (
-        usage &&
-        total.ok &&
-        input.ok &&
-        cachedInput.ok &&
-        output.ok &&
-        cachedInput.value <= input.value &&
-        total.value > session.maxTotal
-      ) {
+      if (!(usage && total.ok && input.ok && cachedInput.ok && output.ok && cachedInput.value <= input.value)) {
+        session.rejectedMetricRecords++;
+        return;
+      }
+      if (total.value > session.maxTotal) {
         session.hasTokenUsage = true;
         session.maxTotal = total.value;
         session.tin = input.value - cachedInput.value;
@@ -612,6 +641,7 @@ const createCodexSessionParser = () => {
       lines,
       parseMs: Date.now() - parseStartedAt,
       parsedLines,
+      rejectedMetricRecords: session.rejectedMetricRecords,
       session,
       skippedLines,
     }),
@@ -693,6 +723,7 @@ const readCodexSessions = (
       let parseMs = 0;
       let parsedLines = 0;
       let readMs = 0;
+      let rejectedMetricRecords = 0;
       let skippedLines = 0;
       const files = yield* listCodexSessionFiles;
       const parsedForCache: { filePath: string; session: CodexSession; stat: CodexSessionFileStat }[] = [];
@@ -716,6 +747,7 @@ const readCodexSessions = (
               const cached = stat ? sessionCache?.entries.get(filePath) : null;
               if (cached && cached.size === stat?.size && cached.mtimeMs === stat.mtimeMs) {
                 cacheHits++;
+                rejectedMetricRecords += cached.session.rejectedMetricRecords;
                 mergeMetadata(cached.session, cached.session.id ? metadata.get(cached.session.id) : undefined);
                 if (cached.session.id || cached.session.start) {
                   sessions.push(cached.session);
@@ -734,6 +766,7 @@ const readCodexSessions = (
               lines += parsed.lines;
               parseMs += parsed.parseMs;
               parsedLines += parsed.parsedLines;
+              rejectedMetricRecords += parsed.rejectedMetricRecords;
               skippedLines += parsed.skippedLines;
               const session = parsed.session;
               if (stat) {
@@ -775,6 +808,7 @@ const readCodexSessions = (
         parseMs,
         parsedLines,
         readMs,
+        rejectedMetricRecords,
         sessions,
         skippedLines,
       };
@@ -790,81 +824,93 @@ const readCodexSessions = (
       parseMs: result.parseMs,
       parsedLines: result.parsedLines,
       readMs: result.readMs,
+      rejectedMetricRecords: result.rejectedMetricRecords,
       sessions: result.sessions.length,
       skippedLines: result.skippedLines,
     }),
   );
 
+export interface CodexUsageSessionsResult {
+  rejectedMetricRecords: number;
+  sessions: CollectedSession[];
+}
+
+export const readCodexUsageSessionsResult: Effect.Effect<
+  CodexUsageSessionsResult,
+  LocalHistoryError,
+  LocalHistoryStorageService
+> = withPerfSpan(
+  'aiUsage.collect.codex.usageSessions',
+  Effect.gen(function* () {
+    const names = yield* readCodexThreadNames;
+    const metadata = yield* readCodexThreadMetadata;
+    const { rejectedMetricRecords, sessions } = yield* readCodexSessions(metadata);
+    const byId = new Map<string, CodexSession>();
+    for (const session of sessions) {
+      if (session.id) {
+        byId.set(session.id, session);
+      }
+    }
+
+    const children = new Map<string, CodexSession[]>();
+    const childIds = new Set<string>();
+    for (const session of sessions) {
+      if (session.id && session.parent && byId.has(session.parent)) {
+        childIds.add(session.id);
+        const siblings = children.get(session.parent) ?? [];
+        siblings.push(session);
+        children.set(session.parent, siblings);
+      }
+    }
+
+    const usageSessions: CollectedSession[] = [];
+    for (const session of sessions) {
+      const kids = (session.id && children.get(session.id)) || [];
+      const meta = session.id ? metadata.get(session.id) : undefined;
+      const tokens = {
+        in: session.tin,
+        out: session.tout,
+        cr: session.tcr,
+        cw: 0,
+      };
+      const isSubagent = (session.id ? childIds.has(session.id) : false) || session.threadSource === 'subagent';
+      const parentSession = session.parent ? byId.get(session.parent) : undefined;
+      const subscription = session.subscription || Boolean(parentSession?.subscription);
+      const indexedName = session.id ? names.get(session.id) : undefined;
+      usageSessions.push({
+        source: {
+          harnessKey: 'codex',
+          sourceSessionId: session.id,
+          ...(session.parent === null ? {} : { parentSourceSessionId: session.parent }),
+          sourcePath: session.cwd,
+        },
+        projectPath: session.cwd,
+        date: session.start,
+        endDate: session.end,
+        provider: subscription ? 'Codex sub' : 'Codex API',
+        model: session.model,
+        name: codexSessionName(session, indexedName, meta),
+        titleSource: codexTitleSource(session, indexedName, meta, isSubagent),
+        project: base(session.cwd),
+        tokens,
+        cost: subscription ? actualCost(0) : approximateApiCost,
+        calls: 1,
+        turns: session.turns,
+        tools: session.tools,
+        linesAdded: null,
+        linesDeleted: null,
+        subagent: isSubagent || kids.length > 0,
+        usageUnavailable: !session.hasTokenUsage,
+      });
+    }
+
+    return { rejectedMetricRecords, sessions: usageSessions };
+  }),
+  (result) => ({ rejectedMetricRecords: result.rejectedMetricRecords, sessions: result.sessions.length }),
+);
+
 export const readCodexUsageSessions: Effect.Effect<CollectedSession[], LocalHistoryError, LocalHistoryStorageService> =
-  withPerfSpan(
-    'aiUsage.collect.codex.usageSessions',
-    Effect.gen(function* () {
-      const names = yield* readCodexThreadNames;
-      const metadata = yield* readCodexThreadMetadata;
-      const { sessions } = yield* readCodexSessions(metadata);
-      const byId = new Map<string, CodexSession>();
-      for (const session of sessions) {
-        if (session.id) {
-          byId.set(session.id, session);
-        }
-      }
-
-      const children = new Map<string, CodexSession[]>();
-      const childIds = new Set<string>();
-      for (const session of sessions) {
-        if (session.id && session.parent && byId.has(session.parent)) {
-          childIds.add(session.id);
-          const siblings = children.get(session.parent) ?? [];
-          siblings.push(session);
-          children.set(session.parent, siblings);
-        }
-      }
-
-      const usageSessions: CollectedSession[] = [];
-      for (const session of sessions) {
-        const kids = (session.id && children.get(session.id)) || [];
-        const meta = session.id ? metadata.get(session.id) : undefined;
-        const tokens = {
-          in: session.tin,
-          out: session.tout,
-          cr: session.tcr,
-          cw: 0,
-        };
-        const isSubagent = (session.id ? childIds.has(session.id) : false) || session.threadSource === 'subagent';
-        const parentSession = session.parent ? byId.get(session.parent) : undefined;
-        const subscription = session.subscription || Boolean(parentSession?.subscription);
-        const indexedName = session.id ? names.get(session.id) : undefined;
-        usageSessions.push({
-          source: {
-            harnessKey: 'codex',
-            sourceSessionId: session.id,
-            ...(session.parent === null ? {} : { parentSourceSessionId: session.parent }),
-            sourcePath: session.cwd,
-          },
-          projectPath: session.cwd,
-          date: session.start,
-          endDate: session.end,
-          provider: subscription ? 'Codex sub' : 'Codex API',
-          model: session.model,
-          name: codexSessionName(session, indexedName, meta),
-          titleSource: codexTitleSource(session, indexedName, meta, isSubagent),
-          project: base(session.cwd),
-          tokens,
-          cost: subscription ? actualCost(0) : approximateApiCost,
-          calls: 1,
-          turns: session.turns,
-          tools: session.tools,
-          linesAdded: null,
-          linesDeleted: null,
-          subagent: isSubagent || kids.length > 0,
-          usageUnavailable: !session.hasTokenUsage,
-        });
-      }
-
-      return usageSessions;
-    }),
-    (sessions) => ({ sessions: sessions.length }),
-  );
+  readCodexUsageSessionsResult.pipe(Effect.map((result) => result.sessions));
 
 const findLatestRawCodexRateLimits = (
   recentFileLimit = 40,

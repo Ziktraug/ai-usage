@@ -34,6 +34,79 @@ const cursorCsv = (rows: string[]) =>
   ].join('\n');
 
 describe('DB-backed Harness collectors', () => {
+  test('aggregates redacted metric warnings per harness while preserving valid neighboring records', () => {
+    const claudeStorage = new TestMemoryStorage();
+    claudeStorage.writeText(
+      '.claude/projects/-work-ai-usage/metrics.jsonl',
+      jsonl(
+        {
+          type: 'assistant',
+          timestamp: '2026-04-25T08:00:00.000Z',
+          requestId: 'invalid',
+          message: { id: 'invalid', usage: { input_tokens: 'private-invalid-value' } },
+        },
+        {
+          type: 'assistant',
+          timestamp: '2026-04-25T08:01:00.000Z',
+          requestId: 'valid',
+          message: { id: 'valid', usage: { input_tokens: 10, output_tokens: 5 } },
+        },
+      ),
+    );
+    const claude = runWithStorage(
+      collectSelectedHarnessResults({ harness: 'claude', includeCursor: false }),
+      claudeStorage,
+    );
+
+    const cursorStorage = new TestMemoryStorage();
+    cursorStorage.writeDatabaseRows(CURSOR_DB, CURSOR_COMPOSER_SQL, [
+      { key: 'composerData:cursor-session', value: JSON.stringify({ name: 'Cursor session', createdAt: 1 }) },
+    ]);
+    cursorStorage.writeDatabaseRows(CURSOR_DB, CURSOR_TOKEN_SQL, [
+      {
+        key: 'bubbleId:cursor-session:invalid',
+        value: JSON.stringify({ tokenCount: { inputTokens: -1 } }),
+      },
+      {
+        key: 'bubbleId:cursor-session:valid',
+        value: JSON.stringify({ tokenCount: { inputTokens: 10, outputTokens: 5 } }),
+      },
+    ]);
+    cursorStorage.writeDatabaseRows(CURSOR_DB, CURSOR_USER_SQL, []);
+    const cursor = runWithStorage(
+      collectSelectedHarnessResults({ harness: 'cursor', includeCursor: true }),
+      cursorStorage,
+    );
+
+    const openCodeStorage = new TestMemoryStorage();
+    openCodeStorage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SESSION_SQL, [
+      { id: 'open-session', title: 'Open session', directory: '/work', summary_additions: 0, summary_deletions: 0 },
+    ]);
+    openCodeStorage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TOOL_SQL, []);
+    openCodeStorage.writeDatabaseRows(OPENCODE_DB, OPENCODE_MESSAGE_SQL, [
+      {
+        session_id: 'open-session',
+        data: JSON.stringify({ role: 'assistant', tokens: { input: 'private-invalid-value' } }),
+      },
+      {
+        session_id: 'open-session',
+        data: JSON.stringify({ role: 'assistant', tokens: { input: 10, output: 5 } }),
+      },
+    ]);
+    const opencode = runWithStorage(
+      collectSelectedHarnessResults({ harness: 'opencode', includeCursor: false }),
+      openCodeStorage,
+    );
+
+    for (const result of [claude, cursor, opencode]) {
+      const warnings = result.warnings.filter((warning) => warning.operation === 'metricValidation');
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]?.message).toContain('Rejected 1 malformed');
+      expect(JSON.stringify(warnings)).not.toContain('private-invalid-value');
+      expect(result.rows).toHaveLength(1);
+    }
+  });
+
   test('reports one failing harness while keeping successful harness rows', () => {
     const storage = new TestMemoryStorage();
     storage.writeText('.codex/session_index.jsonl', jsonl({ id: 'codex-thread', thread_name: 'Fixture thread' }));

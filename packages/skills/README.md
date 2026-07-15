@@ -24,8 +24,10 @@ This package should stay independent from app packages, report-data, usage-store
 and usage-merge. It may use standard Node filesystem APIs behind
 workflow functions and should expose JSON-safe data to app callers.
 
-`src/index.ts` is the explicit public facade. Keep implementation imports on the
-smallest internal seam instead of importing the facade from inside the package:
+`src/index.ts` is the domain public facade; `application.ts` is exposed through
+the explicit `@ai-usage/skills/application` subpath so app orchestration does
+not deepen the root barrel. Keep implementation imports on the smallest
+internal seam instead of importing a public facade from inside the package:
 
 - `contracts.ts`, `config.ts`, and `validation.ts` own JSON-safe contracts and input parsing;
 - `filesystem.ts` owns bounded reads, cross-process locks, and atomic writes;

@@ -166,6 +166,32 @@ export const visitRegularFileLines = (
   }
 };
 
+const MAX_CONFIG_SYMLINK_DEPTH = 16;
+
+/**
+ * Configuration files are the only local-collector inputs allowed to be
+ * symlinks because dotfile managers commonly project them. Inspect every link
+ * in the chain before resolving the next path, then apply the normal bounded,
+ * no-follow regular-file read to the final target.
+ */
+export const readConfigFileText = (filePath: string, maxBytes = HISTORY_FILE_MAX_BYTES): string => {
+  let currentPath = path.resolve(filePath);
+  const visited = new Set<string>();
+  for (let depth = 0; depth <= MAX_CONFIG_SYMLINK_DEPTH; depth++) {
+    const stat = fs.lstatSync(currentPath);
+    if (!stat.isSymbolicLink()) {
+      return readRegularFileText(currentPath, maxBytes);
+    }
+    if (visited.has(currentPath) || depth === MAX_CONFIG_SYMLINK_DEPTH) {
+      throw new Error(`Config symlink chain is cyclic or exceeds ${MAX_CONFIG_SYMLINK_DEPTH} links: ${filePath}`);
+    }
+    visited.add(currentPath);
+    const target = fs.readlinkSync(currentPath);
+    currentPath = path.resolve(path.dirname(currentPath), target);
+  }
+  throw new Error(`Config symlink chain could not be resolved: ${filePath}`);
+};
+
 export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStorage => ({
   home,
   exists: (filePath) =>
@@ -180,9 +206,7 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
     }),
   readConfigText: (filePath, maxBytes = HISTORY_FILE_MAX_BYTES) =>
     Effect.try({
-      // Resolve symlink chains first; the hardened read then verifies the
-      // resolved target is a regular file within its size budget.
-      try: () => readRegularFileText(fs.realpathSync(filePath), maxBytes),
+      try: () => readConfigFileText(filePath, maxBytes),
       catch: localHistoryError('readConfigText', { path: filePath }),
     }),
   readLines: (filePath, visit, limits = {}) =>

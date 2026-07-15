@@ -3,7 +3,7 @@ import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import {
-  cachedDbRows,
+  cachedDbCollection,
   type DbRowCache,
   dbStat,
   readDbRowCache,
@@ -15,6 +15,7 @@ import { LocalHistoryStorage } from '../local-history';
 import {
   addNonNegativeFiniteNumbers,
   addNonNegativeSafeIntegers,
+  metricValidationWarning,
   parseOptionalNonNegativeFiniteNumber,
   parseOptionalNonNegativeSafeInteger,
 } from '../metric-validation';
@@ -61,7 +62,7 @@ export interface OpenCodeCollectionResult {
   warnings: LocalHistoryWarning[];
 }
 
-const OPENCODE_DB_CACHE_VERSION = 3;
+const OPENCODE_DB_CACHE_VERSION = 4;
 const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 const SESSION_SQL = 'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
 const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE data LIKE '%"type":"tool"%' GROUP BY session_id`;
@@ -72,7 +73,11 @@ const collectFromDb = (
   storage: import('../local-history').LocalHistoryStorage,
   source: 'live' | 'stable',
   cache: DbRowCache | null,
-): Effect.Effect<CollectorRow[], import('../errors').LocalHistoryError, never> =>
+): Effect.Effect<
+  { rejectedMetricRecords: number; rows: CollectorRow[] },
+  import('../errors').LocalHistoryError,
+  never
+> =>
   withPerfSpan(
     'aiUsage.collect.opencode.db',
     Effect.gen(function* () {
@@ -82,15 +87,15 @@ const collectFromDb = (
         (value) => ({ db: source, exists: value }),
       );
       if (!exists) {
-        return [];
+        return { rejectedMetricRecords: 0, rows: [] };
       }
 
       const stat = dbStat(dbPath);
-      const cachedRows = cachedDbRows(cache, dbPath, stat);
-      if (cachedRows) {
-        return yield* withPerfSpan('aiUsage.collect.opencode.cache.hit', Effect.succeed(cachedRows), (rows) => ({
+      const cached = cachedDbCollection(cache, dbPath, stat);
+      if (cached) {
+        return yield* withPerfSpan('aiUsage.collect.opencode.cache.hit', Effect.succeed(cached), (result) => ({
           db: source,
-          rows: rows.length,
+          rows: result.rows.length,
         }));
       }
 
@@ -98,6 +103,7 @@ const collectFromDb = (
       const toolCount = new Map<string, number>();
       const turnCount = new Map<string, number>();
       const agg = new Map<string, Agg>();
+      let rejectedMetricRecords = 0;
 
       yield* Effect.acquireUseRelease(
         withPerfSpan('aiUsage.collect.opencode.db.open', storage.openDatabase(dbPath), () => ({ db: source })),
@@ -109,12 +115,18 @@ const collectFromDb = (
               (rows) => ({ db: source, rows: rows.length }),
             );
             for (const row of sessionRows) {
+              const additions = parseOptionalNonNegativeSafeInteger(row.summary_additions);
+              const deletions = parseOptionalNonNegativeSafeInteger(row.summary_deletions);
+              if (!(typeof row.id === 'string' && additions.ok && deletions.ok)) {
+                rejectedMetricRecords++;
+                continue;
+              }
               meta.set(row.id, {
                 parentId: row.parent_id || null,
                 title: row.title || '',
                 dir: row.directory || '',
-                add: row.summary_additions || 0,
-                del: row.summary_deletions || 0,
+                add: additions.value,
+                del: deletions.value,
               });
             }
 
@@ -124,7 +136,12 @@ const collectFromDb = (
               (rows) => ({ db: source, rows: rows.length }),
             );
             for (const row of toolRows) {
-              toolCount.set(row.session_id, row.n);
+              const count = parseOptionalNonNegativeSafeInteger(row.n);
+              if (!(typeof row.session_id === 'string' && count.ok)) {
+                rejectedMetricRecords++;
+                continue;
+              }
+              toolCount.set(row.session_id, count.value);
             }
 
             const messageRows = yield* withPerfSpan(
@@ -179,6 +196,7 @@ const collectFromDb = (
                   const reasoning = parseOptionalNonNegativeSafeInteger(tokens.reasoning);
                   const cost = parseOptionalNonNegativeFiniteNumber(data.cost);
                   if (!(input.ok && output.ok && cacheRead.ok && cacheWrite.ok && reasoning.ok && cost.ok)) {
+                    rejectedMetricRecords++;
                     continue;
                   }
                   const nextInput = addNonNegativeSafeIntegers(current.tin, input.value);
@@ -199,6 +217,7 @@ const collectFromDb = (
                       nextCost.ok
                     )
                   ) {
+                    rejectedMetricRecords++;
                     continue;
                   }
                   current.tin = nextInput.value;
@@ -268,9 +287,14 @@ const collectFromDb = (
             const sessionMeta = meta.get(sid);
             const providerId = dominant(current.prov);
             const model = dominant(current.model);
+            const output = addNonNegativeSafeIntegers(current.tout, current.reason);
+            if (!output.ok) {
+              rejectedMetricRecords++;
+              continue;
+            }
             const tokens = {
               in: current.tin,
-              out: current.tout + current.reason,
+              out: output.value,
               cr: current.tcr,
               cw: current.tcw,
             };
@@ -306,11 +330,11 @@ const collectFromDb = (
       );
       const afterStat = dbStat(dbPath);
       if (JSON.stringify(stat) === JSON.stringify(afterStat)) {
-        storeDbRows(cache, dbPath, afterStat, sessions);
+        storeDbRows(cache, dbPath, afterStat, sessions, rejectedMetricRecords);
       }
-      return sessions;
+      return { rejectedMetricRecords, rows: sessions };
     }),
-    (rows) => ({ db: source, rows: rows.length }),
+    (result) => ({ db: source, rows: result.rows.length }),
   );
 
 export const classifyOpenCodeTitle = (
@@ -346,8 +370,10 @@ export const collectOpenCodeResult: Effect.Effect<
   );
   const seen = new Set<string>();
   const warnings: LocalHistoryWarning[] = [];
-  const appendRows = (target: CollectorRow[], rows: CollectorRow[]) => {
-    for (const row of rows) {
+  let rejectedMetricRecords = 0;
+  const appendRows = (target: CollectorRow[], result: { rejectedMetricRecords: number; rows: CollectorRow[] }) => {
+    rejectedMetricRecords += result.rejectedMetricRecords;
+    for (const row of result.rows) {
       const sessionId = row.source?.sourceSessionId;
       if (sessionId && seen.has(sessionId)) {
         continue;
@@ -364,7 +390,7 @@ export const collectOpenCodeResult: Effect.Effect<
     const result = yield* collectFromDb(dbPath, storage, 'live', cache).pipe(
       Effect.match({
         onFailure: (error) => ({ _tag: 'failure' as const, error }),
-        onSuccess: (rows) => ({ _tag: 'success' as const, rows }),
+        onSuccess: (result) => ({ _tag: 'success' as const, result }),
       }),
     );
     if (result._tag === 'failure') {
@@ -375,7 +401,7 @@ export const collectOpenCodeResult: Effect.Effect<
         }),
       );
     } else {
-      appendRows(liveRows, result.rows);
+      appendRows(liveRows, result.result);
     }
   }
 
@@ -384,7 +410,7 @@ export const collectOpenCodeResult: Effect.Effect<
     const result = yield* collectFromDb(dbPath, storage, 'stable', cache).pipe(
       Effect.match({
         onFailure: (error) => ({ _tag: 'failure' as const, error }),
-        onSuccess: (rows) => ({ _tag: 'success' as const, rows }),
+        onSuccess: (result) => ({ _tag: 'success' as const, result }),
       }),
     );
     if (result._tag === 'failure') {
@@ -395,7 +421,7 @@ export const collectOpenCodeResult: Effect.Effect<
         }),
       );
     } else {
-      appendRows(stableRows, result.rows);
+      appendRows(stableRows, result.result);
     }
   }
 
@@ -405,5 +431,9 @@ export const collectOpenCodeResult: Effect.Effect<
     (wrote) => ({ wrote }),
   );
 
+  const metricWarning = metricValidationWarning('opencode', rejectedMetricRecords);
+  if (metricWarning) {
+    warnings.push(metricWarning);
+  }
   return { rows: [...liveRows, ...stableRows], warnings };
 });

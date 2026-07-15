@@ -21,7 +21,6 @@ import type {
   SkillToggleInput,
 } from '@ai-usage/skills';
 import {
-  createSkillsApplication,
   parseSkillConfigInput,
   parseSkillMarkdownWriteInput,
   parseSkillName,
@@ -29,6 +28,7 @@ import {
   parseSkillToggleInput,
   projectSkillDirectories,
 } from '@ai-usage/skills';
+import { createSkillsApplication } from '@ai-usage/skills/application';
 import { Cause, Effect, Option, Runtime } from 'effect';
 import { runKnownProjectSourcesRunner } from './known-project-sources-runner.server';
 import type {

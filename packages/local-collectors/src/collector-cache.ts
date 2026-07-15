@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { COLLECTOR_CACHE_MAX_BYTES } from './history-budgets';
 import type { LocalHistoryStorage } from './local-history';
+import { parseNonNegativeFiniteNumber, parseNonNegativeSafeInteger } from './metric-validation';
 import { readPrivateJson, writePrivateJson } from './private-storage';
 import type { CollectorRow } from './rtk-enrichment';
 
@@ -25,19 +26,93 @@ export const reviveDate = (value: unknown): Date | null => {
   return Number.isFinite(date.getTime()) ? date : null;
 };
 
-export const reviveCollectorRows = (value: unknown): CollectorRow[] => {
-  if (!Array.isArray(value)) {
-    return [];
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const isNullableDate = (value: unknown): boolean => value === null || reviveDate(value) !== null;
+const isNullableMetric = (value: unknown): boolean => value === null || parseNonNegativeFiniteNumber(value).ok;
+const isNullableCounter = (value: unknown): boolean => value === null || parseNonNegativeSafeInteger(value).ok;
+const isOptionalCounter = (value: unknown): boolean => value === undefined || parseNonNegativeSafeInteger(value).ok;
+const isOptionalBoolean = (value: unknown): boolean => value === undefined || typeof value === 'boolean';
+const isOptionalString = (value: unknown): boolean => value === undefined || typeof value === 'string';
+
+const isCollectorRowSource = (value: unknown): boolean =>
+  value === undefined ||
+  (isRecord(value) &&
+    typeof value.harnessKey === 'string' &&
+    (value.sourceSessionId === null || typeof value.sourceSessionId === 'string') &&
+    (value.artifactPath === undefined || value.artifactPath === null || typeof value.artifactPath === 'string') &&
+    (value.machineId === undefined || typeof value.machineId === 'string') &&
+    (value.machineLabel === undefined || typeof value.machineLabel === 'string') &&
+    (value.parentSourceSessionId === undefined ||
+      value.parentSourceSessionId === null ||
+      typeof value.parentSourceSessionId === 'string') &&
+    (value.rootSourceSessionId === undefined ||
+      value.rootSourceSessionId === null ||
+      typeof value.rootSourceSessionId === 'string') &&
+    (value.sourcePath === undefined || value.sourcePath === null || typeof value.sourcePath === 'string'));
+
+const isCachedCollectorRow = (value: unknown): value is CollectorRow & { date: unknown; endDate: unknown } => {
+  if (!isRecord(value)) {
+    return false;
   }
-  return value.map((row) => {
-    const record = row as CollectorRow;
-    return {
+  return (
+    parseNonNegativeSafeInteger(value.calls).ok &&
+    isNullableMetric(value.costActual) &&
+    parseNonNegativeFiniteNumber(value.costApprox).ok &&
+    typeof value.costKnown === 'boolean' &&
+    (value.costQuota === undefined || isNullableMetric(value.costQuota)) &&
+    isNullableDate(value.date) &&
+    isNullableMetric(value.durationMs) &&
+    isNullableDate(value.endDate) &&
+    typeof value.harness === 'string' &&
+    isNullableCounter(value.linesAdded) &&
+    isNullableCounter(value.linesDeleted) &&
+    typeof value.model === 'string' &&
+    (value.models === undefined ||
+      (Array.isArray(value.models) && value.models.every((model) => typeof model === 'string'))) &&
+    typeof value.name === 'string' &&
+    typeof value.project === 'string' &&
+    typeof value.provider === 'string' &&
+    parseNonNegativeSafeInteger(value.tokCr).ok &&
+    parseNonNegativeSafeInteger(value.tokCw).ok &&
+    parseNonNegativeSafeInteger(value.tokIn).ok &&
+    parseNonNegativeSafeInteger(value.tokOut).ok &&
+    parseNonNegativeSafeInteger(value.tools).ok &&
+    parseNonNegativeSafeInteger(value.turns).ok &&
+    isOptionalCounter(value.rtkCommandCount) &&
+    isOptionalCounter(value.rtkInputTokens) &&
+    isOptionalCounter(value.rtkOutputTokens) &&
+    isOptionalCounter(value.rtkSavedTokens) &&
+    isOptionalBoolean(value.ambiguous) &&
+    isOptionalBoolean(value.partial) &&
+    isOptionalBoolean(value.subagent) &&
+    isOptionalBoolean(value.usageUnavailable) &&
+    isOptionalString(value.projectPath) &&
+    isOptionalString(value.titleSource) &&
+    isCollectorRowSource(value.source)
+  );
+};
+
+export const reviveCollectorRowsResult = (
+  value: unknown,
+): { rejectedMetricRecords: number; rows: CollectorRow[]; valid: boolean } => {
+  if (!Array.isArray(value)) {
+    return { rejectedMetricRecords: 0, rows: [], valid: false };
+  }
+  const validRows = value.filter(isCachedCollectorRow);
+  return {
+    rejectedMetricRecords: value.length - validRows.length,
+    rows: validRows.map((record) => ({
       ...record,
       date: reviveDate(record.date),
       endDate: reviveDate(record.endDate),
-    };
-  });
+    })),
+    valid: true,
+  };
 };
+
+export const reviveCollectorRows = (value: unknown): CollectorRow[] => reviveCollectorRowsResult(value).rows;
 
 export interface DbStat {
   dev: number;
@@ -79,6 +154,7 @@ export const collectorCachePath = (storage: LocalHistoryStorage, fileName: strin
   path.join(storage.home, '.config', 'ai-usage', fileName);
 
 export interface DbRowCacheEntry extends DbStat {
+  rejectedMetricRecords: number;
   rows: CollectorRow[];
 }
 
@@ -100,7 +176,7 @@ export const readDbRowCache = (storage: LocalHistoryStorage, fileName: string, v
     }
     const parsed = readPrivateJson(cachePath, COLLECTOR_CACHE_MAX_BYTES) as
       | {
-          entries?: Record<string, DbStat & { rows: unknown }>;
+          entries?: Record<string, DbStat & { rejectedMetricRecords?: unknown; rows: unknown }>;
           version?: number;
         }
       | undefined;
@@ -120,7 +196,16 @@ export const readDbRowCache = (storage: LocalHistoryStorage, fileName: string, v
       ) {
         continue;
       }
-      entries[dbPath] = { ...entry, rows: reviveCollectorRows(entry.rows) };
+      const rejectedMetricRecords = parseNonNegativeSafeInteger(entry.rejectedMetricRecords);
+      const revived = reviveCollectorRowsResult(entry.rows);
+      if (!(rejectedMetricRecords.ok && revived.valid && revived.rejectedMetricRecords === 0)) {
+        continue;
+      }
+      entries[dbPath] = {
+        ...entry,
+        rejectedMetricRecords: rejectedMetricRecords.value,
+        rows: revived.rows,
+      };
     }
     return { dirty: false, entries, version };
   } catch {
@@ -151,6 +236,15 @@ export const writeDbRowCache = (
 
 /** Return cached rows for a db path when the cache entry matches the current file stat, else null. */
 export const cachedDbRows = (cache: DbRowCache | null, dbPath: string, stat: DbStat | null): CollectorRow[] | null => {
+  const collection = cachedDbCollection(cache, dbPath, stat);
+  return collection?.rows ?? null;
+};
+
+export const cachedDbCollection = (
+  cache: DbRowCache | null,
+  dbPath: string,
+  stat: DbStat | null,
+): { rejectedMetricRecords: number; rows: CollectorRow[] } | null => {
   if (!(cache && stat)) {
     return null;
   }
@@ -166,7 +260,7 @@ export const cachedDbRows = (cache: DbRowCache | null, dbPath: string, stat: DbS
     cached.walSize === stat.walSize &&
     cached.walMtimeMs === stat.walMtimeMs
   ) {
-    return cached.rows;
+    return { rejectedMetricRecords: cached.rejectedMetricRecords, rows: cached.rows };
   }
   return null;
 };
@@ -177,10 +271,11 @@ export const storeDbRows = (
   dbPath: string,
   stat: DbStat | null,
   rows: CollectorRow[],
+  rejectedMetricRecords = 0,
 ): void => {
   if (!(cache && stat)) {
     return;
   }
-  cache.entries[dbPath] = { ...stat, rows };
+  cache.entries[dbPath] = { ...stat, rejectedMetricRecords, rows };
   cache.dirty = true;
 };

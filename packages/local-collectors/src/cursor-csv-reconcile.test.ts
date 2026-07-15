@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import type { CollectedSession } from './collected-session';
-import { collectCursorCsvTurns } from './collectors/cursor-csv';
+import { collectCursorCsvTurns, collectCursorCsvTurnsResult } from './collectors/cursor-csv';
 import { reconcileCursorSessions } from './collectors/cursor-reconcile';
 import { LocalHistoryStorage } from './local-history';
 import { TestMemoryStorage } from './test-memory-storage';
@@ -36,6 +36,32 @@ const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, 
   Effect.runSync(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
 
 describe('Cursor CSV reconciliation', () => {
+  test('keeps valid CSV rows and reports malformed metrics without leaking values', () => {
+    const storage = new TestMemoryStorage();
+    const exportPath = `${storage.home}/cursor.csv`;
+    storage.writeText(
+      'cursor.csv',
+      csv([
+        '"2026-06-03T09:00:57.773Z","alex@example.com","","","Included","claude-opus-4-8","No","0","10","20","3","33","0.10"',
+        '"2026-06-03T09:01:57.773Z","alex@example.com","","","Included","private-model","No","0","-1","20","3","22","0.10"',
+      ]),
+    );
+
+    const result = runWithStorage(
+      collectCursorCsvTurnsResult({
+        usageExportPaths: [exportPath],
+        clusterGapMs: 5 * 60_000,
+        user: 'alex@example.com',
+      }),
+      storage,
+    );
+
+    expect(result.turns).toHaveLength(1);
+    expect(result.rejectedMetricRecords).toBe(1);
+    expect(result.warnings[0]?.message).toBe('Rejected 1 malformed cursor metric record(s).');
+    expect(JSON.stringify(result.warnings)).not.toContain('private-model');
+  });
+
   test('assigns usage events to local Composer windows and keeps Cursor cost perspectives separate', () => {
     const storage = new TestMemoryStorage();
     const exportPath = `${storage.home}/cursor.csv`;

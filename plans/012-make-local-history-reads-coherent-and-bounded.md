@@ -26,6 +26,15 @@ smaller explicit limits. Callers that need a task-specific aggregate byte limit
 may still inject `walkFiles(..., { maxBytes })`; such failures remain typed and
 recoverable.
 
+## Post-implementation config-symlink amendment — 2026-07-15
+
+The no-follow contract applies to harness-owned history, databases, caches, and
+scan roots. User-owned configuration files are an explicit, narrow exception
+because dotfile managers commonly install them as symbolic links. The config
+reader inspects each link with `lstat`/`readlink`, rejects cycles and excessive
+depth, and only then applies the same bounded `O_NOFOLLOW` regular-file read to
+the final target. Configuration paths never enter history traversal.
+
 ## Executor instructions
 
 Read this plan completely. Compare the current commit with `17bcf28` and plan
@@ -58,8 +67,9 @@ the intended history tree.
 3. Cache keys include stable main+WAL identity, and cache writes occur only when
    the source fingerprint is unchanged across collection.
 4. All local-history text/line and directory traversal is explicitly bounded.
-5. File and directory symlinks, FIFOs, devices, and other non-regular inputs are
-   rejected without following them.
+5. Harness-history file and directory symlinks, FIFOs, devices, and other
+   non-regular inputs are rejected without following them; explicitly selected
+   user configuration files follow only the validated exception above.
 6. JSONL/CSV parsing streams incrementally rather than reconstructing a complete
    file or all lines in memory.
 7. Limit failures become structured harness/import failures, never silent
@@ -343,7 +353,8 @@ bun run build
 - The supported platform still cannot see committed WAL data.
 - SHM is added to the cache key and eliminates useful cache hits.
 - Streaming code reconstructs the entire file/all lines in memory.
-- A symlink is followed before validation.
+- A history symlink is followed, or a configuration symlink is resolved before
+  each link and its final target are validated.
 - An exceeded budget returns incomplete rows marked successful.
 - A supported real fixture exceeds a budget without an evidence-based policy.
 - A platform fallback follows a path or may block on a non-regular file before
