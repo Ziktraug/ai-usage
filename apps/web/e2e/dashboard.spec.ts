@@ -4,6 +4,7 @@ const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const COLUMN_URL_PATTERN = /cols=/;
 const DATE_HEADER_PATTERN = /Date/;
 const HYDRATION_ERROR_PATTERN = /hydrat/i;
+const HYDRATION_TIMEOUT_MS = 15_000;
 const INSPECT_SESSION_PATTERN = /Inspect session/;
 const LEGACY_PROJECT_TAB_URL_PATTERN = /tab=projects/;
 const PROVIDER_DETAILS_PATTERN = /^Provider details \(/;
@@ -34,6 +35,7 @@ test('opens legacy analysis deep links inside the compact Breakdown navigation',
 
 test('shows analysis and report metrics without disclosure gates', async ({ page }) => {
   await page.goto('/');
+  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible({ timeout: HYDRATION_TIMEOUT_MS });
 
   const apiValueHelp = page.getByRole('button', { name: 'About API value' });
   await expect(apiValueHelp).toBeVisible();
