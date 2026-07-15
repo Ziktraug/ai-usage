@@ -56,7 +56,7 @@ const costActual = (cost: UsageCostInput, costApprox: number) =>
   cost._tag === 'ApproximateApiCost' ? costApprox : cost.amount;
 
 export const normalizeUsageRow = (input: UsageRowInput): Row => {
-  const { rates, known } = priceFor(input.pricingModel ?? input.model);
+  const { rates, known } = priceFor(input.pricingModel ?? input.model, { at: input.endDate ?? input.date });
   const costApprox = input.costApprox ?? approxCost(rates, input.tokens);
   const computedDurationMs =
     input.durationMs ?? (input.date && input.endDate ? input.endDate.getTime() - input.date.getTime() : null);
