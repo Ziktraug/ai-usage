@@ -201,14 +201,31 @@ export const collectClaudeRetentionWarnings: Effect.Effect<LocalHistoryWarning[]
     const settingsFile = paths.claude.settingsFile;
 
     const exists = yield* storage.exists(settingsFile).pipe(Effect.catchAll(() => Effect.succeed(false)));
+    // Settings are user-managed config, so read them through the
+    // symlink-following path: dotfiles managers commonly install
+    // ~/.claude/settings.json as a symlink, which the hardened history read
+    // rejects by design.
     const raw = exists
       ? yield* storage
-          .readText(settingsFile, SMALL_HISTORY_JSON_MAX_BYTES)
-          .pipe(Effect.catchAll(() => Effect.succeed('')))
-      : '';
-    const configured = safeJSON(raw)?.cleanupPeriodDays;
+          .readConfigText(settingsFile, SMALL_HISTORY_JSON_MAX_BYTES)
+          .pipe(Effect.catchAll(() => Effect.succeed(null)))
+      : '{}';
+    const parsed = raw === null ? null : safeJSON(raw);
+    if (parsed === null) {
+      // The file exists but could not be read or parsed. Retention is unknown
+      // here — say so instead of wrongly claiming the lossy default applies.
+      return [
+        {
+          harness: 'claude',
+          operation: 'claude.settings',
+          path: settingsFile,
+          message: `Claude Code transcript retention could not be verified: ${settingsFile} exists but could not be read as JSON. If cleanupPeriodDays is unset there, Claude Code deletes transcripts after ${CLAUDE_DEFAULT_CLEANUP_DAYS} days and that usage can no longer be reported.`,
+        },
+      ];
+    }
+    const configured = parsed.cleanupPeriodDays;
     const hasExplicit = typeof configured === 'number' && Number.isFinite(configured);
-    const days = hasExplicit ? (configured as number) : CLAUDE_DEFAULT_CLEANUP_DAYS;
+    const days = hasExplicit ? configured : CLAUDE_DEFAULT_CLEANUP_DAYS;
 
     // Only warn when retention is at or below the lossy default; raising the value
     // (or disabling cleanup) means history is being kept, so stay quiet.
@@ -258,7 +275,7 @@ export const collectClaude = Effect.gen(function* () {
   const cfg = paths.claude.configFile;
   if (yield* storage.exists(cfg).pipe(Effect.catchAll(() => Effect.succeed(false)))) {
     const json = safeJSON(
-      yield* storage.readText(cfg, SMALL_HISTORY_JSON_MAX_BYTES).pipe(Effect.catchAll(() => Effect.succeed(''))),
+      yield* storage.readConfigText(cfg, SMALL_HISTORY_JSON_MAX_BYTES).pipe(Effect.catchAll(() => Effect.succeed(''))),
     );
     if (json?.hasApiKey) {
       provider = 'Claude API';

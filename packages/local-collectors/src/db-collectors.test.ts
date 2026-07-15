@@ -241,6 +241,27 @@ describe('DB-backed Harness collectors', () => {
     expect(runWithStorage(collectClaudeRetentionWarnings, storage)).toHaveLength(0);
   });
 
+  test('reports unverifiable retention instead of claiming the default when settings cannot be read', () => {
+    // Settings that exist but do not parse leave retention unknown; claiming
+    // "unset -> 30-day default" here would be a false positive.
+    const unparsable = new TestMemoryStorage();
+    unparsable.writeText('.claude/settings.json', 'not-json');
+    const parseFailure = runWithStorage(collectClaudeRetentionWarnings, unparsable);
+    expect(parseFailure).toHaveLength(1);
+    expect(parseFailure[0]?.message).toContain('could not be verified');
+    expect(parseFailure[0]?.message).not.toContain('is unset, so');
+
+    // Same when the read itself fails (permissions, size budget, …).
+    const unreadable = new TestMemoryStorage();
+    unreadable.writeText(
+      '.claude/settings.json',
+      JSON.stringify({ cleanupPeriodDays: 3650, padding: 'x'.repeat(2 * 1024 * 1024) }),
+    );
+    const readFailure = runWithStorage(collectClaudeRetentionWarnings, unreadable);
+    expect(readFailure).toHaveLength(1);
+    expect(readFailure[0]?.message).toContain('could not be verified');
+  });
+
   test('collects OpenCode Usage rows through SQLite fixture storage', () => {
     const storage = new TestMemoryStorage();
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SESSION_SQL, [

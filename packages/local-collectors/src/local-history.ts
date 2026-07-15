@@ -30,6 +30,13 @@ export interface LocalHistoryStorage {
   exists(filePath: string): Effect.Effect<boolean, LocalHistoryError>;
   home: string;
   openDatabase(dbPath: string): Effect.Effect<LocalHistoryDatabase, LocalHistoryError>;
+  /**
+   * Read a user-managed config file, following symlinks. Dotfiles managers
+   * (home-manager, stow, …) commonly install configs as symlinks, so unlike
+   * history inputs these must be resolved before the hardened regular-file
+   * read applies to the target.
+   */
+  readConfigText(filePath: string, maxBytes?: number): Effect.Effect<string, LocalHistoryError>;
   readDir(dirPath: string): Effect.Effect<LocalHistoryDirEntry[], LocalHistoryError>;
   readLines(
     filePath: string,
@@ -170,6 +177,13 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
     Effect.try({
       try: () => readRegularFileText(filePath, maxBytes),
       catch: localHistoryError('readText', { path: filePath }),
+    }),
+  readConfigText: (filePath, maxBytes = HISTORY_FILE_MAX_BYTES) =>
+    Effect.try({
+      // Resolve symlink chains first; the hardened read then verifies the
+      // resolved target is a regular file within its size budget.
+      try: () => readRegularFileText(fs.realpathSync(filePath), maxBytes),
+      catch: localHistoryError('readConfigText', { path: filePath }),
     }),
   readLines: (filePath, visit, limits = {}) =>
     Effect.try({
