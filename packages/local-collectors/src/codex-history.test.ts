@@ -367,6 +367,39 @@ describe('Codex local history', () => {
     expect(JSON.stringify(result.warnings)).not.toContain('private-invalid-value');
   });
 
+  test('accepts rate-limit-only Codex snapshots without a malformed metric warning', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/quota-only.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'quota-only-thread', cwd: '/work/quota-only' },
+        },
+        {
+          timestamp: '2026-01-01T00:01:00.000Z',
+          type: 'event_msg',
+          payload: {
+            type: 'token_count',
+            info: null,
+            rate_limits: {
+              plan_type: 'pro',
+              primary: { used_percent: 50, window_minutes: 300 },
+            },
+          },
+        },
+      ),
+    );
+
+    const result = runWithStorage(collectCodexResult, storage);
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.provider).toBe('Codex sub');
+    expect(result.rows[0]?.usageUnavailable).toBe(true);
+    expect(result.warnings).toEqual([]);
+  });
+
   test('caches parsed Codex session files by mtime and size', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-cache-'));
     try {

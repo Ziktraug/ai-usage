@@ -132,7 +132,7 @@ interface SqliteDatabase {
   query(sql: string): SqliteStatement;
 }
 
-const CODEX_SESSION_CACHE_VERSION = 4;
+const CODEX_SESSION_CACHE_VERSION = 5;
 
 export const codexSessionsDir = (storage: LocalHistoryStorageService) => {
   const paths = resolvePaths(storage);
@@ -613,8 +613,13 @@ const createCodexSessionParser = () => {
       session.firstUser = usablePrompt(userText.slice(0, 200));
     }
     if (payload.type === 'token_count') {
-      if (payload.rate_limits) {
+      const hasRateLimits = isRecord(payload.rate_limits);
+      if (hasRateLimits) {
         session.subscription = true;
+      }
+      // Codex emits quota-only snapshots without per-session token usage.
+      if (payload.info === null && hasRateLimits) {
+        return;
       }
       const info = isRecord(payload.info) ? payload.info : null;
       const usage = isRecord(info?.total_token_usage) ? info.total_token_usage : null;
