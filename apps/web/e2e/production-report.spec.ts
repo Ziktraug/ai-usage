@@ -177,7 +177,7 @@ test('keeps the last complete report visible while the report range changes', as
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
 });
 
-test('hydrates and pages Sessions through the production revision protocol', async ({ page }) => {
+test('hydrates and automatically pages Sessions through the production revision protocol', async ({ page }) => {
   const serverFunctionResponses: CapturedServerFunctionResponse[] = [];
   page.on('response', (response) => {
     if (response.url().includes('/_serverFn/')) {
@@ -202,17 +202,23 @@ test('hydrates and pages Sessions through the production revision protocol', asy
     throw new Error('Production Sessions diagnostics must expose a revision and request fingerprint');
   }
 
-  const loadMore = page.getByRole('button', { name: 'Load more sessions' });
-  await expect(loadMore).toBeVisible();
-  for (let pageIndex = 0; pageIndex < 3; pageIndex++) {
-    if ((await loadMore.count()) === 0) {
-      break;
-    }
-    await loadMore.click();
-  }
-  await expect(loadMore).toHaveCount(0);
+  const sessionViewport = page.locator('[data-session-surface="desktop"]');
+  await expect
+    .poll(async () => {
+      await sessionViewport.evaluate((element) => {
+        element.scrollTop = element.scrollHeight;
+      });
+      return await page
+        .locator('tr[data-index]')
+        .evaluateAll((rows) => Math.max(...rows.map((row) => Number(row.getAttribute('data-index')))));
+    })
+    .toBe(204);
+  await expect(page.getByRole('button', { name: 'Load more sessions' })).toHaveCount(0);
 
-  await page.locator('tbody tr:not([data-virtual-spacer])').first().locator('td').last().click();
+  await sessionViewport.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await page.locator('tr[data-index="0"]').locator('td').last().click();
   await expect(page.getByRole('dialog')).toBeVisible();
   const nextSession = page.getByRole('button', { name: 'Next session' });
   await expect(nextSession).toBeEnabled();
@@ -242,4 +248,22 @@ test('hydrates and pages Sessions through the production revision protocol', asy
   }
   expect(serverFunctionResponses.length).toBeGreaterThanOrEqual(5);
   expect(serverFunctionResponses.every(({ status }) => status === 200)).toBe(true);
+});
+
+test('automatically pages mobile Sessions while scrolling', async ({ page }) => {
+  await page.setViewportSize({ height: 844, width: 390 });
+  await page.goto('/?tab=sessions');
+
+  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await page.getByRole('button', { name: 'Pause auto-refresh' }).click();
+  const summaries = page.getByRole('list', { name: 'Session summaries' });
+  await expect(summaries).toBeVisible();
+  const pagingSentinel = page.locator('[data-session-paging-sentinel="mobile"]');
+  await expect
+    .poll(async () => {
+      await pagingSentinel.scrollIntoViewIfNeeded();
+      return await summaries.locator('li').count();
+    })
+    .toBe(205);
+  await expect(page.getByRole('button', { name: 'Load more sessions' })).toHaveCount(0);
 });

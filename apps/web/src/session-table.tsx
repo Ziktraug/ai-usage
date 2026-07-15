@@ -38,7 +38,6 @@ import {
 } from '@ai-usage/design-system/report';
 import type { Column, ExpandedState, OnChangeFn, Row, SortingState, VisibilityState } from '@tanstack/solid-table';
 import { createSolidTable, flexRender, getCoreRowModel, getExpandedRowModel } from '@tanstack/solid-table';
-import { createVirtualizer } from '@tanstack/solid-virtual';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { measureClientPerf } from './client-perf';
 import type { FieldFilterKey } from './dashboard-search';
@@ -75,11 +74,9 @@ import {
 
 const track = (..._values: unknown[]) => _values.length;
 const DESKTOP_ROW_HEIGHT = 43;
+const DESKTOP_OVERSCAN_ROWS = 8;
+const DESKTOP_PAGE_PREFETCH_ROWS = 12;
 const MIN_SESSION_TABLE_WIDTH = 720;
-const MOBILE_PAGE_SIZE = 50;
-
-export const nextMobileSessionRowLimit = (currentLimit: number, totalRows: number) =>
-  Math.min(totalRows, currentLimit + MOBILE_PAGE_SIZE);
 
 const MobileSessionSummary = (props: {
   onFieldFilter: (key: FieldFilterKey, value: string) => void;
@@ -362,7 +359,17 @@ export const SessionTable = (props: {
       visibleColumns().reduce((sum, { columnDef }) => sum + (columnDef.meta?.widthPx ?? 140), 0),
     );
   const [desktopViewportEl, setDesktopViewportEl] = createSignal<HTMLDivElement>();
-  const [mobileRowLimit, setMobileRowLimit] = createSignal(MOBILE_PAGE_SIZE);
+  const [tableViewport, setTableViewport] = createSignal({ height: 520, scrollTop: 0 });
+  const updateTableViewport = (): void => {
+    const element = desktopViewportEl();
+    const next = {
+      height: element?.clientHeight || 520,
+      scrollTop: element?.scrollTop ?? 0,
+    };
+    setTableViewport((current) =>
+      current.height === next.height && current.scrollTop === next.scrollTop ? current : next,
+    );
+  };
   const rowModelRows = createMemo(() => {
     track(tableData(), props.sorting);
     return measureClientPerf(
@@ -371,46 +378,51 @@ export const SessionTable = (props: {
       (rows) => ({ rows: rows.length }),
     );
   });
-  const mobileRows = createMemo(() => (surfaceMode() === 'mobile' ? rowModelRows().slice(0, mobileRowLimit()) : []));
-  const remainingMobileRows = createMemo(() =>
-    surfaceMode() === 'mobile' ? Math.max(0, rowModelRows().length - mobileRows().length) : 0,
-  );
+  const mobileRows = createMemo(() => (surfaceMode() === 'mobile' ? rowModelRows() : []));
   const visibleColumnCount = () => visibleColumns().length;
-  const rowVirtualizer = createVirtualizer({
-    get count() {
-      return rowModelRows().length;
-    },
-    get enabled() {
-      return surfaceMode() === 'desktop' && Boolean(desktopViewportEl());
-    },
-    estimateSize: () => DESKTOP_ROW_HEIGHT,
-    getScrollElement: () => desktopViewportEl() ?? null,
-    initialRect: { height: 520, width: 0 },
-    overscan: 8,
-  });
   const virtualRows = createMemo(() => {
     const rows = rowModelRows();
     if (surfaceMode() !== 'desktop') {
       return {
         bottomHeight: 0,
+        lastIndex: -1,
         rows: [],
         topHeight: 0,
       };
     }
-    const items = rowVirtualizer.getVirtualItems();
-    const firstItem = items[0];
-    const lastItem = items.at(-1);
+    const viewport = tableViewport();
+    const start = Math.max(0, Math.floor(viewport.scrollTop / DESKTOP_ROW_HEIGHT) - DESKTOP_OVERSCAN_ROWS);
+    const end = Math.min(
+      rows.length,
+      start + Math.ceil(viewport.height / DESKTOP_ROW_HEIGHT) + DESKTOP_OVERSCAN_ROWS * 2,
+    );
     return measureClientPerf(
       'aiUsage.web.client.compute.sessionTableVirtualRows',
       () => ({
-        bottomHeight: Math.max(0, rowVirtualizer.getTotalSize() - (lastItem?.end ?? 0)),
-        rows: items.flatMap((item) => {
-          const row = rows[item.index];
-          return row ? [{ item, row }] : [];
-        }),
-        topHeight: firstItem?.start ?? 0,
+        bottomHeight: Math.max(0, rows.length - end) * DESKTOP_ROW_HEIGHT,
+        lastIndex: end - 1,
+        rows: rows.slice(start, end).map((row, index) => ({ index: start + index, row })),
+        topHeight: start * DESKTOP_ROW_HEIGHT,
       }),
       (result) => ({ rows: result.rows.length }),
+    );
+  });
+  const shouldLoadNextDesktopPage = createMemo(() => {
+    if (surfaceMode() !== 'desktop' || !props.hasMoreRows || props.loadingMoreRows || !props.onLoadMoreRows) {
+      return false;
+    }
+    return virtualRows().lastIndex >= rowModelRows().length - DESKTOP_PAGE_PREFETCH_ROWS;
+  });
+  const [mobilePagingEl, setMobilePagingEl] = createSignal<HTMLDivElement>();
+  const [mobilePagingActivated, setMobilePagingActivated] = createSignal(false);
+  const [mobileViewportRevision, setMobileViewportRevision] = createSignal(0);
+  const mobilePagingNearViewport = createMemo(() => {
+    track(mobileViewportRevision(), rowModelRows().length);
+    const element = mobilePagingEl();
+    return (
+      surfaceMode() === 'mobile' &&
+      element !== undefined &&
+      element.getBoundingClientRect().top <= window.innerHeight + 240
     );
   });
 
@@ -420,24 +432,67 @@ export const SessionTable = (props: {
   });
 
   createEffect(() => {
-    track(tableData(), props.sorting);
-    setMobileRowLimit(MOBILE_PAGE_SIZE);
-    if (surfaceMode() === 'desktop') {
-      rowVirtualizer.scrollToOffset(0);
+    const element = mobilePagingEl();
+    if (!(element && surfaceMode() === 'mobile')) {
+      return;
+    }
+    const updateMobileViewport = (): void => {
+      setMobileViewportRevision((revision) => revision + 1);
+    };
+    window.addEventListener('resize', updateMobileViewport);
+    window.addEventListener('scroll', updateMobileViewport, { passive: true });
+    updateMobileViewport();
+    onCleanup(() => {
+      window.removeEventListener('resize', updateMobileViewport);
+      window.removeEventListener('scroll', updateMobileViewport);
+    });
+  });
+
+  createEffect(() => {
+    if (mobilePagingNearViewport()) {
+      setMobilePagingActivated(true);
     }
   });
 
   createEffect(() => {
-    if (surfaceMode() !== 'mobile') {
+    if (surfaceMode() === 'mobile' && mobilePagingActivated() && props.hasMoreRows && !props.loadingMoreRows) {
+      props.onLoadMoreRows?.();
+    }
+  });
+
+  createEffect(() => {
+    if (shouldLoadNextDesktopPage()) {
+      props.onLoadMoreRows?.();
+    }
+  });
+
+  createEffect(() => {
+    const element = desktopViewportEl();
+    if (!(surfaceMode() === 'desktop' && element)) {
       return;
     }
-    const selectedKey = props.selectedKey;
-    if (!selectedKey) {
+    updateTableViewport();
+    const observer = new ResizeObserver(updateTableViewport);
+    observer.observe(element);
+    onCleanup(() => observer.disconnect());
+  });
+
+  let previousRowKeys: string[] = [];
+  createEffect(() => {
+    track(props.sorting);
+    const nextRowKeys = tableData().map(rowKey);
+    const existingRowsUnchanged =
+      previousRowKeys.length > 0 &&
+      previousRowKeys.length <= nextRowKeys.length &&
+      previousRowKeys.every((key, index) => nextRowKeys[index] === key);
+    previousRowKeys = nextRowKeys;
+    if (existingRowsUnchanged) {
       return;
     }
-    const selectedIndex = rowModelRows().findIndex((row) => row.id === selectedKey);
-    if (selectedIndex >= mobileRowLimit()) {
-      setMobileRowLimit(selectedIndex + 1);
+    setMobilePagingActivated(false);
+    if (surfaceMode() === 'desktop') {
+      desktopViewportEl()?.scrollTo({ top: 0 });
+      updateTableViewport();
     }
   });
 
@@ -558,10 +613,8 @@ export const SessionTable = (props: {
         <div
           class={cx(tableWrap, surfaceMode() === 'desktop' ? desktopTableSurface : undefined)}
           data-session-surface={surfaceMode()}
-          ref={(element) => {
-            setDesktopViewportEl(element);
-            queueMicrotask(() => rowVirtualizer.measure());
-          }}
+          onScroll={updateTableViewport}
+          ref={setDesktopViewportEl}
         >
           <table class={cx(table, sessionsTable)} style={{ 'min-width': `${tableMinWidth()}px` }}>
             <thead>
@@ -590,12 +643,11 @@ export const SessionTable = (props: {
               </Show>
               <For each={virtualRows().rows}>
                 {(virtualRow) => {
-                  const tableRow = 'row' in virtualRow ? virtualRow.row : virtualRow;
-                  const virtualItem = 'item' in virtualRow ? virtualRow.item : null;
+                  const tableRow = virtualRow.row;
                   return (
                     <tr
                       data-depth={tableRow.depth}
-                      data-index={virtualItem?.index}
+                      data-index={virtualRow.index}
                       data-selected={String(props.selectedKey === tableRow.id)}
                       onClick={() => props.onSelect(tableRow.original)}
                       onKeyDown={(event) => {
@@ -607,16 +659,6 @@ export const SessionTable = (props: {
                         }
                         event.preventDefault();
                         props.onSelect(tableRow.original);
-                      }}
-                      ref={(element) => {
-                        if (!virtualItem) {
-                          return;
-                        }
-                        queueMicrotask(() => {
-                          if (element.isConnected) {
-                            rowVirtualizer.measureElement(element);
-                          }
-                        });
                       }}
                       tabIndex={0}
                     >
@@ -664,17 +706,12 @@ export const SessionTable = (props: {
             )}
           </For>
         </ul>
-        <Show when={remainingMobileRows() > 0}>
-          <div class={sessionSummaryLoadMore}>
-            <button
-              class={ghostButton}
-              onClick={() => setMobileRowLimit((limit) => nextMobileSessionRowLimit(limit, rowModelRows().length))}
-              type="button"
-            >
-              Show {Math.min(MOBILE_PAGE_SIZE, remainingMobileRows())} more · {remainingMobileRows()} remaining
-            </button>
-          </div>
-        </Show>
+        <div
+          aria-hidden="true"
+          class={sessionSummaryLoadMore}
+          data-session-paging-sentinel="mobile"
+          ref={setMobilePagingEl}
+        />
       </Show>
       <For each={expandedCampaignLoads()}>
         {(campaign) => (
@@ -691,23 +728,9 @@ export const SessionTable = (props: {
           </div>
         )}
       </For>
-      <Show
-        when={
-          props.hasMoreRows &&
-          (surfaceMode() === 'desktop' ||
-            surfaceMode() === 'pending' ||
-            (surfaceMode() === 'mobile' && remainingMobileRows() === 0))
-        }
-      >
-        <div class={sessionPagingLoadMore}>
-          <button
-            class={ghostButton}
-            disabled={props.loadingMoreRows}
-            onClick={() => props.onLoadMoreRows?.()}
-            type="button"
-          >
-            {props.loadingMoreRows ? 'Loading more sessions…' : 'Load more sessions'}
-          </button>
+      <Show when={props.loadingMoreRows}>
+        <div aria-live="polite" class={sessionPagingLoadMore}>
+          Loading more sessions…
         </div>
       </Show>
     </Show>

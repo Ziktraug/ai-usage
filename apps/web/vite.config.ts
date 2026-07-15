@@ -22,7 +22,6 @@ const clientOptimizeDeps = [
   '@tanstack/router-core/scroll-restoration-script',
   '@tanstack/router-core/ssr/client',
   '@tanstack/solid-query',
-  '@tanstack/solid-virtual',
   'effect',
   'seroval',
   'solid-js',

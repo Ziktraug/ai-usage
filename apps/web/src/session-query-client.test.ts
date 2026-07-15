@@ -14,6 +14,7 @@ import {
   buildDashboardSessionQueryScope,
   createSessionQueryCoordinator,
   type SessionQuerySource,
+  type SessionQueryState,
   sessionRowsForState,
 } from './session-query-client';
 import {
@@ -272,6 +273,38 @@ describe('served session query coordination', () => {
 
     expect(next?.selectedRowId).toBe(rows[0]!.rowId);
     expect(sessionRowsForState(next).map((row) => row.rowId)).toEqual([rows[0]!.rowId, rows[1]!.rowId]);
+  });
+
+  test('accepts the next page request immediately after publishing the previous page', async () => {
+    const followUpLoads: Promise<SessionQueryState | undefined>[] = [];
+    const requestedCursors: (string | null)[] = [];
+    let coordinator: ReturnType<typeof createSessionQueryCoordinator>;
+    coordinator = createSessionQueryCoordinator({
+      onStateChange: (state) => {
+        if (state?.nextCursor && !state.loadingMore) {
+          followUpLoads.push(coordinator.loadMore());
+        }
+      },
+      source: sourceWith({
+        getPage: (request) => {
+          requestedCursors.push(request.cursor);
+          const pageIndex = requestedCursors.length - 1;
+          const nextCursor = pageIndex < 2 ? `sq1.0000000000000000.${pageIndex + 1}` : null;
+          return Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[pageIndex]! }], nextCursor));
+        },
+      }),
+    });
+
+    await coordinator.start(scopeFor());
+    await Promise.all(followUpLoads);
+    await Promise.all(followUpLoads);
+
+    expect(requestedCursors).toEqual([null, 'sq1.0000000000000000.1', 'sq1.0000000000000000.2']);
+    expect(sessionRowsForState(coordinator.state()).map((row) => row.rowId)).toEqual([
+      rows[0]!.rowId,
+      rows[1]!.rowId,
+      rows[2]!.rowId,
+    ]);
   });
 
   test('loads bounded campaign children incrementally', async () => {
