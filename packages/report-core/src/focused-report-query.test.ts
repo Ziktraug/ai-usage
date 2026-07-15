@@ -7,7 +7,6 @@ import {
   parseFocusedOverviewRequest,
   parseFocusedReportQueryResult,
   projectFocusedBreakdown,
-  projectFocusedHtmlPayload,
   projectFocusedOverview,
   projectFocusedSupport,
 } from './focused-report-query';
@@ -302,50 +301,6 @@ describe('focused report query contracts', () => {
         request,
       ),
     ).toThrow('cursorCommitAttribution');
-  });
-
-  test('produces full compatibility HTML payloads', () => {
-    const html = projectFocusedHtmlPayload(rows, support, { revision: 'revision-a' });
-    expect(html.payload.rows).toEqual(rows);
-    expect(html.payload.tableRows).toEqual(rows.slice(0, 2));
-    expect(html.rowCount).toBe(rows.length);
-  });
-
-  test('rejects malformed nested HTML compatibility payloads at the transport boundary', () => {
-    const request = { revision: 'revision-a' };
-    const result = projectFocusedHtmlPayload(rows, support, request);
-    const firstRow = result.payload.rows[0];
-    const firstTableRow = result.payload.tableRows[0];
-    if (!(firstRow && firstTableRow)) {
-      throw new Error('The HTML compatibility fixture must include report rows');
-    }
-    const invalidPayloadValues = [
-      { ...result.payload, unexpected: true },
-      { ...result.payload, analytics: { ...result.payload.analytics, byHarness: [{ key: 'incomplete' }] } },
-      { ...result.payload, filters: { ...result.payload.filters, sort: 'unknown' } },
-      { ...result.payload, generatedAt: '2026-07-13T12:00:00Z' },
-      { ...result.payload, omittedRows: -1 },
-      { ...result.payload, rows: [{ ...firstRow, tokIn: -1 }] },
-      { ...result.payload, tableRows: [{ ...firstTableRow, unexpected: true }] },
-      { ...result.payload, datasets: { providerStatus: { schemaVersion: 2 } } },
-      { ...result.payload, facets: [] },
-      {
-        ...result.payload,
-        projectGroupConfigs: [{ ...result.payload.projectGroupConfigs?.[0], unexpected: true }],
-      },
-      { ...result.payload, projectGroups: [{ key: 'incomplete' }] },
-      { ...result.payload, warnings: [{ message: 1 }] },
-    ];
-
-    expect(parseFocusedReportQueryResult('html-payload', JSON.parse(JSON.stringify(result)), request)).toEqual(result);
-    for (const invalidPayload of invalidPayloadValues) {
-      expect(() =>
-        parseFocusedReportQueryResult('html-payload', { ...result, payload: invalidPayload }, request),
-      ).toThrow();
-    }
-    expect(() =>
-      parseFocusedReportQueryResult('html-payload', { ...result, rowCount: rows.length - 1 }, request),
-    ).toThrow('compatibility payload');
   });
 
   test('prunes large destination-only context from bootstrap support', () => {

@@ -116,6 +116,13 @@ export interface Projection {
   skillName: string;
   state: ProjectionState;
   targetId: string;
+  targetIdentity?: ProjectionTargetIdentity;
+}
+
+export interface ProjectionTargetIdentity {
+  canonicalPath: string;
+  dev: string;
+  ino: string;
 }
 
 export type ProjectionAction =
@@ -124,6 +131,7 @@ export type ProjectionAction =
       skillName: string;
       sourcePath: string;
       targetId: string;
+      targetIdentity?: ProjectionTargetIdentity;
       type: 'create-symlink';
     }
   | {
@@ -132,6 +140,7 @@ export type ProjectionAction =
       skillName: string;
       sourcePath: string;
       targetId: string;
+      targetIdentity?: ProjectionTargetIdentity;
       type: 'repair-symlink' | 'unlink-managed-symlink';
     }
   | {
@@ -254,6 +263,7 @@ export interface SkillReconcileResult {
 
 export interface CreateSkillTargetDirectoryInput {
   path: string;
+  privateStatePath: string;
 }
 
 export const projectSkillDirectories = [

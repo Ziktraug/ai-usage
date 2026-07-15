@@ -2,8 +2,14 @@ import path from 'node:path';
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import type { TokenCounts } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
-import { LocalHistoryError } from '../errors';
+import { LocalHistoryError, type LocalHistoryWarning } from '../errors';
+import { CURSOR_CSV_MAX_BYTES } from '../history-budgets';
 import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from '../local-history';
+import {
+  addNonNegativeSafeIntegers,
+  metricValidationWarning,
+  parseNonNegativeFiniteNumber,
+} from '../metric-validation';
 
 export interface CursorCsvOptions {
   clusterGapMs: number;
@@ -35,6 +41,12 @@ export interface CursorCsvTurn {
   date: Date;
   model: string;
   tokens: TokenCounts;
+}
+
+export interface CursorCsvTurnsResult {
+  rejectedMetricRecords: number;
+  turns: CursorCsvTurn[];
+  warnings: LocalHistoryWarning[];
 }
 
 const REQUIRED_HEADERS = [
@@ -93,77 +105,125 @@ const parseCsvLine = (line: string): string[] => {
   return cells;
 };
 
-const LINE_SEPARATOR = /\r?\n/;
-
-const parseCsv = (text: string, filePath: string) => {
-  const lines = text.split(LINE_SEPARATOR).filter((line) => line.length > 0);
-  if (!lines.length) {
-    return [];
-  }
-  const headers = parseCsvLine(lines[0] ?? '');
-  const missing = REQUIRED_HEADERS.filter((header) => !headers.includes(header));
-  if (missing.length) {
-    throw new Error(`Missing Cursor CSV columns: ${missing.join(', ')}`);
-  }
-  return lines.slice(1).map((line) => {
-    const values = parseCsvLine(line);
-    const row: Record<string, string> = {};
-    headers.forEach((header, index) => {
-      row[header] = values[index] ?? '';
-    });
-    return { ...row, __artifactPath: filePath };
+const visitCsvRows = (
+  storage: LocalHistoryStorageService,
+  filePath: string,
+  visit: (row: Record<string, string>) => void,
+): Effect.Effect<void, LocalHistoryError> =>
+  Effect.gen(function* () {
+    let headers: string[] | null = null;
+    yield* storage.readLines(
+      filePath,
+      (line) => {
+        if (line.length === 0) {
+          return;
+        }
+        if (headers === null) {
+          headers = parseCsvLine(line);
+          const missing = REQUIRED_HEADERS.filter((header) => !headers?.includes(header));
+          if (missing.length) {
+            throw new Error(`Missing Cursor CSV columns: ${missing.join(', ')}`);
+          }
+          return;
+        }
+        const values = parseCsvLine(line);
+        const row: Record<string, string> = {};
+        for (const [index, header] of headers.entries()) {
+          row[header] = values[index] ?? '';
+        }
+        visit({ ...row, __artifactPath: filePath });
+      },
+      { maxBytes: CURSOR_CSV_MAX_BYTES },
+    );
   });
-};
 
-const parseInteger = (value: string) => {
-  const normalized = value.trim().replaceAll(',', '');
-  if (!normalized) {
+const INTEGER_FIELD_PATTERN = /^\s*(?:\d+|\d{1,3}(?:,\d{3})+)\s*$/;
+const COST_FIELD_PATTERN = /^\s*\$?\d+(?:\.\d+)?\s*$/;
+
+const parseInteger = (value: string): number | null => {
+  if (!value.trim()) {
     return 0;
   }
-  const parsed = Number.parseInt(normalized, 10);
-  return Number.isFinite(parsed) ? parsed : 0;
-};
-
-const parseCost = (value: string) => {
-  const parsed = Number.parseFloat(value.trim());
-  return Number.isFinite(parsed) ? parsed : 0;
-};
-
-const tokenTotal = (tokens: TokenCounts) => tokens.in + tokens.out + tokens.cr + tokens.cw;
-
-const rowToTurn = (row: Record<string, string>, user?: string): CursorCsvTurn | null => {
-  if (user && row.User !== user) {
+  if (!INTEGER_FIELD_PATTERN.test(value)) {
     return null;
+  }
+  const normalized = value.trim().replaceAll(',', '');
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+};
+
+const parseCost = (value: string): number | null => {
+  if (!value.trim()) {
+    return 0;
+  }
+  if (!COST_FIELD_PATTERN.test(value)) {
+    return null;
+  }
+  const parsed = Number(value.trim().replace('$', ''));
+  const validated = parseNonNegativeFiniteNumber(parsed);
+  return validated.ok ? validated.value : null;
+};
+
+const tokenTotal = (tokens: TokenCounts): number | null => {
+  const input = addNonNegativeSafeIntegers(tokens.in, tokens.out);
+  if (!input.ok) {
+    return null;
+  }
+  const cache = addNonNegativeSafeIntegers(tokens.cr, tokens.cw);
+  if (!cache.ok) {
+    return null;
+  }
+  const total = addNonNegativeSafeIntegers(input.value, cache.value);
+  return total.ok ? total.value : null;
+};
+
+type CursorCsvRowResult = { status: 'invalid' } | { status: 'skip' } | { status: 'valid'; turn: CursorCsvTurn };
+
+const rowToTurn = (row: Record<string, string>, user?: string): CursorCsvRowResult => {
+  if (user && row.User !== user) {
+    return { status: 'skip' };
   }
   const date = new Date(row.Date ?? '');
   if (!Number.isFinite(date.getTime())) {
-    return null;
+    return { status: 'invalid' };
   }
   const model = row.Model?.trim() || 'cursor';
-  const tokens = {
-    in: parseInteger(row['Input (w/o Cache Write)'] ?? ''),
-    out: parseInteger(row['Output Tokens'] ?? ''),
-    cr: parseInteger(row['Cache Read'] ?? ''),
-    cw: parseInteger(row['Input (w/ Cache Write)'] ?? ''),
-  };
-  if (tokenTotal(tokens) === 0) {
-    return null;
+  const parsedTokens = [
+    parseInteger(row['Input (w/o Cache Write)'] ?? ''),
+    parseInteger(row['Output Tokens'] ?? ''),
+    parseInteger(row['Cache Read'] ?? ''),
+    parseInteger(row['Input (w/ Cache Write)'] ?? ''),
+  ];
+  if (parsedTokens.some((value) => value === null)) {
+    return { status: 'invalid' };
+  }
+  const [input = 0, output = 0, cacheRead = 0, cacheWrite = 0] = parsedTokens as number[];
+  const tokens = { in: input, out: output, cr: cacheRead, cw: cacheWrite };
+  const total = tokenTotal(tokens);
+  if (total === null || total === 0) {
+    return total === null ? { status: 'invalid' } : { status: 'skip' };
   }
 
   const cost = parseCost(row.Cost ?? '');
+  if (cost === null) {
+    return { status: 'invalid' };
+  }
   const kind = row.Kind ?? '';
   const isOnDemand = kind === 'On-Demand';
   const isIncluded = kind === 'Included';
   const { rates, known } = priceFor(model);
   return {
-    date,
-    artifactPath: row.__artifactPath ?? '',
-    model,
-    tokens,
-    costActual: isOnDemand ? cost : 0,
-    costQuota: isIncluded ? cost : 0,
-    costApprox: approxCost(rates, tokens),
-    costKnown: known,
+    status: 'valid',
+    turn: {
+      date,
+      artifactPath: row.__artifactPath ?? '',
+      model,
+      tokens,
+      costActual: isOnDemand ? cost : 0,
+      costQuota: isIncluded ? cost : 0,
+      costApprox: approxCost(rates, tokens),
+      costKnown: known,
+    },
   };
 };
 
@@ -186,7 +246,7 @@ export const clusterFromTurns = (turns: CursorCsvTurn[]): CursorCsvCluster => {
     if (!modelTokens.has(turn.model)) {
       models.push(turn.model);
     }
-    modelTokens.set(turn.model, (modelTokens.get(turn.model) ?? 0) + tokenTotal(turn.tokens));
+    modelTokens.set(turn.model, (modelTokens.get(turn.model) ?? 0) + (tokenTotal(turn.tokens) ?? 0));
     tokens = addTokens(tokens, turn.tokens);
     costActual += turn.costActual;
     costQuota += turn.costQuota;
@@ -227,36 +287,47 @@ export const clusterTurns = (turns: CursorCsvTurn[], clusterGapMs: number): Curs
   return clusters;
 };
 
-export const collectCursorCsvTurns = (
+export const collectCursorCsvTurnsResult = (
   options: CursorCsvOptions,
-): Effect.Effect<CursorCsvTurn[], LocalHistoryError, LocalHistoryStorageService> =>
+): Effect.Effect<CursorCsvTurnsResult, LocalHistoryError, LocalHistoryStorageService> =>
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
     const turns: CursorCsvTurn[] = [];
     const seen = new Set<string>();
+    let rejectedMetricRecords = 0;
     const configuredPaths = (options.usageExportPaths ?? []).map(resolveExportPath);
     const dirPaths = options.usageExportDir ? yield* exportPathsFromDir(storage, options.usageExportDir) : [];
     for (const filePath of [...configuredPaths, ...dirPaths]) {
       if (!(yield* storage.exists(filePath).pipe(Effect.catchAll(() => Effect.succeed(false))))) {
         continue;
       }
-      const text = yield* storage.readText(filePath);
-      const rows = yield* Effect.try({
-        try: () => parseCsv(text, filePath),
-        catch: (cause) => csvError('parseCursorCsv', filePath, cause),
-      });
-      for (const row of rows) {
-        const turn = rowToTurn(row, options.user);
-        if (!turn) {
-          continue;
+      yield* visitCsvRows(storage, filePath, (row) => {
+        const parsed = rowToTurn(row, options.user);
+        if (parsed.status === 'invalid') {
+          rejectedMetricRecords++;
+          return;
         }
+        if (parsed.status === 'skip') {
+          return;
+        }
+        const { turn } = parsed;
         const key = `${turn.date.toISOString()}|${turn.model}|${tokenTotal(turn.tokens)}|${turn.costActual}|${turn.costQuota}`;
         if (seen.has(key)) {
-          continue;
+          return;
         }
         seen.add(key);
         turns.push(turn);
-      }
+      }).pipe(Effect.mapError((error) => csvError('parseCursorCsv', filePath, error)));
     }
-    return turns.sort((a, b) => a.date.getTime() - b.date.getTime());
+    const warning = metricValidationWarning('cursor', rejectedMetricRecords);
+    return {
+      rejectedMetricRecords,
+      turns: turns.sort((a, b) => a.date.getTime() - b.date.getTime()),
+      warnings: warning ? [warning] : [],
+    };
   });
+
+export const collectCursorCsvTurns = (
+  options: CursorCsvOptions,
+): Effect.Effect<CursorCsvTurn[], LocalHistoryError, LocalHistoryStorageService> =>
+  collectCursorCsvTurnsResult(options).pipe(Effect.map((result) => result.turns));

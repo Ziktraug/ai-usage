@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { linkSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
@@ -7,12 +7,52 @@ import { Effect } from 'effect';
 import { createLocalHistoryStorage, LocalHistoryStorage } from './local-history';
 import {
   aiUsageConfigPath,
+  machineConfigPath,
   readAiUsageConfig,
   readMergedAiUsageConfigFrom,
   updateAiUsageConfig,
 } from './machine-config';
 
 describe('machine config', () => {
+  test('creates one machine identity across concurrent first-start processes', async () => {
+    const home = await mkdtemp('ai-usage-machine-identity-process-');
+    try {
+      const workerPath = path.join(import.meta.dir, 'test-fixtures', 'machine-identity-subprocess.ts');
+      const barrierPath = path.join(home, 'go');
+      const workerIndexes = Array.from({ length: 8 }, (_, index) => index);
+      const workers = workerIndexes.map((index) =>
+        Bun.spawn(
+          [
+            process.execPath,
+            workerPath,
+            home,
+            path.join(home, `ready-${index}`),
+            barrierPath,
+            path.join(home, `result-${index}.json`),
+          ],
+          { stderr: 'pipe', stdout: 'pipe' },
+        ),
+      );
+      while ((await Array.fromAsync(new Bun.Glob('ready-*').scan({ cwd: home }))).length < workers.length) {
+        await Bun.sleep(5);
+      }
+      await writeFile(barrierPath, 'go', 'utf8');
+      expect(await Promise.all(workers.map((worker) => worker.exited))).toEqual(workerIndexes.map(() => 0));
+      const machines = await Promise.all(
+        workerIndexes.map(async (index) => JSON.parse(await Bun.file(path.join(home, `result-${index}.json`)).text())),
+      );
+      expect(new Set(machines.map((machine) => machine.id)).size).toBe(1);
+      const stored = JSON.parse(await Bun.file(machineConfigPath(createLocalHistoryStorage(home))).text());
+      expect(stored).toEqual(machines[0]);
+      if (process.platform !== 'win32') {
+        expect(lstatSync(machineConfigPath(createLocalHistoryStorage(home))).mode % 0o1000).toBe(0o600);
+        expect(lstatSync(path.dirname(machineConfigPath(createLocalHistoryStorage(home)))).mode % 0o1000).toBe(0o700);
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }, 20_000);
+
   test('preserves concurrent config updates', async () => {
     const home = await mkdtemp('ai-usage-machine-config-');
     try {
@@ -118,7 +158,7 @@ describe('machine config', () => {
     }
   });
 
-  test('atomically replaces the config file', async () => {
+  test('rejects a multiply-linked authoritative config without changing its alias', async () => {
     const home = await mkdtemp('ai-usage-machine-config-');
     try {
       const storage = createLocalHistoryStorage(home);
@@ -129,18 +169,13 @@ describe('machine config', () => {
       const previousConfigPath = path.join(path.dirname(configPath), 'previous-config.json');
       linkSync(configPath, previousConfigPath);
 
-      await runUpdate((config) => ({
-        ...config,
-        projectAliases: [{ match: ['/work/beta'], name: 'beta' }],
-      }));
+      await expect(
+        runUpdate((config) => ({
+          ...config,
+          projectAliases: [{ match: ['/work/beta'], name: 'beta' }],
+        })),
+      ).rejects.toThrow();
 
-      const config = await Effect.runPromise(
-        readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-      expect(config).toEqual({
-        cursor: { clusterGapMs: 1234 },
-        projectAliases: [{ match: ['/work/beta'], name: 'beta' }],
-      });
       expect(JSON.parse(readFileSync(previousConfigPath, 'utf8'))).toEqual({ cursor: { clusterGapMs: 1234 } });
       expect(readdirSync(path.dirname(configPath)).sort()).toEqual(['config.json', 'previous-config.json']);
     } finally {

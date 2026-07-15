@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import {
   type FocusedBreakdownRequest,
   type FocusedBreakdownResult,
-  type FocusedHtmlPayloadResult,
   type FocusedOverviewRequest,
   type FocusedOverviewResult,
   type FocusedReportSupport,
@@ -81,8 +80,6 @@ const success = <Result extends { requestFingerprint: string; revision: string }
 const sourceWith = (overrides: Partial<FocusedReportSource>): FocusedReportSource => ({
   getBreakdown: (_request: FocusedBreakdownRequest) =>
     Promise.reject<SessionQueryServerResult<FocusedBreakdownResult>>(new Error('Unexpected breakdown request')),
-  getHtmlPayload: (_request: FocusedRevisionRequest) =>
-    Promise.reject<SessionQueryServerResult<FocusedHtmlPayloadResult>>(new Error('Unexpected HTML request')),
   getManifest: () => Promise.resolve(manifest('revision-a')),
   getOverview: (_request: FocusedOverviewRequest) =>
     Promise.reject<SessionQueryServerResult<FocusedOverviewResult>>(new Error('Unexpected overview request')),

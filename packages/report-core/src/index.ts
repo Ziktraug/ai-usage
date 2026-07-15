@@ -4,7 +4,6 @@ export * from './csv';
 export * from './datasets';
 export * from './focused-report-query';
 export * from './harness-metadata';
-export * from './html-export';
 export * from './merge-bundle';
 export * from './model-identity';
 export * from './pricing';

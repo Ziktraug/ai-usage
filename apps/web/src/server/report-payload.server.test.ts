@@ -3,14 +3,19 @@ import { chmod, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
+import { reportCaptureFingerprint } from '@ai-usage/report-data';
 import { MAX_REPORT_RUNNER_ARTIFACT_BYTES } from '@ai-usage/report-data/report-payload-artifact';
+import { toWebReportPayload } from '../web-report-payload';
 import {
   createReportPayloadCache,
   MAX_REPORT_RUNNER_STDERR_TAIL_BYTES,
+  MAX_UNCHANGED_CAPTURE_RESULT_BYTES,
+  parseRunnerCaptureResult,
   parseRunnerPayload,
   ReportPayloadRunnerProcessError,
   runReportPayloadArtifactProcess,
 } from './report-payload.server';
+import { reportCaptureFingerprintForPayload } from './report-revision.server';
 
 const deferred = <A>() => {
   let reject: ((reason?: unknown) => void) | undefined;
@@ -27,7 +32,27 @@ const deferred = <A>() => {
 };
 
 const payloadForRun = (generatedAt: string): UsageReportPayload => ({
-  analytics: {} as UsageReportPayload['analytics'],
+  analytics: {
+    averageDurationMs: null,
+    byHarness: [],
+    byModel: [],
+    byProvider: [],
+    costPer100Lines: null,
+    durationMs: 0,
+    durationRows: 0,
+    lineCount: 0,
+    linesA: 0,
+    linesD: 0,
+    meanCost: 0,
+    medianCost: 0,
+    pricedCount: 0,
+    recentSessions: 0,
+    sessionCount: 0,
+    tools: 0,
+    totalCost: 0,
+    turns: 0,
+    unpricedCount: 0,
+  },
   filters: { since: null, project: null, limit: null, minTokens: 1, sort: 'date' },
   generatedAt,
   omittedRows: 0,
@@ -149,9 +174,52 @@ describe('report payload cache', () => {
 
 describe('parseRunnerPayload', () => {
   test('ignores runtime warning lines before the JSON payload', () => {
-    const payload = parseRunnerPayload('timestamp=2026-06-22T11:30:48.703Z level=WARN message=noise\n{"rows":[]}');
+    const serialized = JSON.stringify(payloadForRun('2026-06-22T11:30:48.703Z'));
+    const payload = parseRunnerPayload(`timestamp=2026-06-22T11:30:48.703Z level=WARN message=noise\n${serialized}`);
 
     expect(payload.rows).toEqual([]);
+  });
+
+  test('rejects incomplete legacy and changed payloads instead of trusting assertions', () => {
+    expect(() => parseRunnerPayload('{"generatedAt":"2026-07-14T12:00:00.000Z","rows":[]}')).toThrow(
+      'invalid required fields',
+    );
+    expect(() =>
+      parseRunnerCaptureResult(
+        JSON.stringify({
+          captureFingerprint: 'a'.repeat(64),
+          payload: { generatedAt: '2026-07-14T12:00:00.000Z', rows: [] },
+          status: 'changed',
+          version: 1,
+        }),
+      ),
+    ).toThrow('invalid required fields');
+  });
+
+  test('uses the same semantic capture fingerprint as immutable web revisions', () => {
+    const payload = payloadForRun('2026-07-14T12:00:00.000Z');
+
+    expect(reportCaptureFingerprint(payload)).toBe(reportCaptureFingerprintForPayload(toWebReportPayload(payload)));
+  });
+
+  test('accepts an unchanged result at 64 KiB and rejects one byte more', () => {
+    const result = {
+      captureFingerprint: 'a'.repeat(64),
+      metadata: { padding: '' },
+      status: 'unchanged',
+      version: 1,
+    };
+    const empty = JSON.stringify(result);
+    const exact = JSON.stringify({
+      ...result,
+      metadata: { padding: 'x'.repeat(MAX_UNCHANGED_CAPTURE_RESULT_BYTES - Buffer.byteLength(empty)) },
+    });
+    const tooLarge = exact.replace('"status"', '"metadataPadding":"x","status"');
+
+    expect(Buffer.byteLength(exact)).toBe(MAX_UNCHANGED_CAPTURE_RESULT_BYTES);
+    expect(parseRunnerCaptureResult(exact).status).toBe('unchanged');
+    expect(Buffer.byteLength(tooLarge)).toBeGreaterThan(MAX_UNCHANGED_CAPTURE_RESULT_BYTES);
+    expect(() => parseRunnerCaptureResult(tooLarge)).toThrow(`${MAX_UNCHANGED_CAPTURE_RESULT_BYTES}-byte limit`);
   });
 });
 

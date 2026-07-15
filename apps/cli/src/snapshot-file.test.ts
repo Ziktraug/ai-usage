@@ -2,15 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
 import { createUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
-import {
-  createUsageSnapshotFileReader,
-  MAX_USAGE_SNAPSHOT_BYTES,
-  readUsageSnapshotFile,
-  type UsageSnapshotFileHandle,
-} from './snapshot-file';
+import { createUsageSnapshotFileReader, readUsageSnapshotFile, type UsageSnapshotFileHandle } from './snapshot-file';
 
 const row = (): SourcedRow => ({
   calls: 1,
@@ -100,7 +96,7 @@ describe('usage snapshot files', () => {
       writeFileSync(snapshotPath, '{}');
       symlinkSync(snapshotPath, symlinkPath);
       writeFileSync(oversizedPath, '');
-      truncateSync(oversizedPath, MAX_USAGE_SNAPSHOT_BYTES + 1);
+      truncateSync(oversizedPath, MAX_PORTABLE_USAGE_BYTES + 1);
 
       for (const inputPath of [childDirectory, symlinkPath, oversizedPath]) {
         const error = await Effect.runPromise(Effect.flip(readUsageSnapshotFile(inputPath)));

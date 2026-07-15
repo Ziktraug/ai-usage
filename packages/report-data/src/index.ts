@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  collectHarnessDatasets,
+  collectHarnessDatasetsResult,
   collectSelectedHarnessResults,
   collectSelectedHarnessRows,
   type HarnessSelection,
@@ -24,28 +24,36 @@ import {
   projectSourceSelectorLabel,
 } from '@ai-usage/report-core/project-group';
 import { mergeProviderStatusDatasets, parseProviderStatusDataset } from '@ai-usage/report-core/provider-status';
-import {
-  createUsageReportPayload,
-  type PreparedUsageReport,
-  prepareUsageReport,
-  type ReportOptions,
-  type UsageReportPayload,
-  type UsageReportProjectGroup,
-  type UsageReportWarning,
+import type {
+  PreparedUsageReport,
+  ReportOptions,
+  UsageReportPayload,
+  UsageReportProjectGroup,
+  UsageReportWarning,
 } from '@ai-usage/report-core/report-data';
-import { normalizeSessionLineage } from '@ai-usage/report-core/session-lineage';
 import {
   createUsageSnapshot,
+  deserializeSnapshotRow,
   mergeUsageSnapshots,
   type SnapshotMergeWarning,
   type UsageMachine,
   type UsageSnapshot,
+  usageSnapshotRowDedupeKey,
 } from '@ai-usage/report-core/snapshot';
 import type { Row, SourcedRow } from '@ai-usage/report-core/types';
 import { usageRowLineDelta, usageRowPricedCost, usageRowTokenTotal } from '@ai-usage/report-core/usage-row';
-import { importLocalRows, queryReportRows, queryUsageStoreGeneration, usageStorePath } from '@ai-usage/usage-store';
+import {
+  importLocalRows,
+  queryReportRows,
+  queryUsageStoreGeneration,
+  type StoredSourceAuthority,
+  usageStorePath,
+} from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 import { withPerfSpan } from './perf';
+import { assembleReport, captureReport, type ReportAssemblyInput } from './report-assembly';
+
+export { captureReport, reportAssemblyInputFingerprint, reportCaptureFingerprint } from './report-assembly';
 
 const GIT_CONFIG_LINE_SEPARATOR = /\r?\n/;
 const GIT_REMOTE_HEADER_PATTERN = /^\s*\[remote\s+"([^"]+)"\]\s*$/;
@@ -54,6 +62,7 @@ const GIT_REMOTE_URL_PATTERN = /^\s*url\s*=\s*(.+?)\s*$/;
 const GITHUB_HTTPS_REPO_PATTERN = /github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?$/;
 const GITHUB_SSH_REPO_PATTERN = /git@github\.com:([^/]+\/[^/]+?)(?:\.git)?$/;
 const GITDIR_FILE_PATTERN = /^\s*gitdir:\s*(.+?)\s*$/i;
+const METRIC_VALIDATION_MESSAGE_PATTERN = /^Rejected (\d+) malformed (.+) metric record\(s\)\.$/;
 const CLAUDE_WORKTREE_PATH_SEGMENT = '/.claude/worktrees/';
 const MAX_STABLE_REPORT_CAPTURE_ATTEMPTS = 3;
 
@@ -114,8 +123,9 @@ export interface StoredReportSourceFingerprint {
 }
 
 export interface LocalReportRowsResult {
+  authorizedRows: AuthorizedSourceRow[];
   collection: SelectedHarnessCollectionResult;
-  rows: Row[];
+  rows: SourcedRow[];
   warnings: LocalHistoryWarning[];
 }
 
@@ -181,7 +191,37 @@ interface CanonicalProjectSource {
   sourcePath: string;
 }
 
-type CanonicalProjectSourceResolver = (project: string, sourcePath: string) => CanonicalProjectSource;
+type SourceAuthority = 'local-observed' | 'portable-opaque';
+
+interface AuthorizedSourceRow {
+  authority: SourceAuthority;
+  row: SourcedRow;
+}
+
+const authorizeRows = (rows: SourcedRow[], authority: SourceAuthority): AuthorizedSourceRow[] =>
+  rows.map((row) => ({ authority, row }));
+
+const authorizeStoredRows = (stored: {
+  rows: SourcedRow[];
+  sourceAuthorities: StoredSourceAuthority[];
+}): AuthorizedSourceRow[] => {
+  if (stored.rows.length !== stored.sourceAuthorities.length) {
+    throw new Error('Stored report rows and source authorities must have the same length');
+  }
+  return stored.rows.map((row, index) => {
+    const authority = stored.sourceAuthorities[index];
+    if (!authority) {
+      throw new Error(`Stored report row ${index} is missing its source authority`);
+    }
+    return { authority, row };
+  });
+};
+
+type CanonicalProjectSourceResolver = (
+  project: string,
+  sourcePath: string,
+  authority: SourceAuthority,
+) => CanonicalProjectSource;
 
 export interface ProjectSourcesRequest extends LocalUsageSelection {
   appVersion?: string | null;
@@ -240,14 +280,48 @@ const collectReportDatasets = (request: {
 }) => {
   const selection = datasetSelectionFor(request);
   if (!selection) {
-    return Effect.succeed(undefined);
+    return Effect.succeed({ datasets: undefined, warnings: [] as LocalHistoryWarning[] });
   }
-  const datasetEffect = collectHarnessDatasets({
+  const datasetEffect = collectHarnessDatasetsResult({
     includeCursor: selection.includeCursorCommitAttribution === true,
     includeProviderStatus: selection.includeProviderStatus === true,
     ...(request.machine === undefined ? {} : { machineId: request.machine.id, machineLabel: request.machine.label }),
   });
-  return Effect.map(datasetEffect, (datasets) => (Object.keys(datasets).length ? datasets : undefined));
+  return Effect.map(datasetEffect, ({ datasets, warnings }) => ({
+    datasets: Object.keys(datasets).length ? datasets : undefined,
+    warnings,
+  }));
+};
+
+const coalesceMetricValidationWarnings = (
+  warnings: (LocalHistoryWarning | UsageReportWarning)[],
+): (LocalHistoryWarning | UsageReportWarning)[] => {
+  const metricCounts = new Map<string, number>();
+  const otherWarnings: (LocalHistoryWarning | UsageReportWarning)[] = [];
+  for (const warning of warnings) {
+    const match =
+      warning.operation === 'metricValidation' ? warning.message.match(METRIC_VALIDATION_MESSAGE_PATTERN) : null;
+    const count = match?.[1] ? Number(match[1]) : Number.NaN;
+    const messageHarness = match?.[2];
+    if (!(warning.harness && messageHarness === warning.harness && Number.isSafeInteger(count) && count > 0)) {
+      otherWarnings.push(warning);
+      continue;
+    }
+    const combined = (metricCounts.get(warning.harness) ?? 0) + count;
+    if (!Number.isSafeInteger(combined)) {
+      otherWarnings.push(warning);
+      continue;
+    }
+    metricCounts.set(warning.harness, combined);
+  }
+  return [
+    ...otherWarnings,
+    ...[...metricCounts.entries()].map(([harness, count]) => ({
+      harness,
+      operation: 'metricValidation',
+      message: `Rejected ${count} malformed ${harness} metric record(s).`,
+    })),
+  ];
 };
 
 const mergeReportDatasets = (...datasets: (ReportDatasets | undefined)[]): ReportDatasets | undefined => {
@@ -338,7 +412,8 @@ export type ProjectedRow = SourcedRow & {
   rawProject: string;
 };
 
-export interface ProjectedLocalReportRowsResult extends Omit<LocalReportRowsResult, 'rows' | 'warnings'> {
+export interface ProjectedLocalReportRowsResult
+  extends Omit<LocalReportRowsResult, 'authorizedRows' | 'rows' | 'warnings'> {
   rows: ProjectedRow[];
   warnings: (LocalHistoryWarning | UsageReportWarning)[];
 }
@@ -348,9 +423,6 @@ interface ProjectProjection {
   rows: ProjectedRow[];
   warnings: UsageReportWarning[];
 }
-
-const prepareNormalizedUsageReport = (rows: Row[], options: ReportOptions) =>
-  prepareUsageReport(normalizeSessionLineage(rows), options);
 
 export const collectLocalReportRows = (request: LocalReportRowsRequest) =>
   Effect.gen(function* () {
@@ -408,6 +480,7 @@ export const collectLocalReportRowsWithWarnings = (
         rows: stored.rows.filter((row) => row.harness === harness.label),
       }));
       return {
+        authorizedRows: authorizeStoredRows(stored),
         rows: stored.rows,
         warnings: collection.warnings,
         collection: { ...collection, rows: stored.rows, harnesses },
@@ -430,7 +503,7 @@ export const collectProjectedLocalReportRowsWithWarnings = (
   withPerfSpan(
     'aiUsage.report.collectProjectedRowsWithWarnings',
     Effect.gen(function* () {
-      const { rows, warnings, collection } = yield* collectLocalReportRowsWithWarnings({
+      const { authorizedRows, warnings, collection } = yield* collectLocalReportRowsWithWarnings({
         ...request,
         keepSource: true,
       });
@@ -438,7 +511,7 @@ export const collectProjectedLocalReportRowsWithWarnings = (
       const projection = yield* withPerfSpan(
         'aiUsage.report.projectGroups',
         Effect.sync(() =>
-          buildProjectProjection(rows as SourcedRow[], config.projectGroups ?? [], config.projectAliases ?? []),
+          buildProjectProjection(authorizedRows, config.projectGroups ?? [], config.projectAliases ?? []),
         ),
         (result) => ({
           groups: result.projectGroups.length,
@@ -458,17 +531,23 @@ export const collectProjectedLocalReportRowsWithWarnings = (
     }),
   );
 
-export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
+const collectLocalReportAssemblyInput = (
+  request: LocalReportPayloadRequest,
+): Effect.Effect<
+  ReportAssemblyInput<ProjectedRow>,
+  LocalHistoryError,
+  import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
+> =>
   withPerfSpan(
-    'aiUsage.report.createLocalPayload',
+    'aiUsage.report.collectLocalAssemblyInput',
     Effect.gen(function* () {
-      const { rows, warnings } = yield* collectLocalReportRowsWithWarnings(request);
+      const { authorizedRows, warnings } = yield* collectLocalReportRowsWithWarnings(request);
       const machine = yield* ensureMachineConfig;
       const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
       const projection = yield* withPerfSpan(
         'aiUsage.report.projectGroups',
         Effect.sync(() =>
-          buildProjectProjection(rows as SourcedRow[], config.projectGroups ?? [], config.projectAliases ?? []),
+          buildProjectProjection(authorizedRows, config.projectGroups ?? [], config.projectAliases ?? []),
         ),
         (result) => ({
           groups: result.projectGroups.length,
@@ -476,46 +555,64 @@ export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
           warnings: result.warnings.length,
         }),
       );
-      const datasets = yield* withPerfSpan(
+      const datasetResult = yield* withPerfSpan(
         'aiUsage.report.collectDatasets',
         collectReportDatasets({ ...request, machine }),
-        (result) => ({ datasets: result ? Object.keys(result).length : 0 }),
+        (result) => ({ datasets: result.datasets ? Object.keys(result.datasets).length : 0 }),
       );
+      const { datasets } = datasetResult;
       const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
-      const report = yield* withPerfSpan(
-        'aiUsage.report.prepare',
-        Effect.sync(() => prepareNormalizedUsageReport(projection.rows, request.options)),
-        (prepared) => ({
-          omittedRows: prepared.omittedRows,
-          rows: prepared.rows.length,
-          tableRows: prepared.tableRows.length,
-        }),
-      );
-      return yield* withPerfSpan(
-        'aiUsage.report.serializePayload',
-        Effect.sync(() =>
-          createUsageReportPayload(
-            report,
-            request.options,
-            request.generatedAt ?? new Date(),
-            facets,
-            [...warnings, ...projection.warnings],
-            projection.projectGroups,
-            config.projectGroups ?? [],
-            datasets,
-          ),
-        ),
-        (payload) => ({
-          rows: payload.rows.length,
-          tableRows: payload.tableRows.length,
-          warnings: payload.warnings?.length ?? 0,
-        }),
-      );
+      return {
+        configuredProjectGroups: config.projectGroups ?? [],
+        datasets,
+        facets,
+        generatedAt: request.generatedAt ?? new Date(),
+        options: request.options,
+        projectGroups: projection.projectGroups,
+        rows: projection.rows,
+        warnings: coalesceMetricValidationWarnings([...warnings, ...datasetResult.warnings, ...projection.warnings]),
+      };
     }),
-    (payload) => ({
-      rows: payload.rows.length,
-      tableRows: payload.tableRows.length,
-      warnings: payload.warnings?.length ?? 0,
+    (input) => ({
+      rows: input.rows.length,
+      warnings: input.warnings.length,
+    }),
+  );
+
+export type LocalReportCaptureResult =
+  | { captureFingerprint: string; payload: UsageReportPayload; status: 'changed' }
+  | { captureFingerprint: string; status: 'unchanged' };
+
+export const createLocalReportCapture = (request: LocalReportPayloadRequest, currentCaptureFingerprint?: string) =>
+  withPerfSpan(
+    'aiUsage.report.createLocalCapture',
+    Effect.gen(function* () {
+      const input = yield* collectLocalReportAssemblyInput(request);
+      const capture = captureReport(input, currentCaptureFingerprint);
+      if (capture.status === 'unchanged') {
+        return capture;
+      }
+      const payload = yield* withPerfSpan(
+        'aiUsage.report.serializePayload',
+        Effect.succeed(capture.result.payload),
+        (assembledPayload) => ({
+          rows: assembledPayload.rows.length,
+          tableRows: assembledPayload.tableRows.length,
+          warnings: assembledPayload.warnings?.length ?? 0,
+        }),
+      );
+      return { captureFingerprint: capture.captureFingerprint, payload, status: 'changed' as const };
+    }),
+    (result) => ({ status: result.status }),
+  );
+
+export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
+  createLocalReportCapture(request).pipe(
+    Effect.map((result) => {
+      if (result.status === 'unchanged') {
+        throw new Error('A local report capture without a comparison fingerprint must contain a payload');
+      }
+      return result.payload;
     }),
   );
 
@@ -544,7 +641,7 @@ export const createStoredReportPayload = (
       const projection = yield* withPerfSpan(
         'aiUsage.report.projectStoredGroups',
         Effect.sync(() =>
-          buildProjectProjection(stored.rows as SourcedRow[], config.projectGroups ?? [], config.projectAliases ?? []),
+          buildProjectProjection(authorizeStoredRows(stored), config.projectGroups ?? [], config.projectAliases ?? []),
         ),
         (result) => ({
           groups: result.projectGroups.length,
@@ -552,34 +649,27 @@ export const createStoredReportPayload = (
           warnings: result.warnings.length,
         }),
       );
-      const datasets = yield* withPerfSpan(
+      const datasetResult = yield* withPerfSpan(
         'aiUsage.report.collectStoredDatasets',
         collectReportDatasets({ ...request, machine }),
-        (result) => ({ datasets: result ? Object.keys(result).length : 0 }),
+        (result) => ({ datasets: result.datasets ? Object.keys(result.datasets).length : 0 }),
       );
+      const { datasets } = datasetResult;
       const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
-      const report = yield* withPerfSpan(
-        'aiUsage.report.prepareStored',
-        Effect.sync(() => prepareNormalizedUsageReport(projection.rows, request.options)),
-        (prepared) => ({
-          omittedRows: prepared.omittedRows,
-          rows: prepared.rows.length,
-          tableRows: prepared.tableRows.length,
-        }),
-      );
       return yield* withPerfSpan(
         'aiUsage.report.serializeStoredPayload',
-        Effect.sync(() =>
-          createUsageReportPayload(
-            report,
-            request.options,
-            request.generatedAt ?? new Date(),
-            facets,
-            projection.warnings,
-            projection.projectGroups,
-            config.projectGroups ?? [],
-            datasets,
-          ),
+        Effect.sync(
+          () =>
+            assembleReport({
+              configuredProjectGroups: config.projectGroups ?? [],
+              datasets,
+              facets,
+              generatedAt: request.generatedAt ?? new Date(),
+              options: request.options,
+              projectGroups: projection.projectGroups,
+              rows: projection.rows,
+              warnings: [...datasetResult.warnings, ...projection.warnings],
+            }).payload,
         ),
         (payload) => ({
           rows: payload.rows.length,
@@ -628,6 +718,7 @@ export const createKnownLocalProjectSources = (
         queryReportRows({
           dbPath,
           originMachineIds: [machine.id],
+          sourceAuthorities: ['local-observed'],
           ...(harnessKeys === undefined ? {} : { harnessKeys }),
         }).pipe(Effect.mapError(usageStoreLocalHistoryError('usageStore.queryReportRows', dbPath)));
 
@@ -643,11 +734,16 @@ export const createKnownLocalProjectSources = (
       }
 
       const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
-      const rows = stored.rows as SourcedRow[];
-      const projection = buildProjectProjection(rows, config.projectGroups ?? [], config.projectAliases ?? []);
+      const rows = stored.rows;
+      const localCandidates = authorizeRows(rows, 'local-observed');
+      const projection = buildProjectProjection(
+        localCandidates,
+        config.projectGroups ?? [],
+        config.projectAliases ?? [],
+      );
       return {
         projectGroups: projection.projectGroups,
-        sources: collectProjectSources(rows, false, defaultReadGitFile),
+        sources: collectProjectSources(localCandidates, false, defaultReadGitFile),
         warnings: [...collectionWarnings, ...projection.warnings],
       };
     }),
@@ -662,7 +758,8 @@ export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
   Effect.gen(function* () {
     const machine = request.machine ?? (yield* ensureMachineConfig);
     const { collection } = yield* collectConfiguredLocalRowsWithWarnings({ ...request, keepSource: true });
-    const datasets = yield* collectReportDatasets({ ...request, machine });
+    const datasetResult = yield* collectReportDatasets({ ...request, machine });
+    const { datasets } = datasetResult;
     const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
 
     return createUsageSnapshot({
@@ -670,24 +767,51 @@ export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
       rows: collection.rows,
       ...(request.generatedAt === undefined ? {} : { generatedAt: request.generatedAt }),
       ...(request.appVersion === undefined ? {} : { appVersion: request.appVersion }),
-      ...(collection.warnings.length ? { warnings: collection.warnings } : {}),
+      ...(collection.warnings.length || datasetResult.warnings.length
+        ? { warnings: coalesceMetricValidationWarnings([...collection.warnings, ...datasetResult.warnings]) }
+        : {}),
       ...(datasets === undefined ? {} : { datasets }),
       ...(facets === undefined ? {} : { facets }),
     });
   });
 
+const mergeAuthorizedSnapshotRows = (
+  snapshots: Array<{ authority: SourceAuthority; snapshot: UsageSnapshot }>,
+): AuthorizedSourceRow[] => {
+  const winners = new Map<string, { candidate: AuthorizedSourceRow; generatedAt: number }>();
+  for (const { authority, snapshot } of snapshots) {
+    const generatedAt = new Date(snapshot.generatedAt).getTime();
+    for (const serializedRow of snapshot.rows) {
+      const key = usageSnapshotRowDedupeKey(serializedRow);
+      const existing = winners.get(key);
+      if (!existing || generatedAt >= existing.generatedAt) {
+        winners.set(key, { candidate: { authority, row: deserializeSnapshotRow(serializedRow) }, generatedAt });
+      }
+    }
+  }
+  return [...winners.values()].map((winner) => winner.candidate);
+};
+
 export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
   Effect.gen(function* () {
-    const snapshots = [...request.snapshots];
+    const authorizedSnapshots: Array<{ authority: SourceAuthority; snapshot: UsageSnapshot }> = request.snapshots.map(
+      (snapshot) => ({
+        authority: 'portable-opaque',
+        snapshot,
+      }),
+    );
     if (request.includeLocal) {
-      snapshots.push(yield* createLocalUsageSnapshot(toLocalUsageSnapshotRequest(request)));
+      authorizedSnapshots.push({
+        authority: 'local-observed',
+        snapshot: yield* createLocalUsageSnapshot(toLocalUsageSnapshotRequest(request)),
+      });
     }
 
+    const snapshots = authorizedSnapshots.map((candidate) => candidate.snapshot);
     const merged = mergeUsageSnapshots(snapshots);
+    const authorizedRows = mergeAuthorizedSnapshotRows(authorizedSnapshots);
     const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
-    const projection = buildProjectProjection(merged.rows, config.projectGroups ?? [], config.projectAliases ?? []);
-    const rows = normalizeSessionLineage(projection.rows);
-    const report = prepareUsageReport(rows, request.options);
+    const projection = buildProjectProjection(authorizedRows, config.projectGroups ?? [], config.projectAliases ?? []);
     const allWarnings = [...merged.warnings, ...projection.warnings];
     const payloadWarnings = allWarnings.map((warning) => {
       if ('key' in warning) {
@@ -702,19 +826,20 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
     const datasets = mergeReportDatasets(merged.datasets);
     const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
 
+    const assembly = assembleReport({
+      configuredProjectGroups: config.projectGroups ?? [],
+      datasets,
+      facets,
+      generatedAt: request.generatedAt ?? new Date(),
+      options: request.options,
+      projectGroups: projection.projectGroups,
+      rows: projection.rows,
+      warnings: payloadWarnings,
+    });
     return {
-      rows,
-      report,
-      payload: createUsageReportPayload(
-        report,
-        request.options,
-        request.generatedAt ?? new Date(),
-        facets,
-        payloadWarnings,
-        projection.projectGroups,
-        config.projectGroups ?? [],
-        datasets,
-      ),
+      rows: assembly.rows,
+      report: assembly.report,
+      payload: assembly.payload,
       warnings: allWarnings,
       duplicatesDropped: merged.duplicatesDropped,
     };
@@ -807,8 +932,13 @@ const managedWorktreeParentPath = (projectPath: string): string | null => {
   return markerIndex > 0 ? normalizedPath.slice(0, markerIndex) : null;
 };
 
-const canonicalProjectSource = (project: string, sourcePath: string, readGitFile: ReadGitFile) => {
-  if (!sourcePath) {
+const canonicalProjectSource = (
+  project: string,
+  sourcePath: string,
+  authority: SourceAuthority,
+  readGitFile: ReadGitFile,
+) => {
+  if (!sourcePath || authority === 'portable-opaque') {
     return { project, sourcePath };
   }
   const canonicalSourcePath = gitWorktreeParentPath(sourcePath, readGitFile) ?? managedWorktreeParentPath(sourcePath);
@@ -823,13 +953,13 @@ const canonicalProjectSource = (project: string, sourcePath: string, readGitFile
 
 const createCanonicalProjectSourceResolver = (readGitFile: ReadGitFile): CanonicalProjectSourceResolver => {
   const cache = new Map<string, CanonicalProjectSource>();
-  return (project, sourcePath) => {
-    const key = [project, sourcePath].join('\0');
+  return (project, sourcePath, authority) => {
+    const key = [project, sourcePath, authority].join('\0');
     const cached = cache.get(key);
     if (cached) {
       return cached;
     }
-    const canonicalSource = canonicalProjectSource(project, sourcePath, readGitFile);
+    const canonicalSource = canonicalProjectSource(project, sourcePath, authority, readGitFile);
     cache.set(key, canonicalSource);
     return canonicalSource;
   };
@@ -846,19 +976,24 @@ const readGitRemoteFromWorktree = (projectPath: string, readGitFile: ReadGitFile
   return commonGitDir === null ? null : readGitFile(path.join(commonGitDir, 'config'));
 };
 
-const sourceInputFromRow = (row: SourcedRow, resolveCanonicalProjectSource: CanonicalProjectSourceResolver) => {
+const sourceInputFromRow = (
+  row: SourcedRow,
+  authority: SourceAuthority,
+  resolveCanonicalProjectSource: CanonicalProjectSourceResolver,
+) => {
   const project = projectFromRow(row);
   return {
     machineId: row.source.machineId ?? '',
-    ...resolveCanonicalProjectSource(project, row.source.sourcePath ?? ''),
+    ...resolveCanonicalProjectSource(project, row.source.sourcePath ?? '', authority),
   };
 };
 
 const createProjectSourceFromRow = (
   row: SourcedRow,
+  authority: SourceAuthority,
   resolveCanonicalProjectSource: CanonicalProjectSourceResolver,
 ): ProjectSource => {
-  const source = sourceInputFromRow(row, resolveCanonicalProjectSource);
+  const source = sourceInputFromRow(row, authority, resolveCanonicalProjectSource);
   return {
     id: projectSourceId(source),
     project: source.project,
@@ -876,15 +1011,15 @@ const createProjectSourceFromRow = (
 };
 
 const collectProjectSources = (
-  rows: SourcedRow[],
+  candidates: AuthorizedSourceRow[],
   includeGitRemote: boolean,
   readGitFile: ReadGitFile = defaultReadGitFile,
   resolveCanonicalProjectSource = createCanonicalProjectSourceResolver(readGitFile),
 ): ProjectSource[] => {
   const summaries = new Map<string, ProjectSource>();
 
-  for (const row of rows) {
-    const summary = createProjectSourceFromRow(row, resolveCanonicalProjectSource);
+  for (const { authority, row } of candidates) {
+    const summary = createProjectSourceFromRow(row, authority, resolveCanonicalProjectSource);
     const key = summary.id;
     const current = summaries.get(key) ?? summary;
     current.sessions++;
@@ -897,6 +1032,9 @@ const collectProjectSources = (
       current.harnessKeys.push(row.source.harnessKey);
       current.harnessKey = current.harnessKeys.join(',');
     }
+    if (includeGitRemote && authority === 'local-observed' && !current.gitRemote && current.sourcePath) {
+      current.gitRemote = readGitRemoteUrl(current.sourcePath, readGitFile);
+    }
     summaries.set(key, current);
   }
 
@@ -905,9 +1043,6 @@ const collectProjectSources = (
       a.project.localeCompare(b.project) || a.machine.localeCompare(b.machine) || a.harness.localeCompare(b.harness),
   );
 
-  if (includeGitRemote) {
-    enrichGitRemotes(result, readGitFile);
-  }
   return result;
 };
 
@@ -991,16 +1126,16 @@ const projectGroupingWarning = (
 });
 
 const buildProjectProjection = (
-  rows: SourcedRow[],
+  candidates: AuthorizedSourceRow[],
   groups: ProjectGroupConfig[] = [],
   legacyAliases: ProjectAliasEntry[] = [],
 ): ProjectProjection => {
   const resolveCanonicalProjectSource = createCanonicalProjectSourceResolver(defaultReadGitFile);
-  const sources = collectProjectSources(rows, false, defaultReadGitFile, resolveCanonicalProjectSource);
+  const sources = collectProjectSources(candidates, false, defaultReadGitFile, resolveCanonicalProjectSource);
   const sourceById = new Map(sources.map((source) => [source.id, source]));
   const rowsBySourceId = new Map<string, SourcedRow[]>();
-  for (const row of rows) {
-    const sourceId = projectSourceId(sourceInputFromRow(row, resolveCanonicalProjectSource));
+  for (const { authority, row } of candidates) {
+    const sourceId = projectSourceId(sourceInputFromRow(row, authority, resolveCanonicalProjectSource));
     const sourceRows = rowsBySourceId.get(sourceId) ?? [];
     sourceRows.push(row);
     rowsBySourceId.set(sourceId, sourceRows);
@@ -1109,9 +1244,9 @@ const buildProjectProjection = (
     sourceGroupName.set(source.id, { groupId, name: groupName });
   }
 
-  const projectedRows = rows.map((row) => {
+  const projectedRows = candidates.map(({ authority, row }) => {
     const rawProject = row.project;
-    const projectSourceIdValue = projectSourceId(sourceInputFromRow(row, resolveCanonicalProjectSource));
+    const projectSourceIdValue = projectSourceId(sourceInputFromRow(row, authority, resolveCanonicalProjectSource));
     const group = sourceGroupName.get(projectSourceIdValue) ?? {
       groupId: `source:${projectSourceIdValue}`,
       name: projectFromRow(row),
@@ -1132,23 +1267,6 @@ const buildProjectProjection = (
   };
 };
 
-const enrichGitRemotes = (sources: ProjectSource[], readGitFile: ReadGitFile) => {
-  const cache = new Map<string, string>();
-  for (const source of sources) {
-    if (!source.sourcePath) {
-      continue;
-    }
-    const cached = cache.get(source.sourcePath);
-    if (cached !== undefined) {
-      source.gitRemote = cached;
-      continue;
-    }
-    const gitRemote = readGitRemoteUrl(source.sourcePath, readGitFile);
-    cache.set(source.sourcePath, gitRemote);
-    source.gitRemote = gitRemote;
-  }
-};
-
 export const listProjectSourcesWithWarnings = (
   request: ProjectSourcesRequest,
 ): Effect.Effect<
@@ -1157,14 +1275,24 @@ export const listProjectSourcesWithWarnings = (
   import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
 > =>
   Effect.gen(function* () {
-    const snapshots = [...request.snapshots];
+    const authorizedSnapshots: Array<{ authority: SourceAuthority; snapshot: UsageSnapshot }> = request.snapshots.map(
+      (snapshot) => ({ authority: 'portable-opaque', snapshot }),
+    );
     if (request.includeLocal) {
-      snapshots.push(yield* createLocalUsageSnapshot(toLocalUsageSnapshotRequest(request)));
+      authorizedSnapshots.push({
+        authority: 'local-observed',
+        snapshot: yield* createLocalUsageSnapshot(toLocalUsageSnapshotRequest(request)),
+      });
     }
 
+    const snapshots = authorizedSnapshots.map((candidate) => candidate.snapshot);
     const merged = mergeUsageSnapshots(snapshots);
     return {
-      sources: collectProjectSources(merged.rows, request.includeGitRemote ?? false, request.readGitFile),
+      sources: collectProjectSources(
+        mergeAuthorizedSnapshotRows(authorizedSnapshots),
+        request.includeGitRemote ?? false,
+        request.readGitFile,
+      ),
       warnings: merged.warnings,
     };
   });
@@ -1174,6 +1302,14 @@ export const listProjectSources = (request: ProjectSourcesRequest) =>
 
 export const runLocalReportPayload = (request: LocalReportPayloadRequest): Promise<UsageReportPayload> =>
   Effect.runPromise(createLocalReportPayload(request).pipe(Effect.provide(LocalHistoryStorageLive)));
+
+export const runLocalReportCapture = (
+  request: LocalReportPayloadRequest,
+  currentCaptureFingerprint?: string,
+): Promise<LocalReportCaptureResult> =>
+  Effect.runPromise(
+    createLocalReportCapture(request, currentCaptureFingerprint).pipe(Effect.provide(LocalHistoryStorageLive)),
+  );
 
 export const runStoredReportPayload = (request: StoredReportPayloadRequest): Promise<UsageReportPayload> =>
   Effect.runPromise(createStoredReportPayload(request).pipe(Effect.provide(LocalHistoryStorageLive)));

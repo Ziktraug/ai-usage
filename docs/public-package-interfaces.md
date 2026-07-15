@@ -9,9 +9,8 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./auth`: authentication/session provenance helpers.
 - `./csv`: CSV serialization for usage rows.
 - `./datasets`: typed serialized report datasets carried outside usage rows.
-- `./focused-report-query`: strict Overview, Breakdown, byte-bounded support with omission counts, CSV, and HTML compatibility query/result contracts for immutable report revisions.
+- `./focused-report-query`: strict Overview, Breakdown, and byte-bounded support query/result contracts for immutable report revisions.
 - `./harness-metadata`: harness keys, labels, and metadata.
-- `./html-export`: static report HTML payload/asset inlining.
 - `./model-identity`: normalized model-family and provider identity helpers.
 - `./pricing`: editable model pricing and cost approximation support.
 - `./provider-status`: provider-agnostic status windows, reset credits, parsing, and merge helpers.
@@ -51,7 +50,8 @@ The workspace packages expose only these public seams. Cross-package imports mus
 
 ## `@ai-usage/skills`
 
-- `.`: explicit facade for skill-management config types, runtime validation, source-state helpers, source scanning, target observation, projection planning/apply, diagnostics, and workflow functions.
+- `.`: domain contracts, config parsing, source scanning, target observation, identity-checked projection workflows, and diagnostics.
+- `./application`: deep Skills application factory and its narrow adapter ports.
 - `./config`: browser-safe skill-management config and mutation input validation.
 - `./shared`: browser-safe skill name, target id, and token diagnostic contracts.
 

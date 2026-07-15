@@ -17,7 +17,13 @@ import {
 } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
-import { maxSkillMarkdownBytes, parseSkillMarkdownWriteInput, readSkillMarkdown, writeSkillMarkdown } from '.';
+import { maxSkillMarkdownBytes } from './contracts';
+import {
+  parseSkillMarkdownWriteInput,
+  readSkillMarkdown,
+  writeSkillMarkdown,
+  writeSkillMarkdownWithHooks,
+} from './skill-markdown-io';
 
 const writeSourceSkill = async (sourceRepoPath: string, skillName: string, content = '# Skill\n') => {
   const skillPath = path.join(sourceRepoPath, 'skills', skillName);
@@ -152,36 +158,20 @@ describe('skill markdown IO', () => {
       await writeSourceSkill(sourceRepoPath, 'example-skill', '# Original\n');
       const skillPath = path.join(sourceRepoPath, 'skills', 'example-skill');
       const markdownPath = path.join(skillPath, 'SKILL.md');
-      const readyPath = path.join(sourceRepoPath, 'interloper-ready');
       const document = await readSkillMarkdown({ skillName: 'example-skill', sourceRepoPath });
-      const subprocess = Bun.spawn(
-        [
-          process.execPath,
-          path.join(import.meta.dir, 'test-fixtures', 'skill-markdown-interloper-subprocess.ts'),
-          markdownPath,
-          readyPath,
-        ],
-        { stderr: 'pipe', stdout: 'pipe' },
+      const result = await writeSkillMarkdownWithHooks(
+        {
+          baseSha256: document.sha256,
+          content: '# Our edit\n',
+          skillName: 'example-skill',
+          sourceRepoPath,
+        },
+        {
+          afterClaim: async () => {
+            await writeFile(markdownPath, '# External edit\n', { flag: 'wx', mode: 0o640 });
+          },
+        },
       );
-      while (true) {
-        try {
-          await stat(readyPath);
-          break;
-        } catch {
-          await Bun.sleep(1);
-        }
-      }
-
-      const result = await writeSkillMarkdown({
-        baseSha256: document.sha256,
-        content: '# Our edit\n',
-        skillName: 'example-skill',
-        sourceRepoPath,
-      });
-      if (subprocess.exitCode === null) {
-        subprocess.kill();
-      }
-      await subprocess.exited;
 
       expect(result).toEqual({ ok: false, reason: 'conflict' });
       await expect(readFile(markdownPath, 'utf8')).resolves.toBe('# External edit\n');
@@ -320,7 +310,6 @@ describe('skill markdown IO', () => {
       const skillPath = path.join(sourceRepoPath, 'skills', 'example-skill');
       const claimPath = path.join(skillPath, '.SKILL.md.ai-usage.claim');
       const readyPath = path.join(sourceRepoPath, 'writer-ready');
-      const barrierPath = path.join(sourceRepoPath, 'writer-go');
       const killerReadyPath = path.join(sourceRepoPath, 'killer-ready');
       const killedPath = path.join(sourceRepoPath, 'writer-killed');
       const writer = Bun.spawn(
@@ -330,7 +319,6 @@ describe('skill markdown IO', () => {
           sourceRepoPath,
           markdownSha256(originalContent),
           readyPath,
-          barrierPath,
         ],
         { stderr: 'pipe', stdout: 'pipe' },
       );
@@ -359,7 +347,6 @@ describe('skill markdown IO', () => {
       ) {
         await Bun.sleep(1);
       }
-      await writeFile(barrierPath, 'go', 'utf8');
       expect(await killer.exited).toBe(0);
       expect(await writer.exited).not.toBe(0);
       await expect(stat(killedPath)).resolves.toBeDefined();

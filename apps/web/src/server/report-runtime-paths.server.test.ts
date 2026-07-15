@@ -12,11 +12,10 @@ const createWorkspaceFixture = async () => {
   await writeFile(path.join(fixtureRoot, 'package.json'), '{"workspaces":["packages/*"]}\n');
   await Promise.all(
     [
-      'focused-report-query-runner.ts',
       'known-project-sources-runner.ts',
       'report-payload-runner.ts',
+      'revision-query-runner.ts',
       'session-query-materialize-runner.ts',
-      'session-query-runner.ts',
     ].map((file) => writeFile(path.join(fixtureRoot, 'packages/report-data/src', file), 'export {};\n')),
   );
   return fixtureRoot;
@@ -28,16 +27,15 @@ describe('report runtime path resolution', () => {
     const fromWeb = resolveReportRuntimePaths({ cwd: path.join(repositoryRoot, 'apps/web') });
 
     expect(fromRoot).toEqual({
-      focusedReportQueryRunner: path.join(repositoryRoot, 'packages/report-data/src/focused-report-query-runner.ts'),
       knownProjectSourcesRunner: path.join(repositoryRoot, 'packages/report-data/src/known-project-sources-runner.ts'),
       rootDir: repositoryRoot,
       reportingPayloadRunner: path.join(repositoryRoot, 'packages/report-data/src/report-payload-runner.ts'),
       rootEnvPath: path.join(repositoryRoot, '.env'),
+      revisionQueryRunner: path.join(repositoryRoot, 'packages/report-data/src/revision-query-runner.ts'),
       sessionQueryMaterializeRunner: path.join(
         repositoryRoot,
         'packages/report-data/src/session-query-materialize-runner.ts',
       ),
-      sessionQueryRunner: path.join(repositoryRoot, 'packages/report-data/src/session-query-runner.ts'),
     });
     expect(fromWeb).toEqual(fromRoot);
   });
@@ -48,16 +46,15 @@ describe('report runtime path resolution', () => {
       const fixtureParent = path.dirname(fixtureRoot);
       const relativeRoot = path.basename(fixtureRoot);
       const expected = {
-        focusedReportQueryRunner: path.join(fixtureRoot, 'packages/report-data/src/focused-report-query-runner.ts'),
         knownProjectSourcesRunner: path.join(fixtureRoot, 'packages/report-data/src/known-project-sources-runner.ts'),
         rootDir: fixtureRoot,
         reportingPayloadRunner: path.join(fixtureRoot, 'packages/report-data/src/report-payload-runner.ts'),
         rootEnvPath: path.join(fixtureRoot, '.env'),
+        revisionQueryRunner: path.join(fixtureRoot, 'packages/report-data/src/revision-query-runner.ts'),
         sessionQueryMaterializeRunner: path.join(
           fixtureRoot,
           'packages/report-data/src/session-query-materialize-runner.ts',
         ),
-        sessionQueryRunner: path.join(fixtureRoot, 'packages/report-data/src/session-query-runner.ts'),
       };
 
       expect(resolveReportRuntimePaths({ cwd: fixtureParent, configuredRoot: relativeRoot })).toEqual(expected);
@@ -96,24 +93,12 @@ describe('report runtime path resolution', () => {
     }
   });
 
-  test('rejects a configured root missing the session query runner', async () => {
+  test('rejects a configured root missing the revision query runner', async () => {
     const fixtureRoot = await createWorkspaceFixture();
     try {
-      await rm(path.join(fixtureRoot, 'packages/report-data/src/session-query-runner.ts'));
+      await rm(path.join(fixtureRoot, 'packages/report-data/src/revision-query-runner.ts'));
       expect(() => resolveReportRuntimePaths({ cwd: repositoryRoot, configuredRoot: fixtureRoot })).toThrow(
-        path.join(fixtureRoot, 'packages/report-data/src/session-query-runner.ts'),
-      );
-    } finally {
-      await rm(fixtureRoot, { force: true, recursive: true });
-    }
-  });
-
-  test('rejects a configured root missing the focused report query runner', async () => {
-    const fixtureRoot = await createWorkspaceFixture();
-    try {
-      await rm(path.join(fixtureRoot, 'packages/report-data/src/focused-report-query-runner.ts'));
-      expect(() => resolveReportRuntimePaths({ cwd: repositoryRoot, configuredRoot: fixtureRoot })).toThrow(
-        path.join(fixtureRoot, 'packages/report-data/src/focused-report-query-runner.ts'),
+        path.join(fixtureRoot, 'packages/report-data/src/revision-query-runner.ts'),
       );
     } finally {
       await rm(fixtureRoot, { force: true, recursive: true });

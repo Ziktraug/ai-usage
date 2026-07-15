@@ -1,7 +1,6 @@
 import {
   type FocusedBreakdownRequest,
   type FocusedBreakdownResult,
-  type FocusedHtmlPayloadResult,
   type FocusedOverviewRequest,
   type FocusedOverviewResult,
   type FocusedOverviewView,
@@ -16,11 +15,14 @@ import {
 } from '@ai-usage/report-core/focused-report-query';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
 import { type Accessor, batch, createSignal } from 'solid-js';
-import { reportManifestRequestFingerprint, type WebReportRevisionManifestResult } from './web-report-payload';
+import {
+  reportManifestRequestFingerprint,
+  type WebReportRevisionManifest,
+  type WebReportRevisionManifestResult,
+} from './web-report-payload';
 
 export interface FocusedReportSource {
   getBreakdown: (request: FocusedBreakdownRequest) => Promise<SessionQueryServerResult<FocusedBreakdownResult>>;
-  getHtmlPayload: (request: FocusedRevisionRequest) => Promise<SessionQueryServerResult<FocusedHtmlPayloadResult>>;
   getManifest: () => Promise<WebReportRevisionManifestResult>;
   getOverview: (request: FocusedOverviewRequest) => Promise<SessionQueryServerResult<FocusedOverviewResult>>;
   getSupport: (request: FocusedRevisionRequest) => Promise<SessionQueryServerResult<FocusedSupportResult>>;
@@ -29,14 +31,12 @@ export interface FocusedReportSource {
 
 interface FocusedRequestByKind {
   breakdown: FocusedBreakdownRequest;
-  'html-payload': FocusedRevisionRequest;
   overview: FocusedOverviewRequest;
   support: FocusedRevisionRequest;
 }
 
 interface FocusedResultByKind {
   breakdown: FocusedBreakdownResult;
-  'html-payload': FocusedHtmlPayloadResult;
   overview: FocusedOverviewResult;
   support: FocusedSupportResult;
 }
@@ -114,15 +114,6 @@ const querySource = async <Kind extends FocusedReportQueryKind>(
       >,
     );
   }
-  if (kind === 'html-payload') {
-    return validateServerResult(
-      kind,
-      request,
-      (await source.getHtmlPayload(request as FocusedRevisionRequest)) as SessionQueryServerResult<
-        FocusedResultByKind[Kind]
-      >,
-    );
-  }
   return validateServerResult(
     kind,
     request,
@@ -130,44 +121,58 @@ const querySource = async <Kind extends FocusedReportQueryKind>(
   );
 };
 
-const manifestRevision = (manifest: WebReportRevisionManifestResult): string => {
+const validatedManifest = (manifest: WebReportRevisionManifestResult): WebReportRevisionManifest => {
   if (manifest.requestFingerprint !== reportManifestRequestFingerprint) {
     throw new Error('Report manifest request fingerprint mismatch');
   }
   if (!manifest.ok) {
     throw new Error(manifest.error.message);
   }
-  return manifest.manifest.revision;
+  return manifest.manifest;
 };
 
-export const fetchFocusedReportBootstrap = async (
+export interface FocusedReportBootstrapDescriptor {
+  bootstrap: FocusedSupportResult;
+  captureFingerprint: string;
+  revision: string;
+}
+
+export const fetchFocusedReportBootstrapDescriptor = async (
   source: FocusedReportSource,
-  retryExpired = true,
-): Promise<FocusedSupportResult> => {
-  const revision = manifestRevision(await source.getManifest());
+  options: { refresh?: boolean; retryExpired?: boolean } = {},
+): Promise<FocusedReportBootstrapDescriptor> => {
+  if (options.refresh) {
+    await source.refreshRevision?.();
+  }
+  const manifest = validatedManifest(await source.getManifest());
   try {
-    return await querySource(source, 'support', { revision });
+    const bootstrap = await querySource(source, 'support', { revision: manifest.revision });
+    return {
+      bootstrap,
+      captureFingerprint: manifest.captureFingerprint,
+      revision: manifest.revision,
+    };
   } catch (error) {
-    if (retryExpired && error instanceof FocusedRevisionExpiredError) {
-      return await fetchFocusedReportBootstrap(source, false);
+    if ((options.retryExpired ?? true) && error instanceof FocusedRevisionExpiredError) {
+      return await fetchFocusedReportBootstrapDescriptor(source, { retryExpired: false });
     }
     throw error;
   }
 };
 
-export const refreshFocusedReportBootstrap = async (source: FocusedReportSource): Promise<FocusedSupportResult> => {
-  await source.refreshRevision?.();
-  return await fetchFocusedReportBootstrap(source);
-};
+export const fetchFocusedReportBootstrap = async (
+  source: FocusedReportSource,
+  retryExpired = true,
+): Promise<FocusedSupportResult> => (await fetchFocusedReportBootstrapDescriptor(source, { retryExpired })).bootstrap;
+
+export const refreshFocusedReportBootstrap = async (source: FocusedReportSource): Promise<FocusedSupportResult> =>
+  (await fetchFocusedReportBootstrapDescriptor(source, { refresh: true })).bootstrap;
 
 export const fetchFocusedOverview = (source: FocusedReportSource, request: FocusedOverviewRequest) =>
   querySource(source, 'overview', request);
 
 export const fetchFocusedBreakdown = (source: FocusedReportSource, request: FocusedBreakdownRequest) =>
   querySource(source, 'breakdown', request);
-
-export const fetchFocusedHtmlPayload = (source: FocusedReportSource, request: FocusedRevisionRequest) =>
-  querySource(source, 'html-payload', request);
 
 export type FocusedStoreApplyResult =
   | { applied: true }
@@ -200,6 +205,15 @@ export interface FocusedReportStore {
   applyBreakdown: (request: FocusedBreakdownRequest, result: FocusedBreakdownResult) => FocusedStoreApplyResult;
   applyOverview: (request: FocusedOverviewRequest, result: FocusedOverviewResult) => FocusedStoreApplyResult;
   breakdown: Accessor<FocusedBreakdownResult | undefined>;
+  canApplyBreakdown: (
+    request: FocusedBreakdownRequest,
+    result: FocusedBreakdownResult,
+    revision?: string,
+  ) => FocusedStoreApplyResult;
+  canCommitRevision: (
+    bootstrap: FocusedSupportResult,
+    destination: FocusedRevisionDestination,
+  ) => FocusedStoreApplyResult;
   commitRevision: (bootstrap: FocusedSupportResult, destination: FocusedRevisionDestination) => FocusedStoreApplyResult;
   dateDomain: Accessor<FocusedSupportResult['dateDomain']>;
   filterOptions: Accessor<FocusedSupportResult['filterOptions']>;
@@ -263,6 +277,35 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
     bootstrap: FocusedSupportResult,
     destination: FocusedRevisionDestination,
   ): FocusedStoreApplyResult => {
+    const validation = canCommitRevision(bootstrap, destination);
+    if (!validation.applied) {
+      return validation;
+    }
+    const currentRevision = revision();
+    if (currentRevision !== bootstrap.revision) {
+      supersededRevisions.add(currentRevision);
+    }
+    batch(() => {
+      setSnapshot({
+        bootstrap,
+        ...(destination.kind === 'breakdown' ? { breakdown: destination.result } : {}),
+        ...(destination.kind === 'overview' ? { overview: destination.result } : {}),
+      });
+      setAdvancedAnalysisCache(undefined);
+      setOverviewScopeFingerprint(
+        destination.kind === 'overview' ? focusedAdvancedAnalysisFingerprint(destination.request.query) : undefined,
+      );
+      if (destination.kind === 'overview') {
+        rememberAdvancedAnalysis(destination.request, destination.result);
+      }
+    });
+    return { applied: true };
+  };
+
+  function canCommitRevision(
+    bootstrap: FocusedSupportResult,
+    destination: FocusedRevisionDestination,
+  ): FocusedStoreApplyResult {
     if (bootstrap.requestFingerprint !== focusedRevisionFingerprint('support', { revision: bootstrap.revision })) {
       return { applied: false, reason: 'fingerprint-mismatch' };
     }
@@ -291,26 +334,8 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
         return { applied: false, reason: 'fingerprint-mismatch' };
       }
     }
-    const currentRevision = revision();
-    if (currentRevision !== bootstrap.revision) {
-      supersededRevisions.add(currentRevision);
-    }
-    batch(() => {
-      setSnapshot({
-        bootstrap,
-        ...(destination.kind === 'breakdown' ? { breakdown: destination.result } : {}),
-        ...(destination.kind === 'overview' ? { overview: destination.result } : {}),
-      });
-      setAdvancedAnalysisCache(undefined);
-      setOverviewScopeFingerprint(
-        destination.kind === 'overview' ? focusedAdvancedAnalysisFingerprint(destination.request.query) : undefined,
-      );
-      if (destination.kind === 'overview') {
-        rememberAdvancedAnalysis(destination.request, destination.result);
-      }
-    });
     return { applied: true };
-  };
+  }
 
   const applyOverview = (request: FocusedOverviewRequest, result: FocusedOverviewResult): FocusedStoreApplyResult => {
     if (result.revision !== revision() || request.query.revision !== revision()) {
@@ -334,11 +359,9 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
     request: FocusedBreakdownRequest,
     result: FocusedBreakdownResult,
   ): FocusedStoreApplyResult => {
-    if (result.revision !== revision() || request.query.revision !== revision()) {
-      return { applied: false, reason: 'revision-mismatch' };
-    }
-    if (result.requestFingerprint !== focusedBreakdownFingerprint(request)) {
-      return { applied: false, reason: 'fingerprint-mismatch' };
+    const validation = canApplyBreakdown(request, result);
+    if (!validation.applied) {
+      return validation;
     }
     if (breakdown() === result) {
       return { applied: true };
@@ -347,10 +370,26 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
     return { applied: true };
   };
 
+  const canApplyBreakdown = (
+    request: FocusedBreakdownRequest,
+    result: FocusedBreakdownResult,
+    expectedRevision = revision(),
+  ): FocusedStoreApplyResult => {
+    if (result.revision !== expectedRevision || request.query.revision !== expectedRevision) {
+      return { applied: false, reason: 'revision-mismatch' };
+    }
+    if (result.requestFingerprint !== focusedBreakdownFingerprint(request)) {
+      return { applied: false, reason: 'fingerprint-mismatch' };
+    }
+    return { applied: true };
+  };
+
   return {
     applyBreakdown,
     applyOverview,
     breakdown,
+    canApplyBreakdown,
+    canCommitRevision,
     dateDomain,
     filterOptions,
     hasAdvancedAnalysis,
@@ -376,12 +415,6 @@ export const createServedFocusedReportSource = (): FocusedReportSource => {
     getBreakdown: async (request) => {
       const { getFocusedReportBreakdown } = await serverApi();
       return await getFocusedReportBreakdown({ data: request });
-    },
-    getHtmlPayload: async (request) => {
-      const { getFocusedReportHtmlPayload } = await serverApi();
-      return (await getFocusedReportHtmlPayload({
-        data: request,
-      })) as unknown as SessionQueryServerResult<FocusedHtmlPayloadResult>;
     },
     getManifest: async () => {
       const { getReportRevisionManifest } = await serverApi();

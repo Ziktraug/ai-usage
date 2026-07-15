@@ -16,7 +16,6 @@ import type { Args } from './cli';
 import { renderAnalytics } from './render/analytics';
 import { clr } from './render/colors';
 import { renderCSV } from './render/csv';
-import { renderReportAppHTML } from './render/html';
 import { renderTable } from './render/table';
 
 const renderReportNotes = () => {
@@ -77,9 +76,6 @@ export const renderUsageReport = (
   if (args.format === 'csv') {
     return renderCSV(report.rows);
   }
-  if (args.format === 'html') {
-    return renderTerminalReport(report, args, warnings);
-  }
   if (args.format === 'payload') {
     return JSON.stringify(createUsageReportPayload(report, args, new Date(), facets, warnings));
   }
@@ -87,25 +83,14 @@ export const renderUsageReport = (
   return renderTerminalReport(report, args, warnings);
 };
 
-export const renderUsageReportForCli = async (
+export const renderUsageReportForCli = (
   rows: Row[],
   args: Args,
   facets?: Record<string, unknown>,
   warnings?: UsageReportWarning[],
-) => {
-  const report = prepareUsageReport(rows, args);
-  if (args.format === 'html') {
-    return await renderReportAppHTML(createUsageReportPayload(report, args, new Date(), facets, warnings));
-  }
-  return await Promise.resolve(renderUsageReport(rows, args, facets, warnings));
-};
+) => renderUsageReport(rows, args, facets, warnings);
 
-export const renderUsagePayloadForCli = async (payload: UsageReportPayload, args: Args) => {
-  if (args.format === 'html') {
-    return await renderReportAppHTML(payload);
-  }
-  return await Promise.resolve(JSON.stringify(payload));
-};
+export const renderUsagePayloadForCli = (payload: UsageReportPayload) => JSON.stringify(payload);
 
 export const prepareUsageReport = (rows: Row[], args: Args) =>
   prepareCoreUsageReport(normalizeSessionLineage(rows), args);

@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { maxSkillMarkdownBytes, readSkillMarkdown, scanSkillSourceRepository, writeSkillMarkdown } from '.';
+import { maxSkillMarkdownBytes } from './contracts';
+import { readSkillMarkdown, writeSkillMarkdown } from './skill-markdown-io';
+import { scanSkillSourceRepository } from './source-scan';
 
 const markdownSha256 = (content: string): string => createHash('sha256').update(content).digest('hex');
 

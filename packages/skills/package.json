@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./application": "./src/application.ts",
     "./config": "./src/config.ts",
     "./shared": "./src/shared.ts"
   },

@@ -20,7 +20,7 @@ import {
   type SessionQuerySqliteTrace,
 } from './session-query-sqlite';
 
-const runnerPath = path.join(import.meta.dir, 'session-query-runner.ts');
+const runnerPath = path.join(import.meta.dir, 'revision-query-runner.ts');
 const materializeRunnerPath = path.join(import.meta.dir, 'session-query-materialize-runner.ts');
 const temporaryDirectories = new Set<string>();
 

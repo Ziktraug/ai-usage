@@ -12,6 +12,7 @@ export default defineConfig({
     ...devices['Desktop Chrome'],
     launchOptions: executablePath ? { executablePath } : {},
     screenshot: 'only-on-failure',
+    timezoneId: 'Europe/Paris',
     trace: 'retain-on-failure',
   },
   webServer: {

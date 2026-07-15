@@ -1,6 +1,19 @@
 import { type AnalyticsSummary, calculateAnalytics } from './analytics';
 import type { ReportDatasets } from './datasets';
-import type { ProjectGroupConfig, ProjectGroupingWarningReason, ProjectSourceSelector } from './project-group';
+import {
+  isProjectGroupConfigArray,
+  type ProjectGroupConfig,
+  type ProjectGroupingWarningReason,
+  type ProjectSourceSelector,
+} from './project-group';
+import {
+  hasOnlyKeys,
+  isJsonSafeObject,
+  isRecord,
+  isSerializedUsageRow,
+  isStrictIsoTimestamp,
+  isUsageReportWarnings,
+} from './serialized-usage-validation';
 import type { UsageRow, UsageRowSource, UsageRowWithOptionalSource } from './types';
 import { usageRowActiveDate, usageRowLineDelta, usageRowSessionLabel, usageRowTokenTotal } from './usage-row';
 
@@ -95,6 +108,211 @@ export interface UsageReportPayload {
   tableRows: SerializedUsageRow[];
   warnings?: UsageReportWarning[];
 }
+
+const REPORT_PAYLOAD_KEYS = new Set([
+  'analytics',
+  'datasets',
+  'facets',
+  'filters',
+  'generatedAt',
+  'omittedRows',
+  'projectGroupConfigs',
+  'projectGroups',
+  'rows',
+  'tableRows',
+  'warnings',
+]);
+const REPORT_FILTER_KEYS = new Set(['limit', 'minTokens', 'project', 'since', 'sort']);
+const ANALYTICS_KEYS = new Set([
+  'averageDurationMs',
+  'byHarness',
+  'byModel',
+  'byProvider',
+  'costPer100Lines',
+  'durationMs',
+  'durationRows',
+  'lineCount',
+  'linesA',
+  'linesD',
+  'meanCost',
+  'medianCost',
+  'pricedCount',
+  'recentSessions',
+  'sessionCount',
+  'tools',
+  'totalCost',
+  'turns',
+  'unpricedCount',
+]);
+const ANALYTICS_GROUP_KEYS = new Set([
+  'ambiguous',
+  'cache',
+  'cacheHitPct',
+  'costPer100Lines',
+  'costPercent',
+  'costPerSession',
+  'costSum',
+  'fresh',
+  'harness',
+  'inp',
+  'key',
+  'lineCount',
+  'linesA',
+  'linesD',
+  'medianCost',
+  'priced',
+  'provider',
+  'sessions',
+  'tools',
+  'turns',
+  'unpriced',
+  'usageUnavailable',
+]);
+const PROJECT_GROUP_KEYS = new Set([
+  'cache',
+  'cost',
+  'fresh',
+  'grouped',
+  'id',
+  'linesAdded',
+  'linesDeleted',
+  'name',
+  'priced',
+  'sessions',
+  'sources',
+  'tokens',
+  'tools',
+  'turns',
+]);
+const PROJECT_SOURCE_KEYS = new Set([
+  'gitRemote',
+  'id',
+  'machineId',
+  'machineLabel',
+  'project',
+  'sessions',
+  'sourcePath',
+  'tokens',
+]);
+
+const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+const isNonNegativeSafeInteger = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
+const isNullableString = (value: unknown): value is string | null => value === null || typeof value === 'string';
+const isNullableFiniteNumber = (value: unknown): value is number | null => value === null || isFiniteNumber(value);
+const isNonNegativeFiniteNumber = (value: unknown): value is number => isFiniteNumber(value) && value >= 0;
+
+const isAnalyticsGroup = (value: unknown): boolean =>
+  isRecord(value) &&
+  hasOnlyKeys(value, ANALYTICS_GROUP_KEYS) &&
+  [value.key, value.harness, value.provider].every((field) => typeof field === 'string') &&
+  [
+    value.ambiguous,
+    value.cache,
+    value.fresh,
+    value.inp,
+    value.lineCount,
+    value.linesA,
+    value.linesD,
+    value.priced,
+    value.sessions,
+    value.tools,
+    value.turns,
+    value.unpriced,
+    value.usageUnavailable,
+  ].every(isNonNegativeSafeInteger) &&
+  [value.cacheHitPct, value.costPercent, value.costSum].every(isNonNegativeFiniteNumber) &&
+  [value.costPer100Lines, value.costPerSession, value.medianCost].every(isNullableFiniteNumber);
+
+const isUsageReportProjectSource = (value: unknown): boolean =>
+  isRecord(value) &&
+  hasOnlyKeys(value, PROJECT_SOURCE_KEYS) &&
+  [value.gitRemote, value.id, value.machineId, value.machineLabel, value.project, value.sourcePath].every(
+    (field) => typeof field === 'string',
+  ) &&
+  [value.sessions, value.tokens].every(isNonNegativeSafeInteger);
+
+const isUsageReportProjectGroup = (value: unknown): boolean =>
+  isRecord(value) &&
+  hasOnlyKeys(value, PROJECT_GROUP_KEYS) &&
+  typeof value.id === 'string' &&
+  typeof value.name === 'string' &&
+  typeof value.grouped === 'boolean' &&
+  [
+    value.cache,
+    value.fresh,
+    value.linesAdded,
+    value.linesDeleted,
+    value.priced,
+    value.sessions,
+    value.tokens,
+    value.tools,
+    value.turns,
+  ].every(isNonNegativeSafeInteger) &&
+  isNonNegativeFiniteNumber(value.cost) &&
+  Array.isArray(value.sources) &&
+  value.sources.every(isUsageReportProjectSource);
+
+const isReportFilters = (value: unknown): value is UsageReportPayload['filters'] =>
+  isRecord(value) &&
+  hasOnlyKeys(value, REPORT_FILTER_KEYS) &&
+  (value.since === null || isStrictIsoTimestamp(value.since)) &&
+  isNullableString(value.project) &&
+  (value.limit === null || isNonNegativeSafeInteger(value.limit)) &&
+  isNonNegativeSafeInteger(value.minTokens) &&
+  (value.sort === 'date' || value.sort === 'tokens' || value.sort === 'cost');
+
+const isAnalyticsSummary = (value: unknown): value is AnalyticsSummary =>
+  isRecord(value) &&
+  hasOnlyKeys(value, ANALYTICS_KEYS) &&
+  isNullableFiniteNumber(value.averageDurationMs) &&
+  Array.isArray(value.byHarness) &&
+  value.byHarness.every(isAnalyticsGroup) &&
+  Array.isArray(value.byModel) &&
+  value.byModel.every(isAnalyticsGroup) &&
+  Array.isArray(value.byProvider) &&
+  value.byProvider.every(isAnalyticsGroup) &&
+  isNullableFiniteNumber(value.costPer100Lines) &&
+  [
+    value.durationMs,
+    value.durationRows,
+    value.lineCount,
+    value.linesA,
+    value.linesD,
+    value.pricedCount,
+    value.recentSessions,
+    value.sessionCount,
+    value.tools,
+    value.turns,
+    value.unpricedCount,
+  ].every(isNonNegativeSafeInteger) &&
+  [value.meanCost, value.medianCost, value.totalCost].every(isFiniteNumber);
+
+const isUsageReportPayloadValue = (value: unknown): value is UsageReportPayload =>
+  isRecord(value) &&
+  isAnalyticsSummary(value.analytics) &&
+  isReportFilters(value.filters) &&
+  isStrictIsoTimestamp(value.generatedAt) &&
+  isNonNegativeSafeInteger(value.omittedRows) &&
+  Array.isArray(value.rows) &&
+  value.rows.every((row) => isSerializedUsageRow(row)) &&
+  Array.isArray(value.tableRows) &&
+  value.tableRows.every((row) => isSerializedUsageRow(row)) &&
+  (value.datasets === undefined || isJsonSafeObject(value.datasets)) &&
+  (value.facets === undefined || isJsonSafeObject(value.facets)) &&
+  (value.projectGroupConfigs === undefined || isProjectGroupConfigArray(value.projectGroupConfigs)) &&
+  (value.projectGroups === undefined ||
+    (Array.isArray(value.projectGroups) && value.projectGroups.every(isUsageReportProjectGroup))) &&
+  (value.warnings === undefined || isUsageReportWarnings(value.warnings));
+
+export const parseUsageReportPayload = (value: unknown): UsageReportPayload => {
+  if (!(isRecord(value) && hasOnlyKeys(value, REPORT_PAYLOAD_KEYS))) {
+    throw new Error('Report payload must be an object with supported fields');
+  }
+  if (!isUsageReportPayloadValue(value)) {
+    throw new Error('Report payload contains invalid required fields');
+  }
+  return value;
+};
 
 export const compareUsageRows = (sort: SortKey) =>
   ({

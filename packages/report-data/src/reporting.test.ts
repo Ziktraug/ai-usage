@@ -599,7 +599,7 @@ describe('shared reporting', () => {
     }
   });
 
-  test('binds Claude-managed git worktree sessions to the parent project source', async () => {
+  test('keeps portable Claude worktree-looking paths opaque', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-worktree-home-'));
     try {
       const parentPath = '/Users/nathan/projects/github/Exalibur2';
@@ -631,23 +631,19 @@ describe('shared reporting', () => {
       );
 
       expect(merged.rows).toHaveLength(2);
-      expect(merged.rows.every((row) => row.project === 'Exalibur2 · Test Machine')).toBe(true);
+      expect(merged.rows.map((row) => row.project).sort()).toEqual([
+        'agent-a15e8356ff54ade2a · Test Machine',
+        'agent-a2017811a25de4a7c · Test Machine',
+      ]);
       expect(merged.rows.map((row) => row.rawProject).sort()).toEqual([
         'agent-a15e8356ff54ade2a',
         'agent-a2017811a25de4a7c',
       ]);
-      expect(merged.payload.projectGroups).toHaveLength(1);
-      expect(merged.payload.projectGroups?.[0]).toMatchObject({
-        grouped: false,
-        name: 'Exalibur2 · Test Machine',
-        sessions: 2,
-        sources: [
-          expect.objectContaining({
-            project: 'Exalibur2',
-            sourcePath: parentPath,
-          }),
-        ],
-      });
+      expect(merged.payload.projectGroups).toHaveLength(2);
+      expect(merged.payload.projectGroups?.map((group) => group.sources[0]?.sourcePath).sort()).toEqual([
+        `${parentPath}/.claude/worktrees/agent-a15e8356ff54ade2a`,
+        `${parentPath}/.claude/worktrees/agent-a2017811a25de4a7c`,
+      ]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -878,11 +874,11 @@ describe('shared reporting', () => {
     }
   });
 
-  test('lists project sources from snapshots without reading real home', async () => {
+  test('treats snapshot source paths as opaque even when they name a local repository', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-sources-home-'));
     const projectPath = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-project-'));
     try {
-      const gitConfigPath = path.join(projectPath, '.git', 'config');
+      let gitReadCalls = 0;
       const snapshot = createUsageSnapshot({
         machine: testMachine,
         rows: [
@@ -903,8 +899,10 @@ describe('shared reporting', () => {
           harness: null,
           includeCursor: false,
           includeGitRemote: true,
-          readGitFile: (filePath) =>
-            filePath === gitConfigPath ? '[remote "origin"]\n  url = git@github.com:owner/repo.git\n' : null,
+          readGitFile: () => {
+            gitReadCalls++;
+            return '[remote "origin"]\n  url = git@github.com:owner/repo.git\n';
+          },
         }).pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
       );
 
@@ -916,18 +914,19 @@ describe('shared reporting', () => {
           harness: 'Claude Code',
           harnessKey: 'claude',
           sourcePath: projectPath,
-          gitRemote: 'owner/repo',
+          gitRemote: '',
           sessions: 2,
           tokens: 20,
         }),
       ]);
+      expect(gitReadCalls).toBe(0);
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(projectPath, { recursive: true, force: true });
     }
   });
 
-  test('reads git metadata from linked worktrees', async () => {
+  test('does not follow worktree metadata declared by a portable snapshot', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-git-worktree-home-'));
     const parentPath = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-parent-'));
     const worktreePath = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-worktree-'));
@@ -945,6 +944,7 @@ describe('shared reporting', () => {
         ],
       });
 
+      let gitReadCalls = 0;
       const sources = await Effect.runPromise(
         listProjectSources({
           snapshots: [snapshot],
@@ -953,6 +953,7 @@ describe('shared reporting', () => {
           includeCursor: false,
           includeGitRemote: true,
           readGitFile: (filePath) => {
+            gitReadCalls++;
             if (filePath === path.join(worktreePath, '.git')) {
               return `gitdir: ${worktreeGitDir}\n`;
             }
@@ -969,12 +970,13 @@ describe('shared reporting', () => {
 
       expect(sources).toEqual([
         expect.objectContaining({
-          project: path.basename(parentPath),
-          sourcePath: parentPath,
-          gitRemote: 'owner/repo',
+          project: path.basename(worktreePath),
+          sourcePath: worktreePath,
+          gitRemote: '',
           sessions: 1,
         }),
       ]);
+      expect(gitReadCalls).toBe(0);
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(parentPath, { recursive: true, force: true });

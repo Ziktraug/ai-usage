@@ -3,7 +3,7 @@ import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import {
-  cachedDbRows,
+  cachedDbCollection,
   type DbRowCache,
   dbStat,
   readDbRowCache,
@@ -12,10 +12,17 @@ import {
 } from '../collector-cache';
 import { type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
 import { LocalHistoryStorage } from '../local-history';
+import {
+  addNonNegativeFiniteNumbers,
+  addNonNegativeSafeIntegers,
+  metricValidationWarning,
+  parseOptionalNonNegativeFiniteNumber,
+  parseOptionalNonNegativeSafeInteger,
+} from '../metric-validation';
 import { withPerfSpan } from '../perf';
 import { resolvePathCandidates } from '../platform-paths';
 import type { CollectorRow } from '../rtk-enrichment';
-import { base, dominant, safeJSON } from '../text';
+import { base, dominant, isJsonObject, safeJSON } from '../text';
 
 const DEFAULT_ACP_SESSION_TITLE = /^(new session\s*[.…]*|acp(?: session)?)$/i;
 
@@ -50,32 +57,12 @@ interface MessageRow {
   data: string;
   session_id: string;
 }
-interface OpenCodeMessageData {
-  cost?: number;
-  modelID?: string;
-  providerID?: string;
-  role?: string;
-  time?: {
-    completed?: string | number | Date;
-    created?: string | number | Date;
-  };
-  tokens?: {
-    cache?: {
-      read?: number;
-      write?: number;
-    };
-    input?: number;
-    output?: number;
-    reasoning?: number;
-  };
-}
-
 export interface OpenCodeCollectionResult {
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
 }
 
-const OPENCODE_DB_CACHE_VERSION = 2;
+const OPENCODE_DB_CACHE_VERSION = 4;
 const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 const SESSION_SQL = 'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
 const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE data LIKE '%"type":"tool"%' GROUP BY session_id`;
@@ -86,7 +73,11 @@ const collectFromDb = (
   storage: import('../local-history').LocalHistoryStorage,
   source: 'live' | 'stable',
   cache: DbRowCache | null,
-): Effect.Effect<CollectorRow[], import('../errors').LocalHistoryError, never> =>
+): Effect.Effect<
+  { rejectedMetricRecords: number; rows: CollectorRow[] },
+  import('../errors').LocalHistoryError,
+  never
+> =>
   withPerfSpan(
     'aiUsage.collect.opencode.db',
     Effect.gen(function* () {
@@ -96,15 +87,15 @@ const collectFromDb = (
         (value) => ({ db: source, exists: value }),
       );
       if (!exists) {
-        return [];
+        return { rejectedMetricRecords: 0, rows: [] };
       }
 
       const stat = dbStat(dbPath);
-      const cachedRows = cachedDbRows(cache, dbPath, stat);
-      if (cachedRows) {
-        return yield* withPerfSpan('aiUsage.collect.opencode.cache.hit', Effect.succeed(cachedRows), (rows) => ({
+      const cached = cachedDbCollection(cache, dbPath, stat);
+      if (cached) {
+        return yield* withPerfSpan('aiUsage.collect.opencode.cache.hit', Effect.succeed(cached), (result) => ({
           db: source,
-          rows: rows.length,
+          rows: result.rows.length,
         }));
       }
 
@@ -112,6 +103,7 @@ const collectFromDb = (
       const toolCount = new Map<string, number>();
       const turnCount = new Map<string, number>();
       const agg = new Map<string, Agg>();
+      let rejectedMetricRecords = 0;
 
       yield* Effect.acquireUseRelease(
         withPerfSpan('aiUsage.collect.opencode.db.open', storage.openDatabase(dbPath), () => ({ db: source })),
@@ -123,12 +115,18 @@ const collectFromDb = (
               (rows) => ({ db: source, rows: rows.length }),
             );
             for (const row of sessionRows) {
+              const additions = parseOptionalNonNegativeSafeInteger(row.summary_additions);
+              const deletions = parseOptionalNonNegativeSafeInteger(row.summary_deletions);
+              if (!(typeof row.id === 'string' && additions.ok && deletions.ok)) {
+                rejectedMetricRecords++;
+                continue;
+              }
               meta.set(row.id, {
                 parentId: row.parent_id || null,
                 title: row.title || '',
                 dir: row.directory || '',
-                add: row.summary_additions || 0,
-                del: row.summary_deletions || 0,
+                add: additions.value,
+                del: deletions.value,
               });
             }
 
@@ -138,7 +136,12 @@ const collectFromDb = (
               (rows) => ({ db: source, rows: rows.length }),
             );
             for (const row of toolRows) {
-              toolCount.set(row.session_id, row.n);
+              const count = parseOptionalNonNegativeSafeInteger(row.n);
+              if (!(typeof row.session_id === 'string' && count.ok)) {
+                rejectedMetricRecords++;
+                continue;
+              }
+              toolCount.set(row.session_id, count.value);
             }
 
             const messageRows = yield* withPerfSpan(
@@ -153,7 +156,7 @@ const collectFromDb = (
                 let tokenRows = 0;
                 let userRows = 0;
                 for (const row of messageRows) {
-                  const data = safeJSON<OpenCodeMessageData>(row.data);
+                  const data = safeJSON(row.data);
                   if (data?.role === 'user') {
                     userRows++;
                     turnCount.set(row.session_id, (turnCount.get(row.session_id) || 0) + 1);
@@ -163,7 +166,7 @@ const collectFromDb = (
                     continue;
                   }
                   assistantRows++;
-                  const tokens = data.tokens;
+                  const tokens = isJsonObject(data.tokens) ? data.tokens : null;
                   if (!tokens) {
                     continue;
                   }
@@ -185,35 +188,65 @@ const collectFromDb = (
                     };
                     agg.set(row.session_id, current);
                   }
-                  const input = tokens.input || 0;
-                  const output = tokens.output || 0;
-                  const cacheRead = tokens.cache?.read || 0;
-                  const cacheWrite = tokens.cache?.write || 0;
-                  const reasoning = tokens.reasoning || 0;
-                  current.tin += input;
-                  current.tout += output;
-                  current.tcr += cacheRead;
-                  current.tcw += cacheWrite;
-                  current.reason += reasoning;
-                  current.cost += data.cost || 0;
-                  current.calls++;
-                  const created = data.time?.created;
-                  if (created) {
+                  const input = parseOptionalNonNegativeSafeInteger(tokens.input);
+                  const output = parseOptionalNonNegativeSafeInteger(tokens.output);
+                  const cache = isJsonObject(tokens.cache) ? tokens.cache : null;
+                  const cacheRead = parseOptionalNonNegativeSafeInteger(cache?.read);
+                  const cacheWrite = parseOptionalNonNegativeSafeInteger(cache?.write);
+                  const reasoning = parseOptionalNonNegativeSafeInteger(tokens.reasoning);
+                  const cost = parseOptionalNonNegativeFiniteNumber(data.cost);
+                  if (!(input.ok && output.ok && cacheRead.ok && cacheWrite.ok && reasoning.ok && cost.ok)) {
+                    rejectedMetricRecords++;
+                    continue;
+                  }
+                  const nextInput = addNonNegativeSafeIntegers(current.tin, input.value);
+                  const nextOutput = addNonNegativeSafeIntegers(current.tout, output.value);
+                  const nextCacheRead = addNonNegativeSafeIntegers(current.tcr, cacheRead.value);
+                  const nextCacheWrite = addNonNegativeSafeIntegers(current.tcw, cacheWrite.value);
+                  const nextReasoning = addNonNegativeSafeIntegers(current.reason, reasoning.value);
+                  const nextCalls = addNonNegativeSafeIntegers(current.calls, 1);
+                  const nextCost = addNonNegativeFiniteNumbers(current.cost, cost.value);
+                  if (
+                    !(
+                      nextInput.ok &&
+                      nextOutput.ok &&
+                      nextCacheRead.ok &&
+                      nextCacheWrite.ok &&
+                      nextReasoning.ok &&
+                      nextCalls.ok &&
+                      nextCost.ok
+                    )
+                  ) {
+                    rejectedMetricRecords++;
+                    continue;
+                  }
+                  current.tin = nextInput.value;
+                  current.tout = nextOutput.value;
+                  current.tcr = nextCacheRead.value;
+                  current.tcw = nextCacheWrite.value;
+                  current.reason = nextReasoning.value;
+                  current.cost = nextCost.value;
+                  current.calls = nextCalls.value;
+                  const time = isJsonObject(data.time) ? data.time : null;
+                  const created = time?.created;
+                  if (typeof created === 'string' || typeof created === 'number') {
                     const date = new Date(created);
                     if (!current.start || date < current.start) {
                       current.start = date;
                     }
                   }
-                  const completed = data.time?.completed || data.time?.created;
-                  if (completed) {
+                  const completed = time?.completed || time?.created;
+                  if (typeof completed === 'string' || typeof completed === 'number') {
                     const date = new Date(completed);
                     if (!current.end || date > current.end) {
                       current.end = date;
                     }
                   }
-                  const total = input + output + cacheRead + cacheWrite;
-                  current.prov.set(data.providerID || '?', (current.prov.get(data.providerID || '?') || 0) + total);
-                  current.model.set(data.modelID || '?', (current.model.get(data.modelID || '?') || 0) + total);
+                  const total = input.value + output.value + cacheRead.value + cacheWrite.value;
+                  const providerId = typeof data.providerID === 'string' ? data.providerID : '?';
+                  const modelId = typeof data.modelID === 'string' ? data.modelID : '?';
+                  current.prov.set(providerId, (current.prov.get(providerId) || 0) + total);
+                  current.model.set(modelId, (current.model.get(modelId) || 0) + total);
                 }
                 return { assistantRows, tokenRows, userRows };
               }),
@@ -254,9 +287,14 @@ const collectFromDb = (
             const sessionMeta = meta.get(sid);
             const providerId = dominant(current.prov);
             const model = dominant(current.model);
+            const output = addNonNegativeSafeIntegers(current.tout, current.reason);
+            if (!output.ok) {
+              rejectedMetricRecords++;
+              continue;
+            }
             const tokens = {
               in: current.tin,
-              out: current.tout + current.reason,
+              out: output.value,
               cr: current.tcr,
               cw: current.tcw,
             };
@@ -290,10 +328,13 @@ const collectFromDb = (
         }),
         (rows) => ({ db: source, rows: rows.length, sessions: rows.length }),
       );
-      storeDbRows(cache, dbPath, stat, sessions);
-      return sessions;
+      const afterStat = dbStat(dbPath);
+      if (JSON.stringify(stat) === JSON.stringify(afterStat)) {
+        storeDbRows(cache, dbPath, afterStat, sessions, rejectedMetricRecords);
+      }
+      return { rejectedMetricRecords, rows: sessions };
     }),
-    (rows) => ({ db: source, rows: rows.length }),
+    (result) => ({ db: source, rows: result.rows.length }),
   );
 
 export const classifyOpenCodeTitle = (
@@ -329,8 +370,10 @@ export const collectOpenCodeResult: Effect.Effect<
   );
   const seen = new Set<string>();
   const warnings: LocalHistoryWarning[] = [];
-  const appendRows = (target: CollectorRow[], rows: CollectorRow[]) => {
-    for (const row of rows) {
+  let rejectedMetricRecords = 0;
+  const appendRows = (target: CollectorRow[], result: { rejectedMetricRecords: number; rows: CollectorRow[] }) => {
+    rejectedMetricRecords += result.rejectedMetricRecords;
+    for (const row of result.rows) {
       const sessionId = row.source?.sourceSessionId;
       if (sessionId && seen.has(sessionId)) {
         continue;
@@ -347,7 +390,7 @@ export const collectOpenCodeResult: Effect.Effect<
     const result = yield* collectFromDb(dbPath, storage, 'live', cache).pipe(
       Effect.match({
         onFailure: (error) => ({ _tag: 'failure' as const, error }),
-        onSuccess: (rows) => ({ _tag: 'success' as const, rows }),
+        onSuccess: (result) => ({ _tag: 'success' as const, result }),
       }),
     );
     if (result._tag === 'failure') {
@@ -358,7 +401,7 @@ export const collectOpenCodeResult: Effect.Effect<
         }),
       );
     } else {
-      appendRows(liveRows, result.rows);
+      appendRows(liveRows, result.result);
     }
   }
 
@@ -367,7 +410,7 @@ export const collectOpenCodeResult: Effect.Effect<
     const result = yield* collectFromDb(dbPath, storage, 'stable', cache).pipe(
       Effect.match({
         onFailure: (error) => ({ _tag: 'failure' as const, error }),
-        onSuccess: (rows) => ({ _tag: 'success' as const, rows }),
+        onSuccess: (result) => ({ _tag: 'success' as const, result }),
       }),
     );
     if (result._tag === 'failure') {
@@ -378,7 +421,7 @@ export const collectOpenCodeResult: Effect.Effect<
         }),
       );
     } else {
-      appendRows(stableRows, result.rows);
+      appendRows(stableRows, result.result);
     }
   }
 
@@ -388,5 +431,9 @@ export const collectOpenCodeResult: Effect.Effect<
     (wrote) => ({ wrote }),
   );
 
+  const metricWarning = metricValidationWarning('opencode', rejectedMetricRecords);
+  if (metricWarning) {
+    warnings.push(metricWarning);
+  }
   return { rows: [...liveRows, ...stableRows], warnings };
 });

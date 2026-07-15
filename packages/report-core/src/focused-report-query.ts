@@ -4,7 +4,7 @@ import { parseProjectGroupConfigs } from './project-group';
 import { parseProviderStatusDataset } from './provider-status';
 import { MAX_SERVED_BOOTSTRAP_BYTES } from './report-budgets';
 import type { SerializedRow, UsageReportPayload } from './report-data';
-import { isSerializedUsageRowShape, isStrictIsoTimestamp, isUsageReportWarnings } from './serialized-usage-validation';
+import { isStrictIsoTimestamp, isUsageReportWarnings } from './serialized-usage-validation';
 import {
   buildSessionCampaignViews,
   enrichSessionPresentationRow,
@@ -264,19 +264,8 @@ export interface FocusedSupportProjectionOptions {
   sourceOmissions?: FocusedSupportSourceOmissions;
 }
 
-export interface FocusedHtmlPayloadResult {
-  payload: UsageReportPayload;
-  requestFingerprint: string;
-  revision: string;
-  rowCount: number;
-}
-
-export type FocusedReportQueryKind = 'breakdown' | 'html-payload' | 'overview' | 'support';
-export type FocusedReportQueryResult =
-  | FocusedBreakdownResult
-  | FocusedHtmlPayloadResult
-  | FocusedOverviewResult
-  | FocusedSupportResult;
+export type FocusedReportQueryKind = 'breakdown' | 'overview' | 'support';
+export type FocusedReportQueryResult = FocusedBreakdownResult | FocusedOverviewResult | FocusedSupportResult;
 
 const MAX_REVISION_LENGTH = 512;
 const MAX_TIMELINE_SERIES = 12;
@@ -387,7 +376,7 @@ export const focusedBreakdownFingerprint = (input: FocusedBreakdownRequest): str
   return fingerprint('breakdown', request);
 };
 
-export const focusedRevisionFingerprint = (kind: 'html-payload' | 'support', input: FocusedRevisionRequest): string =>
+export const focusedRevisionFingerprint = (kind: 'support', input: FocusedRevisionRequest): string =>
   fingerprint(kind, parseFocusedRevisionRequest(input));
 
 export const matchesFocusedReportQuery = (row: SessionPresentationRow, query: FocusedReportQueryScope): boolean => {
@@ -1060,24 +1049,6 @@ export const projectFocusedBreakdown = (
     },
     requestFingerprint: focusedBreakdownFingerprint(request),
     revision: request.query.revision,
-  };
-};
-
-export const projectFocusedHtmlPayload = (
-  rows: SerializedRow[],
-  support: FocusedReportSupport,
-  input: FocusedRevisionRequest,
-): FocusedHtmlPayloadResult => {
-  const request = parseFocusedRevisionRequest(input);
-  return {
-    payload: {
-      ...support,
-      rows,
-      tableRows: support.filters.limit ? rows.slice(0, support.filters.limit) : rows,
-    },
-    requestFingerprint: focusedRevisionFingerprint('html-payload', request),
-    revision: request.revision,
-    rowCount: rows.length,
   };
 };
 
@@ -1925,76 +1896,6 @@ const assertBootstrapSupport = (value: unknown): void => {
   }
 };
 
-const assertReportDatasets = (value: unknown, label: string): void => {
-  const datasets = requireRecord(value, label);
-  if (
-    datasets.cursorCommitAttribution !== undefined &&
-    !(
-      Array.isArray(datasets.cursorCommitAttribution) &&
-      datasets.cursorCommitAttribution.every(isCursorCommitAttributionRow)
-    )
-  ) {
-    throw new Error(`${label}.cursorCommitAttribution is invalid`);
-  }
-  if (datasets.providerStatus !== undefined && parseProviderStatusDataset(datasets.providerStatus) === null) {
-    throw new Error(`${label}.providerStatus is invalid`);
-  }
-};
-
-const parseCompatibilityPayload = (value: unknown): UsageReportPayload => {
-  const payload = requireRecord(value, 'HTML compatibility payload');
-  assertAllowedKeys(
-    payload,
-    ['analytics', 'filters', 'generatedAt', 'omittedRows', 'rows', 'tableRows'],
-    ['datasets', 'facets', 'projectGroupConfigs', 'projectGroups', 'warnings'],
-    'HTML compatibility payload',
-  );
-  assertAnalyticsSummary(payload.analytics, 'HTML compatibility payload.analytics');
-  assertReportFilters(payload.filters, 'HTML compatibility payload.filters');
-  requireIsoTimestamp(payload.generatedAt, 'HTML compatibility payload.generatedAt');
-  requireNonNegativeSafeInteger(payload.omittedRows, 'HTML compatibility payload.omittedRows');
-  if (!Array.isArray(payload.rows)) {
-    throw new Error('HTML compatibility payload.rows must be an array');
-  }
-  for (const [index, row] of payload.rows.entries()) {
-    if (!isSerializedUsageRowShape(row)) {
-      throw new Error(`HTML compatibility payload.rows[${index}] is not a valid serialized usage row`);
-    }
-  }
-  if (!Array.isArray(payload.tableRows)) {
-    throw new Error('HTML compatibility payload.tableRows must be an array');
-  }
-  for (const [index, row] of payload.tableRows.entries()) {
-    if (!isSerializedUsageRowShape(row)) {
-      throw new Error(`HTML compatibility payload.tableRows[${index}] is not a valid serialized usage row`);
-    }
-  }
-  if (payload.datasets !== undefined) {
-    assertReportDatasets(payload.datasets, 'HTML compatibility payload.datasets');
-  }
-  if (payload.facets !== undefined) {
-    const facets = requireRecord(payload.facets, 'HTML compatibility payload.facets');
-    if (facets.providerStatus !== undefined && parseProviderStatusDataset(facets.providerStatus) === null) {
-      throw new Error('HTML compatibility payload.facets.providerStatus is invalid');
-    }
-  }
-  if (payload.projectGroupConfigs !== undefined) {
-    assertProjectGroupConfigs(payload.projectGroupConfigs);
-  }
-  if (payload.projectGroups !== undefined) {
-    if (!Array.isArray(payload.projectGroups)) {
-      throw new Error('HTML compatibility payload.projectGroups must be an array');
-    }
-    for (const [index, group] of payload.projectGroups.entries()) {
-      assertReportProjectGroup(group, `HTML compatibility payload.projectGroups[${index}]`);
-    }
-  }
-  if (payload.warnings !== undefined && !isUsageReportWarnings(payload.warnings)) {
-    throw new Error('HTML compatibility payload.warnings is invalid');
-  }
-  return payload as unknown as UsageReportPayload;
-};
-
 const assertSupportTruncation = (value: unknown): void => {
   const truncation = requireRecord(value, 'support truncation');
   const keys = [
@@ -2035,11 +1936,6 @@ export function parseFocusedReportQueryResult(
   value: unknown,
   request: FocusedBreakdownRequest,
 ): FocusedBreakdownResult;
-export function parseFocusedReportQueryResult(
-  kind: 'html-payload',
-  value: unknown,
-  request: FocusedRevisionRequest,
-): FocusedHtmlPayloadResult;
 export function parseFocusedReportQueryResult(
   kind: 'support',
   value: unknown,
@@ -2087,19 +1983,6 @@ export function parseFocusedReportQueryResult(
     return record as unknown as FocusedBreakdownResult;
   }
   const parsed = parseFocusedRevisionRequest(request);
-  if (kind === 'html-payload') {
-    const record = assertResultEnvelope(
-      value,
-      ['payload', 'requestFingerprint', 'revision', 'rowCount'],
-      parsed.revision,
-      focusedRevisionFingerprint(kind, parsed),
-    );
-    const payload = parseCompatibilityPayload(record.payload);
-    if (requireNonNegativeSafeInteger(record.rowCount, 'HTML compatibility payload rowCount') !== payload.rows.length) {
-      throw new Error('Focused HTML compatibility payload is invalid');
-    }
-    return { ...record, payload } as unknown as FocusedHtmlPayloadResult;
-  }
   const record = assertResultEnvelope(
     value,
     ['dateDomain', 'filterOptions', 'providerRows', 'requestFingerprint', 'revision', 'support', 'truncation'],

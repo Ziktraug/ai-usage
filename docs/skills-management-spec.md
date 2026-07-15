@@ -62,7 +62,5 @@ The feature provides a local control plane for inspecting, editing, enabling, an
 - `bun run test:web-production`
 - `bun run test:setup-loopback`
 - `bun run test:e2e`, including `apps/web/e2e/skills.spec.ts`
-- `bun run test:html-export`
-- `bun run test:html-file`
 
 The filesystem tests must use temporary directories and cover traversal limits, unsafe symlinks, concurrent writers, atomic replacement, stale observations, and unmanaged mutation refusal.

@@ -7,7 +7,6 @@ import {
   parseWebReportSliceRequest,
   reportSliceRequestFingerprint,
   splitWebReportPayload,
-  toExportReportPayload,
   toWebReportPayload,
 } from './web-report-payload';
 
@@ -16,27 +15,6 @@ test('removes duplicated table rows without cloning report rows', () => {
 
   expect('tableRows' in payload).toBe(false);
   expect(payload.rows).toBe(demoReportPayload.rows);
-});
-
-test('restores compatibility table rows for standalone HTML export', () => {
-  const webPayload = toWebReportPayload(demoReportPayload);
-  const exportPayload = toExportReportPayload(webPayload);
-
-  expect(exportPayload.tableRows).toEqual(webPayload.rows);
-  expect(exportPayload.rows).toBe(webPayload.rows);
-});
-
-test('preserves the report row limit when restoring standalone export compatibility', () => {
-  const webPayload = toWebReportPayload({
-    ...demoReportPayload,
-    filters: { ...demoReportPayload.filters, limit: 2 },
-    omittedRows: demoReportPayload.rows.length - 2,
-  });
-
-  const exportPayload = toExportReportPayload(webPayload);
-
-  expect(exportPayload.tableRows).toEqual(webPayload.rows.slice(0, 2));
-  expect(exportPayload.omittedRows).toBe(2);
 });
 
 test('rejects non-JSON facet values at the server-function boundary', () => {
@@ -52,7 +30,6 @@ test('preserves JSON datasets at the server-function boundary', () => {
   const payload = toWebReportPayload(demoReportPayload);
 
   expect(JSON.stringify(payload.datasets)).toBe(JSON.stringify(demoReportPayload.datasets));
-  expect(JSON.stringify(toExportReportPayload(payload).datasets)).toBe(JSON.stringify(demoReportPayload.datasets));
 });
 
 test('drops legacy Cursor attribution when the canonical dataset is present', () => {

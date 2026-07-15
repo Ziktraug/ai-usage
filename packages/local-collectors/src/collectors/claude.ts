@@ -3,11 +3,19 @@ import path from 'node:path';
 import { actualCost, approximateApiCost, tokenTotal } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
-import { collectorCachePath, reviveCollectorRows } from '../collector-cache';
+import { collectorCachePath, reviveCollectorRowsResult } from '../collector-cache';
 import type { LocalHistoryError, LocalHistoryWarning } from '../errors';
+import { COLLECTOR_CACHE_MAX_BYTES, SMALL_HISTORY_JSON_MAX_BYTES } from '../history-budgets';
 import { LocalHistoryStorage, walkFiles } from '../local-history';
+import {
+  addNonNegativeSafeIntegers,
+  metricValidationWarning,
+  parseNonNegativeSafeInteger,
+  parseOptionalNonNegativeSafeInteger,
+} from '../metric-validation';
 import { withPerfSpan } from '../perf';
 import { type HarnessPaths, resolvePaths } from '../platform-paths';
+import { readPrivateJson, writePrivateJson } from '../private-storage';
 import type { CollectorRow } from '../rtk-enrichment';
 import { base, dominant, safeJSON, usablePrompt } from '../text';
 
@@ -26,46 +34,11 @@ interface FileFingerprint {
 }
 interface ClaudeCache {
   fingerprintKey: string | null;
+  rejectedMetricRecords: number;
   rows: CollectorRow[];
   version: number;
 }
-interface ClaudeConfig {
-  hasApiKey?: boolean;
-}
-interface ClaudeHistoryEvent {
-  display?: string;
-  project?: string;
-  sessionId?: string;
-  timestamp?: number;
-}
-interface ClaudeMessage {
-  content?: unknown;
-  id?: string;
-  model?: string;
-  usage?: ClaudeUsage;
-}
-interface ClaudeSettings {
-  cleanupPeriodDays?: number;
-}
-interface ClaudeTranscriptEvent {
-  aiTitle?: string;
-  cwd?: string;
-  isSidechain?: boolean;
-  lastPrompt?: unknown;
-  message?: ClaudeMessage;
-  requestId?: string;
-  sessionId?: string;
-  timestamp?: string | number | Date;
-  type?: string;
-}
-interface ClaudeUsage {
-  cache_creation_input_tokens?: number;
-  cache_read_input_tokens?: number;
-  input_tokens?: number;
-  output_tokens?: number;
-}
-
-const CLAUDE_CACHE_VERSION = 2;
+const CLAUDE_CACHE_VERSION = 4;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -79,19 +52,26 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
     }
     const cachePath = claudeCachePath(storage);
     if (!fs.existsSync(cachePath)) {
-      return { fingerprintKey: null, rows: [], version: CLAUDE_CACHE_VERSION };
+      return { fingerprintKey: null, rejectedMetricRecords: 0, rows: [], version: CLAUDE_CACHE_VERSION };
     }
-    const parsed = JSON.parse(fs.readFileSync(cachePath, 'utf8')) as {
+    const parsed = readPrivateJson(cachePath, COLLECTOR_CACHE_MAX_BYTES) as {
       fingerprintKey?: unknown;
+      rejectedMetricRecords?: unknown;
       rows?: unknown;
       version?: number;
     };
     if (parsed.version !== CLAUDE_CACHE_VERSION) {
-      return { fingerprintKey: null, rows: [], version: CLAUDE_CACHE_VERSION };
+      return { fingerprintKey: null, rejectedMetricRecords: 0, rows: [], version: CLAUDE_CACHE_VERSION };
+    }
+    const revived = reviveCollectorRowsResult(parsed.rows);
+    const rejectedMetricRecords = parseNonNegativeSafeInteger(parsed.rejectedMetricRecords);
+    if (!(rejectedMetricRecords.ok && revived.valid && revived.rejectedMetricRecords === 0)) {
+      return { fingerprintKey: null, rejectedMetricRecords: 0, rows: [], version: CLAUDE_CACHE_VERSION };
     }
     return {
       fingerprintKey: typeof parsed.fingerprintKey === 'string' ? parsed.fingerprintKey : null,
-      rows: reviveCollectorRows(parsed.rows),
+      rejectedMetricRecords: rejectedMetricRecords.value,
+      rows: revived.rows,
       version: CLAUDE_CACHE_VERSION,
     };
   } catch {
@@ -99,19 +79,30 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
   }
 };
 
-const writeClaudeCache = (storage: LocalHistoryStorage, fingerprintKey: string | null, rows: CollectorRow[]) => {
+const writeClaudeCache = (
+  storage: LocalHistoryStorage,
+  fingerprintKey: string | null,
+  rows: CollectorRow[],
+  rejectedMetricRecords: number,
+) => {
   if (!fingerprintKey) {
     return false;
   }
   const cachePath = claudeCachePath(storage);
-  fs.mkdirSync(path.dirname(cachePath), { recursive: true });
-  fs.writeFileSync(cachePath, `${JSON.stringify({ fingerprintKey, rows, version: CLAUDE_CACHE_VERSION })}\n`, 'utf8');
+  const value = { fingerprintKey, rejectedMetricRecords, rows, version: CLAUDE_CACHE_VERSION };
+  if (Buffer.byteLength(JSON.stringify(value), 'utf8') > COLLECTOR_CACHE_MAX_BYTES) {
+    return false;
+  }
+  writePrivateJson(cachePath, value);
   return true;
 };
 
 const fileFingerprint = (filePath: string): FileFingerprint | null => {
   try {
-    const stat = fs.statSync(filePath);
+    const stat = fs.lstatSync(filePath);
+    if (stat.isSymbolicLink() || !stat.isFile()) {
+      return null;
+    }
     return { mtimeMs: stat.mtimeMs, path: filePath, size: stat.size };
   } catch {
     return null;
@@ -164,22 +155,22 @@ const readClaudeHistoryFallbacks = (
     }
 
     const sessions = new Map<string, ClaudeHistoryFallback>();
-    for (const line of (yield* storage.readText(historyFile)).split('\n')) {
+    yield* storage.readLines(historyFile, (line) => {
       if (!line) {
-        continue;
+        return;
       }
-      const event = safeJSON<ClaudeHistoryEvent>(line);
+      const event = safeJSON(line);
       if (!event) {
-        continue;
+        return;
       }
       const sessionId = typeof event?.sessionId === 'string' ? event.sessionId : null;
       if (!sessionId || existingSessionIds.has(sessionId)) {
-        continue;
+        return;
       }
       const timestamp = Number(event.timestamp);
       const date = new Date(timestamp);
       if (!Number.isFinite(date.getTime())) {
-        continue;
+        return;
       }
 
       const display = typeof event.display === 'string' ? event.display : null;
@@ -210,7 +201,7 @@ const readClaudeHistoryFallbacks = (
         }
       }
       sessions.set(sessionId, current);
-    }
+    });
 
     return [...sessions.values()].filter((session) => session.turns > 0);
   });
@@ -228,10 +219,31 @@ export const collectClaudeRetentionWarnings: Effect.Effect<LocalHistoryWarning[]
     const settingsFile = paths.claude.settingsFile;
 
     const exists = yield* storage.exists(settingsFile).pipe(Effect.catchAll(() => Effect.succeed(false)));
-    const raw = exists ? yield* storage.readText(settingsFile).pipe(Effect.catchAll(() => Effect.succeed(''))) : '';
-    const configured = safeJSON<ClaudeSettings>(raw)?.cleanupPeriodDays;
+    // Settings are user-managed config, so read them through the
+    // symlink-following path: dotfiles managers commonly install
+    // ~/.claude/settings.json as a symlink, which the hardened history read
+    // rejects by design.
+    const raw = exists
+      ? yield* storage
+          .readConfigText(settingsFile, SMALL_HISTORY_JSON_MAX_BYTES)
+          .pipe(Effect.catchAll(() => Effect.succeed(null)))
+      : '{}';
+    const parsed = raw === null ? null : safeJSON(raw);
+    if (parsed === null) {
+      // The file exists but could not be read or parsed. Retention is unknown
+      // here — say so instead of wrongly claiming the lossy default applies.
+      return [
+        {
+          harness: 'claude',
+          operation: 'claude.settings',
+          path: settingsFile,
+          message: `Claude Code transcript retention could not be verified: ${settingsFile} exists but could not be read as JSON. If cleanupPeriodDays is unset there, Claude Code deletes transcripts after ${CLAUDE_DEFAULT_CLEANUP_DAYS} days and that usage can no longer be reported.`,
+        },
+      ];
+    }
+    const configured = parsed.cleanupPeriodDays;
     const hasExplicit = typeof configured === 'number' && Number.isFinite(configured);
-    const days = hasExplicit ? (configured as number) : CLAUDE_DEFAULT_CLEANUP_DAYS;
+    const days = hasExplicit ? configured : CLAUDE_DEFAULT_CLEANUP_DAYS;
 
     // Only warn when retention is at or below the lossy default; raising the value
     // (or disabling cleanup) means history is being kept, so stay quiet.
@@ -252,7 +264,12 @@ export const collectClaudeRetentionWarnings: Effect.Effect<LocalHistoryWarning[]
     ];
   });
 
-export const collectClaude = Effect.gen(function* () {
+export interface ClaudeCollectionResult {
+  rows: CollectorRow[];
+  warnings: LocalHistoryWarning[];
+}
+
+export const collectClaudeResult = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
   const paths = resolvePaths(storage);
   const dir = paths.claude.projectsDir;
@@ -272,15 +289,20 @@ export const collectClaude = Effect.gen(function* () {
     (value) => ({ enabled: value !== null, rows: value?.rows.length ?? 0 }),
   );
   if (cache?.fingerprintKey && cache.fingerprintKey === fingerprintKey) {
-    return yield* withPerfSpan('aiUsage.collect.claude.cache.hit', Effect.succeed(cache.rows), (rows) => ({
-      rows: rows.length,
-    }));
+    const warning = metricValidationWarning('claude', cache.rejectedMetricRecords);
+    return yield* withPerfSpan(
+      'aiUsage.collect.claude.cache.hit',
+      Effect.succeed({ rows: cache.rows, warnings: warning ? [warning] : [] }),
+      (result) => ({ rows: result.rows.length, warnings: result.warnings.length }),
+    );
   }
 
   let provider = 'Claude sub';
   const cfg = paths.claude.configFile;
   if (yield* storage.exists(cfg).pipe(Effect.catchAll(() => Effect.succeed(false)))) {
-    const json = safeJSON<ClaudeConfig>(yield* storage.readText(cfg).pipe(Effect.catchAll(() => Effect.succeed(''))));
+    const json = safeJSON(
+      yield* storage.readConfigText(cfg, SMALL_HISTORY_JSON_MAX_BYTES).pipe(Effect.catchAll(() => Effect.succeed(''))),
+    );
     if (json?.hasApiKey) {
       provider = 'Claude API';
     }
@@ -289,6 +311,7 @@ export const collectClaude = Effect.gen(function* () {
   const sessions: CollectedSession[] = [];
   const existingSessionIds = new Set(files.map((filePath) => path.basename(filePath, '.jsonl')));
   const seen = new Set<string>();
+  let rejectedMetricRecords = 0;
 
   yield* withPerfSpan(
     'aiUsage.collect.claude.parseFiles',
@@ -311,19 +334,19 @@ export const collectClaude = Effect.gen(function* () {
         const tokens = { in: 0, out: 0, cr: 0, cw: 0 };
         const byModel = new Map<string, number>();
 
-        for (const line of (yield* storage.readText(filePath)).split('\n')) {
+        yield* storage.readLines(filePath, (line) => {
           if (!line) {
-            continue;
+            return;
           }
           lines++;
-          const event = safeJSON<ClaudeTranscriptEvent>(line);
+          const event = safeJSON(line);
           if (!event) {
-            continue;
+            return;
           }
           if (isAgentFile && typeof event.sessionId === 'string' && event.sessionId !== sourceSessionId) {
             parentSourceSessionId = event.sessionId;
           }
-          if (event.timestamp) {
+          if (typeof event.timestamp === 'string' || typeof event.timestamp === 'number') {
             const date = new Date(event.timestamp);
             if (Number.isFinite(date.getTime())) {
               if (!start || date < start) {
@@ -337,12 +360,13 @@ export const collectClaude = Effect.gen(function* () {
           if (event.isSidechain) {
             sidechain = true;
           }
-          if (event.type === 'ai-title' && event.aiTitle) {
+          if (event.type === 'ai-title' && typeof event.aiTitle === 'string') {
             title = event.aiTitle;
           } else if (event.type === 'last-prompt' && event.lastPrompt) {
             lastPrompt = String(event.lastPrompt);
           } else if (event.type === 'user') {
-            const content = event.message?.content;
+            const message = isRecord(event.message) ? event.message : null;
+            const content = message?.content;
             let text: string | null = null;
             if (typeof content === 'string') {
               text = content;
@@ -359,37 +383,54 @@ export const collectClaude = Effect.gen(function* () {
               }
             }
           } else if (event.type === 'assistant') {
-            if (event.cwd) {
+            if (typeof event.cwd === 'string') {
               cwd = event.cwd;
             }
-            const usage = event.message?.usage;
-            if (Array.isArray(event.message?.content)) {
-              tools += event.message.content.filter((block) => blockType(block) === 'tool_use').length;
+            const message = isRecord(event.message) ? event.message : null;
+            const usage = isRecord(message?.usage) ? message.usage : null;
+            if (Array.isArray(message?.content)) {
+              tools += message.content.filter((block: unknown) => blockType(block) === 'tool_use').length;
             }
             if (!usage) {
-              continue;
+              return;
             }
-            const id = event.message?.id;
+            const input = parseOptionalNonNegativeSafeInteger(usage.input_tokens);
+            const output = parseOptionalNonNegativeSafeInteger(usage.output_tokens);
+            const cacheRead = parseOptionalNonNegativeSafeInteger(usage.cache_read_input_tokens);
+            const cacheWrite = parseOptionalNonNegativeSafeInteger(usage.cache_creation_input_tokens);
+            if (!(input.ok && output.ok && cacheRead.ok && cacheWrite.ok)) {
+              rejectedMetricRecords++;
+              return;
+            }
+            const id = typeof message?.id === 'string' ? message.id : undefined;
             const key = `${id}:${event.requestId}`;
             if (id && seen.has(key)) {
-              continue;
+              return;
             }
             if (id) {
               seen.add(key);
             }
-            calls++;
-            const input = usage.input_tokens || 0;
-            const output = usage.output_tokens || 0;
-            const cacheRead = usage.cache_read_input_tokens || 0;
-            const cacheWrite = usage.cache_creation_input_tokens || 0;
-            tokens.in += input;
-            tokens.out += output;
-            tokens.cr += cacheRead;
-            tokens.cw += cacheWrite;
-            const model = event.message?.model || 'unknown';
-            byModel.set(model, (byModel.get(model) || 0) + input + output + cacheRead + cacheWrite);
+            const nextCalls = addNonNegativeSafeIntegers(calls, 1);
+            const nextInput = addNonNegativeSafeIntegers(tokens.in, input.value);
+            const nextOutput = addNonNegativeSafeIntegers(tokens.out, output.value);
+            const nextCacheRead = addNonNegativeSafeIntegers(tokens.cr, cacheRead.value);
+            const nextCacheWrite = addNonNegativeSafeIntegers(tokens.cw, cacheWrite.value);
+            if (!(nextCalls.ok && nextInput.ok && nextOutput.ok && nextCacheRead.ok && nextCacheWrite.ok)) {
+              rejectedMetricRecords++;
+              return;
+            }
+            calls = nextCalls.value;
+            tokens.in = nextInput.value;
+            tokens.out = nextOutput.value;
+            tokens.cr = nextCacheRead.value;
+            tokens.cw = nextCacheWrite.value;
+            const model = typeof message?.model === 'string' ? message.model : 'unknown';
+            byModel.set(
+              model,
+              (byModel.get(model) || 0) + input.value + output.value + cacheRead.value + cacheWrite.value,
+            );
           }
-        }
+        });
 
         if (!start && tokenTotal(tokens) === 0) {
           continue;
@@ -466,8 +507,11 @@ export const collectClaude = Effect.gen(function* () {
   const rows = sessions.map(sessionToUsageRow);
   yield* withPerfSpan(
     'aiUsage.collect.claude.cache.write',
-    Effect.sync(() => writeClaudeCache(storage, fingerprintKey, rows)),
+    Effect.sync(() => writeClaudeCache(storage, fingerprintKey, rows, rejectedMetricRecords)),
     (wrote) => ({ wrote }),
   );
-  return rows;
+  const warning = metricValidationWarning('claude', rejectedMetricRecords);
+  return { rows, warnings: warning ? [warning] : [] };
 });
+
+export const collectClaude = collectClaudeResult.pipe(Effect.map((result) => result.rows));

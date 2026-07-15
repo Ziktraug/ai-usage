@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
-import { createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
 import type { UsageSnapshot } from '@ai-usage/report-core/snapshot';
+import { serializeUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import {
   collectProjectedLocalReportRowsWithWarnings,
   createLocalReportPayload,
@@ -16,6 +17,7 @@ import {
 } from '@ai-usage/report-data';
 import { Console, Effect, Layer } from 'effect';
 import { type Args, helpText, parseCommand } from './cli';
+import { importCursorUsageExportFile } from './cursor-import-file';
 import { type AppError, CliArgumentError, formatAppError } from './errors';
 import { renderQuota } from './quota';
 import { setColor } from './render/colors';
@@ -24,8 +26,6 @@ import { renderUsagePayloadForCli, renderUsageReportForCli, renderWarnings, rend
 import { CliRuntime, CliRuntimeLive } from './runtime';
 import { runSetupServer } from './setup';
 import { readUsageSnapshotFile } from './snapshot-file';
-
-const CURSOR_CSV_LINE_SEPARATOR = /\r?\n/;
 
 export const app = Effect.gen(function* () {
   const runtime = yield* CliRuntime;
@@ -62,7 +62,7 @@ export const app = Effect.gen(function* () {
       includeCursor: command.args.cursor,
       includeFacets: true,
     });
-    yield* writeFile(command.args.out, `${JSON.stringify(snapshot, null, 2)}\n`);
+    yield* writePortableFile(command.args.out, serializeUsageSnapshot(snapshot));
     yield* writeWarningsStderr(snapshot.warnings);
     yield* Console.log(`Wrote ${command.args.out}`);
     return;
@@ -81,11 +81,10 @@ export const app = Effect.gen(function* () {
       includeCursor: command.args.cursor,
       options: command.args,
     });
-    const output = yield* Effect.promise(() =>
-      command.args.format === 'html' || command.args.format === 'payload'
-        ? renderUsagePayloadForCli(merged.payload, command.args)
-        : renderUsageReportForCli(merged.rows, command.args, undefined, merged.payload.warnings),
-    );
+    const output =
+      command.args.format === 'payload'
+        ? renderUsagePayloadForCli(merged.payload)
+        : renderUsageReportForCli(merged.rows, command.args, undefined, merged.payload.warnings);
     yield* writeFormatWarningsStderr(command.args, merged.payload.warnings);
     yield* writeStdout(`${output}\n`);
     return;
@@ -129,19 +128,19 @@ export const app = Effect.gen(function* () {
     keepSource: true,
   };
   const output =
-    command.args.format === 'html' || command.args.format === 'payload'
+    command.args.format === 'payload'
       ? yield* Effect.gen(function* () {
           const payload = yield* createLocalReportPayload({
             ...reportRequest,
             options: command.args,
             includeFacets: true,
           });
-          return yield* Effect.promise(() => renderUsagePayloadForCli(payload, command.args));
+          return renderUsagePayloadForCli(payload);
         })
       : yield* Effect.gen(function* () {
           const { rows, warnings } = yield* collectProjectedLocalReportRowsWithWarnings(reportRequest);
           yield* writeFormatWarningsStderr(command.args, warnings);
-          return yield* Effect.promise(() => renderUsageReportForCli(rows, command.args, undefined, warnings));
+          return renderUsageReportForCli(rows, command.args, undefined, warnings);
         });
   yield* writeStdout(`${output}\n`);
 });
@@ -190,48 +189,28 @@ const fileError = (operation: string, filePath: string) => (cause: unknown) =>
     message: `${operation} ${filePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
   });
 
-const writeFile = (filePath: string, text: string) =>
+const writePortableFile = (filePath: string, text: string) =>
   Effect.try({
     try: () => {
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      fs.writeFileSync(filePath, text, 'utf8');
+      const directory = path.dirname(filePath);
+      fs.mkdirSync(directory, { recursive: true });
+      const temporaryPath = path.join(directory, `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
+      try {
+        fs.writeFileSync(temporaryPath, text, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+        fs.renameSync(temporaryPath, filePath);
+        if (process.platform !== 'win32') {
+          fs.chmodSync(filePath, 0o600);
+        }
+      } finally {
+        fs.rmSync(temporaryPath, { force: true });
+      }
     },
     catch: fileError('writeFile', filePath),
   });
 
-const CURSOR_EXPORT_DIR = path.join(process.cwd(), '.ai-usage', 'cursor-exports');
-
-const safeImportName = (filePath: string) => path.basename(filePath).replace(/[^a-zA-Z0-9._-]+/g, '-');
-
-const cursorCsvLooksValid = (text: string) => {
-  const header = text.split(CURSOR_CSV_LINE_SEPARATOR, 1)[0] ?? '';
-  return ['Date', 'User', 'Kind', 'Model', 'Cost'].every((column) => header.includes(column));
-};
-
 const importCursorUsageExport = (filePath: string) =>
   Effect.try({
-    try: () => {
-      const sourcePath = path.resolve(filePath);
-      const content = fs.readFileSync(sourcePath);
-      if (!cursorCsvLooksValid(content.toString('utf8', 0, Math.min(content.length, 4096)))) {
-        throw new Error('not a Cursor usage-events CSV export');
-      }
-      fs.mkdirSync(CURSOR_EXPORT_DIR, { recursive: true });
-      const hash = createHash('sha256').update(content).digest('hex');
-      for (const entry of fs.readdirSync(CURSOR_EXPORT_DIR, { withFileTypes: true })) {
-        if (!(entry.isFile() && entry.name.toLowerCase().endsWith('.csv'))) {
-          continue;
-        }
-        const existingPath = path.join(CURSOR_EXPORT_DIR, entry.name);
-        const existingHash = createHash('sha256').update(fs.readFileSync(existingPath)).digest('hex');
-        if (existingHash === hash) {
-          return { path: existingPath, alreadyImported: true };
-        }
-      }
-      const destination = path.join(CURSOR_EXPORT_DIR, `${hash.slice(0, 12)}-${safeImportName(sourcePath)}`);
-      fs.writeFileSync(destination, content);
-      return { path: destination, alreadyImported: false };
-    },
+    try: () => importCursorUsageExportFile(filePath),
     catch: fileError('cursorImport', filePath),
   });
 

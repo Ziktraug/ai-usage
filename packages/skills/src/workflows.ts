@@ -1,4 +1,5 @@
 import { lstat, mkdir } from 'node:fs/promises';
+import path from 'node:path';
 import { parseSkillConfigInput } from './config';
 import type {
   CreateSkillTargetDirectoryInput,
@@ -20,6 +21,7 @@ import type {
   WriteSkillManagementConfigInput,
 } from './contracts';
 import { isMissingPathError } from './diagnostics';
+import { projectionLockIdentityForTarget, withSkillProjectionLock } from './projection-lock';
 import {
   applyProjectionAction,
   buildDefaultSkillTargets,
@@ -201,6 +203,7 @@ const planReconcileActions = (
 const applyPlannedActions = async (
   snapshot: SkillManagementSnapshot,
   predicate: (skill: SourceSkill) => boolean,
+  privateStatePath: string,
 ): Promise<SkillReconcileResult> => {
   const actions = planReconcileActions(snapshot, predicate);
   for (const action of actions) {
@@ -209,7 +212,7 @@ const applyPlannedActions = async (
       action.type === 'repair-symlink' ||
       action.type === 'unlink-managed-symlink'
     ) {
-      await applyProjectionAction(action);
+      await applyProjectionAction(action, { privateStatePath });
     }
   }
   return { actions, snapshot };
@@ -218,14 +221,18 @@ const applyPlannedActions = async (
 export const reconcileSkill = async (input: ReconcileSkillInput): Promise<SkillReconcileResult> => {
   const skillName = parseSkillName(input.skillName);
   const snapshot = await loadSkillManagementSnapshot(input);
-  return applyPlannedActions(snapshot, (skill) => skill.name === skillName);
+  return applyPlannedActions(
+    snapshot,
+    (skill) => skill.name === skillName,
+    path.join(input.homePath, '.config', 'ai-usage'),
+  );
 };
 
 export const reconcileAllActiveSkills = async (
   input: LoadSkillManagementSnapshotInput,
 ): Promise<SkillReconcileResult> => {
   const snapshot = await loadSkillManagementSnapshot(input);
-  return applyPlannedActions(snapshot, activeSkillPredicate);
+  return applyPlannedActions(snapshot, activeSkillPredicate, path.join(input.homePath, '.config', 'ai-usage'));
 };
 
 export const previewReconcileAllActiveSkills = async (
@@ -236,6 +243,59 @@ export const previewReconcileAllActiveSkills = async (
 };
 
 export const createSkillTargetDirectory = async (input: CreateSkillTargetDirectoryInput): Promise<void> => {
-  const targetPath = parseRequiredNonEmptyString(input.path, 'target path');
-  await mkdir(targetPath, { recursive: true });
+  const targetPath = path.resolve(parseRequiredNonEmptyString(input.path, 'target path'));
+  let existingParent = targetPath;
+  while (true) {
+    try {
+      const parentStat = await lstat(existingParent);
+      if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) {
+        throw new Error(`Skill target ancestor must be a non-symlink directory: ${existingParent}`);
+      }
+      break;
+    } catch (error) {
+      if (!isMissingPathError(error)) {
+        throw error;
+      }
+      const parent = path.dirname(existingParent);
+      if (parent === existingParent) {
+        throw new Error('Skill target has no observable directory ancestor');
+      }
+      existingParent = parent;
+    }
+  }
+
+  const observedParentStat = await lstat(existingParent);
+  const observedParentIdentity = { dev: String(observedParentStat.dev), ino: String(observedParentStat.ino) };
+  const lockIdentity = await projectionLockIdentityForTarget(targetPath);
+  await withSkillProjectionLock(input.privateStatePath, lockIdentity, async () => {
+    const revalidatedLockIdentity = await projectionLockIdentityForTarget(targetPath);
+    if (revalidatedLockIdentity !== lockIdentity) {
+      throw new Error('Skill target ancestor identity changed before directory creation');
+    }
+    const currentParentStat = await lstat(existingParent);
+    if (
+      currentParentStat.isSymbolicLink() ||
+      !currentParentStat.isDirectory() ||
+      String(currentParentStat.dev) !== observedParentIdentity.dev ||
+      String(currentParentStat.ino) !== observedParentIdentity.ino
+    ) {
+      throw new Error('Skill target ancestor identity changed before directory creation');
+    }
+    let current = existingParent;
+    const missingComponents = path.relative(existingParent, targetPath).split(path.sep).filter(Boolean);
+    for (const component of missingComponents) {
+      current = path.join(current, component);
+      try {
+        await mkdir(current);
+      } catch (error) {
+        if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST')) {
+          throw error;
+        }
+      }
+      const currentStat = await lstat(current);
+      if (currentStat.isSymbolicLink() || !currentStat.isDirectory()) {
+        throw new Error(`Skill target component must be a non-symlink directory: ${current}`);
+      }
+    }
+  });
 };

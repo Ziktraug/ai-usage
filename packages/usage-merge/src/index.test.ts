@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
+import { createUsageMergeBundle, parseUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
@@ -79,9 +79,12 @@ describe('usage file merge public boundary', () => {
       const exported = await Effect.runPromise(service.exportManualMergeBundle());
 
       expect(exported.filename).toBe('ai-usage-local-machine-2026-06-19T12-30-00-000Z.json');
-      expect(exported.bundle.machine).toEqual(localMachine);
-      expect(exported.bundle.rows).toHaveLength(1);
-      expect(exported.bundle.rows[0]?.source.machineId).toBe(localMachine.id);
+      const bundle = parseUsageMergeBundle(exported.text);
+      expect(exported.bytes).toBe(new TextEncoder().encode(exported.text).byteLength);
+      expect(exported.rows).toBe(1);
+      expect(bundle.machine).toEqual(localMachine);
+      expect(bundle.rows).toHaveLength(1);
+      expect(bundle.rows[0]?.source.machineId).toBe(localMachine.id);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -113,6 +116,49 @@ describe('usage file merge public boundary', () => {
       expect(repeated.result.unchanged).toBe(1);
     } finally {
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('previews without mutation and binds confirmation to raw bytes and store state', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'usage-merge-preview-'));
+    try {
+      const dbPath = path.join(home, 'usage.sqlite');
+      const service = createUsageFileMergeService({ dbPath, localMachine, now: () => generatedAt });
+      const bundle = createUsageMergeBundle({
+        machine: peerMachine,
+        rows: [makeSourcedRow({ project: 'peer', sessionId: 'peer-preview', sourcePath: '/peer/project' })],
+        generatedAt,
+      });
+      const text = `${JSON.stringify(bundle)}\n`;
+      const bytes = new TextEncoder().encode(text);
+      const preview = await Effect.runPromise(service.previewManualMergeBundle({ bytes, text }));
+      await expect(Bun.file(dbPath).exists()).resolves.toBe(false);
+      expect(preview.inserted).toBe(1);
+      expect(preview.digest).toHaveLength(64);
+
+      await expect(
+        Effect.runPromise(
+          service.confirmManualMergeBundle({
+            bytes: new TextEncoder().encode(`${text} `),
+            text,
+            expectedDigest: preview.digest,
+            expectedStoreGeneration: preview.storeGeneration,
+            expectedStoreStateToken: preview.storeStateToken,
+          }),
+        ),
+      ).rejects.toThrow('changed after preview');
+      const confirmed = await Effect.runPromise(
+        service.confirmManualMergeBundle({
+          bytes,
+          text,
+          expectedDigest: preview.digest,
+          expectedStoreGeneration: preview.storeGeneration,
+          expectedStoreStateToken: preview.storeStateToken,
+        }),
+      );
+      expect(confirmed.result.inserted).toBe(1);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
     }
   });
 

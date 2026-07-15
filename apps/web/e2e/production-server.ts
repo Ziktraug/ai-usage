@@ -90,6 +90,7 @@ try {
       NITRO_HOST: '127.0.0.1',
       NITRO_PORT: '4175',
       PORT: '4175',
+      TZ: 'Europe/Paris',
     },
     stderr: 'inherit',
     stdout: 'inherit',

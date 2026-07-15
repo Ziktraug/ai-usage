@@ -13,10 +13,12 @@ import type { UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import {
+  confirmPeerMergeBundle,
   exportLocalMergeBundle,
   type ImportResult,
   importLocalRows,
   importPeerMergeBundle,
+  previewPeerMergeBundle,
   queryReportRows,
   queryUsageStoreGeneration,
   UsageStoreError,
@@ -58,6 +60,57 @@ const makeBundle = (machine: UsageMachine, rows: UsageRowWithOptionalSource[]): 
   });
 
 describe('usage-store public boundary', () => {
+  test('previews an absent store without creating it and confirms against the same state token', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-preview-'));
+    const dbPath = usageStorePath(home);
+    const bundle = createUsageMergeBundle({
+      machine: machineB,
+      rows: [makeRow({ sourceSessionId: 'peer-preview' })],
+      generatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    });
+    const preview = await Effect.runPromise(previewPeerMergeBundle({ bundle, dbPath, localMachineId: machineA.id }));
+    await expect(Bun.file(dbPath).exists()).resolves.toBe(false);
+    expect(preview.inserted).toBe(1);
+    expect(preview.generation).toBe(0);
+
+    const confirmed = await Effect.runPromise(
+      confirmPeerMergeBundle({
+        bundle,
+        dbPath,
+        localMachineId: machineA.id,
+        expectedGeneration: preview.generation,
+        expectedStoreStateToken: preview.storeStateToken,
+      }),
+    );
+    expect(confirmed.inserted).toBe(1);
+    expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(1);
+  });
+
+  test('keeps portable authority opaque, blocks local collisions, and permits a genuine local upgrade', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-authority-'));
+    const dbPath = usageStorePath(home);
+    const sourceRow = makeRow({ sourceSessionId: 'authority-row' });
+    const portableBundle = createUsageMergeBundle({ machine: machineA, rows: [sourceRow] });
+
+    expect(
+      (await Effect.runPromise(importPeerMergeBundle({ bundle: portableBundle, dbPath, localMachineId: machineB.id })))
+        .inserted,
+    ).toBe(1);
+    const opaque = await Effect.runPromise(queryReportRows({ dbPath }));
+    expect(opaque.sourceAuthorities).toEqual(['portable-opaque']);
+    expect((await Effect.runPromise(exportLocalMergeBundle({ dbPath, machine: machineA }))).rows).toHaveLength(0);
+
+    const upgraded = await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [sourceRow] }));
+    expect(upgraded.updated).toBe(1);
+    const local = await Effect.runPromise(queryReportRows({ dbPath }));
+    expect(local.sourceAuthorities).toEqual(['local-observed']);
+    expect((await Effect.runPromise(exportLocalMergeBundle({ dbPath, machine: machineA }))).rows).toHaveLength(1);
+
+    await expect(
+      Effect.runPromise(previewPeerMergeBundle({ bundle: portableBundle, dbPath, localMachineId: machineB.id })),
+    ).rejects.toThrow('collides with locally observed usage');
+  });
+
   test('keeps import results count based for UI state', () => {
     const result: ImportResult = {
       deleted: 0,
@@ -121,7 +174,7 @@ describe('usage-store public boundary', () => {
     expect(queried.rows[0]?.source.machineId).toBe('machine-a');
   });
 
-  test('advances one atomic source generation per non-empty import', async () => {
+  test('advances generation only when the active report projection changes', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-generation-'));
     const dbPath = usageStorePath(home);
 
@@ -132,6 +185,14 @@ describe('usage-store public boundary', () => {
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(1);
     await Effect.runPromise(
       importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'generation-row' })] }),
+    );
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(1);
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        machine: machineA,
+        rows: [makeRow({ sourceSessionId: 'generation-row', tokOut: 21 })],
+      }),
     );
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(2);
     await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [] }));

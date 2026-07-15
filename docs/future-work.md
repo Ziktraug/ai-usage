@@ -4,9 +4,8 @@ Global backlog for known follow-ups that should survive individual refactor logs
 
 ## Report Data Architecture
 
-- Preserve the delivered compatibility split: the served app reads exact immutable revisions through focused Overview, Breakdown, bounded-support, Session page, campaign, and neighbor queries, while CLI and self-contained static HTML retain the complete `UsageReportPayload` path.
+- Preserve the delivered compatibility split: the served app reads exact immutable revisions through focused Overview, Breakdown, bounded-support, Session page, campaign, and neighbor queries, while compatible CLI consumers retain the complete `UsageReportPayload` path.
 - Continue deepening served report surfaces into bounded, destination-specific queries with canonical request fingerprints; do not make the full compatibility payload the live refresh protocol again.
-- Keep static HTML independent of a server, network request, or dynamic chunk. Any further bundle split must include a complete `file://` asset-inlining design.
 - Revisit the CLI quota adapter exception to `@ai-usage/local-collectors/codex-history` if quota output becomes part of shared reporting.
 
 ## Report UI Models
@@ -49,10 +48,9 @@ heterogeneous, so carry data limitations per-metric, never as a single global
 (ignores subscription cost, mixes pro/perso usage, has lossy data) — do not
 over-emphasize it or build ROI/break-even features on top of it.
 
-- "Wrapped"-style shareable report: a celebratory PNG/PDF recap of a period that
-  leans on the existing HTML-export rendering path. The app's thesis is "if I had
-  to pay API rates, how impossible would it be" — frame the recap around that, not
-  ROI optimization.
+- "Wrapped"-style shareable report: a celebratory PNG/PDF recap of a period.
+  The app's thesis is "if I had to pay API rates, how impossible would it be" —
+  frame the recap around that, not ROI optimization.
 - Filter-aware period-over-period comparison: deltas + sparklines derived from the
   same aggregation over `[t-Δ, t]` in `dashboard-model.ts`, computed against the
   *current* filter set. Must respect data hierarchy — surface a delta only where it
@@ -77,10 +75,9 @@ over-emphasize it or build ROI/break-even features on top of it.
   use. A saved view needs naming, overwrite/delete behavior, schema migration,
   and a clear distinction from a shareable URL before local persistence is
   justified.
-- Further split the root report bundle only alongside an HTML-export asset
-  graph that can rewrite and inline dynamic imports for `file://`; Plan 007
-  intentionally splits server-only Skills and `/sync` file-transfer components
-  and keeps `/` intact.
+- Further split the root report bundle only when HTTP route loading remains
+  well-covered; Plan 007 intentionally splits server-only Skills and `/sync`
+  file-transfer components and keeps `/` intact.
 
 ## Session Linking And Titles
 
