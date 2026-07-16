@@ -35,7 +35,7 @@
     "test:e2e": "playwright test",
     "test:e2e-production": "playwright test --config playwright.production.config.ts e2e/production-report.spec.ts",
     "preview": "vite preview --host 127.0.0.1",
-    "start": "node start.mjs",
+    "start": "bun start.mjs",
     "lint": "biome check .",
     "format": "biome format --write ."
   }

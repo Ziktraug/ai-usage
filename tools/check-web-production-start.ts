@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:net';
 import { networkInterfaces, tmpdir } from 'node:os';
@@ -12,10 +12,14 @@ const GRACEFUL_SHUTDOWN_DEADLINE_MS = 3000;
 const FORCE_EXIT_DEADLINE_MS = 2000;
 const LOG_DRAIN_DEADLINE_MS = 2000;
 const OVERALL_DEADLINE_MS = 30_000;
+const EVENT_LOOP_PROBE_BUDGET_MS = 1250;
+const REPRESENTATIVE_SESSION_COUNT = 64;
 const PROJECT_LOADER_ERROR_MARKER = 'Could not load scanned projects:';
 const PROJECT_LOADER_SUCCESS_MARKER = 'data-known-project-paths-status="ok"';
 const RUNNER_FAILURE_PATTERN =
   /Invalid ai-usage workspace root|Unable to discover the ai-usage workspace|ENOENT[^\n]*report-payload-runner|reportPayloadRunner failed/;
+const SOURCE_CONTROL_STARTED_MARKER = '[ai-usage] Source control started.';
+const SOURCE_CONTROL_STOPPED_MARKER = '[ai-usage] Source control stopped.';
 
 interface HttpResponse {
   body: string;
@@ -164,6 +168,35 @@ const requireNonLoopbackConnectionFailure = async (host: string, port: number): 
   throw new Error(`Production listener unexpectedly accepted a connection through ${host}:${port}.`);
 };
 
+const seedRepresentativeHistory = async (home: string): Promise<void> => {
+  const sessionsDirectory = path.join(home, '.codex', 'sessions', '2026', '01', '01');
+  await mkdir(sessionsDirectory, { recursive: true });
+  await Promise.all(
+    Array.from({ length: REPRESENTATIVE_SESSION_COUNT }, (_, index) => {
+      const sessionId = `production-smoke-${index}`;
+      const content = `${JSON.stringify({
+        payload: { cwd: `/work/project-${index % 8}`, id: sessionId },
+        timestamp: '2026-01-01T00:00:00.000Z',
+        type: 'session_meta',
+      })}\n${JSON.stringify({
+        payload: {
+          info: {
+            total_token_usage: {
+              cached_input_tokens: index,
+              input_tokens: index + 10,
+              output_tokens: index + 20,
+              total_tokens: index * 2 + 30,
+            },
+          },
+          type: 'token_count',
+        },
+        timestamp: '2026-01-01T00:01:00.000Z',
+      })}\n`;
+      return writeFile(path.join(sessionsDirectory, `${sessionId}.jsonl`), content);
+    }),
+  );
+};
+
 export interface OwnedProcessDeadlines {
   forceExitMs: number;
   gracefulShutdownMs: number;
@@ -245,6 +278,7 @@ const rootDir = path.resolve(import.meta.dir, '..');
 const runProductionSmoke = async (): Promise<void> => {
   const temporaryHome = await mkdtemp(path.join(tmpdir(), 'ai-usage-web-smoke-'));
   try {
+    await seedRepresentativeHistory(temporaryHome);
     const port = await reserveFreePort();
     const inheritedEnv = Object.fromEntries(
       Object.entries(process.env).filter(([name]) => name !== 'AI_USAGE_ROOT_DIR'),
@@ -252,6 +286,7 @@ const runProductionSmoke = async (): Promise<void> => {
     const childEnv: Record<string, string> = {
       ...inheritedEnv,
       HOME: temporaryHome,
+      AI_USAGE_PRODUCTION_SMOKE: '1',
       HOST: '0.0.0.0',
       NITRO_HOST: '0.0.0.0',
       NITRO_PORT: String(port),
@@ -261,7 +296,7 @@ const runProductionSmoke = async (): Promise<void> => {
     try {
       processLogs = await withOwnedProcess(
         {
-          command: ['node', 'start.mjs'],
+          command: ['bun', 'start.mjs'],
           cwd: path.join(rootDir, 'apps/web'),
           env: childEnv,
           port,
@@ -272,6 +307,14 @@ const runProductionSmoke = async (): Promise<void> => {
             OVERALL_DEADLINE_MS,
             (async () => {
               await waitForApplicationPage(port, child, '/', 'Usage report');
+              const probeStartedAt = performance.now();
+              const probe = await sendHttpRequest(port, { path: '/' });
+              const probeDurationMs = performance.now() - probeStartedAt;
+              if (probe.status !== 200 || probeDurationMs > EVENT_LOOP_PROBE_BUDGET_MS) {
+                throw new Error(
+                  `Production event-loop probe took ${probeDurationMs.toFixed(0)}ms with status ${probe.status}; budget is ${EVENT_LOOP_PROBE_BUDGET_MS}ms.`,
+                );
+              }
               const skills = await waitForApplicationPage(port, child, '/skills', PROJECT_LOADER_SUCCESS_MARKER);
               if (skills.body.includes(PROJECT_LOADER_ERROR_MARKER)) {
                 throw new Error('/skills rendered the known project-loader error banner.');
@@ -314,6 +357,12 @@ const runProductionSmoke = async (): Promise<void> => {
             })(),
           ),
       );
+      if (!processLogs.stderr.includes(SOURCE_CONTROL_STARTED_MARKER)) {
+        throw new Error('Production source control did not finish startup before shutdown.');
+      }
+      if (!processLogs.stderr.includes(SOURCE_CONTROL_STOPPED_MARKER)) {
+        throw new Error('Production source control did not run its scoped close hook.');
+      }
     } catch (error) {
       const logs = `${processLogs?.stdout ?? ''}${processLogs?.stderr ?? ''}`.trim();
       throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`);

@@ -108,7 +108,10 @@ export default defineConfig({
       },
     }),
     solid({ ssr: true }),
-    nitro({ preset: 'node-server' }),
+    nitro({
+      plugins: ['./server/plugins/source-control.ts'],
+      preset: 'bun',
+    }),
     solidDepScanPlugin(),
   ],
   server: {
