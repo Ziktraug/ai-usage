@@ -33,7 +33,8 @@ import {
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
 import { parseReportRevision, type ReportRevision } from '../web-report-payload';
-import { runReportPayloadArtifactProcess, withReportRevisionDirectoryForServer } from './report-payload.server';
+import { runBoundedArtifactProcess } from './bounded-artifact-process.server';
+import { withReportRevisionDirectoryForServer } from './report-payload.server';
 import { resolveReportRuntimePaths } from './report-runtime-paths.server';
 
 export type RevisionQueryKind = FocusedReportQueryKind | 'campaign-children' | 'neighbors' | 'sessions';
@@ -171,7 +172,7 @@ export async function runRevisionQueryForServer(
   const request = revisionQuerySpecs[kind].parse(input);
   try {
     const lease = await withReportRevisionDirectoryForServer(request.revision, async (revisionDirectory) => {
-      const result = await runReportPayloadArtifactProcess({
+      const result = await runBoundedArtifactProcess({
         args: [revisionQueryRunner, revisionDirectory, kind, request.serializedRequest],
         command: 'bun',
         cwd: rootDir,

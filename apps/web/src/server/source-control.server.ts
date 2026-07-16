@@ -141,5 +141,6 @@ export const requestSourceControlPublicationForServer = async (): Promise<boolea
   if (!runtime) {
     return false;
   }
-  return await runtime.requestPublication();
+  await runtime.requestPublication();
+  return true;
 };

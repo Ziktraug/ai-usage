@@ -614,12 +614,12 @@ export const Dashboard = (props: {
     }
     return { kind: 'sessions', query: queryScope, sessions: activeSessionQueryScope(), timeline };
   });
-  const refreshServedDestination = async (refreshRevision = false): Promise<void> => {
+  const refreshServedDestination = async (): Promise<void> => {
     const destination = servedDestination();
     if (!(destination && servedReportSession)) {
       return;
     }
-    const outcome = await servedReportSession.refresh(destination, { refreshRevision });
+    const outcome = await servedReportSession.refresh(destination);
     if (outcome.status === 'superseded') {
       return;
     }
@@ -681,7 +681,7 @@ export const Dashboard = (props: {
       return;
     }
     if (focusedStore && focusedStore.revision() !== revision) {
-      refreshServedDestination(true).catch((error: unknown) => {
+      refreshServedDestination().catch((error: unknown) => {
         setOperationError(error instanceof Error ? error.message : 'Published report data could not be loaded');
       });
     }
@@ -892,7 +892,6 @@ export const Dashboard = (props: {
   const saveProjectGroupConfigs = async (projectGroups: ProjectGroupConfig[]) => {
     const { saveProjectGroups } = await import('./server/report-payload');
     await saveProjectGroups({ data: { projectGroups } });
-    await refreshServedDestination(true);
   };
   const [cleanupWarningGroupId, setCleanupWarningGroupId] = createSignal<string>();
   const cleanupProjectWarningForServer = async (

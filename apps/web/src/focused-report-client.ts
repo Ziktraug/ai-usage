@@ -26,7 +26,6 @@ export interface FocusedReportSource {
   getManifest: () => Promise<WebReportRevisionManifestResult>;
   getOverview: (request: FocusedOverviewRequest) => Promise<SessionQueryServerResult<FocusedOverviewResult>>;
   getSupport: (request: FocusedRevisionRequest) => Promise<SessionQueryServerResult<FocusedSupportResult>>;
-  refreshRevision?: () => Promise<void>;
 }
 
 interface FocusedRequestByKind {
@@ -139,11 +138,8 @@ export interface FocusedReportBootstrapDescriptor {
 
 export const fetchFocusedReportBootstrapDescriptor = async (
   source: FocusedReportSource,
-  options: { refresh?: boolean; retryExpired?: boolean } = {},
+  options: { retryExpired?: boolean } = {},
 ): Promise<FocusedReportBootstrapDescriptor> => {
-  if (options.refresh) {
-    await source.refreshRevision?.();
-  }
   const manifest = validatedManifest(await source.getManifest());
   try {
     const bootstrap = await querySource(source, 'support', { revision: manifest.revision });
@@ -164,9 +160,6 @@ export const fetchFocusedReportBootstrap = async (
   source: FocusedReportSource,
   retryExpired = true,
 ): Promise<FocusedSupportResult> => (await fetchFocusedReportBootstrapDescriptor(source, { retryExpired })).bootstrap;
-
-export const refreshFocusedReportBootstrap = async (source: FocusedReportSource): Promise<FocusedSupportResult> =>
-  (await fetchFocusedReportBootstrapDescriptor(source, { refresh: true })).bootstrap;
 
 export const fetchFocusedOverview = (source: FocusedReportSource, request: FocusedOverviewRequest) =>
   querySource(source, 'overview', request);
@@ -404,11 +397,6 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
   };
 };
 
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => {
-    window.setTimeout(resolve, ms);
-  });
-
 export const createServedFocusedReportSource = (): FocusedReportSource => {
   const serverApi = () => import('./server/report-payload');
   return {
@@ -429,21 +417,6 @@ export const createServedFocusedReportSource = (): FocusedReportSource => {
       return (await getFocusedReportSupport({
         data: request,
       })) as unknown as SessionQueryServerResult<FocusedSupportResult>;
-    },
-    refreshRevision: async () => {
-      const { getReportPayloadRefreshState, startReportPayloadRefresh } = await serverApi();
-      const started = await startReportPayloadRefresh();
-      while (true) {
-        const state = await getReportPayloadRefreshState();
-        if (state.runId < started.runId || state.status === 'running') {
-          await sleep(300);
-          continue;
-        }
-        if (state.status === 'failed') {
-          throw new Error(state.error);
-        }
-        return;
-      }
     },
   };
 };
