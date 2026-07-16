@@ -41,6 +41,7 @@ import {
 } from '@ai-usage/report-core/project-group';
 import type { ProviderQuotaHistoryPoint, ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
 import { type SessionNeighborResult, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+import { createQuery } from '@tanstack/solid-query';
 import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import {
@@ -115,7 +116,7 @@ import type { TimelineDimension } from './overview-model';
 import { ProjectGroupEditor } from './project-group-editor';
 import { ProjectSummary } from './project-summary';
 import { createServedProviderQuotaSource, type ProviderQuotaSource } from './provider-quota-client';
-import { type ProviderQuotaHistoryRange, providerQuotaHistoryRequest } from './provider-quota-history-model';
+import type { ProviderQuotaHistoryRange } from './provider-quota-history-model';
 import { ProviderQuotaHistoryPanel } from './provider-quota-history-panel';
 import { createProviderStatusClock } from './provider-status-clock';
 import { buildProviderStatusViews } from './provider-status-model';
@@ -139,6 +140,7 @@ import { type DashboardRow, enrichReportRow, fmtDate, fmtDateOnly, fmtNum, rowKe
 import { useSourceControl } from './source-control-context';
 import { applyTableUpdate } from './table-utils';
 import { TimeRangeControl } from './time-range-control';
+import { loadProviderQuotaHistory, webQueryKeys } from './web-query-options';
 import { toWebReportPayload, type WebReportPayload, type WebReportPayloadWithoutRows } from './web-report-payload';
 
 const FORM_CONTROL_TAG_PATTERN = /^(INPUT|SELECT|TEXTAREA)$/;
@@ -312,37 +314,25 @@ export const Dashboard = (props: {
   const quotaFixture =
     props.quotaHistoryFixture ?? (import.meta.env?.VITE_AI_USAGE_E2E === '1' ? e2eQuotaHistoryFixture : undefined);
   const quotaSource = props.quotaSource ?? (props.servedBootstrap ? createServedProviderQuotaSource() : undefined);
-  const [quotaHistory, setQuotaHistory] = createSignal<ProviderQuotaHistoryResult | null>(quotaFixture ?? null);
-  const [quotaHistoryError, setQuotaHistoryError] = createSignal<string | null>(null);
-  const [quotaHistoryLoading, setQuotaHistoryLoading] = createSignal(false);
   const [quotaHistoryOpen, setQuotaHistoryOpen] = createSignal(false);
   const [quotaHistoryRange, setQuotaHistoryRange] = createSignal<ProviderQuotaHistoryRange>('24h');
-  let quotaRequestGeneration = 0;
-  const loadQuotaRange = async (range: ProviderQuotaHistoryRange): Promise<void> => {
+  const quotaHistoryQuery = createQuery(() => ({
+    enabled: quotaHistoryOpen() && quotaSource !== undefined && quotaFixture === undefined,
+    queryFn: async () => {
+      if (!quotaSource) {
+        throw new Error('Quota history is unavailable.');
+      }
+      return await loadProviderQuotaHistory(quotaSource, quotaHistoryRange());
+    },
+    queryKey: webQueryKeys.providerQuotaHistory(quotaHistoryRange()),
+  }));
+  const quotaHistory = (): ProviderQuotaHistoryResult | null => quotaFixture ?? quotaHistoryQuery.data ?? null;
+  const quotaHistoryError = (): string | null =>
+    quotaHistoryQuery.error instanceof Error ? quotaHistoryQuery.error.message : null;
+  const quotaHistoryLoading = (): boolean => quotaHistoryQuery.isFetching;
+  const loadQuotaRange = (range: ProviderQuotaHistoryRange): Promise<void> => {
     setQuotaHistoryRange(range);
-    if (!(quotaSource && !quotaFixture)) {
-      return;
-    }
-    const requestGeneration = ++quotaRequestGeneration;
-    setQuotaHistoryLoading(true);
-    try {
-      const result = await quotaSource.history(
-        providerQuotaHistoryRequest(range, new Date(), { providerKey: 'codex' }),
-      );
-      if (requestGeneration !== quotaRequestGeneration) {
-        return;
-      }
-      setQuotaHistory(result);
-      setQuotaHistoryError(null);
-    } catch (error) {
-      if (requestGeneration === quotaRequestGeneration) {
-        setQuotaHistoryError(error instanceof Error ? error.message : 'Quota history query failed');
-      }
-    } finally {
-      if (requestGeneration === quotaRequestGeneration) {
-        setQuotaHistoryLoading(false);
-      }
-    }
+    return Promise.resolve();
   };
   const servedSessionQueries = Boolean(focusedStore);
   const [servedSessionState, setServedSessionState] = createSignal<SessionQueryState>();
@@ -683,11 +673,6 @@ export const Dashboard = (props: {
     if (focusedStore && focusedStore.revision() !== revision) {
       refreshServedDestination().catch((error: unknown) => {
         setOperationError(error instanceof Error ? error.message : 'Published report data could not be loaded');
-      });
-    }
-    if (quotaHistoryOpen()) {
-      loadQuotaRange(quotaHistoryRange()).catch((error: unknown) => {
-        setQuotaHistoryError(error instanceof Error ? error.message : 'Quota history query failed');
       });
     }
   });
@@ -1368,9 +1353,6 @@ export const Dashboard = (props: {
                   historyAvailable={(quotaHistory()?.points.length ?? 0) > 0}
                   onViewHistory={() => {
                     setQuotaHistoryOpen(true);
-                    loadQuotaRange(quotaHistoryRange()).catch((error: unknown) => {
-                      setQuotaHistoryError(error instanceof Error ? error.message : 'Quota history query failed');
-                    });
                   }}
                   providers={providerStatusViews()}
                 />
@@ -1416,9 +1398,7 @@ export const Dashboard = (props: {
               loading={quotaHistoryLoading()}
               onClose={() => setQuotaHistoryOpen(false)}
               onRangeChange={(range) => {
-                loadQuotaRange(range).catch((error: unknown) => {
-                  setQuotaHistoryError(error instanceof Error ? error.message : 'Quota history query failed');
-                });
+                loadQuotaRange(range).catch(() => undefined);
               }}
               range={quotaHistoryRange()}
               result={quotaHistory()}

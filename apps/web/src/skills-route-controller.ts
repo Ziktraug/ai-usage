@@ -1,9 +1,10 @@
 import type { ProjectionAction, SkillManagementConfig, SkillManagementSnapshot } from '@ai-usage/skills';
-import { type Accessor, createEffect, createMemo, createResource, createSignal } from 'solid-js';
+import { createMutation, createQuery, useQueryClient } from '@tanstack/solid-query';
+import { type Accessor, createEffect, createMemo, createSignal } from 'solid-js';
+import { isServer } from 'solid-js/web';
 import {
   createManagedSkillTargetDirectory,
   getKnownSkillProjectPaths,
-  getSkillProjectInventories,
   type KnownSkillProjectPath,
   previewReconcileAllManagedSkills,
   reconcileAllManagedSkills,
@@ -15,6 +16,7 @@ import {
 import { count, describeReconcileActions, type ReconcilePlanSummary } from './skills-page-model';
 import { snapshotRemovesDirtySkill } from './skills-route-model';
 import type { ProjectInventoriesResult, SkillMarkdownDraftGuard } from './skills-workspace';
+import { loadSkillInventories, webQueryKeys } from './web-query-options';
 
 export type SkillSnapshotResult =
   | { ok: true; data: SkillManagementSnapshot }
@@ -88,6 +90,7 @@ const actionNotice = (
 };
 
 export const createSkillsRouteController = (routeData: Accessor<SkillsRouteInitialData>) => {
+  const queryClient = useQueryClient();
   const initialData = routeData();
   const [result, setResult] = createSignal<SkillSnapshotResult>(skillSnapshotResultFrom(initialData.skills));
   const [knownProjectPathsResult, setKnownProjectPathsResult] = createSignal<KnownProjectPathsResult>(
@@ -126,10 +129,16 @@ export const createSkillsRouteController = (routeData: Accessor<SkillsRouteIniti
     }
     return JSON.stringify([current.config.sourceRepoPath ?? '', ...(current.config.projectPaths ?? [])]);
   });
-  const [projectInventories, { refetch: refetchProjectInventories }] = createResource(
-    projectInventoriesKey,
-    async () => (await getSkillProjectInventories()) as ProjectInventoriesResult,
-  );
+  const projectInventoriesQuery = createQuery(() => ({
+    enabled: !isServer && projectInventoriesKey() !== undefined,
+    queryFn: loadSkillInventories,
+    queryKey: [...webQueryKeys.skillInventories, projectInventoriesKey()] as const,
+  }));
+  const projectInventories = (): ProjectInventoriesResult | undefined =>
+    isServer ? undefined : (projectInventoriesQuery.data as ProjectInventoriesResult | undefined);
+  const operationMutation = createMutation(() => ({
+    mutationFn: async (action: () => Promise<void>) => await action(),
+  }));
 
   createEffect(() => {
     const current = snapshot();
@@ -148,12 +157,23 @@ export const createSkillsRouteController = (routeData: Accessor<SkillsRouteIniti
     refreshDependents: boolean,
   ): Promise<void> => {
     setResult(next);
+    queryClient.setQueryData<SkillsRouteInitialData>(webQueryKeys.skillsInitial, (current) => {
+      if (!(current && current.skills !== next)) {
+        return current;
+      }
+      const updated = { ...current, skills: next };
+      observedRouteDataFingerprint = JSON.stringify(updated);
+      return updated;
+    });
     setOperationNotice(next.ok ? { message, tone: 'ok' } : { message: next.error.message, tone: 'error' });
     if (!(next.ok && refreshDependents)) {
       return;
     }
     if (next.data.configured) {
-      await refetchProjectInventories();
+      await queryClient.refetchQueries({
+        queryKey: webQueryKeys.skillInventories,
+        type: 'active',
+      });
     }
     setMarkdownRefreshVersion((version) => version + 1);
   };
@@ -181,14 +201,25 @@ export const createSkillsRouteController = (routeData: Accessor<SkillsRouteIniti
   };
 
   let observedRouteData = initialData;
+  let observedRouteDataFingerprint = JSON.stringify(initialData);
   createEffect(async () => {
     const nextRouteData = routeData();
     if (nextRouteData === observedRouteData) {
       return;
     }
     observedRouteData = nextRouteData;
-    setKnownProjectPathsResult(nextRouteData.knownProjectPaths as KnownProjectPathsResult);
-    await requestSnapshotReplacement(skillSnapshotResultFrom(nextRouteData.skills), 'Skills reloaded.', true);
+    const nextRouteDataFingerprint = JSON.stringify(nextRouteData);
+    if (nextRouteDataFingerprint === observedRouteDataFingerprint) {
+      return;
+    }
+    observedRouteDataFingerprint = nextRouteDataFingerprint;
+    const nextKnownProjectPaths = nextRouteData.knownProjectPaths as KnownProjectPathsResult;
+    const nextSkills = skillSnapshotResultFrom(nextRouteData.skills);
+    if (nextKnownProjectPaths === knownProjectPathsResult() && nextSkills === result()) {
+      return;
+    }
+    setKnownProjectPathsResult(nextKnownProjectPaths);
+    await requestSnapshotReplacement(nextSkills, 'Skills reloaded.', true);
   });
 
   const applyReconcileResult = async (next: SkillReconcileServerResult, fallbackMessage: string): Promise<void> => {
@@ -210,7 +241,7 @@ export const createSkillsRouteController = (routeData: Accessor<SkillsRouteIniti
     setOperationNotice(null);
     setReconcilePlan(null);
     try {
-      await action();
+      await operationMutation.mutateAsync(action);
     } catch (error) {
       setOperationNotice({ message: errorMessageFrom(error), tone: 'error' });
     } finally {
@@ -327,6 +358,9 @@ export const createSkillsRouteController = (routeData: Accessor<SkillsRouteIniti
         getKnownSkillProjectPaths(),
       ]);
       setKnownProjectPathsResult(nextKnownProjectPaths as KnownProjectPathsResult);
+      queryClient.setQueryData<SkillsRouteInitialData>(webQueryKeys.skillsInitial, (current) =>
+        current ? { ...current, knownProjectPaths: nextKnownProjectPaths } : current,
+      );
       await requestSnapshotReplacement(skillSnapshotResultFrom(nextSnapshot), 'Skills refreshed.', true);
     });
 
@@ -367,6 +401,7 @@ export const createSkillsRouteController = (routeData: Accessor<SkillsRouteIniti
     pendingSnapshotReplacement,
     previewReconcile,
     projectInventories,
+    projectInventoriesLoading: () => projectInventoriesQuery.isFetching,
     projectPathDraft,
     projectPaths,
     reconcilePlan,

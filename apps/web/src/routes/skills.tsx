@@ -21,12 +21,14 @@ import {
   titleBlock,
 } from '@ai-usage/design-system/report';
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
-import { createFileRoute, Link, useLocation } from '@tanstack/solid-router';
+import { createQuery } from '@tanstack/solid-query';
+import { ClientOnly, createFileRoute, Link, useLocation } from '@tanstack/solid-router';
 import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
+import { isServer } from 'solid-js/web';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
 import { DiscardConfirmationDialog } from '../discard-confirmation-dialog';
-import { getKnownSkillProjectPaths, getSkillManagementSnapshot, type KnownSkillProjectPath } from '../server/skills';
+import type { getKnownSkillProjectPaths, getSkillManagementSnapshot, KnownSkillProjectPath } from '../server/skills';
 import {
   buildSkillMatrix,
   count,
@@ -37,6 +39,7 @@ import {
 } from '../skills-page-model';
 import { createSkillsRouteController, type OperationNotice } from '../skills-route-controller';
 import { type ProjectInventoriesResult, type SkillMarkdownDraftGuard, SkillsWorkspace } from '../skills-workspace';
+import { loadSkillsInitialData, webQueryKeys } from '../web-query-options';
 
 export const Route = createFileRoute('/skills')({
   component: SkillsRoute,
@@ -228,29 +231,54 @@ interface SkillsInitialData {
 }
 
 function SkillsRoute() {
+  return (
+    <ClientOnly fallback={<SkillsLoadingShell />}>
+      <SkillsClientRoute />
+    </ClientOnly>
+  );
+}
+
+function SkillsLoadingShell() {
+  return (
+    <main class={page} data-hydrated="false">
+      <div class={shell}>
+        <header class={header}>
+          <div class={titleBlock}>
+            <h1 class={title}>Skill management</h1>
+            <div class={meta}>Loading skills…</div>
+          </div>
+        </header>
+      </div>
+    </main>
+  );
+}
+
+function SkillsClientRoute() {
   const location = useLocation();
   let refreshButtonElement: HTMLButtonElement | undefined;
-  const [hydrated, setHydrated] = createSignal(false);
-  const [data, setData] = createSignal<SkillsInitialData>({
-    knownProjectPaths: { error: { message: 'Loading project paths…', tag: 'Loading' }, ok: false },
-    skills: { error: { message: 'Loading skills…', tag: 'Loading' }, ok: false },
-  });
-  const loadInitialData = async (): Promise<void> => {
-    setHydrated(false);
-    try {
-      const [knownProjectPaths, skills] = await Promise.all([
-        getKnownSkillProjectPaths(),
-        getSkillManagementSnapshot(),
-      ]);
-      setData({ knownProjectPaths, skills });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Skill data could not be loaded.';
-      const failure = { error: { message, tag: 'ClientReadError' }, ok: false } as const;
-      setData({ knownProjectPaths: failure, skills: failure });
-    } finally {
-      setHydrated(true);
+  const initialQuery = createQuery(() => ({
+    enabled: !isServer,
+    queryFn: loadSkillsInitialData,
+    queryKey: webQueryKeys.skillsInitial,
+  }));
+  const data = createMemo<SkillsInitialData>(() => {
+    if (initialQuery.data) {
+      return initialQuery.data;
     }
-  };
+    const message =
+      initialQuery.error instanceof Error ? initialQuery.error.message : 'Skill data could not be loaded.';
+    const failure = {
+      error: {
+        message: initialQuery.isPending ? 'Loading…' : message,
+        tag: initialQuery.isPending ? 'Loading' : 'ClientReadError',
+      },
+      ok: false,
+    } as const;
+    return { knownProjectPaths: failure, skills: failure };
+  });
+  const [clientMounted, setClientMounted] = createSignal(false);
+  onMount(() => setClientMounted(true));
+  const hydrated = () => clientMounted() && !initialQuery.isPending;
   const [activeCellStateFilter, setActiveCellStateFilter] = createSignal<SkillCellStateFilter | undefined>();
   const controller = createSkillsRouteController(data);
   const {
@@ -270,6 +298,7 @@ function SkillsRoute() {
     pendingSnapshotReplacement,
     previewReconcile,
     projectInventories,
+    projectInventoriesLoading,
     projectPathDraft,
     projectPaths,
     reconcilePlan,
@@ -310,10 +339,6 @@ function SkillsRoute() {
   });
 
   const routeSelection = createMemo(() => skillSelectionFromPath(location().pathname, selectionProjects()));
-
-  onMount(() => {
-    loadInitialData().catch(() => undefined);
-  });
 
   return (
     <main
@@ -371,7 +396,7 @@ function SkillsRoute() {
               <ErrorPanel
                 message={errorMessage()}
                 onRetry={() => {
-                  loadInitialData().catch(() => undefined);
+                  initialQuery.refetch().catch(() => undefined);
                 }}
               />
             }
@@ -414,7 +439,7 @@ function SkillsRoute() {
                 operationNotice={operationNotice()}
                 pendingOperation={pendingOperation()}
                 projectInventories={projectInventories()}
-                projectInventoriesLoading={projectInventories.loading}
+                projectInventoriesLoading={projectInventoriesLoading()}
                 projectPathDraft={projectPathDraft()}
                 projectPaths={projectPaths()}
                 projectScopes={knownProjectScopesFromPaths(knownProjectPaths())}

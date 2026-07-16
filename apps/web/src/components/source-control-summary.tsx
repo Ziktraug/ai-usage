@@ -10,6 +10,7 @@ import {
 import { Link } from '@tanstack/solid-router';
 import { createMemo, For, Show } from 'solid-js';
 import { useSourceControl } from '../source-control-context';
+import { presentSourceState, type SourcePresentationTone } from '../source-control-presentation';
 
 const summary = css({
   position: 'relative',
@@ -89,27 +90,14 @@ const sourceRow = css({
 });
 const sourceLabel = css({ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '12px' });
 
-const summaryToneClass = (tone: 'danger' | 'ok' | 'warning'): string => {
+const summaryToneClass = (tone: SourcePresentationTone): string => {
   if (tone === 'ok') {
     return statusPillOk;
   }
   if (tone === 'danger') {
     return statusPillDanger;
   }
-  return statusPillWarn;
-};
-
-const sourceToneClass = (source: { availability: string; lastOutcome: string; lifecycle: string }): string => {
-  if (source.lifecycle === 'running') {
-    return statusPillOk;
-  }
-  if (source.lastOutcome === 'failed' || source.availability !== 'detected') {
-    return statusPillDanger;
-  }
-  if (source.lastOutcome === 'warning') {
-    return statusPillWarn;
-  }
-  return statusPillInfo;
+  return tone === 'warning' ? statusPillWarn : statusPillInfo;
 };
 
 export const SourceControlSummary = () => {
@@ -117,11 +105,7 @@ export const SourceControlSummary = () => {
   const snapshot = () => sourceControl.state().snapshot;
   const enabledSources = createMemo(() => snapshot()?.sources.filter((source) => source.policy === 'enabled') ?? []);
   const warningCount = createMemo(
-    () =>
-      enabledSources().filter(
-        (source) =>
-          source.lastOutcome === 'failed' || source.lastOutcome === 'warning' || source.availability !== 'detected',
-      ).length,
+    () => enabledSources().filter((source) => ['danger', 'warning'].includes(presentSourceState(source).tone)).length,
   );
   const statusLabel = createMemo(() => {
     const state = sourceControl.state();
@@ -147,6 +131,25 @@ export const SourceControlSummary = () => {
     return warningCount() > 0 ? 'danger' : 'ok';
   });
   const runPending = () => sourceControl.state().pendingCommand !== null;
+  const runningSources = createMemo(
+    () =>
+      snapshot()?.sources.filter((source) => source.lifecycle === 'running' || source.lifecycle === 'pausing') ?? [],
+  );
+  const queuedSources = createMemo(() => snapshot()?.sources.filter((source) => source.lifecycle === 'queued') ?? []);
+  const nextDueSource = createMemo(
+    () =>
+      snapshot()
+        ?.sources.filter((source) => source.nextDueAt !== undefined)
+        .toSorted((left, right) => String(left.nextDueAt).localeCompare(String(right.nextDueAt)))[0],
+  );
+  const elapsed = (startedAt: string | undefined): string => {
+    const generatedAt = snapshot()?.generatedAt;
+    if (!(startedAt && generatedAt)) {
+      return 'elapsed time unavailable';
+    }
+    const milliseconds = Math.max(0, Date.parse(generatedAt) - Date.parse(startedAt));
+    return `${Math.round(milliseconds / 1000)}s elapsed`;
+  };
 
   return (
     <section aria-label="Collection source status" class={summary}>
@@ -180,19 +183,49 @@ export const SourceControlSummary = () => {
         <Show fallback={<p class={cardMeta}>Waiting for the server-owned source snapshot.</p>} when={snapshot()}>
           <div class={sourceList}>
             <For each={enabledSources()}>
-              {(source) => (
-                <div class={sourceRow}>
-                  <span class={sourceLabel} title={source.label}>
-                    {source.label}
-                  </span>
-                  <span class={cx(statusPill, sourceToneClass(source))}>
-                    {source.lifecycle === 'running' ? 'running' : source.lastOutcome}
-                  </span>
-                </div>
-              )}
+              {(source) => {
+                const presentation = () => presentSourceState(source);
+                return (
+                  <div class={sourceRow}>
+                    <span class={sourceLabel} title={`${source.label}: ${presentation().explanation}`}>
+                      {source.label}
+                    </span>
+                    <span class={cx(statusPill, summaryToneClass(presentation().tone))}>{presentation().label}</span>
+                  </div>
+                );
+              }}
             </For>
           </div>
-          <p class={cardMeta}>Open Sources for availability, policy, scheduling, progress, and history.</p>
+          <Show when={runningSources().length > 0}>
+            <p class={cardMeta}>
+              Running:{' '}
+              {runningSources()
+                .map((source) => `${source.label} (${elapsed(source.lastStartedAt)})`)
+                .join(', ')}
+            </p>
+          </Show>
+          <Show when={queuedSources().length > 0}>
+            <p class={cardMeta}>
+              Queued:{' '}
+              {queuedSources()
+                .map((source) => source.label)
+                .join(', ')}
+            </p>
+          </Show>
+          <Show when={nextDueSource()}>
+            {(source) => (
+              <p class={cardMeta}>
+                Next due: {source().label} at {source().nextDueAt}
+              </p>
+            )}
+          </Show>
+          <p class={cardMeta}>
+            Last success:{' '}
+            {enabledSources()
+              .flatMap((source) => (source.lastSuccessAt ? [source.lastSuccessAt] : []))
+              .toSorted()
+              .at(-1) ?? 'none yet'}
+          </p>
         </Show>
       </div>
     </section>
