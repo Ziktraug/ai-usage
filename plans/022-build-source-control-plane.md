@@ -1,10 +1,10 @@
 # Build a Server-Owned Source Control Plane and Client-First Web App
 
-**Status:** DONE
-**Priority:** P1  
-**Effort:** L  
-**Depends on:** 017, 018, 021  
-**Branch:** `feat/source-control-plane` (already created from `06e54a3`)  
+**Status:** DONE — initial implementation and plan 023 hardening are complete
+**Priority:** P1
+**Effort:** L
+**Depends on:** 017, 018, 021
+**Branch:** `feat/source-control-plane` (already created from `06e54a3`)
 **Risk:** High — this changes the Nitro production runtime, collection ownership, scheduling, persistence, report publication, and the web data-loading model.
 
 ## Outcome

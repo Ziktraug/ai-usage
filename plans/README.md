@@ -33,6 +33,7 @@ branch or open a pull request unless the user explicitly asks.
 | 020 | Align Commit Tooling, Bun Runtime, Dead CSV Claims, and Final Documentation | P2 | M | 009-019 | DONE |
 | 021 | Persist and visualize Codex quota history behind a provider-neutral seam | P1 | L | - | DONE |
 | 022 | Build a Server-Owned Source Control Plane and Client-First Web App | P1 | L | 017, 018, 021 | DONE |
+| 023 | Harden Source Ownership, Publication, Cancellation, and Client Contracts | P1 | L | 022 initial implementation | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -125,6 +126,12 @@ REJECTED (with one-line rationale).
   sanitized process state, and every route moves business-data reads after
   hydration while preserving plans 017/018's semantic and exact-revision
   guarantees. Disabling, missing, empty, or failed sources never delete data.
+- Plan 023 is the required completion gate for plan 022 after the two
+  implementation reviews at `4f5f700`. It separates RTK enrichment ownership,
+  makes publication demand lossless and single-owner, propagates timeout
+  cancellation through provider writes, closes collection/package side doors,
+  strictly validates SSE state, and completes the Query/UI contract. Plan 022
+  cannot return to `DONE` until plan 023's done criteria pass.
 
 ## Remediation waves
 
@@ -138,7 +145,7 @@ Wave 1: 009 remove HTML export
 
 010-016 complete ── 017 semantic no-op refresh ── 018 browser coordinator
 009-019 complete ──────────────────────────────── 020 tooling/docs closure
-017 + 018 + 021 complete ──────────────────────── 022 source control plane
+017 + 018 + 021 complete ──────────────────────── 022 initial source control plane ── 023 hardening/closure
 ```
 
 Plans on separate Wave 2 branches may run in parallel. Do not parallel-edit the
@@ -172,6 +179,13 @@ sequence overlapping files and rebase/re-read before execution.
 | F21 | Bun package, CI, types, and Nix versions disagree | 020 |
 | F22 | Current docs/dead symbols still claim web/focused CSV export | 009 and 020 |
 | F23 | Browser timers hide independently operating collectors, probes, and enrichers behind one report refresh | 022 |
+| F24 | Base session upserts can erase durable RTK-owned enrichment | 023 |
+| F25 | Publication requests can be lost or bypass the scheduler and race current revision order | 023 |
+| F26 | Scheduler timeout can leave cached provider work running and writing | 023 |
+| F27 | Source-control snapshots enter browser state without complete runtime validation | 023 |
+| F28 | Web reads can trigger global collection and CLI quota crosses the report-data boundary | 023 |
+| F29 | Publication SSE, TanStack Query finite reads, and complete source operational UI are missing | 023 |
+| F30 | Source-control transitions, snapshot replacement, and status presentation have ambiguous or duplicated ownership | 023 |
 
 ## Findings considered and rejected
 
