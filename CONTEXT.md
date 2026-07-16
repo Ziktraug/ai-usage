@@ -12,6 +12,14 @@ _Avoid_: source, tool, integration
 An independently detected, scheduled, and policy-controlled contribution to the normalized local store. A harness may expose more than one collection source: Codex sessions and Codex usage limits have separate policy and cadence.
 _Avoid_: harness, refresh task, report loader
 
+**Source policy**:
+The persisted enabled/disabled choice for one collection source. Policy is independent from whether input is detected, whether work is running, and how the last run ended. Disabling pauses future collection and never deletes stored contributions.
+_Avoid_: availability, lifecycle, deletion
+
+**Source publication**:
+The separate stored-only job that reconciles durable contributions into an immutable served report revision. A source run may be successful without changing the semantic revision.
+_Avoid_: collection run, browser refresh
+
 **Local history**:
 The files or databases written by a harness on this machine. It is the only live collection input; a caller may also supply an explicit portable snapshot or previously imported merge bundle. Provider APIs are not called.
 _Avoid_: remote usage, cloud billing data
@@ -31,6 +39,10 @@ _Avoid_: raw event, database row
 **Collected dataset**:
 A named set of collected and enriched report data transported alongside usage rows, such as provider status or Cursor commit attribution. Skill inventory is a separate local control-plane query, not a collected report dataset.
 _Avoid_: facet, metadata blob, app state
+
+**Client-first route**:
+A web route whose SSR response contains shell and routing markup only. Business data is read after hydration with explicit loading, error, empty, and retry behavior.
+_Avoid_: client-only app, embedded payload
 
 **Report payload**:
 The complete JSON-serializable compatibility aggregate used by CLI output and compatible consumers. It contains serialized usage rows, filters, analytics, collected datasets, and optional local history warnings. The served report app reads exact-revision focused results instead of transporting this complete aggregate during refresh.
