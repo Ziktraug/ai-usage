@@ -384,6 +384,7 @@ Generic query invalidation must never independently replace the three report des
 - 2026-07-16 — Step 0 baseline: 121 collector/store/report-data tests and 75 web server/exact-revision tests passed. Existing executable specifications already cover absent-row preservation, semantic no-op generation, stored-only report assembly, and atomic exact-revision destination commits.
 - 2026-07-16 — Baseline drift: `apps/web/server` does not exist on the branch. Current server modules live in `apps/web/src/server`; Nitro plugin and route directories will be introduced by Step 6/7.
 - 2026-07-16 — Step 1 complete: added the seven stable source definitions and browser-safe control-plane DTOs, home-only sparse policy validation/mutation, repository-policy rejection, vocabulary, and public-interface documentation. All 146 targeted tests, package-boundary checks, Ultracite checks, workspace typechecking, and `git diff --check` passed.
+- 2026-07-16 — Step 2 complete: added the additive versioned normalized dataset-item store, strict read/write validation, bounded corrupt-item isolation, semantic generation, stable Cursor attribution identity, and report-data persistence/read parity helpers. Empty imports preserve prior items. All 131 collector/store/report-data tests, workspace typechecking, package-boundary checks, and `git diff --check` passed.
 
 ### Step 0 — Freeze the baseline and characterize contracts
 

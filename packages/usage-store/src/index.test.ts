@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import type { CursorCommitAttributionDatasetItem } from '@ai-usage/report-core/datasets';
 import {
   createUsageMergeBundle,
   toSerializedMergeRow,
@@ -18,9 +19,11 @@ import {
   exportLocalMergeBundle,
   type ImportResult,
   importLocalRows,
+  importNormalizedDatasetItems,
   importPeerMergeBundle,
   importProviderQuotaBatch,
   previewPeerMergeBundle,
+  queryNormalizedDatasetItems,
   queryProviderQuotaObservations,
   queryProviderQuotaSourceState,
   queryReportRows,
@@ -63,7 +66,136 @@ const makeBundle = (machine: UsageMachine, rows: UsageRowWithOptionalSource[]): 
     rows,
   });
 
+const makeDatasetItem = (itemKey: string, linesAdded = 3): CursorCommitAttributionDatasetItem => ({
+  datasetKey: 'cursor.commit-attribution',
+  itemKey,
+  machineId: machineA.id,
+  payload: {
+    blankLinesAdded: 0,
+    blankLinesDeleted: 0,
+    branchName: 'main',
+    commitDate: null,
+    commitHash: `commit-${itemKey}`,
+    commitMessage: null,
+    composerLinesAdded: 1,
+    composerLinesDeleted: 0,
+    humanLinesAdded: 2,
+    humanLinesDeleted: 0,
+    linesAdded,
+    linesDeleted: 0,
+    scoredAt: '2026-07-16T10:00:00.000Z',
+    tabLinesAdded: 0,
+    tabLinesDeleted: 0,
+    v1AiPercentage: 33,
+    v2AiPercentage: 34,
+  },
+  schemaVersion: 1,
+  sourceId: 'cursor.commit-attribution',
+});
+
 describe('usage-store public boundary', () => {
+  test('upserts normalized datasets semantically without deleting absent items', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-datasets-'));
+    const dbPath = usageStorePath(home);
+    const first = makeDatasetItem('first');
+
+    expect(await Effect.runPromise(importNormalizedDatasetItems({ dbPath, items: [] }))).toEqual({
+      inserted: 0,
+      unchanged: 0,
+      updated: 0,
+    });
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(0);
+
+    expect(
+      await Effect.runPromise(
+        importNormalizedDatasetItems({
+          dbPath,
+          importedAt: new Date('2026-07-16T10:00:00.000Z'),
+          items: [first, makeDatasetItem('first', 4)],
+        }),
+      ),
+    ).toEqual({ inserted: 1, unchanged: 0, updated: 1 });
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(1);
+
+    expect(
+      await Effect.runPromise(
+        importNormalizedDatasetItems({
+          dbPath,
+          importedAt: new Date('2026-07-16T10:01:00.000Z'),
+          items: [makeDatasetItem('first', 4)],
+        }),
+      ),
+    ).toEqual({ inserted: 0, unchanged: 1, updated: 0 });
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(1);
+
+    await Effect.runPromise(importNormalizedDatasetItems({ dbPath, items: [] }));
+    const queried = await Effect.runPromise(queryNormalizedDatasetItems({ dbPath }));
+    expect(queried).toMatchObject({ skipped: 0, truncated: false });
+    expect(queried.items).toHaveLength(1);
+    expect(queried.items[0]?.payload.linesAdded).toBe(4);
+  });
+
+  test('rejects an invalid dataset batch atomically', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-dataset-invalid-'));
+    const dbPath = usageStorePath(home);
+    const invalid = {
+      ...makeDatasetItem('invalid'),
+      payload: { ...makeDatasetItem('invalid').payload, linesAdded: -1 },
+    } as CursorCommitAttributionDatasetItem;
+
+    await expect(
+      Effect.runPromise(importNormalizedDatasetItems({ dbPath, items: [makeDatasetItem('valid'), invalid] })),
+    ).rejects.toThrow('failed strict validation');
+    expect((await Effect.runPromise(queryNormalizedDatasetItems({ dbPath }))).items).toHaveLength(0);
+  });
+
+  test('isolates corrupt stored dataset items and bounds reads', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-dataset-corrupt-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(
+      importNormalizedDatasetItems({
+        dbPath,
+        items: [makeDatasetItem('one'), makeDatasetItem('two')],
+      }),
+    );
+    const { Database } = await import('bun:sqlite');
+    const db = new Database(dbPath);
+    db.query(`
+      UPDATE collected_dataset_items
+      SET payload_json = ?
+      WHERE item_key = ?
+    `).run('{"private":"corrupt"}', 'one');
+    db.close();
+
+    const queried = await Effect.runPromise(
+      queryNormalizedDatasetItems({
+        datasetKey: 'cursor.commit-attribution',
+        dbPath,
+        machineId: machineA.id,
+        maximumItems: 10,
+      }),
+    );
+    expect(queried).toMatchObject({ skipped: 1, truncated: false });
+    expect(queried.items.map(({ itemKey }) => itemKey)).toEqual(['two']);
+
+    const bounded = await Effect.runPromise(queryNormalizedDatasetItems({ dbPath, maximumItems: 1 }));
+    expect(bounded.truncated).toBe(true);
+    expect(bounded.items.length + bounded.skipped).toBe(1);
+  });
+
+  test('serializes concurrent dataset writers without losing items', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-dataset-concurrent-'));
+    const dbPath = usageStorePath(home);
+    await Promise.all([
+      Effect.runPromise(importNormalizedDatasetItems({ dbPath, items: [makeDatasetItem('left')] })),
+      Effect.runPromise(importNormalizedDatasetItems({ dbPath, items: [makeDatasetItem('right')] })),
+    ]);
+
+    const queried = await Effect.runPromise(queryNormalizedDatasetItems({ dbPath }));
+    expect(queried.items.map(({ itemKey }) => itemKey).sort()).toEqual(['left', 'right']);
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(2);
+  });
+
   test('previews an absent store without creating it and confirms against the same state token', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-preview-'));
     const dbPath = usageStorePath(home);
