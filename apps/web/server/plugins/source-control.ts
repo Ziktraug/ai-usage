@@ -2,20 +2,21 @@ import { Effect } from 'effect';
 import { definePlugin } from 'nitro';
 import { publishStoredReportRevisionForSourceControl } from '../../src/server/report-payload.server';
 import { createWebSourceControlRuntime, installWebSourceControlRuntime } from '../../src/server/source-control.server';
+import { createSourceControlE2EFixture } from '../../src/server/source-control-e2e-fixture.server';
 
 export default definePlugin((nitroApp) => {
   const fixtureRuntime = process.env.VITE_AI_USAGE_E2E === '1';
   const productionSmoke = process.env.AI_USAGE_PRODUCTION_SMOKE === '1';
+  const fixture = fixtureRuntime ? createSourceControlE2EFixture() : undefined;
   const runtime = createWebSourceControlRuntime({
-    publication: {
-      publish: fixtureRuntime
-        ? Effect.succeed({ changed: false })
-        : Effect.tryPromise({
-            try: publishStoredReportRevisionForSourceControl,
-            catch: (cause) => cause,
-          }),
+    policyStore: fixture?.policyStore,
+    publication: fixture?.publication ?? {
+      publish: Effect.tryPromise({
+        try: publishStoredReportRevisionForSourceControl,
+        catch: (cause) => cause,
+      }),
     },
-    ...(fixtureRuntime ? { sources: new Map() } : {}),
+    sources: fixture?.sources,
   });
   const uninstall = installWebSourceControlRuntime(runtime);
   const startup = runtime.start();
