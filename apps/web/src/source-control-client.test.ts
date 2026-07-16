@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import type { SourceControlCommand, SourceControlView } from '@ai-usage/report-core/source-control';
+import {
+  collectionSourceDefinitions,
+  type SourceControlCommand,
+  type SourceControlView,
+} from '@ai-usage/report-core/source-control';
 import {
   createSourceControlClient,
   type SourceControlCommandResponse,
@@ -25,20 +29,17 @@ const snapshot = (generation: number, instanceId = 'process-a'): SourceControlVi
   },
   queueDepth: 0,
   runningCount: 0,
-  sources: [
-    {
-      availability: 'detected',
-      cadenceMs: 60_000,
-      id: 'codex.sessions',
-      label:
-        'A deliberately long collection-source label that remains intact across snapshot replacement and can be truncated visually without losing its accessible server-owned name',
-      lastOutcome: 'success',
-      lifecycle: 'scheduled',
-      policy: 'enabled',
-      reason: { code: 'none' },
-      warnings: [],
-    },
-  ],
+  sources: collectionSourceDefinitions.map((definition) => ({
+    availability: 'detected',
+    cadenceMs: definition.cadenceMs,
+    id: definition.id,
+    label: definition.label,
+    lastOutcome: 'success',
+    lifecycle: 'scheduled',
+    policy: 'enabled',
+    reason: { code: 'none' },
+    warnings: [],
+  })),
 });
 
 class FakeEventSource implements SourceControlEventSource {
@@ -91,7 +92,9 @@ describe('source control client', () => {
     eventSource.emit(snapshot(2));
     expect(client.getState().snapshot?.generation).toBe(3);
     expect(client.getState().connection).toBe('live');
-    expect(client.getState().snapshot?.sources[0]?.label).toContain('without losing its accessible server-owned name');
+    expect(client.getState().snapshot?.sources.map(({ id }) => id)).toEqual(
+      collectionSourceDefinitions.map(({ id }) => id),
+    );
 
     eventSource.onerror?.(new Event('error'));
     expect(client.getState().connection).toBe('stale');

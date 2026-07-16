@@ -1,3 +1,5 @@
+import { MAX_PORTABLE_USAGE_ROWS } from './portable-usage';
+
 export const collectionSourceIds = [
   'claude.sessions',
   'codex.sessions',
@@ -296,10 +298,18 @@ export interface SourceControlView {
 }
 
 export const sourceControlBounds = {
+  maxCadenceMs: Math.max(...collectionSourceDefinitions.map(({ cadenceMs }) => cadenceMs)),
+  maxCount: MAX_PORTABLE_USAGE_ROWS,
+  maxDurationMs: 24 * 60 * 60 * 1000,
   maxEventBytes: 4096,
+  maxGeneration: Number.MAX_SAFE_INTEGER,
   maxMessageLength: 240,
+  maxQueueDelayMs: (collectionSourceDefinitions.length * 3 + 3) * 24 * 60 * 60 * 1000,
+  maxQueueDepth: collectionSourceDefinitions.length * 3 + 3,
+  maxRunningCount: 8,
   maxSnapshotBytes: 64 * 1024,
   maxWarningsPerSource: 8,
+  minCadenceMs: Math.min(...collectionSourceDefinitions.map(({ cadenceMs }) => cadenceMs)),
 } as const;
 
 export interface ReportPublishedEvent {
@@ -371,14 +381,17 @@ const isBoundedString = (value: unknown, maximum: number = sourceControlBounds.m
 const isNonNegativeSafeInteger = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 
+const isBoundedNonNegativeInteger = (value: unknown, maximum: number): value is number =>
+  isNonNegativeSafeInteger(value) && value <= maximum;
+
 const isIsoTimestamp = (value: unknown): value is string =>
   typeof value === 'string' && isoTimestampPattern.test(value) && !Number.isNaN(Date.parse(value));
 
 const isOptionalIsoTimestamp = (value: unknown): value is string | undefined =>
   value === undefined || isIsoTimestamp(value);
 
-const isOptionalCount = (value: unknown): value is number | undefined =>
-  value === undefined || isNonNegativeSafeInteger(value);
+const isOptionalBoundedInteger = (value: unknown, maximum: number): value is number | undefined =>
+  value === undefined || isBoundedNonNegativeInteger(value, maximum);
 
 const isReason = (value: unknown): value is SourceReason => {
   if (!(isRecordValue(value) && hasOnlyRecordKeys(value, ['code', 'message']))) {
@@ -401,8 +414,8 @@ const isProgress = (value: unknown): value is SourceProgress =>
   isRecordValue(value) &&
   hasOnlyRecordKeys(value, ['completed', 'message', 'phase', 'total']) &&
   progressPhases.has(value.phase as SourceProgressPhase) &&
-  isOptionalCount(value.completed) &&
-  isOptionalCount(value.total) &&
+  isOptionalBoundedInteger(value.completed, sourceControlBounds.maxCount) &&
+  isOptionalBoundedInteger(value.total, sourceControlBounds.maxCount) &&
   (value.message === undefined || isBoundedString(value.message));
 
 const isSourceEntry = (value: unknown): value is SourceControlEntryView => {
@@ -433,19 +446,21 @@ const isSourceEntry = (value: unknown): value is SourceControlEntryView => {
   ) {
     return false;
   }
+  if (!isCollectionSourceId(value.id)) {
+    return false;
+  }
+  const definition = getCollectionSourceDefinition(value.id);
   return (
-    isCollectionSourceId(value.id) &&
-    isBoundedString(value.label) &&
+    value.label === definition.label &&
     sourcePolicyStates.has(value.policy as SourcePolicyState) &&
     sourceAvailabilities.has(value.availability as SourceAvailability) &&
     sourceLifecycles.has(value.lifecycle as SourceLifecycle) &&
     sourceOutcomes.has(value.lastOutcome as SourceLastOutcome) &&
-    isNonNegativeSafeInteger(value.cadenceMs) &&
-    value.cadenceMs > 0 &&
-    isOptionalCount(value.durationMs) &&
-    isOptionalCount(value.inputCount) &&
-    isOptionalCount(value.outputCount) &&
-    isOptionalCount(value.queueDelayMs) &&
+    value.cadenceMs === definition.cadenceMs &&
+    isOptionalBoundedInteger(value.durationMs, sourceControlBounds.maxDurationMs) &&
+    isOptionalBoundedInteger(value.inputCount, sourceControlBounds.maxCount) &&
+    isOptionalBoundedInteger(value.outputCount, sourceControlBounds.maxCount) &&
+    isOptionalBoundedInteger(value.queueDelayMs, sourceControlBounds.maxQueueDelayMs) &&
     isOptionalIsoTimestamp(value.lastFinishedAt) &&
     isOptionalIsoTimestamp(value.lastStartedAt) &&
     isOptionalIsoTimestamp(value.lastSuccessAt) &&
@@ -456,6 +471,22 @@ const isSourceEntry = (value: unknown): value is SourceControlEntryView => {
     value.warnings.length <= sourceControlBounds.maxWarningsPerSource &&
     value.warnings.every(isWarning)
   );
+};
+
+const isSourceLifecycleConsistent = (source: SourceControlEntryView): boolean => {
+  if (source.progress !== undefined && source.lifecycle !== 'running' && source.lifecycle !== 'pausing') {
+    return false;
+  }
+  if (source.lifecycle === 'running') {
+    return source.policy === 'enabled';
+  }
+  if (source.lifecycle === 'pausing') {
+    return source.policy === 'disabled';
+  }
+  if (source.lifecycle === 'scheduled' || source.lifecycle === 'queued') {
+    return source.policy === 'enabled' && source.availability === 'detected';
+  }
+  return true;
 };
 
 const isPublication = (value: unknown): value is SourcePublicationView => {
@@ -488,17 +519,20 @@ const isPublication = (value: unknown): value is SourcePublicationView => {
     typeof value.queued === 'boolean' &&
     typeof value.running === 'boolean' &&
     publicationOutcomes.has(value.lastOutcome as SourcePublicationView['lastOutcome']) &&
-    isNonNegativeSafeInteger(value.acknowledgedRequestGeneration) &&
-    isNonNegativeSafeInteger(value.dirtyGeneration) &&
-    isNonNegativeSafeInteger(value.publishedGeneration) &&
-    isNonNegativeSafeInteger(value.requestedGeneration) &&
-    isNonNegativeSafeInteger(value.rtkCompletedGeneration) &&
-    isNonNegativeSafeInteger(value.rtkRequiredGeneration) &&
-    isOptionalCount(value.lastDurationMs) &&
+    isBoundedNonNegativeInteger(value.acknowledgedRequestGeneration, sourceControlBounds.maxGeneration) &&
+    isBoundedNonNegativeInteger(value.dirtyGeneration, sourceControlBounds.maxGeneration) &&
+    isBoundedNonNegativeInteger(value.publishedGeneration, sourceControlBounds.maxGeneration) &&
+    isBoundedNonNegativeInteger(value.requestedGeneration, sourceControlBounds.maxGeneration) &&
+    isBoundedNonNegativeInteger(value.rtkCompletedGeneration, sourceControlBounds.maxGeneration) &&
+    isBoundedNonNegativeInteger(value.rtkRequiredGeneration, sourceControlBounds.maxGeneration) &&
+    isOptionalBoundedInteger(value.lastDurationMs, sourceControlBounds.maxDurationMs) &&
     isOptionalIsoTimestamp(value.lastPublishedAt) &&
     (value.revision === undefined || (typeof value.revision === 'string' && revisionPattern.test(value.revision))) &&
     value.acknowledgedRequestGeneration <= value.requestedGeneration &&
     value.publishedGeneration <= value.dirtyGeneration &&
+    value.rtkCompletedGeneration <= value.rtkRequiredGeneration &&
+    value.rtkRequiredGeneration <= value.dirtyGeneration &&
+    !(value.queued && value.running) &&
     value.dirty === value.dirtyGeneration > value.publishedGeneration &&
     value.pendingDemand ===
       (value.requestedGeneration > value.acknowledgedRequestGeneration ||
@@ -533,21 +567,83 @@ export const parseSourceControlSnapshot = (value: unknown): SourceControlView =>
         'sources',
       ]) &&
       isIsoTimestamp(value.generatedAt) &&
-      isNonNegativeSafeInteger(value.generation) &&
+      isBoundedNonNegativeInteger(value.generation, sourceControlBounds.maxGeneration) &&
       isBoundedString(value.instanceId, 160) &&
-      isNonNegativeSafeInteger(value.queueDepth) &&
-      isNonNegativeSafeInteger(value.runningCount) &&
+      isBoundedNonNegativeInteger(value.queueDepth, sourceControlBounds.maxQueueDepth) &&
+      isBoundedNonNegativeInteger(value.runningCount, sourceControlBounds.maxRunningCount) &&
       isPublication(value.publication) &&
-      Array.isArray(value.sources) &&
-      value.sources.every(isSourceEntry)
-    ) ||
-    new Set(value.sources.map((source) => source.id)).size !== value.sources.length ||
-    value.runningCount !==
-      value.sources.filter((source) => source.lifecycle === 'running' || source.lifecycle === 'pausing').length
+      Array.isArray(value.sources)
+    )
   ) {
     return parseFailure('Source control snapshot is invalid.');
   }
-  return value as unknown as SourceControlView;
+  const sources: SourceControlEntryView[] = [];
+  for (const source of value.sources) {
+    if (!isSourceEntry(source)) {
+      return parseFailure('Source control snapshot is invalid.');
+    }
+    sources.push({
+      availability: source.availability,
+      cadenceMs: source.cadenceMs,
+      id: source.id,
+      label: source.label,
+      lastOutcome: source.lastOutcome,
+      lifecycle: source.lifecycle,
+      policy: source.policy,
+      reason: { ...source.reason },
+      warnings: source.warnings.map((warning) => ({ ...warning })),
+      ...(source.durationMs === undefined ? {} : { durationMs: source.durationMs }),
+      ...(source.inputCount === undefined ? {} : { inputCount: source.inputCount }),
+      ...(source.lastFinishedAt === undefined ? {} : { lastFinishedAt: source.lastFinishedAt }),
+      ...(source.lastStartedAt === undefined ? {} : { lastStartedAt: source.lastStartedAt }),
+      ...(source.lastSuccessAt === undefined ? {} : { lastSuccessAt: source.lastSuccessAt }),
+      ...(source.nextDueAt === undefined ? {} : { nextDueAt: source.nextDueAt }),
+      ...(source.outputCount === undefined ? {} : { outputCount: source.outputCount }),
+      ...(source.progress === undefined ? {} : { progress: { ...source.progress } }),
+      ...(source.queueDelayMs === undefined ? {} : { queueDelayMs: source.queueDelayMs }),
+    });
+  }
+  const sourceIds = new Set(sources.map(({ id }) => id));
+  const runningCount = sources.filter(({ lifecycle }) => lifecycle === 'running' || lifecycle === 'pausing').length;
+  const visiblyQueuedCount = sources.filter(({ lifecycle }) => lifecycle === 'queued').length;
+  const completeCatalogue =
+    sources.length === collectionSourceDefinitions.length &&
+    sourceIds.size === collectionSourceDefinitions.length &&
+    collectionSourceIds.every((sourceId) => sourceIds.has(sourceId));
+  const operationallyConsistent =
+    completeCatalogue &&
+    sources.every(isSourceLifecycleConsistent) &&
+    value.runningCount === runningCount &&
+    runningCount + (value.publication.running ? 1 : 0) <= sourceControlBounds.maxRunningCount &&
+    value.queueDepth >= visiblyQueuedCount + (value.publication.queued ? 1 : 0);
+  if (!operationallyConsistent) {
+    return parseFailure('Source control snapshot is invalid.');
+  }
+  const publication: SourcePublicationView = {
+    acknowledgedRequestGeneration: value.publication.acknowledgedRequestGeneration,
+    dirty: value.publication.dirty,
+    dirtyGeneration: value.publication.dirtyGeneration,
+    lastOutcome: value.publication.lastOutcome,
+    pendingDemand: value.publication.pendingDemand,
+    publishedGeneration: value.publication.publishedGeneration,
+    queued: value.publication.queued,
+    requestedGeneration: value.publication.requestedGeneration,
+    rtkCompletedGeneration: value.publication.rtkCompletedGeneration,
+    rtkRequiredGeneration: value.publication.rtkRequiredGeneration,
+    running: value.publication.running,
+    ...(value.publication.lastDurationMs === undefined ? {} : { lastDurationMs: value.publication.lastDurationMs }),
+    ...(value.publication.lastPublishedAt === undefined ? {} : { lastPublishedAt: value.publication.lastPublishedAt }),
+    ...(value.publication.revision === undefined ? {} : { revision: value.publication.revision }),
+  };
+  return {
+    generatedAt: value.generatedAt,
+    generation: value.generation,
+    instanceId: value.instanceId,
+    publication,
+    queueDepth: value.queueDepth,
+    runningCount: value.runningCount,
+    sources,
+  };
 };
 
 export const chooseNewestSourceControlSnapshot = (
