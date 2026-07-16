@@ -30,7 +30,14 @@ import {
   getCollectionSourceDefinition,
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
-import { importLocalRows, queryReportRows, queryUsageStoreGeneration, usageStorePath } from '@ai-usage/usage-store';
+import {
+  importLocalRows,
+  queryEnrichableUsageRows,
+  queryUsageStoreGeneration,
+  type RtkSavingsContribution,
+  upsertRtkSavingsContributions,
+  usageStorePath,
+} from '@ai-usage/usage-store';
 import { Data, Duration, Effect } from 'effect';
 import { persistCursorCommitAttribution } from './index';
 import type { ProviderQuotaRuntimeOptions } from './provider-quota';
@@ -111,6 +118,33 @@ const reportProgress = (context: SourceRunContext, progress: SourceProgress): Ef
       ? {}
       : { message: progress.message.slice(0, sourceControlBounds.maxMessageLength) }),
   });
+
+const abortIfRequested = (signal: AbortSignal | undefined): Effect.Effect<void, never> =>
+  signal?.aborted ? Effect.interrupt : Effect.void;
+
+const stripRtkContribution = (row: CollectorRow): CollectorRow => {
+  const {
+    rtkCommandCount: _rtkCommandCount,
+    rtkInputTokens: _rtkInputTokens,
+    rtkOutputTokens: _rtkOutputTokens,
+    rtkSavedTokens: _rtkSavedTokens,
+    ...base
+  } = row;
+  return base;
+};
+
+const rtkContributionFromRow = (row: CollectorRow): RtkSavingsContribution | undefined => {
+  const { rtkCommandCount, rtkInputTokens, rtkOutputTokens, rtkSavedTokens } = row;
+  if (
+    rtkCommandCount === undefined ||
+    rtkInputTokens === undefined ||
+    rtkOutputTokens === undefined ||
+    rtkSavedTokens === undefined
+  ) {
+    return;
+  }
+  return { rtkCommandCount, rtkInputTokens, rtkOutputTokens, rtkSavedTokens };
+};
 
 const resolveConfigPath = (configCwd: string | undefined, value: string): string =>
   configCwd && !path.isAbsolute(value) ? path.resolve(configCwd, value) : value;
@@ -203,6 +237,7 @@ const createSessionSource = (input: {
         Effect.provideService(LocalHistoryStorage, input.storage),
         Effect.mapError((cause) => sourceFailure(input.id, cause)),
       );
+      yield* abortIfRequested(context.signal);
       const retentionWarnings =
         input.id === 'claude.sessions'
           ? yield* collectClaudeRetentionWarnings.pipe(Effect.provideService(LocalHistoryStorage, input.storage))
@@ -212,7 +247,7 @@ const createSessionSource = (input: {
         phase: 'normalizing',
         total: collection.rows.length,
       });
-      const rows = collection.rows.map(stripProjectPath);
+      const rows = collection.rows.map(stripRtkContribution).map(stripProjectPath);
       yield* reportProgress(context, {
         completed: 0,
         phase: 'importing',
@@ -249,12 +284,12 @@ const createRtkSource = (input: {
       if (availability.availability !== 'detected') {
         return sourceUnavailableResult();
       }
-      const stored = yield* queryReportRows({
+      const stored = yield* queryEnrichableUsageRows({
         dbPath: input.dbPath,
         originMachineIds: [input.machine.id],
         sourceAuthorities: ['local-observed'],
       }).pipe(Effect.mapError((cause) => sourceFailure('rtk.savings', cause)));
-      const collectorRows: CollectorRow[] = stored.rows.map((row) => ({
+      const collectorRows: CollectorRow[] = stored.rows.map(({ row }) => ({
         ...row,
         ...(row.source?.sourcePath ? { projectPath: row.source.sourcePath } : {}),
       }));
@@ -266,20 +301,24 @@ const createRtkSource = (input: {
       const enriched = yield* enrichCollectorRowsWithRtkSavingsResult(collectorRows).pipe(
         Effect.provideService(LocalHistoryStorage, input.storage),
       );
+      yield* abortIfRequested(context.signal);
       yield* reportProgress(context, {
         completed: 0,
         phase: 'importing',
         total: enriched.rows.length,
       });
-      const imported = yield* importLocalRows({
+      const imported = yield* upsertRtkSavingsContributions({
+        contributions: enriched.rows.flatMap((row, index) => {
+          const contribution = rtkContributionFromRow(row);
+          const storedRow = stored.rows[index];
+          return contribution && storedRow ? [{ contribution, rowKey: storedRow.rowKey }] : [];
+        }),
         dbPath: input.dbPath,
-        machine: input.machine,
-        rows: enriched.rows.map(stripProjectPath),
       }).pipe(Effect.mapError((cause) => sourceFailure('rtk.savings', cause)));
       return {
         changed: imported.inserted > 0 || imported.updated > 0,
         inputCount: stored.rows.length,
-        outputCount: enriched.rows.length,
+        outputCount: imported.inserted + imported.updated + imported.unchanged,
         warnings: sanitizeWarnings('RTK savings', enriched.warnings),
       };
     }),
@@ -310,6 +349,7 @@ const createCursorAttributionSource = (input: {
         phase: 'normalizing',
         total: collection.rows.length,
       });
+      yield* abortIfRequested(context.signal);
       const imported = yield* persistCursorCommitAttribution({
         dbPath: input.dbPath,
         machineId: input.machine.id,

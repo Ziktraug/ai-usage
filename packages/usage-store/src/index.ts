@@ -86,6 +86,46 @@ export interface QueryRowsResult {
   sourceAuthorities: StoredSourceAuthority[];
 }
 
+export interface EnrichableUsageRow {
+  readonly row: CollectedUsageRow;
+  readonly rowKey: string;
+}
+
+export interface QueryEnrichableUsageRowsInput {
+  dbPath: string;
+  originMachineIds?: string[];
+  sourceAuthorities?: StoredSourceAuthority[];
+}
+
+export interface QueryEnrichableUsageRowsResult {
+  rows: EnrichableUsageRow[];
+  skipped: number;
+}
+
+export interface RtkSavingsContribution {
+  readonly rtkCommandCount: number;
+  readonly rtkInputTokens: number;
+  readonly rtkOutputTokens: number;
+  readonly rtkSavedTokens: number;
+}
+
+export interface RtkSavingsContributionInput {
+  readonly contribution: RtkSavingsContribution;
+  readonly rowKey: string;
+}
+
+export interface UpsertRtkSavingsContributionsInput {
+  readonly contributions: readonly RtkSavingsContributionInput[];
+  readonly dbPath: string;
+  readonly importedAt?: Date;
+}
+
+export interface EnrichmentImportResult {
+  inserted: number;
+  unchanged: number;
+  updated: number;
+}
+
 export interface QueryUsageStoreGenerationInput {
   dbPath: string;
 }
@@ -223,11 +263,17 @@ export interface UsageStore {
   previewPeerMergeBundle(
     input: PreviewPeerMergeBundleInput,
   ): Effect.Effect<PreviewPeerMergeBundleResult, UsageStoreError>;
+  queryEnrichableUsageRows(
+    input?: QueryEnrichableUsageRowsInput,
+  ): Effect.Effect<QueryEnrichableUsageRowsResult, UsageStoreError>;
   queryNormalizedDatasetItems(
     input?: QueryNormalizedDatasetItemsInput,
   ): Effect.Effect<QueryNormalizedDatasetItemsResult, UsageStoreError>;
   queryReportRows(input?: QueryReportRowsInput): Effect.Effect<QueryRowsResult, UsageStoreError>;
   queryUsageStoreGeneration(input?: QueryUsageStoreGenerationInput): Effect.Effect<number, UsageStoreError>;
+  upsertRtkSavingsContributions(
+    input: UpsertRtkSavingsContributionsInput,
+  ): Effect.Effect<EnrichmentImportResult, UsageStoreError>;
 }
 
 interface SqliteStatement {
@@ -251,7 +297,16 @@ interface ExistingRow {
 
 interface StoredRowRecord {
   row_json: string;
+  row_key: string;
   source_authority: StoredSourceAuthority;
+}
+
+interface StoredEnrichmentRecord {
+  content_hash: string;
+  payload_json: string;
+  row_key: string;
+  schema_version: number;
+  source_id: string;
 }
 
 interface UsageStoreGenerationRecord {
@@ -327,6 +382,56 @@ const usageStoreError = (operation: string, dbPath: string, cause: unknown, reas
 
 export const usageStorePath = (home: string) => path.join(home, '.config', 'ai-usage', 'usage-store.sqlite');
 
+const RTK_SAVINGS_SOURCE_ID = 'rtk.savings';
+const RTK_SAVINGS_SCHEMA_VERSION = 1;
+const RTK_SAVINGS_KEYS = [
+  'rtkCommandCount',
+  'rtkInputTokens',
+  'rtkOutputTokens',
+  'rtkSavedTokens',
+] as const satisfies readonly (keyof RtkSavingsContribution)[];
+
+const isRtkSavingsContribution = (value: unknown): value is RtkSavingsContribution => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).length === RTK_SAVINGS_KEYS.length &&
+    RTK_SAVINGS_KEYS.every((key) => Number.isSafeInteger(record[key]) && (record[key] as number) >= 0) &&
+    (record.rtkSavedTokens as number) > 0
+  );
+};
+
+const rtkSavingsFromRow = (row: {
+  readonly rtkCommandCount?: number;
+  readonly rtkInputTokens?: number;
+  readonly rtkOutputTokens?: number;
+  readonly rtkSavedTokens?: number;
+}): RtkSavingsContribution | undefined => {
+  const contribution = {
+    rtkCommandCount: row.rtkCommandCount,
+    rtkInputTokens: row.rtkInputTokens,
+    rtkOutputTokens: row.rtkOutputTokens,
+    rtkSavedTokens: row.rtkSavedTokens,
+  };
+  return isRtkSavingsContribution(contribution) ? contribution : undefined;
+};
+
+const stripRtkSavings = (row: CollectedUsageRow): CollectedUsageRow => {
+  const {
+    rtkCommandCount: _rtkCommandCount,
+    rtkInputTokens: _rtkInputTokens,
+    rtkOutputTokens: _rtkOutputTokens,
+    rtkSavedTokens: _rtkSavedTokens,
+    ...base
+  } = row;
+  return base;
+};
+
+const enrichmentContentHash = (value: RtkSavingsContribution): string =>
+  createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
 const migrate = (db: SqliteDatabase) => {
   db.exec(`
     CREATE TABLE IF NOT EXISTS usage_rows (
@@ -362,6 +467,22 @@ const migrate = (db: SqliteDatabase) => {
     );
 
     INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('generation', 0);
+    INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('migration.rtk-contributions-v1', 0);
+
+    CREATE TABLE IF NOT EXISTS usage_row_enrichments (
+      row_key TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      schema_version INTEGER NOT NULL CHECK (schema_version > 0),
+      content_hash TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      first_seen_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (row_key, source_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_usage_row_enrichments_source
+      ON usage_row_enrichments(source_id, row_key);
 
     CREATE TABLE IF NOT EXISTS collected_dataset_items (
       source_id TEXT NOT NULL,
@@ -447,6 +568,55 @@ const migrate = (db: SqliteDatabase) => {
     db.exec(
       "ALTER TABLE usage_rows ADD COLUMN source_authority TEXT NOT NULL DEFAULT 'portable-opaque' CHECK (source_authority IN ('local-observed', 'portable-opaque'))",
     );
+  }
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const migration = db
+      .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.rtk-contributions-v1'")
+      .get() as UsageStoreGenerationRecord | null;
+    if (migration?.value === 0) {
+      const migratedAt = new Date().toISOString();
+      const legacyRows = db.query('SELECT row_key, row_json FROM usage_rows').all() as Array<{
+        row_json: string;
+        row_key: string;
+      }>;
+      const insert = db.query(`
+        INSERT OR IGNORE INTO usage_row_enrichments (
+          row_key, source_id, schema_version, content_hash, payload_json,
+          first_seen_at, last_seen_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const legacy of legacyRows) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(legacy.row_json) as unknown;
+        } catch {
+          continue;
+        }
+        if (!isSerializedMergeRow(parsed)) {
+          continue;
+        }
+        const contribution = rtkSavingsFromRow(parsed);
+        if (!contribution) {
+          continue;
+        }
+        insert.run(
+          legacy.row_key,
+          RTK_SAVINGS_SOURCE_ID,
+          RTK_SAVINGS_SCHEMA_VERSION,
+          enrichmentContentHash(contribution),
+          JSON.stringify(contribution),
+          migratedAt,
+          migratedAt,
+          migratedAt,
+        );
+      }
+      db.query("UPDATE usage_store_metadata SET value = 1 WHERE key = 'migration.rtk-contributions-v1'").run();
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
   }
 };
 
@@ -857,7 +1027,7 @@ export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<Quer
       try: () => {
         const statuses = input.statuses?.length ? input.statuses : (['active'] satisfies StoredUsageRowStatus[]);
         const params: unknown[] = [...statuses];
-        let sql = `SELECT row_json, source_authority FROM usage_rows WHERE status IN (${statuses.map(() => '?').join(', ')})`;
+        let sql = `SELECT row_key, row_json, source_authority FROM usage_rows WHERE status IN (${statuses.map(() => '?').join(', ')})`;
 
         if (input.originMachineIds?.length) {
           sql += ` AND origin_machine_id IN (${input.originMachineIds.map(() => '?').join(', ')})`;
@@ -876,13 +1046,49 @@ export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<Quer
 
         sql += " ORDER BY COALESCE(active_date, '') DESC, row_key ASC";
         const records = db.query(sql).all(...params) as StoredRowRecord[];
+        const rowKeys = records.map(({ row_key }) => row_key);
+        const rowKeySet = new Set(rowKeys);
+        const enrichments =
+          rowKeys.length === 0
+            ? []
+            : (
+                db
+                  .query(`
+                  SELECT row_key, source_id, schema_version, content_hash, payload_json
+                  FROM usage_row_enrichments
+                  WHERE source_id = ?
+                `)
+                  .all(RTK_SAVINGS_SOURCE_ID) as StoredEnrichmentRecord[]
+              ).filter(({ row_key }) => rowKeySet.has(row_key));
+        const rtkByRowKey = new Map<string, RtkSavingsContribution>();
+        let skipped = 0;
+        for (const enrichment of enrichments) {
+          let payload: unknown;
+          try {
+            payload = JSON.parse(enrichment.payload_json) as unknown;
+          } catch {
+            skipped += 1;
+            continue;
+          }
+          if (
+            enrichment.schema_version !== RTK_SAVINGS_SCHEMA_VERSION ||
+            enrichment.source_id !== RTK_SAVINGS_SOURCE_ID ||
+            !isRtkSavingsContribution(payload) ||
+            enrichment.content_hash !== enrichmentContentHash(payload)
+          ) {
+            skipped += 1;
+            continue;
+          }
+          rtkByRowKey.set(enrichment.row_key, payload);
+        }
         const rows: CollectedUsageRow[] = [];
         const sourceAuthorities: StoredSourceAuthority[] = [];
-        let skipped = 0;
         for (const record of records) {
           const parsed = JSON.parse(record.row_json) as unknown;
           if (isSerializedMergeRow(parsed)) {
-            rows.push(deserializeMergeRow(parsed));
+            const base = stripRtkSavings(deserializeMergeRow(parsed));
+            const contribution = rtkByRowKey.get(record.row_key);
+            rows.push(contribution ? { ...base, ...contribution } : base);
             sourceAuthorities.push(record.source_authority);
           } else {
             skipped += 1;
@@ -891,6 +1097,136 @@ export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<Quer
         return { rows, skipped, sourceAuthorities };
       },
       catch: (cause) => usageStoreError('queryReportRows', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
+export const queryEnrichableUsageRows = (
+  input: QueryEnrichableUsageRowsInput,
+): Effect.Effect<QueryEnrichableUsageRowsResult, UsageStoreError> =>
+  withUsageStore(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const params: unknown[] = [];
+        let sql = "SELECT row_key, row_json, source_authority FROM usage_rows WHERE status = 'active'";
+        if (input.originMachineIds?.length) {
+          sql += ` AND origin_machine_id IN (${input.originMachineIds.map(() => '?').join(', ')})`;
+          params.push(...input.originMachineIds);
+        }
+        if (input.sourceAuthorities?.length) {
+          sql += ` AND source_authority IN (${input.sourceAuthorities.map(() => '?').join(', ')})`;
+          params.push(...input.sourceAuthorities);
+        }
+        sql += " ORDER BY COALESCE(active_date, '') DESC, row_key ASC";
+        const records = db.query(sql).all(...params) as StoredRowRecord[];
+        const rows: EnrichableUsageRow[] = [];
+        let skipped = 0;
+        for (const record of records) {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(record.row_json) as unknown;
+          } catch {
+            skipped += 1;
+            continue;
+          }
+          if (!isSerializedMergeRow(parsed)) {
+            skipped += 1;
+            continue;
+          }
+          rows.push({ row: stripRtkSavings(deserializeMergeRow(parsed)), rowKey: record.row_key });
+        }
+        return { rows, skipped };
+      },
+      catch: (cause) => usageStoreError('queryEnrichableUsageRows', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
+export const upsertRtkSavingsContributions = (
+  input: UpsertRtkSavingsContributionsInput,
+): Effect.Effect<EnrichmentImportResult, UsageStoreError> =>
+  withUsageStore(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const unique = new Map<string, RtkSavingsContribution>();
+        for (const item of input.contributions) {
+          if (
+            !(typeof item.rowKey === 'string' && item.rowKey.length > 0 && isRtkSavingsContribution(item.contribution))
+          ) {
+            throw new Error('RTK savings contribution failed strict validation');
+          }
+          unique.set(item.rowKey, item.contribution);
+        }
+        const result: EnrichmentImportResult = { inserted: 0, unchanged: 0, updated: 0 };
+        const now = (input.importedAt ?? new Date()).toISOString();
+        const existingStatement = db.query(`
+          SELECT row_key, source_id, schema_version, content_hash, payload_json
+          FROM usage_row_enrichments
+          WHERE row_key = ? AND source_id = ?
+        `);
+        const activeStatement = db.query("SELECT row_key FROM usage_rows WHERE row_key = ? AND status = 'active'");
+        const insertStatement = db.query(`
+          INSERT INTO usage_row_enrichments (
+            row_key, source_id, schema_version, content_hash, payload_json,
+            first_seen_at, last_seen_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        const touchStatement = db.query(`
+          UPDATE usage_row_enrichments SET last_seen_at = ? WHERE row_key = ? AND source_id = ?
+        `);
+        const updateStatement = db.query(`
+          UPDATE usage_row_enrichments
+          SET schema_version = ?, content_hash = ?, payload_json = ?, last_seen_at = ?, updated_at = ?
+          WHERE row_key = ? AND source_id = ?
+        `);
+        let projectionChanged = false;
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          for (const [rowKey, contribution] of unique) {
+            const contentHash = enrichmentContentHash(contribution);
+            const existing = existingStatement.get(rowKey, RTK_SAVINGS_SOURCE_ID) as StoredEnrichmentRecord | null;
+            const active = activeStatement.get(rowKey) !== null;
+            if (!existing) {
+              insertStatement.run(
+                rowKey,
+                RTK_SAVINGS_SOURCE_ID,
+                RTK_SAVINGS_SCHEMA_VERSION,
+                contentHash,
+                JSON.stringify(contribution),
+                now,
+                now,
+                now,
+              );
+              result.inserted += 1;
+              projectionChanged ||= active;
+              continue;
+            }
+            if (existing.schema_version === RTK_SAVINGS_SCHEMA_VERSION && existing.content_hash === contentHash) {
+              touchStatement.run(now, rowKey, RTK_SAVINGS_SOURCE_ID);
+              result.unchanged += 1;
+              continue;
+            }
+            updateStatement.run(
+              RTK_SAVINGS_SCHEMA_VERSION,
+              contentHash,
+              JSON.stringify(contribution),
+              now,
+              now,
+              rowKey,
+              RTK_SAVINGS_SOURCE_ID,
+            );
+            result.updated += 1;
+            projectionChanged ||= active;
+          }
+          if (projectionChanged) {
+            db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
+          }
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+        return result;
+      },
+      catch: (cause) => usageStoreError('upsertRtkSavingsContributions', input.dbPath, cause, 'storage-failure'),
     }),
   );
 
@@ -1578,8 +1914,10 @@ export const createUsageStore = (dbPath: string): UsageStore => ({
   previewPeerMergeBundle: (input) => previewPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
   confirmPeerMergeBundle: (input) => confirmPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
   queryReportRows: (input) => queryReportRows({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
+  queryEnrichableUsageRows: (input) => queryEnrichableUsageRows({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryNormalizedDatasetItems: (input) =>
     queryNormalizedDatasetItems({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryUsageStoreGeneration: (input) =>
     queryUsageStoreGeneration({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
+  upsertRtkSavingsContributions: (input) => upsertRtkSavingsContributions({ ...input, dbPath: input.dbPath ?? dbPath }),
 });

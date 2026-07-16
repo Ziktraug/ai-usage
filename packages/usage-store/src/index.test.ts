@@ -23,12 +23,14 @@ import {
   importPeerMergeBundle,
   importProviderQuotaBatch,
   previewPeerMergeBundle,
+  queryEnrichableUsageRows,
   queryNormalizedDatasetItems,
   queryProviderQuotaObservations,
   queryProviderQuotaSourceState,
   queryReportRows,
   queryUsageStoreGeneration,
   UsageStoreError,
+  upsertRtkSavingsContributions,
   usageStorePath,
 } from './index';
 
@@ -94,6 +96,73 @@ const makeDatasetItem = (itemKey: string, linesAdded = 3): CursorCommitAttributi
 });
 
 describe('usage-store public boundary', () => {
+  test('keeps RTK-owned enrichment across base re-imports, no-ops, and store reopen', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-rtk-contribution-'));
+    const dbPath = usageStorePath(home);
+    const base = makeRow({ sourceSessionId: 'rtk-owned' });
+    await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [base] }));
+    const enrichable = await Effect.runPromise(
+      queryEnrichableUsageRows({
+        dbPath,
+        originMachineIds: [machineA.id],
+        sourceAuthorities: ['local-observed'],
+      }),
+    );
+    const rowKey = enrichable.rows[0]?.rowKey;
+    if (!rowKey) {
+      throw new Error('Expected an enrichable stable row key');
+    }
+    const contribution = {
+      rtkCommandCount: 1,
+      rtkInputTokens: 20,
+      rtkOutputTokens: 5,
+      rtkSavedTokens: 15,
+    };
+    expect(
+      await Effect.runPromise(upsertRtkSavingsContributions({ contributions: [{ contribution, rowKey }], dbPath })),
+    ).toEqual({ inserted: 1, unchanged: 0, updated: 0 });
+    const enrichedGeneration = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+
+    await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [base] }));
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        machine: machineA,
+        rows: [makeRow({ sourceSessionId: 'rtk-owned', tokOut: 99 })],
+      }),
+    );
+    await Effect.runPromise(upsertRtkSavingsContributions({ contributions: [], dbPath }));
+
+    const reopened = await Effect.runPromise(queryReportRows({ dbPath }));
+    expect(reopened.rows[0]).toMatchObject({ rtkSavedTokens: 15, tokOut: 99 });
+    expect((await Effect.runPromise(queryEnrichableUsageRows({ dbPath }))).rows[0]?.row.rtkSavedTokens).toBeUndefined();
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(enrichedGeneration + 1);
+  });
+
+  test('migrates legacy embedded RTK fields additively without advancing semantic generation', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-rtk-migration-'));
+    const dbPath = usageStorePath(home);
+    const legacy = {
+      ...makeRow({ sourceSessionId: 'legacy-rtk' }),
+      rtkCommandCount: 2,
+      rtkInputTokens: 30,
+      rtkOutputTokens: 10,
+      rtkSavedTokens: 20,
+    };
+    await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [legacy] }));
+    const { Database } = await import('bun:sqlite');
+    const db = new Database(dbPath);
+    db.query("UPDATE usage_store_metadata SET value = 0 WHERE key = 'migration.rtk-contributions-v1'").run();
+    db.close();
+    const generationBeforeMigration = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+
+    const first = await Effect.runPromise(queryReportRows({ dbPath }));
+    const second = await Effect.runPromise(queryReportRows({ dbPath }));
+    expect(first.rows[0]).toMatchObject({ rtkCommandCount: 2, rtkSavedTokens: 20 });
+    expect(second.rows[0]).toMatchObject({ rtkCommandCount: 2, rtkSavedTokens: 20 });
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(generationBeforeMigration);
+  });
+
   test('upserts normalized datasets semantically without deleting absent items', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-datasets-'));
     const dbPath = usageStorePath(home);

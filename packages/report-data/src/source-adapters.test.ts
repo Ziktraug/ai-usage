@@ -23,7 +23,7 @@ const createRegistry = async (home: string, options: Parameters<typeof createSch
     ),
   );
 
-const writeClaudeSession = (home: string): void => {
+const writeClaudeSession = (home: string, inputTokens = 10): void => {
   const directory = path.join(home, '.claude', 'projects', '-work-project');
   mkdirSync(directory, { recursive: true });
   writeFileSync(
@@ -37,7 +37,7 @@ const writeClaudeSession = (home: string): void => {
         usage: {
           cache_creation_input_tokens: 0,
           cache_read_input_tokens: 0,
-          input_tokens: 10,
+          input_tokens: inputTokens,
           output_tokens: 5,
         },
       },
@@ -152,6 +152,11 @@ describe('scheduled source adapters', () => {
         rtkOutputTokens: 2,
         rtkSavedTokens: 9,
       });
+      await Effect.runPromise(registry.get('claude.sessions')?.run(progressContext([])) ?? Effect.die('missing'));
+      writeClaudeSession(home, 11);
+      await Effect.runPromise(registry.get('claude.sessions')?.run(progressContext([])) ?? Effect.die('missing'));
+      const afterBaseReimports = await Effect.runPromise(queryReportRows({ dbPath: usageStorePath(home) }));
+      expect(afterBaseReimports.rows[0]).toMatchObject({ rtkSavedTokens: 9, tokIn: 11 });
     } finally {
       rmSync(home, { force: true, recursive: true });
     }
