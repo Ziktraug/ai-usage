@@ -126,6 +126,64 @@ const sendHttpRequest = (
     request.end(options.body);
   });
 
+const readInitialSourceControlSnapshot = (port: number): Promise<Record<string, unknown>> =>
+  new Promise((resolve, reject) => {
+    const request = httpRequest(
+      {
+        headers: {
+          host: `localhost:${port}`,
+          origin: `http://localhost:${port}`,
+          'sec-fetch-site': 'same-origin',
+        },
+        host: LOOPBACK_HOST,
+        path: '/api/source-control',
+        port,
+      },
+      (response) => {
+        if (response.statusCode !== 200) {
+          response.resume();
+          reject(new Error(`Source-control SSE returned status ${response.statusCode ?? 0}.`));
+          return;
+        }
+        let text = '';
+        response.on('data', (chunk: Buffer) => {
+          text += chunk.toString('utf8');
+          if (Buffer.byteLength(text) > LOG_LIMIT_BYTES) {
+            request.destroy(new Error('Source-control SSE initial event exceeded its limit.'));
+            return;
+          }
+          const data = text
+            .split('\n')
+            .find((line) => line.startsWith('data: '))
+            ?.slice(6);
+          if (!data) {
+            return;
+          }
+          request.destroy();
+          try {
+            const parsed = JSON.parse(data) as unknown;
+            if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+              reject(new Error('Source-control SSE snapshot must be an object.'));
+              return;
+            }
+            resolve(parsed as Record<string, unknown>);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      },
+    );
+    request.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      request.destroy(new Error(`Source-control SSE exceeded its ${REQUEST_TIMEOUT_MS}ms deadline.`));
+    });
+    request.once('error', (error) => {
+      if (error.message !== 'The operation was aborted.') {
+        reject(error);
+      }
+    });
+    request.end();
+  });
+
 const waitForApplicationPage = async (
   port: number,
   child: Bun.Subprocess,
@@ -307,6 +365,29 @@ const runProductionSmoke = async (): Promise<void> => {
             OVERALL_DEADLINE_MS,
             (async () => {
               await waitForApplicationPage(port, child, '/', 'Usage report');
+              const sourceSnapshot = await readInitialSourceControlSnapshot(port);
+              const serializedSourceSnapshot = JSON.stringify(sourceSnapshot);
+              if (
+                !Array.isArray(sourceSnapshot.sources) ||
+                serializedSourceSnapshot.includes(temporaryHome) ||
+                serializedSourceSnapshot.includes('/work/project-')
+              ) {
+                throw new Error('Source-control SSE did not return a sanitized bounded snapshot.');
+              }
+              const commandResponse = await sendHttpRequest(port, {
+                body: '{"command":"detect-all"}',
+                headers: {
+                  'content-type': 'application/json',
+                  host: `localhost:${port}`,
+                  origin: `http://localhost:${port}`,
+                  'sec-fetch-site': 'same-origin',
+                },
+                method: 'POST',
+                path: '/api/source-control/command',
+              });
+              if (commandResponse.status !== 200 || !commandResponse.body.includes('"ok":true')) {
+                throw new Error(`Source-control command route did not converge (status ${commandResponse.status}).`);
+              }
               const probeStartedAt = performance.now();
               const probe = await sendHttpRequest(port, { path: '/' });
               const probeDurationMs = performance.now() - probeStartedAt;
@@ -326,6 +407,13 @@ const runProductionSmoke = async (): Promise<void> => {
                 sendHttpRequest(port, { headers: { host: 'attacker.example' } }),
               );
               await requireRejected(
+                'hostile Host on the source-control stream',
+                sendHttpRequest(port, {
+                  headers: { host: 'attacker.example' },
+                  path: '/api/source-control',
+                }),
+              );
+              await requireRejected(
                 'hostile Origin on a read route',
                 sendHttpRequest(port, { headers: { host: localHost, origin: 'http://attacker.example' } }),
               );
@@ -341,6 +429,20 @@ const runProductionSmoke = async (): Promise<void> => {
                   },
                   method: 'POST',
                   path: '/sync',
+                }),
+              );
+              await requireRejected(
+                'cross-site metadata on a source-control command',
+                sendHttpRequest(port, {
+                  body: '{"command":"detect-all"}',
+                  headers: {
+                    'content-type': 'application/json',
+                    host: localHost,
+                    origin: `http://${localHost}`,
+                    'sec-fetch-site': 'cross-site',
+                  },
+                  method: 'POST',
+                  path: '/api/source-control/command',
                 }),
               );
               await requireNonLoopbackConnectionFailure(nonLoopbackIpv4Address(), port);
