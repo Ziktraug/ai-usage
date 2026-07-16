@@ -2,7 +2,7 @@
 
 ## Owns
 
-The SQLite materialized usage store, migrations, local row import, merge bundle persistence, status tracking, and validated report-row queries.
+The SQLite materialized usage store, additive migrations, local row import, normalized dataset-item upserts, merge bundle persistence, status tracking, and validated report queries.
 
 ## Does Not Own
 
@@ -10,7 +10,7 @@ It does not own raw local history collection, file selection or transfer, networ
 
 ## Public Interface
 
-The root export provides typed APIs for importing local rows, previewing/confirming portable bundles against a store-state token, exporting local merge bundles, and querying stored report rows plus semantic generation.
+The root export provides typed APIs for importing local rows and normalized dataset items, previewing/confirming portable bundles against a store-state token, exporting local merge bundles, and querying stored projections plus semantic generation.
 
 ## Depends On
 
@@ -22,7 +22,7 @@ It must not import `@ai-usage/local-collectors`, `@ai-usage/report-data`, `@ai-u
 
 ## Data Boundary
 
-SQLite stores normalized machine-scoped usage facts keyed by origin machine ID and records whether provenance is locally observed or portable/opaque. Generation advances only when the active report projection changes; observation timestamps and identical imports do not invalidate report captures.
+SQLite stores normalized machine-scoped usage facts keyed by origin machine ID and versioned dataset items keyed by source, machine, dataset, schema, and stable item identity. Dataset imports upsert observed items and never delete absent items. Generation advances only when the active report projection changes; observation timestamps and identical imports do not invalidate report captures.
 
 ## Test Strategy
 

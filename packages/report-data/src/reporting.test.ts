@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import { writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
+import type { CursorCommitAttributionRow } from '@ai-usage/report-core/datasets';
 import { createUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import { createProviderStatusDataset } from '@ai-usage/report-core/provider-status';
 import { createUsageSnapshot, type UsageMachine } from '@ai-usage/report-core/snapshot';
@@ -21,6 +22,8 @@ import {
   listProjectSources,
   listProjectSourcesWithWarnings,
   parseGitConfigRemote,
+  persistCursorCommitAttribution,
+  readStoredCursorCommitAttribution,
   readStoredReportSourceFingerprint,
 } from './index';
 
@@ -122,6 +125,57 @@ const makeSourcedRow = (input: {
 });
 
 describe('shared reporting', () => {
+  test('round-trips Cursor attribution through normalized dataset storage without replacing history', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-cursor-dataset-'));
+    try {
+      const dbPath = usageStorePath(home);
+      const row: CursorCommitAttributionRow = {
+        blankLinesAdded: 0,
+        blankLinesDeleted: 0,
+        branchName: 'main',
+        commitDate: null,
+        commitHash: 'abc123',
+        commitMessage: 'Add source control',
+        composerLinesAdded: 3,
+        composerLinesDeleted: 0,
+        humanLinesAdded: 2,
+        humanLinesDeleted: 0,
+        linesAdded: 5,
+        linesDeleted: 0,
+        scoredAt: '2026-07-16T10:00:00.000Z',
+        tabLinesAdded: 0,
+        tabLinesDeleted: 0,
+        v1AiPercentage: 60,
+        v2AiPercentage: 60,
+      };
+
+      expect(
+        await Effect.runPromise(
+          persistCursorCommitAttribution({
+            dbPath,
+            machineId: testMachine.id,
+            rows: [row],
+          }),
+        ),
+      ).toMatchObject({ inserted: 1, unchanged: 0, updated: 0 });
+      await Effect.runPromise(
+        persistCursorCommitAttribution({
+          dbPath,
+          machineId: testMachine.id,
+          rows: [],
+        }),
+      );
+
+      expect(await Effect.runPromise(readStoredCursorCommitAttribution({ dbPath }))).toEqual({
+        rows: [row],
+        skipped: 0,
+        truncated: false,
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('discovers project sources from local rows only and collects once when only imported rows are stored', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-known-local-projects-'));
     const localProjectPath = mkdtempSync(path.join(tmpdir(), 'ai-usage-known-local-project-'));

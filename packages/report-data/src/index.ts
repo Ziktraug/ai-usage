@@ -7,12 +7,13 @@ import {
   collectSelectedHarnessRows,
   type HarnessSelection,
   mirrorDatasetsToLegacyFacets,
+  normalizeCursorCommitAttributionItems,
   type SelectedHarnessCollectionResult,
 } from '@ai-usage/local-collectors';
 import { LocalHistoryError, type LocalHistoryWarning } from '@ai-usage/local-collectors/errors';
 import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-collectors/machine-config';
-import type { ReportDatasets } from '@ai-usage/report-core/datasets';
+import type { CursorCommitAttributionRow, ReportDatasets } from '@ai-usage/report-core/datasets';
 import { type HarnessKey, harnessKeys } from '@ai-usage/report-core/harness-metadata';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import {
@@ -49,7 +50,9 @@ import type { Row, SourcedRow } from '@ai-usage/report-core/types';
 import { usageRowLineDelta, usageRowPricedCost, usageRowTokenTotal } from '@ai-usage/report-core/usage-row';
 import {
   importLocalRows,
+  importNormalizedDatasetItems,
   queryLatestProviderQuotaObservations,
+  queryNormalizedDatasetItems,
   queryReportRows,
   queryUsageStoreGeneration,
   type StoredSourceAuthority,
@@ -114,6 +117,41 @@ export interface ReportDatasetSelection {
   includeCursorCommitAttribution?: boolean;
   includeProviderStatus?: boolean;
 }
+
+export interface PersistCursorCommitAttributionInput {
+  dbPath: string;
+  importedAt?: Date;
+  machineId: string;
+  rows: readonly CursorCommitAttributionRow[];
+}
+
+export interface ReadStoredCursorCommitAttributionInput {
+  dbPath: string;
+  machineId?: string;
+  maximumItems?: number;
+}
+
+export const persistCursorCommitAttribution = (input: PersistCursorCommitAttributionInput) =>
+  importNormalizedDatasetItems({
+    dbPath: input.dbPath,
+    items: normalizeCursorCommitAttributionItems(input.machineId, input.rows),
+    ...(input.importedAt === undefined ? {} : { importedAt: input.importedAt }),
+  });
+
+export const readStoredCursorCommitAttribution = (input: ReadStoredCursorCommitAttributionInput) =>
+  queryNormalizedDatasetItems({
+    datasetKey: 'cursor.commit-attribution',
+    dbPath: input.dbPath,
+    sourceId: 'cursor.commit-attribution',
+    ...(input.machineId === undefined ? {} : { machineId: input.machineId }),
+    ...(input.maximumItems === undefined ? {} : { maximumItems: input.maximumItems }),
+  }).pipe(
+    Effect.map((result) => ({
+      rows: result.items.map(({ payload }) => payload),
+      skipped: result.skipped,
+      truncated: result.truncated,
+    })),
+  );
 
 export interface LocalReportPayloadRequest extends LocalReportRowsRequest {
   datasets?: ReportDatasetSelection;

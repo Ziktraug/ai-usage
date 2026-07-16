@@ -1,4 +1,5 @@
 import type { ProviderStatusDataset } from './provider-status';
+import type { CollectionSourceId } from './source-control';
 
 export interface CursorCommitAttributionRow {
   blankLinesAdded: number;
@@ -24,6 +25,62 @@ export interface ReportDatasets extends Record<string, unknown> {
   cursorCommitAttribution?: CursorCommitAttributionRow[];
   providerStatus?: ProviderStatusDataset;
 }
+
+export const normalizedDatasetKeys = ['cursor.commit-attribution'] as const;
+
+export type NormalizedDatasetKey = (typeof normalizedDatasetKeys)[number];
+
+export interface CursorCommitAttributionDatasetItem {
+  readonly datasetKey: 'cursor.commit-attribution';
+  readonly itemKey: string;
+  readonly machineId: string;
+  readonly payload: CursorCommitAttributionRow;
+  readonly schemaVersion: 1;
+  readonly sourceId: 'cursor.commit-attribution';
+}
+
+export type NormalizedDatasetItem = CursorCommitAttributionDatasetItem;
+
+const normalizedDatasetItemKeys = new Set([
+  'datasetKey',
+  'itemKey',
+  'machineId',
+  'payload',
+  'schemaVersion',
+  'sourceId',
+]);
+
+const maxDatasetIdentityLength = 256;
+
+const isBoundedIdentity = (value: unknown): value is string =>
+  typeof value === 'string' && value.length > 0 && value.length <= maxDatasetIdentityLength;
+
+export const isNormalizedDatasetItem = (value: unknown): value is NormalizedDatasetItem => {
+  if (!(isRecord(value) && hasOnlyKeys(value, normalizedDatasetItemKeys))) {
+    return false;
+  }
+  return (
+    value.sourceId === 'cursor.commit-attribution' &&
+    value.datasetKey === 'cursor.commit-attribution' &&
+    value.schemaVersion === 1 &&
+    isBoundedIdentity(value.machineId) &&
+    isBoundedIdentity(value.itemKey) &&
+    isCursorCommitAttributionRow(value.payload)
+  );
+};
+
+export const isNormalizedDatasetIdentity = (input: {
+  datasetKey: unknown;
+  schemaVersion: unknown;
+  sourceId: unknown;
+}): input is {
+  datasetKey: NormalizedDatasetKey;
+  schemaVersion: 1;
+  sourceId: CollectionSourceId;
+} =>
+  input.sourceId === 'cursor.commit-attribution' &&
+  input.datasetKey === 'cursor.commit-attribution' &&
+  input.schemaVersion === 1;
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
