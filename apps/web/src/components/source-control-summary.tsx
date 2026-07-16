@@ -1,16 +1,9 @@
 import { css, cx } from '@ai-usage/design-system/css';
-import {
-  ghostButton,
-  statusPill,
-  statusPillDanger,
-  statusPillInfo,
-  statusPillOk,
-  statusPillWarn,
-} from '@ai-usage/design-system/report';
+import { ghostButton, statusPill } from '@ai-usage/design-system/report';
 import { Link } from '@tanstack/solid-router';
-import { createMemo, For, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import { useSourceControl } from '../source-control-context';
-import { presentSourceState, type SourcePresentationTone } from '../source-control-presentation';
+import { presentSourceState, sourceToneClass } from '../source-control-presentation';
 
 const summary = css({
   position: 'relative',
@@ -90,16 +83,6 @@ const sourceRow = css({
 });
 const sourceLabel = css({ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '12px' });
 
-const summaryToneClass = (tone: SourcePresentationTone): string => {
-  if (tone === 'ok') {
-    return statusPillOk;
-  }
-  if (tone === 'danger') {
-    return statusPillDanger;
-  }
-  return tone === 'warning' ? statusPillWarn : statusPillInfo;
-};
-
 export const SourceControlSummary = () => {
   const sourceControl = useSourceControl();
   const snapshot = () => sourceControl.state().snapshot;
@@ -142,12 +125,20 @@ export const SourceControlSummary = () => {
         ?.sources.filter((source) => source.nextDueAt !== undefined)
         .toSorted((left, right) => String(left.nextDueAt).localeCompare(String(right.nextDueAt)))[0],
   );
+  const [clock, setClock] = createSignal(Date.now());
+  createEffect(() => {
+    if (runningSources().length === 0) {
+      return;
+    }
+    setClock(Date.now());
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    onCleanup(() => clearInterval(timer));
+  });
   const elapsed = (startedAt: string | undefined): string => {
-    const generatedAt = snapshot()?.generatedAt;
-    if (!(startedAt && generatedAt)) {
+    if (!startedAt) {
       return 'elapsed time unavailable';
     }
-    const milliseconds = Math.max(0, Date.parse(generatedAt) - Date.parse(startedAt));
+    const milliseconds = Math.max(0, clock() - Date.parse(startedAt));
     return `${Math.round(milliseconds / 1000)}s elapsed`;
   };
 
@@ -178,7 +169,7 @@ export const SourceControlSummary = () => {
       <div class={card} data-source-card="">
         <div class={cardHeader}>
           <span class={cardTitle}>Collection sources</span>
-          <span class={cx(statusPill, summaryToneClass(statusTone()))}>{statusLabel()}</span>
+          <span class={cx(statusPill, sourceToneClass(statusTone()))}>{statusLabel()}</span>
         </div>
         <Show fallback={<p class={cardMeta}>Waiting for the server-owned source snapshot.</p>} when={snapshot()}>
           <div class={sourceList}>
@@ -190,7 +181,7 @@ export const SourceControlSummary = () => {
                     <span class={sourceLabel} title={`${source.label}: ${presentation().explanation}`}>
                       {source.label}
                     </span>
-                    <span class={cx(statusPill, summaryToneClass(presentation().tone))}>{presentation().label}</span>
+                    <span class={cx(statusPill, sourceToneClass(presentation().tone))}>{presentation().label}</span>
                   </div>
                 );
               }}

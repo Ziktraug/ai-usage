@@ -1,3 +1,4 @@
+import { statusPillDanger, statusPillInfo, statusPillOk, statusPillWarn } from '@ai-usage/design-system/report';
 import type { SourceControlEntryView } from '@ai-usage/report-core/source-control';
 
 export type SourcePresentationTone = 'danger' | 'info' | 'ok' | 'warning';
@@ -7,6 +8,16 @@ export interface SourcePresentation {
   readonly label: string;
   readonly tone: SourcePresentationTone;
 }
+
+export const sourceToneClass = (tone: SourcePresentationTone): string => {
+  if (tone === 'ok') {
+    return statusPillOk;
+  }
+  if (tone === 'danger') {
+    return statusPillDanger;
+  }
+  return tone === 'warning' ? statusPillWarn : statusPillInfo;
+};
 
 export const presentSourceState = (source: SourceControlEntryView): SourcePresentation => {
   if (source.lifecycle === 'pausing') {

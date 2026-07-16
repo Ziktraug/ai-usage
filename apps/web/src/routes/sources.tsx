@@ -13,10 +13,8 @@ import {
   panel,
   shell,
   statusPill,
-  statusPillDanger,
   statusPillInfo,
   statusPillOk,
-  statusPillWarn,
   title,
   titleBlock,
 } from '@ai-usage/design-system/report';
@@ -32,7 +30,7 @@ import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
 import { fmtDate, fmtNum } from '../shared';
 import { useSourceControl } from '../source-control-context';
-import { presentSourceState, type SourcePresentationTone } from '../source-control-presentation';
+import { presentSourceState, sourceToneClass } from '../source-control-presentation';
 
 export const Route = createFileRoute('/sources')({
   component: SourcesRoute,
@@ -91,16 +89,6 @@ const groupLabels: Record<CollectionSourceGroup, string> = {
   sessions: 'Sessions',
 };
 
-const toneForSource = (tone: SourcePresentationTone) => {
-  if (tone === 'ok') {
-    return statusPillOk;
-  }
-  if (tone === 'danger') {
-    return statusPillDanger;
-  }
-  return tone === 'warning' ? statusPillWarn : statusPillInfo;
-};
-
 const progressValue = (source: SourceControlEntryView): number | undefined => {
   const { completed, total } = source.progress ?? {};
   if (completed === undefined || total === undefined || total <= 0) {
@@ -156,7 +144,7 @@ const SourceCard = (props: {
           <p class={sourceId}>{props.source.id}</p>
         </div>
         <div class={sourceBadges}>
-          <span class={cx(statusPill, toneForSource(presentation().tone))}>{presentation().label}</span>
+          <span class={cx(statusPill, sourceToneClass(presentation().tone))}>{presentation().label}</span>
           <span class={cx(statusPill, props.source.policy === 'enabled' ? statusPillOk : statusPillInfo)}>
             {props.source.policy}
           </span>
