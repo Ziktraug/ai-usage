@@ -187,6 +187,10 @@ export interface LocalUsageSnapshotRequest extends LocalUsageSelection {
   machine?: UsageMachine;
 }
 
+export interface StoredUsageSnapshotRequest extends LocalUsageSnapshotRequest {
+  warnings?: UsageReportWarning[];
+}
+
 export interface MergedUsageReportRequest extends LocalUsageSelection {
   appVersion?: string | null;
   datasets?: ReportDatasetSelection;
@@ -395,6 +399,60 @@ const mergeReportDatasets = (...datasets: (ReportDatasets | undefined)[]): Repor
   }
   return Object.keys(merged).length ? merged : undefined;
 };
+
+const readStoredDatasets = (input: {
+  dbPath: string;
+  machine: UsageMachine;
+  request: {
+    datasets?: ReportDatasetSelection;
+    harness: HarnessKey | null;
+    includeCursor: boolean;
+    includeFacets?: boolean;
+  };
+}) =>
+  Effect.gen(function* () {
+    const selection = datasetSelectionFor(input.request);
+    const warnings: LocalHistoryWarning[] = [];
+    const storedCursor = selection?.includeCursorCommitAttribution
+      ? yield* readStoredCursorCommitAttribution({ dbPath: input.dbPath }).pipe(
+          Effect.mapError(usageStoreLocalHistoryError('usageStore.queryNormalizedDatasetItems', input.dbPath)),
+        )
+      : undefined;
+    if (storedCursor?.skipped) {
+      warnings.push({
+        harness: 'cursor',
+        message: `Skipped ${storedCursor.skipped} invalid stored Cursor attribution item(s).`,
+        operation: 'usageStore.queryNormalizedDatasetItems',
+      });
+    }
+    if (storedCursor?.truncated) {
+      warnings.push({
+        harness: 'cursor',
+        message: 'Stored Cursor attribution exceeded the bounded report read.',
+        operation: 'usageStore.queryNormalizedDatasetItems',
+      });
+    }
+    const storedCursorDataset = storedCursor?.rows.length ? { cursorCommitAttribution: storedCursor.rows } : undefined;
+    const storedQuota = selection?.includeProviderStatus
+      ? yield* queryLatestProviderQuotaObservations({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+        }).pipe(
+          Effect.mapError(usageStoreLocalHistoryError('usageStore.queryLatestProviderQuotaObservations', input.dbPath)),
+        )
+      : undefined;
+    const storedQuotaDataset = storedQuota?.observations.length
+      ? {
+          providerStatus: createProviderStatusDataset(
+            storedQuota.observations.map(({ observation }) => projectProviderQuotaObservation(observation)),
+          ),
+        }
+      : undefined;
+    return {
+      datasets: mergeReportDatasets(storedCursorDataset, storedQuotaDataset),
+      warnings,
+    };
+  });
 
 const toHarnessSelection = (
   request: LocalReportRowsRequest,
@@ -700,23 +758,11 @@ export const createStoredReportPayload = (
         }),
       );
       const datasetResult = yield* withPerfSpan(
-        'aiUsage.report.collectStoredDatasets',
-        collectReportDatasets({ ...request, machine }),
+        'aiUsage.report.readStoredDatasets',
+        readStoredDatasets({ dbPath, machine, request }),
         (result) => ({ datasets: result.datasets ? Object.keys(result.datasets).length : 0 }),
       );
-      const storedQuota = datasetSelectionFor(request)?.includeProviderStatus
-        ? yield* queryLatestProviderQuotaObservations({ dbPath, machineId: machine.id }).pipe(
-            Effect.mapError(usageStoreLocalHistoryError('usageStore.queryLatestProviderQuotaObservations', dbPath)),
-          )
-        : undefined;
-      const storedQuotaDataset = storedQuota?.observations.length
-        ? {
-            providerStatus: createProviderStatusDataset(
-              storedQuota.observations.map(({ observation }) => projectProviderQuotaObservation(observation)),
-            ),
-          }
-        : undefined;
-      const datasets = mergeReportDatasets(datasetResult.datasets, storedQuotaDataset);
+      const { datasets } = datasetResult;
       const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
       return yield* withPerfSpan(
         'aiUsage.report.serializeStoredPayload',
@@ -832,6 +878,33 @@ export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
       ...(collection.warnings.length || datasetResult.warnings.length
         ? { warnings: coalesceMetricValidationWarnings([...collection.warnings, ...datasetResult.warnings]) }
         : {}),
+      ...(datasets === undefined ? {} : { datasets }),
+      ...(facets === undefined ? {} : { facets }),
+    });
+  });
+
+export const createStoredUsageSnapshot = (request: StoredUsageSnapshotRequest) =>
+  Effect.gen(function* () {
+    const storage = yield* LocalHistoryStorage;
+    const machine = request.machine ?? (yield* ensureMachineConfig);
+    const dbPath = usageStorePath(storage.home);
+    const harnessKeys = selectedStoredHarnessKeys(request);
+    const stored = yield* queryReportRows({
+      dbPath,
+      originMachineIds: [machine.id],
+      sourceAuthorities: ['local-observed'],
+      ...(harnessKeys === undefined ? {} : { harnessKeys }),
+    }).pipe(Effect.mapError(usageStoreLocalHistoryError('usageStore.queryReportRows', dbPath)));
+    const datasetResult = yield* readStoredDatasets({ dbPath, machine, request });
+    const datasets = datasetResult.datasets;
+    const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
+    const warnings = [...(request.warnings ?? []), ...datasetResult.warnings];
+    return createUsageSnapshot({
+      machine,
+      rows: stored.rows,
+      ...(request.generatedAt === undefined ? {} : { generatedAt: request.generatedAt }),
+      ...(request.appVersion === undefined ? {} : { appVersion: request.appVersion }),
+      ...(warnings.length ? { warnings } : {}),
       ...(datasets === undefined ? {} : { datasets }),
       ...(facets === undefined ? {} : { facets }),
     });

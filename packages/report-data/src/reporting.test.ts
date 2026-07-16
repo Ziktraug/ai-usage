@@ -165,12 +165,30 @@ describe('shared reporting', () => {
           rows: [],
         }),
       );
+      const storage = createLocalHistoryStorage(home);
+      await Effect.runPromise(
+        writeMachineConfig(testMachine).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      const rawAttributionPath = path.join(home, '.cursor', 'ai-tracking', 'ai-code-tracking.db');
+      mkdirSync(path.dirname(rawAttributionPath), { recursive: true });
+      writeFileSync(rawAttributionPath, 'not a sqlite database');
+      const payload = await Effect.runPromise(
+        createStoredReportPayload({
+          generatedAt: new Date('2026-07-16T11:00:00.000Z'),
+          harness: null,
+          includeCursor: true,
+          includeFacets: true,
+          options: defaultOptions,
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
 
       expect(await Effect.runPromise(readStoredCursorCommitAttribution({ dbPath }))).toEqual({
         rows: [row],
         skipped: 0,
         truncated: false,
       });
+      expect(payload.datasets?.cursorCommitAttribution).toEqual([row]);
+      expect(payload.warnings ?? []).toHaveLength(0);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

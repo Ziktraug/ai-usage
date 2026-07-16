@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parseUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { withCliSandbox } from './test-support/run-cli';
@@ -119,5 +119,69 @@ test('drains a payload larger than one MiB without truncation', async () => {
     expect(payload.rows).toHaveLength(rows.length);
     expect(payload.rows.at(-1)?.name).toBe('payload-row-3999');
     expect((await stat(sourcePath)).isFile()).toBe(true);
+  });
+});
+
+test('normal reports do not invoke provider quota collection', async () => {
+  await withCliSandbox(async ({ root, runCli }) => {
+    const home = path.join(root, 'profile');
+    const binaryDirectory = path.join(root, 'bin');
+    const markerPath = path.join(root, 'codex-invoked');
+    await mkdir(binaryDirectory, { recursive: true });
+    const fakeCodexPath = path.join(binaryDirectory, 'codex');
+    await writeFile(fakeCodexPath, `#!/bin/sh\ntouch "${markerPath}"\nexit 1\n`);
+    await chmod(fakeCodexPath, 0o700);
+    await mkdir(path.join(home, '.codex', 'sessions', '2026', '01', '01'), {
+      recursive: true,
+    });
+    await writeFile(path.join(home, '.codex', 'sessions', '2026', '01', '01', 'fixture.jsonl'), codexHistory);
+
+    const result = await runCli(['--json', '--no-cursor'], {
+      env: { PATH: `${binaryDirectory}:${process.env.PATH ?? ''}` },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toHaveLength(1);
+    expect(Bun.file(markerPath).exists()).resolves.toBe(false);
+
+    const configDirectory = path.join(home, '.config', 'ai-usage');
+    await mkdir(configDirectory, { recursive: true });
+    await writeFile(
+      path.join(configDirectory, 'config.json'),
+      JSON.stringify({
+        sourcePolicies: {
+          'codex.sessions': { enabled: false },
+        },
+      }),
+    );
+    const pausedResult = await runCli(['--json', '--no-cursor'], {
+      env: { PATH: `${binaryDirectory}:${process.env.PATH ?? ''}` },
+    });
+
+    expect(pausedResult.exitCode).toBe(0);
+    expect(JSON.parse(pausedResult.stdout)).toHaveLength(1);
+    expect(pausedResult.stderr).toContain('paused by user policy');
+    expect(Bun.file(markerPath).exists()).resolves.toBe(false);
+  });
+});
+
+test('quota reports a paused policy without invoking the provider', async () => {
+  await withCliSandbox(async ({ root, runCli }) => {
+    const configDirectory = path.join(root, 'profile', '.config', 'ai-usage');
+    await mkdir(configDirectory, { recursive: true });
+    await writeFile(
+      path.join(configDirectory, 'config.json'),
+      JSON.stringify({
+        sourcePolicies: {
+          'codex.usage-limits': { enabled: false },
+        },
+      }),
+    );
+
+    const result = await runCli(['quota']);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('Codex usage-limit collection is paused');
   });
 });
