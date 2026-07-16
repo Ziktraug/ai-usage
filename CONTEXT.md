@@ -17,8 +17,12 @@ The persisted enabled/disabled choice for one collection source. Policy is indep
 _Avoid_: availability, lifecycle, deletion
 
 **Source publication**:
-The separate stored-only job that reconciles durable contributions into an immutable served report revision. A source run may be successful without changing the semantic revision.
+The separate stored-only job that reconciles durable contributions into an immutable served report revision. Requests advance monotonic demand even while publication is queued or running; only a successful attempt acknowledges the generations it captured. A source run may be successful without changing the semantic revision.
 _Avoid_: collection run, browser refresh
+
+**Enrichment contribution**:
+A versioned, validated value owned by one enricher and keyed to a stable base usage-row identity. Report reads compose it with the producer-owned base row; neither writer replaces the other's durable data.
+_Avoid_: JSON patch, enriched base row
 
 **Local history**:
 The files or databases written by a harness on this machine. It is the only live collection input; a caller may also supply an explicit portable snapshot or previously imported merge bundle. Provider APIs are not called.

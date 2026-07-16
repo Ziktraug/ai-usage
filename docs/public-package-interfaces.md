@@ -24,7 +24,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./session-query`: strict JSON-safe session filter, sort, page, campaign-child, neighbor, cursor, and request-fingerprint contracts.
 - `./session-lineage`: parent/root source-session normalization across harnesses.
 - `./snapshot`: multi-machine usage snapshot creation, parsing, and source labels.
-- `./source-control`: browser-safe collection-source identifiers, defaults, policy contracts, state axes, and snapshot DTOs.
+- `./source-control`: browser-safe collection-source identifiers, defaults, policy contracts, state axes, strict snapshot/command/publication-event decoders, and newest-snapshot replacement.
 - `./types`: usage row and provenance types.
 - `./usage-row`: usage row derivations such as token totals, active dates, and cost helpers.
 
@@ -44,14 +44,15 @@ The workspace packages expose only these public seams. Cross-package imports mus
 ## `@ai-usage/report-data`
 
 - `.`: local report row/payload requests, focused known-project-source discovery, snapshot assembly, and full compatibility payload creation over core plus local collectors.
-- `./provider-quota`: local provider-quota refresh and bounded history-query orchestration.
+- `./one-shot-sources`: explicit timer-free source execution application ports, including the combined quota refresh/latest-durable-read operation used by CLI.
+- `./provider-quota`: local provider-quota refresh, provider-neutral latest-durable projection, and bounded history-query orchestration.
 - `./report-payload-artifact`: shared owner-only artifact writer and byte budget used by bounded internal Bun runners.
 - `./source-adapters`: autonomous detected source adapters that persist normalized contributions.
-- `./source-control`: scoped bounded Effect scheduler, server policy/publication ports, commands, and snapshot stream.
+- `./source-control`: deep scoped bounded Effect scheduler facade, server policy/publication ports, commands, and snapshot stream; its pure transition model remains internal.
 
 ## `@ai-usage/usage-store`
 
-- `.`: SQLite-backed normalized usage row and provider-quota import/query operations, atomic source checkpoints, and validated merge bundle import/export.
+- `.`: SQLite-backed producer-owned base usage rows, versioned source-owned enrichment contributions, composed report queries, provider-quota import/query operations, atomic source checkpoints, and validated merge bundle import/export.
 
 ## `@ai-usage/usage-merge`
 
