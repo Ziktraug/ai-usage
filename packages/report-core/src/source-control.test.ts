@@ -11,6 +11,7 @@ import {
   parseSourceControlCommandResponse,
   parseSourceControlSnapshot,
   resolveSourceEnabled,
+  sourceControlBounds,
   updateSourcePolicyOverrides,
 } from './source-control';
 
@@ -35,19 +36,17 @@ const snapshot = (generation = 1) => ({
   },
   queueDepth: 0,
   runningCount: 0,
-  sources: [
-    {
-      availability: 'detected',
-      cadenceMs: 60_000,
-      id: 'claude.sessions',
-      label: 'Claude sessions',
-      lastOutcome: 'success',
-      lifecycle: 'scheduled',
-      policy: 'enabled',
-      reason: { code: 'none' },
-      warnings: [],
-    },
-  ],
+  sources: collectionSourceDefinitions.map((definition) => ({
+    availability: 'detected',
+    cadenceMs: definition.cadenceMs,
+    id: definition.id,
+    label: definition.label,
+    lastOutcome: 'success',
+    lifecycle: 'scheduled',
+    policy: 'enabled',
+    reason: { code: 'none' },
+    warnings: [],
+  })),
 });
 
 describe('collection source contracts', () => {
@@ -144,6 +143,50 @@ describe('collection source contracts', () => {
     ).toThrow('size limit');
     expect(() =>
       parseSourceControlCommandResponse({ accepted: true, ok: true, snapshot: { ...snapshot(), queueDepth: -1 } }),
+    ).toThrow('invalid');
+  });
+
+  test('requires the exact canonical catalogue', () => {
+    const complete = snapshot();
+    expect(() => parseSourceControlSnapshot({ ...complete, sources: [] })).toThrow('invalid');
+    expect(() => parseSourceControlSnapshot({ ...complete, sources: complete.sources.slice(1) })).toThrow('invalid');
+    expect(() =>
+      parseSourceControlSnapshot({ ...complete, sources: [...complete.sources.slice(0, -1), complete.sources[0]] }),
+    ).toThrow('invalid');
+    expect(() =>
+      parseSourceControlSnapshot({
+        ...complete,
+        sources: complete.sources.map((source, index) =>
+          index === 0 ? { ...source, id: 'unknown.sessions' } : source,
+        ),
+      }),
+    ).toThrow('invalid');
+  });
+
+  test('rejects out-of-bound numbers, invalid generations, and inconsistent lifecycle counts', () => {
+    const complete = snapshot();
+    expect(() =>
+      parseSourceControlSnapshot({
+        ...complete,
+        sources: complete.sources.map((source, index) =>
+          index === 0 ? { ...source, inputCount: sourceControlBounds.maxCount + 1 } : source,
+        ),
+      }),
+    ).toThrow('invalid');
+    expect(() =>
+      parseSourceControlSnapshot({ ...complete, queueDepth: sourceControlBounds.maxQueueDepth + 1 }),
+    ).toThrow('invalid');
+    expect(() =>
+      parseSourceControlSnapshot({
+        ...complete,
+        publication: { ...complete.publication, rtkCompletedGeneration: 2 },
+      }),
+    ).toThrow('invalid');
+    expect(() =>
+      parseSourceControlSnapshot({
+        ...complete,
+        sources: complete.sources.map((source, index) => (index === 0 ? { ...source, lifecycle: 'running' } : source)),
+      }),
     ).toThrow('invalid');
   });
 });
