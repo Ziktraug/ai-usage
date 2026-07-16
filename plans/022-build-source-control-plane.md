@@ -1,6 +1,6 @@
 # Build a Server-Owned Source Control Plane and Client-First Web App
 
-**Status:** IN PROGRESS — initial implementation landed; plan 024 is the required second-review closure
+**Status:** DONE — initial implementation and plans 023–024 hardening are complete
 **Priority:** P1
 **Effort:** L
 **Depends on:** 017, 018, 021
