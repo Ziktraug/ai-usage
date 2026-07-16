@@ -41,7 +41,6 @@ import {
 } from '@ai-usage/report-core/project-group';
 import type { ProviderQuotaHistoryPoint, ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
 import { type SessionNeighborResult, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
-import type { ProviderQuotaRefreshResult } from '@ai-usage/report-data/provider-quota';
 import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import {
@@ -115,11 +114,7 @@ import { Overview } from './overview';
 import type { TimelineDimension } from './overview-model';
 import { ProjectGroupEditor } from './project-group-editor';
 import { ProjectSummary } from './project-summary';
-import {
-  createProviderQuotaPoller,
-  createServedProviderQuotaSource,
-  type ProviderQuotaSource,
-} from './provider-quota-client';
+import { createServedProviderQuotaSource, type ProviderQuotaSource } from './provider-quota-client';
 import { type ProviderQuotaHistoryRange, providerQuotaHistoryRequest } from './provider-quota-history-model';
 import { ProviderQuotaHistoryPanel } from './provider-quota-history-panel';
 import { createProviderStatusClock } from './provider-status-clock';
@@ -141,6 +136,7 @@ import {
   sortFromSortingState,
 } from './session-table-schema';
 import { type DashboardRow, enrichReportRow, fmtDate, fmtDateOnly, fmtNum, rowKey } from './shared';
+import { useSourceControl } from './source-control-context';
 import { applyTableUpdate } from './table-utils';
 import { TimeRangeControl } from './time-range-control';
 import { toWebReportPayload, type WebReportPayload, type WebReportPayloadWithoutRows } from './web-report-payload';
@@ -284,6 +280,7 @@ export const Dashboard = (props: {
   quotaSource?: ProviderQuotaSource;
   servedBootstrap?: FocusedSupportResult;
 }) => {
+  const sourceControl = useSourceControl();
   const initialPayload =
     props.initialPayload ??
     (props.servedBootstrap ? payloadForFocusedBootstrap(props.servedBootstrap) : toWebReportPayload(demoReportPayload));
@@ -316,48 +313,37 @@ export const Dashboard = (props: {
     props.quotaHistoryFixture ?? (import.meta.env?.VITE_AI_USAGE_E2E === '1' ? e2eQuotaHistoryFixture : undefined);
   const quotaSource = props.quotaSource ?? (props.servedBootstrap ? createServedProviderQuotaSource() : undefined);
   const [quotaHistory, setQuotaHistory] = createSignal<ProviderQuotaHistoryResult | null>(quotaFixture ?? null);
-  const [quotaRefresh, setQuotaRefresh] = createSignal<ProviderQuotaRefreshResult | null>(null);
   const [quotaHistoryError, setQuotaHistoryError] = createSignal<string | null>(null);
   const [quotaHistoryLoading, setQuotaHistoryLoading] = createSignal(false);
   const [quotaHistoryOpen, setQuotaHistoryOpen] = createSignal(false);
   const [quotaHistoryRange, setQuotaHistoryRange] = createSignal<ProviderQuotaHistoryRange>('24h');
-  const quotaRequest = () => providerQuotaHistoryRequest(quotaHistoryRange(), new Date(), { providerKey: 'codex' });
+  let quotaRequestGeneration = 0;
   const loadQuotaRange = async (range: ProviderQuotaHistoryRange): Promise<void> => {
     setQuotaHistoryRange(range);
     if (!(quotaSource && !quotaFixture)) {
       return;
     }
+    const requestGeneration = ++quotaRequestGeneration;
     setQuotaHistoryLoading(true);
     try {
       const result = await quotaSource.history(
         providerQuotaHistoryRequest(range, new Date(), { providerKey: 'codex' }),
       );
+      if (requestGeneration !== quotaRequestGeneration) {
+        return;
+      }
       setQuotaHistory(result);
       setQuotaHistoryError(null);
     } catch (error) {
-      setQuotaHistoryError(error instanceof Error ? error.message : 'Quota history query failed');
+      if (requestGeneration === quotaRequestGeneration) {
+        setQuotaHistoryError(error instanceof Error ? error.message : 'Quota history query failed');
+      }
     } finally {
-      setQuotaHistoryLoading(false);
+      if (requestGeneration === quotaRequestGeneration) {
+        setQuotaHistoryLoading(false);
+      }
     }
   };
-  onMount(() => {
-    if (!(quotaSource && !quotaFixture && ['http:', 'https:'].includes(window.location.protocol))) {
-      return;
-    }
-    const poller = createProviderQuotaPoller({
-      document,
-      onError: (error) => setQuotaHistoryError(error instanceof Error ? error.message : 'Quota refresh failed'),
-      onResult: (result, refresh) => {
-        setQuotaHistory(result);
-        setQuotaRefresh(refresh);
-        setQuotaHistoryError(null);
-      },
-      request: quotaRequest,
-      source: quotaSource,
-    });
-    poller.start();
-    onCleanup(poller.stop);
-  });
   const servedSessionQueries = Boolean(focusedStore);
   const [servedSessionState, setServedSessionState] = createSignal<SessionQueryState>();
   const servedSessionFingerprint = () => {
@@ -683,6 +669,27 @@ export const Dashboard = (props: {
       const message = error instanceof Error ? error.message : 'Failed to coordinate report destination';
       setOperationError(message);
     });
+  });
+  let observedPublicationRevision: string | undefined;
+  createEffect(() => {
+    const revision = sourceControl.state().snapshot?.publication.revision;
+    if (!revision || revision === observedPublicationRevision) {
+      return;
+    }
+    observedPublicationRevision = revision;
+    if (!clientReady()) {
+      return;
+    }
+    if (focusedStore && focusedStore.revision() !== revision) {
+      refreshServedDestination(true).catch((error: unknown) => {
+        setOperationError(error instanceof Error ? error.message : 'Published report data could not be loaded');
+      });
+    }
+    if (quotaHistoryOpen()) {
+      loadQuotaRange(quotaHistoryRange()).catch((error: unknown) => {
+        setQuotaHistoryError(error instanceof Error ? error.message : 'Quota history query failed');
+      });
+    }
   });
   onCleanup(() => servedReportSession?.abort());
   // Campaign context rows can select their atomic root even when the root is outside
@@ -1360,7 +1367,12 @@ export const Dashboard = (props: {
               <Show when={!isDemo}>
                 <ProviderStatusPanel
                   historyAvailable={(quotaHistory()?.points.length ?? 0) > 0}
-                  onViewHistory={() => setQuotaHistoryOpen(true)}
+                  onViewHistory={() => {
+                    setQuotaHistoryOpen(true);
+                    loadQuotaRange(quotaHistoryRange()).catch((error: unknown) => {
+                      setQuotaHistoryError(error instanceof Error ? error.message : 'Quota history query failed');
+                    });
+                  }}
                   providers={providerStatusViews()}
                 />
               </Show>
@@ -1410,7 +1422,6 @@ export const Dashboard = (props: {
                 });
               }}
               range={quotaHistoryRange()}
-              refresh={quotaRefresh()}
               result={quotaHistory()}
             />
           </Show>

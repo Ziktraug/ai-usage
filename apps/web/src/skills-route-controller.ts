@@ -45,7 +45,7 @@ interface PendingSnapshotReplacement {
   snapshot: SkillManagementSnapshot;
 }
 
-interface SkillsRouteLoaderData {
+interface SkillsRouteInitialData {
   knownProjectPaths: unknown;
   skills: unknown;
 }
@@ -87,8 +87,8 @@ const actionNotice = (
   return `${fallback}: ${count(applied.length, 'change')} applied.`;
 };
 
-export const createSkillsRouteController = (loaderData: Accessor<SkillsRouteLoaderData>) => {
-  const initialData = loaderData();
+export const createSkillsRouteController = (routeData: Accessor<SkillsRouteInitialData>) => {
+  const initialData = routeData();
   const [result, setResult] = createSignal<SkillSnapshotResult>(skillSnapshotResultFrom(initialData.skills));
   const [knownProjectPathsResult, setKnownProjectPathsResult] = createSignal<KnownProjectPathsResult>(
     initialData.knownProjectPaths as KnownProjectPathsResult,
@@ -180,15 +180,15 @@ export const createSkillsRouteController = (loaderData: Accessor<SkillsRouteLoad
     return true;
   };
 
-  let observedLoaderData = initialData;
+  let observedRouteData = initialData;
   createEffect(async () => {
-    const nextLoaderData = loaderData();
-    if (nextLoaderData === observedLoaderData) {
+    const nextRouteData = routeData();
+    if (nextRouteData === observedRouteData) {
       return;
     }
-    observedLoaderData = nextLoaderData;
-    setKnownProjectPathsResult(nextLoaderData.knownProjectPaths as KnownProjectPathsResult);
-    await requestSnapshotReplacement(skillSnapshotResultFrom(nextLoaderData.skills), 'Skills reloaded.', true);
+    observedRouteData = nextRouteData;
+    setKnownProjectPathsResult(nextRouteData.knownProjectPaths as KnownProjectPathsResult);
+    await requestSnapshotReplacement(skillSnapshotResultFrom(nextRouteData.skills), 'Skills reloaded.', true);
   });
 
   const applyReconcileResult = async (next: SkillReconcileServerResult, fallbackMessage: string): Promise<void> => {
