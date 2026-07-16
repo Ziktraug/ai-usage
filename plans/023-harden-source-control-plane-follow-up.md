@@ -3,7 +3,7 @@
 **Priority:** P1
 **Effort:** L
 **Depends on:** 022 initial implementation at `4f5f700`
-**Status:** DONE
+**Status:** IN PROGRESS — implementation landed; plan 024 closes remaining second-review findings
 **Planned at:** `4f5f700` on 2026-07-16
 **Branch:** continue `feat/source-control-plane`; do not push or open a PR without explicit approval
 

@@ -10,7 +10,7 @@ It does not own row normalization/query primitives, immutable web revision stora
 
 ## Public Interface
 
-The root package export exposes report request/result helpers and compatibility snapshot/report payload assembly used by apps. One pure internal assembler owns final payload construction. `./one-shot-sources` exposes explicit timer-free CLI application workflows. `./provider-quota` owns refresh, latest durable projection, and bounded history reads. `./source-adapters` exposes the seven Bun runtime adapters; `./source-control` exposes the deep scoped scheduler service and layer over an internal pure state machine. The `./report-payload-artifact` export supplies owner-only artifact writing and the shared byte budget for bounded internal runners.
+The root package export exposes report request/result helpers and compatibility snapshot/report payload assembly used by apps. One pure internal assembler owns final payload construction. `./one-shot-sources` exposes explicit timer-free CLI application workflows. `./provider-quota` owns refresh, latest durable projection, and bounded history reads; its query, collection, persistence, and projection phases remain in one owner Effect fiber with Deferred-based joiners. `./source-adapters` exposes the seven Bun runtime adapters; `./source-control` exposes the deep scoped scheduler service and layer whose queue/source/policy/RTK/publication transitions are owned by one internal pure state module. The `./report-payload-artifact` export supplies owner-only artifact writing and the shared byte budget for bounded internal runners.
 
 ## Depends On
 
