@@ -9,6 +9,10 @@ export interface CliRunResult {
   stdout: string;
 }
 
+export interface CliRunOptions {
+  readonly env?: Readonly<Record<string, string>>;
+}
+
 const cliRoot = path.resolve(import.meta.dir, '../..');
 
 const processEnvironment = (): Record<string, string> => {
@@ -17,11 +21,14 @@ const processEnvironment = (): Record<string, string> => {
 };
 
 export const withCliSandbox = async <Value>(
-  run: (input: { root: string; runCli: (argv: string[]) => Promise<CliRunResult> }) => Promise<Value>,
+  run: (input: {
+    root: string;
+    runCli: (argv: string[], options?: CliRunOptions) => Promise<CliRunResult>;
+  }) => Promise<Value>,
 ): Promise<Value> => {
   const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-cli-'));
   const profile = path.join(root, 'profile');
-  const runCli = async (argv: string[]): Promise<CliRunResult> => {
+  const runCli = async (argv: string[], options: CliRunOptions = {}): Promise<CliRunResult> => {
     const child = Bun.spawn(['bun', path.join(cliRoot, 'src', 'main.ts'), ...argv], {
       cwd: root,
       env: {
@@ -35,6 +42,7 @@ export const withCliSandbox = async <Value>(
         XDG_CACHE_HOME: path.join(profile, '.cache'),
         XDG_CONFIG_HOME: path.join(profile, '.config'),
         XDG_DATA_HOME: path.join(profile, '.local', 'share'),
+        ...options.env,
       },
       stderr: 'pipe',
       stdout: 'pipe',
