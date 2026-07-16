@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./provider-quota": "./src/provider-quota.ts",
     "./report-payload-artifact": "./src/report-payload-artifact.ts",
-    "./source-adapters": "./src/source-adapters.ts"
+    "./source-adapters": "./src/source-adapters.ts",
+    "./source-control": "./src/source-control.ts"
   },
   "dependencies": {
     "@ai-usage/report-core": "workspace:*",
