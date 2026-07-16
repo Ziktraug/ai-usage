@@ -27,8 +27,22 @@ const { rootDir, rootEnvPath } = resolveReportRuntimePaths({
 });
 const LINE_SEPARATOR = /\r?\n/;
 export const REVISION_RENEWAL_WINDOW_MS = 60_000;
-const reportRevisionRegistry = createReportRevisionRegistry({ materialize: materializeSessionQueryRevision });
-const revisionPublicationByPayload = new WeakMap<UsageReportPayload, Promise<WebReportRevisionManifest>>();
+type ReportRevisionRegistry = ReturnType<typeof createReportRevisionRegistry>;
+
+const reportPublicationState = globalThis as typeof globalThis & {
+  __aiUsageReportPublicationState:
+    | {
+        publications: WeakMap<UsageReportPayload, Promise<WebReportRevisionManifest>>;
+        registry: ReportRevisionRegistry;
+      }
+    | undefined;
+};
+reportPublicationState.__aiUsageReportPublicationState ??= {
+  publications: new WeakMap(),
+  registry: createReportRevisionRegistry({ materialize: materializeSessionQueryRevision }),
+};
+const reportRevisionRegistry = reportPublicationState.__aiUsageReportPublicationState.registry;
+const revisionPublicationByPayload = reportPublicationState.__aiUsageReportPublicationState.publications;
 
 const readRootEnvValue = (key: string) => {
   try {
@@ -173,8 +187,8 @@ export const getReportRevisionManifestForServer = async (): Promise<WebReportRev
   if (current.ok) {
     return current;
   }
-  await publishStoredReportRevisionForSourceControl();
-  return await reportRevisionRegistry.getCurrentManifest();
+  await requestSourceControlPublicationForServer();
+  return current;
 };
 
 export const withReportRevisionDirectoryForServer = <Result>(
@@ -186,7 +200,7 @@ export const invalidateReportPayloadForMutation = async (
   options: { scheduleRefresh?: boolean } = {},
 ): Promise<void> => {
   await reportRevisionRegistry.invalidateLatest();
-  if (options.scheduleRefresh && !(await requestSourceControlPublicationForServer())) {
-    await publishStoredReportRevisionForSourceControl();
+  if (options.scheduleRefresh) {
+    await requestSourceControlPublicationForServer();
   }
 };

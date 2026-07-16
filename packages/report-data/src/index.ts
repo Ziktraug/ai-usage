@@ -830,16 +830,7 @@ export const createKnownLocalProjectSources = (
           ...(harnessKeys === undefined ? {} : { harnessKeys }),
         }).pipe(Effect.mapError(usageStoreLocalHistoryError('usageStore.queryReportRows', dbPath)));
 
-      let stored = yield* queryLocalRows();
-      let collectionWarnings: LocalHistoryWarning[] = [];
-      if (stored.rows.length === 0) {
-        const { collection } = yield* collectConfiguredLocalRowsWithWarnings({ ...request, keepSource: true });
-        collectionWarnings = collection.warnings;
-        yield* importLocalRows({ dbPath, machine, rows: collection.rows }).pipe(
-          Effect.mapError(usageStoreLocalHistoryError('usageStore.importLocalRows', dbPath)),
-        );
-        stored = yield* queryLocalRows();
-      }
+      const stored = yield* queryLocalRows();
 
       const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
       const rows = stored.rows;
@@ -852,7 +843,7 @@ export const createKnownLocalProjectSources = (
       return {
         projectGroups: projection.projectGroups,
         sources: collectProjectSources(localCandidates, false, defaultReadGitFile),
-        warnings: [...collectionWarnings, ...projection.warnings],
+        warnings: projection.warnings,
       };
     }),
     (result) => ({

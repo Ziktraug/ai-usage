@@ -1,20 +1,9 @@
-import { LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
-import { ensureMachineConfig } from '@ai-usage/local-collectors/machine-config';
-import type { ProviderLimitWindow } from '@ai-usage/report-core/provider-status';
-import { queryLatestProviderQuotaObservations, usageStorePath } from '@ai-usage/usage-store';
-import { Effect } from 'effect';
+import type { ProviderLimitWindow, ProviderStatus } from '@ai-usage/report-core/provider-status';
 import { clr } from './render/colors';
 import { fmtDate, pad } from './render/format';
 
-export const renderQuota = Effect.gen(function* () {
-  const storage = yield* LocalHistoryStorage;
-  const machine = yield* ensureMachineConfig;
-  const stored = yield* queryLatestProviderQuotaObservations({
-    dbPath: usageStorePath(storage.home),
-    machineId: machine.id,
-    providerKey: 'codex',
-  });
-  const latest = stored.observations[0]?.observation;
+export const renderQuota = (providers: readonly ProviderStatus[]): string => {
+  const latest = providers[0];
   if (!latest) {
     return 'No stored Codex usage-limit observation is available.';
   }
@@ -26,7 +15,7 @@ export const renderQuota = Effect.gen(function* () {
   };
   const lines = [
     clr.bold('═══ Codex subscription quota ═══'),
-    `  plan: ${clr.cyan(latest.plan ?? 'unknown')}   ${clr.dim(`observed ${fmtDate(new Date(latest.observedAt))}`)}`,
+    `  plan: ${clr.cyan(latest.plan ?? 'unknown')}   ${clr.dim(`observed ${fmtDate(new Date(latest.generatedAt))}`)}`,
   ];
   const win = (window: ProviderLimitWindow) => {
     const usedPercent = window.usedPercent ?? (window.remainingPercent === null ? 0 : 100 - window.remainingPercent);
@@ -45,7 +34,7 @@ export const renderQuota = Effect.gen(function* () {
     ),
   );
   return lines.join('\n');
-});
+};
 
 const quotaWindowSpan = (window: ProviderLimitWindow): string => {
   if (window.limitSeconds === null) {

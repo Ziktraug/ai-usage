@@ -19,6 +19,7 @@ import {
   parseProviderQuotaHistoryRequest,
   projectProviderQuotaObservation,
 } from '@ai-usage/report-core/provider-quota';
+import type { ProviderStatus } from '@ai-usage/report-core/provider-status';
 import { createProviderStatusDataset, parseProviderStatusDataset } from '@ai-usage/report-core/provider-status';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import {
@@ -90,6 +91,25 @@ export interface QueryLocalProviderQuotaHistoryInput extends ProviderQuotaHistor
   dbPath?: string;
 }
 
+export interface QueryLatestLocalProviderQuotasInput {
+  dbPath?: string;
+  machineId?: string;
+  providerKey?: string;
+}
+
+export const queryLatestLocalProviderQuotas = (
+  input: QueryLatestLocalProviderQuotasInput = {},
+): Effect.Effect<readonly ProviderStatus[], UsageStoreError, LocalHistoryStorageService> =>
+  Effect.gen(function* () {
+    const storage = yield* LocalHistoryStorage;
+    const stored = yield* queryLatestProviderQuotaObservations({
+      dbPath: input.dbPath ?? usageStorePath(storage.home),
+      ...(input.machineId === undefined ? {} : { machineId: input.machineId }),
+      ...(input.providerKey === undefined ? {} : { providerKey: input.providerKey }),
+    });
+    return stored.observations.map(({ observation }) => projectProviderQuotaObservation(observation));
+  });
+
 interface ResolvedRefreshInput {
   backfillSource: ProviderQuotaBatchSource | null;
   dbPath: string;
@@ -100,7 +120,45 @@ interface ResolvedRefreshInput {
   signal?: AbortSignal;
 }
 
-const refreshes = new Map<string, Promise<ProviderQuotaRefreshResult>>();
+interface ProviderQuotaFlight {
+  readonly promise: Promise<ProviderQuotaRefreshResult>;
+}
+
+const refreshes = new Map<string, ProviderQuotaFlight>();
+
+const abortError = (): Error => new Error('Provider quota refresh was aborted');
+
+const throwIfAborted = (signal: AbortSignal | undefined): void => {
+  if (signal?.aborted) {
+    throw abortError();
+  }
+};
+
+const awaitFlight = (
+  promise: Promise<ProviderQuotaRefreshResult>,
+  signal: AbortSignal | undefined,
+): Promise<ProviderQuotaRefreshResult> => {
+  if (!signal) {
+    return promise;
+  }
+  if (signal.aborted) {
+    return Promise.reject(abortError());
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => reject(abortError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
+};
 
 const errorReason = (error: unknown): ProviderQuotaRefreshResult['live'] => {
   if (typeof error === 'object' && error !== null) {
@@ -121,6 +179,7 @@ const batchItems = (batch: ProviderQuotaBatch): ProviderQuotaImportItem[] => {
 };
 
 const runRefresh = async (input: ResolvedRefreshInput): Promise<ProviderQuotaRefreshResult> => {
+  throwIfAborted(input.signal);
   const warnings: string[] = [];
   let live: ProviderQuotaRefreshResult['live'] = 'skipped';
   let backfill: ProviderQuotaRefreshResult['backfill'] = 'skipped';
@@ -133,6 +192,7 @@ const runRefresh = async (input: ResolvedRefreshInput): Promise<ProviderQuotaRef
       sourceKey: LIVE_SOURCE_KEY,
     }),
   );
+  throwIfAborted(input.signal);
   const lastSuccess = liveState?.lastSuccessAt ? Date.parse(liveState.lastSuccessAt) : Number.NEGATIVE_INFINITY;
   if (input.now.getTime() - lastSuccess >= input.liveCadenceMs) {
     try {
@@ -144,6 +204,7 @@ const runRefresh = async (input: ResolvedRefreshInput): Promise<ProviderQuotaRef
           ...(input.signal === undefined ? {} : { signal: input.signal }),
         }),
       );
+      throwIfAborted(input.signal);
       await Effect.runPromise(
         importProviderQuotaBatch({
           checkpointUpdates: [],
@@ -152,6 +213,7 @@ const runRefresh = async (input: ResolvedRefreshInput): Promise<ProviderQuotaRef
           importedAt: input.now,
         }),
       );
+      throwIfAborted(input.signal);
       await Effect.runPromise(
         recordProviderQuotaSourceAttempt({
           attemptedAt: input.now,
@@ -165,6 +227,7 @@ const runRefresh = async (input: ResolvedRefreshInput): Promise<ProviderQuotaRef
       );
       live = 'refreshed';
     } catch (error) {
+      throwIfAborted(input.signal);
       live = errorReason(error);
       let warning = 'Codex quota refresh failed; the last successful history remains available.';
       if (live === 'auth-required') {
@@ -189,6 +252,7 @@ const runRefresh = async (input: ResolvedRefreshInput): Promise<ProviderQuotaRef
 
   if (input.backfillSource) {
     try {
+      throwIfAborted(input.signal);
       const states = await Effect.runPromise(
         queryProviderQuotaSourceStates({
           dbPath: input.dbPath,
@@ -197,6 +261,7 @@ const runRefresh = async (input: ResolvedRefreshInput): Promise<ProviderQuotaRef
           sourceKey: BACKFILL_SOURCE_KEY,
         }),
       );
+      throwIfAborted(input.signal);
       const cursors = Object.fromEntries(states.map((state) => [state.cursorKey, state.cursor]));
       const batch = await Effect.runPromise(
         input.backfillSource.collect({
@@ -208,6 +273,7 @@ const runRefresh = async (input: ResolvedRefreshInput): Promise<ProviderQuotaRef
           ...(input.signal === undefined ? {} : { signal: input.signal }),
         }),
       );
+      throwIfAborted(input.signal);
       await Effect.runPromise(
         importProviderQuotaBatch({
           checkpointUpdates: batch.checkpoints.map((checkpoint) => ({
@@ -224,11 +290,13 @@ const runRefresh = async (input: ResolvedRefreshInput): Promise<ProviderQuotaRef
       );
       backfill = batch.hasMore ? 'advanced' : 'complete';
     } catch {
+      throwIfAborted(input.signal);
       backfill = 'failed';
       warnings.push('Codex rollout backfill could not advance; live and previously stored history remain available.');
     }
   }
 
+  throwIfAborted(input.signal);
   const latest = await Effect.runPromise(
     queryLatestProviderQuotaObservations({ dbPath: input.dbPath, machineId: input.machine.id, providerKey: 'codex' }),
   );
@@ -264,15 +332,31 @@ export const refreshLocalProviderQuotas = (
     const key = `${resolved.dbPath}|${machine.id}`;
     const existing = refreshes.get(key);
     if (existing) {
-      return yield* Effect.tryPromise({ try: () => existing, catch: (cause) => cause as UsageStoreError });
+      return yield* Effect.tryPromise({
+        try: () => awaitFlight(existing.promise, input.signal),
+        catch: (cause) => cause as UsageStoreError,
+      });
     }
-    const promise = runRefresh(resolved).finally(() => {
-      if (refreshes.get(key) === promise) {
+    const controller = new AbortController();
+    const abortOwner = (): void => controller.abort();
+    input.signal?.addEventListener('abort', abortOwner, { once: true });
+    if (input.signal?.aborted) {
+      controller.abort();
+    }
+    const ownerInput: ResolvedRefreshInput = { ...resolved, signal: controller.signal };
+    let flight: ProviderQuotaFlight;
+    const promise = runRefresh(ownerInput).finally(() => {
+      input.signal?.removeEventListener('abort', abortOwner);
+      if (refreshes.get(key) === flight) {
         refreshes.delete(key);
       }
     });
-    refreshes.set(key, promise);
-    return yield* Effect.tryPromise({ try: () => promise, catch: (cause) => cause as UsageStoreError });
+    flight = { promise };
+    refreshes.set(key, flight);
+    return yield* Effect.tryPromise({
+      try: () => awaitFlight(promise, input.signal),
+      catch: (cause) => cause as UsageStoreError,
+    });
   });
 
 const coverageForPoints = (points: ProviderQuotaHistoryPoint[]): ProviderQuotaCoverage[] => {

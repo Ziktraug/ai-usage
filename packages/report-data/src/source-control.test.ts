@@ -398,6 +398,75 @@ describe('source control plane', () => {
     await Effect.runPromise(program.pipe(Effect.provide(TestContext.TestContext)));
   });
 
+  test('records publication demand arriving during a running attempt and coalesces a successor', async () => {
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const { store } = yield* makePolicyStore();
+        const firstStarted = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const calls = yield* Ref.make(0);
+        const control = yield* createSourceControl({
+          policyStore: store,
+          publication: {
+            publish: Effect.gen(function* () {
+              const call = yield* Ref.updateAndGet(calls, (value) => value + 1);
+              if (call === 1) {
+                yield* Deferred.succeed(firstStarted, undefined);
+                yield* Deferred.await(releaseFirst);
+              }
+              return { changed: true, revision: `revision-${call}` };
+            }),
+          },
+          sources: new Map(),
+        });
+        yield* Deferred.await(firstStarted);
+        expect(yield* control.requestPublication).toBe(true);
+        expect(yield* control.requestPublication).toBe(true);
+        yield* Deferred.succeed(releaseFirst, undefined);
+        const settled = yield* waitFor(
+          control,
+          (view) =>
+            view.publication.revision === 'revision-2' &&
+            view.publication.acknowledgedRequestGeneration === view.publication.requestedGeneration,
+        );
+        expect(yield* Ref.get(calls)).toBe(2);
+        expect(settled.publication.requestedGeneration).toBe(3);
+        expect(settled.publication.pendingDemand).toBe(false);
+      }),
+    );
+
+    await Effect.runPromise(program.pipe(Effect.provide(TestContext.TestContext)));
+  });
+
+  test('does not publish again for an unchanged periodic RTK run', async () => {
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const events = yield* Ref.make<string[]>([]);
+        const { store } = yield* makePolicyStore();
+        const publication = yield* makePublication(events);
+        const rtkRuns = yield* Ref.make(0);
+        const control = yield* createSourceControl({
+          policyStore: store,
+          publication: publication.port,
+          sources: new Map([
+            [
+              'rtk.savings',
+              fakeSource('rtk.savings', () =>
+                Ref.updateAndGet(rtkRuns, (value) => value + 1).pipe(Effect.as(successResult(false))),
+              ),
+            ],
+          ]),
+        });
+        yield* waitFor(control, (view) => view.publication.revision === 'revision-1');
+        yield* TestClock.adjust(Duration.minutes(1));
+        yield* waitFor(control, () => Effect.runSync(Ref.get(rtkRuns)) === 2);
+        expect(yield* Ref.get(publication.calls)).toBe(1);
+      }),
+    );
+
+    await Effect.runPromise(program.pipe(Effect.provide(TestContext.TestContext)));
+  });
+
   test('does not lose a producer change while RTK is already running with multiple workers', async () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
@@ -500,11 +569,13 @@ describe('source control plane', () => {
     await Effect.runPromise(program.pipe(Effect.provide(TestContext.TestContext)));
   });
 
-  test('times out a stuck source with a bounded failed state', async () => {
+  test('times out a stuck source, aborts its provider signal, and prevents its write', async () => {
     const program = Effect.scoped(
       Effect.gen(function* () {
         const events = yield* Ref.make<string[]>([]);
         const started = yield* Deferred.make<void>();
+        const aborted = yield* Ref.make(false);
+        const wrote = yield* Ref.make(false);
         const { store } = yield* makePolicyStore();
         const publication = yield* makePublication(events);
         const control = yield* createSourceControl({
@@ -514,8 +585,18 @@ describe('source control plane', () => {
           sources: new Map([
             [
               'claude.sessions',
-              fakeSource('claude.sessions', () =>
-                Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+              fakeSource('claude.sessions', (context) =>
+                Effect.async((resume) => {
+                  Effect.runSync(Deferred.succeed(started, undefined));
+                  const onAbort = (): void => {
+                    Effect.runSync(Ref.set(aborted, true));
+                    if (!context.signal?.aborted) {
+                      Effect.runSync(Ref.set(wrote, true));
+                    }
+                    resume(Effect.succeed(successResult(true)));
+                  };
+                  context.signal?.addEventListener('abort', onAbort, { once: true });
+                }),
               ),
             ],
           ]),
@@ -524,12 +605,14 @@ describe('source control plane', () => {
         yield* TestClock.adjust(Duration.seconds(30));
         const snapshot = yield* waitFor(
           control,
-          (view) => sourceView(view, 'claude.sessions').lastOutcome === 'failed',
+          (view) => sourceView(view, 'claude.sessions').lastOutcome === 'timed-out',
         );
         expect(sourceView(snapshot, 'claude.sessions').reason).toEqual({
-          code: 'run-failed',
-          message: 'The source run failed; previously stored data was preserved.',
+          code: 'timed-out',
+          message: 'The source run timed out; previously stored data was preserved.',
         });
+        expect(yield* Ref.get(aborted)).toBe(true);
+        expect(yield* Ref.get(wrote)).toBe(false);
       }),
     );
 

@@ -1,5 +1,7 @@
 import {
+  chooseNewestSourceControlSnapshot,
   parseSourceControlCommand,
+  type ReportPublishedEvent,
   type SourceControlCommand,
   type SourceControlView,
   sourceControlBounds,
@@ -188,22 +190,22 @@ export const handleSourceControlCommandRequest = async (
   return Response.json(result, { status });
 };
 
-const newerSnapshot = (current: SourceControlView | undefined, candidate: SourceControlView): SourceControlView => {
-  if (!current) {
-    return candidate;
-  }
-  if (current.instanceId !== candidate.instanceId) {
-    return candidate;
-  }
-  return candidate.generation >= current.generation ? candidate : current;
-};
-
 const snapshotEvent = (snapshot: SourceControlView, maximumBytes: number): Uint8Array => {
   const serialized = JSON.stringify(snapshot);
   if (encoder.encode(serialized).byteLength > maximumBytes) {
     throw new Error('Source control snapshot exceeded its transport limit.');
   }
   return encoder.encode(`event: snapshot\nid: ${snapshot.instanceId}:${snapshot.generation}\ndata: ${serialized}\n\n`);
+};
+
+const reportPublishedEvent = (event: ReportPublishedEvent): Uint8Array => {
+  const serialized = JSON.stringify(event);
+  if (encoder.encode(serialized).byteLength > sourceControlBounds.maxEventBytes) {
+    throw new Error('Report publication event exceeded its transport limit.');
+  }
+  return encoder.encode(
+    `event: report-published\nid: ${event.instanceId}:report:${event.sourceControlGeneration}\ndata: ${serialized}\n\n`,
+  );
 };
 
 export const createSourceControlEventStream = (
@@ -230,6 +232,8 @@ export const createSourceControlEventStream = (
   let closed = false;
   let initialized = false;
   let latest: SourceControlView | undefined;
+  let latestPublication: ReportPublishedEvent | undefined;
+  let observedPublicationRevision: string | undefined;
   let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
 
   const cleanup = (): void => {
@@ -244,12 +248,20 @@ export const createSourceControlEventStream = (
   };
 
   const flushLatest = (): void => {
-    if (closed || !initialized || !controller || !latest || (controller.desiredSize ?? 0) <= 0) {
+    if (closed || !initialized || !controller || (controller.desiredSize ?? 0) <= 0) {
       return;
     }
-    const snapshot = latest;
-    latest = undefined;
-    controller.enqueue(snapshotEvent(snapshot, maximumSnapshotBytes));
+    if (latest) {
+      const snapshot = latest;
+      latest = undefined;
+      controller.enqueue(snapshotEvent(snapshot, maximumSnapshotBytes));
+      return;
+    }
+    if (latestPublication) {
+      const publication = latestPublication;
+      latestPublication = undefined;
+      controller.enqueue(reportPublishedEvent(publication));
+    }
   };
 
   const abort = (): void => {
@@ -268,11 +280,23 @@ export const createSourceControlEventStream = (
         controller = streamController;
         request.signal.addEventListener('abort', abort, { once: true });
         unsubscribe = runtime.subscribe((snapshot) => {
-          latest = newerSnapshot(latest, snapshot);
+          latest = chooseNewestSourceControlSnapshot(latest, snapshot);
+          const revision = snapshot.publication.revision;
+          const publishedAt = snapshot.publication.lastPublishedAt;
+          if (revision && publishedAt && revision !== observedPublicationRevision) {
+            observedPublicationRevision = revision;
+            latestPublication = {
+              instanceId: snapshot.instanceId,
+              publishedAt,
+              revision,
+              sourceControlGeneration: snapshot.generation,
+            };
+          }
           flushLatest();
         });
         try {
-          const initial = newerSnapshot(latest, await runtime.getSnapshot());
+          const initial = chooseNewestSourceControlSnapshot(latest, await runtime.getSnapshot());
+          observedPublicationRevision ??= initial.publication.revision;
           latest = undefined;
           if (closed) {
             return;
@@ -282,7 +306,12 @@ export const createSourceControlEventStream = (
           initialized = true;
           flushLatest();
           cancelHeartbeat = scheduleHeartbeat(() => {
-            if (!closed && latest === undefined && (streamController.desiredSize ?? 0) > 0) {
+            if (
+              !closed &&
+              latest === undefined &&
+              latestPublication === undefined &&
+              (streamController.desiredSize ?? 0) > 0
+            ) {
               streamController.enqueue(encoder.encode(': heartbeat\n\n'));
             }
           }, heartbeatMs);

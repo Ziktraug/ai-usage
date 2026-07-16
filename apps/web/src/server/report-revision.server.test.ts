@@ -265,6 +265,39 @@ describe('report revision registry', () => {
     );
   });
 
+  test('does not let an older slow assembly replace a newer publication', async () => {
+    let releaseOlder: (() => void) | undefined;
+    const olderMayFinish = new Promise<void>((resolve) => {
+      releaseOlder = resolve;
+    });
+    let olderStarted: (() => void) | undefined;
+    const olderDidStart = new Promise<void>((resolve) => {
+      olderStarted = resolve;
+    });
+    const revisionIds = ['revision-older', 'revision-newer'];
+    await withRegistry(
+      {
+        materialize: async (directory) => {
+          if (directory.includes('revision-older')) {
+            olderStarted?.();
+            await olderMayFinish;
+          }
+          await writeFile(path.join(directory, 'sessions.sqlite'), 'sqlite', { mode: 0o600 });
+        },
+        revisionId: () => revisionIds.shift() ?? 'unexpected',
+      },
+      async (registry) => {
+        const older = registry.publish(payloadFor('2026-07-13T12:00:00.000Z', 1));
+        await olderDidStart;
+        const newer = await registry.publish(payloadFor('2026-07-13T13:00:00.000Z', 2));
+        releaseOlder?.();
+        await older;
+        const current = await registry.getCurrentManifest();
+        expect(current.ok && current.manifest.revision).toBe(newer.revision);
+      },
+    );
+  });
+
   test('keeps the published revision and removes staging files when publication fails', async () => {
     await withRegistry({ revisionId: () => 'duplicate-revision' }, async (registry, rootDirectory) => {
       const first = await registry.publish(payloadFor('2026-07-13T12:00:00.000Z', 1));

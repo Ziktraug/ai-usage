@@ -421,8 +421,10 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
   })();
   const entries = new Map<ReportRevision, RevisionEntry>();
   let currentRevision: ReportRevision | undefined;
+  let currentPublicationSequence = 0;
   let disposed = false;
   let lockTail: Promise<void> = Promise.resolve();
+  let nextPublicationSequence = 0;
 
   const withLock = <Result>(operation: () => Promise<Result>): Promise<Result> => {
     const result = lockTail.then(operation, operation);
@@ -483,6 +485,7 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
     if (disposed) {
       throw new Error('Report revision registry has been disposed');
     }
+    const publicationSequence = ++nextPublicationSequence;
     const revision = parseReportRevision(createRevisionId());
     const { rowsSlice, supportSlice } = splitWebReportPayload(payload, revision);
     const serializedRows = JSON.stringify(rowsSlice.rows);
@@ -592,7 +595,10 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
         await rename(stagingDirectory, revisionDirectory);
         await syncDirectory(rootDirectory);
         entries.set(revision, { directory: revisionDirectory, manifest: validatedManifest, references: 0 });
-        currentRevision = revision;
+        if (publicationSequence >= currentPublicationSequence) {
+          currentPublicationSequence = publicationSequence;
+          currentRevision = revision;
+        }
         await cleanupLocked();
         return publicManifest(validatedManifest);
       });
