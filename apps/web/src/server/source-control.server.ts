@@ -18,7 +18,7 @@ import {
   type SourceControlService,
   type SourcePolicyStore,
 } from '@ai-usage/report-data/source-control';
-import { type Duration, Effect, Layer, ManagedRuntime } from 'effect';
+import { type Duration, Effect, Fiber, Layer, ManagedRuntime, Stream } from 'effect';
 
 export interface WebSourceControlRuntime {
   readonly detectAll: () => Promise<void>;
@@ -29,6 +29,7 @@ export interface WebSourceControlRuntime {
   readonly runNow: (sourceId: CollectionSourceId) => Promise<boolean>;
   readonly setEnabled: (sourceId: CollectionSourceId, enabled: boolean) => Promise<void>;
   readonly start: () => Promise<SourceControlView>;
+  readonly subscribe: (listener: (snapshot: SourceControlView) => void) => () => void;
 }
 
 export interface WebSourceControlRuntimeOptions {
@@ -98,6 +99,16 @@ export const createWebSourceControlRuntime = (options: WebSourceControlRuntimeOp
     runNow: (sourceId) => run((service) => service.runNow(sourceId)),
     setEnabled: (sourceId, enabled) => run((service) => service.setEnabled(sourceId, enabled)),
     start: () => run((service) => service.getSnapshot),
+    subscribe: (listener) => {
+      const fiber = managedRuntime.runFork(
+        withSourceControl((service) =>
+          Stream.runForEach(service.changes, (snapshot) => Effect.sync(() => listener(snapshot))),
+        ),
+      );
+      return () => {
+        managedRuntime.runFork(Fiber.interruptFork(fiber));
+      };
+    },
   };
 };
 

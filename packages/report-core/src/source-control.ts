@@ -142,6 +142,59 @@ export const updateSourcePolicyOverrides = (
   return Object.keys(next).length === 0 ? undefined : next;
 };
 
+export type SourceControlCommand =
+  | {
+      readonly command: 'set-enabled';
+      readonly enabled: boolean;
+      readonly sourceId: CollectionSourceId;
+    }
+  | {
+      readonly command: 'run-now';
+      readonly sourceId: CollectionSourceId;
+    }
+  | { readonly command: 'run-all' }
+  | { readonly command: 'detect-all' };
+
+const isCommandRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const commandHasExactKeys = (record: Record<string, unknown>, expected: readonly string[]): boolean => {
+  const keys = Object.keys(record).sort();
+  return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
+};
+
+export const parseSourceControlCommand = (value: unknown): SourceControlCommand => {
+  if (!isCommandRecord(value) || typeof value.command !== 'string') {
+    throw new Error('Source control command must be an object.');
+  }
+  if (value.command === 'run-all' || value.command === 'detect-all') {
+    if (!commandHasExactKeys(value, ['command'])) {
+      throw new Error('Source control command contains unknown fields.');
+    }
+    return { command: value.command };
+  }
+  if (value.command === 'run-now') {
+    if (!(commandHasExactKeys(value, ['command', 'sourceId']) && isCollectionSourceId(value.sourceId))) {
+      throw new Error('Run-now requires one known source ID.');
+    }
+    return { command: value.command, sourceId: value.sourceId };
+  }
+  if (value.command === 'set-enabled') {
+    if (
+      !(commandHasExactKeys(value, ['command', 'enabled', 'sourceId']) && isCollectionSourceId(value.sourceId)) ||
+      typeof value.enabled !== 'boolean'
+    ) {
+      throw new Error('Set-enabled requires one known source ID and a boolean policy.');
+    }
+    return {
+      command: value.command,
+      enabled: value.enabled,
+      sourceId: value.sourceId,
+    };
+  }
+  throw new Error('Unknown source control command.');
+};
+
 export type SourcePolicyState = 'enabled' | 'disabled';
 export type SourceAvailability = 'detected' | 'not-detected' | 'unsupported' | 'misconfigured';
 export type SourceLifecycle = 'dormant' | 'scheduled' | 'queued' | 'running' | 'pausing';

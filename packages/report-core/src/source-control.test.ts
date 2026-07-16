@@ -5,6 +5,7 @@ import {
   getCollectionSourceDefinition,
   isCollectionSourceId,
   isSourcePolicyOverrides,
+  parseSourceControlCommand,
   resolveSourceEnabled,
   updateSourcePolicyOverrides,
 } from './source-control';
@@ -43,5 +44,34 @@ describe('collection source contracts', () => {
     expect(resolveSourceEnabled('codex.sessions', disabled)).toBe(false);
     expect(updateSourcePolicyOverrides(disabled, 'codex.sessions', true)).toBeUndefined();
     expect(updateSourcePolicyOverrides(disabled, 'codex.sessions', undefined)).toBeUndefined();
+  });
+
+  test('parses only strict commands with stable source ids', () => {
+    expect(
+      parseSourceControlCommand({
+        command: 'set-enabled',
+        enabled: false,
+        sourceId: 'codex.sessions',
+      }),
+    ).toEqual({
+      command: 'set-enabled',
+      enabled: false,
+      sourceId: 'codex.sessions',
+    });
+    expect(parseSourceControlCommand({ command: 'run-all' })).toEqual({
+      command: 'run-all',
+    });
+    expect(() =>
+      parseSourceControlCommand({
+        command: 'run-now',
+        sourceId: 'unknown.sessions',
+      }),
+    ).toThrow('known source ID');
+    expect(() =>
+      parseSourceControlCommand({
+        command: 'detect-all',
+        unexpected: true,
+      }),
+    ).toThrow('unknown fields');
   });
 });
