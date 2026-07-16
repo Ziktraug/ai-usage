@@ -12,7 +12,7 @@ import type {
   QueryProviderQuotaSourceStatesInput,
   RecordProviderQuotaSourceAttemptInput,
 } from '@ai-usage/usage-store';
-import { Deferred, Effect } from 'effect';
+import { Data, Deferred, Effect } from 'effect';
 
 const LIVE_SOURCE_KEY = 'codex-app-server';
 const LIVE_CURSOR_KEY = 'refresh';
@@ -47,14 +47,19 @@ export interface ProviderQuotaPersistence<Error> {
   recordAttempt(input: RecordProviderQuotaSourceAttemptInput): Effect.Effect<void, Error>;
 }
 
-interface ProviderQuotaFlight {
-  readonly result: Deferred.Deferred<ProviderQuotaRefreshResult, unknown>;
+interface ProviderQuotaFlight<Error> {
+  readonly result: Deferred.Deferred<ProviderQuotaRefreshResult, Error>;
 }
 
-const abortError = (): Error => new Error('Provider quota refresh was aborted');
+export class ProviderQuotaRefreshAborted extends Data.TaggedError('ProviderQuotaRefreshAborted')<{
+  readonly message: string;
+}> {}
 
-const waitForAbort = (signal: AbortSignal): Effect.Effect<never, Error> =>
-  Effect.async<never, Error>((resume) => {
+const abortError = (): ProviderQuotaRefreshAborted =>
+  new ProviderQuotaRefreshAborted({ message: 'Provider quota refresh was aborted' });
+
+const waitForAbort = (signal: AbortSignal): Effect.Effect<never, ProviderQuotaRefreshAborted> =>
+  Effect.async<never, ProviderQuotaRefreshAborted>((resume) => {
     if (signal.aborted) {
       resume(Effect.fail(abortError()));
       return;
@@ -67,7 +72,8 @@ const waitForAbort = (signal: AbortSignal): Effect.Effect<never, Error> =>
 const withAbortSignal = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   signal: AbortSignal | undefined,
-): Effect.Effect<A, E | Error, R> => (signal ? Effect.raceFirst(effect, waitForAbort(signal)) : effect);
+): Effect.Effect<A, E | ProviderQuotaRefreshAborted, R> =>
+  signal ? Effect.raceFirst(effect, waitForAbort(signal)) : effect;
 
 const errorReason = (error: unknown): ProviderQuotaRefreshResult['live'] => {
   if (typeof error === 'object' && error !== null) {
@@ -214,16 +220,19 @@ const runRefresh = <PersistenceError, SourceError>(
 export const createProviderQuotaRefresh = <PersistenceError>(
   persistence: ProviderQuotaPersistence<PersistenceError>,
 ) => {
-  const flights = new Map<string, ProviderQuotaFlight>();
+  const flights = new Map<string, ProviderQuotaFlight<PersistenceError | ProviderQuotaRefreshAborted>>();
 
   return <SourceError>(
     input: ResolvedProviderQuotaRefreshInput<SourceError>,
-  ): Effect.Effect<ProviderQuotaRefreshResult, PersistenceError | SourceError | Error> =>
+  ): Effect.Effect<ProviderQuotaRefreshResult, PersistenceError | ProviderQuotaRefreshAborted> =>
     Effect.gen(function* () {
       if (input.signal?.aborted) {
         return yield* Effect.fail(abortError());
       }
-      const candidate = yield* Deferred.make<ProviderQuotaRefreshResult, unknown>();
+      const candidate = yield* Deferred.make<
+        ProviderQuotaRefreshResult,
+        PersistenceError | ProviderQuotaRefreshAborted
+      >();
       const key = `${input.dbPath}|${input.machine.id}`;
       const selection = yield* Effect.sync(() => {
         const existing = flights.get(key);
@@ -235,9 +244,7 @@ export const createProviderQuotaRefresh = <PersistenceError>(
         return { flight, owner: true } as const;
       });
       if (!selection.owner) {
-        return yield* withAbortSignal(Deferred.await(selection.flight.result), input.signal).pipe(
-          Effect.mapError((cause) => cause as PersistenceError | SourceError | Error),
-        );
+        return yield* withAbortSignal(Deferred.await(selection.flight.result), input.signal);
       }
 
       const controller = new AbortController();

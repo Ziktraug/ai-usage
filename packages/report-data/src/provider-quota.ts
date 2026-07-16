@@ -34,6 +34,7 @@ import {
 import { Effect } from 'effect';
 import {
   createProviderQuotaRefresh,
+  type ProviderQuotaRefreshAborted,
   type ProviderQuotaRefreshResult,
   type ResolvedProviderQuotaRefreshInput,
 } from './provider-quota-refresh';
@@ -55,6 +56,7 @@ export interface ProviderQuotaRefreshInput {
 }
 
 export type { ProviderQuotaRefreshResult } from './provider-quota-refresh';
+export { ProviderQuotaRefreshAborted } from './provider-quota-refresh';
 
 export const parseProviderQuotaRefreshResult = (value: unknown): ProviderQuotaRefreshResult => {
   if (!(typeof value === 'object' && value !== null)) {
@@ -119,7 +121,11 @@ const runProviderQuotaRefresh = createProviderQuotaRefresh<UsageStoreError>({
 
 export const refreshLocalProviderQuotas = (
   input: ProviderQuotaRefreshInput = {},
-): Effect.Effect<ProviderQuotaRefreshResult, LocalHistoryError | UsageStoreError, LocalHistoryStorageService> =>
+): Effect.Effect<
+  ProviderQuotaRefreshResult,
+  LocalHistoryError | ProviderQuotaRefreshAborted | UsageStoreError,
+  LocalHistoryStorageService
+> =>
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
     const machine = input.machine ?? (yield* ensureMachineConfig);
@@ -133,9 +139,7 @@ export const refreshLocalProviderQuotas = (
       now: input.options?.now?.() ?? new Date(),
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     };
-    return yield* runProviderQuotaRefresh(resolved).pipe(
-      Effect.mapError((cause) => cause as LocalHistoryError | UsageStoreError),
-    );
+    return yield* runProviderQuotaRefresh(resolved);
   });
 
 const coverageForPoints = (points: ProviderQuotaHistoryPoint[]): ProviderQuotaCoverage[] => {

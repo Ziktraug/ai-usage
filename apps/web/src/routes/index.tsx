@@ -65,11 +65,18 @@ function IndexRoute() {
   createEffect(() => {
     const sourceState = sourceControl.state();
     const revision = sourceState.publication?.revision ?? sourceState.snapshot?.publication.revision;
-    if (!revision || revision === retriedPublicationRevision || loading() || data()) {
+    const currentData = data();
+    if (!revision || revision === retriedPublicationRevision || loading()) {
+      return;
+    }
+    if (retriedPublicationRevision === undefined && currentData) {
+      retriedPublicationRevision = revision;
       return;
     }
     retriedPublicationRevision = revision;
-    load().catch(() => undefined);
+    if (!currentData || currentData.kind === 'payload') {
+      load().catch(() => undefined);
+    }
   });
 
   return (

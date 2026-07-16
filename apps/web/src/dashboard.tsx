@@ -662,7 +662,8 @@ export const Dashboard = (props: {
   });
   let observedPublicationRevision: string | undefined;
   createEffect(() => {
-    const revision = sourceControl.state().snapshot?.publication.revision;
+    const sourceState = sourceControl.state();
+    const revision = sourceState.publication?.revision ?? sourceState.snapshot?.publication.revision;
     if (!revision || revision === observedPublicationRevision) {
       return;
     }
