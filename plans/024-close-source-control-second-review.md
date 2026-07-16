@@ -15,7 +15,7 @@
 
 ## Status
 
-- **Status**: IN PROGRESS
+- **Status**: DONE
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: HIGH
@@ -490,32 +490,32 @@ Deferred/promises or observable state.
 
 ## Done criteria
 
-- [ ] A composed local RTK row survives portable export/import into a fresh
+- [x] A composed local RTK row survives portable export/import into a fresh
       migrated store, and later imports without RTK do not clear it.
-- [ ] Preview and confirm canonicalize the same base/contribution pair, and
+- [x] Preview and confirm canonicalize the same base/contribution pair, and
       semantic generation advances once per changed transaction.
-- [ ] No post-migration import path can create a newly mixed base row with
+- [x] No post-migration import path can create a newly mixed base row with
       embedded-only RTK ownership.
-- [ ] Quota collection and every durable phase run in one owner Effect fiber;
+- [x] Quota collection and every durable phase run in one owner Effect fiber;
       there are no nested `Effect.runPromise` calls in the refresh program.
-- [ ] Owner timeout/interruption cannot be observed before an in-flight atomic
+- [x] Owner timeout/interruption cannot be observed before an in-flight atomic
       write finishes and cannot start a later write; joined caller cancellation
       does not abort the owner.
-- [ ] `createSourceControl` interprets pure state transitions instead of owning
+- [x] `createSourceControl` interprets pure state transitions instead of owning
       source/publication/policy transition logic inline.
-- [ ] Partial source catalogues and out-of-bound operational numbers are
+- [x] Partial source catalogues and out-of-bound operational numbers are
       rejected before client state replacement, without an unchecked snapshot
       cast.
-- [ ] Skills Query mutations receive typed domain variables, inventory results
+- [x] Skills Query mutations receive typed domain variables, inventory results
       are narrowed/decoded, and the arbitrary closure mutation is gone.
-- [ ] Summary and `/sources` use one tone mapping and expose truthful running
+- [x] Summary and `/sources` use one tone mapping and expose truthful running
       detail through hover and keyboard focus.
-- [ ] The stale `codex-history` CLI documentation is removed or corrected.
-- [ ] New focused tests and Sources E2E cover every regression listed above.
-- [ ] `bun run lint`, `bun run typecheck`, `bun run test`, `bun run build`,
+- [x] The stale `codex-history` CLI documentation is removed or corrected.
+- [x] New focused tests and Sources E2E cover every regression listed above.
+- [x] `bun run lint`, `bun run typecheck`, `bun run test`, `bun run build`,
       `bun run check`, both E2E commands, Bun production smoke, and
       `git diff --check 106d5d9...HEAD` all pass.
-- [ ] Plans 022, 023, and 024 are marked `DONE` only after the implementation,
+- [x] Plans 022, 023, and 024 are marked `DONE` only after the implementation,
       tests, and documentation are committed locally.
 
 ## STOP conditions

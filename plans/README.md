@@ -32,9 +32,9 @@ branch or open a pull request unless the user explicitly asks.
 | 019 | Deepen Skills Workflows and Harden Projection Parents | P1 | L | 009 | DONE |
 | 020 | Align Commit Tooling, Bun Runtime, Dead CSV Claims, and Final Documentation | P2 | M | 009-019 | DONE |
 | 021 | Persist and visualize Codex quota history behind a provider-neutral seam | P1 | L | - | DONE |
-| 022 | Build a Server-Owned Source Control Plane and Client-First Web App | P1 | L | 017, 018, 021 | IN PROGRESS |
-| 023 | Harden Source Ownership, Publication, Cancellation, and Client Contracts | P1 | L | 022 initial implementation | IN PROGRESS |
-| 024 | Close Source-Control Data, Cancellation, State, and Client Review Gaps | P1 | L | 023 implementation | TODO |
+| 022 | Build a Server-Owned Source Control Plane and Client-First Web App | P1 | L | 017, 018, 021 | DONE |
+| 023 | Harden Source Ownership, Publication, Cancellation, and Client Contracts | P1 | L | 022 initial implementation | DONE |
+| 024 | Close Source-Control Data, Cancellation, State, and Client Review Gaps | P1 | L | 023 implementation | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
