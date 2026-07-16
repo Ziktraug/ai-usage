@@ -71,6 +71,9 @@ const collectFromProcess = async (
   request: ProviderQuotaCollectRequest,
   options: Required<CodexAppServerSourceOptions>,
 ): Promise<ProviderQuotaBatch> => {
+  if (request.signal?.aborted) {
+    throw collectionError('aborted', 'Codex app-server quota read was aborted');
+  }
   const child = spawn(options.command, options.args, { shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
   let stderrTail = '';
   let stdoutBuffer = Buffer.alloc(0);
@@ -78,31 +81,37 @@ const collectFromProcess = async (
   let settled = false;
 
   const response = new Promise<ProviderQuotaBatch>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout>;
+    const onAbort = (): void => {
+      if (child.exitCode === null) {
+        child.kill();
+      }
+      rejectWith(collectionError('aborted', 'Codex app-server quota read was aborted', stderrTail));
+    };
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      request.signal?.removeEventListener('abort', onAbort);
+    };
     const finish = (run: () => void): void => {
       if (settled) {
         return;
       }
       settled = true;
+      cleanup();
       run();
     };
     const rejectWith = (error: CodexQuotaCollectionError): void => finish(() => reject(error));
-    const timer = setTimeout(
+    timer = setTimeout(
       () => rejectWith(collectionError('timeout', 'Codex app-server quota read timed out', stderrTail)),
       options.timeoutMs,
     );
-    const clear = (): void => clearTimeout(timer);
-
-    request.signal?.addEventListener(
-      'abort',
-      () => {
-        clear();
-        rejectWith(collectionError('aborted', 'Codex app-server quota read was aborted', stderrTail));
-      },
-      { once: true },
-    );
+    request.signal?.addEventListener('abort', onAbort, { once: true });
+    if (request.signal?.aborted) {
+      onAbort();
+      return;
+    }
 
     child.on('error', (error: NodeJS.ErrnoException) => {
-      clear();
       const reason = error.code === 'ENOENT' ? 'unsupported' : 'protocol';
       rejectWith(
         collectionError(
@@ -113,7 +122,6 @@ const collectFromProcess = async (
     });
     child.on('close', () => {
       if (!settled) {
-        clear();
         rejectWith(collectionError('protocol', 'Codex app-server exited before returning quota limits', stderrTail));
       }
     });
@@ -128,7 +136,6 @@ const collectFromProcess = async (
       const record = message as Record<string, unknown>;
       if (record.id === INITIALIZE_REQUEST_ID) {
         if (record.error) {
-          clear();
           rejectWith(collectionError('protocol', 'Codex app-server rejected initialization', stderrTail));
           return;
         }
@@ -140,7 +147,6 @@ const collectFromProcess = async (
       if (record.id !== RATE_LIMITS_REQUEST_ID) {
         return;
       }
-      clear();
       if (!initialized) {
         rejectWith(
           collectionError('protocol', 'Codex app-server returned quota limits before initialization', stderrTail),
@@ -181,7 +187,6 @@ const collectFromProcess = async (
     child.stdout.on('data', (chunk: Buffer) => {
       stdoutBuffer = Buffer.concat([stdoutBuffer, chunk]);
       if (stdoutBuffer.byteLength > MAXIMUM_LINE_BYTES && !stdoutBuffer.includes(10)) {
-        clear();
         rejectWith(collectionError('protocol', 'Codex app-server emitted an oversized protocol line', stderrTail));
         return;
       }
@@ -190,7 +195,6 @@ const collectFromProcess = async (
         const line = stdoutBuffer.subarray(0, lineEnd);
         stdoutBuffer = stdoutBuffer.subarray(lineEnd + 1);
         if (line.byteLength > MAXIMUM_LINE_BYTES) {
-          clear();
           rejectWith(collectionError('protocol', 'Codex app-server emitted an oversized protocol line', stderrTail));
           return;
         }
@@ -198,7 +202,6 @@ const collectFromProcess = async (
           try {
             handleMessage(JSON.parse(line.toString('utf8')) as unknown);
           } catch {
-            clear();
             rejectWith(collectionError('protocol', 'Codex app-server emitted malformed JSON', stderrTail));
             return;
           }

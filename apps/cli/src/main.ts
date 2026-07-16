@@ -17,7 +17,7 @@ import {
 import {
   type OneShotExecutionResult,
   runOneShotLocalSources,
-  runOneShotQuotaSource,
+  runOneShotQuotaAndReadLatest,
 } from '@ai-usage/report-data/one-shot-sources';
 import { Console, Effect, Layer } from 'effect';
 import { type Args, helpText, parseCommand } from './cli';
@@ -42,7 +42,7 @@ export const app = Effect.gen(function* () {
 
   if (command._tag === 'Quota') {
     yield* Effect.sync(() => setColor(command.color === null ? runtime.stdoutIsTTY : command.color));
-    const collection = yield* runOneShotQuotaSource();
+    const { collection, latest } = yield* runOneShotQuotaAndReadLatest();
     if (collection.outcomes[0]?.status === 'paused') {
       return yield* Effect.fail(
         new CliArgumentError({
@@ -50,7 +50,7 @@ export const app = Effect.gen(function* () {
         }),
       );
     }
-    yield* Console.log(yield* renderQuota);
+    yield* Console.log(renderQuota(latest));
     return;
   }
 

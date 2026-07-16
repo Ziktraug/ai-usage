@@ -26,6 +26,7 @@ import {
   readStoredCursorCommitAttribution,
   readStoredReportSourceFingerprint,
 } from './index';
+import { runOneShotLocalSources } from './one-shot-sources';
 
 const defaultOptions = {
   since: null,
@@ -194,7 +195,7 @@ describe('shared reporting', () => {
     }
   });
 
-  test('discovers project sources from local rows only and collects once when only imported rows are stored', async () => {
+  test('keeps project-source reads stored-only until an explicit one-shot collection runs', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-known-local-projects-'));
     const localProjectPath = mkdtempSync(path.join(tmpdir(), 'ai-usage-known-local-project-'));
     try {
@@ -214,13 +215,27 @@ describe('shared reporting', () => {
         }),
       );
 
-      const result = await Effect.runPromise(
+      const beforeCollection = await Effect.runPromise(
         createKnownLocalProjectSources({ harness: 'claude', includeCursor: false }).pipe(
           Effect.provideService(LocalHistoryStorage, storage),
         ),
       );
 
-      expect(result.sources).toEqual([
+      expect(beforeCollection.sources).toEqual([]);
+      expect(beforeCollection.projectGroups).toEqual([]);
+
+      await Effect.runPromise(
+        runOneShotLocalSources({ harness: 'claude', includeCursor: false }).pipe(
+          Effect.provideService(LocalHistoryStorage, storage),
+        ),
+      );
+      const afterCollection = await Effect.runPromise(
+        createKnownLocalProjectSources({ harness: 'claude', includeCursor: false }).pipe(
+          Effect.provideService(LocalHistoryStorage, storage),
+        ),
+      );
+
+      expect(afterCollection.sources).toEqual([
         expect.objectContaining({
           machineId: testMachine.id,
           machine: testMachine.label,
@@ -229,15 +244,15 @@ describe('shared reporting', () => {
           sourcePath: localProjectPath,
         }),
       ]);
-      expect(result.projectGroups).toHaveLength(1);
-      expect(result.projectGroups[0]?.sources).toEqual([
+      expect(afterCollection.projectGroups).toHaveLength(1);
+      expect(afterCollection.projectGroups[0]?.sources).toEqual([
         expect.objectContaining({
           machineId: testMachine.id,
           sourcePath: localProjectPath,
         }),
       ]);
-      expect(JSON.stringify(result)).not.toContain('peer-machine');
-      expect(JSON.stringify(result)).not.toContain('/peer/project');
+      expect(JSON.stringify(afterCollection)).not.toContain('peer-machine');
+      expect(JSON.stringify(afterCollection)).not.toContain('/peer/project');
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(localProjectPath, { recursive: true, force: true });

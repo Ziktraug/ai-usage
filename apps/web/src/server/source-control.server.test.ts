@@ -163,13 +163,13 @@ describe('web source-control runtime', () => {
 
     try {
       await runtime.start();
-      const failed = await waitForSnapshot(
+      const timedOut = await waitForSnapshot(
         runtime.getSnapshot,
-        (snapshot) => sourceView(snapshot, 'claude.sessions').lastOutcome === 'failed',
+        (snapshot) => sourceView(snapshot, 'claude.sessions').lastOutcome === 'timed-out',
       );
-      expect(sourceView(failed, 'claude.sessions').reason).toEqual({
-        code: 'run-failed',
-        message: 'The source run failed; previously stored data was preserved.',
+      expect(sourceView(timedOut, 'claude.sessions').reason).toEqual({
+        code: 'timed-out',
+        message: 'The source run timed out; previously stored data was preserved.',
       });
     } finally {
       await runtime.dispose();

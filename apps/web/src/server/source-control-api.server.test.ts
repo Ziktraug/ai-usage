@@ -37,7 +37,16 @@ const snapshot = (generation: number, instanceId = 'instance-a'): SourceControlV
   generation,
   instanceId,
   publication: {
+    acknowledgedRequestGeneration: 1,
     dirty: false,
+    dirtyGeneration: 0,
+    lastOutcome: 'success',
+    pendingDemand: false,
+    publishedGeneration: 0,
+    queued: false,
+    requestedGeneration: 1,
+    rtkCompletedGeneration: 0,
+    rtkRequiredGeneration: 0,
     running: false,
   },
   queueDepth: 0,
@@ -206,6 +215,31 @@ describe('source-control server API', () => {
 
     expect((await readSnapshotEvent(reader)).generation).toBe(1);
     expect((await readSnapshotEvent(reader)).generation).toBe(100);
+    await reader.cancel();
+  });
+
+  test('emits a separate bounded report publication event after a new revision', async () => {
+    const source = streamRuntime();
+    const response = createSourceControlEventStream(trustedRequest(), { runtime: source.runtime });
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('Expected an SSE response body.');
+    }
+    await readTextChunk(reader);
+    await readSnapshotEvent(reader);
+    const next = snapshot(1);
+    source.emit({
+      ...next,
+      publication: {
+        ...next.publication,
+        lastPublishedAt: '2026-07-16T10:00:00.000Z',
+        revision: 'revision-1',
+      },
+    });
+    expect(await readTextChunk(reader)).toContain('event: snapshot');
+    const publication = await readTextChunk(reader);
+    expect(publication).toContain('event: report-published');
+    expect(publication).toContain('"revision":"revision-1"');
     await reader.cancel();
   });
 

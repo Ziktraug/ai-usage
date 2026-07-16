@@ -1,14 +1,54 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  chooseNewestSourceControlSnapshot,
   collectionSourceDefinitions,
   collectionSourceIds,
   getCollectionSourceDefinition,
   isCollectionSourceId,
   isSourcePolicyOverrides,
+  parseReportPublishedEvent,
   parseSourceControlCommand,
+  parseSourceControlCommandResponse,
+  parseSourceControlSnapshot,
   resolveSourceEnabled,
   updateSourcePolicyOverrides,
 } from './source-control';
+
+const snapshot = (generation = 1) => ({
+  generatedAt: '2026-07-16T10:00:00.000Z',
+  generation,
+  instanceId: 'instance-a',
+  publication: {
+    acknowledgedRequestGeneration: 1,
+    dirty: false,
+    dirtyGeneration: 1,
+    lastOutcome: 'success',
+    lastPublishedAt: '2026-07-16T10:00:00.000Z',
+    pendingDemand: false,
+    publishedGeneration: 1,
+    queued: false,
+    requestedGeneration: 1,
+    revision: 'revision-1',
+    rtkCompletedGeneration: 1,
+    rtkRequiredGeneration: 1,
+    running: false,
+  },
+  queueDepth: 0,
+  runningCount: 0,
+  sources: [
+    {
+      availability: 'detected',
+      cadenceMs: 60_000,
+      id: 'claude.sessions',
+      label: 'Claude sessions',
+      lastOutcome: 'success',
+      lifecycle: 'scheduled',
+      policy: 'enabled',
+      reason: { code: 'none' },
+      warnings: [],
+    },
+  ],
+});
 
 describe('collection source contracts', () => {
   test('defines every stable source exactly once with the agreed defaults', () => {
@@ -73,5 +113,37 @@ describe('collection source contracts', () => {
         unexpected: true,
       }),
     ).toThrow('unknown fields');
+  });
+
+  test('strictly parses nested snapshots, command responses, publication events, and replacement', () => {
+    const parsed = parseSourceControlSnapshot(snapshot());
+    expect(parseSourceControlCommandResponse({ accepted: true, ok: true, snapshot: parsed }).ok).toBe(true);
+    expect(
+      parseReportPublishedEvent({
+        instanceId: 'instance-a',
+        publishedAt: '2026-07-16T10:00:00.000Z',
+        revision: 'revision-1',
+        sourceControlGeneration: 1,
+      }).revision,
+    ).toBe('revision-1');
+    expect(chooseNewestSourceControlSnapshot(parsed, parseSourceControlSnapshot(snapshot(0))).generation).toBe(1);
+  });
+
+  test('rejects malformed nested and oversized source-control payloads', () => {
+    expect(() =>
+      parseSourceControlSnapshot({
+        ...snapshot(),
+        sources: [{ ...snapshot().sources[0], lifecycle: 'invented' }],
+      }),
+    ).toThrow('invalid');
+    expect(() =>
+      parseSourceControlSnapshot({
+        ...snapshot(),
+        sources: [{ ...snapshot().sources[0], warnings: [{ code: 'x', message: 'x'.repeat(70_000) }] }],
+      }),
+    ).toThrow('size limit');
+    expect(() =>
+      parseSourceControlCommandResponse({ accepted: true, ok: true, snapshot: { ...snapshot(), queueDepth: -1 } }),
+    ).toThrow('invalid');
   });
 });

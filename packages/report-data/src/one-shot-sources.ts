@@ -1,4 +1,4 @@
-import { readAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
+import { ensureMachineConfig, readAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
 import type { HarnessKey } from '@ai-usage/report-core/harness-metadata';
 import {
   type CollectionSourceId,
@@ -9,6 +9,7 @@ import {
   type SourceWarning,
 } from '@ai-usage/report-core/source-control';
 import { Effect } from 'effect';
+import { queryLatestLocalProviderQuotas } from './provider-quota';
 import {
   createScheduledSourceRegistry,
   noSourceProgress,
@@ -158,4 +159,16 @@ export const runOneShotQuotaSource = (adapterOptions?: SourceAdapterOptions) =>
       sources,
       ...(config.sourcePolicies === undefined ? {} : { policies: config.sourcePolicies }),
     });
+  });
+
+export const runOneShotQuotaAndReadLatest = (adapterOptions?: SourceAdapterOptions) =>
+  Effect.gen(function* () {
+    const collection = yield* runOneShotQuotaSource(adapterOptions);
+    const machine = adapterOptions?.machine ?? (yield* ensureMachineConfig);
+    const latest = yield* queryLatestLocalProviderQuotas({
+      ...(adapterOptions?.dbPath === undefined ? {} : { dbPath: adapterOptions.dbPath }),
+      machineId: machine.id,
+      providerKey: 'codex',
+    });
+    return { collection, latest };
   });

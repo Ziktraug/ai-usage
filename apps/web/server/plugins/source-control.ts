@@ -4,14 +4,18 @@ import { publishStoredReportRevisionForSourceControl } from '../../src/server/re
 import { createWebSourceControlRuntime, installWebSourceControlRuntime } from '../../src/server/source-control.server';
 
 export default definePlugin((nitroApp) => {
+  const fixtureRuntime = process.env.VITE_AI_USAGE_E2E === '1';
   const productionSmoke = process.env.AI_USAGE_PRODUCTION_SMOKE === '1';
   const runtime = createWebSourceControlRuntime({
     publication: {
-      publish: Effect.tryPromise({
-        try: publishStoredReportRevisionForSourceControl,
-        catch: (cause) => cause,
-      }),
+      publish: fixtureRuntime
+        ? Effect.succeed({ changed: false })
+        : Effect.tryPromise({
+            try: publishStoredReportRevisionForSourceControl,
+            catch: (cause) => cause,
+          }),
     },
+    ...(fixtureRuntime ? { sources: new Map() } : {}),
   });
   const uninstall = installWebSourceControlRuntime(runtime);
   const startup = runtime.start();
