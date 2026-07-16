@@ -10,7 +10,19 @@ const snapshot = (generation: number, instanceId = 'process-a'): SourceControlVi
   generatedAt: '2026-07-16T10:00:00.000Z',
   generation,
   instanceId,
-  publication: { dirty: false, running: false },
+  publication: {
+    acknowledgedRequestGeneration: 1,
+    dirty: false,
+    dirtyGeneration: 0,
+    lastOutcome: 'success',
+    pendingDemand: false,
+    publishedGeneration: 0,
+    queued: false,
+    requestedGeneration: 1,
+    rtkCompletedGeneration: 0,
+    rtkRequiredGeneration: 0,
+    running: false,
+  },
   queueDepth: 0,
   runningCount: 0,
   sources: [
@@ -33,10 +45,10 @@ class FakeEventSource implements SourceControlEventSource {
   closed = false;
   onerror: ((event: Event) => void) | null = null;
   onopen: ((event: Event) => void) | null = null;
-  private listener: ((event: { data: string }) => void) | null = null;
+  private readonly listeners = new Map<string, (event: { data: string }) => void>();
 
-  addEventListener(_type: 'snapshot', listener: (event: { data: string }) => void): void {
-    this.listener = listener;
+  addEventListener(type: 'report-published' | 'snapshot', listener: (event: { data: string }) => void): void {
+    this.listeners.set(type, listener);
   }
 
   close(): void {
@@ -44,7 +56,18 @@ class FakeEventSource implements SourceControlEventSource {
   }
 
   emit(value: SourceControlView): void {
-    this.listener?.({ data: JSON.stringify(value) });
+    this.listeners.get('snapshot')?.({ data: JSON.stringify(value) });
+  }
+
+  emitPublication(revision: string): void {
+    this.listeners.get('report-published')?.({
+      data: JSON.stringify({
+        instanceId: 'process-a',
+        publishedAt: '2026-07-16T10:00:00.000Z',
+        revision,
+        sourceControlGeneration: 4,
+      }),
+    });
   }
 }
 
@@ -99,7 +122,7 @@ describe('source control client', () => {
     expect(await client.execute({ command: 'run-all' })).toBe(false);
     expect(commands).toHaveLength(1);
 
-    resolveCommand?.({ ok: true, snapshot: snapshot(4) });
+    resolveCommand?.({ accepted: true, ok: true, snapshot: snapshot(4) });
     expect(await first).toBe(true);
     expect(client.getState().pendingCommand).toBeNull();
     expect(client.getState().snapshot?.sources[0]?.lifecycle).toBe('scheduled');
@@ -117,5 +140,22 @@ describe('source control client', () => {
     expect(await client.execute({ command: 'set-enabled', enabled: false, sourceId: 'codex.sessions' })).toBe(false);
     expect(client.getState().snapshot?.generation).toBe(1);
     expect(client.getState().commandError).toBe('The source policy could not be saved.');
+  });
+
+  test('strictly accepts and deduplicates explicit publication events', () => {
+    const eventSource = new FakeEventSource();
+    const client = createSourceControlClient({ createEventSource: () => eventSource });
+    let publicationUpdates = 0;
+    client.subscribe((state) => {
+      if (state.publication) {
+        publicationUpdates++;
+      }
+    });
+    client.start();
+    eventSource.emit(snapshot(3));
+    eventSource.emitPublication('revision-4');
+    eventSource.emitPublication('revision-4');
+    expect(client.getState().publication?.revision).toBe('revision-4');
+    expect(publicationUpdates).toBe(1);
   });
 });

@@ -24,6 +24,7 @@ import {
   type CollectionSourceGroup,
   collectionSourceDefinitions,
   type SourceControlEntryView,
+  type SourcePublicationView,
 } from '@ai-usage/report-core/source-control';
 import { createFileRoute, Link } from '@tanstack/solid-router';
 import { createMemo, For, Show } from 'solid-js';
@@ -31,6 +32,7 @@ import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
 import { fmtDate, fmtNum } from '../shared';
 import { useSourceControl } from '../source-control-context';
+import { presentSourceState, type SourcePresentationTone } from '../source-control-presentation';
 
 export const Route = createFileRoute('/sources')({
   component: SourcesRoute,
@@ -89,17 +91,14 @@ const groupLabels: Record<CollectionSourceGroup, string> = {
   sessions: 'Sessions',
 };
 
-const toneForSource = (source: SourceControlEntryView) => {
-  if (source.lifecycle === 'running') {
+const toneForSource = (tone: SourcePresentationTone) => {
+  if (tone === 'ok') {
     return statusPillOk;
   }
-  if (source.lastOutcome === 'failed' || source.availability === 'misconfigured') {
+  if (tone === 'danger') {
     return statusPillDanger;
   }
-  if (source.lastOutcome === 'warning' || source.availability === 'not-detected') {
-    return statusPillWarn;
-  }
-  return statusPillInfo;
+  return tone === 'warning' ? statusPillWarn : statusPillInfo;
 };
 
 const progressValue = (source: SourceControlEntryView): number | undefined => {
@@ -108,6 +107,18 @@ const progressValue = (source: SourceControlEntryView): number | undefined => {
     return;
   }
   return Math.min(completed, total);
+};
+
+const publicationStatus = (publication: SourcePublicationView): string => {
+  if (publication.running) {
+    return 'Publishing stored data now.';
+  }
+  if (publication.queued) {
+    return 'Publication is queued.';
+  }
+  return publication.pendingDemand
+    ? 'Publication demand is waiting for its dependency.'
+    : 'Publication demand is fully acknowledged.';
 };
 
 const SourceCard = (props: {
@@ -120,6 +131,22 @@ const SourceCard = (props: {
     props.source.availability === 'detected' &&
     !['queued', 'running', 'pausing'].includes(props.source.lifecycle);
   const progress = () => progressValue(props.source);
+  const presentation = () => presentSourceState(props.source);
+  const runDisabledReason = () => {
+    if (props.pending) {
+      return 'Another source command is pending.';
+    }
+    if (props.source.policy === 'disabled') {
+      return 'Enable this source before running it.';
+    }
+    if (props.source.availability !== 'detected') {
+      return 'Detect a supported input before running this source.';
+    }
+    if (!canRun()) {
+      return 'This source is already queued or running.';
+    }
+    return;
+  };
 
   return (
     <article class={cx(panel, sourceCard)}>
@@ -129,7 +156,7 @@ const SourceCard = (props: {
           <p class={sourceId}>{props.source.id}</p>
         </div>
         <div class={sourceBadges}>
-          <span class={cx(statusPill, toneForSource(props.source))}>{props.source.lifecycle}</span>
+          <span class={cx(statusPill, toneForSource(presentation().tone))}>{presentation().label}</span>
           <span class={cx(statusPill, props.source.policy === 'enabled' ? statusPillOk : statusPillInfo)}>
             {props.source.policy}
           </span>
@@ -170,6 +197,7 @@ const SourceCard = (props: {
         )}
       </Show>
       <div class={detailList}>
+        <p>{presentation().explanation}</p>
         <Show when={props.source.reason.code !== 'none'}>
           <p>Reason: {props.source.reason.message ?? props.source.reason.code}</p>
         </Show>
@@ -178,6 +206,15 @@ const SourceCard = (props: {
             Last run: {fmtNum(props.source.inputCount ?? 0)} inputs · {fmtNum(props.source.outputCount ?? 0)} outputs
           </p>
         </Show>
+        <p>
+          Cadence: {fmtNum(Math.round(props.source.cadenceMs / 1000))}s · duration{' '}
+          {props.source.durationMs === undefined ? 'not available' : `${fmtNum(props.source.durationMs)}ms`} · queue
+          delay {props.source.queueDelayMs === undefined ? 'not available' : `${fmtNum(props.source.queueDelayMs)}ms`}
+        </p>
+        <p>
+          Started {fmtDate(props.source.lastStartedAt ?? null)} · finished{' '}
+          {fmtDate(props.source.lastFinishedAt ?? null)}
+        </p>
         <For each={props.source.warnings}>{(warning) => <p>Warning: {warning.message ?? warning.code}</p>}</For>
       </div>
       <div class={cardActions}>
@@ -194,6 +231,7 @@ const SourceCard = (props: {
                 })
                 .catch(() => undefined);
             }}
+            title={props.pending ? 'Another source command is pending.' : undefined}
             type="checkbox"
           />
           Enabled
@@ -205,6 +243,7 @@ const SourceCard = (props: {
           onClick={() => {
             props.execute({ command: 'run-now', sourceId: props.source.id }).catch(() => undefined);
           }}
+          title={runDisabledReason()}
           type="button"
         >
           Run now
@@ -227,6 +266,16 @@ function SourcesRoute() {
     },
     { id: 'enrichments', sources: collectionSourceDefinitions.filter((source) => source.group === 'enrichments') },
   ] as const;
+  const conciseStatus = createMemo(() => {
+    const state = sourceControl.state();
+    if (state.commandError) {
+      return state.commandError;
+    }
+    if (state.connection === 'stale') {
+      return 'Connection interrupted; reconnecting.';
+    }
+    return state.publication ? `Report ${state.publication.revision} published.` : '';
+  });
 
   return (
     <main class={page} data-hydrated={sourceControl.state().connection === 'stopped' ? 'false' : 'true'}>
@@ -266,7 +315,10 @@ function SourcesRoute() {
             </div>
           </div>
         </header>
-        <div aria-live="polite" class={pageStack}>
+        <div aria-atomic="true" aria-live="polite" class={meta} role="status">
+          {conciseStatus()}
+        </div>
+        <div class={pageStack}>
           <Show when={sourceControl.state().connection === 'stale'}>
             <div class={banner}>Connection interrupted. Showing the last server snapshot while reconnecting.</div>
           </Show>
@@ -280,6 +332,35 @@ function SourcesRoute() {
                   {current().runningCount} running · {current().queueDepth} queued · snapshot{' '}
                   {fmtDate(current().generatedAt)}
                 </p>
+                <section class={cx(panel, sourceCard)}>
+                  <h2 class={groupTitle}>Report publication pipeline</h2>
+                  <p class={meta}>{publicationStatus(current().publication)}</p>
+                  <div class={axes}>
+                    <div class={axis}>
+                      <span class={axisLabel}>Revision</span>
+                      <span class={axisValue}>{current().publication.revision ?? 'Not published yet'}</span>
+                    </div>
+                    <div class={axis}>
+                      <span class={axisLabel}>Last outcome</span>
+                      <span class={axisValue}>{current().publication.lastOutcome}</span>
+                    </div>
+                    <div class={axis}>
+                      <span class={axisLabel}>Demand</span>
+                      <span class={axisValue}>
+                        {current().publication.acknowledgedRequestGeneration}/
+                        {current().publication.requestedGeneration} acknowledged
+                      </span>
+                    </div>
+                    <div class={axis}>
+                      <span class={axisLabel}>RTK dependency</span>
+                      <span class={axisValue}>
+                        {current().publication.rtkCompletedGeneration >= current().publication.rtkRequiredGeneration
+                          ? 'Caught up'
+                          : `Waiting for generation ${current().publication.rtkRequiredGeneration}`}
+                      </span>
+                    </div>
+                  </div>
+                </section>
                 <For each={groups}>
                   {(group) => (
                     <section aria-labelledby={`source-group-${group.id}`} class={groupStack}>

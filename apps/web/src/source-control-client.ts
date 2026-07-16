@@ -1,9 +1,15 @@
 import {
-  isCollectionSourceId,
+  chooseNewestSourceControlSnapshot,
+  parseReportPublishedEvent,
+  parseSourceControlCommandResponse,
+  parseSourceControlSnapshot,
+  type ReportPublishedEvent,
   type SourceControlCommand,
-  type SourceControlEntryView,
+  type SourceControlCommandResponse,
   type SourceControlView,
 } from '@ai-usage/report-core/source-control';
+
+export type { SourceControlCommandResponse } from '@ai-usage/report-core/source-control';
 
 export type SourceControlConnectionState = 'connecting' | 'live' | 'stale' | 'stopped';
 
@@ -11,15 +17,8 @@ export interface SourceControlClientState {
   readonly commandError: string | null;
   readonly connection: SourceControlConnectionState;
   readonly pendingCommand: SourceControlCommand | null;
+  readonly publication: ReportPublishedEvent | null;
   readonly snapshot: SourceControlView | null;
-}
-
-export interface SourceControlCommandResponse {
-  readonly error?: {
-    readonly message?: string;
-  };
-  readonly ok: boolean;
-  readonly snapshot?: SourceControlView;
 }
 
 interface EventSourceMessage {
@@ -27,7 +26,7 @@ interface EventSourceMessage {
 }
 
 export interface SourceControlEventSource {
-  addEventListener(type: 'snapshot', listener: (event: EventSourceMessage) => void): void;
+  addEventListener(type: 'report-published' | 'snapshot', listener: (event: EventSourceMessage) => void): void;
   close(): void;
   onerror: ((event: Event) => void) | null;
   onopen: ((event: Event) => void) | null;
@@ -50,42 +49,8 @@ const initialState: SourceControlClientState = {
   commandError: null,
   connection: 'stopped',
   pendingCommand: null,
+  publication: null,
   snapshot: null,
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const sourceEntryLooksValid = (value: unknown): value is SourceControlEntryView =>
-  isRecord(value) &&
-  isCollectionSourceId(value.id) &&
-  typeof value.label === 'string' &&
-  typeof value.policy === 'string' &&
-  typeof value.availability === 'string' &&
-  typeof value.lifecycle === 'string' &&
-  typeof value.lastOutcome === 'string' &&
-  Array.isArray(value.warnings);
-
-export const parseSourceControlSnapshot = (value: unknown): SourceControlView => {
-  if (
-    !isRecord(value) ||
-    typeof value.generatedAt !== 'string' ||
-    typeof value.generation !== 'number' ||
-    !Number.isSafeInteger(value.generation) ||
-    value.generation < 0 ||
-    typeof value.instanceId !== 'string' ||
-    value.instanceId.length === 0 ||
-    typeof value.queueDepth !== 'number' ||
-    typeof value.runningCount !== 'number' ||
-    !Array.isArray(value.sources) ||
-    !value.sources.every(sourceEntryLooksValid) ||
-    !isRecord(value.publication) ||
-    typeof value.publication.dirty !== 'boolean' ||
-    typeof value.publication.running !== 'boolean'
-  ) {
-    throw new Error('Source control snapshot is invalid.');
-  }
-  return value as unknown as SourceControlView;
 };
 
 const defaultEventSource = (): SourceControlEventSource => new EventSource('/api/source-control');
@@ -96,18 +61,11 @@ const defaultSendCommand = async (command: SourceControlCommand): Promise<Source
     headers: { 'content-type': 'application/json' },
     method: 'POST',
   });
-  const result = (await response.json()) as SourceControlCommandResponse;
+  const result = parseSourceControlCommandResponse(await response.json());
   if (!(response.ok && result.ok)) {
-    throw new Error(result.error?.message ?? 'The source control command failed.');
+    throw new Error(result.ok ? 'The source control command failed.' : result.error.message);
   }
   return result;
-};
-
-const replaceSnapshot = (current: SourceControlView | null, candidate: SourceControlView): SourceControlView => {
-  if (!current || current.instanceId !== candidate.instanceId || candidate.generation >= current.generation) {
-    return candidate;
-  }
-  return current;
 };
 
 export const createSourceControlClient = (options: SourceControlClientOptions = {}): SourceControlClient => {
@@ -125,11 +83,36 @@ export const createSourceControlClient = (options: SourceControlClientOptions = 
   };
 
   const acceptSnapshot = (snapshot: SourceControlView): void => {
+    const newest = chooseNewestSourceControlSnapshot(state.snapshot, snapshot);
+    const revision = newest.publication.revision;
+    const publishedAt = newest.publication.lastPublishedAt;
+    const recoveredPublication =
+      revision && publishedAt
+        ? {
+            instanceId: newest.instanceId,
+            publishedAt,
+            revision,
+            sourceControlGeneration: newest.generation,
+          }
+        : null;
     update({
       commandError: null,
       connection: 'live',
-      snapshot: replaceSnapshot(state.snapshot, snapshot),
+      ...(recoveredPublication && recoveredPublication.revision !== state.publication?.revision
+        ? { publication: recoveredPublication }
+        : {}),
+      snapshot: newest,
     });
+  };
+
+  const acceptPublication = (publication: ReportPublishedEvent): void => {
+    if (
+      state.publication?.instanceId === publication.instanceId &&
+      state.publication.revision === publication.revision
+    ) {
+      return;
+    }
+    update({ commandError: null, connection: 'live', publication });
   };
 
   const start = (): void => {
@@ -152,6 +135,13 @@ export const createSourceControlClient = (options: SourceControlClientOptions = 
         update({ connection: state.snapshot ? 'stale' : 'connecting' });
       }
     });
+    source.addEventListener('report-published', (event) => {
+      try {
+        acceptPublication(parseReportPublishedEvent(JSON.parse(event.data) as unknown));
+      } catch {
+        update({ connection: state.snapshot ? 'stale' : 'connecting' });
+      }
+    });
   };
 
   const stop = (): void => {
@@ -166,9 +156,9 @@ export const createSourceControlClient = (options: SourceControlClientOptions = 
     }
     update({ commandError: null, pendingCommand: command });
     try {
-      const result = await sendCommand(command);
-      if (!(result.ok && result.snapshot)) {
-        throw new Error(result.error?.message ?? 'The source control command failed.');
+      const result = parseSourceControlCommandResponse(await sendCommand(command));
+      if (!result.ok) {
+        throw new Error(result.error.message);
       }
       acceptSnapshot(parseSourceControlSnapshot(result.snapshot));
       return true;

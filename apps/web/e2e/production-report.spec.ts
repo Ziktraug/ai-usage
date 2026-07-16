@@ -107,7 +107,9 @@ test('renders the report timeline on the initial production Overview', async ({ 
   let serverFunctionRequestCount = 0;
   await page.route('**/_serverFn/**', async (route) => {
     serverFunctionRequestCount++;
-    if (serverFunctionRequestCount <= 2) {
+    // A cold source-control bootstrap may return one pending manifest before
+    // report-published prompts the exact-revision owner to retry.
+    if (serverFunctionRequestCount <= 3) {
       await route.continue();
       return;
     }

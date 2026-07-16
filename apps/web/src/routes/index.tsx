@@ -12,10 +12,11 @@ import {
   titleBlock,
 } from '@ai-usage/design-system/report';
 import { createFileRoute, stripSearchParams } from '@tanstack/solid-router';
-import { createSignal, ErrorBoundary, onMount, Show } from 'solid-js';
+import { createEffect, createSignal, ErrorBoundary, onMount, Show } from 'solid-js';
 import { Dashboard } from '../dashboard';
 import { type DashboardSearch, dashboardSearchDefaultsFor, validateDashboardSearch } from '../dashboard-search';
 import { loadReportPayload, type ReportLoaderData } from '../report-runtime';
+import { useSourceControl } from '../source-control-context';
 
 const fallbackSort = 'date' as const;
 const dashboardSearchDefaults = dashboardSearchDefaultsFor(fallbackSort);
@@ -39,6 +40,7 @@ const LoadedReport = (props: { data: ReportLoaderData }) =>
   );
 
 function IndexRoute() {
+  const sourceControl = useSourceControl();
   const [data, setData] = createSignal<ReportLoaderData>();
   const [error, setError] = createSignal<string>();
   const [loading, setLoading] = createSignal(true);
@@ -56,6 +58,17 @@ function IndexRoute() {
   };
 
   onMount(() => {
+    load().catch(() => undefined);
+  });
+
+  let retriedPublicationRevision: string | undefined;
+  createEffect(() => {
+    const sourceState = sourceControl.state();
+    const revision = sourceState.publication?.revision ?? sourceState.snapshot?.publication.revision;
+    if (!revision || revision === retriedPublicationRevision || loading() || data()) {
+      return;
+    }
+    retriedPublicationRevision = revision;
     load().catch(() => undefined);
   });
 
