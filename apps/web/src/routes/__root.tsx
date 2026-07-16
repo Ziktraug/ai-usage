@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/solid-query';
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/solid-router';
 import type { JSX } from 'solid-js';
 import { HydrationScript } from 'solid-js/web';
+import { SourceControlProvider } from '../source-control-context';
 import '../index.css';
 
 function RootDocument(props: { children: JSX.Element }) {
@@ -51,7 +52,9 @@ function RootRoute() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <Outlet />
+      <SourceControlProvider>
+        <Outlet />
+      </SourceControlProvider>
     </QueryClientProvider>
   );
 }
