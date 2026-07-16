@@ -6,6 +6,7 @@ import {
   type SourceAvailability,
   type SourceControlEntryView,
   type SourceControlView,
+  type SourceDetectionResult,
   type SourceLastOutcome,
   type SourceLifecycle,
   type SourcePolicyOverrides,
@@ -65,6 +66,49 @@ export type SourceExecutionCompletion =
   | { readonly _tag: 'failed' }
   | { readonly _tag: 'success'; readonly result: SourceRunResult }
   | { readonly _tag: 'timed-out' };
+
+export interface SourceJob {
+  readonly _tag: 'source';
+  readonly policyRevision: number;
+  readonly queuedAt: number;
+  readonly sourceId: CollectionSourceId;
+}
+
+export interface PublicationJob {
+  readonly _tag: 'publication';
+  readonly queuedAt: number;
+}
+
+export interface SourceStartDecision {
+  readonly rtkTargetGeneration: number;
+  readonly run: boolean;
+  readonly staleRequeue: boolean;
+  readonly startedAt: number;
+}
+
+export type PublicationStartDecision =
+  | { readonly ready: false }
+  | {
+      readonly dataTarget: number;
+      readonly ready: true;
+      readonly requestTarget: number;
+      readonly startedAt: number;
+    };
+
+export interface SourceFinishDecision {
+  readonly changed: boolean;
+  readonly detected: boolean;
+  readonly enabled: boolean;
+  readonly needsPublicationRequest: boolean;
+  readonly needsPublicationWake: boolean;
+  readonly needsRtk: boolean;
+  readonly needsRtkRerun: boolean;
+}
+
+export interface StateTransition<Decision> {
+  readonly decision: Decision;
+  readonly state: InternalControlState;
+}
 
 export const toIso = (milliseconds: number): string => new Date(milliseconds).toISOString();
 
@@ -144,7 +188,11 @@ export const reasonForAvailability = (availability: SourceAvailability): SourceR
   }
 };
 
-export const sanitizeCount = (value: number): number => (Number.isSafeInteger(value) && value >= 0 ? value : 0);
+export const sanitizeCount = (value: number): number =>
+  Number.isSafeInteger(value) && value >= 0 ? Math.min(value, sourceControlBounds.maxCount) : 0;
+
+const sanitizeDuration = (value: number, maximum: number): number =>
+  Number.isSafeInteger(value) && value >= 0 ? Math.min(value, maximum) : 0;
 
 export const sanitizeWarnings = (warnings: readonly SourceWarning[]): readonly SourceWarning[] =>
   warnings.slice(0, sourceControlBounds.maxWarningsPerSource).map((warning) => ({
@@ -274,3 +322,379 @@ export const sourceNeedsRtk = (sourceId: CollectionSourceId): boolean =>
   sourceId === 'codex.sessions' ||
   sourceId === 'opencode.sessions' ||
   sourceId === 'cursor.sessions';
+
+const transition = <Decision>(
+  state: InternalControlState,
+  next: InternalControlState,
+  decision: Decision,
+  modifiedAt: number,
+): StateTransition<Decision> => {
+  if (next === state) {
+    return { decision, state };
+  }
+  return {
+    decision,
+    state: {
+      ...next,
+      generatedAt: toIso(modifiedAt),
+      generation: state.generation + 1,
+    },
+  };
+};
+
+export const admitSourceJob = (
+  state: InternalControlState,
+  sourceId: CollectionSourceId,
+  sourceExists: boolean,
+  queuedAt: number,
+): StateTransition<SourceJob | undefined> => {
+  const source = state.sources[sourceId];
+  if (!(sourceExists && source.enabled) || source.availability !== 'detected' || source.queued || source.running) {
+    return transition(state, state, undefined, queuedAt);
+  }
+  const job: SourceJob = {
+    _tag: 'source',
+    policyRevision: source.policyRevision,
+    queuedAt,
+    sourceId,
+  };
+  const next = withSourceState({ ...state, queueDepth: state.queueDepth + 1 }, sourceId, (current) => {
+    const { nextDueAt: _nextDueAt, ...rest } = current;
+    return {
+      ...rest,
+      lifecycle: 'queued',
+      queued: true,
+      reason: { code: 'none' },
+    };
+  });
+  return transition(state, next, job, queuedAt);
+};
+
+export const admitPublicationJob = (
+  state: InternalControlState,
+  queuedAt: number,
+): StateTransition<PublicationJob | undefined> => {
+  if (state.publication.queued || state.publication.running) {
+    return transition(state, state, undefined, queuedAt);
+  }
+  return transition(
+    state,
+    {
+      ...state,
+      publication: { ...state.publication, queued: true },
+      queueDepth: state.queueDepth + 1,
+    },
+    { _tag: 'publication', queuedAt },
+    queuedAt,
+  );
+};
+
+export const requestPublicationTransition = (
+  state: InternalControlState,
+  requestedAt: number,
+): StateTransition<{ readonly shouldQueue: boolean }> =>
+  transition(
+    state,
+    {
+      ...state,
+      publication: {
+        ...state.publication,
+        requestedGeneration: state.publication.requestedGeneration + 1,
+      },
+    },
+    { shouldQueue: !(state.publication.queued || state.publication.running) },
+    requestedAt,
+  );
+
+export const scheduleSourceTransition = (
+  state: InternalControlState,
+  sourceId: CollectionSourceId,
+  dueAt: number,
+  modifiedAt: number,
+): StateTransition<boolean> => {
+  const source = state.sources[sourceId];
+  if (!source.enabled || source.availability !== 'detected' || source.queued || source.running) {
+    return transition(state, state, false, modifiedAt);
+  }
+  return transition(
+    state,
+    withSourceState(state, sourceId, (entry) => ({
+      ...entry,
+      lifecycle: 'scheduled',
+      nextDueAt: toIso(dueAt),
+    })),
+    true,
+    modifiedAt,
+  );
+};
+
+export const applyDetectionTransition = (
+  state: InternalControlState,
+  sourceId: CollectionSourceId,
+  detection: SourceDetectionResult,
+  modifiedAt: number,
+): StateTransition<{ readonly cancelTimer: boolean; readonly shouldQueue: boolean }> => {
+  const current = state.sources[sourceId];
+  const cancelTimer = detection.availability !== 'detected';
+  const lifecycle = lifecycleAfterDetection(current, detection.availability);
+  const next = withSourceState(state, sourceId, (entry) => {
+    const { nextDueAt: _nextDueAt, ...entryWithoutDueAt } = entry;
+    return {
+      ...(cancelTimer ? entryWithoutDueAt : entry),
+      availability: detection.availability,
+      lifecycle,
+      reason: entry.enabled ? detection.reason : { code: 'policy-disabled', message: 'Collection is disabled.' },
+    };
+  });
+  return transition(
+    state,
+    next,
+    {
+      cancelTimer,
+      shouldQueue: current.enabled && detection.availability === 'detected' && !current.queued && !current.running,
+    },
+    modifiedAt,
+  );
+};
+
+export const startSourceJobTransition = (
+  state: InternalControlState,
+  job: SourceJob,
+  startedAt: number,
+): StateTransition<SourceStartDecision> => {
+  const source = state.sources[job.sourceId];
+  const valid =
+    source.queued &&
+    source.enabled &&
+    source.availability === 'detected' &&
+    source.policyRevision === job.policyRevision;
+  const queueDepth = Math.max(0, state.queueDepth - 1);
+  if (!valid) {
+    const staleRequeue =
+      source.enabled && source.availability === 'detected' && source.policyRevision !== job.policyRevision;
+    const next = withSourceState({ ...state, queueDepth }, job.sourceId, (entry) => ({
+      ...entry,
+      lastOutcome: 'skipped',
+      lifecycle: lifecycleForIdleSource(entry),
+      queued: false,
+      reason: entry.enabled
+        ? { code: 'stale-policy', message: 'A stale queued job was skipped.' }
+        : { code: 'policy-disabled', message: 'Collection is disabled.' },
+    }));
+    return transition(
+      state,
+      next,
+      { rtkTargetGeneration: state.rtkRequiredGeneration, run: false, staleRequeue, startedAt },
+      startedAt,
+    );
+  }
+  const next = withSourceState({ ...state, queueDepth }, job.sourceId, (entry) => {
+    const { progress: _progress, ...rest } = entry;
+    return {
+      ...rest,
+      lastStartedAt: toIso(startedAt),
+      lifecycle: 'running',
+      queueDelayMs: sanitizeDuration(startedAt - job.queuedAt, sourceControlBounds.maxQueueDelayMs),
+      queued: false,
+      reason: { code: 'none' },
+      running: true,
+      warnings: [],
+    };
+  });
+  return transition(
+    state,
+    next,
+    { rtkTargetGeneration: state.rtkRequiredGeneration, run: true, staleRequeue: false, startedAt },
+    startedAt,
+  );
+};
+
+export const updateSourceProgressTransition = (
+  state: InternalControlState,
+  sourceId: CollectionSourceId,
+  progress: SourceProgress,
+  modifiedAt: number,
+): StateTransition<void> => {
+  if (!state.sources[sourceId].running) {
+    return transition(state, state, undefined, modifiedAt);
+  }
+  return transition(
+    state,
+    withSourceState(state, sourceId, (entry) => ({ ...entry, progress: sanitizeProgress(progress) })),
+    undefined,
+    modifiedAt,
+  );
+};
+
+export const finishSourceJobTransition = (
+  state: InternalControlState,
+  job: SourceJob,
+  startedAt: number,
+  rtkTargetGeneration: number,
+  completion: SourceExecutionCompletion,
+  finishedAt: number,
+): StateTransition<SourceFinishDecision> => {
+  const source = state.sources[job.sourceId];
+  const result = completion._tag === 'success' ? completion.result : undefined;
+  const failed = completion._tag === 'failed';
+  const unavailable = result?.unavailable;
+  const warnings = result ? sanitizeWarnings(result.warnings) : [];
+  const availability = unavailable ? 'not-detected' : source.availability;
+  const lastOutcome = outcomeAfterRun(completion, unavailable, warnings.length);
+  const changed = result?.changed === true && !unavailable;
+  let dirtyGeneration = state.publication.dirtyGeneration;
+  let rtkRequiredGeneration = state.rtkRequiredGeneration;
+  let rtkCompletedGeneration = state.rtkCompletedGeneration;
+  const rtkAvailable = state.sources['rtk.savings'];
+  const needsRtk =
+    changed && sourceNeedsRtk(job.sourceId) && rtkAvailable.enabled && rtkAvailable.availability === 'detected';
+  if (changed) {
+    dirtyGeneration++;
+    if (needsRtk) {
+      rtkRequiredGeneration = dirtyGeneration;
+    }
+  }
+  if (job.sourceId === 'rtk.savings') {
+    rtkCompletedGeneration = Math.max(rtkCompletedGeneration, rtkTargetGeneration);
+  }
+  const releasedRtkDependency =
+    job.sourceId === 'rtk.savings' &&
+    state.rtkRequiredGeneration > state.rtkCompletedGeneration &&
+    rtkCompletedGeneration >= state.rtkRequiredGeneration;
+  const { progress: _progress, ...sourceWithoutProgress } = source;
+  const nextSource: InternalSourceState = {
+    ...sourceWithoutProgress,
+    availability,
+    durationMs: sanitizeDuration(finishedAt - startedAt, sourceControlBounds.maxDurationMs),
+    lastFinishedAt: toIso(finishedAt),
+    lastOutcome,
+    lifecycle: source.enabled && availability === 'detected' ? 'scheduled' : 'dormant',
+    reason: reasonAfterCompletion(completion, unavailable, source.enabled),
+    running: false,
+    warnings,
+    ...(result === undefined
+      ? {}
+      : { inputCount: sanitizeCount(result.inputCount), outputCount: sanitizeCount(result.outputCount) }),
+    ...(failed || unavailable ? {} : { lastSuccessAt: toIso(finishedAt) }),
+  };
+  const nextState = withSourceState(
+    {
+      ...state,
+      publication: { ...state.publication, dirtyGeneration },
+      rtkCompletedGeneration,
+      rtkRequiredGeneration,
+    },
+    job.sourceId,
+    () => nextSource,
+  );
+  return transition(
+    state,
+    nextState,
+    {
+      changed,
+      detected: availability === 'detected',
+      enabled: source.enabled,
+      needsPublicationRequest: changed,
+      needsPublicationWake: releasedRtkDependency,
+      needsRtk,
+      needsRtkRerun: job.sourceId === 'rtk.savings' && rtkRequiredGeneration > rtkCompletedGeneration,
+    },
+    finishedAt,
+  );
+};
+
+export const startPublicationJobTransition = (
+  state: InternalControlState,
+  startedAt: number,
+): StateTransition<PublicationStartDecision> => {
+  const queueDepth = Math.max(0, state.queueDepth - 1);
+  const rtk = state.sources['rtk.savings'];
+  const waitingForRtk =
+    rtk.enabled && rtk.availability === 'detected' && state.rtkRequiredGeneration > state.rtkCompletedGeneration;
+  if (waitingForRtk) {
+    return transition(
+      state,
+      { ...state, publication: { ...state.publication, queued: false }, queueDepth },
+      { ready: false },
+      startedAt,
+    );
+  }
+  return transition(
+    state,
+    { ...state, publication: { ...state.publication, queued: false, running: true }, queueDepth },
+    {
+      dataTarget: state.publication.dirtyGeneration,
+      ready: true,
+      requestTarget: state.publication.requestedGeneration,
+      startedAt,
+    },
+    startedAt,
+  );
+};
+
+export const finishPublicationJobTransition = (
+  state: InternalControlState,
+  startedAt: number,
+  requestTarget: number,
+  dataTarget: number,
+  result: { readonly revision?: string } | undefined,
+  finishedAt: number,
+): StateTransition<boolean> => {
+  const publishedGeneration = result
+    ? Math.max(state.publication.publishedGeneration, dataTarget)
+    : state.publication.publishedGeneration;
+  const acknowledgedRequestGeneration = result
+    ? Math.max(state.publication.acknowledgedRequestGeneration, requestTarget)
+    : state.publication.acknowledgedRequestGeneration;
+  const pending =
+    state.publication.dirtyGeneration > publishedGeneration ||
+    state.publication.requestedGeneration > acknowledgedRequestGeneration;
+  const next = {
+    ...state,
+    publication: {
+      ...state.publication,
+      acknowledgedRequestGeneration,
+      lastDurationMs: sanitizeDuration(finishedAt - startedAt, sourceControlBounds.maxDurationMs),
+      lastOutcome: result ? ('success' as const) : ('failed' as const),
+      publishedGeneration,
+      running: false,
+      ...(result
+        ? {
+            lastPublishedAt: toIso(finishedAt),
+            ...(result.revision === undefined ? {} : { revision: result.revision }),
+          }
+        : {}),
+    },
+  };
+  return transition(state, next, pending, finishedAt);
+};
+
+export const setSourcePolicyTransition = (
+  state: InternalControlState,
+  sourceId: CollectionSourceId,
+  enabled: boolean,
+  modifiedAt: number,
+): StateTransition<{ readonly shouldQueue: boolean }> => {
+  const current = state.sources[sourceId];
+  if (current.enabled === enabled) {
+    return transition(state, state, { shouldQueue: false }, modifiedAt);
+  }
+  const next = withSourceState(state, sourceId, (entry) => {
+    const { nextDueAt: _nextDueAt, ...entryWithoutDueAt } = entry;
+    return {
+      ...(enabled ? entry : entryWithoutDueAt),
+      enabled,
+      lifecycle: lifecycleAfterPolicyChange(entry, enabled),
+      policyRevision: entry.policyRevision + 1,
+      reason: enabled
+        ? reasonForAvailability(entry.availability)
+        : { code: 'policy-disabled', message: 'Collection is disabled.' },
+    };
+  });
+  return transition(
+    state,
+    next,
+    { shouldQueue: enabled && current.availability === 'detected' && !current.queued && !current.running },
+    modifiedAt,
+  );
+};
