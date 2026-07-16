@@ -11,7 +11,7 @@
 5. `@ai-usage/usage-merge` performs explicit merge-bundle export/import; successful mutations request publication without invoking collectors.
 6. The CLI uses timer-free report-data one-shot application ports and complete compatibility payloads. The served app loads exact-revision focused projections after hydration and receives operational snapshots plus explicit publication events through one SSE connection.
 
-Codex quota history is owned by the `codex.usage-limits` source: app-server collection and rollout backfill emit provider-neutral observation batches that are imported transactionally. The web app reads stored history through a dedicated bounded query only when the drawer is open. History is not part of `UsageReportPayload`, report revisions, snapshots, or merge bundles.
+Codex quota history is owned by the `codex.usage-limits` source: app-server collection and rollout backfill emit provider-neutral observation batches that are imported transactionally. One Effect-native single flight owns query, collection, import/checkpoint, attempt recording, and final projection in the scheduler fiber. Joiners await its Deferred without owning cancellation; owner interruption aborts the provider child and prevents any later durable phase from starting. A synchronous SQLite transaction that has begun remains atomic, and timeout cannot become observable until it returns. The web app reads stored history through a dedicated bounded query only when the drawer is open. History is not part of `UsageReportPayload`, report revisions, snapshots, or merge bundles.
 
 ## Package Ownership
 
@@ -64,6 +64,7 @@ Owns durable usage facts and merge bundle persistence:
 - validated merge bundle import and export;
 - active report-row queries with corrupt-row isolation.
 - local-observed versus portable-opaque source authority and semantic generation changes only when the active report projection changes.
+- canonical preparation of every local/peer/preview/confirm merge row: portable embedded RTK fields are split into a hash-recomputed base row plus a validated `rtk.savings` contribution in the same import transaction, without rewriting historical rows or changing the wire format.
 - normalized append-only provider-quota observations/windows, duplicate coalescing, coverage heartbeats, source-event idempotency, and atomic source checkpoints.
 
 The store does not collect local history, choose files, render import progress, or orchestrate app workflows.
@@ -127,7 +128,7 @@ Owns web runtime and UI:
 - dashboard, `/sources`, overview, table schema, and UI model modules;
 - a dedicated bounded stored-history runner and the Codex history drawer.
 
-Client-visible modules must not import `*.server.*`. Shared calculations should live in small model modules such as `dashboard-model.ts`, `overview-model.ts`, and `session-table-schema.ts`. TanStack Query owns ordinary finite Skills, project-source, and quota-history reads/mutations. It intentionally does not own exact report revisions.
+Client-visible modules must not import `*.server.*`. Shared calculations should live in small model modules such as `dashboard-model.ts`, `overview-model.ts`, and `session-table-schema.ts`. TanStack Query owns ordinary finite Skills, project-source, and quota-history reads/mutations. Skills mutations carry discriminated domain requests through one validated browser-safe result contract rather than arbitrary closures. It intentionally does not own exact report revisions.
 
 The browser-side served report session owns revision acquisition, canonical destination fingerprints, supersession, one expiry retry, atomic commit, and same-revision no-op detection. Server publication uses a canonical semantic capture fingerprint that excludes only observation time; unchanged forced captures retain the last good immutable revision and skip Session rematerialization.
 
@@ -150,11 +151,11 @@ Each publication is atomically stored as owner-only immutable manifest, rows, an
 - Stable sources are `claude.sessions`, `codex.sessions`, `opencode.sessions`, `cursor.sessions`, `codex.usage-limits`, `rtk.savings`, and `cursor.commit-attribution`.
 - Sparse `sourcePolicies` overrides are read only from the user-home config. Repository config cannot authorize background work or provider communication.
 - Policy, availability, lifecycle, last outcome, and progress are independent axes. Disabled does not mean unavailable, and failed does not mean disabled.
-- The queue is finite, one worker is the default, RTK waits for session producers, and publication has one runtime owner. Queue deduplication is separate from monotonic request/data demand, so a request arriving during publication produces a successor attempt.
+- The queue is finite, one worker is the default, RTK waits for session producers, and publication has one runtime owner. Pure transitions in `source-control-state.ts` own admission, detection, policy, source completion, RTK, and publication generations; the Effect runtime only applies them atomically and interprets their decisions. Queue deduplication is separate from monotonic request/data demand, so a request arriving during publication produces a successor attempt.
 - Every picked source owns an `AbortController`. Timeout and runtime shutdown reach the provider/child-process boundary and cancellation is checked before every durable phase; disabling after pick does not abort the run.
 - Runtime state is ephemeral. Normalized contributions, policy, source checkpoints, and semantic store generation are durable.
 - Disable, missing/unreadable input, unsupported platform, empty output, failure, redetection, and restart preserve prior contributions. There is no source delete command.
-- SSE snapshots and publication events contain stable IDs, bounded messages/counts, process instance plus generation, and no paths, prompts, records, credentials, or provider responses. Browser code strictly validates every nested axis before replacement.
+- SSE snapshots and publication events contain stable IDs, bounded messages/counts, process instance plus generation, and no paths, prompts, records, credentials, or provider responses. Browser code requires the exact seven-source catalogue, canonical labels/cadences, consistent lifecycle/generation axes, and explicit operational bounds before constructing a replacement snapshot.
 
 Production and setup listeners bind only to numeric loopback. The application does not expose a LAN transport, peer discovery, or credential exchange protocol. Moving usage between machines requires a portable snapshot or merge bundle copied out of band.
 

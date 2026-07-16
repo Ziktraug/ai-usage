@@ -32,8 +32,9 @@ branch or open a pull request unless the user explicitly asks.
 | 019 | Deepen Skills Workflows and Harden Projection Parents | P1 | L | 009 | DONE |
 | 020 | Align Commit Tooling, Bun Runtime, Dead CSV Claims, and Final Documentation | P2 | M | 009-019 | DONE |
 | 021 | Persist and visualize Codex quota history behind a provider-neutral seam | P1 | L | - | DONE |
-| 022 | Build a Server-Owned Source Control Plane and Client-First Web App | P1 | L | 017, 018, 021 | DONE |
-| 023 | Harden Source Ownership, Publication, Cancellation, and Client Contracts | P1 | L | 022 initial implementation | DONE |
+| 022 | Build a Server-Owned Source Control Plane and Client-First Web App | P1 | L | 017, 018, 021 | IN PROGRESS |
+| 023 | Harden Source Ownership, Publication, Cancellation, and Client Contracts | P1 | L | 022 initial implementation | IN PROGRESS |
+| 024 | Close Source-Control Data, Cancellation, State, and Client Review Gaps | P1 | L | 023 implementation | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -131,7 +132,12 @@ REJECTED (with one-line rationale).
   makes publication demand lossless and single-owner, propagates timeout
   cancellation through provider writes, closes collection/package side doors,
   strictly validates SSE state, and completes the Query/UI contract. Plan 022
-  cannot return to `DONE` until plan 023's done criteria pass.
+  cannot return to `DONE` until the remaining review findings in plan 024 pass.
+- Plan 024 is the second-review closure at `106d5d9`. It fixes portable RTK
+  roundtrips and makes quota persistence truly interruption-owned before
+  completing the pure transition boundary, exact catalogue parser, typed
+  TanStack mutations, shared presentation semantics, system coverage, and
+  documentation. Plans 022–024 close together only after plan 024's gates pass.
 
 ## Remediation waves
 
@@ -145,7 +151,7 @@ Wave 1: 009 remove HTML export
 
 010-016 complete ── 017 semantic no-op refresh ── 018 browser coordinator
 009-019 complete ──────────────────────────────── 020 tooling/docs closure
-017 + 018 + 021 complete ──────────────────────── 022 initial source control plane ── 023 hardening/closure
+017 + 018 + 021 complete ── 022 initial plane ── 023 first hardening ── 024 second-review closure
 ```
 
 Plans on separate Wave 2 branches may run in parallel. Do not parallel-edit the
@@ -186,6 +192,12 @@ sequence overlapping files and rebase/re-read before execution.
 | F28 | Web reads can trigger global collection and CLI quota crosses the report-data boundary | 023 |
 | F29 | Publication SSE, TanStack Query finite reads, and complete source operational UI are missing | 023 |
 | F30 | Source-control transitions, snapshot replacement, and status presentation have ambiguous or duplicated ownership | 023 |
+| F31 | Portable export/import stores RTK only in base JSON after migration, so the composed projection loses it | 024 |
+| F32 | Independent quota persistence Promises can commit after the scheduler reports timeout | 024 |
+| F33 | The public snapshot decoder accepts partial catalogues and insufficiently bounded operational axes | 024 |
+| F34 | Core source and publication transitions remain inside the Effect runtime closure | 024 |
+| F35 | Skills Query mutations and inventory results lack a typed, validated domain boundary | 024 |
+| F36 | Source tone mapping, live elapsed detail, lifecycle E2E, and CLI quota documentation remain incomplete | 024 |
 
 ## Findings considered and rejected
 

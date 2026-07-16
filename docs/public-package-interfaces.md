@@ -31,7 +31,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 ## `@ai-usage/local-collectors`
 
 - `.`: local history collection orchestration, including the high-level Codex app-server and rollout quota batch collectors.
-- `./codex-history`: Codex quota/local history helpers used by CLI quota output.
+- `./codex-history`: low-level Codex rollout-history parsing/collection helpers retained for collector compatibility; application callers use report-data one-shot/provider-quota ports.
 - `./datasets`: focused local report-dataset collection helpers.
 - `./collectors`: per-harness normalized collector adapters and compatibility selection orchestration.
 - `./errors`: local history error and warning formatting/types.
