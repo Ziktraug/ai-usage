@@ -82,6 +82,13 @@ const expectExactProtocolIdentity = (
 };
 
 test('renders the report timeline on the initial production Overview', async ({ page }) => {
+  const initialResponse = await page.request.get('/');
+  const initialHtml = await initialResponse.text();
+  expect(initialResponse.ok()).toBe(true);
+  expect(initialHtml).toContain('Loading report data');
+  expect(initialHtml).not.toContain('Production browser session');
+  expect(initialHtml).not.toContain('production-browser-');
+
   await page.addInitScript(() => {
     Reflect.set(globalThis, '__aiUsageFalseEmptyRange', false);
     const recordFalseEmptyRange = () => {
@@ -97,7 +104,13 @@ test('renders the report timeline on the initial production Overview', async ({ 
     window.addEventListener('DOMContentLoaded', recordFalseEmptyRange, { once: true });
   });
   const overviewGate = Promise.withResolvers<void>();
+  let serverFunctionRequestCount = 0;
   await page.route('**/_serverFn/**', async (route) => {
+    serverFunctionRequestCount++;
+    if (serverFunctionRequestCount <= 2) {
+      await route.continue();
+      return;
+    }
     await overviewGate.promise;
     await route.continue();
   });

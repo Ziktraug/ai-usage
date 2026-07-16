@@ -39,11 +39,6 @@ import { createSkillsRouteController, type OperationNotice } from '../skills-rou
 import { type ProjectInventoriesResult, type SkillMarkdownDraftGuard, SkillsWorkspace } from '../skills-workspace';
 
 export const Route = createFileRoute('/skills')({
-  staleTime: Number.POSITIVE_INFINITY,
-  loader: async () => {
-    const [knownProjectPaths, skills] = await Promise.all([getKnownSkillProjectPaths(), getSkillManagementSnapshot()]);
-    return { knownProjectPaths, skills };
-  },
   component: SkillsRoute,
 });
 
@@ -227,11 +222,35 @@ const knownProjectScopesFromPaths = (projects: readonly KnownSkillProjectPath[])
   return [...scopes.values()];
 };
 
+interface SkillsInitialData {
+  knownProjectPaths: Awaited<ReturnType<typeof getKnownSkillProjectPaths>>;
+  skills: Awaited<ReturnType<typeof getSkillManagementSnapshot>>;
+}
+
 function SkillsRoute() {
-  const data = Route.useLoaderData();
   const location = useLocation();
   let refreshButtonElement: HTMLButtonElement | undefined;
   const [hydrated, setHydrated] = createSignal(false);
+  const [data, setData] = createSignal<SkillsInitialData>({
+    knownProjectPaths: { error: { message: 'Loading project paths…', tag: 'Loading' }, ok: false },
+    skills: { error: { message: 'Loading skills…', tag: 'Loading' }, ok: false },
+  });
+  const loadInitialData = async (): Promise<void> => {
+    setHydrated(false);
+    try {
+      const [knownProjectPaths, skills] = await Promise.all([
+        getKnownSkillProjectPaths(),
+        getSkillManagementSnapshot(),
+      ]);
+      setData({ knownProjectPaths, skills });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Skill data could not be loaded.';
+      const failure = { error: { message, tag: 'ClientReadError' }, ok: false } as const;
+      setData({ knownProjectPaths: failure, skills: failure });
+    } finally {
+      setHydrated(true);
+    }
+  };
   const [activeCellStateFilter, setActiveCellStateFilter] = createSignal<SkillCellStateFilter | undefined>();
   const controller = createSkillsRouteController(data);
   const {
@@ -292,7 +311,9 @@ function SkillsRoute() {
 
   const routeSelection = createMemo(() => skillSelectionFromPath(location().pathname, selectionProjects()));
 
-  onMount(() => setHydrated(true));
+  onMount(() => {
+    loadInitialData().catch(() => undefined);
+  });
 
   return (
     <main
@@ -345,7 +366,17 @@ function SkillsRoute() {
         </header>
 
         <div class={pageStack}>
-          <Show fallback={<ErrorPanel message={errorMessage()} />} when={result().ok}>
+          <Show
+            fallback={
+              <ErrorPanel
+                message={errorMessage()}
+                onRetry={() => {
+                  loadInitialData().catch(() => undefined);
+                }}
+              />
+            }
+            when={result().ok}
+          >
             <Show
               fallback={
                 <UnconfiguredPanel
@@ -819,12 +850,19 @@ function TargetsPanel(props: {
   );
 }
 
-function ErrorPanel(props: { message: string }) {
+function ErrorPanel(props: { message: string; onRetry?: () => void }) {
   return (
     <section class={panel}>
       <div class={panelHeader}>
         <h2 class={panelTitle}>Snapshot error</h2>
         <p class={panelSub}>{props.message}</p>
+        <Show when={props.onRetry}>
+          {(onRetry) => (
+            <button class={ghostButton} onClick={onRetry()} type="button">
+              Retry
+            </button>
+          )}
+        </Show>
       </div>
     </section>
   );

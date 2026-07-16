@@ -14,8 +14,8 @@ const LOG_DRAIN_DEADLINE_MS = 2000;
 const OVERALL_DEADLINE_MS = 30_000;
 const EVENT_LOOP_PROBE_BUDGET_MS = 1250;
 const REPRESENTATIVE_SESSION_COUNT = 64;
-const PROJECT_LOADER_ERROR_MARKER = 'Could not load scanned projects:';
-const PROJECT_LOADER_SUCCESS_MARKER = 'data-known-project-paths-status="ok"';
+const SKILLS_BUSINESS_DATA_MARKER = 'data-known-project-paths-status="ok"';
+const SKILLS_SHELL_MARKER = 'Skill management';
 const RUNNER_FAILURE_PATTERN =
   /Invalid ai-usage workspace root|Unable to discover the ai-usage workspace|ENOENT[^\n]*report-payload-runner|reportPayloadRunner failed/;
 const SOURCE_CONTROL_STARTED_MARKER = '[ai-usage] Source control started.';
@@ -396,9 +396,9 @@ const runProductionSmoke = async (): Promise<void> => {
                   `Production event-loop probe took ${probeDurationMs.toFixed(0)}ms with status ${probe.status}; budget is ${EVENT_LOOP_PROBE_BUDGET_MS}ms.`,
                 );
               }
-              const skills = await waitForApplicationPage(port, child, '/skills', PROJECT_LOADER_SUCCESS_MARKER);
-              if (skills.body.includes(PROJECT_LOADER_ERROR_MARKER)) {
-                throw new Error('/skills rendered the known project-loader error banner.');
+              const skills = await waitForApplicationPage(port, child, '/skills', SKILLS_SHELL_MARKER);
+              if (skills.body.includes(SKILLS_BUSINESS_DATA_MARKER)) {
+                throw new Error('/skills embedded business data in its initial HTML.');
               }
 
               const localHost = `localhost:${port}`;
