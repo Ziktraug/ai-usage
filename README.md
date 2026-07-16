@@ -17,7 +17,7 @@ Cursor data is partial because some usage counters are stored server-side; those
 
 ### RTK savings (optional)
 
-If RTK (a token-killer CLI proxy) has a local history database at `~/Library/Application Support/rtk/history.db`, sessions are enriched with the token savings RTK achieved. Each RTK command is matched to a session by project path and time window, and the matched saved / input / output token counts surface in the report. Sources without RTK data are left untouched.
+If RTK (a token-killer CLI proxy) has a local history database at `~/Library/Application Support/rtk/history.db`, sessions are enriched with the token savings RTK achieved. Each RTK command is matched to a session by project path and time window. Savings are persisted as an RTK-owned contribution separate from the collector-owned base row, so later base re-imports, no-match runs, disablement, and restarts preserve the last durable enrichment.
 
 ## Requirements
 
@@ -63,7 +63,7 @@ bun run cli -- quota
 
 The served app runs a Bun-owned control plane even when no browser is open. Its seven independent collection sources are Claude, Codex, OpenCode, and Cursor sessions; Codex usage limits; RTK savings; and Cursor commit attribution. Each source has separate policy, detection, lifecycle, outcome, and cadence state on `/sources`. Sparse policy overrides live only in `~/.config/ai-usage/config.json`; repository config cannot enable background work.
 
-Collectors persist normalized contributions before a separate stored-only publication job creates an immutable report revision. Disabling, missing input, empty output, or failure never deletes prior contributions. The browser receives sanitized operational state through one SSE connection and loads report and Skills business data only after hydration; initial HTML contains the application shell.
+Collectors persist normalized contributions before a separate stored-only publication job creates an immutable report revision. Publication requests use monotonic demand, and timed-out work aborts at the provider boundary before later writes. Disabling, missing input, empty output, or failure never deletes prior contributions. The browser strictly decodes sanitized replacement snapshots plus explicit publication events through one SSE connection. TanStack Query owns ordinary finite Skills and quota reads; the served-report session remains the sole exact-revision owner.
 
 ## Multi-machine usage
 

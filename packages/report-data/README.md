@@ -2,7 +2,7 @@
 
 ## Owns
 
-Application-facing report orchestration: autonomous durable source adapters, the scoped Effect source control plane, applying aliases, composing warnings, reading known local project sources without creating a full report, creating compatibility payloads for CLI consumers, and executing strict focused/Session queries over web-supplied immutable revision artifacts.
+Application-facing report orchestration: autonomous durable source adapters, the scoped Effect source control plane, applying aliases, composing warnings, reading stored-only known local project sources without collecting, creating compatibility payloads for CLI consumers, and executing strict focused/Session queries over web-supplied immutable revision artifacts.
 
 ## Does Not Own
 
@@ -10,7 +10,7 @@ It does not own row normalization/query primitives, immutable web revision stora
 
 ## Public Interface
 
-The root package export exposes report request/result helpers and compatibility snapshot/report payload assembly used by apps. One pure internal assembler owns final payload construction. `./source-adapters` exposes the seven Bun runtime adapters; `./source-control` exposes the scoped bounded scheduler service and layer. The `./report-payload-artifact` export supplies owner-only artifact writing and the shared byte budget for bounded internal runners.
+The root package export exposes report request/result helpers and compatibility snapshot/report payload assembly used by apps. One pure internal assembler owns final payload construction. `./one-shot-sources` exposes explicit timer-free CLI application workflows. `./provider-quota` owns refresh, latest durable projection, and bounded history reads. `./source-adapters` exposes the seven Bun runtime adapters; `./source-control` exposes the deep scoped scheduler service and layer over an internal pure state machine. The `./report-payload-artifact` export supplies owner-only artifact writing and the shared byte budget for bounded internal runners.
 
 ## Depends On
 
@@ -22,7 +22,7 @@ It must not import app packages, private package paths, relative workspace paths
 
 ## Data Boundary
 
-This package provides focused local-row/project-source reads and produces compatibility report payloads from local and stored usage rows. The source control plane holds only bounded operational state: normalized rows, datasets, paths, and raw errors remain outside its snapshot. Its queue is bounded, cadence is completion-relative, policy revisions invalidate stale queued jobs, and dirty/RTK watermarks prevent multi-worker publication from losing producer changes. Portable source paths stay opaque; only locally observed paths may drive Git/filesystem canonicalization. One private Bun runner validates all six exact-revision query kinds, opens only the leased immutable read-only SQLite materialization, and writes bounded results for bootstrap support, Overview, Breakdown, and paged Sessions/campaign/neighbor reads. Bootstrap projection preserves explicit omission counts when metadata exceeds its byte/item budgets. Stable capture compares semantic store generation and config state before publication. The web adapter owns revision materialization. CLI consumers use the complete compatibility payload directly. File import/export happens through explicit usage-merge actions before reporting.
+This package provides focused stored-row/project-source reads and produces compatibility report payloads from local and stored usage rows. The source control plane holds only bounded operational state: normalized rows, datasets, paths, and raw errors remain outside its snapshot. Its queue is bounded, cadence is completion-relative, policy revisions invalidate stale queued jobs, picked jobs own provider cancellation, and monotonic request/data plus RTK watermarks prevent multi-worker publication from losing demand. Portable source paths stay opaque; only locally observed paths may drive Git/filesystem canonicalization. One private Bun runner validates all six exact-revision query kinds, opens only the leased immutable read-only SQLite materialization, and writes bounded results for bootstrap support, Overview, Breakdown, and paged Sessions/campaign/neighbor reads. Bootstrap projection preserves explicit omission counts when metadata exceeds its byte/item budgets. Stable capture compares semantic store generation and config state before publication. The web adapter owns revision materialization. CLI consumers use the complete compatibility payload directly. File import/export happens through explicit usage-merge actions before reporting.
 
 ## Test Strategy
 
