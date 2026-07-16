@@ -10,7 +10,7 @@ It does not own row normalization/query primitives, immutable web revision stora
 
 ## Public Interface
 
-The root package export exposes report request/result helpers and compatibility snapshot/report payload assembly used by apps. One pure internal assembler owns final payload construction. `./source-adapters` exposes the seven Bun runtime adapters; `./source-control` exposes the scoped bounded scheduler service and layer. The `./report-payload-artifact` export writes the bounded private artifact used by the Bun-to-Nitro full-payload compatibility handoff.
+The root package export exposes report request/result helpers and compatibility snapshot/report payload assembly used by apps. One pure internal assembler owns final payload construction. `./source-adapters` exposes the seven Bun runtime adapters; `./source-control` exposes the scoped bounded scheduler service and layer. The `./report-payload-artifact` export supplies owner-only artifact writing and the shared byte budget for bounded internal runners.
 
 ## Depends On
 

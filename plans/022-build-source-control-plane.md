@@ -1,6 +1,6 @@
 # Build a Server-Owned Source Control Plane and Client-First Web App
 
-**Status:** IN PROGRESS  
+**Status:** DONE
 **Priority:** P1  
 **Effort:** L  
 **Depends on:** 017, 018, 021  
@@ -392,6 +392,7 @@ Generic query invalidation must never independently replace the three report des
 - 2026-07-16 — Step 7 complete: added strict browser-safe command parsing, trusted GET/POST source-control routes, server-function read/command seams, and a bounded SSE replacement stream with authoritative initial state, retry, heartbeat, process/generation IDs, abort cleanup, payload limits, and publication state. Slow clients retain at most one queued and one replacement snapshot; reconnect accepts a new process instance at generation zero. Thirteen focused trust/API tests cover hostile metadata, bounded JSON, replacement, disconnect, reconnect, sanitized failures, and command/SSE convergence. Workspace typechecking, Ultracite, the Bun production build, and a production smoke of real trusted/hostile SSE and command routes passed.
 - 2026-07-16 — Step 8 complete: added one hydration-owned source-control client/context, replacement/reconnect/stale semantics, server-confirmed command state, a keyboard-accessible compact status and Run-all control, and a responsive `/sources` workspace for all independent state axes and commands. Removed the dashboard countdown, pause/refresh controls, one-minute client scheduler, and manual refresh prop. Development now explicitly runs Vite under Bun so the in-process control plane is available without a Node fallback; the SSE heartbeat stays below Bun's default idle timeout. Client/API/runtime tests, Ultracite, typechecking, production build, all six production E2E tests, and the 34-test deterministic E2E suite passed.
 - 2026-07-16 — Step 9 complete: removed every business-data route loader and replaced Report and Skills with hydration-only finite reads plus explicit loading, error, and retry states. Initial HTML now contains the application shell without report or skill payloads. Successful publication revisions reacquire only the current atomic dashboard destination; quota history has bounded latest-read semantics and reloads only while open, replacing the visible-tab provider poller. All 259 web tests, 34 deterministic E2E tests, six production E2E tests, the Bun production build, and the trusted-local production smoke passed.
+- 2026-07-16 — Step 10 complete: deleted the generic live-report collection runner, report refresh cache/coordinator, browser refresh RPCs, and provider quota refresh runner/poller. The remaining exact-revision and quota-history subprocesses share one bounded private-artifact utility, publication is stored-only, and current documentation describes the seven-source control plane, Bun runtime, snapshot SSE, client-first reads, and non-deletion behavior. Stale-orchestration searches were clean; Ultracite, lint, typechecking, all workspace tests, all nine builds, 34 deterministic E2E tests, six production E2E tests, and the trusted-local production smoke passed.
 
 ### Step 0 — Freeze the baseline and characterize contracts
 

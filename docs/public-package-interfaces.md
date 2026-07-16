@@ -45,7 +45,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 
 - `.`: local report row/payload requests, focused known-project-source discovery, snapshot assembly, and full compatibility payload creation over core plus local collectors.
 - `./provider-quota`: local provider-quota refresh and bounded history-query orchestration.
-- `./report-payload-artifact`: bounded private artifact writing for the Bun-to-Nitro full-payload compatibility handoff.
+- `./report-payload-artifact`: shared owner-only artifact writer and byte budget used by bounded internal Bun runners.
 - `./source-adapters`: autonomous detected source adapters that persist normalized contributions.
 - `./source-control`: scoped bounded Effect scheduler, server policy/publication ports, commands, and snapshot stream.
 
