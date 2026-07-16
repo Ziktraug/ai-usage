@@ -1,8 +1,9 @@
 import { css, cx } from '@ai-usage/design-system/css';
 import { meta, panel, strongCell } from '@ai-usage/design-system/report';
-import type { ProjectionAction, ProjectSkillInventory, SkillManagementSnapshot } from '@ai-usage/skills';
+import type { ProjectionAction, SkillManagementSnapshot } from '@ai-usage/skills';
 import { useLocation, useNavigate } from '@tanstack/solid-router';
 import { createEffect, createMemo, createSignal, type JSX, Show } from 'solid-js';
+import type { ProjectInventoriesResult } from './skills-client-contracts';
 import { SkillsConsolidate } from './skills-consolidate';
 import { SkillsContextPanel } from './skills-context-panel';
 import { SkillsDetail } from './skills-detail';
@@ -22,14 +23,12 @@ import {
 import { SKILLS_MOBILE_MEDIA_QUERY } from './skills-responsive';
 import { SkillsTree } from './skills-tree';
 
+export type { ProjectInventoriesResult } from './skills-client-contracts';
+
 export interface SkillReconcileResult {
   actions: readonly ProjectionAction[];
   snapshot: SkillManagementSnapshot;
 }
-
-export type ProjectInventoriesResult =
-  | { ok: true; data: readonly ProjectSkillInventory[] }
-  | { ok: false; error: { message: string; tag: string } };
 
 export interface SkillMarkdownDraftGuard {
   dirty: boolean;
