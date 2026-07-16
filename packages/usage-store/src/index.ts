@@ -15,6 +15,7 @@ import {
   type SerializedMergeRow,
   toSerializedMergeRow,
   type UsageMergeBundle,
+  usageContentHash,
 } from '@ai-usage/report-core/merge-bundle';
 import {
   type ProviderQuotaObservation,
@@ -330,6 +331,18 @@ interface ClassifiedMergeRow {
   row: SerializedMergeRow;
 }
 
+interface PreparedMergeRow {
+  contribution?: RtkSavingsContribution;
+  row: SerializedMergeRow;
+}
+
+interface EnrichmentStatements {
+  existing: SqliteStatement;
+  insert: SqliteStatement;
+  touch: SqliteStatement;
+  update: SqliteStatement;
+}
+
 interface ProviderQuotaObservationRecord {
   account_scope: string | null;
   content_hash: string;
@@ -431,6 +444,85 @@ const stripRtkSavings = (row: CollectedUsageRow): CollectedUsageRow => {
 
 const enrichmentContentHash = (value: RtkSavingsContribution): string =>
   createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+const prepareMergeRow = (row: SerializedMergeRow): PreparedMergeRow => {
+  const contribution = rtkSavingsFromRow(row);
+  const hasRtkFields = RTK_SAVINGS_KEYS.some((key) => row[key] !== undefined);
+  if (hasRtkFields && !contribution) {
+    throw new Error('RTK savings contribution failed strict validation');
+  }
+  const {
+    contentHash: _contentHash,
+    rtkCommandCount: _rtkCommandCount,
+    rtkInputTokens: _rtkInputTokens,
+    rtkOutputTokens: _rtkOutputTokens,
+    rtkSavedTokens: _rtkSavedTokens,
+    ...base
+  } = row;
+  return {
+    ...(contribution === undefined ? {} : { contribution }),
+    row: { ...base, contentHash: usageContentHash(base) },
+  };
+};
+
+const prepareEnrichmentStatements = (db: SqliteDatabase): EnrichmentStatements => ({
+  existing: db.query(`
+    SELECT row_key, source_id, schema_version, content_hash, payload_json
+    FROM usage_row_enrichments
+    WHERE row_key = ? AND source_id = ?
+  `),
+  insert: db.query(`
+    INSERT INTO usage_row_enrichments (
+      row_key, source_id, schema_version, content_hash, payload_json,
+      first_seen_at, last_seen_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `),
+  touch: db.query(`
+    UPDATE usage_row_enrichments SET last_seen_at = ? WHERE row_key = ? AND source_id = ?
+  `),
+  update: db.query(`
+    UPDATE usage_row_enrichments
+    SET schema_version = ?, content_hash = ?, payload_json = ?, last_seen_at = ?, updated_at = ?
+    WHERE row_key = ? AND source_id = ?
+  `),
+});
+
+const upsertRtkContribution = (
+  statements: EnrichmentStatements,
+  rowKey: string,
+  contribution: RtkSavingsContribution,
+  now: string,
+): keyof EnrichmentImportResult => {
+  const contentHash = enrichmentContentHash(contribution);
+  const existing = statements.existing.get(rowKey, RTK_SAVINGS_SOURCE_ID) as StoredEnrichmentRecord | null;
+  if (!existing) {
+    statements.insert.run(
+      rowKey,
+      RTK_SAVINGS_SOURCE_ID,
+      RTK_SAVINGS_SCHEMA_VERSION,
+      contentHash,
+      JSON.stringify(contribution),
+      now,
+      now,
+      now,
+    );
+    return 'inserted';
+  }
+  if (existing.schema_version === RTK_SAVINGS_SCHEMA_VERSION && existing.content_hash === contentHash) {
+    statements.touch.run(now, rowKey, RTK_SAVINGS_SOURCE_ID);
+    return 'unchanged';
+  }
+  statements.update.run(
+    RTK_SAVINGS_SCHEMA_VERSION,
+    contentHash,
+    JSON.stringify(contribution),
+    now,
+    now,
+    rowKey,
+    RTK_SAVINGS_SOURCE_ID,
+  );
+  return 'updated';
+};
 
 const migrate = (db: SqliteDatabase) => {
   db.exec(`
@@ -845,27 +937,43 @@ const importMergeRows = (
         const result = emptyImportResult();
         const now = importedAt.toISOString();
         const statements = prepareImportStatements(db);
+        const enrichmentStatements = prepareEnrichmentStatements(db);
+        const preparedRows = rows.map(prepareMergeRow);
 
         db.exec('BEGIN IMMEDIATE');
         try {
-          const classifiedRows = classifyMergeRows(db, rows, authority);
-          for (const { classification, row } of classifiedRows) {
+          const classifiedRows = classifyMergeRows(
+            db,
+            preparedRows.map(({ row }) => row),
+            authority,
+          );
+          let enrichmentProjectionChanged = false;
+          for (const [index, { classification, row }] of classifiedRows.entries()) {
             if (classification === 'inserted') {
               insertMergeRow(statements.insert, row, now, authority);
               result.inserted++;
-              continue;
-            }
-
-            if (classification === 'unchanged') {
+            } else if (classification === 'unchanged') {
               touchMergeRow(statements.touch, row.rowKey, now);
               result.unchanged++;
-              continue;
+            } else {
+              updateMergeRow(statements.update, row, now, authority);
+              result[classification]++;
             }
-
-            updateMergeRow(statements.update, row, now, authority);
-            result[classification]++;
+            const contribution = preparedRows[index]?.contribution;
+            if (contribution) {
+              const enrichmentClassification = upsertRtkContribution(
+                enrichmentStatements,
+                row.rowKey,
+                contribution,
+                now,
+              );
+              enrichmentProjectionChanged ||= row.status === 'active' && enrichmentClassification !== 'unchanged';
+            }
           }
-          if (classifiedRows.some(({ reportProjectionChanged }) => reportProjectionChanged)) {
+          if (
+            enrichmentProjectionChanged ||
+            classifiedRows.some(({ reportProjectionChanged }) => reportProjectionChanged)
+          ) {
             db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
           }
           db.exec('COMMIT');
@@ -953,9 +1061,10 @@ const storeIdentity = (dbPath: string, generation: number): string => {
 };
 
 const readStorePreview = async (dbPath: string, rows: SerializedMergeRow[]): Promise<PreviewPeerMergeBundleResult> => {
+  const canonicalRows = rows.map(prepareMergeRow).map(({ row }) => row);
   if (!fs.existsSync(dbPath)) {
     return {
-      ...summarizeClassifications(rows.map((row) => ({ classification: 'inserted', row }))),
+      ...summarizeClassifications(canonicalRows.map((row) => ({ classification: 'inserted', row }))),
       generation: 0,
       storeStateToken: createHash('sha256').update('absent').digest('hex'),
     };
@@ -973,7 +1082,7 @@ const readStorePreview = async (dbPath: string, rows: SerializedMergeRow[]): Pro
     if (!(record && Number.isSafeInteger(record.value) && record.value >= 0)) {
       throw new Error('Usage store generation metadata is missing or invalid.');
     }
-    const result = summarizeClassifications(classifyMergeRows(db, rows, 'portable-opaque'));
+    const result = summarizeClassifications(classifyMergeRows(db, canonicalRows, 'portable-opaque'));
     db.exec('ROLLBACK');
     return { ...result, generation: record.value, storeStateToken: storeIdentity(dbPath, record.value) };
   } catch (error) {
@@ -1157,64 +1266,16 @@ export const upsertRtkSavingsContributions = (
         }
         const result: EnrichmentImportResult = { inserted: 0, unchanged: 0, updated: 0 };
         const now = (input.importedAt ?? new Date()).toISOString();
-        const existingStatement = db.query(`
-          SELECT row_key, source_id, schema_version, content_hash, payload_json
-          FROM usage_row_enrichments
-          WHERE row_key = ? AND source_id = ?
-        `);
+        const enrichmentStatements = prepareEnrichmentStatements(db);
         const activeStatement = db.query("SELECT row_key FROM usage_rows WHERE row_key = ? AND status = 'active'");
-        const insertStatement = db.query(`
-          INSERT INTO usage_row_enrichments (
-            row_key, source_id, schema_version, content_hash, payload_json,
-            first_seen_at, last_seen_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        const touchStatement = db.query(`
-          UPDATE usage_row_enrichments SET last_seen_at = ? WHERE row_key = ? AND source_id = ?
-        `);
-        const updateStatement = db.query(`
-          UPDATE usage_row_enrichments
-          SET schema_version = ?, content_hash = ?, payload_json = ?, last_seen_at = ?, updated_at = ?
-          WHERE row_key = ? AND source_id = ?
-        `);
         let projectionChanged = false;
         db.exec('BEGIN IMMEDIATE');
         try {
           for (const [rowKey, contribution] of unique) {
-            const contentHash = enrichmentContentHash(contribution);
-            const existing = existingStatement.get(rowKey, RTK_SAVINGS_SOURCE_ID) as StoredEnrichmentRecord | null;
             const active = activeStatement.get(rowKey) !== null;
-            if (!existing) {
-              insertStatement.run(
-                rowKey,
-                RTK_SAVINGS_SOURCE_ID,
-                RTK_SAVINGS_SCHEMA_VERSION,
-                contentHash,
-                JSON.stringify(contribution),
-                now,
-                now,
-                now,
-              );
-              result.inserted += 1;
-              projectionChanged ||= active;
-              continue;
-            }
-            if (existing.schema_version === RTK_SAVINGS_SCHEMA_VERSION && existing.content_hash === contentHash) {
-              touchStatement.run(now, rowKey, RTK_SAVINGS_SOURCE_ID);
-              result.unchanged += 1;
-              continue;
-            }
-            updateStatement.run(
-              RTK_SAVINGS_SCHEMA_VERSION,
-              contentHash,
-              JSON.stringify(contribution),
-              now,
-              now,
-              rowKey,
-              RTK_SAVINGS_SOURCE_ID,
-            );
-            result.updated += 1;
-            projectionChanged ||= active;
+            const classification = upsertRtkContribution(enrichmentStatements, rowKey, contribution, now);
+            result[classification] += 1;
+            projectionChanged ||= active && classification !== 'unchanged';
           }
           if (projectionChanged) {
             db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();

@@ -139,6 +139,90 @@ describe('usage-store public boundary', () => {
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(enrichedGeneration + 1);
   });
 
+  test('preserves portable RTK contributions across preview, confirm, and later base imports', async () => {
+    const machineAHome = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-rtk-portable-a-'));
+    const machineBHome = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-rtk-portable-b-'));
+    const machineADbPath = usageStorePath(machineAHome);
+    const machineBDbPath = usageStorePath(machineBHome);
+    const base = makeRow({ sourceSessionId: 'portable-rtk' });
+    await Effect.runPromise(importLocalRows({ dbPath: machineADbPath, machine: machineA, rows: [base] }));
+    const enrichable = await Effect.runPromise(queryEnrichableUsageRows({ dbPath: machineADbPath }));
+    const rowKey = enrichable.rows[0]?.rowKey;
+    if (!rowKey) {
+      throw new Error('Expected a stable row key for the portable RTK test');
+    }
+    const contribution = {
+      rtkCommandCount: 3,
+      rtkInputTokens: 40,
+      rtkOutputTokens: 11,
+      rtkSavedTokens: 29,
+    };
+    await Effect.runPromise(
+      upsertRtkSavingsContributions({
+        contributions: [{ contribution, rowKey }],
+        dbPath: machineADbPath,
+      }),
+    );
+    const bundle = await Effect.runPromise(exportLocalMergeBundle({ dbPath: machineADbPath, machine: machineA }));
+
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath: machineBDbPath }))).toBe(0);
+    const preview = await Effect.runPromise(
+      previewPeerMergeBundle({ bundle, dbPath: machineBDbPath, localMachineId: machineB.id }),
+    );
+    const confirmed = await Effect.runPromise(
+      confirmPeerMergeBundle({
+        bundle,
+        dbPath: machineBDbPath,
+        expectedGeneration: preview.generation,
+        expectedStoreStateToken: preview.storeStateToken,
+        localMachineId: machineB.id,
+      }),
+    );
+    expect(confirmed).toEqual({
+      deleted: preview.deleted,
+      inserted: preview.inserted,
+      superseded: preview.superseded,
+      unchanged: preview.unchanged,
+      updated: preview.updated,
+      warnings: preview.warnings,
+    });
+    expect((await Effect.runPromise(queryReportRows({ dbPath: machineBDbPath }))).rows[0]).toMatchObject(contribution);
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath: machineBDbPath }))).toBe(1);
+
+    expect(
+      await Effect.runPromise(importPeerMergeBundle({ bundle, dbPath: machineBDbPath, localMachineId: machineB.id })),
+    ).toMatchObject({ inserted: 0, unchanged: 1, updated: 0 });
+    const baseOnlyBundle = makeBundle(machineA, [base]);
+    expect(
+      await Effect.runPromise(
+        importPeerMergeBundle({ bundle: baseOnlyBundle, dbPath: machineBDbPath, localMachineId: machineB.id }),
+      ),
+    ).toMatchObject({ inserted: 0, unchanged: 1, updated: 0 });
+    expect((await Effect.runPromise(queryReportRows({ dbPath: machineBDbPath }))).rows[0]).toMatchObject(contribution);
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath: machineBDbPath }))).toBe(1);
+
+    const changedContribution = { ...contribution, rtkCommandCount: 4, rtkSavedTokens: 35 };
+    const changedBundle = makeBundle(machineA, [{ ...base, ...changedContribution }]);
+    const changedPreview = await Effect.runPromise(
+      previewPeerMergeBundle({ bundle: changedBundle, dbPath: machineBDbPath, localMachineId: machineB.id }),
+    );
+    expect(changedPreview).toMatchObject({ inserted: 0, unchanged: 1, updated: 0 });
+    const changed = await Effect.runPromise(
+      confirmPeerMergeBundle({
+        bundle: changedBundle,
+        dbPath: machineBDbPath,
+        expectedGeneration: changedPreview.generation,
+        expectedStoreStateToken: changedPreview.storeStateToken,
+        localMachineId: machineB.id,
+      }),
+    );
+    expect(changed).toMatchObject({ inserted: 0, unchanged: 1, updated: 0 });
+    expect((await Effect.runPromise(queryReportRows({ dbPath: machineBDbPath }))).rows[0]).toMatchObject(
+      changedContribution,
+    );
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath: machineBDbPath }))).toBe(2);
+  });
+
   test('migrates legacy embedded RTK fields additively without advancing semantic generation', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-rtk-migration-'));
     const dbPath = usageStorePath(home);
@@ -150,8 +234,15 @@ describe('usage-store public boundary', () => {
       rtkSavedTokens: 20,
     };
     await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [legacy] }));
+    const serializedLegacy = toSerializedMergeRow(legacy, machineA);
     const { Database } = await import('bun:sqlite');
     const db = new Database(dbPath);
+    db.query('UPDATE usage_rows SET content_hash = ?, row_json = ? WHERE row_key = ?').run(
+      serializedLegacy.contentHash,
+      JSON.stringify(serializedLegacy),
+      serializedLegacy.rowKey,
+    );
+    db.query('DELETE FROM usage_row_enrichments WHERE row_key = ?').run(serializedLegacy.rowKey);
     db.query("UPDATE usage_store_metadata SET value = 0 WHERE key = 'migration.rtk-contributions-v1'").run();
     db.close();
     const generationBeforeMigration = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
