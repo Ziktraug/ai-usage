@@ -639,6 +639,20 @@ export const runReportPayloadCollection = async (options: { force?: boolean } = 
   }
 };
 
+export const publishStoredReportRevisionForSourceControl = async (): Promise<{
+  changed: boolean;
+  revision: string;
+}> => {
+  const previous = await reportRevisionRegistry.getCurrentManifest();
+  const payload = await loadStoredPayloadDirect();
+  const manifest = await ensurePublishedRevision(payload);
+  lastCollectedPayload = payload;
+  return {
+    changed: !(previous.ok && previous.manifest.revision === manifest.revision),
+    revision: manifest.revision,
+  };
+};
+
 export const getReportRevisionManifestForServer = async (): Promise<WebReportRevisionManifestResult> => {
   const current = await reportRevisionRegistry.getCurrentManifest();
   if (current.ok) {
@@ -660,6 +674,10 @@ export const invalidateReportPayloadForMutation = async (
   reportPayloadCache.invalidate();
   await reportRevisionRegistry.invalidateLatest();
   if (options.scheduleRefresh) {
+    const { requestSourceControlPublicationForServer } = await import('./source-control.server');
+    if (await requestSourceControlPublicationForServer()) {
+      return;
+    }
     if (refreshJob && refreshState.status === 'running') {
       refreshRequestedAfterCurrent = true;
     } else {
