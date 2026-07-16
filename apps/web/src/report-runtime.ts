@@ -1,9 +1,5 @@
 import type { FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
-import {
-  createServedFocusedReportSource,
-  fetchFocusedReportBootstrap,
-  refreshFocusedReportBootstrap,
-} from './focused-report-client';
+import { createServedFocusedReportSource, fetchFocusedReportBootstrap } from './focused-report-client';
 import { demoReportPayload } from './report-data';
 import { toWebReportPayload, type WebReportPayload } from './web-report-payload';
 
@@ -21,8 +17,3 @@ export const loadReportPayload = async (): Promise<ReportLoaderData> => {
 
   return { bootstrap: await fetchFocusedReportBootstrap(createServedFocusedReportSource()), kind: 'served' };
 };
-
-export const reportRefreshPayload = () =>
-  typeof window === 'undefined' || isE2ERuntime()
-    ? undefined
-    : () => refreshFocusedReportBootstrap(createServedFocusedReportSource());

@@ -2,7 +2,7 @@ import { createFileRoute, stripSearchParams } from '@tanstack/solid-router';
 import { createMemo, ErrorBoundary } from 'solid-js';
 import { Dashboard } from '../dashboard';
 import { type DashboardSearch, dashboardSearchDefaultsFor, validateDashboardSearch } from '../dashboard-search';
-import { loadReportPayload, reportRefreshPayload } from '../report-runtime';
+import { loadReportPayload } from '../report-runtime';
 
 const fallbackSort = 'date' as const;
 const dashboardSearchDefaults = dashboardSearchDefaultsFor(fallbackSort);
@@ -19,16 +19,14 @@ export const Route = createFileRoute('/')({
 
 function IndexRoute() {
   const loaderData = Route.useLoaderData();
-  const refreshPayload = reportRefreshPayload();
   const initial = createMemo(loaderData);
-  const refreshProps = refreshPayload ? { refreshBootstrap: () => refreshPayload() } : {};
   const initialProps = createMemo(() => {
     const value = initial();
     return value.kind === 'payload' ? { initialPayload: value.payload } : { servedBootstrap: value.bootstrap };
   });
   return (
     <ErrorBoundary fallback={(error) => <pre>{error instanceof Error ? error.message : String(error)}</pre>}>
-      <Dashboard {...initialProps()} {...refreshProps} />
+      <Dashboard {...initialProps()} />
     </ErrorBoundary>
   );
 }

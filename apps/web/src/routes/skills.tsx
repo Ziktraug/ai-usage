@@ -60,6 +60,13 @@ const headerWrap = css({
   flexWrap: 'wrap',
 });
 
+const headerActionsWrap = css({
+  flexWrap: 'wrap',
+  flexShrink: 1,
+  justifyContent: 'flex-end',
+  maxW: '100%',
+});
+
 const stack = css({
   display: 'grid',
   gap: '12px',
@@ -310,7 +317,7 @@ function SkillsRoute() {
                 </Show>
               </div>
             </div>
-            <div class={headerActions}>
+            <div class={cx(headerActions, headerActionsWrap)}>
               <button
                 aria-busy={pendingOperation() === 'refresh-skills' ? 'true' : undefined}
                 class={navButton}
@@ -328,6 +335,9 @@ function SkillsRoute() {
               </Link>
               <Link class={navButton} to="/sync">
                 Sync
+              </Link>
+              <Link class={navButton} to="/sources">
+                Sources
               </Link>
               <ThemeToggle />
             </div>

@@ -8,7 +8,9 @@ import { Cause, Option, Runtime } from 'effect';
 import { validateTrustedLocalRequest } from './local-request-trust.server';
 import { getWebSourceControlRuntime, type WebSourceControlRuntime } from './source-control.server';
 
-const SSE_HEARTBEAT_MS = 15_000;
+// Bun's default HTTP idle timeout is ten seconds. Keep the stream active
+// without requiring deployment-specific server tuning.
+const SSE_HEARTBEAT_MS = 5000;
 const SSE_RETRY_MS = 3000;
 const MAX_COMMAND_BYTES = 4096;
 const BYTE_COUNT_PATTERN = /^\d+$/;

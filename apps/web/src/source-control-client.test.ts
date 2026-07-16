@@ -1,0 +1,121 @@
+import { describe, expect, test } from 'bun:test';
+import type { SourceControlCommand, SourceControlView } from '@ai-usage/report-core/source-control';
+import {
+  createSourceControlClient,
+  type SourceControlCommandResponse,
+  type SourceControlEventSource,
+} from './source-control-client';
+
+const snapshot = (generation: number, instanceId = 'process-a'): SourceControlView => ({
+  generatedAt: '2026-07-16T10:00:00.000Z',
+  generation,
+  instanceId,
+  publication: { dirty: false, running: false },
+  queueDepth: 0,
+  runningCount: 0,
+  sources: [
+    {
+      availability: 'detected',
+      cadenceMs: 60_000,
+      id: 'codex.sessions',
+      label:
+        'A deliberately long collection-source label that remains intact across snapshot replacement and can be truncated visually without losing its accessible server-owned name',
+      lastOutcome: 'success',
+      lifecycle: 'scheduled',
+      policy: 'enabled',
+      reason: { code: 'none' },
+      warnings: [],
+    },
+  ],
+});
+
+class FakeEventSource implements SourceControlEventSource {
+  closed = false;
+  onerror: ((event: Event) => void) | null = null;
+  onopen: ((event: Event) => void) | null = null;
+  private listener: ((event: { data: string }) => void) | null = null;
+
+  addEventListener(_type: 'snapshot', listener: (event: { data: string }) => void): void {
+    this.listener = listener;
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+
+  emit(value: SourceControlView): void {
+    this.listener?.({ data: JSON.stringify(value) });
+  }
+}
+
+describe('source control client', () => {
+  test('starts only once, replaces snapshots, and closes cleanly', () => {
+    const eventSource = new FakeEventSource();
+    let connectionCount = 0;
+    const client = createSourceControlClient({
+      createEventSource: () => {
+        connectionCount++;
+        return eventSource;
+      },
+    });
+
+    client.start();
+    client.start();
+    expect(connectionCount).toBe(1);
+    expect(client.getState().connection).toBe('connecting');
+
+    eventSource.emit(snapshot(3));
+    eventSource.emit(snapshot(2));
+    expect(client.getState().snapshot?.generation).toBe(3);
+    expect(client.getState().connection).toBe('live');
+    expect(client.getState().snapshot?.sources[0]?.label).toContain('without losing its accessible server-owned name');
+
+    eventSource.onerror?.(new Event('error'));
+    expect(client.getState().connection).toBe('stale');
+    eventSource.emit(snapshot(0, 'process-b'));
+    expect(client.getState().snapshot?.instanceId).toBe('process-b');
+    expect(client.getState().snapshot?.generation).toBe(0);
+
+    client.stop();
+    expect(eventSource.closed).toBe(true);
+    expect(client.getState().connection).toBe('stopped');
+  });
+
+  test('keeps lifecycle server-confirmed and blocks conflicting commands', async () => {
+    let resolveCommand: ((value: SourceControlCommandResponse) => void) | undefined;
+    const commands: SourceControlCommand[] = [];
+    const client = createSourceControlClient({
+      sendCommand: (command) => {
+        commands.push(command);
+        return new Promise((resolve) => {
+          resolveCommand = resolve;
+        });
+      },
+    });
+
+    const first = client.execute({ command: 'run-now', sourceId: 'codex.sessions' });
+    expect(client.getState().pendingCommand).toEqual({ command: 'run-now', sourceId: 'codex.sessions' });
+    expect(client.getState().snapshot).toBeNull();
+    expect(await client.execute({ command: 'run-all' })).toBe(false);
+    expect(commands).toHaveLength(1);
+
+    resolveCommand?.({ ok: true, snapshot: snapshot(4) });
+    expect(await first).toBe(true);
+    expect(client.getState().pendingCommand).toBeNull();
+    expect(client.getState().snapshot?.sources[0]?.lifecycle).toBe('scheduled');
+  });
+
+  test('retains the last snapshot and exposes bounded command failure text', async () => {
+    const eventSource = new FakeEventSource();
+    const client = createSourceControlClient({
+      createEventSource: () => eventSource,
+      sendCommand: () => Promise.reject(new Error('The source policy could not be saved.')),
+    });
+    client.start();
+    eventSource.emit(snapshot(1));
+
+    expect(await client.execute({ command: 'set-enabled', enabled: false, sourceId: 'codex.sessions' })).toBe(false);
+    expect(client.getState().snapshot?.generation).toBe(1);
+    expect(client.getState().commandError).toBe('The source policy could not be saved.');
+  });
+});
