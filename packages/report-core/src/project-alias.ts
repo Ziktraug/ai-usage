@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { ProjectGroupConfig } from './project-group';
+import type { SourcePolicyOverrides } from './source-control';
 import type { UsageRowWithOptionalSource } from './types';
 
 export interface ProjectAliasEntry {
@@ -19,6 +20,7 @@ export interface AiUsageConfig {
   projectAliases?: ProjectAliasEntry[];
   projectGroups?: ProjectGroupConfig[];
   skills?: unknown;
+  sourcePolicies?: SourcePolicyOverrides;
 }
 
 const escapeRegex = (value: string) => value.replace(/[.+^${}()|[\]\\]/g, '\\$&');

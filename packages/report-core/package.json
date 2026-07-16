@@ -25,6 +25,7 @@
     "./session-query": "./src/session-query.ts",
     "./session-lineage": "./src/session-lineage.ts",
     "./snapshot": "./src/snapshot.ts",
+    "./source-control": "./src/source-control.ts",
     "./types": "./src/types.ts",
     "./usage-row": "./src/usage-row.ts"
   },
