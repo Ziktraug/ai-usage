@@ -5,6 +5,7 @@ import {
   type SourceControlView,
   type SourcePolicyOverrides,
   type SourceProgress,
+  sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
 import {
   Clock,
@@ -21,23 +22,24 @@ import {
 } from 'effect';
 import type { ScheduledSource } from './source-adapters';
 import {
+  admitPublicationJob,
+  admitSourceJob,
+  applyDetectionTransition,
+  finishPublicationJobTransition,
+  finishSourceJobTransition,
   type InternalControlState,
-  type InternalSourceState,
   initialSourceControlState,
-  lifecycleAfterDetection,
-  lifecycleAfterPolicyChange,
-  lifecycleForIdleSource,
-  outcomeAfterRun,
-  reasonAfterCompletion,
-  reasonForAvailability,
+  type PublicationJob,
+  requestPublicationTransition,
   type SourceExecutionCompletion,
-  sanitizeCount,
-  sanitizeProgress,
-  sanitizeWarnings,
+  type SourceJob,
+  type StateTransition,
+  scheduleSourceTransition,
+  setSourcePolicyTransition,
   sourceControlView,
-  sourceNeedsRtk,
-  toIso,
-  withSourceState,
+  startPublicationJobTransition,
+  startSourceJobTransition,
+  updateSourceProgressTransition,
 } from './source-control-state';
 
 export interface SourcePolicyStore {
@@ -90,35 +92,7 @@ export class SourceControl extends Context.Tag('@ai-usage/report-data/SourceCont
   SourceControlService
 >() {}
 
-interface SourceJob {
-  readonly _tag: 'source';
-  readonly policyRevision: number;
-  readonly queuedAt: number;
-  readonly sourceId: CollectionSourceId;
-}
-
-interface PublicationJob {
-  readonly _tag: 'publication';
-  readonly queuedAt: number;
-}
-
 type ControlPlaneJob = PublicationJob | SourceJob;
-
-interface SourceStartDecision {
-  readonly rtkTargetGeneration: number;
-  readonly run: boolean;
-  readonly staleRequeue: boolean;
-  readonly startedAt: number;
-}
-
-type PublicationStartDecision =
-  | { readonly ready: false }
-  | {
-      readonly dataTarget: number;
-      readonly ready: true;
-      readonly requestTarget: number;
-      readonly startedAt: number;
-    };
 
 export const createSourceControl = (
   options: SourceControlOptions,
@@ -129,6 +103,10 @@ export const createSourceControl = (
       return yield* Effect.die(new Error('Source control workerCount must be an integer from 1 through 8.'));
     }
     const sourceTimeout = Duration.decode(options.sourceTimeout ?? Duration.minutes(10));
+    const sourceTimeoutMs = Duration.toMillis(sourceTimeout);
+    if (!(sourceTimeoutMs > 0 && sourceTimeoutMs <= sourceControlBounds.maxDurationMs)) {
+      return yield* Effect.die(new Error('Source control timeout must be positive and no longer than 24 hours.'));
+    }
     const policies = yield* options.policyStore.load.pipe(Effect.orDie);
     const now = yield* Clock.currentTimeMillis;
     const sourceIds = [...options.sources.keys()];
@@ -140,57 +118,21 @@ export const createSourceControl = (
     const timers = yield* FiberMap.make<CollectionSourceId>();
 
     const modifyState = <A>(
-      update: (state: InternalControlState, modifiedAt: number) => readonly [A, InternalControlState],
+      update: (state: InternalControlState, modifiedAt: number) => StateTransition<A>,
     ): Effect.Effect<A> =>
       Effect.gen(function* () {
         const modifiedAt = yield* Clock.currentTimeMillis;
         return yield* SubscriptionRef.modify(stateRef, (state) => {
-          const [value, next] = update(state, modifiedAt);
-          if (next === state) {
-            return [value, state] as const;
-          }
-          return [
-            value,
-            {
-              ...next,
-              generatedAt: toIso(modifiedAt),
-              generation: state.generation + 1,
-            },
-          ] as const;
+          const result = update(state, modifiedAt);
+          return [result.decision, result.state] as const;
         });
       });
 
     const enqueueSource = (sourceId: CollectionSourceId): Effect.Effect<boolean> =>
       Effect.gen(function* () {
-        const queued = yield* modifyState((state, queuedAt) => {
-          const source = state.sources[sourceId];
-          if (
-            !(options.sources.has(sourceId) && source.enabled) ||
-            source.availability !== 'detected' ||
-            source.queued ||
-            source.running
-          ) {
-            return [undefined, state] as const;
-          }
-          const job: SourceJob = {
-            _tag: 'source',
-            policyRevision: source.policyRevision,
-            queuedAt,
-            sourceId,
-          };
-          return [
-            job,
-            withSourceState({ ...state, queueDepth: state.queueDepth + 1 }, sourceId, (current) => {
-              const { nextDueAt: _nextDueAt, ...rest } = current;
-              return {
-                ...rest,
-                lifecycle: 'queued',
-                queued: true,
-                reason: { code: 'none' },
-              };
-            }),
-          ] as const;
-        });
+        const queued = yield* modifyState((state, queuedAt) =>
+          admitSourceJob(state, sourceId, options.sources.has(sourceId), queuedAt),
+        );
         if (!queued) {
           return false;
         }
@@ -199,19 +141,7 @@ export const createSourceControl = (
       });
 
     const ensurePublicationQueued: Effect.Effect<boolean> = Effect.gen(function* () {
-      const job = yield* modifyState((state, queuedAt) => {
-        if (state.publication.queued || state.publication.running) {
-          return [undefined, state] as const;
-        }
-        return [
-          { _tag: 'publication', queuedAt } satisfies PublicationJob,
-          {
-            ...state,
-            publication: { ...state.publication, queued: true },
-            queueDepth: state.queueDepth + 1,
-          },
-        ] as const;
-      });
+      const job = yield* modifyState(admitPublicationJob);
       if (!job) {
         return false;
       }
@@ -220,17 +150,8 @@ export const createSourceControl = (
     });
 
     const requestPublication: Effect.Effect<boolean> = Effect.gen(function* () {
-      const shouldQueue = yield* modifyState((state) => [
-        !(state.publication.queued || state.publication.running),
-        {
-          ...state,
-          publication: {
-            ...state.publication,
-            requestedGeneration: state.publication.requestedGeneration + 1,
-          },
-        },
-      ]);
-      if (shouldQueue) {
+      const decision = yield* modifyState(requestPublicationTransition);
+      if (decision.shouldQueue) {
         yield* ensurePublicationQueued;
       }
       return true;
@@ -244,20 +165,9 @@ export const createSourceControl = (
         }
         const currentTime = yield* Clock.currentTimeMillis;
         const dueAt = currentTime + Duration.toMillis(source.cadence);
-        const scheduled = yield* modifyState((state) => {
-          const current = state.sources[sourceId];
-          if (!current.enabled || current.availability !== 'detected' || current.queued || current.running) {
-            return [false, state] as const;
-          }
-          return [
-            true,
-            withSourceState(state, sourceId, (entry) => ({
-              ...entry,
-              lifecycle: 'scheduled',
-              nextDueAt: toIso(dueAt),
-            })),
-          ] as const;
-        });
+        const scheduled = yield* modifyState((state, modifiedAt) =>
+          scheduleSourceTransition(state, sourceId, dueAt, modifiedAt),
+        );
         if (!scheduled) {
           return;
         }
@@ -278,28 +188,13 @@ export const createSourceControl = (
           return;
         }
         const result = yield* source.detect;
-        const shouldCancel = result.availability !== 'detected';
-        if (shouldCancel) {
+        const decision = yield* modifyState((state, modifiedAt) =>
+          applyDetectionTransition(state, sourceId, result, modifiedAt),
+        );
+        if (decision.cancelTimer) {
           yield* FiberMap.remove(timers, sourceId);
         }
-        const shouldQueue = yield* modifyState((state) => {
-          const current = state.sources[sourceId];
-          const lifecycle = lifecycleAfterDetection(current, result.availability);
-          const next = withSourceState(state, sourceId, (entry) => {
-            const { nextDueAt: _nextDueAt, ...entryWithoutDueAt } = entry;
-            return {
-              ...(shouldCancel ? entryWithoutDueAt : entry),
-              availability: result.availability,
-              lifecycle,
-              reason: entry.enabled ? result.reason : { code: 'policy-disabled', message: 'Collection is disabled.' },
-            };
-          });
-          return [
-            current.enabled && result.availability === 'detected' && !current.queued && !current.running,
-            next,
-          ] as const;
-        });
-        if (shouldQueue) {
+        if (decision.shouldQueue) {
           yield* enqueueSource(sourceId);
         }
       });
@@ -309,162 +204,12 @@ export const createSourceControl = (
       discard: true,
     });
 
-    const beginSourceJob = (job: SourceJob): Effect.Effect<SourceStartDecision> =>
-      modifyState<SourceStartDecision>((state, startedAt) => {
-        const source = state.sources[job.sourceId];
-        const valid =
-          source.queued &&
-          source.enabled &&
-          source.availability === 'detected' &&
-          source.policyRevision === job.policyRevision;
-        const queueDepth = Math.max(0, state.queueDepth - 1);
-        if (!valid) {
-          const staleRequeue =
-            source.enabled && source.availability === 'detected' && source.policyRevision !== job.policyRevision;
-          return [
-            {
-              rtkTargetGeneration: state.rtkRequiredGeneration,
-              run: false,
-              staleRequeue,
-              startedAt,
-            },
-            withSourceState({ ...state, queueDepth }, job.sourceId, (entry) => ({
-              ...entry,
-              lastOutcome: 'skipped',
-              lifecycle: lifecycleForIdleSource(entry),
-              queued: false,
-              reason: entry.enabled
-                ? { code: 'stale-policy', message: 'A stale queued job was skipped.' }
-                : { code: 'policy-disabled', message: 'Collection is disabled.' },
-            })),
-          ] as const;
-        }
-        return [
-          {
-            rtkTargetGeneration: state.rtkRequiredGeneration,
-            run: true,
-            staleRequeue: false,
-            startedAt,
-          },
-          withSourceState({ ...state, queueDepth }, job.sourceId, (entry) => {
-            const { progress: _progress, ...rest } = entry;
-            return {
-              ...rest,
-              lastStartedAt: toIso(startedAt),
-              lifecycle: 'running',
-              queueDelayMs: Math.max(0, startedAt - job.queuedAt),
-              queued: false,
-              reason: { code: 'none' },
-              running: true,
-              warnings: [],
-            };
-          }),
-        ] as const;
-      });
-
     const updateProgress = (sourceId: CollectionSourceId, progress: SourceProgress): Effect.Effect<void> =>
-      modifyState((state) => {
-        const source = state.sources[sourceId];
-        if (!source.running) {
-          return [undefined, state] as const;
-        }
-        return [
-          undefined,
-          withSourceState(state, sourceId, (entry) => ({
-            ...entry,
-            progress: sanitizeProgress(progress),
-          })),
-        ] as const;
-      });
-
-    const completeSource = (
-      job: SourceJob,
-      startedAt: number,
-      rtkTargetGeneration: number,
-      completion: SourceExecutionCompletion,
-    ): Effect.Effect<{
-      changed: boolean;
-      detected: boolean;
-      enabled: boolean;
-      needsPublicationRequest: boolean;
-      needsPublicationWake: boolean;
-      needsRtk: boolean;
-      needsRtkRerun: boolean;
-    }> =>
-      modifyState((state, finishedAt) => {
-        const source = state.sources[job.sourceId];
-        const result = completion._tag === 'success' ? completion.result : undefined;
-        const failed = completion._tag === 'failed';
-        const unavailable = result?.unavailable;
-        const warnings = result ? sanitizeWarnings(result.warnings) : [];
-        const availability = unavailable ? 'not-detected' : source.availability;
-        const lastOutcome = outcomeAfterRun(completion, unavailable, warnings.length);
-        const changed = result?.changed === true && !unavailable;
-        let dirtyGeneration = state.publication.dirtyGeneration;
-        let rtkRequiredGeneration = state.rtkRequiredGeneration;
-        let rtkCompletedGeneration = state.rtkCompletedGeneration;
-        const rtkAvailable = state.sources['rtk.savings'];
-        const needsRtk =
-          changed && sourceNeedsRtk(job.sourceId) && rtkAvailable.enabled && rtkAvailable.availability === 'detected';
-        if (changed) {
-          dirtyGeneration++;
-          if (needsRtk) {
-            rtkRequiredGeneration = dirtyGeneration;
-          }
-        }
-        if (job.sourceId === 'rtk.savings') {
-          rtkCompletedGeneration = Math.max(rtkCompletedGeneration, rtkTargetGeneration);
-        }
-        const releasedRtkDependency =
-          job.sourceId === 'rtk.savings' &&
-          state.rtkRequiredGeneration > state.rtkCompletedGeneration &&
-          rtkCompletedGeneration >= state.rtkRequiredGeneration;
-        const { progress: _progress, ...sourceWithoutProgress } = source;
-        const nextSource: InternalSourceState = {
-          ...sourceWithoutProgress,
-          availability,
-          durationMs: Math.max(0, finishedAt - startedAt),
-          lastFinishedAt: toIso(finishedAt),
-          lastOutcome,
-          lifecycle: source.enabled && availability === 'detected' ? 'scheduled' : 'dormant',
-          reason: reasonAfterCompletion(completion, unavailable, source.enabled),
-          running: false,
-          warnings,
-          ...(result === undefined
-            ? {}
-            : {
-                inputCount: sanitizeCount(result.inputCount),
-                outputCount: sanitizeCount(result.outputCount),
-              }),
-          ...(failed || unavailable ? {} : { lastSuccessAt: toIso(finishedAt) }),
-        };
-        const nextState = withSourceState(
-          {
-            ...state,
-            publication: { ...state.publication, dirtyGeneration },
-            rtkCompletedGeneration,
-            rtkRequiredGeneration,
-          },
-          job.sourceId,
-          () => nextSource,
-        );
-        return [
-          {
-            changed,
-            detected: availability === 'detected',
-            enabled: source.enabled,
-            needsPublicationRequest: changed,
-            needsPublicationWake: releasedRtkDependency,
-            needsRtk,
-            needsRtkRerun: job.sourceId === 'rtk.savings' && rtkRequiredGeneration > rtkCompletedGeneration,
-          },
-          nextState,
-        ] as const;
-      });
+      modifyState((state, modifiedAt) => updateSourceProgressTransition(state, sourceId, progress, modifiedAt));
 
     const processSourceJob = (job: SourceJob): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const decision = yield* beginSourceJob(job);
+        const decision = yield* modifyState((state, startedAt) => startSourceJobTransition(state, job, startedAt));
         if (!decision.run) {
           if (decision.staleRequeue) {
             yield* enqueueSource(job.sourceId);
@@ -493,7 +238,16 @@ export const createSourceControl = (
         if (completion._tag === 'timed-out') {
           controller.abort();
         }
-        const completed = yield* completeSource(job, decision.startedAt, decision.rtkTargetGeneration, completion);
+        const completed = yield* modifyState((state, finishedAt) =>
+          finishSourceJobTransition(
+            state,
+            job,
+            decision.startedAt,
+            decision.rtkTargetGeneration,
+            completion,
+            finishedAt,
+          ),
+        );
         if (completed.needsRtk || completed.needsRtkRerun) {
           yield* enqueueSource('rtk.savings');
         }
@@ -510,77 +264,8 @@ export const createSourceControl = (
         }
       });
 
-    const beginPublication = (): Effect.Effect<PublicationStartDecision> =>
-      modifyState<PublicationStartDecision>((state, startedAt) => {
-        const queueDepth = Math.max(0, state.queueDepth - 1);
-        const rtk = state.sources['rtk.savings'];
-        const waitingForRtk =
-          rtk.enabled && rtk.availability === 'detected' && state.rtkRequiredGeneration > state.rtkCompletedGeneration;
-        if (waitingForRtk) {
-          return [
-            { ready: false },
-            {
-              ...state,
-              publication: { ...state.publication, queued: false },
-              queueDepth,
-            },
-          ] as const;
-        }
-        return [
-          {
-            ready: true,
-            startedAt,
-            dataTarget: state.publication.dirtyGeneration,
-            requestTarget: state.publication.requestedGeneration,
-          },
-          {
-            ...state,
-            publication: { ...state.publication, queued: false, running: true },
-            queueDepth,
-          },
-        ] as const;
-      });
-
-    const finishPublication = (
-      startedAt: number,
-      requestTarget: number,
-      dataTarget: number,
-      result: ReportPublicationResult | undefined,
-    ): Effect.Effect<boolean> =>
-      modifyState((state, finishedAt) => {
-        const publishedGeneration = result
-          ? Math.max(state.publication.publishedGeneration, dataTarget)
-          : state.publication.publishedGeneration;
-        const acknowledgedRequestGeneration = result
-          ? Math.max(state.publication.acknowledgedRequestGeneration, requestTarget)
-          : state.publication.acknowledgedRequestGeneration;
-        const pending =
-          state.publication.dirtyGeneration > publishedGeneration ||
-          state.publication.requestedGeneration > acknowledgedRequestGeneration;
-        return [
-          pending,
-          {
-            ...state,
-            publication: {
-              ...state.publication,
-              acknowledgedRequestGeneration,
-              lastDurationMs: Math.max(0, finishedAt - startedAt),
-              lastOutcome: result ? 'success' : 'failed',
-              publishedGeneration,
-              running: false,
-              ...(result
-                ? {
-                    lastPublishedAt: toIso(finishedAt),
-                    ...(result.revision === undefined ? {} : { revision: result.revision }),
-                  }
-                : {}),
-            },
-          },
-        ] as const;
-      });
-
     const processPublicationJob: Effect.Effect<void> = Effect.gen(function* () {
-      const decision = yield* beginPublication();
+      const decision = yield* modifyState(startPublicationJobTransition);
       if (!decision.ready) {
         return;
       }
@@ -590,11 +275,15 @@ export const createSourceControl = (
           onSuccess: (value) => value,
         }),
       );
-      const remainsPending = yield* finishPublication(
-        decision.startedAt,
-        decision.requestTarget,
-        decision.dataTarget,
-        result,
+      const remainsPending = yield* modifyState((state, finishedAt) =>
+        finishPublicationJobTransition(
+          state,
+          decision.startedAt,
+          decision.requestTarget,
+          decision.dataTarget,
+          result,
+          finishedAt,
+        ),
       );
       if (remainsPending) {
         yield* ensurePublicationQueued;
@@ -690,26 +379,10 @@ export const createSourceControl = (
         if (!enabled) {
           yield* FiberMap.remove(timers, sourceId);
         }
-        const shouldQueue = yield* modifyState((state) => {
-          const current = state.sources[sourceId];
-          if (current.enabled === enabled) {
-            return [false, state] as const;
-          }
-          const next = withSourceState(state, sourceId, (entry) => {
-            const { nextDueAt: _nextDueAt, ...entryWithoutDueAt } = entry;
-            return {
-              ...(enabled ? entry : entryWithoutDueAt),
-              enabled,
-              lifecycle: lifecycleAfterPolicyChange(entry, enabled),
-              policyRevision: entry.policyRevision + 1,
-              reason: enabled
-                ? reasonForAvailability(entry.availability)
-                : { code: 'policy-disabled', message: 'Collection is disabled.' },
-            };
-          });
-          return [enabled && current.availability === 'detected' && !current.queued && !current.running, next] as const;
-        });
-        if (shouldQueue) {
+        const decision = yield* modifyState((state, modifiedAt) =>
+          setSourcePolicyTransition(state, sourceId, enabled, modifiedAt),
+        );
+        if (decision.shouldQueue) {
           yield* enqueueSource(sourceId);
         }
       });
