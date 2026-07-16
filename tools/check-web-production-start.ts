@@ -17,7 +17,7 @@ const REPRESENTATIVE_SESSION_COUNT = 64;
 const SKILLS_BUSINESS_DATA_MARKER = 'data-known-project-paths-status="ok"';
 const SKILLS_SHELL_MARKER = 'Skill management';
 const RUNNER_FAILURE_PATTERN =
-  /Invalid ai-usage workspace root|Unable to discover the ai-usage workspace|ENOENT[^\n]*report-payload-runner|reportPayloadRunner failed/;
+  /Invalid ai-usage workspace root|Unable to discover the ai-usage workspace|ENOENT[^\n]*revision-query-runner|revisionQueryRunner failed/;
 const SOURCE_CONTROL_STARTED_MARKER = '[ai-usage] Source control started.';
 const SOURCE_CONTROL_STOPPED_MARKER = '[ai-usage] Source control stopped.';
 

@@ -325,7 +325,7 @@ const datasetSelectionFor = (request: {
   };
 };
 
-const collectReportDatasets = (request: {
+const loadSelectedReportDatasets = (request: {
   datasets?: ReportDatasetSelection;
   harness: HarnessKey | null;
   includeCursor: boolean;
@@ -665,7 +665,7 @@ const collectLocalReportAssemblyInput = (
       );
       const datasetResult = yield* withPerfSpan(
         'aiUsage.report.collectDatasets',
-        collectReportDatasets({ ...request, machine }),
+        loadSelectedReportDatasets({ ...request, machine }),
         (result) => ({ datasets: result.datasets ? Object.keys(result.datasets).length : 0 }),
       );
       const { datasets } = datasetResult;
@@ -866,7 +866,7 @@ export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
   Effect.gen(function* () {
     const machine = request.machine ?? (yield* ensureMachineConfig);
     const { collection } = yield* collectConfiguredLocalRowsWithWarnings({ ...request, keepSource: true });
-    const datasetResult = yield* collectReportDatasets({ ...request, machine });
+    const datasetResult = yield* loadSelectedReportDatasets({ ...request, machine });
     const { datasets } = datasetResult;
     const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
 

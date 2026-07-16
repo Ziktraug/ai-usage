@@ -9,7 +9,12 @@ import type { ScheduledSource } from '@ai-usage/report-data/source-adapters';
 import type { SourcePolicyStore } from '@ai-usage/report-data/source-control';
 import { queryReportRows } from '@ai-usage/usage-store';
 import { Duration, Effect, Ref } from 'effect';
-import { createWebSourceControlRuntime, installWebSourceControlRuntime } from './source-control.server';
+import {
+  createWebSourceControlRuntime,
+  installWebSourceControlRuntime,
+  requestSourceControlPublicationForServer,
+  type WebSourceControlRuntime,
+} from './source-control.server';
 
 const detected = {
   availability: 'detected',
@@ -58,6 +63,35 @@ const fakeSource = (run: ScheduledSource['run']): ReadonlyMap<CollectionSourceId
   ]);
 
 describe('web source-control runtime', () => {
+  test('treats a deduplicated publication request as handled by the installed runtime', async () => {
+    let requests = 0;
+    const unavailable = (): Promise<never> => Promise.reject(new Error('Unexpected runtime operation.'));
+    const runtime: WebSourceControlRuntime = {
+      detectAll: async () => undefined,
+      dispose: async () => undefined,
+      getSnapshot: unavailable,
+      requestPublication: () => {
+        requests += 1;
+        return Promise.resolve(false);
+      },
+      runAllEnabled: async () => 0,
+      runNow: async () => false,
+      setEnabled: async () => undefined,
+      start: unavailable,
+      subscribe: () => () => undefined,
+    };
+    const uninstall = installWebSourceControlRuntime(runtime);
+
+    try {
+      expect(await requestSourceControlPublicationForServer()).toBe(true);
+      expect(requests).toBe(1);
+    } finally {
+      uninstall();
+    }
+
+    expect(await requestSourceControlPublicationForServer()).toBe(false);
+  });
+
   test('starts once, publishes, and disposes idempotently', async () => {
     const publications = await Effect.runPromise(Ref.make(0));
     const runtime = createWebSourceControlRuntime({

@@ -105,14 +105,6 @@ export const getFocusedReportBreakdown = createServerFn({ method: 'POST' })
     ),
   );
 
-export const startReportPayloadRefresh = createServerFn({ method: 'POST' }).handler(() =>
-  import('./report-payload.server').then(({ startReportPayloadRefresh: startRefresh }) => startRefresh()),
-);
-
-export const getReportPayloadRefreshState = createServerFn({ method: 'GET' }).handler(() =>
-  import('./report-payload.server').then(({ getReportPayloadRefreshState: getRefreshState }) => getRefreshState()),
-);
-
 export const saveProjectGroups = createServerFn({ method: 'POST' })
   .validator((input: { projectGroups?: unknown }) => ({
     projectGroups: parseProjectGroupConfigs(input.projectGroups),
