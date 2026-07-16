@@ -431,7 +431,9 @@ const rtkSavingsFromRow = (row: {
   return isRtkSavingsContribution(contribution) ? contribution : undefined;
 };
 
-const stripRtkSavings = (row: CollectedUsageRow): CollectedUsageRow => {
+const stripRtkSavings = <Row extends Partial<RtkSavingsContribution>>(
+  row: Row,
+): Omit<Row, keyof RtkSavingsContribution> => {
   const {
     rtkCommandCount: _rtkCommandCount,
     rtkInputTokens: _rtkInputTokens,
@@ -451,14 +453,7 @@ const prepareMergeRow = (row: SerializedMergeRow): PreparedMergeRow => {
   if (hasRtkFields && !contribution) {
     throw new Error('RTK savings contribution failed strict validation');
   }
-  const {
-    contentHash: _contentHash,
-    rtkCommandCount: _rtkCommandCount,
-    rtkInputTokens: _rtkInputTokens,
-    rtkOutputTokens: _rtkOutputTokens,
-    rtkSavedTokens: _rtkSavedTokens,
-    ...base
-  } = row;
+  const { contentHash: _contentHash, ...base } = stripRtkSavings(row);
   return {
     ...(contribution === undefined ? {} : { contribution }),
     row: { ...base, contentHash: usageContentHash(base) },

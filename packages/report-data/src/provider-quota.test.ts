@@ -6,7 +6,7 @@ import type { ProviderQuotaBatch, ProviderQuotaBatchSource } from '@ai-usage/loc
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import { queryLatestProviderQuotaObservations, usageStorePath } from '@ai-usage/usage-store';
-import { Cause, Deferred, Effect, Exit, Fiber, Ref } from 'effect';
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref } from 'effect';
 import { queryLocalProviderQuotaHistory, refreshLocalProviderQuotas } from './provider-quota';
 import {
   createProviderQuotaRefresh,
@@ -100,6 +100,67 @@ describe('provider quota orchestration', () => {
     expect(result.committed).toBe(false);
   });
 
+  test('interrupts a backfill checkpoint import before its atomic commit', async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const committed = yield* Ref.make(false);
+        const checkpoint = yield* Ref.make<unknown>(null);
+        const persistence: ProviderQuotaPersistence<never> = {
+          ...fakePersistence((input) =>
+            Ref.set(checkpoint, input.checkpointUpdates[0]?.cursor).pipe(
+              Effect.andThen(Deferred.succeed(entered, undefined)),
+              Effect.andThen(Deferred.await(release)),
+              Effect.andThen(Ref.set(committed, true)),
+              Effect.as({ coalesced: 0, inserted: 0, unchanged: 0 }),
+            ),
+          ),
+          queryLiveState: () =>
+            Effect.succeed({
+              cursor: null,
+              cursorKey: 'refresh',
+              lastAttemptAt: '2026-07-15T10:00:00.000Z',
+              lastSuccessAt: '2026-07-15T10:00:00.000Z',
+              machineId: 'machine-1',
+              providerKey: 'codex',
+              sourceKey: 'codex-app-server',
+              updatedAt: '2026-07-15T10:00:00.000Z',
+            }),
+        };
+        const refresh = createProviderQuotaRefresh(persistence);
+        const owner = yield* Effect.fork(
+          refresh(
+            refreshInput({
+              backfillSource: {
+                collect: () =>
+                  Effect.succeed({
+                    checkpoints: [{ key: 'rollout-day', value: { offset: 7 } }],
+                    hasMore: true,
+                    observations: [],
+                    sourceEvents: [],
+                  }),
+              },
+              liveCadenceMs: 1,
+            }),
+          ),
+        );
+        yield* Deferred.await(entered);
+        const ownerExit = yield* Fiber.interrupt(owner);
+        yield* Deferred.succeed(release, undefined);
+        return {
+          checkpoint: yield* Ref.get(checkpoint),
+          committed: yield* Ref.get(committed),
+          ownerExit,
+        };
+      }),
+    );
+
+    expect(result.checkpoint).toEqual({ offset: 7 });
+    expect(Exit.isFailure(result.ownerExit)).toBe(true);
+    expect(result.committed).toBe(false);
+  });
+
   test('lets a joined caller cancel without stopping the owner', async () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
@@ -184,6 +245,8 @@ describe('provider quota orchestration', () => {
     const dbPath = usageStorePath(home);
     const run = <A, E>(effect: Effect.Effect<A, E, typeof LocalHistoryStorage.Service>) =>
       Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))));
+    const runExit = <A, E>(effect: Effect.Effect<A, E, typeof LocalHistoryStorage.Service>) =>
+      Effect.runPromiseExit(effect.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))));
     let calls = 0;
     const liveSource: ProviderQuotaBatchSource = {
       collect: (request) =>
@@ -221,10 +284,16 @@ describe('provider quota orchestration', () => {
       },
       signal: controller.signal,
     } as const;
-    const aborted = run(refreshLocalProviderQuotas(input));
+    const aborted = runExit(refreshLocalProviderQuotas(input));
     await new Promise((resolve) => setTimeout(resolve, 0));
     controller.abort();
-    await expect(aborted).rejects.toThrow('aborted');
+    const abortedExit = await aborted;
+    expect(Exit.isFailure(abortedExit)).toBe(true);
+    const failure = Exit.isFailure(abortedExit) ? Option.getOrUndefined(Cause.failureOption(abortedExit.cause)) : null;
+    expect(failure).toMatchObject({
+      _tag: 'ProviderQuotaRefreshAborted',
+      message: 'Provider quota refresh was aborted',
+    });
     expect(
       (
         await Effect.runPromise(

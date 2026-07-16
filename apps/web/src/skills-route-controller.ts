@@ -1,4 +1,4 @@
-import type { ProjectionAction, SkillManagementConfig, SkillManagementSnapshot } from '@ai-usage/skills';
+import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import { createMutation, createQuery, useQueryClient } from '@tanstack/solid-query';
 import { type Accessor, createEffect, createMemo, createSignal } from 'solid-js';
 import { isServer } from 'solid-js/web';
@@ -7,34 +7,20 @@ import {
   type ProjectInventoriesResult,
   parseKnownProjectPathsResult,
   parseSkillSnapshotResult,
-  type SkillReconcileServerResult,
   type SkillSnapshotResult,
 } from './skills-client-contracts';
-import { count, describeReconcileActions, type ReconcilePlanSummary } from './skills-page-model';
-import { snapshotRemovesDirtySkill } from './skills-route-model';
-import type { SkillMarkdownDraftGuard } from './skills-workspace';
+import type { ReconcilePlanSummary } from './skills-page-model';
+import { createSkillsRouteActions } from './skills-route-actions';
+import { createSkillsSnapshotOwner, runSkillsControllerOperation } from './skills-route-controller-state';
 import { loadSkillInventories, runSkillsMutation, type SkillsMutationRequest, webQueryKeys } from './web-query-options';
 
 export type { KnownProjectPathsResult, SkillSnapshotResult } from './skills-client-contracts';
-
-export interface OperationNotice {
-  message: string;
-  tone: 'error' | 'ok';
-}
-
-interface PendingSnapshotReplacement {
-  afterCommit?: () => void;
-  message: string;
-  refreshDependents: boolean;
-  snapshot: SkillManagementSnapshot;
-}
+export type { OperationNotice } from './skills-route-controller-state';
 
 interface SkillsRouteInitialData {
   knownProjectPaths: unknown;
   skills: unknown;
 }
-
-const errorMessageFrom = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 const snapshotResultFrom = (value: unknown): SkillSnapshotResult => {
   try {
@@ -78,54 +64,47 @@ const operationLabel = (request: SkillsMutationRequest | undefined): string | nu
   }
 };
 
-const targetLabel = (snapshot: SkillManagementSnapshot, targetId: string): string =>
-  snapshot.targets.find((target) => target.id === targetId)?.label ?? targetId;
-
-const actionNotice = (
-  actions: readonly ProjectionAction[],
-  snapshot: SkillManagementSnapshot,
-  fallback: string,
-): string => {
-  const applied = actions.filter((action) => action.type !== 'noop' && action.type !== 'refuse-unmanaged-mutation');
-  if (applied.length === 0) {
-    return 'Nothing to change.';
-  }
-  if (applied.length === 1) {
-    const action = applied.at(0);
-    if (action === undefined) {
-      return 'Nothing to change.';
-    }
-    if (action.type === 'create-symlink') {
-      return `${action.skillName} linked to ${targetLabel(snapshot, action.targetId)}.`;
-    }
-    if (action.type === 'repair-symlink') {
-      return `${action.skillName} repaired in ${targetLabel(snapshot, action.targetId)}.`;
-    }
-    return `${action.skillName} unlinked from ${targetLabel(snapshot, action.targetId)}.`;
-  }
-  return `${fallback}: ${count(applied.length, 'change')} applied.`;
-};
-
 export const createSkillsRouteController = (routeData: Accessor<SkillsRouteInitialData>) => {
   const queryClient = useQueryClient();
   const initialData = routeData();
-  const [result, setResult] = createSignal<SkillSnapshotResult>(snapshotResultFrom(initialData.skills));
+  let observedRouteData = initialData;
+  let observedRouteDataFingerprint = JSON.stringify(initialData);
+  const snapshotOwner = createSkillsSnapshotOwner({
+    commitCache: (next) => {
+      queryClient.setQueryData<SkillsRouteInitialData>(webQueryKeys.skillsInitial, (current) => {
+        if (!(current && current.skills !== next)) {
+          return current;
+        }
+        const updated = { ...current, skills: next };
+        observedRouteDataFingerprint = JSON.stringify(updated);
+        return updated;
+      });
+    },
+    initialResult: snapshotResultFrom(initialData.skills),
+    refetchInventories: async () => {
+      await queryClient.refetchQueries({
+        queryKey: webQueryKeys.skillInventories,
+        type: 'active',
+      });
+    },
+  });
+  const {
+    discardDirtySnapshot,
+    errorMessage,
+    keepDirtySnapshot,
+    markdownRefreshVersion,
+    operationNotice,
+    pendingSnapshotReplacement,
+    requestSnapshotReplacement,
+    result,
+    setDirtyMarkdownDraft,
+    setOperationNotice,
+    snapshot,
+  } = snapshotOwner;
   const [knownProjectPathsResult, setKnownProjectPathsResult] = createSignal<KnownProjectPathsResult>(
     knownProjectPathsResultFrom(initialData.knownProjectPaths),
   );
-  const [operationNotice, setOperationNotice] = createSignal<OperationNotice | null>(null);
   const [reconcilePlan, setReconcilePlan] = createSignal<ReconcilePlanSummary | null>(null);
-  const [markdownRefreshVersion, setMarkdownRefreshVersion] = createSignal(0);
-  const [dirtyMarkdownDraft, setDirtyMarkdownDraft] = createSignal<SkillMarkdownDraftGuard>();
-  const [pendingSnapshotReplacement, setPendingSnapshotReplacement] = createSignal<PendingSnapshotReplacement>();
-  const snapshot = createMemo(() => {
-    const current = result();
-    return current.ok ? current.data : undefined;
-  });
-  const errorMessage = createMemo(() => {
-    const current = result();
-    return current.ok ? '' : current.error.message;
-  });
   const knownProjectPaths = createMemo(() => {
     const current = knownProjectPathsResult();
     return current.ok ? current.data : [];
@@ -170,57 +149,6 @@ export const createSkillsRouteController = (routeData: Accessor<SkillsRouteIniti
     setProjectPaths(current.config.projectPaths ?? []);
   });
 
-  const commitSnapshotResult = async (
-    next: SkillSnapshotResult,
-    message: string,
-    refreshDependents: boolean,
-  ): Promise<void> => {
-    setResult(next);
-    queryClient.setQueryData<SkillsRouteInitialData>(webQueryKeys.skillsInitial, (current) => {
-      if (!(current && current.skills !== next)) {
-        return current;
-      }
-      const updated = { ...current, skills: next };
-      observedRouteDataFingerprint = JSON.stringify(updated);
-      return updated;
-    });
-    setOperationNotice(next.ok ? { message, tone: 'ok' } : { message: next.error.message, tone: 'error' });
-    if (!(next.ok && refreshDependents)) {
-      return;
-    }
-    if (next.data.configured) {
-      await queryClient.refetchQueries({
-        queryKey: webQueryKeys.skillInventories,
-        type: 'active',
-      });
-    }
-    setMarkdownRefreshVersion((version) => version + 1);
-  };
-
-  const requestSnapshotReplacement = async (
-    next: SkillSnapshotResult,
-    message: string,
-    refreshDependents = false,
-    afterCommit?: () => void,
-  ): Promise<boolean> => {
-    if (next.ok && snapshotRemovesDirtySkill(next.data, dirtyMarkdownDraft())) {
-      setPendingSnapshotReplacement({
-        ...(afterCommit === undefined ? {} : { afterCommit }),
-        message,
-        refreshDependents,
-        snapshot: next.data,
-      });
-      return false;
-    }
-    await commitSnapshotResult(next, message, refreshDependents);
-    if (next.ok) {
-      afterCommit?.();
-    }
-    return true;
-  };
-
-  let observedRouteData = initialData;
-  let observedRouteDataFingerprint = JSON.stringify(initialData);
   createEffect(async () => {
     const nextRouteData = routeData();
     if (nextRouteData === observedRouteData) {
@@ -241,198 +169,69 @@ export const createSkillsRouteController = (routeData: Accessor<SkillsRouteIniti
     await requestSnapshotReplacement(nextSkills, 'Skills reloaded.', true);
   });
 
-  const applyReconcileResult = async (next: SkillReconcileServerResult, fallbackMessage: string): Promise<void> => {
-    if (!next.ok) {
-      setOperationNotice({ message: next.error.message, tone: 'error' });
-      return;
-    }
-    await requestSnapshotReplacement(
-      { data: next.data.snapshot, ok: true },
-      actionNotice(next.data.actions, next.data.snapshot, fallbackMessage),
-    );
-  };
-
-  const runOperation = async (request: SkillsMutationRequest) => {
-    if (operationMutation.isPending) {
-      return;
-    }
-    setOperationNotice(null);
-    setReconcilePlan(null);
-    try {
-      return await operationMutation.mutateAsync(request);
-    } catch (error) {
-      setOperationNotice({ message: errorMessageFrom(operationMutation.error ?? error), tone: 'error' });
-    }
-  };
-
-  const configInput = (overrides: { projectPaths?: readonly string[]; sourceRepoPath?: string } = {}) => {
-    const current = snapshot()?.config ?? {};
-    const { projectPaths: _projectPaths, ...currentWithoutProjectPaths } = current;
-    const next: SkillManagementConfig = currentWithoutProjectPaths;
-    const source = (overrides.sourceRepoPath ?? current.sourceRepoPath ?? '').trim();
-    if (source) {
-      next.sourceRepoPath = source;
-    }
-    const nextProjectPaths = overrides.projectPaths ?? projectPaths();
-    if (nextProjectPaths.length > 0) {
-      next.projectPaths = nextProjectPaths;
-    }
-    return next;
-  };
-
-  const addProjectPath = async (): Promise<void> => {
-    const value = projectPathDraft().trim();
-    if (!value || projectPaths().includes(value)) {
-      return;
-    }
-    const nextProjectPaths = [...projectPaths(), value];
-    const response = await runOperation({
-      config: configInput({ projectPaths: nextProjectPaths }),
-      type: 'save-config',
+  const runOperation = async (request: SkillsMutationRequest) =>
+    await runSkillsControllerOperation({
+      clearReconcilePlan: () => setReconcilePlan(null),
+      error: () => operationMutation.error,
+      isPending: () => operationMutation.isPending,
+      mutate: (variables) => operationMutation.mutateAsync(variables),
+      request,
+      setNotice: setOperationNotice,
     });
-    if (response?.type !== 'save-config') {
-      return;
-    }
-    await requestSnapshotReplacement(response.result, `Project path added: ${value}.`);
-    setProjectPathDraft('');
-  };
-
-  const removeProjectPath = async (value: string): Promise<void> => {
-    const nextProjectPaths = projectPaths().filter((projectPath) => projectPath !== value);
-    const response = await runOperation({
-      config: configInput({ projectPaths: nextProjectPaths }),
-      type: 'save-config',
-    });
-    if (response?.type === 'save-config') {
-      await requestSnapshotReplacement(response.result, `Project path removed: ${value}.`);
-    }
-  };
-
-  const saveConfig = async (nextSourceRepoPath: string): Promise<void> => {
-    const response = await runOperation({
-      config: configInput({ sourceRepoPath: nextSourceRepoPath }),
-      type: 'save-config',
-    });
-    if (response?.type !== 'save-config') {
-      return;
-    }
-    if (response.result.ok) {
-      setSourceRepoPathDirty(false);
-      setSourceRepoPath(response.result.data.config.sourceRepoPath ?? '');
-    }
-    await requestSnapshotReplacement(response.result, 'Skill source saved.');
-  };
-
-  const toggleSkill = async (skillName: string, enabled: boolean): Promise<void> => {
-    const response = await runOperation({ enabled, skillName, type: 'toggle' });
-    if (response?.type === 'toggle') {
-      await applyReconcileResult(response.result, enabled ? `Enabled ${skillName}` : `Disabled ${skillName}`);
-    }
-  };
-
-  const reconcileSkill = async (skillName: string): Promise<void> => {
-    const response = await runOperation({ skillName, type: 'reconcile-one' });
-    if (response?.type === 'reconcile-one') {
-      await applyReconcileResult(response.result, `Reconciled ${skillName}`);
-    }
-  };
-
-  const previewReconcile = async (): Promise<void> => {
-    const response = await runOperation({ type: 'preview-reconcile' });
-    if (response?.type !== 'preview-reconcile') {
-      return;
-    }
-    const next = response.result;
-    if (!next.ok) {
-      setOperationNotice({ message: next.error.message, tone: 'error' });
-      return;
-    }
-    await requestSnapshotReplacement(
-      { data: next.data.snapshot, ok: true },
-      'Reconcile preview refreshed.',
-      false,
-      () => setReconcilePlan(describeReconcileActions(next.data.actions, next.data.snapshot.targets)),
-    );
-  };
-
-  const applyReconcile = async (): Promise<void> => {
-    const response = await runOperation({ type: 'reconcile-all' });
-    if (response?.type === 'reconcile-all') {
-      await applyReconcileResult(response.result, 'Reconciled active skills');
-    }
-  };
-
-  const createTargetDirectory = async (targetId: string): Promise<void> => {
-    const response = await runOperation({ targetId, type: 'create-target' });
-    if (response?.type === 'create-target') {
-      await requestSnapshotReplacement(response.result, `Created target directory ${targetId}.`);
-    }
-  };
-
-  const refreshSkills = async (): Promise<void> => {
-    const response = await runOperation({ type: 'refresh' });
-    if (response?.type !== 'refresh') {
-      return;
-    }
-    setKnownProjectPathsResult(response.knownProjectPaths);
-    queryClient.setQueryData<SkillsRouteInitialData>(webQueryKeys.skillsInitial, (current) =>
-      current ? { ...current, knownProjectPaths: response.knownProjectPaths } : current,
-    );
-    await requestSnapshotReplacement(response.result, 'Skills refreshed.', true);
-  };
-
-  const updateSourceRepoPath = (value: string): void => {
-    setSourceRepoPath(value);
-    setSourceRepoPathDirty(value !== (snapshot()?.config.sourceRepoPath ?? ''));
-  };
+  const actions = createSkillsRouteActions({
+    mutate: runOperation,
+    projectPathDraft,
+    projectPaths,
+    replaceSnapshot: requestSnapshotReplacement,
+    setKnownProjectPaths: setKnownProjectPathsResult,
+    setKnownProjectPathsCache: (knownProjectPaths) => {
+      queryClient.setQueryData<SkillsRouteInitialData>(webQueryKeys.skillsInitial, (current) =>
+        current ? { ...current, knownProjectPaths } : current,
+      );
+    },
+    setNotice: setOperationNotice,
+    setProjectPathDraft,
+    setReconcilePlan,
+    setSourceRepoPath,
+    setSourceRepoPathDirty,
+    snapshot,
+  });
 
   const applyWorkspaceSnapshot = (nextSnapshot: SkillManagementSnapshot): Promise<boolean> =>
     requestSnapshotReplacement({ data: nextSnapshot, ok: true }, 'Skill snapshot updated.');
 
-  const discardDirtySnapshot = async (): Promise<void> => {
-    const pending = pendingSnapshotReplacement();
-    if (pending === undefined) {
-      return;
-    }
-    dirtyMarkdownDraft()?.discard();
-    setPendingSnapshotReplacement();
-    setDirtyMarkdownDraft();
-    await commitSnapshotResult({ data: pending.snapshot, ok: true }, pending.message, pending.refreshDependents);
-    pending.afterCommit?.();
-  };
-
   return {
-    addProjectPath,
-    applyReconcile,
+    addProjectPath: actions.addProjectPath,
+    applyReconcile: actions.applyReconcile,
     applyWorkspaceSnapshot,
     cancelReconcile: () => setReconcilePlan(null),
-    createTargetDirectory,
+    createTargetDirectory: actions.createTargetDirectory,
     discardDirtySnapshot,
     errorMessage,
-    keepDirtySnapshot: () => setPendingSnapshotReplacement(),
+    keepDirtySnapshot,
     knownProjectPaths,
     knownProjectPathsError,
     markdownRefreshVersion,
     operationNotice,
     pendingOperation,
     pendingSnapshotReplacement,
-    previewReconcile,
+    previewReconcile: actions.previewReconcile,
     projectInventories,
     projectInventoriesLoading: () => projectInventoriesQuery.isFetching,
     projectPathDraft,
     projectPaths,
     reconcilePlan,
-    reconcileSkill,
-    refreshSkills,
-    removeProjectPath,
+    reconcileSkill: actions.reconcileSkill,
+    refreshSkills: actions.refreshSkills,
+    removeProjectPath: actions.removeProjectPath,
     result,
-    saveConfig,
+    saveConfig: actions.saveConfig,
     setDirtyMarkdownDraft,
     setOperationNotice,
     setProjectPathDraft,
     snapshot,
     sourceRepoPath,
-    toggleSkill,
-    updateSourceRepoPath,
+    toggleSkill: actions.toggleSkill,
+    updateSourceRepoPath: actions.updateSourceRepoPath,
   };
 };

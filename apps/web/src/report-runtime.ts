@@ -12,6 +12,8 @@ export type ReportLoaderData =
 
 export const loadReportPayload = async (): Promise<ReportLoaderData> => {
   if (isE2ERuntime()) {
+    const currentLoads = Number(Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads') ?? 0);
+    Reflect.set(globalThis, '__aiUsageE2EReportOwnerLoads', currentLoads + 1);
     return { kind: 'payload', payload: demoWebReportPayload };
   }
 

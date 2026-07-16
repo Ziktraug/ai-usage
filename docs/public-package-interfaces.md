@@ -45,7 +45,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 
 - `.`: local report row/payload requests, focused known-project-source discovery, snapshot assembly, and full compatibility payload creation over core plus local collectors.
 - `./one-shot-sources`: explicit timer-free source execution application ports, including the combined quota refresh/latest-durable-read operation used by CLI.
-- `./provider-quota`: local provider-quota refresh, provider-neutral latest-durable projection, and bounded history-query orchestration.
+- `./provider-quota`: local provider-quota refresh, typed `ProviderQuotaRefreshAborted` cancellation, provider-neutral latest-durable projection, and bounded history-query orchestration.
 - `./report-payload-artifact`: shared owner-only artifact writer and byte budget used by bounded internal Bun runners.
 - `./source-adapters`: autonomous detected source adapters that persist normalized contributions.
 - `./source-control`: deep scoped bounded Effect scheduler facade, server policy/publication ports, commands, and snapshot stream; its pure transition model remains internal.

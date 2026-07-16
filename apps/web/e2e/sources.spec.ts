@@ -10,7 +10,7 @@ const NEXT_DUE_PATTERN = /Next due: .* at \d{4}-\d{2}-\d{2}T/;
 const sourceCard = (page: Page, label: string) =>
   page.getByRole('article').filter({ has: page.getByRole('heading', { level: 3, name: label }) });
 
-test('keeps business sources independent through a picked disable and publishes once', async ({ page }) => {
+test('keeps business sources independent through a picked disable and publishes once', async ({ context, page }) => {
   await page.goto('/sources');
   await expect(page.getByRole('heading', { level: 1, name: 'Sources' })).toBeVisible();
 
@@ -26,8 +26,13 @@ test('keeps business sources independent through a picked disable and publishes 
   await sessions.getByRole('button', { name: 'Run now' }).click();
   await expect(sessions.getByText('Running', { exact: true })).toBeVisible();
 
-  await page.getByRole('link', { name: 'Report' }).click();
-  const summary = page.getByRole('region', { name: 'Collection source status' });
+  const reportPage = await context.newPage();
+  await reportPage.goto('/');
+  await expect(reportPage.locator('main[data-hydrated="true"]')).toBeVisible();
+  const reportOwnerLoads = await reportPage.evaluate(() =>
+    Number(Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads') ?? 0),
+  );
+  const summary = reportPage.getByRole('region', { name: 'Collection source status' });
   const summaryCard = summary.locator('[data-source-card]');
   await summary.hover();
   await expect(summaryCard).toBeVisible();
@@ -39,8 +44,6 @@ test('keeps business sources independent through a picked disable and publishes 
 
   await summary.getByRole('link').focus();
   await expect(summaryCard).toBeVisible();
-  await summary.getByRole('link').click();
-  await expect(page.getByRole('heading', { level: 1, name: 'Sources' })).toBeVisible();
   await sessions.getByRole('checkbox', { name: 'Enabled' }).uncheck();
   await expect(sessions.getByText('Pausing after current run', { exact: true })).toBeVisible();
   await expect(sessions.getByText('Disabled', { exact: true })).toBeVisible();
@@ -48,9 +51,13 @@ test('keeps business sources independent through a picked disable and publishes 
   await expect
     .poll(async () => Number((await revisionText.textContent())?.split('-').at(-1)))
     .toBe(initialRevision + 1);
+  await expect
+    .poll(() => reportPage.evaluate(() => Number(Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads') ?? 0)))
+    .toBe(reportOwnerLoads + 1);
 
   await sessions.getByRole('checkbox', { name: 'Enabled' }).check();
   await expect(sessions.getByRole('checkbox', { name: 'Enabled' })).toBeChecked();
+  await reportPage.close();
 });
 
 test('ignores a partial SSE snapshot after a complete catalogue', async ({ page }) => {
