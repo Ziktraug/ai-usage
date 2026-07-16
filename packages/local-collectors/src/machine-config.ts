@@ -8,6 +8,11 @@ import { pathToFileURL } from 'node:url';
 import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
 import { isProjectGroupConfigArray } from '@ai-usage/report-core/project-group';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
+import {
+  type CollectionSourceId,
+  isSourcePolicyOverrides,
+  updateSourcePolicyOverrides,
+} from '@ai-usage/report-core/source-control';
 import { parseSkillConfigInput, type SkillManagementConfig } from '@ai-usage/skills';
 import { Effect } from 'effect';
 import { LocalHistoryError } from './errors';
@@ -350,6 +355,11 @@ const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
   if (skills !== undefined && !isSkillManagementConfig(skills)) {
     return false;
   }
+
+  const sourcePolicies = config.sourcePolicies;
+  if (sourcePolicies !== undefined && !isSourcePolicyOverrides(sourcePolicies)) {
+    return false;
+  }
   return true;
 };
 
@@ -441,6 +451,18 @@ export const readRepoAiUsageConfig = (cwd = process.cwd()): Effect.Effect<AiUsag
     const exportedConfig =
       (module as { default?: unknown; config?: unknown }).default ??
       (module as { default?: unknown; config?: unknown }).config;
+    if (
+      typeof exportedConfig === 'object' &&
+      exportedConfig !== null &&
+      Object.hasOwn(exportedConfig, 'sourcePolicies')
+    ) {
+      return yield* Effect.fail(
+        machineConfigError(
+          'importAiUsageConfig',
+          filePath,
+        )(new Error('sourcePolicies may only be configured in the user home config')),
+      );
+    }
     return parseAiUsageConfig(exportedConfig, filePath);
   });
 
@@ -476,6 +498,19 @@ export const updateAiUsageConfig = (
         }),
       catch: machineConfigError('updateAiUsageConfig', filePath),
     });
+  });
+
+export const setSourcePolicyOverride = (
+  sourceId: CollectionSourceId,
+  enabled: boolean | undefined,
+): Effect.Effect<AiUsageConfig, LocalHistoryError, LocalHistoryStorageService> =>
+  updateAiUsageConfig((config) => {
+    const sourcePolicies = updateSourcePolicyOverrides(config.sourcePolicies, sourceId, enabled);
+    if (sourcePolicies === undefined) {
+      const { sourcePolicies: _, ...rest } = config;
+      return rest;
+    }
+    return { ...config, sourcePolicies };
   });
 
 export const writeAiUsageConfig = (

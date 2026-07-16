@@ -24,6 +24,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./session-query`: strict JSON-safe session filter, sort, page, campaign-child, neighbor, cursor, and request-fingerprint contracts.
 - `./session-lineage`: parent/root source-session normalization across harnesses.
 - `./snapshot`: multi-machine usage snapshot creation, parsing, and source labels.
+- `./source-control`: browser-safe collection-source identifiers, defaults, policy contracts, state axes, and snapshot DTOs.
 - `./types`: usage row and provenance types.
 - `./usage-row`: usage row derivations such as token totals, active dates, and cost helpers.
 

@@ -8,6 +8,10 @@ This context describes the local AI usage reporting domain. The CLI reads local 
 An installed AI coding tool whose local history can be collected, such as Claude Code, Codex, OpenCode, or Cursor.
 _Avoid_: source, tool, integration
 
+**Collection source**:
+An independently detected, scheduled, and policy-controlled contribution to the normalized local store. A harness may expose more than one collection source: Codex sessions and Codex usage limits have separate policy and cadence.
+_Avoid_: harness, refresh task, report loader
+
 **Local history**:
 The files or databases written by a harness on this machine. It is the only live collection input; a caller may also supply an explicit portable snapshot or previously imported merge bundle. Provider APIs are not called.
 _Avoid_: remote usage, cloud billing data

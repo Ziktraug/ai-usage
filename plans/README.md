@@ -32,6 +32,7 @@ branch or open a pull request unless the user explicitly asks.
 | 019 | Deepen Skills Workflows and Harden Projection Parents | P1 | L | 009 | DONE |
 | 020 | Align Commit Tooling, Bun Runtime, Dead CSV Claims, and Final Documentation | P2 | M | 009-019 | DONE |
 | 021 | Persist and visualize Codex quota history behind a provider-neutral seam | P1 | L | - | DONE |
+| 022 | Build a Server-Owned Source Control Plane and Client-First Web App | P1 | L | 017, 018, 021 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -116,6 +117,14 @@ REJECTED (with one-line rationale).
   rollout JSONL supplies bounded incremental backfill. Other provider adapters,
   daemons, multi-machine history sync, and static-history embedding are
   deliberately deferred.
+- Plan 022 replaces browser-owned refresh and quota timers with a server-owned
+  Effect control plane. Each business source owns its normalized durable
+  contribution and independent policy/state; stored-only publication remains a
+  separate deduped job. Nitro migrates to its official Bun preset so Effect
+  adapters and SQLite run directly in the scoped server process; SSE exposes
+  sanitized process state, and every route moves business-data reads after
+  hydration while preserving plans 017/018's semantic and exact-revision
+  guarantees. Disabling, missing, empty, or failed sources never delete data.
 
 ## Remediation waves
 
@@ -129,6 +138,7 @@ Wave 1: 009 remove HTML export
 
 010-016 complete ── 017 semantic no-op refresh ── 018 browser coordinator
 009-019 complete ──────────────────────────────── 020 tooling/docs closure
+017 + 018 + 021 complete ──────────────────────── 022 source control plane
 ```
 
 Plans on separate Wave 2 branches may run in parallel. Do not parallel-edit the
@@ -161,6 +171,7 @@ sequence overlapping files and rebase/re-read before execution.
 | F20 | Pre-commit can format/stage unrelated worktree files | 020 |
 | F21 | Bun package, CI, types, and Nix versions disagree | 020 |
 | F22 | Current docs/dead symbols still claim web/focused CSV export | 009 and 020 |
+| F23 | Browser timers hide independently operating collectors, probes, and enrichers behind one report refresh | 022 |
 
 ## Findings considered and rejected
 
