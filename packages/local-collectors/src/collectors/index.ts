@@ -21,6 +21,8 @@ import { collectCursor, collectCursorResult } from './cursor';
 import type { CursorCsvOptions } from './cursor-csv';
 import { collectOpenCode, collectOpenCodeResult } from './opencode';
 
+export { collectClaudeRetentionWarnings } from './claude';
+
 interface HarnessAdapterCollection {
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];

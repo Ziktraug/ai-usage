@@ -33,15 +33,20 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `.`: local history collection orchestration, including the high-level Codex app-server and rollout quota batch collectors.
 - `./codex-history`: Codex quota/local history helpers used by CLI quota output.
 - `./datasets`: focused local report-dataset collection helpers.
+- `./collectors`: per-harness normalized collector adapters and compatibility selection orchestration.
 - `./errors`: local history error and warning formatting/types.
+- `./facets`: normalized Cursor commit-attribution collection.
 - `./local-history`: local history storage service interface/live layer.
 - `./machine-config`: user-local machine, project group, skill-management, and legacy project alias config helpers.
+- `./platform-paths`: supported local input candidate resolution.
+- `./rtk-enrichment`: normalized usage-row RTK enrichment.
 
 ## `@ai-usage/report-data`
 
 - `.`: local report row/payload requests, focused known-project-source discovery, snapshot assembly, and full compatibility payload creation over core plus local collectors.
 - `./provider-quota`: local provider-quota refresh and bounded history-query orchestration.
 - `./report-payload-artifact`: bounded private artifact writing for the Bun-to-Nitro full-payload compatibility handoff.
+- `./source-adapters`: autonomous detected source adapters that persist normalized contributions.
 
 ## `@ai-usage/usage-store`
 

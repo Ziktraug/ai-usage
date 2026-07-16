@@ -6,10 +6,14 @@
   "exports": {
     ".": "./src/index.ts",
     "./codex-history": "./src/codex-history.ts",
+    "./collectors": "./src/collectors/index.ts",
     "./datasets": "./src/datasets.ts",
     "./errors": "./src/errors.ts",
+    "./facets": "./src/facets.ts",
     "./local-history": "./src/local-history.ts",
-    "./machine-config": "./src/machine-config.ts"
+    "./machine-config": "./src/machine-config.ts",
+    "./platform-paths": "./src/platform-paths.ts",
+    "./rtk-enrichment": "./src/rtk-enrichment.ts"
   },
   "dependencies": {
     "@ai-usage/skills": "workspace:*",
