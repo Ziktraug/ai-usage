@@ -1,5 +1,10 @@
-import { ensureMachineConfig, readAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
+import {
+  ensureMachineConfig,
+  readAiUsageConfig,
+  readMergedAiUsageConfigFrom,
+} from '@ai-usage/local-collectors/machine-config';
 import type { HarnessKey } from '@ai-usage/report-core/harness-metadata';
+import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
 import {
   type CollectionSourceId,
   resolveSourceEnabled,
@@ -9,6 +14,14 @@ import {
   type SourceWarning,
 } from '@ai-usage/report-core/source-control';
 import { Effect } from 'effect';
+import {
+  createMergedUsageReport,
+  createStoredUsageSnapshot,
+  type LocalUsageSnapshotRequest,
+  listProjectSourcesWithWarnings,
+  type MergedUsageReportRequest,
+  type ProjectSourcesRequest,
+} from './index';
 import { queryLatestLocalProviderQuotas } from './provider-quota';
 import {
   createScheduledSourceRegistry,
@@ -46,6 +59,15 @@ export interface ExecuteOneShotSourcesInput {
 
 export interface RunOneShotLocalSourcesInput extends OneShotLocalSelection {
   readonly adapterOptions?: SourceAdapterOptions;
+  readonly configCwd?: string;
+}
+
+export interface FreshLocalMergedUsageReportRequest extends MergedUsageReportRequest {
+  readonly includeLocal?: boolean;
+}
+
+export interface FreshLocalProjectSourcesRequest extends ProjectSourcesRequest {
+  readonly includeLocal?: boolean;
 }
 
 const harnessSourceIds: Record<HarnessKey, CollectionSourceId> = {
@@ -141,12 +163,82 @@ export const executeOneShotSources = (input: ExecuteOneShotSourcesInput): Effect
 
 export const runOneShotLocalSources = (input: RunOneShotLocalSourcesInput) =>
   Effect.gen(function* () {
-    const config = yield* readAiUsageConfig;
-    const sources = yield* createScheduledSourceRegistry(input.adapterOptions);
+    const configCwd = input.configCwd ?? input.adapterOptions?.configCwd;
+    const config = yield* readMergedAiUsageConfigFrom(configCwd);
+    const sources = yield* createScheduledSourceRegistry({
+      ...input.adapterOptions,
+      ...(configCwd === undefined ? {} : { configCwd }),
+    });
     return yield* executeOneShotSources({
       sourceIds: localOneShotSourceIds(input),
       sources,
       ...(config.sourcePolicies === undefined ? {} : { policies: config.sourcePolicies }),
+    });
+  });
+
+const oneShotUsageWarnings = (collection: OneShotExecutionResult): UsageReportWarning[] =>
+  collection.outcomes.flatMap((outcome) =>
+    outcome.warnings.map((warning) => {
+      const harness = outcome.sourceId.split('.')[0];
+      return {
+        message: warning.message ?? 'The source reported a warning.',
+        operation: outcome.sourceId,
+        ...(harness === undefined ? {} : { harness }),
+      };
+    }),
+  );
+
+const collectFreshLocalSnapshot = (request: LocalUsageSnapshotRequest) =>
+  Effect.gen(function* () {
+    const collection = yield* runOneShotLocalSources({
+      harness: request.harness,
+      includeCursor: request.includeCursor,
+      ...(request.configCwd === undefined ? {} : { configCwd: request.configCwd }),
+      ...(request.machine === undefined ? {} : { adapterOptions: { machine: request.machine } }),
+    });
+    return yield* createStoredUsageSnapshot({
+      ...request,
+      warnings: oneShotUsageWarnings(collection),
+    });
+  });
+
+export const createMergedUsageReportWithFreshLocal = (request: FreshLocalMergedUsageReportRequest) =>
+  Effect.gen(function* () {
+    if (!request.includeLocal) {
+      return yield* createMergedUsageReport(request);
+    }
+    const snapshot = yield* collectFreshLocalSnapshot({
+      harness: request.harness,
+      includeCursor: request.includeCursor,
+      ...(request.appVersion === undefined ? {} : { appVersion: request.appVersion }),
+      ...(request.configCwd === undefined ? {} : { configCwd: request.configCwd }),
+      ...(request.datasets === undefined ? {} : { datasets: request.datasets }),
+      ...(request.generatedAt === undefined ? {} : { generatedAt: request.generatedAt }),
+      ...(request.includeFacets === undefined ? {} : { includeFacets: request.includeFacets }),
+      ...(request.machine === undefined ? {} : { machine: request.machine }),
+    });
+    return yield* createMergedUsageReport({
+      ...request,
+      localSnapshots: [...(request.localSnapshots ?? []), snapshot],
+    });
+  });
+
+export const listProjectSourcesWithFreshLocalWarnings = (request: FreshLocalProjectSourcesRequest) =>
+  Effect.gen(function* () {
+    if (!request.includeLocal) {
+      return yield* listProjectSourcesWithWarnings(request);
+    }
+    const snapshot = yield* collectFreshLocalSnapshot({
+      harness: request.harness,
+      includeCursor: request.includeCursor,
+      ...(request.appVersion === undefined ? {} : { appVersion: request.appVersion }),
+      ...(request.configCwd === undefined ? {} : { configCwd: request.configCwd }),
+      ...(request.generatedAt === undefined ? {} : { generatedAt: request.generatedAt }),
+      ...(request.machine === undefined ? {} : { machine: request.machine }),
+    });
+    return yield* listProjectSourcesWithWarnings({
+      ...request,
+      localSnapshots: [...(request.localSnapshots ?? []), snapshot],
     });
   });
 

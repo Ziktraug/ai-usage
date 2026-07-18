@@ -297,16 +297,22 @@ export interface SourceControlView {
   readonly sources: readonly SourceControlEntryView[];
 }
 
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+const QUEUE_SLOTS_PER_SOURCE = 3;
+const QUEUE_CONTROL_SLOTS = 3;
+const MAX_QUEUE_DEPTH = collectionSourceDefinitions.length * QUEUE_SLOTS_PER_SOURCE + QUEUE_CONTROL_SLOTS;
+const MAX_CONCURRENT_SOURCES = 8;
+
 export const sourceControlBounds = {
   maxCadenceMs: Math.max(...collectionSourceDefinitions.map(({ cadenceMs }) => cadenceMs)),
   maxCount: MAX_PORTABLE_USAGE_ROWS,
-  maxDurationMs: 24 * 60 * 60 * 1000,
+  maxDurationMs: MILLISECONDS_PER_DAY,
   maxEventBytes: 4096,
   maxGeneration: Number.MAX_SAFE_INTEGER,
   maxMessageLength: 240,
-  maxQueueDelayMs: (collectionSourceDefinitions.length * 3 + 3) * 24 * 60 * 60 * 1000,
-  maxQueueDepth: collectionSourceDefinitions.length * 3 + 3,
-  maxRunningCount: 8,
+  maxQueueDelayMs: MAX_QUEUE_DEPTH * MILLISECONDS_PER_DAY,
+  maxQueueDepth: MAX_QUEUE_DEPTH,
+  maxRunningCount: MAX_CONCURRENT_SOURCES,
   maxSnapshotBytes: 64 * 1024,
   maxWarningsPerSource: 8,
   minCadenceMs: Math.min(...collectionSourceDefinitions.map(({ cadenceMs }) => cadenceMs)),
@@ -711,5 +717,10 @@ export const parseReportPublishedEvent = (value: unknown): ReportPublishedEvent 
   ) {
     return parseFailure('Report publication event is invalid.');
   }
-  return value as unknown as ReportPublishedEvent;
+  return {
+    instanceId: value.instanceId,
+    publishedAt: value.publishedAt,
+    revision: value.revision,
+    sourceControlGeneration: value.sourceControlGeneration,
+  };
 };

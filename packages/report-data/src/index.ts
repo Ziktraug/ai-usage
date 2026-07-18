@@ -196,7 +196,7 @@ export interface MergedUsageReportRequest extends LocalUsageSelection {
   datasets?: ReportDatasetSelection;
   generatedAt?: Date;
   includeFacets?: boolean;
-  includeLocal?: boolean;
+  localSnapshots?: UsageSnapshot[];
   machine?: UsageMachine;
   options: ReportOptions;
   snapshots: UsageSnapshot[];
@@ -281,31 +281,11 @@ export interface ProjectSourcesRequest extends LocalUsageSelection {
   appVersion?: string | null;
   generatedAt?: Date;
   includeGitRemote?: boolean;
-  includeLocal?: boolean;
+  localSnapshots?: UsageSnapshot[];
   machine?: UsageMachine;
   readGitFile?: ReadGitFile;
   snapshots: UsageSnapshot[];
 }
-
-const toLocalUsageSnapshotRequest = (request: {
-  harness: HarnessKey | null;
-  includeCursor: boolean;
-  configCwd?: string;
-  machine?: UsageMachine;
-  generatedAt?: Date;
-  appVersion?: string | null;
-  datasets?: ReportDatasetSelection;
-  includeFacets?: boolean;
-}): LocalUsageSnapshotRequest => ({
-  harness: request.harness,
-  includeCursor: request.includeCursor,
-  ...(request.configCwd === undefined ? {} : { configCwd: request.configCwd }),
-  ...(request.machine === undefined ? {} : { machine: request.machine }),
-  ...(request.generatedAt === undefined ? {} : { generatedAt: request.generatedAt }),
-  ...(request.appVersion === undefined ? {} : { appVersion: request.appVersion }),
-  ...(request.datasets === undefined ? {} : { datasets: request.datasets }),
-  ...(request.includeFacets === undefined ? {} : { includeFacets: request.includeFacets }),
-});
 
 const datasetSelectionFor = (request: {
   datasets?: ReportDatasetSelection;
@@ -918,20 +898,17 @@ const mergeAuthorizedSnapshotRows = (
   return [...winners.values()].map((winner) => winner.candidate);
 };
 
+const authorizeSnapshots = (
+  snapshots: readonly UsageSnapshot[],
+  localSnapshots: readonly UsageSnapshot[] = [],
+): Array<{ authority: SourceAuthority; snapshot: UsageSnapshot }> => [
+  ...snapshots.map((snapshot) => ({ authority: 'portable-opaque' as const, snapshot })),
+  ...localSnapshots.map((snapshot) => ({ authority: 'local-observed' as const, snapshot })),
+];
+
 export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
   Effect.gen(function* () {
-    const authorizedSnapshots: Array<{ authority: SourceAuthority; snapshot: UsageSnapshot }> = request.snapshots.map(
-      (snapshot) => ({
-        authority: 'portable-opaque',
-        snapshot,
-      }),
-    );
-    if (request.includeLocal) {
-      authorizedSnapshots.push({
-        authority: 'local-observed',
-        snapshot: yield* createLocalUsageSnapshot(toLocalUsageSnapshotRequest(request)),
-      });
-    }
+    const authorizedSnapshots = authorizeSnapshots(request.snapshots, request.localSnapshots);
 
     const snapshots = authorizedSnapshots.map((candidate) => candidate.snapshot);
     const merged = mergeUsageSnapshots(snapshots);
@@ -1401,15 +1378,7 @@ export const listProjectSourcesWithWarnings = (
   import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
 > =>
   Effect.gen(function* () {
-    const authorizedSnapshots: Array<{ authority: SourceAuthority; snapshot: UsageSnapshot }> = request.snapshots.map(
-      (snapshot) => ({ authority: 'portable-opaque', snapshot }),
-    );
-    if (request.includeLocal) {
-      authorizedSnapshots.push({
-        authority: 'local-observed',
-        snapshot: yield* createLocalUsageSnapshot(toLocalUsageSnapshotRequest(request)),
-      });
-    }
+    const authorizedSnapshots = authorizeSnapshots(request.snapshots, request.localSnapshots);
 
     const snapshots = authorizedSnapshots.map((candidate) => candidate.snapshot);
     const merged = mergeUsageSnapshots(snapshots);
