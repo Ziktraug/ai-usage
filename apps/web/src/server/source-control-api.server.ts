@@ -52,6 +52,29 @@ export interface SourceControlEventStreamOptions {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+const disableRequestIdleTimeout = (request: Request): void => {
+  const runtime = 'runtime' in request && isRecord(request.runtime) ? request.runtime : undefined;
+  if (!runtime) {
+    return;
+  }
+
+  const bunRuntime = runtime.bun;
+  if (isRecord(bunRuntime) && isRecord(bunRuntime.server) && typeof bunRuntime.server.timeout === 'function') {
+    bunRuntime.server.timeout(request, 0);
+  }
+
+  const nodeRuntime = runtime.node;
+  if (!isRecord(nodeRuntime)) {
+    return;
+  }
+  if (isRecord(nodeRuntime.req) && typeof nodeRuntime.req.setTimeout === 'function') {
+    nodeRuntime.req.setTimeout(0);
+  }
+  if (isRecord(nodeRuntime.res) && typeof nodeRuntime.res.setTimeout === 'function') {
+    nodeRuntime.res.setTimeout(0);
+  }
+};
+
 const unwrapEffectFailure = (error: unknown): unknown => {
   if (!Runtime.isFiberFailure(error)) {
     return error;
@@ -216,6 +239,11 @@ export const createSourceControlEventStream = (
   if (trustFailure) {
     return trustFailure;
   }
+
+  // Bun closes quiet responses after ten seconds by default. Disable that
+  // transport timeout for this long-lived stream; heartbeats remain useful to
+  // intermediaries, but must not be the correctness boundary under CI load.
+  disableRequestIdleTimeout(request);
 
   const runtime = options.runtime ?? getWebSourceControlRuntime();
   const heartbeatMs = options.heartbeatMs ?? SSE_HEARTBEAT_MS;
