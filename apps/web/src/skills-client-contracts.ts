@@ -65,77 +65,65 @@ const booleanValue = (value: unknown, label: string): boolean =>
 const nonNegativeInteger = (value: unknown, label: string): number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : invalidResult(label);
 
-const diagnosticSeverity = (value: unknown, label: string): SkillDiagnosticSeverity => {
-  if (value === 'info' || value === 'warning' || value === 'error') {
-    return value;
-  }
-  return invalidResult(label);
-};
+const isAllowedLiteral = <Value extends string>(value: unknown, allowed: readonly Value[]): value is Value =>
+  typeof value === 'string' && allowed.some((candidate) => candidate === value);
 
-const validationStatus = (value: unknown, label: string): SkillValidationStatus => {
-  if (value === 'valid' || value === 'warning' || value === 'invalid') {
-    return value;
-  }
-  return invalidResult(label);
-};
+const literalValue = <Value extends string>(value: unknown, label: string, allowed: readonly Value[]): Value =>
+  isAllowedLiteral(value, allowed) ? value : invalidResult(label);
 
-const frontmatterFieldKind = (value: unknown, label: string): SkillFrontmatterFieldKind => {
-  if (value === 'standard' || value === 'known-extension' || value === 'unknown-extension') {
-    return value;
-  }
-  return invalidResult(label);
-};
+const diagnosticSeverities = ['info', 'warning', 'error'] as const satisfies readonly SkillDiagnosticSeverity[];
+const validationStatuses = ['valid', 'warning', 'invalid'] as const satisfies readonly SkillValidationStatus[];
+const frontmatterFieldKinds = [
+  'standard',
+  'known-extension',
+  'unknown-extension',
+] as const satisfies readonly SkillFrontmatterFieldKind[];
+const targetKinds = ['standard-interop', 'native', 'custom'] as const satisfies readonly SkillTargetKind[];
+const targetScopes = ['system', 'project'] as const satisfies readonly SkillTargetScope[];
+const projectionStates = [
+  'linked',
+  'missing',
+  'broken-link',
+  'wrong-target',
+  'unmanaged-copy',
+  'unmanaged-symlink',
+  'duplicate-same-content',
+  'duplicate-name-conflict',
+  'disabled-exposed',
+  'missing-target',
+] as const satisfies readonly ProjectionState[];
+const projectSkillPlacements = [
+  'owned-directory',
+  'symlink-to-source',
+  'project-symlink',
+  'external-symlink',
+] as const satisfies readonly ProjectSkillPlacement[];
+const projectRuntimeIds = [
+  'claude-project',
+  'agents-project',
+] as const satisfies readonly ProjectSkillObservation['runtimeDirId'][];
 
-const targetKind = (value: unknown, label: string): SkillTargetKind => {
-  if (value === 'standard-interop' || value === 'native' || value === 'custom') {
-    return value;
-  }
-  return invalidResult(label);
-};
+const diagnosticSeverity = (value: unknown, label: string): SkillDiagnosticSeverity =>
+  literalValue(value, label, diagnosticSeverities);
 
-const targetScope = (value: unknown, label: string): SkillTargetScope => {
-  if (value === 'system' || value === 'project') {
-    return value;
-  }
-  return invalidResult(label);
-};
+const validationStatus = (value: unknown, label: string): SkillValidationStatus =>
+  literalValue(value, label, validationStatuses);
 
-const projectionState = (value: unknown, label: string): ProjectionState => {
-  switch (value) {
-    case 'linked':
-    case 'missing':
-    case 'broken-link':
-    case 'wrong-target':
-    case 'unmanaged-copy':
-    case 'unmanaged-symlink':
-    case 'duplicate-same-content':
-    case 'duplicate-name-conflict':
-    case 'disabled-exposed':
-    case 'missing-target':
-      return value;
-    default:
-      return invalidResult(label);
-  }
-};
+const frontmatterFieldKind = (value: unknown, label: string): SkillFrontmatterFieldKind =>
+  literalValue(value, label, frontmatterFieldKinds);
 
-const projectSkillPlacement = (value: unknown, label: string): ProjectSkillPlacement => {
-  if (
-    value === 'owned-directory' ||
-    value === 'symlink-to-source' ||
-    value === 'project-symlink' ||
-    value === 'external-symlink'
-  ) {
-    return value;
-  }
-  return invalidResult(label);
-};
+const targetKind = (value: unknown, label: string): SkillTargetKind => literalValue(value, label, targetKinds);
 
-const projectRuntimeId = (value: unknown, label: string): ProjectSkillObservation['runtimeDirId'] => {
-  if (value === 'claude-project' || value === 'agents-project') {
-    return value;
-  }
-  return invalidResult(label);
-};
+const targetScope = (value: unknown, label: string): SkillTargetScope => literalValue(value, label, targetScopes);
+
+const projectionState = (value: unknown, label: string): ProjectionState =>
+  literalValue(value, label, projectionStates);
+
+const projectSkillPlacement = (value: unknown, label: string): ProjectSkillPlacement =>
+  literalValue(value, label, projectSkillPlacements);
+
+const projectRuntimeId = (value: unknown, label: string): ProjectSkillObservation['runtimeDirId'] =>
+  literalValue(value, label, projectRuntimeIds);
 
 const arrayValue = <T>(value: unknown, label: string, parse: (entry: unknown) => T): readonly T[] => {
   if (!Array.isArray(value)) {

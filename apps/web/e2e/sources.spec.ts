@@ -18,6 +18,8 @@ test('keeps business sources independent through a picked disable and publishes 
   const quota = sourceCard(page, 'Codex usage limits');
   await expect(sessions).toBeVisible();
   await expect(quota).toBeVisible();
+  await expect(sessions.getByText('Lifecycle', { exact: true })).toBeVisible();
+  await expect(sessions.getByText('scheduled', { exact: true })).toBeVisible();
   await expect(sessions.getByRole('checkbox', { name: 'Enabled' })).toBeChecked();
   await expect(quota.getByRole('checkbox', { name: 'Enabled' })).toBeChecked();
 
@@ -41,6 +43,12 @@ test('keeps business sources independent through a picked disable and publishes 
   const firstElapsed = await runningDetail.textContent();
   await expect.poll(async () => runningDetail.textContent()).not.toBe(firstElapsed);
   await expect(summaryCard.getByText(NEXT_DUE_PATTERN)).toBeVisible();
+
+  await reportPage.mouse.move(0, 0);
+  await expect(summaryCard).toBeHidden();
+  const hiddenElapsed = await runningDetail.textContent();
+  await reportPage.waitForTimeout(1200);
+  expect(await runningDetail.textContent()).toBe(hiddenElapsed);
 
   await summary.getByRole('link').focus();
   await expect(summaryCard).toBeVisible();

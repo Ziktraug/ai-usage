@@ -11,12 +11,6 @@ const summary = css({
   alignItems: 'center',
   gap: '8px',
   ml: { base: '0', md: 'auto' },
-  _focusWithin: {
-    '& [data-source-card]': { display: 'grid' },
-  },
-  _hover: {
-    '& [data-source-card]': { display: 'grid' },
-  },
 });
 
 const summaryLink = css({
@@ -33,9 +27,15 @@ const summaryLink = css({
   fontWeight: 650,
   textDecoration: 'none',
   whiteSpace: 'nowrap',
+  _focus: {
+    '& [data-source-card]': { display: 'grid' },
+  },
   _focusVisible: {
     outline: '2px solid token(colors.accent)',
     outlineOffset: '2px',
+  },
+  _hover: {
+    '& [data-source-card]': { display: 'grid' },
   },
 });
 
@@ -125,9 +125,12 @@ export const SourceControlSummary = () => {
         ?.sources.filter((source) => source.nextDueAt !== undefined)
         .toSorted((left, right) => String(left.nextDueAt).localeCompare(String(right.nextDueAt)))[0],
   );
+  const [hasFocus, setHasFocus] = createSignal(false);
+  const [isHovered, setIsHovered] = createSignal(false);
+  const isSummaryVisible = () => hasFocus() || isHovered();
   const [clock, setClock] = createSignal(Date.now());
   createEffect(() => {
-    if (runningSources().length === 0) {
+    if (!isSummaryVisible() || runningSources().length === 0) {
       return;
     }
     setClock(Date.now());
@@ -144,7 +147,14 @@ export const SourceControlSummary = () => {
 
   return (
     <section aria-label="Collection source status" class={summary}>
-      <Link class={summaryLink} to="/sources">
+      <Link
+        class={summaryLink}
+        onBlur={() => setHasFocus(false)}
+        onFocus={() => setHasFocus(true)}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        to="/sources"
+      >
         <span
           aria-hidden="true"
           class={cx(
@@ -154,6 +164,59 @@ export const SourceControlSummary = () => {
           )}
         />
         {statusLabel()}
+        <div class={card} data-source-card="">
+          <div class={cardHeader}>
+            <span class={cardTitle}>Collection sources</span>
+            <span class={cx(statusPill, sourceToneClass(statusTone()))}>{statusLabel()}</span>
+          </div>
+          <Show fallback={<p class={cardMeta}>Waiting for the server-owned source snapshot.</p>} when={snapshot()}>
+            <div class={sourceList}>
+              <For each={enabledSources()}>
+                {(source) => {
+                  const presentation = () => presentSourceState(source);
+                  return (
+                    <div class={sourceRow}>
+                      <span class={sourceLabel} title={`${source.label}: ${presentation().explanation}`}>
+                        {source.label}
+                      </span>
+                      <span class={cx(statusPill, sourceToneClass(presentation().tone))}>{presentation().label}</span>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
+            <Show when={runningSources().length > 0}>
+              <p class={cardMeta}>
+                Running:{' '}
+                {runningSources()
+                  .map((source) => `${source.label} (${elapsed(source.lastStartedAt)})`)
+                  .join(', ')}
+              </p>
+            </Show>
+            <Show when={queuedSources().length > 0}>
+              <p class={cardMeta}>
+                Queued:{' '}
+                {queuedSources()
+                  .map((source) => source.label)
+                  .join(', ')}
+              </p>
+            </Show>
+            <Show when={nextDueSource()}>
+              {(source) => (
+                <p class={cardMeta}>
+                  Next due: {source().label} at {source().nextDueAt}
+                </p>
+              )}
+            </Show>
+            <p class={cardMeta}>
+              Last success:{' '}
+              {enabledSources()
+                .flatMap((source) => (source.lastSuccessAt ? [source.lastSuccessAt] : []))
+                .toSorted()
+                .at(-1) ?? 'none yet'}
+            </p>
+          </Show>
+        </div>
       </Link>
       <button
         aria-busy={runPending() ? 'true' : undefined}
@@ -166,59 +229,6 @@ export const SourceControlSummary = () => {
       >
         Run all
       </button>
-      <div class={card} data-source-card="">
-        <div class={cardHeader}>
-          <span class={cardTitle}>Collection sources</span>
-          <span class={cx(statusPill, sourceToneClass(statusTone()))}>{statusLabel()}</span>
-        </div>
-        <Show fallback={<p class={cardMeta}>Waiting for the server-owned source snapshot.</p>} when={snapshot()}>
-          <div class={sourceList}>
-            <For each={enabledSources()}>
-              {(source) => {
-                const presentation = () => presentSourceState(source);
-                return (
-                  <div class={sourceRow}>
-                    <span class={sourceLabel} title={`${source.label}: ${presentation().explanation}`}>
-                      {source.label}
-                    </span>
-                    <span class={cx(statusPill, sourceToneClass(presentation().tone))}>{presentation().label}</span>
-                  </div>
-                );
-              }}
-            </For>
-          </div>
-          <Show when={runningSources().length > 0}>
-            <p class={cardMeta}>
-              Running:{' '}
-              {runningSources()
-                .map((source) => `${source.label} (${elapsed(source.lastStartedAt)})`)
-                .join(', ')}
-            </p>
-          </Show>
-          <Show when={queuedSources().length > 0}>
-            <p class={cardMeta}>
-              Queued:{' '}
-              {queuedSources()
-                .map((source) => source.label)
-                .join(', ')}
-            </p>
-          </Show>
-          <Show when={nextDueSource()}>
-            {(source) => (
-              <p class={cardMeta}>
-                Next due: {source().label} at {source().nextDueAt}
-              </p>
-            )}
-          </Show>
-          <p class={cardMeta}>
-            Last success:{' '}
-            {enabledSources()
-              .flatMap((source) => (source.lastSuccessAt ? [source.lastSuccessAt] : []))
-              .toSorted()
-              .at(-1) ?? 'none yet'}
-          </p>
-        </Show>
-      </div>
     </section>
   );
 };

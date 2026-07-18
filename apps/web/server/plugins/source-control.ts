@@ -4,7 +4,7 @@ import { publishStoredReportRevisionForSourceControl } from '../../src/server/re
 import { createWebSourceControlRuntime, installWebSourceControlRuntime } from '../../src/server/source-control.server';
 import { createSourceControlE2EFixture } from '../../src/server/source-control-e2e-fixture.server';
 
-export default definePlugin((nitroApp) => {
+export default definePlugin(async (nitroApp) => {
   const fixtureRuntime = process.env.VITE_AI_USAGE_E2E === '1';
   const productionSmoke = process.env.AI_USAGE_PRODUCTION_SMOKE === '1';
   const fixture = fixtureRuntime ? createSourceControlE2EFixture() : undefined;
@@ -19,20 +19,6 @@ export default definePlugin((nitroApp) => {
     sources: fixture?.sources,
   });
   const uninstall = installWebSourceControlRuntime(runtime);
-  const startup = runtime.start();
-  if (productionSmoke) {
-    startup.then(
-      () => {
-        console.error('[ai-usage] Source control started.');
-      },
-      () => undefined,
-    );
-  }
-  startup.catch((error: unknown) => {
-    console.error(
-      `[ai-usage] Source control startup failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  });
 
   let shutdown: Promise<void> | undefined;
   const closeRuntime = (): Promise<void> => {
@@ -47,12 +33,14 @@ export default definePlugin((nitroApp) => {
     })();
     return shutdown;
   };
-  const closeAfterSignal = (): void => {
-    closeRuntime().catch((error: unknown) => {
+  const closeAfterSignal = async (): Promise<void> => {
+    try {
+      await closeRuntime();
+    } catch (error) {
       console.error(
         `[ai-usage] Source control shutdown failed: ${error instanceof Error ? error.message : String(error)}`,
       );
-    });
+    }
   };
 
   process.once('SIGINT', closeAfterSignal);
@@ -60,4 +48,15 @@ export default definePlugin((nitroApp) => {
   nitroApp.hooks.hook('close', async () => {
     await closeRuntime();
   });
+
+  try {
+    await runtime.start();
+    if (productionSmoke) {
+      console.error('[ai-usage] Source control started.');
+    }
+  } catch (error) {
+    console.error(
+      `[ai-usage] Source control startup failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 });

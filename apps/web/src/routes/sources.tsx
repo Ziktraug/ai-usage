@@ -65,7 +65,7 @@ const sourceId = css({ color: 'muted', fontFamily: 'mono', fontSize: '11px', ove
 const sourceBadges = css({ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'flex-end' });
 const axes = css({
   display: 'grid',
-  gridTemplateColumns: { base: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(4, minmax(0, 1fr))' },
+  gridTemplateColumns: { base: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(5, minmax(0, 1fr))' },
   gap: '8px',
 });
 const axis = css({ display: 'grid', gap: '3px', minW: 0 });
@@ -154,6 +154,10 @@ const SourceCard = (props: {
         <div class={axis}>
           <span class={axisLabel}>Availability</span>
           <span class={axisValue}>{props.source.availability}</span>
+        </div>
+        <div class={axis}>
+          <span class={axisLabel}>Lifecycle</span>
+          <span class={axisValue}>{props.source.lifecycle}</span>
         </div>
         <div class={axis}>
           <span class={axisLabel}>Last outcome</span>

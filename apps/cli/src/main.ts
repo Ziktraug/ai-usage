@@ -7,14 +7,10 @@ import { ensureMachineConfig, writeMachineConfig } from '@ai-usage/local-collect
 import { deserializeUsageRow, type UsageReportWarning } from '@ai-usage/report-core/report-data';
 import type { UsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { serializeUsageSnapshot } from '@ai-usage/report-core/snapshot';
+import { createStoredReportPayload, createStoredUsageSnapshot, type ProjectSource } from '@ai-usage/report-data';
 import {
-  createMergedUsageReport,
-  createStoredReportPayload,
-  createStoredUsageSnapshot,
-  listProjectSourcesWithWarnings,
-  type ProjectSource,
-} from '@ai-usage/report-data';
-import {
+  createMergedUsageReportWithFreshLocal,
+  listProjectSourcesWithFreshLocalWarnings,
   type OneShotExecutionResult,
   runOneShotLocalSources,
   runOneShotQuotaAndReadLatest,
@@ -91,7 +87,7 @@ export const app = Effect.gen(function* () {
     for (const file of command.args.files) {
       snapshots.push(yield* readUsageSnapshotFile(file));
     }
-    const merged = yield* createMergedUsageReport({
+    const merged = yield* createMergedUsageReportWithFreshLocal({
       snapshots,
       includeLocal: command.args.local,
       harness: command.args.harness,
@@ -112,7 +108,7 @@ export const app = Effect.gen(function* () {
     for (const file of command.args.files) {
       snapshots.push(yield* readUsageSnapshotFile(file));
     }
-    const { sources, warnings } = yield* listProjectSourcesWithWarnings({
+    const { sources, warnings } = yield* listProjectSourcesWithFreshLocalWarnings({
       snapshots,
       includeLocal: command.args.local,
       harness: null,
