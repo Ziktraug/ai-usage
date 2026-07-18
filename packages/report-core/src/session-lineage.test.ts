@@ -66,6 +66,20 @@ describe('normalizeSessionLineage', () => {
     expect(normalized[1]?.source.rootSourceSessionId).toBe('b');
   });
 
+  test('treats a self-parented row as the root of its children', () => {
+    const normalized = normalizeSessionLineage([
+      row('root', {
+        source: { harnessKey: 'codex', sourceSessionId: 'root', parentSourceSessionId: 'root' },
+      }),
+      row('child', {
+        source: { harnessKey: 'codex', sourceSessionId: 'child', parentSourceSessionId: 'root' },
+      }),
+    ]);
+
+    expect(normalized[0]?.source.rootSourceSessionId).toBe('root');
+    expect(normalized[1]?.source.rootSourceSessionId).toBe('root');
+  });
+
   test('groups identity by machine and harness to avoid source id collisions', () => {
     const normalized = normalizeSessionLineage([
       row('parent', { source: { harnessKey: 'codex', sourceSessionId: 'parent', machineId: 'a' } }),
