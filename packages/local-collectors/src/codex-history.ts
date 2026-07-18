@@ -19,6 +19,7 @@ import { base, safeJSON, usablePrompt } from './text';
 
 interface CodexSession {
   agentNickname: string | null;
+  beganWithPriorTokenUsage: boolean;
   cwd: string | null;
   end: Date | null;
   firstUser: string | null;
@@ -132,7 +133,7 @@ interface SqliteDatabase {
   query(sql: string): SqliteStatement;
 }
 
-const CODEX_SESSION_CACHE_VERSION = 5;
+const CODEX_SESSION_CACHE_VERSION = 7;
 
 export const codexSessionsDir = (storage: LocalHistoryStorageService) => {
   const paths = resolvePaths(storage);
@@ -320,6 +321,7 @@ const readCodexThreadMetadata: Effect.Effect<
 const emptySession = (): CodexSession => ({
   id: null,
   parent: null,
+  beganWithPriorTokenUsage: false,
   rejectedMetricRecords: 0,
   start: null,
   end: null,
@@ -434,7 +436,8 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       (value.end !== null && end === null) ||
       typeof value.model !== 'string' ||
       typeof value.subscription !== 'boolean' ||
-      typeof value.hasTokenUsage !== 'boolean'
+      typeof value.hasTokenUsage !== 'boolean' ||
+      typeof value.beganWithPriorTokenUsage !== 'boolean'
     ) {
       return null;
     }
@@ -445,6 +448,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
     return {
       id: typeof value.id === 'string' ? value.id : null,
       parent: typeof value.parent === 'string' ? value.parent : null,
+      beganWithPriorTokenUsage: value.beganWithPriorTokenUsage,
       start,
       end,
       cwd: typeof value.cwd === 'string' ? value.cwd : null,
@@ -594,7 +598,7 @@ const createCodexSessionParser = () => {
     }
 
     const payload = isRecord(event.payload) ? event.payload : {};
-    if (event.type === 'session_meta') {
+    if (event.type === 'session_meta' && !session.id) {
       session.id = typeof payload.id === 'string' ? payload.id : session.id;
       session.cwd = typeof payload.cwd === 'string' ? payload.cwd : session.cwd;
       session.source = payload.source == null ? session.source : JSON.stringify(payload.source);
@@ -631,6 +635,11 @@ const createCodexSessionParser = () => {
         session.rejectedMetricRecords++;
         return;
       }
+      if (!session.hasTokenUsage) {
+        const lastUsage = isRecord(info?.last_token_usage) ? info.last_token_usage : null;
+        const lastTotal = parseNonNegativeSafeInteger(lastUsage?.total_tokens);
+        session.beganWithPriorTokenUsage = lastTotal.ok && total.value > lastTotal.value;
+      }
       if (total.value > session.maxTotal) {
         session.hasTokenUsage = true;
         session.maxTotal = total.value;
@@ -654,9 +663,16 @@ const createCodexSessionParser = () => {
   };
 };
 
+const removeSelfParent = (session: CodexSession): CodexSession => {
+  if (session.id && session.parent === session.id) {
+    session.parent = null;
+  }
+  return session;
+};
+
 const mergeMetadata = (session: CodexSession, metadata: CodexThreadMetadata | undefined) => {
   if (!metadata) {
-    return session;
+    return removeSelfParent(session);
   }
   session.parent = session.parent ?? metadata.parent;
   session.start = session.start ?? metadata.start;
@@ -667,7 +683,7 @@ const mergeMetadata = (session: CodexSession, metadata: CodexThreadMetadata | un
   session.threadSource = session.threadSource ?? metadata.threadSource;
   session.agentNickname = session.agentNickname ?? metadata.agentNickname;
   session.firstUser = session.firstUser ?? (metadata.firstUser ? usablePrompt(metadata.firstUser.slice(0, 200)) : null);
-  return session;
+  return removeSelfParent(session);
 };
 
 const isGuardianSession = (session: CodexSession, candidateName: string | null) =>
@@ -774,10 +790,10 @@ const readCodexSessions = (
               rejectedMetricRecords += parsed.rejectedMetricRecords;
               skippedLines += parsed.skippedLines;
               const session = parsed.session;
+              mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
               if (stat) {
                 parsedForCache.push({ filePath, session: { ...session }, stat });
               }
-              mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
               if (session.id || session.start) {
                 sessions.push(session);
               }
@@ -840,6 +856,49 @@ export interface CodexUsageSessionsResult {
   sessions: CollectedSession[];
 }
 
+const resolveCodexRootId = (session: CodexSession, sessionsById: ReadonlyMap<string, CodexSession>): string | null => {
+  const sourceSessionId = session.id;
+  if (!sourceSessionId) {
+    return null;
+  }
+
+  let current = session;
+  const seen = new Set<string>();
+  while (current.id) {
+    if (seen.has(current.id)) {
+      return sourceSessionId;
+    }
+    seen.add(current.id);
+    if (!current.parent) {
+      return current.id;
+    }
+    const parent = sessionsById.get(current.parent);
+    if (!parent) {
+      return sourceSessionId;
+    }
+    current = parent;
+  }
+  return sourceSessionId;
+};
+
+const sharedTokenUsageRoots = (
+  sessions: readonly CodexSession[],
+  sessionsById: ReadonlyMap<string, CodexSession>,
+): Set<string> => {
+  const roots = new Set<string>();
+  for (const session of sessions) {
+    if (!(session.parent && session.beganWithPriorTokenUsage)) {
+      continue;
+    }
+    const rootId = resolveCodexRootId(session, sessionsById);
+    const root = rootId ? sessionsById.get(rootId) : undefined;
+    if (rootId && root && root.id !== session.id && root.hasTokenUsage && root.maxTotal >= session.maxTotal) {
+      roots.add(rootId);
+    }
+  }
+  return roots;
+};
+
 export const readCodexUsageSessionsResult: Effect.Effect<
   CodexUsageSessionsResult,
   LocalHistoryError,
@@ -856,6 +915,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
         byId.set(session.id, session);
       }
     }
+    const sharedUsageRoots = sharedTokenUsageRoots(sessions, byId);
 
     const children = new Map<string, CodexSession[]>();
     const childIds = new Set<string>();
@@ -882,6 +942,16 @@ export const readCodexUsageSessionsResult: Effect.Effect<
       const parentSession = session.parent ? byId.get(session.parent) : undefined;
       const subscription = session.subscription || Boolean(parentSession?.subscription);
       const indexedName = session.id ? names.get(session.id) : undefined;
+      const rootId = resolveCodexRootId(session, byId);
+      const rootSession = rootId ? byId.get(rootId) : undefined;
+      const usageOwnedByRoot = Boolean(
+        session.id &&
+          rootId &&
+          session.id !== rootId &&
+          sharedUsageRoots.has(rootId) &&
+          rootSession &&
+          rootSession.maxTotal >= session.maxTotal,
+      );
       usageSessions.push({
         source: {
           harnessKey: 'codex',
@@ -897,7 +967,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
         name: codexSessionName(session, indexedName, meta),
         titleSource: codexTitleSource(session, indexedName, meta, isSubagent),
         project: base(session.cwd),
-        tokens,
+        tokens: usageOwnedByRoot ? { cr: 0, cw: 0, in: 0, out: 0 } : tokens,
         cost: subscription ? actualCost(0) : approximateApiCost,
         calls: 1,
         turns: session.turns,
@@ -905,7 +975,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
         linesAdded: null,
         linesDeleted: null,
         subagent: isSubagent || kids.length > 0,
-        usageUnavailable: !session.hasTokenUsage,
+        usageUnavailable: usageOwnedByRoot || !session.hasTokenUsage,
       });
     }
 

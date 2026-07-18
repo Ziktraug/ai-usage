@@ -267,6 +267,171 @@ describe('Codex local history', () => {
     expect(rows[1]?.usageUnavailable).toBe(false);
   });
 
+  test('attributes a shared cumulative token stream only to the campaign root', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/shared-parent.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'shared-parent', cwd: '/work/shared-project' },
+        },
+        {
+          timestamp: '2026-01-01T00:01:00.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              last_token_usage: {
+                total_tokens: 10,
+                input_tokens: 8,
+                cached_input_tokens: 6,
+                output_tokens: 2,
+              },
+              total_token_usage: {
+                total_tokens: 10,
+                input_tokens: 8,
+                cached_input_tokens: 6,
+                output_tokens: 2,
+              },
+            },
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:10:00.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              last_token_usage: {
+                total_tokens: 10,
+                input_tokens: 8,
+                cached_input_tokens: 6,
+                output_tokens: 2,
+              },
+              total_token_usage: {
+                total_tokens: 100,
+                input_tokens: 80,
+                cached_input_tokens: 60,
+                output_tokens: 20,
+              },
+            },
+          },
+        },
+      ),
+    );
+    storage.writeText(
+      '.codex/sessions/2026/shared-child-a.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:02:00.000Z',
+          type: 'session_meta',
+          payload: {
+            id: 'shared-child-a',
+            cwd: '/work/shared-project',
+            source: { subagent: { thread_spawn: { parent_thread_id: 'shared-parent' } } },
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:02:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'shared-parent', cwd: '/work/shared-project', source: 'vscode' },
+        },
+        {
+          timestamp: '2026-01-01T00:03:00.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              last_token_usage: {
+                total_tokens: 10,
+                input_tokens: 8,
+                cached_input_tokens: 6,
+                output_tokens: 2,
+              },
+              total_token_usage: {
+                total_tokens: 50,
+                input_tokens: 40,
+                cached_input_tokens: 30,
+                output_tokens: 10,
+              },
+            },
+          },
+        },
+      ),
+    );
+    storage.writeText(
+      '.codex/sessions/2026/shared-child-b.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:04:00.000Z',
+          type: 'session_meta',
+          payload: {
+            id: 'shared-child-b',
+            cwd: '/work/shared-project',
+            source: { subagent: { thread_spawn: { parent_thread_id: 'shared-parent' } } },
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:04:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'shared-parent', cwd: '/work/shared-project', source: 'vscode' },
+        },
+        {
+          timestamp: '2026-01-01T00:05:00.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              last_token_usage: {
+                total_tokens: 10,
+                input_tokens: 8,
+                cached_input_tokens: 6,
+                output_tokens: 2,
+              },
+              total_token_usage: {
+                total_tokens: 10,
+                input_tokens: 8,
+                cached_input_tokens: 6,
+                output_tokens: 2,
+              },
+            },
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:09:00.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              last_token_usage: {
+                total_tokens: 10,
+                input_tokens: 8,
+                cached_input_tokens: 6,
+                output_tokens: 2,
+              },
+              total_token_usage: {
+                total_tokens: 90,
+                input_tokens: 72,
+                cached_input_tokens: 54,
+                output_tokens: 18,
+              },
+            },
+          },
+        },
+      ),
+    );
+
+    const sessions = runWithStorage(readCodexUsageSessions, storage);
+    const parent = sessions.find((session) => session.source.sourceSessionId === 'shared-parent');
+    const children = sessions.filter((session) => session.source.parentSourceSessionId === 'shared-parent');
+
+    expect(parent?.tokens).toEqual({ cr: 60, cw: 0, in: 20, out: 20 });
+    expect(parent?.usageUnavailable).toBe(false);
+    expect(children).toHaveLength(2);
+    expect(children.map((session) => session.tokens)).toEqual([
+      { cr: 0, cw: 0, in: 0, out: 0 },
+      { cr: 0, cw: 0, in: 0, out: 0 },
+    ]);
+    expect(children.every((session) => session.usageUnavailable)).toBe(true);
+  });
+
   test('collects sessions whose aggregate metadata exceeds the former 2 GiB ceiling', () => {
     const storage = new LargeAggregateCodexStorage();
     const sessionIds = ['large-one', 'large-two', 'large-three', 'large-four'];
