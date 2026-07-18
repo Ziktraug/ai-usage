@@ -4,12 +4,14 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import { Effect } from 'effect';
+import { formatLocalHistoryError } from './errors';
 import { createLocalHistoryStorage, LocalHistoryStorage } from './local-history';
 import {
   aiUsageConfigPath,
   machineConfigPath,
   readAiUsageConfig,
   readMergedAiUsageConfigFrom,
+  setSourcePolicyOverride,
   updateAiUsageConfig,
 } from './machine-config';
 
@@ -460,6 +462,103 @@ describe('machine config', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('persists only non-default home source policy overrides', async () => {
+    const home = await mkdtemp('ai-usage-source-policy-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      const runSetPolicy = (enabled: boolean | undefined) =>
+        Effect.runPromise(
+          setSourcePolicyOverride('codex.sessions', enabled).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+        );
+
+      await runSetPolicy(false);
+      expect(JSON.parse(readFileSync(aiUsageConfigPath(storage), 'utf8')).sourcePolicies).toEqual({
+        'codex.sessions': { enabled: false },
+      });
+
+      await runSetPolicy(true);
+      const resetConfig = JSON.parse(readFileSync(aiUsageConfigPath(storage), 'utf8')) as Record<string, unknown>;
+      expect(Object.hasOwn(resetConfig, 'sourcePolicies')).toBe(false);
+      if (process.platform !== 'win32') {
+        expect(lstatSync(aiUsageConfigPath(storage)).mode % 0o1000).toBe(0o600);
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('preserves unrelated config across concurrent source policy mutations', async () => {
+    const home = await mkdtemp('ai-usage-source-policy-concurrent-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      await Effect.runPromise(
+        updateAiUsageConfig(() => ({
+          cursor: { clusterGapMs: 1234 },
+          projectAliases: [{ match: ['/work/alpha'], name: 'alpha' }],
+        })).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      await Promise.all([
+        Effect.runPromise(
+          setSourcePolicyOverride('codex.sessions', false).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+        ),
+        Effect.runPromise(
+          setSourcePolicyOverride('rtk.savings', false).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+        ),
+      ]);
+
+      const config = await Effect.runPromise(
+        readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      expect(config.sourcePolicies).toEqual({
+        'codex.sessions': { enabled: false },
+        'rtk.savings': { enabled: false },
+      });
+      expect(config.cursor?.clusterGapMs).toBe(1234);
+      expect(config.projectAliases).toEqual([{ match: ['/work/alpha'], name: 'alpha' }]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects source policy in repository configuration', async () => {
+    const home = await mkdtemp('ai-usage-source-policy-home-');
+    const repo = await mkdtemp('ai-usage-source-policy-repo-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      writeFileSync(
+        path.join(repo, 'ai-usage.config.ts'),
+        "export default { sourcePolicies: { 'codex.sessions': { enabled: false } } };\n",
+      );
+
+      const error = await Effect.runPromise(
+        readMergedAiUsageConfigFrom(repo).pipe(Effect.provideService(LocalHistoryStorage, storage), Effect.flip),
+      );
+      expect(formatLocalHistoryError(error)).toContain('sourcePolicies may only be configured in the user home config');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects unknown source policy ids in home configuration', async () => {
+    const home = await mkdtemp('ai-usage-source-policy-invalid-');
+    try {
+      const storage = createLocalHistoryStorage(home);
+      mkdirSync(path.dirname(aiUsageConfigPath(storage)), { recursive: true });
+      writeFileSync(
+        aiUsageConfigPath(storage),
+        JSON.stringify({ sourcePolicies: { 'cursor.sqlite': { enabled: false } } }),
+      );
+
+      await expect(
+        Effect.runPromise(readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage))),
+      ).rejects.toThrow('Invalid ai-usage config');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
     }
   });
 });

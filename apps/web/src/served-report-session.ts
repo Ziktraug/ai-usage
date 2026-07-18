@@ -3,16 +3,12 @@ export interface ServedRevisionDescriptor {
   revision: string;
 }
 
-export interface ServedReportRefreshOptions {
-  refreshRevision?: boolean;
-}
-
 export interface ServedReportSessionAdapter<
   Destination,
   Prepared,
   Descriptor extends ServedRevisionDescriptor = ServedRevisionDescriptor,
 > {
-  acquire(options: ServedReportRefreshOptions): Promise<Descriptor>;
+  acquire(): Promise<Descriptor>;
   commit(prepared: Prepared, descriptor: Descriptor, destination: Destination): void;
   destinationFingerprint(destination: Destination): string;
   isRevisionExpired(error: unknown): boolean;
@@ -30,10 +26,7 @@ export interface ServedReportSession<
   Descriptor extends ServedRevisionDescriptor = ServedRevisionDescriptor,
 > {
   abort(): void;
-  refresh(
-    destination: Destination,
-    options?: ServedReportRefreshOptions,
-  ): Promise<ServedReportRefreshOutcome<Descriptor>>;
+  refresh(destination: Destination): Promise<ServedReportRefreshOutcome<Descriptor>>;
 }
 
 /** Owns exact-revision acquisition, one expiry retry, supersession, and atomic destination commit. */
@@ -51,15 +44,12 @@ export const createServedReportSession = <
     requestId += 1;
   };
 
-  const refresh = async (
-    destination: Destination,
-    options: ServedReportRefreshOptions = {},
-  ): Promise<ServedReportRefreshOutcome<Descriptor>> => {
+  const refresh = async (destination: Destination): Promise<ServedReportRefreshOutcome<Descriptor>> => {
     const currentRequestId = ++requestId;
     const destinationFingerprint = adapter.destinationFingerprint(destination);
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const descriptor = await adapter.acquire(attempt === 0 ? options : {});
+        const descriptor = await adapter.acquire();
         if (currentRequestId !== requestId) {
           return { status: 'superseded' };
         }

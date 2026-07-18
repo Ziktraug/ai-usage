@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SyncRouteImport } from './routes/sync'
+import { Route as SourcesRouteImport } from './routes/sources'
 import { Route as SkillsRouteImport } from './routes/skills'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SkillsMatrixRouteImport } from './routes/skills.matrix'
@@ -21,6 +22,11 @@ import { Route as SkillsProjectsProjectKeySkillNameRouteImport } from './routes/
 const SyncRoute = SyncRouteImport.update({
   id: '/sync',
   path: '/sync',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SourcesRoute = SourcesRouteImport.update({
+  id: '/sources',
+  path: '/sources',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SkillsRoute = SkillsRouteImport.update({
@@ -64,6 +70,7 @@ const SkillsProjectsProjectKeySkillNameRoute =
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/skills': typeof SkillsRouteWithChildren
+  '/sources': typeof SourcesRoute
   '/sync': typeof SyncRoute
   '/skills/global': typeof SkillsGlobalRouteWithChildren
   '/skills/matrix': typeof SkillsMatrixRoute
@@ -74,6 +81,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/skills': typeof SkillsRouteWithChildren
+  '/sources': typeof SourcesRoute
   '/sync': typeof SyncRoute
   '/skills/global': typeof SkillsGlobalRouteWithChildren
   '/skills/matrix': typeof SkillsMatrixRoute
@@ -85,6 +93,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/skills': typeof SkillsRouteWithChildren
+  '/sources': typeof SourcesRoute
   '/sync': typeof SyncRoute
   '/skills/global': typeof SkillsGlobalRouteWithChildren
   '/skills/matrix': typeof SkillsMatrixRoute
@@ -97,6 +106,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/skills'
+    | '/sources'
     | '/sync'
     | '/skills/global'
     | '/skills/matrix'
@@ -107,6 +117,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/skills'
+    | '/sources'
     | '/sync'
     | '/skills/global'
     | '/skills/matrix'
@@ -117,6 +128,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/skills'
+    | '/sources'
     | '/sync'
     | '/skills/global'
     | '/skills/matrix'
@@ -128,6 +140,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SkillsRoute: typeof SkillsRouteWithChildren
+  SourcesRoute: typeof SourcesRoute
   SyncRoute: typeof SyncRoute
 }
 
@@ -138,6 +151,13 @@ declare module '@tanstack/solid-router' {
       path: '/sync'
       fullPath: '/sync'
       preLoaderRoute: typeof SyncRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/sources': {
+      id: '/sources'
+      path: '/sources'
+      fullPath: '/sources'
+      preLoaderRoute: typeof SourcesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/skills': {
@@ -237,6 +257,7 @@ const SkillsRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SkillsRoute: SkillsRouteWithChildren,
+  SourcesRoute: SourcesRoute,
   SyncRoute: SyncRoute,
 }
 export const routeTree = rootRouteImport

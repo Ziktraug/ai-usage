@@ -26,7 +26,7 @@ const resolveRootSourceSessionId = (
     seen.add(currentSourceId);
 
     const parentSourceId = current.source?.parentSourceSessionId ?? null;
-    if (!parentSourceId) {
+    if (!parentSourceId || parentSourceId === currentSourceId) {
       return currentSourceId;
     }
 

@@ -1,20 +1,11 @@
-import {
-  type CodexQuotaWindow,
-  findLatestCodexQuotaSnapshot,
-  hasCodexHistory,
-} from '@ai-usage/local-collectors/codex-history';
-import { Effect } from 'effect';
+import type { ProviderLimitWindow, ProviderStatus } from '@ai-usage/report-core/provider-status';
 import { clr } from './render/colors';
 import { fmtDate, pad } from './render/format';
 
-export const renderQuota = Effect.gen(function* () {
-  if (!(yield* hasCodexHistory)) {
-    return 'No Codex data found at ~/.codex/sessions';
-  }
-
-  const latest = yield* findLatestCodexQuotaSnapshot();
+export const renderQuota = (providers: readonly ProviderStatus[]): string => {
+  const latest = providers[0];
   if (!latest) {
-    return 'No quota (rate_limits) snapshot found in recent Codex sessions.';
+    return 'No stored Codex usage-limit observation is available.';
   }
 
   const bar = (pct: number) => {
@@ -24,33 +15,36 @@ export const renderQuota = Effect.gen(function* () {
   };
   const lines = [
     clr.bold('═══ Codex subscription quota ═══'),
-    `  plan: ${clr.cyan(latest.planType)}   ${clr.dim(`snapshot ${fmtDate(latest.ts)}`)}`,
+    `  plan: ${clr.cyan(latest.plan ?? 'unknown')}   ${clr.dim(`observed ${fmtDate(new Date(latest.generatedAt))}`)}`,
   ];
-  const win = (label: string, window: CodexQuotaWindow | null) => {
-    if (!window) {
-      return;
-    }
-    const span =
-      window.windowMinutes >= 1440
-        ? `${Math.round(window.windowMinutes / 1440)}d`
-        : `${Math.round(window.windowMinutes / 60)}h`;
+  const win = (window: ProviderLimitWindow) => {
+    const usedPercent = window.usedPercent ?? (window.remainingPercent === null ? 0 : 100 - window.remainingPercent);
+    const span = quotaWindowSpan(window);
     lines.push(
-      `  ${pad(`${label} (${span})`, 12)} ${bar(window.usedPercent)} ${clr.bold(`${window.usedPercent.toFixed(0)}%`)}` +
-        (window.resetsAt ? clr.dim(`  resets ${fmtDate(window.resetsAt)}`) : ''),
+      `  ${pad(`${window.label} (${span})`, 18)} ${bar(usedPercent)} ${clr.bold(`${usedPercent.toFixed(0)}%`)}` +
+        (window.resetsAt ? clr.dim(`  resets ${fmtDate(new Date(window.resetsAt))}`) : ''),
     );
   };
-  win('5-hour', latest.primary);
-  win('weekly', latest.secondary);
-  if (latest.credits != null) {
-    lines.push(`  credits: ${latest.credits}`);
+  for (const window of latest.windows) {
+    win(window);
   }
   lines.push(
     clr.dim(
-      '\n  From the newest local token_count.rate_limits event (Codex CLI/VSCode). Claude/OpenCode/Cursor expose no local quota.',
+      '\n  From the newest durable Codex usage-limit observation. Claude/OpenCode/Cursor expose no equivalent source.',
     ),
   );
   return lines.join('\n');
-});
+};
+
+const quotaWindowSpan = (window: ProviderLimitWindow): string => {
+  if (window.limitSeconds === null) {
+    return window.label;
+  }
+  if (window.limitSeconds >= 86_400) {
+    return `${Math.round(window.limitSeconds / 86_400)}d`;
+  }
+  return `${Math.round(window.limitSeconds / 3600)}h`;
+};
 
 const quotaColor = (pct: number) => {
   if (pct >= 90) {

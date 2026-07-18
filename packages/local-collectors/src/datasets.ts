@@ -1,4 +1,5 @@
-import type { CursorCommitAttributionRow, ReportDatasets } from '@ai-usage/report-core/datasets';
+import { createHash } from 'node:crypto';
+import type { CursorCommitAttributionRow, NormalizedDatasetItem, ReportDatasets } from '@ai-usage/report-core/datasets';
 import {
   createProviderStatusDataset,
   type ProviderStatus,
@@ -26,6 +27,24 @@ export interface HarnessDatasetsResult {
   datasets: HarnessDatasets;
   warnings: LocalHistoryWarning[];
 }
+
+export const cursorCommitAttributionItemKey = (row: Pick<CursorCommitAttributionRow, 'branchName' | 'commitHash'>) =>
+  createHash('sha256')
+    .update(JSON.stringify([row.commitHash, row.branchName]))
+    .digest('hex');
+
+export const normalizeCursorCommitAttributionItems = (
+  machineId: string,
+  rows: readonly CursorCommitAttributionRow[],
+): NormalizedDatasetItem[] =>
+  rows.map((payload) => ({
+    datasetKey: 'cursor.commit-attribution',
+    itemKey: cursorCommitAttributionItemKey(payload),
+    machineId,
+    payload,
+    schemaVersion: 1,
+    sourceId: 'cursor.commit-attribution',
+  }));
 
 export const mirrorDatasetsToLegacyFacets = (datasets: ReportDatasets | undefined): HarnessFacets | undefined => {
   if (!datasets?.cursorCommitAttribution?.length) {

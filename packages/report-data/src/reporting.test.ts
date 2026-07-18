@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import { writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
+import type { CursorCommitAttributionRow } from '@ai-usage/report-core/datasets';
 import { createUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import { createProviderStatusDataset } from '@ai-usage/report-core/provider-status';
 import { createUsageSnapshot, type UsageMachine } from '@ai-usage/report-core/snapshot';
@@ -19,10 +20,16 @@ import {
   createMergedUsageReport,
   createStoredReportPayload,
   listProjectSources,
-  listProjectSourcesWithWarnings,
   parseGitConfigRemote,
+  persistCursorCommitAttribution,
+  readStoredCursorCommitAttribution,
   readStoredReportSourceFingerprint,
 } from './index';
+import {
+  createMergedUsageReportWithFreshLocal,
+  listProjectSourcesWithFreshLocalWarnings,
+  runOneShotLocalSources,
+} from './one-shot-sources';
 
 const defaultOptions = {
   since: null,
@@ -122,7 +129,76 @@ const makeSourcedRow = (input: {
 });
 
 describe('shared reporting', () => {
-  test('discovers project sources from local rows only and collects once when only imported rows are stored', async () => {
+  test('round-trips Cursor attribution through normalized dataset storage without replacing history', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-cursor-dataset-'));
+    try {
+      const dbPath = usageStorePath(home);
+      const row: CursorCommitAttributionRow = {
+        blankLinesAdded: 0,
+        blankLinesDeleted: 0,
+        branchName: 'main',
+        commitDate: null,
+        commitHash: 'abc123',
+        commitMessage: 'Add source control',
+        composerLinesAdded: 3,
+        composerLinesDeleted: 0,
+        humanLinesAdded: 2,
+        humanLinesDeleted: 0,
+        linesAdded: 5,
+        linesDeleted: 0,
+        scoredAt: '2026-07-16T10:00:00.000Z',
+        tabLinesAdded: 0,
+        tabLinesDeleted: 0,
+        v1AiPercentage: 60,
+        v2AiPercentage: 60,
+      };
+
+      expect(
+        await Effect.runPromise(
+          persistCursorCommitAttribution({
+            dbPath,
+            machineId: testMachine.id,
+            rows: [row],
+          }),
+        ),
+      ).toMatchObject({ inserted: 1, unchanged: 0, updated: 0 });
+      await Effect.runPromise(
+        persistCursorCommitAttribution({
+          dbPath,
+          machineId: testMachine.id,
+          rows: [],
+        }),
+      );
+      const storage = createLocalHistoryStorage(home);
+      await Effect.runPromise(
+        writeMachineConfig(testMachine).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      const rawAttributionPath = path.join(home, '.cursor', 'ai-tracking', 'ai-code-tracking.db');
+      mkdirSync(path.dirname(rawAttributionPath), { recursive: true });
+      writeFileSync(rawAttributionPath, 'not a sqlite database');
+      const payload = await Effect.runPromise(
+        createStoredReportPayload({
+          generatedAt: new Date('2026-07-16T11:00:00.000Z'),
+          harness: null,
+          includeCursor: true,
+          includeFacets: true,
+          options: defaultOptions,
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(await Effect.runPromise(readStoredCursorCommitAttribution({ dbPath }))).toEqual({
+        rows: [row],
+        skipped: 0,
+        truncated: false,
+      });
+      expect(payload.datasets?.cursorCommitAttribution).toEqual([row]);
+      expect(payload.warnings ?? []).toHaveLength(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps project-source reads stored-only until an explicit one-shot collection runs', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-known-local-projects-'));
     const localProjectPath = mkdtempSync(path.join(tmpdir(), 'ai-usage-known-local-project-'));
     try {
@@ -142,13 +218,27 @@ describe('shared reporting', () => {
         }),
       );
 
-      const result = await Effect.runPromise(
+      const beforeCollection = await Effect.runPromise(
         createKnownLocalProjectSources({ harness: 'claude', includeCursor: false }).pipe(
           Effect.provideService(LocalHistoryStorage, storage),
         ),
       );
 
-      expect(result.sources).toEqual([
+      expect(beforeCollection.sources).toEqual([]);
+      expect(beforeCollection.projectGroups).toEqual([]);
+
+      await Effect.runPromise(
+        runOneShotLocalSources({ harness: 'claude', includeCursor: false }).pipe(
+          Effect.provideService(LocalHistoryStorage, storage),
+        ),
+      );
+      const afterCollection = await Effect.runPromise(
+        createKnownLocalProjectSources({ harness: 'claude', includeCursor: false }).pipe(
+          Effect.provideService(LocalHistoryStorage, storage),
+        ),
+      );
+
+      expect(afterCollection.sources).toEqual([
         expect.objectContaining({
           machineId: testMachine.id,
           machine: testMachine.label,
@@ -157,15 +247,26 @@ describe('shared reporting', () => {
           sourcePath: localProjectPath,
         }),
       ]);
-      expect(result.projectGroups).toHaveLength(1);
-      expect(result.projectGroups[0]?.sources).toEqual([
+      expect(afterCollection.projectGroups).toHaveLength(1);
+      expect(afterCollection.projectGroups[0]?.sources).toEqual([
         expect.objectContaining({
           machineId: testMachine.id,
           sourcePath: localProjectPath,
         }),
       ]);
-      expect(JSON.stringify(result)).not.toContain('peer-machine');
-      expect(JSON.stringify(result)).not.toContain('/peer/project');
+      const freshProjectSources = await Effect.runPromise(
+        listProjectSourcesWithFreshLocalWarnings({
+          harness: 'claude',
+          includeCursor: false,
+          includeGitRemote: true,
+          includeLocal: true,
+          readGitFile: () => '[remote "origin"]\nurl = git@github.com:example/local.git',
+          snapshots: [],
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      expect(freshProjectSources.sources[0]?.gitRemote).toBe('example/local');
+      expect(JSON.stringify(afterCollection)).not.toContain('peer-machine');
+      expect(JSON.stringify(afterCollection)).not.toContain('/peer/project');
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(localProjectPath, { recursive: true, force: true });
@@ -505,7 +606,6 @@ describe('shared reporting', () => {
           harness: null,
           includeCursor: false,
           includeFacets: true,
-          includeLocal: false,
           snapshots: [snapshot],
           generatedAt: new Date('2026-01-01T00:00:00.000Z'),
           options: defaultOptions,
@@ -622,7 +722,6 @@ describe('shared reporting', () => {
       const merged = await Effect.runPromise(
         createMergedUsageReport({
           snapshots: [snapshot],
-          includeLocal: false,
           harness: null,
           includeCursor: false,
           options: defaultOptions,
@@ -772,7 +871,7 @@ describe('shared reporting', () => {
       );
 
       const merged = await Effect.runPromise(
-        createMergedUsageReport({
+        createMergedUsageReportWithFreshLocal({
           snapshots: [],
           includeLocal: true,
           harness: 'opencode',
@@ -783,7 +882,7 @@ describe('shared reporting', () => {
         }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
       );
       const projectSources = await Effect.runPromise(
-        listProjectSourcesWithWarnings({
+        listProjectSourcesWithFreshLocalWarnings({
           snapshots: [],
           includeLocal: true,
           harness: 'opencode',
@@ -796,9 +895,44 @@ describe('shared reporting', () => {
       expect(snapshot.warnings?.[0]?.harness).toBe('opencode');
       expect(snapshot.warnings?.[0]?.message).toContain('Failed to read OpenCode live database');
       expect(merged.payload.warnings?.[0]?.harness).toBe('opencode');
-      expect(merged.payload.warnings?.[0]?.message).toContain('Failed to read OpenCode live database');
+      expect(merged.payload.warnings?.[0]?.message).toContain('incomplete or rejected local record');
       expect(projectSources.sources).toHaveLength(0);
       expect(projectSources.warnings[0]?.harness).toBe('opencode');
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('fresh local merge and project discovery honor disabled source policy', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-policy-home-'));
+    try {
+      writeClaudeSession(home);
+      writeAiUsageConfig(home, { sourcePolicies: { 'claude.sessions': { enabled: false } } });
+      const storage = createLocalHistoryStorage(home);
+      const merged = await Effect.runPromise(
+        createMergedUsageReportWithFreshLocal({
+          harness: 'claude',
+          includeCursor: false,
+          includeLocal: true,
+          machine: testMachine,
+          options: defaultOptions,
+          snapshots: [],
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      const projects = await Effect.runPromise(
+        listProjectSourcesWithFreshLocalWarnings({
+          harness: 'claude',
+          includeCursor: false,
+          includeLocal: true,
+          machine: testMachine,
+          snapshots: [],
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(merged.rows).toHaveLength(0);
+      expect(merged.warnings.some((warning) => warning.operation === 'claude.sessions')).toBe(true);
+      expect(projects.sources).toHaveLength(0);
+      expect(projects.warnings.some((warning) => warning.operation === 'claude.sessions')).toBe(true);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -848,7 +982,6 @@ describe('shared reporting', () => {
       const merged = await Effect.runPromise(
         createMergedUsageReport({
           snapshots: [older, newer],
-          includeLocal: false,
           harness: null,
           includeCursor: false,
           configCwd,
@@ -895,7 +1028,6 @@ describe('shared reporting', () => {
       const sources = await Effect.runPromise(
         listProjectSources({
           snapshots: [snapshot],
-          includeLocal: false,
           harness: null,
           includeCursor: false,
           includeGitRemote: true,
@@ -948,7 +1080,6 @@ describe('shared reporting', () => {
       const sources = await Effect.runPromise(
         listProjectSources({
           snapshots: [snapshot],
-          includeLocal: false,
           harness: null,
           includeCursor: false,
           includeGitRemote: true,

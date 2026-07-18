@@ -21,12 +21,14 @@ import {
   titleBlock,
 } from '@ai-usage/design-system/report';
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
-import { createFileRoute, Link, useLocation } from '@tanstack/solid-router';
+import { createQuery } from '@tanstack/solid-query';
+import { ClientOnly, createFileRoute, Link, useLocation } from '@tanstack/solid-router';
 import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
+import { isServer } from 'solid-js/web';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
 import { DiscardConfirmationDialog } from '../discard-confirmation-dialog';
-import { getKnownSkillProjectPaths, getSkillManagementSnapshot, type KnownSkillProjectPath } from '../server/skills';
+import type { getKnownSkillProjectPaths, getSkillManagementSnapshot, KnownSkillProjectPath } from '../server/skills';
 import {
   buildSkillMatrix,
   count,
@@ -37,13 +39,9 @@ import {
 } from '../skills-page-model';
 import { createSkillsRouteController, type OperationNotice } from '../skills-route-controller';
 import { type ProjectInventoriesResult, type SkillMarkdownDraftGuard, SkillsWorkspace } from '../skills-workspace';
+import { loadSkillsInitialData, webQueryKeys } from '../web-query-options';
 
 export const Route = createFileRoute('/skills')({
-  staleTime: Number.POSITIVE_INFINITY,
-  loader: async () => {
-    const [knownProjectPaths, skills] = await Promise.all([getKnownSkillProjectPaths(), getSkillManagementSnapshot()]);
-    return { knownProjectPaths, skills };
-  },
   component: SkillsRoute,
 });
 
@@ -58,6 +56,13 @@ const pageStack = css({
 // header actions overflow the 390px viewport, so allow wrapping here.
 const headerWrap = css({
   flexWrap: 'wrap',
+});
+
+const headerActionsWrap = css({
+  flexWrap: 'wrap',
+  flexShrink: 1,
+  justifyContent: 'flex-end',
+  maxW: '100%',
 });
 
 const stack = css({
@@ -220,11 +225,60 @@ const knownProjectScopesFromPaths = (projects: readonly KnownSkillProjectPath[])
   return [...scopes.values()];
 };
 
+interface SkillsInitialData {
+  knownProjectPaths: Awaited<ReturnType<typeof getKnownSkillProjectPaths>>;
+  skills: Awaited<ReturnType<typeof getSkillManagementSnapshot>>;
+}
+
 function SkillsRoute() {
-  const data = Route.useLoaderData();
+  return (
+    <ClientOnly fallback={<SkillsLoadingShell />}>
+      <SkillsClientRoute />
+    </ClientOnly>
+  );
+}
+
+function SkillsLoadingShell() {
+  return (
+    <main class={page} data-hydrated="false">
+      <div class={shell}>
+        <header class={header}>
+          <div class={titleBlock}>
+            <h1 class={title}>Skill management</h1>
+            <div class={meta}>Loading skills…</div>
+          </div>
+        </header>
+      </div>
+    </main>
+  );
+}
+
+function SkillsClientRoute() {
   const location = useLocation();
   let refreshButtonElement: HTMLButtonElement | undefined;
-  const [hydrated, setHydrated] = createSignal(false);
+  const initialQuery = createQuery(() => ({
+    enabled: !isServer,
+    queryFn: loadSkillsInitialData,
+    queryKey: webQueryKeys.skillsInitial,
+  }));
+  const data = createMemo<SkillsInitialData>(() => {
+    if (initialQuery.data) {
+      return initialQuery.data;
+    }
+    const message =
+      initialQuery.error instanceof Error ? initialQuery.error.message : 'Skill data could not be loaded.';
+    const failure = {
+      error: {
+        message: initialQuery.isPending ? 'Loading…' : message,
+        tag: initialQuery.isPending ? 'Loading' : 'ClientReadError',
+      },
+      ok: false,
+    } as const;
+    return { knownProjectPaths: failure, skills: failure };
+  });
+  const [clientMounted, setClientMounted] = createSignal(false);
+  onMount(() => setClientMounted(true));
+  const hydrated = () => clientMounted() && !initialQuery.isPending;
   const [activeCellStateFilter, setActiveCellStateFilter] = createSignal<SkillCellStateFilter | undefined>();
   const controller = createSkillsRouteController(data);
   const {
@@ -244,6 +298,7 @@ function SkillsRoute() {
     pendingSnapshotReplacement,
     previewReconcile,
     projectInventories,
+    projectInventoriesLoading,
     projectPathDraft,
     projectPaths,
     reconcilePlan,
@@ -285,8 +340,6 @@ function SkillsRoute() {
 
   const routeSelection = createMemo(() => skillSelectionFromPath(location().pathname, selectionProjects()));
 
-  onMount(() => setHydrated(true));
-
   return (
     <main
       aria-busy={hydrated() ? undefined : 'true'}
@@ -310,7 +363,7 @@ function SkillsRoute() {
                 </Show>
               </div>
             </div>
-            <div class={headerActions}>
+            <div class={cx(headerActions, headerActionsWrap)}>
               <button
                 aria-busy={pendingOperation() === 'refresh-skills' ? 'true' : undefined}
                 class={navButton}
@@ -329,13 +382,26 @@ function SkillsRoute() {
               <Link class={navButton} to="/sync">
                 Sync
               </Link>
+              <Link class={navButton} to="/sources">
+                Sources
+              </Link>
               <ThemeToggle />
             </div>
           </div>
         </header>
 
         <div class={pageStack}>
-          <Show fallback={<ErrorPanel message={errorMessage()} />} when={result().ok}>
+          <Show
+            fallback={
+              <ErrorPanel
+                message={errorMessage()}
+                onRetry={() => {
+                  initialQuery.refetch().catch(() => undefined);
+                }}
+              />
+            }
+            when={result().ok}
+          >
             <Show
               fallback={
                 <UnconfiguredPanel
@@ -373,7 +439,7 @@ function SkillsRoute() {
                 operationNotice={operationNotice()}
                 pendingOperation={pendingOperation()}
                 projectInventories={projectInventories()}
-                projectInventoriesLoading={projectInventories.loading}
+                projectInventoriesLoading={projectInventoriesLoading()}
                 projectPathDraft={projectPathDraft()}
                 projectPaths={projectPaths()}
                 projectScopes={knownProjectScopesFromPaths(knownProjectPaths())}
@@ -809,12 +875,19 @@ function TargetsPanel(props: {
   );
 }
 
-function ErrorPanel(props: { message: string }) {
+function ErrorPanel(props: { message: string; onRetry?: () => void }) {
   return (
     <section class={panel}>
       <div class={panelHeader}>
         <h2 class={panelTitle}>Snapshot error</h2>
         <p class={panelSub}>{props.message}</p>
+        <Show when={props.onRetry}>
+          {(onRetry) => (
+            <button class={ghostButton} onClick={onRetry()} type="button">
+              Retry
+            </button>
+          )}
+        </Show>
       </div>
     </section>
   );

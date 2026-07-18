@@ -11,12 +11,9 @@ const createWorkspaceFixture = async () => {
   await mkdir(path.join(fixtureRoot, 'packages/report-data/src'), { recursive: true });
   await writeFile(path.join(fixtureRoot, 'package.json'), '{"workspaces":["packages/*"]}\n');
   await Promise.all(
-    [
-      'known-project-sources-runner.ts',
-      'report-payload-runner.ts',
-      'revision-query-runner.ts',
-      'session-query-materialize-runner.ts',
-    ].map((file) => writeFile(path.join(fixtureRoot, 'packages/report-data/src', file), 'export {};\n')),
+    ['known-project-sources-runner.ts', 'revision-query-runner.ts', 'session-query-materialize-runner.ts'].map((file) =>
+      writeFile(path.join(fixtureRoot, 'packages/report-data/src', file), 'export {};\n'),
+    ),
   );
   return fixtureRoot;
 };
@@ -29,7 +26,6 @@ describe('report runtime path resolution', () => {
     expect(fromRoot).toEqual({
       knownProjectSourcesRunner: path.join(repositoryRoot, 'packages/report-data/src/known-project-sources-runner.ts'),
       rootDir: repositoryRoot,
-      reportingPayloadRunner: path.join(repositoryRoot, 'packages/report-data/src/report-payload-runner.ts'),
       rootEnvPath: path.join(repositoryRoot, '.env'),
       revisionQueryRunner: path.join(repositoryRoot, 'packages/report-data/src/revision-query-runner.ts'),
       sessionQueryMaterializeRunner: path.join(
@@ -48,7 +44,6 @@ describe('report runtime path resolution', () => {
       const expected = {
         knownProjectSourcesRunner: path.join(fixtureRoot, 'packages/report-data/src/known-project-sources-runner.ts'),
         rootDir: fixtureRoot,
-        reportingPayloadRunner: path.join(fixtureRoot, 'packages/report-data/src/report-payload-runner.ts'),
         rootEnvPath: path.join(fixtureRoot, '.env'),
         revisionQueryRunner: path.join(fixtureRoot, 'packages/report-data/src/revision-query-runner.ts'),
         sessionQueryMaterializeRunner: path.join(
@@ -64,17 +59,17 @@ describe('report runtime path resolution', () => {
     }
   });
 
-  test('rejects configured roots that are invalid or missing the regular runner file', async () => {
+  test('rejects configured roots that are invalid or missing a required runner file', async () => {
     const fixtureRoot = await createWorkspaceFixture();
     const missingRoot = path.join(fixtureRoot, 'missing');
     try {
-      await rm(path.join(fixtureRoot, 'packages/report-data/src/report-payload-runner.ts'));
+      await rm(path.join(fixtureRoot, 'package.json'));
 
       expect(() => resolveReportRuntimePaths({ cwd: repositoryRoot, configuredRoot: missingRoot })).toThrow(
         missingRoot,
       );
       expect(() => resolveReportRuntimePaths({ cwd: repositoryRoot, configuredRoot: fixtureRoot })).toThrow(
-        path.join(fixtureRoot, 'packages/report-data/src/report-payload-runner.ts'),
+        path.join(fixtureRoot, 'package.json'),
       );
     } finally {
       await rm(fixtureRoot, { force: true, recursive: true });

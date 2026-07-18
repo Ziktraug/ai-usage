@@ -7,12 +7,13 @@ import {
   collectSelectedHarnessRows,
   type HarnessSelection,
   mirrorDatasetsToLegacyFacets,
+  normalizeCursorCommitAttributionItems,
   type SelectedHarnessCollectionResult,
 } from '@ai-usage/local-collectors';
 import { LocalHistoryError, type LocalHistoryWarning } from '@ai-usage/local-collectors/errors';
 import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-collectors/machine-config';
-import type { ReportDatasets } from '@ai-usage/report-core/datasets';
+import type { CursorCommitAttributionRow, ReportDatasets } from '@ai-usage/report-core/datasets';
 import { type HarnessKey, harnessKeys } from '@ai-usage/report-core/harness-metadata';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import {
@@ -49,7 +50,9 @@ import type { Row, SourcedRow } from '@ai-usage/report-core/types';
 import { usageRowLineDelta, usageRowPricedCost, usageRowTokenTotal } from '@ai-usage/report-core/usage-row';
 import {
   importLocalRows,
+  importNormalizedDatasetItems,
   queryLatestProviderQuotaObservations,
+  queryNormalizedDatasetItems,
   queryReportRows,
   queryUsageStoreGeneration,
   type StoredSourceAuthority,
@@ -115,6 +118,41 @@ export interface ReportDatasetSelection {
   includeProviderStatus?: boolean;
 }
 
+export interface PersistCursorCommitAttributionInput {
+  dbPath: string;
+  importedAt?: Date;
+  machineId: string;
+  rows: readonly CursorCommitAttributionRow[];
+}
+
+export interface ReadStoredCursorCommitAttributionInput {
+  dbPath: string;
+  machineId?: string;
+  maximumItems?: number;
+}
+
+export const persistCursorCommitAttribution = (input: PersistCursorCommitAttributionInput) =>
+  importNormalizedDatasetItems({
+    dbPath: input.dbPath,
+    items: normalizeCursorCommitAttributionItems(input.machineId, input.rows),
+    ...(input.importedAt === undefined ? {} : { importedAt: input.importedAt }),
+  });
+
+export const readStoredCursorCommitAttribution = (input: ReadStoredCursorCommitAttributionInput) =>
+  queryNormalizedDatasetItems({
+    datasetKey: 'cursor.commit-attribution',
+    dbPath: input.dbPath,
+    sourceId: 'cursor.commit-attribution',
+    ...(input.machineId === undefined ? {} : { machineId: input.machineId }),
+    ...(input.maximumItems === undefined ? {} : { maximumItems: input.maximumItems }),
+  }).pipe(
+    Effect.map((result) => ({
+      rows: result.items.map(({ payload }) => payload),
+      skipped: result.skipped,
+      truncated: result.truncated,
+    })),
+  );
+
 export interface LocalReportPayloadRequest extends LocalReportRowsRequest {
   datasets?: ReportDatasetSelection;
   generatedAt?: Date;
@@ -149,12 +187,16 @@ export interface LocalUsageSnapshotRequest extends LocalUsageSelection {
   machine?: UsageMachine;
 }
 
+export interface StoredUsageSnapshotRequest extends LocalUsageSnapshotRequest {
+  warnings?: UsageReportWarning[];
+}
+
 export interface MergedUsageReportRequest extends LocalUsageSelection {
   appVersion?: string | null;
   datasets?: ReportDatasetSelection;
   generatedAt?: Date;
   includeFacets?: boolean;
-  includeLocal?: boolean;
+  localSnapshots?: UsageSnapshot[];
   machine?: UsageMachine;
   options: ReportOptions;
   snapshots: UsageSnapshot[];
@@ -239,31 +281,11 @@ export interface ProjectSourcesRequest extends LocalUsageSelection {
   appVersion?: string | null;
   generatedAt?: Date;
   includeGitRemote?: boolean;
-  includeLocal?: boolean;
+  localSnapshots?: UsageSnapshot[];
   machine?: UsageMachine;
   readGitFile?: ReadGitFile;
   snapshots: UsageSnapshot[];
 }
-
-const toLocalUsageSnapshotRequest = (request: {
-  harness: HarnessKey | null;
-  includeCursor: boolean;
-  configCwd?: string;
-  machine?: UsageMachine;
-  generatedAt?: Date;
-  appVersion?: string | null;
-  datasets?: ReportDatasetSelection;
-  includeFacets?: boolean;
-}): LocalUsageSnapshotRequest => ({
-  harness: request.harness,
-  includeCursor: request.includeCursor,
-  ...(request.configCwd === undefined ? {} : { configCwd: request.configCwd }),
-  ...(request.machine === undefined ? {} : { machine: request.machine }),
-  ...(request.generatedAt === undefined ? {} : { generatedAt: request.generatedAt }),
-  ...(request.appVersion === undefined ? {} : { appVersion: request.appVersion }),
-  ...(request.datasets === undefined ? {} : { datasets: request.datasets }),
-  ...(request.includeFacets === undefined ? {} : { includeFacets: request.includeFacets }),
-});
 
 const datasetSelectionFor = (request: {
   datasets?: ReportDatasetSelection;
@@ -283,7 +305,7 @@ const datasetSelectionFor = (request: {
   };
 };
 
-const collectReportDatasets = (request: {
+const loadSelectedReportDatasets = (request: {
   datasets?: ReportDatasetSelection;
   harness: HarnessKey | null;
   includeCursor: boolean;
@@ -357,6 +379,60 @@ const mergeReportDatasets = (...datasets: (ReportDatasets | undefined)[]): Repor
   }
   return Object.keys(merged).length ? merged : undefined;
 };
+
+const readStoredDatasets = (input: {
+  dbPath: string;
+  machine: UsageMachine;
+  request: {
+    datasets?: ReportDatasetSelection;
+    harness: HarnessKey | null;
+    includeCursor: boolean;
+    includeFacets?: boolean;
+  };
+}) =>
+  Effect.gen(function* () {
+    const selection = datasetSelectionFor(input.request);
+    const warnings: LocalHistoryWarning[] = [];
+    const storedCursor = selection?.includeCursorCommitAttribution
+      ? yield* readStoredCursorCommitAttribution({ dbPath: input.dbPath }).pipe(
+          Effect.mapError(usageStoreLocalHistoryError('usageStore.queryNormalizedDatasetItems', input.dbPath)),
+        )
+      : undefined;
+    if (storedCursor?.skipped) {
+      warnings.push({
+        harness: 'cursor',
+        message: `Skipped ${storedCursor.skipped} invalid stored Cursor attribution item(s).`,
+        operation: 'usageStore.queryNormalizedDatasetItems',
+      });
+    }
+    if (storedCursor?.truncated) {
+      warnings.push({
+        harness: 'cursor',
+        message: 'Stored Cursor attribution exceeded the bounded report read.',
+        operation: 'usageStore.queryNormalizedDatasetItems',
+      });
+    }
+    const storedCursorDataset = storedCursor?.rows.length ? { cursorCommitAttribution: storedCursor.rows } : undefined;
+    const storedQuota = selection?.includeProviderStatus
+      ? yield* queryLatestProviderQuotaObservations({
+          dbPath: input.dbPath,
+          machineId: input.machine.id,
+        }).pipe(
+          Effect.mapError(usageStoreLocalHistoryError('usageStore.queryLatestProviderQuotaObservations', input.dbPath)),
+        )
+      : undefined;
+    const storedQuotaDataset = storedQuota?.observations.length
+      ? {
+          providerStatus: createProviderStatusDataset(
+            storedQuota.observations.map(({ observation }) => projectProviderQuotaObservation(observation)),
+          ),
+        }
+      : undefined;
+    return {
+      datasets: mergeReportDatasets(storedCursorDataset, storedQuotaDataset),
+      warnings,
+    };
+  });
 
 const toHarnessSelection = (
   request: LocalReportRowsRequest,
@@ -569,7 +645,7 @@ const collectLocalReportAssemblyInput = (
       );
       const datasetResult = yield* withPerfSpan(
         'aiUsage.report.collectDatasets',
-        collectReportDatasets({ ...request, machine }),
+        loadSelectedReportDatasets({ ...request, machine }),
         (result) => ({ datasets: result.datasets ? Object.keys(result.datasets).length : 0 }),
       );
       const { datasets } = datasetResult;
@@ -662,23 +738,11 @@ export const createStoredReportPayload = (
         }),
       );
       const datasetResult = yield* withPerfSpan(
-        'aiUsage.report.collectStoredDatasets',
-        collectReportDatasets({ ...request, machine }),
+        'aiUsage.report.readStoredDatasets',
+        readStoredDatasets({ dbPath, machine, request }),
         (result) => ({ datasets: result.datasets ? Object.keys(result.datasets).length : 0 }),
       );
-      const storedQuota = datasetSelectionFor(request)?.includeProviderStatus
-        ? yield* queryLatestProviderQuotaObservations({ dbPath, machineId: machine.id }).pipe(
-            Effect.mapError(usageStoreLocalHistoryError('usageStore.queryLatestProviderQuotaObservations', dbPath)),
-          )
-        : undefined;
-      const storedQuotaDataset = storedQuota?.observations.length
-        ? {
-            providerStatus: createProviderStatusDataset(
-              storedQuota.observations.map(({ observation }) => projectProviderQuotaObservation(observation)),
-            ),
-          }
-        : undefined;
-      const datasets = mergeReportDatasets(datasetResult.datasets, storedQuotaDataset);
+      const { datasets } = datasetResult;
       const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
       return yield* withPerfSpan(
         'aiUsage.report.serializeStoredPayload',
@@ -746,16 +810,7 @@ export const createKnownLocalProjectSources = (
           ...(harnessKeys === undefined ? {} : { harnessKeys }),
         }).pipe(Effect.mapError(usageStoreLocalHistoryError('usageStore.queryReportRows', dbPath)));
 
-      let stored = yield* queryLocalRows();
-      let collectionWarnings: LocalHistoryWarning[] = [];
-      if (stored.rows.length === 0) {
-        const { collection } = yield* collectConfiguredLocalRowsWithWarnings({ ...request, keepSource: true });
-        collectionWarnings = collection.warnings;
-        yield* importLocalRows({ dbPath, machine, rows: collection.rows }).pipe(
-          Effect.mapError(usageStoreLocalHistoryError('usageStore.importLocalRows', dbPath)),
-        );
-        stored = yield* queryLocalRows();
-      }
+      const stored = yield* queryLocalRows();
 
       const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
       const rows = stored.rows;
@@ -768,7 +823,7 @@ export const createKnownLocalProjectSources = (
       return {
         projectGroups: projection.projectGroups,
         sources: collectProjectSources(localCandidates, false, defaultReadGitFile),
-        warnings: [...collectionWarnings, ...projection.warnings],
+        warnings: projection.warnings,
       };
     }),
     (result) => ({
@@ -782,7 +837,7 @@ export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
   Effect.gen(function* () {
     const machine = request.machine ?? (yield* ensureMachineConfig);
     const { collection } = yield* collectConfiguredLocalRowsWithWarnings({ ...request, keepSource: true });
-    const datasetResult = yield* collectReportDatasets({ ...request, machine });
+    const datasetResult = yield* loadSelectedReportDatasets({ ...request, machine });
     const { datasets } = datasetResult;
     const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
 
@@ -794,6 +849,33 @@ export const createLocalUsageSnapshot = (request: LocalUsageSnapshotRequest) =>
       ...(collection.warnings.length || datasetResult.warnings.length
         ? { warnings: coalesceMetricValidationWarnings([...collection.warnings, ...datasetResult.warnings]) }
         : {}),
+      ...(datasets === undefined ? {} : { datasets }),
+      ...(facets === undefined ? {} : { facets }),
+    });
+  });
+
+export const createStoredUsageSnapshot = (request: StoredUsageSnapshotRequest) =>
+  Effect.gen(function* () {
+    const storage = yield* LocalHistoryStorage;
+    const machine = request.machine ?? (yield* ensureMachineConfig);
+    const dbPath = usageStorePath(storage.home);
+    const harnessKeys = selectedStoredHarnessKeys(request);
+    const stored = yield* queryReportRows({
+      dbPath,
+      originMachineIds: [machine.id],
+      sourceAuthorities: ['local-observed'],
+      ...(harnessKeys === undefined ? {} : { harnessKeys }),
+    }).pipe(Effect.mapError(usageStoreLocalHistoryError('usageStore.queryReportRows', dbPath)));
+    const datasetResult = yield* readStoredDatasets({ dbPath, machine, request });
+    const datasets = datasetResult.datasets;
+    const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
+    const warnings = [...(request.warnings ?? []), ...datasetResult.warnings];
+    return createUsageSnapshot({
+      machine,
+      rows: stored.rows,
+      ...(request.generatedAt === undefined ? {} : { generatedAt: request.generatedAt }),
+      ...(request.appVersion === undefined ? {} : { appVersion: request.appVersion }),
+      ...(warnings.length ? { warnings } : {}),
       ...(datasets === undefined ? {} : { datasets }),
       ...(facets === undefined ? {} : { facets }),
     });
@@ -816,20 +898,17 @@ const mergeAuthorizedSnapshotRows = (
   return [...winners.values()].map((winner) => winner.candidate);
 };
 
+const authorizeSnapshots = (
+  snapshots: readonly UsageSnapshot[],
+  localSnapshots: readonly UsageSnapshot[] = [],
+): Array<{ authority: SourceAuthority; snapshot: UsageSnapshot }> => [
+  ...snapshots.map((snapshot) => ({ authority: 'portable-opaque' as const, snapshot })),
+  ...localSnapshots.map((snapshot) => ({ authority: 'local-observed' as const, snapshot })),
+];
+
 export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
   Effect.gen(function* () {
-    const authorizedSnapshots: Array<{ authority: SourceAuthority; snapshot: UsageSnapshot }> = request.snapshots.map(
-      (snapshot) => ({
-        authority: 'portable-opaque',
-        snapshot,
-      }),
-    );
-    if (request.includeLocal) {
-      authorizedSnapshots.push({
-        authority: 'local-observed',
-        snapshot: yield* createLocalUsageSnapshot(toLocalUsageSnapshotRequest(request)),
-      });
-    }
+    const authorizedSnapshots = authorizeSnapshots(request.snapshots, request.localSnapshots);
 
     const snapshots = authorizedSnapshots.map((candidate) => candidate.snapshot);
     const merged = mergeUsageSnapshots(snapshots);
@@ -1299,15 +1378,7 @@ export const listProjectSourcesWithWarnings = (
   import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
 > =>
   Effect.gen(function* () {
-    const authorizedSnapshots: Array<{ authority: SourceAuthority; snapshot: UsageSnapshot }> = request.snapshots.map(
-      (snapshot) => ({ authority: 'portable-opaque', snapshot }),
-    );
-    if (request.includeLocal) {
-      authorizedSnapshots.push({
-        authority: 'local-observed',
-        snapshot: yield* createLocalUsageSnapshot(toLocalUsageSnapshotRequest(request)),
-      });
-    }
+    const authorizedSnapshots = authorizeSnapshots(request.snapshots, request.localSnapshots);
 
     const snapshots = authorizedSnapshots.map((candidate) => candidate.snapshot);
     const merged = mergeUsageSnapshots(snapshots);

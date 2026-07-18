@@ -9,6 +9,7 @@ import {
   parseSessionNeighborRequest,
   parseSessionQueryRequest,
 } from '@ai-usage/report-core/session-query';
+import { parseSourceControlCommand } from '@ai-usage/report-core/source-control';
 import { createServerFn } from '@tanstack/solid-start';
 import type { JsonValue } from '../web-report-payload';
 
@@ -17,6 +18,36 @@ const toSerializableJson = (value: unknown): JsonValue => JSON.parse(JSON.string
 export const getReportPerfEnabled = createServerFn({ method: 'GET' }).handler(() =>
   import('./report-payload.server').then(({ reportPerfEnabled }) => reportPerfEnabled()),
 );
+
+export const getSourceControlSnapshot = createServerFn({
+  method: 'GET',
+}).handler(async () => {
+  const [{ getRequest }, { validateTrustedLocalRequest }, sourceControlApi] = await Promise.all([
+    import('@tanstack/solid-start/server'),
+    import('./local-request-trust.server'),
+    import('./source-control-api.server'),
+  ]);
+  const trustFailure = validateTrustedLocalRequest(getRequest());
+  if (trustFailure) {
+    throw trustFailure;
+  }
+  return await sourceControlApi.getSourceControlSnapshotForServer();
+});
+
+export const applySourceControlCommand = createServerFn({ method: 'POST' })
+  .validator(parseSourceControlCommand)
+  .handler(async ({ data }) => {
+    const [{ getRequest }, { validateTrustedLocalRequest }, sourceControlApi] = await Promise.all([
+      import('@tanstack/solid-start/server'),
+      import('./local-request-trust.server'),
+      import('./source-control-api.server'),
+    ]);
+    const trustFailure = validateTrustedLocalRequest(getRequest());
+    if (trustFailure) {
+      throw trustFailure;
+    }
+    return await sourceControlApi.applySourceControlCommandForServer(data);
+  });
 
 export const getReportRevisionManifest = createServerFn({ method: 'GET' }).handler(() =>
   import('./report-payload.server').then(({ getReportRevisionManifestForServer }) =>
@@ -73,14 +104,6 @@ export const getFocusedReportBreakdown = createServerFn({ method: 'POST' })
       runRevisionQueryForServer('breakdown', data),
     ),
   );
-
-export const startReportPayloadRefresh = createServerFn({ method: 'POST' }).handler(() =>
-  import('./report-payload.server').then(({ startReportPayloadRefresh: startRefresh }) => startRefresh()),
-);
-
-export const getReportPayloadRefreshState = createServerFn({ method: 'GET' }).handler(() =>
-  import('./report-payload.server').then(({ getReportPayloadRefreshState: getRefreshState }) => getRefreshState()),
-);
 
 export const saveProjectGroups = createServerFn({ method: 'POST' })
   .validator((input: { projectGroups?: unknown }) => ({

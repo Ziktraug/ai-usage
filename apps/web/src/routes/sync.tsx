@@ -504,6 +504,9 @@ function SyncRoute() {
             <Link class={navButton} search={dashboardSearchDefaults} to="/">
               Dashboard
             </Link>
+            <Link class={navButton} to="/sources">
+              Sources
+            </Link>
             <ThemeToggle />
           </div>
         </div>
