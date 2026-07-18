@@ -7,6 +7,9 @@ import type { ScheduledSource } from '@ai-usage/report-data/source-adapters';
 import type { ReportPublicationPort, SourcePolicyStore } from '@ai-usage/report-data/source-control';
 import { Duration, Effect } from 'effect';
 
+const policyChangePollInterval = Duration.millis(10);
+const pausingStateObservationWindow = Duration.millis(250);
+
 export interface SourceControlE2EFixture {
   policyStore: SourcePolicyStore;
   publication: ReportPublicationPort;
@@ -40,7 +43,10 @@ export const createSourceControlE2EFixture = (): SourceControlE2EFixture => {
         Effect.gen(function* () {
           runCount++;
           if (definition.id === 'codex.sessions' && runCount > 1) {
-            yield* Effect.sleep(Duration.millis(6000));
+            while (policies[definition.id]?.enabled !== false) {
+              yield* Effect.sleep(policyChangePollInterval);
+            }
+            yield* Effect.sleep(pausingStateObservationWindow);
           }
           return {
             changed: runCount > 1,
