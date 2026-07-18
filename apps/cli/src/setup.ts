@@ -2,7 +2,8 @@
 import { LocalHistoryStorage, readAiUsageConfig, updateAiUsageConfig } from '@ai-usage/local-collectors';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import type { UsageSnapshot } from '@ai-usage/report-core/snapshot';
-import { listProjectSourcesWithWarnings, type ProjectSource } from '@ai-usage/report-data';
+import type { ProjectSource } from '@ai-usage/report-data';
+import { listProjectSourcesWithFreshLocalWarnings } from '@ai-usage/report-data/one-shot-sources';
 import { Console, Effect } from 'effect';
 import { readUsageSnapshotFile } from './snapshot-file';
 
@@ -202,7 +203,7 @@ export const collectSetupSources = (snapshotFiles: string[], local: boolean) =>
     for (const file of snapshotFiles) {
       snapshots.push(yield* readUsageSnapshotFile(file));
     }
-    return yield* listProjectSourcesWithWarnings({
+    return yield* listProjectSourcesWithFreshLocalWarnings({
       snapshots,
       includeLocal: local,
       harness: null,

@@ -108,7 +108,22 @@ export default defineConfig({
       },
     }),
     solid({ ssr: true }),
-    nitro({ preset: 'node-server' }),
+    nitro({
+      handlers: [
+        {
+          handler: './server/routes/api/source-control.get.ts',
+          method: 'GET',
+          route: '/api/source-control',
+        },
+        {
+          handler: './server/routes/api/source-control.post.ts',
+          method: 'POST',
+          route: '/api/source-control/command',
+        },
+      ],
+      plugins: ['./server/plugins/source-control.ts'],
+      preset: 'bun',
+    }),
     solidDepScanPlugin(),
   ],
   server: {

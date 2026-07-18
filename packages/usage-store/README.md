@@ -2,7 +2,7 @@
 
 ## Owns
 
-The SQLite materialized usage store, migrations, local row import, merge bundle persistence, status tracking, and validated report-row queries.
+The SQLite materialized usage store, additive migrations, producer-owned base-row import, source-owned enrichment contributions, normalized dataset-item upserts, merge bundle persistence, status tracking, and validated composed report queries.
 
 ## Does Not Own
 
@@ -10,7 +10,7 @@ It does not own raw local history collection, file selection or transfer, networ
 
 ## Public Interface
 
-The root export provides typed APIs for importing local rows, previewing/confirming portable bundles against a store-state token, exporting local merge bundles, and querying stored report rows plus semantic generation.
+The root export provides typed APIs for importing local base rows and normalized dataset items, querying enrichable rows with stable keys, idempotently upserting validated RTK savings contributions, previewing/confirming portable bundles against a store-state token, exporting local merge bundles, and querying composed projections plus semantic generation.
 
 ## Depends On
 
@@ -22,7 +22,7 @@ It must not import `@ai-usage/local-collectors`, `@ai-usage/report-data`, `@ai-u
 
 ## Data Boundary
 
-SQLite stores normalized machine-scoped usage facts keyed by origin machine ID and records whether provenance is locally observed or portable/opaque. Generation advances only when the active report projection changes; observation timestamps and identical imports do not invalidate report captures.
+SQLite stores normalized machine-scoped base usage facts keyed by stable row identity. Enrichers own separate versioned contributions keyed by row and enrichment source; report reads validate and overlay them without teaching base upserts about enrichment fields. Every local or portable merge import canonicalizes validated RTK fields into a hash-recomputed base row plus a separate contribution inside one transaction; preview uses the identical preparation. Missing incoming RTK fields never clear an existing contribution, and the transaction advances semantic generation at most once. Empty or unmatched enrichment runs never clear prior contributions. Versioned dataset items remain keyed by source, machine, dataset, schema, and stable item identity. Generation advances only when the active composed report projection changes; observation timestamps and identical imports do not invalidate report captures.
 
 ## Test Strategy
 

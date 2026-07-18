@@ -1,7 +1,9 @@
 import { MultiSelect, Tabs } from '@ai-usage/design-system';
-import { css } from '@ai-usage/design-system/css';
+import { css, cx } from '@ai-usage/design-system/css';
 import {
   activeFilters,
+  banner,
+  bannerError,
   demoBadge,
   eyebrow,
   eyebrowRow,
@@ -39,7 +41,7 @@ import {
 } from '@ai-usage/report-core/project-group';
 import type { ProviderQuotaHistoryPoint, ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
 import { type SessionNeighborResult, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
-import type { ProviderQuotaRefreshResult } from '@ai-usage/report-data/provider-quota';
+import { createQuery } from '@tanstack/solid-query';
 import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import {
@@ -56,13 +58,13 @@ import {
   untrack,
 } from 'solid-js';
 import {
-  createClientPerfTrace,
   logClientPerf,
   logNavigationPerf,
   measureClientPerf,
   payloadStats,
   resolveClientPerfEnabled,
 } from './client-perf';
+import { SourceControlSummary } from './components/source-control-summary';
 import { CursorAttributionPanel } from './cursor-attribution-panel';
 import { FilterPill, fieldFilterLabels } from './dashboard-filters';
 import { MetricTile } from './dashboard-metrics';
@@ -113,17 +115,12 @@ import { Overview } from './overview';
 import type { TimelineDimension } from './overview-model';
 import { ProjectGroupEditor } from './project-group-editor';
 import { ProjectSummary } from './project-summary';
-import {
-  createProviderQuotaPoller,
-  createServedProviderQuotaSource,
-  type ProviderQuotaSource,
-} from './provider-quota-client';
-import { type ProviderQuotaHistoryRange, providerQuotaHistoryRequest } from './provider-quota-history-model';
+import { createServedProviderQuotaSource, type ProviderQuotaSource } from './provider-quota-client';
+import type { ProviderQuotaHistoryRange } from './provider-quota-history-model';
 import { ProviderQuotaHistoryPanel } from './provider-quota-history-panel';
 import { createProviderStatusClock } from './provider-status-clock';
 import { buildProviderStatusViews } from './provider-status-model';
 import { ProviderStatusPanel } from './provider-status-panel';
-import { RefreshStatus } from './refresh-status';
 import { cursorCommitAttributionFacet, demoReportPayload } from './report-data';
 import { ReportWarnings } from './report-warnings';
 import { SessionDrawer } from './session-drawer';
@@ -140,11 +137,12 @@ import {
   sortFromSortingState,
 } from './session-table-schema';
 import { type DashboardRow, enrichReportRow, fmtDate, fmtDateOnly, fmtNum, rowKey } from './shared';
+import { useSourceControl } from './source-control-context';
 import { applyTableUpdate } from './table-utils';
 import { TimeRangeControl } from './time-range-control';
+import { loadProviderQuotaHistory, webQueryKeys } from './web-query-options';
 import { toWebReportPayload, type WebReportPayload, type WebReportPayloadWithoutRows } from './web-report-payload';
 
-const REFRESH_INTERVAL_MS = 60_000;
 const FORM_CONTROL_TAG_PATTERN = /^(INPUT|SELECT|TEXTAREA)$/;
 const SessionTable = lazy(async () => {
   const module = await import('./session-table');
@@ -282,9 +280,9 @@ export const Dashboard = (props: {
   initialPayload?: WebReportPayload;
   quotaHistoryFixture?: ProviderQuotaHistoryResult;
   quotaSource?: ProviderQuotaSource;
-  refreshBootstrap?: () => Promise<FocusedSupportResult>;
   servedBootstrap?: FocusedSupportResult;
 }) => {
+  const sourceControl = useSourceControl();
   const initialPayload =
     props.initialPayload ??
     (props.servedBootstrap ? payloadForFocusedBootstrap(props.servedBootstrap) : toWebReportPayload(demoReportPayload));
@@ -316,49 +314,26 @@ export const Dashboard = (props: {
   const quotaFixture =
     props.quotaHistoryFixture ?? (import.meta.env?.VITE_AI_USAGE_E2E === '1' ? e2eQuotaHistoryFixture : undefined);
   const quotaSource = props.quotaSource ?? (props.servedBootstrap ? createServedProviderQuotaSource() : undefined);
-  const [quotaHistory, setQuotaHistory] = createSignal<ProviderQuotaHistoryResult | null>(quotaFixture ?? null);
-  const [quotaRefresh, setQuotaRefresh] = createSignal<ProviderQuotaRefreshResult | null>(null);
-  const [quotaHistoryError, setQuotaHistoryError] = createSignal<string | null>(null);
-  const [quotaHistoryLoading, setQuotaHistoryLoading] = createSignal(false);
   const [quotaHistoryOpen, setQuotaHistoryOpen] = createSignal(false);
   const [quotaHistoryRange, setQuotaHistoryRange] = createSignal<ProviderQuotaHistoryRange>('24h');
-  const quotaRequest = () => providerQuotaHistoryRequest(quotaHistoryRange(), new Date(), { providerKey: 'codex' });
-  const loadQuotaRange = async (range: ProviderQuotaHistoryRange): Promise<void> => {
+  const quotaHistoryQuery = createQuery(() => ({
+    enabled: quotaHistoryOpen() && quotaSource !== undefined && quotaFixture === undefined,
+    queryFn: async () => {
+      if (!quotaSource) {
+        throw new Error('Quota history is unavailable.');
+      }
+      return await loadProviderQuotaHistory(quotaSource, quotaHistoryRange());
+    },
+    queryKey: webQueryKeys.providerQuotaHistory(quotaHistoryRange()),
+  }));
+  const quotaHistory = (): ProviderQuotaHistoryResult | null => quotaFixture ?? quotaHistoryQuery.data ?? null;
+  const quotaHistoryError = (): string | null =>
+    quotaHistoryQuery.error instanceof Error ? quotaHistoryQuery.error.message : null;
+  const quotaHistoryLoading = (): boolean => quotaHistoryQuery.isFetching;
+  const loadQuotaRange = (range: ProviderQuotaHistoryRange): Promise<void> => {
     setQuotaHistoryRange(range);
-    if (!(quotaSource && !quotaFixture)) {
-      return;
-    }
-    setQuotaHistoryLoading(true);
-    try {
-      const result = await quotaSource.history(
-        providerQuotaHistoryRequest(range, new Date(), { providerKey: 'codex' }),
-      );
-      setQuotaHistory(result);
-      setQuotaHistoryError(null);
-    } catch (error) {
-      setQuotaHistoryError(error instanceof Error ? error.message : 'Quota history query failed');
-    } finally {
-      setQuotaHistoryLoading(false);
-    }
+    return Promise.resolve();
   };
-  onMount(() => {
-    if (!(quotaSource && !quotaFixture && ['http:', 'https:'].includes(window.location.protocol))) {
-      return;
-    }
-    const poller = createProviderQuotaPoller({
-      document,
-      onError: (error) => setQuotaHistoryError(error instanceof Error ? error.message : 'Quota refresh failed'),
-      onResult: (result, refresh) => {
-        setQuotaHistory(result);
-        setQuotaRefresh(refresh);
-        setQuotaHistoryError(null);
-      },
-      request: quotaRequest,
-      source: quotaSource,
-    });
-    poller.start();
-    onCleanup(poller.stop);
-  });
   const servedSessionQueries = Boolean(focusedStore);
   const [servedSessionState, setServedSessionState] = createSignal<SessionQueryState>();
   const servedSessionFingerprint = () => {
@@ -379,16 +354,7 @@ export const Dashboard = (props: {
       })
     : undefined;
   const [clientReady, setClientReady] = createSignal(false);
-  const canRefresh = () =>
-    !!props.refreshBootstrap && !isDemo && clientReady() && ['http:', 'https:'].includes(window.location.protocol);
-  const [refreshing, setRefreshing] = createSignal(false);
-  const [lastRefreshError, setLastRefreshError] = createSignal<string | null>(null);
-  const [lastSuccessfulRefreshAt, setLastSuccessfulRefreshAt] = createSignal<number | null>(null);
-  const [refreshErrorCount, setRefreshErrorCount] = createSignal(0);
-  const [refreshPaused, setRefreshPaused] = createSignal(false);
-  const [nextRefreshAt, setNextRefreshAt] = createSignal<number | null>(
-    canRefresh() ? Date.now() + REFRESH_INTERVAL_MS : null,
-  );
+  const [operationError, setOperationError] = createSignal<string | null>(null);
   const search = useSearch({ from: '/' });
   const servedSessionViewActive = () => servedSessionQueries && search().tab === 'sessions';
   const navigate = useNavigate({ from: '/' });
@@ -638,19 +604,19 @@ export const Dashboard = (props: {
     }
     return { kind: 'sessions', query: queryScope, sessions: activeSessionQueryScope(), timeline };
   });
-  const refreshServedDestination = async (refreshRevision = false): Promise<void> => {
+  const refreshServedDestination = async (): Promise<void> => {
     const destination = servedDestination();
     if (!(destination && servedReportSession)) {
       return;
     }
-    const outcome = await servedReportSession.refresh(destination, { refreshRevision });
+    const outcome = await servedReportSession.refresh(destination);
     if (outcome.status === 'superseded') {
       return;
     }
     if (outcome.status === 'failed-preserving-previous') {
       const message = outcome.error instanceof Error ? outcome.error.message : 'Failed to load report destination';
       setFocusedTimelineError(message);
-      setLastRefreshError(message);
+      setOperationError(message);
       if (destination.kind === 'overview' && destination.includeAdvanced) {
         setAdvancedAnalysisFailure({
           message,
@@ -691,8 +657,25 @@ export const Dashboard = (props: {
     });
     refreshServedDestination().catch((error: unknown) => {
       const message = error instanceof Error ? error.message : 'Failed to coordinate report destination';
-      setLastRefreshError(message);
+      setOperationError(message);
     });
+  });
+  let observedPublicationRevision: string | undefined;
+  createEffect(() => {
+    const sourceState = sourceControl.state();
+    const revision = sourceState.publication?.revision ?? sourceState.snapshot?.publication.revision;
+    if (!revision || revision === observedPublicationRevision) {
+      return;
+    }
+    observedPublicationRevision = revision;
+    if (!clientReady()) {
+      return;
+    }
+    if (focusedStore && focusedStore.revision() !== revision) {
+      refreshServedDestination().catch((error: unknown) => {
+        setOperationError(error instanceof Error ? error.message : 'Published report data could not be loaded');
+      });
+    }
   });
   onCleanup(() => servedReportSession?.abort());
   // Campaign context rows can select their atomic root even when the root is outside
@@ -771,7 +754,7 @@ export const Dashboard = (props: {
       })
       .catch((error: unknown) => {
         if (sequence === neighborRequestSequence) {
-          setLastRefreshError(error instanceof Error ? error.message : 'Failed to load session neighbors');
+          setOperationError(error instanceof Error ? error.message : 'Failed to load session neighbors');
         }
       })
       .finally(() => {
@@ -892,37 +875,9 @@ export const Dashboard = (props: {
       focusedStore?.overview()?.view.previousSummary ??
       buildPreviousPeriodSummary(timelineRows(), dateRange.bounds(), generatedAt()),
   );
-  const refreshPayload = async (force = false) => {
-    if (!(servedReportSession && focusedStore) || refreshing()) {
-      return;
-    }
-    const perfTrace = createClientPerfTrace('aiUsage.web.client.refresh', { force });
-    setRefreshing(true);
-    perfTrace?.mark('started');
-    try {
-      await refreshServedDestination(true);
-      perfTrace?.mark('payloadReceived', { revision: focusedStore.revision() });
-      perfTrace?.mark('stateUpdated');
-      requestAnimationFrame(() => {
-        perfTrace?.end('frame', { revision: focusedStore.revision() });
-      });
-      setLastRefreshError(null);
-      setLastSuccessfulRefreshAt(Date.now());
-      setRefreshErrorCount(0);
-      setNextRefreshAt(Date.now() + REFRESH_INTERVAL_MS);
-    } catch (error) {
-      perfTrace?.end('failed', { error: error instanceof Error ? error.message : String(error) });
-      setLastRefreshError(error instanceof Error ? error.message : 'Failed to refresh report payload');
-      setRefreshErrorCount((count) => count + 1);
-      setNextRefreshAt(Date.now() + REFRESH_INTERVAL_MS);
-    } finally {
-      setRefreshing(false);
-    }
-  };
   const saveProjectGroupConfigs = async (projectGroups: ProjectGroupConfig[]) => {
     const { saveProjectGroups } = await import('./server/report-payload');
     await saveProjectGroups({ data: { projectGroups } });
-    await refreshPayload(true);
   };
   const [cleanupWarningGroupId, setCleanupWarningGroupId] = createSignal<string>();
   const cleanupProjectWarningForServer = async (
@@ -969,42 +924,11 @@ export const Dashboard = (props: {
     setCleanupWarningGroupId(groupId);
     cleanupProjectWarningForServer(warning)
       .catch((error: unknown) => {
-        setLastRefreshError(error instanceof Error ? error.message : 'Failed to clean up the project group');
+        setOperationError(error instanceof Error ? error.message : 'Failed to clean up the project group');
       })
       .finally(() => setCleanupWarningGroupId());
   };
-  const toggleRefreshPause = () => {
-    setRefreshPaused((paused) => {
-      if (paused) {
-        setNextRefreshAt(Date.now() + REFRESH_INTERVAL_MS);
-      }
-      return !paused;
-    });
-  };
-  createEffect(() => {
-    if (!canRefresh() || refreshPaused() || refreshing()) {
-      return;
-    }
-    const next = nextRefreshAt();
-    if (next == null) {
-      return;
-    }
-    const timer = window.setTimeout(
-      () => {
-        refreshPayload(true).catch((error: unknown) => {
-          console.error(error);
-        });
-      },
-      Math.max(0, next - Date.now()),
-    );
-    onCleanup(() => window.clearTimeout(timer));
-  });
-  onMount(() => {
-    setClientReady(true);
-    if (canRefresh() && nextRefreshAt() == null) {
-      setNextRefreshAt(Date.now() + REFRESH_INTERVAL_MS);
-    }
-  });
+  onMount(() => setClientReady(true));
   const toggleSelected = (row: DashboardRow) => {
     const next = selectedKey() === rowKey(row) ? null : rowKey(row);
     setSelectedNavigationRow(next ? row : null);
@@ -1129,6 +1053,9 @@ export const Dashboard = (props: {
               <Link class={navButton} to="/sync">
                 Sync
               </Link>
+              <Link class={navButton} to="/sources">
+                Sources
+              </Link>
               <ThemeToggle />
             </div>
           </div>
@@ -1170,25 +1097,11 @@ export const Dashboard = (props: {
                 value={machine()}
               />
             </Show>
-            <RefreshStatus
-              canRefresh={canRefresh()}
-              generatedAt={reportSupport().generatedAt}
-              lastRefreshError={lastRefreshError()}
-              lastSuccessfulRefreshAt={lastSuccessfulRefreshAt()}
-              nextRefreshAt={nextRefreshAt()}
-              onRefresh={() => {
-                refreshPayload(true).catch((error: unknown) => {
-                  console.error(error);
-                });
-              }}
-              onTogglePause={toggleRefreshPause}
-              refreshErrorCount={refreshErrorCount()}
-              refreshIntervalMs={REFRESH_INTERVAL_MS}
-              refreshing={refreshing()}
-              refreshPaused={refreshPaused()}
-            />
+            <SourceControlSummary />
           </div>
         </Show>
+
+        <Show when={operationError()}>{(message) => <div class={cx(banner, bannerError)}>{message()}</div>}</Show>
 
         <Show
           fallback={
@@ -1295,14 +1208,14 @@ export const Dashboard = (props: {
                                     sessionQueryCoordinator
                                       .loadCampaignChildren(campaignKey)
                                       .catch((error: unknown) => {
-                                        setLastRefreshError(
+                                        setOperationError(
                                           error instanceof Error ? error.message : 'Failed to load campaign sessions',
                                         );
                                       });
                                   },
                                   onLoadMoreRows: () => {
                                     sessionQueryCoordinator.loadMore().catch((error: unknown) => {
-                                      setLastRefreshError(
+                                      setOperationError(
                                         error instanceof Error ? error.message : 'Failed to load sessions',
                                       );
                                     });
@@ -1385,7 +1298,7 @@ export const Dashboard = (props: {
                             content: () => (
                               <section class={section}>
                                 <ProjectGroupEditor
-                                  disabled={!canRefresh()}
+                                  disabled={!servedReportSession}
                                   onSave={saveProjectGroupConfigs}
                                   payload={projectGroupPayload()}
                                 />
@@ -1439,7 +1352,9 @@ export const Dashboard = (props: {
               <Show when={!isDemo}>
                 <ProviderStatusPanel
                   historyAvailable={(quotaHistory()?.points.length ?? 0) > 0}
-                  onViewHistory={() => setQuotaHistoryOpen(true)}
+                  onViewHistory={() => {
+                    setQuotaHistoryOpen(true);
+                  }}
                   providers={providerStatusViews()}
                 />
               </Show>
@@ -1484,12 +1399,9 @@ export const Dashboard = (props: {
               loading={quotaHistoryLoading()}
               onClose={() => setQuotaHistoryOpen(false)}
               onRangeChange={(range) => {
-                loadQuotaRange(range).catch((error: unknown) => {
-                  setQuotaHistoryError(error instanceof Error ? error.message : 'Quota history query failed');
-                });
+                loadQuotaRange(range).catch(() => undefined);
               }}
               range={quotaHistoryRange()}
-              refresh={quotaRefresh()}
               result={quotaHistory()}
             />
           </Show>

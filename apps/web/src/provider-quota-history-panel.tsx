@@ -2,7 +2,6 @@ import { Drawer } from '@ai-usage/design-system';
 import { css, cx } from '@ai-usage/design-system/css';
 import { drawer } from '@ai-usage/design-system/report';
 import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
-import type { ProviderQuotaRefreshResult } from '@ai-usage/report-data/provider-quota';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import {
   buildProviderQuotaHistoryModel,
@@ -170,7 +169,6 @@ export const ProviderQuotaHistoryPanel = (props: {
   onClose(): void;
   onRangeChange(range: ProviderQuotaHistoryRange): void;
   range: ProviderQuotaHistoryRange;
-  refresh?: ProviderQuotaRefreshResult | null;
   result: ProviderQuotaHistoryResult | null;
 }) => {
   let closeButton: HTMLButtonElement | undefined;
@@ -196,15 +194,6 @@ export const ProviderQuotaHistoryPanel = (props: {
   const refreshBanner = () => {
     if (props.error) {
       return props.error;
-    }
-    if (props.refresh?.live === 'unsupported') {
-      return 'Codex CLI unavailable. Showing stored history.';
-    }
-    if (props.refresh?.live === 'auth-required') {
-      return 'Codex authentication required. Showing stored history.';
-    }
-    if (props.refresh?.backfill === 'advanced') {
-      return 'Historical backfill is still progressing.';
     }
     return null;
   };

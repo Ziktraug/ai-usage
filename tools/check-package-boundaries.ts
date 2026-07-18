@@ -81,6 +81,12 @@ const boundaryPolicies: BoundaryPolicy[] = [
     reason: 'report-data must not import app packages.',
   },
   {
+    packageName: '@ai-usage/cli',
+    forbiddenDependencies: ['@ai-usage/usage-store'],
+    forbiddenImports: ['@ai-usage/usage-store'],
+    reason: 'CLI application workflows must reach durable usage data through report-data.',
+  },
+  {
     packageName: '@ai-usage/usage-merge',
     forbiddenDependencies: [
       '@ai-usage/local-collectors',

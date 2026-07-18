@@ -372,6 +372,25 @@ export const serializeUsageRow = (row: UsageRowWithOptionalSource): SerializedUs
   };
 };
 
+export const deserializeUsageRow = (row: SerializedUsageRow): UsageRow => {
+  const {
+    activeDate: _activeDate,
+    freshTokens: _freshTokens,
+    lineDelta: _lineDelta,
+    projectGroupId: _projectGroupId,
+    projectSourceId: _projectSourceId,
+    rawProject: _rawProject,
+    sessionLabel: _sessionLabel,
+    tokenTotal: _tokenTotal,
+    ...serializedRow
+  } = row;
+  return {
+    ...serializedRow,
+    date: row.date === null ? null : new Date(row.date),
+    endDate: row.endDate === null ? null : new Date(row.endDate),
+  };
+};
+
 export const createUsageReportPayload = (
   report: PreparedUsageReport,
   options: ReportOptions,

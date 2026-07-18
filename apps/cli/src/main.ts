@@ -4,17 +4,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
-import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
+import { deserializeUsageRow, type UsageReportWarning } from '@ai-usage/report-core/report-data';
 import type { UsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { serializeUsageSnapshot } from '@ai-usage/report-core/snapshot';
+import { createStoredReportPayload, createStoredUsageSnapshot, type ProjectSource } from '@ai-usage/report-data';
 import {
-  collectProjectedLocalReportRowsWithWarnings,
-  createLocalReportPayload,
-  createLocalUsageSnapshot,
-  createMergedUsageReport,
-  listProjectSourcesWithWarnings,
-  type ProjectSource,
-} from '@ai-usage/report-data';
+  createMergedUsageReportWithFreshLocal,
+  listProjectSourcesWithFreshLocalWarnings,
+  type OneShotExecutionResult,
+  runOneShotLocalSources,
+  runOneShotQuotaAndReadLatest,
+} from '@ai-usage/report-data/one-shot-sources';
 import { Console, Effect, Layer } from 'effect';
 import { type Args, helpText, parseCommand } from './cli';
 import { importCursorUsageExportFile } from './cursor-import-file';
@@ -38,7 +38,15 @@ export const app = Effect.gen(function* () {
 
   if (command._tag === 'Quota') {
     yield* Effect.sync(() => setColor(command.color === null ? runtime.stdoutIsTTY : command.color));
-    yield* Console.log(yield* renderQuota);
+    const { collection, latest } = yield* runOneShotQuotaAndReadLatest();
+    if (collection.outcomes[0]?.status === 'paused') {
+      return yield* Effect.fail(
+        new CliArgumentError({
+          message: 'Codex usage-limit collection is paused; re-enable codex.usage-limits first.',
+        }),
+      );
+    }
+    yield* Console.log(renderQuota(latest));
     return;
   }
 
@@ -57,10 +65,15 @@ export const app = Effect.gen(function* () {
   }
 
   if (command._tag === 'Snapshot') {
-    const snapshot = yield* createLocalUsageSnapshot({
+    const collection = yield* runOneShotLocalSources({
+      harness: command.args.harness,
+      includeCursor: command.args.cursor,
+    });
+    const snapshot = yield* createStoredUsageSnapshot({
       harness: command.args.harness,
       includeCursor: command.args.cursor,
       includeFacets: true,
+      warnings: oneShotWarnings(collection),
     });
     yield* writePortableFile(command.args.out, serializeUsageSnapshot(snapshot));
     yield* writeWarningsStderr(snapshot.warnings);
@@ -74,7 +87,7 @@ export const app = Effect.gen(function* () {
     for (const file of command.args.files) {
       snapshots.push(yield* readUsageSnapshotFile(file));
     }
-    const merged = yield* createMergedUsageReport({
+    const merged = yield* createMergedUsageReportWithFreshLocal({
       snapshots,
       includeLocal: command.args.local,
       harness: command.args.harness,
@@ -95,7 +108,7 @@ export const app = Effect.gen(function* () {
     for (const file of command.args.files) {
       snapshots.push(yield* readUsageSnapshotFile(file));
     }
-    const { sources, warnings } = yield* listProjectSourcesWithWarnings({
+    const { sources, warnings } = yield* listProjectSourcesWithFreshLocalWarnings({
       snapshots,
       includeLocal: command.args.local,
       harness: null,
@@ -125,25 +138,35 @@ export const app = Effect.gen(function* () {
   const reportRequest = {
     harness: command.args.harness,
     includeCursor: command.args.cursor,
-    keepSource: true,
   };
+  const collection = yield* runOneShotLocalSources(reportRequest);
+  const collectionWarnings = oneShotWarnings(collection);
+  const storedPayload = yield* createStoredReportPayload({
+    ...reportRequest,
+    includeFacets: true,
+    options: command.args,
+  });
+  const warnings = [...(storedPayload.warnings ?? []), ...collectionWarnings];
+  const payload = warnings.length ? { ...storedPayload, warnings } : storedPayload;
   const output =
     command.args.format === 'payload'
-      ? yield* Effect.gen(function* () {
-          const payload = yield* createLocalReportPayload({
-            ...reportRequest,
-            options: command.args,
-            includeFacets: true,
-          });
-          return renderUsagePayloadForCli(payload);
-        })
-      : yield* Effect.gen(function* () {
-          const { rows, warnings } = yield* collectProjectedLocalReportRowsWithWarnings(reportRequest);
-          yield* writeFormatWarningsStderr(command.args, warnings);
-          return renderUsageReportForCli(rows, command.args, undefined, warnings);
-        });
+      ? renderUsagePayloadForCli(payload)
+      : renderUsageReportForCli(payload.rows.map(deserializeUsageRow), command.args, undefined, warnings);
+  yield* writeFormatWarningsStderr(command.args, warnings);
   yield* writeStdout(`${output}\n`);
 });
+
+const oneShotWarnings = (collection: OneShotExecutionResult): UsageReportWarning[] =>
+  collection.outcomes.flatMap((outcome) =>
+    outcome.warnings.map((warning) => {
+      const harness = outcome.sourceId.split('.')[0];
+      return {
+        message: warning.message ?? 'The source reported a warning.',
+        operation: outcome.sourceId,
+        ...(harness === undefined ? {} : { harness }),
+      };
+    }),
+  );
 
 const renderProjectSources = (items: ProjectSource[]) => {
   const cols = [

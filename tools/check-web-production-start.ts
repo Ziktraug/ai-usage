@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { createServer } from 'node:net';
 import { networkInterfaces, tmpdir } from 'node:os';
@@ -12,10 +12,14 @@ const GRACEFUL_SHUTDOWN_DEADLINE_MS = 3000;
 const FORCE_EXIT_DEADLINE_MS = 2000;
 const LOG_DRAIN_DEADLINE_MS = 2000;
 const OVERALL_DEADLINE_MS = 30_000;
-const PROJECT_LOADER_ERROR_MARKER = 'Could not load scanned projects:';
-const PROJECT_LOADER_SUCCESS_MARKER = 'data-known-project-paths-status="ok"';
+const EVENT_LOOP_PROBE_BUDGET_MS = 1250;
+const REPRESENTATIVE_SESSION_COUNT = 64;
+const SKILLS_BUSINESS_DATA_MARKER = 'data-known-project-paths-status="ok"';
+const SKILLS_SHELL_MARKER = 'Skill management';
 const RUNNER_FAILURE_PATTERN =
-  /Invalid ai-usage workspace root|Unable to discover the ai-usage workspace|ENOENT[^\n]*report-payload-runner|reportPayloadRunner failed/;
+  /Invalid ai-usage workspace root|Unable to discover the ai-usage workspace|ENOENT[^\n]*revision-query-runner|revisionQueryRunner failed/;
+const SOURCE_CONTROL_STARTED_MARKER = '[ai-usage] Source control started.';
+const SOURCE_CONTROL_STOPPED_MARKER = '[ai-usage] Source control stopped.';
 
 interface HttpResponse {
   body: string;
@@ -122,6 +126,64 @@ const sendHttpRequest = (
     request.end(options.body);
   });
 
+const readInitialSourceControlSnapshot = (port: number): Promise<Record<string, unknown>> =>
+  new Promise((resolve, reject) => {
+    const request = httpRequest(
+      {
+        headers: {
+          host: `localhost:${port}`,
+          origin: `http://localhost:${port}`,
+          'sec-fetch-site': 'same-origin',
+        },
+        host: LOOPBACK_HOST,
+        path: '/api/source-control',
+        port,
+      },
+      (response) => {
+        if (response.statusCode !== 200) {
+          response.resume();
+          reject(new Error(`Source-control SSE returned status ${response.statusCode ?? 0}.`));
+          return;
+        }
+        let text = '';
+        response.on('data', (chunk: Buffer) => {
+          text += chunk.toString('utf8');
+          if (Buffer.byteLength(text) > LOG_LIMIT_BYTES) {
+            request.destroy(new Error('Source-control SSE initial event exceeded its limit.'));
+            return;
+          }
+          const data = text
+            .split('\n')
+            .find((line) => line.startsWith('data: '))
+            ?.slice(6);
+          if (!data) {
+            return;
+          }
+          request.destroy();
+          try {
+            const parsed = JSON.parse(data) as unknown;
+            if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+              reject(new Error('Source-control SSE snapshot must be an object.'));
+              return;
+            }
+            resolve(parsed as Record<string, unknown>);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      },
+    );
+    request.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      request.destroy(new Error(`Source-control SSE exceeded its ${REQUEST_TIMEOUT_MS}ms deadline.`));
+    });
+    request.once('error', (error) => {
+      if (error.message !== 'The operation was aborted.') {
+        reject(error);
+      }
+    });
+    request.end();
+  });
+
 const waitForApplicationPage = async (
   port: number,
   child: Bun.Subprocess,
@@ -162,6 +224,35 @@ const requireNonLoopbackConnectionFailure = async (host: string, port: number): 
     return;
   }
   throw new Error(`Production listener unexpectedly accepted a connection through ${host}:${port}.`);
+};
+
+const seedRepresentativeHistory = async (home: string): Promise<void> => {
+  const sessionsDirectory = path.join(home, '.codex', 'sessions', '2026', '01', '01');
+  await mkdir(sessionsDirectory, { recursive: true });
+  await Promise.all(
+    Array.from({ length: REPRESENTATIVE_SESSION_COUNT }, (_, index) => {
+      const sessionId = `production-smoke-${index}`;
+      const content = `${JSON.stringify({
+        payload: { cwd: `/work/project-${index % 8}`, id: sessionId },
+        timestamp: '2026-01-01T00:00:00.000Z',
+        type: 'session_meta',
+      })}\n${JSON.stringify({
+        payload: {
+          info: {
+            total_token_usage: {
+              cached_input_tokens: index,
+              input_tokens: index + 10,
+              output_tokens: index + 20,
+              total_tokens: index * 2 + 30,
+            },
+          },
+          type: 'token_count',
+        },
+        timestamp: '2026-01-01T00:01:00.000Z',
+      })}\n`;
+      return writeFile(path.join(sessionsDirectory, `${sessionId}.jsonl`), content);
+    }),
+  );
 };
 
 export interface OwnedProcessDeadlines {
@@ -245,6 +336,7 @@ const rootDir = path.resolve(import.meta.dir, '..');
 const runProductionSmoke = async (): Promise<void> => {
   const temporaryHome = await mkdtemp(path.join(tmpdir(), 'ai-usage-web-smoke-'));
   try {
+    await seedRepresentativeHistory(temporaryHome);
     const port = await reserveFreePort();
     const inheritedEnv = Object.fromEntries(
       Object.entries(process.env).filter(([name]) => name !== 'AI_USAGE_ROOT_DIR'),
@@ -252,6 +344,7 @@ const runProductionSmoke = async (): Promise<void> => {
     const childEnv: Record<string, string> = {
       ...inheritedEnv,
       HOME: temporaryHome,
+      AI_USAGE_PRODUCTION_SMOKE: '1',
       HOST: '0.0.0.0',
       NITRO_HOST: '0.0.0.0',
       NITRO_PORT: String(port),
@@ -261,7 +354,7 @@ const runProductionSmoke = async (): Promise<void> => {
     try {
       processLogs = await withOwnedProcess(
         {
-          command: ['node', 'start.mjs'],
+          command: ['bun', 'start.mjs'],
           cwd: path.join(rootDir, 'apps/web'),
           env: childEnv,
           port,
@@ -272,15 +365,53 @@ const runProductionSmoke = async (): Promise<void> => {
             OVERALL_DEADLINE_MS,
             (async () => {
               await waitForApplicationPage(port, child, '/', 'Usage report');
-              const skills = await waitForApplicationPage(port, child, '/skills', PROJECT_LOADER_SUCCESS_MARKER);
-              if (skills.body.includes(PROJECT_LOADER_ERROR_MARKER)) {
-                throw new Error('/skills rendered the known project-loader error banner.');
+              const sourceSnapshot = await readInitialSourceControlSnapshot(port);
+              const serializedSourceSnapshot = JSON.stringify(sourceSnapshot);
+              if (
+                !Array.isArray(sourceSnapshot.sources) ||
+                serializedSourceSnapshot.includes(temporaryHome) ||
+                serializedSourceSnapshot.includes('/work/project-')
+              ) {
+                throw new Error('Source-control SSE did not return a sanitized bounded snapshot.');
+              }
+              const commandResponse = await sendHttpRequest(port, {
+                body: '{"command":"detect-all"}',
+                headers: {
+                  'content-type': 'application/json',
+                  host: `localhost:${port}`,
+                  origin: `http://localhost:${port}`,
+                  'sec-fetch-site': 'same-origin',
+                },
+                method: 'POST',
+                path: '/api/source-control/command',
+              });
+              if (commandResponse.status !== 200 || !commandResponse.body.includes('"ok":true')) {
+                throw new Error(`Source-control command route did not converge (status ${commandResponse.status}).`);
+              }
+              const probeStartedAt = performance.now();
+              const probe = await sendHttpRequest(port, { path: '/' });
+              const probeDurationMs = performance.now() - probeStartedAt;
+              if (probe.status !== 200 || probeDurationMs > EVENT_LOOP_PROBE_BUDGET_MS) {
+                throw new Error(
+                  `Production event-loop probe took ${probeDurationMs.toFixed(0)}ms with status ${probe.status}; budget is ${EVENT_LOOP_PROBE_BUDGET_MS}ms.`,
+                );
+              }
+              const skills = await waitForApplicationPage(port, child, '/skills', SKILLS_SHELL_MARKER);
+              if (skills.body.includes(SKILLS_BUSINESS_DATA_MARKER)) {
+                throw new Error('/skills embedded business data in its initial HTML.');
               }
 
               const localHost = `localhost:${port}`;
               await requireRejected(
                 'hostile Host on a read route',
                 sendHttpRequest(port, { headers: { host: 'attacker.example' } }),
+              );
+              await requireRejected(
+                'hostile Host on the source-control stream',
+                sendHttpRequest(port, {
+                  headers: { host: 'attacker.example' },
+                  path: '/api/source-control',
+                }),
               );
               await requireRejected(
                 'hostile Origin on a read route',
@@ -300,6 +431,20 @@ const runProductionSmoke = async (): Promise<void> => {
                   path: '/sync',
                 }),
               );
+              await requireRejected(
+                'cross-site metadata on a source-control command',
+                sendHttpRequest(port, {
+                  body: '{"command":"detect-all"}',
+                  headers: {
+                    'content-type': 'application/json',
+                    host: localHost,
+                    origin: `http://${localHost}`,
+                    'sec-fetch-site': 'cross-site',
+                  },
+                  method: 'POST',
+                  path: '/api/source-control/command',
+                }),
+              );
               await requireNonLoopbackConnectionFailure(nonLoopbackIpv4Address(), port);
 
               if (child.exitCode !== null) {
@@ -314,6 +459,12 @@ const runProductionSmoke = async (): Promise<void> => {
             })(),
           ),
       );
+      if (!processLogs.stderr.includes(SOURCE_CONTROL_STARTED_MARKER)) {
+        throw new Error('Production source control did not finish startup before shutdown.');
+      }
+      if (!processLogs.stderr.includes(SOURCE_CONTROL_STOPPED_MARKER)) {
+        throw new Error('Production source control did not run its scoped close hook.');
+      }
     } catch (error) {
       const logs = `${processLogs?.stdout ?? ''}${processLogs?.stderr ?? ''}`.trim();
       throw new Error(`${error instanceof Error ? error.message : String(error)}${logs ? `\n${logs}` : ''}`);

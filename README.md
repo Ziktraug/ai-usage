@@ -2,9 +2,9 @@
 
 Unified local AI usage report for the coding tools installed on this machine — and across multiple machines via portable snapshots.
 
-The CLI reads local history files and databases written by each tool, then reports per-session token usage, estimated cost, and aggregate analytics — in the terminal or the interactive web app. Normal report collection never calls provider APIs; everything is computed from local data. When the served dashboard is open, its optional Codex quota-history surface may invoke the installed `codex app-server`, which owns any provider communication and authentication refresh. `ai-usage` never reads or stores Codex credentials or raw app-server responses.
+The CLI reads local history files and databases written by each tool, then reports per-session token usage, estimated cost, and aggregate analytics — in the terminal or the interactive web app. Normal report collection never calls provider APIs; everything is computed from local data. While the long-lived served app is running, its Codex usage-limit source may invoke the installed `codex app-server`, which owns any provider communication and authentication refresh. `ai-usage` never reads or stores Codex credentials or raw app-server responses.
 
-## Supported sources
+## Supported session sources
 
 | Harness | Local history |
 | --- | --- |
@@ -17,7 +17,7 @@ Cursor data is partial because some usage counters are stored server-side; those
 
 ### RTK savings (optional)
 
-If RTK (a token-killer CLI proxy) has a local history database at `~/Library/Application Support/rtk/history.db`, sessions are enriched with the token savings RTK achieved. Each RTK command is matched to a session by project path and time window, and the matched saved / input / output token counts surface in the report. Sources without RTK data are left untouched.
+If RTK (a token-killer CLI proxy) has a local history database at `~/Library/Application Support/rtk/history.db`, sessions are enriched with the token savings RTK achieved. Each RTK command is matched to a session by project path and time window. Savings are persisted as an RTK-owned contribution separate from the collector-owned base row, so later base re-imports, no-match runs, disablement, and restarts preserve the last durable enrichment.
 
 ## Requirements
 
@@ -61,7 +61,9 @@ Show Codex subscription quota (5h / 7d windows) from the newest local rate-limit
 bun run cli -- quota
 ```
 
-The served dashboard also retains normalized Codex quota observations in the local usage-store SQLite database and refreshes them at most every five minutes while the page is visible. Static HTML remains read-only: it can show current provider status from its embedded report payload, but it does not poll Codex or embed interactive persisted history.
+The served app runs a Bun-owned control plane even when no browser is open. Its seven independent collection sources are Claude, Codex, OpenCode, and Cursor sessions; Codex usage limits; RTK savings; and Cursor commit attribution. Each source has separate policy, detection, lifecycle, outcome, and cadence state on `/sources`. Sparse policy overrides live only in `~/.config/ai-usage/config.json`; repository config cannot enable background work.
+
+Collectors persist normalized contributions before a separate stored-only publication job creates an immutable report revision. Publication requests use monotonic demand, and timed-out work aborts at the provider boundary before later writes. Disabling, missing input, empty output, or failure never deletes prior contributions. The browser strictly decodes sanitized replacement snapshots plus explicit publication events through one SSE connection. TanStack Query owns ordinary finite Skills and quota reads; the served-report session remains the sole exact-revision owner.
 
 ## Multi-machine usage
 
@@ -203,7 +205,7 @@ Merged CSV/JSON payloads include row provenance (`source.machineLabel`, `source.
 - `packages/skills` (`@ai-usage/skills`): local skill inventory, validation, projection, and reconciliation workflows
 - `packages/design-system` (`@ai-usage/design-system`): Panda/Solid primitives, report style slots, and generated Panda consumer exports
 - `apps/cli`: terminal CLI, quota/setup commands, portable snapshots, and table/CSV/JSON/payload output adapters
-- `apps/web`: Solid + TanStack Start/Router/Table + Panda CSS report app, local Skills control plane, and file-only `/sync` route
+- `apps/web`: Bun/Nitro source-control host plus the client-first Solid/TanStack report, `/sources`, local Skills, and file-only `/sync` workspaces
 
 Architecture docs:
 

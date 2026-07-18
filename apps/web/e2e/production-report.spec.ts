@@ -4,6 +4,7 @@ const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
 const SESSION_NEIGHBOR_FINGERPRINT_PATTERN = /^session-neighbor-v1:[0-9a-f]{16}$/;
 const FOCUSED_OVERVIEW_FINGERPRINT_PREFIX = 'focused-overview-v1:';
+const SOURCES_URL_PATTERN = /\/sources$/;
 
 interface CapturedServerFunctionResponse {
   body: Promise<string>;
@@ -81,6 +82,13 @@ const expectExactProtocolIdentity = (
 };
 
 test('renders the report timeline on the initial production Overview', async ({ page }) => {
+  const initialResponse = await page.request.get('/');
+  const initialHtml = await initialResponse.text();
+  expect(initialResponse.ok()).toBe(true);
+  expect(initialHtml).toContain('Loading report data');
+  expect(initialHtml).not.toContain('Production browser session');
+  expect(initialHtml).not.toContain('production-browser-');
+
   await page.addInitScript(() => {
     Reflect.set(globalThis, '__aiUsageFalseEmptyRange', false);
     const recordFalseEmptyRange = () => {
@@ -96,7 +104,15 @@ test('renders the report timeline on the initial production Overview', async ({ 
     window.addEventListener('DOMContentLoaded', recordFalseEmptyRange, { once: true });
   });
   const overviewGate = Promise.withResolvers<void>();
+  let serverFunctionRequestCount = 0;
   await page.route('**/_serverFn/**', async (route) => {
+    serverFunctionRequestCount++;
+    // A cold source-control bootstrap may return one pending manifest before
+    // report-published prompts the exact-revision owner to retry.
+    if (serverFunctionRequestCount <= 3) {
+      await route.continue();
+      return;
+    }
     await overviewGate.promise;
     await route.continue();
   });
@@ -115,6 +131,32 @@ test('renders the report timeline on the initial production Overview', async ({ 
   ).toBeVisible({ timeout: 5000 });
   await expect(page.getByText('No dated sessions match the current filters')).toHaveCount(0);
   expect(await page.evaluate(() => Reflect.get(globalThis, '__aiUsageFalseEmptyRange'))).toBe(false);
+});
+
+test('provides one accessible responsive source-control surface', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.setViewportSize({ height: 844, width: 390 });
+  await page.goto('/');
+  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+
+  const sourceSummary = page.getByRole('region', { name: 'Collection source status' }).locator('a[href="/sources"]');
+  await expect(sourceSummary).toBeVisible();
+  await sourceSummary.focus();
+  await expect(page.getByText('Collection sources', { exact: true })).toBeVisible();
+  await sourceSummary.press('Enter');
+
+  await expect(page).toHaveURL(SOURCES_URL_PATTERN);
+  await expect(page.getByRole('heading', { level: 1, name: 'Sources' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Sessions' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Provider usage' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Enrichments' })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: 'Enabled' })).toHaveCount(7);
+  await expect(page.getByText('codex.sessions', { exact: true })).toBeVisible();
+
+  const detectAll = page.getByRole('button', { name: 'Detect all' });
+  await expect(detectAll).toBeEnabled();
+  await detectAll.focus();
+  await expect(detectAll).toBeFocused();
 });
 
 test('keeps the Report range mounted while focused chart options refresh', async ({ page }) => {
@@ -195,7 +237,6 @@ test('hydrates and automatically pages Sessions through the production revision 
   await expect(page.getByText('205 / 205 sessions', { exact: true })).toBeVisible();
   await expect(report).toHaveAttribute('data-report-revision', NON_EMPTY_ATTRIBUTE_PATTERN);
   await expect(report).toHaveAttribute('data-request-fingerprint', SESSION_QUERY_FINGERPRINT_PATTERN);
-  await page.getByRole('button', { name: 'Pause auto-refresh' }).click();
   const revision = await report.getAttribute('data-report-revision');
   const requestFingerprint = await report.getAttribute('data-request-fingerprint');
   if (!(revision && requestFingerprint)) {
@@ -255,7 +296,6 @@ test('automatically pages mobile Sessions while scrolling', async ({ page }) => 
   await page.goto('/?tab=sessions');
 
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
-  await page.getByRole('button', { name: 'Pause auto-refresh' }).click();
   const summaries = page.getByRole('list', { name: 'Session summaries' });
   await expect(summaries).toBeVisible();
   const pagingSentinel = page.locator('[data-session-paging-sentinel="mobile"]');

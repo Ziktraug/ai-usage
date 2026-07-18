@@ -8,6 +8,22 @@ This context describes the local AI usage reporting domain. The CLI reads local 
 An installed AI coding tool whose local history can be collected, such as Claude Code, Codex, OpenCode, or Cursor.
 _Avoid_: source, tool, integration
 
+**Collection source**:
+An independently detected, scheduled, and policy-controlled contribution to the normalized local store. A harness may expose more than one collection source: Codex sessions and Codex usage limits have separate policy and cadence.
+_Avoid_: harness, refresh task, report loader
+
+**Source policy**:
+The persisted enabled/disabled choice for one collection source. Policy is independent from whether input is detected, whether work is running, and how the last run ended. Disabling pauses future collection and never deletes stored contributions.
+_Avoid_: availability, lifecycle, deletion
+
+**Source publication**:
+The separate stored-only job that reconciles durable contributions into an immutable served report revision. Requests advance monotonic demand even while publication is queued or running; only a successful attempt acknowledges the generations it captured. A source run may be successful without changing the semantic revision.
+_Avoid_: collection run, browser refresh
+
+**Enrichment contribution**:
+A versioned, validated value owned by one enricher and keyed to a stable base usage-row identity. Report reads compose it with the producer-owned base row; neither writer replaces the other's durable data.
+_Avoid_: JSON patch, enriched base row
+
 **Local history**:
 The files or databases written by a harness on this machine. It is the only live collection input; a caller may also supply an explicit portable snapshot or previously imported merge bundle. Provider APIs are not called.
 _Avoid_: remote usage, cloud billing data
@@ -27,6 +43,10 @@ _Avoid_: raw event, database row
 **Collected dataset**:
 A named set of collected and enriched report data transported alongside usage rows, such as provider status or Cursor commit attribution. Skill inventory is a separate local control-plane query, not a collected report dataset.
 _Avoid_: facet, metadata blob, app state
+
+**Client-first route**:
+A web route whose SSR response contains shell and routing markup only. Business data is read after hydration with explicit loading, error, empty, and retry behavior.
+_Avoid_: client-only app, embedded payload
 
 **Report payload**:
 The complete JSON-serializable compatibility aggregate used by CLI output and compatible consumers. It contains serialized usage rows, filters, analytics, collected datasets, and optional local history warnings. The served report app reads exact-revision focused results instead of transporting this complete aggregate during refresh.

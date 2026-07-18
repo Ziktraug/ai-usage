@@ -109,12 +109,7 @@ export const createDashboardServedReportSession = (options: {
     DashboardPreparedDestination,
     DashboardServedRevisionDescriptor
   >({
-    acquire: async (refreshOptions) => {
-      const descriptor = await fetchFocusedReportBootstrapDescriptor(options.focusedSource, {
-        ...(refreshOptions.refreshRevision === undefined ? {} : { refresh: refreshOptions.refreshRevision }),
-      });
-      return descriptor;
-    },
+    acquire: async () => await fetchFocusedReportBootstrapDescriptor(options.focusedSource),
     commit: (prepared, descriptor, destination) => {
       const overviewDestination = { kind: 'overview' as const, ...prepared.overview };
       const overviewValidation = options.focusedStore.canCommitRevision(descriptor.bootstrap, overviewDestination);

@@ -18,8 +18,9 @@ to decide which repositories or runtime targets to scan.
 - diagnostics;
 - workflow functions used by app adapters.
 
-`apps/web` owns the `/skills` UI, route loaders, and TanStack Start server
-function facades only. Filesystem access and mutation rules stay behind
+`apps/web` owns the client-first `/skills` UI and TanStack Start server-function
+facades only. Its initial HTML is a shell; snapshot and project-path reads begin
+after hydration. Filesystem access and mutation rules stay behind
 `@ai-usage/skills` workflows and server-only web modules.
 
 ## Storage

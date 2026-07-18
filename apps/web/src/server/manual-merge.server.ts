@@ -10,7 +10,7 @@ import {
 import { usageStorePath } from '@ai-usage/usage-store';
 import { Cause, Effect, Option, Runtime } from 'effect';
 import type { ManualOperationResult } from '../manual-transfer-contract';
-import { invalidateReportPayloadForMutation, runReportPayloadCollection } from './report-payload.server';
+import { invalidateReportPayloadForMutation } from './report-payload.server';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -71,14 +71,7 @@ const runService = async <A>(
   }
 };
 
-export const exportManualMergeBundleForServer = async () => {
-  try {
-    await runReportPayloadCollection();
-  } catch (error) {
-    return errorResult(error);
-  }
-  return runService((service) => service.exportManualMergeBundle());
-};
+export const exportManualMergeBundleForServer = () => runService((service) => service.exportManualMergeBundle());
 
 export const importManualMergeBundleForServer = async (input: ManualMergeImportInput) => {
   const result = await runService((service) => service.importManualMergeBundle(input));

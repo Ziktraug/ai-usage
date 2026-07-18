@@ -2,6 +2,12 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  isNormalizedDatasetIdentity,
+  isNormalizedDatasetItem,
+  type NormalizedDatasetItem,
+  type NormalizedDatasetKey,
+} from '@ai-usage/report-core/datasets';
+import {
   createUsageMergeBundle,
   deserializeMergeRow,
   isSerializedMergeRow,
@@ -9,6 +15,7 @@ import {
   type SerializedMergeRow,
   toSerializedMergeRow,
   type UsageMergeBundle,
+  usageContentHash,
 } from '@ai-usage/report-core/merge-bundle';
 import {
   type ProviderQuotaObservation,
@@ -80,8 +87,74 @@ export interface QueryRowsResult {
   sourceAuthorities: StoredSourceAuthority[];
 }
 
+export interface EnrichableUsageRow {
+  readonly row: CollectedUsageRow;
+  readonly rowKey: string;
+}
+
+export interface QueryEnrichableUsageRowsInput {
+  dbPath: string;
+  originMachineIds?: string[];
+  sourceAuthorities?: StoredSourceAuthority[];
+}
+
+export interface QueryEnrichableUsageRowsResult {
+  rows: EnrichableUsageRow[];
+  skipped: number;
+}
+
+export interface RtkSavingsContribution {
+  readonly rtkCommandCount: number;
+  readonly rtkInputTokens: number;
+  readonly rtkOutputTokens: number;
+  readonly rtkSavedTokens: number;
+}
+
+export interface RtkSavingsContributionInput {
+  readonly contribution: RtkSavingsContribution;
+  readonly rowKey: string;
+}
+
+export interface UpsertRtkSavingsContributionsInput {
+  readonly contributions: readonly RtkSavingsContributionInput[];
+  readonly dbPath: string;
+  readonly importedAt?: Date;
+}
+
+export interface EnrichmentImportResult {
+  inserted: number;
+  unchanged: number;
+  updated: number;
+}
+
 export interface QueryUsageStoreGenerationInput {
   dbPath: string;
+}
+
+export interface ImportNormalizedDatasetItemsInput {
+  dbPath: string;
+  importedAt?: Date;
+  items: readonly NormalizedDatasetItem[];
+}
+
+export interface NormalizedDatasetImportResult {
+  inserted: number;
+  unchanged: number;
+  updated: number;
+}
+
+export interface QueryNormalizedDatasetItemsInput {
+  datasetKey?: NormalizedDatasetKey;
+  dbPath: string;
+  machineId?: string;
+  maximumItems?: number;
+  sourceId?: NormalizedDatasetItem['sourceId'];
+}
+
+export interface QueryNormalizedDatasetItemsResult {
+  items: NormalizedDatasetItem[];
+  skipped: number;
+  truncated: boolean;
 }
 
 export interface ProviderQuotaCheckpointUpdate {
@@ -184,12 +257,24 @@ export interface UsageStore {
   confirmPeerMergeBundle(input: ConfirmPeerMergeBundleInput): Effect.Effect<ImportResult, UsageStoreError>;
   exportLocalMergeBundle(input: ExportLocalMergeBundleInput): Effect.Effect<UsageMergeBundle, UsageStoreError>;
   importLocalRows(input: ImportLocalRowsInput): Effect.Effect<ImportResult, UsageStoreError>;
+  importNormalizedDatasetItems(
+    input: ImportNormalizedDatasetItemsInput,
+  ): Effect.Effect<NormalizedDatasetImportResult, UsageStoreError>;
   importPeerMergeBundle(input: ImportPeerMergeBundleInput): Effect.Effect<ImportResult, UsageStoreError>;
   previewPeerMergeBundle(
     input: PreviewPeerMergeBundleInput,
   ): Effect.Effect<PreviewPeerMergeBundleResult, UsageStoreError>;
+  queryEnrichableUsageRows(
+    input?: QueryEnrichableUsageRowsInput,
+  ): Effect.Effect<QueryEnrichableUsageRowsResult, UsageStoreError>;
+  queryNormalizedDatasetItems(
+    input?: QueryNormalizedDatasetItemsInput,
+  ): Effect.Effect<QueryNormalizedDatasetItemsResult, UsageStoreError>;
   queryReportRows(input?: QueryReportRowsInput): Effect.Effect<QueryRowsResult, UsageStoreError>;
   queryUsageStoreGeneration(input?: QueryUsageStoreGenerationInput): Effect.Effect<number, UsageStoreError>;
+  upsertRtkSavingsContributions(
+    input: UpsertRtkSavingsContributionsInput,
+  ): Effect.Effect<EnrichmentImportResult, UsageStoreError>;
 }
 
 interface SqliteStatement {
@@ -213,11 +298,29 @@ interface ExistingRow {
 
 interface StoredRowRecord {
   row_json: string;
+  row_key: string;
   source_authority: StoredSourceAuthority;
+}
+
+interface StoredEnrichmentRecord {
+  content_hash: string;
+  payload_json: string;
+  row_key: string;
+  schema_version: number;
+  source_id: string;
 }
 
 interface UsageStoreGenerationRecord {
   value: number;
+}
+
+interface StoredNormalizedDatasetItemRecord {
+  dataset_key: string;
+  item_key: string;
+  machine_id: string;
+  payload_json: string;
+  schema_version: number;
+  source_id: string;
 }
 
 type MergeRowClassification = 'inserted' | 'updated' | 'unchanged' | 'superseded' | 'deleted';
@@ -226,6 +329,18 @@ interface ClassifiedMergeRow {
   classification: MergeRowClassification;
   reportProjectionChanged: boolean;
   row: SerializedMergeRow;
+}
+
+interface PreparedMergeRow {
+  contribution?: RtkSavingsContribution;
+  row: SerializedMergeRow;
+}
+
+interface EnrichmentStatements {
+  existing: SqliteStatement;
+  insert: SqliteStatement;
+  touch: SqliteStatement;
+  update: SqliteStatement;
 }
 
 interface ProviderQuotaObservationRecord {
@@ -280,6 +395,130 @@ const usageStoreError = (operation: string, dbPath: string, cause: unknown, reas
 
 export const usageStorePath = (home: string) => path.join(home, '.config', 'ai-usage', 'usage-store.sqlite');
 
+const RTK_SAVINGS_SOURCE_ID = 'rtk.savings';
+const RTK_SAVINGS_SCHEMA_VERSION = 1;
+const RTK_SAVINGS_KEYS = [
+  'rtkCommandCount',
+  'rtkInputTokens',
+  'rtkOutputTokens',
+  'rtkSavedTokens',
+] as const satisfies readonly (keyof RtkSavingsContribution)[];
+
+const isRtkSavingsContribution = (value: unknown): value is RtkSavingsContribution => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).length === RTK_SAVINGS_KEYS.length &&
+    RTK_SAVINGS_KEYS.every((key) => Number.isSafeInteger(record[key]) && (record[key] as number) >= 0) &&
+    (record.rtkSavedTokens as number) > 0
+  );
+};
+
+const rtkSavingsFromRow = (row: {
+  readonly rtkCommandCount?: number;
+  readonly rtkInputTokens?: number;
+  readonly rtkOutputTokens?: number;
+  readonly rtkSavedTokens?: number;
+}): RtkSavingsContribution | undefined => {
+  const contribution = {
+    rtkCommandCount: row.rtkCommandCount,
+    rtkInputTokens: row.rtkInputTokens,
+    rtkOutputTokens: row.rtkOutputTokens,
+    rtkSavedTokens: row.rtkSavedTokens,
+  };
+  return isRtkSavingsContribution(contribution) ? contribution : undefined;
+};
+
+const stripRtkSavings = <Row extends Partial<RtkSavingsContribution>>(
+  row: Row,
+): Omit<Row, keyof RtkSavingsContribution> => {
+  const {
+    rtkCommandCount: _rtkCommandCount,
+    rtkInputTokens: _rtkInputTokens,
+    rtkOutputTokens: _rtkOutputTokens,
+    rtkSavedTokens: _rtkSavedTokens,
+    ...base
+  } = row;
+  return base;
+};
+
+const enrichmentContentHash = (value: RtkSavingsContribution): string =>
+  createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+const prepareMergeRow = (row: SerializedMergeRow): PreparedMergeRow => {
+  const contribution = rtkSavingsFromRow(row);
+  const hasRtkFields = RTK_SAVINGS_KEYS.some((key) => row[key] !== undefined);
+  if (hasRtkFields && !contribution) {
+    throw new Error('RTK savings contribution failed strict validation');
+  }
+  const { contentHash: _contentHash, ...base } = stripRtkSavings(row);
+  return {
+    ...(contribution === undefined ? {} : { contribution }),
+    row: { ...base, contentHash: usageContentHash(base) },
+  };
+};
+
+const prepareEnrichmentStatements = (db: SqliteDatabase): EnrichmentStatements => ({
+  existing: db.query(`
+    SELECT row_key, source_id, schema_version, content_hash, payload_json
+    FROM usage_row_enrichments
+    WHERE row_key = ? AND source_id = ?
+  `),
+  insert: db.query(`
+    INSERT INTO usage_row_enrichments (
+      row_key, source_id, schema_version, content_hash, payload_json,
+      first_seen_at, last_seen_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `),
+  touch: db.query(`
+    UPDATE usage_row_enrichments SET last_seen_at = ? WHERE row_key = ? AND source_id = ?
+  `),
+  update: db.query(`
+    UPDATE usage_row_enrichments
+    SET schema_version = ?, content_hash = ?, payload_json = ?, last_seen_at = ?, updated_at = ?
+    WHERE row_key = ? AND source_id = ?
+  `),
+});
+
+const upsertRtkContribution = (
+  statements: EnrichmentStatements,
+  rowKey: string,
+  contribution: RtkSavingsContribution,
+  now: string,
+): keyof EnrichmentImportResult => {
+  const contentHash = enrichmentContentHash(contribution);
+  const existing = statements.existing.get(rowKey, RTK_SAVINGS_SOURCE_ID) as StoredEnrichmentRecord | null;
+  if (!existing) {
+    statements.insert.run(
+      rowKey,
+      RTK_SAVINGS_SOURCE_ID,
+      RTK_SAVINGS_SCHEMA_VERSION,
+      contentHash,
+      JSON.stringify(contribution),
+      now,
+      now,
+      now,
+    );
+    return 'inserted';
+  }
+  if (existing.schema_version === RTK_SAVINGS_SCHEMA_VERSION && existing.content_hash === contentHash) {
+    statements.touch.run(now, rowKey, RTK_SAVINGS_SOURCE_ID);
+    return 'unchanged';
+  }
+  statements.update.run(
+    RTK_SAVINGS_SCHEMA_VERSION,
+    contentHash,
+    JSON.stringify(contribution),
+    now,
+    now,
+    rowKey,
+    RTK_SAVINGS_SOURCE_ID,
+  );
+  return 'updated';
+};
+
 const migrate = (db: SqliteDatabase) => {
   db.exec(`
     CREATE TABLE IF NOT EXISTS usage_rows (
@@ -315,6 +554,39 @@ const migrate = (db: SqliteDatabase) => {
     );
 
     INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('generation', 0);
+    INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('migration.rtk-contributions-v1', 0);
+
+    CREATE TABLE IF NOT EXISTS usage_row_enrichments (
+      row_key TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      schema_version INTEGER NOT NULL CHECK (schema_version > 0),
+      content_hash TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      first_seen_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (row_key, source_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_usage_row_enrichments_source
+      ON usage_row_enrichments(source_id, row_key);
+
+    CREATE TABLE IF NOT EXISTS collected_dataset_items (
+      source_id TEXT NOT NULL,
+      machine_id TEXT NOT NULL,
+      dataset_key TEXT NOT NULL,
+      schema_version INTEGER NOT NULL CHECK (schema_version > 0),
+      item_key TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      first_seen_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (source_id, machine_id, dataset_key, schema_version, item_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_collected_dataset_items_query
+      ON collected_dataset_items(dataset_key, machine_id, source_id, item_key);
 
     CREATE TABLE IF NOT EXISTS provider_quota_observations (
       id INTEGER PRIMARY KEY,
@@ -383,6 +655,55 @@ const migrate = (db: SqliteDatabase) => {
     db.exec(
       "ALTER TABLE usage_rows ADD COLUMN source_authority TEXT NOT NULL DEFAULT 'portable-opaque' CHECK (source_authority IN ('local-observed', 'portable-opaque'))",
     );
+  }
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const migration = db
+      .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.rtk-contributions-v1'")
+      .get() as UsageStoreGenerationRecord | null;
+    if (migration?.value === 0) {
+      const migratedAt = new Date().toISOString();
+      const legacyRows = db.query('SELECT row_key, row_json FROM usage_rows').all() as Array<{
+        row_json: string;
+        row_key: string;
+      }>;
+      const insert = db.query(`
+        INSERT OR IGNORE INTO usage_row_enrichments (
+          row_key, source_id, schema_version, content_hash, payload_json,
+          first_seen_at, last_seen_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const legacy of legacyRows) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(legacy.row_json) as unknown;
+        } catch {
+          continue;
+        }
+        if (!isSerializedMergeRow(parsed)) {
+          continue;
+        }
+        const contribution = rtkSavingsFromRow(parsed);
+        if (!contribution) {
+          continue;
+        }
+        insert.run(
+          legacy.row_key,
+          RTK_SAVINGS_SOURCE_ID,
+          RTK_SAVINGS_SCHEMA_VERSION,
+          enrichmentContentHash(contribution),
+          JSON.stringify(contribution),
+          migratedAt,
+          migratedAt,
+          migratedAt,
+        );
+      }
+      db.query("UPDATE usage_store_metadata SET value = 1 WHERE key = 'migration.rtk-contributions-v1'").run();
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
   }
 };
 
@@ -611,27 +932,43 @@ const importMergeRows = (
         const result = emptyImportResult();
         const now = importedAt.toISOString();
         const statements = prepareImportStatements(db);
+        const enrichmentStatements = prepareEnrichmentStatements(db);
+        const preparedRows = rows.map(prepareMergeRow);
 
         db.exec('BEGIN IMMEDIATE');
         try {
-          const classifiedRows = classifyMergeRows(db, rows, authority);
-          for (const { classification, row } of classifiedRows) {
+          const classifiedRows = classifyMergeRows(
+            db,
+            preparedRows.map(({ row }) => row),
+            authority,
+          );
+          let enrichmentProjectionChanged = false;
+          for (const [index, { classification, row }] of classifiedRows.entries()) {
             if (classification === 'inserted') {
               insertMergeRow(statements.insert, row, now, authority);
               result.inserted++;
-              continue;
-            }
-
-            if (classification === 'unchanged') {
+            } else if (classification === 'unchanged') {
               touchMergeRow(statements.touch, row.rowKey, now);
               result.unchanged++;
-              continue;
+            } else {
+              updateMergeRow(statements.update, row, now, authority);
+              result[classification]++;
             }
-
-            updateMergeRow(statements.update, row, now, authority);
-            result[classification]++;
+            const contribution = preparedRows[index]?.contribution;
+            if (contribution) {
+              const enrichmentClassification = upsertRtkContribution(
+                enrichmentStatements,
+                row.rowKey,
+                contribution,
+                now,
+              );
+              enrichmentProjectionChanged ||= row.status === 'active' && enrichmentClassification !== 'unchanged';
+            }
           }
-          if (classifiedRows.some(({ reportProjectionChanged }) => reportProjectionChanged)) {
+          if (
+            enrichmentProjectionChanged ||
+            classifiedRows.some(({ reportProjectionChanged }) => reportProjectionChanged)
+          ) {
             db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
           }
           db.exec('COMMIT');
@@ -719,9 +1056,10 @@ const storeIdentity = (dbPath: string, generation: number): string => {
 };
 
 const readStorePreview = async (dbPath: string, rows: SerializedMergeRow[]): Promise<PreviewPeerMergeBundleResult> => {
+  const canonicalRows = rows.map(prepareMergeRow).map(({ row }) => row);
   if (!fs.existsSync(dbPath)) {
     return {
-      ...summarizeClassifications(rows.map((row) => ({ classification: 'inserted', row }))),
+      ...summarizeClassifications(canonicalRows.map((row) => ({ classification: 'inserted', row }))),
       generation: 0,
       storeStateToken: createHash('sha256').update('absent').digest('hex'),
     };
@@ -739,7 +1077,7 @@ const readStorePreview = async (dbPath: string, rows: SerializedMergeRow[]): Pro
     if (!(record && Number.isSafeInteger(record.value) && record.value >= 0)) {
       throw new Error('Usage store generation metadata is missing or invalid.');
     }
-    const result = summarizeClassifications(classifyMergeRows(db, rows, 'portable-opaque'));
+    const result = summarizeClassifications(classifyMergeRows(db, canonicalRows, 'portable-opaque'));
     db.exec('ROLLBACK');
     return { ...result, generation: record.value, storeStateToken: storeIdentity(dbPath, record.value) };
   } catch (error) {
@@ -793,7 +1131,7 @@ export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<Quer
       try: () => {
         const statuses = input.statuses?.length ? input.statuses : (['active'] satisfies StoredUsageRowStatus[]);
         const params: unknown[] = [...statuses];
-        let sql = `SELECT row_json, source_authority FROM usage_rows WHERE status IN (${statuses.map(() => '?').join(', ')})`;
+        let sql = `SELECT row_key, row_json, source_authority FROM usage_rows WHERE status IN (${statuses.map(() => '?').join(', ')})`;
 
         if (input.originMachineIds?.length) {
           sql += ` AND origin_machine_id IN (${input.originMachineIds.map(() => '?').join(', ')})`;
@@ -812,13 +1150,49 @@ export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<Quer
 
         sql += " ORDER BY COALESCE(active_date, '') DESC, row_key ASC";
         const records = db.query(sql).all(...params) as StoredRowRecord[];
+        const rowKeys = records.map(({ row_key }) => row_key);
+        const rowKeySet = new Set(rowKeys);
+        const enrichments =
+          rowKeys.length === 0
+            ? []
+            : (
+                db
+                  .query(`
+                  SELECT row_key, source_id, schema_version, content_hash, payload_json
+                  FROM usage_row_enrichments
+                  WHERE source_id = ?
+                `)
+                  .all(RTK_SAVINGS_SOURCE_ID) as StoredEnrichmentRecord[]
+              ).filter(({ row_key }) => rowKeySet.has(row_key));
+        const rtkByRowKey = new Map<string, RtkSavingsContribution>();
+        let skipped = 0;
+        for (const enrichment of enrichments) {
+          let payload: unknown;
+          try {
+            payload = JSON.parse(enrichment.payload_json) as unknown;
+          } catch {
+            skipped += 1;
+            continue;
+          }
+          if (
+            enrichment.schema_version !== RTK_SAVINGS_SCHEMA_VERSION ||
+            enrichment.source_id !== RTK_SAVINGS_SOURCE_ID ||
+            !isRtkSavingsContribution(payload) ||
+            enrichment.content_hash !== enrichmentContentHash(payload)
+          ) {
+            skipped += 1;
+            continue;
+          }
+          rtkByRowKey.set(enrichment.row_key, payload);
+        }
         const rows: CollectedUsageRow[] = [];
         const sourceAuthorities: StoredSourceAuthority[] = [];
-        let skipped = 0;
         for (const record of records) {
           const parsed = JSON.parse(record.row_json) as unknown;
           if (isSerializedMergeRow(parsed)) {
-            rows.push(deserializeMergeRow(parsed));
+            const base = stripRtkSavings(deserializeMergeRow(parsed));
+            const contribution = rtkByRowKey.get(record.row_key);
+            rows.push(contribution ? { ...base, ...contribution } : base);
             sourceAuthorities.push(record.source_authority);
           } else {
             skipped += 1;
@@ -827,6 +1201,88 @@ export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<Quer
         return { rows, skipped, sourceAuthorities };
       },
       catch: (cause) => usageStoreError('queryReportRows', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
+export const queryEnrichableUsageRows = (
+  input: QueryEnrichableUsageRowsInput,
+): Effect.Effect<QueryEnrichableUsageRowsResult, UsageStoreError> =>
+  withUsageStore(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const params: unknown[] = [];
+        let sql = "SELECT row_key, row_json, source_authority FROM usage_rows WHERE status = 'active'";
+        if (input.originMachineIds?.length) {
+          sql += ` AND origin_machine_id IN (${input.originMachineIds.map(() => '?').join(', ')})`;
+          params.push(...input.originMachineIds);
+        }
+        if (input.sourceAuthorities?.length) {
+          sql += ` AND source_authority IN (${input.sourceAuthorities.map(() => '?').join(', ')})`;
+          params.push(...input.sourceAuthorities);
+        }
+        sql += " ORDER BY COALESCE(active_date, '') DESC, row_key ASC";
+        const records = db.query(sql).all(...params) as StoredRowRecord[];
+        const rows: EnrichableUsageRow[] = [];
+        let skipped = 0;
+        for (const record of records) {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(record.row_json) as unknown;
+          } catch {
+            skipped += 1;
+            continue;
+          }
+          if (!isSerializedMergeRow(parsed)) {
+            skipped += 1;
+            continue;
+          }
+          rows.push({ row: stripRtkSavings(deserializeMergeRow(parsed)), rowKey: record.row_key });
+        }
+        return { rows, skipped };
+      },
+      catch: (cause) => usageStoreError('queryEnrichableUsageRows', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
+export const upsertRtkSavingsContributions = (
+  input: UpsertRtkSavingsContributionsInput,
+): Effect.Effect<EnrichmentImportResult, UsageStoreError> =>
+  withUsageStore(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const unique = new Map<string, RtkSavingsContribution>();
+        for (const item of input.contributions) {
+          if (
+            !(typeof item.rowKey === 'string' && item.rowKey.length > 0 && isRtkSavingsContribution(item.contribution))
+          ) {
+            throw new Error('RTK savings contribution failed strict validation');
+          }
+          unique.set(item.rowKey, item.contribution);
+        }
+        const result: EnrichmentImportResult = { inserted: 0, unchanged: 0, updated: 0 };
+        const now = (input.importedAt ?? new Date()).toISOString();
+        const enrichmentStatements = prepareEnrichmentStatements(db);
+        const activeStatement = db.query("SELECT row_key FROM usage_rows WHERE row_key = ? AND status = 'active'");
+        let projectionChanged = false;
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          for (const [rowKey, contribution] of unique) {
+            const active = activeStatement.get(rowKey) !== null;
+            const classification = upsertRtkContribution(enrichmentStatements, rowKey, contribution, now);
+            result[classification] += 1;
+            projectionChanged ||= active && classification !== 'unchanged';
+          }
+          if (projectionChanged) {
+            db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
+          }
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+        return result;
+      },
+      catch: (cause) => usageStoreError('upsertRtkSavingsContributions', input.dbPath, cause, 'storage-failure'),
     }),
   );
 
@@ -847,6 +1303,196 @@ export const queryUsageStoreGeneration = (
       catch: (cause) => usageStoreError('queryUsageStoreGeneration', input.dbPath, cause, 'storage-failure'),
     }),
   );
+
+const maximumNormalizedDatasetItems = 50_000;
+
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+};
+
+const normalizedDatasetContentHash = (item: NormalizedDatasetItem): string =>
+  createHash('sha256').update(canonicalJson(item.payload)).digest('hex');
+
+const invalidNormalizedDatasetInput = (operation: string, message: string): UsageStoreError =>
+  new UsageStoreError({
+    message,
+    operation,
+    reason: 'invalid-input',
+  });
+
+export const importNormalizedDatasetItems = (
+  input: ImportNormalizedDatasetItemsInput,
+): Effect.Effect<NormalizedDatasetImportResult, UsageStoreError> => {
+  if (input.items.length > maximumNormalizedDatasetItems) {
+    return Effect.fail(
+      invalidNormalizedDatasetInput(
+        'importNormalizedDatasetItems',
+        `A normalized dataset import cannot exceed ${maximumNormalizedDatasetItems} items.`,
+      ),
+    );
+  }
+  if (!input.items.every(isNormalizedDatasetItem)) {
+    return Effect.fail(
+      invalidNormalizedDatasetInput(
+        'importNormalizedDatasetItems',
+        'A normalized dataset item failed strict validation.',
+      ),
+    );
+  }
+
+  return withUsageStore(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const result: NormalizedDatasetImportResult = { inserted: 0, unchanged: 0, updated: 0 };
+        const observedAt = (input.importedAt ?? new Date()).toISOString();
+        const selectExisting = db.query(`
+          SELECT content_hash
+          FROM collected_dataset_items
+          WHERE source_id = ? AND machine_id = ? AND dataset_key = ? AND schema_version = ? AND item_key = ?
+        `);
+        const insertItem = db.query(`
+          INSERT INTO collected_dataset_items (
+            source_id, machine_id, dataset_key, schema_version, item_key, content_hash,
+            payload_json, first_seen_at, last_seen_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        const touchItem = db.query(`
+          UPDATE collected_dataset_items
+          SET last_seen_at = ?
+          WHERE source_id = ? AND machine_id = ? AND dataset_key = ? AND schema_version = ? AND item_key = ?
+        `);
+        const updateItem = db.query(`
+          UPDATE collected_dataset_items
+          SET content_hash = ?, payload_json = ?, last_seen_at = ?, updated_at = ?
+          WHERE source_id = ? AND machine_id = ? AND dataset_key = ? AND schema_version = ? AND item_key = ?
+        `);
+
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          for (const item of input.items) {
+            const identity = [
+              item.sourceId,
+              item.machineId,
+              item.datasetKey,
+              item.schemaVersion,
+              item.itemKey,
+            ] as const;
+            const payloadJson = canonicalJson(item.payload);
+            const contentHash = normalizedDatasetContentHash(item);
+            const existing = selectExisting.get(...identity) as { content_hash: string } | null;
+            if (!existing) {
+              insertItem.run(...identity, contentHash, payloadJson, observedAt, observedAt, observedAt);
+              result.inserted++;
+              continue;
+            }
+            if (existing.content_hash === contentHash) {
+              touchItem.run(observedAt, ...identity);
+              result.unchanged++;
+              continue;
+            }
+            updateItem.run(contentHash, payloadJson, observedAt, observedAt, ...identity);
+            result.updated++;
+          }
+          if (result.inserted > 0 || result.updated > 0) {
+            db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
+          }
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+        return result;
+      },
+      catch: (cause) => usageStoreError('importNormalizedDatasetItems', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+};
+
+export const queryNormalizedDatasetItems = (
+  input: QueryNormalizedDatasetItemsInput,
+): Effect.Effect<QueryNormalizedDatasetItemsResult, UsageStoreError> => {
+  const maximumItems = input.maximumItems ?? maximumNormalizedDatasetItems;
+  if (!(Number.isSafeInteger(maximumItems) && maximumItems > 0 && maximumItems <= maximumNormalizedDatasetItems)) {
+    return Effect.fail(
+      invalidNormalizedDatasetInput(
+        'queryNormalizedDatasetItems',
+        `maximumItems must be an integer from 1 through ${maximumNormalizedDatasetItems}.`,
+      ),
+    );
+  }
+
+  return withUsageStore(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const filters: string[] = [];
+        const params: unknown[] = [];
+        if (input.sourceId !== undefined) {
+          filters.push('source_id = ?');
+          params.push(input.sourceId);
+        }
+        if (input.machineId !== undefined) {
+          filters.push('machine_id = ?');
+          params.push(input.machineId);
+        }
+        if (input.datasetKey !== undefined) {
+          filters.push('dataset_key = ?');
+          params.push(input.datasetKey);
+        }
+        const where = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+        const records = db
+          .query(`
+            SELECT source_id, machine_id, dataset_key, schema_version, item_key, payload_json
+            FROM collected_dataset_items
+            ${where}
+            ORDER BY dataset_key, machine_id, source_id, item_key
+            LIMIT ?
+          `)
+          .all(...params, maximumItems + 1) as StoredNormalizedDatasetItemRecord[];
+        const truncated = records.length > maximumItems;
+        const items: NormalizedDatasetItem[] = [];
+        let skipped = 0;
+        for (const record of records.slice(0, maximumItems)) {
+          try {
+            if (
+              !isNormalizedDatasetIdentity({
+                datasetKey: record.dataset_key,
+                schemaVersion: record.schema_version,
+                sourceId: record.source_id,
+              })
+            ) {
+              skipped++;
+              continue;
+            }
+            const item = {
+              datasetKey: record.dataset_key,
+              itemKey: record.item_key,
+              machineId: record.machine_id,
+              payload: JSON.parse(record.payload_json) as unknown,
+              schemaVersion: record.schema_version,
+              sourceId: record.source_id,
+            };
+            if (!isNormalizedDatasetItem(item)) {
+              skipped++;
+              continue;
+            }
+            items.push(item);
+          } catch {
+            skipped++;
+          }
+        }
+        return { items, skipped, truncated };
+      },
+      catch: (cause) => usageStoreError('queryNormalizedDatasetItems', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+};
 
 const providerQuotaContentHash = (observation: ProviderQuotaObservation): string =>
   createHash('sha256').update(providerQuotaObservationFingerprintInput(observation)).digest('hex');
@@ -1319,10 +1965,15 @@ export const exportLocalMergeBundle = (
 export const createUsageStore = (dbPath: string): UsageStore => ({
   exportLocalMergeBundle: (input) => exportLocalMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
   importLocalRows: (input) => importLocalRows({ ...input, dbPath: input.dbPath ?? dbPath }),
+  importNormalizedDatasetItems: (input) => importNormalizedDatasetItems({ ...input, dbPath: input.dbPath ?? dbPath }),
   importPeerMergeBundle: (input) => importPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
   previewPeerMergeBundle: (input) => previewPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
   confirmPeerMergeBundle: (input) => confirmPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
   queryReportRows: (input) => queryReportRows({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
+  queryEnrichableUsageRows: (input) => queryEnrichableUsageRows({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
+  queryNormalizedDatasetItems: (input) =>
+    queryNormalizedDatasetItems({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryUsageStoreGeneration: (input) =>
     queryUsageStoreGeneration({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
+  upsertRtkSavingsContributions: (input) => upsertRtkSavingsContributions({ ...input, dbPath: input.dbPath ?? dbPath }),
 });
