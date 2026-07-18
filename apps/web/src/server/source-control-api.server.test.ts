@@ -197,6 +197,38 @@ describe('source-control server API', () => {
     expect(source.unsubscribeCount()).toBe(1);
   });
 
+  test('disables runtime idle timeouts for the long-lived stream', async () => {
+    const timeoutCalls: [Request, number][] = [];
+    const nodeTimeouts: number[] = [];
+    const request = trustedRequest();
+    Object.defineProperty(request, 'runtime', {
+      value: {
+        bun: {
+          server: {
+            timeout: (runtimeRequest: Request, seconds: number) => {
+              timeoutCalls.push([runtimeRequest, seconds]);
+            },
+          },
+        },
+        node: {
+          req: {
+            setTimeout: (milliseconds: number) => nodeTimeouts.push(milliseconds),
+          },
+          res: {
+            setTimeout: (milliseconds: number) => nodeTimeouts.push(milliseconds),
+          },
+        },
+      },
+    });
+    const response = createSourceControlEventStream(request, {
+      runtime: streamRuntime().runtime,
+    });
+
+    expect(timeoutCalls).toEqual([[request, 0]]);
+    expect(nodeTimeouts).toEqual([0, 0]);
+    await response.body?.cancel();
+  });
+
   test('bounds slow clients to one queued and one replacement snapshot', async () => {
     const source = streamRuntime();
     const response = createSourceControlEventStream(trustedRequest(), {
