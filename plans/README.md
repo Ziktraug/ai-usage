@@ -41,6 +41,7 @@ pull request unless the user explicitly asks.
 | 025 | Make Session Analysis Trustworthy End to End | P1 | L | 016-018, 024 | DONE |
 | 026 | Unify the Session Drawer and Make Chronology Readable | P1 | M | 025 | DONE |
 | 027 | Extend Session Insight to Claude and Add Trustworthy Git Links | P1 | XL | 025, 026 | DONE |
+| 028 | Frontend Portfolio Step-up | P0 | L | - | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
