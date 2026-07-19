@@ -72,6 +72,9 @@ export interface ProvenanceMarkerFact {
 const provenanceTitle = (facts: ProvenanceMarkerFact[]) =>
   facts.map((fact) => `${fact.label}: ${fact.description}`).join('\n');
 
+export const provenanceMarkerGlyph = (facts: ProvenanceMarkerFact[]): '!' | 'i' =>
+  facts.some((fact) => fact.severity === 'warning') ? '!' : 'i';
+
 export const ProvenanceMarker = (props: { facts: ProvenanceMarkerFact[] }) => {
   if (!props.facts.length) {
     return null;
@@ -85,7 +88,7 @@ export const ProvenanceMarker = (props: { facts: ProvenanceMarkerFact[] }) => {
         class={hasWarning ? `${provenanceMarker} ${provenanceMarkerWarning}` : provenanceMarker}
         role="img"
       >
-        !
+        {provenanceMarkerGlyph(props.facts)}
       </span>
     </Tooltip>
   );

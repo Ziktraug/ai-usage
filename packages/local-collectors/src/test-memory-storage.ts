@@ -1,9 +1,27 @@
 import path from 'node:path';
 import { Effect } from 'effect';
 import { LocalHistoryError } from './errors';
-import type { LocalHistoryDatabase, LocalHistoryDirEntry, LocalHistoryStorage } from './local-history';
+import type {
+  LocalHistoryDatabase,
+  LocalHistoryDirEntry,
+  LocalHistorySqlParameter,
+  LocalHistoryStorage,
+} from './local-history';
 
 const LINE_SEPARATOR = /\r?\n/;
+
+const databaseParameterKey = (parameter: LocalHistorySqlParameter): unknown => {
+  if (typeof parameter === 'bigint') {
+    return { type: 'bigint', value: parameter.toString() };
+  }
+  if (parameter instanceof Uint8Array) {
+    return { type: 'bytes', value: [...parameter] };
+  }
+  return { type: typeof parameter, value: parameter };
+};
+
+const databaseStatementKey = (sql: string, parameters: readonly LocalHistorySqlParameter[]): string =>
+  JSON.stringify([sql, parameters.map(databaseParameterKey)]);
 
 export class TestMemoryStorage implements LocalHistoryStorage {
   readonly home: string;
@@ -18,10 +36,15 @@ export class TestMemoryStorage implements LocalHistoryStorage {
     this.files.set(path.join(this.home, relativePath), content);
   }
 
-  writeDatabaseRows(relativePath: string, sql: string, rows: Record<string, unknown>[]) {
+  writeDatabaseRows(
+    relativePath: string,
+    sql: string,
+    rows: Record<string, unknown>[],
+    parameters: readonly LocalHistorySqlParameter[] = [],
+  ) {
     const dbPath = path.join(this.home, relativePath);
     const database = this.databases.get(dbPath) ?? new Map<string, Record<string, unknown>[]>();
-    database.set(sql, rows);
+    database.set(databaseStatementKey(sql, parameters), rows);
     this.databases.set(dbPath, database);
   }
 
@@ -129,8 +152,11 @@ export class TestMemoryStorage implements LocalHistoryStorage {
     }
 
     return Effect.succeed({
-      all: <T extends object = Record<string, unknown>>(sql: string) => {
-        const rows = database.get(sql);
+      all: <T extends object = Record<string, unknown>>(
+        sql: string,
+        parameters: readonly LocalHistorySqlParameter[] = [],
+      ) => {
+        const rows = database.get(databaseStatementKey(sql, parameters));
         if (!rows) {
           return Effect.fail(
             new LocalHistoryError({

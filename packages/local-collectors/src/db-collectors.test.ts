@@ -6,6 +6,7 @@ import { collectCursor } from './collectors/cursor';
 import { classifyOpenCodeTitle, collectOpenCode } from './collectors/opencode';
 import { CURSOR_COMMIT_ATTRIBUTION_SQL, collectCursorCommitAttribution } from './facets';
 import { LocalHistoryStorage } from './local-history';
+import { OPENCODE_DIRECT_USER_PART_PREDICATE } from './opencode-schema';
 import { TestMemoryStorage } from './test-memory-storage';
 
 const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, storage: TestMemoryStorage) =>
@@ -16,7 +17,8 @@ const OPENCODE_STABLE_DB = '.local/share/opencode/opencode-stable.db';
 const OPENCODE_SESSION_SQL =
   'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
 const OPENCODE_TOOL_SQL = `SELECT session_id, count(*) n FROM part WHERE data LIKE '%"type":"tool"%' GROUP BY session_id`;
-const OPENCODE_MESSAGE_SQL = 'SELECT session_id, data FROM message';
+const OPENCODE_TURN_SQL = `SELECT m.session_id, count(DISTINCT m.id) n FROM message m JOIN part p ON p.message_id = m.id WHERE json_extract(m.data, '$.role') = 'user' AND ${OPENCODE_DIRECT_USER_PART_PREDICATE} GROUP BY m.session_id`;
+const OPENCODE_MESSAGE_SQL = 'SELECT session_id, data FROM message ORDER BY session_id, time_created, id';
 
 const CURSOR_DB = '.config/Cursor/User/globalStorage/state.vscdb';
 const CURSOR_AI_TRACKING_DB = '.cursor/ai-tracking/ai-code-tracking.db';
@@ -83,6 +85,7 @@ describe('DB-backed Harness collectors', () => {
       { id: 'open-session', title: 'Open session', directory: '/work', summary_additions: 0, summary_deletions: 0 },
     ]);
     openCodeStorage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TOOL_SQL, []);
+    openCodeStorage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TURN_SQL, []);
     openCodeStorage.writeDatabaseRows(OPENCODE_DB, OPENCODE_MESSAGE_SQL, [
       {
         session_id: 'open-session',
@@ -348,6 +351,7 @@ describe('DB-backed Harness collectors', () => {
       },
     ]);
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TOOL_SQL, [{ session_id: 'session-1', n: 2 }]);
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TURN_SQL, [{ session_id: 'session-1', n: 1 }]);
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_MESSAGE_SQL, [
       { session_id: 'session-1', data: JSON.stringify({ role: 'user' }) },
       {
@@ -373,9 +377,85 @@ describe('DB-backed Harness collectors', () => {
     expect(rows[0]?.source?.parentSourceSessionId).toBe('parent-session');
     expect(rows[0]?.tokOut).toBe(25);
     expect(rows[0]?.costActual).toBe(0.12);
+    expect(rows[0]?.durationMs).toBe(60_000);
+    expect(rows[0]?.models).toEqual(['openai/gpt-5.3']);
     expect(rows[0]?.turns).toBe(1);
     expect(rows[0]?.tools).toBe(2);
     expect(rows[0]?.linesAdded).toBe(12);
+  });
+
+  test('preserves OpenCode provider/model chronology and separates active time from pauses', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SESSION_SQL, [
+      {
+        id: 'mixed-session',
+        parent_id: null,
+        title: 'Mixed providers',
+        directory: '/work/ai-usage',
+        summary_additions: 0,
+        summary_deletions: 0,
+      },
+    ]);
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TOOL_SQL, []);
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TURN_SQL, [{ session_id: 'mixed-session', n: 2 }]);
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_MESSAGE_SQL, [
+      {
+        session_id: 'mixed-session',
+        data: JSON.stringify({
+          role: 'assistant',
+          providerID: 'openai',
+          modelID: 'gpt-5',
+          cost: 0,
+          tokens: { input: 1_100_000, output: 0 },
+          time: { created: '2026-02-01T00:00:00.000Z', completed: '2026-02-01T00:01:00.000Z' },
+        }),
+      },
+      {
+        session_id: 'mixed-session',
+        data: JSON.stringify({
+          role: 'assistant',
+          providerID: 'anthropic',
+          modelID: 'claude-sonnet-4-5',
+          cost: 1,
+          tokens: { input: 1_000_000, output: 0 },
+          time: { created: '2026-02-01T01:00:00.000Z', completed: '2026-02-01T01:01:00.000Z' },
+        }),
+      },
+      {
+        session_id: 'mixed-session',
+        data: JSON.stringify({
+          role: 'assistant',
+          providerID: 'openai',
+          modelID: 'gpt-5',
+          cost: 0,
+          tokens: { input: 200_000, output: 0 },
+          time: { created: '2026-02-01T02:00:00.000Z' },
+        }),
+      },
+      {
+        session_id: 'mixed-session',
+        data: JSON.stringify({
+          role: 'assistant',
+          providerID: 'local',
+          modelID: 'unpriced-zero-token-model',
+          cost: 0,
+          tokens: { input: 0, output: 0 },
+          time: { created: '2026-02-01T03:00:00.000Z' },
+        }),
+      },
+    ]);
+
+    const [row] = runWithStorage(collectOpenCode, storage);
+
+    expect(row?.model).toBe('openai/gpt-5');
+    expect(row?.models).toEqual(['openai/gpt-5', 'anthropic/claude-sonnet-4-5', 'local/unpriced-zero-token-model']);
+    expect(row?.provider).toBe('Codex sub (OC)');
+    expect(row?.costActual).toBe(1);
+    expect(row?.costApprox).toBeCloseTo(4.625, 8);
+    expect(row?.costKnown).toBe(true);
+    expect(row?.durationMs).toBe(120_000);
+    expect(row?.partial).toBe(true);
+    expect(row?.turns).toBe(2);
   });
 
   test('classifies OpenCode generic titles as technical id fallbacks', () => {
@@ -416,6 +496,7 @@ describe('DB-backed Harness collectors', () => {
 
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SESSION_SQL, [liveSession]);
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TOOL_SQL, [{ session_id: 'live-1', n: 1 }]);
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TURN_SQL, [{ session_id: 'live-1', n: 1 }]);
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_MESSAGE_SQL, [
       { session_id: 'live-1', data: JSON.stringify({ role: 'user' }) },
       {
@@ -433,6 +514,7 @@ describe('DB-backed Harness collectors', () => {
 
     storage.writeDatabaseRows(OPENCODE_STABLE_DB, OPENCODE_SESSION_SQL, [stableSession]);
     storage.writeDatabaseRows(OPENCODE_STABLE_DB, OPENCODE_TOOL_SQL, [{ session_id: 'stable-1', n: 3 }]);
+    storage.writeDatabaseRows(OPENCODE_STABLE_DB, OPENCODE_TURN_SQL, [{ session_id: 'stable-1', n: 1 }]);
     storage.writeDatabaseRows(OPENCODE_STABLE_DB, OPENCODE_MESSAGE_SQL, [
       { session_id: 'stable-1', data: JSON.stringify({ role: 'user' }) },
       {

@@ -19,7 +19,7 @@ import {
 
 export const SESSION_QUERY_DATABASE_NAME = 'sessions.sqlite';
 
-const SESSION_QUERY_SCHEMA_VERSION = 3;
+const SESSION_QUERY_SCHEMA_VERSION = 4;
 const SESSION_ROW_INSERT_VALUE_COUNT = 74;
 const createFileFlags =
   // biome-ignore lint/suspicious/noBitwiseOperators: Node file-open flags are a documented bitmask API.

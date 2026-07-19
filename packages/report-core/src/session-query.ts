@@ -764,7 +764,7 @@ export const sessionRowIdentity = (row: SerializedRow): string =>
     row.sessionLabel,
   ].join('|');
 
-const sessionModelLabel = (row: SerializedRow): string => (row.models?.length ? row.models.join(' + ') : row.model);
+const sessionModelLabel = (row: SerializedRow): string => (row.models?.length ? row.models.join(' → ') : row.model);
 
 const providerPresentationLabel = (provider: string): string =>
   provider.replace(OPENCODE_PROVIDER_SUFFIX, ' · via OpenCode');
@@ -828,7 +828,7 @@ export const sortValueForSessionColumn = (row: SessionPresentationRow, columnId:
     case 'rtkSaved':
       return rtkSavingsPct(row) ?? 0;
     case 'cost':
-      return row.costKnown ? row.costApprox : Number.NEGATIVE_INFINITY;
+      return row.costKnown || row.costApprox > 0 ? row.costApprox : Number.NEGATIVE_INFINITY;
     case 'actual':
       return row.costActual ?? Number.NEGATIVE_INFINITY;
     case 'quota':
@@ -920,14 +920,28 @@ const sumNullable = (
   return present ? total : null;
 };
 
-export const buildSessionCampaignTotals = (rows: SessionPresentationRow[]): SessionCampaignTotals => ({
+const campaignRootFromRows = (rows: SessionPresentationRow[]): SessionPresentationRow | undefined =>
+  rows.find((row) => {
+    const sourceSessionId = row.source?.sourceSessionId;
+    return Boolean(sourceSessionId && sourceSessionId === row.source?.rootSourceSessionId);
+  });
+
+/**
+ * The root duration represents the orchestrator's active work. Child
+ * rollout spans overlap the root and each other, so summing them inflates the
+ * campaign duration.
+ */
+export const buildSessionCampaignTotals = (
+  rows: SessionPresentationRow[],
+  campaignRoot = campaignRootFromRows(rows),
+): SessionCampaignTotals => ({
   actualCost: rows.reduce((sum, row) => sum + (row.costActual ?? 0), 0),
   cacheRead: rows.reduce((sum, row) => sum + row.tokCr, 0),
   cacheWrite: rows.reduce((sum, row) => sum + row.tokCw, 0),
   calls: rows.reduce((sum, row) => sum + row.calls, 0),
   costKnown: rows.every((row) => row.costKnown),
   costQuota: rows.reduce((sum, row) => sum + (row.costQuota ?? 0), 0),
-  durationMs: sumNullable(rows, (row) => row.durationMs),
+  durationMs: campaignRoot?.durationMs ?? null,
   freshTokens: rows.reduce((sum, row) => sum + row.freshTokens, 0),
   lineDelta: sumNullable(rows, (row) => row.lineDelta),
   linesAdded: sumNullable(rows, (row) => row.linesAdded),
@@ -940,7 +954,7 @@ export const buildSessionCampaignTotals = (rows: SessionPresentationRow[]): Sess
   tokIn: rows.reduce((sum, row) => sum + row.tokIn, 0),
   tokOut: rows.reduce((sum, row) => sum + row.tokOut, 0),
   tools: rows.reduce((sum, row) => sum + row.tools, 0),
-  totalCost: rows.reduce((sum, row) => sum + (row.costKnown ? row.costApprox : 0), 0),
+  totalCost: rows.reduce((sum, row) => sum + row.costApprox, 0),
   turns: rows.reduce((sum, row) => sum + row.turns, 0),
 });
 
@@ -987,7 +1001,7 @@ export const buildSessionCampaignViews = (
     campaigns.push({
       allChildren,
       allRows: rows,
-      allTotals: buildSessionCampaignTotals(rows),
+      allTotals: buildSessionCampaignTotals(rows, root),
       campaignKey,
       root,
       rootSourceSessionId: firstIdentity.rootSourceSessionId,
@@ -995,7 +1009,7 @@ export const buildSessionCampaignViews = (
       visibleChildren,
       visibleCount: visibleRowsForTotals.length,
       visibleRows: visibleRowsForTotals,
-      visibleTotals: buildSessionCampaignTotals(visibleRowsForTotals),
+      visibleTotals: buildSessionCampaignTotals(visibleRowsForTotals, root),
     });
   }
   return campaigns;
@@ -1021,7 +1035,7 @@ const campaignSortValue = (campaign: SessionCampaignView, columnId: SessionSortF
     case 'rtkSaved':
       return totals.rtkInputTokens ? (totals.rtkSavedTokens / totals.rtkInputTokens) * 100 : 0;
     case 'cost':
-      return totals.costKnown ? totals.totalCost : Number.NEGATIVE_INFINITY;
+      return totals.costKnown || totals.totalCost > 0 ? totals.totalCost : Number.NEGATIVE_INFINITY;
     case 'actual':
       return totals.actualCost;
     case 'quota':
@@ -1136,6 +1150,11 @@ export const sessionCampaignDisplayRow = (
     lineDelta: totals.lineDelta,
     linesAdded: totals.linesAdded,
     linesDeleted: totals.linesDeleted,
+    // The latest child only controls campaign recency; model identity remains
+    // representative of the root orchestrator session.
+    model: campaign.root.model,
+    modelKey: campaign.root.modelKey,
+    modelLabel: campaign.root.modelLabel,
     partial: campaign.visibleRows.some((row) => row.partial),
     rtkCommandCount: totals.rtkCommandCount,
     rtkInputTokens: totals.rtkInputTokens,
@@ -1143,6 +1162,7 @@ export const sessionCampaignDisplayRow = (
     rtkSavedTokens: totals.rtkSavedTokens,
     sessionLabel: campaign.root.sessionLabel,
     sortDate: latestVisibleRow.sortDate,
+    sortModel: campaign.root.sortModel,
     subagent: true,
     tokCr: totals.cacheRead,
     tokCw: totals.cacheWrite,

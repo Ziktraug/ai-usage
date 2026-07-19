@@ -321,7 +321,7 @@ const readTopSessions = (
         'campaign' AS item_kind,
         root.row_json AS row_json,
         SUM(CASE WHEN visible.cost_known = 1 THEN visible.cost_approx ELSE 0 END) AS cost_approx,
-        CASE WHEN COUNT(visible.duration_ms) = 0 THEN NULL ELSE SUM(visible.duration_ms) END AS duration_ms,
+        MAX(root.duration_ms) AS duration_ms,
         COUNT(*) AS session_count,
         0 AS kind_order,
         MIN(visible.ordinal) AS item_ordinal

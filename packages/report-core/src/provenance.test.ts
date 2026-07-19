@@ -59,9 +59,13 @@ describe('usage row provenance', () => {
   test('cost provenance is metric-specific', () => {
     const provenance = provenanceForUsageRow(row({ costKnown: false, costActual: null, costQuota: null }));
 
-    expect(provenanceForMetric(row({ costKnown: false }), 'api-value').map((item) => item.kind)).toEqual([
-      'unknown-api-price',
-    ]);
+    expect(provenanceForMetric(row({ costApprox: 0, costKnown: true }), 'api-value')).toEqual([]);
+    expect(provenanceForMetric(row({ costApprox: 0, costKnown: false }), 'api-value').map((item) => item.kind)).toEqual(
+      ['unknown-api-price'],
+    );
+    expect(provenanceForMetric(row({ costApprox: 1, costKnown: false }), 'api-value').map((item) => item.kind)).toEqual(
+      ['partial-api-price'],
+    );
     expect(provenance.map((item) => item.kind)).toContain('unknown-actual-cost');
     expect(provenance.map((item) => item.kind)).toContain('unknown-subscription-value');
     expect(provenanceForMetric(row(), 'subscription-value')).toEqual([]);

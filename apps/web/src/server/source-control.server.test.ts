@@ -12,6 +12,7 @@ import { Duration, Effect, Ref } from 'effect';
 import {
   createWebSourceControlRuntime,
   installWebSourceControlRuntime,
+  replaceWebSourceControlRuntime,
   requestSourceControlPublicationForServer,
   type WebSourceControlRuntime,
 } from './source-control.server';
@@ -63,6 +64,82 @@ const fakeSource = (run: ScheduledSource['run']): ReadonlyMap<CollectionSourceId
   ]);
 
 describe('web source-control runtime', () => {
+  test('runs the complete registered lifecycle teardown before hot replacement', async () => {
+    let lifecycleTeardowns = 0;
+    let runtimeDisposals = 0;
+    const unavailable = (): Promise<never> => Promise.reject(new Error('Unexpected runtime operation.'));
+    const staleRuntime: WebSourceControlRuntime = {
+      detectAll: async () => undefined,
+      dispose: () => {
+        runtimeDisposals += 1;
+        return Promise.resolve();
+      },
+      getSnapshot: unavailable,
+      requestPublication: async () => false,
+      runAllEnabled: async () => 0,
+      runNow: async () => false,
+      setEnabled: async () => undefined,
+      start: unavailable,
+      subscribe: () => () => undefined,
+    };
+    const replacementRuntime: WebSourceControlRuntime = {
+      ...staleRuntime,
+      dispose: async () => undefined,
+    };
+    const uninstallStale = await replaceWebSourceControlRuntime(staleRuntime, () => {
+      lifecycleTeardowns += 1;
+      return Promise.resolve();
+    });
+
+    const uninstallReplacement = await replaceWebSourceControlRuntime(replacementRuntime);
+    try {
+      expect(lifecycleTeardowns).toBe(1);
+      expect(runtimeDisposals).toBe(0);
+    } finally {
+      uninstallReplacement();
+      uninstallStale();
+    }
+  });
+
+  test('disposes a stale installed runtime before replacing it during hot reload', async () => {
+    let disposed = 0;
+    let replacementRequests = 0;
+    const unavailable = (): Promise<never> => Promise.reject(new Error('Unexpected runtime operation.'));
+    const staleRuntime: WebSourceControlRuntime = {
+      detectAll: async () => undefined,
+      dispose: () => {
+        disposed += 1;
+        return Promise.resolve();
+      },
+      getSnapshot: unavailable,
+      requestPublication: async () => false,
+      runAllEnabled: async () => 0,
+      runNow: async () => false,
+      setEnabled: async () => undefined,
+      start: unavailable,
+      subscribe: () => () => undefined,
+    };
+    const replacementRuntime: WebSourceControlRuntime = {
+      ...staleRuntime,
+      dispose: async () => undefined,
+      requestPublication: () => {
+        replacementRequests += 1;
+        return Promise.resolve(false);
+      },
+    };
+    const uninstallStale = installWebSourceControlRuntime(staleRuntime);
+
+    const uninstallReplacement = await replaceWebSourceControlRuntime(replacementRuntime);
+    try {
+      expect(disposed).toBe(1);
+      expect(await requestSourceControlPublicationForServer()).toBe(true);
+      expect(replacementRequests).toBe(1);
+    } finally {
+      uninstallReplacement();
+      uninstallStale();
+    }
+  });
+
   test('treats a deduplicated publication request as handled by the installed runtime', async () => {
     let requests = 0;
     const unavailable = (): Promise<never> => Promise.reject(new Error('Unexpected runtime operation.'));

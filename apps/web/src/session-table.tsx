@@ -42,6 +42,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show }
 import { measureClientPerf } from './client-perf';
 import type { FieldFilterKey } from './dashboard-search';
 import { HighlightedText } from './highlighted-text';
+import { sessionDurationSemantics } from './session-analysis-model';
 import {
   defaultColumnVisibility,
   isSessionColumnVisible,
@@ -62,14 +63,14 @@ import {
   sessionColumnPresets,
 } from './session-table-schema';
 import {
+  apiValuePresentation,
   type DashboardRow,
   fmtCompact,
   fmtDate,
   fmtDuration,
-  fmtMoney,
   HarnessBadge,
   rowKey,
-  UNKNOWN_PRICE_HINT,
+  USAGE_UNAVAILABLE_HINT,
 } from './shared';
 
 const track = (..._values: unknown[]) => _values.length;
@@ -89,12 +90,9 @@ const MobileSessionSummary = (props: {
   total: number;
 }) => {
   const row = () => props.tableRow.original;
-  const apiValue = () => {
-    if (row().usageUnavailable || !row().costKnown) {
-      return '—';
-    }
-    return fmtMoney(row().costApprox);
-  };
+  const apiValue = () => apiValuePresentation(row());
+  const rootSessionOnly = () => row().campaignTotalCount !== undefined;
+  const durationSemantics = () => sessionDurationSemantics(row().source?.harnessKey, rootSessionOnly());
 
   return (
     <li aria-posinset={props.position} aria-setsize={props.total} class={sessionSummaryRow}>
@@ -112,8 +110,8 @@ const MobileSessionSummary = (props: {
           <span class={sessionSummaryTitle}>
             <HighlightedText query={props.searchQuery} text={row().sessionLabel} />
           </span>
-          <span class={sessionSummaryValue} title={row().costKnown ? 'Estimated API value' : UNKNOWN_PRICE_HINT}>
-            {apiValue()}
+          <span class={sessionSummaryValue} title={row().usageUnavailable ? USAGE_UNAVAILABLE_HINT : apiValue().title}>
+            {row().usageUnavailable ? '—' : apiValue().label}
           </span>
         </button>
         <footer class={sessionSummaryFooter}>
@@ -146,7 +144,11 @@ const MobileSessionSummary = (props: {
             </Show>
           </div>
           <span class={sessionSummaryStats}>
-            {fmtCompact(row().freshTokens)} fresh · {fmtCompact(row().tokCr)} cache · {fmtDuration(row().durationMs)}
+            {fmtCompact(row().freshTokens)} fresh · {fmtCompact(row().tokCr)} cache ·{' '}
+            <span title={durationSemantics().metricHint}>
+              {fmtDuration(row().durationMs)}
+              {rootSessionOnly() ? ' root' : ''}
+            </span>
           </span>
         </footer>
       </article>

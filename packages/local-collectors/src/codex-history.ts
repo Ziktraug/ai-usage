@@ -1,6 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import { normalizeCodexRateLimitStatus, type ProviderStatus } from '@ai-usage/report-core/provider-status';
+import type {
+  SessionDetail,
+  SessionDetailPhase,
+  SessionDetailPrompt,
+  SessionDetailTokenCounts,
+  SessionDetailTurn,
+} from '@ai-usage/report-core/session-detail';
 import { actualCost, approximateApiCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import type { CollectedSession } from './collected-session';
@@ -18,6 +26,7 @@ import { firstExisting, resolvePaths } from './platform-paths';
 import { base, safeJSON, usablePrompt } from './text';
 
 interface CodexSession {
+  activeDurationMs: number | null;
   agentNickname: string | null;
   beganWithPriorTokenUsage: boolean;
   cwd: string | null;
@@ -27,7 +36,9 @@ interface CodexSession {
   id: string | null;
   maxTotal: number;
   model: string;
+  models: string[];
   parent: string | null;
+  phases: CodexSessionPhase[];
   rejectedMetricRecords: number;
   source: string | null;
   start: Date | null;
@@ -38,6 +49,16 @@ interface CodexSession {
   tools: number;
   tout: number;
   turns: number;
+}
+
+interface CodexSessionPhase {
+  effort: string | null;
+  end: Date;
+  model: string;
+  start: Date;
+  tcr: number;
+  tin: number;
+  tout: number;
 }
 
 interface CodexThreadMetadata {
@@ -133,7 +154,24 @@ interface SqliteDatabase {
   query(sql: string): SqliteStatement;
 }
 
-const CODEX_SESSION_CACHE_VERSION = 7;
+// This cache stores normalized parser output, not raw JSONL. Bump whenever an
+// unchanged rollout could produce different counters, lineage, phases, or turns.
+const CODEX_SESSION_CACHE_VERSION = 10;
+const CODEX_DETAIL_MAX_BYTES = 128 * 1024 * 1024;
+const CODEX_DETAIL_MAX_LINE_BYTES = 8 * 1024 * 1024;
+const CODEX_DETAIL_MAX_PHASES = 256;
+const CODEX_DETAIL_MAX_PROMPTS = 256;
+const CODEX_DETAIL_MAX_PROMPT_BYTES = 32 * 1024;
+const CODEX_DETAIL_MAX_PROMPT_TOTAL_BYTES = 1024 * 1024;
+const CODEX_DETAIL_MAX_TURNS = 1024;
+const CODEX_DETAIL_DUPLICATE_PROMPT_WINDOW_MS = 1000;
+// Forked rollouts stamp copied task events at replay time while preserving the
+// task's original second-resolution `started_at`. Genuine task events observed
+// in the rollout can therefore lag by up to one rounding second; require more
+// than two seconds before classifying an event as replayed history.
+const CODEX_REPLAYED_TASK_EVENT_LAG_MS = 2000;
+const SAFE_CODEX_SESSION_ID = /^[a-z\d][a-z\d-]{0,127}$/i;
+const TRAILING_REPLACEMENT_CHARACTER = /\uFFFD$/u;
 
 export const codexSessionsDir = (storage: LocalHistoryStorageService) => {
   const paths = resolvePaths(storage);
@@ -319,6 +357,7 @@ const readCodexThreadMetadata: Effect.Effect<
 );
 
 const emptySession = (): CodexSession => ({
+  activeDurationMs: null,
   id: null,
   parent: null,
   beganWithPriorTokenUsage: false,
@@ -327,6 +366,8 @@ const emptySession = (): CodexSession => ({
   end: null,
   cwd: null,
   model: 'codex',
+  models: [],
+  phases: [],
   source: null,
   threadSource: null,
   agentNickname: null,
@@ -340,6 +381,41 @@ const emptySession = (): CodexSession => ({
   tout: 0,
   hasTokenUsage: false,
 });
+
+const emptyDetailTokens = (): SessionDetailTokenCounts => ({
+  cacheRead: 0,
+  cacheWrite: 0,
+  input: 0,
+  output: 0,
+  total: 0,
+});
+
+const addDetailTokens = (target: SessionDetailTokenCounts, delta: SessionDetailTokenCounts): void => {
+  target.cacheRead += delta.cacheRead;
+  target.cacheWrite += delta.cacheWrite;
+  target.input += delta.input;
+  target.output += delta.output;
+  target.total += delta.total;
+};
+
+const phaseTokenTotal = (phase: CodexSessionPhase): number => phase.tin + phase.tcr + phase.tout;
+
+const dominantCodexModel = (session: CodexSession): string => {
+  const totals = new Map<string, number>();
+  for (const phase of session.phases) {
+    totals.set(phase.model, (totals.get(phase.model) ?? 0) + phaseTokenTotal(phase));
+  }
+  let dominantModel = session.models[0] ?? session.model;
+  let dominantTokens = -1;
+  for (const model of session.models) {
+    const tokens = totals.get(model) ?? 0;
+    if (tokens > dominantTokens) {
+      dominantModel = model;
+      dominantTokens = tokens;
+    }
+  }
+  return dominantModel;
+};
 
 const textFromContent = (content: unknown): string | null => {
   if (typeof content === 'string') {
@@ -383,6 +459,8 @@ const shouldParseCodexPrefix = (prefix: string) =>
   prefix.includes('token_count') ||
   prefix.includes('session_meta') ||
   prefix.includes('turn_context') ||
+  prefix.includes('task_started') ||
+  prefix.includes('task_complete') ||
   prefix.includes('user_message') ||
   prefix.includes('"role":"user"') ||
   prefix.includes('"role": "user"');
@@ -413,6 +491,47 @@ const reviveDate = (value: unknown): Date | null => {
   return Number.isFinite(date.getTime()) ? date : null;
 };
 
+const reviveCachedPhases = (value: unknown): CodexSessionPhase[] | null => {
+  if (!(Array.isArray(value) && value.length <= CODEX_DETAIL_MAX_PHASES)) {
+    return null;
+  }
+  const phases: CodexSessionPhase[] = [];
+  for (const candidate of value) {
+    if (!isRecord(candidate)) {
+      return null;
+    }
+    const start = reviveDate(candidate.start);
+    const end = reviveDate(candidate.end);
+    const tin = parseNonNegativeSafeInteger(candidate.tin);
+    const tcr = parseNonNegativeSafeInteger(candidate.tcr);
+    const tout = parseNonNegativeSafeInteger(candidate.tout);
+    if (
+      !(
+        start &&
+        end &&
+        end >= start &&
+        tin.ok &&
+        tcr.ok &&
+        tout.ok &&
+        typeof candidate.model === 'string' &&
+        (candidate.effort === null || typeof candidate.effort === 'string')
+      )
+    ) {
+      return null;
+    }
+    phases.push({
+      effort: candidate.effort,
+      end,
+      model: candidate.model,
+      start,
+      tcr: tcr.value,
+      tin: tin.value,
+      tout: tout.value,
+    });
+  }
+  return phases;
+};
+
 const reviveCachedSession = (json: string): CodexSession | null => {
   try {
     const value = JSON.parse(json) as unknown;
@@ -430,6 +549,12 @@ const reviveCachedSession = (json: string): CodexSession | null => {
     ].map(parseNonNegativeSafeInteger);
     const start = reviveDate(value.start);
     const end = reviveDate(value.end);
+    const activeDuration = value.activeDurationMs === null ? null : parseNonNegativeSafeInteger(value.activeDurationMs);
+    const rawModels = Array.isArray(value.models) ? value.models : null;
+    const models = rawModels
+      ? rawModels.filter((model): model is string => typeof model === 'string').slice(0, CODEX_DETAIL_MAX_PHASES)
+      : null;
+    const phases = reviveCachedPhases(value.phases);
     if (
       !counters.every((counter) => counter.ok) ||
       (value.start !== null && start === null) ||
@@ -437,7 +562,11 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       typeof value.model !== 'string' ||
       typeof value.subscription !== 'boolean' ||
       typeof value.hasTokenUsage !== 'boolean' ||
-      typeof value.beganWithPriorTokenUsage !== 'boolean'
+      typeof value.beganWithPriorTokenUsage !== 'boolean' ||
+      !(activeDuration === null || activeDuration.ok) ||
+      models === null ||
+      models.length !== rawModels?.length ||
+      phases === null
     ) {
       return null;
     }
@@ -446,6 +575,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       return null;
     }
     return {
+      activeDurationMs: activeDuration?.value ?? null,
       id: typeof value.id === 'string' ? value.id : null,
       parent: typeof value.parent === 'string' ? value.parent : null,
       beganWithPriorTokenUsage: value.beganWithPriorTokenUsage,
@@ -453,6 +583,8 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       end,
       cwd: typeof value.cwd === 'string' ? value.cwd : null,
       model: value.model,
+      models,
+      phases,
       source: typeof value.source === 'string' ? value.source : null,
       threadSource: typeof value.threadSource === 'string' ? value.threadSource : null,
       agentNickname: typeof value.agentNickname === 'string' ? value.agentNickname : null,
@@ -557,12 +689,275 @@ const writeCodexSessionCache = (
   }
 };
 
-const createCodexSessionParser = () => {
+interface MutableCodexTask {
+  canonicalPromptSeen: boolean;
+  effort: string | null;
+  hasContext: boolean;
+  lastPromptAt: Date | null;
+  lastPromptNormalized: string | null;
+  model: string;
+  pendingResponsePrompt: { at: Date; text: string } | null;
+  promptIds: string[];
+  replayed: boolean;
+  start: Date;
+  tokens: SessionDetailTokenCounts;
+  tools: number;
+  turnId: string;
+}
+
+interface CodexTokenSnapshot {
+  cacheRead: number;
+  input: number;
+  output: number;
+  total: number;
+}
+
+const truncatePrompt = (text: string, maximumBytes: number): { text: string; truncated: boolean } => {
+  const encoded = Buffer.from(text, 'utf8');
+  if (encoded.byteLength <= maximumBytes) {
+    return { text, truncated: false };
+  }
+  return {
+    text: encoded.subarray(0, maximumBytes).toString('utf8').replace(TRAILING_REPLACEMENT_CHARACTER, ''),
+    truncated: true,
+  };
+};
+
+const createCodexSessionParser = (captureDetail = false) => {
   const session = emptySession();
+  const completedTasks: (MutableCodexTask & { durationMs: number; end: Date })[] = [];
+  const openTasks = new Map<string, MutableCodexTask>();
+  const prompts: SessionDetailPrompt[] = [];
   let lines = 0;
   let parsedLines = 0;
   let skippedLines = 0;
+  let activeDurationMs = 0;
+  let currentEffort: string | null = null;
+  let currentModel = 'codex';
+  let hasContextualTokenSnapshot = false;
+  let legacyMaxTokens: CodexTokenSnapshot | null = null;
+  let previousTokens: CodexTokenSnapshot | null = null;
+  let promptBytes = 0;
+  let promptsTruncated = false;
+  let taskObservedEnd: Date | null = null;
+  let taskObservedStart: Date | null = null;
   const parseStartedAt = Date.now();
+
+  const latestOpenTask = (): MutableCodexTask | null => {
+    let latest: MutableCodexTask | null = null;
+    for (const task of openTasks.values()) {
+      if (!task.replayed) {
+        latest = task;
+      }
+    }
+    return latest;
+  };
+
+  const addModel = (model: string): void => {
+    if (!(session.models.includes(model) || session.models.length >= CODEX_DETAIL_MAX_PHASES)) {
+      session.models.push(model);
+    }
+  };
+
+  const ensurePhase = (at: Date): CodexSessionPhase | null => {
+    const last = session.phases.at(-1);
+    if (last?.model === currentModel && last.effort === currentEffort) {
+      if (at > last.end) {
+        last.end = at;
+      }
+      return last;
+    }
+    if (session.phases.length >= CODEX_DETAIL_MAX_PHASES) {
+      return last ?? null;
+    }
+    if (last && at > last.end) {
+      last.end = at;
+    }
+    const phaseStart = latestOpenTask()?.start ?? at;
+    const phase = {
+      effort: currentEffort,
+      end: at < phaseStart ? phaseStart : at,
+      model: currentModel,
+      start: phaseStart,
+      tcr: 0,
+      tin: 0,
+      tout: 0,
+    };
+    session.phases.push(phase);
+    return phase;
+  };
+
+  const appendPrompt = (task: MutableCodexTask, text: string, at: Date): void => {
+    const normalized = usablePrompt(text);
+    if (!normalized) {
+      return;
+    }
+    if (!session.firstUser) {
+      session.firstUser = normalized.slice(0, 200);
+    }
+    if (!captureDetail) {
+      return;
+    }
+    const adjacentDuplicate =
+      normalized === task.lastPromptNormalized &&
+      task.lastPromptAt !== null &&
+      Math.abs(at.getTime() - task.lastPromptAt.getTime()) <= CODEX_DETAIL_DUPLICATE_PROMPT_WINDOW_MS;
+    if (adjacentDuplicate) {
+      task.lastPromptAt = at;
+      return;
+    }
+    task.lastPromptAt = at;
+    task.lastPromptNormalized = normalized;
+    if (prompts.length >= CODEX_DETAIL_MAX_PROMPTS) {
+      promptsTruncated = true;
+      return;
+    }
+    const remainingBytes = CODEX_DETAIL_MAX_PROMPT_TOTAL_BYTES - promptBytes;
+    if (remainingBytes <= 0) {
+      promptsTruncated = true;
+      return;
+    }
+    const maximumBytes = Math.min(CODEX_DETAIL_MAX_PROMPT_BYTES, remainingBytes);
+    const bounded = truncatePrompt(text.trim(), maximumBytes);
+    if (!bounded.text) {
+      promptsTruncated = true;
+      return;
+    }
+    if (Buffer.byteLength(text.trim(), 'utf8') > remainingBytes) {
+      promptsTruncated = true;
+    }
+    const prompt = {
+      id: `prompt-${prompts.length + 1}`,
+      text: bounded.text,
+      timestamp: at.toISOString(),
+      truncated: bounded.truncated,
+    };
+    prompts.push(prompt);
+    promptBytes += Buffer.byteLength(prompt.text, 'utf8');
+    task.promptIds.push(prompt.id);
+  };
+
+  const recordPrompt = (task: MutableCodexTask | null, text: string, at: Date, canonical: boolean): void => {
+    if (!task?.hasContext) {
+      return;
+    }
+    if (!canonical) {
+      task.pendingResponsePrompt = { at, text };
+      return;
+    }
+    task.canonicalPromptSeen = true;
+    task.pendingResponsePrompt = null;
+    appendPrompt(task, text, at);
+  };
+
+  const flushResponsePrompt = (task: MutableCodexTask): void => {
+    if (!(task.canonicalPromptSeen || !task.pendingResponsePrompt)) {
+      appendPrompt(task, task.pendingResponsePrompt.text, task.pendingResponsePrompt.at);
+    }
+  };
+
+  const tokenSnapshotFrom = (value: unknown): CodexTokenSnapshot | null => {
+    if (!isRecord(value)) {
+      return null;
+    }
+    const total = parseNonNegativeSafeInteger(value.total_tokens);
+    const input = parseNonNegativeSafeInteger(value.input_tokens);
+    const cacheRead = parseNonNegativeSafeInteger(value.cached_input_tokens);
+    const output = parseNonNegativeSafeInteger(value.output_tokens);
+    if (!(total.ok && input.ok && cacheRead.ok && output.ok) || cacheRead.value > input.value) {
+      return null;
+    }
+    return { cacheRead: cacheRead.value, input: input.value, output: output.value, total: total.value };
+  };
+
+  const detailDelta = (current: CodexTokenSnapshot, baseline: CodexTokenSnapshot): SessionDetailTokenCounts => ({
+    cacheRead: current.cacheRead - baseline.cacheRead,
+    cacheWrite: 0,
+    input: current.input - current.cacheRead - (baseline.input - baseline.cacheRead),
+    output: current.output - baseline.output,
+    total: current.input - baseline.input + (current.output - baseline.output),
+  });
+
+  const recordTokenDelta = (delta: SessionDetailTokenCounts, at: Date, task: MutableCodexTask): void => {
+    if (delta.input < 0 || delta.cacheRead < 0 || delta.output < 0 || delta.total < 0) {
+      session.rejectedMetricRecords++;
+      return;
+    }
+    if (delta.total !== delta.input + delta.cacheRead + delta.output) {
+      session.rejectedMetricRecords++;
+      return;
+    }
+    session.tin += delta.input;
+    session.tcr += delta.cacheRead;
+    session.tout += delta.output;
+    const phase = ensurePhase(at);
+    if (phase) {
+      phase.tin += delta.input;
+      phase.tcr += delta.cacheRead;
+      phase.tout += delta.output;
+    }
+    addDetailTokens(task.tokens, delta);
+  };
+
+  const recordTokens = (payload: Record<string, unknown>, at: Date): void => {
+    const hasRateLimits = isRecord(payload.rate_limits);
+    if (hasRateLimits) {
+      session.subscription = true;
+    }
+    if (payload.info === null && hasRateLimits) {
+      return;
+    }
+    const info = isRecord(payload.info) ? payload.info : null;
+    const snapshot = tokenSnapshotFrom(isRecord(info?.total_token_usage) ? info.total_token_usage : null);
+    if (!snapshot) {
+      session.rejectedMetricRecords++;
+      return;
+    }
+    const lastUsage = tokenSnapshotFrom(isRecord(info?.last_token_usage) ? info.last_token_usage : null);
+    if (!session.hasTokenUsage) {
+      session.beganWithPriorTokenUsage = Boolean(lastUsage && snapshot.total > lastUsage.total);
+    }
+    session.hasTokenUsage = true;
+    session.maxTotal = Math.max(session.maxTotal, snapshot.total);
+    if (!legacyMaxTokens || snapshot.total > legacyMaxTokens.total) {
+      legacyMaxTokens = snapshot;
+    }
+    const task = latestOpenTask();
+    const contextualTask = task?.hasContext ? task : null;
+    if (contextualTask) {
+      hasContextualTokenSnapshot = true;
+    }
+    if (!previousTokens) {
+      previousTokens = snapshot;
+      if (contextualTask) {
+        const zero = { cacheRead: 0, input: 0, output: 0, total: 0 };
+        recordTokenDelta(
+          lastUsage && snapshot.total > lastUsage.total ? detailDelta(lastUsage, zero) : detailDelta(snapshot, zero),
+          at,
+          contextualTask,
+        );
+      }
+      return;
+    }
+    const nonMonotonic =
+      snapshot.total < previousTokens.total ||
+      snapshot.input < previousTokens.input ||
+      snapshot.cacheRead < previousTokens.cacheRead ||
+      snapshot.output < previousTokens.output;
+    if (nonMonotonic) {
+      session.rejectedMetricRecords++;
+      previousTokens = snapshot;
+      if (lastUsage && contextualTask) {
+        recordTokenDelta(detailDelta(lastUsage, { cacheRead: 0, input: 0, output: 0, total: 0 }), at, contextualTask);
+      }
+      return;
+    }
+    const delta = detailDelta(snapshot, previousTokens);
+    previousTokens = snapshot;
+    if (contextualTask) {
+      recordTokenDelta(delta, at, contextualTask);
+    }
+  };
 
   const visit = (line: string): void => {
     if (!line) {
@@ -570,13 +965,7 @@ const createCodexSessionParser = () => {
     }
     lines++;
     const prefix = codexLinePrefix(line);
-    if (prefix.includes('"type":"task_started"')) {
-      session.turns++;
-    }
-    if (isCodexToolCallPrefix(prefix)) {
-      session.tools++;
-    }
-    if (!shouldParseCodexPrefix(prefix)) {
+    if (!(shouldParseCodexPrefix(prefix) || isCodexToolCallPrefix(prefix))) {
       skippedLines++;
       return;
     }
@@ -585,19 +974,31 @@ const createCodexSessionParser = () => {
     if (!event) {
       return;
     }
-    if (typeof event.timestamp === 'string' || typeof event.timestamp === 'number') {
-      const date = new Date(event.timestamp);
-      if (Number.isFinite(date.getTime())) {
-        if (!session.start || date < session.start) {
-          session.start = date;
-        }
-        if (!session.end || date > session.end) {
-          session.end = date;
-        }
-      }
+    const timestamp =
+      typeof event.timestamp === 'string' || typeof event.timestamp === 'number' ? event.timestamp : Number.NaN;
+    const date = new Date(timestamp);
+    if (!Number.isFinite(date.getTime())) {
+      return;
+    }
+    if (!session.start || date < session.start) {
+      session.start = date;
+    }
+    if (!session.end || date > session.end) {
+      session.end = date;
     }
 
     const payload = isRecord(event.payload) ? event.payload : {};
+    if (isCodexToolCallPrefix(prefix)) {
+      const metadata = isRecord(payload.internal_chat_message_metadata_passthrough)
+        ? payload.internal_chat_message_metadata_passthrough
+        : null;
+      const turnId = nonEmpty(metadata?.turn_id);
+      const task = turnId ? (openTasks.get(turnId) ?? null) : latestOpenTask();
+      if (task?.hasContext) {
+        session.tools++;
+        task.tools++;
+      }
+    }
     if (event.type === 'session_meta' && !session.id) {
       session.id = typeof payload.id === 'string' ? payload.id : session.id;
       session.cwd = typeof payload.cwd === 'string' ? payload.cwd : session.cwd;
@@ -610,55 +1011,198 @@ const createCodexSessionParser = () => {
       }
     }
     if (event.type === 'turn_context' && typeof payload.model === 'string') {
-      session.model = payload.model;
+      const turnId = nonEmpty(payload.turn_id);
+      const task = turnId ? (openTasks.get(turnId) ?? null) : latestOpenTask();
+      if (task && !task.replayed) {
+        currentModel = payload.model;
+        currentEffort = nonEmpty(payload.effort) ?? nonEmpty(payload.reasoning_effort);
+        addModel(currentModel);
+        if (!task.hasContext) {
+          task.hasContext = true;
+          session.turns++;
+          if (!taskObservedStart || task.start < taskObservedStart) {
+            taskObservedStart = task.start;
+          }
+        }
+        task.model = currentModel;
+        task.effort = currentEffort;
+        ensurePhase(date);
+      }
     }
     const userText = userTextFromPayload(payload);
-    if (userText && !session.firstUser) {
-      session.firstUser = usablePrompt(userText.slice(0, 200));
+    if (userText) {
+      const canonical = payload.type === 'user_message';
+      const promptMetadata = isRecord(payload.internal_chat_message_metadata_passthrough)
+        ? payload.internal_chat_message_metadata_passthrough
+        : null;
+      const promptTurnId = nonEmpty(promptMetadata?.turn_id);
+      const promptTask = promptTurnId ? (openTasks.get(promptTurnId) ?? null) : latestOpenTask();
+      recordPrompt(promptTask, userText, date, canonical);
+    }
+    if (payload.type === 'task_started') {
+      const turnId = nonEmpty(payload.turn_id) ?? `turn-${lines}`;
+      const recordedTaskStart = unixDate(payload.started_at);
+      const taskStart = recordedTaskStart ?? date;
+      const replayed = Boolean(
+        recordedTaskStart && date.getTime() - recordedTaskStart.getTime() > CODEX_REPLAYED_TASK_EVENT_LAG_MS,
+      );
+      if (!(openTasks.has(turnId) || openTasks.size < CODEX_DETAIL_MAX_TURNS)) {
+        const oldestUnanchored = [...openTasks].find(([, task]) => !task.hasContext)?.[0];
+        if (!oldestUnanchored) {
+          return;
+        }
+        openTasks.delete(oldestUnanchored);
+      }
+      openTasks.set(turnId, {
+        canonicalPromptSeen: false,
+        effort: currentEffort,
+        hasContext: false,
+        lastPromptAt: null,
+        lastPromptNormalized: null,
+        model: currentModel,
+        pendingResponsePrompt: null,
+        promptIds: [],
+        replayed,
+        start: taskStart,
+        tokens: emptyDetailTokens(),
+        tools: 0,
+        turnId,
+      });
+    }
+    if (payload.type === 'task_complete') {
+      const turnId = nonEmpty(payload.turn_id);
+      const task = turnId ? (openTasks.get(turnId) ?? null) : latestOpenTask();
+      const taskEnd = unixDate(payload.completed_at) ?? date;
+      if (task && taskEnd >= task.start) {
+        openTasks.delete(task.turnId);
+        if (task.hasContext) {
+          flushResponsePrompt(task);
+          const parsedDuration = parseNonNegativeSafeInteger(payload.duration_ms);
+          const durationMs = parsedDuration.ok ? parsedDuration.value : taskEnd.getTime() - task.start.getTime();
+          activeDurationMs += durationMs;
+          if (captureDetail && completedTasks.length < CODEX_DETAIL_MAX_TURNS) {
+            completedTasks.push({ ...task, durationMs, end: taskEnd });
+          }
+          taskObservedEnd = !taskObservedEnd || taskEnd > taskObservedEnd ? taskEnd : taskObservedEnd;
+          ensurePhase(taskEnd);
+        }
+      }
     }
     if (payload.type === 'token_count') {
-      const hasRateLimits = isRecord(payload.rate_limits);
-      if (hasRateLimits) {
-        session.subscription = true;
-      }
-      // Codex emits quota-only snapshots without per-session token usage.
-      if (payload.info === null && hasRateLimits) {
-        return;
-      }
-      const info = isRecord(payload.info) ? payload.info : null;
-      const usage = isRecord(info?.total_token_usage) ? info.total_token_usage : null;
-      const total = parseNonNegativeSafeInteger(usage?.total_tokens);
-      const input = parseNonNegativeSafeInteger(usage?.input_tokens);
-      const cachedInput = parseNonNegativeSafeInteger(usage?.cached_input_tokens);
-      const output = parseNonNegativeSafeInteger(usage?.output_tokens);
-      if (!(usage && total.ok && input.ok && cachedInput.ok && output.ok && cachedInput.value <= input.value)) {
-        session.rejectedMetricRecords++;
-        return;
-      }
-      if (!session.hasTokenUsage) {
-        const lastUsage = isRecord(info?.last_token_usage) ? info.last_token_usage : null;
-        const lastTotal = parseNonNegativeSafeInteger(lastUsage?.total_tokens);
-        session.beganWithPriorTokenUsage = lastTotal.ok && total.value > lastTotal.value;
-      }
-      if (total.value > session.maxTotal) {
-        session.hasTokenUsage = true;
-        session.maxTotal = total.value;
-        session.tin = input.value - cachedInput.value;
-        session.tcr = cachedInput.value;
-        session.tout = output.value;
-      }
+      recordTokens(payload, date);
     }
   };
 
+  const finalize = (): void => {
+    if (!hasContextualTokenSnapshot && legacyMaxTokens) {
+      session.tin = legacyMaxTokens.input - legacyMaxTokens.cacheRead;
+      session.tcr = legacyMaxTokens.cacheRead;
+      session.tout = legacyMaxTokens.output;
+    }
+    if (session.models.length === 0) {
+      addModel(currentModel);
+    }
+    if (taskObservedStart) {
+      session.start = taskObservedStart;
+    }
+    if (taskObservedEnd) {
+      session.end = taskObservedEnd;
+    }
+    session.model = dominantCodexModel(session);
+    session.activeDurationMs = activeDurationMs;
+  };
+
+  const detailPhases = (): SessionDetailPhase[] => {
+    const sessionStart = session.start;
+    const sessionEnd = session.end;
+    if (!(sessionStart && sessionEnd)) {
+      return [];
+    }
+    return session.phases.flatMap((phase) => {
+      const start = phase.start < sessionStart ? sessionStart : phase.start;
+      const end = phase.end > sessionEnd ? sessionEnd : phase.end;
+      if (end < start) {
+        return [];
+      }
+      const tokens = {
+        cacheRead: phase.tcr,
+        cacheWrite: 0,
+        input: phase.tin,
+        output: phase.tout,
+        total: phaseTokenTotal(phase),
+      };
+      const pricing = priceFor(phase.model, { at: end });
+      return [
+        {
+          cost: pricing.known
+            ? approxCost(pricing.rates, { cr: phase.tcr, cw: 0, in: phase.tin, out: phase.tout })
+            : null,
+          costKind: pricing.known ? ('approximate' as const) : ('unknown' as const),
+          effort: phase.effort,
+          effortKind: phase.effort ? ('recorded' as const) : ('default' as const),
+          endAt: end.toISOString(),
+          model: phase.model,
+          startAt: start.toISOString(),
+          tokens,
+        },
+      ];
+    });
+  };
+
+  const detailTurns = (): SessionDetailTurn[] =>
+    completedTasks.slice(0, CODEX_DETAIL_MAX_TURNS).map((task, index) => ({
+      durationMs: task.durationMs,
+      effort: task.effort,
+      effortKind: task.effort ? ('recorded' as const) : ('default' as const),
+      endAt: task.end.toISOString(),
+      index,
+      intervals: [{ endAt: task.end.toISOString(), startAt: task.start.toISOString() }],
+      model: task.model,
+      promptIds: task.promptIds,
+      startAt: task.start.toISOString(),
+      tokens: task.tokens,
+      tools: task.tools,
+    }));
+
+  const detail = (): SessionDetail | null => {
+    finalize();
+    if (!(captureDetail && session.id && session.start && session.end)) {
+      return null;
+    }
+    const activeDurationMs = session.activeDurationMs ?? 0;
+    const elapsedDurationMs = Math.max(activeDurationMs, session.end.getTime() - session.start.getTime(), 0);
+    return {
+      activeDurationMs,
+      durationStatus: 'recorded',
+      efforts: [...new Set(session.phases.flatMap((phase) => (phase.effort ? [phase.effort] : [])))],
+      elapsedDurationMs,
+      endedAt: session.end.toISOString(),
+      idleDurationMs: Math.max(0, elapsedDurationMs - activeDurationMs),
+      models: session.models,
+      observedAt: new Date().toISOString(),
+      phases: detailPhases(),
+      prompts,
+      promptsTruncated,
+      sourceSessionId: session.id,
+      startedAt: session.start.toISOString(),
+      turns: detailTurns(),
+      turnsStatus: 'recorded',
+    };
+  };
+
   return {
-    finish: (): CodexSessionParseResult => ({
-      lines,
-      parseMs: Date.now() - parseStartedAt,
-      parsedLines,
-      rejectedMetricRecords: session.rejectedMetricRecords,
-      session,
-      skippedLines,
-    }),
+    detail,
+    finish: (): CodexSessionParseResult => {
+      finalize();
+      return {
+        lines,
+        parseMs: Date.now() - parseStartedAt,
+        parsedLines,
+        rejectedMetricRecords: session.rejectedMetricRecords,
+        session,
+        skippedLines,
+      };
+    },
     visit,
   };
 };
@@ -678,7 +1222,15 @@ const mergeMetadata = (session: CodexSession, metadata: CodexThreadMetadata | un
   session.start = session.start ?? metadata.start;
   session.end = session.end ?? metadata.end;
   session.cwd = session.cwd ?? metadata.cwd;
-  session.model = session.model === 'codex' && metadata.model ? metadata.model : session.model;
+  if (session.model === 'codex' && metadata.model) {
+    session.model = metadata.model;
+    session.models = session.models.map((model) => (model === 'codex' ? (metadata.model ?? model) : model));
+    for (const phase of session.phases) {
+      if (phase.model === 'codex') {
+        phase.model = metadata.model;
+      }
+    }
+  }
   session.source = session.source ?? metadata.source;
   session.threadSource = session.threadSource ?? metadata.threadSource;
   session.agentNickname = session.agentNickname ?? metadata.agentNickname;
@@ -899,6 +1451,26 @@ const sharedTokenUsageRoots = (
   return roots;
 };
 
+const codexPhaseCost = (session: CodexSession): { costApprox: number; costKnown: boolean } => {
+  if (session.phases.length === 0) {
+    const pricing = priceFor(session.model, { at: session.end });
+    return {
+      costApprox: approxCost(pricing.rates, { cr: session.tcr, cw: 0, in: session.tin, out: session.tout }),
+      costKnown: session.tin + session.tcr + session.tout === 0 || pricing.known,
+    };
+  }
+  let costApprox = 0;
+  let costKnown = true;
+  for (const phase of session.phases) {
+    const pricing = priceFor(phase.model, { at: phase.end });
+    costApprox += approxCost(pricing.rates, { cr: phase.tcr, cw: 0, in: phase.tin, out: phase.tout });
+    if (phaseTokenTotal(phase) > 0 && !pricing.known) {
+      costKnown = false;
+    }
+  }
+  return { costApprox, costKnown };
+};
+
 export const readCodexUsageSessionsResult: Effect.Effect<
   CodexUsageSessionsResult,
   LocalHistoryError,
@@ -948,10 +1520,12 @@ export const readCodexUsageSessionsResult: Effect.Effect<
         session.id &&
           rootId &&
           session.id !== rootId &&
+          !session.phases.some((phase) => phaseTokenTotal(phase) > 0) &&
           sharedUsageRoots.has(rootId) &&
           rootSession &&
           rootSession.maxTotal >= session.maxTotal,
       );
+      const phaseCost = codexPhaseCost(session);
       usageSessions.push({
         source: {
           harnessKey: 'codex',
@@ -964,12 +1538,16 @@ export const readCodexUsageSessionsResult: Effect.Effect<
         endDate: session.end,
         provider: subscription ? 'Codex sub' : 'Codex API',
         model: session.model,
+        models: session.models,
         name: codexSessionName(session, indexedName, meta),
         titleSource: codexTitleSource(session, indexedName, meta, isSubagent),
         project: base(session.cwd),
         tokens: usageOwnedByRoot ? { cr: 0, cw: 0, in: 0, out: 0 } : tokens,
         cost: subscription ? actualCost(0) : approximateApiCost,
+        costApprox: usageOwnedByRoot ? 0 : phaseCost.costApprox,
+        costKnown: usageOwnedByRoot || phaseCost.costKnown,
         calls: 1,
+        durationMs: session.activeDurationMs ?? 0,
         turns: session.turns,
         tools: session.tools,
         linesAdded: null,
@@ -986,6 +1564,38 @@ export const readCodexUsageSessionsResult: Effect.Effect<
 
 export const readCodexUsageSessions: Effect.Effect<CollectedSession[], LocalHistoryError, LocalHistoryStorageService> =
   readCodexUsageSessionsResult.pipe(Effect.map((result) => result.sessions));
+
+const codexRolloutMatchesSessionId = (filePath: string, sourceSessionId: string): boolean => {
+  const fileName = path.basename(filePath);
+  return fileName === `${sourceSessionId}.jsonl` || fileName.endsWith(`-${sourceSessionId}.jsonl`);
+};
+
+export const readCodexSessionDetail = (
+  sourceSessionId: string,
+): Effect.Effect<SessionDetail | null, LocalHistoryError, LocalHistoryStorageService> =>
+  Effect.gen(function* () {
+    if (!SAFE_CODEX_SESSION_ID.test(sourceSessionId)) {
+      return null;
+    }
+    const storage = yield* LocalHistoryStorage;
+    const files = yield* listCodexSessionFiles;
+    for (const filePath of files) {
+      if (!codexRolloutMatchesSessionId(filePath, sourceSessionId)) {
+        continue;
+      }
+      const parser = createCodexSessionParser(true);
+      yield* storage.readLines(filePath, parser.visit, {
+        maxBytes: CODEX_DETAIL_MAX_BYTES,
+        maxLineBytes: CODEX_DETAIL_MAX_LINE_BYTES,
+      });
+      const parsed = parser.finish();
+      if (parsed.session.id !== sourceSessionId) {
+        continue;
+      }
+      return parser.detail();
+    }
+    return null;
+  });
 
 const findLatestRawCodexRateLimits = (
   recentFileLimit = 40,

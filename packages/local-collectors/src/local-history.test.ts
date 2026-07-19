@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Effect } from 'effect';
 import { createLocalHistoryStorage, readConfigFileText, readRegularFileText, walkFiles } from './local-history';
+import { TestMemoryStorage } from './test-memory-storage';
 
 const PREVIOUS_AGGREGATE_HISTORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024;
 const SIMULATED_LARGE_SESSION_BYTES = 600 * 1024 * 1024;
@@ -133,6 +134,12 @@ test('keeps one read-only SQLite snapshot and sees committed WAL rows', async ()
     try {
       const rows = await Effect.runPromise(database.all<{ id: number }>('SELECT id FROM events ORDER BY id'));
       expect(rows).toEqual([{ id: 1 }]);
+      const selected = await Effect.runPromise(database.all<{ id: number }>('SELECT id FROM events WHERE id = ?', [1]));
+      expect(selected).toEqual([{ id: 1 }]);
+      const injectionShapedParameter = await Effect.runPromise(
+        database.all<{ id: number }>('SELECT id FROM events WHERE id = ?', ['1 OR 1=1']),
+      );
+      expect(injectionShapedParameter).toEqual([]);
       writer.exec('INSERT INTO events (id) VALUES (2);');
       const sameSnapshot = await Effect.runPromise(database.all<{ id: number }>('SELECT id FROM events ORDER BY id'));
       expect(sameSnapshot).toEqual([{ id: 1 }]);
@@ -142,5 +149,19 @@ test('keeps one read-only SQLite snapshot and sees committed WAL rows', async ()
   } finally {
     writer.close();
     fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('keys in-memory SQLite fixtures by SQL and positional parameters', async () => {
+  const storage = new TestMemoryStorage();
+  const sql = 'SELECT id FROM events WHERE session_id = ? LIMIT ?';
+  storage.writeDatabaseRows('history.sqlite', sql, [{ id: 1 }], ['session-a', 2]);
+  storage.writeDatabaseRows('history.sqlite', sql, [], ['session-b', 2]);
+  const database = await Effect.runPromise(storage.openDatabase(path.join(storage.home, 'history.sqlite')));
+  try {
+    await expect(Effect.runPromise(database.all(sql, ['session-a', 2]))).resolves.toEqual([{ id: 1 }]);
+    await expect(Effect.runPromise(database.all(sql, ['session-b', 2]))).resolves.toEqual([]);
+  } finally {
+    await Effect.runPromise(database.close);
   }
 });
