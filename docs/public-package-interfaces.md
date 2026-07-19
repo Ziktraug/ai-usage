@@ -22,6 +22,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./report-data`: serialized usage report payloads and report preparation.
 - `./report-budgets`: shared frozen byte, row, artifact, and import-query acceptance budgets.
 - `./session-query`: strict JSON-safe session filter, sort, page, campaign-child, neighbor, cursor, and request-fingerprint contracts.
+- `./session-detail`: strict local session-detail contract, quality statuses, phases, turns, intervals, and parser.
 - `./session-lineage`: parent/root source-session normalization across harnesses.
 - `./snapshot`: multi-machine usage snapshot creation, parsing, and source labels.
 - `./source-control`: browser-safe collection-source identifiers, defaults, policy contracts, state axes, strict snapshot/command/publication-event decoders, and newest-snapshot replacement.
@@ -38,6 +39,7 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./facets`: normalized Cursor commit-attribution collection.
 - `./local-history`: local history storage service interface/live layer.
 - `./machine-config`: user-local machine, project group, skill-management, and legacy project alias config helpers.
+- `./opencode-history`: low-level OpenCode SQLite session-detail parsing and collection helpers.
 - `./platform-paths`: supported local input candidate resolution.
 - `./rtk-enrichment`: normalized usage-row RTK enrichment.
 

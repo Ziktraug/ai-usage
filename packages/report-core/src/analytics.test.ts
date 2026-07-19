@@ -99,4 +99,111 @@ describe('analytics calculation', () => {
     expect(gpt54?.costSum).toBe(5);
     expect(analytics.byModel.find((group) => group.key === 'gpt-5-codex')?.sessions).toBe(1);
   });
+
+  test('attributes multi-model tokens and API value to the model segment that produced them', () => {
+    const multiModelRow = {
+      ...row({
+        costApprox: 3,
+        model: 'gpt-5.4',
+        models: ['gpt-5.4', 'gpt-5.4-mini'],
+        tokCr: 30,
+        tokCw: 10,
+        tokIn: 100,
+        tokOut: 60,
+      }),
+      modelSegments: [
+        {
+          costApprox: 2,
+          costKnown: true,
+          model: 'gpt-5.4',
+          tokCr: 20,
+          tokCw: 0,
+          tokIn: 70,
+          tokOut: 30,
+        },
+        {
+          costApprox: 1,
+          costKnown: true,
+          model: 'gpt-5.4-mini',
+          tokCr: 10,
+          tokCw: 10,
+          tokIn: 30,
+          tokOut: 30,
+        },
+      ],
+    };
+
+    const analytics = calculateAnalytics([multiModelRow]);
+    const primary = analytics.byModel.find((group) => group.key === 'gpt-5.4');
+    const secondary = analytics.byModel.find((group) => group.key === 'gpt-5.4-mini');
+
+    expect(primary).toMatchObject({ cache: 20, costSum: 2, fresh: 100, inp: 70, sessions: 1 });
+    expect(secondary).toMatchObject({ cache: 10, costSum: 1, fresh: 70, inp: 30, sessions: 1 });
+  });
+
+  test('preserves a known model subtotal when attribution for that model is incomplete', () => {
+    const analytics = calculateAnalytics([
+      {
+        ...row({
+          costApprox: 2,
+          costKnown: false,
+          model: 'gpt-5.4-high',
+          models: ['gpt-5.4-high', 'gpt-5.4-fast'],
+          tokIn: 10,
+          tokOut: 10,
+        }),
+        modelSegments: [
+          {
+            costApprox: 2,
+            costKnown: true,
+            model: 'gpt-5.4-high',
+            tokCr: 0,
+            tokCw: 0,
+            tokIn: 10,
+            tokOut: 0,
+          },
+          {
+            costApprox: 0,
+            costKnown: false,
+            model: 'gpt-5.4-fast',
+            tokCr: 0,
+            tokCw: 0,
+            tokIn: 0,
+            tokOut: 10,
+          },
+        ],
+      },
+    ]);
+
+    expect(analytics.byModel).toHaveLength(1);
+    expect(analytics.byModel[0]).toMatchObject({
+      costPerSession: null,
+      costSum: 2,
+      key: 'gpt-5.4',
+      medianCost: null,
+      priced: 0,
+      unpriced: 1,
+    });
+  });
+
+  test('orders equal model aggregates by a stable lexical key', () => {
+    const analytics = calculateAnalytics([
+      row({ model: 'z-model' }),
+      row({ model: 'a-model' }),
+      row({ model: 'ä-model' }),
+    ]);
+
+    expect(analytics.byModel.map(({ key }) => key)).toEqual(['a-model', 'z-model', 'ä-model']);
+  });
+
+  test('keeps legacy multi-model usage in an explicit unsegmented bucket', () => {
+    const analytics = calculateAnalytics([row({ model: 'gpt-5.4', models: ['gpt-5.4', 'claude-sonnet-4-6'] })]);
+
+    expect(analytics.byModel).toHaveLength(1);
+    expect(analytics.byModel[0]).toMatchObject({
+      costSum: 1,
+      key: '(multi-model, unsegmented)',
+      sessions: 1,
+    });
+  });
 });

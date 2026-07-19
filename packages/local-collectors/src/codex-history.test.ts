@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { parseSessionDetail, type SessionDetail } from '@ai-usage/report-core/session-detail';
 import { Effect } from 'effect';
 import {
   findLatestCodexProviderStatus,
@@ -44,6 +45,13 @@ const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, 
   Effect.runSync(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
 const runWithRealStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, home: string) =>
   Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))));
+
+const requireSessionDetail = (detail: SessionDetail | null): SessionDetail => {
+  if (!detail) {
+    throw new Error('Expected a Codex session detail');
+  }
+  return detail;
+};
 
 describe('Codex local history', () => {
   test('closes the metadata database when a query fails', async () => {
@@ -434,6 +442,7 @@ describe('Codex local history', () => {
       { cr: 0, cw: 0, in: 0, out: 0 },
       { cr: 0, cw: 0, in: 0, out: 0 },
     ]);
+    expect(children.every((session) => session.modelSegments === undefined)).toBe(true);
     expect(children.every((session) => session.usageUnavailable)).toBe(true);
   });
 
@@ -733,6 +742,35 @@ describe('Codex local history', () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.model).toBe('gpt-5.6-sol');
     expect(sessions[0]?.models).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra']);
+    expect(
+      sessions[0]?.modelSegments?.map(({ costKnown, model, tokCr, tokCw, tokIn, tokOut }) => ({
+        costKnown,
+        model,
+        tokCr,
+        tokCw,
+        tokIn,
+        tokOut,
+      })),
+    ).toEqual([
+      {
+        costKnown: true,
+        model: 'gpt-5.6-sol',
+        tokCr: 60,
+        tokCw: 0,
+        tokIn: 20,
+        tokOut: 20,
+      },
+      {
+        costKnown: true,
+        model: 'gpt-5.6-terra',
+        tokCr: 6,
+        tokCw: 0,
+        tokIn: 2,
+        tokOut: 2,
+      },
+    ]);
+    expect(sessions[0]?.modelSegments?.[0]?.costApprox).toBeCloseTo(0.000_73, 10);
+    expect(sessions[0]?.modelSegments?.[1]?.costApprox).toBeCloseTo(0.000_036_5, 10);
     expect(sessions[0]?.durationMs).toBe(3_660_000);
     expect(sessions[0]?.turns).toBe(2);
     expect(sessions[0]?.tools).toBe(1);
@@ -751,6 +789,585 @@ describe('Codex local history', () => {
     expect(detail?.prompts[1]?.truncated).toBe(true);
     expect(Buffer.byteLength(detail?.prompts[1]?.text ?? '', 'utf8')).toBeLessThanOrEqual(32 * 1024);
     expect(runWithStorage(readCodexSessionDetail('../../private'), storage)).toBeNull();
+  });
+
+  test('marks a token-bearing segment with unknown model pricing as a lower bound', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/unknown-model-thread.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'unknown-model-thread', cwd: '/work/unknown-model' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:01.000Z',
+          payload: { type: 'task_started', turn_id: 'unknown-model-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:01.010Z',
+          type: 'turn_context',
+          payload: { model: 'private-codex-model', turn_id: 'unknown-model-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:02.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: {
+                total_tokens: 13,
+                input_tokens: 10,
+                cached_input_tokens: 2,
+                output_tokens: 3,
+              },
+            },
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:00:03.000Z',
+          payload: { duration_ms: 2000, type: 'task_complete', turn_id: 'unknown-model-turn' },
+        },
+      ),
+    );
+
+    const [session] = runWithStorage(readCodexUsageSessions, storage);
+
+    expect(session?.costApprox).toBe(0);
+    expect(session?.costKnown).toBe(false);
+    expect(session?.modelSegments).toEqual([
+      {
+        costApprox: 0,
+        costKnown: false,
+        model: 'private-codex-model',
+        tokCr: 2,
+        tokCw: 0,
+        tokIn: 8,
+        tokOut: 3,
+      },
+    ]);
+  });
+
+  test('attributes cumulative tokens to the only model observed in zero-token phases', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/single-model-cumulative-thread.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'single-model-cumulative-thread', cwd: '/work/single-model-cumulative' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:01.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: {
+                total_tokens: 15,
+                input_tokens: 10,
+                cached_input_tokens: 2,
+                output_tokens: 5,
+              },
+            },
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:00:02.000Z',
+          payload: { type: 'task_started', turn_id: 'single-model-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:02.010Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-sol', turn_id: 'single-model-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:03.000Z',
+          payload: { duration_ms: 1000, type: 'task_complete', turn_id: 'single-model-turn' },
+        },
+      ),
+    );
+
+    const [session] = runWithStorage(readCodexUsageSessions, storage);
+    const [row] = runWithStorage(collectCodex, storage);
+
+    expect(session?.modelSegments).toMatchObject([
+      {
+        costKnown: true,
+        model: 'gpt-5.6-sol',
+        tokCr: 2,
+        tokCw: 0,
+        tokIn: 8,
+        tokOut: 5,
+      },
+    ]);
+    expect(session?.modelSegments?.[0]?.costApprox).toBeCloseTo(0.000_191, 10);
+    expect(session?.costApprox).toBeCloseTo(0.000_191, 10);
+    expect(row).toMatchObject({
+      costKnown: true,
+      tokCr: 2,
+      tokCw: 0,
+      tokIn: 8,
+      tokOut: 5,
+      usageUnavailable: false,
+    });
+    expect(row?.costApprox).toBeCloseTo(0.000_191, 10);
+  });
+
+  test('keeps cumulative tokens unsegmented when zero-token phases observe multiple models', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/unattributed-cumulative-thread.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'unattributed-cumulative-thread', cwd: '/work/unattributed-cumulative' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:01.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: {
+                total_tokens: 15,
+                input_tokens: 10,
+                cached_input_tokens: 2,
+                output_tokens: 5,
+              },
+            },
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:00:02.000Z',
+          payload: { type: 'task_started', turn_id: 'later-context-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:02.010Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-sol', turn_id: 'later-context-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:03.000Z',
+          payload: { duration_ms: 1000, type: 'task_complete', turn_id: 'later-context-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:04.000Z',
+          payload: { type: 'task_started', turn_id: 'second-context-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:04.010Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-terra', turn_id: 'second-context-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:05.000Z',
+          payload: { duration_ms: 1000, type: 'task_complete', turn_id: 'second-context-turn' },
+        },
+      ),
+    );
+
+    const [session] = runWithStorage(readCodexUsageSessions, storage);
+    const [row] = runWithStorage(collectCodex, storage);
+
+    expect(session?.tokens).toEqual({ cr: 2, cw: 0, in: 8, out: 5 });
+    expect(session?.modelSegments).toEqual([
+      {
+        costApprox: 0,
+        costKnown: false,
+        model: '(multi-model, unsegmented)',
+        tokCr: 2,
+        tokCw: 0,
+        tokIn: 8,
+        tokOut: 5,
+      },
+    ]);
+    expect(row).toMatchObject({
+      costKnown: false,
+      tokCr: 2,
+      tokCw: 0,
+      tokIn: 8,
+      tokOut: 5,
+      usageUnavailable: false,
+    });
+  });
+
+  test('emits contract-valid active duration when completed turns overlap', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/overlap-thread.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'overlap-thread', cwd: '/work/overlap-project' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          payload: { type: 'task_started', turn_id: 'first-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:00.001Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-sol', turn_id: 'first-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:05.000Z',
+          payload: { type: 'task_started', turn_id: 'second-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:05.001Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-sol', turn_id: 'second-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:10.000Z',
+          payload: { duration_ms: 10_000, type: 'task_complete', turn_id: 'first-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:15.000Z',
+          payload: { duration_ms: 10_000, type: 'task_complete', turn_id: 'second-turn' },
+        },
+      ),
+    );
+
+    const session = runWithStorage(readCodexUsageSessions, storage)[0];
+    const detail = runWithStorage(readCodexSessionDetail('overlap-thread'), storage);
+
+    const validDetail = requireSessionDetail(detail);
+    expect(parseSessionDetail(validDetail)).toEqual(validDetail);
+    expect(session?.durationMs).toBe(15_000);
+    expect(validDetail.activeDurationMs).toBe(15_000);
+    expect(validDetail.turns.map((turn) => turn.durationMs)).toEqual([10_000, 10_000]);
+  });
+
+  test('reconciles a recorded task duration with its turn interval while retaining the observed session end', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/recorded-duration-thread.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'recorded-duration-thread', cwd: '/work/recorded-duration' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          payload: { type: 'task_started', turn_id: 'recorded-duration-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:00.001Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-sol', turn_id: 'recorded-duration-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:10.000Z',
+          payload: { duration_ms: 2000, type: 'task_complete', turn_id: 'recorded-duration-turn' },
+        },
+      ),
+    );
+
+    const session = runWithStorage(readCodexUsageSessions, storage)[0];
+    const detail = requireSessionDetail(runWithStorage(readCodexSessionDetail('recorded-duration-thread'), storage));
+
+    expect(parseSessionDetail(detail)).toEqual(detail);
+    expect(session?.durationMs).toBe(2000);
+    expect(detail).toMatchObject({
+      activeDurationMs: 2000,
+      elapsedDurationMs: 10_000,
+      endedAt: '2026-01-01T00:00:10.000Z',
+      idleDurationMs: 8000,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      turns: [
+        {
+          durationMs: 2000,
+          endAt: '2026-01-01T00:00:02.000Z',
+          intervals: [{ endAt: '2026-01-01T00:00:02.000Z', startAt: '2026-01-01T00:00:00.000Z' }],
+          startAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+  });
+
+  test('bounds a recorded task duration to the observed completion', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/bounded-duration-thread.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'bounded-duration-thread', cwd: '/work/bounded-duration' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          payload: { type: 'task_started', turn_id: 'bounded-duration-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:00.001Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-sol', turn_id: 'bounded-duration-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:10.000Z',
+          payload: { duration_ms: 20_000, type: 'task_complete', turn_id: 'bounded-duration-turn' },
+        },
+      ),
+    );
+
+    const session = runWithStorage(readCodexUsageSessions, storage)[0];
+    const detail = requireSessionDetail(runWithStorage(readCodexSessionDetail('bounded-duration-thread'), storage));
+
+    expect(parseSessionDetail(detail)).toEqual(detail);
+    expect(session?.durationMs).toBe(10_000);
+    expect(detail).toMatchObject({
+      activeDurationMs: 10_000,
+      elapsedDurationMs: 10_000,
+      idleDurationMs: 0,
+      turns: [{ durationMs: 10_000, endAt: '2026-01-01T00:00:10.000Z' }],
+    });
+  });
+
+  test('keeps contextual open turns visible and marks their coverage as partial', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/open-thread.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'open-thread', cwd: '/work/open-project' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          payload: { type: 'task_started', turn_id: 'completed-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:00.001Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-sol', turn_id: 'completed-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:05.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: {
+                cached_input_tokens: 2,
+                input_tokens: 8,
+                output_tokens: 2,
+                total_tokens: 10,
+              },
+            },
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:00:10.000Z',
+          payload: { duration_ms: 10_000, type: 'task_complete', turn_id: 'completed-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:20.000Z',
+          payload: { type: 'task_started', turn_id: 'open-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:20.001Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-sol', turn_id: 'open-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:25.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: {
+                cached_input_tokens: 5,
+                input_tokens: 20,
+                output_tokens: 5,
+                total_tokens: 25,
+              },
+            },
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:00:30.000Z',
+          type: 'response_item',
+          payload: {
+            internal_chat_message_metadata_passthrough: { turn_id: 'open-turn' },
+            name: 'shell',
+            type: 'function_call',
+          },
+        },
+      ),
+    );
+
+    const session = runWithStorage(readCodexUsageSessions, storage)[0];
+    const detail = runWithStorage(readCodexSessionDetail('open-thread'), storage);
+    const row = runWithStorage(collectCodex, storage)[0];
+
+    const validDetail = requireSessionDetail(detail);
+    expect(parseSessionDetail(validDetail)).toEqual(validDetail);
+    expect(session?.partial).toBe(true);
+    expect(row?.partial).toBe(true);
+    expect(session?.durationMs).toBe(20_000);
+    expect(session?.turns).toBe(2);
+    expect(validDetail.durationStatus).toBe('partial');
+    expect(validDetail.turnsStatus).toBe('partial');
+    expect(validDetail.activeDurationMs).toBe(20_000);
+    expect(validDetail.turns.map((turn) => [turn.durationMs, turn.tokens.total, turn.tools])).toEqual([
+      [10_000, 10, 0],
+      [10_000, 15, 1],
+    ]);
+  });
+
+  test('keeps a delayed task that starts inside the observed rollout', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/delayed-thread.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'delayed-thread', cwd: '/work/delayed-project' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:12.500Z',
+          payload: { started_at: 1_767_225_610, type: 'task_started', turn_id: 'delayed-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:12.510Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-sol', turn_id: 'delayed-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:15.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: {
+                cached_input_tokens: 5,
+                input_tokens: 15,
+                output_tokens: 5,
+                total_tokens: 20,
+              },
+            },
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:00:20.000Z',
+          payload: { type: 'task_complete', turn_id: 'delayed-turn' },
+        },
+      ),
+    );
+
+    const session = runWithStorage(readCodexUsageSessions, storage)[0];
+    const detail = runWithStorage(readCodexSessionDetail('delayed-thread'), storage);
+
+    const validDetail = requireSessionDetail(detail);
+    expect(parseSessionDetail(validDetail)).toEqual(validDetail);
+    expect(session?.partial).toBe(false);
+    expect(session?.turns).toBe(1);
+    expect(session?.tokens).toEqual({ cr: 5, cw: 0, in: 10, out: 5 });
+    expect(validDetail.turns.map((turn) => turn.tokens.total)).toEqual([20]);
+  });
+
+  test('marks an unparented pre-rollout replay candidate as partial without double counting it', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/ambiguous-replay-thread.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:10:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'ambiguous-replay-thread', cwd: '/work/ambiguous-replay' },
+        },
+        {
+          timestamp: '2026-01-01T00:10:00.010Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              last_token_usage: {
+                cached_input_tokens: 30,
+                input_tokens: 40,
+                output_tokens: 10,
+                total_tokens: 50,
+              },
+              total_token_usage: {
+                cached_input_tokens: 60,
+                input_tokens: 80,
+                output_tokens: 20,
+                total_tokens: 100,
+              },
+            },
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:10:00.020Z',
+          payload: { started_at: 1_767_226_198, type: 'task_started', turn_id: 'ambiguous-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:10:00.030Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-terra', turn_id: 'ambiguous-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:10:00.040Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: {
+                cached_input_tokens: 120,
+                input_tokens: 160,
+                output_tokens: 40,
+                total_tokens: 200,
+              },
+            },
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:10:00.050Z',
+          payload: { type: 'task_complete', turn_id: 'ambiguous-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:10:10.100Z',
+          payload: { started_at: 1_767_226_210, type: 'task_started', turn_id: 'local-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:10:10.110Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-sol', turn_id: 'local-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:10:20.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: {
+                cached_input_tokens: 150,
+                input_tokens: 200,
+                output_tokens: 50,
+                total_tokens: 250,
+              },
+            },
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:11:10.000Z',
+          payload: { duration_ms: 60_000, type: 'task_complete', turn_id: 'local-turn' },
+        },
+      ),
+    );
+
+    const session = runWithStorage(readCodexUsageSessions, storage)[0];
+    const detail = runWithStorage(readCodexSessionDetail('ambiguous-replay-thread'), storage);
+
+    const validDetail = requireSessionDetail(detail);
+    expect(parseSessionDetail(validDetail)).toEqual(validDetail);
+    expect(session?.partial).toBe(true);
+    expect(session?.turns).toBe(1);
+    expect(session?.tokens).toEqual({ cr: 30, cw: 0, in: 10, out: 10 });
+    expect(validDetail.durationStatus).toBe('partial');
+    expect(validDetail.turnsStatus).toBe('partial');
+    expect(validDetail.turns.map((turn) => [turn.model, turn.tokens.total])).toEqual([['gpt-5.6-sol', 50]]);
   });
 
   test('uses replayed token snapshots as a baseline without attributing replayed tasks', () => {

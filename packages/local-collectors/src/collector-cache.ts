@@ -1,8 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { MAX_USAGE_MODEL_SEGMENTS } from '@ai-usage/report-core/usage-row';
 import { COLLECTOR_CACHE_MAX_BYTES } from './history-budgets';
 import type { LocalHistoryStorage } from './local-history';
-import { parseNonNegativeFiniteNumber, parseNonNegativeSafeInteger } from './metric-validation';
+import {
+  addNonNegativeSafeIntegers,
+  parseNonNegativeFiniteNumber,
+  parseNonNegativeSafeInteger,
+} from './metric-validation';
 import { readPrivateJson, writePrivateJson } from './private-storage';
 import type { CollectorRow } from './rtk-enrichment';
 
@@ -35,6 +40,126 @@ const isNullableCounter = (value: unknown): boolean => value === null || parseNo
 const isOptionalCounter = (value: unknown): boolean => value === undefined || parseNonNegativeSafeInteger(value).ok;
 const isOptionalBoolean = (value: unknown): boolean => value === undefined || typeof value === 'boolean';
 const isOptionalString = (value: unknown): boolean => value === undefined || typeof value === 'string';
+
+const numbersEqual = (left: number, right: number): boolean =>
+  Math.abs(left - right) <= Number.EPSILON * Math.max(1, Math.abs(left), Math.abs(right)) * 16;
+
+const hasValidModelSegmentTotals = (value: Record<string, unknown>): boolean => {
+  if (value.modelSegments === undefined) {
+    return true;
+  }
+  if (
+    !(
+      Array.isArray(value.modelSegments) &&
+      value.modelSegments.length > 0 &&
+      value.modelSegments.length <= MAX_USAGE_MODEL_SEGMENTS
+    )
+  ) {
+    return false;
+  }
+
+  const models = new Set<string>();
+  let costApprox = 0;
+  let costKnown = true;
+  let tokCr = 0;
+  let tokCw = 0;
+  let tokIn = 0;
+  let tokOut = 0;
+  for (const segment of value.modelSegments) {
+    if (!isRecord(segment)) {
+      return false;
+    }
+    const model = segment.model;
+    const segmentCostApprox = parseNonNegativeFiniteNumber(segment.costApprox);
+    const segmentTokCr = parseNonNegativeSafeInteger(segment.tokCr);
+    const segmentTokCw = parseNonNegativeSafeInteger(segment.tokCw);
+    const segmentTokIn = parseNonNegativeSafeInteger(segment.tokIn);
+    const segmentTokOut = parseNonNegativeSafeInteger(segment.tokOut);
+    if (
+      typeof model !== 'string' ||
+      model.length === 0 ||
+      models.has(model) ||
+      !segmentCostApprox.ok ||
+      typeof segment.costKnown !== 'boolean' ||
+      !segmentTokCr.ok ||
+      !segmentTokCw.ok ||
+      !segmentTokIn.ok ||
+      !segmentTokOut.ok
+    ) {
+      return false;
+    }
+    models.add(model);
+    const nextTokCr = addNonNegativeSafeIntegers(tokCr, segmentTokCr.value);
+    const nextTokCw = addNonNegativeSafeIntegers(tokCw, segmentTokCw.value);
+    const nextTokIn = addNonNegativeSafeIntegers(tokIn, segmentTokIn.value);
+    const nextTokOut = addNonNegativeSafeIntegers(tokOut, segmentTokOut.value);
+    if (!(nextTokCr.ok && nextTokCw.ok && nextTokIn.ok && nextTokOut.ok)) {
+      return false;
+    }
+    tokCr = nextTokCr.value;
+    tokCw = nextTokCw.value;
+    tokIn = nextTokIn.value;
+    tokOut = nextTokOut.value;
+    costApprox += segmentCostApprox.value;
+    const segmentHasTokens = segmentTokCr.value + segmentTokCw.value + segmentTokIn.value + segmentTokOut.value > 0;
+    costKnown = costKnown && (!segmentHasTokens || segment.costKnown);
+  }
+
+  return (
+    Number.isFinite(costApprox) &&
+    numbersEqual(costApprox, Number(value.costApprox)) &&
+    costKnown === value.costKnown &&
+    tokCr === value.tokCr &&
+    tokCw === value.tokCw &&
+    tokIn === value.tokIn &&
+    tokOut === value.tokOut
+  );
+};
+
+const parseUniqueModelList = (value: unknown): string[] | null => {
+  if (!(Array.isArray(value) && value.length > 0)) {
+    return null;
+  }
+  const models: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of value) {
+    if (typeof candidate !== 'string' || candidate.length === 0 || seen.has(candidate)) {
+      return null;
+    }
+    seen.add(candidate);
+    models.push(candidate);
+  }
+  return models;
+};
+
+const hasCoherentModelIdentity = (value: Record<string, unknown>): boolean => {
+  const model = value.model;
+  if (!(typeof model === 'string' && model.length > 0)) {
+    return false;
+  }
+  const models = value.models === undefined ? undefined : parseUniqueModelList(value.models);
+  if (models === null || (models !== undefined && !models.includes(model))) {
+    return false;
+  }
+  if (value.modelSegments === undefined) {
+    return true;
+  }
+  if (!Array.isArray(value.modelSegments)) {
+    return false;
+  }
+  const segmentModels = value.modelSegments.flatMap((segment) =>
+    isRecord(segment) && typeof segment.model === 'string' ? [segment.model] : [],
+  );
+  const uniqueSegmentModels = parseUniqueModelList(segmentModels);
+  if (uniqueSegmentModels === null || !uniqueSegmentModels.includes(model)) {
+    return false;
+  }
+  return (
+    models === undefined ||
+    (models.length === uniqueSegmentModels.length &&
+      models.every((candidate, index) => candidate === uniqueSegmentModels[index]))
+  );
+};
 
 const isCollectorRowSource = (value: unknown): boolean =>
   value === undefined ||
@@ -69,6 +194,7 @@ const isCachedCollectorRow = (value: unknown): value is CollectorRow & { date: u
     isNullableCounter(value.linesAdded) &&
     isNullableCounter(value.linesDeleted) &&
     typeof value.model === 'string' &&
+    value.model.length > 0 &&
     (value.models === undefined ||
       (Array.isArray(value.models) && value.models.every((model) => typeof model === 'string'))) &&
     typeof value.name === 'string' &&
@@ -80,6 +206,8 @@ const isCachedCollectorRow = (value: unknown): value is CollectorRow & { date: u
     parseNonNegativeSafeInteger(value.tokOut).ok &&
     parseNonNegativeSafeInteger(value.tools).ok &&
     parseNonNegativeSafeInteger(value.turns).ok &&
+    hasCoherentModelIdentity(value) &&
+    hasValidModelSegmentTotals(value) &&
     isOptionalCounter(value.rtkCommandCount) &&
     isOptionalCounter(value.rtkInputTokens) &&
     isOptionalCounter(value.rtkOutputTokens) &&

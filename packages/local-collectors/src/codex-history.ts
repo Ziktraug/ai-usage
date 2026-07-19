@@ -9,7 +9,8 @@ import type {
   SessionDetailTokenCounts,
   SessionDetailTurn,
 } from '@ai-usage/report-core/session-detail';
-import { actualCost, approximateApiCost } from '@ai-usage/report-core/usage-row';
+import type { UsageModelSegment } from '@ai-usage/report-core/types';
+import { actualCost, approximateApiCost, UNSEGMENTED_MULTI_MODEL_LABEL } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import type { CollectedSession } from './collected-session';
 import type { LocalHistoryError } from './errors';
@@ -38,6 +39,7 @@ interface CodexSession {
   model: string;
   models: string[];
   parent: string | null;
+  partial: boolean;
   phases: CodexSessionPhase[];
   rejectedMetricRecords: number;
   source: string | null;
@@ -59,6 +61,11 @@ interface CodexSessionPhase {
   tcr: number;
   tin: number;
   tout: number;
+}
+
+interface CodexTaskInterval {
+  endMs: number;
+  startMs: number;
 }
 
 interface CodexThreadMetadata {
@@ -156,7 +163,7 @@ interface SqliteDatabase {
 
 // This cache stores normalized parser output, not raw JSONL. Bump whenever an
 // unchanged rollout could produce different counters, lineage, phases, or turns.
-const CODEX_SESSION_CACHE_VERSION = 10;
+const CODEX_SESSION_CACHE_VERSION = 11;
 const CODEX_DETAIL_MAX_BYTES = 128 * 1024 * 1024;
 const CODEX_DETAIL_MAX_LINE_BYTES = 8 * 1024 * 1024;
 const CODEX_DETAIL_MAX_PHASES = 256;
@@ -167,8 +174,9 @@ const CODEX_DETAIL_MAX_TURNS = 1024;
 const CODEX_DETAIL_DUPLICATE_PROMPT_WINDOW_MS = 1000;
 // Forked rollouts stamp copied task events at replay time while preserving the
 // task's original second-resolution `started_at`. Genuine task events observed
-// in the rollout can therefore lag by up to one rounding second; require more
-// than two seconds before classifying an event as replayed history.
+// in the rollout may also be delivered late. Only an event whose recorded start
+// predates the observed rollout can be replayed history; tolerate two seconds of
+// timestamp rounding around that boundary.
 const CODEX_REPLAYED_TASK_EVENT_LAG_MS = 2000;
 const SAFE_CODEX_SESSION_ID = /^[a-z\d][a-z\d-]{0,127}$/i;
 const TRAILING_REPLACEMENT_CHARACTER = /\uFFFD$/u;
@@ -360,6 +368,7 @@ const emptySession = (): CodexSession => ({
   activeDurationMs: null,
   id: null,
   parent: null,
+  partial: false,
   beganWithPriorTokenUsage: false,
   rejectedMetricRecords: 0,
   start: null,
@@ -415,6 +424,31 @@ const dominantCodexModel = (session: CodexSession): string => {
     }
   }
   return dominantModel;
+};
+
+const mergedIntervalDurationMs = (intervals: CodexTaskInterval[]): number => {
+  const sortedIntervals = [...intervals].sort((left, right) => left.startMs - right.startMs);
+  let mergedEndMs: number | null = null;
+  let mergedStartMs: number | null = null;
+  let totalMs = 0;
+  for (const interval of sortedIntervals) {
+    if (mergedStartMs === null || mergedEndMs === null) {
+      mergedStartMs = interval.startMs;
+      mergedEndMs = interval.endMs;
+      continue;
+    }
+    if (interval.startMs <= mergedEndMs) {
+      mergedEndMs = Math.max(mergedEndMs, interval.endMs);
+      continue;
+    }
+    totalMs += mergedEndMs - mergedStartMs;
+    mergedStartMs = interval.startMs;
+    mergedEndMs = interval.endMs;
+  }
+  if (mergedStartMs !== null && mergedEndMs !== null) {
+    totalMs += mergedEndMs - mergedStartMs;
+  }
+  return totalMs;
 };
 
 const textFromContent = (content: unknown): string | null => {
@@ -563,6 +597,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       typeof value.subscription !== 'boolean' ||
       typeof value.hasTokenUsage !== 'boolean' ||
       typeof value.beganWithPriorTokenUsage !== 'boolean' ||
+      typeof value.partial !== 'boolean' ||
       !(activeDuration === null || activeDuration.ok) ||
       models === null ||
       models.length !== rawModels?.length ||
@@ -578,6 +613,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       activeDurationMs: activeDuration?.value ?? null,
       id: typeof value.id === 'string' ? value.id : null,
       parent: typeof value.parent === 'string' ? value.parent : null,
+      partial: value.partial,
       beganWithPriorTokenUsage: value.beganWithPriorTokenUsage,
       start,
       end,
@@ -696,6 +732,7 @@ interface MutableCodexTask {
   lastPromptAt: Date | null;
   lastPromptNormalized: string | null;
   model: string;
+  observedEnd: Date;
   pendingResponsePrompt: { at: Date; text: string } | null;
   promptIds: string[];
   replayed: boolean;
@@ -726,12 +763,12 @@ const truncatePrompt = (text: string, maximumBytes: number): { text: string; tru
 const createCodexSessionParser = (captureDetail = false) => {
   const session = emptySession();
   const completedTasks: (MutableCodexTask & { durationMs: number; end: Date })[] = [];
+  const observedTaskIntervals: CodexTaskInterval[] = [];
   const openTasks = new Map<string, MutableCodexTask>();
   const prompts: SessionDetailPrompt[] = [];
   let lines = 0;
   let parsedLines = 0;
   let skippedLines = 0;
-  let activeDurationMs = 0;
   let currentEffort: string | null = null;
   let currentModel = 'codex';
   let hasContextualTokenSnapshot = false;
@@ -751,6 +788,12 @@ const createCodexSessionParser = (captureDetail = false) => {
       }
     }
     return latest;
+  };
+
+  const observeTask = (task: MutableCodexTask, at: Date): void => {
+    if (at > task.observedEnd) {
+      task.observedEnd = at;
+    }
   };
 
   const addModel = (model: string): void => {
@@ -841,6 +884,7 @@ const createCodexSessionParser = (captureDetail = false) => {
     if (!task?.hasContext) {
       return;
     }
+    observeTask(task, at);
     if (!canonical) {
       task.pendingResponsePrompt = { at, text };
       return;
@@ -852,7 +896,9 @@ const createCodexSessionParser = (captureDetail = false) => {
 
   const flushResponsePrompt = (task: MutableCodexTask): void => {
     if (!(task.canonicalPromptSeen || !task.pendingResponsePrompt)) {
-      appendPrompt(task, task.pendingResponsePrompt.text, task.pendingResponsePrompt.at);
+      const pendingPrompt = task.pendingResponsePrompt;
+      task.pendingResponsePrompt = null;
+      appendPrompt(task, pendingPrompt.text, pendingPrompt.at);
     }
   };
 
@@ -925,6 +971,7 @@ const createCodexSessionParser = (captureDetail = false) => {
     const task = latestOpenTask();
     const contextualTask = task?.hasContext ? task : null;
     if (contextualTask) {
+      observeTask(contextualTask, at);
       hasContextualTokenSnapshot = true;
     }
     if (!previousTokens) {
@@ -995,6 +1042,7 @@ const createCodexSessionParser = (captureDetail = false) => {
       const turnId = nonEmpty(metadata?.turn_id);
       const task = turnId ? (openTasks.get(turnId) ?? null) : latestOpenTask();
       if (task?.hasContext) {
+        observeTask(task, date);
         session.tools++;
         task.tools++;
       }
@@ -1024,6 +1072,7 @@ const createCodexSessionParser = (captureDetail = false) => {
             taskObservedStart = task.start;
           }
         }
+        observeTask(task, date);
         task.model = currentModel;
         task.effort = currentEffort;
         ensurePhase(date);
@@ -1043,9 +1092,18 @@ const createCodexSessionParser = (captureDetail = false) => {
       const turnId = nonEmpty(payload.turn_id) ?? `turn-${lines}`;
       const recordedTaskStart = unixDate(payload.started_at);
       const taskStart = recordedTaskStart ?? date;
-      const replayed = Boolean(
-        recordedTaskStart && date.getTime() - recordedTaskStart.getTime() > CODEX_REPLAYED_TASK_EVENT_LAG_MS,
+      const recordedStartPredatesRollout = Boolean(
+        recordedTaskStart && session.start && recordedTaskStart < session.start,
       );
+      const replayed = Boolean(
+        recordedTaskStart &&
+          recordedStartPredatesRollout &&
+          date.getTime() - recordedTaskStart.getTime() > CODEX_REPLAYED_TASK_EVENT_LAG_MS,
+      );
+      const hasReplayLineage = session.parent !== null || session.threadSource === 'subagent';
+      if (replayed && !hasReplayLineage) {
+        session.partial = true;
+      }
       if (!(openTasks.has(turnId) || openTasks.size < CODEX_DETAIL_MAX_TURNS)) {
         const oldestUnanchored = [...openTasks].find(([, task]) => !task.hasContext)?.[0];
         if (!oldestUnanchored) {
@@ -1060,6 +1118,7 @@ const createCodexSessionParser = (captureDetail = false) => {
         lastPromptAt: null,
         lastPromptNormalized: null,
         model: currentModel,
+        observedEnd: date < taskStart ? taskStart : date,
         pendingResponsePrompt: null,
         promptIds: [],
         replayed,
@@ -1078,10 +1137,17 @@ const createCodexSessionParser = (captureDetail = false) => {
         if (task.hasContext) {
           flushResponsePrompt(task);
           const parsedDuration = parseNonNegativeSafeInteger(payload.duration_ms);
-          const durationMs = parsedDuration.ok ? parsedDuration.value : taskEnd.getTime() - task.start.getTime();
-          activeDurationMs += durationMs;
+          const recordedDurationMs = parsedDuration.ok
+            ? parsedDuration.value
+            : taskEnd.getTime() - task.start.getTime();
+          const turnEnd = new Date(Math.min(taskEnd.getTime(), task.start.getTime() + recordedDurationMs));
+          const durationMs = turnEnd.getTime() - task.start.getTime();
+          observedTaskIntervals.push({
+            endMs: turnEnd.getTime(),
+            startMs: task.start.getTime(),
+          });
           if (captureDetail && completedTasks.length < CODEX_DETAIL_MAX_TURNS) {
-            completedTasks.push({ ...task, durationMs, end: taskEnd });
+            completedTasks.push({ ...task, durationMs, end: turnEnd });
           }
           taskObservedEnd = !taskObservedEnd || taskEnd > taskObservedEnd ? taskEnd : taskObservedEnd;
           ensurePhase(taskEnd);
@@ -1102,6 +1168,20 @@ const createCodexSessionParser = (captureDetail = false) => {
     if (session.models.length === 0) {
       addModel(currentModel);
     }
+    for (const task of openTasks.values()) {
+      if (!(task.hasContext && !task.replayed)) {
+        continue;
+      }
+      session.partial = true;
+      flushResponsePrompt(task);
+      observedTaskIntervals.push({
+        endMs: task.observedEnd.getTime(),
+        startMs: task.start.getTime(),
+      });
+      if (!taskObservedEnd || task.observedEnd > taskObservedEnd) {
+        taskObservedEnd = task.observedEnd;
+      }
+    }
     if (taskObservedStart) {
       session.start = taskObservedStart;
     }
@@ -1109,7 +1189,7 @@ const createCodexSessionParser = (captureDetail = false) => {
       session.end = taskObservedEnd;
     }
     session.model = dominantCodexModel(session);
-    session.activeDurationMs = activeDurationMs;
+    session.activeDurationMs = mergedIntervalDurationMs(observedTaskIntervals);
   };
 
   const detailPhases = (): SessionDetailPhase[] => {
@@ -1149,8 +1229,19 @@ const createCodexSessionParser = (captureDetail = false) => {
     });
   };
 
-  const detailTurns = (): SessionDetailTurn[] =>
-    completedTasks.slice(0, CODEX_DETAIL_MAX_TURNS).map((task, index) => ({
+  const detailTurns = (): SessionDetailTurn[] => {
+    const tasks = [...completedTasks];
+    for (const task of openTasks.values()) {
+      if (task.hasContext && !task.replayed) {
+        tasks.push({
+          ...task,
+          durationMs: task.observedEnd.getTime() - task.start.getTime(),
+          end: task.observedEnd,
+        });
+      }
+    }
+    tasks.sort((left, right) => left.start.getTime() - right.start.getTime());
+    return tasks.slice(0, CODEX_DETAIL_MAX_TURNS).map((task, index) => ({
       durationMs: task.durationMs,
       effort: task.effort,
       effortKind: task.effort ? ('recorded' as const) : ('default' as const),
@@ -1163,6 +1254,7 @@ const createCodexSessionParser = (captureDetail = false) => {
       tokens: task.tokens,
       tools: task.tools,
     }));
+  };
 
   const detail = (): SessionDetail | null => {
     finalize();
@@ -1170,10 +1262,10 @@ const createCodexSessionParser = (captureDetail = false) => {
       return null;
     }
     const activeDurationMs = session.activeDurationMs ?? 0;
-    const elapsedDurationMs = Math.max(activeDurationMs, session.end.getTime() - session.start.getTime(), 0);
+    const elapsedDurationMs = session.end.getTime() - session.start.getTime();
     return {
       activeDurationMs,
-      durationStatus: 'recorded',
+      durationStatus: session.partial ? 'partial' : 'recorded',
       efforts: [...new Set(session.phases.flatMap((phase) => (phase.effort ? [phase.effort] : [])))],
       elapsedDurationMs,
       endedAt: session.end.toISOString(),
@@ -1186,7 +1278,7 @@ const createCodexSessionParser = (captureDetail = false) => {
       sourceSessionId: session.id,
       startedAt: session.start.toISOString(),
       turns: detailTurns(),
-      turnsStatus: 'recorded',
+      turnsStatus: session.partial ? 'partial' : 'recorded',
     };
   };
 
@@ -1451,24 +1543,62 @@ const sharedTokenUsageRoots = (
   return roots;
 };
 
-const codexPhaseCost = (session: CodexSession): { costApprox: number; costKnown: boolean } => {
-  if (session.phases.length === 0) {
-    const pricing = priceFor(session.model, { at: session.end });
-    return {
-      costApprox: approxCost(pricing.rates, { cr: session.tcr, cw: 0, in: session.tin, out: session.tout }),
-      costKnown: session.tin + session.tcr + session.tout === 0 || pricing.known,
+const codexModelSegments = (session: CodexSession): UsageModelSegment[] => {
+  const segments = new Map<string, UsageModelSegment>();
+  const addSegment = (model: string, tokens: { cr: number; in: number; out: number }, at: Date | null): void => {
+    const pricing = priceFor(model, { at });
+    const tokenBearing = tokens.in + tokens.cr + tokens.out > 0;
+    const current = segments.get(model) ?? {
+      costApprox: 0,
+      costKnown: true,
+      model,
+      tokCr: 0,
+      tokCw: 0,
+      tokIn: 0,
+      tokOut: 0,
     };
-  }
-  let costApprox = 0;
-  let costKnown = true;
-  for (const phase of session.phases) {
-    const pricing = priceFor(phase.model, { at: phase.end });
-    costApprox += approxCost(pricing.rates, { cr: phase.tcr, cw: 0, in: phase.tin, out: phase.tout });
-    if (phaseTokenTotal(phase) > 0 && !pricing.known) {
-      costKnown = false;
+    current.costApprox += approxCost(pricing.rates, { ...tokens, cw: 0 });
+    current.costKnown = current.costKnown && (!tokenBearing || pricing.known);
+    current.tokCr += tokens.cr;
+    current.tokIn += tokens.in;
+    current.tokOut += tokens.out;
+    segments.set(model, current);
+  };
+
+  if (session.phases.length === 0) {
+    addSegment(session.model, { cr: session.tcr, in: session.tin, out: session.tout }, session.end);
+  } else {
+    for (const phase of session.phases) {
+      addSegment(phase.model, { cr: phase.tcr, in: phase.tin, out: phase.tout }, phase.end);
+    }
+    const phaseTotals = [...segments.values()].reduce(
+      (totals, segment) => ({
+        cr: totals.cr + segment.tokCr,
+        in: totals.in + segment.tokIn,
+        out: totals.out + segment.tokOut,
+      }),
+      { cr: 0, in: 0, out: 0 },
+    );
+    const phasesReconcile =
+      phaseTotals.cr === session.tcr && phaseTotals.in === session.tin && phaseTotals.out === session.tout;
+    if (!phasesReconcile) {
+      // A cumulative snapshot observed outside a contextual task can only be
+      // attributed when every model observation agrees. Otherwise keep the
+      // aggregate intact in an explicit unsegmented lower-bound bucket.
+      const observedModels = new Set([...session.models, ...session.phases.map((phase) => phase.model)]);
+      if (observedModels.size === 0) {
+        observedModels.add(session.model);
+      }
+      const fallbackModel = observedModels.size === 1 ? ([...observedModels][0] ?? session.model) : null;
+      segments.clear();
+      addSegment(
+        fallbackModel ?? UNSEGMENTED_MULTI_MODEL_LABEL,
+        { cr: session.tcr, in: session.tin, out: session.tout },
+        session.end,
+      );
     }
   }
-  return { costApprox, costKnown };
+  return [...segments.values()];
 };
 
 export const readCodexUsageSessionsResult: Effect.Effect<
@@ -1525,7 +1655,9 @@ export const readCodexUsageSessionsResult: Effect.Effect<
           rootSession &&
           rootSession.maxTotal >= session.maxTotal,
       );
-      const phaseCost = codexPhaseCost(session);
+      const modelSegments = codexModelSegments(session);
+      const costApprox = modelSegments.reduce((total, segment) => total + segment.costApprox, 0);
+      const costKnown = modelSegments.every((segment) => segment.costKnown);
       usageSessions.push({
         source: {
           harnessKey: 'codex',
@@ -1538,16 +1670,18 @@ export const readCodexUsageSessionsResult: Effect.Effect<
         endDate: session.end,
         provider: subscription ? 'Codex sub' : 'Codex API',
         model: session.model,
+        ...(usageOwnedByRoot ? {} : { modelSegments }),
         models: session.models,
         name: codexSessionName(session, indexedName, meta),
         titleSource: codexTitleSource(session, indexedName, meta, isSubagent),
         project: base(session.cwd),
         tokens: usageOwnedByRoot ? { cr: 0, cw: 0, in: 0, out: 0 } : tokens,
         cost: subscription ? actualCost(0) : approximateApiCost,
-        costApprox: usageOwnedByRoot ? 0 : phaseCost.costApprox,
-        costKnown: usageOwnedByRoot || phaseCost.costKnown,
+        costApprox: usageOwnedByRoot ? 0 : costApprox,
+        costKnown: usageOwnedByRoot || costKnown,
         calls: 1,
         durationMs: session.activeDurationMs ?? 0,
+        partial: session.partial,
         turns: session.turns,
         tools: session.tools,
         linesAdded: null,

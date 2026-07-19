@@ -56,6 +56,17 @@ describe('usage row provenance', () => {
     expect(provenanceForMetric(row({ partial: true, ambiguous: true }), 'title')).toEqual([]);
   });
 
+  test('scopes incomplete OpenCode intervals to duration without caveating valid counters', () => {
+    const partialOpenCodeRow = row({ harness: 'OpenCode', partial: true });
+
+    expect(provenanceForMetric(partialOpenCodeRow, 'duration').map((item) => item.kind)).toEqual(['partial-session']);
+    expect(provenanceForMetric(partialOpenCodeRow, 'tokens')).toEqual([]);
+    expect(provenanceForMetric(partialOpenCodeRow, 'turns')).toEqual([]);
+    expect(provenanceForMetric(row({ harness: 'Cursor', partial: true }), 'tokens').map((item) => item.kind)).toEqual([
+      'partial-session',
+    ]);
+  });
+
   test('cost provenance is metric-specific', () => {
     const provenance = provenanceForUsageRow(row({ costKnown: false, costActual: null, costQuota: null }));
 

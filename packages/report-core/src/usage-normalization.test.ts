@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { approximateApiCost, normalizeUsageRow, usageRowActiveDate, usageRowSessionLabel } from './usage-row';
+import {
+  actualCost,
+  approximateApiCost,
+  MAX_USAGE_MODEL_SEGMENTS,
+  normalizeUsageRow,
+  UNSEGMENTED_MULTI_MODEL_LABEL,
+  usageRowActiveDate,
+  usageRowSessionLabel,
+} from './usage-row';
 
 describe('usage row', () => {
   test('constructs report rows with pricing, defaults, and derived duration', () => {
@@ -93,6 +101,93 @@ describe('usage row', () => {
 
     expect(row.costKnown).toBe(true);
     expect(row.costApprox).toBe(18);
+  });
+
+  test('keeps a partial API-value lower bound without claiming exact API spend', () => {
+    const input = {
+      calls: 2,
+      date: new Date('2026-01-01T00:00:00.000Z'),
+      endDate: new Date('2026-01-01T00:02:00.000Z'),
+      harness: 'Codex',
+      model: 'gpt-5.4',
+      modelSegments: [
+        {
+          costApprox: 2,
+          costKnown: true,
+          model: 'gpt-5.4',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 10,
+          tokOut: 0,
+        },
+        {
+          costApprox: 0,
+          costKnown: false,
+          model: 'private-model',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 0,
+          tokOut: 10,
+        },
+      ],
+      name: 'partial pricing',
+      project: 'ai-usage',
+      provider: 'Codex API',
+      tokens: { cr: 0, cw: 0, in: 0, out: 0 },
+    };
+
+    const apiRow = normalizeUsageRow({ ...input, cost: approximateApiCost });
+    const subscriptionRow = normalizeUsageRow({ ...input, cost: actualCost(0) });
+
+    expect(apiRow.costApprox).toBe(2);
+    expect(apiRow.costKnown).toBe(false);
+    expect(apiRow.costActual).toBeNull();
+    expect(subscriptionRow.costActual).toBe(0);
+  });
+
+  test('bounds model segments without losing overflow usage or the dominant model', () => {
+    const modelSegments = Array.from({ length: 66 }, (_, index) => ({
+      costApprox: 1,
+      costKnown: index !== 64,
+      model: `model-${index}`,
+      tokCr: 0,
+      tokCw: 0,
+      tokIn: 1,
+      tokOut: 0,
+    }));
+    const row = normalizeUsageRow({
+      calls: 1,
+      cost: approximateApiCost,
+      date: new Date('2026-01-01T00:00:00.000Z'),
+      endDate: new Date('2026-01-01T00:01:00.000Z'),
+      harness: 'Codex',
+      model: 'model-65',
+      modelSegments,
+      models: modelSegments.map((segment) => segment.model),
+      name: 'many models',
+      project: 'ai-usage',
+      provider: 'Codex API',
+      tokens: { cr: 0, cw: 0, in: 0, out: 0 },
+    });
+
+    expect(MAX_USAGE_MODEL_SEGMENTS).toBe(64);
+    expect(row.modelSegments).toHaveLength(64);
+    expect(row.model).toBe('model-65');
+    expect(row.models).toEqual(row.modelSegments?.map((segment) => segment.model));
+    expect(row.modelSegments?.at(-1)).toEqual({
+      costApprox: 3,
+      costKnown: false,
+      model: UNSEGMENTED_MULTI_MODEL_LABEL,
+      tokCr: 0,
+      tokCw: 0,
+      tokIn: 3,
+      tokOut: 0,
+    });
+    expect({ costApprox: row.costApprox, costKnown: row.costKnown, tokIn: row.tokIn }).toEqual({
+      costApprox: 66,
+      costKnown: false,
+      tokIn: 66,
+    });
   });
 
   test('owns active date and marker labels', () => {

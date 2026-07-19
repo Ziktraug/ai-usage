@@ -45,7 +45,7 @@ describe('usage snapshots', () => {
   test('serializes rows with machine provenance', () => {
     const snapshot = createUsageSnapshot({ machine, rows: [row('a', 'session-1')] });
 
-    expect(snapshot.schemaVersion).toBe(1);
+    expect(snapshot.schemaVersion).toBe(2);
     expect(snapshot.rows[0]?.source).toMatchObject({
       machineId: 'machine-1',
       machineLabel: 'Machine 1',
@@ -61,11 +61,37 @@ describe('usage snapshots', () => {
     expect(snapshot.source.appVersion).toBeNull();
   });
 
+  test('migrates legacy v1 snapshots and rejects model attribution mislabeled as v1', () => {
+    const snapshot = currentSnapshot();
+
+    expect(parseUsageSnapshot(JSON.stringify({ ...snapshot, schemaVersion: 1 })).schemaVersion).toBe(2);
+
+    const segmented = createUsageSnapshot({
+      machine,
+      rows: [
+        row('segmented', 'segmented', {
+          modelSegments: [
+            {
+              costApprox: 0.1,
+              costKnown: true,
+              model: 'gpt-5.3-codex',
+              tokCr: 0,
+              tokCw: 0,
+              tokIn: 10,
+              tokOut: 5,
+            },
+          ],
+        }),
+      ],
+    });
+    expect(() => parseUsageSnapshot(JSON.stringify({ ...segmented, schemaVersion: 1 }))).toThrow('legacy v1');
+  });
+
   test('rejects unknown top-level fields and malformed snapshot identity', () => {
     const snapshot = currentSnapshot();
     const invalidSnapshots = [
       [{ ...snapshot, unexpected: true }, 'unknown fields'],
-      [{ ...snapshot, schemaVersion: 2 }, 'schemaVersion'],
+      [{ ...snapshot, schemaVersion: 3 }, 'schemaVersion'],
       [{ ...snapshot, snapshotId: '' }, 'snapshotId'],
       [{ ...snapshot, generatedAt: '2026-01-01T00:00:00Z' }, 'generatedAt'],
       [{ ...snapshot, machine: { ...snapshot.machine, id: '' } }, 'machine'],
@@ -226,6 +252,46 @@ describe('usage snapshots', () => {
     expect(parsed.rows[0]?.source.sourcePath).toBeUndefined();
     expect(mergedRow?.source.artifactPath).toBe(artifactPath);
     expect(mergedRow?.source.sourcePath).toBeUndefined();
+  });
+
+  test('preserves per-model attribution through snapshot parsing and merging', () => {
+    const modelSegments = [
+      {
+        costApprox: 0.08,
+        costKnown: true,
+        model: 'gpt-5.3-codex',
+        tokCr: 0,
+        tokCw: 0,
+        tokIn: 10,
+        tokOut: 0,
+      },
+      {
+        costApprox: 0.02,
+        costKnown: true,
+        model: 'gpt-5.3-codex-mini',
+        tokCr: 0,
+        tokCw: 0,
+        tokIn: 0,
+        tokOut: 5,
+      },
+    ];
+    const snapshot = createUsageSnapshot({
+      machine,
+      rows: [
+        row('mixed-model', 'session-mixed', {
+          modelSegments,
+          models: ['gpt-5.3-codex', 'gpt-5.3-codex-mini'],
+          titleSource: 'first-prompt',
+        }),
+      ],
+    });
+
+    const parsed = parseUsageSnapshot(JSON.stringify(snapshot));
+    const [mergedRow] = mergeUsageSnapshots([parsed]).rows;
+
+    expect(parsed.rows[0]?.modelSegments).toEqual(modelSegments);
+    expect(mergedRow?.modelSegments).toEqual(modelSegments);
+    expect(mergedRow?.titleSource).toBe('first-prompt');
   });
 
   test('parses and dedupes repeated snapshots by source session', () => {

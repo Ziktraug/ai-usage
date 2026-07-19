@@ -1,4 +1,4 @@
-import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
+import { type AnalyticsGroup, compareAnalyticsKeys } from '@ai-usage/report-core/analytics';
 import {
   buildFocusedDateDomain,
   buildFocusedHeatmapFromAggregates,
@@ -115,6 +115,11 @@ interface TimelineRecord {
   sessions: number;
 }
 
+interface ModelTimelineRecord extends TimelineRecord {
+  day_cost: number;
+  day_sessions: number;
+}
+
 interface DayRecord {
   cost: number;
   day_key: string;
@@ -129,6 +134,7 @@ interface RecordCandidates {
 
 interface TopSessionRecord {
   cost_approx: number;
+  cost_known: number;
   duration_ms: number | null;
   item_kind: 'campaign' | 'session';
   row_json: string;
@@ -216,12 +222,83 @@ const timeForLocalDay = (dayKey: string): number => {
   return time;
 };
 
+const readModelTimeline = (
+  database: SessionQuerySqliteDatabase,
+  filter: SqlFilter,
+  trace?: SessionQuerySqliteTrace,
+): { dateDomain: FocusedDateDomain | null; days: FocusedDayAggregate[]; timeline: FocusedTimelineAggregate[] } => {
+  const records = executeAll<ModelTimelineRecord>(
+    database,
+    `WITH visible AS (
+      SELECT ordinal, active_time, cost_approx, cost_known, model_key AS primary_model_key
+      FROM session_rows
+      WHERE ${filter.where} AND active_time IS NOT NULL
+    ),
+    timeline AS (
+      SELECT
+        strftime('%Y-%m-%d', visible.active_time / 1000, 'unixepoch', 'localtime') AS day_key,
+        segments.model_key AS key,
+        SUM(CASE WHEN visible.cost_known = 1 THEN segments.cost_approx ELSE 0 END) AS cost,
+        SUM(
+          CASE
+            WHEN segments.model_key = visible.primary_model_key THEN 1
+            WHEN segments.segment_position = 0 AND NOT EXISTS (
+              SELECT 1
+              FROM session_model_segments AS primary_segment
+              WHERE primary_segment.ordinal = visible.ordinal
+                AND primary_segment.model_key = visible.primary_model_key
+            ) THEN 1
+            ELSE 0
+          END
+        ) AS sessions,
+        MIN(visible.active_time) AS first_time,
+        MAX(visible.active_time) AS last_time,
+        MIN(visible.ordinal) AS first_ordinal
+      FROM visible
+      INNER JOIN session_model_segments AS segments USING (ordinal)
+      GROUP BY day_key, segments.model_key
+    ),
+    days AS (
+      SELECT
+        strftime('%Y-%m-%d', active_time / 1000, 'unixepoch', 'localtime') AS day_key,
+        SUM(CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END) AS day_cost,
+        COUNT(*) AS day_sessions
+      FROM visible
+      GROUP BY day_key
+    )
+    SELECT timeline.*, days.day_cost, days.day_sessions
+    FROM timeline
+    INNER JOIN days USING (day_key)
+    ORDER BY timeline.first_ordinal`,
+    filter.params,
+    trace,
+  );
+  const byDay = new Map<string, FocusedDayAggregate>();
+  const timeline = records.map(
+    ({ cost, day_cost: dayCost, day_key: dayKey, day_sessions: daySessions, key, sessions }) => {
+      const time = timeForLocalDay(dayKey);
+      if (!byDay.has(dayKey)) {
+        byDay.set(dayKey, { cost: dayCost, sessions: daySessions, time });
+      }
+      return { cost, key, sessions, time };
+    },
+  );
+  return {
+    dateDomain: buildFocusedDateDomain(records.flatMap(({ first_time, last_time }) => [first_time, last_time])),
+    days: [...byDay.values()],
+    timeline,
+  };
+};
+
 const readTimeline = (
   database: SessionQuerySqliteDatabase,
   filter: SqlFilter,
   dimension: FocusedOverviewRequest['timeline']['dimension'],
   trace?: SessionQuerySqliteTrace,
 ): { dateDomain: FocusedDateDomain | null; days: FocusedDayAggregate[]; timeline: FocusedTimelineAggregate[] } => {
+  if (dimension === 'model') {
+    return readModelTimeline(database, filter, trace);
+  }
   const dimensionColumn = timelineDimensionColumn(dimension);
   const records = executeAll<TimelineRecord>(
     database,
@@ -320,7 +397,8 @@ const readTopSessions = (
       SELECT
         'campaign' AS item_kind,
         root.row_json AS row_json,
-        SUM(CASE WHEN visible.cost_known = 1 THEN visible.cost_approx ELSE 0 END) AS cost_approx,
+        SUM(visible.cost_approx) AS cost_approx,
+        MIN(visible.cost_known) AS cost_known,
         MAX(root.duration_ms) AS duration_ms,
         COUNT(*) AS session_count,
         0 AS kind_order,
@@ -335,6 +413,7 @@ const readTopSessions = (
         'session' AS item_kind,
         row_json,
         cost_approx,
+        cost_known,
         duration_ms,
         1 AS session_count,
         1 AS kind_order,
@@ -342,7 +421,7 @@ const readTopSessions = (
       FROM visible
       WHERE campaign_key IS NULL
     )
-    SELECT item_kind, row_json, cost_approx, duration_ms, session_count
+    SELECT item_kind, row_json, cost_approx, cost_known, duration_ms, session_count
     FROM items
     WHERE cost_approx > 0
     ORDER BY cost_approx DESC, kind_order ASC, item_ordinal ASC
@@ -353,6 +432,7 @@ const readTopSessions = (
     const row = parsePresentationRow(record.row_json);
     return {
       costApprox: record.cost_approx,
+      costKnown: record.cost_known === 1,
       durationMs: record.duration_ms,
       harness: row.harness,
       kind: record.item_kind,
@@ -460,6 +540,7 @@ interface AnalyticsAggregateRecord {
   lines_d: number;
   median_cost: number | null;
   priced: number;
+  priced_cost_sum: number;
   provider: string;
   sessions: number;
   tools: number;
@@ -489,9 +570,9 @@ const analyticsGroupFromRecord = (record: AnalyticsAggregateRecord): AnalyticsGr
     ambiguous: record.ambiguous,
     cache: record.cache,
     cacheHitPct: record.inp + record.cache > 0 ? (record.cache / (record.inp + record.cache)) * 100 : 0,
-    costPer100Lines: lineCount && record.priced ? (record.cost_sum / lineCount) * 100 : null,
+    costPer100Lines: lineCount && record.priced ? (record.priced_cost_sum / lineCount) * 100 : null,
     costPercent: record.total_cost > 0 ? (record.cost_sum / record.total_cost) * 100 : 0,
-    costPerSession: record.priced ? record.cost_sum / record.priced : null,
+    costPerSession: record.priced ? record.priced_cost_sum / record.priced : null,
     costSum: record.cost_sum,
     fresh: record.fresh,
     harness: record.harness,
@@ -540,11 +621,63 @@ const readAnalyticsGroups = (
       WHERE ${filter.where}
     ),
     dimensions AS (
-      SELECT 'harness' AS kind, harness AS key, * FROM filtered
+      SELECT
+        'harness' AS kind,
+        harness AS key,
+        ordinal,
+        harness,
+        provider,
+        cost_known,
+        cost_approx,
+        usage_unavailable,
+        sort_ambiguous,
+        fresh_tokens,
+        tok_in,
+        tok_cr,
+        lines_added,
+        lines_deleted,
+        turns,
+        tools
+      FROM filtered
       UNION ALL
-      SELECT 'model' AS kind, model_key AS key, * FROM filtered
+      SELECT
+        'provider' AS kind,
+        provider_display AS key,
+        ordinal,
+        harness,
+        provider,
+        cost_known,
+        cost_approx,
+        usage_unavailable,
+        sort_ambiguous,
+        fresh_tokens,
+        tok_in,
+        tok_cr,
+        lines_added,
+        lines_deleted,
+        turns,
+        tools
+      FROM filtered
       UNION ALL
-      SELECT 'provider' AS kind, provider_display AS key, * FROM filtered
+      SELECT
+        'model' AS kind,
+        segments.model_key AS key,
+        filtered.ordinal,
+        filtered.harness,
+        filtered.provider,
+        segments.cost_known,
+        segments.cost_approx,
+        filtered.usage_unavailable,
+        filtered.sort_ambiguous,
+        segments.tok_in + segments.tok_out + segments.tok_cw AS fresh_tokens,
+        segments.tok_in,
+        segments.tok_cr,
+        0 AS lines_added,
+        0 AS lines_deleted,
+        0 AS turns,
+        0 AS tools
+      FROM filtered
+      INNER JOIN session_model_segments AS segments USING (ordinal)
     ),
     grouped AS (
       SELECT
@@ -559,7 +692,8 @@ const readAnalyticsGroups = (
         SUM(fresh_tokens) AS fresh,
         SUM(tok_in) AS inp,
         SUM(tok_cr) AS cache,
-        SUM(CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END) AS cost_sum,
+        SUM(CASE WHEN cost_known = 1 OR kind = 'model' THEN cost_approx ELSE 0 END) AS cost_sum,
+        SUM(CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END) AS priced_cost_sum,
         SUM(COALESCE(lines_added, 0)) AS lines_a,
         SUM(COALESCE(lines_deleted, 0)) AS lines_d,
         SUM(turns) AS turns,
@@ -600,15 +734,19 @@ const readAnalyticsGroups = (
     FROM grouped
     INNER JOIN first_rows USING (kind, key)
     LEFT JOIN medians USING (kind, key)
-    ORDER BY grouped.kind, grouped.cost_sum DESC, grouped.first_ordinal`,
+    ORDER BY grouped.kind, grouped.cost_sum DESC, grouped.key ASC`,
     filter.params,
     trace,
   );
   const groups = records.map(analyticsGroupFromRecord);
+  const groupsForKind = (kind: AnalyticsAggregateRecord['kind']): AnalyticsGroup[] =>
+    groups
+      .filter((_, index) => records[index]?.kind === kind)
+      .sort((left, right) => right.costSum - left.costSum || compareAnalyticsKeys(left.key, right.key));
   return {
-    harnesses: groups.filter((_, index) => records[index]?.kind === 'harness'),
-    models: groups.filter((_, index) => records[index]?.kind === 'model'),
-    providers: groups.filter((_, index) => records[index]?.kind === 'provider'),
+    harnesses: groupsForKind('harness'),
+    models: groupsForKind('model'),
+    providers: groupsForKind('provider'),
   };
 };
 

@@ -33,7 +33,7 @@ export interface SessionQuerySqliteDatabase {
 
 export type SessionQuerySqliteTrace = (query: { params: readonly unknown[]; sql: string }) => void;
 
-const SESSION_QUERY_SCHEMA_VERSION = 4;
+const SESSION_QUERY_SCHEMA_VERSION = 6;
 const CURSOR_PATTERN = /^sq1\.([0-9a-f]{16})\.([0-9a-z]+)$/;
 const CAMPAIGN_EXACT_COST_SORT_FIELDS = new Set<SessionSortField>(['actual', 'cost', 'quota']);
 const SORT_COLUMN_BY_FIELD = {
@@ -189,7 +189,15 @@ export const buildSessionQuerySqlFilter = (request: SessionQueryRequest, alias =
     add(`${alias}.provider_display = ?`, request.filters.fields.provider);
   }
   if (request.filters.fields.model !== undefined) {
-    add(`${alias}.model_key = ?`, request.filters.fields.model);
+    add(
+      `EXISTS (
+        SELECT 1
+        FROM session_model_filter_keys AS filtered_model_keys
+        WHERE filtered_model_keys.ordinal = ${alias}.ordinal
+          AND filtered_model_keys.model_key = ?
+      )`,
+      request.filters.fields.model,
+    );
   }
   if (request.filters.fields.project !== undefined) {
     add(`${alias}.project_key = ?`, request.filters.fields.project);
@@ -441,6 +449,8 @@ const parsePresentationRow = (serialized: string): SessionPresentationRow =>
 
 const campaignDisplayRow = (record: ItemRecord): SessionPresentationRow => {
   const root = parsePresentationRow(record.row_json);
+  const rootWithoutModelAttribution = { ...root };
+  Reflect.deleteProperty(rootWithoutModelAttribution, 'modelSegments');
   if (
     record.campaign_key === null ||
     record.visible_count === null ||
@@ -469,7 +479,7 @@ const campaignDisplayRow = (record: ItemRecord): SessionPresentationRow => {
     throw new Error('Session query database returned an incomplete campaign item');
   }
   return {
-    ...root,
+    ...rootWithoutModelAttribution,
     activeDate: record.latest_active_date,
     activeTime: record.latest_active_time,
     ambiguous: record.ambiguous === 1,
