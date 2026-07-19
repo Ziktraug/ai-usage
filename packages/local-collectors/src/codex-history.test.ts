@@ -3,14 +3,20 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { parseSessionDetail, type SessionDetail } from '@ai-usage/report-core/session-detail';
+import { serializeUsageRow } from '@ai-usage/report-core/report-data';
+import {
+  parseSessionDetail,
+  type SessionDetail,
+  sessionProjectionFactsForSerializedRow,
+} from '@ai-usage/report-core/session-detail';
 import { Effect } from 'effect';
 import {
   findLatestCodexProviderStatus,
   findLatestCodexQuotaSnapshot,
-  readCodexSessionDetail,
+  readCodexSessionAnalysis,
   readCodexUsageSessions,
 } from './codex-history';
+import { sessionToUsageRow } from './collected-session';
 import { collectCodex, collectCodexResult } from './collectors/codex';
 import { LocalHistoryError } from './errors';
 import {
@@ -22,6 +28,9 @@ import {
 import { TestMemoryStorage } from './test-memory-storage';
 
 const SIMULATED_LARGE_SESSION_BYTES = 600 * 1024 * 1024;
+
+const readCodexDetailForTest = (sourceSessionId: string) =>
+  readCodexSessionAnalysis(sourceSessionId).pipe(Effect.map((analysis) => analysis?.detail ?? null));
 
 class LargeAggregateCodexStorage extends TestMemoryStorage {
   override readDir(dirPath: string) {
@@ -737,7 +746,8 @@ describe('Codex local history', () => {
     );
 
     const sessions = runWithStorage(readCodexUsageSessions, storage);
-    const detail = runWithStorage(readCodexSessionDetail('trace-thread'), storage);
+    const detail = runWithStorage(readCodexDetailForTest('trace-thread'), storage);
+    const analysis = runWithStorage(readCodexSessionAnalysis('trace-thread'), storage);
 
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.model).toBe('gpt-5.6-sol');
@@ -788,7 +798,10 @@ describe('Codex local history', () => {
     expect(detail?.prompts[1]?.text.startsWith('Second prompt')).toBe(true);
     expect(detail?.prompts[1]?.truncated).toBe(true);
     expect(Buffer.byteLength(detail?.prompts[1]?.text ?? '', 'utf8')).toBeLessThanOrEqual(32 * 1024);
-    expect(runWithStorage(readCodexSessionDetail('../../private'), storage)).toBeNull();
+    const reportRow = sessionToUsageRow(sessions[0]!);
+    const { projectPath: _projectPath, source: _source, ...serializedInput } = reportRow;
+    expect(analysis?.projection).toEqual(sessionProjectionFactsForSerializedRow(serializeUsageRow(serializedInput)));
+    expect(runWithStorage(readCodexDetailForTest('../../private'), storage)).toBeNull();
   });
 
   test('marks a token-bearing segment with unknown model pricing as a lower bound', () => {
@@ -1032,7 +1045,7 @@ describe('Codex local history', () => {
     );
 
     const session = runWithStorage(readCodexUsageSessions, storage)[0];
-    const detail = runWithStorage(readCodexSessionDetail('overlap-thread'), storage);
+    const detail = runWithStorage(readCodexDetailForTest('overlap-thread'), storage);
 
     const validDetail = requireSessionDetail(detail);
     expect(parseSessionDetail(validDetail)).toEqual(validDetail);
@@ -1068,7 +1081,7 @@ describe('Codex local history', () => {
     );
 
     const session = runWithStorage(readCodexUsageSessions, storage)[0];
-    const detail = requireSessionDetail(runWithStorage(readCodexSessionDetail('recorded-duration-thread'), storage));
+    const detail = requireSessionDetail(runWithStorage(readCodexDetailForTest('recorded-duration-thread'), storage));
 
     expect(parseSessionDetail(detail)).toEqual(detail);
     expect(session?.durationMs).toBe(2000);
@@ -1116,7 +1129,7 @@ describe('Codex local history', () => {
     );
 
     const session = runWithStorage(readCodexUsageSessions, storage)[0];
-    const detail = requireSessionDetail(runWithStorage(readCodexSessionDetail('bounded-duration-thread'), storage));
+    const detail = requireSessionDetail(runWithStorage(readCodexDetailForTest('bounded-duration-thread'), storage));
 
     expect(parseSessionDetail(detail)).toEqual(detail);
     expect(session?.durationMs).toBe(10_000);
@@ -1201,7 +1214,7 @@ describe('Codex local history', () => {
     );
 
     const session = runWithStorage(readCodexUsageSessions, storage)[0];
-    const detail = runWithStorage(readCodexSessionDetail('open-thread'), storage);
+    const detail = runWithStorage(readCodexDetailForTest('open-thread'), storage);
     const row = runWithStorage(collectCodex, storage)[0];
 
     const validDetail = requireSessionDetail(detail);
@@ -1260,7 +1273,7 @@ describe('Codex local history', () => {
     );
 
     const session = runWithStorage(readCodexUsageSessions, storage)[0];
-    const detail = runWithStorage(readCodexSessionDetail('delayed-thread'), storage);
+    const detail = runWithStorage(readCodexDetailForTest('delayed-thread'), storage);
 
     const validDetail = requireSessionDetail(detail);
     expect(parseSessionDetail(validDetail)).toEqual(validDetail);
@@ -1358,7 +1371,7 @@ describe('Codex local history', () => {
     );
 
     const session = runWithStorage(readCodexUsageSessions, storage)[0];
-    const detail = runWithStorage(readCodexSessionDetail('ambiguous-replay-thread'), storage);
+    const detail = runWithStorage(readCodexDetailForTest('ambiguous-replay-thread'), storage);
 
     const validDetail = requireSessionDetail(detail);
     expect(parseSessionDetail(validDetail)).toEqual(validDetail);
@@ -1524,7 +1537,7 @@ describe('Codex local history', () => {
     );
 
     const sessions = runWithStorage(readCodexUsageSessions, storage);
-    const detail = runWithStorage(readCodexSessionDetail('replay-child'), storage);
+    const detail = runWithStorage(readCodexDetailForTest('replay-child'), storage);
     const child = sessions.find((session) => session.source.sourceSessionId === 'replay-child');
 
     expect(sessions).toHaveLength(2);
@@ -1589,7 +1602,7 @@ describe('Codex local history', () => {
     );
 
     const result = runWithStorage(collectCodexResult, storage);
-    const detail = runWithStorage(readCodexSessionDetail('nonmono-thread'), storage);
+    const detail = runWithStorage(readCodexDetailForTest('nonmono-thread'), storage);
 
     expect(result.rows[0]?.tokIn).toBe(20);
     expect(result.rows[0]?.tokCr).toBe(9);

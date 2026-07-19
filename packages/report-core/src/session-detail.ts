@@ -1,3 +1,6 @@
+import type { SerializedUsageRow } from './report-data';
+import { isSerializedUsageRow } from './serialized-usage-validation';
+
 const MAX_ID_LENGTH = 512;
 const MAX_LABEL_LENGTH = 256;
 const MAX_PHASES = 256;
@@ -14,9 +17,8 @@ export const supportsSessionDetailHarness = (value: string): value is SessionDet
   sessionDetailHarnessKeys.some((key) => key === value);
 
 export interface SessionDetailRequest {
-  harnessKey: string;
-  machineId: string;
-  sourceSessionId: string;
+  revision: string;
+  rowId: string;
 }
 
 export interface SessionDetailTokenCounts {
@@ -26,6 +28,61 @@ export interface SessionDetailTokenCounts {
   output: number;
   total: number;
 }
+
+export interface SessionProjectionModelFacts {
+  model: string;
+  tokens: SessionDetailTokenCounts;
+}
+
+export interface SessionProjectionFacts {
+  calls: number;
+  durationMs: number | null;
+  modelSegments: SessionProjectionModelFacts[] | null;
+  partial: boolean;
+  tokens: SessionDetailTokenCounts | null;
+  tools: number;
+  turns: number;
+}
+
+export interface LocalSessionAnalysis {
+  detail: SessionDetail;
+  projection: SessionProjectionFacts;
+}
+
+export interface SessionDetailReportAnchor {
+  harnessKey: string | null;
+  machineId: string | null;
+  projection: SessionProjectionFacts;
+  sourceSessionId: string | null;
+}
+
+export interface SessionDetailAnchorResult {
+  anchor: SessionDetailReportAnchor | null;
+  requestFingerprint: string;
+  revision: string;
+}
+
+export type SessionDetailComparableField =
+  | 'calls'
+  | 'duration'
+  | 'model-attribution'
+  | 'coverage'
+  | 'tokens'
+  | 'tools'
+  | 'turns';
+
+export type SessionDetailConsistency =
+  | { checkedFields: SessionDetailComparableField[]; status: 'matches-report' }
+  | {
+      checkedFields: SessionDetailComparableField[];
+      differingFields: SessionDetailComparableField[];
+      status: 'differs-from-report';
+    }
+  | {
+      checkedFields: SessionDetailComparableField[];
+      reason: 'insufficient-comparable-facts';
+      status: 'cannot-compare';
+    };
 
 export type SessionDetailCostKind = 'approximate' | 'reported' | 'unknown';
 export type SessionDetailCoverageStatus = 'partial' | 'recorded';
@@ -86,10 +143,17 @@ export interface SessionDetail {
   turnsStatus: SessionDetailCoverageStatus;
 }
 
-export type SessionDetailUnavailableReason = 'history-unavailable' | 'not-found' | 'not-local' | 'unsupported';
+export type SessionDetailUnavailableReason =
+  | 'history-unavailable'
+  | 'not-found'
+  | 'not-local'
+  | 'report-provenance-unavailable'
+  | 'report-row-not-found'
+  | 'revision-expired'
+  | 'unsupported';
 
 export type SessionDetailResponse =
-  | { detail: SessionDetail; status: 'available' }
+  | { consistency: SessionDetailConsistency; detail: SessionDetail; revision: string; status: 'available' }
   | { message: string; reason: SessionDetailUnavailableReason; status: 'unavailable' };
 
 export class SessionDetailValidationError extends Error {
@@ -116,8 +180,8 @@ const requireString = (value: unknown, label: string, maximumLength = MAX_LABEL_
   return value;
 };
 
-const requireNullableString = (value: unknown, label: string): string | null =>
-  value === null ? null : requireString(value, label);
+const requireNullableString = (value: unknown, label: string, maximumLength = MAX_LABEL_LENGTH): string | null =>
+  value === null ? null : requireString(value, label, maximumLength);
 
 const requireTimestamp = (value: unknown, label: string): string => {
   const timestamp = requireString(value, label);
@@ -189,6 +253,91 @@ const parseTokenCounts = (value: unknown, label: string): SessionDetailTokenCoun
     throw new SessionDetailValidationError(`${label}.total does not match its token parts`);
   }
   return tokens;
+};
+
+const parseProjectionFacts = (value: unknown, label: string): SessionProjectionFacts => {
+  if (!isRecord(value)) {
+    throw new SessionDetailValidationError(`${label} must be an object`);
+  }
+  assertExactKeys(value, ['calls', 'durationMs', 'modelSegments', 'partial', 'tokens', 'tools', 'turns'], label);
+  if (typeof value.partial !== 'boolean') {
+    throw new SessionDetailValidationError(`${label}.partial must be a boolean`);
+  }
+  let modelSegments: SessionProjectionModelFacts[] | null = null;
+  if (value.modelSegments !== null) {
+    if (!Array.isArray(value.modelSegments) || value.modelSegments.length > MAX_PHASES) {
+      throw new SessionDetailValidationError(`${label}.modelSegments must be a bounded array or null`);
+    }
+    modelSegments = value.modelSegments.map((segment, index) => {
+      const segmentLabel = `${label}.modelSegments[${index}]`;
+      if (!isRecord(segment)) {
+        throw new SessionDetailValidationError(`${segmentLabel} must be an object`);
+      }
+      assertExactKeys(segment, ['model', 'tokens'], segmentLabel);
+      return {
+        model: requireString(segment.model, `${segmentLabel}.model`),
+        tokens: parseTokenCounts(segment.tokens, `${segmentLabel}.tokens`),
+      };
+    });
+    for (let index = 1; index < modelSegments.length; index += 1) {
+      if (modelSegments[index - 1]!.model.localeCompare(modelSegments[index]!.model) >= 0) {
+        throw new SessionDetailValidationError(`${label}.modelSegments must be canonically ordered and unique`);
+      }
+    }
+  }
+  return {
+    calls: requireNonNegativeInteger(value.calls, `${label}.calls`),
+    durationMs: requireNullableNonNegativeNumber(value.durationMs, `${label}.durationMs`),
+    modelSegments,
+    partial: value.partial,
+    tokens: value.tokens === null ? null : parseTokenCounts(value.tokens, `${label}.tokens`),
+    tools: requireNonNegativeInteger(value.tools, `${label}.tools`),
+    turns: requireNonNegativeInteger(value.turns, `${label}.turns`),
+  };
+};
+
+const projectionTokensForRow = (
+  row: Pick<SerializedUsageRow, 'tokCr' | 'tokCw' | 'tokIn' | 'tokOut' | 'tokenTotal'>,
+): SessionDetailTokenCounts => ({
+  cacheRead: row.tokCr,
+  cacheWrite: row.tokCw,
+  input: row.tokIn,
+  output: row.tokOut,
+  total: row.tokenTotal,
+});
+
+export const sessionProjectionFactsForSerializedRow = (value: unknown): SessionProjectionFacts => {
+  if (!isSerializedUsageRow(value)) {
+    throw new SessionDetailValidationError('Session projection source row is invalid');
+  }
+  let modelSegments: SessionProjectionModelFacts[] | null;
+  if (value.modelSegments) {
+    modelSegments = value.modelSegments
+      .map((segment) => ({
+        model: segment.model,
+        tokens: projectionTokensForRow({
+          tokCr: segment.tokCr,
+          tokCw: segment.tokCw,
+          tokIn: segment.tokIn,
+          tokOut: segment.tokOut,
+          tokenTotal: segment.tokCr + segment.tokCw + segment.tokIn + segment.tokOut,
+        }),
+      }))
+      .sort((left, right) => left.model.localeCompare(right.model));
+  } else if (value.models && value.models.length > 1) {
+    modelSegments = null;
+  } else {
+    modelSegments = [{ model: value.model, tokens: projectionTokensForRow(value) }];
+  }
+  return {
+    calls: value.calls,
+    durationMs: value.durationMs,
+    modelSegments,
+    partial: value.partial ?? false,
+    tokens: value.usageUnavailable ? null : projectionTokensForRow(value),
+    tools: value.tools,
+    turns: value.turns,
+  };
 };
 
 const parsePhase = (value: unknown, index: number): SessionDetailPhase => {
@@ -314,12 +463,125 @@ export const parseSessionDetailRequest = (value: unknown): SessionDetailRequest 
   if (!isRecord(value)) {
     throw new SessionDetailValidationError('Session detail request must be an object');
   }
-  assertExactKeys(value, ['harnessKey', 'machineId', 'sourceSessionId'], 'Session detail request');
+  assertExactKeys(value, ['revision', 'rowId'], 'Session detail request');
   return {
-    harnessKey: requireString(value.harnessKey, 'Session detail request.harnessKey'),
-    machineId: requireString(value.machineId, 'Session detail request.machineId', MAX_ID_LENGTH),
-    sourceSessionId: requireString(value.sourceSessionId, 'Session detail request.sourceSessionId', MAX_ID_LENGTH),
+    revision: requireString(value.revision, 'Session detail request.revision', MAX_ID_LENGTH),
+    rowId: requireString(value.rowId, 'Session detail request.rowId', MAX_ID_LENGTH),
   };
+};
+
+const fnv1a64 = (value: string): string => {
+  let hash = 0xcbf29ce484222325n;
+  for (const character of value) {
+    // biome-ignore lint/suspicious/noBitwiseOperators: The XOR step is intrinsic to FNV-1a.
+    hash ^= BigInt(character.codePointAt(0) ?? 0);
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return hash.toString(16).padStart(16, '0');
+};
+
+export const sessionDetailRequestFingerprint = (input: SessionDetailRequest): string => {
+  const request = parseSessionDetailRequest(input);
+  return `session-detail-v2:${fnv1a64(request.rowId)}`;
+};
+
+export const parseSessionDetailAnchorResult = (
+  value: unknown,
+  input: SessionDetailRequest,
+): SessionDetailAnchorResult => {
+  const request = parseSessionDetailRequest(input);
+  if (!isRecord(value)) {
+    throw new SessionDetailValidationError('Session detail anchor result must be an object');
+  }
+  assertExactKeys(value, ['anchor', 'requestFingerprint', 'revision'], 'Session detail anchor result');
+  const revision = requireString(value.revision, 'Session detail anchor result.revision', MAX_ID_LENGTH);
+  const requestFingerprint = requireString(
+    value.requestFingerprint,
+    'Session detail anchor result.requestFingerprint',
+    MAX_ID_LENGTH,
+  );
+  if (revision !== request.revision || requestFingerprint !== sessionDetailRequestFingerprint(request)) {
+    throw new SessionDetailValidationError('Session detail anchor result does not match its request');
+  }
+  if (value.anchor === null) {
+    return { anchor: null, requestFingerprint, revision };
+  }
+  if (!isRecord(value.anchor)) {
+    throw new SessionDetailValidationError('Session detail anchor result.anchor must be an object or null');
+  }
+  assertExactKeys(
+    value.anchor,
+    ['harnessKey', 'machineId', 'projection', 'sourceSessionId'],
+    'Session detail anchor result.anchor',
+  );
+  return {
+    anchor: {
+      harnessKey: requireNullableString(value.anchor.harnessKey, 'Session detail anchor result.anchor.harnessKey'),
+      machineId: requireNullableString(
+        value.anchor.machineId,
+        'Session detail anchor result.anchor.machineId',
+        MAX_ID_LENGTH,
+      ),
+      projection: parseProjectionFacts(value.anchor.projection, 'Session detail anchor result.anchor.projection'),
+      sourceSessionId: requireNullableString(
+        value.anchor.sourceSessionId,
+        'Session detail anchor result.anchor.sourceSessionId',
+        MAX_ID_LENGTH,
+      ),
+    },
+    requestFingerprint,
+    revision,
+  };
+};
+
+const tokenCountsEqual = (left: SessionDetailTokenCounts, right: SessionDetailTokenCounts): boolean =>
+  left.cacheRead === right.cacheRead &&
+  left.cacheWrite === right.cacheWrite &&
+  left.input === right.input &&
+  left.output === right.output &&
+  left.total === right.total;
+
+const modelSegmentsEqual = (left: SessionProjectionModelFacts[], right: SessionProjectionModelFacts[]): boolean =>
+  left.length === right.length &&
+  left.every((segment, index) => {
+    const other = right[index];
+    return other !== undefined && segment.model === other.model && tokenCountsEqual(segment.tokens, other.tokens);
+  });
+
+export const compareSessionProjectionFacts = (
+  report: SessionProjectionFacts,
+  local: SessionProjectionFacts,
+): SessionDetailConsistency => {
+  const checkedFields: SessionDetailComparableField[] = [];
+  const differingFields: SessionDetailComparableField[] = [];
+  const check = (field: SessionDetailComparableField, equal: boolean): void => {
+    checkedFields.push(field);
+    if (!equal) {
+      differingFields.push(field);
+    }
+  };
+  if (report.tokens !== null && local.tokens !== null) {
+    check('calls', report.calls === local.calls);
+  }
+  if (report.durationMs !== null || local.durationMs !== null) {
+    check('duration', report.durationMs === local.durationMs);
+  }
+  if (report.modelSegments !== null && local.modelSegments !== null) {
+    check('model-attribution', modelSegmentsEqual(report.modelSegments, local.modelSegments));
+  }
+  check('coverage', report.partial === local.partial && (report.tokens !== null) === (local.tokens !== null));
+  if (report.tokens !== null && local.tokens !== null) {
+    check('tokens', tokenCountsEqual(report.tokens, local.tokens));
+    check('tools', report.tools === local.tools);
+  }
+  check('turns', report.turns === local.turns);
+  if (differingFields.length > 0) {
+    return { checkedFields, differingFields, status: 'differs-from-report' };
+  }
+  if (checkedFields.includes('tokens')) {
+    return { checkedFields, status: 'matches-report' };
+  }
+  return { checkedFields, reason: 'insufficient-comparable-facts', status: 'cannot-compare' };
 };
 
 export const parseSessionDetail = (value: unknown): SessionDetail => {
@@ -424,8 +686,17 @@ export const parseSessionDetailResponse = (value: unknown): SessionDetailRespons
     throw new SessionDetailValidationError('Session detail response must be an object');
   }
   if (value.status === 'available') {
-    assertExactKeys(value, ['detail', 'status'], 'Session detail response');
-    return { detail: parseSessionDetail(value.detail), status: 'available' };
+    assertExactKeys(value, ['consistency', 'detail', 'revision', 'status'], 'Session detail response');
+    if (!isRecord(value.consistency)) {
+      throw new SessionDetailValidationError('Session detail response.consistency must be an object');
+    }
+    const consistency = parseSessionDetailConsistency(value.consistency);
+    return {
+      consistency,
+      detail: parseSessionDetail(value.detail),
+      revision: requireString(value.revision, 'Session detail response.revision', MAX_ID_LENGTH),
+      status: 'available',
+    };
   }
   if (value.status === 'unavailable') {
     assertExactKeys(value, ['message', 'reason', 'status'], 'Session detail response');
@@ -433,6 +704,9 @@ export const parseSessionDetailResponse = (value: unknown): SessionDetailRespons
       value.reason !== 'history-unavailable' &&
       value.reason !== 'not-found' &&
       value.reason !== 'not-local' &&
+      value.reason !== 'report-provenance-unavailable' &&
+      value.reason !== 'report-row-not-found' &&
+      value.reason !== 'revision-expired' &&
       value.reason !== 'unsupported'
     ) {
       throw new SessionDetailValidationError('Session detail response.reason is invalid');
@@ -444,4 +718,54 @@ export const parseSessionDetailResponse = (value: unknown): SessionDetailRespons
     };
   }
   throw new SessionDetailValidationError('Session detail response.status is invalid');
+};
+
+const parseComparableFields = (value: unknown, label: string): SessionDetailComparableField[] => {
+  const fields: SessionDetailComparableField[] = [
+    'calls',
+    'duration',
+    'model-attribution',
+    'coverage',
+    'tokens',
+    'tools',
+    'turns',
+  ];
+  if (!Array.isArray(value)) {
+    throw new SessionDetailValidationError(`${label} must be an array`);
+  }
+  const parsed = value.map((field) => {
+    if (typeof field !== 'string' || !fields.includes(field as SessionDetailComparableField)) {
+      throw new SessionDetailValidationError(`${label} contains an invalid field`);
+    }
+    return field as SessionDetailComparableField;
+  });
+  const expected = fields.filter((field) => parsed.includes(field));
+  if (new Set(parsed).size !== parsed.length || !parsed.every((field, index) => field === expected[index])) {
+    throw new SessionDetailValidationError(`${label} must use deterministic field order without duplicates`);
+  }
+  return parsed;
+};
+
+const parseSessionDetailConsistency = (value: Record<string, unknown>): SessionDetailConsistency => {
+  const checkedFields = parseComparableFields(value.checkedFields, 'Session detail consistency.checkedFields');
+  if (value.status === 'matches-report') {
+    assertExactKeys(value, ['checkedFields', 'status'], 'Session detail consistency');
+    return { checkedFields, status: 'matches-report' };
+  }
+  if (value.status === 'differs-from-report') {
+    assertExactKeys(value, ['checkedFields', 'differingFields', 'status'], 'Session detail consistency');
+    const differingFields = parseComparableFields(value.differingFields, 'Session detail consistency.differingFields');
+    if (differingFields.some((field) => !checkedFields.includes(field)) || differingFields.length === 0) {
+      throw new SessionDetailValidationError('Session detail consistency has invalid differing fields');
+    }
+    return { checkedFields, differingFields, status: 'differs-from-report' };
+  }
+  if (value.status === 'cannot-compare') {
+    assertExactKeys(value, ['checkedFields', 'reason', 'status'], 'Session detail consistency');
+    if (value.reason !== 'insufficient-comparable-facts') {
+      throw new SessionDetailValidationError('Session detail consistency.reason is invalid');
+    }
+    return { checkedFields, reason: value.reason, status: 'cannot-compare' };
+  }
+  throw new SessionDetailValidationError('Session detail consistency.status is invalid');
 };

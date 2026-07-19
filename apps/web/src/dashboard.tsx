@@ -123,6 +123,11 @@ import { buildProviderStatusViews } from './provider-status-model';
 import { ProviderStatusPanel } from './provider-status-panel';
 import { cursorCommitAttributionFacet, demoReportPayload } from './report-data';
 import { ReportWarnings } from './report-warnings';
+import {
+  type SessionAnalysisTarget,
+  sessionAnalysisTargetForSession,
+  sessionAnalysisTargetForTopLevelRow,
+} from './session-analysis-target';
 import { SessionDrawer } from './session-drawer';
 import {
   buildDashboardSessionQueryScope,
@@ -393,6 +398,8 @@ export const Dashboard = (props: {
   );
   const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
   const [selectedNavigationRow, setSelectedNavigationRow] = createSignal<DashboardRow | null>(null);
+  const [selectedAnalysisTarget, setSelectedAnalysisTarget] = createSignal<SessionAnalysisTarget | null>(null);
+  const [selectedAnalysisRevision, setSelectedAnalysisRevision] = createSignal<string | null>(null);
   const [sessionNeighbors, setSessionNeighbors] = createSignal<SessionNeighborResult>();
   const [sessionNeighborsLoading, setSessionNeighborsLoading] = createSignal(false);
   let searchInputEl: HTMLInputElement | undefined;
@@ -685,6 +692,10 @@ export const Dashboard = (props: {
     if (!key) {
       return null;
     }
+    const target = selectedAnalysisTarget();
+    if (target?.summaryRow.rowId === key) {
+      return target.summaryRow;
+    }
     if (!servedSessionQueries) {
       return reportRows().find((row) => rowKey(row) === key) ?? null;
     }
@@ -717,6 +728,8 @@ export const Dashboard = (props: {
       const next = delta > 0 ? sessionNeighbors()?.next : sessionNeighbors()?.previous;
       if (next) {
         setSelectedNavigationRow(next);
+        setSelectedAnalysisTarget(sessionAnalysisTargetForSession(next));
+        setSelectedAnalysisRevision(servedSessionState()?.query.revision ?? null);
         setSelectedKey(rowKey(next));
         sessionQueryCoordinator?.select(rowKey(next));
       }
@@ -730,6 +743,8 @@ export const Dashboard = (props: {
     }
     const next = rows[index + delta];
     if (next) {
+      setSelectedAnalysisTarget(sessionAnalysisTargetForSession(next));
+      setSelectedAnalysisRevision(null);
       setSelectedKey(rowKey(next));
     }
   };
@@ -773,6 +788,8 @@ export const Dashboard = (props: {
         return;
       }
       if (event.key === 'Escape') {
+        setSelectedAnalysisTarget(null);
+        setSelectedAnalysisRevision(null);
         setSelectedKey(null);
       } else if (event.key === 'j' || event.key === 'ArrowDown') {
         event.preventDefault();
@@ -932,6 +949,16 @@ export const Dashboard = (props: {
   const toggleSelected = (row: DashboardRow) => {
     const next = selectedKey() === rowKey(row) ? null : rowKey(row);
     setSelectedNavigationRow(next ? row : null);
+    setSelectedAnalysisTarget(
+      next
+        ? sessionAnalysisTargetForTopLevelRow({
+            campaigns: servedSessionViewActive() || !groupCampaigns() ? [] : campaignViews(),
+            pageItems: servedSessionViewActive() ? (servedSessionState()?.items ?? []) : [],
+            row,
+          })
+        : null,
+    );
+    setSelectedAnalysisRevision(next ? (servedSessionState()?.query.revision ?? null) : null);
     setSelectedKey(next);
     sessionQueryCoordinator?.select(next);
   };
@@ -958,6 +985,8 @@ export const Dashboard = (props: {
   };
   const inspectOverviewSession = (row: DashboardRow) => {
     setSelectedNavigationRow(row);
+    setSelectedAnalysisTarget(sessionAnalysisTargetForSession(row));
+    setSelectedAnalysisRevision(focusedStore?.revision() ?? null);
     setSelectedKey(rowKey(row));
     sessionQueryCoordinator?.select(rowKey(row));
   };
@@ -1377,6 +1406,8 @@ export const Dashboard = (props: {
                 onClearFilters={clearFilters}
                 onClose={() => {
                   setSelectedNavigationRow(null);
+                  setSelectedAnalysisTarget(null);
+                  setSelectedAnalysisRevision(null);
                   setSelectedKey(null);
                   sessionQueryCoordinator?.select(null);
                 }}
@@ -1384,12 +1415,16 @@ export const Dashboard = (props: {
                 onNavigate={navigateSelected}
                 onSelectSession={(session) => {
                   setSelectedNavigationRow(session);
+                  setSelectedAnalysisTarget(sessionAnalysisTargetForSession(session));
+                  setSelectedAnalysisRevision(servedSessionState()?.query.revision ?? null);
                   setSelectedKey(rowKey(session));
                   sessionQueryCoordinator?.select(rowKey(session));
                 }}
+                revision={selectedAnalysisRevision()}
                 row={row()}
                 rows={servedSessionViewActive() ? visibleSessionTableRows() : sortedRows()}
                 selectedCampaign={selectedCampaign()}
+                target={selectedAnalysisTarget() ?? sessionAnalysisTargetForSession(row())}
               />
             )}
           </Show>

@@ -1,4 +1,5 @@
 import type {
+  LocalSessionAnalysis,
   SessionDetail,
   SessionDetailPhase,
   SessionDetailPrompt,
@@ -12,10 +13,18 @@ import {
   addNonNegativeFiniteNumbers,
   addNonNegativeSafeIntegers,
   parseFiniteTimestamp,
-  parseNonNegativeFiniteNumber,
   parseOptionalNonNegativeSafeInteger,
 } from './metric-validation';
 import { OPENCODE_DIRECT_USER_PART_PREDICATE } from './opencode-schema';
+import {
+  buildOpenCodeProjectionSummary,
+  decodeOpenCodeMessageRow,
+  mergeOpenCodeActivityIntervals,
+  type OpenCodeMessageFact,
+  type OpenCodeParentKind,
+  openCodeActivityDuration,
+  openCodeParentKind,
+} from './opencode-session-facts';
 import { resolvePathCandidates } from './platform-paths';
 
 const MAX_ID_LENGTH = 512;
@@ -133,7 +142,7 @@ interface ParsedOpenCodeTurn {
   costKind: 'reported' | 'unknown';
   endMs: number;
   parentId: string | null;
-  parentKind: 'human' | 'internal' | 'unresolved';
+  parentKind: OpenCodeParentKind;
   startMs: number;
   turn: SessionDetailTurn;
 }
@@ -141,11 +150,6 @@ interface ParsedOpenCodeTurn {
 interface BoundedPromptText {
   text: string;
   truncated: boolean;
-}
-
-interface MillisecondInterval {
-  endMs: number;
-  startMs: number;
 }
 
 const detailError = (operation: string, dbPath: string, message: string): LocalHistoryError =>
@@ -187,41 +191,24 @@ const addTokens = (
   };
 };
 
-const tokensFromRow = (row: OpenCodeDetailMessageRow): SessionDetailTokenCounts | null => {
-  const input = parseOptionalNonNegativeSafeInteger(row.token_input);
-  const output = parseOptionalNonNegativeSafeInteger(row.token_output);
-  const reasoning = parseOptionalNonNegativeSafeInteger(row.token_reasoning);
-  const cacheRead = parseOptionalNonNegativeSafeInteger(row.token_cache_read);
-  const cacheWrite = parseOptionalNonNegativeSafeInteger(row.token_cache_write);
-  if (!(input.ok && output.ok && reasoning.ok && cacheRead.ok && cacheWrite.ok)) {
-    return null;
-  }
-  const outputWithReasoning = addNonNegativeSafeIntegers(output.value, reasoning.value);
-  if (!outputWithReasoning.ok) {
-    return null;
-  }
-  const inputAndOutput = addNonNegativeSafeIntegers(input.value, outputWithReasoning.value);
-  const caches = addNonNegativeSafeIntegers(cacheRead.value, cacheWrite.value);
-  if (!(inputAndOutput.ok && caches.ok)) {
-    return null;
-  }
-  const total = addNonNegativeSafeIntegers(inputAndOutput.value, caches.value);
-  if (!total.ok) {
-    return null;
-  }
-  return {
-    cacheRead: cacheRead.value,
-    cacheWrite: cacheWrite.value,
-    input: input.value,
-    output: outputWithReasoning.value,
-    total: total.value,
-  };
-};
-
-const modelLabel = (row: OpenCodeDetailMessageRow): string => {
-  const provider = boundedString(row.provider_id) ?? 'unknown';
-  const model = boundedString(row.model_id) ?? 'unknown';
-  return `${provider}/${model}`;
+const messageFactFromDetailRow = (row: OpenCodeDetailMessageRow): OpenCodeMessageFact | null => {
+  const decoded = decodeOpenCodeMessageRow({
+    completed: row.completed,
+    cost: row.cost,
+    created: row.created,
+    id: row.id,
+    model_id: row.model_id,
+    parent_id: row.parent_id,
+    provider_id: row.provider_id,
+    role: row.role,
+    token_cache_read: row.token_cache_read,
+    token_cache_write: row.token_cache_write,
+    token_input: row.token_input,
+    token_output: row.token_output,
+    token_reasoning: row.token_reasoning,
+    variant: row.variant,
+  });
+  return decoded.kind === 'fact' ? decoded.value : null;
 };
 
 const boundedPromptText = (value: string, maximumBytes: number): BoundedPromptText => {
@@ -239,33 +226,6 @@ const boundedPromptText = (value: string, maximumBytes: number): BoundedPromptTe
   }
   return { text: characters.join(''), truncated };
 };
-
-const mergedActivityIntervals = (turns: readonly ParsedOpenCodeTurn[]): MillisecondInterval[] => {
-  const intervals = turns
-    .map(({ endMs, startMs }) => ({ endMs, startMs }))
-    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
-  const first = intervals[0];
-  if (!first) {
-    return [];
-  }
-  let currentStart = first.startMs;
-  let currentEnd = first.endMs;
-  const merged: MillisecondInterval[] = [];
-  for (const interval of intervals.slice(1)) {
-    if (interval.startMs > currentEnd) {
-      merged.push({ endMs: currentEnd, startMs: currentStart });
-      currentStart = interval.startMs;
-      currentEnd = interval.endMs;
-      continue;
-    }
-    currentEnd = Math.max(currentEnd, interval.endMs);
-  }
-  merged.push({ endMs: currentEnd, startMs: currentStart });
-  return merged;
-};
-
-const activeDuration = (turns: readonly ParsedOpenCodeTurn[]): number =>
-  mergedActivityIntervals(turns).reduce((total, interval) => total + interval.endMs - interval.startMs, 0);
 
 const promptsFromRows = (
   rows: readonly OpenCodeDetailPromptRow[],
@@ -304,17 +264,6 @@ const promptsFromRows = (
   return { prompts, promptsTruncated };
 };
 
-const parentKindFor = (
-  parentId: string | null,
-  userMessageIds: ReadonlySet<string>,
-  directUserMessageIds: ReadonlySet<string>,
-): ParsedOpenCodeTurn['parentKind'] => {
-  if (parentId === null || !userMessageIds.has(parentId)) {
-    return 'unresolved';
-  }
-  return directUserMessageIds.has(parentId) ? 'human' : 'internal';
-};
-
 const turnsFromRows = (
   rows: readonly OpenCodeDetailMessageRow[],
   prompts: readonly SessionDetailPrompt[],
@@ -344,36 +293,33 @@ const turnsFromRows = (
 
   const assistantRows = rows.filter(({ role }) => role === 'assistant');
   return assistantRows.map((row, index) => {
-    const id = boundedString(row.id, MAX_ID_LENGTH);
-    const startMs = timestampMs(row.created);
-    const completedMs = timestampMs(row.completed);
-    const tokens = tokensFromRow(row);
-    if (!(id && startMs !== null && tokens)) {
-      throw detailError('readOpenCodeSessionDetail.message', dbPath, 'OpenCode detail contains invalid metrics');
+    const fact = messageFactFromDetailRow(row);
+    if (!(fact?.id && fact.createdMs !== null)) {
+      throw detailError('readOpenCodeSessionAnalysis.message', dbPath, 'OpenCode detail contains invalid metrics');
     }
-    const endMs = completedMs === null ? startMs : Math.max(startMs, completedMs);
-    const effort = boundedString(row.variant);
-    const parentId = boundedString(row.parent_id, MAX_ID_LENGTH);
-    const parentKind = parentKindFor(parentId, userMessageIds, directUserMessageIds);
-    const cost = parseNonNegativeFiniteNumber(row.cost);
+    const id = fact.id;
+    const startMs = fact.createdMs;
+    const endMs = fact.completedMs === null ? startMs : Math.max(startMs, fact.completedMs);
+    const parentId = fact.parentId;
+    const parentKind = openCodeParentKind(parentId, userMessageIds, directUserMessageIds);
     return {
-      cost: cost.ok ? cost.value : null,
-      costKind: cost.ok ? 'reported' : 'unknown',
+      cost: fact.reportedCostKnown ? fact.cost : null,
+      costKind: fact.reportedCostKnown ? 'reported' : 'unknown',
       endMs,
       parentId,
       parentKind,
       startMs,
       turn: {
         durationMs: endMs - startMs,
-        effort,
-        effortKind: effort ? 'recorded' : 'unavailable',
+        effort: fact.effort,
+        effortKind: fact.effort ? 'recorded' : 'unavailable',
         endAt: timestamp(endMs),
         index,
         intervals: [{ endAt: timestamp(endMs), startAt: timestamp(startMs) }],
-        model: modelLabel(row),
+        model: fact.model,
         promptIds: parentKind === 'human' && parentId !== null ? (promptIdsByMessage.get(parentId) ?? []) : [],
         startAt: timestamp(startMs),
-        tokens,
+        tokens: fact.tokens,
         tools: toolsByMessageId.get(id) ?? 0,
       },
     };
@@ -413,7 +359,7 @@ const groupedTurnsFromMessages = (messages: readonly ParsedOpenCodeTurn[], dbPat
     groups.set(key, group);
   }
   if (groups.size > MAX_TURNS) {
-    throw detailError('readOpenCodeSessionDetail.turnLimit', dbPath, 'OpenCode session exceeds its turn limit');
+    throw detailError('readOpenCodeSessionAnalysis.turnLimit', dbPath, 'OpenCode session exceeds its turn limit');
   }
 
   return [...groups.values()].map((group, index) => {
@@ -424,7 +370,7 @@ const groupedTurnsFromMessages = (messages: readonly ParsedOpenCodeTurn[], dbPat
       const nextTokens = addTokens(tokens, turn.tokens);
       const nextTools = addNonNegativeSafeIntegers(tools, turn.tools);
       if (!(nextTokens && nextTools.ok)) {
-        throw detailError('readOpenCodeSessionDetail.turnMetrics', dbPath, 'OpenCode turn metrics overflow');
+        throw detailError('readOpenCodeSessionAnalysis.turnMetrics', dbPath, 'OpenCode turn metrics overflow');
       }
       tokens = nextTokens;
       tools = nextTools.value;
@@ -435,9 +381,9 @@ const groupedTurnsFromMessages = (messages: readonly ParsedOpenCodeTurn[], dbPat
     const effort = dominantTurnValue(group, (turn) => turn.effort);
     const startMs = Math.min(...group.map(({ startMs: value }) => value));
     const endMs = Math.max(...group.map(({ endMs: value }) => value));
-    const intervals = mergedActivityIntervals(group);
+    const intervals = mergeOpenCodeActivityIntervals(group);
     return {
-      durationMs: activeDuration(group),
+      durationMs: openCodeActivityDuration(group),
       effort,
       effortKind: effort ? 'recorded' : 'unavailable',
       endAt: timestamp(endMs),
@@ -463,7 +409,7 @@ const phasesFromTurns = (turns: readonly ParsedOpenCodeTurn[], dbPath: string): 
     if (previous && previous.model === turn.model && previous.effort === turn.effort) {
       const tokens = addTokens(previous.tokens, turn.tokens);
       if (!tokens) {
-        throw detailError('readOpenCodeSessionDetail.phaseTokens', dbPath, 'OpenCode phase tokens overflow');
+        throw detailError('readOpenCodeSessionAnalysis.phaseTokens', dbPath, 'OpenCode phase tokens overflow');
       }
       const cost =
         previous.cost === null || current.cost === null
@@ -476,7 +422,7 @@ const phasesFromTurns = (turns: readonly ParsedOpenCodeTurn[], dbPath: string): 
       continue;
     }
     if (phases.length >= MAX_PHASES) {
-      throw detailError('readOpenCodeSessionDetail.phaseLimit', dbPath, 'OpenCode session exceeds its phase limit');
+      throw detailError('readOpenCodeSessionAnalysis.phaseLimit', dbPath, 'OpenCode session exceeds its phase limit');
     }
     phases.push({
       cost: current.cost,
@@ -496,7 +442,7 @@ const detailFromDatabase = (
   dbPath: string,
   sourceSessionId: string,
   storage: LocalHistoryStorageService,
-): Effect.Effect<SessionDetail | null, LocalHistoryError> =>
+): Effect.Effect<LocalSessionAnalysis | null, LocalHistoryError> =>
   Effect.acquireUseRelease(
     storage.openDatabase(dbPath),
     (db) =>
@@ -512,7 +458,11 @@ const detailFromDatabase = (
         ]);
         if (messageRows.length > MAX_MESSAGE_ROWS) {
           return yield* Effect.fail(
-            detailError('readOpenCodeSessionDetail.messageLimit', dbPath, 'OpenCode session exceeds its message limit'),
+            detailError(
+              'readOpenCodeSessionAnalysis.messageLimit',
+              dbPath,
+              'OpenCode session exceeds its message limit',
+            ),
           );
         }
         const promptRows = yield* db.all<OpenCodeDetailPromptRow>(OPENCODE_DETAIL_PROMPT_SQL, [
@@ -527,7 +477,7 @@ const detailFromDatabase = (
         ]);
         if (parentRows.length > MAX_TURNS) {
           return yield* Effect.fail(
-            detailError('readOpenCodeSessionDetail.parentLimit', dbPath, 'OpenCode session exceeds its turn limit'),
+            detailError('readOpenCodeSessionAnalysis.parentLimit', dbPath, 'OpenCode session exceeds its turn limit'),
           );
         }
         const toolRows = yield* db.all<OpenCodeDetailToolRow>(OPENCODE_DETAIL_TOOL_SQL, [
@@ -536,16 +486,28 @@ const detailFromDatabase = (
         ]);
         if (toolRows.length > MAX_TOOL_GROUPS) {
           return yield* Effect.fail(
-            detailError('readOpenCodeSessionDetail.toolLimit', dbPath, 'OpenCode session exceeds its tool-group limit'),
+            detailError(
+              'readOpenCodeSessionAnalysis.toolLimit',
+              dbPath,
+              'OpenCode session exceeds its tool-group limit',
+            ),
           );
         }
 
         const toolsByMessageId = new Map<string, number>();
+        let projectionTools = 0;
         for (const row of toolRows) {
           const messageId = boundedString(row.message_id, MAX_ID_LENGTH);
           const count = parseOptionalNonNegativeSafeInteger(row.tool_count);
           if (messageId && count.ok) {
             toolsByMessageId.set(messageId, count.value);
+            const nextTools = addNonNegativeSafeIntegers(projectionTools, count.value);
+            if (!nextTools.ok) {
+              return yield* Effect.fail(
+                detailError('readOpenCodeSessionAnalysis.toolMetrics', dbPath, 'OpenCode tool metrics overflow'),
+              );
+            }
+            projectionTools = nextTools.value;
           }
         }
         const { prompts, promptsTruncated } = promptsFromRows(promptRows);
@@ -564,6 +526,14 @@ const detailFromDatabase = (
           dbPath,
         );
         const phases = phasesFromTurns(parsedTurns, dbPath);
+        const messageFacts = messageRows.flatMap((row) => {
+          const fact = messageFactFromDetailRow(row);
+          return fact ? [fact] : [];
+        });
+        const projectionSummary = buildOpenCodeProjectionSummary(messageFacts);
+        if (!projectionSummary) {
+          return null;
+        }
 
         const messageTimes = messageRows.flatMap((row) => {
           const created = timestampMs(row.created);
@@ -581,7 +551,7 @@ const detailFromDatabase = (
         }
         const boundedEndMs = Math.max(startMs, endMs);
         const elapsedDurationMs = boundedEndMs - startMs;
-        const activeDurationMs = Math.min(elapsedDurationMs, activeDuration(parsedTurns));
+        const activeDurationMs = Math.min(elapsedDurationMs, openCodeActivityDuration(parsedTurns));
         const missingCompletion = messageRows.some((row) => {
           if (row.role !== 'assistant') {
             return false;
@@ -591,7 +561,7 @@ const detailFromDatabase = (
           return created === null || completed === null || completed < created;
         });
         const turns = groupedTurnsFromMessages(parsedTurns, dbPath);
-        return {
+        const detail = {
           activeDurationMs,
           durationStatus: missingCompletion ? 'partial' : 'recorded',
           efforts: [...new Set(parsedTurns.flatMap(({ turn }) => (turn.effort ? [turn.effort] : [])))],
@@ -608,13 +578,36 @@ const detailFromDatabase = (
           turns,
           turnsStatus: parsedTurns.some(({ parentKind }) => parentKind !== 'human') ? 'partial' : 'recorded',
         } satisfies SessionDetail;
+        return {
+          detail,
+          projection: {
+            calls: projectionSummary.calls,
+            durationMs: projectionSummary.durationMs,
+            modelSegments: projectionSummary.modelSegments
+              .map((segment) => ({
+                model: segment.model,
+                tokens: {
+                  cacheRead: segment.tokCr,
+                  cacheWrite: segment.tokCw,
+                  input: segment.tokIn,
+                  output: segment.tokOut,
+                  total: segment.tokCr + segment.tokCw + segment.tokIn + segment.tokOut,
+                },
+              }))
+              .sort((left, right) => left.model.localeCompare(right.model)),
+            partial: projectionSummary.partial,
+            tokens: projectionSummary.tokens,
+            tools: projectionTools,
+            turns: directUserMessageIds.size,
+          },
+        } satisfies LocalSessionAnalysis;
       }),
     (db) => db.close,
   );
 
-export const readOpenCodeSessionDetail = (
+export const readOpenCodeSessionAnalysis = (
   sourceSessionId: string,
-): Effect.Effect<SessionDetail | null, LocalHistoryError, LocalHistoryStorageService> =>
+): Effect.Effect<LocalSessionAnalysis | null, LocalHistoryError, LocalHistoryStorageService> =>
   Effect.gen(function* () {
     if (!(sourceSessionId.length > 0 && sourceSessionId.length <= MAX_ID_LENGTH && !sourceSessionId.includes('\0'))) {
       return null;

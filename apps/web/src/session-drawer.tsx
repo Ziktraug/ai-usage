@@ -28,6 +28,7 @@ import type { FieldFilterKey } from './dashboard-search';
 import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from './dashboard-sort';
 import { SessionAnalysis } from './session-analysis';
 import { sessionDurationSemantics } from './session-analysis-model';
+import type { SessionAnalysisTarget } from './session-analysis-target';
 import { canAnalyzeSession, loadSessionDetail } from './session-detail-client';
 import {
   apiValuePresentation,
@@ -88,9 +89,11 @@ export const SessionDrawer = (props: {
     previous: DashboardRow | null;
     total: number;
   };
+  revision: string | null;
   row: DashboardRow;
   rows: DashboardRow[];
   selectedCampaign?: CampaignView | null;
+  target: SessionAnalysisTarget;
 }) => {
   let closeButton: HTMLButtonElement | undefined;
   const previousFocus = typeof document === 'undefined' ? null : document.activeElement;
@@ -120,7 +123,11 @@ export const SessionDrawer = (props: {
     setAnalysisResponse(null);
     setAnalysisError(null);
     try {
-      const response = await loadSessionDetail(props.row);
+      const revision = props.revision;
+      if (!revision) {
+        throw new Error('A served report revision is required for session analysis.');
+      }
+      const response = await loadSessionDetail({ revision, rowId: props.target.reportRowId });
       if (sequence === analysisSequence) {
         setAnalysisResponse(response);
       }
@@ -152,16 +159,14 @@ export const SessionDrawer = (props: {
     if (analysisOpen()) {
       return 'Summary';
     }
-    return props.row.campaignTotalCount === undefined ? 'Analyze' : 'Analyze root';
+    return props.target.kind === 'session' ? 'Analyze' : 'Analyze root';
   };
 
   const analysisButtonAriaLabel = (): string => {
     if (analysisOpen()) {
       return 'Back to session summary';
     }
-    return props.row.campaignTotalCount === undefined
-      ? 'Analyze session chronology'
-      : 'Analyze root session chronology';
+    return props.target.kind === 'session' ? 'Analyze session chronology' : 'Analyze root session chronology';
   };
 
   const position = createMemo(() => props.rows.findIndex((row) => rowKey(row) === rowKey(props.row)));
@@ -177,7 +182,7 @@ export const SessionDrawer = (props: {
     (props.row.durationMs ?? 0) > 0 && medianDuration() > 0 ? (props.row.durationMs ?? 0) / medianDuration() : null;
   const apiValue = () => apiValuePresentation(props.row);
   const durationSemantics = () =>
-    sessionDurationSemantics(props.row.source?.harnessKey, props.row.campaignTotalCount !== undefined);
+    sessionDurationSemantics(props.row.source?.harnessKey, props.target.kind === 'campaign-root');
   const isInNavigation = () => position() >= 0;
   const previousAvailable = () =>
     props.navigation ? props.navigation.previous !== null : isInNavigation() && position() > 0;
@@ -250,7 +255,7 @@ export const SessionDrawer = (props: {
           >
             ↓
           </button>
-          <Show when={canAnalyzeSession(props.row)}>
+          <Show when={canAnalyzeSession({ revision: props.revision, rowId: props.target.reportRowId })}>
             <button
               aria-controls={SESSION_ANALYSIS_PANEL_ID}
               aria-expanded={analysisOpen()}
@@ -283,11 +288,7 @@ export const SessionDrawer = (props: {
             loading={analysisLoading()}
             onRetry={loadAnalysis}
             response={analysisResponse()}
-            scopeNote={
-              props.row.campaignTotalCount === undefined
-                ? null
-                : `This trace covers the root rollout; the campaign summary combines ${fmtNum(props.row.campaignTotalCount)} rollouts.`
-            }
+            target={props.target}
           />
         </div>
       </Show>

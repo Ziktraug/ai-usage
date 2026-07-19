@@ -3,6 +3,7 @@ import path from 'node:path';
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import { normalizeCodexRateLimitStatus, type ProviderStatus } from '@ai-usage/report-core/provider-status';
 import type {
+  LocalSessionAnalysis,
   SessionDetail,
   SessionDetailPhase,
   SessionDetailPrompt,
@@ -778,6 +779,7 @@ const createCodexSessionParser = (captureDetail = false) => {
   let promptsTruncated = false;
   let taskObservedEnd: Date | null = null;
   let taskObservedStart: Date | null = null;
+  let finalized = false;
   const parseStartedAt = Date.now();
 
   const latestOpenTask = (): MutableCodexTask | null => {
@@ -1160,6 +1162,10 @@ const createCodexSessionParser = (captureDetail = false) => {
   };
 
   const finalize = (): void => {
+    if (finalized) {
+      return;
+    }
+    finalized = true;
     if (!hasContextualTokenSnapshot && legacyMaxTokens) {
       session.tin = legacyMaxTokens.input - legacyMaxTokens.cacheRead;
       session.tcr = legacyMaxTokens.cacheRead;
@@ -1257,7 +1263,6 @@ const createCodexSessionParser = (captureDetail = false) => {
   };
 
   const detail = (): SessionDetail | null => {
-    finalize();
     if (!(captureDetail && session.id && session.start && session.end)) {
       return null;
     }
@@ -1282,7 +1287,47 @@ const createCodexSessionParser = (captureDetail = false) => {
     };
   };
 
+  const analysis = (): LocalSessionAnalysis | null => {
+    const parsedDetail = detail();
+    if (!parsedDetail) {
+      return null;
+    }
+    const modelSegments = codexModelSegments(session)
+      .map((segment) => ({
+        model: segment.model,
+        tokens: {
+          cacheRead: segment.tokCr,
+          cacheWrite: segment.tokCw,
+          input: segment.tokIn,
+          output: segment.tokOut,
+          total: segment.tokCr + segment.tokCw + segment.tokIn + segment.tokOut,
+        },
+      }))
+      .sort((left, right) => left.model.localeCompare(right.model));
+    return {
+      detail: parsedDetail,
+      projection: {
+        calls: 1,
+        durationMs: session.activeDurationMs ?? 0,
+        modelSegments,
+        partial: session.partial,
+        tokens: session.hasTokenUsage
+          ? {
+              cacheRead: session.tcr,
+              cacheWrite: 0,
+              input: session.tin,
+              output: session.tout,
+              total: session.tcr + session.tin + session.tout,
+            }
+          : null,
+        tools: session.tools,
+        turns: session.turns,
+      },
+    };
+  };
+
   return {
+    analysis,
     detail,
     finish: (): CodexSessionParseResult => {
       finalize();
@@ -1704,9 +1749,9 @@ const codexRolloutMatchesSessionId = (filePath: string, sourceSessionId: string)
   return fileName === `${sourceSessionId}.jsonl` || fileName.endsWith(`-${sourceSessionId}.jsonl`);
 };
 
-export const readCodexSessionDetail = (
+export const readCodexSessionAnalysis = (
   sourceSessionId: string,
-): Effect.Effect<SessionDetail | null, LocalHistoryError, LocalHistoryStorageService> =>
+): Effect.Effect<LocalSessionAnalysis | null, LocalHistoryError, LocalHistoryStorageService> =>
   Effect.gen(function* () {
     if (!SAFE_CODEX_SESSION_ID.test(sourceSessionId)) {
       return null;
@@ -1726,7 +1771,7 @@ export const readCodexSessionDetail = (
       if (parsed.session.id !== sourceSessionId) {
         continue;
       }
-      return parser.detail();
+      return parser.analysis();
     }
     return null;
   });

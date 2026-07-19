@@ -48,10 +48,28 @@ metric; it does not mean that the whole source run failed.
 
 The served report has two durable steps: a source run replaces that source's
 stored contribution, then publication creates an immutable report revision.
-On-demand local detail is read independently and can therefore be newer than
-the displayed revision. A successful source status with no source warnings
-only proves that its adapter completed; it does not prove that an older
-long-lived process loaded the newest collector implementation.
+On-demand local detail is read independently from the current source after the
+server resolves the selected row's machine, harness, source session, and
+projection facts from the requested immutable revision. The browser sends only
+the revision and report row identity; it does not choose the local provenance.
+This keeps detailed prompts outside the revision while binding the comparison
+to the report that the user is viewing.
+
+The resulting consistency has three precise meanings:
+
+- `matches-report`: every comparable projection metric, including available
+  token counters, agrees with the report revision;
+- `differs-from-report`: at least one comparable metric differs;
+- `cannot-compare`: the row lacks enough comparable facts to claim a match,
+  even though some fields may still have been checked.
+
+A divergence does not prove that the local source is newer. It can also result
+from an enriched source, a corrected parser, or comparison with an older
+revision. Partial duration or turn coverage, unavailable usage, and unknown
+pricing remain limitations of their individual metrics rather than a global
+quality status. A successful source status with no source warnings only proves
+that its adapter completed; it does not prove that an older long-lived process
+loaded the newest collector implementation.
 
 In development, the source-control runtime persists across scheduled runs.
 The workspace packages used by that runtime must stay inside Nitro's server
