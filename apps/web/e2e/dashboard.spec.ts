@@ -3,6 +3,8 @@ import { expect, test } from '@playwright/test';
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const COLUMN_URL_PATTERN = /cols=/;
 const DATE_HEADER_PATTERN = /Date/;
+const ESTIMATED_API_VALUE_HELP_PATTERN =
+  /Estimated cost at standard API prices for \d+ of \d+ fully priced sessions, including usage covered by subscriptions/;
 const HYDRATION_ERROR_PATTERN = /hydrat/i;
 const HYDRATION_TIMEOUT_MS = 15_000;
 const INSPECT_SESSION_PATTERN = /Inspect session/;
@@ -42,9 +44,7 @@ test('shows analysis and report metrics without disclosure gates', async ({ page
   const apiValueHelp = page.getByRole('button', { name: 'About API value' });
   await expect(apiValueHelp).toBeVisible();
   await apiValueHelp.click();
-  await expect(
-    page.getByText('Estimated cost at standard API prices, including usage covered by subscriptions'),
-  ).toBeVisible();
+  await expect(page.getByText(ESTIMATED_API_VALUE_HELP_PATTERN)).toBeVisible();
 
   const advancedSummary = page.locator('summary').filter({ hasText: 'Advanced analysis' });
   const punchcard = page.getByRole('heading', { level: 2, name: 'Punchcard' });
@@ -196,7 +196,7 @@ test('starts sessions with focused work columns and switches metric presets', as
     'Project',
     'Model',
     'API value',
-    'Duration',
+    'Time',
   ]);
   expect(
     await page.getByRole('table').evaluate((table) => table.scrollWidth <= (table.parentElement?.clientWidth ?? 0)),

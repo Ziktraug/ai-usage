@@ -9,7 +9,7 @@ import {
   OPENCODE_DETAIL_PROMPT_SQL,
   OPENCODE_DETAIL_SESSION_SQL,
   OPENCODE_DETAIL_TOOL_SQL,
-  readOpenCodeSessionDetail,
+  readOpenCodeSessionAnalysis,
 } from './opencode-history';
 import { TestMemoryStorage } from './test-memory-storage';
 
@@ -20,6 +20,9 @@ const MESSAGE_PARAMETERS = [SESSION_ID, 2049] as const;
 const PARENT_PARAMETERS = [SESSION_ID, SESSION_ID, 1025] as const;
 const PROMPT_PARAMETERS = [SESSION_ID, SESSION_ID, 257] as const;
 const TOOL_PARAMETERS = [SESSION_ID, 1025] as const;
+
+const readOpenCodeDetailForTest = (sourceSessionId: string) =>
+  readOpenCodeSessionAnalysis(sourceSessionId).pipe(Effect.map((analysis) => analysis?.detail ?? null));
 
 const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, storage: TestMemoryStorage) =>
   Effect.runSync(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
@@ -244,7 +247,7 @@ describe('OpenCode session detail', () => {
     const storage = new TestMemoryStorage();
     writeDetailFixture(storage);
 
-    const detail = runWithStorage(readOpenCodeSessionDetail(SESSION_ID), storage);
+    const detail = runWithStorage(readOpenCodeDetailForTest(SESSION_ID), storage);
 
     if (!detail) {
       throw new Error('Expected OpenCode session detail');
@@ -309,7 +312,7 @@ describe('OpenCode session detail', () => {
     const storage = new TestMemoryStorage();
     writeGroupedTurnFixture(storage);
 
-    const detail = runWithStorage(readOpenCodeSessionDetail(SESSION_ID), storage);
+    const detail = runWithStorage(readOpenCodeDetailForTest(SESSION_ID), storage);
 
     if (!detail) {
       throw new Error('Expected grouped OpenCode session detail');
@@ -424,7 +427,7 @@ describe('OpenCode session detail', () => {
     const sourceSessionId = "session' OR 1=1";
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_DETAIL_SESSION_SQL, [], [sourceSessionId, 2]);
 
-    expect(runWithStorage(readOpenCodeSessionDetail(sourceSessionId), storage)).toBeNull();
+    expect(runWithStorage(readOpenCodeDetailForTest(sourceSessionId), storage)).toBeNull();
   });
 
   test('marks internal turn attribution and open duration partial without dropping recorded metrics', () => {
@@ -433,7 +436,7 @@ describe('OpenCode session detail', () => {
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_DETAIL_PROMPT_SQL, [], PROMPT_PARAMETERS);
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_DETAIL_PARENT_SQL, [], PARENT_PARAMETERS);
 
-    const detail = runWithStorage(readOpenCodeSessionDetail(SESSION_ID), storage);
+    const detail = runWithStorage(readOpenCodeDetailForTest(SESSION_ID), storage);
 
     if (!detail) {
       throw new Error('Expected partial OpenCode session detail');

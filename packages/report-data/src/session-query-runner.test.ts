@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { MAX_SESSION_QUERY_DATABASE_BYTES } from '@ai-usage/report-core/report-budgets';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
+import { sessionDetailRequestFingerprint } from '@ai-usage/report-core/session-detail';
 import {
   projectSessionCampaignChildren,
   projectSessionNeighbors,
@@ -181,6 +182,113 @@ const runFixture = async (request: unknown, kind = 'sessions') => {
 };
 
 describe('session query SQLite materialization', () => {
+  test('resolves exact session detail anchors and preserves nullable provenance', async () => {
+    const anchorFixture = {
+      ...row('anchor-session', 10),
+      activeDate: '2026-07-01T10:01:00.000Z',
+      freshTokens: 30,
+      lineDelta: 12,
+      tokenTotal: 40,
+    };
+    const { source: _source, ...rowWithoutProvenance } = row('without-provenance', 7);
+    const provenanceFreeRow: SerializedRow = {
+      ...rowWithoutProvenance,
+      activeDate: '2026-07-01T10:01:00.000Z',
+      freshTokens: 21,
+      lineDelta: 9,
+      tokenTotal: 28,
+    };
+    const anchorRows = [...rows, anchorFixture, provenanceFreeRow];
+    const { database } = await openRowsDatabase(anchorRows);
+    try {
+      const anchorPage = projectSessionPage(anchorRows, queryRequest({ campaigns: false, pageSize: 200 }));
+      const anchorItem = anchorPage.items.find(
+        ({ row: projectedRow }) => projectedRow.source?.sourceSessionId === 'anchor-session',
+      );
+      if (!anchorItem) {
+        throw new Error('Missing valid anchor fixture row');
+      }
+      const foundRequest = { revision: 'revision-a', rowId: anchorItem.row.rowId };
+      expect(executeMaterializedSessionQuery(database, 'session-detail-anchor', foundRequest)).toEqual({
+        anchor: {
+          harnessKey: 'codex',
+          machineId: 'machine-a',
+          projection: {
+            calls: 10,
+            durationMs: 10_000,
+            modelSegments: [
+              {
+                model: 'gpt-5.4',
+                tokens: { cacheRead: 10, cacheWrite: 10, input: 10, output: 10, total: 40 },
+              },
+            ],
+            partial: false,
+            tokens: { cacheRead: 10, cacheWrite: 10, input: 10, output: 10, total: 40 },
+            tools: 10,
+            turns: 10,
+          },
+          sourceSessionId: 'anchor-session',
+        },
+        requestFingerprint: sessionDetailRequestFingerprint(foundRequest),
+        revision: 'revision-a',
+      });
+      const missingRequest = { revision: 'revision-a', rowId: 'missing-row' };
+      expect(executeMaterializedSessionQuery(database, 'session-detail-anchor', missingRequest)).toEqual({
+        anchor: null,
+        requestFingerprint: sessionDetailRequestFingerprint(missingRequest),
+        revision: 'revision-a',
+      });
+
+      const noSourcePage = projectSessionPage(anchorRows, queryRequest({ campaigns: false, pageSize: 200 }));
+      const noSource = noSourcePage.items.find(
+        ({ row: projectedRow }) => projectedRow.sessionLabel === 'without-provenance',
+      );
+      if (!noSource) {
+        throw new Error('Missing provenance-free fixture row');
+      }
+      expect(
+        executeMaterializedSessionQuery(database, 'session-detail-anchor', {
+          revision: 'revision-a',
+          rowId: noSource.row.rowId,
+        }),
+      ).toMatchObject({
+        anchor: { harnessKey: null, machineId: null, sourceSessionId: null },
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  test('rejects duplicate row identities and invalid source JSON', async () => {
+    const duplicateRevision = await createRevision();
+    const duplicateDatabase = new Database(path.join(duplicateRevision, SESSION_QUERY_DATABASE_NAME));
+    try {
+      duplicateDatabase.query('UPDATE session_rows SET row_id = ? WHERE ordinal IN (0, 1)').run('duplicate-row');
+      expect(() =>
+        executeMaterializedSessionQuery(duplicateDatabase, 'session-detail-anchor', {
+          revision: 'revision-a',
+          rowId: 'duplicate-row',
+        }),
+      ).toThrow('identity is not unique');
+      duplicateDatabase.query('UPDATE session_rows SET source_row_json = ? WHERE ordinal = 0').run('{invalid');
+      expect(() =>
+        executeMaterializedSessionQuery(duplicateDatabase, 'session-detail-anchor', {
+          revision: 'revision-a',
+          rowId: 'duplicate-row',
+        }),
+      ).toThrow('identity is not unique');
+      duplicateDatabase.query('UPDATE session_rows SET row_id = ? WHERE ordinal = 1').run('other-row');
+      expect(() =>
+        executeMaterializedSessionQuery(duplicateDatabase, 'session-detail-anchor', {
+          revision: 'revision-a',
+          rowId: 'duplicate-row',
+        }),
+      ).toThrow('invalid JSON');
+    } finally {
+      duplicateDatabase.close();
+    }
+  });
+
   test('materializes from rows.json once in a silent Bun publication job', async () => {
     const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-session-publication-'));
     temporaryDirectories.add(revisionDirectory);

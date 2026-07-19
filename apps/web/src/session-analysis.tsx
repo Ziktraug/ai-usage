@@ -1,6 +1,7 @@
 import { css, cx } from '@ai-usage/design-system/css';
 import type {
   SessionDetail,
+  SessionDetailConsistency,
   SessionDetailPhase,
   SessionDetailResponse,
   SessionDetailTurn,
@@ -14,6 +15,11 @@ import {
   type SessionDurationSemantics,
   sessionDurationSemantics,
 } from './session-analysis-model';
+import {
+  buildSessionAnalysisPresentation,
+  type SessionAnalysisPresentationItem,
+} from './session-analysis-presentation';
+import type { SessionAnalysisTarget } from './session-analysis-target';
 
 export interface SessionAnalysisProps {
   error?: string | null;
@@ -21,7 +27,7 @@ export interface SessionAnalysisProps {
   loading: boolean;
   onRetry?: () => void;
   response: SessionDetailResponse | null;
-  scopeNote: string | null;
+  target: SessionAnalysisTarget;
 }
 
 const dateTimeFormatter = new Intl.DateTimeFormat('en', {
@@ -361,7 +367,24 @@ const TurnRow = (props: {
 
 const EmptyTimeline = (props: { children: string }) => <div class={empty}>{props.children}</div>;
 
-const AvailableSessionAnalysis = (props: { detail: SessionDetail; harnessKey: string; scopeNote: string | null }) => {
+const PresentationItem = (props: { item: SessionAnalysisPresentationItem }) => (
+  <div
+    class={props.item.tone === 'warning' ? cx(notice, warningNotice) : muted}
+    data-session-analysis-item={props.item.kind}
+    data-tone={props.item.tone}
+    role={props.item.tone === 'warning' ? 'status' : undefined}
+  >
+    {'title' in props.item ? <strong>{props.item.title}</strong> : null}
+    <span>{props.item.text}</span>
+  </div>
+);
+
+const AvailableSessionAnalysis = (props: {
+  consistency: SessionDetailConsistency;
+  detail: SessionDetail;
+  harnessKey: string;
+  target: SessionAnalysisTarget;
+}) => {
   const chronologicalPhases = createMemo(() =>
     [...props.detail.phases].sort((left, right) => Date.parse(left.startAt) - Date.parse(right.startAt)),
   );
@@ -377,7 +400,22 @@ const AvailableSessionAnalysis = (props: { detail: SessionDetail; harnessKey: st
   const promptDataTruncated = createMemo(
     () => props.detail.promptsTruncated || props.detail.prompts.some(({ truncated }) => truncated),
   );
-  const durationSemantics = createMemo(() => sessionDurationSemantics(props.harnessKey));
+  const durationSemantics = createMemo(() =>
+    sessionDurationSemantics(props.harnessKey, props.target.kind === 'campaign-root'),
+  );
+  const presentationItems = createMemo(() =>
+    buildSessionAnalysisPresentation({
+      consistency: props.consistency,
+      durationPartialBody: durationSemantics().partialBody,
+      durationPartialTitle: durationSemantics().partialTitle,
+      durationStatus: props.detail.durationStatus,
+      promptDataTruncated: promptDataTruncated(),
+      target: props.target,
+      turnsStatus: props.detail.turnsStatus,
+    }),
+  );
+  const itemsOfKind = (kind: SessionAnalysisPresentationItem['kind']) =>
+    presentationItems().filter((item) => item.kind === kind);
 
   const metricItems = () => [
     {
@@ -412,35 +450,13 @@ const AvailableSessionAnalysis = (props: { detail: SessionDetail; harnessKey: st
           <time dateTime={props.detail.endedAt}>{fmtDateTime(props.detail.endedAt)}</time>
           {' · '}session <span class={numeric}>{props.detail.sourceSessionId}</span>
         </div>
+        <For each={itemsOfKind('consistency-meta')}>{(item) => <PresentationItem item={item} />}</For>
+        <For each={itemsOfKind('scope')}>{(item) => <PresentationItem item={item} />}</For>
       </header>
 
-      <div class={notice}>
-        <strong>Live local trace</strong>
-        <span>This detail is read now from local history and may be newer than the displayed report revision.</span>
-      </div>
-      <Show when={props.detail.durationStatus === 'partial'}>
-        <div class={cx(notice, warningNotice)} role="status">
-          <strong>{durationSemantics().partialTitle}</strong>
-          <span>{durationSemantics().partialBody}</span>
-        </div>
-      </Show>
-      <Show when={props.detail.turnsStatus === 'partial'}>
-        <div class={cx(notice, warningNotice)} role="status">
-          <strong>Partial turn attribution</strong>
-          <span>
-            Some legacy assistant activity has no resolvable parent user message. It remains visible without an invented
-            prompt association.
-          </span>
-        </div>
-      </Show>
-      <Show when={props.scopeNote}>
-        {(scopeNote) => (
-          <div class={cx(notice, warningNotice)} role="status">
-            <strong>Root session only</strong>
-            <span>{scopeNote()}</span>
-          </div>
-        )}
-      </Show>
+      <For each={itemsOfKind('consistency-warning')}>{(item) => <PresentationItem item={item} />}</For>
+      <For each={itemsOfKind('partial-duration')}>{(item) => <PresentationItem item={item} />}</For>
+      <For each={itemsOfKind('partial-turns')}>{(item) => <PresentationItem item={item} />}</For>
 
       <dl class={metrics}>
         <For each={metricItems()}>
@@ -501,20 +517,9 @@ const AvailableSessionAnalysis = (props: { detail: SessionDetail; harnessKey: st
             Prompts ({chronologicalPrompts().length})
           </h3>
           <div class={muted}>Prompt bodies are collapsed by default.</div>
+          <For each={itemsOfKind('privacy')}>{(item) => <PresentationItem item={item} />}</For>
         </div>
-        <div class={notice}>
-          <strong>Private local detail</strong>
-          <span>
-            Detailed prompt bodies are loaded on demand from local history and are not included in report snapshots or
-            exports. Session labels may still come from source-provided or prompt-derived titles.
-          </span>
-        </div>
-        <Show when={promptDataTruncated()}>
-          <div class={cx(notice, warningNotice)} role="status">
-            <strong>Some prompt text is truncated</strong>
-            <span>The local detail budget was reached. The timeline and usage totals remain available.</span>
-          </div>
-        </Show>
+        <For each={itemsOfKind('prompt-truncation')}>{(item) => <PresentationItem item={item} />}</For>
         <Show
           fallback={<EmptyTimeline>No prompt text was available in local history.</EmptyTimeline>}
           when={chronologicalPrompts().length > 0}
@@ -590,7 +595,7 @@ const unavailableTitle = (response: Extract<SessionDetailResponse, { status: 'un
 
 export const SessionAnalysis = (props: SessionAnalysisProps) => {
   const unavailable = createMemo(() => (props.response?.status === 'unavailable' ? props.response : null));
-  const detail = createMemo(() => (props.response?.status === 'available' ? props.response.detail : null));
+  const available = createMemo(() => (props.response?.status === 'available' ? props.response : null));
 
   return (
     <section aria-label="Session analysis" class={panel}>
@@ -615,12 +620,13 @@ export const SessionAnalysis = (props: SessionAnalysisProps) => {
             />
           )}
         </Match>
-        <Match when={detail()}>
-          {(availableDetail) => (
+        <Match when={available()}>
+          {(response) => (
             <AvailableSessionAnalysis
-              detail={availableDetail()}
+              consistency={response().consistency}
+              detail={response().detail}
               harnessKey={props.harnessKey}
-              scopeNote={props.scopeNote}
+              target={props.target}
             />
           )}
         </Match>

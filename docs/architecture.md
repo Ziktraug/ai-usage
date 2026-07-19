@@ -32,8 +32,14 @@ Owns local history adapters:
 - Claude, Codex, OpenCode, Cursor, Cursor CSV reconciliation, and RTK enrichment;
 - machine identity and user-local config reading;
 - local history warnings and errors;
-- the collected session seam before rows become normalized usage rows.
+- the collected session seam before rows become normalized usage rows;
 - the Codex app-server batch adapter and bounded incremental rollout quota backfill, both producing normalized provider-quota observations.
+
+OpenCode's report collector and bounded detail reader keep their SQL queries
+separate, but decode messages and derive tokens, model attribution, costs,
+activity intervals, parent kinds, turns, and tools through one shared internal
+session-facts module. The report projection and local detail therefore do not
+maintain competing semantic implementations.
 
 History files are read through explicit byte/file/depth budgets, no-follow regular-file checks, strict UTF-8 decoding, and WAL-aware SQLite snapshots. Usage-bearing values are validated as finite, non-negative runtime data before aggregation. Private ai-usage state is owner-only; harness-owned files are never chmodded.
 
@@ -120,7 +126,7 @@ Owns web runtime and UI:
 - direct source adapters and SQLite access, with no generic collection subprocess;
 - trusted-local source commands and a sanitized bounded SSE replacement stream;
 - immutable report revision manifests, read-only SQLite materializations, and exact-revision focused-result adapters;
-- exact-revision Overview, Breakdown, support, Session page, campaign-child, and neighbor queries through bounded Bun artifact runners;
+- exact-revision Overview, Breakdown, support, Session page, campaign-child, neighbor, and `session-detail-anchor` queries through bounded Bun artifact runners;
 - one server exact-revision lifecycle and bounded Bun artifact runners for focused query kinds;
 - shared focused/Session request validation, projection, cursor, budget, and fingerprint contracts;
 - file-based merge bundle import/export on `/sync`, including bounded local upload handling;
@@ -145,6 +151,14 @@ complete.
 Collection does not depend on browser visibility. Completion-relative source cadences live in the Bun process, and successful semantic publication changes flow to the browser as a bounded `report-published` SSE event alongside replacement snapshots. Reconnect begins from a strictly decoded current snapshot, so no replay log is needed. The browser reacquires only its current atomic destination; finite query invalidation remains separate from exact-revision ownership.
 
 Each publication is atomically stored as owner-only immutable manifest, rows, and support artifacts. Served reads name the exact revision and canonical request fingerprint. The registry bounds retention by age and count, keeps referenced revisions alive through leases, and returns typed unavailable/expired results instead of silently reading a newer revision. Project-group mutations and successful manual imports request a new stored-only publication; retained revisions do not change.
+
+For on-demand Session Analysis, the browser supplies only the served revision
+and row identity. The server resolves non-sensitive machine, harness, source
+session, and projection facts with the `session-detail-anchor` query under the
+same exact-revision lease and budgets. Only after validating that provenance
+against the local machine does it read current local detail and compare the two
+projections. Paths and prompt bodies are neither anchor fields nor comparison
+inputs.
 
 ## Source control invariants
 

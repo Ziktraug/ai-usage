@@ -1,3 +1,10 @@
+import {
+  parseSessionDetailRequest,
+  type SessionDetailAnchorResult,
+  type SessionDetailRequest,
+  sessionDetailRequestFingerprint,
+  sessionProjectionFactsForSerializedRow,
+} from '@ai-usage/report-core/session-detail';
 import type {
   SessionCampaignChildrenRequest,
   SessionCampaignChildrenResult,
@@ -19,7 +26,7 @@ import {
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
 
-export type SessionQueryKind = 'campaign-children' | 'neighbors' | 'sessions';
+export type SessionQueryKind = 'campaign-children' | 'neighbors' | 'session-detail-anchor' | 'sessions';
 
 export interface SessionQuerySqliteStatement {
   all(...params: unknown[]): unknown[];
@@ -36,6 +43,12 @@ export type SessionQuerySqliteTrace = (query: { params: readonly unknown[]; sql:
 const SESSION_QUERY_SCHEMA_VERSION = 6;
 const CURSOR_PATTERN = /^sq1\.([0-9a-f]{16})\.([0-9a-z]+)$/;
 const CAMPAIGN_EXACT_COST_SORT_FIELDS = new Set<SessionSortField>(['actual', 'cost', 'quota']);
+const isUnknownRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+const withoutSource = (row: Record<string, unknown>): Record<string, unknown> => {
+  const { source: _source, ...projectionRow } = row;
+  return projectionRow;
+};
 const SORT_COLUMN_BY_FIELD = {
   actual: 'sort_actual',
   ambiguous: 'sort_ambiguous',
@@ -107,6 +120,10 @@ interface ItemRecord {
 interface NeighborRecord {
   next_json: string | null;
   previous_json: string | null;
+}
+
+interface SessionDetailAnchorRecord {
+  source_row_json: string;
 }
 
 interface CampaignCostRecord {
@@ -692,6 +709,62 @@ const runNeighbors = (
   };
 };
 
+const runSessionDetailAnchor = (
+  database: SessionQuerySqliteDatabase,
+  input: SessionDetailRequest,
+  trace?: SessionQuerySqliteTrace,
+): SessionDetailAnchorResult => {
+  const request = parseSessionDetailRequest(input);
+  const rows = executeAll<SessionDetailAnchorRecord>(
+    database,
+    `SELECT source_row_json
+    FROM session_rows
+    WHERE row_id = ?
+    ORDER BY ordinal
+    LIMIT 2`,
+    [request.rowId],
+    trace,
+  );
+  if (rows.length > 1) {
+    throw new Error('Report revision session row identity is not unique');
+  }
+  const sourceRow = rows[0];
+  if (!sourceRow) {
+    return {
+      anchor: null,
+      requestFingerprint: sessionDetailRequestFingerprint(request),
+      revision: request.revision,
+    };
+  }
+  let serializedRow: unknown;
+  try {
+    serializedRow = JSON.parse(sourceRow.source_row_json);
+  } catch {
+    throw new Error('Report revision session detail source row is invalid JSON');
+  }
+  const source = isUnknownRecord(serializedRow) ? serializedRow.source : null;
+  const projectionSource = isUnknownRecord(serializedRow) ? withoutSource(serializedRow) : serializedRow;
+  const projection = sessionProjectionFactsForSerializedRow(projectionSource);
+  const provenance = isUnknownRecord(source) ? source : null;
+  const nullableIdentity = (key: 'harnessKey' | 'machineId' | 'sourceSessionId'): string | null => {
+    if (!(provenance && key in provenance)) {
+      return null;
+    }
+    const value = provenance[key];
+    return typeof value === 'string' && value.length > 0 ? value : null;
+  };
+  return {
+    anchor: {
+      harnessKey: nullableIdentity('harnessKey'),
+      machineId: nullableIdentity('machineId'),
+      projection,
+      sourceSessionId: nullableIdentity('sourceSessionId'),
+    },
+    requestFingerprint: sessionDetailRequestFingerprint(request),
+    revision: request.revision,
+  };
+};
+
 export const assertSessionQueryDatabase = (
   database: SessionQuerySqliteDatabase,
   trace?: SessionQuerySqliteTrace,
@@ -727,21 +800,30 @@ export function executeMaterializedSessionQuery(
 ): SessionNeighborResult;
 export function executeMaterializedSessionQuery(
   database: SessionQuerySqliteDatabase,
-  kind: SessionQueryKind,
+  kind: 'session-detail-anchor',
   request: unknown,
   trace?: SessionQuerySqliteTrace,
-): SessionPageResult | SessionCampaignChildrenResult | SessionNeighborResult;
+): SessionDetailAnchorResult;
 export function executeMaterializedSessionQuery(
   database: SessionQuerySqliteDatabase,
   kind: SessionQueryKind,
   request: unknown,
   trace?: SessionQuerySqliteTrace,
-): SessionPageResult | SessionCampaignChildrenResult | SessionNeighborResult {
+): SessionPageResult | SessionCampaignChildrenResult | SessionNeighborResult | SessionDetailAnchorResult;
+export function executeMaterializedSessionQuery(
+  database: SessionQuerySqliteDatabase,
+  kind: SessionQueryKind,
+  request: unknown,
+  trace?: SessionQuerySqliteTrace,
+): SessionPageResult | SessionCampaignChildrenResult | SessionNeighborResult | SessionDetailAnchorResult {
   if (kind === 'sessions') {
     return runSessionPage(database, parseSessionQueryRequest(request), trace);
   }
   if (kind === 'campaign-children') {
     return runCampaignChildren(database, parseSessionCampaignChildrenRequest(request), trace);
+  }
+  if (kind === 'session-detail-anchor') {
+    return runSessionDetailAnchor(database, parseSessionDetailRequest(request), trace);
   }
   return runNeighbors(database, parseSessionNeighborRequest(request), trace);
 }
