@@ -2,7 +2,13 @@ import { rtkSavingsPct } from './csv';
 import { modelGroupKey } from './model-identity';
 import { MAX_SESSION_QUERY_PAGE_SIZE, MAX_SESSION_QUERY_RESULT_BYTES } from './report-budgets';
 import type { SerializedRow } from './report-data';
-import { isRecord, isSerializedUsageRowShape, SERIALIZED_USAGE_ROW_KEYS } from './serialized-usage-validation';
+import {
+  hasValidSerializedUsageDerivedFields,
+  isRecord,
+  isSerializedUsageRowShape,
+  SERIALIZED_USAGE_ROW_KEYS,
+} from './serialized-usage-validation';
+import { usageRowModelContributions } from './usage-row';
 
 export { MAX_SESSION_QUERY_PAGE_SIZE } from './report-budgets';
 
@@ -507,6 +513,9 @@ export const parseSessionPresentationRow = (value: unknown, label: string): Sess
   if (!isSerializedUsageRowShape(record, SESSION_PRESENTATION_ROW_KEYS)) {
     throw new SessionQueryValidationError(`${label} contains an invalid serialized usage row`);
   }
+  if (record.campaignKey === undefined && !hasValidSerializedUsageDerivedFields(record)) {
+    throw new SessionQueryValidationError(`${label} contains inconsistent serialized usage totals`);
+  }
   const requiredStrings = [
     'modelLabel',
     'modelKey',
@@ -765,6 +774,13 @@ export const sessionRowIdentity = (row: SerializedRow): string =>
   ].join('|');
 
 const sessionModelLabel = (row: SerializedRow): string => (row.models?.length ? row.models.join(' → ') : row.model);
+
+export const sessionModelKeys = (row: SerializedRow): string[] => [
+  ...new Set([
+    ...usageRowModelContributions(row).map(({ key }) => key),
+    ...(row.models?.length ? row.models : [row.model]).map((model) => modelGroupKey(model)),
+  ]),
+];
 
 const providerPresentationLabel = (provider: string): string =>
   provider.replace(OPENCODE_PROVIDER_SUFFIX, ' · via OpenCode');
@@ -1127,12 +1143,14 @@ export const sessionCampaignDisplayRow = (
   includeChildren = true,
 ): SessionPresentationRow => {
   const totals = campaign.visibleTotals;
+  const rootWithoutModelAttribution = { ...campaign.root };
+  Reflect.deleteProperty(rootWithoutModelAttribution, 'modelSegments');
   const latestVisibleRow = campaign.visibleRows.reduce(
     (latest, row) => (row.sortDate > latest.sortDate ? row : latest),
     campaign.visibleRows[0] ?? campaign.root,
   );
   return {
-    ...campaign.root,
+    ...rootWithoutModelAttribution,
     activeDate: latestVisibleRow.activeDate,
     activeTime: latestVisibleRow.activeTime,
     ambiguous: campaign.visibleRows.some((row) => row.ambiguous),
@@ -1209,7 +1227,7 @@ const matchesSessionQuery = (row: SessionPresentationRow, request: SessionQueryR
   if (fields.provider !== undefined && row.providerDisplay !== fields.provider) {
     return false;
   }
-  if (fields.model !== undefined && row.modelKey !== fields.model) {
+  if (fields.model !== undefined && !sessionModelKeys(row).includes(fields.model)) {
     return false;
   }
   if (fields.project !== undefined && row.projectKey !== fields.project) {

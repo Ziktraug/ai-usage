@@ -302,6 +302,62 @@ describe('session query contracts', () => {
     expect(page.sessionCount).toBe(1);
   });
 
+  test('matches a model filter against secondary segmented and legacy observations', () => {
+    const mixed = sourcedRow('mixed-model', {
+      costApprox: 3,
+      freshTokens: 30,
+      model: 'gpt-5.4',
+      models: ['gpt-5.4', 'claude-sonnet-4-6'],
+      modelSegments: [
+        {
+          costApprox: 2,
+          costKnown: true,
+          model: 'gpt-5.4',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 10,
+          tokOut: 0,
+        },
+        {
+          costApprox: 1,
+          costKnown: true,
+          model: 'claude-sonnet-4-6',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 0,
+          tokOut: 20,
+        },
+      ],
+      tokCr: 0,
+      tokCw: 0,
+      tokIn: 10,
+      tokOut: 20,
+      tokenTotal: 30,
+    });
+
+    const page = projectSessionPage(
+      [mixed],
+      defaultRequest({
+        campaigns: false,
+        filters: { fields: { model: 'claude-sonnet-4-6' }, harness: [], machine: [], query: '' },
+      }),
+    );
+    const legacy = sourcedRow('legacy-mixed-model', {
+      model: 'gpt-5.4',
+      models: ['gpt-5.4', 'claude-sonnet-4-6'],
+    });
+    const legacyPage = projectSessionPage(
+      [legacy],
+      defaultRequest({
+        campaigns: false,
+        filters: { fields: { model: 'claude-sonnet-4-6' }, harness: [], machine: [], query: '' },
+      }),
+    );
+
+    expect(page.items.map((item) => item.row.sessionLabel)).toEqual(['mixed-model']);
+    expect(legacyPage.items.map((item) => item.row.sessionLabel)).toEqual(['legacy-mixed-model']);
+  });
+
   test('projects bounded top-level pages with campaign and underlying session counts', () => {
     const parent = sourcedRow('campaign-root', { costApprox: 1 });
     const child = sourcedRow('campaign-child', {
@@ -343,6 +399,26 @@ describe('session query contracts', () => {
       activeDate: '2026-06-10T12:00:00.000Z',
       durationMs: rootDurationMinutes * MINUTE_MS,
       model: 'gpt-5.6-sol',
+      modelSegments: [
+        {
+          costApprox: 0.8,
+          costKnown: true,
+          model: 'gpt-5.6-sol',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 10,
+          tokOut: 5,
+        },
+        {
+          costApprox: 0.2,
+          costKnown: true,
+          model: 'gpt-5.6-terra',
+          tokCr: 3,
+          tokCw: 2,
+          tokIn: 0,
+          tokOut: 0,
+        },
+      ],
       models: ['gpt-5.6-sol', 'gpt-5.6-terra'],
     });
     const children = childDurationsMinutes.map((durationMinutes, index) =>
@@ -378,6 +454,7 @@ describe('session query contracts', () => {
     expect(item.row.durationMs).toBe(rootDurationMinutes * MINUTE_MS);
     expect(item.row.durationMs).not.toBe(cumulativeRolloutDurationMs);
     expect(item.row.model).toBe('gpt-5.6-sol');
+    expect(item.row.modelSegments).toBeUndefined();
     expect(item.row.models).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra']);
     expect(item.row.modelLabel).toBe('gpt-5.6-sol → gpt-5.6-terra');
     expect(item.row.modelKey).toBe('gpt-5.6-sol');
@@ -574,10 +651,59 @@ describe('session query contracts', () => {
         ...page,
         items: [{ ...page.items[0], row: { ...page.items[0]?.row, tokenTotal: 'invalid' } }],
       },
+      {
+        ...page,
+        items: [
+          {
+            ...page.items[0],
+            row: { ...page.items[0]?.row, tokenTotal: (page.items[0]?.row.tokenTotal ?? 0) + 1 },
+          },
+        ],
+      },
     ];
     for (const result of invalidResults) {
       expect(() => parseSessionPageResult(result, request)).toThrow(SessionQueryValidationError);
     }
+    const segmentedPage = projectSessionPage(
+      [
+        sourcedRow('segmented', {
+          modelSegments: [
+            {
+              costApprox: 1,
+              costKnown: true,
+              model: 'openai/gpt-5.4-high',
+              tokCr: 3,
+              tokCw: 2,
+              tokIn: 10,
+              tokOut: 5,
+            },
+          ],
+        }),
+      ],
+      request,
+    );
+    const segmentedItem = segmentedPage.items[0];
+    if (segmentedItem?.kind !== 'session' || !segmentedItem.row.modelSegments?.[0]) {
+      throw new Error('Expected a segmented Session fixture');
+    }
+    const segment = segmentedItem.row.modelSegments[0];
+    expect(() =>
+      parseSessionPageResult(
+        {
+          ...segmentedPage,
+          items: [
+            {
+              ...segmentedItem,
+              row: {
+                ...segmentedItem.row,
+                modelSegments: [{ ...segment, tokIn: segment.tokIn + 1 }],
+              },
+            },
+          ],
+        },
+        request,
+      ),
+    ).toThrow(SessionQueryValidationError);
     expect(() =>
       parseSessionPageServerResult(
         {

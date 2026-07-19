@@ -294,6 +294,80 @@ describe('DB-backed Harness collectors', () => {
     expect(child?.subagent).toBe(true);
   });
 
+  test('attributes Claude tokens and API value to each message model', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.claude/projects/-work-ai-usage/multi-model-session.jsonl',
+      jsonl(
+        {
+          type: 'assistant',
+          timestamp: '2026-04-25T08:00:00.000Z',
+          requestId: 'sonnet-request',
+          message: {
+            id: 'sonnet-message',
+            model: 'claude-sonnet-4-6',
+            usage: { input_tokens: 1_000_000 },
+          },
+        },
+        {
+          type: 'assistant',
+          timestamp: '2026-04-25T08:01:00.000Z',
+          requestId: 'opus-request',
+          message: {
+            id: 'opus-message',
+            model: 'claude-opus-4-6',
+            usage: { output_tokens: 1_000_000 },
+          },
+        },
+        {
+          type: 'assistant',
+          timestamp: '2026-04-25T08:02:00.000Z',
+          requestId: 'unpriced-request',
+          message: {
+            id: 'unpriced-message',
+            model: 'private-unpriced-model',
+            usage: { input_tokens: 500_000 },
+          },
+        },
+      ),
+    );
+
+    const [row] = runWithStorage(collectClaude, storage);
+
+    expect(row?.models).toEqual(['claude-sonnet-4-6', 'claude-opus-4-6', 'private-unpriced-model']);
+    expect(row?.modelSegments).toEqual([
+      {
+        model: 'claude-sonnet-4-6',
+        tokIn: 1_000_000,
+        tokOut: 0,
+        tokCr: 0,
+        tokCw: 0,
+        costApprox: 3,
+        costKnown: true,
+      },
+      {
+        model: 'claude-opus-4-6',
+        tokIn: 0,
+        tokOut: 1_000_000,
+        tokCr: 0,
+        tokCw: 0,
+        costApprox: 25,
+        costKnown: true,
+      },
+      {
+        model: 'private-unpriced-model',
+        tokIn: 500_000,
+        tokOut: 0,
+        tokCr: 0,
+        tokCw: 0,
+        costApprox: 0,
+        costKnown: false,
+      },
+    ]);
+    expect(row?.costApprox).toBe(28);
+    expect(row?.costKnown).toBe(false);
+  });
+
   test('warns when Claude Code is set to delete transcripts at the lossy default', () => {
     const storage = new TestMemoryStorage();
 
@@ -443,16 +517,71 @@ describe('DB-backed Harness collectors', () => {
           time: { created: '2026-02-01T03:00:00.000Z' },
         }),
       },
+      {
+        session_id: 'mixed-session',
+        data: JSON.stringify({
+          role: 'assistant',
+          providerID: 'local',
+          modelID: 'unpriced-token-model',
+          cost: 0,
+          tokens: { input: 7, output: 2, reasoning: 1, cache: { read: 4, write: 5 } },
+          time: { created: '2026-02-01T04:00:00.000Z' },
+        }),
+      },
     ]);
 
     const [row] = runWithStorage(collectOpenCode, storage);
 
     expect(row?.model).toBe('openai/gpt-5');
-    expect(row?.models).toEqual(['openai/gpt-5', 'anthropic/claude-sonnet-4-5', 'local/unpriced-zero-token-model']);
+    expect(row?.models).toEqual([
+      'openai/gpt-5',
+      'anthropic/claude-sonnet-4-5',
+      'local/unpriced-zero-token-model',
+      'local/unpriced-token-model',
+    ]);
+    expect(row?.modelSegments).toEqual([
+      {
+        costApprox: 1.625,
+        costKnown: true,
+        model: 'openai/gpt-5',
+        tokCr: 0,
+        tokCw: 0,
+        tokIn: 1_300_000,
+        tokOut: 0,
+      },
+      {
+        costApprox: 3,
+        costKnown: true,
+        model: 'anthropic/claude-sonnet-4-5',
+        tokCr: 0,
+        tokCw: 0,
+        tokIn: 1_000_000,
+        tokOut: 0,
+      },
+      {
+        costApprox: 0,
+        costKnown: true,
+        model: 'local/unpriced-zero-token-model',
+        tokCr: 0,
+        tokCw: 0,
+        tokIn: 0,
+        tokOut: 0,
+      },
+      {
+        costApprox: 0,
+        costKnown: false,
+        model: 'local/unpriced-token-model',
+        tokCr: 4,
+        tokCw: 5,
+        tokIn: 7,
+        tokOut: 3,
+      },
+    ]);
     expect(row?.provider).toBe('Codex sub (OC)');
     expect(row?.costActual).toBe(1);
     expect(row?.costApprox).toBeCloseTo(4.625, 8);
-    expect(row?.costKnown).toBe(true);
+    expect(row?.costKnown).toBe(false);
+    expect(row).toMatchObject({ tokCr: 4, tokCw: 5, tokIn: 2_300_007, tokOut: 3 });
     expect(row?.durationMs).toBe(120_000);
     expect(row?.partial).toBe(true);
     expect(row?.turns).toBe(2);
@@ -677,6 +806,19 @@ describe('DB-backed Harness collectors', () => {
     expect(matched?.tokCw).toBe(20);
     expect(matched?.tokCr).toBe(100);
     expect(matched?.tokOut).toBe(5);
+    expect(matched?.modelSegments).toEqual([
+      {
+        model: 'claude-opus-4-8-thinking-high',
+        tokIn: 10,
+        tokOut: 5,
+        tokCr: 100,
+        tokCw: 20,
+        costApprox: 0.000_35,
+        costKnown: true,
+      },
+    ]);
+    expect(matched?.costApprox).toBe(0.000_35);
+    expect(matched?.costKnown).toBe(true);
     expect(matched?.costQuota).toBe(1.5);
     expect(matched?.linesAdded).toBe(9);
     expect(orphan?.source?.artifactPath).toBe(exportPath);

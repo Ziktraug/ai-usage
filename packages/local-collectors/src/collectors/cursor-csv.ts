@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
+import type { UsageModelSegment } from '@ai-usage/report-core/types';
 import type { TokenCounts } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { LocalHistoryError, type LocalHistoryWarning } from '../errors';
@@ -27,6 +28,7 @@ export interface CursorCsvCluster {
   costQuota: number;
   dominantModel: string;
   endDate: Date;
+  modelSegments: UsageModelSegment[];
   models: string[];
   startDate: Date;
   tokens: TokenCounts;
@@ -236,6 +238,7 @@ const addTokens = (left: TokenCounts, right: TokenCounts): TokenCounts => ({
 
 export const clusterFromTurns = (turns: CursorCsvTurn[]): CursorCsvCluster => {
   const modelTokens = new Map<string, number>();
+  const modelSegmentsByModel = new Map<string, UsageModelSegment>();
   const models: string[] = [];
   let tokens: TokenCounts = { in: 0, out: 0, cr: 0, cw: 0 };
   let costActual = 0;
@@ -247,6 +250,24 @@ export const clusterFromTurns = (turns: CursorCsvTurn[]): CursorCsvCluster => {
       models.push(turn.model);
     }
     modelTokens.set(turn.model, (modelTokens.get(turn.model) ?? 0) + (tokenTotal(turn.tokens) ?? 0));
+    const currentSegment = modelSegmentsByModel.get(turn.model) ?? {
+      model: turn.model,
+      tokIn: 0,
+      tokOut: 0,
+      tokCr: 0,
+      tokCw: 0,
+      costApprox: 0,
+      costKnown: true,
+    };
+    modelSegmentsByModel.set(turn.model, {
+      model: turn.model,
+      tokIn: currentSegment.tokIn + turn.tokens.in,
+      tokOut: currentSegment.tokOut + turn.tokens.out,
+      tokCr: currentSegment.tokCr + turn.tokens.cr,
+      tokCw: currentSegment.tokCw + turn.tokens.cw,
+      costApprox: currentSegment.costApprox + turn.costApprox,
+      costKnown: currentSegment.costKnown && turn.costKnown,
+    });
     tokens = addTokens(tokens, turn.tokens);
     costActual += turn.costActual;
     costQuota += turn.costQuota;
@@ -259,6 +280,7 @@ export const clusterFromTurns = (turns: CursorCsvTurn[]): CursorCsvCluster => {
     startDate: turns[0]?.date ?? new Date(0),
     endDate: turns.at(-1)?.date ?? turns[0]?.date ?? new Date(0),
     models,
+    modelSegments: [...modelSegmentsByModel.values()],
     dominantModel,
     tokens,
     calls: turns.length,

@@ -12,14 +12,16 @@ import {
   type SessionCampaignView,
   type SessionPresentationRow,
   type SessionTextSortField,
+  sessionModelKeys,
   sessionSortFields,
   sessionTextSortFields,
   sortValueForSessionColumn,
 } from '@ai-usage/report-core/session-query';
+import { usageRowModelContributions } from '@ai-usage/report-core/usage-row';
 
 export const SESSION_QUERY_DATABASE_NAME = 'sessions.sqlite';
 
-const SESSION_QUERY_SCHEMA_VERSION = 4;
+const SESSION_QUERY_SCHEMA_VERSION = 6;
 const SESSION_ROW_INSERT_VALUE_COUNT = 74;
 const createFileFlags =
   // biome-ignore lint/suspicious/noBitwiseOperators: Node file-open flags are a documented bitmask API.
@@ -159,11 +161,32 @@ const createSchema = (database: SqliteDatabase): void => {
       tools REAL NOT NULL,
       usage_unavailable INTEGER NOT NULL CHECK (usage_unavailable IN (0, 1))
     );
+    CREATE TABLE session_model_segments (
+      ordinal INTEGER NOT NULL,
+      model_key TEXT NOT NULL,
+      segment_position INTEGER NOT NULL,
+      cost_approx REAL NOT NULL,
+      cost_known INTEGER NOT NULL CHECK (cost_known IN (0, 1)),
+      tok_cr REAL NOT NULL,
+      tok_cw REAL NOT NULL,
+      tok_in REAL NOT NULL,
+      tok_out REAL NOT NULL,
+      PRIMARY KEY (ordinal, model_key),
+      FOREIGN KEY (ordinal) REFERENCES session_rows(ordinal)
+    );
+    CREATE TABLE session_model_filter_keys (
+      ordinal INTEGER NOT NULL,
+      model_key TEXT NOT NULL,
+      PRIMARY KEY (ordinal, model_key),
+      FOREIGN KEY (ordinal) REFERENCES session_rows(ordinal)
+    );
     CREATE INDEX session_rows_campaign ON session_rows(campaign_key, campaign_root, ordinal);
     CREATE INDEX session_rows_row_id ON session_rows(row_id, ordinal);
     CREATE INDEX session_rows_active_time ON session_rows(active_time);
     CREATE INDEX session_rows_facets ON session_rows(harness, machine_label, provider_display, model_key, project_key);
     CREATE INDEX session_rows_provider_scope ON session_rows(provider_scope_key, ordinal);
+    CREATE INDEX session_model_segments_model ON session_model_segments(model_key, ordinal);
+    CREATE INDEX session_model_filter_keys_model ON session_model_filter_keys(model_key, ordinal);
   `);
 };
 
@@ -179,6 +202,16 @@ const insertSql = `
     rtk_saved_tokens, tok_cr, tok_cw, tok_in, tok_out, token_total, calls, turns, tools,
     usage_unavailable
   ) VALUES (${Array.from({ length: SESSION_ROW_INSERT_VALUE_COUNT }, () => '?').join(', ')})
+`;
+
+const modelSegmentInsertSql = `
+  INSERT INTO session_model_segments (
+    ordinal, model_key, segment_position, cost_approx, cost_known, tok_cr, tok_cw, tok_in, tok_out
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
+
+const modelFilterKeyInsertSql = `
+  INSERT INTO session_model_filter_keys (ordinal, model_key) VALUES (?, ?)
 `;
 
 interface MaterializedSessionRanks {
@@ -361,10 +394,29 @@ export const materializeSessionQueryDatabase = async (
     const ranks = buildMaterializedSessionRanks(presentationRows, campaigns);
 
     const insert = database.query(insertSql);
+    const insertModelFilterKey = database.query(modelFilterKeyInsertSql);
+    const insertModelSegment = database.query(modelSegmentInsertSql);
     database.exec('BEGIN IMMEDIATE');
     try {
       for (const [ordinal, row] of presentationRows.entries()) {
-        insertRow(insert, row, rows[ordinal]!, ordinal, campaignByRow.get(row), ranks);
+        const sourceRow = rows[ordinal]!;
+        insertRow(insert, row, sourceRow, ordinal, campaignByRow.get(row), ranks);
+        for (const [segmentPosition, segment] of usageRowModelContributions(sourceRow).entries()) {
+          insertModelSegment.run(
+            ordinal,
+            segment.key,
+            segmentPosition,
+            segment.costApprox,
+            segment.costKnown ? 1 : 0,
+            segment.tokCr,
+            segment.tokCw,
+            segment.tokIn,
+            segment.tokOut,
+          );
+        }
+        for (const modelKey of sessionModelKeys(sourceRow)) {
+          insertModelFilterKey.run(ordinal, modelKey);
+        }
       }
       database
         .query('INSERT INTO metadata (schema_version, row_count, support_json) VALUES (?, ?, ?)')

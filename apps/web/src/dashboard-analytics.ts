@@ -1,4 +1,4 @@
-import { type AnalyticsRowInput, groupAnalytics } from '@ai-usage/report-core/analytics';
+import { type AnalyticsRowInput, groupAnalytics, groupModelAnalytics } from '@ai-usage/report-core/analytics';
 import type { DashboardRow } from './shared';
 
 export interface ProjectGroup {
@@ -68,6 +68,9 @@ export const buildAnalyticsGroups = (
   keyForRow: (row: DashboardRow) => string,
   totalCost: number,
 ) => groupAnalytics(rows.filter(acceptsRow), dashboardRowToAnalyticsInput, keyForRow, totalCost);
+
+export const buildModelAnalyticsGroups = (rows: DashboardRow[], acceptsRow: (row: DashboardRow) => boolean) =>
+  groupModelAnalytics(rows.filter(acceptsRow));
 
 export const buildProjectGroups = (rows: DashboardRow[], acceptsRow: (row: DashboardRow) => boolean) => {
   const projects = new Map<string, ProjectGroup>();

@@ -19,12 +19,11 @@ import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
 import { createMemo, For, Show } from 'solid-js';
 import {
   accentFill,
+  apiValuePresentation,
   fmtCompact,
-  fmtMoney,
   fmtNum,
   fmtPct,
   harnessFillFor,
-  UNKNOWN_PRICE_HINT,
   USAGE_UNAVAILABLE_HINT,
   UsageUnavailableCell,
 } from './shared';
@@ -36,6 +35,18 @@ const groupFreshTitle = (group: AnalyticsGroup) =>
   analyticsGroupUnavailableOnly(group) ? USAGE_UNAVAILABLE_HINT : `${fmtNum(group.fresh)} fresh tokens`;
 const groupCacheLabel = (group: AnalyticsGroup) =>
   analyticsGroupUnavailableOnly(group) ? 'n/a cache' : `${fmtPct(group.cacheHitPct)} cache`;
+const groupPricingCoverage = (group: AnalyticsGroup) =>
+  group.unpriced > 0 ? ` · ${fmtNum(group.priced)}/${fmtNum(group.sessions)} fully priced` : '';
+const PRICED_SHARE_HINT =
+  'Share of the known API-value subtotal in this breakdown; ≥ values include lower bounds from incomplete pricing';
+
+const GroupApiValue = (props: { group: AnalyticsGroup }) => {
+  const presentation = apiValuePresentation({
+    costApprox: props.group.costSum,
+    costKnown: props.group.unpriced === 0,
+  });
+  return <span title={presentation.title}>{presentation.label}</span>;
+};
 
 export const GroupPanel = (props: {
   title: string;
@@ -66,6 +77,7 @@ export const GroupPanel = (props: {
                 <div class={groupSub} title={groupFreshTitle(group)}>
                   {group.sessions} sess{group.ambiguous ? ` · ${group.ambiguous} ambig` : ''} · {groupFreshLabel(group)}{' '}
                   · {groupCacheLabel(group)}
+                  {groupPricingCoverage(group)}
                 </div>
                 <div class={barTrack}>
                   <div
@@ -81,12 +93,12 @@ export const GroupPanel = (props: {
               <div class={right}>
                 <div class={groupValue}>
                   <Show fallback={<UsageUnavailableCell />} when={!analyticsGroupUnavailableOnly(group)}>
-                    <Show fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>} when={group.priced}>
-                      {fmtMoney(group.costSum)}
-                    </Show>
+                    <GroupApiValue group={group} />
                   </Show>
                 </div>
-                <div class={groupPct}>{fmtPct(group.costPercent)}</div>
+                <div class={groupPct} title={PRICED_SHARE_HINT}>
+                  {fmtPct(group.costPercent)}
+                </div>
               </div>
             </div>
           )}

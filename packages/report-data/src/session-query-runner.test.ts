@@ -386,6 +386,60 @@ describe('session query SQLite materialization', () => {
     }
   });
 
+  test('filters sessions by every attributed model segment', async () => {
+    const segmentedRow: SerializedRow = {
+      ...row('multi-model', 10),
+      costApprox: 6,
+      freshTokens: 77,
+      model: 'gpt-5.4',
+      modelSegments: [
+        {
+          costApprox: 2,
+          costKnown: true,
+          model: 'gpt-5.4',
+          tokCr: 3,
+          tokCw: 4,
+          tokIn: 1,
+          tokOut: 2,
+        },
+        {
+          costApprox: 4,
+          costKnown: true,
+          model: 'claude-opus-4-6',
+          tokCr: 30,
+          tokCw: 40,
+          tokIn: 10,
+          tokOut: 20,
+        },
+      ],
+      models: ['gpt-5.4', 'claude-opus-4-6'],
+      tokCr: 33,
+      tokCw: 44,
+      tokIn: 11,
+      tokOut: 22,
+      tokenTotal: 110,
+    };
+    const fixtureRows = [segmentedRow, row('single-model', 20)];
+    const { database } = await openRowsDatabase(fixtureRows);
+    const request = queryRequest({
+      campaigns: false,
+      filters: {
+        fields: { model: 'claude-opus-4-6' },
+        harness: [],
+        machine: [],
+        query: '',
+      },
+      pageSize: 200,
+    });
+    try {
+      expect(executeMaterializedSessionQuery(database, 'sessions', request)).toEqual(
+        projectSessionPage(fixtureRows, request),
+      );
+    } finally {
+      database.close();
+    }
+  });
+
   test('creates an owner-only database artifact', async () => {
     const revisionDirectory = await createRevision();
     const databaseStat = await stat(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME));

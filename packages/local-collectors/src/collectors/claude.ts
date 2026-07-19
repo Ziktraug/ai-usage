@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
+import type { UsageModelSegment } from '@ai-usage/report-core/types';
 import { actualCost, approximateApiCost, tokenTotal } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
@@ -38,7 +40,7 @@ interface ClaudeCache {
   rows: CollectorRow[];
   version: number;
 }
-const CLAUDE_CACHE_VERSION = 4;
+const CLAUDE_CACHE_VERSION = 5;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -333,6 +335,7 @@ export const collectClaudeResult = Effect.gen(function* () {
         let sidechain = isAgentFile;
         const tokens = { in: 0, out: 0, cr: 0, cw: 0 };
         const byModel = new Map<string, number>();
+        const modelSegmentsByModel = new Map<string, UsageModelSegment>();
 
         yield* storage.readLines(filePath, (line) => {
           if (!line) {
@@ -346,15 +349,16 @@ export const collectClaudeResult = Effect.gen(function* () {
           if (isAgentFile && typeof event.sessionId === 'string' && event.sessionId !== sourceSessionId) {
             parentSourceSessionId = event.sessionId;
           }
-          if (typeof event.timestamp === 'string' || typeof event.timestamp === 'number') {
-            const date = new Date(event.timestamp);
-            if (Number.isFinite(date.getTime())) {
-              if (!start || date < start) {
-                start = date;
-              }
-              if (!end || date > end) {
-                end = date;
-              }
+          const eventDate =
+            typeof event.timestamp === 'string' || typeof event.timestamp === 'number'
+              ? new Date(event.timestamp)
+              : null;
+          if (eventDate && Number.isFinite(eventDate.getTime())) {
+            if (!start || eventDate < start) {
+              start = eventDate;
+            }
+            if (!end || eventDate > end) {
+              end = eventDate;
             }
           }
           if (event.isSidechain) {
@@ -415,7 +419,33 @@ export const collectClaudeResult = Effect.gen(function* () {
             const nextOutput = addNonNegativeSafeIntegers(tokens.out, output.value);
             const nextCacheRead = addNonNegativeSafeIntegers(tokens.cr, cacheRead.value);
             const nextCacheWrite = addNonNegativeSafeIntegers(tokens.cw, cacheWrite.value);
-            if (!(nextCalls.ok && nextInput.ok && nextOutput.ok && nextCacheRead.ok && nextCacheWrite.ok)) {
+            const model = typeof message?.model === 'string' ? message.model : 'unknown';
+            const currentSegment = modelSegmentsByModel.get(model) ?? {
+              model,
+              tokIn: 0,
+              tokOut: 0,
+              tokCr: 0,
+              tokCw: 0,
+              costApprox: 0,
+              costKnown: true,
+            };
+            const nextModelInput = addNonNegativeSafeIntegers(currentSegment.tokIn, input.value);
+            const nextModelOutput = addNonNegativeSafeIntegers(currentSegment.tokOut, output.value);
+            const nextModelCacheRead = addNonNegativeSafeIntegers(currentSegment.tokCr, cacheRead.value);
+            const nextModelCacheWrite = addNonNegativeSafeIntegers(currentSegment.tokCw, cacheWrite.value);
+            if (
+              !(
+                nextCalls.ok &&
+                nextInput.ok &&
+                nextOutput.ok &&
+                nextCacheRead.ok &&
+                nextCacheWrite.ok &&
+                nextModelInput.ok &&
+                nextModelOutput.ok &&
+                nextModelCacheRead.ok &&
+                nextModelCacheWrite.ok
+              )
+            ) {
               rejectedMetricRecords++;
               return;
             }
@@ -424,7 +454,22 @@ export const collectClaudeResult = Effect.gen(function* () {
             tokens.out = nextOutput.value;
             tokens.cr = nextCacheRead.value;
             tokens.cw = nextCacheWrite.value;
-            const model = typeof message?.model === 'string' ? message.model : 'unknown';
+            const messageTokens = {
+              in: input.value,
+              out: output.value,
+              cr: cacheRead.value,
+              cw: cacheWrite.value,
+            };
+            const { rates, known } = priceFor(model, { at: eventDate });
+            modelSegmentsByModel.set(model, {
+              model,
+              tokIn: nextModelInput.value,
+              tokOut: nextModelOutput.value,
+              tokCr: nextModelCacheRead.value,
+              tokCw: nextModelCacheWrite.value,
+              costApprox: currentSegment.costApprox + approxCost(rates, messageTokens),
+              costKnown: currentSegment.costKnown && known,
+            });
             byModel.set(
               model,
               (byModel.get(model) || 0) + input.value + output.value + cacheRead.value + cacheWrite.value,
@@ -436,6 +481,8 @@ export const collectClaudeResult = Effect.gen(function* () {
           continue;
         }
         const model = dominant(byModel);
+        const modelSegments = [...modelSegmentsByModel.values()];
+        const models = modelSegments.map((segment) => segment.model);
         const name =
           title ||
           usablePrompt(lastPrompt) ||
@@ -466,6 +513,8 @@ export const collectClaudeResult = Effect.gen(function* () {
           name,
           titleSource,
           model,
+          models,
+          modelSegments,
           project: base(cwd),
           tokens,
           cost: provider === 'Claude API' ? approximateApiCost : actualCost(0),

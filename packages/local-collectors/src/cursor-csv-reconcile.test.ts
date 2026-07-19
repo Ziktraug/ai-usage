@@ -89,6 +89,26 @@ describe('Cursor CSV reconciliation', () => {
     expect(session?.usageUnavailable).toBeUndefined();
     expect(session?.model).toBe('claude-opus-4-8-thinking-high');
     expect(session?.models).toEqual(['claude-opus-4-8-thinking-high', 'claude-4.5-sonnet']);
+    expect(session?.modelSegments).toEqual([
+      {
+        model: 'claude-opus-4-8-thinking-high',
+        tokIn: 10,
+        tokOut: 5,
+        tokCr: 100,
+        tokCw: 20,
+        costApprox: 0.000_35,
+        costKnown: true,
+      },
+      {
+        model: 'claude-4.5-sonnet',
+        tokIn: 7,
+        tokOut: 3,
+        tokCr: 50,
+        tokCw: 0,
+        costApprox: 0.000_081,
+        costKnown: true,
+      },
+    ]);
     expect(session?.tokens.in).toBe(17);
     expect(session?.tokens.cw).toBe(20);
     expect(session?.tokens.cr).toBe(150);
@@ -96,6 +116,8 @@ describe('Cursor CSV reconciliation', () => {
     expect(session?.costQuota).toBe(1.5);
     expect(session?.cost._tag).toBe('ActualCost');
     expect(session?.cost._tag === 'ActualCost' ? session.cost.amount : null).toBe(0.4);
+    expect(session?.costApprox).toBe(0.000_431);
+    expect(session?.costKnown).toBe(true);
     expect(session?.calls).toBe(2);
   });
 

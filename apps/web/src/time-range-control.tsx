@@ -1012,6 +1012,9 @@ export const TimeRangeControl = (props: {
                 />
               </div>
             </details>
+            <Show when={dimension() === 'model' && (valueMode() === 'sessions' || usesSessionShare(chart()))}>
+              <div class={timeRangeMeta}>Multi-model sessions are counted once under their primary model.</div>
+            </Show>
 
             <div class={chartLegendList}>
               <For

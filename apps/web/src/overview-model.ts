@@ -1,3 +1,5 @@
+import { compareAnalyticsKeys } from '@ai-usage/report-core/analytics';
+import { usageRowModelContributions } from '@ai-usage/report-core/usage-row';
 import { type CampaignView, fieldValueForRow } from './dashboard-model';
 import type { FieldFilterKey } from './dashboard-search';
 import { DAY_MS, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
@@ -235,6 +237,25 @@ const timelineKeyForRow = (row: DashboardRow, dimension: TimelineDimension) => {
   return fieldKey ? fieldValueForRow(row, fieldKey) : row.harness;
 };
 
+const timelineContributionsForRow = (row: DashboardRow, dimension: TimelineDimension) => {
+  if (dimension !== 'model') {
+    return [
+      {
+        cost: row.costKnown ? row.costApprox : 0,
+        key: timelineKeyForRow(row, dimension),
+        sessions: 1,
+      },
+    ];
+  }
+  const contributions = usageRowModelContributions(row);
+  const sessionKey = contributions.some(({ key }) => key === row.modelKey) ? row.modelKey : contributions[0]?.key;
+  return contributions.map(({ costApprox, key }) => ({
+    cost: row.costKnown ? costApprox : 0,
+    key,
+    sessions: key === sessionKey ? 1 : 0,
+  }));
+};
+
 const MAX_TIMELINE_SERIES = 12;
 const OTHER_TIMELINE_SERIES_KEY = '__ai_usage_other__';
 
@@ -262,7 +283,7 @@ const timelineSeriesFrom = (ranked: [string, TimelineBucketEntry][], buckets: Ti
       aggregateEntry.sessions += entry.sessions;
       bucket.byKey.delete(key);
     }
-    if (aggregateEntry.sessions > 0) {
+    if (aggregateEntry.sessions > 0 || aggregateEntry.cost > 0) {
       bucket.byKey.set(aggregateKey, aggregateEntry);
     }
   }
@@ -329,24 +350,26 @@ export const buildTimelineData = (
     if (!bucket) {
       continue;
     }
-    const key = timelineKeyForRow(row, options.dimension);
-    const cost = row.costKnown ? row.costApprox : 0;
-    const entry = bucket.byKey.get(key) ?? { cost: 0, sessions: 0 };
-    entry.cost += cost;
-    entry.sessions++;
-    bucket.byKey.set(key, entry);
-    bucket.total += cost;
-    bucket.sessions++;
+    for (const { cost, key, sessions } of timelineContributionsForRow(row, options.dimension)) {
+      const entry = bucket.byKey.get(key) ?? { cost: 0, sessions: 0 };
+      entry.cost += cost;
+      entry.sessions += sessions;
+      bucket.byKey.set(key, entry);
+      bucket.total += cost;
+      bucket.sessions += sessions;
 
-    const totalEntry = totals.get(key) ?? { cost: 0, sessions: 0 };
-    totalEntry.cost += cost;
-    totalEntry.sessions++;
-    totals.set(key, totalEntry);
+      const totalEntry = totals.get(key) ?? { cost: 0, sessions: 0 };
+      totalEntry.cost += cost;
+      totalEntry.sessions += sessions;
+      totals.set(key, totalEntry);
+    }
   }
 
   // Largest total first so the dominant model sits at the base of every
   // stacked bar. Dense additive tails share one honest aggregate.
-  const ranked = [...totals.entries()].sort((a, b) => b[1].cost - a[1].cost || b[1].sessions - a[1].sessions);
+  const ranked = [...totals.entries()].sort(
+    (a, b) => b[1].cost - a[1].cost || b[1].sessions - a[1].sessions || compareAnalyticsKeys(a[0], b[0]),
+  );
   const grandTotal = ranked.reduce((sum, [, value]) => sum + value.cost, 0);
   const grandSessions = ranked.reduce((sum, [, value]) => sum + value.sessions, 0);
   const series = timelineSeriesFrom(ranked, buckets);
@@ -389,6 +412,7 @@ export type OverviewSessionItem =
       label: string;
       harness: string;
       costApprox: number;
+      costKnown: boolean;
       durationMs: number | null;
       sessionCount: 1;
     }
@@ -399,6 +423,7 @@ export type OverviewSessionItem =
       label: string;
       harness: string;
       costApprox: number;
+      costKnown: boolean;
       durationMs: number | null;
       sessionCount: number;
     };
@@ -406,7 +431,7 @@ export type OverviewSessionItem =
 type TimedOverviewSessionItem = OverviewSessionItem & { durationMs: number };
 
 const isTimedPricedSession = (item: OverviewSessionItem): item is TimedOverviewSessionItem =>
-  item.durationMs !== null && item.durationMs > 0 && item.costApprox > 0;
+  item.costKnown && item.durationMs !== null && item.durationMs > 0 && item.costApprox > 0;
 
 export const buildOverviewSessionItems = (
   rows: DashboardRow[],
@@ -420,6 +445,7 @@ export const buildOverviewSessionItems = (
     label: campaign.root.sessionLabel,
     harness: campaign.root.harness,
     costApprox: campaign.visibleTotals.totalCost,
+    costKnown: campaign.visibleTotals.costKnown,
     durationMs: campaign.visibleTotals.durationMs,
     sessionCount: campaign.visibleCount,
   }));
@@ -431,6 +457,7 @@ export const buildOverviewSessionItems = (
       label: row.sessionLabel,
       harness: row.harness,
       costApprox: row.costApprox,
+      costKnown: row.costKnown,
       durationMs: row.durationMs,
       sessionCount: 1,
     }));

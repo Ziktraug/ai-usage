@@ -1,5 +1,6 @@
 import type { SerializedUsageRow, UsageReportWarning } from './report-data';
 import type { UsageRowSource } from './types';
+import { MAX_USAGE_MODEL_SEGMENTS } from './usage-row';
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -29,6 +30,7 @@ export const SERIALIZED_USAGE_ROW_KEYS: ReadonlySet<string> = new Set([
   'linesAdded',
   'linesDeleted',
   'model',
+  'modelSegments',
   'models',
   'name',
   'partial',
@@ -84,6 +86,7 @@ const PROJECT_GROUPING_WARNING_REASONS = new Set([
   'partial-group',
   'unmatched-group',
 ]);
+const MODEL_SEGMENT_KEYS = new Set(['costApprox', 'costKnown', 'model', 'tokCr', 'tokCw', 'tokIn', 'tokOut']);
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -189,6 +192,25 @@ export const isUsageReportWarnings = (value: unknown): value is UsageReportWarni
 const isOptionalStringArray = (value: unknown): boolean =>
   value === undefined || (Array.isArray(value) && value.every((item) => typeof item === 'string'));
 
+const isUsageModelSegment = (value: unknown): boolean =>
+  isRecord(value) &&
+  hasOnlyKeys(value, MODEL_SEGMENT_KEYS) &&
+  isNonNegativeFiniteNumber(value.costApprox) &&
+  typeof value.costKnown === 'boolean' &&
+  typeof value.model === 'string' &&
+  value.model.length > 0 &&
+  isNonNegativeSafeInteger(value.tokCr) &&
+  isNonNegativeSafeInteger(value.tokCw) &&
+  isNonNegativeSafeInteger(value.tokIn) &&
+  isNonNegativeSafeInteger(value.tokOut);
+
+const isOptionalUsageModelSegments = (value: unknown): boolean =>
+  value === undefined ||
+  (Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= MAX_USAGE_MODEL_SEGMENTS &&
+    value.every(isUsageModelSegment));
+
 const isTitleSource = (value: unknown): boolean =>
   value === undefined || value === 'ai' || value === 'first-prompt' || value === 'agent-role' || value === 'id';
 
@@ -212,6 +234,8 @@ const hasValidSerializedUsageFields = (
   isNullableNonNegativeSafeInteger(value.linesAdded) &&
   isNullableNonNegativeSafeInteger(value.linesDeleted) &&
   typeof value.model === 'string' &&
+  isOptionalUsageModelSegments(value.modelSegments) &&
+  value.model.length > 0 &&
   isOptionalStringArray(value.models) &&
   typeof value.name === 'string' &&
   isOptionalBoolean(value.partial) &&
@@ -242,7 +266,90 @@ const expectedSessionLabel = (value: Record<string, unknown>): string =>
     value.ambiguous === true ? ' ?' : ''
   }${value.usageUnavailable === true ? ' (usage unavailable)' : ''}`;
 
-const hasValidDerivedFields = (value: Record<string, unknown>): boolean => {
+const numbersEqual = (left: number, right: number): boolean =>
+  Math.abs(left - right) <= Number.EPSILON * Math.max(1, Math.abs(left), Math.abs(right)) * 16;
+const parseUniqueModelList = (value: unknown): string[] | null => {
+  if (!(Array.isArray(value) && value.length > 0)) {
+    return null;
+  }
+  const models: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of value) {
+    if (typeof candidate !== 'string' || candidate.length === 0 || seen.has(candidate)) {
+      return null;
+    }
+    seen.add(candidate);
+    models.push(candidate);
+  }
+  return models;
+};
+
+const hasCoherentModelIdentity = (value: Record<string, unknown>): boolean => {
+  const model = value.model;
+  if (!(typeof model === 'string' && model.length > 0)) {
+    return false;
+  }
+  const models = value.models === undefined ? undefined : parseUniqueModelList(value.models);
+  if (models === null || (models !== undefined && !models.includes(model))) {
+    return false;
+  }
+  if (value.modelSegments === undefined) {
+    return true;
+  }
+  if (!Array.isArray(value.modelSegments)) {
+    return false;
+  }
+  const segmentModels = value.modelSegments.flatMap((segment) =>
+    isRecord(segment) && typeof segment.model === 'string' ? [segment.model] : [],
+  );
+  const uniqueSegmentModels = parseUniqueModelList(segmentModels);
+  if (uniqueSegmentModels === null || !uniqueSegmentModels.includes(model)) {
+    return false;
+  }
+  return (
+    models === undefined ||
+    (models.length === uniqueSegmentModels.length &&
+      models.every((candidate, index) => candidate === uniqueSegmentModels[index]))
+  );
+};
+
+const hasValidModelSegmentTotals = (value: Record<string, unknown>): boolean => {
+  if (value.modelSegments === undefined) {
+    return true;
+  }
+  if (!(Array.isArray(value.modelSegments) && value.modelSegments.every(isRecord))) {
+    return false;
+  }
+  let costApprox = 0;
+  let costKnown = true;
+  let tokCr = 0;
+  let tokCw = 0;
+  let tokIn = 0;
+  let tokOut = 0;
+  for (const segment of value.modelSegments) {
+    const segmentTokCr = Number(segment.tokCr);
+    const segmentTokCw = Number(segment.tokCw);
+    const segmentTokIn = Number(segment.tokIn);
+    const segmentTokOut = Number(segment.tokOut);
+    costApprox += Number(segment.costApprox);
+    tokCr += segmentTokCr;
+    tokCw += segmentTokCw;
+    tokIn += segmentTokIn;
+    tokOut += segmentTokOut;
+    const tokenTotal = segmentTokCr + segmentTokCw + segmentTokIn + segmentTokOut;
+    costKnown = costKnown && (tokenTotal === 0 || segment.costKnown === true);
+  }
+  return (
+    numbersEqual(costApprox, Number(value.costApprox)) &&
+    costKnown === value.costKnown &&
+    tokCr === value.tokCr &&
+    tokCw === value.tokCw &&
+    tokIn === value.tokIn &&
+    tokOut === value.tokOut
+  );
+};
+
+export const hasValidSerializedUsageDerivedFields = (value: Record<string, unknown>): boolean => {
   const expectedLineDelta =
     value.linesAdded === null && value.linesDeleted === null
       ? null
@@ -251,6 +358,8 @@ const hasValidDerivedFields = (value: Record<string, unknown>): boolean => {
     value.activeDate === (value.endDate ?? value.date) &&
     value.freshTokens === Number(value.tokIn) + Number(value.tokOut) + Number(value.tokCw) &&
     value.lineDelta === expectedLineDelta &&
+    hasCoherentModelIdentity(value) &&
+    hasValidModelSegmentTotals(value) &&
     value.sessionLabel === expectedSessionLabel(value) &&
     value.tokenTotal === Number(value.tokIn) + Number(value.tokOut) + Number(value.tokCr) + Number(value.tokCw)
   );
@@ -263,7 +372,7 @@ export const isSerializedUsageRowWithSource = (
   isRecord(value) &&
   hasOnlyKeys(value, allowedKeys) &&
   hasValidSerializedUsageFields(value, true) &&
-  hasValidDerivedFields(value);
+  hasValidSerializedUsageDerivedFields(value);
 
 export const isSerializedUsageRowShape = (
   value: unknown,
@@ -277,7 +386,7 @@ export const isSerializedUsageRow = (
   isRecord(value) &&
   hasOnlyKeys(value, allowedKeys) &&
   hasValidSerializedUsageFields(value, false) &&
-  hasValidDerivedFields(value);
+  hasValidSerializedUsageDerivedFields(value);
 
 export const isJsonSafeValue = (value: unknown): value is JsonValue => {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') {

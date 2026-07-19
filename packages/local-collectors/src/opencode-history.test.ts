@@ -305,7 +305,7 @@ describe('OpenCode session detail', () => {
     ]);
   });
 
-  test('summarizes shared-parent messages by token-dominant model and effort while preserving union duration', () => {
+  test('preserves direct, unresolved, and internal assistant activity in reconcilable turns', () => {
     const storage = new TestMemoryStorage();
     writeGroupedTurnFixture(storage);
 
@@ -316,7 +316,7 @@ describe('OpenCode session detail', () => {
     }
     expect(parseSessionDetail(detail)).toEqual(detail);
     expect(detail.turnsStatus).toBe('partial');
-    expect(detail.turns).toHaveLength(2);
+    expect(detail.turns).toHaveLength(3);
     expect(detail.turns[0]).toEqual({
       durationMs: 15_000,
       effort: 'high',
@@ -341,6 +341,18 @@ describe('OpenCode session detail', () => {
       promptIds: [],
       tools: 3,
     });
+    expect(detail.turns[2]).toMatchObject({
+      durationMs: 5000,
+      effort: null,
+      effortKind: 'unavailable',
+      model: 'provider-internal/compaction',
+      promptIds: [],
+      tokens: { cacheRead: 0, cacheWrite: 0, input: 2, output: 1, total: 3 },
+      tools: 1,
+    });
+    expect(detail.turns.reduce((total, turn) => total + turn.tokens.total, 0)).toBe(30);
+    expect(detail.phases.reduce((total, phase) => total + phase.tokens.total, 0)).toBe(30);
+    expect(detail.turns.reduce((total, turn) => total + turn.durationMs, 0)).toBe(detail.activeDurationMs);
     expect(detail.activeDurationMs).toBe(25_000);
     expect(detail.elapsedDurationMs).toBe(55_000);
   });
@@ -413,5 +425,27 @@ describe('OpenCode session detail', () => {
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_DETAIL_SESSION_SQL, [], [sourceSessionId, 2]);
 
     expect(runWithStorage(readOpenCodeSessionDetail(sourceSessionId), storage)).toBeNull();
+  });
+
+  test('marks internal turn attribution and open duration partial without dropping recorded metrics', () => {
+    const storage = new TestMemoryStorage();
+    writeDetailFixture(storage);
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_DETAIL_PROMPT_SQL, [], PROMPT_PARAMETERS);
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_DETAIL_PARENT_SQL, [], PARENT_PARAMETERS);
+
+    const detail = runWithStorage(readOpenCodeSessionDetail(SESSION_ID), storage);
+
+    if (!detail) {
+      throw new Error('Expected partial OpenCode session detail');
+    }
+    expect(parseSessionDetail(detail)).toEqual(detail);
+    expect(detail.turnsStatus).toBe('partial');
+    expect(detail.durationStatus).toBe('partial');
+    expect(detail.prompts).toEqual([]);
+    expect(detail.turns).toHaveLength(2);
+    expect(detail.turns.every(({ promptIds }) => promptIds.length === 0)).toBe(true);
+    expect(detail.turns.reduce((total, turn) => total + turn.tokens.total, 0)).toBe(24);
+    expect(detail.phases.reduce((total, phase) => total + phase.tokens.total, 0)).toBe(24);
+    expect(detail.turns.reduce((total, turn) => total + turn.durationMs, 0)).toBe(detail.activeDurationMs);
   });
 });

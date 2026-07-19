@@ -347,11 +347,13 @@ export const sessionColumns: SessionColumnDef[] = [
       const row = info.row.original;
       const rootSessionOnly = row.campaignTotalCount !== undefined;
       const semantics = sessionDurationSemantics(row.source?.harnessKey, rootSessionOnly);
-      return (
+      return withProvenance(
+        row,
+        'duration',
         <span title={semantics.metricHint}>
           {fmtDuration(row.durationMs)}
           {rootSessionOnly ? ' root' : ''}
-        </span>
+        </span>,
       );
     },
     sortDescFirst: true,

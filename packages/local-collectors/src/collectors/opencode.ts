@@ -1,5 +1,5 @@
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
-import type { TitleSource } from '@ai-usage/report-core/types';
+import type { TitleSource, UsageModelSegment } from '@ai-usage/report-core/types';
 import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
@@ -31,13 +31,12 @@ const DEFAULT_ACP_SESSION_TITLE = /^(new session\s*[.…]*|acp(?: session)?)$/i;
 interface Agg {
   calls: number;
   cost: number;
-  costApprox: number;
-  costKnown: boolean;
   end: Date | null;
   hasIncompleteInterval: boolean;
   intervals: { endMs: number; startMs: number }[];
   modelIdentities: Map<string, { modelId: string; providerId: string }>;
   modelOrder: string[];
+  modelSegments: Map<string, UsageModelSegment>;
   modelWeights: Map<string, number>;
   providerCosts: Map<string, number>;
   providerCostsKnown: Map<string, boolean>;
@@ -72,7 +71,7 @@ export interface OpenCodeCollectionResult {
   warnings: LocalHistoryWarning[];
 }
 
-const OPENCODE_DB_CACHE_VERSION = 6;
+const OPENCODE_DB_CACHE_VERSION = 7;
 const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 const SESSION_SQL = 'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
 const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE data LIKE '%"type":"tool"%' GROUP BY session_id`;
@@ -228,8 +227,6 @@ const collectFromDb = (
                       tcw: 0,
                       reason: 0,
                       cost: 0,
-                      costApprox: 0,
-                      costKnown: true,
                       calls: 0,
                       start: null,
                       end: null,
@@ -237,6 +234,7 @@ const collectFromDb = (
                       intervals: [],
                       modelIdentities: new Map(),
                       modelOrder: [],
+                      modelSegments: new Map(),
                       modelWeights: new Map(),
                       providerCosts: new Map(),
                       providerCostsKnown: new Map(),
@@ -306,7 +304,26 @@ const collectFromDb = (
                           out: outputWithReasoning.value,
                         })
                       : 0;
-                  const nextCostApprox = addNonNegativeFiniteNumbers(current.costApprox, messageCostApprox);
+                  const currentModelSegment = current.modelSegments.get(identityKey) ?? {
+                    costApprox: 0,
+                    costKnown: true,
+                    model: modelIdentityLabel(providerId, modelId),
+                    tokCr: 0,
+                    tokCw: 0,
+                    tokIn: 0,
+                    tokOut: 0,
+                  };
+                  const nextModelInput = addNonNegativeSafeIntegers(currentModelSegment.tokIn, input.value);
+                  const nextModelOutput = addNonNegativeSafeIntegers(
+                    currentModelSegment.tokOut,
+                    outputWithReasoning.ok ? outputWithReasoning.value : 0,
+                  );
+                  const nextModelCacheRead = addNonNegativeSafeIntegers(currentModelSegment.tokCr, cacheRead.value);
+                  const nextModelCacheWrite = addNonNegativeSafeIntegers(currentModelSegment.tokCw, cacheWrite.value);
+                  const nextModelCostApprox = addNonNegativeFiniteNumbers(
+                    currentModelSegment.costApprox,
+                    messageCostApprox,
+                  );
                   if (
                     !(
                       nextInput.ok &&
@@ -320,7 +337,11 @@ const collectFromDb = (
                       total.ok &&
                       nextModelWeight.ok &&
                       nextProviderCost.ok &&
-                      nextCostApprox.ok
+                      nextModelInput.ok &&
+                      nextModelOutput.ok &&
+                      nextModelCacheRead.ok &&
+                      nextModelCacheWrite.ok &&
+                      nextModelCostApprox.ok
                     )
                   ) {
                     rejectedMetricRecords++;
@@ -333,9 +354,16 @@ const collectFromDb = (
                   current.reason = nextReasoning.value;
                   current.cost = nextCost.value;
                   current.reportedCostKnown = current.reportedCostKnown && reportedCostKnown;
-                  current.costApprox = nextCostApprox.value;
-                  current.costKnown = current.costKnown && (total.value === 0 || pricing.known);
                   current.calls = nextCalls.value;
+                  current.modelSegments.set(identityKey, {
+                    ...currentModelSegment,
+                    costApprox: nextModelCostApprox.value,
+                    costKnown: currentModelSegment.costKnown && (total.value === 0 || pricing.known),
+                    tokCr: nextModelCacheRead.value,
+                    tokCw: nextModelCacheWrite.value,
+                    tokIn: nextModelInput.value,
+                    tokOut: nextModelOutput.value,
+                  });
                   current.modelWeights.set(identityKey, nextModelWeight.value);
                   current.modelIdentities.set(identityKey, { modelId, providerId });
                   current.providerCosts.set(providerId, nextProviderCost.value);
@@ -413,6 +441,10 @@ const collectFromDb = (
                 ? modelIdentityLabel(identity.providerId, identity.modelId)
                 : modelIdentityLabel('unknown', 'unknown');
             });
+            const modelSegments = current.modelOrder.flatMap((identityKey) => {
+              const segment = current.modelSegments.get(identityKey);
+              return segment ? [segment] : [];
+            });
             const output = addNonNegativeSafeIntegers(current.tout, current.reason);
             if (!output.ok) {
               rejectedMetricRecords++;
@@ -444,12 +476,11 @@ const collectFromDb = (
               titleSource: title.source,
               model: modelIdentityLabel(dominantIdentity.providerId, dominantIdentity.modelId),
               models,
+              modelSegments,
               pricingModel: dominantIdentity.modelId,
               project: base(sessionMeta?.dir),
               tokens,
               cost: actualCost(current.reportedCostKnown ? current.cost : null),
-              costApprox: current.costApprox,
-              costKnown: current.costKnown,
               calls: current.calls,
               durationMs: mergedIntervalDurationMs(current.intervals),
               partial: current.hasIncompleteInterval,

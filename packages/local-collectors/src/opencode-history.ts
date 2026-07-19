@@ -407,10 +407,7 @@ const dominantTurnValue = <Value extends string | null>(
 const groupedTurnsFromMessages = (messages: readonly ParsedOpenCodeTurn[], dbPath: string): SessionDetailTurn[] => {
   const groups = new Map<string, ParsedOpenCodeTurn[]>();
   for (const message of messages) {
-    if (message.parentKind === 'internal') {
-      continue;
-    }
-    const key = message.parentKind === 'human' ? `parent:${message.parentId}` : `message:${message.turn.index}`;
+    const key = message.parentKind === 'unresolved' ? `message:${message.turn.index}` : `parent:${message.parentId}`;
     const group = groups.get(key) ?? [];
     group.push(message);
     groups.set(key, group);
@@ -609,7 +606,7 @@ const detailFromDatabase = (
           sourceSessionId,
           startedAt: timestamp(startMs),
           turns,
-          turnsStatus: parsedTurns.some(({ parentKind }) => parentKind === 'unresolved') ? 'partial' : 'recorded',
+          turnsStatus: parsedTurns.some(({ parentKind }) => parentKind !== 'human') ? 'partial' : 'recorded',
         } satisfies SessionDetail;
       }),
     (db) => db.close,

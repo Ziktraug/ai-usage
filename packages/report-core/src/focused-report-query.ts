@@ -1,4 +1,10 @@
-import { type AnalyticsGroup, type AnalyticsRowInput, groupAnalytics } from './analytics';
+import {
+  type AnalyticsGroup,
+  type AnalyticsRowInput,
+  compareAnalyticsKeys,
+  groupAnalytics,
+  groupModelAnalytics,
+} from './analytics';
 import { type CursorCommitAttributionRow, isCursorCommitAttributionRow } from './datasets';
 import { parseProjectGroupConfigs } from './project-group';
 import { parseProviderStatusDataset } from './provider-status';
@@ -13,7 +19,9 @@ import {
   type SessionPresentationRow,
   type SessionQueryFilters,
   type SessionQueryRange,
+  sessionModelKeys,
 } from './session-query';
+import { usageRowModelContributions } from './usage-row';
 
 export type FocusedReportSupport = Omit<UsageReportPayload, 'rows' | 'tableRows'>;
 export type FocusedBootstrapSupport = Pick<
@@ -153,6 +161,7 @@ export interface FocusedPunchcardAggregate {
 
 export interface FocusedOverviewSessionItem {
   costApprox: number;
+  costKnown: boolean;
   durationMs: number | null;
   harness: string;
   kind: 'campaign' | 'session';
@@ -386,7 +395,7 @@ export const matchesFocusedReportQuery = (row: SessionPresentationRow, query: Fo
     (query.filters.harness.length === 0 || query.filters.harness.includes(row.harness)) &&
     (query.filters.machine.length === 0 || query.filters.machine.includes(row.source?.machineLabel ?? '')) &&
     (fields.provider === undefined || row.providerDisplay === fields.provider) &&
-    (fields.model === undefined || row.modelKey === fields.model) &&
+    (fields.model === undefined || sessionModelKeys(row).includes(fields.model)) &&
     (fields.project === undefined || row.projectKey === fields.project) &&
     (!query.range.from || (row.activeTime !== null && row.activeTime >= Date.parse(query.range.from))) &&
     (!query.range.to || (row.activeTime !== null && row.activeTime <= Date.parse(query.range.to)))
@@ -470,6 +479,34 @@ const timelineKey = (row: SessionPresentationRow, dimension: FocusedTimelineDime
   return dimension === 'project' ? row.projectKey : row.providerDisplay;
 };
 
+const timelineAggregatesForRow = (
+  row: SessionPresentationRow,
+  dimension: FocusedTimelineDimension,
+): FocusedTimelineAggregate[] => {
+  const time = row.activeTime;
+  if (time === null) {
+    return [];
+  }
+  if (dimension === 'model') {
+    const contributions = usageRowModelContributions(row);
+    const sessionKey = contributions.some(({ key }) => key === row.modelKey) ? row.modelKey : contributions[0]?.key;
+    return contributions.map(({ costApprox, key }) => ({
+      cost: row.costKnown ? costApprox : 0,
+      key,
+      sessions: key === sessionKey ? 1 : 0,
+      time,
+    }));
+  }
+  return [
+    {
+      cost: row.costKnown ? row.costApprox : 0,
+      key: timelineKey(row, dimension),
+      sessions: 1,
+      time,
+    },
+  ];
+};
+
 export const buildFocusedTimelineFromAggregates = (
   aggregates: readonly FocusedTimelineAggregate[],
   options: FocusedOverviewRequest['timeline'],
@@ -505,7 +542,8 @@ export const buildFocusedTimelineFromAggregates = (
     totals.set(key, total);
   }
   const ranked = [...totals.entries()].sort(
-    (left, right) => right[1].cost - left[1].cost || right[1].sessions - left[1].sessions,
+    (left, right) =>
+      right[1].cost - left[1].cost || right[1].sessions - left[1].sessions || compareAnalyticsKeys(left[0], right[0]),
   );
   let series: FocusedTimelineSeries[] = ranked.map(([key, value]) => ({
     key,
@@ -531,7 +569,7 @@ export const buildFocusedTimelineFromAggregates = (
           delete bucket.byKey[key];
         }
       }
-      if (aggregate.sessions > 0) {
+      if (aggregate.sessions > 0 || aggregate.cost > 0) {
         bucket.byKey[aggregateKey] = aggregate;
       }
     }
@@ -576,18 +614,7 @@ export const buildFocusedTimeline = (
   options: FocusedOverviewRequest['timeline'],
 ): FocusedTimelineData | null =>
   buildFocusedTimelineFromAggregates(
-    rows.flatMap((row) =>
-      row.activeTime === null
-        ? []
-        : [
-            {
-              cost: row.costKnown ? row.costApprox : 0,
-              key: timelineKey(row, options.dimension),
-              sessions: 1,
-              time: row.activeTime,
-            },
-          ],
-    ),
+    rows.flatMap((row) => timelineAggregatesForRow(row, options.dimension)),
     options,
   );
 
@@ -719,6 +746,7 @@ const overviewSessionItems = (
     ...campaigns.map(
       (campaign): FocusedOverviewSessionItem => ({
         costApprox: campaign.visibleTotals.totalCost,
+        costKnown: campaign.visibleTotals.costKnown,
         durationMs: campaign.visibleTotals.durationMs,
         harness: campaign.root.harness,
         kind: 'campaign',
@@ -732,6 +760,7 @@ const overviewSessionItems = (
       .map(
         (row): FocusedOverviewSessionItem => ({
           costApprox: row.costApprox,
+          costKnown: row.costKnown,
           durationMs: row.durationMs,
           harness: row.harness,
           kind: 'session',
@@ -760,7 +789,7 @@ const COST_TICKS = [
 const buildSessionShape = (items: FocusedOverviewSessionItem[]): FocusedSessionShape | null => {
   const timed = items.filter(
     (item): item is FocusedOverviewSessionItem & { durationMs: number } =>
-      item.durationMs !== null && item.durationMs > 0 && item.costApprox > 0,
+      item.costKnown && item.durationMs !== null && item.durationMs > 0 && item.costApprox > 0,
   );
   if (timed.length < 3) {
     return null;
@@ -1043,7 +1072,7 @@ export const projectFocusedBreakdown = (
     },
     groups: {
       harnesses: groupAnalytics(visible, analyticsInput, (row) => row.harness, totalCost),
-      models: groupAnalytics(visible, analyticsInput, (row) => row.modelKey, totalCost),
+      models: groupModelAnalytics(visible),
       projects: projectGroups(visible),
       providers: groupAnalytics(visible, analyticsInput, (row) => row.providerDisplay, totalCost),
     },
@@ -1391,9 +1420,12 @@ const assertFocusedTimeline = (value: unknown, expected: FocusedOverviewRequest[
 
 const assertOverviewSessionItem = (value: unknown, label: string, requireAggregateCount = false): void => {
   const item = requireRecord(value, label);
-  const requiredKeys = ['costApprox', 'durationMs', 'harness', 'kind', 'label', 'row', 'sessionCount'];
+  const requiredKeys = ['costApprox', 'costKnown', 'durationMs', 'harness', 'kind', 'label', 'row', 'sessionCount'];
   assertExactKeys(item, requireAggregateCount ? [...requiredKeys, 'aggregateCount'] : requiredKeys, label);
   requireFiniteNumber(item.costApprox, `${label}.costApprox`);
+  if (typeof item.costKnown !== 'boolean') {
+    throw new Error(`${label}.costKnown must be a boolean`);
+  }
   if (item.durationMs !== null) {
     requireFiniteNumber(item.durationMs, `${label}.durationMs`);
   }
