@@ -8,5 +8,6 @@ export * from './errors';
 export * from './facets';
 export * from './local-history';
 export * from './machine-config';
+export * from './opencode-history';
 export * from './platform-paths';
 export * from './provider-quota';

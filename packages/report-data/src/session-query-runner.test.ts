@@ -97,10 +97,12 @@ const campaignCostRow = (
   sourceSessionId: string,
   costApprox: number,
   campaign: { parent?: string; root: string },
+  costKnown = true,
 ): SerializedRow => ({
   ...row(sourceSessionId, 1, campaign),
   costActual: costApprox,
   costApprox,
+  costKnown,
   costQuota: costApprox,
 });
 
@@ -274,6 +276,45 @@ describe('session query SQLite materialization', () => {
         expect(actual).toEqual(expected);
         expect(actual.items.map(({ row: itemRow }) => itemRow.sessionLabel)).toEqual(['z-near-root', 'a-exact-root']);
       }
+    } finally {
+      database.close();
+    }
+  });
+
+  test('keeps and pages campaign lower bounds by their known subtotal', async () => {
+    const fixtureRows = [
+      campaignCostRow('exact-high-root', 70, { root: 'exact-high-root' }),
+      campaignCostRow('partial-root', 68.09, { root: 'partial-root' }),
+      campaignCostRow('partial-child', 1.21, { parent: 'partial-root', root: 'partial-root' }, false),
+      campaignCostRow('exact-low-root', 69.2, { root: 'exact-low-root' }),
+      campaignCostRow('unknown-root', 0, { root: 'unknown-root' }, false),
+    ];
+    const { database } = await openRowsDatabase(fixtureRows);
+    try {
+      const firstRequest = queryRequest({ pageSize: 1, sort: [{ desc: true, id: 'cost' }] });
+      const first = executeMaterializedSessionQuery(database, 'sessions', firstRequest);
+      expect(first).toEqual(projectSessionPage(fixtureRows, firstRequest));
+      expect(first.items[0]?.row.sessionLabel).toBe('exact-high-root');
+      expect(first.nextCursor).not.toBeNull();
+
+      const secondRequest = { ...firstRequest, cursor: first.nextCursor };
+      const second = executeMaterializedSessionQuery(database, 'sessions', secondRequest);
+      expect(second).toEqual(projectSessionPage(fixtureRows, secondRequest));
+      expect(second.items[0]?.row).toMatchObject({
+        costApprox: 69.3,
+        costKnown: false,
+        sessionLabel: 'partial-root',
+      });
+
+      const ascendingRequest = queryRequest({ pageSize: 200, sort: [{ desc: false, id: 'cost' }] });
+      const ascending = executeMaterializedSessionQuery(database, 'sessions', ascendingRequest);
+      expect(ascending).toEqual(projectSessionPage(fixtureRows, ascendingRequest));
+      expect(ascending.items.map(({ row: itemRow }) => itemRow.sessionLabel)).toEqual([
+        'unknown-root',
+        'exact-low-root',
+        'partial-root',
+        'exact-high-root',
+      ]);
     } finally {
       database.close();
     }

@@ -172,9 +172,11 @@ The web report opens on Overview and lets you:
 
 - switch between **Overview, Sessions, and Breakdown**, with Models, Providers, Harnesses, Projects, and Cursor AI inside Breakdown;
 - filter by date range with presets or a custom range, and read the activity timeline;
+- analyze a local Codex or OpenCode session's active, elapsed, and idle time, model/effort phases, turns, and prompts from its session drawer;
 - show/hide columns (input/output/cache tokens, RTK savings, durations, turns, tools, line deltas, …), sort, and filter by field;
 
 All exploration state (active view, filters, range, sorting, visible columns) is persisted in the URL, so a report link reopens exactly where you left off.
+Detailed prompt bodies are read only on demand from the source machine's local history and may be truncated by safety budgets; that separate prompt collection is not added to report revisions, snapshots, sync payloads, or exports. Normal session names can still come from source-provided or prompt-derived titles and are portable report fields. See [session analysis data sources](docs/session-analysis-sources.md) for the exact guarantees and limitations of each harness.
 
 ## Useful options
 
@@ -202,6 +204,7 @@ Merged CSV/JSON payloads include row provenance (`source.machineLabel`, `source.
 - `packages/report-data` (`@ai-usage/report-data`): report orchestration seam over core plus local collectors
 - `packages/usage-store` (`@ai-usage/usage-store`): SQLite materialization, merge-bundle persistence, and stored report-row queries
 - `packages/usage-merge` (`@ai-usage/usage-merge`): explicit merge-bundle file import/export workflows
+- `docs/session-analysis-sources.md`: provenance, quality, privacy, and known limitations of per-session analysis for each harness
 - `packages/skills` (`@ai-usage/skills`): local skill inventory, validation, projection, and reconciliation workflows
 - `packages/design-system` (`@ai-usage/design-system`): Panda/Solid primitives, report style slots, and generated Panda consumer exports
 - `apps/cli`: terminal CLI, quota/setup commands, portable snapshots, and table/CSV/JSON/payload output adapters
@@ -264,5 +267,5 @@ The dev server collects this machine's real usage data and refreshes the dashboa
 
 ## Notes
 
-- **`$API`** is an estimated cost at standard API prices, computed from local token counters and the editable pricing table in `packages/report-core/src/pricing.ts`. Models without public pricing are marked as unknown.
+- **`$API`** is an estimated cost at standard API prices, computed from local token counters and the editable pricing table in `packages/report-core/src/pricing.ts`. A `≥` value is the known subtotal when only some model segments have pricing; wholly unpriced usage remains unknown.
 - **`$Actual`** is out-of-pocket spend when a harness reports it. Subscription products bill differently from per-token API rates, so the two columns can diverge.

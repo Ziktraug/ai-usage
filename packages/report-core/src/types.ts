@@ -22,7 +22,9 @@ export interface UsageRow {
   ambiguous?: boolean;
   calls: number;
   costActual: number | null;
+  /** Sum of segments with known API pricing; a lower bound when costKnown is false. */
   costApprox: number;
+  /** True only when every token-bearing segment has known API pricing. */
   costKnown: boolean;
   costQuota?: number | null;
   date: Date | null;

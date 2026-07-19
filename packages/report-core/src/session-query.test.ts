@@ -27,6 +27,7 @@ import {
   sortValueForSessionColumn,
 } from './session-query';
 
+const MINUTE_MS = 60_000;
 const baseRow: SerializedRow = {
   activeDate: '2026-06-10T12:00:00.000Z',
   calls: 1,
@@ -149,7 +150,7 @@ describe('session query contracts', () => {
       17,
       20,
       25,
-      Number.NEGATIVE_INFINITY,
+      1,
       Number.NEGATIVE_INFINITY,
       0,
       0,
@@ -161,6 +162,12 @@ describe('session query contracts', () => {
       1,
       1,
     ]);
+    expect(
+      sortValueForSessionColumn(
+        enrichSessionPresentationRow(row('Unknown price', { costApprox: 0, costKnown: false })),
+        'cost',
+      ),
+    ).toBe(Number.NEGATIVE_INFINITY);
   });
 
   test('builds stable JSON-safe presentation identity and search fields', () => {
@@ -171,11 +178,12 @@ describe('session query contracts', () => {
     expect(first).toEqual(second);
     expect(first.activeTime).toBe(Date.parse('2026-06-10T12:00:00.000Z'));
     expect(first.modelKey).toBe('gpt-5.4');
-    expect(first.modelLabel).toBe('gpt-5.4 + gpt-5.4-mini');
+    expect(first.modelLabel).toBe('gpt-5.4 → gpt-5.4-mini');
+    expect(first.sortModel).toBe('gpt-5.4');
     expect(first.providerDisplay).toBe('Codex API');
     expect(first.rowId).toContain('machine-a|source-a');
     expect(first.searchText).toContain('source-a alpha repo');
-    expect(first.searchText).toContain('gpt-5.4 + gpt-5.4-mini');
+    expect(first.searchText).toContain('gpt-5.4 → gpt-5.4-mini');
     expect(JSON.parse(JSON.stringify(first))).toEqual(first);
   });
 
@@ -326,6 +334,82 @@ describe('session query contracts', () => {
     expect(second.items.map((item) => item.row.sessionLabel)).toEqual(['standalone-b']);
     expect(second.nextCursor).toBeNull();
     expect(second.requestFingerprint).toBe(first.requestFingerprint);
+  });
+
+  test('uses root duration and model identity for campaigns with overlapping child rollouts', () => {
+    const rootDurationMinutes = 517;
+    const childDurationsMinutes = [300, 126];
+    const root = sourcedRow('campaign-root', {
+      activeDate: '2026-06-10T12:00:00.000Z',
+      durationMs: rootDurationMinutes * MINUTE_MS,
+      model: 'gpt-5.6-sol',
+      models: ['gpt-5.6-sol', 'gpt-5.6-terra'],
+    });
+    const children = childDurationsMinutes.map((durationMinutes, index) =>
+      sourcedRow(`campaign-child-${index}`, {
+        activeDate: `2026-06-10T1${index + 3}:00:00.000Z`,
+        durationMs: durationMinutes * MINUTE_MS,
+        model: 'gpt-5.6-terra',
+        models: ['gpt-5.6-terra'],
+        source: {
+          harnessKey: 'codex',
+          machineId: 'machine-a',
+          machineLabel: 'Machine A',
+          parentSourceSessionId: 'campaign-root',
+          rootSourceSessionId: 'campaign-root',
+          sourceSessionId: `campaign-child-${index}`,
+        },
+      }),
+    );
+    const page = projectSessionPage(
+      [root, ...children],
+      defaultRequest({ pageSize: 1, sort: [{ desc: false, id: 'model' }] }),
+    );
+    const item = page.items[0];
+    if (item?.kind !== 'campaign') {
+      throw new Error('Expected a campaign fixture');
+    }
+    const cumulativeRolloutDurationMs = [root, ...children].reduce(
+      (total, campaignRow) => total + (campaignRow.durationMs ?? 0),
+      0,
+    );
+
+    expect(cumulativeRolloutDurationMs).toBe(943 * MINUTE_MS);
+    expect(item.row.durationMs).toBe(rootDurationMinutes * MINUTE_MS);
+    expect(item.row.durationMs).not.toBe(cumulativeRolloutDurationMs);
+    expect(item.row.model).toBe('gpt-5.6-sol');
+    expect(item.row.models).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra']);
+    expect(item.row.modelLabel).toBe('gpt-5.6-sol → gpt-5.6-terra');
+    expect(item.row.modelKey).toBe('gpt-5.6-sol');
+    expect(item.row.sortModel).toBe('gpt-5.6-sol');
+    expect(sortValueForSessionColumn(item.row, 'model')).toBe('gpt-5.6-sol');
+  });
+
+  test('keeps the known API-value subtotal when one campaign rollout has incomplete pricing', () => {
+    const root = sourcedRow('campaign-root', { costApprox: 68.09 });
+    const partiallyPricedChild = sourcedRow('campaign-child', {
+      costApprox: 1.21,
+      costKnown: false,
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        machineLabel: 'Machine A',
+        parentSourceSessionId: 'campaign-root',
+        rootSourceSessionId: 'campaign-root',
+        sourceSessionId: 'campaign-child',
+      },
+    });
+    const page = projectSessionPage(
+      [root, partiallyPricedChild],
+      defaultRequest({ pageSize: 1, sort: [{ desc: true, id: 'cost' }] }),
+    );
+    const item = page.items[0];
+    if (item?.kind !== 'campaign') {
+      throw new Error('Expected a campaign fixture');
+    }
+
+    expect(item.row.costKnown).toBe(false);
+    expect(item.row.costApprox).toBeCloseTo(69.3);
   });
 
   test('rejects cursors issued for another validated query scope', () => {

@@ -33,7 +33,7 @@ export interface SessionQuerySqliteDatabase {
 
 export type SessionQuerySqliteTrace = (query: { params: readonly unknown[]; sql: string }) => void;
 
-const SESSION_QUERY_SCHEMA_VERSION = 3;
+const SESSION_QUERY_SCHEMA_VERSION = 4;
 const CURSOR_PATTERN = /^sq1\.([0-9a-f]{16})\.([0-9a-z]+)$/;
 const CAMPAIGN_EXACT_COST_SORT_FIELDS = new Set<SessionSortField>(['actual', 'cost', 'quota']);
 const SORT_COLUMN_BY_FIELD = {
@@ -247,7 +247,7 @@ campaign_cost_totals(
     cost_position,
     cost_count,
     COALESCE(cost_actual, 0),
-    CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END,
+    cost_approx,
     cost_known,
     COALESCE(cost_quota, 0)
   FROM campaign_cost_rows
@@ -258,7 +258,7 @@ campaign_cost_totals(
     next.cost_position,
     next.cost_count,
     total.cost_actual + COALESCE(next.cost_actual, 0),
-    total.cost_approx + CASE WHEN next.cost_known = 1 THEN next.cost_approx ELSE 0 END,
+    total.cost_approx + next.cost_approx,
     CASE WHEN total.cost_known = 1 AND next.cost_known = 1 THEN 1 ELSE 0 END,
     total.cost_quota + COALESCE(next.cost_quota, 0)
   FROM campaign_cost_totals AS total
@@ -386,12 +386,12 @@ const campaignItemCte = (useExactCostSort: boolean): string => `campaign_items A
       ELSE SUM(visible.rtk_saved_tokens) * 100.0 / SUM(visible.rtk_input_tokens) END AS sort_rtk_saved,
     ${
       useExactCostSort
-        ? 'CASE WHEN MAX(exact_cost.cost_known) = 1 THEN MAX(exact_cost.cost_approx) ELSE -1e999 END'
-        : 'CASE WHEN MIN(visible.cost_known) = 1 THEN SUM(visible.cost_approx) ELSE -1e999 END'
+        ? 'CASE WHEN MAX(exact_cost.cost_known) = 1 OR MAX(exact_cost.cost_approx) > 0 THEN MAX(exact_cost.cost_approx) ELSE -1e999 END'
+        : 'CASE WHEN MIN(visible.cost_known) = 1 OR SUM(visible.cost_approx) > 0 THEN SUM(visible.cost_approx) ELSE -1e999 END'
     } AS sort_cost,
     ${useExactCostSort ? 'MAX(exact_cost.cost_actual)' : 'SUM(COALESCE(visible.cost_actual, 0))'} AS sort_actual,
     ${useExactCostSort ? 'MAX(exact_cost.cost_quota)' : 'SUM(COALESCE(visible.cost_quota, 0))'} AS sort_quota,
-    COALESCE(SUM(visible.duration_ms), 0) AS sort_duration,
+    COALESCE(MAX(root.duration_ms), 0) AS sort_duration,
     SUM(visible.calls) AS sort_calls,
     SUM(visible.turns) AS sort_turns,
     SUM(visible.tools) AS sort_tools,
@@ -400,10 +400,10 @@ const campaignItemCte = (useExactCostSort: boolean): string => `campaign_items A
     MAX(visible.sort_partial) AS sort_partial,
     MAX(visible.sort_ambiguous) AS sort_ambiguous,
     SUM(COALESCE(visible.cost_actual, 0)) AS cost_actual,
-    SUM(CASE WHEN visible.cost_known = 1 THEN visible.cost_approx ELSE 0 END) AS cost_approx,
+    SUM(visible.cost_approx) AS cost_approx,
     MIN(visible.cost_known) AS cost_known,
     SUM(COALESCE(visible.cost_quota, 0)) AS cost_quota,
-    CASE WHEN COUNT(visible.duration_ms) = 0 THEN NULL ELSE SUM(visible.duration_ms) END AS duration_ms,
+    MAX(root.duration_ms) AS duration_ms,
     SUM(visible.fresh_tokens) AS fresh_tokens,
     CASE WHEN COUNT(visible.line_delta) = 0 THEN NULL ELSE SUM(visible.line_delta) END AS line_delta,
     CASE WHEN COUNT(visible.lines_added) = 0 THEN NULL ELSE SUM(visible.lines_added) END AS lines_added,
@@ -530,7 +530,7 @@ const hydrateExactCampaignCosts = (
     const row = value as CampaignCostRecord;
     const total = totals.get(row.campaign_key) ?? { actual: 0, approx: 0, known: true, quota: 0 };
     total.actual += row.cost_actual ?? 0;
-    total.approx += row.cost_known === 1 ? row.cost_approx : 0;
+    total.approx += row.cost_approx;
     total.known = total.known && row.cost_known === 1;
     total.quota += row.cost_quota ?? 0;
     totals.set(row.campaign_key, total);

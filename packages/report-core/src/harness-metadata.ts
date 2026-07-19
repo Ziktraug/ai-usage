@@ -18,7 +18,7 @@ export const HARNESS_METADATA = {
     tracksLineDeltas: false,
     partial: false,
     reportNote:
-      'Codex tokens are cumulative observed counters (proxy, not billing); Codex durations span the rollout file (resumed sessions look long, not active time).',
+      'Codex tokens are cumulative observed counters (proxy, not billing); duration sums recorded active task intervals, while session analysis preserves the full elapsed span and idle gaps.',
   },
   opencode: {
     key: 'opencode',
@@ -27,7 +27,8 @@ export const HARNESS_METADATA = {
     defaultEnabled: true,
     tracksLineDeltas: true,
     partial: false,
-    reportNote: null,
+    reportNote:
+      'OpenCode duration sums completed assistant intervals instead of wall-clock gaps; rows marked ~ contain an open or unusable interval. Model history and API value are segmented by provider/model, while session analysis preserves elapsed time and pauses.',
   },
   cursor: {
     key: 'cursor',

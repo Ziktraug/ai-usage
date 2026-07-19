@@ -98,7 +98,8 @@ const campaignIdentityForRow = (row: DashboardRow) => {
   return { campaignKey: campaignKeyFor(row, rootSourceSessionId), rootSourceSessionId, sourceSessionId };
 };
 
-export const buildCampaignTotals = (rows: DashboardRow[]): CampaignTotals => buildSessionCampaignTotals(rows);
+export const buildCampaignTotals = (rows: DashboardRow[], root?: DashboardRow): CampaignTotals =>
+  buildSessionCampaignTotals(rows, root);
 
 export const buildCampaignViews = (allRows: DashboardRow[], visibleRows: DashboardRow[]): CampaignView[] => {
   const visibleKeys = new Set(visibleRows.map(rowKeyForCampaignMembership));
@@ -150,8 +151,8 @@ export const buildCampaignViews = (allRows: DashboardRow[], visibleRows: Dashboa
       allRows: rows,
       visibleChildren,
       allChildren,
-      visibleTotals: buildCampaignTotals(visibleRowsForTotals),
-      allTotals: buildCampaignTotals(rows),
+      visibleTotals: buildCampaignTotals(visibleRowsForTotals, root),
+      allTotals: buildCampaignTotals(rows, root),
       visibleCount: visibleRowsForTotals.length,
       totalCount: rows.length,
     });
@@ -183,7 +184,7 @@ const campaignSortValue = (campaign: CampaignView, columnId: SessionColumnId): n
     case 'rtkSaved':
       return totals.rtkInputTokens ? (totals.rtkSavedTokens / totals.rtkInputTokens) * 100 : 0;
     case 'cost':
-      return totals.costKnown ? totals.totalCost : Number.NEGATIVE_INFINITY;
+      return totals.costKnown || totals.totalCost > 0 ? totals.totalCost : Number.NEGATIVE_INFINITY;
     case 'actual':
       return totals.actualCost;
     case 'quota':
@@ -438,7 +439,7 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
     {
       label: 'API value',
       value: fmtMoney(summary.totalCost),
-      hint: 'Estimated cost at standard API prices, including usage covered by subscriptions',
+      hint: `Estimated cost at standard API prices for ${fmtNum(summary.pricedSessions)} of ${fmtNum(summary.sessionCount)} fully priced sessions, including usage covered by subscriptions`,
       delta: deltaVs(summary.totalCost, prev?.totalCost, fmtMoney),
     },
     {

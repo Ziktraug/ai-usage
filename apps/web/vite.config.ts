@@ -3,6 +3,7 @@ import { tanstackStart } from '@tanstack/solid-start/plugin/vite';
 import { nitro } from 'nitro/vite';
 import { defineConfig, type Plugin } from 'vite';
 import solid from 'vite-plugin-solid';
+import { PERSISTENT_SOURCE_RUNTIME_PACKAGES } from './src/server/persistent-source-runtime';
 import { manualSyncImportDevPlugin } from './vite-manual-sync-import';
 import { createRetryableWarmup } from './vite-warmup';
 
@@ -121,6 +122,7 @@ export default defineConfig({
           route: '/api/source-control/command',
         },
       ],
+      noExternals: [...PERSISTENT_SOURCE_RUNTIME_PACKAGES],
       plugins: ['./server/plugins/source-control.ts'],
       preset: 'bun',
     }),

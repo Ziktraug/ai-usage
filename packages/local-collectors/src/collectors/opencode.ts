@@ -1,3 +1,4 @@
+import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import type { TitleSource } from '@ai-usage/report-core/types';
 import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
@@ -19,6 +20,7 @@ import {
   parseOptionalNonNegativeFiniteNumber,
   parseOptionalNonNegativeSafeInteger,
 } from '../metric-validation';
+import { OPENCODE_DIRECT_USER_PART_PREDICATE } from '../opencode-schema';
 import { withPerfSpan } from '../perf';
 import { resolvePathCandidates } from '../platform-paths';
 import type { CollectorRow } from '../rtk-enrichment';
@@ -29,10 +31,18 @@ const DEFAULT_ACP_SESSION_TITLE = /^(new session\s*[.…]*|acp(?: session)?)$/i;
 interface Agg {
   calls: number;
   cost: number;
+  costApprox: number;
+  costKnown: boolean;
   end: Date | null;
-  model: Map<string, number>;
-  prov: Map<string, number>;
+  hasIncompleteInterval: boolean;
+  intervals: { endMs: number; startMs: number }[];
+  modelIdentities: Map<string, { modelId: string; providerId: string }>;
+  modelOrder: string[];
+  modelWeights: Map<string, number>;
+  providerCosts: Map<string, number>;
+  providerCostsKnown: Map<string, boolean>;
   reason: number;
+  reportedCostKnown: boolean;
   start: Date | null;
   tcr: number;
   tcw: number;
@@ -62,11 +72,36 @@ export interface OpenCodeCollectionResult {
   warnings: LocalHistoryWarning[];
 }
 
-const OPENCODE_DB_CACHE_VERSION = 4;
+const OPENCODE_DB_CACHE_VERSION = 6;
 const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 const SESSION_SQL = 'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
 const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE data LIKE '%"type":"tool"%' GROUP BY session_id`;
-const MESSAGE_SQL = 'SELECT session_id, data FROM message';
+const TURN_COUNT_SQL = `SELECT m.session_id, count(DISTINCT m.id) n FROM message m JOIN part p ON p.message_id = m.id WHERE json_extract(m.data, '$.role') = 'user' AND ${OPENCODE_DIRECT_USER_PART_PREDICATE} GROUP BY m.session_id`;
+const MESSAGE_SQL = 'SELECT session_id, data FROM message ORDER BY session_id, time_created, id';
+
+const modelIdentityKey = (providerId: string, modelId: string): string => `${providerId}\u0000${modelId}`;
+const modelIdentityLabel = (providerId: string, modelId: string): string => `${providerId}/${modelId}`;
+
+const mergedIntervalDurationMs = (intervals: readonly { endMs: number; startMs: number }[]): number => {
+  const ordered = [...intervals].sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+  const first = ordered[0];
+  if (!first) {
+    return 0;
+  }
+  let durationMs = 0;
+  let currentStartMs = first.startMs;
+  let currentEndMs = first.endMs;
+  for (const interval of ordered.slice(1)) {
+    if (interval.startMs > currentEndMs) {
+      durationMs += currentEndMs - currentStartMs;
+      currentStartMs = interval.startMs;
+      currentEndMs = interval.endMs;
+      continue;
+    }
+    currentEndMs = Math.max(currentEndMs, interval.endMs);
+  }
+  return durationMs + currentEndMs - currentStartMs;
+};
 
 const collectFromDb = (
   dbPath: string,
@@ -144,6 +179,20 @@ const collectFromDb = (
               toolCount.set(row.session_id, count.value);
             }
 
+            const turnRows = yield* withPerfSpan(
+              'aiUsage.collect.opencode.db.query.turnCounts',
+              db.all<CountRow>(TURN_COUNT_SQL),
+              (rows) => ({ db: source, rows: rows.length }),
+            );
+            for (const row of turnRows) {
+              const count = parseOptionalNonNegativeSafeInteger(row.n);
+              if (!(typeof row.session_id === 'string' && count.ok)) {
+                rejectedMetricRecords++;
+                continue;
+              }
+              turnCount.set(row.session_id, count.value);
+            }
+
             const messageRows = yield* withPerfSpan(
               'aiUsage.collect.opencode.db.query.messages',
               db.all<MessageRow>(MESSAGE_SQL),
@@ -159,7 +208,6 @@ const collectFromDb = (
                   const data = safeJSON(row.data);
                   if (data?.role === 'user') {
                     userRows++;
-                    turnCount.set(row.session_id, (turnCount.get(row.session_id) || 0) + 1);
                     continue;
                   }
                   if (data?.role !== 'assistant') {
@@ -180,11 +228,19 @@ const collectFromDb = (
                       tcw: 0,
                       reason: 0,
                       cost: 0,
+                      costApprox: 0,
+                      costKnown: true,
                       calls: 0,
                       start: null,
                       end: null,
-                      prov: new Map(),
-                      model: new Map(),
+                      hasIncompleteInterval: false,
+                      intervals: [],
+                      modelIdentities: new Map(),
+                      modelOrder: [],
+                      modelWeights: new Map(),
+                      providerCosts: new Map(),
+                      providerCostsKnown: new Map(),
+                      reportedCostKnown: true,
                     };
                     agg.set(row.session_id, current);
                   }
@@ -195,6 +251,7 @@ const collectFromDb = (
                   const cacheWrite = parseOptionalNonNegativeSafeInteger(cache?.write);
                   const reasoning = parseOptionalNonNegativeSafeInteger(tokens.reasoning);
                   const cost = parseOptionalNonNegativeFiniteNumber(data.cost);
+                  const reportedCostKnown = data.cost !== undefined && data.cost !== null;
                   if (!(input.ok && output.ok && cacheRead.ok && cacheWrite.ok && reasoning.ok && cost.ok)) {
                     rejectedMetricRecords++;
                     continue;
@@ -206,6 +263,50 @@ const collectFromDb = (
                   const nextReasoning = addNonNegativeSafeIntegers(current.reason, reasoning.value);
                   const nextCalls = addNonNegativeSafeIntegers(current.calls, 1);
                   const nextCost = addNonNegativeFiniteNumbers(current.cost, cost.value);
+                  const outputWithReasoning = addNonNegativeSafeIntegers(output.value, reasoning.value);
+                  const freshTokens = outputWithReasoning.ok
+                    ? addNonNegativeSafeIntegers(input.value, outputWithReasoning.value)
+                    : outputWithReasoning;
+                  const cachedTokens = addNonNegativeSafeIntegers(cacheRead.value, cacheWrite.value);
+                  const total =
+                    freshTokens.ok && cachedTokens.ok
+                      ? addNonNegativeSafeIntegers(freshTokens.value, cachedTokens.value)
+                      : { ok: false as const };
+                  const providerId = typeof data.providerID === 'string' ? data.providerID : '?';
+                  const modelId = typeof data.modelID === 'string' ? data.modelID : '?';
+                  const identityKey = modelIdentityKey(providerId, modelId);
+                  const nextModelWeight = total.ok
+                    ? addNonNegativeSafeIntegers(current.modelWeights.get(identityKey) ?? 0, total.value)
+                    : total;
+                  const nextProviderCost = addNonNegativeFiniteNumbers(
+                    current.providerCosts.get(providerId) ?? 0,
+                    cost.value,
+                  );
+                  const time = isJsonObject(data.time) ? data.time : null;
+                  const createdCandidate = time?.created;
+                  const completedCandidate = time?.completed;
+                  const createdDate =
+                    typeof createdCandidate === 'string' || typeof createdCandidate === 'number'
+                      ? new Date(createdCandidate)
+                      : null;
+                  const completedDate =
+                    typeof completedCandidate === 'string' || typeof completedCandidate === 'number'
+                      ? new Date(completedCandidate)
+                      : null;
+                  const validCreated = createdDate && Number.isFinite(createdDate.getTime()) ? createdDate : null;
+                  const validCompleted =
+                    completedDate && Number.isFinite(completedDate.getTime()) ? completedDate : null;
+                  const pricing = priceFor(modelId, { at: validCompleted ?? validCreated });
+                  const messageCostApprox =
+                    pricing.known && outputWithReasoning.ok
+                      ? approxCost(pricing.rates, {
+                          cr: cacheRead.value,
+                          cw: cacheWrite.value,
+                          in: input.value,
+                          out: outputWithReasoning.value,
+                        })
+                      : 0;
+                  const nextCostApprox = addNonNegativeFiniteNumbers(current.costApprox, messageCostApprox);
                   if (
                     !(
                       nextInput.ok &&
@@ -214,7 +315,12 @@ const collectFromDb = (
                       nextCacheWrite.ok &&
                       nextReasoning.ok &&
                       nextCalls.ok &&
-                      nextCost.ok
+                      nextCost.ok &&
+                      outputWithReasoning.ok &&
+                      total.ok &&
+                      nextModelWeight.ok &&
+                      nextProviderCost.ok &&
+                      nextCostApprox.ok
                     )
                   ) {
                     rejectedMetricRecords++;
@@ -226,27 +332,35 @@ const collectFromDb = (
                   current.tcw = nextCacheWrite.value;
                   current.reason = nextReasoning.value;
                   current.cost = nextCost.value;
+                  current.reportedCostKnown = current.reportedCostKnown && reportedCostKnown;
+                  current.costApprox = nextCostApprox.value;
+                  current.costKnown = current.costKnown && (total.value === 0 || pricing.known);
                   current.calls = nextCalls.value;
-                  const time = isJsonObject(data.time) ? data.time : null;
-                  const created = time?.created;
-                  if (typeof created === 'string' || typeof created === 'number') {
-                    const date = new Date(created);
-                    if (!current.start || date < current.start) {
-                      current.start = date;
+                  current.modelWeights.set(identityKey, nextModelWeight.value);
+                  current.modelIdentities.set(identityKey, { modelId, providerId });
+                  current.providerCosts.set(providerId, nextProviderCost.value);
+                  current.providerCostsKnown.set(
+                    providerId,
+                    (current.providerCostsKnown.get(providerId) ?? true) && reportedCostKnown,
+                  );
+                  if (!current.modelOrder.includes(identityKey)) {
+                    current.modelOrder.push(identityKey);
+                  }
+                  if (validCreated && (!current.start || validCreated < current.start)) {
+                    current.start = validCreated;
+                  }
+                  const observedEnd = validCompleted ?? validCreated;
+                  if (observedEnd && (!current.end || observedEnd > current.end)) {
+                    current.end = observedEnd;
+                  }
+                  if (validCreated && validCompleted && validCompleted >= validCreated) {
+                    current.intervals.push({ endMs: validCompleted.getTime(), startMs: validCreated.getTime() });
+                  } else {
+                    current.hasIncompleteInterval = true;
+                    if (validCreated && validCompleted && validCreated > current.end!) {
+                      current.end = validCreated;
                     }
                   }
-                  const completed = time?.completed || time?.created;
-                  if (typeof completed === 'string' || typeof completed === 'number') {
-                    const date = new Date(completed);
-                    if (!current.end || date > current.end) {
-                      current.end = date;
-                    }
-                  }
-                  const total = input.value + output.value + cacheRead.value + cacheWrite.value;
-                  const providerId = typeof data.providerID === 'string' ? data.providerID : '?';
-                  const modelId = typeof data.modelID === 'string' ? data.modelID : '?';
-                  current.prov.set(providerId, (current.prov.get(providerId) || 0) + total);
-                  current.model.set(modelId, (current.model.get(modelId) || 0) + total);
                 }
                 return { assistantRows, tokenRows, userRows };
               }),
@@ -263,8 +377,11 @@ const collectFromDb = (
         (db) => db.close,
       );
 
-      const provLabel = (providerId: string, cost: number) => {
+      const provLabel = (providerId: string, cost: number, costKnown: boolean) => {
         if (providerId === 'openai') {
+          if (!costKnown) {
+            return 'OpenAI via OpenCode';
+          }
           return cost > 0 ? 'OpenAI API' : 'Codex sub (OC)';
         }
         if (providerId === 'anthropic') {
@@ -285,8 +402,17 @@ const collectFromDb = (
           const sessions: CollectedSession[] = [];
           for (const [sid, current] of agg) {
             const sessionMeta = meta.get(sid);
-            const providerId = dominant(current.prov);
-            const model = dominant(current.model);
+            const dominantIdentityKey = dominant(current.modelWeights);
+            const dominantIdentity = current.modelIdentities.get(dominantIdentityKey) ?? {
+              modelId: 'unknown',
+              providerId: 'unknown',
+            };
+            const models = current.modelOrder.map((identityKey) => {
+              const identity = current.modelIdentities.get(identityKey);
+              return identity
+                ? modelIdentityLabel(identity.providerId, identity.modelId)
+                : modelIdentityLabel('unknown', 'unknown');
+            });
             const output = addNonNegativeSafeIntegers(current.tout, current.reason);
             if (!output.ok) {
               rejectedMetricRecords++;
@@ -309,15 +435,24 @@ const collectFromDb = (
               projectPath: sessionMeta?.dir ?? null,
               date: current.start,
               endDate: current.end,
-              provider: provLabel(providerId, current.cost),
+              provider: provLabel(
+                dominantIdentity.providerId,
+                current.providerCosts.get(dominantIdentity.providerId) ?? 0,
+                current.providerCostsKnown.get(dominantIdentity.providerId) ?? false,
+              ),
               name: title.name,
               titleSource: title.source,
-              model: `${providerId}/${model}`,
-              pricingModel: model,
+              model: modelIdentityLabel(dominantIdentity.providerId, dominantIdentity.modelId),
+              models,
+              pricingModel: dominantIdentity.modelId,
               project: base(sessionMeta?.dir),
               tokens,
-              cost: actualCost(current.cost),
+              cost: actualCost(current.reportedCostKnown ? current.cost : null),
+              costApprox: current.costApprox,
+              costKnown: current.costKnown,
               calls: current.calls,
+              durationMs: mergedIntervalDurationMs(current.intervals),
+              partial: current.hasIncompleteInterval,
               turns: turnCount.get(sid) || 0,
               tools: toolCount.get(sid) || 0,
               linesAdded: sessionMeta?.add ?? null,

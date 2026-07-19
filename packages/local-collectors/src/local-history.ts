@@ -21,8 +21,13 @@ export interface LocalHistoryDirEntry {
   size: number;
 }
 
+export type LocalHistorySqlParameter = bigint | boolean | null | number | string | Uint8Array;
+
 export interface LocalHistoryDatabase {
-  all<T extends object = Record<string, unknown>>(sql: string): Effect.Effect<T[], LocalHistoryError>;
+  all<T extends object = Record<string, unknown>>(
+    sql: string,
+    parameters?: readonly LocalHistorySqlParameter[],
+  ): Effect.Effect<T[], LocalHistoryError>;
   close: Effect.Effect<void>;
 }
 
@@ -316,9 +321,12 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
         const db = new Database(dbPath, { readonly: true });
         db.exec('BEGIN');
         return {
-          all: <T extends object = Record<string, unknown>>(sql: string) =>
+          all: <T extends object = Record<string, unknown>>(
+            sql: string,
+            parameters: readonly LocalHistorySqlParameter[] = [],
+          ) =>
             Effect.try({
-              try: () => db.query(sql).all() as T[],
+              try: () => db.query(sql).all(...parameters) as T[],
               catch: localHistoryError('sqlite.all', { path: dbPath, sql }),
             }),
           close: Effect.try({
