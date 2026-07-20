@@ -1,5 +1,6 @@
 import type { SerializedUsageRow } from './report-data';
 import { isSerializedUsageRow } from './serialized-usage-validation';
+import { parseSessionVcsContext, type SessionVcsContext } from './session-vcs';
 
 const MAX_ID_LENGTH = 512;
 const MAX_LABEL_LENGTH = 256;
@@ -58,6 +59,7 @@ export interface SessionDetailReportAnchor {
   projection: SessionProjectionFacts;
   sourceAuthority: SessionDetailSourceAuthority;
   sourceSessionId: string | null;
+  vcs: SessionVcsContext | null;
 }
 
 export interface SessionDetailAnchorResult {
@@ -563,7 +565,7 @@ export const parseSessionDetailAnchorResult = (
   const anchor = value.anchor;
   assertExactKeys(
     anchor,
-    ['harnessKey', 'machineId', 'projection', 'sourceAuthority', 'sourceSessionId'],
+    ['harnessKey', 'machineId', 'projection', 'sourceAuthority', 'sourceSessionId', 'vcs'],
     'Session detail anchor result.anchor',
   );
   const sourceAuthority = sessionDetailSourceAuthorities.find((authority) => authority === anchor.sourceAuthority);
@@ -585,6 +587,7 @@ export const parseSessionDetailAnchorResult = (
         'Session detail anchor result.anchor.sourceSessionId',
         MAX_ID_LENGTH,
       ),
+      vcs: anchor.vcs === null ? null : parseSessionVcsContext(anchor.vcs),
     },
     requestFingerprint,
     revision,

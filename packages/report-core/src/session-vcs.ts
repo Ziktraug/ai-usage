@@ -49,6 +49,23 @@ export interface SessionVcsBranchObservation {
   observedAt: string | null;
 }
 
+export interface SessionVcsResolveRequest {
+  revision: string;
+  rowId: string;
+}
+
+export type SessionVcsResolveUnavailableReason =
+  | 'not-local'
+  | 'provenance-unavailable'
+  | 'resolver-unavailable'
+  | 'repository-unsupported'
+  | 'not-found'
+  | 'timed-out';
+
+export type SessionVcsResolveResponse =
+  | { pullRequests: SessionVcsPullRequest[]; repositoryUrl: string; status: 'available' }
+  | { reason: SessionVcsResolveUnavailableReason; status: 'unavailable' };
+
 const COMMIT_PATTERN = /^[0-9a-fA-F]{1,64}$/;
 const SCP_REMOTE_PATTERN = /^(?:([^@\s]+)@)?([^/:\s]+):(.+)$/;
 const SAFE_HOST_PATTERN = /^[a-zA-Z0-9.-]+$/;
@@ -59,6 +76,17 @@ const BRANCH_KEYS = new Set(['firstObservedAt', 'lastObservedAt', 'name', 'prove
 const COMMIT_KEYS = new Set(['hash', 'observedAt', 'provenance', 'webUrl']);
 const PULL_REQUEST_KEYS = new Set(['number', 'observedAt', 'repository', 'url']);
 const CONTEXT_KEYS = new Set(['branches', 'headCommit', 'partial', 'pullRequests', 'repository']);
+const RESOLVE_RESPONSE_AVAILABLE_KEYS = new Set(['pullRequests', 'repositoryUrl', 'status']);
+const RESOLVE_RESPONSE_UNAVAILABLE_KEYS = new Set(['reason', 'status']);
+const RESOLVE_REQUEST_KEYS = new Set(['revision', 'rowId']);
+const RESOLVE_UNAVAILABLE_REASONS = new Set<SessionVcsResolveUnavailableReason>([
+  'not-local',
+  'provenance-unavailable',
+  'resolver-unavailable',
+  'repository-unsupported',
+  'not-found',
+  'timed-out',
+]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -375,6 +403,60 @@ export const parseSessionVcsContext = (value: unknown): SessionVcsContext => {
     partial: value.partial,
     pullRequests,
     repository,
+  };
+};
+
+export const parseSessionVcsResolveRequest = (value: unknown): SessionVcsResolveRequest => {
+  if (!(isRecord(value) && hasOnlyKeys(value, RESOLVE_REQUEST_KEYS))) {
+    throw new Error('Session VCS resolve request is invalid');
+  }
+  if (
+    typeof value.revision !== 'string' ||
+    value.revision.length === 0 ||
+    value.revision.length > 512 ||
+    typeof value.rowId !== 'string' ||
+    value.rowId.length === 0 ||
+    value.rowId.length > 512
+  ) {
+    throw new Error('Session VCS resolve request identity is invalid');
+  }
+  return { revision: value.revision, rowId: value.rowId };
+};
+
+export const parseSessionVcsResolveResponse = (value: unknown): SessionVcsResolveResponse => {
+  if (!isRecord(value)) {
+    throw new Error('Session VCS resolve response is invalid');
+  }
+  if (value.status === 'unavailable') {
+    if (
+      !(
+        hasOnlyKeys(value, RESOLVE_RESPONSE_UNAVAILABLE_KEYS) &&
+        RESOLVE_UNAVAILABLE_REASONS.has(value.reason as SessionVcsResolveUnavailableReason)
+      )
+    ) {
+      throw new Error('Session VCS unavailable response is invalid');
+    }
+    return { reason: value.reason as SessionVcsResolveUnavailableReason, status: 'unavailable' };
+  }
+  if (
+    value.status !== 'available' ||
+    !hasOnlyKeys(value, RESOLVE_RESPONSE_AVAILABLE_KEYS) ||
+    safeHttpsUrl(value.repositoryUrl) === null ||
+    !Array.isArray(value.pullRequests)
+  ) {
+    throw new Error('Session VCS available response is invalid');
+  }
+  const validated = parseSessionVcsContext({
+    branches: [],
+    headCommit: null,
+    partial: false,
+    pullRequests: value.pullRequests,
+    repository: null,
+  });
+  return {
+    pullRequests: validated.pullRequests,
+    repositoryUrl: safeHttpsUrl(value.repositoryUrl)!,
+    status: 'available',
   };
 };
 
