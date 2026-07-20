@@ -38,7 +38,6 @@ export interface ClaudeSessionInput {
 export interface ClaudeReportFacts {
   calls: number;
   end: Date;
-  firstPrompt: string | null;
   model: string;
   modelSegments: UsageModelSegment[];
   models: string[];
@@ -46,7 +45,7 @@ export interface ClaudeReportFacts {
   rejectedMetricRecords: number;
   sidechain: boolean;
   start: Date;
-  titleSource: 'agent-role' | 'ai' | 'first-prompt' | 'id';
+  titleSource: 'agent-role' | 'ai' | 'id';
   tokens: { cr: number; cw: number; in: number; out: number };
   tools: number;
   turns: number;
@@ -542,7 +541,6 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
   );
 
   let title: string | null = null;
-  let lastPrompt: string | null = null;
   let parentSourceSessionId: string | null = null;
   let sourcePath: string | null = null;
   let sidechain = input.isAgentFile === true;
@@ -559,9 +557,6 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
     }
     if (record.type === 'ai-title' && typeof record.aiTitle === 'string') {
       title = record.aiTitle;
-    }
-    if (record.type === 'last-prompt' && record.lastPrompt) {
-      lastPrompt = String(record.lastPrompt);
     }
     if (typeof record.cwd === 'string') {
       sourcePath = record.cwd;
@@ -603,19 +598,12 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
       })
     : undefined;
 
-  const firstPrompt = prompts[0]?.text ?? null;
-  const name =
-    title ??
-    usablePrompt(lastPrompt) ??
-    firstPrompt ??
-    `${sidechain ? 'subagent ' : ''}${input.sourceSessionId.slice(0, 8)}`;
+  const name = title ?? `${sidechain ? 'subagent ' : 'claude '}${input.sourceSessionId.slice(0, 8)}`;
   let titleSource: ClaudeReportFacts['titleSource'] = 'id';
   if (title) {
     titleSource = 'ai';
-  } else if (sidechain && !lastPrompt && !firstPrompt) {
+  } else if (sidechain) {
     titleSource = 'agent-role';
-  } else if (lastPrompt || firstPrompt) {
-    titleSource = 'first-prompt';
   }
   const tools = assistants.reduce((total, assistant) => total + assistant.tools, 0);
   const projection: SessionProjectionFacts = {
@@ -661,7 +649,6 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
     report: {
       calls: assistants.length,
       end,
-      firstPrompt,
       model: dominant(modelWeights),
       modelSegments: segments,
       models,

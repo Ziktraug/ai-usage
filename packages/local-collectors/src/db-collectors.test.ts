@@ -222,7 +222,8 @@ describe('DB-backed Harness collectors', () => {
     expect(rows.some((row) => row.name === 'existing detailed session')).toBe(false);
     expect(rows.some((row) => row.name === '/clear')).toBe(false);
     expect(unavailable?.harness).toBe('Claude Code');
-    expect(unavailable?.name).toBe('fait moi un plan pour traiter tous ces findings');
+    expect(unavailable?.name).toBe('claude missing-');
+    expect(unavailable?.titleSource).toBe('id');
     expect(unavailable?.project).toBe('ai-usage');
     expect(unavailable?.tokIn).toBe(0);
     expect(unavailable?.costActual).toBeNull();

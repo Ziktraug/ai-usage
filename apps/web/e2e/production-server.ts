@@ -1,21 +1,32 @@
 import { rmSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { seedHarnessHome } from '@ai-usage/local-collectors/test-fixtures/harness-home';
+import {
+  HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
+  seedHarnessHome,
+} from '@ai-usage/local-collectors/test-fixtures/harness-home';
 
 const SESSION_COUNT = 205;
 const rootDirectory = path.resolve(import.meta.dirname, '../../..');
 const temporaryHome = await mkdtemp(path.join(tmpdir(), 'ai-usage-production-browser-'));
+const fixtureBinDirectory = path.join(temporaryHome, 'fixture-bin');
 
 const cleanupHome = (): void => {
   rmSync(temporaryHome, { force: true, recursive: true });
 };
 
 try {
+  await mkdir(fixtureBinDirectory, { recursive: true });
+  const fakeGhPath = path.join(fixtureBinDirectory, 'gh');
+  await writeFile(
+    fakeGhPath,
+    `#!/usr/bin/env bun\nprocess.stderr.write(${JSON.stringify(HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL)});\nprocess.stdout.write(JSON.stringify([{ number: 42, url: "https://github.com/fixture/ai-usage/pull/42" }]));\n`,
+  );
+  await chmod(fakeGhPath, 0o700);
   await seedHarnessHome(temporaryHome, {
     codexSessionCount: SESSION_COUNT,
-    harnesses: ['codex'],
+    harnesses: ['claude', 'codex'],
   });
   const child = Bun.spawn(['bun', 'run', '--cwd', 'apps/web', 'start'], {
     cwd: rootDirectory,
@@ -26,6 +37,7 @@ try {
       HOST: '127.0.0.1',
       NITRO_HOST: '127.0.0.1',
       NITRO_PORT: '4175',
+      PATH: `${fixtureBinDirectory}${path.delimiter}${process.env.PATH ?? ''}`,
       PORT: '4175',
       TZ: 'Europe/Paris',
     },

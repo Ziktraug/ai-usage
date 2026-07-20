@@ -5,6 +5,9 @@ import { dirname, join } from 'node:path';
 export type HarnessFixtureKey = 'claude' | 'codex' | 'cursor' | 'opencode';
 
 export const HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL = 'PRIVATE_DETAIL_PROMPT_SENTINEL_025';
+export const HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL = 'PRIVATE_CREDENTIAL_REMOTE_SENTINEL_027';
+export const HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL = 'javascript:PRIVATE_DANGEROUS_URL_SENTINEL_027';
+export const HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL = 'PRIVATE_PROVIDER_STDERR_SENTINEL_027';
 
 export interface SeededHarnessHome {
   ids: {
@@ -58,7 +61,7 @@ const writeClaudeFixture = async (home: string, repository: string): Promise<voi
         uuid: 'claude-user-1',
         cwd: repository,
         gitBranch: 'fixture/main',
-        message: { role: 'user', content: 'Build the fixture report' },
+        message: { role: 'user', content: HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL },
       },
       {
         type: 'assistant',
@@ -174,7 +177,7 @@ const writeClaudeFixture = async (home: string, repository: string): Promise<voi
       {
         type: 'pr-link',
         timestamp: '2026-07-01T08:04:30.000Z',
-        prUrl: 'javascript:private-fixture',
+        prUrl: HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL,
       },
     ),
   );
@@ -582,7 +585,7 @@ export const seedHarnessHome = async (
     await writeFile(join(paths.repository, '.git', 'HEAD'), 'ref: refs/heads/fixture-main\n');
     await writeFile(
       join(paths.repository, '.git', 'config'),
-      '[core]\n\trepositoryformatversion = 0\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:fixture/ai-usage.git\n',
+      `[core]\n\trepositoryformatversion = 0\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:fixture/ai-usage.git\n[remote "unsafe-fixture"]\n\turl = https://fixture:${HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL}@github.com/fixture/private.git\n`,
     );
   }
   if (seededHarnesses.includes('claude')) {
