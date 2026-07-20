@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isSessionVcsContext } from '@ai-usage/report-core/session-vcs';
 import { MAX_USAGE_MODEL_SEGMENTS } from '@ai-usage/report-core/usage-row';
 import { COLLECTOR_CACHE_MAX_BYTES } from './history-budgets';
 import type { LocalHistoryStorage } from './local-history';
@@ -164,6 +165,19 @@ const hasCoherentModelIdentity = (value: Record<string, unknown>): boolean => {
 const isCollectorRowSource = (value: unknown): boolean =>
   value === undefined ||
   (isRecord(value) &&
+    Object.keys(value).every((key) =>
+      [
+        'artifactPath',
+        'harnessKey',
+        'machineId',
+        'machineLabel',
+        'parentSourceSessionId',
+        'rootSourceSessionId',
+        'sourcePath',
+        'sourceSessionId',
+        'vcs',
+      ].includes(key),
+    ) &&
     typeof value.harnessKey === 'string' &&
     (value.sourceSessionId === null || typeof value.sourceSessionId === 'string') &&
     (value.artifactPath === undefined || value.artifactPath === null || typeof value.artifactPath === 'string') &&
@@ -175,7 +189,8 @@ const isCollectorRowSource = (value: unknown): boolean =>
     (value.rootSourceSessionId === undefined ||
       value.rootSourceSessionId === null ||
       typeof value.rootSourceSessionId === 'string') &&
-    (value.sourcePath === undefined || value.sourcePath === null || typeof value.sourcePath === 'string'));
+    (value.sourcePath === undefined || value.sourcePath === null || typeof value.sourcePath === 'string') &&
+    (value.vcs === undefined || isSessionVcsContext(value.vcs)));
 
 const isCachedCollectorRow = (value: unknown): value is CollectorRow & { date: unknown; endDate: unknown } => {
   if (!isRecord(value)) {

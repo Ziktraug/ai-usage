@@ -96,6 +96,18 @@ const defaultRequest = (overrides: Partial<SessionQueryRequest> = {}): SessionQu
 });
 
 describe('session query contracts', () => {
+  test('keeps session identity stable when only VCS context changes', () => {
+    const withoutVcs = sourcedRow('stable-vcs');
+    const withVcs = sourcedRow('stable-vcs', {
+      source: {
+        ...withoutVcs.source!,
+        vcs: { branches: [], headCommit: null, partial: false, pullRequests: [], repository: null },
+      },
+    });
+
+    expect(sessionRowIdentity(withVcs)).toBe(sessionRowIdentity(withoutVcs));
+  });
+
   test('owns the complete 25-column sort allowlist', () => {
     expect(sessionSortFields).toEqual([
       'date',

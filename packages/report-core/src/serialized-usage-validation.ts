@@ -1,4 +1,5 @@
 import type { SerializedUsageRow, UsageReportWarning } from './report-data';
+import { isSessionVcsContext } from './session-vcs';
 import type { UsageRowSource } from './types';
 import { MAX_USAGE_MODEL_SEGMENTS } from './usage-row';
 
@@ -67,6 +68,7 @@ const SERIALIZED_SOURCE_KEYS = new Set([
   'rootSourceSessionId',
   'sourcePath',
   'sourceSessionId',
+  'vcs',
 ]);
 const WARNING_KEYS = new Set([
   'groupId',
@@ -158,7 +160,8 @@ export const isSerializedUsageRowSource = (value: unknown): value is SerializedU
     (value.sourcePath === undefined || value.sourcePath === null || typeof value.sourcePath === 'string') &&
     typeof value.machineId === 'string' &&
     value.machineId.length > 0 &&
-    typeof value.machineLabel === 'string'
+    typeof value.machineLabel === 'string' &&
+    (value.vcs === undefined || isSessionVcsContext(value.vcs))
   );
 };
 

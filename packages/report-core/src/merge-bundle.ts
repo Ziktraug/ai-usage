@@ -14,7 +14,8 @@ import type { UsageMachine } from './snapshot';
 import type { CollectedUsageRow, UsageRowSource, UsageRowWithOptionalSource } from './types';
 
 const LEGACY_USAGE_MERGE_BUNDLE_VERSION = 1 as const;
-export const USAGE_MERGE_BUNDLE_VERSION = 2 as const;
+const LEGACY_USAGE_MERGE_BUNDLE_VERSION_V2 = 2 as const;
+export const USAGE_MERGE_BUNDLE_VERSION = 3 as const;
 
 export type UsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StableUsageRowKey = string;
@@ -89,6 +90,7 @@ const identityParts = (row: SerializedUsageRow, source: SerializedMergeRow['sour
   provider: row.provider,
   sourcePath: source.sourcePath ?? source.artifactPath ?? null,
   tokenTotal: row.tokenTotal,
+  vcs: source.vcs ?? null,
 });
 
 // Stable identity for rows without a `sourceSessionId` (e.g. Cursor CSV-reconciled daily rows).
@@ -129,6 +131,7 @@ export const toSerializedMergeRow = (
     ...(source?.rootSourceSessionId === undefined ? {} : { rootSourceSessionId: source.rootSourceSessionId }),
     ...(source?.sourcePath === undefined ? {} : { sourcePath: source.sourcePath }),
     ...(source?.artifactPath === undefined ? {} : { artifactPath: source.artifactPath }),
+    ...(source?.vcs === undefined ? {} : { vcs: source.vcs }),
     machineId: machine.id,
     machineLabel: machine.label,
   };
@@ -201,7 +204,11 @@ export const parseUsageMergeBundleValue = (value: unknown): UsageMergeBundle => 
   if (!hasOnlyKeys(value, BUNDLE_KEYS)) {
     throw new Error('Usage merge bundle contains unknown fields');
   }
-  if (value.version !== LEGACY_USAGE_MERGE_BUNDLE_VERSION && value.version !== USAGE_MERGE_BUNDLE_VERSION) {
+  if (
+    value.version !== LEGACY_USAGE_MERGE_BUNDLE_VERSION &&
+    value.version !== LEGACY_USAGE_MERGE_BUNDLE_VERSION_V2 &&
+    value.version !== USAGE_MERGE_BUNDLE_VERSION
+  ) {
     throw new Error('Unsupported usage merge bundle version');
   }
   if (!isUsageMachine(value.machine)) {
@@ -222,6 +229,12 @@ export const parseUsageMergeBundleValue = (value: unknown): UsageMergeBundle => 
     value.rows.some((row) => row.modelSegments !== undefined)
   ) {
     throw new Error('Usage merge bundle legacy v1 rows cannot contain modelSegments');
+  }
+  if (
+    (value.version === LEGACY_USAGE_MERGE_BUNDLE_VERSION || value.version === LEGACY_USAGE_MERGE_BUNDLE_VERSION_V2) &&
+    value.rows.some((row) => row.source.vcs !== undefined)
+  ) {
+    throw new Error(`Usage merge bundle legacy v${value.version} rows cannot contain source.vcs`);
   }
   if (!isUsageReportWarnings(value.warnings)) {
     throw new Error('Usage merge bundle contains invalid warnings');

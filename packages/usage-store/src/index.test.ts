@@ -495,6 +495,43 @@ describe('usage-store public boundary', () => {
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(2);
   });
 
+  test('round-trips VCS in source JSON and treats its change as semantic without changing the row key', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-vcs-'));
+    const dbPath = usageStorePath(home);
+    const base = makeRow({ sourceSessionId: 'vcs-row' });
+    const vcs = {
+      branches: [],
+      headCommit: null,
+      partial: false,
+      pullRequests: [],
+      repository: {
+        host: 'github.com',
+        ownerPath: 'example/project',
+        provenance: 'local-derived' as const,
+        webUrl: 'https://github.com/example/project',
+      },
+    };
+
+    await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [base] }));
+    const updated = await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        machine: machineA,
+        rows: [
+          {
+            ...base,
+            source: { harnessKey: 'codex', sourceSessionId: 'vcs-row', vcs },
+          },
+        ],
+      }),
+    );
+    const after = await Effect.runPromise(queryReportRows({ dbPath }));
+
+    expect(updated.updated).toBe(1);
+    expect(after.rows).toHaveLength(1);
+    expect(after.rows[0]?.source.vcs).toEqual(vcs);
+  });
+
   test('skips invalid stored rows instead of failing the whole query', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-corrupt-'));
     const dbPath = usageStorePath(home);
