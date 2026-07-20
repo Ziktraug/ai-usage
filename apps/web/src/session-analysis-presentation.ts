@@ -2,6 +2,7 @@ import type {
   SessionDetailComparableField,
   SessionDetailConsistency,
   SessionDetailCoverageStatus,
+  SessionDetailTimingStatus,
 } from '@ai-usage/report-core/session-detail';
 import type { SessionAnalysisTarget } from './session-analysis-target';
 
@@ -61,7 +62,7 @@ const scopeItem = (target: SessionAnalysisTarget): SessionAnalysisPresentationIt
 export const buildSessionAnalysisPresentation = (input: {
   consistency: SessionDetailConsistency;
   durationPartialBody: string;
-  durationStatus: SessionDetailCoverageStatus;
+  durationStatus: SessionDetailTimingStatus;
   promptDataTruncated: boolean;
   target: SessionAnalysisTarget;
   turnsStatus: SessionDetailCoverageStatus;

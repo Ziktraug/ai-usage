@@ -2019,7 +2019,7 @@ describe('Codex local history', () => {
     expect(session?.partial).toBe(true);
     expect(session?.turns).toBe(1);
     expect(session?.tokens).toEqual({ cr: 30, cw: 0, in: 10, out: 10 });
-    expect(validDetail.durationStatus).toBe('partial');
+    expect(validDetail.durationStatus).toBe('recorded');
     expect(validDetail.turnsStatus).toBe('recorded');
     expect(validDetail.turns.map((turn) => [turn.model, turn.tokens.total])).toEqual([['gpt-5.6-sol', 50]]);
   });

@@ -10,8 +10,8 @@
 
 | Work package | Status | Commit | Verification |
 | --- | --- | --- | --- |
-| 0 — Baseline, fixtures, and portable-format proof | DONE | pending | PASS — 4 fixture tests |
-| A — Honest recorded/partial/unavailable timing | PENDING | — | — |
+| 0 — Baseline, fixtures, and portable-format proof | DONE | `76d1212` | PASS — 4 fixture tests |
+| A — Honest recorded/partial/unavailable timing | DONE | pending | PASS — 40 focused tests; 31 collector regressions |
 | B — Portable VCS contract and v3 migration | PENDING | — | — |
 | C — Shared Claude facts, detail, and harness VCS | PENDING | — | — |
 | D — Exact-revision Claude wiring and explicit resolver | PENDING | — | — |
@@ -40,6 +40,12 @@
 
 ## Commits
 
-- Package 0: pending commit. Fixture test first failed because the required
+- Package 0: `76d1212`. Fixture test first failed because the required
   Claude paths and records were absent, then passed after the literal fixture
   was extended. `git diff --check` passed.
+- Package A: pending commit. Parser/model tests first failed on the missing
+  timing discriminants and span-only presentation. The completed contract
+  passes 40 focused tests, 31 Codex/OpenCode regression tests, report-core and
+  web checks, and `git diff --check`. Existing replay ambiguity remains report
+  coverage rather than being mislabeled as timing coverage; open OpenCode
+  assistant turns now carry unavailable timing instead of a zero sentinel.

@@ -111,6 +111,7 @@ const turn = (
   model: 'gpt-5.6-sol',
   promptIds: [],
   startAt,
+  timingStatus: 'recorded',
   tokens: tokens(100),
   tools: 0,
   ...overrides,

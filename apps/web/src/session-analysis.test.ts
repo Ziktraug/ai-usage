@@ -54,6 +54,7 @@ const turn = (
   model: 'gpt-5.6-sol',
   promptIds: [],
   startAt,
+  timingStatus: 'recorded',
   tokens: tokens(10),
   tools: 0,
   ...overrides,
@@ -163,8 +164,8 @@ describe('session analysis model', () => {
       timelineHeading: 'Assistant timeline',
     });
     expect(sessionDurationSemantics('claude')).toMatchObject({
-      gapLabel: 'Unattributed',
-      metricLabel: 'Interval time',
+      gapLabel: 'Unattributed span',
+      metricLabel: 'Recorded turn time',
       rowNoun: 'Turn',
     });
     expect(sessionDurationSemantics('codex', true)).toMatchObject({
@@ -178,7 +179,10 @@ describe('session analysis model', () => {
     const harnesses = [
       { harnessKey: 'codex', labels: ['Task-open time', 'Session span', 'Between tasks', 'Task blocks'] },
       { harnessKey: 'opencode', labels: ['Assistant time', 'Session span', 'Outside assistant', 'Assistant bursts'] },
-      { harnessKey: 'claude', labels: ['Interval time', 'Session span', 'Unattributed', 'Interval blocks'] },
+      {
+        harnessKey: 'claude',
+        labels: ['Recorded turn time', 'Session span', 'Unattributed span', 'Recorded turn blocks'],
+      },
     ];
 
     for (const { harnessKey, labels } of harnesses) {
@@ -204,6 +208,27 @@ describe('session analysis model', () => {
         ]);
       }
     }
+  });
+
+  test('renders unavailable timing as span-only and keeps untimed turns as points', () => {
+    const unavailable = detail({
+      activeDurationMs: null,
+      durationStatus: 'unavailable',
+      idleDurationMs: null,
+      turns: [
+        turn(0, '2026-07-18T10:10:00.000Z', '2026-07-18T10:10:00.000Z', {
+          durationMs: null,
+          intervals: [],
+          timingStatus: 'unavailable',
+        }),
+      ],
+    });
+
+    expect(sessionDurationCaption(unavailable, sessionDurationSemantics('claude'), 0)).toEqual([
+      expect.objectContaining({ key: 'span', value: '1h' }),
+    ]);
+    expect(buildSessionTimelineRows(unavailable)).toMatchObject([{ durationMs: null, intervals: [], kind: 'task' }]);
+    expect(timelineHasCompressibleGaps(unavailable)).toBe(false);
   });
 
   test('pluralizes simple count labels', () => {

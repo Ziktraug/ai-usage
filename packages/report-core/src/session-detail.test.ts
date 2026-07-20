@@ -17,12 +17,12 @@ import type { UsageRow } from './types';
 const tokens = { cacheRead: 60, cacheWrite: 0, input: 30, output: 10, total: 100 };
 
 const detail: SessionDetail = {
-  activeDurationMs: 120_000,
+  activeDurationMs: 60_000,
   durationStatus: 'recorded',
   efforts: ['ultra', 'high'],
   elapsedDurationMs: 3_720_000,
   endedAt: '2026-07-18T11:02:00.000Z',
-  idleDurationMs: 3_600_000,
+  idleDurationMs: 3_660_000,
   models: ['gpt-5.6-sol', 'gpt-5.6-terra'],
   observedAt: '2026-07-18T11:02:01.000Z',
   phases: [
@@ -69,6 +69,7 @@ const detail: SessionDetail = {
       model: 'gpt-5.6-sol',
       promptIds: ['prompt-1'],
       startAt: '2026-07-18T10:00:00.000Z',
+      timingStatus: 'recorded',
       tokens,
       tools: 3,
     },
@@ -297,6 +298,85 @@ describe('session detail contract', () => {
   test('accepts a bounded available detail response', () => {
     const response = { consistency: fullConsistency, detail, revision: 'revision-a', status: 'available' } as const;
     expect(parseSessionDetailResponse(response)).toEqual(response);
+  });
+
+  test('accepts explicit partial and unavailable timing without treating span as active', () => {
+    const untimedTurn = {
+      ...detail.turns[0]!,
+      durationMs: null,
+      intervals: [],
+      timingStatus: 'unavailable',
+    } as const;
+    const unavailable = {
+      ...detail,
+      activeDurationMs: null,
+      durationStatus: 'unavailable',
+      idleDurationMs: null,
+      turns: [untimedTurn],
+    } as const;
+    expect(
+      parseSessionDetailResponse({
+        consistency: fullConsistency,
+        detail: unavailable,
+        revision: 'revision-a',
+        status: 'available',
+      }),
+    ).toMatchObject({ detail: unavailable });
+
+    const partial = {
+      ...detail,
+      activeDurationMs: 60_000,
+      durationStatus: 'partial',
+      idleDurationMs: detail.elapsedDurationMs - 60_000,
+      turns: [detail.turns[0]!, untimedTurn],
+    } as const;
+    expect(
+      parseSessionDetailResponse({
+        consistency: fullConsistency,
+        detail: partial,
+        revision: 'revision-a',
+        status: 'available',
+      }),
+    ).toMatchObject({ detail: partial });
+  });
+
+  test('rejects timing states whose values or turn evidence contradict their status', () => {
+    const invalidDetails = [
+      { ...detail, activeDurationMs: null },
+      { ...detail, durationStatus: 'unavailable', activeDurationMs: 0, idleDurationMs: 3_720_000 },
+      { ...detail, durationStatus: 'unavailable', activeDurationMs: null, idleDurationMs: null },
+      {
+        ...detail,
+        activeDurationMs: 0,
+        durationStatus: 'partial',
+        idleDurationMs: detail.elapsedDurationMs,
+        turns: [{ ...detail.turns[0]!, durationMs: null, intervals: [], timingStatus: 'unavailable' }],
+      },
+      {
+        ...detail,
+        turns: [{ ...detail.turns[0]!, durationMs: null, timingStatus: 'recorded' }],
+      },
+      {
+        ...detail,
+        turns: [
+          { ...detail.turns[0]!, durationMs: null, intervals: detail.turns[0]!.intervals, timingStatus: 'unavailable' },
+        ],
+      },
+      {
+        ...detail,
+        turns: [{ ...detail.turns[0]!, durationMs: 59_999 }],
+      },
+    ];
+    for (const invalidDetail of invalidDetails) {
+      expect(() =>
+        parseSessionDetailResponse({
+          consistency: fullConsistency,
+          detail: invalidDetail,
+          revision: 'revision-a',
+          status: 'available',
+        }),
+      ).toThrow(SessionDetailValidationError);
+    }
   });
 
   test('accepts explicit unavailable states', () => {

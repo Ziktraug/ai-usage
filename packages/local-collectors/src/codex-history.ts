@@ -857,6 +857,7 @@ const createCodexSessionParser = (captureDetail = false) => {
   let taskObservedEnd: Date | null = null;
   let taskObservedStart: Date | null = null;
   let finalized = false;
+  let timingPartial = false;
   const parseStartedAt = Date.now();
 
   const latestOpenTask = (): MutableCodexTask | null => {
@@ -1258,6 +1259,7 @@ const createCodexSessionParser = (captureDetail = false) => {
       }
       session.durationPartial = true;
       session.reportPartial = true;
+      timingPartial = true;
       flushResponsePrompt(task);
       observedTaskIntervals.push({
         endMs: task.observedEnd.getTime(),
@@ -1336,6 +1338,7 @@ const createCodexSessionParser = (captureDetail = false) => {
       model: task.model === 'codex' ? session.model : task.model,
       promptIds: task.promptIds,
       startAt: task.start.toISOString(),
+      timingStatus: 'recorded',
       tokens: task.tokens,
       tools: task.tools,
     }));
@@ -1350,7 +1353,7 @@ const createCodexSessionParser = (captureDetail = false) => {
     const turns = detailTurns();
     return {
       activeDurationMs,
-      durationStatus: session.durationPartial ? 'partial' : 'recorded',
+      durationStatus: timingPartial ? 'partial' : 'recorded',
       efforts: [...new Set(session.phases.flatMap((phase) => (phase.effort ? [phase.effort] : [])))],
       elapsedDurationMs,
       endedAt: session.end.toISOString(),
