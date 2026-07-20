@@ -8,6 +8,11 @@ import {
   MAX_SESSION_QUERY_DATABASE_BYTES,
 } from '@ai-usage/report-core/report-budgets';
 import {
+  type SessionDetailSourceAuthority,
+  sessionDetailSourceAuthorities,
+} from '@ai-usage/report-core/session-detail';
+import { sessionRowIdentity } from '@ai-usage/report-core/session-query';
+import {
   parseReportRevision,
   type ReportRequestFingerprint,
   type ReportRevision,
@@ -26,6 +31,7 @@ import {
 
 const REVISION_SCHEMA_VERSION = 1;
 const ROWS_ARTIFACT_NAME = 'rows.json';
+const ROW_SOURCE_AUTHORITIES_ARTIFACT_NAME = 'row-source-authorities.json';
 const SUPPORT_ARTIFACT_NAME = 'support.json';
 const MANIFEST_ARTIFACT_NAME = 'manifest.json';
 const SESSION_QUERY_ARTIFACT_NAME = 'sessions.sqlite';
@@ -76,10 +82,33 @@ interface RevisionDiskManifest extends WebReportRevisionManifest {
   supportArtifact: RevisionArtifactManifest;
 }
 
+interface SessionQuerySnapshotIdentity {
+  changedAtNanoseconds: string;
+  device: string;
+  inode: string;
+  links: string;
+  modifiedAtNanoseconds: string;
+  size: string;
+}
+
+interface SessionQuerySnapshotValue {
+  directory: string;
+  identity: SessionQuerySnapshotIdentity;
+}
+
+interface SessionQuerySnapshot {
+  promise: Promise<SessionQuerySnapshotValue>;
+  reject: (error: unknown) => void;
+  resolve: (value: SessionQuerySnapshotValue) => void;
+  value?: SessionQuerySnapshotValue;
+}
+
 interface RevisionEntry {
   directory: string;
   manifest: RevisionDiskManifest;
+  privateCaptureFingerprint: string;
   references: number;
+  sessionQuerySnapshot?: SessionQuerySnapshot | undefined;
 }
 
 export interface ReportRevisionRegistryOptions {
@@ -98,12 +127,21 @@ export type ReportRevisionLeaseResult<Result> =
 export interface ReportRevisionRegistry {
   dispose(): Promise<void>;
   getCurrentManifest(): Promise<WebReportRevisionManifestResult>;
+  getCurrentManifestForCapture(privateCaptureFingerprint: string): Promise<WebReportRevisionManifestResult>;
   invalidateLatest(): Promise<void>;
-  publish(payload: WebReportPayload, options?: { captureFingerprint?: string }): Promise<WebReportRevisionManifest>;
+  publish(
+    payload: WebReportPayload,
+    options?: {
+      rowSourceAuthorities?: readonly SessionDetailSourceAuthority[];
+    },
+  ): Promise<WebReportRevisionManifest>;
   readRows(request: WebReportSliceRequest): Promise<WebReportRowsSliceResult>;
   readSupport(request: WebReportSliceRequest): Promise<WebReportSupportSliceResult>;
-  renewCurrent(): Promise<WebReportRevisionManifestResult>;
-  withRevisionDirectory<Result>(
+  renewCurrentForCapture(
+    expectedRevision: ReportRevision,
+    privateCaptureFingerprint: string,
+  ): Promise<WebReportRevisionManifestResult>;
+  withSessionQueryLease<Result>(
     revision: ReportRevision,
     operation: (directory: string, manifest: WebReportRevisionManifest) => Promise<Result>,
   ): Promise<ReportRevisionLeaseResult<Result>>;
@@ -136,10 +174,15 @@ const canonicalJson = (value: unknown): unknown => {
   );
 };
 
-export const reportCaptureFingerprintForPayload = (payload: WebReportPayload): string => {
+export const reportCaptureFingerprintForPayload = (
+  payload: WebReportPayload,
+  rowSourceAuthorities?: readonly SessionDetailSourceAuthority[],
+): string => {
   const { generatedAt: _generatedAt, ...semanticPayload } = payload;
+  const fingerprintInput =
+    rowSourceAuthorities === undefined ? semanticPayload : { payload: semanticPayload, rowSourceAuthorities };
   return createHash('sha256')
-    .update(JSON.stringify(canonicalJson(semanticPayload)))
+    .update(JSON.stringify(canonicalJson(fingerprintInput)))
     .digest('hex');
 };
 
@@ -356,6 +399,132 @@ const inspectPrivateArtifact = async (
   }
 };
 
+const createPendingSessionQuerySnapshot = (): SessionQuerySnapshot => {
+  let rejectSnapshot: (error: unknown) => void = () => undefined;
+  let resolveSnapshot: (value: SessionQuerySnapshotValue) => void = () => undefined;
+  const promise = new Promise<SessionQuerySnapshotValue>((resolve, reject) => {
+    rejectSnapshot = reject;
+    resolveSnapshot = resolve;
+  });
+  return { promise, reject: rejectSnapshot, resolve: resolveSnapshot };
+};
+
+const createValidatedSessionQuerySnapshotDirectory = async (
+  entry: RevisionEntry,
+): Promise<SessionQuerySnapshotValue> => {
+  const expected = entry.manifest.sessionQueryArtifact;
+  if (!expected) {
+    throw new Error('Report revision does not contain a Session query artifact');
+  }
+  const leaseDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-session-query-lease-'));
+  await chmod(leaseDirectory, 0o700);
+  let completed = false;
+  try {
+    const destinationPath = path.join(leaseDirectory, SESSION_QUERY_ARTIFACT_NAME);
+    const source = await open(path.join(entry.directory, expected.file), readFileFlags);
+    try {
+      const destination = await open(destinationPath, createFileFlags, 0o600);
+      try {
+        const sourceStat = await source.stat();
+        if (
+          !(sourceStat.isFile() && hasOwnerOnlyPermissions(sourceStat.mode) && isOwnedByCurrentUser(sourceStat.uid))
+        ) {
+          throw new Error('Report revision artifact must be a private regular file owned by the current user');
+        }
+        if (sourceStat.size > MAX_SESSION_QUERY_DATABASE_BYTES) {
+          throw new Error(`Report revision artifact exceeds the ${MAX_SESSION_QUERY_DATABASE_BYTES}-byte limit`);
+        }
+
+        const digest = createHash('sha256');
+        let copiedBytes = 0;
+        while (copiedBytes <= MAX_SESSION_QUERY_DATABASE_BYTES) {
+          const remainingBytes = MAX_SESSION_QUERY_DATABASE_BYTES + 1 - copiedBytes;
+          const buffer = Buffer.alloc(Math.min(ARTIFACT_READ_CHUNK_BYTES, remainingBytes));
+          const { bytesRead } = await source.read(buffer, 0, buffer.byteLength, null);
+          if (bytesRead === 0) {
+            break;
+          }
+          const chunk = buffer.subarray(0, bytesRead);
+          digest.update(chunk);
+          await destination.writeFile(chunk);
+          copiedBytes += bytesRead;
+        }
+        if (copiedBytes > MAX_SESSION_QUERY_DATABASE_BYTES) {
+          throw new Error(`Report revision artifact exceeds the ${MAX_SESSION_QUERY_DATABASE_BYTES}-byte limit`);
+        }
+        if (copiedBytes !== expected.bytes || digest.digest('hex') !== expected.sha256) {
+          throw new Error('Report revision Session query artifact does not match its manifest');
+        }
+        await destination.sync();
+      } finally {
+        await destination.close();
+      }
+    } finally {
+      await source.close();
+    }
+    await chmod(destinationPath, 0o400);
+    await syncFile(destinationPath);
+    await chmod(leaseDirectory, 0o500);
+    await syncDirectory(leaseDirectory);
+    const identity = await inspectSessionQuerySnapshot(leaseDirectory, expected.bytes);
+    completed = true;
+    return { directory: leaseDirectory, identity };
+  } finally {
+    if (!completed) {
+      await removeRevisionDirectory(leaseDirectory);
+    }
+  }
+};
+
+const inspectSessionQuerySnapshot = async (
+  directory: string,
+  expectedBytes: number,
+): Promise<SessionQuerySnapshotIdentity> => {
+  await ensurePrivateDirectory(directory);
+  const handle = await open(path.join(directory, SESSION_QUERY_ARTIFACT_NAME), readFileFlags);
+  try {
+    const snapshotStat = await handle.stat({ bigint: true });
+    if (
+      !(
+        snapshotStat.isFile() &&
+        hasOwnerOnlyPermissions(Number(snapshotStat.mode)) &&
+        isOwnedByCurrentUser(Number(snapshotStat.uid)) &&
+        snapshotStat.size === BigInt(expectedBytes)
+      )
+    ) {
+      throw new Error('Session query snapshot must be a private regular file matching its manifest size');
+    }
+    return {
+      changedAtNanoseconds: snapshotStat.ctimeNs.toString(),
+      device: snapshotStat.dev.toString(),
+      inode: snapshotStat.ino.toString(),
+      links: snapshotStat.nlink.toString(),
+      modifiedAtNanoseconds: snapshotStat.mtimeNs.toString(),
+      size: snapshotStat.size.toString(),
+    };
+  } finally {
+    await handle.close();
+  }
+};
+
+const validateSessionQuerySnapshot = async (
+  snapshot: SessionQuerySnapshotValue,
+  expectedBytes: number,
+): Promise<void> => {
+  const observedIdentity = await inspectSessionQuerySnapshot(snapshot.directory, expectedBytes);
+  const expectedIdentity = snapshot.identity;
+  if (
+    observedIdentity.changedAtNanoseconds !== expectedIdentity.changedAtNanoseconds ||
+    observedIdentity.device !== expectedIdentity.device ||
+    observedIdentity.inode !== expectedIdentity.inode ||
+    observedIdentity.links !== expectedIdentity.links ||
+    observedIdentity.modifiedAtNanoseconds !== expectedIdentity.modifiedAtNanoseconds ||
+    observedIdentity.size !== expectedIdentity.size
+  ) {
+    throw new Error('Session query snapshot changed since validation');
+  }
+};
+
 const copyValidatedPrivateArtifact = async (
   sourcePath: string,
   destinationPath: string,
@@ -423,16 +592,45 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
   let currentRevision: ReportRevision | undefined;
   let currentPublicationSequence = 0;
   let disposed = false;
+  let disposalPromise: Promise<void> | undefined;
   let lockTail: Promise<void> = Promise.resolve();
   let nextPublicationSequence = 0;
+  const referenceDrainWaiters = new Set<() => void>();
 
-  const withLock = <Result>(operation: () => Promise<Result>): Promise<Result> => {
+  const withLock = <Result>(operation: () => Promise<Result> | Result): Promise<Result> => {
     const result = lockTail.then(operation, operation);
     lockTail = result.then(
       () => undefined,
       () => undefined,
     );
     return result;
+  };
+
+  const removeEntryArtifacts = async (entry: RevisionEntry): Promise<void> => {
+    const snapshotDirectory = entry.sessionQuerySnapshot?.value?.directory;
+    await Promise.all([
+      removeRevisionDirectory(entry.directory),
+      ...(snapshotDirectory === undefined ? [] : [removeRevisionDirectory(snapshotDirectory)]),
+    ]);
+  };
+
+  const notifyReferenceDrainLocked = (): void => {
+    if ([...entries.values()].some((entry) => entry.references > 0)) {
+      return;
+    }
+    for (const resolve of referenceDrainWaiters) {
+      resolve();
+    }
+    referenceDrainWaiters.clear();
+  };
+
+  const waitForReferenceDrainLocked = (): Promise<void> => {
+    if (![...entries.values()].some((entry) => entry.references > 0)) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      referenceDrainWaiters.add(resolve);
+    });
   };
 
   const cleanupLocked = async (): Promise<void> => {
@@ -473,14 +671,16 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
       if (!entry) {
         continue;
       }
-      await removeRevisionDirectory(entry.directory);
+      await removeEntryArtifacts(entry);
       entries.delete(revision);
     }
   };
 
   const publish = async (
     payload: WebReportPayload,
-    publishOptions: { captureFingerprint?: string } = {},
+    publishOptions: {
+      rowSourceAuthorities?: readonly SessionDetailSourceAuthority[];
+    } = {},
   ): Promise<WebReportRevisionManifest> => {
     if (disposed) {
       throw new Error('Report revision registry has been disposed');
@@ -490,20 +690,36 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
     const { rowsSlice, supportSlice } = splitWebReportPayload(payload, revision);
     const serializedRows = JSON.stringify(rowsSlice.rows);
     const serializedSupport = JSON.stringify(supportSlice.payloadWithoutRows);
+    const rowSourceAuthorities = publishOptions.rowSourceAuthorities ?? rowsSlice.rows.map(() => 'portable-opaque');
+    if (rowSourceAuthorities.length !== rowsSlice.rows.length) {
+      throw new Error('Report revision row source authorities must align with its rows');
+    }
+    const rowSourceAuthorityBindings: Array<{ rowId: string; sourceAuthority: SessionDetailSourceAuthority }> = [];
+    for (const [index, row] of rowsSlice.rows.entries()) {
+      const authorityValue = rowSourceAuthorities[index];
+      const sourceAuthority = sessionDetailSourceAuthorities.find((authority) => authority === authorityValue);
+      if (!sourceAuthority) {
+        throw new Error(`Report revision row ${index} has an invalid source authority`);
+      }
+      rowSourceAuthorityBindings.push({ rowId: sessionRowIdentity(row), sourceAuthority });
+    }
+    const serializedRowSourceAuthorities = JSON.stringify(rowSourceAuthorityBindings);
     const rowsBytes = Buffer.byteLength(serializedRows);
     const supportBytes = Buffer.byteLength(serializedSupport);
     if (rowsBytes + supportBytes > MAX_REPORT_RUNNER_ARTIFACT_BYTES) {
       throw new Error(`Report revision artifacts exceed the ${MAX_REPORT_RUNNER_ARTIFACT_BYTES}-byte limit`);
     }
+    if (Buffer.byteLength(serializedRowSourceAuthorities) > MAX_REPORT_RUNNER_ARTIFACT_BYTES) {
+      throw new Error(
+        `Report revision row source authorities exceed the ${MAX_REPORT_RUNNER_ARTIFACT_BYTES}-byte limit`,
+      );
+    }
 
     const payloadFingerprint = reportCaptureFingerprintForPayload(payload);
-    const captureFingerprint = publishOptions.captureFingerprint ?? payloadFingerprint;
-    if (!SHA256_PATTERN.test(captureFingerprint)) {
-      throw new Error('Report revision capture fingerprint must be a SHA-256 digest');
-    }
+    const privateCaptureFingerprint = reportCaptureFingerprintForPayload(payload, rowSourceAuthorities);
     const publishedAt = now();
     const diskManifest: RevisionDiskManifest = {
-      captureFingerprint,
+      captureFingerprint: payloadFingerprint,
       expiresAt: publishedAt + ttlMs,
       generatedAt: payload.generatedAt,
       payloadFingerprint,
@@ -524,7 +740,10 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
       await writePrivateArtifact(path.join(stagingDirectory, ROWS_ARTIFACT_NAME), serializedRows);
       await writePrivateArtifact(path.join(stagingDirectory, SUPPORT_ARTIFACT_NAME), serializedSupport);
       if (options.materialize) {
+        const rowSourceAuthoritiesPath = path.join(stagingDirectory, ROW_SOURCE_AUTHORITIES_ARTIFACT_NAME);
+        await writePrivateArtifact(rowSourceAuthoritiesPath, serializedRowSourceAuthorities);
         await options.materialize(stagingDirectory);
+        await rm(rowSourceAuthoritiesPath, { force: true });
         const sessionQueryArtifact = await inspectPrivateArtifact(
           path.join(stagingDirectory, SESSION_QUERY_ARTIFACT_NAME),
           SESSION_QUERY_ARTIFACT_NAME,
@@ -594,7 +813,12 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
         }
         await rename(stagingDirectory, revisionDirectory);
         await syncDirectory(rootDirectory);
-        entries.set(revision, { directory: revisionDirectory, manifest: validatedManifest, references: 0 });
+        entries.set(revision, {
+          directory: revisionDirectory,
+          manifest: validatedManifest,
+          privateCaptureFingerprint,
+          references: 0,
+        });
         if (publicationSequence >= currentPublicationSequence) {
           currentPublicationSequence = publicationSequence;
           currentRevision = revision;
@@ -607,98 +831,155 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
     }
   };
 
-  const renewCurrent = (): Promise<WebReportRevisionManifestResult> =>
-    withLock(async () => {
+  const renewalUnavailable = (): WebReportRevisionManifestResult => ({
+    error: {
+      message: 'No current report revision matches the expected private capture.',
+      tag: 'RevisionUnavailable',
+    },
+    ok: false,
+    requestFingerprint: reportManifestRequestFingerprint,
+  });
+
+  const renewCurrentForCapture = async (
+    expectedRevision: ReportRevision,
+    privateCaptureFingerprint: string,
+  ): Promise<WebReportRevisionManifestResult> => {
+    const publicationSequence = ++nextPublicationSequence;
+    const sourceEntry = await withLock(async () => {
       await cleanupLocked();
-      const sourceEntry = currentRevision === undefined ? undefined : entries.get(currentRevision);
-      if (!sourceEntry) {
-        return {
-          error: { message: 'No current report revision is available.', tag: 'RevisionUnavailable' },
-          ok: false,
-          requestFingerprint: reportManifestRequestFingerprint,
-        };
+      const currentEntry = currentRevision === undefined ? undefined : entries.get(currentRevision);
+      if (
+        !(
+          !disposed &&
+          currentEntry &&
+          currentEntry.manifest.revision === expectedRevision &&
+          currentEntry.privateCaptureFingerprint === privateCaptureFingerprint
+        )
+      ) {
+        return;
       }
-      const sourceManifest = parseDiskManifest(
+      currentEntry.references++;
+      return currentEntry;
+    });
+    if (!sourceEntry) {
+      return renewalUnavailable();
+    }
+
+    let stagingDirectory: string | undefined;
+    try {
+      const revision = parseReportRevision(createRevisionId());
+      const rootDirectory = await rootDirectoryPromise;
+      const preparedStagingDirectory = path.join(rootDirectory, `.staging-${revision}`);
+      stagingDirectory = preparedStagingDirectory;
+      const revisionDirectory = path.join(rootDirectory, String(revision));
+      const diskManifest = parseDiskManifest(
         await readPrivateArtifact(path.join(sourceEntry.directory, MANIFEST_ARTIFACT_NAME), 64 * 1024),
         sourceEntry.manifest.revision,
       );
-      const revision = parseReportRevision(createRevisionId());
+      if (JSON.stringify(canonicalJson(diskManifest)) !== JSON.stringify(canonicalJson(sourceEntry.manifest))) {
+        throw new Error('Report revision disk manifest does not match its in-memory manifest');
+      }
+      const sourceManifest = sourceEntry.manifest;
+      await mkdir(preparedStagingDirectory, { mode: 0o700 });
+      await chmod(preparedStagingDirectory, 0o700);
+      const rowsArtifact = await copyValidatedPrivateArtifact(
+        path.join(sourceEntry.directory, sourceManifest.rowsArtifact.file),
+        path.join(preparedStagingDirectory, ROWS_ARTIFACT_NAME),
+        sourceManifest.rowsArtifact,
+        MAX_REPORT_RUNNER_ARTIFACT_BYTES,
+      );
+      const supportArtifact = await copyValidatedPrivateArtifact(
+        path.join(sourceEntry.directory, sourceManifest.supportArtifact.file),
+        path.join(preparedStagingDirectory, SUPPORT_ARTIFACT_NAME),
+        sourceManifest.supportArtifact,
+        MAX_REPORT_RUNNER_ARTIFACT_BYTES,
+      );
+      const sessionQueryArtifact = sourceManifest.sessionQueryArtifact
+        ? await copyValidatedPrivateArtifact(
+            path.join(sourceEntry.directory, sourceManifest.sessionQueryArtifact.file),
+            path.join(preparedStagingDirectory, SESSION_QUERY_ARTIFACT_NAME),
+            sourceManifest.sessionQueryArtifact,
+            MAX_SESSION_QUERY_DATABASE_BYTES,
+          )
+        : undefined;
       const publishedAt = now();
-      const rootDirectory = await rootDirectoryPromise;
-      const stagingDirectory = path.join(rootDirectory, `.staging-${revision}`);
-      const revisionDirectory = path.join(rootDirectory, String(revision));
-      await mkdir(stagingDirectory, { mode: 0o700 });
-      await chmod(stagingDirectory, 0o700);
-      try {
-        const rowsArtifact = await copyValidatedPrivateArtifact(
-          path.join(sourceEntry.directory, sourceManifest.rowsArtifact.file),
-          path.join(stagingDirectory, ROWS_ARTIFACT_NAME),
-          sourceManifest.rowsArtifact,
-          MAX_REPORT_RUNNER_ARTIFACT_BYTES,
-        );
-        const supportArtifact = await copyValidatedPrivateArtifact(
-          path.join(sourceEntry.directory, sourceManifest.supportArtifact.file),
-          path.join(stagingDirectory, SUPPORT_ARTIFACT_NAME),
-          sourceManifest.supportArtifact,
-          MAX_REPORT_RUNNER_ARTIFACT_BYTES,
-        );
-        const sessionQueryArtifact = sourceManifest.sessionQueryArtifact
-          ? await copyValidatedPrivateArtifact(
-              path.join(sourceEntry.directory, sourceManifest.sessionQueryArtifact.file),
-              path.join(stagingDirectory, SESSION_QUERY_ARTIFACT_NAME),
-              sourceManifest.sessionQueryArtifact,
-              MAX_SESSION_QUERY_DATABASE_BYTES,
-            )
-          : undefined;
-        const renewedManifest: RevisionDiskManifest = {
-          captureFingerprint: sourceManifest.captureFingerprint,
-          expiresAt: publishedAt + ttlMs,
-          generatedAt: sourceManifest.generatedAt,
-          payloadFingerprint: sourceManifest.payloadFingerprint,
-          publishedAt,
-          revision,
-          rowsArtifact,
-          rowsBytes: rowsArtifact.bytes,
-          schemaVersion: REVISION_SCHEMA_VERSION,
-          ...(sessionQueryArtifact === undefined
-            ? {}
-            : { sessionQueryArtifact, sessionQueryBytes: sessionQueryArtifact.bytes }),
-          supportArtifact,
-          supportBytes: supportArtifact.bytes,
-        };
-        await writePrivateArtifact(
-          path.join(stagingDirectory, MANIFEST_ARTIFACT_NAME),
-          JSON.stringify(renewedManifest),
-        );
-        const validatedManifest = parseDiskManifest(
-          await readPrivateArtifact(path.join(stagingDirectory, MANIFEST_ARTIFACT_NAME), 64 * 1024),
-          revision,
-        );
-        const artifactNames = [ROWS_ARTIFACT_NAME, SUPPORT_ARTIFACT_NAME, MANIFEST_ARTIFACT_NAME];
-        if (sessionQueryArtifact) {
-          artifactNames.push(SESSION_QUERY_ARTIFACT_NAME);
+      const renewedManifest: RevisionDiskManifest = {
+        captureFingerprint: sourceManifest.captureFingerprint,
+        expiresAt: publishedAt + ttlMs,
+        generatedAt: sourceManifest.generatedAt,
+        payloadFingerprint: sourceManifest.payloadFingerprint,
+        publishedAt,
+        revision,
+        rowsArtifact,
+        rowsBytes: rowsArtifact.bytes,
+        schemaVersion: REVISION_SCHEMA_VERSION,
+        ...(sessionQueryArtifact === undefined
+          ? {}
+          : { sessionQueryArtifact, sessionQueryBytes: sessionQueryArtifact.bytes }),
+        supportArtifact,
+        supportBytes: supportArtifact.bytes,
+      };
+      await writePrivateArtifact(
+        path.join(preparedStagingDirectory, MANIFEST_ARTIFACT_NAME),
+        JSON.stringify(renewedManifest),
+      );
+      const validatedManifest = parseDiskManifest(
+        await readPrivateArtifact(path.join(preparedStagingDirectory, MANIFEST_ARTIFACT_NAME), 64 * 1024),
+        revision,
+      );
+      const artifactNames = [ROWS_ARTIFACT_NAME, SUPPORT_ARTIFACT_NAME, MANIFEST_ARTIFACT_NAME];
+      if (sessionQueryArtifact) {
+        artifactNames.push(SESSION_QUERY_ARTIFACT_NAME);
+      }
+      for (const artifactName of artifactNames) {
+        const artifactPath = path.join(preparedStagingDirectory, artifactName);
+        await chmod(artifactPath, 0o400);
+        await syncFile(artifactPath);
+      }
+      await chmod(preparedStagingDirectory, 0o500);
+      await syncDirectory(preparedStagingDirectory);
+
+      return await withLock(async () => {
+        await cleanupLocked();
+        const currentEntry = currentRevision === undefined ? undefined : entries.get(currentRevision);
+        if (
+          disposed ||
+          currentEntry !== sourceEntry ||
+          sourceEntry.manifest.expiresAt <= now() ||
+          publicationSequence < currentPublicationSequence
+        ) {
+          return renewalUnavailable();
         }
-        for (const artifactName of artifactNames) {
-          const artifactPath = path.join(stagingDirectory, artifactName);
-          await chmod(artifactPath, 0o400);
-          await syncFile(artifactPath);
+        if (entries.has(revision)) {
+          throw new Error(`Report revision ${revision} already exists`);
         }
-        await chmod(stagingDirectory, 0o500);
-        await syncDirectory(stagingDirectory);
-        await rename(stagingDirectory, revisionDirectory);
+        await rename(preparedStagingDirectory, revisionDirectory);
         await syncDirectory(rootDirectory);
-        entries.set(revision, { directory: revisionDirectory, manifest: validatedManifest, references: 0 });
+        entries.set(revision, {
+          directory: revisionDirectory,
+          manifest: validatedManifest,
+          privateCaptureFingerprint: sourceEntry.privateCaptureFingerprint,
+          references: 0,
+        });
         currentRevision = revision;
+        currentPublicationSequence = publicationSequence;
         await cleanupLocked();
         return {
           manifest: publicManifest(validatedManifest),
           ok: true,
           requestFingerprint: reportManifestRequestFingerprint,
         };
+      });
+    } finally {
+      try {
+        if (stagingDirectory !== undefined) {
+          await removeRevisionDirectory(stagingDirectory);
+        }
       } finally {
-        await removeRevisionDirectory(stagingDirectory);
+        await release(sourceEntry.manifest.revision);
       }
-    });
+    }
+  };
 
   const getCurrentManifest = (): Promise<WebReportRevisionManifestResult> =>
     withLock(async () => {
@@ -718,16 +999,87 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
       };
     });
 
+  const getCurrentManifestForCapture = (privateCaptureFingerprint: string): Promise<WebReportRevisionManifestResult> =>
+    withLock(async () => {
+      await cleanupLocked();
+      const entry = currentRevision === undefined ? undefined : entries.get(currentRevision);
+      if (!(entry && entry.privateCaptureFingerprint === privateCaptureFingerprint)) {
+        return {
+          error: { message: 'No current report revision matches this private capture.', tag: 'RevisionUnavailable' },
+          ok: false,
+          requestFingerprint: reportManifestRequestFingerprint,
+        };
+      }
+      return {
+        manifest: publicManifest(entry.manifest),
+        ok: true,
+        requestFingerprint: reportManifestRequestFingerprint,
+      };
+    });
+
   const acquire = async (revision: ReportRevision): Promise<RevisionEntry | undefined> =>
     await withLock(async () => {
       await cleanupLocked();
       const entry = entries.get(revision);
-      if (!entry || entry.manifest.expiresAt <= now()) {
+      if (disposed || !entry || entry.manifest.expiresAt <= now()) {
         return;
       }
       entry.references++;
       return entry;
     });
+
+  const acquireSessionQueryLease = async (
+    revision: ReportRevision,
+  ): Promise<{ entry: RevisionEntry; snapshot: SessionQuerySnapshotValue } | undefined> => {
+    const acquired = await withLock(async () => {
+      await cleanupLocked();
+      const entry = entries.get(revision);
+      if (disposed || !entry || entry.manifest.expiresAt <= now()) {
+        return;
+      }
+      entry.references++;
+      if (entry.sessionQuerySnapshot) {
+        return { createSnapshot: false, entry, snapshot: entry.sessionQuerySnapshot };
+      }
+      const snapshot = createPendingSessionQuerySnapshot();
+      entry.sessionQuerySnapshot = snapshot;
+      return { createSnapshot: true, entry, snapshot };
+    });
+    if (!acquired) {
+      return;
+    }
+
+    const { createSnapshot, entry, snapshot } = acquired;
+    if (createSnapshot) {
+      try {
+        const value = await createValidatedSessionQuerySnapshotDirectory(entry);
+        snapshot.value = value;
+        snapshot.resolve(value);
+      } catch (error) {
+        snapshot.reject(error);
+      }
+    }
+
+    try {
+      const value = await snapshot.promise;
+      const expected = entry.manifest.sessionQueryArtifact;
+      if (!expected) {
+        throw new Error('Report revision does not contain a Session query artifact');
+      }
+      await validateSessionQuerySnapshot(value, expected.bytes);
+      return { entry, snapshot: value };
+    } catch (error) {
+      await withLock(async () => {
+        entry.references = Math.max(0, entry.references - 1);
+        if (entry.sessionQuerySnapshot === snapshot && snapshot.value === undefined) {
+          entry.sessionQuerySnapshot = undefined;
+        }
+        notifyReferenceDrainLocked();
+        await cleanupLocked();
+      });
+      throw error;
+    }
+  };
 
   const release = (revision: ReportRevision): Promise<void> =>
     withLock(async () => {
@@ -735,6 +1087,7 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
       if (entry) {
         entry.references = Math.max(0, entry.references - 1);
       }
+      notifyReferenceDrainLocked();
       await cleanupLocked();
     });
 
@@ -816,47 +1169,76 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
     }
   };
 
-  const withRevisionDirectory = async <Result>(
+  const withSessionQueryLease = async <Result>(
     revision: ReportRevision,
     operation: (directory: string, manifest: WebReportRevisionManifest) => Promise<Result>,
   ): Promise<ReportRevisionLeaseResult<Result>> => {
-    const entry = await acquire(revision);
-    if (!entry) {
+    const lease = await acquireSessionQueryLease(revision);
+    if (!lease) {
       return { error: revisionExpired(revision), ok: false };
     }
     try {
+      const value = await operation(lease.snapshot.directory, publicManifest(lease.entry.manifest));
+      const expected = lease.entry.manifest.sessionQueryArtifact;
+      if (!expected) {
+        throw new Error('Report revision does not contain a Session query artifact');
+      }
+      await validateSessionQuerySnapshot(lease.snapshot, expected.bytes);
       return {
-        manifest: publicManifest(entry.manifest),
+        manifest: publicManifest(lease.entry.manifest),
         ok: true,
-        value: await operation(entry.directory, publicManifest(entry.manifest)),
+        value,
       };
     } finally {
       await release(revision);
     }
   };
 
-  return {
-    dispose: () =>
-      withLock(async () => {
+  const dispose = (): Promise<void> => {
+    if (disposalPromise) {
+      return disposalPromise;
+    }
+    disposalPromise = (async () => {
+      const { drained } = await withLock(() => {
         disposed = true;
         currentRevision = undefined;
-        const directories = [...entries.values()].map((entry) => entry.directory);
+        return { drained: waitForReferenceDrainLocked() };
+      });
+      await drained;
+      await withLock(async () => {
+        const retainedEntries = [...entries.values()];
+        await Promise.all(
+          retainedEntries.map(async (entry) => {
+            try {
+              await entry.sessionQuerySnapshot?.promise;
+            } catch {
+              // Failed snapshot creation removes its own staging directory.
+            }
+          }),
+        );
         entries.clear();
-        await Promise.all(directories.map(removeRevisionDirectory));
+        await Promise.all(retainedEntries.map(removeEntryArtifacts));
         if (ownsRootDirectory) {
           await rm(await rootDirectoryPromise, { force: true, recursive: true });
         }
-      }),
+      });
+    })();
+    return disposalPromise;
+  };
+
+  return {
+    dispose,
     getCurrentManifest,
+    getCurrentManifestForCapture,
     invalidateLatest: () =>
       withLock(async () => {
         currentRevision = undefined;
         await cleanupLocked();
       }),
     publish,
-    renewCurrent,
+    renewCurrentForCapture,
     readRows,
     readSupport,
-    withRevisionDirectory,
+    withSessionQueryLease,
   };
 };

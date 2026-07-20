@@ -95,6 +95,7 @@ import {
   PUNCH_DAYS,
 } from './overview-model';
 import {
+  apiValuePresentation,
   type DashboardRow,
   fmtCompact,
   fmtDateOnly,
@@ -431,7 +432,7 @@ const SessionShape = (props: {
       sub="Duration × API value (log scales) — density is aggregated; inspect standout work below"
       title="Session shape"
     >
-      <Show fallback={<div class={emptyPanel}>Not enough timed, priced sessions in range</div>} when={data()}>
+      <Show fallback={<div class={emptyPanel}>Not enough timed, fully priced sessions in range</div>} when={data()}>
         {(chart) => (
           <>
             <div class={scatterWrap}>
@@ -491,7 +492,7 @@ const SessionShape = (props: {
               </svg>
             </div>
             <div class={scatterSummary}>
-              {fmtNum(chart().totalPoints)} timed, priced sessions · {fmtNum(chart().points.length)} density marks
+              {fmtNum(chart().totalPoints)} timed, fully priced sessions · {fmtNum(chart().points.length)} density marks
             </div>
             <details class={scatterDistribution}>
               <summary>Distribution by harness</summary>
@@ -668,7 +669,7 @@ const Records = (props: {
 };
 
 // ---------------------------------------------------------------------------
-// Top sessions — the five most expensive sessions, by name. Session titles
+// Top sessions — the five highest API-equivalent values, by name. Session titles
 // carry a lot of qualitative signal; surface them.
 
 const TopSessions = (props: {
@@ -681,7 +682,10 @@ const TopSessions = (props: {
 
   return (
     <Show when={top().length}>
-      <Panel sub="The five most expensive sessions or campaigns in range — click to inspect" title="Top sessions">
+      <Panel
+        sub="The five highest estimated API-equivalent values for sessions or campaigns in range — click to inspect"
+        title="Top sessions"
+      >
         <div class={topList}>
           <For each={top()}>
             {(item, index) => (
@@ -694,7 +698,9 @@ const TopSessions = (props: {
                   </Show>
                 </span>
                 <HarnessBadge name={item.harness} />
-                <span class={topMoney}>{fmtMoney(item.costApprox)}</span>
+                <span class={topMoney} title={apiValuePresentation(item).title}>
+                  {apiValuePresentation(item).label}
+                </span>
               </button>
             )}
           </For>

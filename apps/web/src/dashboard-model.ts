@@ -3,9 +3,15 @@ import {
   buildSessionCampaignTotals,
   buildSortedSessionPresentationRows,
   type SessionCampaignTotals,
+  sessionModelKeys,
 } from '@ai-usage/report-core/session-query';
 import type { SortingState } from '@tanstack/solid-table';
-import { buildAnalyticsGroups, buildProjectGroups, type ProjectGroup } from './dashboard-analytics';
+import {
+  buildAnalyticsGroups,
+  buildModelAnalyticsGroups,
+  buildProjectGroups,
+  type ProjectGroup,
+} from './dashboard-analytics';
 import type { Metric, MetricDelta } from './dashboard-metrics';
 import type { FieldFilterKey, FieldFilters } from './dashboard-search';
 import { DAY_MS, type DateBounds, endOfDay, rowMatchesDateBounds } from './date-range';
@@ -30,6 +36,9 @@ export const fieldValueForRow = (row: DashboardRow, key: FieldFilterKey) => {
   return row.projectKey;
 };
 
+export const fieldValuesForRow = (row: DashboardRow, key: FieldFilterKey): readonly string[] =>
+  key === 'model' ? sessionModelKeys(row) : [fieldValueForRow(row, key)];
+
 export interface FilterSnapshot {
   fieldEntries: [FieldFilterKey, string][];
   harness: string[];
@@ -53,7 +62,7 @@ export const matchesFilterSnapshot = (row: DashboardRow, filters: FilterSnapshot
   row.searchText.includes(filters.query) &&
   (filters.harness.length === 0 || filters.harness.includes(row.harness)) &&
   (filters.machine.length === 0 || filters.machine.includes(row.source?.machineLabel ?? '')) &&
-  filters.fieldEntries.every(([key, value]) => fieldValueForRow(row, key) === value);
+  filters.fieldEntries.every(([key, value]) => fieldValuesForRow(row, key).includes(value));
 
 export const filterTimelineRows = (rows: DashboardRow[], filters: FilterSnapshot) =>
   rows.filter((row) => matchesFilterSnapshot(row, filters));
@@ -98,7 +107,8 @@ const campaignIdentityForRow = (row: DashboardRow) => {
   return { campaignKey: campaignKeyFor(row, rootSourceSessionId), rootSourceSessionId, sourceSessionId };
 };
 
-export const buildCampaignTotals = (rows: DashboardRow[]): CampaignTotals => buildSessionCampaignTotals(rows);
+export const buildCampaignTotals = (rows: DashboardRow[], root?: DashboardRow): CampaignTotals =>
+  buildSessionCampaignTotals(rows, root);
 
 export const buildCampaignViews = (allRows: DashboardRow[], visibleRows: DashboardRow[]): CampaignView[] => {
   const visibleKeys = new Set(visibleRows.map(rowKeyForCampaignMembership));
@@ -150,8 +160,8 @@ export const buildCampaignViews = (allRows: DashboardRow[], visibleRows: Dashboa
       allRows: rows,
       visibleChildren,
       allChildren,
-      visibleTotals: buildCampaignTotals(visibleRowsForTotals),
-      allTotals: buildCampaignTotals(rows),
+      visibleTotals: buildCampaignTotals(visibleRowsForTotals, root),
+      allTotals: buildCampaignTotals(rows, root),
       visibleCount: visibleRowsForTotals.length,
       totalCount: rows.length,
     });
@@ -183,7 +193,7 @@ const campaignSortValue = (campaign: CampaignView, columnId: SessionColumnId): n
     case 'rtkSaved':
       return totals.rtkInputTokens ? (totals.rtkSavedTokens / totals.rtkInputTokens) * 100 : 0;
     case 'cost':
-      return totals.costKnown ? totals.totalCost : Number.NEGATIVE_INFINITY;
+      return totals.costKnown || totals.totalCost > 0 ? totals.totalCost : Number.NEGATIVE_INFINITY;
     case 'actual':
       return totals.actualCost;
     case 'quota':
@@ -385,13 +395,8 @@ export const buildPreviousPeriodSummary = (rows: DashboardRow[], bounds: DateBou
 
 export const hiddenSessionCount = (totalRows: number, visibleRows: number) => totalRows - visibleRows;
 
-export const buildModelGroups = (rows: DashboardRow[], bounds: DateBounds, totalCost: number): AnalyticsGroup[] =>
-  buildAnalyticsGroups(
-    rows,
-    (row) => rowMatchesDateBounds(row, bounds),
-    (row) => row.modelKey,
-    totalCost,
-  );
+export const buildModelGroups = (rows: DashboardRow[], bounds: DateBounds, _totalCost: number): AnalyticsGroup[] =>
+  buildModelAnalyticsGroups(rows, (row) => rowMatchesDateBounds(row, bounds));
 
 export const buildProviderGroups = (rows: DashboardRow[], bounds: DateBounds, totalCost: number): AnalyticsGroup[] =>
   buildAnalyticsGroups(
@@ -438,7 +443,7 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
     {
       label: 'API value',
       value: fmtMoney(summary.totalCost),
-      hint: 'Estimated cost at standard API prices, including usage covered by subscriptions',
+      hint: `Estimated cost at standard API prices for ${fmtNum(summary.pricedSessions)} of ${fmtNum(summary.sessionCount)} fully priced sessions, including usage covered by subscriptions`,
       delta: deltaVs(summary.totalCost, prev?.totalCost, fmtMoney),
     },
     {

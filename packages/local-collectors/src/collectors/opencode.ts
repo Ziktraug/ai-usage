@@ -12,32 +12,22 @@ import {
 } from '../collector-cache';
 import { type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
 import { LocalHistoryStorage } from '../local-history';
+import { metricValidationWarning, parseOptionalNonNegativeSafeInteger } from '../metric-validation';
+import { OPENCODE_DIRECT_USER_PART_PREDICATE, OPENCODE_TOOL_PART_PREDICATE } from '../opencode-schema';
 import {
-  addNonNegativeFiniteNumbers,
-  addNonNegativeSafeIntegers,
-  metricValidationWarning,
-  parseOptionalNonNegativeFiniteNumber,
-  parseOptionalNonNegativeSafeInteger,
-} from '../metric-validation';
+  buildOpenCodeProjectionSummary,
+  decodeOpenCodeMessageRow,
+  type OpenCodeMessageFact,
+} from '../opencode-session-facts';
 import { withPerfSpan } from '../perf';
 import { resolvePathCandidates } from '../platform-paths';
 import type { CollectorRow } from '../rtk-enrichment';
-import { base, dominant, isJsonObject, safeJSON } from '../text';
+import { base, safeJSON } from '../text';
 
 const DEFAULT_ACP_SESSION_TITLE = /^(new session\s*[.…]*|acp(?: session)?)$/i;
 
 interface Agg {
-  calls: number;
-  cost: number;
-  end: Date | null;
-  model: Map<string, number>;
-  prov: Map<string, number>;
-  reason: number;
-  start: Date | null;
-  tcr: number;
-  tcw: number;
-  tin: number;
-  tout: number;
+  facts: OpenCodeMessageFact[];
 }
 
 interface SessionRow {
@@ -56,17 +46,19 @@ interface CountRow {
 interface MessageRow {
   data: string;
   session_id: string;
+  time_created?: unknown;
 }
 export interface OpenCodeCollectionResult {
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
 }
 
-const OPENCODE_DB_CACHE_VERSION = 4;
+const OPENCODE_DB_CACHE_VERSION = 8;
 const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 const SESSION_SQL = 'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
-const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE data LIKE '%"type":"tool"%' GROUP BY session_id`;
-const MESSAGE_SQL = 'SELECT session_id, data FROM message';
+const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE ${OPENCODE_TOOL_PART_PREDICATE} GROUP BY session_id`;
+const TURN_COUNT_SQL = `SELECT m.session_id, count(DISTINCT m.id) n FROM message m JOIN part p ON p.message_id = m.id WHERE json_valid(m.data) AND json_valid(p.data) AND json_extract(m.data, '$.role') = 'user' AND ${OPENCODE_DIRECT_USER_PART_PREDICATE} GROUP BY m.session_id`;
+const MESSAGE_SQL = 'SELECT session_id, data, time_created FROM message ORDER BY session_id, time_created, id';
 
 const collectFromDb = (
   dbPath: string,
@@ -144,6 +136,20 @@ const collectFromDb = (
               toolCount.set(row.session_id, count.value);
             }
 
+            const turnRows = yield* withPerfSpan(
+              'aiUsage.collect.opencode.db.query.turnCounts',
+              db.all<CountRow>(TURN_COUNT_SQL),
+              (rows) => ({ db: source, rows: rows.length }),
+            );
+            for (const row of turnRows) {
+              const count = parseOptionalNonNegativeSafeInteger(row.n);
+              if (!(typeof row.session_id === 'string' && count.ok)) {
+                rejectedMetricRecords++;
+                continue;
+              }
+              turnCount.set(row.session_id, count.value);
+            }
+
             const messageRows = yield* withPerfSpan(
               'aiUsage.collect.opencode.db.query.messages',
               db.all<MessageRow>(MESSAGE_SQL),
@@ -159,94 +165,27 @@ const collectFromDb = (
                   const data = safeJSON(row.data);
                   if (data?.role === 'user') {
                     userRows++;
-                    turnCount.set(row.session_id, (turnCount.get(row.session_id) || 0) + 1);
                     continue;
                   }
                   if (data?.role !== 'assistant') {
                     continue;
                   }
                   assistantRows++;
-                  const tokens = isJsonObject(data.tokens) ? data.tokens : null;
-                  if (!tokens) {
+                  const decoded = decodeOpenCodeMessageRow({ ...data, created: row.time_created });
+                  if (decoded.kind === 'ignored') {
+                    continue;
+                  }
+                  if (decoded.kind === 'invalid') {
+                    rejectedMetricRecords++;
                     continue;
                   }
                   tokenRows++;
                   let current = agg.get(row.session_id);
                   if (!current) {
-                    current = {
-                      tin: 0,
-                      tout: 0,
-                      tcr: 0,
-                      tcw: 0,
-                      reason: 0,
-                      cost: 0,
-                      calls: 0,
-                      start: null,
-                      end: null,
-                      prov: new Map(),
-                      model: new Map(),
-                    };
+                    current = { facts: [] };
                     agg.set(row.session_id, current);
                   }
-                  const input = parseOptionalNonNegativeSafeInteger(tokens.input);
-                  const output = parseOptionalNonNegativeSafeInteger(tokens.output);
-                  const cache = isJsonObject(tokens.cache) ? tokens.cache : null;
-                  const cacheRead = parseOptionalNonNegativeSafeInteger(cache?.read);
-                  const cacheWrite = parseOptionalNonNegativeSafeInteger(cache?.write);
-                  const reasoning = parseOptionalNonNegativeSafeInteger(tokens.reasoning);
-                  const cost = parseOptionalNonNegativeFiniteNumber(data.cost);
-                  if (!(input.ok && output.ok && cacheRead.ok && cacheWrite.ok && reasoning.ok && cost.ok)) {
-                    rejectedMetricRecords++;
-                    continue;
-                  }
-                  const nextInput = addNonNegativeSafeIntegers(current.tin, input.value);
-                  const nextOutput = addNonNegativeSafeIntegers(current.tout, output.value);
-                  const nextCacheRead = addNonNegativeSafeIntegers(current.tcr, cacheRead.value);
-                  const nextCacheWrite = addNonNegativeSafeIntegers(current.tcw, cacheWrite.value);
-                  const nextReasoning = addNonNegativeSafeIntegers(current.reason, reasoning.value);
-                  const nextCalls = addNonNegativeSafeIntegers(current.calls, 1);
-                  const nextCost = addNonNegativeFiniteNumbers(current.cost, cost.value);
-                  if (
-                    !(
-                      nextInput.ok &&
-                      nextOutput.ok &&
-                      nextCacheRead.ok &&
-                      nextCacheWrite.ok &&
-                      nextReasoning.ok &&
-                      nextCalls.ok &&
-                      nextCost.ok
-                    )
-                  ) {
-                    rejectedMetricRecords++;
-                    continue;
-                  }
-                  current.tin = nextInput.value;
-                  current.tout = nextOutput.value;
-                  current.tcr = nextCacheRead.value;
-                  current.tcw = nextCacheWrite.value;
-                  current.reason = nextReasoning.value;
-                  current.cost = nextCost.value;
-                  current.calls = nextCalls.value;
-                  const time = isJsonObject(data.time) ? data.time : null;
-                  const created = time?.created;
-                  if (typeof created === 'string' || typeof created === 'number') {
-                    const date = new Date(created);
-                    if (!current.start || date < current.start) {
-                      current.start = date;
-                    }
-                  }
-                  const completed = time?.completed || time?.created;
-                  if (typeof completed === 'string' || typeof completed === 'number') {
-                    const date = new Date(completed);
-                    if (!current.end || date > current.end) {
-                      current.end = date;
-                    }
-                  }
-                  const total = input.value + output.value + cacheRead.value + cacheWrite.value;
-                  const providerId = typeof data.providerID === 'string' ? data.providerID : '?';
-                  const modelId = typeof data.modelID === 'string' ? data.modelID : '?';
-                  current.prov.set(providerId, (current.prov.get(providerId) || 0) + total);
-                  current.model.set(modelId, (current.model.get(modelId) || 0) + total);
+                  current.facts.push(decoded.value);
                 }
                 return { assistantRows, tokenRows, userRows };
               }),
@@ -263,8 +202,11 @@ const collectFromDb = (
         (db) => db.close,
       );
 
-      const provLabel = (providerId: string, cost: number) => {
+      const provLabel = (providerId: string, cost: number, costKnown: boolean) => {
         if (providerId === 'openai') {
+          if (!costKnown) {
+            return 'OpenAI via OpenCode';
+          }
           return cost > 0 ? 'OpenAI API' : 'Codex sub (OC)';
         }
         if (providerId === 'anthropic') {
@@ -284,19 +226,17 @@ const collectFromDb = (
         Effect.sync(() => {
           const sessions: CollectedSession[] = [];
           for (const [sid, current] of agg) {
-            const sessionMeta = meta.get(sid);
-            const providerId = dominant(current.prov);
-            const model = dominant(current.model);
-            const output = addNonNegativeSafeIntegers(current.tout, current.reason);
-            if (!output.ok) {
+            const summary = buildOpenCodeProjectionSummary(current.facts);
+            if (!summary) {
               rejectedMetricRecords++;
               continue;
             }
+            const sessionMeta = meta.get(sid);
             const tokens = {
-              in: current.tin,
-              out: output.value,
-              cr: current.tcr,
-              cw: current.tcw,
+              in: summary.tokens.input,
+              out: summary.tokens.output,
+              cr: summary.tokens.cacheRead,
+              cw: summary.tokens.cacheWrite,
             };
             const title = classifyOpenCodeTitle(sessionMeta?.title ?? null, sid);
             sessions.push({
@@ -307,17 +247,27 @@ const collectFromDb = (
                 sourcePath: sessionMeta?.dir ?? null,
               },
               projectPath: sessionMeta?.dir ?? null,
-              date: current.start,
-              endDate: current.end,
-              provider: provLabel(providerId, current.cost),
+              date: summary.startMs === null ? null : new Date(summary.startMs),
+              endDate: summary.endMs === null ? null : new Date(summary.endMs),
+              provider: provLabel(
+                summary.dominantProviderId,
+                summary.providerCosts.get(summary.dominantProviderId) ?? 0,
+                summary.providerCostsKnown.get(summary.dominantProviderId) ?? false,
+              ),
               name: title.name,
               titleSource: title.source,
-              model: `${providerId}/${model}`,
-              pricingModel: model,
+              model: `${summary.dominantProviderId}/${summary.dominantModelId}`,
+              models: summary.models,
+              modelSegments: summary.modelSegments,
+              pricingModel: summary.dominantModelId,
               project: base(sessionMeta?.dir),
               tokens,
-              cost: actualCost(current.cost),
-              calls: current.calls,
+              cost: actualCost(summary.reportedCostKnown ? summary.reportedCost : null),
+              costApprox: summary.costApprox,
+              costKnown: summary.costKnown,
+              calls: summary.calls,
+              durationMs: summary.durationMs,
+              partial: summary.partial,
               turns: turnCount.get(sid) || 0,
               tools: toolCount.get(sid) || 0,
               linesAdded: sessionMeta?.add ?? null,

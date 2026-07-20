@@ -15,6 +15,13 @@ import {
   parseFocusedRevisionRequest,
 } from '@ai-usage/report-core/focused-report-query';
 import {
+  parseSessionDetailAnchorResult,
+  parseSessionDetailRequest,
+  type SessionDetailAnchorResult,
+  type SessionDetailRequest,
+  sessionDetailRequestFingerprint,
+} from '@ai-usage/report-core/session-detail';
+import {
   parseSessionCampaignChildrenRequest,
   parseSessionCampaignChildrenResult,
   parseSessionNeighborRequest,
@@ -34,16 +41,22 @@ import {
 } from '@ai-usage/report-core/session-query';
 import { parseReportRevision, type ReportRevision } from '../web-report-payload';
 import { runBoundedArtifactProcess } from './bounded-artifact-process.server';
-import { withReportRevisionDirectoryForServer } from './report-payload.server';
+import { withReportRevisionQueryLeaseForServer } from './report-payload.server';
 import { resolveReportRuntimePaths } from './report-runtime-paths.server';
 
-export type RevisionQueryKind = FocusedReportQueryKind | 'campaign-children' | 'neighbors' | 'sessions';
+export type RevisionQueryKind =
+  | FocusedReportQueryKind
+  | 'campaign-children'
+  | 'neighbors'
+  | 'session-detail-anchor'
+  | 'sessions';
 type RevisionQueryResult =
   | FocusedBreakdownResult
   | FocusedOverviewResult
   | FocusedSupportResult
   | SessionCampaignChildrenResult
   | SessionNeighborResult
+  | SessionDetailAnchorResult
   | SessionPageResult;
 
 interface ParsedRevisionRequest<Result extends RevisionQueryResult> {
@@ -57,6 +70,18 @@ interface RevisionQuerySpec<Result extends RevisionQueryResult> {
   parse(input: unknown): ParsedRevisionRequest<Result>;
 }
 
+interface RevisionQueryExecutionRequest {
+  kind: RevisionQueryKind;
+  revision: ReportRevision;
+  serializedRequest: string;
+}
+
+type RevisionQueryExecutionResult = { ok: true; serializedPayload: string } | { message: string; ok: false };
+
+export interface RevisionQueryRunnerDependencies {
+  execute(request: RevisionQueryExecutionRequest): Promise<RevisionQueryExecutionResult>;
+}
+
 const configuredRoot = process.env.AI_USAGE_ROOT_DIR;
 const { revisionQueryRunner, rootDir } = resolveReportRuntimePaths({
   cwd: process.cwd(),
@@ -65,12 +90,30 @@ const { revisionQueryRunner, rootDir } = resolveReportRuntimePaths({
 
 const jsonValue = (serialized: string): unknown => JSON.parse(serialized);
 
+const defaultDependencies: RevisionQueryRunnerDependencies = {
+  execute: async ({ kind, revision, serializedRequest }) => {
+    const lease = await withReportRevisionQueryLeaseForServer(revision, async (revisionDirectory) => {
+      const result = await runBoundedArtifactProcess({
+        args: [revisionQueryRunner, revisionDirectory, kind, serializedRequest],
+        command: 'bun',
+        cwd: rootDir,
+      });
+      return result.serializedPayload;
+    });
+    if (!lease.ok) {
+      return { message: lease.error.message, ok: false };
+    }
+    return { ok: true, serializedPayload: lease.value };
+  },
+};
+
 const revisionQuerySpecs: {
   breakdown: RevisionQuerySpec<FocusedBreakdownResult>;
   'campaign-children': RevisionQuerySpec<SessionCampaignChildrenResult>;
   neighbors: RevisionQuerySpec<SessionNeighborResult>;
   overview: RevisionQuerySpec<FocusedOverviewResult>;
   sessions: RevisionQuerySpec<SessionPageResult>;
+  'session-detail-anchor': RevisionQuerySpec<SessionDetailAnchorResult>;
   support: RevisionQuerySpec<FocusedSupportResult>;
 } = {
   breakdown: {
@@ -102,6 +145,17 @@ const revisionQuerySpecs: {
         fingerprint: sessionNeighborFingerprint(request),
         parseResult: (serialized) => parseSessionNeighborResult(jsonValue(serialized), request),
         revision: parseReportRevision(request.query.revision),
+        serializedRequest: JSON.stringify(request),
+      };
+    },
+  },
+  'session-detail-anchor': {
+    parse: (input) => {
+      const request = parseSessionDetailRequest(input);
+      return {
+        fingerprint: sessionDetailRequestFingerprint(request),
+        parseResult: (serialized) => parseSessionDetailAnchorResult(jsonValue(serialized), request),
+        revision: parseReportRevision(request.revision),
         serializedRequest: JSON.stringify(request),
       };
     },
@@ -154,6 +208,11 @@ export function runRevisionQueryForServer(
   input: SessionNeighborRequest,
 ): Promise<SessionQueryServerResult<SessionNeighborResult>>;
 export function runRevisionQueryForServer(
+  kind: 'session-detail-anchor',
+  input: SessionDetailRequest,
+  dependencies?: RevisionQueryRunnerDependencies,
+): Promise<SessionQueryServerResult<SessionDetailAnchorResult>>;
+export function runRevisionQueryForServer(
   kind: 'overview',
   input: FocusedOverviewRequest,
 ): Promise<SessionQueryServerResult<FocusedOverviewResult>>;
@@ -168,27 +227,25 @@ export function runRevisionQueryForServer(
 export async function runRevisionQueryForServer(
   kind: RevisionQueryKind,
   input: unknown,
+  dependencies: RevisionQueryRunnerDependencies = defaultDependencies,
 ): Promise<SessionQueryServerResult<RevisionQueryResult>> {
   const request = revisionQuerySpecs[kind].parse(input);
   try {
-    const lease = await withReportRevisionDirectoryForServer(request.revision, async (revisionDirectory) => {
-      const result = await runBoundedArtifactProcess({
-        args: [revisionQueryRunner, revisionDirectory, kind, request.serializedRequest],
-        command: 'bun',
-        cwd: rootDir,
-      });
-      return request.parseResult(result.serializedPayload);
+    const execution = await dependencies.execute({
+      kind,
+      revision: request.revision,
+      serializedRequest: request.serializedRequest,
     });
-    if (!lease.ok) {
+    if (!execution.ok) {
       return {
-        error: { message: lease.error.message, revision: request.revision, tag: 'RevisionExpired' },
+        error: { message: execution.message, revision: request.revision, tag: 'RevisionExpired' },
         ok: false,
         requestFingerprint: request.fingerprint,
         revision: request.revision,
       };
     }
     return {
-      data: lease.value,
+      data: request.parseResult(execution.serializedPayload),
       ok: true,
       requestFingerprint: request.fingerprint,
       revision: request.revision,

@@ -12,8 +12,10 @@
     "./facets": "./src/facets.ts",
     "./local-history": "./src/local-history.ts",
     "./machine-config": "./src/machine-config.ts",
+    "./opencode-history": "./src/opencode-history.ts",
     "./platform-paths": "./src/platform-paths.ts",
-    "./rtk-enrichment": "./src/rtk-enrichment.ts"
+    "./rtk-enrichment": "./src/rtk-enrichment.ts",
+    "./test-fixtures/harness-home": "./src/test-fixtures/harness-home.ts"
   },
   "dependencies": {
     "@ai-usage/skills": "workspace:*",

@@ -1,5 +1,5 @@
 import { Drawer } from '@ai-usage/design-system';
-import { cx } from '@ai-usage/design-system/css';
+import { css, cx } from '@ai-usage/design-system/css';
 import {
   detailItem,
   detailLabel,
@@ -21,11 +21,18 @@ import {
   ghostButton,
   muted,
 } from '@ai-usage/design-system/report';
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import type { SessionDetailResponse } from '@ai-usage/report-core/session-detail';
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import type { CampaignTotals, CampaignView } from './dashboard-model';
 import type { FieldFilterKey } from './dashboard-search';
 import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from './dashboard-sort';
+import { SessionAnalysis } from './session-analysis';
+import { classifySessionAnalysisError, type SessionAnalysisError } from './session-analysis-error';
+import { sessionDurationSemantics } from './session-analysis-model';
+import type { SessionAnalysisTarget } from './session-analysis-target';
+import { canAnalyzeSession, loadSessionDetail } from './session-detail-client';
 import {
+  apiValuePresentation,
   type DashboardRow,
   fmtCompact,
   fmtDate,
@@ -37,7 +44,6 @@ import {
   rowKey,
   SegmentBar,
   tokenSegmentClasses,
-  UNKNOWN_PRICE_HINT,
 } from './shared';
 
 const DetailItem = (props: { label: string; value: string; hint?: string }) => (
@@ -47,23 +53,30 @@ const DetailItem = (props: { label: string; value: string; hint?: string }) => (
   </div>
 );
 
+const analysisDrawer = css({ w: { base: '100vw', md: 'min(960px, 94vw)' } });
+const SESSION_ANALYSIS_PANEL_ID = 'session-analysis-panel';
+
 const fmtRatio = (ratio: number) => (ratio >= 10 ? `${Math.round(ratio)}×` : `${ratio.toFixed(1)}×`);
 
-const fmtCampaignTotals = (totals: CampaignTotals) =>
-  [
-    `${fmtMoney(totals.totalCost)} API`,
+const fmtCampaignTotals = (totals: CampaignTotals) => {
+  const apiValue = apiValuePresentation({ costApprox: totals.totalCost, costKnown: totals.costKnown });
+  return [
+    `${apiValue.label} API`,
     `${fmtCompact(totals.freshTokens)} fresh tokens`,
     `${fmtNum(totals.turns)} turns`,
     `${fmtNum(totals.tools)} tools`,
   ].join(' · ');
+};
 
-const campaignSessionSummary = (row: DashboardRow) =>
-  [
-    row.costKnown ? fmtMoney(row.costApprox) : '— API',
+const campaignSessionSummary = (row: DashboardRow) => {
+  const apiValue = apiValuePresentation(row);
+  return [
+    `${apiValue.label} API`,
     `${fmtCompact(row.freshTokens)} fresh`,
     `${fmtNum(row.turns)} turns`,
     `${fmtNum(row.tools)} tools`,
   ].join(' · ');
+};
 
 export const SessionDrawer = (props: {
   onClose: () => void;
@@ -77,13 +90,90 @@ export const SessionDrawer = (props: {
     previous: DashboardRow | null;
     total: number;
   };
+  revision: string | null;
   row: DashboardRow;
   rows: DashboardRow[];
   selectedCampaign?: CampaignView | null;
+  target: SessionAnalysisTarget;
 }) => {
   let closeButton: HTMLButtonElement | undefined;
   const previousFocus = typeof document === 'undefined' ? null : document.activeElement;
   const [showAllCampaignSessions, setShowAllCampaignSessions] = createSignal(false);
+  const [analysisOpen, setAnalysisOpen] = createSignal(false);
+  const [analysisLoading, setAnalysisLoading] = createSignal(false);
+  const [analysisResponse, setAnalysisResponse] = createSignal<SessionDetailResponse | null>(null);
+  const [analysisError, setAnalysisError] = createSignal<SessionAnalysisError | null>(null);
+  let analysisPanel: HTMLDivElement | undefined;
+  let analysisSequence = 0;
+
+  createEffect(() => {
+    rowKey(props.row);
+    analysisSequence += 1;
+    setAnalysisOpen(false);
+    setAnalysisLoading(false);
+    setAnalysisResponse(null);
+    setAnalysisError(null);
+  });
+
+  onCleanup(() => {
+    analysisSequence += 1;
+  });
+
+  const loadAnalysis = async (): Promise<void> => {
+    const sequence = ++analysisSequence;
+    setAnalysisLoading(true);
+    setAnalysisResponse(null);
+    setAnalysisError(null);
+    try {
+      const revision = props.revision;
+      if (!revision) {
+        throw new Error('A served report revision is required for session analysis.');
+      }
+      const response = await loadSessionDetail({ revision, rowId: props.target.reportRowId });
+      if (sequence === analysisSequence) {
+        setAnalysisResponse(response);
+      }
+    } catch (error) {
+      if (sequence === analysisSequence) {
+        setAnalysisError(classifySessionAnalysisError(error));
+      }
+    } finally {
+      if (sequence === analysisSequence) {
+        setAnalysisLoading(false);
+      }
+    }
+  };
+
+  const toggleAnalysis = async (): Promise<void> => {
+    if (analysisOpen()) {
+      analysisSequence += 1;
+      setAnalysisOpen(false);
+      setAnalysisLoading(false);
+      setAnalysisResponse(null);
+      setAnalysisError(null);
+      return;
+    }
+    setAnalysisOpen(true);
+    const requestSequence = analysisSequence + 1;
+    await loadAnalysis();
+    if (analysisOpen() && requestSequence === analysisSequence) {
+      analysisPanel?.scrollIntoView({ block: 'nearest' });
+    }
+  };
+
+  const analysisButtonLabel = (): string => {
+    if (analysisOpen()) {
+      return 'Hide analysis';
+    }
+    return props.target.kind === 'session' ? 'Analyze' : 'Analyze root';
+  };
+
+  const analysisButtonAriaLabel = (): string => {
+    if (analysisOpen()) {
+      return 'Hide session chronology';
+    }
+    return props.target.kind === 'session' ? 'Analyze session chronology' : 'Analyze root session chronology';
+  };
 
   const position = createMemo(() => props.rows.findIndex((row) => rowKey(row) === rowKey(props.row)));
   const medianCost = createMemo(() =>
@@ -96,6 +186,9 @@ export const SessionDrawer = (props: {
     props.row.costKnown && props.row.costApprox > 0 && medianCost() > 0 ? props.row.costApprox / medianCost() : null;
   const durationRatio = () =>
     (props.row.durationMs ?? 0) > 0 && medianDuration() > 0 ? (props.row.durationMs ?? 0) / medianDuration() : null;
+  const apiValue = () => apiValuePresentation(props.row);
+  const durationSemantics = () =>
+    sessionDurationSemantics(props.row.source?.harnessKey, props.target.kind === 'campaign-root');
   const isInNavigation = () => position() >= 0;
   const previousAvailable = () =>
     props.navigation ? props.navigation.previous !== null : isInNavigation() && position() > 0;
@@ -126,7 +219,7 @@ export const SessionDrawer = (props: {
     <Drawer
       closeOnInteractOutside
       contentAriaLabel="Session details"
-      contentClass={drawer}
+      contentClass={analysisOpen() ? cx(drawer, analysisDrawer) : drawer}
       finalFocusEl={() => (previousFocus instanceof HTMLElement && previousFocus.isConnected ? previousFocus : null)}
       initialFocusEl={() => closeButton ?? null}
       modal={false}
@@ -168,6 +261,18 @@ export const SessionDrawer = (props: {
           >
             ↓
           </button>
+          <Show when={canAnalyzeSession({ revision: props.revision, rowId: props.target.reportRowId })}>
+            <button
+              aria-controls={SESSION_ANALYSIS_PANEL_ID}
+              aria-expanded={analysisOpen()}
+              aria-label={analysisButtonAriaLabel()}
+              class={ghostButton}
+              onClick={() => toggleAnalysis()}
+              type="button"
+            >
+              {analysisButtonLabel()}
+            </button>
+          </Show>
           <button
             aria-label="Close session details"
             class={drawerClose}
@@ -268,11 +373,7 @@ export const SessionDrawer = (props: {
           <DetailItem label="Ended" value={fmtDate(props.row.endDate)} />
           <DetailItem label="Total tokens" value={fmtNum(props.row.tokenTotal)} />
           <DetailItem hint={rtkSavedTitle(props.row)} label="RTK savings" value={rtkSavedLabel(props.row)} />
-          <DetailItem
-            hint={props.row.costKnown ? 'Estimated cost at standard API prices' : UNKNOWN_PRICE_HINT}
-            label="API value"
-            value={props.row.costKnown ? fmtMoney(props.row.costApprox) : '—'}
-          />
+          <DetailItem hint={apiValue().title} label="API value" value={apiValue().label} />
           <DetailItem
             hint="Out-of-pocket spend — $0.00 means covered by a subscription"
             label="Actual cost"
@@ -286,7 +387,11 @@ export const SessionDrawer = (props: {
           <DetailItem label="Calls" value={fmtNum(props.row.calls)} />
           <DetailItem label="Turns" value={fmtNum(props.row.turns)} />
           <DetailItem label="Tools" value={fmtNum(props.row.tools)} />
-          <DetailItem label="Duration" value={fmtDuration(props.row.durationMs)} />
+          <DetailItem
+            hint={durationSemantics().metricHint}
+            label={durationSemantics().metricLabel}
+            value={fmtDuration(props.row.durationMs)}
+          />
           <DetailItem label="Lines" value={lineDeltaLabel(props.row)} />
           <DetailItem label="Subagent" value={props.row.subagent ? 'Yes' : 'No'} />
           <Show when={props.row.partial}>
@@ -319,6 +424,23 @@ export const SessionDrawer = (props: {
             Filter model: {props.row.modelKey}
           </button>
         </div>
+        <Show when={analysisOpen()}>
+          <div
+            id={SESSION_ANALYSIS_PANEL_ID}
+            ref={(element) => {
+              analysisPanel = element;
+            }}
+          >
+            <SessionAnalysis
+              error={analysisError()}
+              harnessKey={props.row.source?.harnessKey ?? ''}
+              loading={analysisLoading()}
+              onRetry={loadAnalysis}
+              response={analysisResponse()}
+              target={props.target}
+            />
+          </div>
+        </Show>
       </div>
     </Drawer>
   );

@@ -4,6 +4,7 @@ import {
   parseFocusedRevisionRequest,
 } from '@ai-usage/report-core/focused-report-query';
 import { parseProjectGroupConfigs } from '@ai-usage/report-core/project-group';
+import { parseSessionDetailRequest } from '@ai-usage/report-core/session-detail';
 import {
   parseSessionCampaignChildrenRequest,
   parseSessionNeighborRequest,
@@ -47,6 +48,21 @@ export const applySourceControlCommand = createServerFn({ method: 'POST' })
       throw trustFailure;
     }
     return await sourceControlApi.applySourceControlCommandForServer(data);
+  });
+
+export const getReportSessionDetail = createServerFn({ method: 'POST' })
+  .validator(parseSessionDetailRequest)
+  .handler(async ({ data }) => {
+    const [{ getRequest }, { validateTrustedLocalRequest }, sessionDetailApi] = await Promise.all([
+      import('@tanstack/solid-start/server'),
+      import('./local-request-trust.server'),
+      import('./session-detail.server'),
+    ]);
+    const trustFailure = validateTrustedLocalRequest(getRequest());
+    if (trustFailure) {
+      throw trustFailure;
+    }
+    return await sessionDetailApi.getLocalSessionDetailForServer(data);
   });
 
 export const getReportRevisionManifest = createServerFn({ method: 'GET' }).handler(() =>

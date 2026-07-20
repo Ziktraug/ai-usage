@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { MAX_SESSION_QUERY_RESULT_BYTES } from './report-budgets';
 import type { SerializedRow } from './report-data';
+import { parseSessionDetailRequest } from './session-detail';
 import {
   compareSessionPresentationRows,
   enrichSessionPresentationRow,
@@ -23,10 +24,13 @@ import {
   sessionQueryFingerprint,
   sessionQueryNextCursor,
   sessionQueryPageOffset,
+  sessionRowIdentity,
   sessionSortFields,
   sortValueForSessionColumn,
 } from './session-query';
 
+const MINUTE_MS = 60_000;
+const SESSION_ROW_ID_PATTERN = /^session-row-v1:[a-f0-9]{16}$/;
 const baseRow: SerializedRow = {
   activeDate: '2026-06-10T12:00:00.000Z',
   calls: 1,
@@ -149,7 +153,7 @@ describe('session query contracts', () => {
       17,
       20,
       25,
-      Number.NEGATIVE_INFINITY,
+      1,
       Number.NEGATIVE_INFINITY,
       0,
       0,
@@ -161,6 +165,12 @@ describe('session query contracts', () => {
       1,
       1,
     ]);
+    expect(
+      sortValueForSessionColumn(
+        enrichSessionPresentationRow(row('Unknown price', { costApprox: 0, costKnown: false })),
+        'cost',
+      ),
+    ).toBe(Number.NEGATIVE_INFINITY);
   });
 
   test('builds stable JSON-safe presentation identity and search fields', () => {
@@ -171,12 +181,52 @@ describe('session query contracts', () => {
     expect(first).toEqual(second);
     expect(first.activeTime).toBe(Date.parse('2026-06-10T12:00:00.000Z'));
     expect(first.modelKey).toBe('gpt-5.4');
-    expect(first.modelLabel).toBe('gpt-5.4 + gpt-5.4-mini');
+    expect(first.modelLabel).toBe('gpt-5.4 → gpt-5.4-mini');
+    expect(first.sortModel).toBe('gpt-5.4');
     expect(first.providerDisplay).toBe('Codex API');
-    expect(first.rowId).toContain('machine-a|source-a');
+    expect(first.rowId).toMatch(SESSION_ROW_ID_PATTERN);
     expect(first.searchText).toContain('source-a alpha repo');
-    expect(first.searchText).toContain('gpt-5.4 + gpt-5.4-mini');
+    expect(first.searchText).toContain('gpt-5.4 → gpt-5.4-mini');
     expect(JSON.parse(JSON.stringify(first))).toEqual(first);
+  });
+
+  test('builds bounded unambiguous row identities accepted by session detail', () => {
+    const longProject = 'project/'.repeat(100);
+    const longLabel = 'session '.repeat(100);
+    const identity = sessionRowIdentity(
+      sourcedRow('source-a', {
+        name: longLabel,
+        project: longProject,
+        sessionLabel: longLabel,
+      }),
+    );
+    const delimiterVariant = sessionRowIdentity(
+      sourcedRow('source|a', {
+        project: 'alpha',
+        provider: 'Codex API',
+      }),
+    );
+    const shiftedDelimiterVariant = sessionRowIdentity(
+      sourcedRow('source', {
+        project: 'alpha',
+        provider: 'a|Codex API',
+      }),
+    );
+
+    expect(identity).toMatch(SESSION_ROW_ID_PATTERN);
+    expect(parseSessionDetailRequest({ revision: 'revision-1', rowId: identity })).toEqual({
+      revision: 'revision-1',
+      rowId: identity,
+    });
+    expect(delimiterVariant).not.toBe(shiftedDelimiterVariant);
+
+    const firstSource = sessionRowIdentity(
+      row('source-less', { projectSourceId: 'source:first', rawProject: 'shared-project' }),
+    );
+    const secondSource = sessionRowIdentity(
+      row('source-less', { projectSourceId: 'source:second', rawProject: 'shared-project' }),
+    );
+    expect(firstSource).not.toBe(secondSource);
   });
 
   test('strictly validates and canonically normalizes query inputs', () => {
@@ -262,9 +312,10 @@ describe('session query contracts', () => {
     const first = enrichSessionPresentationRow(sourcedRow('a'));
     const second = enrichSessionPresentationRow(sourcedRow('b'));
     const comparator = compareSessionPresentationRows([{ desc: true, id: 'cost' }]);
+    const forward = comparator(first, second);
 
-    expect(comparator(first, second)).toBeLessThan(0);
-    expect(comparator(second, first)).toBeGreaterThan(0);
+    expect(forward).not.toBe(0);
+    expect(comparator(second, first)).toBe(-forward);
   });
 
   test('applies presentation, machine, harness, field, and inclusive range filters together', () => {
@@ -292,6 +343,62 @@ describe('session query contracts', () => {
     expect(page.items.map((item) => item.row.sessionLabel)).toEqual(['matching']);
     expect(page.itemCount).toBe(1);
     expect(page.sessionCount).toBe(1);
+  });
+
+  test('matches a model filter against secondary segmented and legacy observations', () => {
+    const mixed = sourcedRow('mixed-model', {
+      costApprox: 3,
+      freshTokens: 30,
+      model: 'gpt-5.4',
+      models: ['gpt-5.4', 'claude-sonnet-4-6'],
+      modelSegments: [
+        {
+          costApprox: 2,
+          costKnown: true,
+          model: 'gpt-5.4',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 10,
+          tokOut: 0,
+        },
+        {
+          costApprox: 1,
+          costKnown: true,
+          model: 'claude-sonnet-4-6',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 0,
+          tokOut: 20,
+        },
+      ],
+      tokCr: 0,
+      tokCw: 0,
+      tokIn: 10,
+      tokOut: 20,
+      tokenTotal: 30,
+    });
+
+    const page = projectSessionPage(
+      [mixed],
+      defaultRequest({
+        campaigns: false,
+        filters: { fields: { model: 'claude-sonnet-4-6' }, harness: [], machine: [], query: '' },
+      }),
+    );
+    const legacy = sourcedRow('legacy-mixed-model', {
+      model: 'gpt-5.4',
+      models: ['gpt-5.4', 'claude-sonnet-4-6'],
+    });
+    const legacyPage = projectSessionPage(
+      [legacy],
+      defaultRequest({
+        campaigns: false,
+        filters: { fields: { model: 'claude-sonnet-4-6' }, harness: [], machine: [], query: '' },
+      }),
+    );
+
+    expect(page.items.map((item) => item.row.sessionLabel)).toEqual(['mixed-model']);
+    expect(legacyPage.items.map((item) => item.row.sessionLabel)).toEqual(['legacy-mixed-model']);
   });
 
   test('projects bounded top-level pages with campaign and underlying session counts', () => {
@@ -326,6 +433,103 @@ describe('session query contracts', () => {
     expect(second.items.map((item) => item.row.sessionLabel)).toEqual(['standalone-b']);
     expect(second.nextCursor).toBeNull();
     expect(second.requestFingerprint).toBe(first.requestFingerprint);
+  });
+
+  test('uses root duration and model identity for campaigns with overlapping child rollouts', () => {
+    const rootDurationMinutes = 517;
+    const childDurationsMinutes = [300, 126];
+    const root = sourcedRow('campaign-root', {
+      activeDate: '2026-06-10T12:00:00.000Z',
+      durationMs: rootDurationMinutes * MINUTE_MS,
+      model: 'gpt-5.6-sol',
+      modelSegments: [
+        {
+          costApprox: 0.8,
+          costKnown: true,
+          model: 'gpt-5.6-sol',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 10,
+          tokOut: 5,
+        },
+        {
+          costApprox: 0.2,
+          costKnown: true,
+          model: 'gpt-5.6-terra',
+          tokCr: 3,
+          tokCw: 2,
+          tokIn: 0,
+          tokOut: 0,
+        },
+      ],
+      models: ['gpt-5.6-sol', 'gpt-5.6-terra'],
+    });
+    const children = childDurationsMinutes.map((durationMinutes, index) =>
+      sourcedRow(`campaign-child-${index}`, {
+        activeDate: `2026-06-10T1${index + 3}:00:00.000Z`,
+        durationMs: durationMinutes * MINUTE_MS,
+        model: 'gpt-5.6-terra',
+        models: ['gpt-5.6-terra'],
+        source: {
+          harnessKey: 'codex',
+          machineId: 'machine-a',
+          machineLabel: 'Machine A',
+          parentSourceSessionId: 'campaign-root',
+          rootSourceSessionId: 'campaign-root',
+          sourceSessionId: `campaign-child-${index}`,
+        },
+      }),
+    );
+    const page = projectSessionPage(
+      [root, ...children],
+      defaultRequest({ pageSize: 1, sort: [{ desc: false, id: 'model' }] }),
+    );
+    const item = page.items[0];
+    if (item?.kind !== 'campaign') {
+      throw new Error('Expected a campaign fixture');
+    }
+    const cumulativeRolloutDurationMs = [root, ...children].reduce(
+      (total, campaignRow) => total + (campaignRow.durationMs ?? 0),
+      0,
+    );
+
+    expect(cumulativeRolloutDurationMs).toBe(943 * MINUTE_MS);
+    expect(item.row.durationMs).toBe(rootDurationMinutes * MINUTE_MS);
+    expect(item.row.durationMs).not.toBe(cumulativeRolloutDurationMs);
+    expect(item.row.model).toBe('gpt-5.6-sol');
+    expect(item.row.modelSegments).toBeUndefined();
+    expect(item.row.models).toEqual(['gpt-5.6-sol', 'gpt-5.6-terra']);
+    expect(item.row.modelLabel).toBe('gpt-5.6-sol → gpt-5.6-terra');
+    expect(item.row.modelKey).toBe('gpt-5.6-sol');
+    expect(item.row.sortModel).toBe('gpt-5.6-sol');
+    expect(sortValueForSessionColumn(item.row, 'model')).toBe('gpt-5.6-sol');
+  });
+
+  test('keeps the known API-value subtotal when one campaign rollout has incomplete pricing', () => {
+    const root = sourcedRow('campaign-root', { costApprox: 68.09 });
+    const partiallyPricedChild = sourcedRow('campaign-child', {
+      costApprox: 1.21,
+      costKnown: false,
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        machineLabel: 'Machine A',
+        parentSourceSessionId: 'campaign-root',
+        rootSourceSessionId: 'campaign-root',
+        sourceSessionId: 'campaign-child',
+      },
+    });
+    const page = projectSessionPage(
+      [root, partiallyPricedChild],
+      defaultRequest({ pageSize: 1, sort: [{ desc: true, id: 'cost' }] }),
+    );
+    const item = page.items[0];
+    if (item?.kind !== 'campaign') {
+      throw new Error('Expected a campaign fixture');
+    }
+
+    expect(item.row.costKnown).toBe(false);
+    expect(item.row.costApprox).toBeCloseTo(69.3);
   });
 
   test('rejects cursors issued for another validated query scope', () => {
@@ -490,10 +694,59 @@ describe('session query contracts', () => {
         ...page,
         items: [{ ...page.items[0], row: { ...page.items[0]?.row, tokenTotal: 'invalid' } }],
       },
+      {
+        ...page,
+        items: [
+          {
+            ...page.items[0],
+            row: { ...page.items[0]?.row, tokenTotal: (page.items[0]?.row.tokenTotal ?? 0) + 1 },
+          },
+        ],
+      },
     ];
     for (const result of invalidResults) {
       expect(() => parseSessionPageResult(result, request)).toThrow(SessionQueryValidationError);
     }
+    const segmentedPage = projectSessionPage(
+      [
+        sourcedRow('segmented', {
+          modelSegments: [
+            {
+              costApprox: 1,
+              costKnown: true,
+              model: 'openai/gpt-5.4-high',
+              tokCr: 3,
+              tokCw: 2,
+              tokIn: 10,
+              tokOut: 5,
+            },
+          ],
+        }),
+      ],
+      request,
+    );
+    const segmentedItem = segmentedPage.items[0];
+    if (segmentedItem?.kind !== 'session' || !segmentedItem.row.modelSegments?.[0]) {
+      throw new Error('Expected a segmented Session fixture');
+    }
+    const segment = segmentedItem.row.modelSegments[0];
+    expect(() =>
+      parseSessionPageResult(
+        {
+          ...segmentedPage,
+          items: [
+            {
+              ...segmentedItem,
+              row: {
+                ...segmentedItem.row,
+                modelSegments: [{ ...segment, tokIn: segment.tokIn + 1 }],
+              },
+            },
+          ],
+        },
+        request,
+      ),
+    ).toThrow(SessionQueryValidationError);
     expect(() =>
       parseSessionPageServerResult(
         {

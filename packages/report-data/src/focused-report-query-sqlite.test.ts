@@ -40,7 +40,7 @@ const row = (name: string, day: number, cost: number): SerializedRow => ({
   date: `2026-07-0${day}T09:00:00.000Z`,
   durationMs: day * 60_000,
   endDate: `2026-07-0${day}T10:00:00.000Z`,
-  freshTokens: day * 10,
+  freshTokens: day * 3,
   harness: day % 2 ? 'Codex' : 'Claude Code',
   lineDelta: day,
   linesAdded: day,
@@ -67,7 +67,7 @@ const row = (name: string, day: number, cost: number): SerializedRow => ({
   turns: day,
 });
 
-const rows = [row('one', 1, 1), row('two', 2, 2), row('three', 3, 3), row('four', 4, 4)];
+const rows = [row('one', 1, 1), { ...row('two', 2, 2), costKnown: false }, row('three', 3, 3), row('four', 4, 4)];
 const support: FocusedReportSupport = {
   analytics: {
     averageDurationMs: null,
@@ -127,6 +127,13 @@ describe('focused report SQLite queries', () => {
       expect('dateDomain' in overview ? overview.dateDomain : undefined).toEqual({
         first: '2026-07-01T10:00:00.000Z',
         last: '2026-07-04T10:00:00.000Z',
+      });
+      if (!('view' in overview)) {
+        throw new Error('The focused Overview query must return an Overview result');
+      }
+      expect(overview.view.topSessions.find(({ kind }) => kind === 'campaign')).toMatchObject({
+        costApprox: 2,
+        costKnown: false,
       });
       expect(overviewTrace).toHaveLength(2);
       expect(overviewTrace.some((sql) => sql.includes('source_row_json'))).toBe(false);
@@ -213,6 +220,273 @@ describe('focused report SQLite queries', () => {
       expect(overview.dateDomain).toBeNull();
       expect(overview.timeline).toBeNull();
       expect(overview.summary.sessionCount).toBe(undatedRows.length);
+    } finally {
+      database.close();
+    }
+  });
+
+  test('matches segmented model filters, timeline, and Breakdown projections', async () => {
+    const segmentedRow: SerializedRow = {
+      ...row('multi-model', 3, 6),
+      freshTokens: 77,
+      model: 'gpt-5.4-high',
+      modelSegments: [
+        {
+          costApprox: 0.5,
+          costKnown: true,
+          model: 'gpt-5.4-high',
+          tokCr: 1,
+          tokCw: 1,
+          tokIn: 1,
+          tokOut: 1,
+        },
+        {
+          costApprox: 1.5,
+          costKnown: true,
+          model: 'gpt-5.4-fast',
+          tokCr: 2,
+          tokCw: 3,
+          tokIn: 0,
+          tokOut: 1,
+        },
+        {
+          costApprox: 4,
+          costKnown: true,
+          model: 'claude-opus-4-6',
+          tokCr: 30,
+          tokCw: 40,
+          tokIn: 10,
+          tokOut: 20,
+        },
+      ],
+      models: ['gpt-5.4-high', 'gpt-5.4-fast', 'claude-opus-4-6'],
+      tokCr: 33,
+      tokCw: 44,
+      tokIn: 11,
+      tokOut: 22,
+      tokenTotal: 110,
+    };
+    const fixtureRows = [segmentedRow, { ...row('single-model', 4, 1), model: 'gpt-4.1' }];
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-model-segments-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    await materializeSessionQueryDatabase(revisionDirectory, fixtureRows, support);
+    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), { readonly: true });
+    assertSessionQueryDatabase(database);
+    const request: FocusedOverviewRequest = {
+      includeAdvanced: false,
+      query: {
+        filters: {
+          fields: { model: 'claude-opus-4-6' },
+          harness: [],
+          machine: [],
+          query: '',
+        },
+        range: { from: null, to: null },
+        revision: 'revision-segmented',
+      },
+      timeline: { dimension: 'model', granularity: 'day' },
+    };
+    try {
+      const overview = executeFocusedReportQuery(database, 'overview', request);
+      expect(overview).toEqual(projectFocusedOverview(fixtureRows, support, request));
+      if (!('timeline' in overview) || overview.timeline === null) {
+        throw new Error('The segmented focused query must return an Overview timeline');
+      }
+      expect(overview.summary.sessionCount).toBe(1);
+      expect(overview.timeline.series).toEqual([
+        { key: 'claude-opus-4-6', label: 'claude-opus-4-6', sessions: 0, total: 4 },
+        { key: 'gpt-5.4', label: 'gpt-5.4', sessions: 1, total: 2 },
+      ]);
+      expect(overview.timeline.grandSessions).toBe(1);
+      expect(overview.timeline.buckets[0]?.sessions).toBe(1);
+
+      const breakdownRequest = { query: request.query };
+      const breakdown = executeFocusedReportQuery(database, 'breakdown', breakdownRequest);
+      expect(breakdown).toEqual(projectFocusedBreakdown(fixtureRows, support, breakdownRequest));
+      if (!('groups' in breakdown)) {
+        throw new Error('The segmented focused query must return Breakdown groups');
+      }
+      expect(
+        breakdown.groups.models.map(({ cache, costSum, inp, key, lineCount, sessions, tools, turns }) => ({
+          cache,
+          costSum,
+          inp,
+          key,
+          lineCount,
+          sessions,
+          tools,
+          turns,
+        })),
+      ).toEqual([
+        {
+          cache: 30,
+          costSum: 4,
+          inp: 10,
+          key: 'claude-opus-4-6',
+          lineCount: 0,
+          sessions: 1,
+          tools: 0,
+          turns: 0,
+        },
+        {
+          cache: 3,
+          costSum: 2,
+          inp: 1,
+          key: 'gpt-5.4',
+          lineCount: 0,
+          sessions: 1,
+          tools: 0,
+          turns: 0,
+        },
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  test('keeps partial API-value lower bounds dimension-invariant in SQLite timelines', async () => {
+    const partialRow: SerializedRow = {
+      ...row('partially-priced-models', 3, 2),
+      costActual: null,
+      costKnown: false,
+      freshTokens: 2,
+      model: 'gpt-5.4-high',
+      modelSegments: [
+        {
+          costApprox: 2,
+          costKnown: true,
+          model: 'gpt-5.4-high',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 1,
+          tokOut: 0,
+        },
+        {
+          costApprox: 0,
+          costKnown: false,
+          model: 'gpt-5.4-fast',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 0,
+          tokOut: 1,
+        },
+      ],
+      models: ['gpt-5.4-high', 'gpt-5.4-fast'],
+      tokCr: 0,
+      tokCw: 0,
+      tokIn: 1,
+      tokOut: 1,
+      tokenTotal: 2,
+    };
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-partial-model-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    await materializeSessionQueryDatabase(revisionDirectory, [partialRow], support);
+    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), { readonly: true });
+    assertSessionQueryDatabase(database);
+    const modelRequest: FocusedOverviewRequest = {
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+      timeline: { dimension: 'model', granularity: 'day' },
+    };
+    const providerRequest: FocusedOverviewRequest = {
+      ...modelRequest,
+      timeline: { dimension: 'provider', granularity: 'day' },
+    };
+    try {
+      const modelOverview = executeFocusedReportQuery(database, 'overview', modelRequest);
+      const providerOverview = executeFocusedReportQuery(database, 'overview', providerRequest);
+      const breakdownRequest = { query: modelRequest.query };
+      const breakdown = executeFocusedReportQuery(database, 'breakdown', breakdownRequest);
+
+      expect(modelOverview).toEqual(projectFocusedOverview([partialRow], support, modelRequest));
+      expect(providerOverview).toEqual(projectFocusedOverview([partialRow], support, providerRequest));
+      expect(breakdown).toEqual(projectFocusedBreakdown([partialRow], support, breakdownRequest));
+      expect('timeline' in modelOverview ? modelOverview.timeline?.grandTotal : null).toBe(0);
+      expect('timeline' in providerOverview ? providerOverview.timeline?.grandTotal : null).toBe(0);
+      expect('groups' in breakdown ? breakdown.groups.models[0] : null).toMatchObject({
+        costPerSession: null,
+        costSum: 2,
+        key: 'gpt-5.4',
+        priced: 0,
+        unpriced: 1,
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  test('orders equal model aggregates deterministically across pure and SQLite projections', async () => {
+    const tieRows = [
+      { ...row('z-row', 1, 1), model: 'z-model' },
+      { ...row('a-row', 1, 1), model: 'a-model' },
+      { ...row('accent-row', 1, 1), model: 'ä-model' },
+    ];
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-model-ties-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    await materializeSessionQueryDatabase(revisionDirectory, tieRows, support);
+    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), { readonly: true });
+    assertSessionQueryDatabase(database);
+    const request: FocusedOverviewRequest = {
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+      timeline: { dimension: 'model', granularity: 'day' },
+    };
+    const breakdownRequest = { query: request.query };
+    try {
+      const overview = executeFocusedReportQuery(database, 'overview', request);
+      const breakdown = executeFocusedReportQuery(database, 'breakdown', breakdownRequest);
+
+      expect(overview).toEqual(projectFocusedOverview(tieRows, support, request));
+      expect(breakdown).toEqual(projectFocusedBreakdown(tieRows, support, breakdownRequest));
+      expect('timeline' in overview ? overview.timeline?.series.map(({ key }) => key) : []).toEqual([
+        'a-model',
+        'z-model',
+        'ä-model',
+      ]);
+      expect('groups' in breakdown ? breakdown.groups.models.map(({ key }) => key) : []).toEqual([
+        'a-model',
+        'z-model',
+        'ä-model',
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  test('filters legacy multi-model sessions by observed models without inventing attribution', async () => {
+    const legacyMultiModelRow: SerializedRow = {
+      ...row('legacy-multi-model', 3, 6),
+      model: 'gpt-5.4',
+      models: ['gpt-5.4', 'claude-opus-4-6'],
+    };
+    const fixtureRows = [legacyMultiModelRow];
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-observed-models-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    await materializeSessionQueryDatabase(revisionDirectory, fixtureRows, support);
+    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), { readonly: true });
+    assertSessionQueryDatabase(database);
+    try {
+      for (const model of ['gpt-5.4', 'claude-opus-4-6']) {
+        const breakdownRequest = {
+          query: {
+            filters: { fields: { model }, harness: [], machine: [], query: '' },
+            range: { from: null, to: null },
+            revision: 'revision-legacy-models',
+          },
+        };
+        const breakdown = executeFocusedReportQuery(database, 'breakdown', breakdownRequest);
+        expect(breakdown).toEqual(projectFocusedBreakdown(fixtureRows, support, breakdownRequest));
+        if (!('groups' in breakdown)) {
+          throw new Error('The legacy multi-model query must return Breakdown groups');
+        }
+        expect(breakdown.groups.models.map(({ key, sessions }) => ({ key, sessions }))).toEqual([
+          { key: '(multi-model, unsegmented)', sessions: 1 },
+        ]);
+      }
     } finally {
       database.close();
     }

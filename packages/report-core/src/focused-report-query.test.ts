@@ -28,7 +28,7 @@ const row = (name: string, day: number, cost: number, project = 'ai-usage'): Ser
   date: `2026-07-${String(day).padStart(2, '0')}T09:00:00.000Z`,
   durationMs: day * 60_000,
   endDate: `2026-07-${String(day).padStart(2, '0')}T10:00:00.000Z`,
-  freshTokens: day * 10,
+  freshTokens: day * 3,
   harness: day % 2 === 0 ? 'Claude Code' : 'Codex',
   lineDelta: day,
   linesAdded: day,
@@ -175,6 +175,64 @@ describe('focused report query contracts', () => {
     ).toThrow('fingerprint');
   });
 
+  test('preserves known API-value subtotals and completeness for top sessions and campaigns', () => {
+    const campaignRoot = {
+      ...row('campaign-root', 2, 5),
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        machineLabel: 'Machine A',
+        rootSourceSessionId: 'campaign-root',
+        sourceSessionId: 'campaign-root',
+      },
+    };
+    const campaignChild = {
+      ...row('campaign-child', 3, 7),
+      costKnown: false,
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        machineLabel: 'Machine A',
+        parentSourceSessionId: 'campaign-root',
+        rootSourceSessionId: 'campaign-root',
+        sourceSessionId: 'campaign-child',
+      },
+    };
+    const partialSession = { ...row('partial-session', 4, 10), costKnown: false };
+
+    const result = projectFocusedOverview([campaignRoot, campaignChild, partialSession], support, overviewRequest);
+
+    expect(
+      result.view.topSessions.map(({ costApprox, costKnown, kind, label }) => ({
+        costApprox,
+        costKnown,
+        kind,
+        label,
+      })),
+    ).toEqual([
+      { costApprox: 12, costKnown: false, kind: 'campaign', label: 'campaign-root' },
+      { costApprox: 10, costKnown: false, kind: 'session', label: 'partial-session' },
+    ]);
+    expect(result.view.sessionShape).toBeNull();
+    expect(result.view.advancedSummary?.hasSessionShape).toBe(false);
+  });
+
+  test('excludes partial API-value lower bounds from exact session-shape analysis', () => {
+    const partialRows = [1, 2, 3].map((day) => ({
+      ...row(`partial-${day}`, day, day),
+      costKnown: false,
+    }));
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    };
+
+    const result = projectFocusedOverview(partialRows, support, request);
+
+    expect(result.view.sessionShape).toBeNull();
+    expect(result.view.advancedSummary?.hasSessionShape).toBe(false);
+  });
+
   test('keeps projected session-shape outliers within the transport bound', () => {
     const outlierRows = [100, 80, 60, 40, 20, 10, 1, 2, 3, 4, 5, 6].map((cost, index) =>
       row(`outlier-${index + 1}`, index + 1, cost),
@@ -204,7 +262,7 @@ describe('focused report query contracts', () => {
       expect(() => parseFocusedReportQueryResult('overview', { ...result, dateDomain }, overviewRequest)).toThrow();
     }
 
-    const undatedRows = rows.map((sourceRow) => ({ ...sourceRow, activeDate: null, date: null }));
+    const undatedRows = rows.map((sourceRow) => ({ ...sourceRow, activeDate: null, date: null, endDate: null }));
     const undatedRequest: FocusedOverviewRequest = {
       ...overviewRequest,
       query: { ...overviewRequest.query, range: { from: null, to: null } },
@@ -281,6 +339,73 @@ describe('focused report query contracts', () => {
     expect(
       parseFocusedReportQueryResult('breakdown', JSON.parse(JSON.stringify(result)), { query: overviewRequest.query }),
     ).toEqual(result);
+  });
+
+  test('uses source model segments for model filters, timelines, and breakdowns', () => {
+    const mixedModelRow: SerializedRow = {
+      ...row('mixed-model', 5, 3),
+      costApprox: 3,
+      freshTokens: 30,
+      model: 'gpt-5.4',
+      models: ['gpt-5.4', 'claude-sonnet-4-6'],
+      modelSegments: [
+        {
+          costApprox: 2,
+          costKnown: true,
+          model: 'gpt-5.4',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 10,
+          tokOut: 0,
+        },
+        {
+          costApprox: 1,
+          costKnown: true,
+          model: 'claude-sonnet-4-6',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 0,
+          tokOut: 20,
+        },
+      ],
+      tokCr: 0,
+      tokCw: 0,
+      tokIn: 10,
+      tokOut: 20,
+      tokenTotal: 30,
+    };
+    const unboundedQuery = { ...overviewRequest.query, range: { from: null, to: null } };
+
+    const overview = projectFocusedOverview([mixedModelRow], support, {
+      ...overviewRequest,
+      query: unboundedQuery,
+    });
+    const breakdown = projectFocusedBreakdown([mixedModelRow], support, { query: unboundedQuery });
+    const filtered = projectFocusedBreakdown([mixedModelRow], support, {
+      query: {
+        ...unboundedQuery,
+        filters: { ...unboundedQuery.filters, fields: { model: 'claude-sonnet-4-6' } },
+      },
+    });
+
+    expect(overview.timeline?.series.map(({ key, sessions, total }) => ({ key, sessions, total }))).toEqual([
+      { key: 'gpt-5.4', sessions: 1, total: 2 },
+      { key: 'claude-sonnet-4-6', sessions: 0, total: 1 },
+    ]);
+    expect(overview.timeline?.grandSessions).toBe(1);
+    expect(
+      breakdown.groups.models.map(({ costSum, fresh, inp, key, sessions }) => ({
+        costSum,
+        fresh,
+        inp,
+        key,
+        sessions,
+      })),
+    ).toEqual([
+      { costSum: 2, fresh: 10, inp: 10, key: 'gpt-5.4', sessions: 1 },
+      { costSum: 1, fresh: 20, inp: 0, key: 'claude-sonnet-4-6', sessions: 1 },
+    ]);
+    expect(filtered.groups.harnesses[0]?.sessions).toBe(1);
   });
 
   test('rejects malformed nested Breakdown groups and context at the transport boundary', () => {

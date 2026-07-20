@@ -17,9 +17,11 @@ import { campaignBadgeLabelForRow } from './dashboard-model';
 import type { FieldFilterKey } from './dashboard-search';
 import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle, rtkSavingsPct, sortValueForRow } from './dashboard-sort';
 import { HighlightedText } from './highlighted-text';
+import { sessionDurationSemantics } from './session-analysis-model';
 import type { SessionColumnId } from './session-table-schema';
 import { isSessionColumnVisible as isSessionColumnVisibleForSchema } from './session-table-schema';
 import {
+  apiValuePresentation,
   type DashboardRow,
   fmtCompact,
   fmtDate,
@@ -27,7 +29,6 @@ import {
   fmtMoney,
   fmtNum,
   HarnessBadge,
-  UNKNOWN_PRICE_HINT,
   UsageUnavailableCell,
 } from './shared';
 
@@ -278,13 +279,12 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => sortValueForRow(row, 'cost'),
     cell: (info) => {
       const row = info.row.original;
+      const apiValue = apiValuePresentation(row);
       return withProvenance(
         row,
         'api-value',
         <Show fallback={<UsageUnavailableCell />} when={!row.usageUnavailable}>
-          <Show fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>} when={row.costKnown}>
-            {fmtMoney(row.costApprox)}
-          </Show>
+          <span title={apiValue.title}>{apiValue.label}</span>
         </Show>,
       );
     },
@@ -341,14 +341,26 @@ export const sessionColumns: SessionColumnDef[] = [
   },
   {
     id: 'duration',
-    header: 'Duration',
+    header: 'Time',
     accessorFn: (row) => row.durationMs ?? 0,
-    cell: (info) => fmtDuration(info.row.original.durationMs),
+    cell: (info) => {
+      const row = info.row.original;
+      const rootSessionOnly = row.campaignTotalCount !== undefined;
+      const semantics = sessionDurationSemantics(row.source?.harnessKey, rootSessionOnly);
+      return withProvenance(
+        row,
+        'duration',
+        <span title={semantics.metricHint}>
+          {fmtDuration(row.durationMs)}
+          {rootSessionOnly ? ' root' : ''}
+        </span>,
+      );
+    },
     sortDescFirst: true,
     meta: {
-      label: 'Duration',
-      title: 'Wall-clock session duration',
-      widthPx: 86,
+      label: 'Recorded time',
+      title: 'Harness-specific recorded or derived time; this is not model runtime',
+      widthPx: 96,
       cellClass: numCell,
       headerClass: right,
     },

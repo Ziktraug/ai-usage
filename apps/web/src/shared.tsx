@@ -45,6 +45,7 @@ export const fmtCompact = (n: number) => {
   return fmtNum(n);
 };
 export const UNKNOWN_PRICE_HINT = 'No pricing data for this model';
+export const PARTIAL_PRICE_HINT = 'Known API-value subtotal; one or more model prices are unavailable';
 export const USAGE_UNAVAILABLE_HINT = 'Session found in prompt history; detailed local token counters are missing';
 export const fmtDate = (value: string | null) => (value ? dateTimeFormatter.format(new Date(value)) : '—');
 export const fmtDateOnly = (value: string | Date | null) =>
@@ -80,6 +81,22 @@ const OPENCODE_PROVIDER_SUFFIX = /\s*\(OC\)\s*$/;
 export const providerLabel = (provider: string) => provider.replace(OPENCODE_PROVIDER_SUFFIX, ' · via OpenCode');
 
 export type DashboardRow = SessionPresentationRow;
+
+export interface ApiValuePresentation {
+  label: string;
+  status: 'exact' | 'lower-bound' | 'unknown';
+  title: string;
+}
+
+export const apiValuePresentation = (row: { costApprox: number; costKnown: boolean }): ApiValuePresentation => {
+  if (row.costKnown) {
+    return { label: fmtMoney(row.costApprox), status: 'exact', title: 'Estimated API value at standard prices' };
+  }
+  if (row.costApprox > 0) {
+    return { label: `≥ ${fmtMoney(row.costApprox)}`, status: 'lower-bound', title: PARTIAL_PRICE_HINT };
+  }
+  return { label: '—', status: 'unknown', title: UNKNOWN_PRICE_HINT };
+};
 
 export const enrichReportRow = enrichSessionPresentationRow;
 

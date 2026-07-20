@@ -1,10 +1,10 @@
-import { modelGroupKey } from './model-identity';
 import type { Row } from './types';
 import {
   usageRowCacheReadTokens,
   usageRowFreshTokens,
   usageRowIsRecent,
   usageRowLineDelta,
+  usageRowModelContributions,
   usageRowPricedCost,
 } from './usage-row';
 
@@ -41,6 +41,8 @@ export interface AnalyticsGroup {
 export interface AnalyticsRowInput {
   ambiguous?: boolean;
   cache: number;
+  /** Known subtotal retained when the complete price is unavailable. */
+  costLowerBound?: number;
   fresh: number;
   harness: string;
   inp: number;
@@ -80,6 +82,15 @@ type GroupDraft = Omit<
   'cacheHitPct' | 'costPerSession' | 'medianCost' | 'lineCount' | 'costPer100Lines' | 'costPercent'
 > & {
   costs: number[];
+  pricedCostSum: number;
+};
+
+/** Stable, locale-independent ordering for analytics and timeline tie-breaks. */
+export const compareAnalyticsKeys = (left: string, right: string): number => {
+  if (left === right) {
+    return 0;
+  }
+  return left < right ? -1 : 1;
 };
 
 const median = (values: number[]) => {
@@ -108,12 +119,12 @@ const finishGroup = (group: GroupDraft, totalCost: number): AnalyticsGroup => {
     cache: group.cache,
     cacheHitPct: group.inp + group.cache > 0 ? (group.cache / (group.inp + group.cache)) * 100 : 0,
     costSum: group.costSum,
-    costPerSession: group.priced ? group.costSum / group.priced : null,
+    costPerSession: group.priced ? group.pricedCostSum / group.priced : null,
     medianCost: group.priced ? median(group.costs) : null,
     linesA: group.linesA,
     linesD: group.linesD,
     lineCount,
-    costPer100Lines: lineCount && group.priced ? (group.costSum / lineCount) * 100 : null,
+    costPer100Lines: lineCount && group.priced ? (group.pricedCostSum / lineCount) * 100 : null,
     costPercent: totalCost > 0 ? (group.costSum / totalCost) * 100 : 0,
     turns: group.turns,
     tools: group.tools,
@@ -151,6 +162,7 @@ export const groupAnalytics = <T>(
         cache: 0,
         costs: [],
         costSum: 0,
+        pricedCostSum: 0,
         linesA: 0,
         linesD: 0,
         turns: 0,
@@ -174,14 +186,77 @@ export const groupAnalytics = <T>(
     group.tools += input.tools;
     if (input.pricedCost == null) {
       group.unpriced++;
+      group.costSum += input.costLowerBound ?? 0;
     } else {
       group.priced++;
       group.costs.push(input.pricedCost);
       group.costSum += input.pricedCost;
+      group.pricedCostSum += input.pricedCost;
     }
   }
 
-  return [...groups.values()].map((group) => finishGroup(group, totalCost)).sort((a, b) => b.costSum - a.costSum);
+  return [...groups.values()]
+    .map((group) => finishGroup(group, totalCost))
+    .sort((a, b) => b.costSum - a.costSum || compareAnalyticsKeys(a.key, b.key));
+};
+
+type ModelAnalyticsSourceRow = Pick<
+  Row,
+  | 'ambiguous'
+  | 'costApprox'
+  | 'costKnown'
+  | 'harness'
+  | 'model'
+  | 'modelSegments'
+  | 'models'
+  | 'provider'
+  | 'tokCr'
+  | 'tokCw'
+  | 'tokIn'
+  | 'tokOut'
+  | 'usageUnavailable'
+>;
+
+interface ModelAnalyticsItem {
+  key: string;
+  row: ModelAnalyticsSourceRow;
+  segment: {
+    costApprox: number;
+    costKnown: boolean;
+    tokCr: number;
+    tokCw: number;
+    tokIn: number;
+    tokOut: number;
+  };
+}
+
+const modelAnalyticsItemsForRow = (row: ModelAnalyticsSourceRow): ModelAnalyticsItem[] =>
+  usageRowModelContributions(row).map(({ key, ...segment }) => ({ key, row, segment }));
+
+/** Groups tokens and API value by the model segment that produced them. */
+export const groupModelAnalytics = <T extends ModelAnalyticsSourceRow>(rows: readonly T[]): AnalyticsGroup[] => {
+  const items = rows.flatMap(modelAnalyticsItemsForRow);
+  const totalCost = items.reduce((total, { segment }) => total + segment.costApprox, 0);
+  return groupAnalytics(
+    items,
+    ({ row, segment }) => ({
+      ambiguous: row.ambiguous ?? false,
+      cache: segment.tokCr,
+      costLowerBound: segment.costApprox,
+      fresh: segment.tokIn + segment.tokOut + segment.tokCw,
+      harness: row.harness,
+      inp: segment.tokIn,
+      linesAdded: 0,
+      linesDeleted: 0,
+      pricedCost: segment.costKnown ? segment.costApprox : null,
+      provider: row.provider,
+      tools: 0,
+      turns: 0,
+      usageUnavailable: row.usageUnavailable ?? false,
+    }),
+    ({ key }) => key,
+    totalCost,
+  );
 };
 
 export const rowToAnalyticsInput = (row: Row): AnalyticsRowInput => {
@@ -238,7 +313,7 @@ export const calculateAnalytics = (rows: Row[], now = Date.now()): AnalyticsSumm
     durationRows: durationRows.length,
     averageDurationMs: durationRows.length ? durationMs / durationRows.length : null,
     recentSessions,
-    byModel: groupBy(rows, (row) => modelGroupKey(row.model), totalCost),
+    byModel: groupModelAnalytics(rows),
     byProvider: groupBy(rows, (row) => row.provider, totalCost),
     byHarness: groupBy(rows, (row) => row.harness, totalCost),
   };

@@ -6,10 +6,16 @@ import path from 'node:path';
 import { MAX_SESSION_QUERY_DATABASE_BYTES } from '@ai-usage/report-core/report-budgets';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import {
+  type SessionDetailSourceAuthority,
+  sessionDetailRequestFingerprint,
+} from '@ai-usage/report-core/session-detail';
+import {
+  compareSessionIdentityValues,
   projectSessionCampaignChildren,
   projectSessionNeighbors,
   projectSessionPage,
   type SessionQueryRequest,
+  sessionRowIdentity,
   sessionSortFields,
   sessionTextSortFields,
 } from '@ai-usage/report-core/session-query';
@@ -97,10 +103,12 @@ const campaignCostRow = (
   sourceSessionId: string,
   costApprox: number,
   campaign: { parent?: string; root: string },
+  costKnown = true,
 ): SerializedRow => ({
   ...row(sourceSessionId, 1, campaign),
   costActual: costApprox,
   costApprox,
+  costKnown,
   costQuota: costApprox,
 });
 
@@ -128,7 +136,12 @@ const createRevision = async (): Promise<string> => {
   const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-session-revision-'));
   temporaryDirectories.add(revisionDirectory);
   await chmod(revisionDirectory, 0o700);
-  await materializeSessionQueryDatabase(revisionDirectory, rows);
+  await materializeSessionQueryDatabase(
+    revisionDirectory,
+    rows,
+    undefined,
+    rows.map(() => 'local-observed'),
+  );
   return revisionDirectory;
 };
 
@@ -144,11 +157,12 @@ const openFixtureDatabase = async (): Promise<{ database: Database; revisionDire
 
 const openRowsDatabase = async (
   fixtureRows: SerializedRow[],
+  sourceAuthorities: SessionDetailSourceAuthority[] = fixtureRows.map(() => 'local-observed'),
 ): Promise<{ database: Database; revisionDirectory: string }> => {
   const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-session-parity-'));
   temporaryDirectories.add(revisionDirectory);
   await chmod(revisionDirectory, 0o700);
-  await materializeSessionQueryDatabase(revisionDirectory, fixtureRows);
+  await materializeSessionQueryDatabase(revisionDirectory, fixtureRows, undefined, sourceAuthorities);
   const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), {
     readonly: true,
     strict: true,
@@ -179,11 +193,171 @@ const runFixture = async (request: unknown, kind = 'sessions') => {
 };
 
 describe('session query SQLite materialization', () => {
+  test('rejects duplicate report row identities during materialization', async () => {
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-session-duplicate-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    const duplicate = row('duplicate-source', 10);
+
+    await expect(
+      materializeSessionQueryDatabase(revisionDirectory, [duplicate, { ...duplicate }], undefined, [
+        'local-observed',
+        'local-observed',
+      ]),
+    ).rejects.toThrow();
+  });
+
+  test('resolves exact session detail anchors and preserves nullable provenance', async () => {
+    const anchorFixture = {
+      ...row('anchor-session', 10),
+      activeDate: '2026-07-01T10:01:00.000Z',
+      freshTokens: 30,
+      lineDelta: 12,
+      tokenTotal: 40,
+    };
+    const { source: _source, ...rowWithoutProvenance } = row('without-provenance', 7);
+    const provenanceFreeRow: SerializedRow = {
+      ...rowWithoutProvenance,
+      activeDate: '2026-07-01T10:01:00.000Z',
+      freshTokens: 21,
+      lineDelta: 9,
+      tokenTotal: 28,
+    };
+    const anchorRows = [...rows, anchorFixture, provenanceFreeRow];
+    const { database } = await openRowsDatabase(anchorRows);
+    try {
+      const anchorPage = projectSessionPage(anchorRows, queryRequest({ campaigns: false, pageSize: 200 }));
+      const anchorItem = anchorPage.items.find(
+        ({ row: projectedRow }) => projectedRow.source?.sourceSessionId === 'anchor-session',
+      );
+      if (!anchorItem) {
+        throw new Error('Missing valid anchor fixture row');
+      }
+      const foundRequest = { revision: 'revision-a', rowId: anchorItem.row.rowId };
+      expect(executeMaterializedSessionQuery(database, 'session-detail-anchor', foundRequest)).toEqual({
+        anchor: {
+          harnessKey: 'codex',
+          machineId: 'machine-a',
+          projection: {
+            calls: 10,
+            durationMs: 10_000,
+            modelSegments: [
+              {
+                model: 'gpt-5.4',
+                tokens: { cacheRead: 10, cacheWrite: 10, input: 10, output: 10, total: 40 },
+              },
+            ],
+            partial: false,
+            tokens: { cacheRead: 10, cacheWrite: 10, input: 10, output: 10, total: 40 },
+            tools: 10,
+            turns: 10,
+          },
+          sourceAuthority: 'local-observed',
+          sourceSessionId: 'anchor-session',
+        },
+        requestFingerprint: sessionDetailRequestFingerprint(foundRequest),
+        revision: 'revision-a',
+      });
+      const missingRequest = { revision: 'revision-a', rowId: 'missing-row' };
+      expect(executeMaterializedSessionQuery(database, 'session-detail-anchor', missingRequest)).toEqual({
+        anchor: null,
+        requestFingerprint: sessionDetailRequestFingerprint(missingRequest),
+        revision: 'revision-a',
+      });
+
+      const noSourcePage = projectSessionPage(anchorRows, queryRequest({ campaigns: false, pageSize: 200 }));
+      const noSource = noSourcePage.items.find(
+        ({ row: projectedRow }) => projectedRow.sessionLabel === 'without-provenance',
+      );
+      if (!noSource) {
+        throw new Error('Missing provenance-free fixture row');
+      }
+      expect(
+        executeMaterializedSessionQuery(database, 'session-detail-anchor', {
+          revision: 'revision-a',
+          rowId: noSource.row.rowId,
+        }),
+      ).toMatchObject({
+        anchor: {
+          harnessKey: null,
+          machineId: null,
+          sourceAuthority: 'local-observed',
+          sourceSessionId: null,
+        },
+      });
+
+      const portable = await openRowsDatabase([anchorFixture], ['portable-opaque']);
+      try {
+        const portablePage = projectSessionPage([anchorFixture], queryRequest({ campaigns: false, pageSize: 200 }));
+        const portableRowId = portablePage.items[0]?.row.rowId;
+        if (!portableRowId) {
+          throw new Error('Missing portable anchor fixture row');
+        }
+        expect(
+          executeMaterializedSessionQuery(portable.database, 'session-detail-anchor', {
+            revision: 'revision-a',
+            rowId: portableRowId,
+          }),
+        ).toMatchObject({ anchor: { sourceAuthority: 'portable-opaque' } });
+      } finally {
+        portable.database.close();
+      }
+    } finally {
+      database.close();
+    }
+  });
+
+  test('rejects invalid source JSON in a detail anchor', async () => {
+    const revisionDirectory = await createRevision();
+    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME));
+    try {
+      const target = projectSessionPage(rows, queryRequest({ campaigns: false, pageSize: 200 })).items.find(
+        ({ row: targetRow }) => targetRow.source?.sourceSessionId === 'standalone-a',
+      );
+      if (!target) {
+        throw new Error('Missing invalid JSON target row');
+      }
+      database.query('UPDATE session_rows SET source_row_json = ? WHERE row_id = ?').run('{invalid', target.row.rowId);
+      expect(() =>
+        executeMaterializedSessionQuery(database, 'session-detail-anchor', {
+          revision: 'revision-a',
+          rowId: target.row.rowId,
+        }),
+      ).toThrow('invalid JSON');
+    } finally {
+      database.close();
+    }
+  });
+
   test('materializes from rows.json once in a silent Bun publication job', async () => {
     const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-session-publication-'));
     temporaryDirectories.add(revisionDirectory);
     await chmod(revisionDirectory, 0o700);
-    await writeFile(path.join(revisionDirectory, 'rows.json'), JSON.stringify(rows), { mode: 0o600 });
+    const publicationSourceRow = row('publication-session', 10);
+    const publicationRows = [
+      {
+        ...publicationSourceRow,
+        activeDate: publicationSourceRow.endDate,
+        freshTokens: publicationSourceRow.tokIn + publicationSourceRow.tokOut + publicationSourceRow.tokCw,
+        lineDelta: (publicationSourceRow.linesAdded ?? 0) + (publicationSourceRow.linesDeleted ?? 0),
+        tokenTotal:
+          publicationSourceRow.tokIn +
+          publicationSourceRow.tokOut +
+          publicationSourceRow.tokCr +
+          publicationSourceRow.tokCw,
+      },
+    ];
+    await writeFile(path.join(revisionDirectory, 'rows.json'), JSON.stringify(publicationRows), { mode: 0o600 });
+    await writeFile(
+      path.join(revisionDirectory, 'row-source-authorities.json'),
+      JSON.stringify(
+        publicationRows.map((sourceRow) => ({
+          rowId: sessionRowIdentity(sourceRow),
+          sourceAuthority: 'local-observed',
+        })),
+      ),
+      { mode: 0o600 },
+    );
     await writeFile(
       path.join(revisionDirectory, 'support.json'),
       JSON.stringify({
@@ -202,18 +376,65 @@ describe('session query SQLite materialization', () => {
       new Response(child.stdout).text(),
     ]);
 
-    expect(exitCode).toBe(0);
     expect(stderr).toBe('');
     expect(stdout).toBe('');
+    expect(exitCode).toBe(0);
     const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), { readonly: true });
     try {
       assertSessionQueryDatabase(database);
       expect(executeMaterializedSessionQuery(database, 'sessions', queryRequest())).toEqual(
-        projectSessionPage(rows, queryRequest()),
+        projectSessionPage(publicationRows, queryRequest()),
       );
+      expect(database.query('SELECT DISTINCT source_authority FROM session_rows').all()).toEqual([
+        { source_authority: 'local-observed' },
+      ]);
     } finally {
       database.close();
     }
+  });
+
+  test('rejects a source-authority binding that does not match its report row', async () => {
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-session-authority-mismatch-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    const sourceRow = row('authority-mismatch', 10);
+    const publicationRow = {
+      ...sourceRow,
+      activeDate: sourceRow.endDate,
+      freshTokens: sourceRow.tokIn + sourceRow.tokOut + sourceRow.tokCw,
+      lineDelta: (sourceRow.linesAdded ?? 0) + (sourceRow.linesDeleted ?? 0),
+      tokenTotal: sourceRow.tokIn + sourceRow.tokOut + sourceRow.tokCr + sourceRow.tokCw,
+    };
+    await Promise.all([
+      writeFile(path.join(revisionDirectory, 'rows.json'), JSON.stringify([publicationRow]), { mode: 0o600 }),
+      writeFile(
+        path.join(revisionDirectory, 'row-source-authorities.json'),
+        JSON.stringify([{ rowId: 'session-row-v1:0000000000000000', sourceAuthority: 'local-observed' }]),
+        { mode: 0o600 },
+      ),
+      writeFile(
+        path.join(revisionDirectory, 'support.json'),
+        JSON.stringify({
+          analytics: {},
+          filters: { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
+          generatedAt: '2026-07-13T00:00:00.000Z',
+          omittedRows: 0,
+        }),
+        { mode: 0o600 },
+      ),
+    ]);
+
+    const child = Bun.spawn(['bun', materializeRunnerPath, revisionDirectory], { stderr: 'pipe', stdout: 'pipe' });
+    const [exitCode, stderr, stdout] = await Promise.all([
+      child.exited,
+      new Response(child.stderr).text(),
+      new Response(child.stdout).text(),
+    ]);
+
+    expect(exitCode).not.toBe(0);
+    expect(stdout).toBe('');
+    expect(stderr).toContain('source authority binding does not match its row');
+    await expect(stat(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME))).rejects.toThrow();
   });
 
   test('materializes every derived sort field and preserves pure projection parity', async () => {
@@ -250,7 +471,11 @@ describe('session query SQLite materialization', () => {
         executeMaterializedSessionQuery(database, 'sessions', identityRequest)
           .items.filter(({ row: itemRow }) => itemRow.sessionLabel.startsWith('identity-'))
           .map(({ row: itemRow }) => itemRow.sessionLabel),
-      ).toEqual(['identity-A', 'identity-a']);
+      ).toEqual(
+        identityRows
+          .toSorted((left, right) => compareSessionIdentityValues(sessionRowIdentity(left), sessionRowIdentity(right)))
+          .map(({ sessionLabel }) => sessionLabel),
+      );
     } finally {
       database.close();
     }
@@ -274,6 +499,45 @@ describe('session query SQLite materialization', () => {
         expect(actual).toEqual(expected);
         expect(actual.items.map(({ row: itemRow }) => itemRow.sessionLabel)).toEqual(['z-near-root', 'a-exact-root']);
       }
+    } finally {
+      database.close();
+    }
+  });
+
+  test('keeps and pages campaign lower bounds by their known subtotal', async () => {
+    const fixtureRows = [
+      campaignCostRow('exact-high-root', 70, { root: 'exact-high-root' }),
+      campaignCostRow('partial-root', 68.09, { root: 'partial-root' }),
+      campaignCostRow('partial-child', 1.21, { parent: 'partial-root', root: 'partial-root' }, false),
+      campaignCostRow('exact-low-root', 69.2, { root: 'exact-low-root' }),
+      campaignCostRow('unknown-root', 0, { root: 'unknown-root' }, false),
+    ];
+    const { database } = await openRowsDatabase(fixtureRows);
+    try {
+      const firstRequest = queryRequest({ pageSize: 1, sort: [{ desc: true, id: 'cost' }] });
+      const first = executeMaterializedSessionQuery(database, 'sessions', firstRequest);
+      expect(first).toEqual(projectSessionPage(fixtureRows, firstRequest));
+      expect(first.items[0]?.row.sessionLabel).toBe('exact-high-root');
+      expect(first.nextCursor).not.toBeNull();
+
+      const secondRequest = { ...firstRequest, cursor: first.nextCursor };
+      const second = executeMaterializedSessionQuery(database, 'sessions', secondRequest);
+      expect(second).toEqual(projectSessionPage(fixtureRows, secondRequest));
+      expect(second.items[0]?.row).toMatchObject({
+        costApprox: 69.3,
+        costKnown: false,
+        sessionLabel: 'partial-root',
+      });
+
+      const ascendingRequest = queryRequest({ pageSize: 200, sort: [{ desc: false, id: 'cost' }] });
+      const ascending = executeMaterializedSessionQuery(database, 'sessions', ascendingRequest);
+      expect(ascending).toEqual(projectSessionPage(fixtureRows, ascendingRequest));
+      expect(ascending.items.map(({ row: itemRow }) => itemRow.sessionLabel)).toEqual([
+        'unknown-root',
+        'exact-low-root',
+        'partial-root',
+        'exact-high-root',
+      ]);
     } finally {
       database.close();
     }
@@ -340,6 +604,60 @@ describe('session query SQLite materialization', () => {
     });
     try {
       expect(executeMaterializedSessionQuery(database, 'sessions', request)).toEqual(projectSessionPage(rows, request));
+    } finally {
+      database.close();
+    }
+  });
+
+  test('filters sessions by every attributed model segment', async () => {
+    const segmentedRow: SerializedRow = {
+      ...row('multi-model', 10),
+      costApprox: 6,
+      freshTokens: 77,
+      model: 'gpt-5.4',
+      modelSegments: [
+        {
+          costApprox: 2,
+          costKnown: true,
+          model: 'gpt-5.4',
+          tokCr: 3,
+          tokCw: 4,
+          tokIn: 1,
+          tokOut: 2,
+        },
+        {
+          costApprox: 4,
+          costKnown: true,
+          model: 'claude-opus-4-6',
+          tokCr: 30,
+          tokCw: 40,
+          tokIn: 10,
+          tokOut: 20,
+        },
+      ],
+      models: ['gpt-5.4', 'claude-opus-4-6'],
+      tokCr: 33,
+      tokCw: 44,
+      tokIn: 11,
+      tokOut: 22,
+      tokenTotal: 110,
+    };
+    const fixtureRows = [segmentedRow, row('single-model', 20)];
+    const { database } = await openRowsDatabase(fixtureRows);
+    const request = queryRequest({
+      campaigns: false,
+      filters: {
+        fields: { model: 'claude-opus-4-6' },
+        harness: [],
+        machine: [],
+        query: '',
+      },
+      pageSize: 200,
+    });
+    try {
+      expect(executeMaterializedSessionQuery(database, 'sessions', request)).toEqual(
+        projectSessionPage(fixtureRows, request),
+      );
     } finally {
       database.close();
     }

@@ -18,11 +18,26 @@ export interface UsageRowSource {
   sourceSessionId: string | null;
 }
 
+/** Token and API-value attribution for one model within a usage row. */
+export interface UsageModelSegment {
+  /** Known API-value subtotal for this model; a lower bound when costKnown is false. */
+  costApprox: number;
+  /** True only when every token in this segment has known API pricing. */
+  costKnown: boolean;
+  model: string;
+  tokCr: number;
+  tokCw: number;
+  tokIn: number;
+  tokOut: number;
+}
+
 export interface UsageRow {
   ambiguous?: boolean;
   calls: number;
   costActual: number | null;
+  /** Sum of segments with known API pricing; a lower bound when costKnown is false. */
   costApprox: number;
+  /** True only when every token-bearing segment has known API pricing. */
   costKnown: boolean;
   costQuota?: number | null;
   date: Date | null;
@@ -32,6 +47,7 @@ export interface UsageRow {
   linesAdded: number | null;
   linesDeleted: number | null;
   model: string;
+  modelSegments?: UsageModelSegment[];
   models?: string[];
   name: string;
   partial?: boolean;

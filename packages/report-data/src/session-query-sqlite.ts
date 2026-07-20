@@ -1,3 +1,11 @@
+import {
+  parseSessionDetailRequest,
+  type SessionDetailAnchorResult,
+  type SessionDetailRequest,
+  sessionDetailRequestFingerprint,
+  sessionDetailSourceAuthorities,
+  sessionProjectionFactsForSerializedRow,
+} from '@ai-usage/report-core/session-detail';
 import type {
   SessionCampaignChildrenRequest,
   SessionCampaignChildrenResult,
@@ -19,7 +27,7 @@ import {
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
 
-export type SessionQueryKind = 'campaign-children' | 'neighbors' | 'sessions';
+export type SessionQueryKind = 'campaign-children' | 'neighbors' | 'session-detail-anchor' | 'sessions';
 
 export interface SessionQuerySqliteStatement {
   all(...params: unknown[]): unknown[];
@@ -33,9 +41,15 @@ export interface SessionQuerySqliteDatabase {
 
 export type SessionQuerySqliteTrace = (query: { params: readonly unknown[]; sql: string }) => void;
 
-const SESSION_QUERY_SCHEMA_VERSION = 3;
+const SESSION_QUERY_SCHEMA_VERSION = 8;
 const CURSOR_PATTERN = /^sq1\.([0-9a-f]{16})\.([0-9a-z]+)$/;
 const CAMPAIGN_EXACT_COST_SORT_FIELDS = new Set<SessionSortField>(['actual', 'cost', 'quota']);
+const isUnknownRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+const withoutSource = (row: Record<string, unknown>): Record<string, unknown> => {
+  const { source: _source, ...projectionRow } = row;
+  return projectionRow;
+};
 const SORT_COLUMN_BY_FIELD = {
   actual: 'sort_actual',
   ambiguous: 'sort_ambiguous',
@@ -107,6 +121,11 @@ interface ItemRecord {
 interface NeighborRecord {
   next_json: string | null;
   previous_json: string | null;
+}
+
+interface SessionDetailAnchorRecord {
+  source_authority: string;
+  source_row_json: string;
 }
 
 interface CampaignCostRecord {
@@ -189,7 +208,15 @@ export const buildSessionQuerySqlFilter = (request: SessionQueryRequest, alias =
     add(`${alias}.provider_display = ?`, request.filters.fields.provider);
   }
   if (request.filters.fields.model !== undefined) {
-    add(`${alias}.model_key = ?`, request.filters.fields.model);
+    add(
+      `EXISTS (
+        SELECT 1
+        FROM session_model_filter_keys AS filtered_model_keys
+        WHERE filtered_model_keys.ordinal = ${alias}.ordinal
+          AND filtered_model_keys.model_key = ?
+      )`,
+      request.filters.fields.model,
+    );
   }
   if (request.filters.fields.project !== undefined) {
     add(`${alias}.project_key = ?`, request.filters.fields.project);
@@ -247,7 +274,7 @@ campaign_cost_totals(
     cost_position,
     cost_count,
     COALESCE(cost_actual, 0),
-    CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END,
+    cost_approx,
     cost_known,
     COALESCE(cost_quota, 0)
   FROM campaign_cost_rows
@@ -258,7 +285,7 @@ campaign_cost_totals(
     next.cost_position,
     next.cost_count,
     total.cost_actual + COALESCE(next.cost_actual, 0),
-    total.cost_approx + CASE WHEN next.cost_known = 1 THEN next.cost_approx ELSE 0 END,
+    total.cost_approx + next.cost_approx,
     CASE WHEN total.cost_known = 1 AND next.cost_known = 1 THEN 1 ELSE 0 END,
     total.cost_quota + COALESCE(next.cost_quota, 0)
   FROM campaign_cost_totals AS total
@@ -386,12 +413,12 @@ const campaignItemCte = (useExactCostSort: boolean): string => `campaign_items A
       ELSE SUM(visible.rtk_saved_tokens) * 100.0 / SUM(visible.rtk_input_tokens) END AS sort_rtk_saved,
     ${
       useExactCostSort
-        ? 'CASE WHEN MAX(exact_cost.cost_known) = 1 THEN MAX(exact_cost.cost_approx) ELSE -1e999 END'
-        : 'CASE WHEN MIN(visible.cost_known) = 1 THEN SUM(visible.cost_approx) ELSE -1e999 END'
+        ? 'CASE WHEN MAX(exact_cost.cost_known) = 1 OR MAX(exact_cost.cost_approx) > 0 THEN MAX(exact_cost.cost_approx) ELSE -1e999 END'
+        : 'CASE WHEN MIN(visible.cost_known) = 1 OR SUM(visible.cost_approx) > 0 THEN SUM(visible.cost_approx) ELSE -1e999 END'
     } AS sort_cost,
     ${useExactCostSort ? 'MAX(exact_cost.cost_actual)' : 'SUM(COALESCE(visible.cost_actual, 0))'} AS sort_actual,
     ${useExactCostSort ? 'MAX(exact_cost.cost_quota)' : 'SUM(COALESCE(visible.cost_quota, 0))'} AS sort_quota,
-    COALESCE(SUM(visible.duration_ms), 0) AS sort_duration,
+    COALESCE(MAX(root.duration_ms), 0) AS sort_duration,
     SUM(visible.calls) AS sort_calls,
     SUM(visible.turns) AS sort_turns,
     SUM(visible.tools) AS sort_tools,
@@ -400,10 +427,10 @@ const campaignItemCte = (useExactCostSort: boolean): string => `campaign_items A
     MAX(visible.sort_partial) AS sort_partial,
     MAX(visible.sort_ambiguous) AS sort_ambiguous,
     SUM(COALESCE(visible.cost_actual, 0)) AS cost_actual,
-    SUM(CASE WHEN visible.cost_known = 1 THEN visible.cost_approx ELSE 0 END) AS cost_approx,
+    SUM(visible.cost_approx) AS cost_approx,
     MIN(visible.cost_known) AS cost_known,
     SUM(COALESCE(visible.cost_quota, 0)) AS cost_quota,
-    CASE WHEN COUNT(visible.duration_ms) = 0 THEN NULL ELSE SUM(visible.duration_ms) END AS duration_ms,
+    MAX(root.duration_ms) AS duration_ms,
     SUM(visible.fresh_tokens) AS fresh_tokens,
     CASE WHEN COUNT(visible.line_delta) = 0 THEN NULL ELSE SUM(visible.line_delta) END AS line_delta,
     CASE WHEN COUNT(visible.lines_added) = 0 THEN NULL ELSE SUM(visible.lines_added) END AS lines_added,
@@ -441,6 +468,8 @@ const parsePresentationRow = (serialized: string): SessionPresentationRow =>
 
 const campaignDisplayRow = (record: ItemRecord): SessionPresentationRow => {
   const root = parsePresentationRow(record.row_json);
+  const rootWithoutModelAttribution = { ...root };
+  Reflect.deleteProperty(rootWithoutModelAttribution, 'modelSegments');
   if (
     record.campaign_key === null ||
     record.visible_count === null ||
@@ -469,7 +498,7 @@ const campaignDisplayRow = (record: ItemRecord): SessionPresentationRow => {
     throw new Error('Session query database returned an incomplete campaign item');
   }
   return {
-    ...root,
+    ...rootWithoutModelAttribution,
     activeDate: record.latest_active_date,
     activeTime: record.latest_active_time,
     ambiguous: record.ambiguous === 1,
@@ -530,7 +559,7 @@ const hydrateExactCampaignCosts = (
     const row = value as CampaignCostRecord;
     const total = totals.get(row.campaign_key) ?? { actual: 0, approx: 0, known: true, quota: 0 };
     total.actual += row.cost_actual ?? 0;
-    total.approx += row.cost_known === 1 ? row.cost_approx : 0;
+    total.approx += row.cost_approx;
     total.known = total.known && row.cost_known === 1;
     total.quota += row.cost_quota ?? 0;
     totals.set(row.campaign_key, total);
@@ -682,6 +711,67 @@ const runNeighbors = (
   };
 };
 
+const runSessionDetailAnchor = (
+  database: SessionQuerySqliteDatabase,
+  input: SessionDetailRequest,
+  trace?: SessionQuerySqliteTrace,
+): SessionDetailAnchorResult => {
+  const request = parseSessionDetailRequest(input);
+  const rows = executeAll<SessionDetailAnchorRecord>(
+    database,
+    `SELECT source_authority, source_row_json
+    FROM session_rows
+    WHERE row_id = ?
+    ORDER BY ordinal
+    LIMIT 2`,
+    [request.rowId],
+    trace,
+  );
+  if (rows.length > 1) {
+    throw new Error('Report revision session row identity is not unique');
+  }
+  const sourceRow = rows[0];
+  if (!sourceRow) {
+    return {
+      anchor: null,
+      requestFingerprint: sessionDetailRequestFingerprint(request),
+      revision: request.revision,
+    };
+  }
+  const sourceAuthority = sessionDetailSourceAuthorities.find((authority) => authority === sourceRow.source_authority);
+  if (!sourceAuthority) {
+    throw new Error('Report revision session detail source authority is invalid');
+  }
+  let serializedRow: unknown;
+  try {
+    serializedRow = JSON.parse(sourceRow.source_row_json);
+  } catch {
+    throw new Error('Report revision session detail source row is invalid JSON');
+  }
+  const source = isUnknownRecord(serializedRow) ? serializedRow.source : null;
+  const projectionSource = isUnknownRecord(serializedRow) ? withoutSource(serializedRow) : serializedRow;
+  const projection = sessionProjectionFactsForSerializedRow(projectionSource);
+  const provenance = isUnknownRecord(source) ? source : null;
+  const nullableIdentity = (key: 'harnessKey' | 'machineId' | 'sourceSessionId'): string | null => {
+    if (!(provenance && key in provenance)) {
+      return null;
+    }
+    const value = provenance[key];
+    return typeof value === 'string' && value.length > 0 ? value : null;
+  };
+  return {
+    anchor: {
+      harnessKey: nullableIdentity('harnessKey'),
+      machineId: nullableIdentity('machineId'),
+      projection,
+      sourceAuthority,
+      sourceSessionId: nullableIdentity('sourceSessionId'),
+    },
+    requestFingerprint: sessionDetailRequestFingerprint(request),
+    revision: request.revision,
+  };
+};
+
 export const assertSessionQueryDatabase = (
   database: SessionQuerySqliteDatabase,
   trace?: SessionQuerySqliteTrace,
@@ -717,21 +807,30 @@ export function executeMaterializedSessionQuery(
 ): SessionNeighborResult;
 export function executeMaterializedSessionQuery(
   database: SessionQuerySqliteDatabase,
-  kind: SessionQueryKind,
+  kind: 'session-detail-anchor',
   request: unknown,
   trace?: SessionQuerySqliteTrace,
-): SessionPageResult | SessionCampaignChildrenResult | SessionNeighborResult;
+): SessionDetailAnchorResult;
 export function executeMaterializedSessionQuery(
   database: SessionQuerySqliteDatabase,
   kind: SessionQueryKind,
   request: unknown,
   trace?: SessionQuerySqliteTrace,
-): SessionPageResult | SessionCampaignChildrenResult | SessionNeighborResult {
+): SessionPageResult | SessionCampaignChildrenResult | SessionNeighborResult | SessionDetailAnchorResult;
+export function executeMaterializedSessionQuery(
+  database: SessionQuerySqliteDatabase,
+  kind: SessionQueryKind,
+  request: unknown,
+  trace?: SessionQuerySqliteTrace,
+): SessionPageResult | SessionCampaignChildrenResult | SessionNeighborResult | SessionDetailAnchorResult {
   if (kind === 'sessions') {
     return runSessionPage(database, parseSessionQueryRequest(request), trace);
   }
   if (kind === 'campaign-children') {
     return runCampaignChildren(database, parseSessionCampaignChildrenRequest(request), trace);
+  }
+  if (kind === 'session-detail-anchor') {
+    return runSessionDetailAnchor(database, parseSessionDetailRequest(request), trace);
   }
   return runNeighbors(database, parseSessionNeighborRequest(request), trace);
 }

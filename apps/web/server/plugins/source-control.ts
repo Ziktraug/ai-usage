@@ -1,7 +1,8 @@
 import { Effect } from 'effect';
 import { definePlugin } from 'nitro';
+import { registerPersistentSourceRuntimeHotReload } from '../../src/server/persistent-source-runtime';
 import { publishStoredReportRevisionForSourceControl } from '../../src/server/report-payload.server';
-import { createWebSourceControlRuntime, installWebSourceControlRuntime } from '../../src/server/source-control.server';
+import { createWebSourceControlRuntime, replaceWebSourceControlRuntime } from '../../src/server/source-control.server';
 import { createSourceControlE2EFixture } from '../../src/server/source-control-e2e-fixture.server';
 
 export default definePlugin(async (nitroApp) => {
@@ -18,11 +19,12 @@ export default definePlugin(async (nitroApp) => {
     },
     sources: fixture?.sources,
   });
-  const uninstall = installWebSourceControlRuntime(runtime);
-
+  let uninstall = () => undefined;
   let shutdown: Promise<void> | undefined;
+  let unregisterHotReload = () => undefined;
   const closeRuntime = (): Promise<void> => {
     shutdown ??= (async () => {
+      unregisterHotReload();
       process.off('SIGINT', closeAfterSignal);
       process.off('SIGTERM', closeAfterSignal);
       uninstall();
@@ -42,6 +44,8 @@ export default definePlugin(async (nitroApp) => {
       );
     }
   };
+  uninstall = await replaceWebSourceControlRuntime(runtime, closeRuntime);
+  unregisterHotReload = registerPersistentSourceRuntimeHotReload(import.meta.hot, closeRuntime);
 
   process.once('SIGINT', closeAfterSignal);
   process.once('SIGTERM', closeAfterSignal);

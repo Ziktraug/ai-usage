@@ -15,7 +15,8 @@ import {
 import type { CollectedUsageRow, UsageRow, UsageRowSource, UsageRowWithOptionalSource } from './types';
 import { usageRowActiveDate, usageRowTokenTotal } from './usage-row';
 
-export const USAGE_SNAPSHOT_SCHEMA_VERSION = 1 as const;
+const LEGACY_USAGE_SNAPSHOT_SCHEMA_VERSION = 1 as const;
+export const USAGE_SNAPSHOT_SCHEMA_VERSION = 2 as const;
 // Manual merge is measured and supported through 50,000 rows. Keeping the file
 // format at that same boundary bounds validation work without truncating history.
 
@@ -139,7 +140,10 @@ export const parseUsageSnapshot = (text: string): UsageSnapshot => {
   if (!hasOnlyKeys(value, SNAPSHOT_KEYS)) {
     throw new Error('Snapshot contains unknown fields');
   }
-  if (value.schemaVersion !== USAGE_SNAPSHOT_SCHEMA_VERSION) {
+  if (
+    value.schemaVersion !== LEGACY_USAGE_SNAPSHOT_SCHEMA_VERSION &&
+    value.schemaVersion !== USAGE_SNAPSHOT_SCHEMA_VERSION
+  ) {
     throw new Error('Unsupported snapshot schemaVersion');
   }
   if (typeof value.snapshotId !== 'string' || value.snapshotId.length === 0) {
@@ -161,6 +165,12 @@ export const parseUsageSnapshot = (text: string): UsageSnapshot => {
   if (!value.rows.every(isSnapshotRow)) {
     throw new Error('Snapshot contains invalid row');
   }
+  if (
+    value.schemaVersion === LEGACY_USAGE_SNAPSHOT_SCHEMA_VERSION &&
+    value.rows.some((row) => row.modelSegments !== undefined)
+  ) {
+    throw new Error('Snapshot legacy v1 rows cannot contain modelSegments');
+  }
   for (const row of value.rows) {
     if (row.source.machineId !== value.machine.id) {
       throw new Error('Snapshot row machineId does not match snapshot machine');
@@ -179,7 +189,7 @@ export const parseUsageSnapshot = (text: string): UsageSnapshot => {
     throw new Error('Snapshot contains invalid facets');
   }
   return {
-    schemaVersion: value.schemaVersion,
+    schemaVersion: USAGE_SNAPSHOT_SCHEMA_VERSION,
     snapshotId: value.snapshotId,
     generatedAt: value.generatedAt,
     machine: value.machine,
@@ -295,6 +305,7 @@ export const deserializeSnapshotRow = (row: SnapshotUsageRow): CollectedUsageRow
   provider: row.provider,
   name: row.name,
   model: row.model,
+  ...(row.modelSegments === undefined ? {} : { modelSegments: row.modelSegments }),
   ...(row.models === undefined ? {} : { models: row.models }),
   project: row.project,
   tokIn: row.tokIn,
@@ -319,6 +330,7 @@ export const deserializeSnapshotRow = (row: SnapshotUsageRow): CollectedUsageRow
   ...(row.partial === undefined ? {} : { partial: row.partial }),
   ...(row.usageUnavailable === undefined ? {} : { usageUnavailable: row.usageUnavailable }),
   ...(row.ambiguous === undefined ? {} : { ambiguous: row.ambiguous }),
+  ...(row.titleSource === undefined ? {} : { titleSource: row.titleSource }),
   source: row.source,
 });
 

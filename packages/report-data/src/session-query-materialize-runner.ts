@@ -4,11 +4,17 @@ import { open, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import { MAX_SESSION_QUERY_DATABASE_BYTES } from '@ai-usage/report-core/report-budgets';
-import type { SerializedRow } from '@ai-usage/report-core/report-data';
+import { isSerializedUsageRow, type SerializedRow } from '@ai-usage/report-core/report-data';
+import {
+  type SessionDetailSourceAuthority,
+  sessionDetailSourceAuthorities,
+} from '@ai-usage/report-core/session-detail';
+import { sessionRowIdentity } from '@ai-usage/report-core/session-query';
 import { MAX_REPORT_RUNNER_ARTIFACT_BYTES } from './report-payload-artifact';
 import { materializeSessionQueryDatabase, SESSION_QUERY_DATABASE_NAME } from './session-query-materialization';
 
 const ROWS_ARTIFACT_NAME = 'rows.json';
+const ROW_SOURCE_AUTHORITIES_ARTIFACT_NAME = 'row-source-authorities.json';
 const SUPPORT_ARTIFACT_NAME = 'support.json';
 const READ_CHUNK_BYTES = 64 * 1024;
 const readFlags =
@@ -75,17 +81,55 @@ if (!revisionDirectory) {
   throw new Error('Report session query materializer requires a private revision directory');
 }
 
-const [rows, support] = await Promise.all([
+const [rows, rowSourceAuthorityValues, support] = await Promise.all([
   readJsonArtifact(revisionDirectory, ROWS_ARTIFACT_NAME),
+  readJsonArtifact(revisionDirectory, ROW_SOURCE_AUTHORITIES_ARTIFACT_NAME),
   readJsonArtifact(revisionDirectory, SUPPORT_ARTIFACT_NAME),
 ]);
 if (!Array.isArray(rows)) {
   throw new Error('Report revision rows artifact must contain an array');
 }
+const serializedRows: SerializedRow[] = [];
+for (const row of rows) {
+  if (!isSerializedUsageRow(row)) {
+    throw new Error('Report revision rows artifact contains an invalid row');
+  }
+  serializedRows.push(row);
+}
+if (!Array.isArray(rowSourceAuthorityValues) || rowSourceAuthorityValues.length !== rows.length) {
+  throw new Error('Report revision row source authorities must align with its rows');
+}
+const rowSourceAuthorities: SessionDetailSourceAuthority[] = [];
+for (const [index, value] of rowSourceAuthorityValues.entries()) {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value) ||
+    Object.keys(value).length !== 2 ||
+    !Object.hasOwn(value, 'rowId') ||
+    !Object.hasOwn(value, 'sourceAuthority')
+  ) {
+    throw new Error('Report revision row source authority binding is invalid');
+  }
+  const sourceAuthority = sessionDetailSourceAuthorities.find((authority) => authority === value.sourceAuthority);
+  if (!sourceAuthority) {
+    throw new Error('Report revision row source authority is invalid');
+  }
+  const row = serializedRows[index];
+  if (!(row && value.rowId === sessionRowIdentity(row))) {
+    throw new Error('Report revision row source authority binding does not match its row');
+  }
+  rowSourceAuthorities.push(sourceAuthority);
+}
 if (typeof support !== 'object' || support === null || Array.isArray(support) || Object.hasOwn(support, 'rows')) {
   throw new Error('Report revision support artifact must contain payload context without rows');
 }
-await materializeSessionQueryDatabase(revisionDirectory, rows as SerializedRow[], support as FocusedReportSupport);
+await materializeSessionQueryDatabase(
+  revisionDirectory,
+  serializedRows,
+  support as FocusedReportSupport,
+  rowSourceAuthorities,
+);
 const databaseStat = await stat(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME));
 if (databaseStat.size > MAX_SESSION_QUERY_DATABASE_BYTES) {
   throw new Error(`Report Session query database exceeds the ${MAX_SESSION_QUERY_DATABASE_BYTES}-byte limit`);
