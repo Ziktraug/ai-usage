@@ -40,7 +40,11 @@ import {
   projectSourceSelectorKey,
 } from '@ai-usage/report-core/project-group';
 import type { ProviderQuotaHistoryPoint, ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
-import { type SessionNeighborResult, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+import {
+  type SessionNeighborResult,
+  sessionNeighborFingerprint,
+  sessionQueryFingerprint,
+} from '@ai-usage/report-core/session-query';
 import { createQuery } from '@tanstack/solid-query';
 import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
@@ -129,6 +133,7 @@ import {
   sessionAnalysisTargetForTopLevelRow,
 } from './session-analysis-target';
 import { SessionDrawer } from './session-drawer';
+import { createSessionNeighborRequestController } from './session-neighbor-request-controller';
 import {
   buildDashboardSessionQueryScope,
   createServedSessionQuerySource,
@@ -402,6 +407,20 @@ export const Dashboard = (props: {
   const [selectedAnalysisRevision, setSelectedAnalysisRevision] = createSignal<string | null>(null);
   const [sessionNeighbors, setSessionNeighbors] = createSignal<SessionNeighborResult>();
   const [sessionNeighborsLoading, setSessionNeighborsLoading] = createSignal(false);
+  const setSessionSelection = (selection: {
+    key: string | null;
+    navigationRow: DashboardRow | null;
+    revision: string | null;
+    target: SessionAnalysisTarget | null;
+  }): void => {
+    batch(() => {
+      setSelectedNavigationRow(selection.navigationRow);
+      setSelectedAnalysisTarget(selection.target);
+      setSelectedAnalysisRevision(selection.revision);
+      setSelectedKey(selection.key);
+      sessionQueryCoordinator?.select(selection.key);
+    });
+  };
   let searchInputEl: HTMLInputElement | undefined;
   const cursorCommitRows = createMemo(() =>
     focusedStore
@@ -727,11 +746,12 @@ export const Dashboard = (props: {
     if (servedSessionViewActive() && servedSessionState()) {
       const next = delta > 0 ? sessionNeighbors()?.next : sessionNeighbors()?.previous;
       if (next) {
-        setSelectedNavigationRow(next);
-        setSelectedAnalysisTarget(sessionAnalysisTargetForSession(next));
-        setSelectedAnalysisRevision(servedSessionState()?.query.revision ?? null);
-        setSelectedKey(rowKey(next));
-        sessionQueryCoordinator?.select(rowKey(next));
+        setSessionSelection({
+          key: rowKey(next),
+          navigationRow: next,
+          revision: servedSessionState()?.query.revision ?? null,
+          target: sessionAnalysisTargetForSession(next),
+        });
       }
       return;
     }
@@ -743,39 +763,41 @@ export const Dashboard = (props: {
     }
     const next = rows[index + delta];
     if (next) {
-      setSelectedAnalysisTarget(sessionAnalysisTargetForSession(next));
-      setSelectedAnalysisRevision(null);
-      setSelectedKey(rowKey(next));
+      setSessionSelection({
+        key: rowKey(next),
+        navigationRow: next,
+        revision: null,
+        target: sessionAnalysisTargetForSession(next),
+      });
     }
   };
-  let neighborRequestSequence = 0;
+  const neighborRequests = sessionQueryCoordinator
+    ? createSessionNeighborRequestController({
+        loadNeighbors: (rowId) => sessionQueryCoordinator.loadNeighbors(rowId),
+        onError: (error) => {
+          setOperationError(error instanceof Error ? error.message : 'Failed to load session neighbors');
+        },
+        onLoadingChange: (loading) => setSessionNeighborsLoading(loading),
+        onNeighbors: (neighbors) => setSessionNeighbors(neighbors),
+      })
+    : undefined;
+  onCleanup(() => neighborRequests?.close());
   createEffect(() => {
     const row = selectedRow();
-    if (!(servedSessionQueries && sessionQueryCoordinator && servedSessionState() && row)) {
+    const state = servedSessionState();
+    if (!(servedSessionQueries && neighborRequests && state && row)) {
+      neighborRequests?.close();
       setSessionNeighbors();
       setSessionNeighborsLoading(false);
       return;
     }
-    neighborRequestSequence += 1;
-    const sequence = neighborRequestSequence;
-    setSessionNeighbors();
-    setSessionNeighborsLoading(true);
-    sessionQueryCoordinator
-      .loadNeighbors(row.rowId)
-      .then((neighbors) => {
-        if (sequence === neighborRequestSequence) {
-          setSessionNeighbors(neighbors);
-        }
+    neighborRequests
+      .load({
+        requestKey: sessionNeighborFingerprint({ query: state.query, rowId: row.rowId }),
+        rowId: row.rowId,
       })
       .catch((error: unknown) => {
-        if (sequence === neighborRequestSequence) {
-          setOperationError(error instanceof Error ? error.message : 'Failed to load session neighbors');
-        }
-      })
-      .finally(() => {
-        if (sequence === neighborRequestSequence) {
-          setSessionNeighborsLoading(false);
-        }
+        setOperationError(error instanceof Error ? error.message : 'Failed to coordinate session neighbors');
       });
   });
   createEffect(() => {
@@ -788,9 +810,7 @@ export const Dashboard = (props: {
         return;
       }
       if (event.key === 'Escape') {
-        setSelectedAnalysisTarget(null);
-        setSelectedAnalysisRevision(null);
-        setSelectedKey(null);
+        setSessionSelection({ key: null, navigationRow: null, revision: null, target: null });
       } else if (event.key === 'j' || event.key === 'ArrowDown') {
         event.preventDefault();
         navigateSelected(1);
@@ -948,19 +968,19 @@ export const Dashboard = (props: {
   onMount(() => setClientReady(true));
   const toggleSelected = (row: DashboardRow) => {
     const next = selectedKey() === rowKey(row) ? null : rowKey(row);
-    setSelectedNavigationRow(next ? row : null);
-    setSelectedAnalysisTarget(
-      next
-        ? sessionAnalysisTargetForTopLevelRow({
-            campaigns: servedSessionViewActive() || !groupCampaigns() ? [] : campaignViews(),
-            pageItems: servedSessionViewActive() ? (servedSessionState()?.items ?? []) : [],
-            row,
-          })
-        : null,
-    );
-    setSelectedAnalysisRevision(next ? (servedSessionState()?.query.revision ?? null) : null);
-    setSelectedKey(next);
-    sessionQueryCoordinator?.select(next);
+    const target = next
+      ? sessionAnalysisTargetForTopLevelRow({
+          campaigns: servedSessionViewActive() || !groupCampaigns() ? [] : campaignViews(),
+          pageItems: servedSessionViewActive() ? (servedSessionState()?.items ?? []) : [],
+          row,
+        })
+      : null;
+    setSessionSelection({
+      key: next,
+      navigationRow: next ? row : null,
+      revision: next ? (servedSessionState()?.query.revision ?? null) : null,
+      target,
+    });
   };
   let activeQueryEdit = false;
   const commitQueryEdit = () => {
@@ -984,11 +1004,12 @@ export const Dashboard = (props: {
     setTab('sessions');
   };
   const inspectOverviewSession = (row: DashboardRow) => {
-    setSelectedNavigationRow(row);
-    setSelectedAnalysisTarget(sessionAnalysisTargetForSession(row));
-    setSelectedAnalysisRevision(focusedStore?.revision() ?? null);
-    setSelectedKey(rowKey(row));
-    sessionQueryCoordinator?.select(rowKey(row));
+    setSessionSelection({
+      key: rowKey(row),
+      navigationRow: row,
+      revision: focusedStore?.revision() ?? null,
+      target: sessionAnalysisTargetForSession(row),
+    });
   };
   const setFieldFilters = (updater: Updater<FieldFilters>) =>
     updateSearch((current) => ({ ...current, filters: applyTableUpdate(updater, current.filters) }));
@@ -1405,20 +1426,17 @@ export const Dashboard = (props: {
                   : {})}
                 onClearFilters={clearFilters}
                 onClose={() => {
-                  setSelectedNavigationRow(null);
-                  setSelectedAnalysisTarget(null);
-                  setSelectedAnalysisRevision(null);
-                  setSelectedKey(null);
-                  sessionQueryCoordinator?.select(null);
+                  setSessionSelection({ key: null, navigationRow: null, revision: null, target: null });
                 }}
                 onFieldFilter={setFieldFilter}
                 onNavigate={navigateSelected}
                 onSelectSession={(session) => {
-                  setSelectedNavigationRow(session);
-                  setSelectedAnalysisTarget(sessionAnalysisTargetForSession(session));
-                  setSelectedAnalysisRevision(servedSessionState()?.query.revision ?? null);
-                  setSelectedKey(rowKey(session));
-                  sessionQueryCoordinator?.select(rowKey(session));
+                  setSessionSelection({
+                    key: rowKey(session),
+                    navigationRow: session,
+                    revision: servedSessionState()?.query.revision ?? null,
+                    target: sessionAnalysisTargetForSession(session),
+                  });
                 }}
                 revision={selectedAnalysisRevision()}
                 row={row()}

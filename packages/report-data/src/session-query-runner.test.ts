@@ -5,12 +5,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { MAX_SESSION_QUERY_DATABASE_BYTES } from '@ai-usage/report-core/report-budgets';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
-import { sessionDetailRequestFingerprint } from '@ai-usage/report-core/session-detail';
 import {
+  type SessionDetailSourceAuthority,
+  sessionDetailRequestFingerprint,
+} from '@ai-usage/report-core/session-detail';
+import {
+  compareSessionIdentityValues,
   projectSessionCampaignChildren,
   projectSessionNeighbors,
   projectSessionPage,
   type SessionQueryRequest,
+  sessionRowIdentity,
   sessionSortFields,
   sessionTextSortFields,
 } from '@ai-usage/report-core/session-query';
@@ -131,7 +136,12 @@ const createRevision = async (): Promise<string> => {
   const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-session-revision-'));
   temporaryDirectories.add(revisionDirectory);
   await chmod(revisionDirectory, 0o700);
-  await materializeSessionQueryDatabase(revisionDirectory, rows);
+  await materializeSessionQueryDatabase(
+    revisionDirectory,
+    rows,
+    undefined,
+    rows.map(() => 'local-observed'),
+  );
   return revisionDirectory;
 };
 
@@ -147,11 +157,12 @@ const openFixtureDatabase = async (): Promise<{ database: Database; revisionDire
 
 const openRowsDatabase = async (
   fixtureRows: SerializedRow[],
+  sourceAuthorities: SessionDetailSourceAuthority[] = fixtureRows.map(() => 'local-observed'),
 ): Promise<{ database: Database; revisionDirectory: string }> => {
   const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-session-parity-'));
   temporaryDirectories.add(revisionDirectory);
   await chmod(revisionDirectory, 0o700);
-  await materializeSessionQueryDatabase(revisionDirectory, fixtureRows);
+  await materializeSessionQueryDatabase(revisionDirectory, fixtureRows, undefined, sourceAuthorities);
   const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), {
     readonly: true,
     strict: true,
@@ -182,6 +193,20 @@ const runFixture = async (request: unknown, kind = 'sessions') => {
 };
 
 describe('session query SQLite materialization', () => {
+  test('rejects duplicate report row identities during materialization', async () => {
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-session-duplicate-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    const duplicate = row('duplicate-source', 10);
+
+    await expect(
+      materializeSessionQueryDatabase(revisionDirectory, [duplicate, { ...duplicate }], undefined, [
+        'local-observed',
+        'local-observed',
+      ]),
+    ).rejects.toThrow();
+  });
+
   test('resolves exact session detail anchors and preserves nullable provenance', async () => {
     const anchorFixture = {
       ...row('anchor-session', 10),
@@ -227,6 +252,7 @@ describe('session query SQLite materialization', () => {
             tools: 10,
             turns: 10,
           },
+          sourceAuthority: 'local-observed',
           sourceSessionId: 'anchor-session',
         },
         requestFingerprint: sessionDetailRequestFingerprint(foundRequest),
@@ -252,40 +278,54 @@ describe('session query SQLite materialization', () => {
           rowId: noSource.row.rowId,
         }),
       ).toMatchObject({
-        anchor: { harnessKey: null, machineId: null, sourceSessionId: null },
+        anchor: {
+          harnessKey: null,
+          machineId: null,
+          sourceAuthority: 'local-observed',
+          sourceSessionId: null,
+        },
       });
+
+      const portable = await openRowsDatabase([anchorFixture], ['portable-opaque']);
+      try {
+        const portablePage = projectSessionPage([anchorFixture], queryRequest({ campaigns: false, pageSize: 200 }));
+        const portableRowId = portablePage.items[0]?.row.rowId;
+        if (!portableRowId) {
+          throw new Error('Missing portable anchor fixture row');
+        }
+        expect(
+          executeMaterializedSessionQuery(portable.database, 'session-detail-anchor', {
+            revision: 'revision-a',
+            rowId: portableRowId,
+          }),
+        ).toMatchObject({ anchor: { sourceAuthority: 'portable-opaque' } });
+      } finally {
+        portable.database.close();
+      }
     } finally {
       database.close();
     }
   });
 
-  test('rejects duplicate row identities and invalid source JSON', async () => {
-    const duplicateRevision = await createRevision();
-    const duplicateDatabase = new Database(path.join(duplicateRevision, SESSION_QUERY_DATABASE_NAME));
+  test('rejects invalid source JSON in a detail anchor', async () => {
+    const revisionDirectory = await createRevision();
+    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME));
     try {
-      duplicateDatabase.query('UPDATE session_rows SET row_id = ? WHERE ordinal IN (0, 1)').run('duplicate-row');
+      const target = projectSessionPage(rows, queryRequest({ campaigns: false, pageSize: 200 })).items.find(
+        ({ row: targetRow }) => targetRow.source?.sourceSessionId === 'standalone-a',
+      );
+      if (!target) {
+        throw new Error('Missing invalid JSON target row');
+      }
+      database.query('UPDATE session_rows SET source_row_json = ? WHERE row_id = ?').run('{invalid', target.row.rowId);
       expect(() =>
-        executeMaterializedSessionQuery(duplicateDatabase, 'session-detail-anchor', {
+        executeMaterializedSessionQuery(database, 'session-detail-anchor', {
           revision: 'revision-a',
-          rowId: 'duplicate-row',
-        }),
-      ).toThrow('identity is not unique');
-      duplicateDatabase.query('UPDATE session_rows SET source_row_json = ? WHERE ordinal = 0').run('{invalid');
-      expect(() =>
-        executeMaterializedSessionQuery(duplicateDatabase, 'session-detail-anchor', {
-          revision: 'revision-a',
-          rowId: 'duplicate-row',
-        }),
-      ).toThrow('identity is not unique');
-      duplicateDatabase.query('UPDATE session_rows SET row_id = ? WHERE ordinal = 1').run('other-row');
-      expect(() =>
-        executeMaterializedSessionQuery(duplicateDatabase, 'session-detail-anchor', {
-          revision: 'revision-a',
-          rowId: 'duplicate-row',
+          rowId: target.row.rowId,
         }),
       ).toThrow('invalid JSON');
     } finally {
-      duplicateDatabase.close();
+      database.close();
     }
   });
 
@@ -293,7 +333,31 @@ describe('session query SQLite materialization', () => {
     const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-session-publication-'));
     temporaryDirectories.add(revisionDirectory);
     await chmod(revisionDirectory, 0o700);
-    await writeFile(path.join(revisionDirectory, 'rows.json'), JSON.stringify(rows), { mode: 0o600 });
+    const publicationSourceRow = row('publication-session', 10);
+    const publicationRows = [
+      {
+        ...publicationSourceRow,
+        activeDate: publicationSourceRow.endDate,
+        freshTokens: publicationSourceRow.tokIn + publicationSourceRow.tokOut + publicationSourceRow.tokCw,
+        lineDelta: (publicationSourceRow.linesAdded ?? 0) + (publicationSourceRow.linesDeleted ?? 0),
+        tokenTotal:
+          publicationSourceRow.tokIn +
+          publicationSourceRow.tokOut +
+          publicationSourceRow.tokCr +
+          publicationSourceRow.tokCw,
+      },
+    ];
+    await writeFile(path.join(revisionDirectory, 'rows.json'), JSON.stringify(publicationRows), { mode: 0o600 });
+    await writeFile(
+      path.join(revisionDirectory, 'row-source-authorities.json'),
+      JSON.stringify(
+        publicationRows.map((sourceRow) => ({
+          rowId: sessionRowIdentity(sourceRow),
+          sourceAuthority: 'local-observed',
+        })),
+      ),
+      { mode: 0o600 },
+    );
     await writeFile(
       path.join(revisionDirectory, 'support.json'),
       JSON.stringify({
@@ -312,18 +376,65 @@ describe('session query SQLite materialization', () => {
       new Response(child.stdout).text(),
     ]);
 
-    expect(exitCode).toBe(0);
     expect(stderr).toBe('');
     expect(stdout).toBe('');
+    expect(exitCode).toBe(0);
     const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), { readonly: true });
     try {
       assertSessionQueryDatabase(database);
       expect(executeMaterializedSessionQuery(database, 'sessions', queryRequest())).toEqual(
-        projectSessionPage(rows, queryRequest()),
+        projectSessionPage(publicationRows, queryRequest()),
       );
+      expect(database.query('SELECT DISTINCT source_authority FROM session_rows').all()).toEqual([
+        { source_authority: 'local-observed' },
+      ]);
     } finally {
       database.close();
     }
+  });
+
+  test('rejects a source-authority binding that does not match its report row', async () => {
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-session-authority-mismatch-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    const sourceRow = row('authority-mismatch', 10);
+    const publicationRow = {
+      ...sourceRow,
+      activeDate: sourceRow.endDate,
+      freshTokens: sourceRow.tokIn + sourceRow.tokOut + sourceRow.tokCw,
+      lineDelta: (sourceRow.linesAdded ?? 0) + (sourceRow.linesDeleted ?? 0),
+      tokenTotal: sourceRow.tokIn + sourceRow.tokOut + sourceRow.tokCr + sourceRow.tokCw,
+    };
+    await Promise.all([
+      writeFile(path.join(revisionDirectory, 'rows.json'), JSON.stringify([publicationRow]), { mode: 0o600 }),
+      writeFile(
+        path.join(revisionDirectory, 'row-source-authorities.json'),
+        JSON.stringify([{ rowId: 'session-row-v1:0000000000000000', sourceAuthority: 'local-observed' }]),
+        { mode: 0o600 },
+      ),
+      writeFile(
+        path.join(revisionDirectory, 'support.json'),
+        JSON.stringify({
+          analytics: {},
+          filters: { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
+          generatedAt: '2026-07-13T00:00:00.000Z',
+          omittedRows: 0,
+        }),
+        { mode: 0o600 },
+      ),
+    ]);
+
+    const child = Bun.spawn(['bun', materializeRunnerPath, revisionDirectory], { stderr: 'pipe', stdout: 'pipe' });
+    const [exitCode, stderr, stdout] = await Promise.all([
+      child.exited,
+      new Response(child.stderr).text(),
+      new Response(child.stdout).text(),
+    ]);
+
+    expect(exitCode).not.toBe(0);
+    expect(stdout).toBe('');
+    expect(stderr).toContain('source authority binding does not match its row');
+    await expect(stat(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME))).rejects.toThrow();
   });
 
   test('materializes every derived sort field and preserves pure projection parity', async () => {
@@ -360,7 +471,11 @@ describe('session query SQLite materialization', () => {
         executeMaterializedSessionQuery(database, 'sessions', identityRequest)
           .items.filter(({ row: itemRow }) => itemRow.sessionLabel.startsWith('identity-'))
           .map(({ row: itemRow }) => itemRow.sessionLabel),
-      ).toEqual(['identity-A', 'identity-a']);
+      ).toEqual(
+        identityRows
+          .toSorted((left, right) => compareSessionIdentityValues(sessionRowIdentity(left), sessionRowIdentity(right)))
+          .map(({ sessionLabel }) => sessionLabel),
+      );
     } finally {
       database.close();
     }

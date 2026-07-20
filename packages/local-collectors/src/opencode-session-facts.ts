@@ -55,12 +55,21 @@ export interface OpenCodeMillisecondInterval {
 
 export type OpenCodeParentKind = 'human' | 'internal' | 'unresolved';
 
+const MAX_OPEN_CODE_FACT_STRING_LENGTH = 512;
+const OPEN_CODE_FLAT_TOKEN_KEYS = [
+  'token_input',
+  'token_output',
+  'token_reasoning',
+  'token_cache_read',
+  'token_cache_write',
+] as const;
+
 const boundedString = (value: unknown): string | null => {
   if (typeof value !== 'string') {
     return null;
   }
   const normalized = value.trim();
-  return normalized.length > 0 && normalized.length <= 512 ? normalized : null;
+  return normalized.length > 0 && normalized.length <= MAX_OPEN_CODE_FACT_STRING_LENGTH ? normalized : null;
 };
 
 const timestampMs = (value: unknown): number | null => {
@@ -83,11 +92,12 @@ export const decodeOpenCodeMessageRow = (value: unknown): OpenCodeMessageDecodeR
   if (value.role !== 'assistant') {
     return { kind: 'ignored' };
   }
-  const tokens = isJsonObject(value.tokens) ? value.tokens : value;
-  const hasTokens = value.tokens !== undefined || Object.keys(value).some((key) => key.startsWith('token_'));
-  if (!hasTokens) {
+  const nestedTokens = isJsonObject(value.tokens) ? value.tokens : null;
+  const hasFlatTokens = OPEN_CODE_FLAT_TOKEN_KEYS.some((key) => value[key] !== undefined && value[key] !== null);
+  if (!(nestedTokens || hasFlatTokens)) {
     return { kind: 'ignored' };
   }
+  const tokens = nestedTokens ?? value;
   const input = parseOptionalNonNegativeSafeInteger(tokenValue(tokens, value, 'input'));
   const output = parseOptionalNonNegativeSafeInteger(tokenValue(tokens, value, 'output'));
   const reasoning = parseOptionalNonNegativeSafeInteger(tokenValue(tokens, value, 'reasoning'));

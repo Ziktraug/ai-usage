@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { serializeUsageRow } from '@ai-usage/report-core/report-data';
 import {
+  compareSessionProjectionFacts,
   parseSessionDetail,
   type SessionDetail,
   sessionProjectionFactsForSerializedRow,
@@ -46,6 +47,43 @@ class LargeAggregateCodexStorage extends TestMemoryStorage {
           ),
         ),
       );
+  }
+}
+
+class SimulatedBudgetCodexStorage extends TestMemoryStorage {
+  private readonly simulatedBytes = new Map<string, number>();
+
+  setSimulatedBytes(relativePath: string, bytes: number): void {
+    this.simulatedBytes.set(path.join(this.home, relativePath), bytes);
+  }
+
+  override readLines(
+    filePath: string,
+    visit: (line: string) => void,
+    limits: { maxBytes?: number; maxLineBytes?: number } = {},
+  ) {
+    const simulatedBytes = this.simulatedBytes.get(filePath);
+    if (simulatedBytes !== undefined && simulatedBytes > (limits.maxBytes ?? Number.POSITIVE_INFINITY)) {
+      return Effect.fail(
+        new LocalHistoryError({
+          cause: new Error('Fixture exceeds the remaining aggregate budget'),
+          operation: 'readLines',
+          path: filePath,
+        }),
+      );
+    }
+    return super
+      .readLines(filePath, visit, limits)
+      .pipe(Effect.map((result) => ({ ...result, bytes: simulatedBytes ?? result.bytes })));
+  }
+}
+
+class CountingCodexDatabaseStorage extends TestMemoryStorage {
+  databaseOpens = 0;
+
+  override openDatabase(dbPath: string) {
+    this.databaseOpens++;
+    return super.openDatabase(dbPath);
   }
 }
 
@@ -453,6 +491,504 @@ describe('Codex local history', () => {
     ]);
     expect(children.every((session) => session.modelSegments === undefined)).toBe(true);
     expect(children.every((session) => session.usageUnavailable)).toBe(true);
+
+    for (const child of children) {
+      const analysis = runWithStorage(readCodexSessionAnalysis(child.source.sourceSessionId ?? ''), storage);
+      const reportRow = sessionToUsageRow(child);
+      const { projectPath: _projectPath, source: _source, ...serializedInput } = reportRow;
+      const reportProjection = sessionProjectionFactsForSerializedRow(serializeUsageRow(serializedInput));
+
+      expect(analysis).not.toBeNull();
+      expect(analysis?.projection).toEqual(reportProjection);
+      expect(analysis ? compareSessionProjectionFacts(reportProjection, analysis.projection) : null).toMatchObject({
+        status: 'cannot-compare',
+      });
+    }
+  });
+
+  test('keeps cached rollout parsing independent from changing state metadata', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-state-detail-'));
+    try {
+      const sessionsDirectory = path.join(home, '.codex', 'sessions', '2026');
+      mkdirSync(sessionsDirectory, { recursive: true });
+      writeFileSync(
+        path.join(sessionsDirectory, 'rollout-state-root.jsonl'),
+        jsonl(
+          {
+            timestamp: '2026-01-01T00:00:00.000Z',
+            type: 'session_meta',
+            payload: { id: 'state-root', cwd: '/work/state-project' },
+          },
+          {
+            timestamp: '2026-01-01T00:02:00.000Z',
+            payload: {
+              type: 'token_count',
+              info: {
+                total_token_usage: {
+                  total_tokens: 100,
+                  input_tokens: 80,
+                  cached_input_tokens: 60,
+                  output_tokens: 20,
+                },
+              },
+            },
+          },
+        ),
+      );
+      writeFileSync(
+        path.join(sessionsDirectory, 'rollout-state-child.jsonl'),
+        jsonl(
+          {
+            timestamp: '2026-01-01T00:01:00.000Z',
+            type: 'session_meta',
+            payload: { id: 'state-child', cwd: '/work/state-project' },
+          },
+          {
+            timestamp: '2026-01-01T00:03:00.000Z',
+            payload: {
+              type: 'token_count',
+              info: {
+                last_token_usage: {
+                  total_tokens: 10,
+                  input_tokens: 8,
+                  cached_input_tokens: 6,
+                  output_tokens: 2,
+                },
+                total_token_usage: {
+                  total_tokens: 50,
+                  input_tokens: 40,
+                  cached_input_tokens: 30,
+                  output_tokens: 10,
+                },
+              },
+            },
+          },
+          {
+            timestamp: '2026-01-01T00:04:00.000Z',
+            payload: { type: 'task_started', turn_id: 'state-child-turn' },
+          },
+          {
+            timestamp: '2026-01-01T00:04:01.000Z',
+            type: 'turn_context',
+            payload: { model: 'codex', turn_id: 'state-child-turn' },
+          },
+          {
+            timestamp: '2026-01-01T00:05:00.000Z',
+            payload: { duration_ms: 60_000, type: 'task_complete', turn_id: 'state-child-turn' },
+          },
+        ),
+      );
+
+      const stateDirectory = path.join(home, '.codex');
+      mkdirSync(stateDirectory, { recursive: true });
+      const stateDatabase = new Database(path.join(stateDirectory, 'state_5.sqlite'));
+      try {
+        stateDatabase.exec(`
+          CREATE TABLE threads (
+            id TEXT PRIMARY KEY,
+            cwd TEXT,
+            title TEXT,
+            first_user_message TEXT,
+            source TEXT,
+            thread_source TEXT,
+            model TEXT,
+            created_at INTEGER,
+            updated_at INTEGER
+          );
+          CREATE TABLE thread_spawn_edges (
+            parent_thread_id TEXT,
+            child_thread_id TEXT
+          );
+        `);
+        const insertThread = stateDatabase.query(`
+          INSERT INTO threads (
+            id, cwd, title, first_user_message, source, thread_source, model, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        insertThread.run(
+          'state-root',
+          '/work/state-project',
+          'State root',
+          'Run the campaign',
+          'vscode',
+          null,
+          'gpt-5.9-state',
+          1_767_225_600,
+          1_767_225_720,
+        );
+        insertThread.run(
+          'state-child',
+          '/work/state-project',
+          'State child',
+          'Handle the child task',
+          JSON.stringify({ subagent: { thread_spawn: { agent_nickname: 'state-agent' } } }),
+          'subagent',
+          'gpt-5.9-state',
+          1_767_225_660,
+          1_767_225_780,
+        );
+        const insertSpawnEdge = stateDatabase.query(
+          'INSERT INTO thread_spawn_edges (parent_thread_id, child_thread_id) VALUES (?, ?)',
+        );
+        insertSpawnEdge.run('state-root', 'state-child');
+        insertSpawnEdge.run('state-root', 'state-child');
+      } finally {
+        stateDatabase.close();
+      }
+
+      const storage = createLocalHistoryStorage(home);
+      const firstSessions = await runWithRealStorage(readCodexUsageSessions, home);
+      const firstChild = firstSessions.find((session) => session.source.sourceSessionId === 'state-child');
+      expect(firstChild?.model).toBe('gpt-5.9-state');
+
+      const updatedStateDatabase = new Database(path.join(stateDirectory, 'state_5.sqlite'));
+      try {
+        updatedStateDatabase
+          .query('UPDATE threads SET model = ?, title = ? WHERE id = ?')
+          .run('gpt-5.10-state', 'Updated state child', 'state-child');
+      } finally {
+        updatedStateDatabase.close();
+      }
+
+      const sessions = await runWithRealStorage(readCodexUsageSessions, home);
+      const child = sessions.find((session) => session.source.sourceSessionId === 'state-child');
+      const analysis = await Effect.runPromise(
+        readCodexSessionAnalysis('state-child').pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(child).toBeDefined();
+      expect(analysis).not.toBeNull();
+      if (!(child?.date && child.endDate && analysis)) {
+        throw new Error('Expected the state-backed Codex child and its local analysis');
+      }
+      const reportRow = sessionToUsageRow(child);
+      const { projectPath: _projectPath, source: _source, ...serializedInput } = reportRow;
+      const reportProjection = sessionProjectionFactsForSerializedRow(serializeUsageRow(serializedInput));
+
+      expect(child.model).toBe('gpt-5.10-state');
+      expect(child.source.parentSourceSessionId).toBe('state-root');
+      expect(analysis.detail.models).toEqual(['gpt-5.10-state']);
+      expect(analysis.detail.turns.map((turn) => turn.model)).toEqual(['gpt-5.10-state']);
+      expect(analysis.detail.startedAt).toBe(child.date.toISOString());
+      expect(analysis.detail.endedAt).toBe(child.endDate.toISOString());
+      expect(analysis.projection).toEqual(reportProjection);
+      expect(compareSessionProjectionFacts(reportProjection, analysis.projection)).toMatchObject({
+        status: 'cannot-compare',
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('treats duplicate and conflicting state parent edges identically in report and detail', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-parent-edges-'));
+    try {
+      const sessionsDirectory = path.join(home, '.codex', 'sessions', '2026');
+      mkdirSync(sessionsDirectory, { recursive: true });
+      const tokenEvent = (timestamp: string, totalTokens: number, withPriorUsage: boolean) => ({
+        timestamp,
+        payload: {
+          type: 'token_count',
+          info: {
+            ...(withPriorUsage
+              ? {
+                  last_token_usage: {
+                    total_tokens: 10,
+                    input_tokens: 8,
+                    cached_input_tokens: 6,
+                    output_tokens: 2,
+                  },
+                }
+              : {}),
+            total_token_usage: {
+              total_tokens: totalTokens,
+              input_tokens: totalTokens - 10,
+              cached_input_tokens: totalTokens - 20,
+              output_tokens: 10,
+            },
+          },
+        },
+      });
+      writeFileSync(
+        path.join(sessionsDirectory, 'edge-root.jsonl'),
+        jsonl(
+          {
+            timestamp: '2026-01-01T00:00:00.000Z',
+            type: 'session_meta',
+            payload: { id: 'edge-root', cwd: '/work/edge-project' },
+          },
+          tokenEvent('2026-01-01T00:01:00.000Z', 100, false),
+        ),
+      );
+      writeFileSync(
+        path.join(sessionsDirectory, 'edge-child.jsonl'),
+        jsonl(
+          {
+            timestamp: '2026-01-01T00:00:30.000Z',
+            type: 'session_meta',
+            payload: { id: 'edge-child', cwd: '/work/edge-project' },
+          },
+          tokenEvent('2026-01-01T00:01:30.000Z', 50, true),
+        ),
+      );
+
+      const stateDatabase = new Database(path.join(home, '.codex', 'state_5.sqlite'), { create: true });
+      try {
+        stateDatabase.exec(`
+          CREATE TABLE threads (
+            id TEXT PRIMARY KEY,
+            cwd TEXT,
+            title TEXT,
+            first_user_message TEXT,
+            source TEXT,
+            thread_source TEXT,
+            model TEXT,
+            created_at INTEGER,
+            updated_at INTEGER
+          );
+          CREATE TABLE thread_spawn_edges (
+            parent_thread_id TEXT,
+            child_thread_id TEXT
+          );
+          INSERT INTO threads (id, cwd, model) VALUES
+            ('edge-root', '/work/edge-project', 'gpt-5.9-state'),
+            ('edge-child', '/work/edge-project', 'gpt-5.9-state');
+          INSERT INTO thread_spawn_edges (parent_thread_id, child_thread_id) VALUES
+            ('edge-root', 'edge-child'),
+            ('edge-root', 'edge-child'),
+            ('edge-conflict', 'edge-child');
+        `);
+      } finally {
+        stateDatabase.close();
+      }
+
+      const sessions = await runWithRealStorage(readCodexUsageSessions, home);
+      const child = sessions.find((session) => session.source.sourceSessionId === 'edge-child');
+      const analysis = await runWithRealStorage(readCodexSessionAnalysis('edge-child'), home);
+
+      expect(child).toBeDefined();
+      expect(analysis).not.toBeNull();
+      if (!(child && analysis)) {
+        throw new Error('Expected the conflicting-edge report row and local analysis');
+      }
+      const reportRow = sessionToUsageRow(child);
+      const { projectPath: _projectPath, source: _source, ...serializedInput } = reportRow;
+      const reportProjection = sessionProjectionFactsForSerializedRow(serializeUsageRow(serializedInput));
+
+      expect(child.source.parentSourceSessionId).toBeUndefined();
+      expect(analysis.projection).toEqual(reportProjection);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('uses the same bounded lineage semantics for report rows and local analysis', () => {
+    const storage = new TestMemoryStorage();
+    const lineageDepth = 33;
+    for (let index = 0; index <= lineageDepth; index += 1) {
+      const sessionId = `bounded-lineage-${index}`;
+      const parentSessionId = index === 0 ? null : `bounded-lineage-${index - 1}`;
+      const totalTokens = index === 0 ? 100 : 50;
+      storage.writeText(
+        `.codex/sessions/2026/${sessionId}.jsonl`,
+        jsonl(
+          {
+            timestamp: `2026-01-01T00:00:${String(index).padStart(2, '0')}.000Z`,
+            type: 'session_meta',
+            payload: {
+              id: sessionId,
+              cwd: '/work/bounded-lineage',
+              ...(parentSessionId === null
+                ? {}
+                : { source: { subagent: { thread_spawn: { parent_thread_id: parentSessionId } } } }),
+            },
+          },
+          {
+            timestamp: `2026-01-01T00:01:${String(index).padStart(2, '0')}.000Z`,
+            payload: {
+              type: 'token_count',
+              info: {
+                ...(index === 0
+                  ? {}
+                  : {
+                      last_token_usage: {
+                        total_tokens: 10,
+                        input_tokens: 8,
+                        cached_input_tokens: 6,
+                        output_tokens: 2,
+                      },
+                    }),
+                total_token_usage: {
+                  total_tokens: totalTokens,
+                  input_tokens: totalTokens - 10,
+                  cached_input_tokens: totalTokens - 20,
+                  output_tokens: 10,
+                },
+              },
+            },
+          },
+        ),
+      );
+    }
+
+    const sourceSessionId = `bounded-lineage-${lineageDepth}`;
+    const session = runWithStorage(readCodexUsageSessions, storage).find(
+      (candidate) => candidate.source.sourceSessionId === sourceSessionId,
+    );
+    const analysis = runWithStorage(readCodexSessionAnalysis(sourceSessionId), storage);
+
+    expect(session).toBeDefined();
+    expect(analysis).not.toBeNull();
+    if (!(session && analysis)) {
+      throw new Error('Expected the bounded-lineage report row and local analysis');
+    }
+    const reportRow = sessionToUsageRow(session);
+    const { projectPath: _projectPath, source: _source, ...serializedInput } = reportRow;
+    const reportProjection = sessionProjectionFactsForSerializedRow(serializeUsageRow(serializedInput));
+
+    expect(analysis.projection).toEqual(reportProjection);
+    expect(compareSessionProjectionFacts(reportProjection, analysis.projection)).toMatchObject({
+      status: 'matches-report',
+    });
+  });
+
+  test('makes lineage-budget truncation incomparable instead of reporting false drift', () => {
+    const storage = new SimulatedBudgetCodexStorage();
+    const rootPath = '.codex/sessions/2026/budget-root.jsonl';
+    const childPath = '.codex/sessions/2026/budget-child.jsonl';
+    storage.writeText(
+      rootPath,
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'budget-root', cwd: '/work/budget-project' },
+        },
+        {
+          timestamp: '2026-01-01T00:01:00.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: {
+                total_tokens: 100,
+                input_tokens: 80,
+                cached_input_tokens: 60,
+                output_tokens: 20,
+              },
+            },
+          },
+        },
+      ),
+    );
+    storage.writeText(
+      childPath,
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:30.000Z',
+          type: 'session_meta',
+          payload: {
+            id: 'budget-child',
+            cwd: '/work/budget-project',
+            source: { subagent: { thread_spawn: { parent_thread_id: 'budget-root' } } },
+          },
+        },
+        {
+          timestamp: '2026-01-01T00:01:30.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              last_token_usage: {
+                total_tokens: 10,
+                input_tokens: 8,
+                cached_input_tokens: 6,
+                output_tokens: 2,
+              },
+              total_token_usage: {
+                total_tokens: 50,
+                input_tokens: 40,
+                cached_input_tokens: 30,
+                output_tokens: 10,
+              },
+            },
+          },
+        },
+      ),
+    );
+    storage.setSimulatedBytes(childPath, 100 * 1024 * 1024);
+    storage.setSimulatedBytes(rootPath, 64 * 1024 * 1024);
+
+    const session = runWithStorage(readCodexUsageSessions, storage).find(
+      (candidate) => candidate.source.sourceSessionId === 'budget-child',
+    );
+    const analysis = runWithStorage(readCodexSessionAnalysis('budget-child'), storage);
+
+    expect(session).toBeDefined();
+    expect(analysis).not.toBeNull();
+    if (!(session && analysis)) {
+      throw new Error('Expected the budgeted report row and bounded local analysis');
+    }
+    const reportRow = sessionToUsageRow(session);
+    const { projectPath: _projectPath, source: _source, ...serializedInput } = reportRow;
+    const reportProjection = sessionProjectionFactsForSerializedRow(serializeUsageRow(serializedInput));
+
+    expect(analysis.projection).toEqual({
+      ...reportProjection,
+      modelSegments: null,
+    });
+    expect(compareSessionProjectionFacts(reportProjection, analysis.projection)).toMatchObject({
+      status: 'cannot-compare',
+    });
+  });
+
+  test('reads state metadata for a detail lineage through one database lease', () => {
+    const storage = new CountingCodexDatabaseStorage();
+    const sessionIds = ['single-lease-root', 'single-lease-parent', 'single-lease-child'];
+    for (const [index, sessionId] of sessionIds.entries()) {
+      const parentSessionId = index === 0 ? null : sessionIds[index - 1]!;
+      storage.writeText(
+        `.codex/sessions/2026/${sessionId}.jsonl`,
+        jsonl({
+          timestamp: `2026-01-01T00:00:0${index}.000Z`,
+          type: 'session_meta',
+          payload: {
+            id: sessionId,
+            cwd: '/work/single-lease',
+            ...(parentSessionId === null
+              ? {}
+              : { source: { subagent: { thread_spawn: { parent_thread_id: parentSessionId } } } }),
+          },
+        }),
+      );
+      storage.writeDatabaseRows(
+        '.codex/state_5.sqlite',
+        { includes: ['from threads', 'where id = ?'] },
+        [
+          {
+            createdAt: null,
+            cwd: '/work/single-lease',
+            firstUser: null,
+            id: sessionId,
+            model: null,
+            source: null,
+            threadSource: index === 0 ? null : 'subagent',
+            title: null,
+            updatedAt: null,
+          },
+        ],
+        [sessionId],
+      );
+      storage.writeDatabaseRows(
+        '.codex/state_5.sqlite',
+        { includes: ['from thread_spawn_edges', 'where child_thread_id = ?'] },
+        parentSessionId === null ? [] : [{ child: sessionId, parent: parentSessionId }],
+        [sessionId],
+      );
+    }
+
+    const analysis = runWithStorage(readCodexSessionAnalysis('single-lease-child'), storage);
+
+    expect(analysis).not.toBeNull();
+    expect(storage.databaseOpens).toBe(1);
   });
 
   test('collects sessions whose aggregate metadata exceeds the former 2 GiB ceiling', () => {
@@ -586,6 +1122,45 @@ describe('Codex local history', () => {
     expect(result.rows[0]?.provider).toBe('Codex sub');
     expect(result.rows[0]?.usageUnavailable).toBe(true);
     expect(result.warnings).toEqual([]);
+  });
+
+  test('prefers exact rollout names and continues through suffix collisions', () => {
+    const rollout = (sourceSessionId: string) =>
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { cwd: '/work/suffix-collision', id: sourceSessionId },
+        },
+        {
+          timestamp: '2026-01-01T00:00:01.000Z',
+          payload: { type: 'task_started', turn_id: `${sourceSessionId}-turn` },
+        },
+        {
+          timestamp: '2026-01-01T00:00:02.000Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-codex', turn_id: `${sourceSessionId}-turn` },
+        },
+        {
+          timestamp: '2026-01-01T00:00:03.000Z',
+          payload: { type: 'task_complete', turn_id: `${sourceSessionId}-turn` },
+        },
+      );
+    const exactStorage = new TestMemoryStorage();
+    exactStorage.writeText('.codex/sessions/2026/z-target.jsonl', rollout('z-target'));
+    exactStorage.writeText('.codex/sessions/2026/target.jsonl', rollout('target'));
+
+    const exactAnalysis = runWithStorage(readCodexSessionAnalysis('target'), exactStorage);
+
+    expect(exactAnalysis?.detail.sourceSessionId).toBe('target');
+
+    const fallbackStorage = new TestMemoryStorage();
+    fallbackStorage.writeText('.codex/sessions/2026/z-target.jsonl', rollout('z-target'));
+    fallbackStorage.writeText('.codex/sessions/2026/a-target.jsonl', rollout('target'));
+
+    const fallbackAnalysis = runWithStorage(readCodexSessionAnalysis('target'), fallbackStorage);
+
+    expect(fallbackAnalysis?.detail.sourceSessionId).toBe('target');
   });
 
   test('reconstructs active turns, model phases, costs, and bounded deduplicated prompts', () => {

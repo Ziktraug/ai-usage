@@ -274,6 +274,7 @@ test('hydrates and automatically pages Sessions through the production revision 
   await expect(promptSection).toContainText(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL);
   await expect(sessionAnalysis.getByText(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL, { exact: true })).toHaveCount(1);
   const consistencyMetadata = sessionAnalysis.locator('[data-session-analysis-item="consistency-meta"]');
+  await expect(consistencyMetadata).toHaveText('Local detail · comparable metrics match this report revision.');
   await expect(consistencyMetadata).toHaveAttribute('data-tone', 'neutral');
   await expect(consistencyMetadata).not.toHaveAttribute('role', 'status');
   await expect(sessionAnalysis.locator('[data-tone="neutral"][role="status"]')).toHaveCount(0);
@@ -315,6 +316,11 @@ test('hydrates and automatically pages Sessions through the production revision 
   expect(neighborResponseBodies.length).toBeGreaterThanOrEqual(2);
   for (const responseBody of neighborResponseBodies) {
     expectExactProtocolIdentity(responseBody, revision, SESSION_NEIGHBOR_FINGERPRINT_PATTERN);
+  }
+  const detailResponseBodies = responseBodies.filter((body) => body.includes('matches-report'));
+  expect(detailResponseBodies).toHaveLength(1);
+  for (const responseBody of detailResponseBodies) {
+    expect(new Set(protocolIdentityFrom(responseBody).revisions)).toEqual(new Set([revision]));
   }
   expect(serverFunctionResponses.length).toBeGreaterThanOrEqual(5);
   expect(serverFunctionResponses.every(({ status }) => status === 200)).toBe(true);

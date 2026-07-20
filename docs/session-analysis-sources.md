@@ -2,7 +2,7 @@
 
 This document records what the session report and the on-demand session
 analysis can truthfully derive from each local harness. The implementation
-status and structural audits below are current as of **2026-07-19**.
+status and structural audits below are current as of **2026-07-20**.
 
 The important distinction is:
 
@@ -54,6 +54,14 @@ projection facts from the requested immutable revision. The browser sends only
 the revision and report row identity; it does not choose the local provenance.
 This keeps detailed prompts outside the revision while binding the comparison
 to the report that the user is viewing.
+
+The immutable revision also records a private source authority for every row.
+Only `local-observed` authorizes the server to dereference that row's provenance
+against local history. `portable-opaque` identifies a row obtained through a
+portable snapshot or merge path: its machine and source-session identifiers are
+report metadata, not proof that local detail belongs to that row. Matching
+identifiers never upgrade `portable-opaque` to `local-observed`; the row remains
+valid for reporting, but its on-demand local detail is denied.
 
 The resulting consistency has three precise meanings:
 

@@ -10,7 +10,7 @@ import { createProviderStatusDataset } from '@ai-usage/report-core/provider-stat
 import { createUsageSnapshot, type UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
-import { importPeerMergeBundle, usageStorePath } from '@ai-usage/usage-store';
+import { importLocalRows, importPeerMergeBundle, usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 import {
   collectProjectedLocalReportRowsWithWarnings,
@@ -18,6 +18,7 @@ import {
   createLocalReportPayload,
   createLocalUsageSnapshot,
   createMergedUsageReport,
+  createStoredReportCapture,
   createStoredReportPayload,
   listProjectSources,
   parseGitConfigRemote,
@@ -129,6 +130,54 @@ const makeSourcedRow = (input: {
 });
 
 describe('shared reporting', () => {
+  test('keeps source authority aligned with filtered stored report rows', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-authority-'));
+    try {
+      const storage = createLocalHistoryStorage(home);
+      await Effect.runPromise(
+        writeMachineConfig(testMachine).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      await Effect.runPromise(
+        importLocalRows({
+          dbPath: usageStorePath(home),
+          machine: testMachine,
+          rows: [makeSourcedRow({ project: 'local-project', sourcePath: '/work/local', sessionId: 'local-session' })],
+        }),
+      );
+      await Effect.runPromise(
+        importPeerMergeBundle({
+          dbPath: usageStorePath(home),
+          localMachineId: testMachine.id,
+          bundle: createUsageMergeBundle({
+            machine: { id: 'peer-machine', label: 'Peer Machine' },
+            rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-session' })],
+          }),
+        }),
+      );
+
+      const capture = await Effect.runPromise(
+        createStoredReportCapture({
+          generatedAt: new Date('2026-01-01T00:00:00.000Z'),
+          harness: null,
+          includeCursor: false,
+          options: defaultOptions,
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(
+        Object.fromEntries(
+          capture.payload.rows.map((row, index) => [row.source?.sourceSessionId, capture.rowSourceAuthorities[index]]),
+        ),
+      ).toEqual({
+        'local-session': 'local-observed',
+        'peer-session': 'portable-opaque',
+      });
+      expect(Object.hasOwn(capture.payload, 'rowSourceAuthorities')).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('round-trips Cursor attribution through normalized dataset storage without replacing history', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-cursor-dataset-'));
     try {

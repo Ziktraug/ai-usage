@@ -49,10 +49,14 @@ export interface LocalSessionAnalysis {
   projection: SessionProjectionFacts;
 }
 
+export const sessionDetailSourceAuthorities = ['local-observed', 'portable-opaque'] as const;
+export type SessionDetailSourceAuthority = (typeof sessionDetailSourceAuthorities)[number];
+
 export interface SessionDetailReportAnchor {
   harnessKey: string | null;
   machineId: string | null;
   projection: SessionProjectionFacts;
+  sourceAuthority: SessionDetailSourceAuthority;
   sourceSessionId: string | null;
 }
 
@@ -509,22 +513,28 @@ export const parseSessionDetailAnchorResult = (
   if (!isRecord(value.anchor)) {
     throw new SessionDetailValidationError('Session detail anchor result.anchor must be an object or null');
   }
+  const anchor = value.anchor;
   assertExactKeys(
-    value.anchor,
-    ['harnessKey', 'machineId', 'projection', 'sourceSessionId'],
+    anchor,
+    ['harnessKey', 'machineId', 'projection', 'sourceAuthority', 'sourceSessionId'],
     'Session detail anchor result.anchor',
   );
+  const sourceAuthority = sessionDetailSourceAuthorities.find((authority) => authority === anchor.sourceAuthority);
+  if (!sourceAuthority) {
+    throw new SessionDetailValidationError('Session detail anchor result.anchor.sourceAuthority is invalid');
+  }
   return {
     anchor: {
-      harnessKey: requireNullableString(value.anchor.harnessKey, 'Session detail anchor result.anchor.harnessKey'),
+      harnessKey: requireNullableString(anchor.harnessKey, 'Session detail anchor result.anchor.harnessKey'),
       machineId: requireNullableString(
-        value.anchor.machineId,
+        anchor.machineId,
         'Session detail anchor result.anchor.machineId',
         MAX_ID_LENGTH,
       ),
-      projection: parseProjectionFacts(value.anchor.projection, 'Session detail anchor result.anchor.projection'),
+      projection: parseProjectionFacts(anchor.projection, 'Session detail anchor result.anchor.projection'),
+      sourceAuthority,
       sourceSessionId: requireNullableString(
-        value.anchor.sourceSessionId,
+        anchor.sourceSessionId,
         'Session detail anchor result.anchor.sourceSessionId',
         MAX_ID_LENGTH,
       ),

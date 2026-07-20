@@ -1,8 +1,7 @@
-import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { serializeUsageRow } from '@ai-usage/report-core/report-data';
 import { sessionProjectionFactsForSerializedRow } from '@ai-usage/report-core/session-detail';
 import { Effect } from 'effect';
@@ -16,7 +15,7 @@ const temporaryHomes: string[] = [];
 
 afterEach(async () => {
   for (const home of temporaryHomes.splice(0)) {
-    await fs.rm(home, { force: true, recursive: true });
+    await rm(home, { force: true, recursive: true });
   }
 });
 
@@ -88,18 +87,15 @@ describe('OpenCode session facts', () => {
     expect(overflow).toEqual({ kind: 'invalid' });
   });
 
+  test('ignores assistant messages without an object token payload', () => {
+    expect(decodeOpenCodeMessageRow({ role: 'assistant' })).toEqual({ kind: 'ignored' });
+    expect(decodeOpenCodeMessageRow({ role: 'assistant', tokens: null })).toEqual({ kind: 'ignored' });
+  });
+
   test('keeps report and detail projection facts identical for a real database', async () => {
-    const home = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-usage-opencode-facts-'));
+    const home = await mkdtemp(join(tmpdir(), 'ai-usage-opencode-facts-'));
     temporaryHomes.push(home);
     const fixture = await seedHarnessHome(home, { harnesses: ['opencode'] });
-    const database = new Database(fixture.paths.opencodeDatabase);
-    database.exec('ALTER TABLE session ADD COLUMN time_created INTEGER');
-    database.exec('ALTER TABLE session ADD COLUMN time_updated INTEGER');
-    database.exec('ALTER TABLE part ADD COLUMN time_created INTEGER');
-    database
-      .query('UPDATE session SET time_created = ?, time_updated = ? WHERE id = ?')
-      .run(Date.parse('2026-07-04T10:00:00.000Z'), Date.parse('2026-07-04T10:02:00.000Z'), fixture.ids.opencode);
-    database.close();
     const storage = createLocalHistoryStorage(home);
     const run = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>): Promise<A> =>
       Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
@@ -111,7 +107,33 @@ describe('OpenCode session facts', () => {
       throw new Error('Expected matching OpenCode report and detail rows');
     }
     const { projectPath: _projectPath, source: _source, ...rowWithoutSource } = reportRow;
+    const reportProjection = sessionProjectionFactsForSerializedRow(serializeUsageRow(rowWithoutSource));
+    const expectedProjection = {
+      calls: 3,
+      durationMs: 90_000,
+      modelSegments: [
+        {
+          model: 'anthropic/claude-sonnet-4-6',
+          tokens: { cacheRead: 6, cacheWrite: 1, input: 30, output: 10, total: 47 },
+        },
+        {
+          model: 'openai/gpt-5',
+          tokens: { cacheRead: 23, cacheWrite: 4, input: 60, output: 18, total: 105 },
+        },
+      ],
+      partial: true,
+      tokens: { cacheRead: 29, cacheWrite: 5, input: 90, output: 28, total: 152 },
+      tools: 1,
+      turns: 1,
+    };
 
-    expect(analysis.projection).toEqual(sessionProjectionFactsForSerializedRow(serializeUsageRow(rowWithoutSource)));
+    expect(reportProjection).toEqual(expectedProjection);
+    expect(analysis.projection).toEqual(expectedProjection);
+    expect(analysis.detail.turns.map(({ model, promptIds }) => ({ model, promptIds }))).toEqual([
+      { model: 'openai/gpt-5', promptIds: ['opencode-user-part'] },
+      { model: 'anthropic/claude-sonnet-4-6', promptIds: [] },
+      { model: 'openai/gpt-5', promptIds: [] },
+    ]);
+    expect(analysis.detail.turnsStatus).toBe('partial');
   });
 });

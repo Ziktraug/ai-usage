@@ -13,7 +13,7 @@ import {
 import { type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
 import { LocalHistoryStorage } from '../local-history';
 import { metricValidationWarning, parseOptionalNonNegativeSafeInteger } from '../metric-validation';
-import { OPENCODE_DIRECT_USER_PART_PREDICATE } from '../opencode-schema';
+import { OPENCODE_DIRECT_USER_PART_PREDICATE, OPENCODE_TOOL_PART_PREDICATE } from '../opencode-schema';
 import {
   buildOpenCodeProjectionSummary,
   decodeOpenCodeMessageRow,
@@ -46,18 +46,19 @@ interface CountRow {
 interface MessageRow {
   data: string;
   session_id: string;
+  time_created?: unknown;
 }
 export interface OpenCodeCollectionResult {
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
 }
 
-const OPENCODE_DB_CACHE_VERSION = 7;
+const OPENCODE_DB_CACHE_VERSION = 8;
 const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 const SESSION_SQL = 'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
-const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE data LIKE '%"type":"tool"%' GROUP BY session_id`;
-const TURN_COUNT_SQL = `SELECT m.session_id, count(DISTINCT m.id) n FROM message m JOIN part p ON p.message_id = m.id WHERE json_extract(m.data, '$.role') = 'user' AND ${OPENCODE_DIRECT_USER_PART_PREDICATE} GROUP BY m.session_id`;
-const MESSAGE_SQL = 'SELECT session_id, data FROM message ORDER BY session_id, time_created, id';
+const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE ${OPENCODE_TOOL_PART_PREDICATE} GROUP BY session_id`;
+const TURN_COUNT_SQL = `SELECT m.session_id, count(DISTINCT m.id) n FROM message m JOIN part p ON p.message_id = m.id WHERE json_valid(m.data) AND json_valid(p.data) AND json_extract(m.data, '$.role') = 'user' AND ${OPENCODE_DIRECT_USER_PART_PREDICATE} GROUP BY m.session_id`;
+const MESSAGE_SQL = 'SELECT session_id, data, time_created FROM message ORDER BY session_id, time_created, id';
 
 const collectFromDb = (
   dbPath: string,
@@ -170,7 +171,7 @@ const collectFromDb = (
                     continue;
                   }
                   assistantRows++;
-                  const decoded = decodeOpenCodeMessageRow(data);
+                  const decoded = decodeOpenCodeMessageRow({ ...data, created: row.time_created });
                   if (decoded.kind === 'ignored') {
                     continue;
                   }

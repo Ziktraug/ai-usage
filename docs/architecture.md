@@ -150,15 +150,16 @@ complete.
 
 Collection does not depend on browser visibility. Completion-relative source cadences live in the Bun process, and successful semantic publication changes flow to the browser as a bounded `report-published` SSE event alongside replacement snapshots. Reconnect begins from a strictly decoded current snapshot, so no replay log is needed. The browser reacquires only its current atomic destination; finite query invalidation remains separate from exact-revision ownership.
 
-Each publication is atomically stored as owner-only immutable manifest, rows, and support artifacts. Served reads name the exact revision and canonical request fingerprint. The registry bounds retention by age and count, keeps referenced revisions alive through leases, and returns typed unavailable/expired results instead of silently reading a newer revision. Project-group mutations and successful manual imports request a new stored-only publication; retained revisions do not change.
+Each publication is atomically stored as owner-only immutable manifest, rows, support, and Session SQLite artifacts. Source authority travels beside rows only inside the private staging directory, is bound to each hashed row identity while SQLite is materialized, and is removed before publication. It is neither a public payload field nor a published sidecar. Served reads name the exact revision and canonical request fingerprint. The registry bounds retention by age and count, keeps referenced revisions alive through leases, and returns typed unavailable/expired results instead of silently reading a newer revision. Project-group mutations and successful manual imports request a new stored-only publication; retained revisions do not change.
 
 For on-demand Session Analysis, the browser supplies only the served revision
 and row identity. The server resolves non-sensitive machine, harness, source
-session, and projection facts with the `session-detail-anchor` query under the
-same exact-revision lease and budgets. Only after validating that provenance
-against the local machine does it read current local detail and compare the two
-projections. Paths and prompt bodies are neither anchor fields nor comparison
-inputs.
+session, private source authority, and projection facts with the
+`session-detail-anchor` query under the same exact-revision lease and budgets.
+Only a `local-observed` anchor may be validated against the local machine and
+then dereferenced into current local detail; a portable row remains opaque even
+when its machine and session identifiers happen to match. Paths and prompt
+bodies are neither anchor fields nor comparison inputs.
 
 ## Source control invariants
 

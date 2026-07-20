@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { MAX_SESSION_QUERY_RESULT_BYTES } from './report-budgets';
 import type { SerializedRow } from './report-data';
+import { parseSessionDetailRequest } from './session-detail';
 import {
   compareSessionPresentationRows,
   enrichSessionPresentationRow,
@@ -23,11 +24,13 @@ import {
   sessionQueryFingerprint,
   sessionQueryNextCursor,
   sessionQueryPageOffset,
+  sessionRowIdentity,
   sessionSortFields,
   sortValueForSessionColumn,
 } from './session-query';
 
 const MINUTE_MS = 60_000;
+const SESSION_ROW_ID_PATTERN = /^session-row-v1:[a-f0-9]{16}$/;
 const baseRow: SerializedRow = {
   activeDate: '2026-06-10T12:00:00.000Z',
   calls: 1,
@@ -181,10 +184,49 @@ describe('session query contracts', () => {
     expect(first.modelLabel).toBe('gpt-5.4 → gpt-5.4-mini');
     expect(first.sortModel).toBe('gpt-5.4');
     expect(first.providerDisplay).toBe('Codex API');
-    expect(first.rowId).toContain('machine-a|source-a');
+    expect(first.rowId).toMatch(SESSION_ROW_ID_PATTERN);
     expect(first.searchText).toContain('source-a alpha repo');
     expect(first.searchText).toContain('gpt-5.4 → gpt-5.4-mini');
     expect(JSON.parse(JSON.stringify(first))).toEqual(first);
+  });
+
+  test('builds bounded unambiguous row identities accepted by session detail', () => {
+    const longProject = 'project/'.repeat(100);
+    const longLabel = 'session '.repeat(100);
+    const identity = sessionRowIdentity(
+      sourcedRow('source-a', {
+        name: longLabel,
+        project: longProject,
+        sessionLabel: longLabel,
+      }),
+    );
+    const delimiterVariant = sessionRowIdentity(
+      sourcedRow('source|a', {
+        project: 'alpha',
+        provider: 'Codex API',
+      }),
+    );
+    const shiftedDelimiterVariant = sessionRowIdentity(
+      sourcedRow('source', {
+        project: 'alpha',
+        provider: 'a|Codex API',
+      }),
+    );
+
+    expect(identity).toMatch(SESSION_ROW_ID_PATTERN);
+    expect(parseSessionDetailRequest({ revision: 'revision-1', rowId: identity })).toEqual({
+      revision: 'revision-1',
+      rowId: identity,
+    });
+    expect(delimiterVariant).not.toBe(shiftedDelimiterVariant);
+
+    const firstSource = sessionRowIdentity(
+      row('source-less', { projectSourceId: 'source:first', rawProject: 'shared-project' }),
+    );
+    const secondSource = sessionRowIdentity(
+      row('source-less', { projectSourceId: 'source:second', rawProject: 'shared-project' }),
+    );
+    expect(firstSource).not.toBe(secondSource);
   });
 
   test('strictly validates and canonically normalizes query inputs', () => {
@@ -270,9 +312,10 @@ describe('session query contracts', () => {
     const first = enrichSessionPresentationRow(sourcedRow('a'));
     const second = enrichSessionPresentationRow(sourcedRow('b'));
     const comparator = compareSessionPresentationRows([{ desc: true, id: 'cost' }]);
+    const forward = comparator(first, second);
 
-    expect(comparator(first, second)).toBeLessThan(0);
-    expect(comparator(second, first)).toBeGreaterThan(0);
+    expect(forward).not.toBe(0);
+    expect(comparator(second, first)).toBe(-forward);
   });
 
   test('applies presentation, machine, harness, field, and inclusive range filters together', () => {

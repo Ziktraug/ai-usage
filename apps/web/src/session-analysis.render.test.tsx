@@ -3,6 +3,7 @@ import type {
   SessionDetail,
   SessionDetailConsistency,
   SessionDetailResponse,
+  SessionDetailUnavailableReason,
 } from '@ai-usage/report-core/session-detail';
 import { enrichSessionPresentationRow } from '@ai-usage/report-core/session-query';
 import { type Component, createComponent } from 'solid-js';
@@ -10,11 +11,14 @@ import { renderToString } from 'solid-js/web';
 import { createServer } from 'vite';
 import solidPlugin from 'vite-plugin-solid';
 import { demoReportPayload } from './report-data';
+import type { SessionAnalysisError } from './session-analysis-error';
 import type { SessionAnalysisTarget } from './session-analysis-target';
 
 interface RenderedSessionAnalysisProps {
+  error?: SessionAnalysisError | null;
   harnessKey: string;
   loading: boolean;
+  onRetry?: () => void;
   response: SessionDetailResponse | null;
   target: SessionAnalysisTarget;
 }
@@ -93,10 +97,51 @@ const renderAnalysis = (
   );
 };
 
+const renderUnavailableAnalysis = (reason: SessionDetailUnavailableReason): string =>
+  renderToString(() =>
+    createComponent(SessionAnalysis, {
+      harnessKey: 'codex',
+      loading: false,
+      onRetry: () => undefined,
+      response: { message: `Unavailable: ${reason}`, reason, status: 'unavailable' },
+      target: sessionTarget,
+    }),
+  );
+
+const renderAnalysisError = (error: SessionAnalysisError): string =>
+  renderToString(() =>
+    createComponent(SessionAnalysis, {
+      error,
+      harnessKey: 'codex',
+      loading: false,
+      onRetry: () => undefined,
+      response: null,
+      target: sessionTarget,
+    }),
+  );
+
+const renderLoadingAnalysis = (): string =>
+  renderToString(() =>
+    createComponent(SessionAnalysis, {
+      harnessKey: 'codex',
+      loading: true,
+      response: null,
+      target: sessionTarget,
+    }),
+  );
+
 const itemMarkup = (html: string, kind: string): string => {
   const start = html.indexOf(`data-session-analysis-item="${kind}"`);
   if (start < 0) {
     throw new Error(`Missing rendered session analysis item: ${kind}`);
+  }
+  return html.slice(Math.max(0, start - 200), start + 500);
+};
+
+const liveStatusMarkup = (html: string): string => {
+  const start = html.indexOf('data-session-analysis-live-status');
+  if (start < 0) {
+    throw new Error('Missing rendered session analysis live status');
   }
   return html.slice(Math.max(0, start - 200), start + 500);
 };
@@ -178,5 +223,53 @@ describe('SessionAnalysis SSR semantics', () => {
         expect(html.toLowerCase()).not.toContain(freshnessClaim);
       }
     }
+  });
+
+  test('labels an expired immutable revision explicitly and does not offer a doomed retry', () => {
+    const html = renderUnavailableAnalysis('revision-expired');
+
+    expect(html).toContain('Report revision expired');
+    expect(html).not.toContain('>Retry<');
+  });
+
+  test.each([
+    'not-found',
+    'not-local',
+    'report-provenance-unavailable',
+    'report-row-not-found',
+    'revision-expired',
+    'unsupported',
+  ] satisfies SessionDetailUnavailableReason[])('does not offer Retry for terminal unavailable reason %s', (reason) => {
+    expect(renderUnavailableAnalysis(reason)).not.toContain('>Retry<');
+  });
+
+  test('offers Retry for a transient local-history read failure', () => {
+    expect(renderUnavailableAnalysis('history-unavailable')).toContain('>Retry<');
+  });
+
+  test('does not offer Retry for a terminal detail-contract failure', () => {
+    const html = renderAnalysisError({ kind: 'terminal', message: 'Revision mismatch' });
+
+    expect(html).toContain('Revision mismatch');
+    expect(html).not.toContain('>Retry<');
+  });
+
+  test('offers Retry for a transient transport failure', () => {
+    const html = renderAnalysisError({ kind: 'transient', message: 'Connection reset' });
+
+    expect(html).toContain('Connection reset');
+    expect(html).toContain('>Retry<');
+  });
+
+  test.each([
+    ['loading', renderLoadingAnalysis(), 'Loading session analysis'],
+    ['unavailable', renderUnavailableAnalysis('revision-expired'), 'Report revision expired'],
+    ['available', renderAnalysis(), 'Session analysis loaded'],
+  ])('keeps a polite atomic live status for the %s state', (_state, html, announcement) => {
+    const markup = liveStatusMarkup(html);
+
+    expect(markup).toContain('aria-atomic="true"');
+    expect(markup).toContain('aria-live="polite"');
+    expect(markup).toContain(announcement);
   });
 });

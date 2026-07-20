@@ -15,12 +15,12 @@ import {
   parseFiniteTimestamp,
   parseOptionalNonNegativeSafeInteger,
 } from './metric-validation';
-import { OPENCODE_DIRECT_USER_PART_PREDICATE } from './opencode-schema';
+import { OPENCODE_DIRECT_USER_PART_PREDICATE, OPENCODE_TOOL_PART_PREDICATE } from './opencode-schema';
 import {
   buildOpenCodeProjectionSummary,
   decodeOpenCodeMessageRow,
   mergeOpenCodeActivityIntervals,
-  type OpenCodeMessageFact,
+  type OpenCodeMessageDecodeResult,
   type OpenCodeParentKind,
   openCodeActivityDuration,
   openCodeParentKind,
@@ -54,10 +54,11 @@ SELECT
   json_extract(data, '$.tokens.reasoning') AS token_reasoning,
   json_extract(data, '$.tokens.cache.read') AS token_cache_read,
   json_extract(data, '$.tokens.cache.write') AS token_cache_write,
+  json_type(data, '$.tokens') AS tokens_type,
   json_extract(data, '$.cost') AS cost
 FROM message
 WHERE session_id = ? AND json_valid(data)
-ORDER BY COALESCE(json_extract(data, '$.time.created'), time_created), id
+ORDER BY time_created, id
 LIMIT ?`;
 export const OPENCODE_DETAIL_PROMPT_SQL = `
 SELECT
@@ -92,7 +93,7 @@ LIMIT ?`;
 export const OPENCODE_DETAIL_TOOL_SQL = `
 SELECT message_id, count(*) AS tool_count
 FROM part
-WHERE session_id = ? AND json_valid(data) AND json_extract(data, '$.type') = 'tool'
+WHERE session_id = ? AND ${OPENCODE_TOOL_PART_PREDICATE}
 GROUP BY message_id
 ORDER BY message_id
 LIMIT ?`;
@@ -111,6 +112,7 @@ interface OpenCodeDetailMessageRow {
   token_input: unknown;
   token_output: unknown;
   token_reasoning: unknown;
+  tokens_type: unknown;
   variant: unknown;
 }
 
@@ -191,8 +193,24 @@ const addTokens = (
   };
 };
 
-const messageFactFromDetailRow = (row: OpenCodeDetailMessageRow): OpenCodeMessageFact | null => {
-  const decoded = decodeOpenCodeMessageRow({
+const decodeMessageFactFromDetailRow = (row: OpenCodeDetailMessageRow): OpenCodeMessageDecodeResult => {
+  const hasExtractedTokenValue = [
+    row.token_cache_read,
+    row.token_cache_write,
+    row.token_input,
+    row.token_output,
+    row.token_reasoning,
+  ].some((value) => value !== undefined && value !== null);
+  const tokens =
+    row.tokens_type === 'object' || hasExtractedTokenValue
+      ? {
+          cache: { read: row.token_cache_read, write: row.token_cache_write },
+          input: row.token_input,
+          output: row.token_output,
+          reasoning: row.token_reasoning,
+        }
+      : undefined;
+  return decodeOpenCodeMessageRow({
     completed: row.completed,
     cost: row.cost,
     created: row.created,
@@ -201,14 +219,9 @@ const messageFactFromDetailRow = (row: OpenCodeDetailMessageRow): OpenCodeMessag
     parent_id: row.parent_id,
     provider_id: row.provider_id,
     role: row.role,
-    token_cache_read: row.token_cache_read,
-    token_cache_write: row.token_cache_write,
-    token_input: row.token_input,
-    token_output: row.token_output,
-    token_reasoning: row.token_reasoning,
+    ...(tokens ? { tokens } : {}),
     variant: row.variant,
   });
-  return decoded.kind === 'fact' ? decoded.value : null;
 };
 
 const boundedPromptText = (value: string, maximumBytes: number): BoundedPromptText => {
@@ -291,18 +304,27 @@ const turnsFromRows = (
     promptIdsByMessage.set(messageId, current);
   }
 
-  const assistantRows = rows.filter(({ role }) => role === 'assistant');
-  return assistantRows.map((row, index) => {
-    const fact = messageFactFromDetailRow(row);
-    if (!(fact?.id && fact.createdMs !== null)) {
+  const turns: ParsedOpenCodeTurn[] = [];
+  for (const row of rows) {
+    if (row.role !== 'assistant') {
+      continue;
+    }
+    const decoded = decodeMessageFactFromDetailRow(row);
+    if (decoded.kind === 'ignored') {
+      continue;
+    }
+    if (decoded.kind === 'invalid') {
       throw detailError('readOpenCodeSessionAnalysis.message', dbPath, 'OpenCode detail contains invalid metrics');
     }
-    const id = fact.id;
-    const startMs = fact.createdMs;
+    const fact = decoded.value;
+    if (!(fact.id && fact.createdMs !== null)) {
+      throw detailError('readOpenCodeSessionAnalysis.message', dbPath, 'OpenCode detail contains invalid metrics');
+    }
+    const { id, createdMs: startMs } = fact;
     const endMs = fact.completedMs === null ? startMs : Math.max(startMs, fact.completedMs);
     const parentId = fact.parentId;
     const parentKind = openCodeParentKind(parentId, userMessageIds, directUserMessageIds);
-    return {
+    turns.push({
       cost: fact.reportedCostKnown ? fact.cost : null,
       costKind: fact.reportedCostKnown ? 'reported' : 'unknown',
       endMs,
@@ -314,7 +336,7 @@ const turnsFromRows = (
         effort: fact.effort,
         effortKind: fact.effort ? 'recorded' : 'unavailable',
         endAt: timestamp(endMs),
-        index,
+        index: turns.length,
         intervals: [{ endAt: timestamp(endMs), startAt: timestamp(startMs) }],
         model: fact.model,
         promptIds: parentKind === 'human' && parentId !== null ? (promptIdsByMessage.get(parentId) ?? []) : [],
@@ -322,8 +344,9 @@ const turnsFromRows = (
         tokens: fact.tokens,
         tools: toolsByMessageId.get(id) ?? 0,
       },
-    };
-  });
+    });
+  }
+  return turns;
 };
 
 const dominantTurnValue = <Value extends string | null>(
@@ -527,8 +550,8 @@ const detailFromDatabase = (
         );
         const phases = phasesFromTurns(parsedTurns, dbPath);
         const messageFacts = messageRows.flatMap((row) => {
-          const fact = messageFactFromDetailRow(row);
-          return fact ? [fact] : [];
+          const decoded = decodeMessageFactFromDetailRow(row);
+          return decoded.kind === 'fact' ? [decoded.value] : [];
         });
         const projectionSummary = buildOpenCodeProjectionSummary(messageFacts);
         if (!projectionSummary) {
@@ -553,11 +576,11 @@ const detailFromDatabase = (
         const elapsedDurationMs = boundedEndMs - startMs;
         const activeDurationMs = Math.min(elapsedDurationMs, openCodeActivityDuration(parsedTurns));
         const missingCompletion = messageRows.some((row) => {
-          if (row.role !== 'assistant') {
+          const decoded = decodeMessageFactFromDetailRow(row);
+          if (decoded.kind !== 'fact') {
             return false;
           }
-          const created = timestampMs(row.created);
-          const completed = timestampMs(row.completed);
+          const { completedMs: completed, createdMs: created } = decoded.value;
           return created === null || completed === null || completed < created;
         });
         const turns = groupedTurnsFromMessages(parsedTurns, dbPath);

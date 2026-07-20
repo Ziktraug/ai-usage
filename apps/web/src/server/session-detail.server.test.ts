@@ -41,6 +41,7 @@ const anchor: SessionDetailReportAnchor = {
   harnessKey: 'codex',
   machineId: 'machine-a',
   projection,
+  sourceAuthority: 'local-observed',
   sourceSessionId: 'session-a',
 };
 const analysis: LocalSessionAnalysis = { detail, projection };
@@ -145,6 +146,7 @@ describe('local session detail server', () => {
     });
     for (const expected of [
       { anchor: null, reason: 'report-row-not-found' },
+      { anchor: { ...anchor, sourceAuthority: 'portable-opaque' }, reason: 'not-local' },
       { anchor: { ...anchor, sourceSessionId: null }, reason: 'report-provenance-unavailable' },
     ] as const) {
       expect(

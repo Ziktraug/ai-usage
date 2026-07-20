@@ -9,6 +9,7 @@ import type {
   SessionDetailPrompt,
   SessionDetailTokenCounts,
   SessionDetailTurn,
+  SessionProjectionFacts,
 } from '@ai-usage/report-core/session-detail';
 import type { UsageModelSegment } from '@ai-usage/report-core/types';
 import { actualCost, approximateApiCost, UNSEGMENTED_MULTI_MODEL_LABEL } from '@ai-usage/report-core/usage-row';
@@ -18,6 +19,7 @@ import type { LocalHistoryError } from './errors';
 import { SMALL_HISTORY_JSON_MAX_BYTES } from './history-budgets';
 import {
   historyPath,
+  type LocalHistoryDatabase,
   LocalHistoryStorage,
   type LocalHistoryStorage as LocalHistoryStorageService,
   walkFiles,
@@ -30,7 +32,6 @@ import { base, safeJSON, usablePrompt } from './text';
 interface CodexSession {
   activeDurationMs: number | null;
   agentNickname: string | null;
-  beganWithPriorTokenUsage: boolean;
   cwd: string | null;
   end: Date | null;
   firstUser: string | null;
@@ -39,6 +40,7 @@ interface CodexSession {
   maxTotal: number;
   model: string;
   models: string[];
+  observedPriorTokenUsage: boolean;
   parent: string | null;
   partial: boolean;
   phases: CodexSessionPhase[];
@@ -164,8 +166,9 @@ interface SqliteDatabase {
 
 // This cache stores normalized parser output, not raw JSONL. Bump whenever an
 // unchanged rollout could produce different counters, lineage, phases, or turns.
-const CODEX_SESSION_CACHE_VERSION = 11;
-const CODEX_DETAIL_MAX_BYTES = 128 * 1024 * 1024;
+const CODEX_SESSION_CACHE_VERSION = 13;
+const CODEX_DETAIL_MAX_TOTAL_BYTES = 128 * 1024 * 1024;
+const CODEX_LINEAGE_MAX_DEPTH = 32;
 const CODEX_DETAIL_MAX_LINE_BYTES = 8 * 1024 * 1024;
 const CODEX_DETAIL_MAX_PHASES = 256;
 const CODEX_DETAIL_MAX_PROMPTS = 256;
@@ -258,6 +261,17 @@ select parent_thread_id as parent, child_thread_id as child
 from thread_spawn_edges
 `;
 
+const THREAD_METADATA_FOR_ID_SQL = `${THREAD_METADATA_SQL.trim()}
+where id = ?
+limit 2`;
+
+const THREAD_PARENT_FOR_CHILD_SQL = `select distinct
+  parent_thread_id as parent,
+  child_thread_id as child
+from thread_spawn_edges
+where child_thread_id = ?
+limit 2`;
+
 interface CodexThreadMetadataRow {
   createdAt?: number | null;
   cwd?: string | null;
@@ -274,6 +288,31 @@ interface CodexThreadSpawnEdgeRow {
   child?: string | null;
   parent?: string | null;
 }
+
+const codexParentsFromEdges = (edges: readonly CodexThreadSpawnEdgeRow[]): Map<string, string> => {
+  const candidates = new Map<string, Set<string>>();
+  for (const edge of edges) {
+    const child = nonEmpty(edge.child);
+    const parent = nonEmpty(edge.parent);
+    if (!(child && parent)) {
+      continue;
+    }
+    const parents = candidates.get(child) ?? new Set<string>();
+    parents.add(parent);
+    candidates.set(child, parents);
+  }
+
+  const parents = new Map<string, string>();
+  for (const [child, parentCandidates] of candidates) {
+    if (parentCandidates.size === 1) {
+      const parent = parentCandidates.values().next().value;
+      if (parent) {
+        parents.set(child, parent);
+      }
+    }
+  }
+  return parents;
+};
 
 const unixDate = (seconds: unknown): Date | null => {
   if (typeof seconds !== 'number' || !Number.isFinite(seconds)) {
@@ -297,6 +336,26 @@ const agentNicknameFromSource = (source: string | null | undefined): string | nu
   }
   const spawn = threadSpawnFromSource(safeJSON(source));
   return nonEmpty(spawn?.agent_nickname) ?? nonEmpty(spawn?.agent_role);
+};
+
+const codexThreadMetadataFromRow = (row: CodexThreadMetadataRow, parent: string | null): CodexThreadMetadata | null => {
+  const id = nonEmpty(row.id);
+  if (!id) {
+    return null;
+  }
+  return {
+    id,
+    parent,
+    cwd: nonEmpty(row.cwd),
+    title: nonEmpty(row.title),
+    firstUser: nonEmpty(row.firstUser),
+    source: nonEmpty(row.source),
+    threadSource: nonEmpty(row.threadSource),
+    agentNickname: agentNicknameFromSource(row.source),
+    model: nonEmpty(row.model),
+    start: unixDate(row.createdAt),
+    end: unixDate(row.updatedAt),
+  };
 };
 
 const readCodexThreadMetadata: Effect.Effect<
@@ -327,14 +386,7 @@ const readCodexThreadMetadata: Effect.Effect<
             (value) => ({ rows: value.length }),
           );
 
-          const parents = new Map<string, string>();
-          for (const edge of edges) {
-            const child = nonEmpty(edge.child);
-            const parent = nonEmpty(edge.parent);
-            if (child && parent) {
-              parents.set(child, parent);
-            }
-          }
+          const parents = codexParentsFromEdges(edges);
 
           const metadata = new Map<string, CodexThreadMetadata>();
           for (const row of rows) {
@@ -342,19 +394,10 @@ const readCodexThreadMetadata: Effect.Effect<
             if (!id) {
               continue;
             }
-            metadata.set(id, {
-              id,
-              parent: parents.get(id) ?? null,
-              cwd: nonEmpty(row.cwd),
-              title: nonEmpty(row.title),
-              firstUser: nonEmpty(row.firstUser),
-              source: nonEmpty(row.source),
-              threadSource: nonEmpty(row.threadSource),
-              agentNickname: agentNicknameFromSource(row.source),
-              model: nonEmpty(row.model),
-              start: unixDate(row.createdAt),
-              end: unixDate(row.updatedAt),
-            });
+            const threadMetadata = codexThreadMetadataFromRow(row, parents.get(id) ?? null);
+            if (threadMetadata) {
+              metadata.set(id, threadMetadata);
+            }
           }
 
           return metadata;
@@ -365,12 +408,27 @@ const readCodexThreadMetadata: Effect.Effect<
   (metadata) => ({ rows: metadata.size }),
 );
 
+const readCodexThreadMetadataForSession = (
+  database: LocalHistoryDatabase,
+  sourceSessionId: string,
+): Effect.Effect<CodexThreadMetadata | null> =>
+  Effect.gen(function* () {
+    const rows = yield* database.all<CodexThreadMetadataRow>(THREAD_METADATA_FOR_ID_SQL, [sourceSessionId]);
+    const row = rows[0];
+    if (rows.length !== 1 || !row) {
+      return null;
+    }
+    const edges = yield* database.all<CodexThreadSpawnEdgeRow>(THREAD_PARENT_FOR_CHILD_SQL, [sourceSessionId]);
+    const parent = codexParentsFromEdges(edges).get(sourceSessionId) ?? null;
+    return codexThreadMetadataFromRow(row, parent);
+  }).pipe(Effect.catchAll(() => Effect.succeed(null)));
+
 const emptySession = (): CodexSession => ({
   activeDurationMs: null,
   id: null,
   parent: null,
   partial: false,
-  beganWithPriorTokenUsage: false,
+  observedPriorTokenUsage: false,
   rejectedMetricRecords: 0,
   start: null,
   end: null,
@@ -390,6 +448,18 @@ const emptySession = (): CodexSession => ({
   tcr: 0,
   tout: 0,
   hasTokenUsage: false,
+});
+
+const cloneCodexSession = (session: CodexSession): CodexSession => ({
+  ...session,
+  end: session.end ? new Date(session.end) : null,
+  models: [...session.models],
+  phases: session.phases.map((phase) => ({
+    ...phase,
+    end: new Date(phase.end),
+    start: new Date(phase.start),
+  })),
+  start: session.start ? new Date(session.start) : null,
 });
 
 const emptyDetailTokens = (): SessionDetailTokenCounts => ({
@@ -597,7 +667,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       typeof value.model !== 'string' ||
       typeof value.subscription !== 'boolean' ||
       typeof value.hasTokenUsage !== 'boolean' ||
-      typeof value.beganWithPriorTokenUsage !== 'boolean' ||
+      typeof value.observedPriorTokenUsage !== 'boolean' ||
       typeof value.partial !== 'boolean' ||
       !(activeDuration === null || activeDuration.ok) ||
       models === null ||
@@ -615,7 +685,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       id: typeof value.id === 'string' ? value.id : null,
       parent: typeof value.parent === 'string' ? value.parent : null,
       partial: value.partial,
-      beganWithPriorTokenUsage: value.beganWithPriorTokenUsage,
+      observedPriorTokenUsage: value.observedPriorTokenUsage,
       start,
       end,
       cwd: typeof value.cwd === 'string' ? value.cwd : null,
@@ -749,6 +819,8 @@ interface CodexTokenSnapshot {
   output: number;
   total: number;
 }
+
+type CodexUsageOwnership = 'root' | 'session' | 'unknown';
 
 const truncatePrompt = (text: string, maximumBytes: number): { text: string; truncated: boolean } => {
   const encoded = Buffer.from(text, 'utf8');
@@ -962,8 +1034,8 @@ const createCodexSessionParser = (captureDetail = false) => {
       return;
     }
     const lastUsage = tokenSnapshotFrom(isRecord(info?.last_token_usage) ? info.last_token_usage : null);
-    if (!session.hasTokenUsage) {
-      session.beganWithPriorTokenUsage = Boolean(lastUsage && snapshot.total > lastUsage.total);
+    if (lastUsage && snapshot.total > lastUsage.total) {
+      session.observedPriorTokenUsage = true;
     }
     session.hasTokenUsage = true;
     session.maxTotal = Math.max(session.maxTotal, snapshot.total);
@@ -1254,7 +1326,7 @@ const createCodexSessionParser = (captureDetail = false) => {
       endAt: task.end.toISOString(),
       index,
       intervals: [{ endAt: task.end.toISOString(), startAt: task.start.toISOString() }],
-      model: task.model,
+      model: task.model === 'codex' ? session.model : task.model,
       promptIds: task.promptIds,
       startAt: task.start.toISOString(),
       tokens: task.tokens,
@@ -1287,42 +1359,14 @@ const createCodexSessionParser = (captureDetail = false) => {
     };
   };
 
-  const analysis = (): LocalSessionAnalysis | null => {
+  const analysis = (usageOwnership: CodexUsageOwnership = 'session'): LocalSessionAnalysis | null => {
     const parsedDetail = detail();
     if (!parsedDetail) {
       return null;
     }
-    const modelSegments = codexModelSegments(session)
-      .map((segment) => ({
-        model: segment.model,
-        tokens: {
-          cacheRead: segment.tokCr,
-          cacheWrite: segment.tokCw,
-          input: segment.tokIn,
-          output: segment.tokOut,
-          total: segment.tokCr + segment.tokCw + segment.tokIn + segment.tokOut,
-        },
-      }))
-      .sort((left, right) => left.model.localeCompare(right.model));
     return {
       detail: parsedDetail,
-      projection: {
-        calls: 1,
-        durationMs: session.activeDurationMs ?? 0,
-        modelSegments,
-        partial: session.partial,
-        tokens: session.hasTokenUsage
-          ? {
-              cacheRead: session.tcr,
-              cacheWrite: 0,
-              input: session.tin,
-              output: session.tout,
-              total: session.tcr + session.tin + session.tout,
-            }
-          : null,
-        tools: session.tools,
-        turns: session.turns,
-      },
+      projection: codexProjectionFacts(session, usageOwnership),
     };
   };
 
@@ -1458,9 +1502,10 @@ const readCodexSessions = (
               if (cached && cached.size === stat?.size && cached.mtimeMs === stat.mtimeMs) {
                 cacheHits++;
                 rejectedMetricRecords += cached.session.rejectedMetricRecords;
-                mergeMetadata(cached.session, cached.session.id ? metadata.get(cached.session.id) : undefined);
-                if (cached.session.id || cached.session.start) {
-                  sessions.push(cached.session);
+                const session = cloneCodexSession(cached.session);
+                mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
+                if (session.id || session.start) {
+                  sessions.push(session);
                 }
                 continue;
               }
@@ -1479,10 +1524,10 @@ const readCodexSessions = (
               rejectedMetricRecords += parsed.rejectedMetricRecords;
               skippedLines += parsed.skippedLines;
               const session = parsed.session;
-              mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
               if (stat) {
-                parsedForCache.push({ filePath, session: { ...session }, stat });
+                parsedForCache.push({ filePath, session: cloneCodexSession(session), stat });
               }
+              mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
               if (session.id || session.start) {
                 sessions.push(session);
               }
@@ -1553,6 +1598,7 @@ const resolveCodexRootId = (session: CodexSession, sessionsById: ReadonlyMap<str
 
   let current = session;
   const seen = new Set<string>();
+  let traversedEdges = 0;
   while (current.id) {
     if (seen.has(current.id)) {
       return sourceSessionId;
@@ -1561,31 +1607,17 @@ const resolveCodexRootId = (session: CodexSession, sessionsById: ReadonlyMap<str
     if (!current.parent) {
       return current.id;
     }
+    if (traversedEdges >= CODEX_LINEAGE_MAX_DEPTH) {
+      return sourceSessionId;
+    }
     const parent = sessionsById.get(current.parent);
     if (!parent) {
       return sourceSessionId;
     }
     current = parent;
+    traversedEdges++;
   }
   return sourceSessionId;
-};
-
-const sharedTokenUsageRoots = (
-  sessions: readonly CodexSession[],
-  sessionsById: ReadonlyMap<string, CodexSession>,
-): Set<string> => {
-  const roots = new Set<string>();
-  for (const session of sessions) {
-    if (!(session.parent && session.beganWithPriorTokenUsage)) {
-      continue;
-    }
-    const rootId = resolveCodexRootId(session, sessionsById);
-    const root = rootId ? sessionsById.get(rootId) : undefined;
-    if (rootId && root && root.id !== session.id && root.hasTokenUsage && root.maxTotal >= session.maxTotal) {
-      roots.add(rootId);
-    }
-  }
-  return roots;
 };
 
 const codexModelSegments = (session: CodexSession): UsageModelSegment[] => {
@@ -1646,6 +1678,55 @@ const codexModelSegments = (session: CodexSession): UsageModelSegment[] => {
   return [...segments.values()];
 };
 
+const projectionTokens = (tokens: { cr: number; cw: number; in: number; out: number }): SessionDetailTokenCounts => ({
+  cacheRead: tokens.cr,
+  cacheWrite: tokens.cw,
+  input: tokens.in,
+  output: tokens.out,
+  total: tokens.cr + tokens.cw + tokens.in + tokens.out,
+});
+
+const codexProjectionFacts = (session: CodexSession, usageOwnership: CodexUsageOwnership): SessionProjectionFacts => {
+  let modelSegments: SessionProjectionFacts['modelSegments'];
+  if (usageOwnership === 'unknown') {
+    modelSegments = null;
+  } else if (usageOwnership === 'root') {
+    modelSegments =
+      session.models.length > 1
+        ? null
+        : [{ model: session.model, tokens: projectionTokens({ cr: 0, cw: 0, in: 0, out: 0 }) }];
+  } else {
+    modelSegments = codexModelSegments(session)
+      .map((segment) => ({
+        model: segment.model,
+        tokens: projectionTokens({ cr: segment.tokCr, cw: segment.tokCw, in: segment.tokIn, out: segment.tokOut }),
+      }))
+      .sort((left, right) => left.model.localeCompare(right.model));
+  }
+  const usageUnavailable = usageOwnership !== 'session' || !session.hasTokenUsage;
+  return {
+    calls: 1,
+    durationMs: session.activeDurationMs ?? 0,
+    modelSegments,
+    partial: session.partial,
+    tokens: usageUnavailable ? null : projectionTokens({ cr: session.tcr, cw: 0, in: session.tin, out: session.tout }),
+    tools: session.tools,
+    turns: session.turns,
+  };
+};
+
+const isCodexUsageOwnedByRoot = (session: CodexSession, sessionsById: ReadonlyMap<string, CodexSession>): boolean => {
+  if (!(session.id && session.parent && session.observedPriorTokenUsage)) {
+    return false;
+  }
+  if (session.phases.some((phase) => phaseTokenTotal(phase) > 0)) {
+    return false;
+  }
+  const rootId = resolveCodexRootId(session, sessionsById);
+  const root = rootId ? sessionsById.get(rootId) : undefined;
+  return Boolean(rootId && root && root.id !== session.id && root.hasTokenUsage && root.maxTotal >= session.maxTotal);
+};
+
 export const readCodexUsageSessionsResult: Effect.Effect<
   CodexUsageSessionsResult,
   LocalHistoryError,
@@ -1662,8 +1743,6 @@ export const readCodexUsageSessionsResult: Effect.Effect<
         byId.set(session.id, session);
       }
     }
-    const sharedUsageRoots = sharedTokenUsageRoots(sessions, byId);
-
     const children = new Map<string, CodexSession[]>();
     const childIds = new Set<string>();
     for (const session of sessions) {
@@ -1689,17 +1768,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
       const parentSession = session.parent ? byId.get(session.parent) : undefined;
       const subscription = session.subscription || Boolean(parentSession?.subscription);
       const indexedName = session.id ? names.get(session.id) : undefined;
-      const rootId = resolveCodexRootId(session, byId);
-      const rootSession = rootId ? byId.get(rootId) : undefined;
-      const usageOwnedByRoot = Boolean(
-        session.id &&
-          rootId &&
-          session.id !== rootId &&
-          !session.phases.some((phase) => phaseTokenTotal(phase) > 0) &&
-          sharedUsageRoots.has(rootId) &&
-          rootSession &&
-          rootSession.maxTotal >= session.maxTotal,
-      );
+      const usageOwnedByRoot = isCodexUsageOwnedByRoot(session, byId);
       const modelSegments = codexModelSegments(session);
       const costApprox = modelSegments.reduce((total, segment) => total + segment.costApprox, 0);
       const costKnown = modelSegments.every((segment) => segment.costKnown);
@@ -1744,9 +1813,35 @@ export const readCodexUsageSessionsResult: Effect.Effect<
 export const readCodexUsageSessions: Effect.Effect<CollectedSession[], LocalHistoryError, LocalHistoryStorageService> =
   readCodexUsageSessionsResult.pipe(Effect.map((result) => result.sessions));
 
-const codexRolloutMatchesSessionId = (filePath: string, sourceSessionId: string): boolean => {
-  const fileName = path.basename(filePath);
-  return fileName === `${sourceSessionId}.jsonl` || fileName.endsWith(`-${sourceSessionId}.jsonl`);
+const indexCodexRolloutFiles = (files: readonly string[]): ReadonlyMap<string, readonly string[]> => {
+  const filesBySessionId = new Map<string, string[]>();
+  for (const filePath of files) {
+    const fileName = path.basename(filePath);
+    if (!fileName.endsWith('.jsonl')) {
+      continue;
+    }
+    const stem = fileName.slice(0, -'.jsonl'.length);
+    const candidates = [stem];
+    for (let separator = stem.indexOf('-'); separator >= 0; separator = stem.indexOf('-', separator + 1)) {
+      candidates.push(stem.slice(separator + 1));
+    }
+    for (const [index, candidate] of candidates.entries()) {
+      if (!SAFE_CODEX_SESSION_ID.test(candidate)) {
+        continue;
+      }
+      const candidateFiles = filesBySessionId.get(candidate) ?? [];
+      if (candidateFiles.includes(filePath)) {
+        continue;
+      }
+      if (index === 0) {
+        candidateFiles.unshift(filePath);
+      } else {
+        candidateFiles.push(filePath);
+      }
+      filesBySessionId.set(candidate, candidateFiles);
+    }
+  }
+  return filesBySessionId;
 };
 
 export const readCodexSessionAnalysis = (
@@ -1758,22 +1853,89 @@ export const readCodexSessionAnalysis = (
     }
     const storage = yield* LocalHistoryStorage;
     const files = yield* listCodexSessionFiles;
-    for (const filePath of files) {
-      if (!codexRolloutMatchesSessionId(filePath, sourceSessionId)) {
-        continue;
-      }
-      const parser = createCodexSessionParser(true);
-      yield* storage.readLines(filePath, parser.visit, {
-        maxBytes: CODEX_DETAIL_MAX_BYTES,
-        maxLineBytes: CODEX_DETAIL_MAX_LINE_BYTES,
+    const filesBySessionId = indexCodexRolloutFiles(files);
+    const readIndexedSession = (sessionId: string, captureDetail: boolean, maximumBytes: number) =>
+      Effect.gen(function* () {
+        let bytes = 0;
+        for (const filePath of filesBySessionId.get(sessionId) ?? []) {
+          const parser = createCodexSessionParser(captureDetail);
+          const read = yield* storage.readLines(filePath, parser.visit, {
+            maxBytes: Math.max(0, maximumBytes - bytes),
+            maxLineBytes: CODEX_DETAIL_MAX_LINE_BYTES,
+          });
+          bytes += read.bytes;
+          const session = parser.finish().session;
+          if (session.id === sessionId) {
+            return { bytes, parser, session } as const;
+          }
+        }
+        return { bytes, parser: null, session: null } as const;
       });
-      const parsed = parser.finish();
-      if (parsed.session.id !== sourceSessionId) {
-        continue;
-      }
-      return parser.analysis();
+    const targetRead = yield* readIndexedSession(sourceSessionId, true, CODEX_DETAIL_MAX_TOTAL_BYTES);
+    if (!(targetRead.parser && targetRead.session)) {
+      return null;
     }
-    return null;
+    const parser = targetRead.parser;
+    const parsedSession = targetRead.session;
+    const initialRemainingBytes = Math.max(0, CODEX_DETAIL_MAX_TOTAL_BYTES - targetRead.bytes);
+    const analyzeWithMetadata = (database: LocalHistoryDatabase | null) =>
+      Effect.gen(function* () {
+        let remainingBytes = initialRemainingBytes;
+        const metadata = database ? yield* readCodexThreadMetadataForSession(database, sourceSessionId) : null;
+        mergeMetadata(parsedSession, metadata ?? undefined);
+
+        const sessionsById = new Map<string, CodexSession>([[sourceSessionId, parsedSession]]);
+        const seen = new Set([sourceSessionId]);
+        let lineageBudgetTruncated = false;
+        let ancestorId = parsedSession.parent;
+        for (let depth = 0; ancestorId && depth < CODEX_LINEAGE_MAX_DEPTH; depth += 1) {
+          const currentAncestorId = ancestorId;
+          if (seen.has(currentAncestorId)) {
+            break;
+          }
+          seen.add(currentAncestorId);
+          if (!filesBySessionId.has(currentAncestorId)) {
+            break;
+          }
+          const ancestorRead = yield* readIndexedSession(currentAncestorId, false, remainingBytes).pipe(
+            Effect.map((result) => ({ ok: true as const, result })),
+            Effect.catchAll(() => Effect.succeed({ ok: false as const })),
+          );
+          if (!ancestorRead.ok) {
+            lineageBudgetTruncated = true;
+            break;
+          }
+          remainingBytes = Math.max(0, remainingBytes - ancestorRead.result.bytes);
+          const ancestor = ancestorRead.result.session;
+          if (!ancestor) {
+            break;
+          }
+          const ancestorMetadata = database
+            ? yield* readCodexThreadMetadataForSession(database, currentAncestorId)
+            : null;
+          mergeMetadata(ancestor, ancestorMetadata ?? undefined);
+          sessionsById.set(currentAncestorId, ancestor);
+          ancestorId = ancestor.parent;
+        }
+
+        let usageOwnership: CodexUsageOwnership = 'session';
+        if (lineageBudgetTruncated) {
+          usageOwnership = 'unknown';
+        } else if (isCodexUsageOwnedByRoot(parsedSession, sessionsById)) {
+          usageOwnership = 'root';
+        }
+        return parser.analysis(usageOwnership);
+      });
+
+    const dbPath = yield* firstExisting(storage, ...codexStateDbCandidates(storage));
+    if (!dbPath) {
+      return yield* analyzeWithMetadata(null);
+    }
+    const database = yield* storage.openDatabase(dbPath).pipe(Effect.catchAll(() => Effect.succeed(null)));
+    if (!database) {
+      return yield* analyzeWithMetadata(null);
+    }
+    return yield* analyzeWithMetadata(database).pipe(Effect.ensuring(database.close));
   });
 
 const findLatestRawCodexRateLimits = (
