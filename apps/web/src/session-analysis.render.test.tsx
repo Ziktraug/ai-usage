@@ -2,7 +2,10 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import type {
   SessionDetail,
   SessionDetailConsistency,
+  SessionDetailPhase,
+  SessionDetailPrompt,
   SessionDetailResponse,
+  SessionDetailTurn,
   SessionDetailUnavailableReason,
 } from '@ai-usage/report-core/session-detail';
 import { enrichSessionPresentationRow } from '@ai-usage/report-core/session-query';
@@ -76,6 +79,42 @@ const detail: SessionDetail = {
   turnsStatus: 'recorded',
 };
 const matches: SessionDetailConsistency = { checkedFields: ['tokens'], status: 'matches-report' };
+const tokens = (total: number) => ({ cacheRead: 0, cacheWrite: 0, input: total, output: 0, total });
+const phase = (model: string, startAt: string, endAt: string, total: number, cost = 1): SessionDetailPhase => ({
+  cost,
+  costKind: 'approximate',
+  effort: 'high',
+  effortKind: 'recorded',
+  endAt,
+  model,
+  startAt,
+  tokens: tokens(total),
+});
+const prompt = (id: string, text: string, timestamp: string, truncated = false): SessionDetailPrompt => ({
+  id,
+  text,
+  timestamp,
+  truncated,
+});
+const turn = (
+  index: number,
+  startAt: string,
+  endAt: string,
+  overrides: Partial<SessionDetailTurn> = {},
+): SessionDetailTurn => ({
+  durationMs: Date.parse(endAt) - Date.parse(startAt),
+  effort: 'high',
+  effortKind: 'recorded',
+  endAt,
+  index,
+  intervals: [{ endAt, startAt }],
+  model: 'gpt-5.6-sol',
+  promptIds: [],
+  startAt,
+  tokens: tokens(100),
+  tools: 0,
+  ...overrides,
+});
 const forbiddenFreshnessClaims = [
   ['may', 'be', 'newer'],
   ['source', 'newer'],
@@ -85,6 +124,7 @@ const renderAnalysis = (
   consistency: SessionDetailConsistency = matches,
   detailOverrides: Partial<SessionDetail> = {},
   target: SessionAnalysisTarget = sessionTarget,
+  harnessKey = 'codex',
 ): string => {
   const response: SessionDetailResponse = {
     consistency,
@@ -92,10 +132,11 @@ const renderAnalysis = (
     revision: 'revision-a',
     status: 'available',
   };
-  return renderToString(() =>
-    createComponent(SessionAnalysis, { harnessKey: 'codex', loading: false, response, target }),
-  );
+  return renderToString(() => createComponent(SessionAnalysis, { harnessKey, loading: false, response, target }));
 };
+
+const renderAnalysisForHarness = (harnessKey: string, detailOverrides: Partial<SessionDetail> = {}): string =>
+  renderAnalysis(matches, detailOverrides, sessionTarget, harnessKey);
 
 const renderUnavailableAnalysis = (reason: SessionDetailUnavailableReason): string =>
   renderToString(() =>
@@ -146,6 +187,16 @@ const liveStatusMarkup = (html: string): string => {
   return html.slice(Math.max(0, start - 200), start + 500);
 };
 
+const sectionMarkup = (html: string, id: string): string => {
+  const idIndex = html.indexOf(`id="${id}"`);
+  const start = html.lastIndexOf('<section', idIndex);
+  const end = html.indexOf('</section>', idIndex);
+  if (idIndex < 0 || start < 0 || end < 0) {
+    throw new Error(`Missing rendered session analysis section: ${id}`);
+  }
+  return html.slice(start, end + '</section>'.length);
+};
+
 describe('SessionAnalysis SSR semantics', () => {
   test.each([
     [matches, 'comparable metrics match this report revision'],
@@ -188,15 +239,16 @@ describe('SessionAnalysis SSR semantics', () => {
     expect(html).toContain(text);
   });
 
-  test('renders privacy beside Prompts as neutral metadata', () => {
+  test('renders privacy in the unified timeline as neutral metadata', () => {
     const html = renderAnalysis();
     const markup = itemMarkup(html, 'privacy');
+    const timelineMarkup = sectionMarkup(html, 'session-timeline');
     expect(markup).toContain('data-tone="neutral"');
     expect(markup).not.toContain('role="status"');
-    expect(html.indexOf('session-prompts')).toBeLessThan(html.indexOf('data-session-analysis-item="privacy"'));
+    expect(timelineMarkup).toContain('data-session-analysis-item="privacy"');
   });
 
-  test('renders incomplete timing as accessible bounds with a neutral note below the metrics', () => {
+  test('renders incomplete timing as accessible bounds in the timeline caption', () => {
     const html = renderAnalysis(matches, {
       activeDurationMs: 60_000,
       durationStatus: 'partial',
@@ -218,10 +270,8 @@ describe('SessionAnalysis SSR semantics', () => {
       'title="Wall-clock span from the first local task start to the last observed local task event."',
     );
     expect(html).not.toContain('final local task completion');
-    expect(html.indexOf('<dl')).toBeLessThan(html.indexOf('data-session-analysis-item="partial-duration"'));
-    expect(html.indexOf('data-session-analysis-item="partial-duration"')).toBeLessThan(
-      html.indexOf('id="session-model-phases"'),
-    );
+    expect(html).not.toContain('<dl');
+    expect(sectionMarkup(html, 'session-timeline')).toContain('data-session-analysis-item="partial-duration"');
   });
 
   test('does not add timing bounds when coverage is recorded', () => {
@@ -232,13 +282,15 @@ describe('SessionAnalysis SSR semantics', () => {
     expect(html).not.toContain('aria-hidden="true">≤ ');
   });
 
-  test('places partial turn attribution beside Prompts as neutral static metadata', () => {
+  test('places partial turn attribution in the unified timeline as neutral static metadata', () => {
     const html = renderAnalysis(matches, { turnsStatus: 'partial' });
     const markup = itemMarkup(html, 'partial-turns');
+    const timelineMarkup = sectionMarkup(html, 'session-timeline');
 
     expect(markup).toContain('data-tone="neutral"');
     expect(markup).not.toContain('role="status"');
-    expect(html.indexOf('id="session-prompts"')).toBeLessThan(
+    expect(timelineMarkup).toContain('data-session-analysis-item="partial-turns"');
+    expect(html.indexOf('id="session-timeline"')).toBeLessThan(
       html.indexOf('data-session-analysis-item="partial-turns"'),
     );
     expect(html.indexOf('data-session-analysis-item="partial-turns"')).toBeLessThan(
@@ -253,13 +305,15 @@ describe('SessionAnalysis SSR semantics', () => {
     expect(renderAnalysis()).not.toContain('data-session-analysis-item="partial-turns"');
   });
 
-  test('keeps prompt truncation beside Prompts as neutral static metadata', () => {
+  test('keeps prompt truncation in the unified timeline as neutral static metadata', () => {
     const html = renderAnalysis(matches, { promptsTruncated: true });
     const markup = itemMarkup(html, 'prompt-truncation');
+    const timelineMarkup = sectionMarkup(html, 'session-timeline');
 
     expect(markup).toContain('data-tone="neutral"');
     expect(markup).not.toContain('role="status"');
-    expect(html.indexOf('id="session-prompts"')).toBeLessThan(
+    expect(timelineMarkup).toContain('data-session-analysis-item="prompt-truncation"');
+    expect(html.indexOf('id="session-timeline"')).toBeLessThan(
       html.indexOf('data-session-analysis-item="prompt-truncation"'),
     );
     expect(html).toContain(
@@ -332,5 +386,144 @@ describe('SessionAnalysis SSR semantics', () => {
     expect(markup).toContain('aria-atomic="true"');
     expect(markup).toContain('aria-live="polite"');
     expect(markup).toContain(announcement);
+  });
+
+  test('renders a single-phase legend with precise cost and no phase band', () => {
+    const html = renderAnalysis(matches, {
+      phases: [phase('gpt-5.6-sol', detail.startedAt, detail.endedAt, 100, 115.3777)],
+    });
+
+    expect(html).not.toContain('id="session-model-phases"');
+    expect(html).toContain('100% tokens');
+    expect(html).toContain('≈ $115.38');
+    expect(html).not.toContain('$115.3777');
+  });
+
+  test('keeps four decimals for a phase cost below one dollar', () => {
+    const html = renderAnalysis(matches, {
+      phases: [phase('gpt-5.6-sol', detail.startedAt, detail.endedAt, 100, 0.123_45)],
+    });
+
+    expect(html).toContain('≈ $0.1235');
+  });
+
+  test('renders multi-phase bands and gives task tracks distinct phase colors', () => {
+    const middle = '2026-07-18T10:30:00.000Z';
+    const html = renderAnalysis(matches, {
+      elapsedDurationMs: 60 * 60_000,
+      endedAt: '2026-07-18T11:00:00.000Z',
+      phases: [
+        phase('gpt-5.6-sol', detail.startedAt, middle, 100),
+        phase('gpt-5.7-sol', middle, '2026-07-18T11:00:00.000Z', 200),
+      ],
+      turns: [
+        turn(0, '2026-07-18T10:00:00.000Z', '2026-07-18T10:10:00.000Z'),
+        turn(1, '2026-07-18T10:40:00.000Z', '2026-07-18T10:50:00.000Z', { model: 'gpt-5.7-sol' }),
+      ],
+    });
+
+    expect(html).toContain('id="session-model-phases"');
+    expect(html).toContain('data-session-analysis-phase-tone="0"');
+    expect(html).toContain('data-session-analysis-phase-tone="1"');
+  });
+
+  test('uses the primary prompt preview as the task label and pluralizes counts', () => {
+    const taskPrompt = prompt('prompt-1', 'Explain the chronology clearly', '2026-07-18T10:00:01.000Z');
+    const html = renderAnalysis(matches, {
+      prompts: [taskPrompt],
+      turns: [
+        turn(0, detail.startedAt, detail.endedAt, {
+          promptIds: [taskPrompt.id],
+          tools: 1,
+        }),
+      ],
+    });
+    const taskMarkup = html.slice(html.indexOf('data-session-analysis-row="task"'));
+
+    expect(taskMarkup).toContain('Explain the chronology clearly');
+    expect(taskMarkup).not.toContain('Task 1');
+    expect(taskMarkup).toContain('1 prompt');
+    expect(taskMarkup).not.toContain('1 prompts');
+    expect(taskMarkup).toContain('1 tool');
+    expect(taskMarkup).not.toContain('1 tools');
+  });
+
+  test.each([
+    ['codex', 'Task 1'],
+    ['opencode', 'Turn 1'],
+  ])('uses the %s row noun for a task without a prompt', (harnessKey, expectedLabel) => {
+    const html = renderAnalysisForHarness(harnessKey, { turns: [turn(0, detail.startedAt, detail.endedAt)] });
+
+    expect(html).toContain(expectedLabel);
+  });
+
+  test('renders an orphan prompt with a point marker and no token value', () => {
+    const html = renderAnalysis(matches, {
+      prompts: [prompt('orphan', 'Unmatched prompt', '2026-07-18T10:00:30.000Z')],
+    });
+    const orphanMarkup = html.slice(html.indexOf('data-session-analysis-row="orphan-prompt"'));
+
+    expect(orphanMarkup).toContain('data-session-analysis-point');
+    expect(orphanMarkup).toContain('>—</span>');
+    expect(orphanMarkup).toContain('0s task-open time');
+    expect(orphanMarkup).toContain('0 tools');
+  });
+
+  test('keeps both empty-state explanations in the unified timeline', () => {
+    const html = renderAnalysis();
+
+    expect(html).toContain('No turn intervals were available in local history.');
+    expect(html).toContain('No prompt text was available in local history.');
+  });
+
+  test('renders all four duration metrics without bounds for recorded coverage', () => {
+    const html = renderAnalysis();
+
+    for (const key of ['active', 'span', 'gap', 'blocks']) {
+      expect(html).toContain(`data-session-analysis-metric="${key}"`);
+    }
+    expect(html).not.toContain('aria-hidden="true">≥ ');
+    expect(html).not.toContain('aria-hidden="true">≤ ');
+  });
+
+  test('defaults to a compressed scale with a labelled break for a five-hour gap', () => {
+    const html = renderAnalysis(matches, {
+      activeDurationMs: 20 * 60_000,
+      elapsedDurationMs: 5 * 60 * 60_000 + 20 * 60_000,
+      endedAt: '2026-07-18T15:20:00.000Z',
+      idleDurationMs: 5 * 60 * 60_000,
+      turns: [
+        turn(0, '2026-07-18T10:00:00.000Z', '2026-07-18T10:10:00.000Z'),
+        turn(1, '2026-07-18T15:10:00.000Z', '2026-07-18T15:20:00.000Z'),
+      ],
+    });
+
+    expect(html).toContain('data-session-analysis-scale="compressed"');
+    expect(html).toContain('aria-label="Show real gaps"');
+    expect(html).toContain('aria-pressed="false"');
+    expect(html).toContain('title="5h"');
+    expect(html).toContain('>⫽</span>');
+    expect(html).toContain('>Show real gaps</button>');
+  });
+
+  test('hides the scale toggle when the timeline has no compressible gap', () => {
+    const html = renderAnalysis(matches, {
+      elapsedDurationMs: 20 * 60_000,
+      endedAt: '2026-07-18T10:20:00.000Z',
+      turns: [
+        turn(0, '2026-07-18T10:00:00.000Z', '2026-07-18T10:10:00.000Z'),
+        turn(1, '2026-07-18T10:12:00.000Z', '2026-07-18T10:20:00.000Z'),
+      ],
+    });
+
+    expect(html).not.toContain('>Show real gaps</button>');
+    expect(html).not.toContain('>Compress gaps</button>');
+  });
+
+  test('never renders invalid row labels or numeric values', () => {
+    for (const html of [renderAnalysis(), renderAnalysisForHarness('opencode')]) {
+      expect(html).not.toContain('Turn undefined');
+      expect(html).not.toContain('NaN');
+    }
   });
 });

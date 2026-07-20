@@ -4,17 +4,25 @@ import type {
   SessionDetailConsistency,
   SessionDetailPhase,
   SessionDetailResponse,
-  SessionDetailTurn,
 } from '@ai-usage/report-core/session-detail';
-import { createMemo, For, Match, Show, Switch } from 'solid-js';
+import { createMemo, createSignal, For, Match, Show, Switch } from 'solid-js';
 import type { SessionAnalysisError } from './session-analysis-error';
 import {
+  buildSessionTimelineRows,
+  buildTimelineScale,
   countActivityBursts,
+  countLabel,
   formatSessionDuration,
   phaseTokenShare,
-  positionOnTimeline,
+  positionOnScale,
   type SessionDurationSemantics,
+  type SessionTimelinePromptRef,
+  type SessionTimelineRow,
+  sessionDurationCaption,
   sessionDurationSemantics,
+  type TimelineScale,
+  type TimelineScaleMode,
+  timelineHasCompressibleGaps,
 } from './session-analysis-model';
 import {
   buildSessionAnalysisPresentation,
@@ -31,15 +39,6 @@ export interface SessionAnalysisProps {
   target: SessionAnalysisTarget;
 }
 
-type SessionMetricBound = 'lower' | 'upper' | null;
-
-interface SessionMetricItem {
-  bound: SessionMetricBound;
-  hint: string;
-  label: string;
-  value: string;
-}
-
 const dateTimeFormatter = new Intl.DateTimeFormat('en', {
   day: '2-digit',
   hour: '2-digit',
@@ -53,8 +52,14 @@ const compactNumberFormatter = new Intl.NumberFormat('en', {
 });
 const moneyFormatter = new Intl.NumberFormat('en-US', {
   currency: 'USD',
-  maximumFractionDigits: 4,
+  maximumFractionDigits: 2,
   minimumFractionDigits: 2,
+  style: 'currency',
+});
+const subDollarMoneyFormatter = new Intl.NumberFormat('en-US', {
+  currency: 'USD',
+  maximumFractionDigits: 4,
+  minimumFractionDigits: 4,
   style: 'currency',
 });
 const COLLAPSE_WHITESPACE = /\s+/g;
@@ -68,31 +73,8 @@ const muted = css({ color: 'muted', fontSize: '12px', lineHeight: 1.5 });
 const numeric = css({ fontFamily: 'mono', fontVariantNumeric: 'tabular-nums' });
 const section = css({ display: 'grid', gap: '12px', minW: 0 });
 const sectionHeader = css({ display: 'grid', gap: '3px' });
-const metrics = css({
-  display: 'grid',
-  gridTemplateColumns: { base: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' },
-  gap: '8px',
-  m: 0,
-});
-const metric = css({
-  display: 'grid',
-  gap: '5px',
-  minW: 0,
-  p: '12px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surfaceMuted',
-});
-const metricLabel = css({ color: 'muted', fontSize: '11px', fontWeight: 650, textTransform: 'uppercase' });
-const metricValue = css({
-  color: 'ink',
-  fontFamily: 'mono',
-  fontSize: { base: '17px', md: '20px' },
-  fontVariantNumeric: 'tabular-nums',
-  fontWeight: 700,
-  lineHeight: 1.1,
-  m: 0,
-});
+const durationCaption = css({ display: 'flex', flexWrap: 'wrap', gap: '4px 8px', color: 'muted', fontSize: '11px' });
+const durationCaptionPart = css({ whiteSpace: 'nowrap' });
 const notice = css({
   display: 'grid',
   gap: '4px',
@@ -116,7 +98,10 @@ const timelineShell = css({
 });
 const timelineAxis = css({
   display: 'grid',
-  gridTemplateColumns: { base: 'minmax(0, 1fr)', md: 'minmax(152px, 0.36fr) minmax(0, 1fr)' },
+  gridTemplateColumns: {
+    base: 'minmax(0, 1fr)',
+    md: 'minmax(220px, 0.42fr) minmax(0, 1fr) minmax(72px, 0.16fr)',
+  },
   gap: '12px',
   alignItems: 'end',
 });
@@ -130,15 +115,34 @@ const axisLabels = css({
   fontSize: '10px',
   fontVariantNumeric: 'tabular-nums',
 });
+const axisTrack = css({ position: 'relative', minW: 0 });
+const axisTokenHeading = css({
+  display: { base: 'none', md: 'block' },
+  color: 'faint',
+  fontSize: '10px',
+  fontWeight: 650,
+});
+const scaleBreak = css({
+  position: 'absolute',
+  top: '-2px',
+  color: 'ink',
+  fontSize: '14px',
+  fontWeight: 700,
+  lineHeight: 1,
+  transform: 'translateX(-50%)',
+});
 const timelineList = css({ display: 'grid', gap: '7px', listStyle: 'none', m: 0, p: 0 });
 const timelineRow = css({
   display: 'grid',
-  gridTemplateColumns: { base: 'minmax(0, 1fr)', md: 'minmax(152px, 0.36fr) minmax(0, 1fr)' },
+  gridTemplateColumns: {
+    base: 'minmax(0, 1fr)',
+    md: 'minmax(220px, 0.42fr) minmax(0, 1fr) minmax(72px, 0.16fr)',
+  },
   gap: { base: '5px', md: '12px' },
   alignItems: 'center',
   minW: 0,
 });
-const timelineLabel = css({ display: 'grid', gap: '2px', minW: 0 });
+const timelineLabel = css({ minW: 0 });
 const timelineLabelTop = css({
   display: 'flex',
   gap: '6px',
@@ -158,6 +162,8 @@ const timelineTrack = css({
   border: '1px solid token(colors.line)',
   borderRadius: 'sm',
   bg: 'track',
+});
+const wallClockTrack = css({
   backgroundImage:
     'linear-gradient(to right, transparent 24.8%, token(colors.line) 25%, transparent 25.2%, transparent 49.8%, token(colors.line) 50%, transparent 50.2%, transparent 74.8%, token(colors.line) 75%, transparent 75.2%)',
 });
@@ -165,10 +171,18 @@ const timelineBar = css({
   position: 'absolute',
   top: '3px',
   bottom: '3px',
-  minW: '4px',
   borderRadius: '4px',
 });
 const turnBar = css({ bg: 'accent', boxShadow: '0 0 0 1px token(colors.focusRing)' });
+const pointMarker = css({
+  position: 'absolute',
+  top: '5px',
+  w: '8px',
+  h: '8px',
+  bg: 'accent',
+  border: '1px solid token(colors.focusRing)',
+  transform: 'translateX(-50%) rotate(45deg)',
+});
 const phaseDot = css({ flex: '0 0 auto', w: '8px', h: '8px', borderRadius: 'full' });
 const phaseToneClasses = [
   css({ bg: 'chart.c1' }),
@@ -186,7 +200,6 @@ const empty = css({
   fontSize: '12px',
   textAlign: 'center',
 });
-const promptList = css({ display: 'grid', gap: '8px' });
 const promptDisclosure = css({
   overflow: 'hidden',
   border: '1px solid token(colors.line)',
@@ -195,7 +208,7 @@ const promptDisclosure = css({
 });
 const promptSummary = css({
   display: 'grid',
-  gridTemplateColumns: 'auto minmax(0, 1fr) auto',
+  gridTemplateColumns: 'auto minmax(0, 1fr)',
   gap: '9px',
   alignItems: 'center',
   p: '10px 12px',
@@ -208,8 +221,9 @@ const promptSummary = css({
   _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '-2px' },
 });
 const promptChevron = css({ color: 'accent', fontSize: '11px', '[open] &': { transform: 'rotate(90deg)' } });
+const promptLabelContent = css({ display: 'grid', gap: '2px', minW: 0 });
+const promptTitleRow = css({ display: 'flex', gap: '7px', alignItems: 'baseline', minW: 0 });
 const promptPreview = css({ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
-const promptSummaryMeta = css({ display: 'flex', gap: '7px', alignItems: 'center', whiteSpace: 'nowrap' });
 const pill = css({
   px: '7px',
   py: '2px',
@@ -230,6 +244,37 @@ const promptBody = css({
   lineHeight: 1.6,
   overflowWrap: 'anywhere',
   whiteSpace: 'pre-wrap',
+});
+const promptEntry = css({
+  display: 'grid',
+  gap: '5px',
+  '& + &': { borderTop: '1px solid token(colors.line)', mt: '10px', pt: '10px' },
+});
+const promptEntryMeta = css({ display: 'flex', flexWrap: 'wrap', gap: '7px', alignItems: 'center' });
+const tokenCell = css({ display: { base: 'none', md: 'flex' }, gap: '7px', alignItems: 'center', minW: 0 });
+const tokenTrack = css({ flex: '1 1 auto', h: '6px', overflow: 'hidden', borderRadius: 'sm', bg: 'track' });
+const tokenBar = css({ display: 'block', h: 'full', bg: 'accent' });
+const tokenValue = css({
+  flex: '0 0 auto',
+  color: 'ink',
+  fontFamily: 'mono',
+  fontSize: '10px',
+  fontVariantNumeric: 'tabular-nums',
+});
+const phaseLegend = css({ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' });
+const scaleButton = css({
+  justifySelf: 'start',
+  px: '8px',
+  py: '5px',
+  border: '1px solid token(colors.lineStrong)',
+  borderRadius: 'sm',
+  bg: 'surface',
+  color: 'ink',
+  cursor: 'pointer',
+  fontSize: '11px',
+  fontWeight: 650,
+  _hover: { borderColor: 'accent', color: 'accent' },
+  _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
 });
 const statePanel = css({
   display: 'grid',
@@ -261,6 +306,8 @@ const retryButton = css({
 
 const fmtDateTime = (value: string): string => dateTimeFormatter.format(new Date(value));
 const fmtTokens = (tokens: number): string => compactNumberFormatter.format(tokens);
+const fmtCount = (count: number, noun: string): string =>
+  `${fmtTokens(count)}${countLabel(count, noun).slice(String(count).length)}`;
 const fmtShare = (share: number): string => `${share >= 10 ? share.toFixed(0) : share.toFixed(1)}%`;
 const fmtEffort = (effort: string | null, effortKind: SessionDetailPhase['effortKind']): string => {
   if (effort !== null) {
@@ -270,122 +317,325 @@ const fmtEffort = (effort: string | null, effortKind: SessionDetailPhase['effort
 };
 const phaseKey = (phase: SessionDetailPhase): string =>
   `${phase.model}\u0000${phase.effortKind}\u0000${phase.effort ?? ''}`;
-const phaseTone = (phase: SessionDetailPhase, phases: readonly SessionDetailPhase[]): string => {
+const phaseToneIndex = (phase: SessionDetailPhase, phases: readonly SessionDetailPhase[]): number => {
   const uniqueKeys = [...new Set(phases.map(phaseKey))];
-  const index = Math.max(0, uniqueKeys.indexOf(phaseKey(phase)));
-  return phaseToneClasses[index % phaseToneClasses.length] ?? phaseToneClasses[0];
+  return Math.max(0, uniqueKeys.indexOf(phaseKey(phase))) % phaseToneClasses.length;
 };
+const phaseTone = (phase: SessionDetailPhase, phases: readonly SessionDetailPhase[]): string =>
+  phaseToneClasses[phaseToneIndex(phase, phases)] ?? phaseToneClasses[0];
 const promptPreviewText = (text: string): string => {
   const normalized = text.replace(COLLAPSE_WHITESPACE, ' ').trim();
   return normalized.length > PROMPT_PREVIEW_LENGTH
     ? `${normalized.slice(0, PROMPT_PREVIEW_LENGTH).trimEnd()}…`
     : normalized;
 };
+const formatPhaseCost = (phase: SessionDetailPhase): string => {
+  if (phase.cost === null) {
+    return 'price unknown';
+  }
+  const formatter = phase.cost >= 1 ? moneyFormatter : subDollarMoneyFormatter;
+  const formatted = formatter.format(phase.cost);
+  return phase.costKind === 'approximate' ? `≈ ${formatted}` : `${formatted} reported`;
+};
+const phaseAt = (phases: readonly SessionDetailPhase[], timestamp: string): SessionDetailPhase | null => {
+  const timestampMs = Date.parse(timestamp);
+  const phase = phases.find(
+    (candidate) => timestampMs >= Date.parse(candidate.startAt) && timestampMs < Date.parse(candidate.endAt),
+  );
+  if (phase) {
+    return phase;
+  }
+  const lastPhase = phases.at(-1);
+  return lastPhase && timestampMs === Date.parse(lastPhase.endAt) ? lastPhase : null;
+};
 
-const TimelineAxis = (props: { endedAt: string; startedAt: string }) => (
+type TaskTimelineRow = Extract<SessionTimelineRow, { kind: 'task' }>;
+
+const taskBounds = (row: TaskTimelineRow): { endAt: string; startAt: string } | null => {
+  const chronologicalIntervals = [...row.intervals].sort(
+    (left, right) => Date.parse(left.startAt) - Date.parse(right.startAt),
+  );
+  const firstInterval = chronologicalIntervals[0];
+  if (!firstInterval) {
+    return null;
+  }
+  const endAt = chronologicalIntervals.reduce(
+    (latest, interval) => (Date.parse(interval.endAt) > Date.parse(latest) ? interval.endAt : latest),
+    firstInterval.endAt,
+  );
+  return { endAt, startAt: firstInterval.startAt };
+};
+
+const TimelineAxis = (props: { endedAt: string; scale: TimelineScale; showTokens?: boolean; startedAt: string }) => (
   <div class={timelineAxis}>
     <span aria-hidden="true" class={timelineAxisSpacer} />
-    <div class={axisLabels}>
-      <time dateTime={props.startedAt}>{fmtDateTime(props.startedAt)}</time>
-      <span aria-hidden="true">Wall-clock time</span>
-      <time dateTime={props.endedAt}>{fmtDateTime(props.endedAt)}</time>
+    <div class={axisTrack}>
+      <div class={axisLabels}>
+        <time dateTime={props.startedAt}>{fmtDateTime(props.startedAt)}</time>
+        <span aria-hidden="true">{props.scale.mode === 'compressed' ? 'Compressed gaps' : 'Wall-clock time'}</span>
+        <time dateTime={props.endedAt}>{fmtDateTime(props.endedAt)}</time>
+      </div>
+      <For each={props.scale.breaks}>
+        {(scaleBreakItem) => (
+          <span
+            aria-hidden="true"
+            class={scaleBreak}
+            style={{ left: `${scaleBreakItem.atPercent}%` }}
+            title={formatSessionDuration(scaleBreakItem.gapMs)}
+          >
+            ⫽
+          </span>
+        )}
+      </For>
     </div>
+    <span class={axisTokenHeading}>{props.showTokens ? 'Tokens' : ''}</span>
   </div>
 );
 
-const PhaseRow = (props: { detail: SessionDetail; phase: SessionDetailPhase }) => {
-  const position = createMemo(() =>
-    positionOnTimeline(props.phase.startAt, props.phase.endAt, props.detail.startedAt, props.detail.endedAt),
-  );
-  const share = createMemo(() => phaseTokenShare(props.phase, props.detail.phases));
+const PhaseRow = (props: {
+  phase: SessionDetailPhase;
+  phases: readonly SessionDetailPhase[];
+  scale: TimelineScale;
+}) => {
+  const position = createMemo(() => positionOnScale(props.scale, props.phase.startAt, props.phase.endAt));
+  const share = createMemo(() => phaseTokenShare(props.phase, props.phases));
   const effort = () => fmtEffort(props.phase.effort, props.phase.effortKind);
-  const cost = () => {
-    if (props.phase.cost === null) {
-      return 'price unknown';
-    }
-    const formatted = moneyFormatter.format(props.phase.cost);
-    return props.phase.costKind === 'approximate' ? `≈ ${formatted}` : `${formatted} reported`;
-  };
   const accessibleLabel = () =>
-    `${props.phase.model}, ${effort()}, ${fmtShare(share())} of tokens, ${cost()}, from ${fmtDateTime(props.phase.startAt)} to ${fmtDateTime(props.phase.endAt)}`;
+    `${props.phase.model}, ${effort()}, ${fmtShare(share())} of tokens, ${formatPhaseCost(props.phase)}, from ${fmtDateTime(props.phase.startAt)} to ${fmtDateTime(props.phase.endAt)}`;
 
   return (
     <li class={timelineRow}>
       <div class={timelineLabel}>
         <div class={timelineLabelTop}>
-          <span aria-hidden="true" class={cx(phaseDot, phaseTone(props.phase, props.detail.phases))} />
+          <span aria-hidden="true" class={cx(phaseDot, phaseTone(props.phase, props.phases))} />
           <span class={timelineLabelText} title={props.phase.model}>
             {props.phase.model}
           </span>
         </div>
         <div class={timelineMeta}>
-          {effort()} · {fmtShare(share())} tokens · {cost()}
+          {effort()} · {fmtShare(share())} tokens · {formatPhaseCost(props.phase)}
         </div>
       </div>
-      <div aria-label={accessibleLabel()} class={timelineTrack} role="img">
+      <div
+        aria-label={accessibleLabel()}
+        class={cx(timelineTrack, props.scale.mode === 'wall-clock' && wallClockTrack)}
+        role="img"
+      >
         <span
           aria-hidden="true"
-          class={cx(timelineBar, phaseTone(props.phase, props.detail.phases))}
+          class={cx(timelineBar, phaseTone(props.phase, props.phases))}
           style={{ left: `${position().leftPercent}%`, width: `${position().widthPercent}%` }}
         />
       </div>
+      <span aria-hidden="true" />
     </li>
   );
 };
 
-const TurnRow = (props: {
-  detail: SessionDetail;
+const PromptBodies = (props: { prompts: readonly SessionTimelinePromptRef[] }) => (
+  <div class={promptBody}>
+    <Show
+      fallback={<span class={muted}>No prompt text was available in local history.</span>}
+      when={props.prompts.length > 0}
+    >
+      <For each={props.prompts}>
+        {(prompt) => (
+          <div class={promptEntry}>
+            <div class={promptEntryMeta}>
+              <time class={muted} dateTime={prompt.timestamp}>
+                {fmtDateTime(prompt.timestamp)}
+              </time>
+              <Show when={prompt.truncated}>
+                <span class={pill}>Truncated</span>
+              </Show>
+            </div>
+            <span>{prompt.text}</span>
+          </div>
+        )}
+      </For>
+    </Show>
+  </div>
+);
+
+const TaskRow = (props: {
+  dominantPhase: SessionDetailPhase | null;
   durationSemantics: SessionDurationSemantics;
-  turn: SessionDetailTurn;
+  multiPhase: boolean;
+  phases: readonly SessionDetailPhase[];
+  row: TaskTimelineRow;
+  scale: TimelineScale;
 }) => {
   const positions = createMemo(() =>
-    props.turn.intervals.map((interval) =>
-      positionOnTimeline(interval.startAt, interval.endAt, props.detail.startedAt, props.detail.endedAt),
-    ),
+    props.row.intervals.map((interval) => positionOnScale(props.scale, interval.startAt, interval.endAt)),
   );
-  const effort = () => fmtEffort(props.turn.effort, props.turn.effortKind);
-  const accessibleLabel = () =>
-    `Turn ${props.turn.index + 1}, ${props.turn.model}, ${effort()}, ${formatSessionDuration(props.turn.durationMs)} ${props.durationSemantics.turnSpanNoun} across ${props.turn.intervals.length} segments, ${fmtTokens(props.turn.tokens.total)} tokens, ${props.turn.tools} tools and ${props.turn.promptIds.length} prompts, from ${fmtDateTime(props.turn.startAt)} to ${fmtDateTime(props.turn.endAt)}`;
+  const bounds = createMemo(() => taskBounds(props.row));
+  const taskPhase = createMemo(() => {
+    const rowBounds = bounds();
+    return rowBounds ? phaseAt(props.phases, rowBounds.startAt) : null;
+  });
+  const taskTone = createMemo(() => {
+    const phase = taskPhase();
+    if (!(props.multiPhase && phase)) {
+      return { className: turnBar, index: undefined };
+    }
+    return { className: phaseTone(phase, props.phases), index: phaseToneIndex(phase, props.phases) };
+  });
+  const primaryPrompt = () => props.row.prompts[0] ?? null;
+  const label = () => {
+    const prompt = primaryPrompt();
+    const preview = prompt ? promptPreviewText(prompt.text) : '';
+    return preview || `${props.durationSemantics.rowNoun} ${props.row.index + 1}`;
+  };
+  const effort = () => fmtEffort(props.row.effort, props.row.effortKind);
+  const showPhaseMeta = () => {
+    const dominant = props.dominantPhase;
+    return (
+      props.multiPhase &&
+      (!dominant ||
+        props.row.model !== dominant.model ||
+        props.row.effort !== dominant.effort ||
+        props.row.effortKind !== dominant.effortKind)
+    );
+  };
+  const accessibleLabel = () => {
+    const rowBounds = bounds();
+    const timeBounds = rowBounds
+      ? `, from ${fmtDateTime(rowBounds.startAt)} to ${fmtDateTime(rowBounds.endAt)}`
+      : ', recorded time bounds unavailable';
+    return `${label()}, ${props.row.model}, ${effort()}, ${formatSessionDuration(props.row.durationMs)} ${props.durationSemantics.turnSpanNoun} across ${countLabel(props.row.intervals.length, 'segment')}, ${countLabel(props.row.tokens.total, 'token')}, ${countLabel(props.row.tools, 'tool')} and ${countLabel(props.row.prompts.length, 'prompt')}${timeBounds}`;
+  };
 
   return (
-    <li class={timelineRow}>
-      <div class={timelineLabel}>
-        <div class={timelineLabelTop}>
-          <span class={timelineLabelText}>Turn {props.turn.index + 1}</span>
-          <span class={muted} title={props.durationSemantics.metricHint}>
-            {formatSessionDuration(props.turn.durationMs)}
+    <li class={timelineRow} data-session-analysis-row="task">
+      <details class={promptDisclosure}>
+        <summary class={promptSummary}>
+          <span aria-hidden="true" class={promptChevron}>
+            ▶
           </span>
-        </div>
-        <div class={timelineMeta} title={`${props.turn.model} · ${effort()}`}>
-          {props.turn.model} · {effort()} · {fmtTokens(props.turn.tokens.total)} tokens · {props.turn.tools} tools ·{' '}
-          {props.turn.promptIds.length} prompts
-        </div>
-      </div>
-      <div aria-label={accessibleLabel()} class={timelineTrack} role="img">
+          <span class={promptLabelContent}>
+            <span class={promptTitleRow}>
+              <span class={promptPreview}>{label()}</span>
+              <span class={muted} title={props.durationSemantics.metricHint}>
+                {formatSessionDuration(props.row.durationMs)}
+              </span>
+            </span>
+            <span class={timelineMeta}>
+              <Show when={showPhaseMeta()}>
+                {props.row.model} · {effort()} ·{' '}
+              </Show>
+              {fmtCount(props.row.tokens.total, 'token')} · {countLabel(props.row.tools, 'tool')} ·{' '}
+              {countLabel(props.row.prompts.length, 'prompt')}
+            </span>
+          </span>
+        </summary>
+        <PromptBodies prompts={props.row.prompts} />
+      </details>
+      <div
+        aria-label={accessibleLabel()}
+        class={cx(timelineTrack, props.scale.mode === 'wall-clock' && wallClockTrack)}
+        role="img"
+      >
         <For each={positions()}>
           {(position) => (
             <span
               aria-hidden="true"
-              class={cx(timelineBar, turnBar)}
+              class={cx(timelineBar, taskTone().className)}
+              data-session-analysis-phase-tone={taskTone().index}
               style={{ left: `${position.leftPercent}%`, width: `${position.widthPercent}%` }}
             />
           )}
         </For>
       </div>
+      <div class={tokenCell}>
+        <span aria-hidden="true" class={tokenTrack}>
+          <span class={tokenBar} style={{ width: `${props.row.tokenShareOfMax * 100}%` }} />
+        </span>
+        <span class={tokenValue}>{fmtTokens(props.row.tokens.total)}</span>
+      </div>
     </li>
+  );
+};
+
+const OrphanPromptRow = (props: {
+  durationSemantics: SessionDurationSemantics;
+  prompt: SessionTimelinePromptRef;
+  scale: TimelineScale;
+}) => {
+  const label = () => promptPreviewText(props.prompt.text) || 'Prompt';
+  const position = createMemo(() => positionOnScale(props.scale, props.prompt.timestamp, props.prompt.timestamp));
+  const accessibleLabel = () =>
+    `${label()}, orphan prompt, 0s ${props.durationSemantics.turnSpanNoun}, tokens unavailable, 0 tools, point event with no task attribution, from ${fmtDateTime(props.prompt.timestamp)} to ${fmtDateTime(props.prompt.timestamp)}`;
+
+  return (
+    <li class={timelineRow} data-session-analysis-row="orphan-prompt">
+      <details class={promptDisclosure}>
+        <summary class={promptSummary}>
+          <span aria-hidden="true" class={promptChevron}>
+            ▶
+          </span>
+          <span class={promptLabelContent}>
+            <span class={promptPreview}>{label()}</span>
+            <time class={timelineMeta} dateTime={props.prompt.timestamp}>
+              {fmtDateTime(props.prompt.timestamp)} · prompt without task attribution
+            </time>
+          </span>
+        </summary>
+        <PromptBodies prompts={[props.prompt]} />
+      </details>
+      <div
+        aria-label={accessibleLabel()}
+        class={cx(timelineTrack, props.scale.mode === 'wall-clock' && wallClockTrack)}
+        role="img"
+      >
+        <span
+          aria-hidden="true"
+          class={pointMarker}
+          data-session-analysis-point
+          style={{ left: `${position().leftPercent}%` }}
+        />
+      </div>
+      <span class={tokenCell}>
+        <span class={tokenValue}>—</span>
+      </span>
+    </li>
+  );
+};
+
+const UnifiedTimelineRow = (props: {
+  dominantPhase: SessionDetailPhase | null;
+  durationSemantics: SessionDurationSemantics;
+  multiPhase: boolean;
+  phases: readonly SessionDetailPhase[];
+  row: SessionTimelineRow;
+  scale: TimelineScale;
+}) => {
+  if (props.row.kind === 'orphan-prompt') {
+    return (
+      <OrphanPromptRow durationSemantics={props.durationSemantics} prompt={props.row.prompt} scale={props.scale} />
+    );
+  }
+  return (
+    <TaskRow
+      dominantPhase={props.dominantPhase}
+      durationSemantics={props.durationSemantics}
+      multiPhase={props.multiPhase}
+      phases={props.phases}
+      row={props.row}
+      scale={props.scale}
+    />
   );
 };
 
 const EmptyTimeline = (props: { children: string }) => <div class={empty}>{props.children}</div>;
 
-const MetricValue = (props: { bound: SessionMetricBound; value: string }) => (
-  <dd class={metricValue}>
+const BoundedValue = (props: { bound: 'lower' | 'upper' | null; value: string }) => (
+  <>
     <Show when={props.bound !== null}>
       <span class={visuallyHidden}>{props.bound === 'lower' ? 'At least ' : 'At most '}</span>
       <span aria-hidden="true">{props.bound === 'lower' ? '≥ ' : '≤ '}</span>
     </Show>
     {props.value}
-  </dd>
+  </>
 );
 
 const PresentationItem = (props: { item: SessionAnalysisPresentationItem }) => (
@@ -408,14 +658,7 @@ const AvailableSessionAnalysis = (props: {
   const chronologicalPhases = createMemo(() =>
     [...props.detail.phases].sort((left, right) => Date.parse(left.startAt) - Date.parse(right.startAt)),
   );
-  const chronologicalTurns = createMemo(() =>
-    [...props.detail.turns].sort(
-      (left, right) => Date.parse(left.startAt) - Date.parse(right.startAt) || left.index - right.index,
-    ),
-  );
-  const chronologicalPrompts = createMemo(() =>
-    [...props.detail.prompts].sort((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp)),
-  );
+  const timelineRows = createMemo(() => buildSessionTimelineRows(props.detail));
   const burstCount = createMemo(() => countActivityBursts(props.detail.turns));
   const promptDataTruncated = createMemo(
     () => props.detail.promptsTruncated || props.detail.prompts.some(({ truncated }) => truncated),
@@ -435,33 +678,21 @@ const AvailableSessionAnalysis = (props: {
   );
   const itemsOfKind = (kind: SessionAnalysisPresentationItem['kind']) =>
     presentationItems().filter((item) => item.kind === kind);
-
-  const metricItems = (): SessionMetricItem[] => [
-    {
-      bound: props.detail.durationStatus === 'partial' ? 'lower' : null,
-      hint: durationSemantics().metricHint,
-      label: durationSemantics().metricLabel,
-      value: formatSessionDuration(props.detail.activeDurationMs),
-    },
-    {
-      bound: null,
-      hint: durationSemantics().elapsedHint,
-      label: durationSemantics().elapsedLabel,
-      value: formatSessionDuration(props.detail.elapsedDurationMs),
-    },
-    {
-      bound: props.detail.durationStatus === 'partial' ? 'upper' : null,
-      hint: durationSemantics().gapHint,
-      label: durationSemantics().gapLabel,
-      value: formatSessionDuration(props.detail.idleDurationMs),
-    },
-    {
-      bound: null,
-      hint: durationSemantics().burstHint,
-      label: durationSemantics().burstLabel,
-      value: String(burstCount()),
-    },
-  ];
+  const durationParts = createMemo(() => sessionDurationCaption(props.detail, durationSemantics(), burstCount()));
+  const [scaleMode, setScaleMode] = createSignal<TimelineScaleMode>('compressed');
+  const scale = createMemo(() => buildTimelineScale(props.detail, scaleMode()));
+  const hasCompressibleGaps = createMemo(() => timelineHasCompressibleGaps(props.detail));
+  const multiPhase = () => chronologicalPhases().length > 1;
+  const dominantPhase = createMemo(() => {
+    const phases = chronologicalPhases();
+    return phases.reduce<SessionDetailPhase | null>(
+      (dominant, phase) => (!dominant || phase.tokens.total > dominant.tokens.total ? phase : dominant),
+      null,
+    );
+  });
+  const toggleScale = () => {
+    setScaleMode((current) => (current === 'compressed' ? 'wall-clock' : 'compressed'));
+  };
 
   return (
     <div class={panel}>
@@ -475,114 +706,114 @@ const AvailableSessionAnalysis = (props: {
         </div>
         <For each={itemsOfKind('consistency-meta')}>{(item) => <PresentationItem item={item} />}</For>
         <For each={itemsOfKind('scope')}>{(item) => <PresentationItem item={item} />}</For>
+        <For each={itemsOfKind('consistency-warning')}>{(item) => <PresentationItem item={item} />}</For>
       </header>
 
-      <For each={itemsOfKind('consistency-warning')}>{(item) => <PresentationItem item={item} />}</For>
-
-      <div class={section}>
-        <dl class={metrics}>
-          <For each={metricItems()}>
-            {(item) => (
-              <div class={metric} title={item.hint}>
-                <dt class={metricLabel}>{item.label}</dt>
-                <MetricValue bound={item.bound} value={item.value} />
-              </div>
-            )}
-          </For>
-        </dl>
-        <For each={itemsOfKind('partial-duration')}>{(item) => <PresentationItem item={item} />}</For>
-      </div>
-
-      <section aria-labelledby="session-model-phases" class={section}>
+      <section aria-labelledby="session-timeline" class={section}>
         <div class={sectionHeader}>
-          <h3 class={sectionHeading} id="session-model-phases">
-            Model and effort phases
-          </h3>
-          <div class={muted}>Band position follows wall-clock time; percentages show each phase's token share.</div>
-        </div>
-        <Show
-          fallback={<EmptyTimeline>No model or effort changes were recorded for this session.</EmptyTimeline>}
-          when={chronologicalPhases().length > 0}
-        >
-          <div class={timelineShell}>
-            <TimelineAxis endedAt={props.detail.endedAt} startedAt={props.detail.startedAt} />
-            <ol aria-label="Chronological model and effort phases" class={timelineList}>
-              <For each={chronologicalPhases()}>{(phase) => <PhaseRow detail={props.detail} phase={phase} />}</For>
-            </ol>
-          </div>
-        </Show>
-      </section>
-
-      <section aria-labelledby="session-turn-timeline" class={section}>
-        <div class={sectionHeader}>
-          <h3 class={sectionHeading} id="session-turn-timeline">
+          <h3 class={sectionHeading} id="session-timeline">
             {durationSemantics().timelineHeading}
           </h3>
+          <div class={durationCaption}>
+            <For each={durationParts()}>
+              {(part, index) => (
+                <span class={durationCaptionPart} data-session-analysis-metric={part.key} title={part.hint}>
+                  <Show when={index() > 0}> · </Show>
+                  {part.label} <BoundedValue bound={part.bound} value={part.value} />
+                </span>
+              )}
+            </For>
+          </div>
+          <For each={itemsOfKind('partial-duration')}>{(item) => <PresentationItem item={item} />}</For>
           <div class={muted}>{durationSemantics().timelineDescription}</div>
+          <For each={itemsOfKind('partial-turns')}>{(item) => <PresentationItem item={item} />}</For>
+          <For each={itemsOfKind('privacy')}>{(item) => <PresentationItem item={item} />}</For>
+          <For each={itemsOfKind('prompt-truncation')}>{(item) => <PresentationItem item={item} />}</For>
+          <Show when={hasCompressibleGaps()}>
+            <button
+              aria-label="Show real gaps"
+              aria-pressed={scaleMode() === 'wall-clock'}
+              class={scaleButton}
+              onClick={toggleScale}
+              type="button"
+            >
+              {scaleMode() === 'compressed' ? 'Show real gaps' : 'Compress gaps'}
+            </button>
+          </Show>
         </div>
         <Show
-          fallback={<EmptyTimeline>No turn intervals were available in local history.</EmptyTimeline>}
-          when={chronologicalTurns().length > 0}
+          fallback={
+            <EmptyTimeline>
+              No turn intervals were available in local history. No prompt text was available in local history.
+            </EmptyTimeline>
+          }
+          when={timelineRows().length > 0}
         >
-          <div class={timelineShell}>
-            <TimelineAxis endedAt={props.detail.endedAt} startedAt={props.detail.startedAt} />
-            <ol aria-label="Chronological session turns" class={timelineList}>
-              <For each={chronologicalTurns()}>
-                {(turn) => <TurnRow detail={props.detail} durationSemantics={durationSemantics()} turn={turn} />}
+          <div class={timelineShell} data-session-analysis-scale={scaleMode()}>
+            <TimelineAxis
+              endedAt={props.detail.endedAt}
+              scale={scale()}
+              showTokens
+              startedAt={props.detail.startedAt}
+            />
+            <ol aria-label="Chronological session tasks and prompts" class={timelineList}>
+              <For each={timelineRows()}>
+                {(row) => (
+                  <UnifiedTimelineRow
+                    dominantPhase={dominantPhase()}
+                    durationSemantics={durationSemantics()}
+                    multiPhase={multiPhase()}
+                    phases={chronologicalPhases()}
+                    row={row}
+                    scale={scale()}
+                  />
+                )}
               </For>
             </ol>
           </div>
         </Show>
       </section>
 
-      <section aria-labelledby="session-prompts" class={section}>
-        <div class={sectionHeader}>
-          <h3 class={sectionHeading} id="session-prompts">
-            Prompts ({chronologicalPrompts().length})
-          </h3>
-          <div class={muted}>Prompt bodies are collapsed by default.</div>
-          <For each={itemsOfKind('partial-turns')}>{(item) => <PresentationItem item={item} />}</For>
-          <For each={itemsOfKind('privacy')}>{(item) => <PresentationItem item={item} />}</For>
-        </div>
-        <For each={itemsOfKind('prompt-truncation')}>{(item) => <PresentationItem item={item} />}</For>
-        <Show
-          fallback={<EmptyTimeline>No prompt text was available in local history.</EmptyTimeline>}
-          when={chronologicalPrompts().length > 0}
-        >
-          <div class={promptList}>
-            <For each={chronologicalPrompts()}>
-              {(prompt) => (
-                <details class={promptDisclosure}>
-                  <summary class={promptSummary}>
-                    <span aria-hidden="true" class={promptChevron}>
-                      ▶
-                    </span>
-                    <span class={promptPreview}>{promptPreviewText(prompt.text)}</span>
-                    <span class={promptSummaryMeta}>
-                      <time class={muted} dateTime={prompt.timestamp}>
-                        {fmtDateTime(prompt.timestamp)}
-                      </time>
-                      <Show when={prompt.truncated}>
-                        <span class={pill}>Truncated</span>
-                      </Show>
-                    </span>
-                  </summary>
-                  <div class={promptBody}>
-                    <div class={muted}>
-                      <time dateTime={prompt.timestamp}>{fmtDateTime(prompt.timestamp)}</time>
-                    </div>
-                    {prompt.text}
-                  </div>
-                </details>
-              )}
-            </For>
+      <Show
+        fallback={
+          <Show when={chronologicalPhases()[0]}>
+            {(phase) => (
+              <div class={cx(muted, phaseLegend)}>
+                <span aria-hidden="true" class={cx(phaseDot, phaseTone(phase(), chronologicalPhases()))} />
+                <span>
+                  {phase().model} · {fmtEffort(phase().effort, phase().effortKind)} · 100% tokens ·{' '}
+                  {formatPhaseCost(phase())}
+                </span>
+              </div>
+            )}
+          </Show>
+        }
+        when={multiPhase()}
+      >
+        <section aria-labelledby="session-model-phases" class={section}>
+          <div class={sectionHeader}>
+            <h3 class={sectionHeading} id="session-model-phases">
+              Model and effort phases
+            </h3>
+            <div class={muted}>
+              Band position follows the selected timeline scale; percentages show each phase's token share.
+            </div>
           </div>
-        </Show>
-        <div class={muted}>
-          Detail observed <time dateTime={props.detail.observedAt}>{fmtDateTime(props.detail.observedAt)}</time> from
-          local history.
-        </div>
-      </section>
+          <div class={timelineShell}>
+            <TimelineAxis endedAt={props.detail.endedAt} scale={scale()} startedAt={props.detail.startedAt} />
+            <ol aria-label="Chronological model and effort phases" class={timelineList}>
+              <For each={chronologicalPhases()}>
+                {(phase) => <PhaseRow phase={phase} phases={chronologicalPhases()} scale={scale()} />}
+              </For>
+            </ol>
+          </div>
+        </section>
+      </Show>
+
+      <div class={muted}>
+        Detail observed <time dateTime={props.detail.observedAt}>{fmtDateTime(props.detail.observedAt)}</time> from
+        local history.
+      </div>
     </div>
   );
 };
