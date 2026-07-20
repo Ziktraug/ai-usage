@@ -35,6 +35,7 @@ const parseKind = (value: string | undefined): RevisionQueryKind => {
     value === 'support' ||
     value === 'campaign-children' ||
     value === 'neighbors' ||
+    value === 'session-detail-anchor' ||
     value === 'sessions'
   ) {
     return value;

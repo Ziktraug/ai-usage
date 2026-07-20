@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   createUsageMergeBundle,
+  deserializeMergeRow,
   mergeRowIdentity,
   parseSerializedMergeRow,
   parseUsageMergeBundle,
@@ -33,7 +34,7 @@ describe('usage merge bundles', () => {
       rows: [{ ...row, source: { harnessKey: 'codex', sourceSessionId: 'session-1' } }],
     });
 
-    expect(bundle.version).toBe(1);
+    expect(bundle.version).toBe(2);
     expect(bundle.rows).toHaveLength(1);
     expect(bundle.rows[0]?.source.machineId).toBe('machine-a');
     expect(bundle.rows[0]?.source.machineLabel).toBe('Machine A');
@@ -72,6 +73,7 @@ describe('usage merge bundles', () => {
   test('parses valid bundles and rejects invalid row provenance', () => {
     const bundle = createUsageMergeBundle({ machine, rows: [{ ...row }] });
     expect(parseUsageMergeBundle(JSON.stringify(bundle)).machine.id).toBe('machine-a');
+    expect(parseUsageMergeBundle(JSON.stringify({ ...bundle, version: 1 })).version).toBe(2);
 
     const invalid = { ...bundle, rows: [{ ...bundle.rows[0], source: { harnessKey: 'codex' } }] };
     expect(() => parseUsageMergeBundle(JSON.stringify(invalid))).toThrow('invalid rows');
@@ -137,6 +139,89 @@ describe('usage merge bundles', () => {
       toSerializedMergeRow({ ...row, linesAdded: 0.5 }, machine),
     ];
 
+    for (const invalidRow of invalidRows) {
+      expect(() => parseSerializedMergeRow(invalidRow)).toThrow('invalid row');
+    }
+  });
+
+  test('preserves model segments and rejects correctly hashed rows with incoherent model attribution', () => {
+    const segmented = normalizeUsageRow({
+      calls: 2,
+      cost: actualCost(null),
+      date: new Date('2026-06-01T10:00:00.000Z'),
+      endDate: new Date('2026-06-01T10:01:00.000Z'),
+      harness: 'Codex',
+      model: 'gpt-5',
+      modelSegments: [
+        {
+          costApprox: 1,
+          costKnown: true,
+          model: 'gpt-5',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 10,
+          tokOut: 0,
+        },
+        {
+          costApprox: 0,
+          costKnown: false,
+          model: 'claude-sonnet',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 0,
+          tokOut: 20,
+        },
+      ],
+      models: ['gpt-5', 'claude-sonnet'],
+      name: 'Mixed session',
+      project: 'ai-usage',
+      provider: 'OpenAI',
+      titleSource: 'first-prompt',
+      tokens: { cr: 0, cw: 0, in: 0, out: 0 },
+    });
+    const serialized = toSerializedMergeRow(segmented, machine);
+    const { modelSegments, ...unsegmented } = segmented;
+    if (!modelSegments) {
+      throw new Error('Expected a segmented usage row');
+    }
+
+    expect(parseSerializedMergeRow(serialized).modelSegments).toEqual(modelSegments);
+    expect(deserializeMergeRow(serialized).titleSource).toBe('first-prompt');
+    expect(() =>
+      parseUsageMergeBundle(JSON.stringify({ ...createUsageMergeBundle({ machine, rows: [segmented] }), version: 1 })),
+    ).toThrow('legacy v1');
+
+    const invalidRows = [
+      toSerializedMergeRow({ ...segmented, tokIn: segmented.tokIn + 1 }, machine),
+      toSerializedMergeRow({ ...segmented, costApprox: segmented.costApprox + 0.1 }, machine),
+      toSerializedMergeRow({ ...segmented, costKnown: true }, machine),
+      toSerializedMergeRow(
+        {
+          ...segmented,
+          modelSegments: modelSegments.map((segment, index) => (index === 0 ? { ...segment, model: '' } : segment)),
+        },
+        machine,
+      ),
+      toSerializedMergeRow(
+        {
+          ...segmented,
+          modelSegments: modelSegments.map((segment, index) =>
+            index === 1 ? { ...segment, model: modelSegments[0]!.model } : segment,
+          ),
+        },
+        machine,
+      ),
+      toSerializedMergeRow({ ...segmented, model: 'forged-dominant-model' }, machine),
+      toSerializedMergeRow({ ...segmented, models: [modelSegments[0]!.model] }, machine),
+      toSerializedMergeRow(
+        {
+          ...unsegmented,
+          model: '',
+          models: ['gpt-5'],
+        },
+        machine,
+      ),
+    ];
     for (const invalidRow of invalidRows) {
       expect(() => parseSerializedMergeRow(invalidRow)).toThrow('invalid row');
     }

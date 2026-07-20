@@ -13,10 +13,12 @@ const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, 
 
 const OPENCODE_DB = '.local/share/opencode/opencode.db';
 const OPENCODE_STABLE_DB = '.local/share/opencode/opencode-stable.db';
-const OPENCODE_SESSION_SQL =
-  'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
-const OPENCODE_TOOL_SQL = `SELECT session_id, count(*) n FROM part WHERE data LIKE '%"type":"tool"%' GROUP BY session_id`;
-const OPENCODE_MESSAGE_SQL = 'SELECT session_id, data FROM message';
+const OPENCODE_SESSION_SQL = { includes: ['SELECT id, parent_id, title, directory', 'FROM session'] } as const;
+const OPENCODE_TOOL_SQL = {
+  includes: ['FROM part WHERE', "json_extract(data, '$.type') = 'tool'"],
+} as const;
+const OPENCODE_TURN_SQL = { includes: ['count(DISTINCT m.id)', 'FROM message m JOIN part p'] } as const;
+const OPENCODE_MESSAGE_SQL = { includes: ['SELECT session_id, data, time_created FROM message'] } as const;
 
 const CURSOR_DB = '.config/Cursor/User/globalStorage/state.vscdb';
 const CURSOR_AI_TRACKING_DB = '.cursor/ai-tracking/ai-code-tracking.db';
@@ -83,6 +85,7 @@ describe('DB-backed Harness collectors', () => {
       { id: 'open-session', title: 'Open session', directory: '/work', summary_additions: 0, summary_deletions: 0 },
     ]);
     openCodeStorage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TOOL_SQL, []);
+    openCodeStorage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TURN_SQL, []);
     openCodeStorage.writeDatabaseRows(OPENCODE_DB, OPENCODE_MESSAGE_SQL, [
       {
         session_id: 'open-session',
@@ -291,6 +294,80 @@ describe('DB-backed Harness collectors', () => {
     expect(child?.subagent).toBe(true);
   });
 
+  test('attributes Claude tokens and API value to each message model', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.claude/projects/-work-ai-usage/multi-model-session.jsonl',
+      jsonl(
+        {
+          type: 'assistant',
+          timestamp: '2026-04-25T08:00:00.000Z',
+          requestId: 'sonnet-request',
+          message: {
+            id: 'sonnet-message',
+            model: 'claude-sonnet-4-6',
+            usage: { input_tokens: 1_000_000 },
+          },
+        },
+        {
+          type: 'assistant',
+          timestamp: '2026-04-25T08:01:00.000Z',
+          requestId: 'opus-request',
+          message: {
+            id: 'opus-message',
+            model: 'claude-opus-4-6',
+            usage: { output_tokens: 1_000_000 },
+          },
+        },
+        {
+          type: 'assistant',
+          timestamp: '2026-04-25T08:02:00.000Z',
+          requestId: 'unpriced-request',
+          message: {
+            id: 'unpriced-message',
+            model: 'private-unpriced-model',
+            usage: { input_tokens: 500_000 },
+          },
+        },
+      ),
+    );
+
+    const [row] = runWithStorage(collectClaude, storage);
+
+    expect(row?.models).toEqual(['claude-sonnet-4-6', 'claude-opus-4-6', 'private-unpriced-model']);
+    expect(row?.modelSegments).toEqual([
+      {
+        model: 'claude-sonnet-4-6',
+        tokIn: 1_000_000,
+        tokOut: 0,
+        tokCr: 0,
+        tokCw: 0,
+        costApprox: 3,
+        costKnown: true,
+      },
+      {
+        model: 'claude-opus-4-6',
+        tokIn: 0,
+        tokOut: 1_000_000,
+        tokCr: 0,
+        tokCw: 0,
+        costApprox: 25,
+        costKnown: true,
+      },
+      {
+        model: 'private-unpriced-model',
+        tokIn: 500_000,
+        tokOut: 0,
+        tokCr: 0,
+        tokCw: 0,
+        costApprox: 0,
+        costKnown: false,
+      },
+    ]);
+    expect(row?.costApprox).toBe(28);
+    expect(row?.costKnown).toBe(false);
+  });
+
   test('warns when Claude Code is set to delete transcripts at the lossy default', () => {
     const storage = new TestMemoryStorage();
 
@@ -348,6 +425,7 @@ describe('DB-backed Harness collectors', () => {
       },
     ]);
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TOOL_SQL, [{ session_id: 'session-1', n: 2 }]);
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TURN_SQL, [{ session_id: 'session-1', n: 1 }]);
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_MESSAGE_SQL, [
       { session_id: 'session-1', data: JSON.stringify({ role: 'user' }) },
       {
@@ -373,9 +451,140 @@ describe('DB-backed Harness collectors', () => {
     expect(rows[0]?.source?.parentSourceSessionId).toBe('parent-session');
     expect(rows[0]?.tokOut).toBe(25);
     expect(rows[0]?.costActual).toBe(0.12);
+    expect(rows[0]?.durationMs).toBe(60_000);
+    expect(rows[0]?.models).toEqual(['openai/gpt-5.3']);
     expect(rows[0]?.turns).toBe(1);
     expect(rows[0]?.tools).toBe(2);
     expect(rows[0]?.linesAdded).toBe(12);
+  });
+
+  test('preserves OpenCode provider/model chronology and separates active time from pauses', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SESSION_SQL, [
+      {
+        id: 'mixed-session',
+        parent_id: null,
+        title: 'Mixed providers',
+        directory: '/work/ai-usage',
+        summary_additions: 0,
+        summary_deletions: 0,
+      },
+    ]);
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TOOL_SQL, []);
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TURN_SQL, [{ session_id: 'mixed-session', n: 2 }]);
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_MESSAGE_SQL, [
+      {
+        session_id: 'mixed-session',
+        data: JSON.stringify({
+          role: 'assistant',
+          providerID: 'openai',
+          modelID: 'gpt-5',
+          cost: 0,
+          tokens: { input: 1_100_000, output: 0 },
+          time: { created: '2026-02-01T00:00:00.000Z', completed: '2026-02-01T00:01:00.000Z' },
+        }),
+      },
+      {
+        session_id: 'mixed-session',
+        data: JSON.stringify({
+          role: 'assistant',
+          providerID: 'anthropic',
+          modelID: 'claude-sonnet-4-5',
+          cost: 1,
+          tokens: { input: 1_000_000, output: 0 },
+          time: { created: '2026-02-01T01:00:00.000Z', completed: '2026-02-01T01:01:00.000Z' },
+        }),
+      },
+      {
+        session_id: 'mixed-session',
+        data: JSON.stringify({
+          role: 'assistant',
+          providerID: 'openai',
+          modelID: 'gpt-5',
+          cost: 0,
+          tokens: { input: 200_000, output: 0 },
+          time: { created: '2026-02-01T02:00:00.000Z' },
+        }),
+      },
+      {
+        session_id: 'mixed-session',
+        data: JSON.stringify({
+          role: 'assistant',
+          providerID: 'local',
+          modelID: 'unpriced-zero-token-model',
+          cost: 0,
+          tokens: { input: 0, output: 0 },
+          time: { created: '2026-02-01T03:00:00.000Z' },
+        }),
+      },
+      {
+        session_id: 'mixed-session',
+        data: JSON.stringify({
+          role: 'assistant',
+          providerID: 'local',
+          modelID: 'unpriced-token-model',
+          cost: 0,
+          tokens: { input: 7, output: 2, reasoning: 1, cache: { read: 4, write: 5 } },
+          time: { created: '2026-02-01T04:00:00.000Z' },
+        }),
+      },
+    ]);
+
+    const [row] = runWithStorage(collectOpenCode, storage);
+
+    expect(row?.model).toBe('openai/gpt-5');
+    expect(row?.models).toEqual([
+      'openai/gpt-5',
+      'anthropic/claude-sonnet-4-5',
+      'local/unpriced-zero-token-model',
+      'local/unpriced-token-model',
+    ]);
+    expect(row?.modelSegments).toEqual([
+      {
+        costApprox: 1.625,
+        costKnown: true,
+        model: 'openai/gpt-5',
+        tokCr: 0,
+        tokCw: 0,
+        tokIn: 1_300_000,
+        tokOut: 0,
+      },
+      {
+        costApprox: 3,
+        costKnown: true,
+        model: 'anthropic/claude-sonnet-4-5',
+        tokCr: 0,
+        tokCw: 0,
+        tokIn: 1_000_000,
+        tokOut: 0,
+      },
+      {
+        costApprox: 0,
+        costKnown: true,
+        model: 'local/unpriced-zero-token-model',
+        tokCr: 0,
+        tokCw: 0,
+        tokIn: 0,
+        tokOut: 0,
+      },
+      {
+        costApprox: 0,
+        costKnown: false,
+        model: 'local/unpriced-token-model',
+        tokCr: 4,
+        tokCw: 5,
+        tokIn: 7,
+        tokOut: 3,
+      },
+    ]);
+    expect(row?.provider).toBe('Codex sub (OC)');
+    expect(row?.costActual).toBe(1);
+    expect(row?.costApprox).toBeCloseTo(4.625, 8);
+    expect(row?.costKnown).toBe(false);
+    expect(row).toMatchObject({ tokCr: 4, tokCw: 5, tokIn: 2_300_007, tokOut: 3 });
+    expect(row?.durationMs).toBe(120_000);
+    expect(row?.partial).toBe(true);
+    expect(row?.turns).toBe(2);
   });
 
   test('classifies OpenCode generic titles as technical id fallbacks', () => {
@@ -416,6 +625,7 @@ describe('DB-backed Harness collectors', () => {
 
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_SESSION_SQL, [liveSession]);
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TOOL_SQL, [{ session_id: 'live-1', n: 1 }]);
+    storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_TURN_SQL, [{ session_id: 'live-1', n: 1 }]);
     storage.writeDatabaseRows(OPENCODE_DB, OPENCODE_MESSAGE_SQL, [
       { session_id: 'live-1', data: JSON.stringify({ role: 'user' }) },
       {
@@ -433,6 +643,7 @@ describe('DB-backed Harness collectors', () => {
 
     storage.writeDatabaseRows(OPENCODE_STABLE_DB, OPENCODE_SESSION_SQL, [stableSession]);
     storage.writeDatabaseRows(OPENCODE_STABLE_DB, OPENCODE_TOOL_SQL, [{ session_id: 'stable-1', n: 3 }]);
+    storage.writeDatabaseRows(OPENCODE_STABLE_DB, OPENCODE_TURN_SQL, [{ session_id: 'stable-1', n: 1 }]);
     storage.writeDatabaseRows(OPENCODE_STABLE_DB, OPENCODE_MESSAGE_SQL, [
       { session_id: 'stable-1', data: JSON.stringify({ role: 'user' }) },
       {
@@ -595,6 +806,19 @@ describe('DB-backed Harness collectors', () => {
     expect(matched?.tokCw).toBe(20);
     expect(matched?.tokCr).toBe(100);
     expect(matched?.tokOut).toBe(5);
+    expect(matched?.modelSegments).toEqual([
+      {
+        model: 'claude-opus-4-8-thinking-high',
+        tokIn: 10,
+        tokOut: 5,
+        tokCr: 100,
+        tokCw: 20,
+        costApprox: 0.000_35,
+        costKnown: true,
+      },
+    ]);
+    expect(matched?.costApprox).toBe(0.000_35);
+    expect(matched?.costKnown).toBe(true);
     expect(matched?.costQuota).toBe(1.5);
     expect(matched?.linesAdded).toBe(9);
     expect(orphan?.source?.artifactPath).toBe(exportPath);

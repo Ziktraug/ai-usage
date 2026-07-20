@@ -114,18 +114,58 @@ export const createWebSourceControlRuntime = (options: WebSourceControlRuntimeOp
 
 const runtimeRegistry = globalThis as typeof globalThis & {
   __aiUsageSourceControlRuntime: WebSourceControlRuntime | undefined;
+  __aiUsageSourceControlRuntimeReplacement: Promise<void> | undefined;
+  __aiUsageSourceControlRuntimeTeardown: (() => Promise<void>) | undefined;
 };
+
+const uninstallRuntime =
+  (runtime: WebSourceControlRuntime): (() => void) =>
+  () => {
+    if (runtimeRegistry.__aiUsageSourceControlRuntime === runtime) {
+      runtimeRegistry.__aiUsageSourceControlRuntime = undefined;
+      runtimeRegistry.__aiUsageSourceControlRuntimeTeardown = undefined;
+    }
+  };
+
+const disposeRuntime =
+  (runtime: WebSourceControlRuntime): (() => Promise<void>) =>
+  () =>
+    runtime.dispose();
 
 export const installWebSourceControlRuntime = (runtime: WebSourceControlRuntime): (() => void) => {
   if (runtimeRegistry.__aiUsageSourceControlRuntime !== undefined) {
     throw new Error('A source-control runtime is already installed in this process.');
   }
   runtimeRegistry.__aiUsageSourceControlRuntime = runtime;
-  return () => {
-    if (runtimeRegistry.__aiUsageSourceControlRuntime === runtime) {
+  runtimeRegistry.__aiUsageSourceControlRuntimeTeardown = disposeRuntime(runtime);
+  return uninstallRuntime(runtime);
+};
+
+export const replaceWebSourceControlRuntime = async (
+  runtime: WebSourceControlRuntime,
+  teardown: () => Promise<void> = disposeRuntime(runtime),
+): Promise<() => void> => {
+  const previousReplacement = runtimeRegistry.__aiUsageSourceControlRuntimeReplacement ?? Promise.resolve();
+  const replacement = previousReplacement.then(async () => {
+    const previousRuntime = runtimeRegistry.__aiUsageSourceControlRuntime;
+    if (previousRuntime && previousRuntime !== runtime) {
+      const previousTeardown = runtimeRegistry.__aiUsageSourceControlRuntimeTeardown ?? disposeRuntime(previousRuntime);
       runtimeRegistry.__aiUsageSourceControlRuntime = undefined;
+      runtimeRegistry.__aiUsageSourceControlRuntimeTeardown = undefined;
+      await previousTeardown();
     }
-  };
+    runtimeRegistry.__aiUsageSourceControlRuntime = runtime;
+    runtimeRegistry.__aiUsageSourceControlRuntimeTeardown = teardown;
+  });
+  runtimeRegistry.__aiUsageSourceControlRuntimeReplacement = replacement;
+  try {
+    await replacement;
+  } finally {
+    if (runtimeRegistry.__aiUsageSourceControlRuntimeReplacement === replacement) {
+      runtimeRegistry.__aiUsageSourceControlRuntimeReplacement = undefined;
+    }
+  }
+  return uninstallRuntime(runtime);
 };
 
 export const getWebSourceControlRuntime = (): WebSourceControlRuntime => {

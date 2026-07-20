@@ -17,6 +17,8 @@ import {
 import type { UsageRow, UsageRowSource, UsageRowWithOptionalSource } from './types';
 import { usageRowActiveDate, usageRowLineDelta, usageRowSessionLabel, usageRowTokenTotal } from './usage-row';
 
+export { isSerializedUsageRow } from './serialized-usage-validation';
+
 export type SortKey = 'date' | 'tokens' | 'cost';
 
 export interface ReportOptions {

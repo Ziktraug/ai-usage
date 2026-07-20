@@ -18,27 +18,33 @@ const codexHistory =
     },
   })}\n`;
 
-test('runs stateful machine and snapshot commands in an isolated profile', async () => {
-  await withCliSandbox(async ({ root, runCli }) => {
-    const first = await runCli(['machine']);
-    const second = await runCli(['machine']);
-    expect(first.exitCode).toBe(0);
-    expect(first.stdout).toBe(second.stdout);
+const PROCESS_INTEGRATION_TEST_TIMEOUT_MS = 20_000;
 
-    const labelled = await runCli(['machine', 'set-label', 'Fixture Machine']);
-    expect(labelled.exitCode).toBe(0);
-    expect(labelled.stdout).toContain('Fixture Machine');
+test(
+  'runs stateful machine and snapshot commands in an isolated profile',
+  async () => {
+    await withCliSandbox(async ({ root, runCli }) => {
+      const first = await runCli(['machine']);
+      const second = await runCli(['machine']);
+      expect(first.exitCode).toBe(0);
+      expect(first.stdout).toBe(second.stdout);
 
-    const home = path.join(root, 'profile');
-    await mkdir(path.join(home, '.codex', 'sessions', '2026', '01', '01'), { recursive: true });
-    await writeFile(path.join(home, '.codex', 'sessions', '2026', '01', '01', 'fixture.jsonl'), codexHistory);
-    const snapshotPath = path.join(root, 'snapshot.json');
-    const snapshot = await runCli(['snapshot', '--no-cursor', '--out', snapshotPath]);
-    expect(snapshot.exitCode).toBe(0);
-    expect(snapshot.stdout).toContain(snapshotPath);
-    expect(parseUsageSnapshot(await readFile(snapshotPath, 'utf8')).rows).toHaveLength(1);
-  });
-});
+      const labelled = await runCli(['machine', 'set-label', 'Fixture Machine']);
+      expect(labelled.exitCode).toBe(0);
+      expect(labelled.stdout).toContain('Fixture Machine');
+
+      const home = path.join(root, 'profile');
+      await mkdir(path.join(home, '.codex', 'sessions', '2026', '01', '01'), { recursive: true });
+      await writeFile(path.join(home, '.codex', 'sessions', '2026', '01', '01', 'fixture.jsonl'), codexHistory);
+      const snapshotPath = path.join(root, 'snapshot.json');
+      const snapshot = await runCli(['snapshot', '--no-cursor', '--out', snapshotPath]);
+      expect(snapshot.exitCode).toBe(0);
+      expect(snapshot.stdout).toContain(snapshotPath);
+      expect(parseUsageSnapshot(await readFile(snapshotPath, 'utf8')).rows).toHaveLength(1);
+    });
+  },
+  PROCESS_INTEGRATION_TEST_TIMEOUT_MS,
+);
 
 test('renders a snapshot merge and rejects retired HTML arguments as real processes', async () => {
   await withCliSandbox(async ({ root, runCli }) => {

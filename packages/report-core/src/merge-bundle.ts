@@ -13,7 +13,8 @@ import {
 import type { UsageMachine } from './snapshot';
 import type { CollectedUsageRow, UsageRowSource, UsageRowWithOptionalSource } from './types';
 
-export const USAGE_MERGE_BUNDLE_VERSION = 1 as const;
+const LEGACY_USAGE_MERGE_BUNDLE_VERSION = 1 as const;
+export const USAGE_MERGE_BUNDLE_VERSION = 2 as const;
 
 export type UsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StableUsageRowKey = string;
@@ -200,7 +201,7 @@ export const parseUsageMergeBundleValue = (value: unknown): UsageMergeBundle => 
   if (!hasOnlyKeys(value, BUNDLE_KEYS)) {
     throw new Error('Usage merge bundle contains unknown fields');
   }
-  if (value.version !== USAGE_MERGE_BUNDLE_VERSION) {
+  if (value.version !== LEGACY_USAGE_MERGE_BUNDLE_VERSION && value.version !== USAGE_MERGE_BUNDLE_VERSION) {
     throw new Error('Unsupported usage merge bundle version');
   }
   if (!isUsageMachine(value.machine)) {
@@ -216,6 +217,12 @@ export const parseUsageMergeBundleValue = (value: unknown): UsageMergeBundle => 
   if (!value.rows.every(isSerializedMergeRow)) {
     throw new Error('Usage merge bundle contains invalid rows');
   }
+  if (
+    value.version === LEGACY_USAGE_MERGE_BUNDLE_VERSION &&
+    value.rows.some((row) => row.modelSegments !== undefined)
+  ) {
+    throw new Error('Usage merge bundle legacy v1 rows cannot contain modelSegments');
+  }
   if (!isUsageReportWarnings(value.warnings)) {
     throw new Error('Usage merge bundle contains invalid warnings');
   }
@@ -228,7 +235,7 @@ export const parseUsageMergeBundleValue = (value: unknown): UsageMergeBundle => 
     }
   }
   return {
-    version: value.version,
+    version: USAGE_MERGE_BUNDLE_VERSION,
     machine: value.machine,
     generatedAt: value.generatedAt,
     rows: value.rows,
@@ -255,6 +262,7 @@ export const deserializeMergeRow = (row: SerializedMergeRow): CollectedUsageRow 
   provider: row.provider,
   name: row.name,
   model: row.model,
+  ...(row.modelSegments === undefined ? {} : { modelSegments: row.modelSegments }),
   ...(row.models === undefined ? {} : { models: row.models }),
   project: row.project,
   tokIn: row.tokIn,
@@ -279,5 +287,6 @@ export const deserializeMergeRow = (row: SerializedMergeRow): CollectedUsageRow 
   ...(row.partial === undefined ? {} : { partial: row.partial }),
   ...(row.usageUnavailable === undefined ? {} : { usageUnavailable: row.usageUnavailable }),
   ...(row.ambiguous === undefined ? {} : { ambiguous: row.ambiguous }),
+  ...(row.titleSource === undefined ? {} : { titleSource: row.titleSource }),
   source: row.source,
 });

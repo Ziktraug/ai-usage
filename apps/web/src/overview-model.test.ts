@@ -207,6 +207,61 @@ describe('overview model', () => {
     expect(data?.maxBucketTotal).toBe(5);
   });
 
+  test('keeps mixed-model session counts unique and partial timeline value dimension-invariant', () => {
+    const mixed = row({
+      costApprox: 2,
+      costKnown: false,
+      freshTokens: 30,
+      model: 'gpt-5',
+      models: ['gpt-5', 'claude-sonnet'],
+      modelSegments: [
+        {
+          costApprox: 2,
+          costKnown: true,
+          model: 'gpt-5',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 10,
+          tokOut: 0,
+        },
+        {
+          costApprox: 0,
+          costKnown: false,
+          model: 'claude-sonnet',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 0,
+          tokOut: 20,
+        },
+      ],
+      tokCr: 0,
+      tokCw: 0,
+      tokIn: 10,
+      tokOut: 20,
+      tokenTotal: 30,
+    });
+
+    const data = buildTimelineData([mixed], { dimension: 'model', granularity: 'day' });
+    const providerData = buildTimelineData([mixed], { dimension: 'provider', granularity: 'day' });
+
+    expect(data?.series.map(({ key, sessions, total }) => ({ key, sessions, total }))).toEqual([
+      { key: 'gpt-5', sessions: 1, total: 0 },
+      { key: 'claude-sonnet', sessions: 0, total: 0 },
+    ]);
+    expect(data?.series[1]?.sessions).toBe(0);
+    expect(data?.grandTotal).toBe(providerData?.grandTotal);
+    expect(data?.grandSessions).toBe(1);
+    expect(providerData?.grandSessions).toBe(1);
+  });
+
+  test('orders equal timeline series by a stable lexical key', () => {
+    const rows = ['z-model', 'a-model', 'ä-model'].map((model) => row({ costApprox: 1, model, sessionLabel: model }));
+
+    const data = buildTimelineData(rows, { dimension: 'model', granularity: 'day' });
+
+    expect(data?.series.map(({ key }) => key)).toEqual(['a-model', 'z-model', 'ä-model']);
+  });
+
   test('builds timeline series for every supported dimension with cost and sessions', () => {
     const rows = [
       row({
@@ -479,6 +534,7 @@ describe('overview model', () => {
       activeDate: '2026-06-10T12:05:00.000Z',
       date: '2026-06-10T12:05:00.000Z',
       costApprox: 5,
+      costKnown: false,
       durationMs: 300_000,
       source: {
         harnessKey: 'codex',
@@ -490,16 +546,18 @@ describe('overview model', () => {
     });
     const soloA = row({ sessionLabel: 'Solo A', costApprox: 12, durationMs: 120_000 });
     const soloB = row({ sessionLabel: 'Solo B', costApprox: 3, durationMs: 240_000 });
-    const rows = [campaignRoot, campaignChild, soloA, soloB];
+    const soloC = row({ sessionLabel: 'Solo C', costApprox: 1, durationMs: 360_000 });
+    const rows = [campaignRoot, campaignChild, soloA, soloB, soloC];
     const campaigns = buildCampaignViews(rows, rows);
 
     const items = buildOverviewSessionItems(rows, campaigns);
     const top = buildTopSessions(rows, 2, campaigns);
     const shape = buildSessionShapeData(rows, campaigns);
 
-    expect(items.map((item) => item.label).sort()).toEqual(['Campaign root', 'Solo A', 'Solo B']);
+    expect(items.map((item) => item.label).sort()).toEqual(['Campaign root', 'Solo A', 'Solo B', 'Solo C']);
     expect(top.map((item) => item.kind)).toEqual(['campaign', 'session']);
     expect(top.map((item) => item.costApprox)).toEqual([13, 12]);
-    expect(shape?.points.map((item) => item.label).sort()).toEqual(['Campaign root', 'Solo A', 'Solo B']);
+    expect(top.map((item) => item.costKnown)).toEqual([false, true]);
+    expect(shape?.points.map((item) => item.label).sort()).toEqual(['Solo A', 'Solo B', 'Solo C']);
   });
 });

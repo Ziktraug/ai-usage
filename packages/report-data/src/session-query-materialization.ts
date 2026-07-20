@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import { providerStatusKeyForUsage, providerStatusScopeKey } from '@ai-usage/report-core/provider-status';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
+import type { SessionDetailSourceAuthority } from '@ai-usage/report-core/session-detail';
 import {
   buildSessionCampaignViews,
   compareSessionIdentityValues,
@@ -12,15 +13,17 @@ import {
   type SessionCampaignView,
   type SessionPresentationRow,
   type SessionTextSortField,
+  sessionModelKeys,
   sessionSortFields,
   sessionTextSortFields,
   sortValueForSessionColumn,
 } from '@ai-usage/report-core/session-query';
+import { usageRowModelContributions } from '@ai-usage/report-core/usage-row';
 
 export const SESSION_QUERY_DATABASE_NAME = 'sessions.sqlite';
 
-const SESSION_QUERY_SCHEMA_VERSION = 3;
-const SESSION_ROW_INSERT_VALUE_COUNT = 74;
+const SESSION_QUERY_SCHEMA_VERSION = 8;
+const SESSION_ROW_INSERT_VALUE_COUNT = 75;
 const createFileFlags =
   // biome-ignore lint/suspicious/noBitwiseOperators: Node file-open flags are a documented bitmask API.
   fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW;
@@ -85,9 +88,10 @@ const createSchema = (database: SqliteDatabase): void => {
     );
     CREATE TABLE session_rows (
       ordinal INTEGER PRIMARY KEY,
-      row_id TEXT NOT NULL,
+      row_id TEXT NOT NULL UNIQUE,
       row_json TEXT NOT NULL,
       source_row_json TEXT NOT NULL,
+      source_authority TEXT NOT NULL CHECK (source_authority IN ('local-observed', 'portable-opaque')),
       active_date TEXT,
       active_time INTEGER,
       search_text TEXT NOT NULL,
@@ -159,17 +163,38 @@ const createSchema = (database: SqliteDatabase): void => {
       tools REAL NOT NULL,
       usage_unavailable INTEGER NOT NULL CHECK (usage_unavailable IN (0, 1))
     );
+    CREATE TABLE session_model_segments (
+      ordinal INTEGER NOT NULL,
+      model_key TEXT NOT NULL,
+      segment_position INTEGER NOT NULL,
+      cost_approx REAL NOT NULL,
+      cost_known INTEGER NOT NULL CHECK (cost_known IN (0, 1)),
+      tok_cr REAL NOT NULL,
+      tok_cw REAL NOT NULL,
+      tok_in REAL NOT NULL,
+      tok_out REAL NOT NULL,
+      PRIMARY KEY (ordinal, model_key),
+      FOREIGN KEY (ordinal) REFERENCES session_rows(ordinal)
+    );
+    CREATE TABLE session_model_filter_keys (
+      ordinal INTEGER NOT NULL,
+      model_key TEXT NOT NULL,
+      PRIMARY KEY (ordinal, model_key),
+      FOREIGN KEY (ordinal) REFERENCES session_rows(ordinal)
+    );
     CREATE INDEX session_rows_campaign ON session_rows(campaign_key, campaign_root, ordinal);
-    CREATE INDEX session_rows_row_id ON session_rows(row_id, ordinal);
     CREATE INDEX session_rows_active_time ON session_rows(active_time);
     CREATE INDEX session_rows_facets ON session_rows(harness, machine_label, provider_display, model_key, project_key);
     CREATE INDEX session_rows_provider_scope ON session_rows(provider_scope_key, ordinal);
+    CREATE INDEX session_model_segments_model ON session_model_segments(model_key, ordinal);
+    CREATE INDEX session_model_filter_keys_model ON session_model_filter_keys(model_key, ordinal);
   `);
 };
 
 const insertSql = `
   INSERT INTO session_rows (
-    ordinal, row_id, row_json, source_row_json, active_date, active_time, search_text, harness, machine_id, machine_label,
+    ordinal, row_id, row_json, source_row_json, source_authority, active_date, active_time, search_text, harness,
+    machine_id, machine_label,
     provider_scope_key, provider, provider_display, model_key, project_key, campaign_key, campaign_root, campaign_total_count,
     ${sessionSortFields.map((field) => `sort_${field === 'cache' ? 'cache' : field.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`).join(', ')},
     ${sessionTextSortFields.map((field) => `sort_${field}_rank`).join(', ')},
@@ -179,6 +204,16 @@ const insertSql = `
     rtk_saved_tokens, tok_cr, tok_cw, tok_in, tok_out, token_total, calls, turns, tools,
     usage_unavailable
   ) VALUES (${Array.from({ length: SESSION_ROW_INSERT_VALUE_COUNT }, () => '?').join(', ')})
+`;
+
+const modelSegmentInsertSql = `
+  INSERT INTO session_model_segments (
+    ordinal, model_key, segment_position, cost_approx, cost_known, tok_cr, tok_cw, tok_in, tok_out
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`;
+
+const modelFilterKeyInsertSql = `
+  INSERT INTO session_model_filter_keys (ordinal, model_key) VALUES (?, ?)
 `;
 
 interface MaterializedSessionRanks {
@@ -241,6 +276,7 @@ const insertRow = (
   insert: SqliteStatement,
   row: SessionPresentationRow,
   sourceRow: SerializedRow,
+  sourceAuthority: SessionDetailSourceAuthority,
   ordinal: number,
   campaign: { key: string; root: boolean; totalCount: number } | undefined,
   ranks: MaterializedSessionRanks,
@@ -257,6 +293,7 @@ const insertRow = (
     row.rowId,
     JSON.stringify(row),
     JSON.stringify(sourceRow),
+    sourceAuthority,
     row.activeDate,
     row.activeTime,
     row.searchText,
@@ -337,7 +374,11 @@ export const materializeSessionQueryDatabase = async (
     generatedAt: new Date(0).toISOString(),
     omittedRows: 0,
   },
+  sourceAuthorities: readonly SessionDetailSourceAuthority[] = rows.map(() => 'portable-opaque'),
 ): Promise<string> => {
+  if (rows.length !== sourceAuthorities.length) {
+    throw new Error('Session query rows and source authorities must have the same length');
+  }
   await ensurePrivateDirectory(revisionDirectory);
   const databasePath = path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME);
   await createDatabaseFile(databasePath);
@@ -361,10 +402,33 @@ export const materializeSessionQueryDatabase = async (
     const ranks = buildMaterializedSessionRanks(presentationRows, campaigns);
 
     const insert = database.query(insertSql);
+    const insertModelFilterKey = database.query(modelFilterKeyInsertSql);
+    const insertModelSegment = database.query(modelSegmentInsertSql);
     database.exec('BEGIN IMMEDIATE');
     try {
       for (const [ordinal, row] of presentationRows.entries()) {
-        insertRow(insert, row, rows[ordinal]!, ordinal, campaignByRow.get(row), ranks);
+        const sourceRow = rows[ordinal]!;
+        const sourceAuthority = sourceAuthorities[ordinal];
+        if (!sourceAuthority) {
+          throw new Error(`Session query row ${ordinal} is missing its source authority`);
+        }
+        insertRow(insert, row, sourceRow, sourceAuthority, ordinal, campaignByRow.get(row), ranks);
+        for (const [segmentPosition, segment] of usageRowModelContributions(sourceRow).entries()) {
+          insertModelSegment.run(
+            ordinal,
+            segment.key,
+            segmentPosition,
+            segment.costApprox,
+            segment.costKnown ? 1 : 0,
+            segment.tokCr,
+            segment.tokCw,
+            segment.tokIn,
+            segment.tokOut,
+          );
+        }
+        for (const modelKey of sessionModelKeys(sourceRow)) {
+          insertModelFilterKey.run(ordinal, modelKey);
+        }
       }
       database
         .query('INSERT INTO metadata (schema_version, row_count, support_json) VALUES (?, ?, ?)')

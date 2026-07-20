@@ -12,6 +12,7 @@ export * from './project-group';
 export * from './provenance';
 export * from './provider-status';
 export * from './report-data';
+export * from './session-detail';
 export * from './session-lineage';
 export * from './session-query';
 export * from './snapshot';

@@ -6,6 +6,7 @@ export type UsageMetricKey =
   | 'api-value'
   | 'actual-cost'
   | 'subscription-value'
+  | 'duration'
   | 'calls'
   | 'turns'
   | 'tools'
@@ -16,6 +17,7 @@ export type UsageProvenanceKind =
   | 'usage-unavailable'
   | 'reconciliation-ambiguous'
   | 'partial-session'
+  | 'partial-api-price'
   | 'unknown-api-price'
   | 'unknown-actual-cost'
   | 'unknown-subscription-value';
@@ -31,8 +33,10 @@ export interface UsageRowProvenance {
 export interface UsageProvenanceInput {
   ambiguous?: boolean;
   costActual: number | null;
+  costApprox: number;
   costKnown: boolean;
   costQuota?: number | null;
+  harness?: string;
   partial?: boolean;
   titleSource?: UsageRow['titleSource'];
   usageUnavailable?: boolean;
@@ -84,12 +88,16 @@ export const provenanceForUsageRow = (row: UsageProvenanceInput): UsageRowProven
   }
 
   if (row.partial) {
+    const appliesTo: UsageMetricKey[] = row.harness === 'OpenCode' ? ['duration'] : COUNTERS_AND_AGGREGATES;
     provenance.push({
       kind: 'partial-session',
-      appliesTo: COUNTERS_AND_AGGREGATES,
+      appliesTo,
       severity: 'warning',
       label: 'Partial session',
-      description: 'This row may be missing part of the session data for counters and aggregate metrics.',
+      description:
+        row.harness === 'OpenCode'
+          ? 'Recorded time may be missing an open or unusable assistant interval.'
+          : 'This row may be missing part of the session data for counters and aggregate metrics.',
     });
   }
 
@@ -104,13 +112,23 @@ export const provenanceForUsageRow = (row: UsageProvenanceInput): UsageRowProven
   }
 
   if (!row.costKnown) {
-    provenance.push({
-      kind: 'unknown-api-price',
-      appliesTo: ['api-value'],
-      severity: 'warning',
-      label: 'Unknown API price',
-      description: 'No known API price was available for this model.',
-    });
+    if (row.costApprox > 0) {
+      provenance.push({
+        kind: 'partial-api-price',
+        appliesTo: ['api-value'],
+        severity: 'warning',
+        label: 'Partial API value',
+        description: 'This is a known subtotal; one or more model prices are unavailable.',
+      });
+    } else {
+      provenance.push({
+        kind: 'unknown-api-price',
+        appliesTo: ['api-value'],
+        severity: 'warning',
+        label: 'Unknown API price',
+        description: 'No known API price was available for this model.',
+      });
+    }
   }
 
   if (row.costActual == null) {

@@ -1,3 +1,4 @@
+import { HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL } from '@ai-usage/local-collectors/test-fixtures/harness-home';
 import { expect, test } from '@playwright/test';
 
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
@@ -86,8 +87,8 @@ test('renders the report timeline on the initial production Overview', async ({ 
   const initialHtml = await initialResponse.text();
   expect(initialResponse.ok()).toBe(true);
   expect(initialHtml).toContain('Loading report data');
-  expect(initialHtml).not.toContain('Production browser session');
-  expect(initialHtml).not.toContain('production-browser-');
+  expect(initialHtml).not.toContain('Implement fixture root');
+  expect(initialHtml).not.toContain('codex-root-025');
 
   await page.addInitScript(() => {
     Reflect.set(globalThis, '__aiUsageFalseEmptyRange', false);
@@ -120,8 +121,8 @@ test('renders the report timeline on the initial production Overview', async ({ 
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
   const dateRange = page.getByRole('region', { name: 'Date range' });
   try {
-    await expect(dateRange).toContainText('May 30, 2026');
-    await expect(dateRange).toContainText('Jun 29, 2026');
+    await expect(dateRange).toContainText('Jun 03, 2026');
+    await expect(dateRange).toContainText('Jul 03, 2026');
     await expect(dateRange.getByText('Loading report range…', { exact: true })).toHaveCount(0);
   } finally {
     overviewGate.resolve();
@@ -215,7 +216,7 @@ test('keeps the last complete report visible while the report range changes', as
     overviewGate.resolve();
   }
 
-  await expect(dateRange.getByRole('textbox', { name: 'Start date' })).toHaveValue('2026-06-22');
+  await expect(dateRange.getByRole('textbox', { name: 'Start date' })).toHaveValue('2026-06-26');
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
 });
 
@@ -230,6 +231,11 @@ test('hydrates and automatically pages Sessions through the production revision 
     (await Promise.all(serverFunctionResponses.map(({ body }) => body))).filter((body) =>
       body.includes(FOCUSED_OVERVIEW_FINGERPRINT_PREFIX),
     ).length;
+
+  const initialDocumentResponse = await page.request.get('/?tab=sessions');
+  const initialDocumentHtml = await initialDocumentResponse.text();
+  expect(initialDocumentResponse.ok()).toBe(true);
+  expect(initialDocumentHtml).not.toContain(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL);
 
   await page.goto('/?tab=sessions');
   const report = page.locator('main[data-hydrated="true"]');
@@ -253,8 +259,49 @@ test('hydrates and automatically pages Sessions through the production revision 
         .locator('tr[data-index]')
         .evaluateAll((rows) => Math.max(...rows.map((row) => Number(row.getAttribute('data-index')))));
     })
-    .toBe(204);
+    .toBe(203);
   await expect(page.getByRole('button', { name: 'Load more sessions' })).toHaveCount(0);
+
+  const rootSessionRow = page.locator('tr[data-index]').filter({ hasText: 'Implement fixture root' });
+  await expect(rootSessionRow).toHaveCount(1);
+  await rootSessionRow.click({ force: true });
+  const rootDrawer = page.getByRole('dialog');
+  await expect(rootDrawer).toBeVisible();
+  await rootDrawer.getByRole('button', { name: 'Analyze root session chronology' }).click();
+  const sessionAnalysis = rootDrawer.getByRole('region', { name: 'Session analysis' });
+  await expect(sessionAnalysis.getByRole('heading', { level: 2, name: 'Session analysis' })).toBeVisible();
+  await expect(rootDrawer.locator('[aria-label="Token anatomy"]')).toBeVisible();
+  const timelineSection = sessionAnalysis.locator('section[aria-labelledby="session-timeline"]');
+  await expect(timelineSection).toContainText(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL);
+  await expect(sessionAnalysis.getByText(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL, { exact: true })).toHaveCount(1);
+  const consistencyMetadata = sessionAnalysis.locator('[data-session-analysis-item="consistency-meta"]');
+  await expect(consistencyMetadata).toHaveText('Local detail · comparable metrics match this report revision.');
+  await expect(consistencyMetadata).toHaveAttribute('data-tone', 'neutral');
+  await expect(consistencyMetadata).not.toHaveAttribute('role', 'status');
+  await expect(sessionAnalysis.locator('[data-tone="neutral"][role="status"]')).toHaveCount(0);
+  await expect(sessionAnalysis.locator('[data-tone="warning"]')).toHaveCount(0);
+  await expect(sessionAnalysis).not.toContainText('may be newer');
+  const timingCoverage = sessionAnalysis.locator('[data-session-analysis-item="partial-duration"]');
+  await expect(timingCoverage).toBeVisible();
+  await expect(timingCoverage).toHaveAttribute('data-tone', 'neutral');
+  await expect(timingCoverage).not.toHaveAttribute('role', 'status');
+  await expect(sessionAnalysis.locator('[data-session-analysis-item="partial-turns"]')).toHaveCount(0);
+  await expect(sessionAnalysis.locator('[data-session-analysis-metric="active"]')).toContainText('≥');
+  await expect(sessionAnalysis.locator('[data-session-analysis-metric="gap"]')).toContainText('≤');
+  await expect(sessionAnalysis.getByRole('button', { name: 'Show real gaps' })).toHaveCount(0);
+  const privacyMetadata = timelineSection.locator('[data-session-analysis-item="privacy"]');
+  await expect(privacyMetadata).toBeVisible();
+  await expect(privacyMetadata).toHaveAttribute('data-tone', 'neutral');
+  await expect(privacyMetadata).not.toHaveAttribute('role', 'status');
+  const hideAnalysisButton = rootDrawer.getByRole('button', { name: 'Hide session chronology' });
+  await expect(hideAnalysisButton).toBeVisible();
+  await expect(hideAnalysisButton).toHaveText('Hide analysis');
+  await hideAnalysisButton.click();
+  await expect(sessionAnalysis).toHaveCount(0);
+  await expect(rootDrawer).toBeVisible();
+  await expect(rootDrawer.locator('[aria-label="Token anatomy"]')).toBeVisible();
+  await rootDrawer.getByRole('button', { name: 'Close session details' }).click();
+  await expect(rootDrawer).toHaveCount(0);
 
   await sessionViewport.evaluate((element) => {
     element.scrollTop = 0;
@@ -287,6 +334,11 @@ test('hydrates and automatically pages Sessions through the production revision 
   for (const responseBody of neighborResponseBodies) {
     expectExactProtocolIdentity(responseBody, revision, SESSION_NEIGHBOR_FINGERPRINT_PATTERN);
   }
+  const detailResponseBodies = responseBodies.filter((body) => body.includes('matches-report'));
+  expect(detailResponseBodies).toHaveLength(1);
+  for (const responseBody of detailResponseBodies) {
+    expect(new Set(protocolIdentityFrom(responseBody).revisions)).toEqual(new Set([revision]));
+  }
   expect(serverFunctionResponses.length).toBeGreaterThanOrEqual(5);
   expect(serverFunctionResponses.every(({ status }) => status === 200)).toBe(true);
 });
@@ -304,6 +356,6 @@ test('automatically pages mobile Sessions while scrolling', async ({ page }) => 
       await pagingSentinel.scrollIntoViewIfNeeded();
       return await summaries.locator('li').count();
     })
-    .toBe(205);
+    .toBe(204);
   await expect(page.getByRole('button', { name: 'Load more sessions' })).toHaveCount(0);
 });
