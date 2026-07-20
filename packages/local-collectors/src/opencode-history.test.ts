@@ -277,12 +277,13 @@ describe('OpenCode session detail', () => {
       tools: 2,
     });
     expect(detail.turns[1]).toMatchObject({
-      durationMs: 0,
+      durationMs: null,
       effort: null,
       effortKind: 'unavailable',
-      intervals: [{ endAt: '2026-07-19T11:00:00.000Z', startAt: '2026-07-19T11:00:00.000Z' }],
+      intervals: [],
       model: 'openai/gpt-5.4',
       promptIds: ['prompt-2'],
+      timingStatus: 'unavailable',
     });
     expect(detail.phases).toEqual([
       {
@@ -333,6 +334,7 @@ describe('OpenCode session detail', () => {
       model: 'provider-b/large',
       promptIds: ['prompt-1'],
       startAt: '2026-07-19T10:00:05.000Z',
+      timingStatus: 'recorded',
       tokens: { cacheRead: 0, cacheWrite: 0, input: 12, output: 13, total: 25 },
       tools: 3,
     });
