@@ -43,6 +43,7 @@
         "@tanstack/solid-start": "1.168.26",
         "@tanstack/solid-table": "^8.21.3",
         "effect": "^3.21.4",
+        "lucide-solid": "^1.25.0",
         "solid-js": "^1.9.13",
       },
       "devDependencies": {
@@ -936,6 +937,8 @@
     "look-it-up": ["look-it-up@2.1.0", "", {}, "sha512-nMoGWW2HurtuJf6XAL56FWTDCWLOTSsanrgwOyaR5Y4e3zfG5N/0cU5xWZSEU3tBxhQugRbV1xL9jb+ug7yZww=="],
 
     "lru-cache": ["lru-cache@5.1.1", "", { "dependencies": { "yallist": "^3.0.2" } }, "sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w=="],
+
+    "lucide-solid": ["lucide-solid@1.25.0", "", { "peerDependencies": { "solid-js": "^1.4.7" } }, "sha512-n5HsI8eWNFe3wYErZixuqDSMd5iqCLU9o2gxivT5JYnuvvDH0WSDqWUnknMWBKQsA8ZYiVjRdHY8Y0BgubujAQ=="],
 
     "magic-string": ["magic-string@0.30.21", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.5" } }, "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ=="],
 

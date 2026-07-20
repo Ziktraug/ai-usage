@@ -22,6 +22,7 @@ import {
   muted,
 } from '@ai-usage/design-system/report';
 import type { SessionDetailResponse } from '@ai-usage/report-core/session-detail';
+import type { SessionVcsResolveResponse } from '@ai-usage/report-core/session-vcs';
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import type { CampaignTotals, CampaignView } from './dashboard-model';
 import type { FieldFilterKey } from './dashboard-search';
@@ -31,6 +32,8 @@ import { classifySessionAnalysisError, type SessionAnalysisError } from './sessi
 import { sessionDurationSemantics } from './session-analysis-model';
 import type { SessionAnalysisTarget } from './session-analysis-target';
 import { canAnalyzeSession, loadSessionDetail } from './session-detail-client';
+import { loadSessionVcsResolution } from './session-vcs-client';
+import { SessionVcsSummary } from './session-vcs-summary';
 import {
   apiValuePresentation,
   type DashboardRow,
@@ -103,8 +106,11 @@ export const SessionDrawer = (props: {
   const [analysisLoading, setAnalysisLoading] = createSignal(false);
   const [analysisResponse, setAnalysisResponse] = createSignal<SessionDetailResponse | null>(null);
   const [analysisError, setAnalysisError] = createSignal<SessionAnalysisError | null>(null);
+  const [vcsResolution, setVcsResolution] = createSignal<SessionVcsResolveResponse | null>(null);
+  const [vcsResolving, setVcsResolving] = createSignal(false);
   let analysisPanel: HTMLDivElement | undefined;
   let analysisSequence = 0;
+  let vcsSequence = 0;
 
   createEffect(() => {
     rowKey(props.row);
@@ -113,11 +119,39 @@ export const SessionDrawer = (props: {
     setAnalysisLoading(false);
     setAnalysisResponse(null);
     setAnalysisError(null);
+    vcsSequence += 1;
+    setVcsResolution(null);
+    setVcsResolving(false);
   });
 
   onCleanup(() => {
     analysisSequence += 1;
+    vcsSequence += 1;
   });
+
+  const resolveVcs = async (): Promise<void> => {
+    const sequence = ++vcsSequence;
+    setVcsResolving(true);
+    setVcsResolution(null);
+    try {
+      const revision = props.revision;
+      if (!revision) {
+        throw new Error('A served report revision is required for VCS resolution.');
+      }
+      const resolution = await loadSessionVcsResolution({ revision, rowId: props.target.reportRowId });
+      if (sequence === vcsSequence) {
+        setVcsResolution(resolution);
+      }
+    } catch {
+      if (sequence === vcsSequence) {
+        setVcsResolution({ reason: 'resolver-unavailable', status: 'unavailable' });
+      }
+    } finally {
+      if (sequence === vcsSequence) {
+        setVcsResolving(false);
+      }
+    }
+  };
 
   const loadAnalysis = async (): Promise<void> => {
     const sequence = ++analysisSequence;
@@ -412,6 +446,16 @@ export const SessionDrawer = (props: {
             />
           </Show>
         </div>
+        <Show when={props.row.source?.vcs}>
+          {(vcs) => (
+            <SessionVcsSummary
+              context={vcs()}
+              onResolve={resolveVcs}
+              resolution={vcsResolution()}
+              resolving={vcsResolving()}
+            />
+          )}
+        </Show>
         <div class={drawerActions}>
           <button
             class={ghostButton}

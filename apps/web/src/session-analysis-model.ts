@@ -146,6 +146,7 @@ export interface SessionTimelinePromptRef {
 export type SessionTimelineRow =
   | {
       durationMs: number | null;
+      endAt: string;
       effort: string | null;
       effortKind: SessionDetailEffortKind;
       index: number;
@@ -153,6 +154,7 @@ export type SessionTimelineRow =
       kind: 'task';
       model: string;
       prompts: SessionTimelinePromptRef[];
+      startAt: string;
       tokenShareOfMax: number;
       tokens: SessionDetailTokenCounts;
       tools: number;
@@ -253,6 +255,7 @@ export const buildSessionTimelineRows = (detail: SessionDetail): SessionTimeline
   const taskRows = chronologicalTurns.map((turn) => ({
     row: {
       durationMs: turn.durationMs,
+      endAt: turn.endAt,
       effort: turn.effort,
       effortKind: turn.effortKind,
       index: turn.index,
@@ -260,6 +263,7 @@ export const buildSessionTimelineRows = (detail: SessionDetail): SessionTimeline
       kind: 'task' as const,
       model: turn.model,
       prompts: promptsByTurn.get(turn) ?? [],
+      startAt: turn.startAt,
       tokenShareOfMax: maximumTokens > 0 ? clamp(turn.tokens.total / maximumTokens, 0, 1) : 0,
       tokens: turn.tokens,
       tools: turn.tools,

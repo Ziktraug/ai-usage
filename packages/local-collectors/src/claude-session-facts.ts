@@ -508,7 +508,7 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
       effort: null,
       effortKind: 'unavailable',
       endAt: iso(turn.end),
-      index: index + 1,
+      index,
       intervals,
       model: turn.assistants.at(-1)?.model ?? 'unknown',
       promptIds: turn.prompt ? [turn.prompt.id] : [],

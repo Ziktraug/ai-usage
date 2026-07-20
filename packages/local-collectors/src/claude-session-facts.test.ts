@@ -90,7 +90,12 @@ describe('parseClaudeSessionFacts', () => {
     expect(facts?.projection.tokens).toEqual({ cacheRead: 3, cacheWrite: 1, input: 18, output: 6, total: 28 });
     expect(facts?.detailFacts.prompts.map(({ text }) => text)).toEqual(['private prompt']);
     expect(facts?.detailFacts.turns).toHaveLength(1);
-    expect(facts?.detailFacts.turns[0]).toMatchObject({ durationMs: 60_000, timingStatus: 'recorded', tools: 1 });
+    expect(facts?.detailFacts.turns[0]).toMatchObject({
+      durationMs: 60_000,
+      index: 0,
+      timingStatus: 'recorded',
+      tools: 1,
+    });
     expect(facts?.detailFacts.durationStatus).toBe('recorded');
     expect(facts?.source.vcs?.branches.map(({ name }) => name)).toEqual(['main', 'topic/a']);
     expect(facts?.source.vcs?.pullRequests).toEqual([
