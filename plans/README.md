@@ -35,7 +35,14 @@ branch or open a pull request unless the user explicitly asks.
 | 022 | Build a Server-Owned Source Control Plane and Client-First Web App | P1 | L | 017, 018, 021 | DONE |
 | 023 | Harden Source Ownership, Publication, Cancellation, and Client Contracts | P1 | L | 022 initial implementation | DONE |
 | 024 | Close Source-Control Data, Cancellation, State, and Client Review Gaps | P1 | L | 023 implementation | DONE |
-| 025 | Frontend Portfolio Step-up | P0 | L | - | TODO |
+| 025 | Build Read-only Demo | P0 | M | merged main | BLOCKED — waiting for session-analysis merge |
+| 026 | Close Frontend Accessibility | P0 | M | 025 | BLOCKED |
+| 027 | Add Frontend Regression Gates | P0 | M | 026 | BLOCKED |
+| 028 | Decide Session Scroll Architecture | P0 | L | 027 | BLOCKED |
+| 029 | Extract Dashboard Owners | P1 | L | 028 | BLOCKED |
+| 030 | Align Router and Design System | P1 | M | 029 | BLOCKED |
+| 031 | Distill Decisions Into ADRs | P1 | M | 030 | BLOCKED |
+| 032 | Prepare Frontend Showcase | P0 | M | 031 | BLOCKED |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -239,3 +246,7 @@ sequence overlapping files and rebase/re-read before execution.
 - A Wrapped/shareable recap based on self-contained HTML is rejected in that
   form. A future non-HTML recap needs its own product design, privacy rules, and
   bounded output contract.
+
+## Frontend portfolio program unblock protocol (plans 025–032)
+
+Plans 025–032 are all required and execute sequentially. They remain BLOCKED until the owner's parallel session-analysis work is merged into `main`. After that merge, recreate/rebase the portfolio worktree, run the baseline, replace every `<NEW_MAIN_SHA>`, re-read and inline exact current-state excerpts and file scopes, then move only plan 025 to TODO. Each later plan moves to TODO only after its dependency is DONE and reviewed. Plan 032 prepares `docs/publication-checklist.md`; executors must not run `gh repo edit` or publish externally. Owner decisions: MIT license; existing plans remain committed; exactly six evidence-backed ADRs; one synthetic composite README hero showing Overview and session detail.
