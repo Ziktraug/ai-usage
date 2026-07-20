@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { access, mkdtemp, rm, stat } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Effect } from 'effect';
@@ -54,8 +54,22 @@ describe('seedHarnessHome', () => {
     });
     expect(fixture.seededHarnesses).toEqual(['claude', 'codex', 'opencode', 'cursor']);
     expect(await stat(fixture.paths.codexRootRollout)).toBeDefined();
+    expect(await stat(fixture.paths.claudeRootTranscript)).toBeDefined();
+    expect(await stat(fixture.paths.claudeSubagentTranscript)).toBeDefined();
     expect(integrityCheck(fixture.paths.opencodeDatabase)).toBe('ok');
     expect(integrityCheck(fixture.paths.cursorDatabase)).toBe('ok');
+    expect(await pathExists(join(fixture.paths.repository, '.git'))).toBe(true);
+
+    const claudeTranscript = await readFile(fixture.paths.claudeRootTranscript, 'utf8');
+    expect(claudeTranscript).toContain('"subtype":"turn_duration"');
+    expect(claudeTranscript).toContain('"type":"pr-link"');
+    expect(claudeTranscript).toContain('"gitBranch":"fixture/topic"');
+    expect(claudeTranscript.match(/"id":"claude-message-1"/g)).toHaveLength(2);
+
+    const codexTranscript = await readFile(fixture.paths.codexRootRollout, 'utf8');
+    expect(codexTranscript).toContain('"repository_url":"git@github.com:fixture/ai-usage.git"');
+    expect(codexTranscript).toContain('"branch":"fixture/main"');
+    expect(codexTranscript).toContain('"commit_hash":"0123456789abcdef0123456789abcdef01234567"');
   });
 
   test('honors a Codex-only subset without creating other artifacts', async () => {
