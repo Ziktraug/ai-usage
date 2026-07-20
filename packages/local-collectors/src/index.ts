@@ -1,3 +1,5 @@
+export * from './claude-history';
+export * from './claude-session-facts';
 export * from './codex-app-server';
 export * from './codex-history';
 export * from './codex-quota-history';
