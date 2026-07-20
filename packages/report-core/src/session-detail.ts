@@ -10,7 +10,7 @@ const MAX_RESULT_BYTES = 2 * 1024 * 1024;
 const MAX_TURNS = 1024;
 const MAX_TURN_INTERVALS = 2048;
 
-export const sessionDetailHarnessKeys = ['codex', 'opencode'] as const;
+export const sessionDetailHarnessKeys = ['claude', 'codex', 'opencode'] as const;
 export type SessionDetailHarnessKey = (typeof sessionDetailHarnessKeys)[number];
 
 export const supportsSessionDetailHarness = (value: string): value is SessionDetailHarnessKey =>

@@ -6,12 +6,12 @@ const request = { revision: 'revision-a', rowId: 'row-a' };
 const availableResponse = {
   consistency: { checkedFields: ['tokens'], status: 'matches-report' },
   detail: {
-    activeDurationMs: 60_000,
-    durationStatus: 'recorded',
+    activeDurationMs: null,
+    durationStatus: 'unavailable',
     efforts: [],
     elapsedDurationMs: 60_000,
     endedAt: '2026-07-18T10:01:00.000Z',
-    idleDurationMs: 0,
+    idleDurationMs: null,
     models: [],
     observedAt: '2026-07-18T10:01:01.000Z',
     phases: [],

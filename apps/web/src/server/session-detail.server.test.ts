@@ -21,12 +21,12 @@ const projection: SessionProjectionFacts = {
   turns: 1,
 };
 const detail: SessionDetail = {
-  activeDurationMs: 60_000,
-  durationStatus: 'recorded',
+  activeDurationMs: null,
+  durationStatus: 'unavailable',
   efforts: ['high'],
   elapsedDurationMs: 60_000,
   endedAt: '2026-07-18T10:01:00.000Z',
-  idleDurationMs: 0,
+  idleDurationMs: null,
   models: ['gpt-5.6-sol'],
   observedAt: '2026-07-18T10:01:01.000Z',
   phases: [],
@@ -97,6 +97,29 @@ describe('local session detail server', () => {
         }),
       ),
     ).toMatchObject({ consistency: { status: 'cannot-compare' } });
+  });
+
+  test('dispatches Claude analysis only after exact local authority is established', async () => {
+    const reads: unknown[] = [];
+    const response = await getLocalSessionDetailForServer(
+      request,
+      dependencies({
+        readAnalysis: (harnessKey, sourceSessionId) => {
+          reads.push({ harnessKey, sourceSessionId });
+          return Promise.resolve(analysis);
+        },
+        resolveAnchor: async () => {
+          const result = await dependencies().resolveAnchor(request);
+          if (!result.ok) {
+            return result;
+          }
+          return { ...result, data: { ...result.data, anchor: { ...anchor, harnessKey: 'claude' } } };
+        },
+      }),
+    );
+
+    expect(response).toMatchObject({ status: 'available' });
+    expect(reads).toEqual([{ harnessKey: 'claude', sourceSessionId: 'session-a' }]);
   });
 
   test('maps revision expiry and row/provenance failures before local reads', async () => {
@@ -188,7 +211,7 @@ describe('local session detail server', () => {
             if (!result.ok) {
               return result;
             }
-            return { ...result, data: { ...result.data, anchor: { ...anchor, harnessKey: 'claude' } } };
+            return { ...result, data: { ...result.data, anchor: { ...anchor, harnessKey: 'cursor' } } };
           },
         }),
       ),
