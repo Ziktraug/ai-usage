@@ -8,6 +8,7 @@ import {
   createUsageMergeBundle,
   toSerializedMergeRow,
   type UsageMergeBundle,
+  usageContentHash,
 } from '@ai-usage/report-core/merge-bundle';
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
@@ -530,6 +531,66 @@ describe('usage-store public boundary', () => {
     expect(updated.updated).toBe(1);
     expect(after.rows).toHaveLength(1);
     expect(after.rows[0]?.source.vcs).toEqual(vcs);
+  });
+
+  test('migrates stored pre-VCS row fingerprints and republishes them exactly once', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-pre-vcs-'));
+    const dbPath = usageStorePath(home);
+    const row = makeRow({ sourceSessionId: 'pre-vcs-row', project: 'Exalibur' });
+    await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [row] }));
+
+    const current = toSerializedMergeRow(row, machineA);
+    const legacySourceFingerprint = usageContentHash({
+      activeDate: current.activeDate,
+      date: current.date,
+      endDate: current.endDate,
+      harness: current.harness,
+      model: current.model,
+      models: current.models ?? [],
+      name: current.name,
+      project: current.project,
+      provider: current.provider,
+      sourcePath: current.source.sourcePath ?? current.source.artifactPath ?? null,
+      tokenTotal: current.tokenTotal,
+    });
+    const {
+      contentHash: _currentContentHash,
+      sourceFingerprint: _currentSourceFingerprint,
+      ...legacyContent
+    } = current;
+    const legacy = {
+      ...legacyContent,
+      sourceFingerprint: legacySourceFingerprint,
+    };
+    const legacyContentHash = usageContentHash(legacy);
+    const { Database } = await import('bun:sqlite');
+    const db = new Database(dbPath);
+    db.query('UPDATE usage_rows SET source_fingerprint = ?, content_hash = ?, row_json = ? WHERE row_key = ?').run(
+      legacySourceFingerprint,
+      legacyContentHash,
+      JSON.stringify({ ...legacy, contentHash: legacyContentHash }),
+      current.rowKey,
+    );
+    db.query("UPDATE usage_store_metadata SET value = 0 WHERE key = 'migration.merge-row-v3-vcs'").run();
+    db.close();
+
+    const first = await Effect.runPromise(queryReportRows({ dbPath }));
+    const generationAfterMigration = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+    const second = await Effect.runPromise(queryReportRows({ dbPath }));
+
+    expect(first).toMatchObject({ rows: [{ project: 'Exalibur' }], skipped: 0 });
+    expect(second).toMatchObject({ rows: [{ project: 'Exalibur' }], skipped: 0 });
+    expect(generationAfterMigration).toBe(2);
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(generationAfterMigration);
+
+    const migratedDb = new Database(dbPath, { readonly: true });
+    const migrated = migratedDb
+      .query('SELECT source_fingerprint, content_hash, row_json FROM usage_rows WHERE row_key = ?')
+      .get(current.rowKey) as { content_hash: string; row_json: string; source_fingerprint: string };
+    migratedDb.close();
+    expect(migrated.source_fingerprint).toBe(current.sourceFingerprint);
+    expect(migrated.content_hash).toBe(current.contentHash);
+    expect(JSON.parse(migrated.row_json)).toEqual(current);
   });
 
   test('skips invalid stored rows instead of failing the whole query', async () => {

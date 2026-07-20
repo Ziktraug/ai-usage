@@ -28,10 +28,14 @@ export const loadSessionVcsResolution = (
   if (pending) {
     return pending;
   }
-  const resolution = source
-    .resolve(request)
-    .then(parseSessionVcsResolveResponse)
-    .finally(() => pendingResolutions.delete(key));
+  const resolve = async (): Promise<SessionVcsResolveResponse> => {
+    try {
+      return parseSessionVcsResolveResponse(await source.resolve(request));
+    } finally {
+      pendingResolutions.delete(key);
+    }
+  };
+  const resolution = resolve();
   pendingResolutions.set(key, resolution);
   return resolution;
 };

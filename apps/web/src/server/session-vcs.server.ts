@@ -24,6 +24,7 @@ import {
   type BoundedStdoutProcessOptions,
   runBoundedStdoutProcess,
 } from './bounded-stdout-process.server';
+import { authorizeLocalSessionAnchor } from './local-session-authority.server';
 import { runRevisionQueryForServer } from './revision-query-runner.server';
 
 const GH_TIMEOUT_MS = 5000;
@@ -79,6 +80,9 @@ const defaultGhDependencies: GhResolverDependencies = {
 const unavailable = (reason: Extract<SessionVcsResolveResponse, { status: 'unavailable' }>['reason']) =>
   ({ reason, status: 'unavailable' }) as const;
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
 const providerPullRequests = (stdout: string, repository: SessionVcsRepository): SessionVcsPullRequest[] | null => {
   let parsed: unknown;
   try {
@@ -95,21 +99,20 @@ const providerPullRequests = (stdout: string, repository: SessionVcsRepository):
   }
   const pullRequests: SessionVcsPullRequest[] = [];
   for (const item of parsed) {
-    if (!(item && typeof item === 'object' && !Array.isArray(item))) {
+    if (!isRecord(item)) {
       return null;
     }
-    const record = item as Record<string, unknown>;
     if (
-      Object.keys(record).some((key) => key !== 'number' && key !== 'url') ||
-      !Number.isSafeInteger(record.number) ||
-      Number(record.number) <= 0 ||
-      typeof record.url !== 'string'
+      Object.keys(item).some((key) => key !== 'number' && key !== 'url') ||
+      !Number.isSafeInteger(item.number) ||
+      Number(item.number) <= 0 ||
+      typeof item.url !== 'string'
     ) {
       return null;
     }
     let url: URL;
     try {
-      url = new URL(record.url);
+      url = new URL(item.url);
     } catch {
       return null;
     }
@@ -120,12 +123,12 @@ const providerPullRequests = (stdout: string, repository: SessionVcsRepository):
       url.password ||
       url.search ||
       url.hash ||
-      url.pathname !== `${repositoryPath}/pull/${String(record.number)}`
+      url.pathname !== `${repositoryPath}/pull/${String(item.number)}`
     ) {
       return null;
     }
     pullRequests.push({
-      number: Number(record.number),
+      number: Number(item.number),
       observedAt: null,
       repository: repository.ownerPath,
       url: url.toString(),
@@ -152,7 +155,12 @@ export const createGhSessionVcsProviderResolver = (
     if (!(repository.host === 'github.com' && repository.webUrl)) {
       return unavailable('repository-unsupported');
     }
-    const executable = await dependencies.findExecutable(GH_EXECUTABLE).catch(() => null);
+    let executable: string | null;
+    try {
+      executable = await dependencies.findExecutable(GH_EXECUTABLE);
+    } catch {
+      executable = null;
+    }
     if (!executable) {
       return unavailable('resolver-unavailable');
     }
@@ -175,7 +183,6 @@ export const createGhSessionVcsProviderResolver = (
         ],
         command: executable,
         maximumOutputBytes: GH_MAXIMUM_OUTPUT_BYTES,
-        shell: false,
         timeoutMs: GH_TIMEOUT_MS,
       });
       stdout = result.stdout;
@@ -185,6 +192,9 @@ export const createGhSessionVcsProviderResolver = (
     const pullRequests = providerPullRequests(stdout, repository);
     if (!pullRequests) {
       return unavailable('resolver-unavailable');
+    }
+    if (pullRequests.length === 0) {
+      return unavailable('not-found');
     }
     return parseSessionVcsResolveResponse({
       pullRequests,
@@ -215,15 +225,9 @@ export const resolveSessionVcsForServer = async (
   if (!anchor) {
     return unavailable('provenance-unavailable');
   }
-  if (anchor.sourceAuthority !== 'local-observed') {
-    return unavailable('not-local');
-  }
-  if (!anchor.machineId) {
-    return unavailable('provenance-unavailable');
-  }
-  const machine = await dependencies.readMachine().catch(() => null);
-  if (!machine || machine.id !== anchor.machineId) {
-    return unavailable('not-local');
+  const authorization = await authorizeLocalSessionAnchor(anchor, dependencies.readMachine);
+  if (authorization.status === 'unauthorized') {
+    return unavailable(authorization.reason === 'provenance-unavailable' ? 'provenance-unavailable' : 'not-local');
   }
   const repository = anchor.vcs?.repository;
   const branch = anchor.vcs?.branches.at(-1)?.name;

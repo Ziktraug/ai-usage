@@ -6,6 +6,7 @@ test.describe.configure({ mode: 'serial' });
 const REVISION_PATTERN = /^e2e-revision-\d+$/;
 const RUNNING_ELAPSED_PATTERN = /Running: Codex sessions \(\d+s elapsed\)/;
 const NEXT_DUE_PATTERN = /Next due: .* at \d{4}-\d{2}-\d{2}T/;
+const NON_FINITE_PROGRESS_ERROR_PATTERN = /HTMLProgressElement.*finite/i;
 
 const sourceCard = (page: Page, label: string) =>
   page.getByRole('article').filter({ has: page.getByRole('heading', { level: 3, name: label }) });
@@ -118,4 +119,56 @@ test('ignores a partial SSE snapshot after a complete catalogue', async ({ page 
   for (const definition of collectionSourceDefinitions) {
     await expect(page.getByRole('heading', { level: 3, name: definition.label })).toBeVisible();
   }
+});
+
+test('renders count-free source progress without assigning a non-finite native value', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  const sources = collectionSourceDefinitions.map((definition) => ({
+    availability: 'detected' as const,
+    cadenceMs: definition.cadenceMs,
+    id: definition.id,
+    label: definition.label,
+    lastOutcome: 'not-run' as const,
+    lifecycle: definition.id === 'codex.usage-limits' ? ('running' as const) : ('scheduled' as const),
+    policy: 'enabled' as const,
+    ...(definition.id === 'codex.usage-limits'
+      ? { progress: { message: 'Reading local rollout history', phase: 'reading' as const } }
+      : {}),
+    reason: { code: 'none' as const },
+    warnings: [],
+  }));
+  const snapshot = {
+    generatedAt: '2026-07-20T20:41:00.000Z',
+    generation: 12,
+    instanceId: 'e2e-count-free-progress',
+    publication: {
+      acknowledgedRequestGeneration: 1,
+      dirty: false,
+      dirtyGeneration: 1,
+      lastOutcome: 'success',
+      pendingDemand: false,
+      publishedGeneration: 1,
+      queued: false,
+      requestedGeneration: 1,
+      revision: 'e2e-count-free-progress-revision',
+      rtkCompletedGeneration: 1,
+      rtkRequiredGeneration: 1,
+      running: false,
+    },
+    queueDepth: 0,
+    runningCount: 1,
+    sources,
+  };
+  await page.route('**/api/source-control', async (route) => {
+    await route.fulfill({
+      body: `event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`,
+      contentType: 'text/event-stream',
+      status: 200,
+    });
+  });
+
+  await page.goto('/sources');
+  await expect(page.getByText('Reading local rollout history')).toBeVisible();
+  expect(pageErrors.filter((message) => NON_FINITE_PROGRESS_ERROR_PATTERN.test(message))).toEqual([]);
 });

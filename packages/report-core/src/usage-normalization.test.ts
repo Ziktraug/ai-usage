@@ -48,6 +48,23 @@ describe('usage row', () => {
     expect(row.durationMs).toBeNull();
   });
 
+  test('preserves an explicitly unavailable duration instead of deriving the event span', () => {
+    const row = normalizeUsageRow({
+      calls: 1,
+      cost: actualCost(null),
+      date: new Date('2026-04-01T13:40:00.000Z'),
+      durationMs: null,
+      endDate: new Date('2026-04-01T13:42:00.000Z'),
+      harness: 'Claude',
+      model: 'claude-sonnet',
+      name: 'untimed session',
+      provider: 'Anthropic API',
+      tokens: { in: 1, out: 1, cr: 0, cw: 0 },
+    });
+
+    expect(row.durationMs).toBeNull();
+  });
+
   test('prices OpenCode Go GLM models from public Z.AI rates', () => {
     const row = normalizeUsageRow({
       date: new Date('2026-01-01T00:00:00.000Z'),

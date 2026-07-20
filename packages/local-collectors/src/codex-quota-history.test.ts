@@ -55,4 +55,33 @@ describe('Codex rollout quota backfill', () => {
     expect(second.observations.map(({ observedAt }) => observedAt)).toEqual(['2026-07-15T10:10:00.000Z']);
     expect(second.sourceEvents).toHaveLength(1);
   });
+
+  test('commits complete lines when a bounded range ends inside a multibyte character', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-quota-utf8-'));
+    const sessions = path.join(home, '.codex', 'sessions', '2026', '07', '15');
+    mkdirSync(sessions, { recursive: true });
+    const rollout = path.join(sessions, 'rollout.jsonl');
+    const completeLine = event('2026-07-15T10:00:00.000Z', 20);
+    const incompleteLine = JSON.stringify({ message: 'é', type: 'diagnostic' });
+    const completePrefix = `${completeLine}\n${incompleteLine.slice(0, incompleteLine.indexOf('é'))}`;
+    writeFileSync(rollout, `${completeLine}\n${incompleteLine}\n`);
+    const storage = createLocalHistoryStorage(home);
+
+    const result = await Effect.runPromise(
+      collectCodexRolloutQuotaBatch(
+        {
+          from: new Date('2026-07-01T00:00:00.000Z'),
+          machineId: 'machine-1',
+        },
+        { maximumBytes: Buffer.byteLength(completePrefix) + 1, maximumFiles: 1 },
+      ).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+    );
+
+    expect(result.observations).toHaveLength(1);
+    expect(result.checkpoints[0]).toEqual({
+      key: rollout,
+      value: expect.objectContaining({ offset: Buffer.byteLength(`${completeLine}\n`) }),
+    });
+    expect(result.hasMore).toBe(true);
+  });
 });

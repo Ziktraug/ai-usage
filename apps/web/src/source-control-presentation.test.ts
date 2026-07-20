@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { collectionSourceDefinitions, type SourceControlEntryView } from '@ai-usage/report-core/source-control';
-import { presentSourceState, type SourcePresentationTone, sourceToneClass } from './source-control-presentation';
+import {
+  presentSourceProgress,
+  presentSourceState,
+  type SourcePresentationTone,
+  sourceToneClass,
+} from './source-control-presentation';
 
 const source = (overrides: Partial<SourceControlEntryView> = {}): SourceControlEntryView => ({
   availability: 'detected',
@@ -38,5 +43,14 @@ describe('source control presentation', () => {
     const tones: readonly SourcePresentationTone[] = ['danger', 'info', 'ok', 'warning'];
     expect(new Set(tones.map(sourceToneClass)).size).toBe(tones.length);
     expect(tones.every((tone) => sourceToneClass(tone).length > 0)).toBe(true);
+  });
+
+  test('keeps phase-only progress indeterminate and bounds determinate values', () => {
+    expect(presentSourceProgress(source({ progress: { phase: 'reading' } }))).toEqual({ kind: 'indeterminate' });
+    expect(presentSourceProgress(source({ progress: { completed: 12, phase: 'importing', total: 10 } }))).toEqual({
+      kind: 'determinate',
+      max: 10,
+      value: 10,
+    });
   });
 });

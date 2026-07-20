@@ -79,15 +79,6 @@ const CONTEXT_KEYS = new Set(['branches', 'headCommit', 'partial', 'pullRequests
 const RESOLVE_RESPONSE_AVAILABLE_KEYS = new Set(['pullRequests', 'repositoryUrl', 'status']);
 const RESOLVE_RESPONSE_UNAVAILABLE_KEYS = new Set(['reason', 'status']);
 const RESOLVE_REQUEST_KEYS = new Set(['revision', 'rowId']);
-const RESOLVE_UNAVAILABLE_REASONS = new Set<SessionVcsResolveUnavailableReason>([
-  'not-local',
-  'provenance-unavailable',
-  'resolver-unavailable',
-  'repository-unsupported',
-  'not-found',
-  'timed-out',
-]);
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -192,11 +183,14 @@ export const normalizeSessionVcsRepository = (
     ownerPathValue = parsed.pathname;
   } else {
     const match = SCP_REMOTE_PATTERN.exec(remote);
-    if (!match || (match[1] !== undefined && match[1] !== 'git')) {
+    const sshUser = match?.[1];
+    const matchedHost = match?.[2];
+    const matchedOwnerPath = match?.[3];
+    if (!(matchedHost && matchedOwnerPath) || (sshUser !== undefined && sshUser !== 'git')) {
       return null;
     }
-    host = match[2]!.toLowerCase();
-    ownerPathValue = match[3]!;
+    host = matchedHost.toLowerCase();
+    ownerPathValue = matchedOwnerPath;
     if (ownerPathValue.includes('?') || ownerPathValue.includes('#')) {
       return null;
     }
@@ -274,7 +268,11 @@ export const normalizeSessionVcsPullRequests = (
       partial = true;
       continue;
     }
-    const url = safeHttpsUrl(candidate.url)!;
+    const url = safeHttpsUrl(candidate.url);
+    if (!url) {
+      partial = true;
+      continue;
+    }
     if (!byUrl.has(url)) {
       byUrl.set(url, { ...candidate, url });
     }
@@ -290,55 +288,66 @@ export const normalizeSessionVcsPullRequests = (
 };
 
 const parseRepository = (value: unknown): SessionVcsRepository => {
+  if (!isRecord(value)) {
+    throw new Error('Session VCS repository is invalid');
+  }
+  const { host, ownerPath, provenance, webUrl } = value;
+  const normalizedWebUrl = webUrl === null ? null : safeHttpsUrl(webUrl);
   if (
     !(
-      isRecord(value) &&
       hasOnlyKeys(value, REPOSITORY_KEYS) &&
-      isBoundedText(value.host) &&
-      SAFE_HOST_PATTERN.test(value.host) &&
-      isBoundedText(value.ownerPath) &&
-      isProvenance(value.provenance)
+      isBoundedText(host) &&
+      SAFE_HOST_PATTERN.test(host) &&
+      isBoundedText(ownerPath) &&
+      isProvenance(provenance)
     ) ||
-    (value.webUrl !== null && safeHttpsUrl(value.webUrl) === null)
+    (webUrl !== null && normalizedWebUrl === null)
   ) {
     throw new Error('Session VCS repository is invalid');
   }
-  return value as unknown as SessionVcsRepository;
+  return { host, ownerPath, provenance, webUrl: normalizedWebUrl };
 };
 
 const parseBranch = (value: unknown): SessionVcsBranchSpan => {
+  if (!isRecord(value)) {
+    throw new Error('Session VCS branch is invalid');
+  }
+  const { firstObservedAt, lastObservedAt, name, provenance, webUrl } = value;
+  const normalizedWebUrl = webUrl === null ? null : safeHttpsUrl(webUrl);
   if (
     !(
-      isRecord(value) &&
       hasOnlyKeys(value, BRANCH_KEYS) &&
-      isNullableTimestamp(value.firstObservedAt) &&
-      isNullableTimestamp(value.lastObservedAt) &&
-      isBoundedText(value.name) &&
-      isProvenance(value.provenance)
+      isNullableTimestamp(firstObservedAt) &&
+      isNullableTimestamp(lastObservedAt) &&
+      isBoundedText(name) &&
+      isProvenance(provenance)
     ) ||
-    (value.webUrl !== null && safeHttpsUrl(value.webUrl) === null) ||
-    (value.firstObservedAt !== null &&
-      value.lastObservedAt !== null &&
-      Date.parse(value.lastObservedAt) < Date.parse(value.firstObservedAt))
+    (webUrl !== null && normalizedWebUrl === null) ||
+    (firstObservedAt !== null && lastObservedAt !== null && Date.parse(lastObservedAt) < Date.parse(firstObservedAt))
   ) {
     throw new Error('Session VCS branch is invalid');
   }
-  return value as unknown as SessionVcsBranchSpan;
+  return { firstObservedAt, lastObservedAt, name, provenance, webUrl: normalizedWebUrl };
 };
 
 const parseCommit = (value: unknown): SessionVcsCommit => {
+  if (!isRecord(value)) {
+    throw new Error('Session VCS commit is invalid');
+  }
+  const { hash, observedAt, provenance, webUrl } = value;
+  const normalizedWebUrl = webUrl === null ? null : safeHttpsUrl(webUrl);
   if (
-    !(isRecord(value) && hasOnlyKeys(value, COMMIT_KEYS)) ||
-    typeof value.hash !== 'string' ||
-    !COMMIT_PATTERN.test(value.hash) ||
-    value.hash.length > MAX_SESSION_VCS_COMMIT_LENGTH ||
-    !isNullableTimestamp(value.observedAt) ||
-    !isProvenance(value.provenance) ||
-    (value.webUrl !== null && safeHttpsUrl(value.webUrl) === null)
+    !hasOnlyKeys(value, COMMIT_KEYS) ||
+    typeof hash !== 'string' ||
+    !COMMIT_PATTERN.test(hash) ||
+    hash.length > MAX_SESSION_VCS_COMMIT_LENGTH ||
+    !isNullableTimestamp(observedAt) ||
+    !isProvenance(provenance) ||
+    (webUrl !== null && normalizedWebUrl === null)
   ) {
     throw new Error('Session VCS commit is invalid');
   }
-  return value as unknown as SessionVcsCommit;
+  return { hash, observedAt, provenance, webUrl: normalizedWebUrl };
 };
 
 export const parseSessionVcsContext = (value: unknown): SessionVcsContext => {
@@ -378,13 +387,18 @@ export const parseSessionVcsContext = (value: unknown): SessionVcsContext => {
     throw new Error('Session VCS repository URL does not match its forge');
   }
   for (const branch of branches) {
-    if (branch.webUrl !== (repository ? sessionVcsBranchUrl(repository, branch.name) : null)) {
+    const expectedWebUrl = repository ? sessionVcsBranchUrl(repository, branch.name) : null;
+    const safelyOmittedPartialUrl = value.partial && branch.webUrl === null;
+    if (branch.webUrl !== expectedWebUrl && !safelyOmittedPartialUrl) {
       throw new Error('Session VCS branch URL does not match its repository');
     }
   }
   for (let index = 1; index < branches.length; index += 1) {
-    const previous = branches[index - 1]!;
-    const current = branches[index]!;
+    const previous = branches.at(index - 1);
+    const current = branches.at(index);
+    if (!(previous && current)) {
+      throw new Error('Session VCS branches are invalid');
+    }
     if (
       previous.firstObservedAt !== null &&
       current.firstObservedAt !== null &&
@@ -423,25 +437,35 @@ export const parseSessionVcsResolveRequest = (value: unknown): SessionVcsResolve
   return { revision: value.revision, rowId: value.rowId };
 };
 
+const isResolveUnavailableReason = (value: unknown): value is SessionVcsResolveUnavailableReason => {
+  switch (value) {
+    case 'not-local':
+    case 'provenance-unavailable':
+    case 'resolver-unavailable':
+    case 'repository-unsupported':
+    case 'not-found':
+    case 'timed-out':
+      return true;
+    default:
+      return false;
+  }
+};
+
 export const parseSessionVcsResolveResponse = (value: unknown): SessionVcsResolveResponse => {
   if (!isRecord(value)) {
     throw new Error('Session VCS resolve response is invalid');
   }
   if (value.status === 'unavailable') {
-    if (
-      !(
-        hasOnlyKeys(value, RESOLVE_RESPONSE_UNAVAILABLE_KEYS) &&
-        RESOLVE_UNAVAILABLE_REASONS.has(value.reason as SessionVcsResolveUnavailableReason)
-      )
-    ) {
+    if (!(hasOnlyKeys(value, RESOLVE_RESPONSE_UNAVAILABLE_KEYS) && isResolveUnavailableReason(value.reason))) {
       throw new Error('Session VCS unavailable response is invalid');
     }
-    return { reason: value.reason as SessionVcsResolveUnavailableReason, status: 'unavailable' };
+    return { reason: value.reason, status: 'unavailable' };
   }
+  const repositoryUrl = safeHttpsUrl(value.repositoryUrl);
   if (
     value.status !== 'available' ||
     !hasOnlyKeys(value, RESOLVE_RESPONSE_AVAILABLE_KEYS) ||
-    safeHttpsUrl(value.repositoryUrl) === null ||
+    repositoryUrl === null ||
     !Array.isArray(value.pullRequests)
   ) {
     throw new Error('Session VCS available response is invalid');
@@ -455,7 +479,7 @@ export const parseSessionVcsResolveResponse = (value: unknown): SessionVcsResolv
   });
   return {
     pullRequests: validated.pullRequests,
-    repositoryUrl: safeHttpsUrl(value.repositoryUrl)!,
+    repositoryUrl,
     status: 'available',
   };
 };

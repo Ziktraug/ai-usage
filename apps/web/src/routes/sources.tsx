@@ -30,7 +30,7 @@ import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
 import { fmtDate, fmtNum } from '../shared';
 import { useSourceControl } from '../source-control-context';
-import { presentSourceState, sourceToneClass } from '../source-control-presentation';
+import { presentSourceProgress, presentSourceState, sourceToneClass } from '../source-control-presentation';
 
 export const Route = createFileRoute('/sources')({
   component: SourcesRoute,
@@ -89,14 +89,6 @@ const groupLabels: Record<CollectionSourceGroup, string> = {
   sessions: 'Sessions',
 };
 
-const progressValue = (source: SourceControlEntryView): number | undefined => {
-  const { completed, total } = source.progress ?? {};
-  if (completed === undefined || total === undefined || total <= 0) {
-    return;
-  }
-  return Math.min(completed, total);
-};
-
 const publicationStatus = (publication: SourcePublicationView): string => {
   if (publication.running) {
     return 'Publishing stored data now.';
@@ -118,7 +110,10 @@ const SourceCard = (props: {
     props.source.policy === 'enabled' &&
     props.source.availability === 'detected' &&
     !['queued', 'running', 'pausing'].includes(props.source.lifecycle);
-  const progress = () => progressValue(props.source);
+  const determinateProgress = () => {
+    const progress = presentSourceProgress(props.source);
+    return progress.kind === 'determinate' ? progress : null;
+  };
   const presentation = () => presentSourceState(props.source);
   const runDisabledReason = () => {
     if (props.pending) {
@@ -179,12 +174,19 @@ const SourceCard = (props: {
               {sourceProgress().phase}
               {sourceProgress().message ? ` · ${sourceProgress().message}` : ''}
             </span>
-            <progress
-              aria-label={`${props.source.label} progress`}
-              class={progressBar}
-              max={sourceProgress().total ?? 1}
-              value={progress()}
-            />
+            <Show
+              fallback={<progress aria-label={`${props.source.label} progress`} class={progressBar} />}
+              when={determinateProgress()}
+            >
+              {(progress) => (
+                <progress
+                  aria-label={`${props.source.label} progress`}
+                  class={progressBar}
+                  max={progress().max}
+                  value={progress().value}
+                />
+              )}
+            </Show>
           </div>
         )}
       </Show>

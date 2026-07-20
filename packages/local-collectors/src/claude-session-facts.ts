@@ -89,6 +89,36 @@ interface ClaudeAssistant {
   uuid: string | null;
 }
 
+interface ClaudeGraphIndex {
+  conflictingUuids: ReadonlySet<string>;
+  parents: ReadonlyMap<string, string | null>;
+}
+
+interface ClaudePromptFacts {
+  partial: boolean;
+  promptEvents: ReadonlyMap<string, ClaudeEvent>;
+  prompts: SessionDetailPrompt[];
+  promptsTruncated: boolean;
+}
+
+interface ClaudeAssistantFacts {
+  assistantEvents: ReadonlyMap<string, ClaudeEvent>;
+  assistants: ClaudeAssistant[];
+  assistantTurnKey: ReadonlyMap<string, string>;
+  partial: boolean;
+  rejectedMetricRecords: number;
+}
+
+interface ClaudeTurnFacts {
+  detailTurns: SessionDetailTurn[];
+  partial: boolean;
+}
+
+interface ClaudeMetadataFacts extends ClaudeSourceFacts {
+  sidechain: boolean;
+  title: string | null;
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -295,12 +325,9 @@ const detailPhases = (assistants: readonly ClaudeAssistant[]): SessionDetailPhas
   return phases;
 };
 
-export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessionFacts | null => {
-  if (!input.sourceSessionId || input.records.length > MAX_CLAUDE_RECORDS) {
-    return null;
-  }
+const parseClaudeEvents = (records: readonly unknown[]): ClaudeEvent[] => {
   const events: ClaudeEvent[] = [];
-  for (const [index, value] of input.records.entries()) {
+  for (const [index, value] of records.entries()) {
     if (!isRecord(value)) {
       continue;
     }
@@ -317,26 +344,40 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
     });
   }
   events.sort((left, right) => left.at.getTime() - right.at.getTime() || left.index - right.index);
-  const start = events[0]?.at;
-  const end = events.at(-1)?.at;
-  if (!(start && end)) {
-    return null;
-  }
+  return events;
+};
 
+const createClaudeGraphIndex = (events: readonly ClaudeEvent[]): ClaudeGraphIndex => {
   const parents = new Map<string, string | null>();
+  const graphSignatures = new Map<string, string>();
+  const conflictingUuids = new Set<string>();
   for (const event of events) {
-    if (event.uuid) {
+    if (!event.uuid) {
+      continue;
+    }
+    const signature = `${String(event.record.type ?? '')}\0${event.parentUuid ?? ''}`;
+    const existingSignature = graphSignatures.get(event.uuid);
+    if (existingSignature !== undefined && existingSignature !== signature) {
+      conflictingUuids.add(event.uuid);
+    } else if (existingSignature === undefined) {
+      graphSignatures.set(event.uuid, signature);
       parents.set(event.uuid, event.parentUuid);
     }
   }
+  for (const uuid of conflictingUuids) {
+    parents.delete(uuid);
+  }
+  return { conflictingUuids, parents };
+};
 
+const collectClaudePrompts = (events: readonly ClaudeEvent[], graph: ClaudeGraphIndex): ClaudePromptFacts => {
   const prompts: SessionDetailPrompt[] = [];
   const promptEvents = new Map<string, ClaudeEvent>();
   let promptBytes = 0;
   let promptsTruncated = false;
-  let turnsPartial = false;
+  let partial = graph.conflictingUuids.size > 0;
   for (const current of events) {
-    const record = current.record;
+    const { record } = current;
     if (record.type !== 'user' || record.isMeta === true || record.isSynthetic === true) {
       continue;
     }
@@ -346,31 +387,42 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
     }
     if (prompts.length >= MAX_CLAUDE_PROMPTS) {
       promptsTruncated = true;
-      turnsPartial = true;
+      partial = true;
       continue;
     }
     const bounded = boundedPrompt(text, MAX_CLAUDE_PROMPT_TOTAL_BYTES - promptBytes);
     if (!bounded) {
       promptsTruncated = true;
-      turnsPartial = true;
+      partial = true;
       continue;
     }
-    const id = current.uuid ?? `prompt-${current.index + 1}`;
+    const usableUuid = current.uuid && !graph.conflictingUuids.has(current.uuid) ? current.uuid : null;
+    if (usableUuid && promptEvents.has(usableUuid)) {
+      partial = true;
+      continue;
+    }
+    const id = usableUuid ?? `prompt-${current.index + 1}`;
     prompts.push({ id, text: bounded.text, timestamp: iso(current.at), truncated: bounded.truncated });
     promptBytes += bounded.usedBytes;
-    if (bounded.truncated) {
-      promptsTruncated = true;
-    }
-    if (current.uuid) {
-      promptEvents.set(current.uuid, current);
+    promptsTruncated ||= bounded.truncated;
+    if (usableUuid) {
+      promptEvents.set(usableUuid, current);
     }
   }
+  return { partial, promptEvents, prompts, promptsTruncated };
+};
 
+const collectClaudeAssistants = (
+  events: readonly ClaudeEvent[],
+  graph: ClaudeGraphIndex,
+  promptEvents: ReadonlyMap<string, ClaudeEvent>,
+): ClaudeAssistantFacts => {
   const promptIds = new Set(promptEvents.keys());
   const assistants: ClaudeAssistant[] = [];
   const assistantEvents = new Map<string, ClaudeEvent>();
   const assistantTurnKey = new Map<string, string>();
   const seenUsage = new Set<string>();
+  let partial = false;
   let rejectedMetricRecords = 0;
   for (const current of events) {
     const { record } = current;
@@ -400,22 +452,26 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
       ? message.content.filter((block) => blockType(block) === 'tool_use').length
       : 0;
     assistants.push({ at: current.at, model, tokens, tools, uuid: current.uuid });
-    if (current.uuid) {
+    if (current.uuid && !graph.conflictingUuids.has(current.uuid)) {
       assistantEvents.set(current.uuid, current);
-      const ancestor = findAncestor(current.parentUuid, parents, promptIds);
-      if (ancestor.cycleOrDepth) {
-        turnsPartial = true;
-      }
+      const ancestor = findAncestor(current.parentUuid, graph.parents, promptIds);
+      partial ||= ancestor.cycleOrDepth;
       assistantTurnKey.set(current.uuid, ancestor.uuid ?? `assistant:${current.uuid}`);
     } else {
-      turnsPartial = true;
+      partial = true;
     }
   }
-  if (assistants.length === 0 && prompts.length === 0) {
-    return null;
-  }
+  return { assistantEvents, assistants, assistantTurnKey, partial, rejectedMetricRecords };
+};
 
+const createClaudeTurns = (
+  prompts: readonly SessionDetailPrompt[],
+  promptEvents: ReadonlyMap<string, ClaudeEvent>,
+  assistants: readonly ClaudeAssistant[],
+  assistantTurnKey: ReadonlyMap<string, string>,
+): { partial: boolean; turnsByKey: Map<string, MutableTurn> } => {
   const turnsByKey = new Map<string, MutableTurn>();
+  let partial = prompts.length > MAX_CLAUDE_TURNS;
   for (const prompt of prompts.slice(0, MAX_CLAUDE_TURNS)) {
     const promptEvent = promptEvents.get(prompt.id);
     const at = promptEvent?.at ?? new Date(prompt.timestamp);
@@ -428,17 +484,14 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
       timingRejected: false,
     });
   }
-  if (prompts.length > MAX_CLAUDE_TURNS) {
-    turnsPartial = true;
-  }
-  for (const assistant of assistants) {
+  for (const [assistantIndex, assistant] of assistants.entries()) {
     const key = assistant.uuid
       ? (assistantTurnKey.get(assistant.uuid) ?? `assistant:${assistant.uuid}`)
-      : `assistant:${assistants.indexOf(assistant)}`;
+      : `assistant:${assistantIndex}`;
     let turn = turnsByKey.get(key);
     if (!turn) {
       if (turnsByKey.size >= MAX_CLAUDE_TURNS) {
-        turnsPartial = true;
+        partial = true;
         continue;
       }
       turn = {
@@ -450,54 +503,64 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
         timingRejected: false,
       };
       turnsByKey.set(key, turn);
-      turnsPartial = true;
+      partial = true;
     }
     turn.assistants.push(assistant);
-    if (assistant.at < turn.start) {
-      turn.start = assistant.at;
-    }
-    if (assistant.at > turn.end) {
-      turn.end = assistant.at;
-    }
+    turn.start = assistant.at < turn.start ? assistant.at : turn.start;
+    turn.end = assistant.at > turn.end ? assistant.at : turn.end;
   }
+  return { partial, turnsByKey };
+};
 
+const applyClaudeTurnDurations = (
+  events: readonly ClaudeEvent[],
+  graph: ClaudeGraphIndex,
+  assistantEvents: ReadonlyMap<string, ClaudeEvent>,
+  assistantTurnKey: ReadonlyMap<string, string>,
+  turnsByKey: ReadonlyMap<string, MutableTurn>,
+  sessionStart: Date,
+  sessionEnd: Date,
+): boolean => {
   const assistantIds = new Set(assistantEvents.keys());
+  let partial = false;
   for (const current of events) {
     if (!(current.record.type === 'system' && current.record.subtype === 'turn_duration')) {
       continue;
     }
-    const ancestor = findAncestor(current.parentUuid, parents, assistantIds);
+    const ancestor = findAncestor(current.parentUuid, graph.parents, assistantIds);
     const key = ancestor.uuid ? assistantTurnKey.get(ancestor.uuid) : null;
     const turn = key ? turnsByKey.get(key) : null;
     const durationMs = current.record.durationMs;
-    if (!(turn && Number.isSafeInteger(durationMs) && Number(durationMs) >= 0)) {
+    const hasLaterAssistant = turn?.assistants.some((assistant) => assistant.at > current.at) ?? false;
+    if (!(turn && Number.isSafeInteger(durationMs) && Number(durationMs) > 0 && !hasLaterAssistant)) {
       if (turn) {
         turn.timingRejected = true;
       }
-      turnsPartial = true;
+      partial = true;
       continue;
     }
     const intervalStart = new Date(current.at.getTime() - Number(durationMs));
-    if (intervalStart < start || current.at > end) {
+    if (intervalStart < sessionStart || current.at > sessionEnd) {
       turn.timingRejected = true;
-      turnsPartial = true;
+      partial = true;
       continue;
     }
     turn.start = intervalStart < turn.start ? intervalStart : turn.start;
     turn.end = current.at > turn.end ? current.at : turn.end;
     turn.durationIntervals.push({ endAt: iso(current.at), startAt: iso(intervalStart) });
   }
+  return partial;
+};
 
+const serializeClaudeTurns = (turnsByKey: ReadonlyMap<string, MutableTurn>): ClaudeTurnFacts => {
   const detailTurns: SessionDetailTurn[] = [];
-  for (const [index, turn] of [...turnsByKey.values()]
-    .sort((left, right) => left.start.getTime() - right.start.getTime())
-    .entries()) {
+  let partial = false;
+  const orderedTurns = [...turnsByKey.values()].sort((left, right) => left.start.getTime() - right.start.getTime());
+  for (const [index, turn] of orderedTurns.entries()) {
     const tokens = emptyTokens();
     let tools = 0;
     for (const assistant of turn.assistants) {
-      if (!addTokens(tokens, assistant.tokens)) {
-        turnsPartial = true;
-      }
+      partial ||= !addTokens(tokens, assistant.tokens);
       tools += assistant.tools;
     }
     const intervals = turn.timingRejected ? [] : turn.durationIntervals;
@@ -517,6 +580,111 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
       tools,
     });
   }
+  return { detailTurns, partial };
+};
+
+const collectClaudeMetadata = (events: readonly ClaudeEvent[], input: ClaudeSessionInput): ClaudeMetadataFacts => {
+  let title: string | null = null;
+  let parentSourceSessionId: string | null = null;
+  let sourcePath: string | null = null;
+  let sidechain = input.isAgentFile === true;
+  const observedSourcePaths = new Set<string>();
+  const branchObservations: { name: string; observedAt: string | null }[] = [];
+  const pullRequestCandidates: SessionVcsPullRequest[] = [];
+  let invalidVcs = false;
+  for (const current of events) {
+    const { record } = current;
+    if (input.isAgentFile && typeof record.sessionId === 'string' && record.sessionId !== input.sourceSessionId) {
+      parentSourceSessionId = record.sessionId;
+    }
+    sidechain ||= record.isSidechain === true;
+    if (record.type === 'ai-title' && typeof record.aiTitle === 'string') {
+      title = record.aiTitle;
+    }
+    if (typeof record.cwd === 'string') {
+      sourcePath = record.cwd;
+      observedSourcePaths.add(record.cwd);
+    }
+    if (typeof record.gitBranch === 'string') {
+      branchObservations.push({ name: record.gitBranch, observedAt: iso(current.at) });
+    } else if (record.gitBranch !== undefined) {
+      invalidVcs = true;
+    }
+    if (record.type === 'pr-link') {
+      if (typeof record.prUrl === 'string') {
+        pullRequestCandidates.push({
+          number: Number.isSafeInteger(record.prNumber) && Number(record.prNumber) > 0 ? Number(record.prNumber) : null,
+          observedAt: iso(current.at),
+          repository: typeof record.prRepository === 'string' ? record.prRepository : null,
+          url: record.prUrl,
+        });
+      } else {
+        invalidVcs = true;
+      }
+    }
+  }
+  const hasMultipleSourcePaths = observedSourcePaths.size > 1;
+  const compactedBranches = compactSessionVcsBranchObservations(
+    branchObservations,
+    'harness-recorded',
+    hasMultipleSourcePaths ? null : input.repository,
+  );
+  const normalizedPullRequests = normalizeSessionVcsPullRequests(pullRequestCandidates);
+  const hasVcs = Boolean(
+    input.repository || branchObservations.length > 0 || pullRequestCandidates.length > 0 || invalidVcs,
+  );
+  const vcs = hasVcs
+    ? parseSessionVcsContext({
+        branches: compactedBranches.spans,
+        headCommit: null,
+        partial: invalidVcs || hasMultipleSourcePaths || compactedBranches.partial || normalizedPullRequests.partial,
+        pullRequests: normalizedPullRequests.pullRequests,
+        repository: input.repository,
+      })
+    : undefined;
+  return { parentSourceSessionId, sidechain, sourcePath, title, ...(vcs ? { vcs } : {}) };
+};
+
+export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessionFacts | null => {
+  if (!input.sourceSessionId || input.records.length > MAX_CLAUDE_RECORDS) {
+    return null;
+  }
+  const events = parseClaudeEvents(input.records);
+  const start = events[0]?.at;
+  const end = events.at(-1)?.at;
+  if (!(start && end)) {
+    return null;
+  }
+
+  const graph = createClaudeGraphIndex(events);
+  const promptFacts = collectClaudePrompts(events, graph);
+  const assistantFacts = collectClaudeAssistants(events, graph, promptFacts.promptEvents);
+  const { assistants } = assistantFacts;
+  const { prompts, promptsTruncated } = promptFacts;
+  if (assistants.length === 0 && prompts.length === 0) {
+    return null;
+  }
+
+  const mutableTurns = createClaudeTurns(
+    prompts,
+    promptFacts.promptEvents,
+    assistants,
+    assistantFacts.assistantTurnKey,
+  );
+  const timingPartial = applyClaudeTurnDurations(
+    events,
+    graph,
+    assistantFacts.assistantEvents,
+    assistantFacts.assistantTurnKey,
+    mutableTurns.turnsByKey,
+    start,
+    end,
+  );
+  const turnFacts = serializeClaudeTurns(mutableTurns.turnsByKey);
+  const { detailTurns } = turnFacts;
+  const turnsPartial =
+    promptFacts.partial || assistantFacts.partial || mutableTurns.partial || timingPartial || turnFacts.partial;
+  let { rejectedMetricRecords } = assistantFacts;
 
   const recordedTurns = detailTurns.filter((turn) => turn.timingStatus === 'recorded').length;
   const activeDurationMs = recordedTurns > 0 ? intervalUnionMs(detailTurns.flatMap((turn) => turn.intervals)) : null;
@@ -540,64 +708,8 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
     segments.map((segment) => [segment.model, segment.tokIn + segment.tokOut + segment.tokCr + segment.tokCw]),
   );
 
-  let title: string | null = null;
-  let parentSourceSessionId: string | null = null;
-  let sourcePath: string | null = null;
-  let sidechain = input.isAgentFile === true;
-  const branchObservations: { name: string; observedAt: string | null }[] = [];
-  const pullRequestCandidates: SessionVcsPullRequest[] = [];
-  let invalidVcs = false;
-  for (const current of events) {
-    const { record } = current;
-    if (input.isAgentFile && typeof record.sessionId === 'string' && record.sessionId !== input.sourceSessionId) {
-      parentSourceSessionId = record.sessionId;
-    }
-    if (record.isSidechain === true) {
-      sidechain = true;
-    }
-    if (record.type === 'ai-title' && typeof record.aiTitle === 'string') {
-      title = record.aiTitle;
-    }
-    if (typeof record.cwd === 'string') {
-      sourcePath = record.cwd;
-    }
-    if (typeof record.gitBranch === 'string') {
-      branchObservations.push({ name: record.gitBranch, observedAt: iso(current.at) });
-    } else if (record.gitBranch !== undefined) {
-      invalidVcs = true;
-    }
-    if (record.type === 'pr-link') {
-      if (typeof record.prUrl === 'string') {
-        pullRequestCandidates.push({
-          number: Number.isSafeInteger(record.prNumber) && Number(record.prNumber) > 0 ? Number(record.prNumber) : null,
-          observedAt: iso(current.at),
-          repository: typeof record.prRepository === 'string' ? record.prRepository : null,
-          url: record.prUrl,
-        });
-      } else {
-        invalidVcs = true;
-      }
-    }
-  }
-  const compactedBranches = compactSessionVcsBranchObservations(
-    branchObservations,
-    'harness-recorded',
-    input.repository,
-  );
-  const normalizedPullRequests = normalizeSessionVcsPullRequests(pullRequestCandidates);
-  const hasVcs = Boolean(
-    input.repository || branchObservations.length > 0 || pullRequestCandidates.length > 0 || invalidVcs,
-  );
-  const vcs = hasVcs
-    ? parseSessionVcsContext({
-        branches: compactedBranches.spans,
-        headCommit: null,
-        partial: invalidVcs || compactedBranches.partial || normalizedPullRequests.partial,
-        pullRequests: normalizedPullRequests.pullRequests,
-        repository: input.repository,
-      })
-    : undefined;
-
+  const metadata = collectClaudeMetadata(events, input);
+  const { sidechain, title } = metadata;
   const name = title ?? `${sidechain ? 'subagent ' : 'claude '}${input.sourceSessionId.slice(0, 8)}`;
   let titleSource: ClaudeReportFacts['titleSource'] = 'id';
   if (title) {
@@ -667,9 +779,9 @@ export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessio
       turns: prompts.length,
     },
     source: {
-      parentSourceSessionId,
-      sourcePath,
-      ...(vcs ? { vcs } : {}),
+      parentSourceSessionId: metadata.parentSourceSessionId,
+      sourcePath: metadata.sourcePath,
+      ...(metadata.vcs ? { vcs: metadata.vcs } : {}),
     },
   };
 };
