@@ -100,7 +100,7 @@ Duplicate sessions (same machine, same harness, same session ID) are deduplicate
 
 The interactive report includes a file-only transfer workspace at `/sync`. Export this machine's stored usage as a JSON merge bundle, copy the file with a tool you trust, then preview the exact insert/update/delete effects and confirm that same digest/store generation on the other machine. Imports are explicit and bounded; the application does not open a LAN listener or synchronize in the background.
 
-Usage snapshots and merge bundles serve different workflows: `snapshot` plus `merge` creates a one-off combined report without changing stored usage, while `/sync` imports a merge bundle into the local usage store for future reports.
+Usage snapshots and merge bundles serve different workflows: `snapshot` plus `merge` creates a one-off combined report without changing stored usage, while `/sync` imports a merge bundle into the local usage store for future reports. Both write portable schema version 3. Version-3 files can carry bounded, credential-free session source-control facts; their rows remain portable and cannot authorize local prompt reads or provider lookup. Readers migrate version-1 and version-2 files with source-control context absent.
 
 ### 4. See where sessions come from
 
@@ -172,11 +172,12 @@ The web report opens on Overview and lets you:
 
 - switch between **Overview, Sessions, and Breakdown**, with Models, Providers, Harnesses, Projects, and Cursor AI inside Breakdown;
 - filter by date range with presets or a custom range, and read the activity timeline;
-- analyze a local Codex or OpenCode session's active, elapsed, and idle time, model/effort phases, turns, and prompts from its session drawer;
+- analyze local Claude, Codex, and OpenCode chronology from the unified session drawer, using each harness's recorded, partial, or unavailable timing semantics;
+- inspect source-dependent repository, branch-span, commit, and recorded pull-request facts when the harness owns them;
 - show/hide columns (input/output/cache tokens, RTK savings, durations, turns, tools, line deltas, …), sort, and filter by field;
 
 All exploration state (active view, filters, range, sorting, visible columns) is persisted in the URL, so a report link reopens exactly where you left off.
-Detailed prompt bodies are read only on demand from the source machine's local history and may be truncated by safety budgets; that separate prompt collection is not added to report revisions, snapshots, sync payloads, or exports. Normal session names can still come from source-provided or prompt-derived titles and are portable report fields. See [session analysis data sources](docs/session-analysis-sources.md) for the exact guarantees and limitations of each harness.
+Detailed prompt bodies are read only on demand from the source machine's local history and may be truncated by safety budgets; that separate prompt collection is not added to report revisions, snapshots, sync payloads, or exports. Normal session names can still come from source-provided or prompt-derived titles and are portable report fields. Claude fallback names are technical identifiers rather than prompt bodies. Provider pull-request lookup is also local and on demand: it runs only after an explicit action, and its result remains ephemeral. Claude's session span is never presented as complete active time because recorded turn durations may cover only part of a session. See [session analysis data sources](docs/session-analysis-sources.md) for the exact guarantees and limitations of each harness.
 
 ## Useful options
 

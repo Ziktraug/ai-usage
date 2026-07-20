@@ -1,3 +1,5 @@
+import type { SessionVcsContext } from './session-vcs';
+
 export interface Rates {
   cr: number;
   cw: number;
@@ -16,6 +18,7 @@ export interface UsageRowSource {
   rootSourceSessionId?: string | null;
   sourcePath?: string | null;
   sourceSessionId: string | null;
+  vcs?: SessionVcsContext;
 }
 
 /** Token and API-value attribution for one model within a usage row. */

@@ -26,6 +26,7 @@ import {
   sessionNeighborFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
+import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
 
 export type SessionQueryKind = 'campaign-children' | 'neighbors' | 'session-detail-anchor' | 'sessions';
 
@@ -752,6 +753,10 @@ const runSessionDetailAnchor = (
   const projectionSource = isUnknownRecord(serializedRow) ? withoutSource(serializedRow) : serializedRow;
   const projection = sessionProjectionFactsForSerializedRow(projectionSource);
   const provenance = isUnknownRecord(source) ? source : null;
+  let vcs: SessionVcsContext | null = null;
+  if (provenance?.vcs !== undefined) {
+    vcs = parseSessionVcsContext(provenance.vcs);
+  }
   const nullableIdentity = (key: 'harnessKey' | 'machineId' | 'sourceSessionId'): string | null => {
     if (!(provenance && key in provenance)) {
       return null;
@@ -766,6 +771,7 @@ const runSessionDetailAnchor = (
       projection,
       sourceAuthority,
       sourceSessionId: nullableIdentity('sourceSessionId'),
+      vcs,
     },
     requestFingerprint: sessionDetailRequestFingerprint(request),
     revision: request.revision,

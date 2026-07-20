@@ -1,3 +1,4 @@
+import { readClaudeSessionAnalysis } from '@ai-usage/local-collectors/claude-history';
 import { readCodexSessionAnalysis } from '@ai-usage/local-collectors/codex-history';
 import {
   createLocalHistoryStorage,
@@ -19,6 +20,7 @@ import {
 } from '@ai-usage/report-core/session-detail';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
 import { Effect } from 'effect';
+import { authorizeLocalSessionAnchor } from './local-session-authority.server';
 import { runRevisionQueryForServer } from './revision-query-runner.server';
 
 export interface SessionDetailServerDependencies {
@@ -29,22 +31,30 @@ export interface SessionDetailServerDependencies {
 
 const defaultDependencies = (
   storage: LocalHistoryStorageService = createLocalHistoryStorage(),
-): SessionDetailServerDependencies => ({
-  readAnalysis: (harnessKey, sourceSessionId) => {
-    const analysisEffect =
-      harnessKey === 'codex' ? readCodexSessionAnalysis(sourceSessionId) : readOpenCodeSessionAnalysis(sourceSessionId);
-    return Effect.runPromise(analysisEffect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
-  },
-  readMachine: () => Effect.runPromise(ensureMachineConfig.pipe(Effect.provideService(LocalHistoryStorage, storage))),
-  resolveAnchor: (request) => runRevisionQueryForServer('session-detail-anchor', request),
-});
+): SessionDetailServerDependencies => {
+  const readers = {
+    claude: readClaudeSessionAnalysis,
+    codex: readCodexSessionAnalysis,
+    opencode: readOpenCodeSessionAnalysis,
+  } satisfies Record<SessionDetailHarnessKey, typeof readCodexSessionAnalysis>;
+  return {
+    readAnalysis: (harnessKey, sourceSessionId) =>
+      Effect.runPromise(readers[harnessKey](sourceSessionId).pipe(Effect.provideService(LocalHistoryStorage, storage))),
+    readMachine: () => Effect.runPromise(ensureMachineConfig.pipe(Effect.provideService(LocalHistoryStorage, storage))),
+    resolveAnchor: (request) => runRevisionQueryForServer('session-detail-anchor', request),
+  };
+};
 
 const unavailable = (
   reason: Extract<SessionDetailResponse, { status: 'unavailable' }>['reason'],
   message: string,
 ): SessionDetailResponse => ({ message, reason, status: 'unavailable' });
 
-const historyLabel = (harnessKey: SessionDetailHarnessKey): string => (harnessKey === 'codex' ? 'Codex' : 'OpenCode');
+const historyLabels = {
+  claude: 'Claude',
+  codex: 'Codex',
+  opencode: 'OpenCode',
+} satisfies Record<SessionDetailHarnessKey, string>;
 
 export const getLocalSessionDetailForServer = async (
   input: SessionDetailRequest,
@@ -62,9 +72,6 @@ export const getLocalSessionDetailForServer = async (
   if (!anchor) {
     return unavailable('report-row-not-found', 'This row does not exist in the requested report revision.');
   }
-  if (anchor.sourceAuthority !== 'local-observed') {
-    return unavailable('not-local', 'Detailed chronology is only available for locally observed sessions.');
-  }
   if (!(anchor.harnessKey && anchor.machineId && anchor.sourceSessionId)) {
     return unavailable(
       'report-provenance-unavailable',
@@ -75,16 +82,26 @@ export const getLocalSessionDetailForServer = async (
     return unavailable('unsupported', 'Detailed chronology is not available for this harness yet.');
   }
 
-  try {
-    const machine = await dependencies.readMachine();
-    if (machine.id !== anchor.machineId) {
+  const authorization = await authorizeLocalSessionAnchor(anchor, dependencies.readMachine);
+  if (authorization.status === 'unauthorized') {
+    if (authorization.reason === 'not-local') {
       return unavailable('not-local', 'Detailed chronology is only available on the session source machine.');
     }
+    if (authorization.reason === 'provenance-unavailable') {
+      return unavailable(
+        'report-provenance-unavailable',
+        'This report row does not include enough provenance to find local history.',
+      );
+    }
+    return unavailable('history-unavailable', 'The local machine identity could not be read safely.');
+  }
+
+  try {
     const analysis = await dependencies.readAnalysis(anchor.harnessKey, anchor.sourceSessionId);
     if (!analysis) {
       return unavailable(
         'not-found',
-        `The local ${historyLabel(anchor.harnessKey)} history for this session is no longer available.`,
+        `The local ${historyLabels[anchor.harnessKey]} history for this session is no longer available.`,
       );
     }
     return parseSessionDetailResponse({
@@ -96,7 +113,7 @@ export const getLocalSessionDetailForServer = async (
   } catch {
     return unavailable(
       'history-unavailable',
-      `The local ${historyLabel(anchor.harnessKey)} history could not be read safely.`,
+      `The local ${historyLabels[anchor.harnessKey]} history could not be read safely.`,
     );
   }
 };

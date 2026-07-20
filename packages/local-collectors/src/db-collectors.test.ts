@@ -222,7 +222,8 @@ describe('DB-backed Harness collectors', () => {
     expect(rows.some((row) => row.name === 'existing detailed session')).toBe(false);
     expect(rows.some((row) => row.name === '/clear')).toBe(false);
     expect(unavailable?.harness).toBe('Claude Code');
-    expect(unavailable?.name).toBe('fait moi un plan pour traiter tous ces findings');
+    expect(unavailable?.name).toBe('claude missing-');
+    expect(unavailable?.titleSource).toBe('id');
     expect(unavailable?.project).toBe('ai-usage');
     expect(unavailable?.tokIn).toBe(0);
     expect(unavailable?.costActual).toBeNull();
@@ -292,6 +293,38 @@ describe('DB-backed Harness collectors', () => {
     expect(child?.source?.parentSourceSessionId).toBe('parent-session');
     expect(child?.titleSource).toBe('agent-role');
     expect(child?.subagent).toBe(true);
+  });
+
+  test('keeps an untimed Claude report duration unavailable', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.claude/projects/-work-ai-usage/untimed-session.jsonl',
+      jsonl(
+        {
+          type: 'user',
+          timestamp: '2026-04-25T08:00:00.000Z',
+          uuid: 'untimed-user',
+          cwd: '/work/ai-usage',
+          message: { content: 'Investigate the unavailable timing case' },
+        },
+        {
+          type: 'assistant',
+          timestamp: '2026-04-25T08:01:00.000Z',
+          uuid: 'untimed-assistant',
+          parentUuid: 'untimed-user',
+          requestId: 'untimed-request',
+          message: {
+            id: 'untimed-message',
+            model: 'claude-sonnet-4-6',
+            usage: { input_tokens: 10, output_tokens: 5 },
+          },
+        },
+      ),
+    );
+
+    const [row] = runWithStorage(collectClaude, storage);
+
+    expect(row?.durationMs).toBeNull();
   });
 
   test('attributes Claude tokens and API value to each message model', () => {

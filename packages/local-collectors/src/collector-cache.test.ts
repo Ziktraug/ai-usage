@@ -41,6 +41,33 @@ const row = (date: string): CollectorRow => ({
 });
 
 describe('shared collector row cache', () => {
+  test('revives strict bounded VCS context and rejects unsafe or unknown source fields', () => {
+    const vcs = {
+      branches: [],
+      headCommit: null,
+      partial: false,
+      pullRequests: [],
+      repository: {
+        host: 'github.com',
+        ownerPath: 'example/project',
+        provenance: 'local-derived' as const,
+        webUrl: 'https://github.com/example/project',
+      },
+    };
+    const valid = { ...row('2026-06-01T00:00:00.000Z'), source: { harnessKey: 'opencode', sourceSessionId: 'a', vcs } };
+
+    expect(reviveCollectorRowsResult([valid]).rows[0]?.source?.vcs).toEqual(vcs);
+    expect(
+      reviveCollectorRowsResult([
+        {
+          ...valid,
+          source: { ...valid.source, vcs: { ...vcs, repository: { ...vcs.repository, webUrl: 'file:///x' } } },
+        },
+        { ...valid, source: { ...valid.source, credentials: 'secret' } },
+      ]),
+    ).toMatchObject({ rejectedMetricRecords: 2, rows: [], valid: true });
+  });
+
   test('round-trips rows by db path, reviving dates and serving fresh hits', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'collector-cache-'));
     const dbPath = path.join(home, 'history.db');

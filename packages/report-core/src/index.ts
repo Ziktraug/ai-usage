@@ -15,6 +15,7 @@ export * from './report-data';
 export * from './session-detail';
 export * from './session-lineage';
 export * from './session-query';
+export * from './session-vcs';
 export * from './snapshot';
 export * from './source-control';
 export * from './types';

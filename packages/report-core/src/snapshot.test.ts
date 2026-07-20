@@ -45,7 +45,7 @@ describe('usage snapshots', () => {
   test('serializes rows with machine provenance', () => {
     const snapshot = createUsageSnapshot({ machine, rows: [row('a', 'session-1')] });
 
-    expect(snapshot.schemaVersion).toBe(2);
+    expect(snapshot.schemaVersion).toBe(3);
     expect(snapshot.rows[0]?.source).toMatchObject({
       machineId: 'machine-1',
       machineLabel: 'Machine 1',
@@ -61,10 +61,52 @@ describe('usage snapshots', () => {
     expect(snapshot.source.appVersion).toBeNull();
   });
 
-  test('migrates legacy v1 snapshots and rejects model attribution mislabeled as v1', () => {
+  test('preserves bounded VCS context through a v3 snapshot roundtrip', () => {
+    const vcs = {
+      branches: [
+        {
+          firstObservedAt: '2026-01-01T00:00:00.000Z',
+          lastObservedAt: '2026-01-01T00:01:00.000Z',
+          name: 'main',
+          provenance: 'harness-recorded' as const,
+          webUrl: 'https://github.com/example/project/tree/main',
+        },
+      ],
+      headCommit: {
+        hash: '0123456789abcdef',
+        observedAt: '2026-01-01T00:01:00.000Z',
+        provenance: 'harness-recorded' as const,
+        webUrl: 'https://github.com/example/project/commit/0123456789abcdef',
+      },
+      partial: false,
+      pullRequests: [
+        {
+          number: 27,
+          observedAt: '2026-01-01T00:01:00.000Z',
+          repository: 'example/project',
+          url: 'https://github.com/example/project/pull/27',
+        },
+      ],
+      repository: {
+        host: 'github.com',
+        ownerPath: 'example/project',
+        provenance: 'harness-recorded' as const,
+        webUrl: 'https://github.com/example/project',
+      },
+    };
+    const snapshot = createUsageSnapshot({
+      machine,
+      rows: [{ ...row('vcs', 'vcs'), source: { harnessKey: 'codex', sourceSessionId: 'vcs', vcs } }],
+    });
+
+    expect(parseUsageSnapshot(serializeUsageSnapshot(snapshot)).rows[0]?.source.vcs).toEqual(vcs);
+  });
+
+  test('migrates legacy v1/v2 snapshots and rejects newer fields under old versions', () => {
     const snapshot = currentSnapshot();
 
-    expect(parseUsageSnapshot(JSON.stringify({ ...snapshot, schemaVersion: 1 })).schemaVersion).toBe(2);
+    expect(parseUsageSnapshot(JSON.stringify({ ...snapshot, schemaVersion: 1 })).schemaVersion).toBe(3);
+    expect(parseUsageSnapshot(JSON.stringify({ ...snapshot, schemaVersion: 2 })).schemaVersion).toBe(3);
 
     const segmented = createUsageSnapshot({
       machine,
@@ -85,13 +127,28 @@ describe('usage snapshots', () => {
       ],
     });
     expect(() => parseUsageSnapshot(JSON.stringify({ ...segmented, schemaVersion: 1 }))).toThrow('legacy v1');
+
+    const withVcs = createUsageSnapshot({
+      machine,
+      rows: [
+        {
+          ...row('vcs', 'vcs'),
+          source: {
+            harnessKey: 'codex',
+            sourceSessionId: 'vcs',
+            vcs: { branches: [], headCommit: null, partial: false, pullRequests: [], repository: null },
+          },
+        },
+      ],
+    });
+    expect(() => parseUsageSnapshot(JSON.stringify({ ...withVcs, schemaVersion: 2 }))).toThrow('legacy v2');
   });
 
   test('rejects unknown top-level fields and malformed snapshot identity', () => {
     const snapshot = currentSnapshot();
     const invalidSnapshots = [
       [{ ...snapshot, unexpected: true }, 'unknown fields'],
-      [{ ...snapshot, schemaVersion: 3 }, 'schemaVersion'],
+      [{ ...snapshot, schemaVersion: 4 }, 'schemaVersion'],
       [{ ...snapshot, snapshotId: '' }, 'snapshotId'],
       [{ ...snapshot, generatedAt: '2026-01-01T00:00:00Z' }, 'generatedAt'],
       [{ ...snapshot, machine: { ...snapshot.machine, id: '' } }, 'machine'],

@@ -26,6 +26,9 @@ The workspace packages expose only these public seams. Cross-package imports mus
   source-authority-gated report anchors, prompt-free projection facts,
   deterministic consistency comparison, bounded local detail responses,
   phases, turns, intervals, and parsers.
+- `./session-vcs`: strict bounded repository, branch-span, commit, recorded-PR,
+  and explicit provider-resolution contracts. These values are credential-free
+  portable facts, not authority to read local history or contact a provider.
 - `./session-lineage`: parent/root source-session normalization across harnesses.
 - `./snapshot`: multi-machine usage snapshot creation, parsing, and source labels.
 - `./source-control`: browser-safe collection-source identifiers, defaults, policy contracts, state axes, strict snapshot/command/publication-event decoders, and newest-snapshot replacement.
@@ -36,6 +39,11 @@ The workspace packages expose only these public seams. Cross-package imports mus
 
 - `.`: local history collection orchestration, including the high-level Codex app-server and rollout quota batch collectors.
 - `./codex-history`: low-level Codex rollout-history parsing/collection helpers retained for collector compatibility; application callers use report-data one-shot/provider-quota ports.
+- `./claude-history`: bounded exact-session Claude JSONL detail reader; prompts
+  remain local and on demand.
+- `./claude-session-facts`: pure Claude semantic owner shared by report
+  collection and local detail for attribution, deduplication, timing, models,
+  tools, lineage, and VCS observations.
 - `./datasets`: focused local report-dataset collection helpers.
 - `./collectors`: per-harness normalized collector adapters and compatibility selection orchestration.
 - `./errors`: local history error and warning formatting/types.

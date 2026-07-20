@@ -100,6 +100,63 @@ const requireSessionDetail = (detail: SessionDetail | null): SessionDetail => {
   return detail;
 };
 
+test('preserves VCS from the first identity-owning Codex session_meta only', () => {
+  const storage = new TestMemoryStorage();
+  storage.writeText(
+    '.codex/sessions/2026/codex-vcs.jsonl',
+    jsonl(
+      {
+        timestamp: '2026-07-01T08:00:00.000Z',
+        type: 'session_meta',
+        payload: {
+          id: 'codex-vcs',
+          cwd: '/work/project',
+          git: {
+            branch: 'recorded/main',
+            commit_hash: '0123456789abcdef0123456789abcdef01234567',
+            repository_url: 'git@github.com:fixture/project.git',
+          },
+        },
+      },
+      {
+        timestamp: '2026-07-01T08:00:01.000Z',
+        type: 'session_meta',
+        payload: {
+          id: 'codex-vcs',
+          git: {
+            branch: 'later/wrong',
+            commit_hash: 'ffffffffffffffffffffffffffffffffffffffff',
+            repository_url: 'https://github.com/wrong/project',
+          },
+        },
+      },
+      {
+        timestamp: '2026-07-01T08:00:02.000Z',
+        payload: {
+          type: 'token_count',
+          info: {
+            total_token_usage: {
+              total_tokens: 3,
+              input_tokens: 2,
+              cached_input_tokens: 0,
+              output_tokens: 1,
+            },
+          },
+        },
+      },
+    ),
+  );
+
+  const [session] = runWithStorage(readCodexUsageSessions, storage);
+  expect(session?.source.vcs).toMatchObject({
+    branches: [{ name: 'recorded/main', provenance: 'harness-recorded' }],
+    headCommit: { hash: '0123456789abcdef0123456789abcdef01234567', provenance: 'harness-recorded' },
+    repository: { host: 'github.com', ownerPath: 'fixture/project', provenance: 'harness-recorded' },
+  });
+  expect(JSON.stringify(session?.source.vcs)).not.toContain('later/wrong');
+  expect(JSON.stringify(session?.source.vcs)).not.toContain('wrong/project');
+});
+
 describe('Codex local history', () => {
   test('closes the metadata database when a query fails', async () => {
     const home = '/home/codex-close-fixture';
@@ -2019,7 +2076,7 @@ describe('Codex local history', () => {
     expect(session?.partial).toBe(true);
     expect(session?.turns).toBe(1);
     expect(session?.tokens).toEqual({ cr: 30, cw: 0, in: 10, out: 10 });
-    expect(validDetail.durationStatus).toBe('partial');
+    expect(validDetail.durationStatus).toBe('recorded');
     expect(validDetail.turnsStatus).toBe('recorded');
     expect(validDetail.turns.map((turn) => [turn.model, turn.tokens.total])).toEqual([['gpt-5.6-sol', 50]]);
   });

@@ -41,6 +41,20 @@ describe('real SQLite harness collectors', () => {
       'anthropic/claude-sonnet-4-6',
     ]);
     expect(row?.endDate?.toISOString()).toBe('2026-07-04T10:02:00.000Z');
+    expect(row?.source?.vcs).toEqual({
+      branches: [],
+      headCommit: null,
+      partial: false,
+      pullRequests: [],
+      repository: {
+        host: 'github.com',
+        ownerPath: 'fixture/ai-usage',
+        provenance: 'local-derived',
+        webUrl: 'https://github.com/fixture/ai-usage',
+      },
+    });
+    expect(row?.source?.vcs?.branches).toEqual([]);
+    expect(row?.source?.vcs?.headCommit).toBeNull();
     expect(row).toMatchObject({
       calls: 3,
       durationMs: 90_000,
@@ -54,24 +68,25 @@ describe('real SQLite harness collectors', () => {
     });
   });
 
-  test('invalidates OpenCode v7 row caches after the projection semantics change', async () => {
+  test('invalidates OpenCode v8 row caches after adding derived repository context', async () => {
     const home = await makeHome();
     const fixture = await seedHarnessHome(home, { harnesses: ['opencode'] });
     await runAtHome(home, collectOpenCodeResult);
     const cachePath = join(home, '.config', 'ai-usage', 'opencode-db-cache.json');
     const currentCache = await readFile(cachePath, 'utf8');
     const staleCache = currentCache
-      .replace('"name":"OpenCode fixture"', '"name":"stale-v7-cache"')
-      .replace('"version":8', '"version":7');
-    expect(staleCache).toContain('"name":"stale-v7-cache"');
-    expect(staleCache).toContain('"version":7');
+      .replace('"name":"OpenCode fixture"', '"name":"stale-v8-cache"')
+      .replace('"version":9', '"version":8');
+    expect(staleCache).toContain('"name":"stale-v8-cache"');
+    expect(staleCache).toContain('"version":8');
     await writeFile(cachePath, staleCache);
 
     const result = await runAtHome(home, collectOpenCodeResult);
     const row = result.rows.find((candidate) => candidate.source?.sourceSessionId === fixture.ids.opencode);
 
     expect(row?.name).toBe('OpenCode fixture');
-    expect(await readFile(cachePath, 'utf8')).toContain('"version":8');
+    expect(row?.source?.vcs?.repository?.ownerPath).toBe('fixture/ai-usage');
+    expect(await readFile(cachePath, 'utf8')).toContain('"version":9');
   });
 
   test('keeps valid OpenCode sessions when joined message and part JSON are malformed', async () => {
@@ -123,6 +138,7 @@ describe('real SQLite harness collectors', () => {
     const row = result.rows.find((candidate) => candidate.source?.sourceSessionId === fixture.ids.cursor);
 
     expect(result.warnings).toEqual([]);
+    expect(row?.source?.vcs).toBeUndefined();
     expect(row).toMatchObject({
       calls: 1,
       model: 'gpt-5.3',

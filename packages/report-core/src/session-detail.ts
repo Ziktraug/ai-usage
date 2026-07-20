@@ -1,5 +1,6 @@
 import type { SerializedUsageRow } from './report-data';
 import { isSerializedUsageRow } from './serialized-usage-validation';
+import { parseSessionVcsContext, type SessionVcsContext } from './session-vcs';
 
 const MAX_ID_LENGTH = 512;
 const MAX_LABEL_LENGTH = 256;
@@ -10,7 +11,7 @@ const MAX_RESULT_BYTES = 2 * 1024 * 1024;
 const MAX_TURNS = 1024;
 const MAX_TURN_INTERVALS = 2048;
 
-export const sessionDetailHarnessKeys = ['codex', 'opencode'] as const;
+export const sessionDetailHarnessKeys = ['claude', 'codex', 'opencode'] as const;
 export type SessionDetailHarnessKey = (typeof sessionDetailHarnessKeys)[number];
 
 export const supportsSessionDetailHarness = (value: string): value is SessionDetailHarnessKey =>
@@ -58,6 +59,7 @@ export interface SessionDetailReportAnchor {
   projection: SessionProjectionFacts;
   sourceAuthority: SessionDetailSourceAuthority;
   sourceSessionId: string | null;
+  vcs: SessionVcsContext | null;
 }
 
 export interface SessionDetailAnchorResult {
@@ -91,6 +93,8 @@ export type SessionDetailConsistency =
 export type SessionDetailCostKind = 'approximate' | 'reported' | 'unknown';
 export type SessionDetailCoverageStatus = 'partial' | 'recorded';
 export type SessionDetailEffortKind = 'default' | 'recorded' | 'unavailable';
+export const sessionDetailTimingStatuses = ['recorded', 'partial', 'unavailable'] as const;
+export type SessionDetailTimingStatus = (typeof sessionDetailTimingStatuses)[number];
 
 export interface SessionDetailPhase {
   cost: number | null;
@@ -116,7 +120,7 @@ export interface SessionDetailInterval {
 }
 
 export interface SessionDetailTurn {
-  durationMs: number;
+  durationMs: number | null;
   effort: string | null;
   effortKind: SessionDetailEffortKind;
   endAt: string;
@@ -125,17 +129,18 @@ export interface SessionDetailTurn {
   model: string;
   promptIds: string[];
   startAt: string;
+  timingStatus: 'recorded' | 'unavailable';
   tokens: SessionDetailTokenCounts;
   tools: number;
 }
 
 export interface SessionDetail {
-  activeDurationMs: number;
-  durationStatus: SessionDetailCoverageStatus;
+  activeDurationMs: number | null;
+  durationStatus: SessionDetailTimingStatus;
   efforts: string[];
   elapsedDurationMs: number;
   endedAt: string;
-  idleDurationMs: number;
+  idleDurationMs: number | null;
   models: string[];
   observedAt: string;
   phases: SessionDetailPhase[];
@@ -218,6 +223,14 @@ const parseCoverageStatus = (value: unknown, label: string): SessionDetailCovera
     throw new SessionDetailValidationError(`${label} is invalid`);
   }
   return value;
+};
+
+const parseTimingStatus = (value: unknown, label: string): SessionDetailTimingStatus => {
+  const status = sessionDetailTimingStatuses.find((candidate) => candidate === value);
+  if (!status) {
+    throw new SessionDetailValidationError(`${label} is invalid`);
+  }
+  return status;
 };
 
 const parseEffortKind = (value: unknown, label: string): SessionDetailEffortKind => {
@@ -418,21 +431,33 @@ const parseTurn = (value: unknown, index: number): SessionDetailTurn => {
       'model',
       'promptIds',
       'startAt',
+      'timingStatus',
       'tokens',
       'tools',
     ],
     label,
   );
-  if (!(Array.isArray(value.intervals) && value.intervals.length > 0 && value.intervals.length <= MAX_TURN_INTERVALS)) {
-    throw new SessionDetailValidationError(`${label}.intervals must be a non-empty bounded array`);
+  if (!(Array.isArray(value.intervals) && value.intervals.length <= MAX_TURN_INTERVALS)) {
+    throw new SessionDetailValidationError(`${label}.intervals must be a bounded array`);
   }
   const effort = requireNullableString(value.effort, `${label}.effort`);
   const effortKind = parseEffortKind(value.effortKind, `${label}.effortKind`);
   if ((effortKind === 'recorded') !== (effort !== null)) {
     throw new SessionDetailValidationError(`${label}.effort must be present exactly when it was recorded`);
   }
+  const timingStatus = value.timingStatus;
+  if (timingStatus !== 'recorded' && timingStatus !== 'unavailable') {
+    throw new SessionDetailValidationError(`${label}.timingStatus is invalid`);
+  }
+  const durationMs = requireNullableNonNegativeNumber(value.durationMs, `${label}.durationMs`);
+  if (timingStatus === 'recorded' && (durationMs === null || value.intervals.length === 0)) {
+    throw new SessionDetailValidationError(`${label} recorded timing requires a duration and interval`);
+  }
+  if (timingStatus === 'unavailable' && (durationMs !== null || value.intervals.length !== 0)) {
+    throw new SessionDetailValidationError(`${label} unavailable timing cannot contain a duration or interval`);
+  }
   return {
-    durationMs: requireNonNegativeNumber(value.durationMs, `${label}.durationMs`),
+    durationMs,
     effort,
     effortKind,
     endAt: requireTimestamp(value.endAt, `${label}.endAt`),
@@ -441,9 +466,33 @@ const parseTurn = (value: unknown, index: number): SessionDetailTurn => {
     model: requireString(value.model, `${label}.model`),
     promptIds: parseStringArray(value.promptIds, `${label}.promptIds`, MAX_PROMPTS),
     startAt: requireTimestamp(value.startAt, `${label}.startAt`),
+    timingStatus,
     tokens: parseTokenCounts(value.tokens, `${label}.tokens`),
     tools: requireNonNegativeInteger(value.tools, `${label}.tools`),
   };
+};
+
+const intervalUnionDuration = (intervals: readonly SessionDetailInterval[]): number => {
+  const ordered = intervals
+    .map(({ endAt, startAt }) => ({ end: Date.parse(endAt), start: Date.parse(startAt) }))
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+  const first = ordered[0];
+  if (!first) {
+    return 0;
+  }
+  let duration = 0;
+  let currentStart = first.start;
+  let currentEnd = first.end;
+  for (const interval of ordered.slice(1)) {
+    if (interval.start > currentEnd) {
+      duration += currentEnd - currentStart;
+      currentStart = interval.start;
+      currentEnd = interval.end;
+    } else {
+      currentEnd = Math.max(currentEnd, interval.end);
+    }
+  }
+  return duration + currentEnd - currentStart;
 };
 
 const assertContainedInterval = (
@@ -516,7 +565,7 @@ export const parseSessionDetailAnchorResult = (
   const anchor = value.anchor;
   assertExactKeys(
     anchor,
-    ['harnessKey', 'machineId', 'projection', 'sourceAuthority', 'sourceSessionId'],
+    ['harnessKey', 'machineId', 'projection', 'sourceAuthority', 'sourceSessionId', 'vcs'],
     'Session detail anchor result.anchor',
   );
   const sourceAuthority = sessionDetailSourceAuthorities.find((authority) => authority === anchor.sourceAuthority);
@@ -538,6 +587,7 @@ export const parseSessionDetailAnchorResult = (
         'Session detail anchor result.anchor.sourceSessionId',
         MAX_ID_LENGTH,
       ),
+      vcs: anchor.vcs === null ? null : parseSessionVcsContext(anchor.vcs),
     },
     requestFingerprint,
     revision,
@@ -635,12 +685,12 @@ export const parseSessionDetail = (value: unknown): SessionDetail => {
     throw new SessionDetailValidationError('Session detail.promptsTruncated must be a boolean');
   }
   const detail: SessionDetail = {
-    activeDurationMs: requireNonNegativeNumber(value.activeDurationMs, 'Session detail.activeDurationMs'),
-    durationStatus: parseCoverageStatus(value.durationStatus, 'Session detail.durationStatus'),
+    activeDurationMs: requireNullableNonNegativeNumber(value.activeDurationMs, 'Session detail.activeDurationMs'),
+    durationStatus: parseTimingStatus(value.durationStatus, 'Session detail.durationStatus'),
     efforts: parseStringArray(value.efforts, 'Session detail.efforts', MAX_PHASES),
     elapsedDurationMs: requireNonNegativeNumber(value.elapsedDurationMs, 'Session detail.elapsedDurationMs'),
     endedAt: requireTimestamp(value.endedAt, 'Session detail.endedAt'),
-    idleDurationMs: requireNonNegativeNumber(value.idleDurationMs, 'Session detail.idleDurationMs'),
+    idleDurationMs: requireNullableNonNegativeNumber(value.idleDurationMs, 'Session detail.idleDurationMs'),
     models: parseStringArray(value.models, 'Session detail.models', MAX_PHASES),
     observedAt: requireTimestamp(value.observedAt, 'Session detail.observedAt'),
     phases: value.phases.map(parsePhase),
@@ -651,9 +701,6 @@ export const parseSessionDetail = (value: unknown): SessionDetail => {
     turns: value.turns.map(parseTurn),
     turnsStatus: parseCoverageStatus(value.turnsStatus, 'Session detail.turnsStatus'),
   };
-  if (detail.activeDurationMs > detail.elapsedDurationMs || detail.idleDurationMs > detail.elapsedDurationMs) {
-    throw new SessionDetailValidationError('Session detail duration parts exceed elapsed duration');
-  }
   const sessionStartMs = Date.parse(detail.startedAt);
   const sessionEndMs = Date.parse(detail.endedAt);
   if (sessionEndMs < sessionStartMs) {
@@ -661,9 +708,6 @@ export const parseSessionDetail = (value: unknown): SessionDetail => {
   }
   if (detail.elapsedDurationMs !== sessionEndMs - sessionStartMs) {
     throw new SessionDetailValidationError('Session detail elapsed duration does not match its timestamps');
-  }
-  if (detail.activeDurationMs + detail.idleDurationMs !== detail.elapsedDurationMs) {
-    throw new SessionDetailValidationError('Session detail active and idle durations do not match elapsed duration');
   }
   for (const [index, phase] of detail.phases.entries()) {
     assertContainedInterval(
@@ -685,6 +729,39 @@ export const parseSessionDetail = (value: unknown): SessionDetail => {
         turnStartMs,
         turnEndMs,
         `Session detail.turns[${index}].intervals[${intervalIndex}]`,
+      );
+    }
+    if (turn.timingStatus === 'recorded' && intervalUnionDuration(turn.intervals) !== turn.durationMs) {
+      throw new SessionDetailValidationError(`Session detail.turns[${index}] duration does not match its intervals`);
+    }
+  }
+  const recordedTurns = detail.turns.filter((turn) => turn.timingStatus === 'recorded');
+  const unavailableTurns = detail.turns.filter((turn) => turn.timingStatus === 'unavailable');
+  if (detail.durationStatus === 'unavailable') {
+    if (detail.activeDurationMs !== null || detail.idleDurationMs !== null || recordedTurns.length > 0) {
+      throw new SessionDetailValidationError('Session detail unavailable timing must not claim active or idle time');
+    }
+  } else {
+    if (detail.activeDurationMs === null || detail.idleDurationMs === null) {
+      throw new SessionDetailValidationError('Session detail recorded or partial timing requires active and idle time');
+    }
+    if (
+      detail.activeDurationMs > detail.elapsedDurationMs ||
+      detail.idleDurationMs > detail.elapsedDurationMs ||
+      detail.activeDurationMs + detail.idleDurationMs !== detail.elapsedDurationMs
+    ) {
+      throw new SessionDetailValidationError('Session detail active and idle durations do not match elapsed duration');
+    }
+    const recordedActiveDuration = intervalUnionDuration(recordedTurns.flatMap((turn) => turn.intervals));
+    if (recordedActiveDuration !== detail.activeDurationMs) {
+      throw new SessionDetailValidationError('Session detail active duration does not match its recorded intervals');
+    }
+    if (detail.durationStatus === 'recorded' && unavailableTurns.length > 0) {
+      throw new SessionDetailValidationError('Session detail recorded timing requires every turn to be recorded');
+    }
+    if (detail.durationStatus === 'partial' && (recordedTurns.length === 0 || detail.idleDurationMs === 0)) {
+      throw new SessionDetailValidationError(
+        'Session detail partial timing requires recorded activity and an outside bound',
       );
     }
   }

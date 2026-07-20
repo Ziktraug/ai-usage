@@ -23,6 +23,7 @@
     "./report-data": "./src/report-data.ts",
     "./report-budgets": "./src/report-budgets.ts",
     "./session-query": "./src/session-query.ts",
+    "./session-vcs": "./src/session-vcs.ts",
     "./session-detail": "./src/session-detail.ts",
     "./session-lineage": "./src/session-lineage.ts",
     "./snapshot": "./src/snapshot.ts",

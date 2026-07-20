@@ -321,7 +321,9 @@ const turnsFromRows = (
       throw detailError('readOpenCodeSessionAnalysis.message', dbPath, 'OpenCode detail contains invalid metrics');
     }
     const { id, createdMs: startMs } = fact;
-    const endMs = fact.completedMs === null ? startMs : Math.max(startMs, fact.completedMs);
+    const recordedEndMs = fact.completedMs !== null && fact.completedMs >= startMs ? fact.completedMs : null;
+    const hasRecordedTiming = recordedEndMs !== null;
+    const endMs = recordedEndMs ?? startMs;
     const parentId = fact.parentId;
     const parentKind = openCodeParentKind(parentId, userMessageIds, directUserMessageIds);
     turns.push({
@@ -332,15 +334,16 @@ const turnsFromRows = (
       parentKind,
       startMs,
       turn: {
-        durationMs: endMs - startMs,
+        durationMs: hasRecordedTiming ? endMs - startMs : null,
         effort: fact.effort,
         effortKind: fact.effort ? 'recorded' : 'unavailable',
         endAt: timestamp(endMs),
         index: turns.length,
-        intervals: [{ endAt: timestamp(endMs), startAt: timestamp(startMs) }],
+        intervals: hasRecordedTiming ? [{ endAt: timestamp(endMs), startAt: timestamp(startMs) }] : [],
         model: fact.model,
         promptIds: parentKind === 'human' && parentId !== null ? (promptIdsByMessage.get(parentId) ?? []) : [],
         startAt: timestamp(startMs),
+        timingStatus: hasRecordedTiming ? 'recorded' : 'unavailable',
         tokens: fact.tokens,
         tools: toolsByMessageId.get(id) ?? 0,
       },
@@ -404,9 +407,11 @@ const groupedTurnsFromMessages = (messages: readonly ParsedOpenCodeTurn[], dbPat
     const effort = dominantTurnValue(group, (turn) => turn.effort);
     const startMs = Math.min(...group.map(({ startMs: value }) => value));
     const endMs = Math.max(...group.map(({ endMs: value }) => value));
-    const intervals = mergeOpenCodeActivityIntervals(group);
+    const timedGroup = group.filter(({ turn }) => turn.timingStatus === 'recorded');
+    const intervals = mergeOpenCodeActivityIntervals(timedGroup);
+    const timingStatus = intervals.length > 0 ? 'recorded' : 'unavailable';
     return {
-      durationMs: openCodeActivityDuration(group),
+      durationMs: timingStatus === 'recorded' ? openCodeActivityDuration(timedGroup) : null,
       effort,
       effortKind: effort ? 'recorded' : 'unavailable',
       endAt: timestamp(endMs),
@@ -418,6 +423,7 @@ const groupedTurnsFromMessages = (messages: readonly ParsedOpenCodeTurn[], dbPat
       model: dominantTurnValue(group, (turn) => turn.model),
       promptIds: [...promptIds],
       startAt: timestamp(startMs),
+      timingStatus,
       tokens,
       tools,
     };

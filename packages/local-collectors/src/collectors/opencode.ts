@@ -1,3 +1,4 @@
+import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
 import type { TitleSource } from '@ai-usage/report-core/types';
 import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
@@ -11,6 +12,7 @@ import {
   writeDbRowCache,
 } from '../collector-cache';
 import { type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
+import { readLocalGitRepository } from '../local-git';
 import { LocalHistoryStorage } from '../local-history';
 import { metricValidationWarning, parseOptionalNonNegativeSafeInteger } from '../metric-validation';
 import { OPENCODE_DIRECT_USER_PART_PREDICATE, OPENCODE_TOOL_PART_PREDICATE } from '../opencode-schema';
@@ -53,7 +55,7 @@ export interface OpenCodeCollectionResult {
   warnings: LocalHistoryWarning[];
 }
 
-const OPENCODE_DB_CACHE_VERSION = 8;
+const OPENCODE_DB_CACHE_VERSION = 9;
 const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 const SESSION_SQL = 'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
 const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE ${OPENCODE_TOOL_PART_PREDICATE} GROUP BY session_id`;
@@ -225,6 +227,24 @@ const collectFromDb = (
         'aiUsage.collect.opencode.mapSessions',
         Effect.sync(() => {
           const sessions: CollectedSession[] = [];
+          const vcsByDirectory = new Map<string, SessionVcsContext | undefined>();
+          const vcsForDirectory = (directory: string): SessionVcsContext | undefined => {
+            if (vcsByDirectory.has(directory)) {
+              return vcsByDirectory.get(directory);
+            }
+            const repository = readLocalGitRepository(directory || null);
+            const vcs = repository
+              ? parseSessionVcsContext({
+                  branches: [],
+                  headCommit: null,
+                  partial: false,
+                  pullRequests: [],
+                  repository,
+                })
+              : undefined;
+            vcsByDirectory.set(directory, vcs);
+            return vcs;
+          };
           for (const [sid, current] of agg) {
             const summary = buildOpenCodeProjectionSummary(current.facts);
             if (!summary) {
@@ -239,12 +259,15 @@ const collectFromDb = (
               cw: summary.tokens.cacheWrite,
             };
             const title = classifyOpenCodeTitle(sessionMeta?.title ?? null, sid);
+            const sourcePath = sessionMeta?.dir ?? null;
+            const vcs = vcsForDirectory(sourcePath ?? '');
             sessions.push({
               source: {
                 harnessKey: 'opencode',
                 sourceSessionId: sid,
                 ...(sessionMeta?.parentId ? { parentSourceSessionId: sessionMeta.parentId } : {}),
-                sourcePath: sessionMeta?.dir ?? null,
+                sourcePath,
+                ...(vcs ? { vcs } : {}),
               },
               projectPath: sessionMeta?.dir ?? null,
               date: summary.startMs === null ? null : new Date(summary.startMs),

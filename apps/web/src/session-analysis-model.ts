@@ -64,6 +64,23 @@ const OPENCODE_DURATION_SEMANTICS: SessionDurationSemantics = {
   turnSpanNoun: 'assistant-interval time',
 };
 
+const CLAUDE_DURATION_SEMANTICS: SessionDurationSemantics = {
+  burstHint: 'Recorded Claude turn intervals are merged into blocks when they overlap or touch.',
+  burstLabel: 'Recorded turn blocks',
+  elapsedHint: 'Wall-clock span from the first to the last relevant Claude session event.',
+  elapsedLabel: 'Session span',
+  gapHint: 'At most this much of the session span falls outside recorded Claude turn intervals.',
+  gapLabel: 'Unattributed span',
+  metricHint: 'Recorded Claude turn time. Untimed turns are not treated as active time.',
+  metricLabel: 'Recorded turn time',
+  partialBody: 'Claude recorded timing for only some turns. Values marked ≥ or ≤ are bounds.',
+  rowNoun: 'Turn',
+  timelineDescription:
+    'Bars show recorded Claude turn intervals. Point markers show turns whose active duration is unavailable.',
+  timelineHeading: 'Claude chronology',
+  turnSpanNoun: 'recorded turn time',
+};
+
 const GENERIC_DURATION_SEMANTICS: SessionDurationSemantics = {
   burstHint: 'Recorded intervals are merged into blocks when they overlap or touch.',
   burstLabel: 'Interval blocks',
@@ -87,6 +104,9 @@ const baseDurationSemantics = (harnessKey: string | null | undefined): SessionDu
   }
   if (harnessKey === 'opencode') {
     return OPENCODE_DURATION_SEMANTICS;
+  }
+  if (harnessKey === 'claude') {
+    return CLAUDE_DURATION_SEMANTICS;
   }
   return GENERIC_DURATION_SEMANTICS;
 };
@@ -125,7 +145,8 @@ export interface SessionTimelinePromptRef {
 
 export type SessionTimelineRow =
   | {
-      durationMs: number;
+      durationMs: number | null;
+      endAt: string;
       effort: string | null;
       effortKind: SessionDetailEffortKind;
       index: number;
@@ -133,6 +154,7 @@ export type SessionTimelineRow =
       kind: 'task';
       model: string;
       prompts: SessionTimelinePromptRef[];
+      startAt: string;
       tokenShareOfMax: number;
       tokens: SessionDetailTokenCounts;
       tools: number;
@@ -233,6 +255,7 @@ export const buildSessionTimelineRows = (detail: SessionDetail): SessionTimeline
   const taskRows = chronologicalTurns.map((turn) => ({
     row: {
       durationMs: turn.durationMs,
+      endAt: turn.endAt,
       effort: turn.effort,
       effortKind: turn.effortKind,
       index: turn.index,
@@ -240,6 +263,7 @@ export const buildSessionTimelineRows = (detail: SessionDetail): SessionTimeline
       kind: 'task' as const,
       model: turn.model,
       prompts: promptsByTurn.get(turn) ?? [],
+      startAt: turn.startAt,
       tokenShareOfMax: maximumTokens > 0 ? clamp(turn.tokens.total / maximumTokens, 0, 1) : 0,
       tokens: turn.tokens,
       tools: turn.tools,
@@ -473,6 +497,20 @@ export const sessionDurationCaption = (
   semantics: SessionDurationSemantics,
   burstCount: number,
 ): SessionDurationCaptionPart[] => {
+  if (detail.durationStatus === 'unavailable') {
+    return [
+      {
+        bound: null,
+        hint: semantics.elapsedHint,
+        key: 'span',
+        label: semantics.elapsedLabel,
+        value: formatSessionDuration(detail.elapsedDurationMs),
+      },
+    ];
+  }
+  if (detail.activeDurationMs === null || detail.idleDurationMs === null) {
+    return [];
+  }
   const partial = detail.durationStatus === 'partial';
   return [
     {

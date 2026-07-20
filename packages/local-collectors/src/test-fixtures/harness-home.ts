@@ -5,6 +5,9 @@ import { dirname, join } from 'node:path';
 export type HarnessFixtureKey = 'claude' | 'codex' | 'cursor' | 'opencode';
 
 export const HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL = 'PRIVATE_DETAIL_PROMPT_SENTINEL_025';
+export const HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL = 'PRIVATE_CREDENTIAL_REMOTE_SENTINEL_027';
+export const HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL = 'javascript:PRIVATE_DANGEROUS_URL_SENTINEL_027';
+export const HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL = 'PRIVATE_PROVIDER_STDERR_SENTINEL_027';
 
 export interface SeededHarnessHome {
   ids: {
@@ -15,9 +18,12 @@ export interface SeededHarnessHome {
     opencode: string;
   };
   paths: {
+    claudeRootTranscript: string;
+    claudeSubagentTranscript: string;
     codexRootRollout: string;
     cursorDatabase: string;
     opencodeDatabase: string;
+    repository: string;
   };
   seededHarnesses: readonly HarnessFixtureKey[];
 }
@@ -42,8 +48,9 @@ const ensureParent = async (filePath: string): Promise<void> => {
   await mkdir(dirname(filePath), { recursive: true });
 };
 
-const writeClaudeFixture = async (home: string): Promise<void> => {
+const writeClaudeFixture = async (home: string, repository: string): Promise<void> => {
   const filePath = join(home, '.claude', 'projects', '-work-fixture', `${FIXTURE_IDS.claude}.jsonl`);
+  const subagentPath = join(home, '.claude', 'projects', '-work-fixture', 'agent-claude-fixture-027.jsonl');
   await ensureParent(filePath);
   await writeFile(
     filePath,
@@ -51,12 +58,38 @@ const writeClaudeFixture = async (home: string): Promise<void> => {
       {
         type: 'user',
         timestamp: '2026-07-01T08:00:00.000Z',
-        message: { role: 'user', content: 'Build the fixture report' },
+        uuid: 'claude-user-1',
+        cwd: repository,
+        gitBranch: 'fixture/main',
+        message: { role: 'user', content: HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL },
       },
       {
         type: 'assistant',
         timestamp: '2026-07-01T08:01:00.000Z',
-        cwd: '/work/fixture',
+        uuid: 'claude-assistant-1',
+        parentUuid: 'claude-user-1',
+        cwd: repository,
+        gitBranch: 'fixture/main',
+        requestId: 'claude-request-1',
+        message: {
+          id: 'claude-message-1',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'tool_use', name: 'Read' }],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 20,
+            cache_read_input_tokens: 30,
+            cache_creation_input_tokens: 10,
+          },
+        },
+      },
+      {
+        type: 'assistant',
+        timestamp: '2026-07-01T08:01:00.000Z',
+        uuid: 'claude-assistant-1',
+        parentUuid: 'claude-user-1',
+        cwd: repository,
+        gitBranch: 'fixture/main',
         requestId: 'claude-request-1',
         message: {
           id: 'claude-message-1',
@@ -72,13 +105,43 @@ const writeClaudeFixture = async (home: string): Promise<void> => {
       },
       {
         type: 'user',
+        timestamp: '2026-07-01T08:01:20.000Z',
+        uuid: 'claude-tool-result-1',
+        parentUuid: 'claude-assistant-1',
+        cwd: repository,
+        gitBranch: 'fixture/main',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'fixture-tool-1', content: 'fixture result' }],
+        },
+      },
+      {
+        type: 'system',
+        subtype: 'turn_duration',
+        timestamp: '2026-07-01T08:01:30.000Z',
+        uuid: 'claude-duration-1',
+        parentUuid: 'claude-assistant-1',
+        sessionId: FIXTURE_IDS.claude,
+        durationMs: 60_000,
+        cwd: repository,
+        gitBranch: 'fixture/main',
+      },
+      {
+        type: 'user',
         timestamp: '2026-07-01T08:02:00.000Z',
+        uuid: 'claude-user-2',
+        parentUuid: 'claude-assistant-1',
+        cwd: repository,
+        gitBranch: 'fixture/topic',
         message: { role: 'user', content: 'Add the golden assertions' },
       },
       {
         type: 'assistant',
         timestamp: '2026-07-01T08:04:00.000Z',
-        cwd: '/work/fixture',
+        uuid: 'claude-assistant-2',
+        parentUuid: 'claude-user-2',
+        cwd: repository,
+        gitBranch: 'fixture/topic',
         requestId: 'claude-request-2',
         message: {
           id: 'claude-message-2',
@@ -90,6 +153,64 @@ const writeClaudeFixture = async (home: string): Promise<void> => {
             cache_read_input_tokens: 5,
             cache_creation_input_tokens: 2,
           },
+        },
+      },
+      {
+        type: 'pr-link',
+        timestamp: '2026-07-01T08:04:10.000Z',
+        uuid: 'claude-pr-1',
+        parentUuid: 'claude-assistant-2',
+        cwd: repository,
+        gitBranch: 'fixture/topic',
+        prUrl: 'https://github.com/fixture/ai-usage/pull/27',
+        prNumber: 27,
+        prRepository: 'fixture/ai-usage',
+      },
+      { type: 'assistant', timestamp: 'invalid', message: { id: 42, usage: { input_tokens: -1 } } },
+      {
+        type: 'system',
+        subtype: 'turn_duration',
+        timestamp: '2026-07-01T08:04:20.000Z',
+        parentUuid: 'missing-assistant',
+        durationMs: -1,
+      },
+      {
+        type: 'pr-link',
+        timestamp: '2026-07-01T08:04:30.000Z',
+        prUrl: HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL,
+      },
+    ),
+  );
+  await writeFile(
+    subagentPath,
+    jsonLines(
+      {
+        type: 'user',
+        timestamp: '2026-07-01T08:00:30.000Z',
+        uuid: 'claude-agent-user-1',
+        sessionId: FIXTURE_IDS.claude,
+        agentId: 'claude-agent-027',
+        isSidechain: true,
+        cwd: repository,
+        gitBranch: 'fixture/main',
+        message: { role: 'user', content: 'Inspect the fixture' },
+      },
+      {
+        type: 'assistant',
+        timestamp: '2026-07-01T08:00:40.000Z',
+        uuid: 'claude-agent-assistant-1',
+        parentUuid: 'claude-agent-user-1',
+        sessionId: FIXTURE_IDS.claude,
+        agentId: 'claude-agent-027',
+        isSidechain: true,
+        cwd: repository,
+        gitBranch: 'fixture/main',
+        requestId: 'claude-agent-request-1',
+        message: {
+          id: 'claude-agent-message-1',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'text', text: 'Inspected' }],
+          usage: { input_tokens: 5, output_tokens: 3 },
         },
       },
     ),
@@ -106,7 +227,7 @@ const codexUsage = (input: number, cached: number, output: number) => ({
 const codexSessionEvents = (
   id: string,
   start: string,
-  options: { abortSecond?: boolean; child?: boolean; prompt: string },
+  options: { abortSecond?: boolean; child?: boolean; prompt: string; repository: string },
 ): readonly unknown[] => {
   const startMs = Date.parse(start);
   const turnOneStart = new Date(startMs + 10_000).toISOString();
@@ -119,7 +240,12 @@ const codexSessionEvents = (
       type: 'session_meta',
       payload: {
         id,
-        cwd: '/work/fixture',
+        cwd: options.repository,
+        git: {
+          branch: 'fixture/main',
+          commit_hash: '0123456789abcdef0123456789abcdef01234567',
+          repository_url: 'git@github.com:fixture/ai-usage.git',
+        },
         ...(options.child
           ? { source: { subagent: { thread_spawn: { parent_thread_id: FIXTURE_IDS.codexRoot } } } }
           : {}),
@@ -201,7 +327,7 @@ const codexSessionEvents = (
   ];
 };
 
-const writeCodexFixture = async (home: string, sessionCount: number): Promise<string> => {
+const writeCodexFixture = async (home: string, repository: string, sessionCount: number): Promise<string> => {
   if (!(Number.isSafeInteger(sessionCount) && sessionCount >= 2)) {
     throw new Error('codexSessionCount must be a safe integer of at least 2');
   }
@@ -215,6 +341,7 @@ const writeCodexFixture = async (home: string, sessionCount: number): Promise<st
       ...codexSessionEvents(FIXTURE_IDS.codexRoot, '2026-07-02T09:00:00.000Z', {
         abortSecond: true,
         prompt: 'Implement fixture root',
+        repository,
       }),
     ),
   );
@@ -224,6 +351,7 @@ const writeCodexFixture = async (home: string, sessionCount: number): Promise<st
       ...codexSessionEvents(FIXTURE_IDS.codexChild, '2026-07-02T09:10:00.000Z', {
         child: true,
         prompt: 'Implement fixture child',
+        repository,
       }),
     ),
   );
@@ -249,7 +377,7 @@ const writeCodexFixture = async (home: string, sessionCount: number): Promise<st
   return rootPath;
 };
 
-const writeOpenCodeFixture = async (databasePath: string): Promise<void> => {
+const writeOpenCodeFixture = async (databasePath: string, repository: string): Promise<void> => {
   await ensureParent(databasePath);
   const database = new Database(databasePath, { create: true });
   try {
@@ -267,7 +395,7 @@ const writeOpenCodeFixture = async (databasePath: string): Promise<void> => {
       FIXTURE_IDS.opencode,
       'opencode-human-parent-025',
       'OpenCode fixture',
-      '/work/fixture',
+      repository,
       12,
       3,
       Date.parse('2026-07-04T10:00:00.000Z'),
@@ -277,7 +405,7 @@ const writeOpenCodeFixture = async (databasePath: string): Promise<void> => {
       'opencode-human-parent-025',
       null,
       'Human parent',
-      '/work/fixture',
+      repository,
       0,
       0,
       Date.parse('2026-07-04T09:59:00.000Z'),
@@ -437,6 +565,8 @@ export const seedHarnessHome = async (
     throw new Error('harnesses contains an unsupported fixture key');
   }
   const paths = {
+    claudeRootTranscript: join(home, '.claude', 'projects', '-work-fixture', `${FIXTURE_IDS.claude}.jsonl`),
+    claudeSubagentTranscript: join(home, '.claude', 'projects', '-work-fixture', 'agent-claude-fixture-027.jsonl'),
     codexRootRollout: join(
       home,
       '.codex',
@@ -447,15 +577,25 @@ export const seedHarnessHome = async (
     ),
     cursorDatabase: join(home, '.config', 'Cursor', 'User', 'globalStorage', 'state.vscdb'),
     opencodeDatabase: join(home, '.local', 'share', 'opencode', 'opencode.db'),
+    repository: join(home, 'work', 'fixture'),
   };
+  if (seededHarnesses.some((harness) => harness === 'claude' || harness === 'codex' || harness === 'opencode')) {
+    await mkdir(join(paths.repository, '.git', 'objects'), { recursive: true });
+    await mkdir(join(paths.repository, '.git', 'refs', 'heads'), { recursive: true });
+    await writeFile(join(paths.repository, '.git', 'HEAD'), 'ref: refs/heads/fixture-main\n');
+    await writeFile(
+      join(paths.repository, '.git', 'config'),
+      `[core]\n\trepositoryformatversion = 0\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:fixture/ai-usage.git\n[remote "unsafe-fixture"]\n\turl = https://fixture:${HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL}@github.com/fixture/private.git\n`,
+    );
+  }
   if (seededHarnesses.includes('claude')) {
-    await writeClaudeFixture(home);
+    await writeClaudeFixture(home, paths.repository);
   }
   if (seededHarnesses.includes('codex')) {
-    await writeCodexFixture(home, options.codexSessionCount ?? 2);
+    await writeCodexFixture(home, paths.repository, options.codexSessionCount ?? 2);
   }
   if (seededHarnesses.includes('opencode')) {
-    await writeOpenCodeFixture(paths.opencodeDatabase);
+    await writeOpenCodeFixture(paths.opencodeDatabase, paths.repository);
   }
   if (seededHarnesses.includes('cursor')) {
     await writeCursorFixture(paths.cursorDatabase);

@@ -467,10 +467,11 @@ const TaskRow = (props: {
   const positions = createMemo(() =>
     props.row.intervals.map((interval) => positionOnScale(props.scale, interval.startAt, interval.endAt)),
   );
+  const pointPosition = createMemo(() => positionOnScale(props.scale, props.row.startAt, props.row.startAt));
   const bounds = createMemo(() => taskBounds(props.row));
   const taskPhase = createMemo(() => {
     const rowBounds = bounds();
-    return rowBounds ? phaseAt(props.phases, rowBounds.startAt) : null;
+    return phaseAt(props.phases, rowBounds?.startAt ?? props.row.startAt);
   });
   const taskTone = createMemo(() => {
     const phase = taskPhase();
@@ -487,6 +488,8 @@ const TaskRow = (props: {
   };
   const summaryLabel = () => (primaryPrompt() ? `Prompt: ${label()}` : label());
   const effort = () => fmtEffort(props.row.effort, props.row.effortKind);
+  const duration = () =>
+    props.row.durationMs === null ? 'Recorded duration unavailable' : formatSessionDuration(props.row.durationMs);
   const showPhaseMeta = () => {
     const dominant = props.dominantPhase;
     return (
@@ -501,8 +504,8 @@ const TaskRow = (props: {
     const rowBounds = bounds();
     const timeBounds = rowBounds
       ? `, from ${fmtDateTime(rowBounds.startAt)} to ${fmtDateTime(rowBounds.endAt)}`
-      : ', recorded time bounds unavailable';
-    return `${label()}, ${props.row.model}, ${effort()}, ${formatSessionDuration(props.row.durationMs)} ${props.durationSemantics.turnSpanNoun} across ${countLabel(props.row.intervals.length, 'segment')}, ${countLabel(props.row.tokens.total, 'token')}, ${countLabel(props.row.tools, 'tool')} and ${countLabel(props.row.prompts.length, 'prompt')}${timeBounds}`;
+      : `, point event at ${fmtDateTime(props.row.startAt)}; recorded active time bounds unavailable`;
+    return `${label()}, ${props.row.model}, ${effort()}, ${duration()} across ${countLabel(props.row.intervals.length, 'segment')}, ${countLabel(props.row.tokens.total, 'token')}, ${countLabel(props.row.tools, 'tool')} and ${countLabel(props.row.prompts.length, 'prompt')}${timeBounds}`;
   };
 
   return (
@@ -516,7 +519,7 @@ const TaskRow = (props: {
             <span class={promptTitleRow}>
               <span class={promptPreview}>{summaryLabel()}</span>
               <span class={muted} title={props.durationSemantics.metricHint}>
-                {formatSessionDuration(props.row.durationMs)}
+                {duration()}
               </span>
             </span>
             <span class={timelineMeta}>
@@ -545,6 +548,14 @@ const TaskRow = (props: {
             />
           )}
         </For>
+        <Show when={positions().length === 0}>
+          <span
+            aria-hidden="true"
+            class={pointMarker}
+            data-session-analysis-point
+            style={{ left: `${pointPosition().leftPercent}%` }}
+          />
+        </Show>
       </div>
       <div class={tokenCell}>
         <span aria-hidden="true" class={tokenTrack}>

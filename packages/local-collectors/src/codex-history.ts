@@ -11,6 +11,15 @@ import type {
   SessionDetailTurn,
   SessionProjectionFacts,
 } from '@ai-usage/report-core/session-detail';
+import {
+  compactSessionVcsBranchObservations,
+  normalizeSessionVcsRepository,
+  parseSessionVcsContext,
+  type SessionVcsCommit,
+  type SessionVcsContext,
+  type SessionVcsRepository,
+  sessionVcsCommitUrl,
+} from '@ai-usage/report-core/session-vcs';
 import type { UsageModelSegment } from '@ai-usage/report-core/types';
 import { actualCost, approximateApiCost, UNSEGMENTED_MULTI_MODEL_LABEL } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
@@ -55,6 +64,7 @@ interface CodexSession {
   tools: number;
   tout: number;
   turns: number;
+  vcs?: SessionVcsContext;
 }
 
 interface CodexSessionPhase {
@@ -167,7 +177,7 @@ interface SqliteDatabase {
 
 // This cache stores normalized parser output, not raw JSONL. Bump whenever an
 // unchanged rollout could produce different counters, lineage, phases, or turns.
-const CODEX_SESSION_CACHE_VERSION = 14;
+const CODEX_SESSION_CACHE_VERSION = 15;
 const CODEX_DETAIL_MAX_TOTAL_BYTES = 128 * 1024 * 1024;
 const CODEX_LINEAGE_MAX_DEPTH = 32;
 const CODEX_DETAIL_MAX_LINE_BYTES = 8 * 1024 * 1024;
@@ -462,6 +472,7 @@ const cloneCodexSession = (session: CodexSession): CodexSession => ({
     start: new Date(phase.start),
   })),
   start: session.start ? new Date(session.start) : null,
+  ...(session.vcs ? { vcs: parseSessionVcsContext(JSON.parse(JSON.stringify(session.vcs))) } : {}),
 });
 
 const emptyDetailTokens = (): SessionDetailTokenCounts => ({
@@ -663,6 +674,12 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       ? rawModels.filter((model): model is string => typeof model === 'string').slice(0, CODEX_DETAIL_MAX_PHASES)
       : null;
     const phases = reviveCachedPhases(value.phases);
+    let vcs: SessionVcsContext | undefined;
+    try {
+      vcs = value.vcs === undefined ? undefined : parseSessionVcsContext(value.vcs);
+    } catch {
+      return null;
+    }
     if (
       !counters.every((counter) => counter.ok) ||
       (value.start !== null && start === null) ||
@@ -710,6 +727,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       tout: tout.value,
       rejectedMetricRecords: rejectedMetricRecords.value,
       hasTokenUsage: value.hasTokenUsage,
+      ...(vcs ? { vcs } : {}),
     };
   } catch {
     return null;
@@ -838,6 +856,48 @@ const truncatePrompt = (text: string, maximumBytes: number): { text: string; tru
   };
 };
 
+const CODEX_COMMIT_HASH = /^[0-9a-fA-F]{1,64}$/;
+
+const codexVcsFromSessionMeta = (payload: Record<string, unknown>, at: Date): SessionVcsContext | undefined => {
+  if (!isRecord(payload.git)) {
+    return;
+  }
+  const git = payload.git;
+  let partial = false;
+  let repository: SessionVcsRepository | null = null;
+  if (typeof git.repository_url === 'string') {
+    repository = normalizeSessionVcsRepository(git.repository_url, 'harness-recorded');
+    partial = repository === null;
+  } else if (git.repository_url !== undefined) {
+    partial = true;
+  }
+  const branchObservations = typeof git.branch === 'string' ? [{ name: git.branch, observedAt: at.toISOString() }] : [];
+  if (git.branch !== undefined && typeof git.branch !== 'string') {
+    partial = true;
+  }
+  const branches = compactSessionVcsBranchObservations(branchObservations, 'harness-recorded', repository);
+  partial ||= branches.partial;
+  let headCommit: SessionVcsCommit | null = null;
+  if (typeof git.commit_hash === 'string' && CODEX_COMMIT_HASH.test(git.commit_hash)) {
+    const hash = git.commit_hash.toLowerCase();
+    headCommit = {
+      hash,
+      observedAt: at.toISOString(),
+      provenance: 'harness-recorded' as const,
+      webUrl: repository ? sessionVcsCommitUrl(repository, hash) : null,
+    };
+  } else if (git.commit_hash !== undefined) {
+    partial = true;
+  }
+  return parseSessionVcsContext({
+    branches: branches.spans,
+    headCommit,
+    partial,
+    pullRequests: [],
+    repository,
+  });
+};
+
 const createCodexSessionParser = (captureDetail = false) => {
   const session = emptySession();
   const completedTasks: (MutableCodexTask & { durationMs: number; end: Date })[] = [];
@@ -857,6 +917,7 @@ const createCodexSessionParser = (captureDetail = false) => {
   let taskObservedEnd: Date | null = null;
   let taskObservedStart: Date | null = null;
   let finalized = false;
+  let timingPartial = false;
   const parseStartedAt = Date.now();
 
   const latestOpenTask = (): MutableCodexTask | null => {
@@ -1126,9 +1187,14 @@ const createCodexSessionParser = (captureDetail = false) => {
         task.tools++;
       }
     }
-    if (event.type === 'session_meta' && !session.id) {
-      session.id = typeof payload.id === 'string' ? payload.id : session.id;
+    const sessionMetaId = event.type === 'session_meta' ? nonEmpty(payload.id) : null;
+    if (sessionMetaId && !session.id) {
+      session.id = sessionMetaId;
       session.cwd = typeof payload.cwd === 'string' ? payload.cwd : session.cwd;
+      const sessionVcs = codexVcsFromSessionMeta(payload, date);
+      if (sessionVcs) {
+        session.vcs = sessionVcs;
+      }
       session.source = payload.source == null ? session.source : JSON.stringify(payload.source);
       session.threadSource = typeof payload.thread_source === 'string' ? payload.thread_source : session.threadSource;
       const spawn = threadSpawnFromSource(payload.source);
@@ -1258,6 +1324,7 @@ const createCodexSessionParser = (captureDetail = false) => {
       }
       session.durationPartial = true;
       session.reportPartial = true;
+      timingPartial = true;
       flushResponsePrompt(task);
       observedTaskIntervals.push({
         endMs: task.observedEnd.getTime(),
@@ -1336,6 +1403,7 @@ const createCodexSessionParser = (captureDetail = false) => {
       model: task.model === 'codex' ? session.model : task.model,
       promptIds: task.promptIds,
       startAt: task.start.toISOString(),
+      timingStatus: 'recorded',
       tokens: task.tokens,
       tools: task.tools,
     }));
@@ -1350,7 +1418,7 @@ const createCodexSessionParser = (captureDetail = false) => {
     const turns = detailTurns();
     return {
       activeDurationMs,
-      durationStatus: session.durationPartial ? 'partial' : 'recorded',
+      durationStatus: timingPartial ? 'partial' : 'recorded',
       efforts: [...new Set(session.phases.flatMap((phase) => (phase.effort ? [phase.effort] : [])))],
       elapsedDurationMs,
       endedAt: session.end.toISOString(),
@@ -1786,6 +1854,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
           sourceSessionId: session.id,
           ...(session.parent === null ? {} : { parentSourceSessionId: session.parent }),
           sourcePath: session.cwd,
+          ...(session.vcs ? { vcs: session.vcs } : {}),
         },
         projectPath: session.cwd,
         date: session.start,

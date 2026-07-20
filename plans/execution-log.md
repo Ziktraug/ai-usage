@@ -1,116 +1,112 @@
-# Journal d’exécution des plans
+# Plan Execution Log
 
-## Clôture du programme 009 à 020 — 2026-07-14
+## Program 009–020 Closure — 2026-07-14
 
-- Branche dédiée : `codex/execute-untracked-plans`.
-- Point de départ du programme : `17bcf28`.
-- Tous les plans auparavant non suivis de 010 à 020 sont maintenant présents
-  dans ce répertoire, exécutés dans leur ordre de dépendance et marqués `DONE`.
-- Le plan 009, déjà présent, a également été terminé sur cette branche avant les
-  plans non suivis.
+- Dedicated branch: `codex/execute-untracked-plans`.
+- Program starting point: `17bcf28`.
+- Every previously untracked plan from 010 through 020 is now present in this
+  directory, executed in dependency order, and marked `DONE`.
+- Plan 009, which already existed, was also completed on this branch before the
+  previously untracked plans.
 
-## Résultats par plan
+## Results by Plan
 
-| Plan | Résultat livré | Commits principaux |
+| Plan | Delivered result | Main commits |
 | --- | --- | --- |
-| 009 | Suppression complète de l’export HTML dans le CLI, le web, les requêtes, la CI et les docs actives. | `4dd0434`, `c3e5869`, `5ba101f`, `6545e62` |
-| 010 | Smoke de production borné avec nettoyage du processus propriétaire ; intégrations CLI réelles et isolées. | `a4a237b`, `1260816`, `e64a222`, `1f11401`, `ffc7146`, `3bb577c` |
-| 011 | Identité machine atomique, écritures concurrentes sérialisées et état privé propriétaire. | `ee86517`, `77ce626`, `7bb9ba1` |
-| 012 | Lectures d’historique bornées/no-follow, snapshots SQLite cohérents avec WAL et caches sensibles au WAL. | `a4bcf22`, `75940d5` |
-| 013 | Validation runtime des métriques avant toute agrégation. | `735c47d` |
-| 014 | Limites portables symétriques et workflow preview/confirm lié aux octets et à la génération du store. | `d711d17`, `f815903` |
-| 015 | Provenance portable opaque, sans résolution ni autorité filesystem locale. | `6975445` |
-| 016 | Un runner exact-révision et un cycle de processus commun pour les six requêtes Focused/Session. | `fd000b0` |
-| 017 | Génération sémantique, assemblage pur unique, capture `changed/unchanged`, no-op sans assemblage ni publication, renouvellement privé sans rematérialiser SQLite. | `de847d8`, `89edf9f` |
-| 018 | Un propriétaire navigateur unique pour acquisition, retry d’expiration, supersession et commit atomique des destinations. | `dbd1fe2` |
-| 019 | Identité de cible revalidée sous verrou, création sûre des parents et cas d’usage Skills derrière une façade applicative profonde. | `61f45d9` |
-| 020 | Hook réellement staged-only, Bun 1.3.13 aligné, résidu CSV supprimé et documentation réconciliée. | `01cd39e` |
+| 009 | Removed HTML export completely from CLI, web, queries, CI, and active documentation. | `4dd0434`, `c3e5869`, `5ba101f`, `6545e62` |
+| 010 | Bounded production smoke with owner-process cleanup and real isolated CLI integrations. | `a4a237b`, `1260816`, `e64a222`, `1f11401`, `ffc7146`, `3bb577c` |
+| 011 | Atomic machine identity, serialized concurrent writes, and owner-private state. | `ee86517`, `77ce626`, `7bb9ba1` |
+| 012 | Bounded/no-follow history reads, WAL-coherent SQLite snapshots, and WAL-sensitive caches. | `a4bcf22`, `75940d5` |
+| 013 | Runtime metric validation before aggregation. | `735c47d` |
+| 014 | Symmetric portable limits and a preview/confirm workflow bound to exact bytes and store generation. | `d711d17`, `f815903` |
+| 015 | Opaque portable provenance without local filesystem resolution or authority. | `6975445` |
+| 016 | One exact-revision runner and shared process lifecycle for all six Focused/Session queries. | `fd000b0` |
+| 017 | Semantic generation, one pure assembler, changed/unchanged capture, no-op publication skipping, and private renewal without SQLite rematerialization. | `de847d8`, `89edf9f` |
+| 018 | One browser owner for acquisition, expiry retry, supersession, and atomic destination commits. | `dbd1fe2` |
+| 019 | Target identity revalidated under lock, safe parent creation, and Skills use cases behind a deep application facade. | `61f45d9` |
+| 020 | Truly staged-only hook, aligned Bun 1.3.13 metadata, removed CSV residue, and reconciled documentation. | `01cd39e` |
 
-Les décisions conditionnelles du plan 016 et les preuves spécifiques du plan
-020 sont détaillées dans leurs journaux voisins.
+Plan 016’s conditional decisions and plan 020’s specific evidence are recorded
+in their neighboring logs.
 
-## Preuves finales
+## Final Evidence
 
-Exécutées sur la branche dédiée après les changements fonctionnels :
+Run on the dedicated branch after the functional changes:
 
-- `bun x ultracite check` : succès, 356 fichiers, aucun correctif requis ;
-- `bun run lint` : succès ;
-- `bun run typecheck` : 16 tâches sur 16 ;
-- `bun run test` : 603 tests de packages et 8 tests d’outillage, aucun échec ;
-- `bun run build` : 9 tâches sur 9 ;
-- `CI=1 bun run test:e2e` : 32 scénarios sur 32 ;
-- `CI=1 bun run test:e2e-production` : 4 scénarios sur 4 ;
-- `bun install --frozen-lockfile` : succès avec Bun 1.3.13, sans dérive du lockfile.
+- `bun x ultracite check`: passed across 356 files with no fixes required;
+- `bun run lint`: passed;
+- `bun run typecheck`: 16/16 tasks;
+- `bun run test`: 603 package tests and 8 tooling tests, no failures;
+- `bun run build`: 9/9 tasks;
+- `CI=1 bun run test:e2e`: 32/32 scenarios;
+- `CI=1 bun run test:e2e-production`: 4/4 scenarios;
+- `bun install --frozen-lockfile`: passed with Bun 1.3.13 and no lockfile drift.
 
-Les seuls messages non bloquants sont les avertissements Playwright/Bun sur la
-combinaison `NO_COLOR` et `FORCE_COLOR`.
+The only non-blocking output was Playwright/Bun warnings about using `NO_COLOR`
+and `FORCE_COLOR` together.
 
-## Revue de clôture et corrections — 2026-07-14
+## Closure Review and Corrections — 2026-07-14
 
-Une revue croisée Standards/Spécification a été exécutée après la première
-clôture. Elle a identifié des implémentations partielles qui auraient rendu la
-mention « tous les plans terminés » inexacte. Le commit `8e984a2` les corrige :
+A cross-review against Standards and Specification ran after the first closure.
+It found partial implementations that would have made the “all plans complete”
+claim inaccurate. Commit `8e984a2` corrected them:
 
-- plan 012 : les JSONL Claude/Codex et les CSV Cursor passent désormais par un
-  visiteur UTF-8 incrémental, borné par fichier et par ligne, sans reconstruire
-  le fichier ou la liste complète des lignes ;
-- plan 013 : `safeJSON<T>` et son cast de confiance ont disparu ; les objets et
-  champs imbriqués provenant de JSON sont rétrécis à l’exécution avant usage ;
-- plan 014 : la réponse XHR d’import manuel est validée jusqu’aux données de
-  preview/confirmation, et la progression expose la sémantique ARIA attendue ;
-- plans 016–018 : le runner exact-révision associe chaque requête à son résultat
-  sans casts croisés, le rafraîchissement utilise `async/await`, et toutes les
-  destinations préparées sont validées avant le premier commit visible ;
-- plan 019 : création et application utilisent la même identité de verrou dans
-  `skills-projection-locks/` sous l’état privé, les parents sont revalidés sous
-  verrou, et les mutations brutes ne sont plus exportées par la racine du
-  package ni orchestrées par l’adaptateur web ;
-- les assertions `Row[] -> SourcedRow[]` ont été remplacées par le type réel du
-  résultat stocké.
+- plan 012: Claude/Codex JSONL and Cursor CSV now use an incremental UTF-8
+  visitor bounded per file and line without rebuilding the file or full line
+  list;
+- plan 013: `safeJSON<T>` and its trust cast were removed; objects and nested
+  JSON fields are narrowed at runtime before use;
+- plan 014: the manual-import XHR response is validated through preview and
+  confirmation data, and progress exposes the required ARIA semantics;
+- plans 016–018: the exact-revision runner binds each request to its result
+  without cross-casts, refresh uses `async/await`, and every prepared
+  destination is validated before the first visible commit;
+- plan 019: planning and application use the same lock identity under private
+  `skills-projection-locks/`; parents are revalidated under lock, and raw
+  mutations are no longer exported by the package root or orchestrated by the
+  web adapter;
+- `Row[] -> SourcedRow[]` assertions were replaced by the stored result’s real
+  type.
 
-Contrôles ciblés après correction : Ultracite sans erreur, typecheck 16/16 et
-108 tests à risque (collecteurs, report-data, Skills et serveur web) réussis.
-Les preuves de suite complète ci-dessus sont rejouées une dernière fois après
-ce correctif avant la remise finale.
+Targeted post-correction checks passed: clean Ultracite, typecheck 16/16, and
+108 high-risk collector, report-data, Skills, and web-server tests. The full
+suite evidence above was replayed after this correction before handoff.
 
-## Correctif de démarrage sur historique hors budget — 2026-07-14
+## Startup Fix for Over-Budget History — 2026-07-14
 
-Le lancement réel a révélé un défaut que les fixtures bornées ne déclenchaient
-pas : un historique Codex supérieur au budget agrégé de 2 Gio faisait répondre
-la route `/` en HTTP 500 avec le seul message `An error has occurred`.
+Real startup exposed a defect not triggered by bounded fixtures: more than 2
+GiB of aggregate Codex history made `/` return HTTP 500 with only
+`An error has occurred`.
 
-Dans un premier correctif conservateur, la limite a été conservée et les
-dépassements de profondeur/complétude lancés par `walkFiles` ont été déplacés
-vers le canal typé `LocalHistoryError`. Les couches collecteur/dataset pouvaient
-ainsi produire un avertissement Codex et laisser le reste du rapport démarrer.
+The first conservative fix retained the limit but moved depth/completeness
+failures from `walkFiles` into the typed `LocalHistoryError` channel. Collector
+and dataset layers could then emit a Codex warning and let the rest of the
+report start.
 
-Preuves du correctif :
+Evidence for that fix:
 
-- test de régression rouge puis vert sur `collectHarnessDatasets -> walkFiles` ;
-- reproduction réelle `/` passée de HTTP 500 à HTTP 200 sur deux instances ;
-- Ultracite sans erreur, typecheck 16/16 et 76 tests ciblés réussis.
+- red/green regression test through `collectHarnessDatasets -> walkFiles`;
+- real `/` reproduction changed from HTTP 500 to HTTP 200 on two instances;
+- clean Ultracite, typecheck 16/16, and 76 focused tests.
 
-Après retour utilisateur, la dégradation gracieuse a été remplacée par la
-correction de capacité attendue : le volume total historique n’est plus traité
-comme de la mémoire résidente. Le scan reste borné en profondeur/nombre de
-fichiers, les JSONL sont lus séquentiellement avec un plafond de 1 Gio par
-session et de 8 Mio par ligne, et les formats non streamés gardent leurs limites
-plus basses.
+After user feedback, graceful degradation was replaced by the intended
+capacity fix: total historical volume is no longer treated as resident memory.
+Traversal remains bounded by depth and file count; JSONL is read sequentially
+with a 1 GiB ceiling per session and 8 MiB per line; non-streamed formats retain
+their lower limits.
 
-Un rafraîchissement forcé sur l’historique réel de 2,55 Gio a ensuite réussi en
-3,6 s : 997 sessions Codex ont été analysées (922 hits de cache, 75 fichiers
-relus), 13 nouvelles lignes ont été insérées et aucun avertissement Codex n’a
-été produit.
+A forced refresh over 2.55 GiB of real history then completed in 3.6 seconds:
+997 Codex sessions parsed, 922 cache hits, 75 files reread, 13 new rows inserted,
+and no Codex warning.
 
-La revue croisée finale a ajouté deux garanties au correctif de capacité :
+The final cross-review added two capacity guarantees:
 
-- l’index `session_index.jsonl`, qui n’est pas un historique de session, garde
-  son plafond explicite de 1 Mio ;
-- un test traverse le collecteur Codex complet avec quatre sessions simulées de
-  600 Mio chacune, soit 2,4 Gio cumulés, et vérifie que les quatre lignes
-  d’usage sont publiées.
+- `session_index.jsonl`, which is not session history, retains an explicit 1
+  MiB ceiling;
+- a test traverses the complete Codex collector with four simulated 600 MiB
+  sessions—2.4 GiB total—and verifies that all four usage rows are published.
 
-Après ces garanties, un nouveau rafraîchissement forcé du chemin de démarrage
-réel a terminé en 2,18 s avec 3 724 lignes, dont 882 lignes Codex visibles, sans
-avertissement Codex. Ultracite, lint, typecheck 16/16, les 603 tests de packages,
-les 8 tests d’outillage et le build 9/9 passent.
+After those guarantees, another forced real startup refresh completed in 2.18
+seconds with 3,724 rows, including 882 visible Codex rows, and no Codex warning.
+Ultracite, lint, typecheck 16/16, 603 package tests, 8 tooling tests, and the 9/9
+build all passed.

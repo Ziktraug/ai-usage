@@ -111,6 +111,7 @@ const turn = (
   model: 'gpt-5.6-sol',
   promptIds: [],
   startAt,
+  timingStatus: 'recorded',
   tokens: tokens(100),
   tools: 0,
   ...overrides,
@@ -468,6 +469,33 @@ describe('SessionAnalysis SSR semantics', () => {
     expect(orphanMarkup).toContain('>—</span>');
     expect(orphanMarkup).toContain('0s task-open time');
     expect(orphanMarkup).toContain('0 tools');
+  });
+
+  test('renders an untimed Claude turn as a point without claiming active time', () => {
+    const eventAt = '2026-07-18T10:00:30.000Z';
+    const html = renderAnalysisForHarness('claude', {
+      activeDurationMs: null,
+      durationStatus: 'unavailable',
+      elapsedDurationMs: 60_000,
+      idleDurationMs: null,
+      turns: [
+        turn(0, eventAt, eventAt, {
+          durationMs: null,
+          effort: null,
+          effortKind: 'unavailable',
+          intervals: [],
+          timingStatus: 'unavailable',
+        }),
+      ],
+    });
+    const taskMarkup = html.slice(html.indexOf('data-session-analysis-row="task"'));
+
+    expect(html).toContain('Claude chronology');
+    expect(taskMarkup).toContain('data-session-analysis-point');
+    expect(taskMarkup).toContain('point event at');
+    expect(taskMarkup).toContain('effort not recorded');
+    expect(html).not.toContain('0s active');
+    expect(html).not.toContain('0s recorded turn time');
   });
 
   test('keeps both empty-state explanations in the unified timeline', () => {

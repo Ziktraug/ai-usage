@@ -1,29 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
-import type { UsageModelSegment } from '@ai-usage/report-core/types';
-import { actualCost, approximateApiCost, tokenTotal } from '@ai-usage/report-core/usage-row';
+import { actualCost, approximateApiCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
+import { parseClaudeSessionFacts } from '../claude-session-facts';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import { collectorCachePath, reviveCollectorRowsResult } from '../collector-cache';
 import type { LocalHistoryError, LocalHistoryWarning } from '../errors';
 import { COLLECTOR_CACHE_MAX_BYTES, SMALL_HISTORY_JSON_MAX_BYTES } from '../history-budgets';
+import { readLocalGitRepository } from '../local-git';
 import { LocalHistoryStorage, walkFiles } from '../local-history';
-import {
-  addNonNegativeSafeIntegers,
-  metricValidationWarning,
-  parseNonNegativeSafeInteger,
-  parseOptionalNonNegativeSafeInteger,
-} from '../metric-validation';
+import { metricValidationWarning, parseNonNegativeSafeInteger } from '../metric-validation';
 import { withPerfSpan } from '../perf';
 import { type HarnessPaths, resolvePaths } from '../platform-paths';
 import { readPrivateJson, writePrivateJson } from '../private-storage';
 import type { CollectorRow } from '../rtk-enrichment';
-import { base, dominant, safeJSON, usablePrompt } from '../text';
+import { base, safeJSON, usablePrompt } from '../text';
 
 interface ClaudeHistoryFallback {
   end: Date;
-  firstPrompt: string | null;
   project: string | null;
   sessionId: string;
   start: Date;
@@ -40,12 +34,8 @@ interface ClaudeCache {
   rows: CollectorRow[];
   version: number;
 }
-const CLAUDE_CACHE_VERSION = 5;
+const CLAUDE_CACHE_VERSION = 6;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-const blockType = (block: unknown) => (isRecord(block) && typeof block.type === 'string' ? block.type : null);
-const textBlockText = (block: unknown) => (isRecord(block) && typeof block.text === 'string' ? block.text : null);
 
 const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
   try {
@@ -183,7 +173,6 @@ const readClaudeHistoryFallbacks = (
         start: date,
         end: date,
         project: typeof event.project === 'string' ? event.project : null,
-        firstPrompt: null,
         turns: 0,
       };
 
@@ -198,9 +187,6 @@ const readClaudeHistoryFallbacks = (
       }
       if (usageBearing) {
         current.turns++;
-        if (!current.firstPrompt) {
-          current.firstPrompt = prompt;
-        }
       }
       sessions.set(sessionId, current);
     });
@@ -312,7 +298,6 @@ export const collectClaudeResult = Effect.gen(function* () {
 
   const sessions: CollectedSession[] = [];
   const existingSessionIds = new Set(files.map((filePath) => path.basename(filePath, '.jsonl')));
-  const seen = new Set<string>();
   let rejectedMetricRecords = 0;
 
   yield* withPerfSpan(
@@ -322,20 +307,7 @@ export const collectClaudeResult = Effect.gen(function* () {
       for (const filePath of files) {
         const sourceSessionId = path.basename(filePath, '.jsonl');
         const isAgentFile = path.basename(filePath).startsWith('agent-');
-        let title: string | null = null;
-        let lastPrompt: string | null = null;
-        let firstPrompt: string | null = null;
-        let parentSourceSessionId: string | null = null;
-        let cwd: string | null = null;
-        let start: Date | null = null;
-        let end: Date | null = null;
-        let calls = 0;
-        let turns = 0;
-        let tools = 0;
-        let sidechain = isAgentFile;
-        const tokens = { in: 0, out: 0, cr: 0, cw: 0 };
-        const byModel = new Map<string, number>();
-        const modelSegmentsByModel = new Map<string, UsageModelSegment>();
+        const records: unknown[] = [];
 
         yield* storage.readLines(filePath, (line) => {
           if (!line) {
@@ -343,187 +315,50 @@ export const collectClaudeResult = Effect.gen(function* () {
           }
           lines++;
           const event = safeJSON(line);
-          if (!event) {
-            return;
-          }
-          if (isAgentFile && typeof event.sessionId === 'string' && event.sessionId !== sourceSessionId) {
-            parentSourceSessionId = event.sessionId;
-          }
-          const eventDate =
-            typeof event.timestamp === 'string' || typeof event.timestamp === 'number'
-              ? new Date(event.timestamp)
-              : null;
-          if (eventDate && Number.isFinite(eventDate.getTime())) {
-            if (!start || eventDate < start) {
-              start = eventDate;
-            }
-            if (!end || eventDate > end) {
-              end = eventDate;
-            }
-          }
-          if (event.isSidechain) {
-            sidechain = true;
-          }
-          if (event.type === 'ai-title' && typeof event.aiTitle === 'string') {
-            title = event.aiTitle;
-          } else if (event.type === 'last-prompt' && event.lastPrompt) {
-            lastPrompt = String(event.lastPrompt);
-          } else if (event.type === 'user') {
-            const message = isRecord(event.message) ? event.message : null;
-            const content = message?.content;
-            let text: string | null = null;
-            if (typeof content === 'string') {
-              text = content;
-            } else if (Array.isArray(content)) {
-              const isToolResult = content.some((block) => blockType(block) === 'tool_result');
-              if (!isToolResult) {
-                text = content.map(textBlockText).find((value) => value !== null) ?? null;
-              }
-            }
-            if (text) {
-              turns++;
-              if (!firstPrompt) {
-                firstPrompt = usablePrompt(text);
-              }
-            }
-          } else if (event.type === 'assistant') {
-            if (typeof event.cwd === 'string') {
-              cwd = event.cwd;
-            }
-            const message = isRecord(event.message) ? event.message : null;
-            const usage = isRecord(message?.usage) ? message.usage : null;
-            if (Array.isArray(message?.content)) {
-              tools += message.content.filter((block: unknown) => blockType(block) === 'tool_use').length;
-            }
-            if (!usage) {
-              return;
-            }
-            const input = parseOptionalNonNegativeSafeInteger(usage.input_tokens);
-            const output = parseOptionalNonNegativeSafeInteger(usage.output_tokens);
-            const cacheRead = parseOptionalNonNegativeSafeInteger(usage.cache_read_input_tokens);
-            const cacheWrite = parseOptionalNonNegativeSafeInteger(usage.cache_creation_input_tokens);
-            if (!(input.ok && output.ok && cacheRead.ok && cacheWrite.ok)) {
-              rejectedMetricRecords++;
-              return;
-            }
-            const id = typeof message?.id === 'string' ? message.id : undefined;
-            const key = `${id}:${event.requestId}`;
-            if (id && seen.has(key)) {
-              return;
-            }
-            if (id) {
-              seen.add(key);
-            }
-            const nextCalls = addNonNegativeSafeIntegers(calls, 1);
-            const nextInput = addNonNegativeSafeIntegers(tokens.in, input.value);
-            const nextOutput = addNonNegativeSafeIntegers(tokens.out, output.value);
-            const nextCacheRead = addNonNegativeSafeIntegers(tokens.cr, cacheRead.value);
-            const nextCacheWrite = addNonNegativeSafeIntegers(tokens.cw, cacheWrite.value);
-            const model = typeof message?.model === 'string' ? message.model : 'unknown';
-            const currentSegment = modelSegmentsByModel.get(model) ?? {
-              model,
-              tokIn: 0,
-              tokOut: 0,
-              tokCr: 0,
-              tokCw: 0,
-              costApprox: 0,
-              costKnown: true,
-            };
-            const nextModelInput = addNonNegativeSafeIntegers(currentSegment.tokIn, input.value);
-            const nextModelOutput = addNonNegativeSafeIntegers(currentSegment.tokOut, output.value);
-            const nextModelCacheRead = addNonNegativeSafeIntegers(currentSegment.tokCr, cacheRead.value);
-            const nextModelCacheWrite = addNonNegativeSafeIntegers(currentSegment.tokCw, cacheWrite.value);
-            if (
-              !(
-                nextCalls.ok &&
-                nextInput.ok &&
-                nextOutput.ok &&
-                nextCacheRead.ok &&
-                nextCacheWrite.ok &&
-                nextModelInput.ok &&
-                nextModelOutput.ok &&
-                nextModelCacheRead.ok &&
-                nextModelCacheWrite.ok
-              )
-            ) {
-              rejectedMetricRecords++;
-              return;
-            }
-            calls = nextCalls.value;
-            tokens.in = nextInput.value;
-            tokens.out = nextOutput.value;
-            tokens.cr = nextCacheRead.value;
-            tokens.cw = nextCacheWrite.value;
-            const messageTokens = {
-              in: input.value,
-              out: output.value,
-              cr: cacheRead.value,
-              cw: cacheWrite.value,
-            };
-            const { rates, known } = priceFor(model, { at: eventDate });
-            modelSegmentsByModel.set(model, {
-              model,
-              tokIn: nextModelInput.value,
-              tokOut: nextModelOutput.value,
-              tokCr: nextModelCacheRead.value,
-              tokCw: nextModelCacheWrite.value,
-              costApprox: currentSegment.costApprox + approxCost(rates, messageTokens),
-              costKnown: currentSegment.costKnown && known,
-            });
-            byModel.set(
-              model,
-              (byModel.get(model) || 0) + input.value + output.value + cacheRead.value + cacheWrite.value,
-            );
+          if (event) {
+            records.push(event);
           }
         });
 
-        if (!start && tokenTotal(tokens) === 0) {
+        const initialFacts = parseClaudeSessionFacts({ isAgentFile, records, repository: null, sourceSessionId });
+        if (!initialFacts) {
           continue;
         }
-        const model = dominant(byModel);
-        const modelSegments = [...modelSegmentsByModel.values()];
-        const models = modelSegments.map((segment) => segment.model);
-        const name =
-          title ||
-          usablePrompt(lastPrompt) ||
-          firstPrompt ||
-          `${sidechain ? 'subagent ' : ''}${sourceSessionId.slice(0, 8)}`;
-        let titleSource: 'ai' | 'agent-role' | 'first-prompt' | 'id';
-        if (title) {
-          titleSource = 'ai';
-        } else if (sidechain && !lastPrompt && !firstPrompt) {
-          titleSource = 'agent-role';
-        } else if (lastPrompt || firstPrompt) {
-          titleSource = 'first-prompt';
-        } else {
-          titleSource = 'id';
-        }
+        const repository = readLocalGitRepository(initialFacts.source.sourcePath);
+        const facts = repository
+          ? (parseClaudeSessionFacts({ isAgentFile, records, repository, sourceSessionId }) ?? initialFacts)
+          : initialFacts;
+        const { projection, report, source } = facts;
+        rejectedMetricRecords += report.rejectedMetricRecords;
 
         sessions.push({
           source: {
             harnessKey: 'claude',
             sourceSessionId,
-            ...(parentSourceSessionId === null ? {} : { parentSourceSessionId }),
-            sourcePath: cwd,
+            ...(source.parentSourceSessionId === null ? {} : { parentSourceSessionId: source.parentSourceSessionId }),
+            sourcePath: source.sourcePath,
+            ...(source.vcs ? { vcs: source.vcs } : {}),
           },
-          projectPath: cwd,
-          date: start,
-          endDate: end,
+          projectPath: source.sourcePath,
+          date: report.start,
+          endDate: report.end,
           provider,
-          name,
-          titleSource,
-          model,
-          models,
-          modelSegments,
-          project: base(cwd),
-          tokens,
+          name: report.name,
+          titleSource: report.titleSource,
+          model: report.model,
+          models: report.models,
+          modelSegments: report.modelSegments,
+          project: base(source.sourcePath),
+          tokens: report.tokens,
           cost: provider === 'Claude API' ? approximateApiCost : actualCost(0),
-          calls,
-          turns,
-          tools,
+          calls: report.calls,
+          durationMs: projection.durationMs,
+          partial: projection.partial,
+          turns: report.turns,
+          tools: report.tools,
           linesAdded: null,
           linesDeleted: null,
-          subagent: sidechain,
+          subagent: report.sidechain,
         });
       }
       return { files: files.length, lines, sessions: sessions.length };
@@ -538,8 +373,8 @@ export const collectClaudeResult = Effect.gen(function* () {
       date: session.start,
       endDate: session.end,
       provider,
-      name: session.firstPrompt || `claude ${session.sessionId.slice(0, 8)}`,
-      titleSource: session.firstPrompt ? 'first-prompt' : 'id',
+      name: `claude ${session.sessionId.slice(0, 8)}`,
+      titleSource: 'id',
       model: 'usage unavailable',
       project: base(session.project),
       tokens: { in: 0, out: 0, cr: 0, cw: 0 },

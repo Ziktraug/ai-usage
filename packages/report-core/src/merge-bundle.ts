@@ -14,7 +14,8 @@ import type { UsageMachine } from './snapshot';
 import type { CollectedUsageRow, UsageRowSource, UsageRowWithOptionalSource } from './types';
 
 const LEGACY_USAGE_MERGE_BUNDLE_VERSION = 1 as const;
-export const USAGE_MERGE_BUNDLE_VERSION = 2 as const;
+const LEGACY_USAGE_MERGE_BUNDLE_VERSION_V2 = 2 as const;
+export const USAGE_MERGE_BUNDLE_VERSION = 3 as const;
 
 export type UsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StableUsageRowKey = string;
@@ -89,6 +90,21 @@ const identityParts = (row: SerializedUsageRow, source: SerializedMergeRow['sour
   provider: row.provider,
   sourcePath: source.sourcePath ?? source.artifactPath ?? null,
   tokenTotal: row.tokenTotal,
+  vcs: source.vcs ?? null,
+});
+
+const legacyIdentityParts = (row: SerializedUsageRow, source: SerializedMergeRow['source']) => ({
+  activeDate: row.activeDate,
+  date: row.date,
+  endDate: row.endDate,
+  harness: row.harness,
+  model: row.model,
+  models: row.models ?? [],
+  name: row.name,
+  project: row.project,
+  provider: row.provider,
+  sourcePath: source.sourcePath ?? source.artifactPath ?? null,
+  tokenTotal: row.tokenTotal,
 });
 
 // Stable identity for rows without a `sourceSessionId` (e.g. Cursor CSV-reconciled daily rows).
@@ -115,6 +131,11 @@ export const mergeRowIdentity = (row: SerializedUsageRow, source: SerializedMerg
   };
 };
 
+const legacyMergeRowIdentity = (row: SerializedUsageRow, source: SerializedMergeRow['source']): MergeRowIdentity => ({
+  rowKey: mergeRowIdentity(row, source).rowKey,
+  sourceFingerprint: usageContentHash(legacyIdentityParts(row, source)),
+});
+
 export const toSerializedMergeRow = (
   row: UsageRowWithOptionalSource,
   machine: UsageMachine,
@@ -129,6 +150,7 @@ export const toSerializedMergeRow = (
     ...(source?.rootSourceSessionId === undefined ? {} : { rootSourceSessionId: source.rootSourceSessionId }),
     ...(source?.sourcePath === undefined ? {} : { sourcePath: source.sourcePath }),
     ...(source?.artifactPath === undefined ? {} : { artifactPath: source.artifactPath }),
+    ...(source?.vcs === undefined ? {} : { vcs: source.vcs }),
     machineId: machine.id,
     machineLabel: machine.label,
   };
@@ -164,7 +186,10 @@ export const createUsageMergeBundle = (input: {
   };
 };
 
-export const isSerializedMergeRow = (value: unknown): value is SerializedMergeRow => {
+const isSerializedMergeRowForVersion = (
+  value: unknown,
+  version: 1 | 2 | typeof USAGE_MERGE_BUNDLE_VERSION,
+): value is SerializedMergeRow => {
   if (!isSerializedUsageRowWithSource(value, MERGE_ROW_KEYS)) {
     return false;
   }
@@ -179,12 +204,38 @@ export const isSerializedMergeRow = (value: unknown): value is SerializedMergeRo
     return false;
   }
 
-  const identity = mergeRowIdentity(value, value.source);
+  const identity =
+    version === USAGE_MERGE_BUNDLE_VERSION
+      ? mergeRowIdentity(value, value.source)
+      : legacyMergeRowIdentity(value, value.source);
   if (value.rowKey !== identity.rowKey || value.sourceFingerprint !== identity.sourceFingerprint) {
     return false;
   }
   const { contentHash, ...content } = value;
   return contentHash === usageContentHash(content);
+};
+
+export const isSerializedMergeRow = (value: unknown): value is SerializedMergeRow =>
+  isSerializedMergeRowForVersion(value, USAGE_MERGE_BUNDLE_VERSION);
+
+const migrateLegacyMergeRow = (row: SerializedMergeRow): SerializedMergeRow => {
+  const identity = mergeRowIdentity(row, row.source);
+  const { contentHash: _legacyContentHash, sourceFingerprint: _legacySourceFingerprint, ...legacyContent } = row;
+  const content = {
+    ...legacyContent,
+    rowKey: identity.rowKey,
+    sourceFingerprint: identity.sourceFingerprint,
+  };
+  return { ...content, contentHash: usageContentHash(content) };
+};
+
+export const migrateLegacySerializedMergeRow = (
+  value: unknown,
+): { legacy: SerializedMergeRow; row: SerializedMergeRow } | null => {
+  if (!isSerializedMergeRowForVersion(value, LEGACY_USAGE_MERGE_BUNDLE_VERSION_V2) || value.source.vcs !== undefined) {
+    return null;
+  }
+  return { legacy: value, row: migrateLegacyMergeRow(value) };
 };
 
 export const parseSerializedMergeRow = (value: unknown): SerializedMergeRow => {
@@ -201,7 +252,11 @@ export const parseUsageMergeBundleValue = (value: unknown): UsageMergeBundle => 
   if (!hasOnlyKeys(value, BUNDLE_KEYS)) {
     throw new Error('Usage merge bundle contains unknown fields');
   }
-  if (value.version !== LEGACY_USAGE_MERGE_BUNDLE_VERSION && value.version !== USAGE_MERGE_BUNDLE_VERSION) {
+  if (
+    value.version !== LEGACY_USAGE_MERGE_BUNDLE_VERSION &&
+    value.version !== LEGACY_USAGE_MERGE_BUNDLE_VERSION_V2 &&
+    value.version !== USAGE_MERGE_BUNDLE_VERSION
+  ) {
     throw new Error('Unsupported usage merge bundle version');
   }
   if (!isUsageMachine(value.machine)) {
@@ -214,19 +269,29 @@ export const parseUsageMergeBundleValue = (value: unknown): UsageMergeBundle => 
     throw new Error('Usage merge bundle contains invalid rows');
   }
   assertPortableUsageRowCount(value.rows, 'Usage merge bundle');
-  if (!value.rows.every(isSerializedMergeRow)) {
-    throw new Error('Usage merge bundle contains invalid rows');
-  }
   if (
     value.version === LEGACY_USAGE_MERGE_BUNDLE_VERSION &&
-    value.rows.some((row) => row.modelSegments !== undefined)
+    value.rows.some((row) => isRecord(row) && row.modelSegments !== undefined)
   ) {
     throw new Error('Usage merge bundle legacy v1 rows cannot contain modelSegments');
+  }
+  if (
+    (value.version === LEGACY_USAGE_MERGE_BUNDLE_VERSION || value.version === LEGACY_USAGE_MERGE_BUNDLE_VERSION_V2) &&
+    value.rows.some((row) => isRecord(row) && isRecord(row.source) && row.source.vcs !== undefined)
+  ) {
+    throw new Error(`Usage merge bundle legacy v${value.version} rows cannot contain source.vcs`);
+  }
+  const rows: SerializedMergeRow[] = [];
+  for (const row of value.rows) {
+    if (!isSerializedMergeRowForVersion(row, value.version)) {
+      throw new Error('Usage merge bundle contains invalid rows');
+    }
+    rows.push(row);
   }
   if (!isUsageReportWarnings(value.warnings)) {
     throw new Error('Usage merge bundle contains invalid warnings');
   }
-  for (const row of value.rows) {
+  for (const row of rows) {
     if (row.source.machineId !== value.machine.id) {
       throw new Error('Usage merge bundle row machineId does not match bundle machine');
     }
@@ -238,7 +303,7 @@ export const parseUsageMergeBundleValue = (value: unknown): UsageMergeBundle => 
     version: USAGE_MERGE_BUNDLE_VERSION,
     machine: value.machine,
     generatedAt: value.generatedAt,
-    rows: value.rows,
+    rows: value.version === USAGE_MERGE_BUNDLE_VERSION ? rows : rows.map((row) => migrateLegacyMergeRow(row)),
     warnings: value.warnings,
   };
 };

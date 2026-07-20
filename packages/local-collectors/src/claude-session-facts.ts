@@ -1,0 +1,787 @@
+import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
+import type {
+  SessionDetail,
+  SessionDetailInterval,
+  SessionDetailPhase,
+  SessionDetailPrompt,
+  SessionDetailTokenCounts,
+  SessionDetailTurn,
+  SessionProjectionFacts,
+} from '@ai-usage/report-core/session-detail';
+import {
+  compactSessionVcsBranchObservations,
+  normalizeSessionVcsPullRequests,
+  parseSessionVcsContext,
+  type SessionVcsContext,
+  type SessionVcsPullRequest,
+  type SessionVcsRepository,
+} from '@ai-usage/report-core/session-vcs';
+import type { UsageModelSegment } from '@ai-usage/report-core/types';
+import { addNonNegativeSafeIntegers, parseOptionalNonNegativeSafeInteger } from './metric-validation';
+import { dominant, usablePrompt } from './text';
+
+const MAX_CLAUDE_RECORDS = 100_000;
+const MAX_CLAUDE_GRAPH_DEPTH = 64;
+const MAX_CLAUDE_PROMPTS = 256;
+const MAX_CLAUDE_PROMPT_BYTES = 32 * 1024;
+const MAX_CLAUDE_PROMPT_TOTAL_BYTES = 1024 * 1024;
+const MAX_CLAUDE_TURNS = 1024;
+const TRAILING_REPLACEMENT_CHARACTER = /\uFFFD$/u;
+
+export interface ClaudeSessionInput {
+  isAgentFile?: boolean;
+  records: readonly unknown[];
+  repository: SessionVcsRepository | null;
+  sourceSessionId: string;
+}
+
+export interface ClaudeReportFacts {
+  calls: number;
+  end: Date;
+  model: string;
+  modelSegments: UsageModelSegment[];
+  models: string[];
+  name: string;
+  rejectedMetricRecords: number;
+  sidechain: boolean;
+  start: Date;
+  titleSource: 'agent-role' | 'ai' | 'id';
+  tokens: { cr: number; cw: number; in: number; out: number };
+  tools: number;
+  turns: number;
+}
+
+export interface ClaudeSourceFacts {
+  parentSourceSessionId: string | null;
+  sourcePath: string | null;
+  vcs?: SessionVcsContext;
+}
+
+export interface ClaudeSessionFacts {
+  detailFacts: SessionDetail;
+  projection: SessionProjectionFacts;
+  report: ClaudeReportFacts;
+  source: ClaudeSourceFacts;
+}
+
+interface ClaudeEvent {
+  at: Date;
+  index: number;
+  parentUuid: string | null;
+  record: Record<string, unknown>;
+  uuid: string | null;
+}
+
+interface MutableTurn {
+  assistants: ClaudeAssistant[];
+  durationIntervals: SessionDetailInterval[];
+  end: Date;
+  prompt: SessionDetailPrompt | null;
+  start: Date;
+  timingRejected: boolean;
+}
+
+interface ClaudeAssistant {
+  at: Date;
+  model: string;
+  tokens: SessionDetailTokenCounts;
+  tools: number;
+  uuid: string | null;
+}
+
+interface ClaudeGraphIndex {
+  conflictingUuids: ReadonlySet<string>;
+  parents: ReadonlyMap<string, string | null>;
+}
+
+interface ClaudePromptFacts {
+  partial: boolean;
+  promptEvents: ReadonlyMap<string, ClaudeEvent>;
+  prompts: SessionDetailPrompt[];
+  promptsTruncated: boolean;
+}
+
+interface ClaudeAssistantFacts {
+  assistantEvents: ReadonlyMap<string, ClaudeEvent>;
+  assistants: ClaudeAssistant[];
+  assistantTurnKey: ReadonlyMap<string, string>;
+  partial: boolean;
+  rejectedMetricRecords: number;
+}
+
+interface ClaudeTurnFacts {
+  detailTurns: SessionDetailTurn[];
+  partial: boolean;
+}
+
+interface ClaudeMetadataFacts extends ClaudeSourceFacts {
+  sidechain: boolean;
+  title: string | null;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const eventDate = (value: unknown): Date | null => {
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    return null;
+  }
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+};
+
+const iso = (date: Date): string => date.toISOString();
+
+const emptyTokens = (): SessionDetailTokenCounts => ({
+  cacheRead: 0,
+  cacheWrite: 0,
+  input: 0,
+  output: 0,
+  total: 0,
+});
+
+const addTokens = (target: SessionDetailTokenCounts, delta: SessionDetailTokenCounts): boolean => {
+  const cacheRead = addNonNegativeSafeIntegers(target.cacheRead, delta.cacheRead);
+  const cacheWrite = addNonNegativeSafeIntegers(target.cacheWrite, delta.cacheWrite);
+  const input = addNonNegativeSafeIntegers(target.input, delta.input);
+  const output = addNonNegativeSafeIntegers(target.output, delta.output);
+  const total = addNonNegativeSafeIntegers(target.total, delta.total);
+  if (!(cacheRead.ok && cacheWrite.ok && input.ok && output.ok && total.ok)) {
+    return false;
+  }
+  target.cacheRead = cacheRead.value;
+  target.cacheWrite = cacheWrite.value;
+  target.input = input.value;
+  target.output = output.value;
+  target.total = total.value;
+  return true;
+};
+
+const parseUsage = (value: unknown): SessionDetailTokenCounts | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const input = parseOptionalNonNegativeSafeInteger(value.input_tokens);
+  const output = parseOptionalNonNegativeSafeInteger(value.output_tokens);
+  const cacheRead = parseOptionalNonNegativeSafeInteger(value.cache_read_input_tokens);
+  const cacheWrite = parseOptionalNonNegativeSafeInteger(value.cache_creation_input_tokens);
+  if (!(input.ok && output.ok && cacheRead.ok && cacheWrite.ok)) {
+    return null;
+  }
+  const total = input.value + output.value + cacheRead.value + cacheWrite.value;
+  if (!Number.isSafeInteger(total)) {
+    return null;
+  }
+  return {
+    cacheRead: cacheRead.value,
+    cacheWrite: cacheWrite.value,
+    input: input.value,
+    output: output.value,
+    total,
+  };
+};
+
+const blockType = (value: unknown): string | null =>
+  isRecord(value) && typeof value.type === 'string' ? value.type : null;
+
+const humanPromptText = (message: unknown): string | null => {
+  if (!isRecord(message) || (message.role !== undefined && message.role !== 'user')) {
+    return null;
+  }
+  const { content } = message;
+  if (typeof content === 'string') {
+    return usablePrompt(content);
+  }
+  if (!Array.isArray(content) || content.some((block) => blockType(block) === 'tool_result')) {
+    return null;
+  }
+  for (const block of content) {
+    if (isRecord(block) && block.type === 'text' && typeof block.text === 'string') {
+      const prompt = usablePrompt(block.text);
+      if (prompt) {
+        return prompt;
+      }
+    }
+  }
+  return null;
+};
+
+const boundedPrompt = (
+  text: string,
+  remainingBytes: number,
+): { text: string; truncated: boolean; usedBytes: number } | null => {
+  if (remainingBytes <= 0) {
+    return null;
+  }
+  const bytes = Buffer.from(text, 'utf8');
+  const maximumBytes = Math.min(MAX_CLAUDE_PROMPT_BYTES, remainingBytes);
+  const truncated = bytes.byteLength > maximumBytes;
+  const bounded = truncated
+    ? bytes.subarray(0, maximumBytes).toString('utf8').replace(TRAILING_REPLACEMENT_CHARACTER, '')
+    : text;
+  return { text: bounded, truncated, usedBytes: Buffer.byteLength(bounded, 'utf8') };
+};
+
+const intervalUnionMs = (intervals: readonly SessionDetailInterval[]): number => {
+  const ordered = intervals
+    .map((interval) => ({ end: Date.parse(interval.endAt), start: Date.parse(interval.startAt) }))
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+  let total = 0;
+  let start: number | null = null;
+  let end: number | null = null;
+  for (const interval of ordered) {
+    if (start === null || end === null) {
+      start = interval.start;
+      end = interval.end;
+    } else if (interval.start <= end) {
+      end = Math.max(end, interval.end);
+    } else {
+      total += end - start;
+      start = interval.start;
+      end = interval.end;
+    }
+  }
+  return start === null || end === null ? total : total + end - start;
+};
+
+const findAncestor = (
+  startUuid: string | null,
+  parents: ReadonlyMap<string, string | null>,
+  candidates: ReadonlySet<string>,
+): { cycleOrDepth: boolean; uuid: string | null } => {
+  let current = startUuid;
+  const seen = new Set<string>();
+  for (let depth = 0; current && depth < MAX_CLAUDE_GRAPH_DEPTH; depth += 1) {
+    if (candidates.has(current)) {
+      return { cycleOrDepth: false, uuid: current };
+    }
+    if (seen.has(current)) {
+      return { cycleOrDepth: true, uuid: null };
+    }
+    seen.add(current);
+    current = parents.get(current) ?? null;
+  }
+  return { cycleOrDepth: current !== null, uuid: null };
+};
+
+const modelSegments = (assistants: readonly ClaudeAssistant[]): UsageModelSegment[] => {
+  const segments = new Map<string, UsageModelSegment>();
+  for (const assistant of assistants) {
+    const pricing = priceFor(assistant.model, { at: assistant.at });
+    const current = segments.get(assistant.model) ?? {
+      costApprox: 0,
+      costKnown: true,
+      model: assistant.model,
+      tokCr: 0,
+      tokCw: 0,
+      tokIn: 0,
+      tokOut: 0,
+    };
+    current.costApprox += approxCost(pricing.rates, {
+      cr: assistant.tokens.cacheRead,
+      cw: assistant.tokens.cacheWrite,
+      in: assistant.tokens.input,
+      out: assistant.tokens.output,
+    });
+    current.costKnown = current.costKnown && pricing.known;
+    current.tokCr += assistant.tokens.cacheRead;
+    current.tokCw += assistant.tokens.cacheWrite;
+    current.tokIn += assistant.tokens.input;
+    current.tokOut += assistant.tokens.output;
+    segments.set(assistant.model, current);
+  }
+  return [...segments.values()];
+};
+
+const detailPhases = (assistants: readonly ClaudeAssistant[]): SessionDetailPhase[] => {
+  const phases: SessionDetailPhase[] = [];
+  for (const assistant of assistants) {
+    const pricing = priceFor(assistant.model, { at: assistant.at });
+    const cost = approxCost(pricing.rates, {
+      cr: assistant.tokens.cacheRead,
+      cw: assistant.tokens.cacheWrite,
+      in: assistant.tokens.input,
+      out: assistant.tokens.output,
+    });
+    const previous = phases.at(-1);
+    if (previous?.model === assistant.model) {
+      previous.endAt = iso(assistant.at);
+      addTokens(previous.tokens, assistant.tokens);
+      previous.cost = previous.cost === null || !pricing.known ? null : previous.cost + cost;
+      previous.costKind = previous.cost === null ? 'unknown' : 'approximate';
+      continue;
+    }
+    phases.push({
+      cost: pricing.known ? cost : null,
+      costKind: pricing.known ? 'approximate' : 'unknown',
+      effort: null,
+      effortKind: 'unavailable',
+      endAt: iso(assistant.at),
+      model: assistant.model,
+      startAt: iso(assistant.at),
+      tokens: { ...assistant.tokens },
+    });
+  }
+  return phases;
+};
+
+const parseClaudeEvents = (records: readonly unknown[]): ClaudeEvent[] => {
+  const events: ClaudeEvent[] = [];
+  for (const [index, value] of records.entries()) {
+    if (!isRecord(value)) {
+      continue;
+    }
+    const at = eventDate(value.timestamp);
+    if (!at) {
+      continue;
+    }
+    events.push({
+      at,
+      index,
+      parentUuid: typeof value.parentUuid === 'string' ? value.parentUuid : null,
+      record: value,
+      uuid: typeof value.uuid === 'string' ? value.uuid : null,
+    });
+  }
+  events.sort((left, right) => left.at.getTime() - right.at.getTime() || left.index - right.index);
+  return events;
+};
+
+const createClaudeGraphIndex = (events: readonly ClaudeEvent[]): ClaudeGraphIndex => {
+  const parents = new Map<string, string | null>();
+  const graphSignatures = new Map<string, string>();
+  const conflictingUuids = new Set<string>();
+  for (const event of events) {
+    if (!event.uuid) {
+      continue;
+    }
+    const signature = `${String(event.record.type ?? '')}\0${event.parentUuid ?? ''}`;
+    const existingSignature = graphSignatures.get(event.uuid);
+    if (existingSignature !== undefined && existingSignature !== signature) {
+      conflictingUuids.add(event.uuid);
+    } else if (existingSignature === undefined) {
+      graphSignatures.set(event.uuid, signature);
+      parents.set(event.uuid, event.parentUuid);
+    }
+  }
+  for (const uuid of conflictingUuids) {
+    parents.delete(uuid);
+  }
+  return { conflictingUuids, parents };
+};
+
+const collectClaudePrompts = (events: readonly ClaudeEvent[], graph: ClaudeGraphIndex): ClaudePromptFacts => {
+  const prompts: SessionDetailPrompt[] = [];
+  const promptEvents = new Map<string, ClaudeEvent>();
+  let promptBytes = 0;
+  let promptsTruncated = false;
+  let partial = graph.conflictingUuids.size > 0;
+  for (const current of events) {
+    const { record } = current;
+    if (record.type !== 'user' || record.isMeta === true || record.isSynthetic === true) {
+      continue;
+    }
+    const text = humanPromptText(record.message);
+    if (!text) {
+      continue;
+    }
+    if (prompts.length >= MAX_CLAUDE_PROMPTS) {
+      promptsTruncated = true;
+      partial = true;
+      continue;
+    }
+    const bounded = boundedPrompt(text, MAX_CLAUDE_PROMPT_TOTAL_BYTES - promptBytes);
+    if (!bounded) {
+      promptsTruncated = true;
+      partial = true;
+      continue;
+    }
+    const usableUuid = current.uuid && !graph.conflictingUuids.has(current.uuid) ? current.uuid : null;
+    if (usableUuid && promptEvents.has(usableUuid)) {
+      partial = true;
+      continue;
+    }
+    const id = usableUuid ?? `prompt-${current.index + 1}`;
+    prompts.push({ id, text: bounded.text, timestamp: iso(current.at), truncated: bounded.truncated });
+    promptBytes += bounded.usedBytes;
+    promptsTruncated ||= bounded.truncated;
+    if (usableUuid) {
+      promptEvents.set(usableUuid, current);
+    }
+  }
+  return { partial, promptEvents, prompts, promptsTruncated };
+};
+
+const collectClaudeAssistants = (
+  events: readonly ClaudeEvent[],
+  graph: ClaudeGraphIndex,
+  promptEvents: ReadonlyMap<string, ClaudeEvent>,
+): ClaudeAssistantFacts => {
+  const promptIds = new Set(promptEvents.keys());
+  const assistants: ClaudeAssistant[] = [];
+  const assistantEvents = new Map<string, ClaudeEvent>();
+  const assistantTurnKey = new Map<string, string>();
+  const seenUsage = new Set<string>();
+  let partial = false;
+  let rejectedMetricRecords = 0;
+  for (const current of events) {
+    const { record } = current;
+    if (record.type !== 'assistant') {
+      continue;
+    }
+    const message = isRecord(record.message) ? record.message : null;
+    if (!message?.usage) {
+      continue;
+    }
+    const messageId = typeof message.id === 'string' ? message.id : null;
+    const requestId = typeof record.requestId === 'string' ? record.requestId : '';
+    const deduplicationKey = messageId ? `${messageId}:${requestId}` : null;
+    if (deduplicationKey && seenUsage.has(deduplicationKey)) {
+      continue;
+    }
+    const tokens = parseUsage(message.usage);
+    if (!tokens) {
+      rejectedMetricRecords += 1;
+      continue;
+    }
+    if (deduplicationKey) {
+      seenUsage.add(deduplicationKey);
+    }
+    const model = typeof message.model === 'string' && message.model.length > 0 ? message.model : 'unknown';
+    const tools = Array.isArray(message.content)
+      ? message.content.filter((block) => blockType(block) === 'tool_use').length
+      : 0;
+    assistants.push({ at: current.at, model, tokens, tools, uuid: current.uuid });
+    if (current.uuid && !graph.conflictingUuids.has(current.uuid)) {
+      assistantEvents.set(current.uuid, current);
+      const ancestor = findAncestor(current.parentUuid, graph.parents, promptIds);
+      partial ||= ancestor.cycleOrDepth;
+      assistantTurnKey.set(current.uuid, ancestor.uuid ?? `assistant:${current.uuid}`);
+    } else {
+      partial = true;
+    }
+  }
+  return { assistantEvents, assistants, assistantTurnKey, partial, rejectedMetricRecords };
+};
+
+const createClaudeTurns = (
+  prompts: readonly SessionDetailPrompt[],
+  promptEvents: ReadonlyMap<string, ClaudeEvent>,
+  assistants: readonly ClaudeAssistant[],
+  assistantTurnKey: ReadonlyMap<string, string>,
+): { partial: boolean; turnsByKey: Map<string, MutableTurn> } => {
+  const turnsByKey = new Map<string, MutableTurn>();
+  let partial = prompts.length > MAX_CLAUDE_TURNS;
+  for (const prompt of prompts.slice(0, MAX_CLAUDE_TURNS)) {
+    const promptEvent = promptEvents.get(prompt.id);
+    const at = promptEvent?.at ?? new Date(prompt.timestamp);
+    turnsByKey.set(prompt.id, {
+      assistants: [],
+      durationIntervals: [],
+      end: at,
+      prompt,
+      start: at,
+      timingRejected: false,
+    });
+  }
+  for (const [assistantIndex, assistant] of assistants.entries()) {
+    const key = assistant.uuid
+      ? (assistantTurnKey.get(assistant.uuid) ?? `assistant:${assistant.uuid}`)
+      : `assistant:${assistantIndex}`;
+    let turn = turnsByKey.get(key);
+    if (!turn) {
+      if (turnsByKey.size >= MAX_CLAUDE_TURNS) {
+        partial = true;
+        continue;
+      }
+      turn = {
+        assistants: [],
+        durationIntervals: [],
+        end: assistant.at,
+        prompt: null,
+        start: assistant.at,
+        timingRejected: false,
+      };
+      turnsByKey.set(key, turn);
+      partial = true;
+    }
+    turn.assistants.push(assistant);
+    turn.start = assistant.at < turn.start ? assistant.at : turn.start;
+    turn.end = assistant.at > turn.end ? assistant.at : turn.end;
+  }
+  return { partial, turnsByKey };
+};
+
+const applyClaudeTurnDurations = (
+  events: readonly ClaudeEvent[],
+  graph: ClaudeGraphIndex,
+  assistantEvents: ReadonlyMap<string, ClaudeEvent>,
+  assistantTurnKey: ReadonlyMap<string, string>,
+  turnsByKey: ReadonlyMap<string, MutableTurn>,
+  sessionStart: Date,
+  sessionEnd: Date,
+): boolean => {
+  const assistantIds = new Set(assistantEvents.keys());
+  let partial = false;
+  for (const current of events) {
+    if (!(current.record.type === 'system' && current.record.subtype === 'turn_duration')) {
+      continue;
+    }
+    const ancestor = findAncestor(current.parentUuid, graph.parents, assistantIds);
+    const key = ancestor.uuid ? assistantTurnKey.get(ancestor.uuid) : null;
+    const turn = key ? turnsByKey.get(key) : null;
+    const durationMs = current.record.durationMs;
+    const hasLaterAssistant = turn?.assistants.some((assistant) => assistant.at > current.at) ?? false;
+    if (!(turn && Number.isSafeInteger(durationMs) && Number(durationMs) > 0 && !hasLaterAssistant)) {
+      if (turn) {
+        turn.timingRejected = true;
+      }
+      partial = true;
+      continue;
+    }
+    const intervalStart = new Date(current.at.getTime() - Number(durationMs));
+    if (intervalStart < sessionStart || current.at > sessionEnd) {
+      turn.timingRejected = true;
+      partial = true;
+      continue;
+    }
+    turn.start = intervalStart < turn.start ? intervalStart : turn.start;
+    turn.end = current.at > turn.end ? current.at : turn.end;
+    turn.durationIntervals.push({ endAt: iso(current.at), startAt: iso(intervalStart) });
+  }
+  return partial;
+};
+
+const serializeClaudeTurns = (turnsByKey: ReadonlyMap<string, MutableTurn>): ClaudeTurnFacts => {
+  const detailTurns: SessionDetailTurn[] = [];
+  let partial = false;
+  const orderedTurns = [...turnsByKey.values()].sort((left, right) => left.start.getTime() - right.start.getTime());
+  for (const [index, turn] of orderedTurns.entries()) {
+    const tokens = emptyTokens();
+    let tools = 0;
+    for (const assistant of turn.assistants) {
+      partial ||= !addTokens(tokens, assistant.tokens);
+      tools += assistant.tools;
+    }
+    const intervals = turn.timingRejected ? [] : turn.durationIntervals;
+    const durationMs = intervals.length > 0 ? intervalUnionMs(intervals) : null;
+    detailTurns.push({
+      durationMs,
+      effort: null,
+      effortKind: 'unavailable',
+      endAt: iso(turn.end),
+      index,
+      intervals,
+      model: turn.assistants.at(-1)?.model ?? 'unknown',
+      promptIds: turn.prompt ? [turn.prompt.id] : [],
+      startAt: iso(turn.start),
+      timingStatus: durationMs === null ? 'unavailable' : 'recorded',
+      tokens,
+      tools,
+    });
+  }
+  return { detailTurns, partial };
+};
+
+const collectClaudeMetadata = (events: readonly ClaudeEvent[], input: ClaudeSessionInput): ClaudeMetadataFacts => {
+  let title: string | null = null;
+  let parentSourceSessionId: string | null = null;
+  let sourcePath: string | null = null;
+  let sidechain = input.isAgentFile === true;
+  const observedSourcePaths = new Set<string>();
+  const branchObservations: { name: string; observedAt: string | null }[] = [];
+  const pullRequestCandidates: SessionVcsPullRequest[] = [];
+  let invalidVcs = false;
+  for (const current of events) {
+    const { record } = current;
+    if (input.isAgentFile && typeof record.sessionId === 'string' && record.sessionId !== input.sourceSessionId) {
+      parentSourceSessionId = record.sessionId;
+    }
+    sidechain ||= record.isSidechain === true;
+    if (record.type === 'ai-title' && typeof record.aiTitle === 'string') {
+      title = record.aiTitle;
+    }
+    if (typeof record.cwd === 'string') {
+      sourcePath = record.cwd;
+      observedSourcePaths.add(record.cwd);
+    }
+    if (typeof record.gitBranch === 'string') {
+      branchObservations.push({ name: record.gitBranch, observedAt: iso(current.at) });
+    } else if (record.gitBranch !== undefined) {
+      invalidVcs = true;
+    }
+    if (record.type === 'pr-link') {
+      if (typeof record.prUrl === 'string') {
+        pullRequestCandidates.push({
+          number: Number.isSafeInteger(record.prNumber) && Number(record.prNumber) > 0 ? Number(record.prNumber) : null,
+          observedAt: iso(current.at),
+          repository: typeof record.prRepository === 'string' ? record.prRepository : null,
+          url: record.prUrl,
+        });
+      } else {
+        invalidVcs = true;
+      }
+    }
+  }
+  const hasMultipleSourcePaths = observedSourcePaths.size > 1;
+  const compactedBranches = compactSessionVcsBranchObservations(
+    branchObservations,
+    'harness-recorded',
+    hasMultipleSourcePaths ? null : input.repository,
+  );
+  const normalizedPullRequests = normalizeSessionVcsPullRequests(pullRequestCandidates);
+  const hasVcs = Boolean(
+    input.repository || branchObservations.length > 0 || pullRequestCandidates.length > 0 || invalidVcs,
+  );
+  const vcs = hasVcs
+    ? parseSessionVcsContext({
+        branches: compactedBranches.spans,
+        headCommit: null,
+        partial: invalidVcs || hasMultipleSourcePaths || compactedBranches.partial || normalizedPullRequests.partial,
+        pullRequests: normalizedPullRequests.pullRequests,
+        repository: input.repository,
+      })
+    : undefined;
+  return { parentSourceSessionId, sidechain, sourcePath, title, ...(vcs ? { vcs } : {}) };
+};
+
+export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessionFacts | null => {
+  if (!input.sourceSessionId || input.records.length > MAX_CLAUDE_RECORDS) {
+    return null;
+  }
+  const events = parseClaudeEvents(input.records);
+  const start = events[0]?.at;
+  const end = events.at(-1)?.at;
+  if (!(start && end)) {
+    return null;
+  }
+
+  const graph = createClaudeGraphIndex(events);
+  const promptFacts = collectClaudePrompts(events, graph);
+  const assistantFacts = collectClaudeAssistants(events, graph, promptFacts.promptEvents);
+  const { assistants } = assistantFacts;
+  const { prompts, promptsTruncated } = promptFacts;
+  if (assistants.length === 0 && prompts.length === 0) {
+    return null;
+  }
+
+  const mutableTurns = createClaudeTurns(
+    prompts,
+    promptFacts.promptEvents,
+    assistants,
+    assistantFacts.assistantTurnKey,
+  );
+  const timingPartial = applyClaudeTurnDurations(
+    events,
+    graph,
+    assistantFacts.assistantEvents,
+    assistantFacts.assistantTurnKey,
+    mutableTurns.turnsByKey,
+    start,
+    end,
+  );
+  const turnFacts = serializeClaudeTurns(mutableTurns.turnsByKey);
+  const { detailTurns } = turnFacts;
+  const turnsPartial =
+    promptFacts.partial || assistantFacts.partial || mutableTurns.partial || timingPartial || turnFacts.partial;
+  let { rejectedMetricRecords } = assistantFacts;
+
+  const recordedTurns = detailTurns.filter((turn) => turn.timingStatus === 'recorded').length;
+  const activeDurationMs = recordedTurns > 0 ? intervalUnionMs(detailTurns.flatMap((turn) => turn.intervals)) : null;
+  const elapsedDurationMs = end.getTime() - start.getTime();
+  let durationStatus: SessionDetail['durationStatus'] = 'partial';
+  if (recordedTurns === 0) {
+    durationStatus = 'unavailable';
+  } else if (recordedTurns === detailTurns.length) {
+    durationStatus = 'recorded';
+  }
+  const idleDurationMs = activeDurationMs === null ? null : Math.max(0, elapsedDurationMs - activeDurationMs);
+  const totalTokens = emptyTokens();
+  for (const assistant of assistants) {
+    if (!addTokens(totalTokens, assistant.tokens)) {
+      rejectedMetricRecords += 1;
+    }
+  }
+  const segments = modelSegments(assistants);
+  const models = segments.map(({ model }) => model);
+  const modelWeights = new Map(
+    segments.map((segment) => [segment.model, segment.tokIn + segment.tokOut + segment.tokCr + segment.tokCw]),
+  );
+
+  const metadata = collectClaudeMetadata(events, input);
+  const { sidechain, title } = metadata;
+  const name = title ?? `${sidechain ? 'subagent ' : 'claude '}${input.sourceSessionId.slice(0, 8)}`;
+  let titleSource: ClaudeReportFacts['titleSource'] = 'id';
+  if (title) {
+    titleSource = 'ai';
+  } else if (sidechain) {
+    titleSource = 'agent-role';
+  }
+  const tools = assistants.reduce((total, assistant) => total + assistant.tools, 0);
+  const projection: SessionProjectionFacts = {
+    calls: assistants.length,
+    durationMs: activeDurationMs,
+    modelSegments: segments
+      .map((segment) => ({
+        model: segment.model,
+        tokens: {
+          cacheRead: segment.tokCr,
+          cacheWrite: segment.tokCw,
+          input: segment.tokIn,
+          output: segment.tokOut,
+          total: segment.tokCr + segment.tokCw + segment.tokIn + segment.tokOut,
+        },
+      }))
+      .sort((left, right) => left.model.localeCompare(right.model)),
+    partial: turnsPartial || promptsTruncated,
+    tokens: totalTokens,
+    tools,
+    turns: prompts.length,
+  };
+  const detailFacts: SessionDetail = {
+    activeDurationMs,
+    durationStatus,
+    efforts: [],
+    elapsedDurationMs,
+    endedAt: iso(end),
+    idleDurationMs,
+    models,
+    observedAt: new Date().toISOString(),
+    phases: detailPhases(assistants),
+    prompts,
+    promptsTruncated,
+    sourceSessionId: input.sourceSessionId,
+    startedAt: iso(start),
+    turns: detailTurns,
+    turnsStatus: turnsPartial ? 'partial' : 'recorded',
+  };
+  return {
+    detailFacts,
+    projection,
+    report: {
+      calls: assistants.length,
+      end,
+      model: dominant(modelWeights),
+      modelSegments: segments,
+      models,
+      name,
+      rejectedMetricRecords,
+      sidechain,
+      start,
+      titleSource,
+      tokens: {
+        cr: totalTokens.cacheRead,
+        cw: totalTokens.cacheWrite,
+        in: totalTokens.input,
+        out: totalTokens.output,
+      },
+      tools,
+      turns: prompts.length,
+    },
+    source: {
+      parentSourceSessionId: metadata.parentSourceSessionId,
+      sourcePath: metadata.sourcePath,
+      ...(metadata.vcs ? { vcs: metadata.vcs } : {}),
+    },
+  };
+};

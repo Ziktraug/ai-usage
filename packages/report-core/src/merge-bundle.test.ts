@@ -7,6 +7,7 @@ import {
   parseUsageMergeBundle,
   serializeUsageMergeBundle,
   toSerializedMergeRow,
+  usageContentHash,
 } from './merge-bundle';
 import { actualCost, normalizeUsageRow } from './usage-row';
 
@@ -34,7 +35,7 @@ describe('usage merge bundles', () => {
       rows: [{ ...row, source: { harnessKey: 'codex', sourceSessionId: 'session-1' } }],
     });
 
-    expect(bundle.version).toBe(2);
+    expect(bundle.version).toBe(3);
     expect(bundle.rows).toHaveLength(1);
     expect(bundle.rows[0]?.source.machineId).toBe('machine-a');
     expect(bundle.rows[0]?.source.machineLabel).toBe('Machine A');
@@ -73,10 +74,76 @@ describe('usage merge bundles', () => {
   test('parses valid bundles and rejects invalid row provenance', () => {
     const bundle = createUsageMergeBundle({ machine, rows: [{ ...row }] });
     expect(parseUsageMergeBundle(JSON.stringify(bundle)).machine.id).toBe('machine-a');
-    expect(parseUsageMergeBundle(JSON.stringify({ ...bundle, version: 1 })).version).toBe(2);
+    expect(() => parseUsageMergeBundle(JSON.stringify({ ...bundle, version: 1 }))).toThrow('invalid rows');
+    expect(() => parseUsageMergeBundle(JSON.stringify({ ...bundle, version: 2 }))).toThrow('invalid rows');
 
     const invalid = { ...bundle, rows: [{ ...bundle.rows[0], source: { harnessKey: 'codex' } }] };
     expect(() => parseUsageMergeBundle(JSON.stringify(invalid))).toThrow('invalid rows');
+  });
+
+  test('migrates genuine v1 and v2 row hashes created before VCS joined the fingerprint', () => {
+    const bundle = createUsageMergeBundle({ generatedAt: new Date('2026-06-19T12:00:00.000Z'), machine, rows: [row] });
+    const current = bundle.rows[0]!;
+    const legacySourceFingerprint = usageContentHash({
+      activeDate: current.activeDate,
+      date: current.date,
+      endDate: current.endDate,
+      harness: current.harness,
+      model: current.model,
+      models: current.models ?? [],
+      name: current.name,
+      project: current.project,
+      provider: current.provider,
+      sourcePath: current.source.sourcePath ?? current.source.artifactPath ?? null,
+      tokenTotal: current.tokenTotal,
+    });
+    const { contentHash: _currentContentHash, ...legacyContent } = current;
+    const legacyRow = {
+      ...legacyContent,
+      sourceFingerprint: legacySourceFingerprint,
+      contentHash: usageContentHash({ ...legacyContent, sourceFingerprint: legacySourceFingerprint }),
+    };
+
+    for (const version of [1, 2]) {
+      const parsed = parseUsageMergeBundle(JSON.stringify({ ...bundle, rows: [legacyRow], version }));
+      expect(parsed.version).toBe(3);
+      expect(parsed.rows[0]?.source.vcs).toBeUndefined();
+      expect(parsed.rows[0]?.sourceFingerprint).not.toBe(legacySourceFingerprint);
+      expect(() => parseSerializedMergeRow(parsed.rows[0])).not.toThrow();
+    }
+  });
+
+  test('preserves VCS in v3, rejects it under v2, and changes content without changing identity', () => {
+    const vcs = {
+      branches: [],
+      headCommit: null,
+      partial: false,
+      pullRequests: [],
+      repository: {
+        host: 'github.com',
+        ownerPath: 'example/project',
+        provenance: 'harness-recorded' as const,
+        webUrl: 'https://github.com/example/project',
+      },
+    };
+    const withoutVcs = toSerializedMergeRow(
+      { ...row, source: { harnessKey: 'codex', sourceSessionId: 'stable-vcs' } },
+      machine,
+    );
+    const withVcs = toSerializedMergeRow(
+      { ...row, source: { harnessKey: 'codex', sourceSessionId: 'stable-vcs', vcs } },
+      machine,
+    );
+    const bundle = createUsageMergeBundle({
+      machine,
+      rows: [{ ...row, source: { harnessKey: 'codex', sourceSessionId: 'stable-vcs', vcs } }],
+    });
+
+    expect(parseUsageMergeBundle(serializeUsageMergeBundle(bundle)).rows[0]?.source.vcs).toEqual(vcs);
+    expect(withVcs.rowKey).toBe(withoutVcs.rowKey);
+    expect(withVcs.sourceFingerprint).not.toBe(withoutVcs.sourceFingerprint);
+    expect(withVcs.contentHash).not.toBe(withoutVcs.contentHash);
+    expect(() => parseUsageMergeBundle(JSON.stringify({ ...bundle, version: 2 }))).toThrow('legacy v2');
   });
 
   test('rejects malformed dates, numbers, derived fields, and unknown row fields', () => {

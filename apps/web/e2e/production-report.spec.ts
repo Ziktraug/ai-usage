@@ -1,4 +1,9 @@
-import { HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL } from '@ai-usage/local-collectors/test-fixtures/harness-home';
+import {
+  HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL,
+  HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL,
+  HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
+  HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
+} from '@ai-usage/local-collectors/test-fixtures/harness-home';
 import { expect, test } from '@playwright/test';
 
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
@@ -236,11 +241,14 @@ test('hydrates and automatically pages Sessions through the production revision 
   const initialDocumentHtml = await initialDocumentResponse.text();
   expect(initialDocumentResponse.ok()).toBe(true);
   expect(initialDocumentHtml).not.toContain(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL);
+  expect(initialDocumentHtml).not.toContain(HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL);
+  expect(initialDocumentHtml).not.toContain(HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL);
+  expect(initialDocumentHtml).not.toContain(HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL);
 
   await page.goto('/?tab=sessions');
   const report = page.locator('main[data-hydrated="true"]');
   await expect(report).toBeVisible();
-  await expect(page.getByText('205 / 205 sessions', { exact: true })).toBeVisible();
+  await expect(page.getByText('207 / 207 sessions', { exact: true })).toBeVisible();
   await expect(report).toHaveAttribute('data-report-revision', NON_EMPTY_ATTRIBUTE_PATTERN);
   await expect(report).toHaveAttribute('data-request-fingerprint', SESSION_QUERY_FINGERPRINT_PATTERN);
   const revision = await report.getAttribute('data-report-revision');
@@ -259,7 +267,7 @@ test('hydrates and automatically pages Sessions through the production revision 
         .locator('tr[data-index]')
         .evaluateAll((rows) => Math.max(...rows.map((row) => Number(row.getAttribute('data-index')))));
     })
-    .toBe(203);
+    .toBe(204);
   await expect(page.getByRole('button', { name: 'Load more sessions' })).toHaveCount(0);
 
   const rootSessionRow = page.locator('tr[data-index]').filter({ hasText: 'Implement fixture root' });
@@ -267,6 +275,14 @@ test('hydrates and automatically pages Sessions through the production revision 
   await rootSessionRow.click({ force: true });
   const rootDrawer = page.getByRole('dialog');
   await expect(rootDrawer).toBeVisible();
+  const codexSourceControl = rootDrawer.getByRole('region', { name: 'Session source control' });
+  await expect(
+    codexSourceControl.getByRole('link', { name: 'Open repository fixture/ai-usage in a new tab' }),
+  ).toBeVisible();
+  await expect(codexSourceControl).toContainText('fixture/main');
+  await expect(codexSourceControl).toContainText('01234567');
+  await codexSourceControl.getByRole('button', { name: 'Resolve GitHub repository and pull request links' }).click();
+  await expect(codexSourceControl.getByRole('link', { name: 'Open #42 in a new tab' })).toBeVisible();
   await rootDrawer.getByRole('button', { name: 'Analyze root session chronology' }).click();
   const sessionAnalysis = rootDrawer.getByRole('region', { name: 'Session analysis' });
   await expect(sessionAnalysis.getByRole('heading', { level: 2, name: 'Session analysis' })).toBeVisible();
@@ -341,6 +357,44 @@ test('hydrates and automatically pages Sessions through the production revision 
   }
   expect(serverFunctionResponses.length).toBeGreaterThanOrEqual(5);
   expect(serverFunctionResponses.every(({ status }) => status === 200)).toBe(true);
+  const allResponseBodies = responseBodies.join('\n');
+  expect(allResponseBodies).not.toContain(HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL);
+  expect(allResponseBodies).not.toContain(HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL);
+  expect(allResponseBodies).not.toContain(HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL);
+});
+
+test('opens Claude chronology and recorded source control from the production revision', async ({ page }) => {
+  await page.goto('/?tab=sessions');
+  const sessionViewport = page.locator('[data-session-surface="desktop"]');
+  await expect(sessionViewport).toBeVisible();
+  await expect
+    .poll(
+      async () =>
+        await sessionViewport.evaluate((element) => {
+          element.scrollTop = element.scrollHeight;
+
+          const claudeRow = Array.from(element.querySelectorAll('tr[data-index]')).find((row) =>
+            row.textContent?.includes('claude claude-f'),
+          );
+          if (!(claudeRow instanceof HTMLElement)) {
+            return false;
+          }
+
+          claudeRow.click();
+          return true;
+        }),
+    )
+    .toBe(true);
+
+  const claudeDrawer = page.getByRole('dialog');
+  const claudeSourceControl = claudeDrawer.getByRole('region', { name: 'Session source control' });
+  await expect(claudeSourceControl).toContainText('fixture/main → fixture/topic');
+  await expect(claudeSourceControl.getByRole('link', { name: 'Open #27 in a new tab' })).toBeVisible();
+  await claudeDrawer.getByRole('button', { name: 'Analyze root session chronology' }).click();
+  const claudeAnalysis = claudeDrawer.getByRole('region', { name: 'Session analysis' });
+  await expect(claudeAnalysis.getByText(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL, { exact: true })).toHaveCount(1);
+  await expect(claudeAnalysis).toContainText('Root interval time');
+  await expect(claudeAnalysis).toContainText('Recorded duration unavailable');
 });
 
 test('automatically pages mobile Sessions while scrolling', async ({ page }) => {
@@ -356,6 +410,6 @@ test('automatically pages mobile Sessions while scrolling', async ({ page }) => 
       await pagingSentinel.scrollIntoViewIfNeeded();
       return await summaries.locator('li').count();
     })
-    .toBe(204);
+    .toBe(205);
   await expect(page.getByRole('button', { name: 'Load more sessions' })).toHaveCount(0);
 });
