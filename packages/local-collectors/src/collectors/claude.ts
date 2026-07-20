@@ -18,7 +18,6 @@ import { base, safeJSON, usablePrompt } from '../text';
 
 interface ClaudeHistoryFallback {
   end: Date;
-  firstPrompt: string | null;
   project: string | null;
   sessionId: string;
   start: Date;
@@ -174,7 +173,6 @@ const readClaudeHistoryFallbacks = (
         start: date,
         end: date,
         project: typeof event.project === 'string' ? event.project : null,
-        firstPrompt: null,
         turns: 0,
       };
 
@@ -189,9 +187,6 @@ const readClaudeHistoryFallbacks = (
       }
       if (usageBearing) {
         current.turns++;
-        if (!current.firstPrompt) {
-          current.firstPrompt = prompt;
-        }
       }
       sessions.set(sessionId, current);
     });
@@ -378,8 +373,8 @@ export const collectClaudeResult = Effect.gen(function* () {
       date: session.start,
       endDate: session.end,
       provider,
-      name: session.firstPrompt || `claude ${session.sessionId.slice(0, 8)}`,
-      titleSource: session.firstPrompt ? 'first-prompt' : 'id',
+      name: `claude ${session.sessionId.slice(0, 8)}`,
+      titleSource: 'id',
       model: 'usage unavailable',
       project: base(session.project),
       tokens: { in: 0, out: 0, cr: 0, cw: 0 },

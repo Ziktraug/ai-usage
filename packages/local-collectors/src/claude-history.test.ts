@@ -12,7 +12,7 @@ import { Effect } from 'effect';
 import { readClaudeSessionAnalysis } from './claude-history';
 import { collectClaude } from './collectors/claude';
 import { createLocalHistoryStorage, LocalHistoryStorage } from './local-history';
-import { seedHarnessHome } from './test-fixtures/harness-home';
+import { HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL, seedHarnessHome } from './test-fixtures/harness-home';
 
 const homes: string[] = [];
 
@@ -40,7 +40,7 @@ describe('readClaudeSessionAnalysis', () => {
     expect(analysis?.detail.sourceSessionId).toBe(fixture.ids.claude);
     expect(analysis?.detail.durationStatus).toBe('partial');
     expect(analysis?.detail.prompts.map(({ text }) => text)).toEqual([
-      'Build the fixture report',
+      HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
       'Add the golden assertions',
     ]);
     expect(analysis?.projection).toMatchObject({ calls: 2, tools: 1, turns: 2 });
