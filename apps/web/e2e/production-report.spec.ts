@@ -270,8 +270,9 @@ test('hydrates and automatically pages Sessions through the production revision 
   await rootDrawer.getByRole('button', { name: 'Analyze root session chronology' }).click();
   const sessionAnalysis = rootDrawer.getByRole('region', { name: 'Session analysis' });
   await expect(sessionAnalysis.getByRole('heading', { level: 2, name: 'Session analysis' })).toBeVisible();
-  const promptSection = sessionAnalysis.locator('section[aria-labelledby="session-prompts"]');
-  await expect(promptSection).toContainText(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL);
+  await expect(rootDrawer.locator('[aria-label="Token anatomy"]')).toBeVisible();
+  const timelineSection = sessionAnalysis.locator('section[aria-labelledby="session-timeline"]');
+  await expect(timelineSection).toContainText(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL);
   await expect(sessionAnalysis.getByText(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL, { exact: true })).toHaveCount(1);
   const consistencyMetadata = sessionAnalysis.locator('[data-session-analysis-item="consistency-meta"]');
   await expect(consistencyMetadata).toHaveText('Local detail · comparable metrics match this report revision.');
@@ -285,12 +286,20 @@ test('hydrates and automatically pages Sessions through the production revision 
   await expect(timingCoverage).toHaveAttribute('data-tone', 'neutral');
   await expect(timingCoverage).not.toHaveAttribute('role', 'status');
   await expect(sessionAnalysis.locator('[data-session-analysis-item="partial-turns"]')).toHaveCount(0);
-  await expect(sessionAnalysis.getByText('Root task-open time', { exact: true }).locator('..')).toContainText('≥');
-  await expect(sessionAnalysis.getByText('Between tasks', { exact: true }).locator('..')).toContainText('≤');
-  const privacyMetadata = promptSection.locator('[data-session-analysis-item="privacy"]');
+  await expect(sessionAnalysis.locator('[data-session-analysis-metric="active"]')).toContainText('≥');
+  await expect(sessionAnalysis.locator('[data-session-analysis-metric="gap"]')).toContainText('≤');
+  await expect(sessionAnalysis.getByRole('button', { name: 'Show real gaps' })).toHaveCount(0);
+  const privacyMetadata = timelineSection.locator('[data-session-analysis-item="privacy"]');
   await expect(privacyMetadata).toBeVisible();
   await expect(privacyMetadata).toHaveAttribute('data-tone', 'neutral');
   await expect(privacyMetadata).not.toHaveAttribute('role', 'status');
+  const hideAnalysisButton = rootDrawer.getByRole('button', { name: 'Hide session chronology' });
+  await expect(hideAnalysisButton).toBeVisible();
+  await expect(hideAnalysisButton).toHaveText('Hide analysis');
+  await hideAnalysisButton.click();
+  await expect(sessionAnalysis).toHaveCount(0);
+  await expect(rootDrawer).toBeVisible();
+  await expect(rootDrawer.locator('[aria-label="Token anatomy"]')).toBeVisible();
   await rootDrawer.getByRole('button', { name: 'Close session details' }).click();
   await expect(rootDrawer).toHaveCount(0);
 
