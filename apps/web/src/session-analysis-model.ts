@@ -172,7 +172,6 @@ export interface SessionDurationCaptionPart {
 export const GAP_COMPRESSION_THRESHOLD_MS = 15 * 60 * 1000;
 
 const COMPRESSED_GAP_WIDTH_PERCENT = 2;
-const MAX_COMPRESSED_GAPS = Math.floor(100 / COMPRESSED_GAP_WIDTH_PERCENT) - 1;
 
 const clamp = (value: number, minimum: number, maximum: number): number => Math.min(maximum, Math.max(minimum, value));
 
@@ -336,29 +335,21 @@ const compressibleGaps = (detail: SessionDetail): CompressibleGap[] => {
     }))
     .filter(({ end, start }) => end >= start);
   const gaps: CompressibleGap[] = [];
-
-  for (let index = 1; index < blocks.length; index += 1) {
-    const previousBlock = blocks[index - 1];
-    const block = blocks[index];
-    if (!(previousBlock && block)) {
-      continue;
-    }
+  let previousBlock = blocks[0];
+  if (!previousBlock) {
+    return gaps;
+  }
+  for (const block of blocks.slice(1)) {
     const gapMs = block.start - previousBlock.end;
     if (gapMs > GAP_COMPRESSION_THRESHOLD_MS) {
       gaps.push({ end: block.start, gapMs, start: previousBlock.end });
     }
+    previousBlock = block;
   }
   return gaps;
 };
 
-const displayableCompressibleGaps = (detail: SessionDetail): CompressibleGap[] => {
-  const gaps = compressibleGaps(detail);
-  // Preserve wall-clock scale when fixed 2% breaks would consume the whole axis.
-  return gaps.length <= MAX_COMPRESSED_GAPS ? gaps : [];
-};
-
-export const timelineHasCompressibleGaps = (detail: SessionDetail): boolean =>
-  displayableCompressibleGaps(detail).length > 0;
+export const timelineHasCompressibleGaps = (detail: SessionDetail): boolean => compressibleGaps(detail).length > 0;
 
 const linearTimelineScale = (detail: SessionDetail, mode: TimelineScaleMode): TimelineScale => ({
   breaks: [],
@@ -376,7 +367,7 @@ export const buildTimelineScale = (detail: SessionDetail, mode: TimelineScaleMod
     return linearTimelineScale(detail, mode);
   }
 
-  const gaps = displayableCompressibleGaps(detail);
+  const gaps = compressibleGaps(detail);
   if (gaps.length === 0) {
     return linearTimelineScale(detail, mode);
   }
@@ -384,7 +375,7 @@ export const buildTimelineScale = (detail: SessionDetail, mode: TimelineScaleMod
   const compressedDuration = gaps.reduce((total, gap) => total + gap.gapMs, 0);
   const proportionalDuration = timelineDuration - compressedDuration;
   const fixedGapWidth = COMPRESSED_GAP_WIDTH_PERCENT;
-  const proportionalWidth = 100 - fixedGapWidth * gaps.length;
+  const proportionalWidth = Math.max(0, 100 - fixedGapWidth * gaps.length);
   const percentPerMillisecond = proportionalDuration > 0 ? proportionalWidth / proportionalDuration : 0;
   const breaks: TimelineScaleBreak[] = [];
   const segments: TimelineScaleSegment[] = [];
@@ -406,7 +397,7 @@ export const buildTimelineScale = (detail: SessionDetail, mode: TimelineScaleMod
       startMs: gap.start,
       startPercent: gapStartPercent,
     });
-    breaks.push({ atPercent: gapStartPercent + fixedGapWidth / 2, gapMs: gap.gapMs });
+    breaks.push({ atPercent: clamp(gapStartPercent + fixedGapWidth / 2, 0, 100), gapMs: gap.gapMs });
     cursorMs = gap.end;
     cursorPercent = gapStartPercent + fixedGapWidth;
   }

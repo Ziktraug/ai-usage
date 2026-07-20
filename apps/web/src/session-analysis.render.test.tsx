@@ -440,9 +440,8 @@ describe('SessionAnalysis SSR semantics', () => {
     });
     const taskMarkup = html.slice(html.indexOf('data-session-analysis-row="task"'));
 
-    expect(taskMarkup).toContain('Explain the chronology clearly');
-    expect(taskMarkup).toContain('Explain the chronology clearly…');
-    expect(taskMarkup.match(/>Explain the chronology clearly</g)).toHaveLength(1);
+    expect(taskMarkup).toContain('Prompt: Explain the chronology clearly');
+    expect(taskMarkup).not.toContain('Explain the chronology clearly…');
     expect(taskMarkup).not.toContain('Task 1');
     expect(taskMarkup).toContain('1 prompt');
     expect(taskMarkup).not.toContain('1 prompts');
