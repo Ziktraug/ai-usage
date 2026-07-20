@@ -304,15 +304,15 @@ describe('session analysis model', () => {
       turns: [turn(0, '2026-07-18T10:10:00.000Z', '2026-07-18T10:50:00.000Z')],
     });
     const scale = buildTimelineScale(session, 'wall-clock');
-    const intervals = [
+    const intervals: ReadonlyArray<readonly [string, string]> = [
       ['2026-07-18T09:50:00.000Z', '2026-07-18T10:15:00.000Z'],
       ['2026-07-18T10:15:00.000Z', '2026-07-18T10:45:00.000Z'],
       ['2026-07-18T10:50:00.000Z', '2026-07-18T11:10:00.000Z'],
     ];
 
     for (const [startAt, endAt] of intervals) {
-      expect(positionOnScale(scale, startAt!, endAt!)).toEqual(
-        positionOnTimeline(startAt!, endAt!, session.startedAt, session.endedAt),
+      expect(positionOnScale(scale, startAt, endAt)).toEqual(
+        positionOnTimeline(startAt, endAt, session.startedAt, session.endedAt),
       );
     }
   });
@@ -365,8 +365,12 @@ describe('session analysis model', () => {
     expect(scale.breaks[0]?.atPercent).toBeCloseTo(20.2);
     expect(scale.breaks[1]?.atPercent).toBeCloseTo(60.6);
     const expectedWidths = [19.2, 2, 38.4, 2, 38.4];
-    for (const [index, position] of positions.entries()) {
-      expect(position.widthPercent).toBeCloseTo(expectedWidths[index]!);
+    const widthComparisons = positions.map((position, index) => ({
+      actual: position.widthPercent,
+      expected: expectedWidths[index] ?? Number.NaN,
+    }));
+    for (const { actual, expected } of widthComparisons) {
+      expect(actual).toBeCloseTo(expected);
     }
     expect(positions.reduce((total, { widthPercent }) => total + widthPercent, 0)).toBeCloseTo(100);
   });
@@ -379,27 +383,31 @@ describe('session analysis model', () => {
       ],
     });
     const scale = buildTimelineScale(session, 'compressed');
+    const firstTimestamp = '2026-07-18T09:00:00.000Z';
+    const lastTimestamp = '2026-07-18T12:00:00.000Z';
     const timestamps = [
-      '2026-07-18T09:00:00.000Z',
+      firstTimestamp,
       '2026-07-18T10:00:00.000Z',
       '2026-07-18T10:20:00.000Z',
       '2026-07-18T10:40:00.000Z',
       '2026-07-18T11:00:00.000Z',
-      '2026-07-18T12:00:00.000Z',
+      lastTimestamp,
     ];
     const points = timestamps.map((value) => positionOnScale(scale, value, value).leftPercent);
 
-    expect(positionOnScale(scale, timestamps[0]!, timestamps.at(-1)!)).toEqual({
+    expect(positionOnScale(scale, firstTimestamp, lastTimestamp)).toEqual({
       leftPercent: 0,
       widthPercent: 100,
     });
     expect(positionOnScale(scale, '2026-07-18T10:50:00.000Z', '2026-07-18T10:30:00.000Z').widthPercent).toBe(0);
-    for (let index = 1; index < points.length; index += 1) {
-      expect(points[index]!).toBeGreaterThanOrEqual(points[index - 1]!);
+    let previousPoint = points[0] ?? 0;
+    for (const point of points.slice(1)) {
+      expect(point).toBeGreaterThanOrEqual(previousPoint);
+      previousPoint = point;
     }
   });
 
-  test('keeps wall-clock scale when fixed-width breaks would consume the axis', () => {
+  test('keeps every fixed-width break when gaps consume the axis', () => {
     const sessionStartMs = Date.parse('2026-07-18T10:00:00.000Z');
     const minuteMs = 60_000;
     const turns = Array.from({ length: 51 }, (_, index) => {
@@ -417,15 +425,18 @@ describe('session analysis model', () => {
     });
     const scale = buildTimelineScale(session, 'compressed');
 
-    expect(timelineHasCompressibleGaps(session)).toBe(false);
-    expect(scale.breaks).toEqual([]);
+    expect(timelineHasCompressibleGaps(session)).toBe(true);
+    expect(scale.breaks).toHaveLength(50);
     expect(positionOnScale(scale, session.startedAt, session.endedAt)).toEqual({
       leftPercent: 0,
       widthPercent: 100,
     });
-    expect(positionOnScale(scale, turns[25]!.startAt, turns[25]!.endAt)).toEqual(
-      positionOnTimeline(turns[25]!.startAt, turns[25]!.endAt, session.startedAt, session.endedAt),
-    );
+    const middleTurn = turns[25];
+    if (!middleTurn) {
+      throw new Error('Expected the generated timeline to contain a middle task.');
+    }
+    expect(positionOnScale(scale, middleTurn.startAt, middleTurn.endAt).widthPercent).toBe(0);
+    expect(scale.breaks.every(({ atPercent }) => atPercent >= 0 && atPercent <= 100)).toBe(true);
   });
 
   test('handles a zero-duration session like the existing timeline', () => {

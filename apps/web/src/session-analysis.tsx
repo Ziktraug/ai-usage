@@ -306,8 +306,7 @@ const retryButton = css({
 
 const fmtDateTime = (value: string): string => dateTimeFormatter.format(new Date(value));
 const fmtTokens = (tokens: number): string => compactNumberFormatter.format(tokens);
-const fmtCount = (count: number, noun: string): string =>
-  `${fmtTokens(count)}${countLabel(count, noun).slice(String(count).length)}`;
+const fmtCount = (count: number, noun: string): string => `${fmtTokens(count)} ${count === 1 ? noun : `${noun}s`}`;
 const fmtShare = (share: number): string => `${share >= 10 ? share.toFixed(0) : share.toFixed(1)}%`;
 const fmtEffort = (effort: string | null, effortKind: SessionDetailPhase['effortKind']): string => {
   if (effort !== null) {
@@ -325,11 +324,9 @@ const phaseTone = (phase: SessionDetailPhase, phases: readonly SessionDetailPhas
   phaseToneClasses[phaseToneIndex(phase, phases)] ?? phaseToneClasses[0];
 const promptPreviewText = (text: string): string => {
   const normalized = text.replace(COLLAPSE_WHITESPACE, ' ').trim();
-  if (!normalized) {
-    return '';
-  }
-  const preview = normalized.length > PROMPT_PREVIEW_LENGTH ? normalized.slice(0, PROMPT_PREVIEW_LENGTH) : normalized;
-  return `${preview.trimEnd()}…`;
+  return normalized.length > PROMPT_PREVIEW_LENGTH
+    ? `${normalized.slice(0, PROMPT_PREVIEW_LENGTH).trimEnd()}…`
+    : normalized;
 };
 const formatPhaseCost = (phase: SessionDetailPhase): string => {
   if (phase.cost === null) {
@@ -488,6 +485,7 @@ const TaskRow = (props: {
     const preview = prompt ? promptPreviewText(prompt.text) : '';
     return preview || `${props.durationSemantics.rowNoun} ${props.row.index + 1}`;
   };
+  const summaryLabel = () => (primaryPrompt() ? `Prompt: ${label()}` : label());
   const effort = () => fmtEffort(props.row.effort, props.row.effortKind);
   const showPhaseMeta = () => {
     const dominant = props.dominantPhase;
@@ -516,7 +514,7 @@ const TaskRow = (props: {
           </span>
           <span class={promptLabelContent}>
             <span class={promptTitleRow}>
-              <span class={promptPreview}>{label()}</span>
+              <span class={promptPreview}>{summaryLabel()}</span>
               <span class={muted} title={props.durationSemantics.metricHint}>
                 {formatSessionDuration(props.row.durationMs)}
               </span>
@@ -576,7 +574,7 @@ const OrphanPromptRow = (props: {
             ▶
           </span>
           <span class={promptLabelContent}>
-            <span class={promptPreview}>{label()}</span>
+            <span class={promptPreview}>Prompt: {label()}</span>
             <time class={timelineMeta} dateTime={props.prompt.timestamp}>
               {fmtDateTime(props.prompt.timestamp)} · prompt without task attribution
             </time>
