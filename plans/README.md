@@ -41,7 +41,14 @@ pull request unless the user explicitly asks.
 | 025 | Make Session Analysis Trustworthy End to End | P1 | L | 016-018, 024 | DONE |
 | 026 | Unify the Session Drawer and Make Chronology Readable | P1 | M | 025 | DONE |
 | 027 | Extend Session Insight to Claude and Add Trustworthy Git Links | P1 | XL | 025, 026 | DONE |
-| 028 | Frontend Portfolio Step-up | P0 | L | - | TODO |
+| 028 | Build Read-only Demo | P0 | M | merged main | BLOCKED — post-merge baseline refresh |
+| 029 | Close Frontend Accessibility | P0 | M | 028 | BLOCKED |
+| 030 | Add Frontend Regression Gates | P0 | M | 029 | BLOCKED |
+| 031 | Decide Session Scroll Architecture | P0 | L | 030 | BLOCKED |
+| 032 | Extract Dashboard Owners | P1 | L | 031 | BLOCKED |
+| 033 | Align Router and Design System | P1 | M | 032 | BLOCKED |
+| 034 | Distill Decisions Into ADRs | P1 | M | 033 | BLOCKED |
+| 035 | Prepare Frontend Showcase | P0 | M | 034 | BLOCKED |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -271,3 +278,7 @@ sequence overlapping files and rebase/re-read before execution.
 - A Wrapped/shareable recap based on self-contained HTML is rejected in that
   form. A future non-HTML recap needs its own product design, privacy rules, and
   bounded output contract.
+
+## Frontend portfolio program unblock protocol (plans 028–035)
+
+Plans 028–035 are all required and execute sequentially. Plan 028 remains BLOCKED until the rebased portfolio worktree runs the baseline, replaces every `<NEW_MAIN_SHA>`, and re-reads and inlines exact current-state excerpts and file scopes. Then move only plan 028 to TODO. Each later plan moves to TODO only after its dependency is DONE and reviewed. Plan 035 prepares `docs/publication-checklist.md`; executors must not run `gh repo edit` or publish externally. Owner decisions: MIT license; existing plans remain committed; exactly six evidence-backed ADRs; one synthetic composite README hero showing Overview and session detail.
