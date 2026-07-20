@@ -14,8 +14,8 @@
 | A — Honest recorded/partial/unavailable timing | DONE | `3e08ba6` | PASS — 40 focused tests; 31 collector regressions |
 | B — Portable VCS contract and v3 migration | DONE | `5fb1464` | PASS — 103 focused tests; four package checks |
 | C — Shared Claude facts, detail, and harness VCS | DONE | `af1c418` | PASS — 53 focused tests; collector check and lint |
-| D — Exact-revision Claude wiring and explicit resolver | DONE | `e74bee3` + pending | PASS — 21 focused tests; web/report checks and lint |
-| E — Claude chronology and VCS UI | PENDING | — | — |
+| D — Exact-revision Claude wiring and explicit resolver | DONE | `e74bee3`, `d5176c4` | PASS — 21 focused tests; web/report checks and lint |
+| E — Claude chronology and VCS UI | DONE | pending | PASS — 67 UI tests, 4 Claude-fact tests, 6 production E2E tests, web check |
 | F — OpenCode VCS and Cursor decision | PENDING | — | — |
 | G — Vertical proof, docs, measurements, and closure | PENDING | — | — |
 
@@ -32,7 +32,16 @@
 
 ## Deviations
 
-- None.
+- Package E adds `lucide-solid@1.25.0` as a web runtime dependency because
+  Plan 027 requires the standard Lucide external-link icon and the repository
+  did not already contain Lucide. Work stopped at that condition; the user
+  explicitly approved `lucide-solid` on 2026-07-20 before installation.
+- The production Playwright script previously launched its Bun-only fixture
+  import under Node, so the exact package-E command failed before test
+  discovery with an unsupported `bun:sqlite` URL. The script now pins
+  Playwright to the repository's required Bun runtime via `bun --bun`; after a
+  fresh production build the unchanged six scenarios pass. No assertion or
+  production boundary was weakened.
 
 ## Measurements
 
@@ -74,7 +83,7 @@
   missing-history, expired-revision, and Cursor cases remain unavailable before
   any local analysis read. The focused server/client/runner suite passes 13
   tests and the web package type check passes.
-- Package D.2: pending commit. Client/server tests first failed because the
+- Package D.2: `d5176c4`. Client/server tests first failed because the
   explicit resolution modules did not exist. The immutable anchor now carries
   strictly parsed VCS from `source_row_json`; the browser still submits only
   revision and row ID. Portable, wrong-machine, missing-VCS, and unsupported-
@@ -86,3 +95,17 @@
   are not cached or persisted, and retry/row changes issue distinct requests.
   The 21-test package gate, web/report checks and web lint pass; tests use fake
   provider ports and a local subprocess only, never real GitHub.
+- Package E: pending commit. The VCS component test first failed because the
+  component was absent; the Claude render test then failed because an untimed
+  turn had no point marker. The unified drawer now renders strict portable VCS
+  facts without a new surface, truncates long values, discloses branch spans,
+  abbreviates commits with the full hash in its title, and uses accessible
+  Lucide external-link affordances only for validated HTTPS URLs. Missing
+  links stay text. GitHub resolution is invoked only by the explicit button,
+  keeps pending/success/typed-failure state in memory, retries safely, and
+  resets stale state on row change or cleanup. Claude uses its own chronology
+  wording, unavailable effort, zero-based turn labels, and point markers for
+  untimed events without claiming `0s` active time. The exact focused UI suite
+  passes 67 tests; the Claude semantic regression file passes 4 tests; a fresh
+  build and the production Playwright suite pass all 6 scenarios; the web
+  check, focused Biome check, and `git diff --check` pass.
