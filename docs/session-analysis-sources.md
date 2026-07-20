@@ -113,22 +113,21 @@ same contract: any change to attribution or serialized session semantics must
 bump the cache version so records produced by an older parser cannot be reused
 under the new rules.
 
-Portable usage snapshots and merge bundles write schema version 2 when they
-carry per-model attribution. Readers migrate genuine version-1 files that do
-not contain `modelSegments`; a version-1 file containing that version-2 field
-is rejected instead of being accepted under a misleading contract version.
+Portable usage snapshots and merge bundles write schema version 3. Version 3
+can preserve bounded, credential-free `UsageRowSource.vcs` display facts while
+the imported row becomes `portable-opaque`. Readers migrate genuine version-1
+and version-2 files with VCS absent, and reject fields introduced by a newer
+version when they appear under an older version number. Portable VCS never
+authorizes local detail or provider resolution.
 
 ## Support matrix
 
-| Harness | Detailed drawer | Recorded time / session span / gaps | Models and effort | Turns, tools, and prompts | Lineage |
-| --- | --- | --- | --- | --- | --- |
-| Codex | Supported locally on demand | Completed task durations and bounded open-task windows are combined as a union; session span and between-task time are derived | Ordered model and effort phases are recorded | Recorded turns and tools; prompt bodies available locally on demand | Cross-session parent IDs are available; a grouped campaign analysis explicitly scopes itself to the root rollout |
-| OpenCode | Supported locally on demand | Assistant time is the union of completed assistant intervals; session span and outside-assistant time are derived | Ordered provider/model phases are available; `variant` is recorded when present and effort is explicitly unavailable otherwise | Assistant activity is grouped by parent user message; tools and non-synthetic user text parts are available locally | Native session parent IDs are available |
-| Claude Code | Not supported by the detailed drawer | Elapsed is available; exact active duration exists only for some recent turns, so whole-session active/idle is mixed or estimated | Report usage is segmented by recorded message model; no explicit effort field was found | Turns, tools, tokens, and prompt records exist locally | Subagent-to-root inference is available for agent files; Codex-equivalent cross-root lineage is not |
-| Cursor | Not supported by the detailed drawer | Elapsed is available for sessions retaining timestamps; RPC intervals and explicit turn durations are partial | Optional CSV usage is segmented by model; the DB fallback has only a partial model history, and Max Mode is not retained | Prompt history is retained for only part of the composer set; local token history is partial | No trustworthy cross-session parent relation is currently collected |
-
-Claude Code and Cursor remain report sources, but the table does **not** claim
-that their prompt or timeline detail is available in the UI.
+| Harness | Detailed drawer | Recorded time / session span / gaps | Models and effort | Turns, tools, and prompts | Lineage | Session VCS |
+| --- | --- | --- | --- | --- | --- | --- |
+| Codex | Supported locally on demand | Recorded completed/aborted task-open windows plus bounded open tasks form a union; span and between-task time are derived | Ordered recorded model and effort phases | Recorded turns and tools; prompts local on demand | Recorded cross-session parents; grouped analysis is explicitly root-scoped | Recorded repository, branch, and commit from the identity-owning session metadata |
+| OpenCode | Supported locally on demand | Completed assistant intervals form a union; span and outside-assistant time are derived; open intervals are unavailable | Ordered provider/model phases; recorded `variant`, otherwise effort unavailable | Assistants grouped by native parent user message; prompt-less assistants remain explicit | Native recorded session parent | Repository derived from the session's recorded directory; no historical branch, commit, or PR claim |
+| Claude Code | Supported locally on demand | Recorded turn durations form a union; coverage can be recorded, partial, or unavailable; span is derived and never substituted for activity | Recorded message-model phases; effort unavailable | Direct human prompts exclude tool/meta/synthetic events; orphan assistants and untimed turns remain explicit | Agent files link to their observed root; no invented ordinary cross-root lineage | Repository derived from recorded cwd, ordered recorded branch spans, and recorded safe `pr-link` events; no commit claim |
+| Cursor | Not supported | Elapsed exists only with retained timestamps; RPC and explicit turn durations are too sparse for a general promise | CSV model segments when available; DB history partial; no inferred effort | Prompt and local-token history are partial | No trustworthy cross-session parent | Unavailable: audited composer/workspace/branch evidence was sparse and non-overlapping, and commit attribution lacks a session key |
 
 ## Codex
 
@@ -261,27 +260,35 @@ formats.
 
 ## Claude Code
 
-### Feasible data and limits
+### Source and derivation
 
-Claude project JSONL contains enough structure for a future local detail
-adapter to expose ordered models, token buckets, tool calls, user turns, prompt
-timestamps, and elapsed time. Recent versions also emit some
-system.turn_duration records.
+Claude project JSONL is parsed by one pure semantic owner shared by report
+collection and local detail. The bounded detail reader opens the exact root or
+agent transcript only after the server has authorized the row against an
+immutable revision. It derives:
 
-It does not currently support trustworthy detail parity with Codex:
+- direct human prompts from eligible user events, excluding tool results,
+  metadata, and synthetic messages;
+- usage-bearing assistant responses by stable message/request identity, so
+  duplicated JSONL observations do not duplicate tokens or tools;
+- ordered recorded model phases, token buckets, tools, prompt association,
+  root/agent lineage, branch spans, and recorded pull requests;
+- recorded `system.turn_duration` intervals where present, kept separate from
+  the derived first-to-last session span.
 
-- exact turn duration is present for only a subset of recent root turns;
-- no explicit effort key was found, so thinking blocks must not be translated
-  into low, medium, or high effort;
-- normal files do not expose a Codex-equivalent cross-root parent pointer;
-- the report collector segments token buckets and API value by recorded
-  `message.model`; the dominant model is retained only as a compact row label;
-- the current Claude API versus subscription label is inferred from current
-  configuration, not recorded per historical session.
+Timing is explicit per metric. Complete recorded turn coverage is `recorded`;
+some timed and some untimed turns are `partial`; no usable duration records is
+`unavailable`. Partial activity is displayed as a lower bound and its
+unattributed span as an upper bound. An untimed turn is a point, never a zero-
+duration activity block. Effort remains unavailable because no explicit effort
+field was found, and thinking blocks are not reinterpreted as effort.
 
-Until a quality-aware detail contract is available, Claude remains unsupported
-by the detailed drawer. A future adapter must label older active time as mixed
-or estimated rather than silently treating the first-to-last span as work.
+Repository identity is derived locally from the recorded cwd through the
+bounded no-follow Git reader. Branches retain their ordered recorded spans.
+Safe `pr-link` events are portable recorded facts; malformed, credential-
+bearing, cross-repository, or non-HTTPS URLs are rejected. Claude does not
+claim a session commit. Current API-versus-subscription configuration remains
+an inference about the present setup, not historical per-session evidence.
 
 ### Sanitized audit observations
 
@@ -299,6 +306,14 @@ their tokens at the dominant model produced a combined estimate of $97.99,
 versus $83.78 when segmented by model: a 17.0% overstatement for that audited
 set. The report collector now applies the segmented rule. No explicit effort
 field was found.
+
+A later sanitized branch/PR audit covered 451 JSONL files: 159 root sessions
+and 292 agent files, about 51,000 events. All 159 roots contained recorded cwd
+and branch observations, 32 observed more than one branch, and 48 `pr-link`
+events appeared across five sessions. Only 187 recorded turn-duration events
+appeared across 54 sessions, with later trace activity in some files. These
+counts support branch spans, recorded PRs, and partial timing; they do not
+support treating whole-session span as active time.
 
 ## Cursor
 
@@ -333,6 +348,15 @@ turn-duration values. Local non-zero token counters existed on 331 bubbles and
 ended on 2026-01-26; only two token-bearing rows overlapped usable model
 metadata. No configured CSV file was available during the probe.
 
+The Plan 027 VCS ownership audit covered 342 `composerData` records, 338 of
+which were valid JSON. Only five had a `workspaceIdentifier`, two had
+`activeBranch`, fifteen had `createdOnBranch`, none had a commit hash or
+repository field, and no record combined workspace identity with either branch
+field. Nine `trackedGitRepos` values were empty arrays. A separate AI-tracking
+database contained 369 scored commits across twelve branches, but its schema
+had no composer or conversation key. Joining those datasets by branch or time
+would be proximity inference, so Cursor VCS was explicitly rejected.
+
 ## Prompt confidentiality and portability
 
 Detailed prompt bodies for supported harnesses are read only after the user
@@ -350,11 +374,20 @@ documentation should say **detailed prompt bodies**, not promise that every
 body is complete.
 
 This boundary does not mean portable reports contain no prompt-derived text.
-The normal collectors can use a first or last prompt as a fallback session
-name, notably for some Claude and Cursor rows. Session names are normal report
-fields and can therefore appear in revisions, snapshots, merge bundles, JSON,
-and CSV. Treat exported reports as potentially containing prompt-derived
-titles even though the separate detailed prompt list is local-only.
+Some collectors, notably Cursor, can use prompt-derived fallback titles.
+Session names are normal report fields and can therefore appear in revisions,
+snapshots, merge bundles, JSON, and CSV. Claude now uses source-provided titles
+or technical session identifiers and does not persist a detailed prompt as its
+fallback title. Treat exported reports as potentially containing prompt-
+derived titles from other harnesses even though the detailed prompt list is
+local-only.
+
+Provider resolution follows the same authority boundary. Recorded safe URLs
+may be displayed immediately. Any missing GitHub PR lookup requires an
+explicit user action; the server then re-resolves repository and branch from
+the trusted exact-revision anchor and invokes bounded `gh` without a shell.
+Results and sanitized failures stay in memory and are absent from the store,
+initial HTML, SQLite artifacts, snapshots, merge bundles, JSON, and CSV.
 
 ## Maintenance checklist
 
@@ -376,3 +409,6 @@ When adding or changing a harness adapter:
 8. Bump the relevant local parser cache version whenever normalized counters,
    lineage, phases, or replay attribution can change for an unchanged source
    file.
+9. Preserve repository, branch, commit, or PR only from deterministic
+   session-owned evidence; never join current checkout or attribution data by
+   branch/time proximity.

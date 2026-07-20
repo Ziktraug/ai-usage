@@ -7,7 +7,10 @@
 1. Seven autonomous adapters detect their own local inputs and persist normalized contributions through `@ai-usage/usage-store`.
 2. The scoped `@ai-usage/report-data/source-control` Effect service applies home-only policy, bounded queueing, dependency ordering, cadence, timeout, progress, and publication rules.
 3. A separate stored-only publication job acknowledges monotonic request/data generations only after it assembles and commits one immutable semantic report revision.
-4. `@ai-usage/report-core` supplies pure normalization, analytics, portable formats, strictly decoded source-control snapshots/events/command responses, and request-fingerprinted report-query contracts.
+4. `@ai-usage/report-core` supplies pure normalization, analytics, portable
+   schema-v3 formats, bounded session VCS contracts, strictly decoded
+   source-control snapshots/events/command responses, and request-fingerprinted
+   report-query contracts.
 5. `@ai-usage/usage-merge` performs explicit merge-bundle export/import; successful mutations request publication without invoking collectors.
 6. The CLI uses timer-free report-data one-shot application ports and complete compatibility payloads. The served app loads exact-revision focused projections after hydration and receives operational snapshots plus explicit publication events through one SSE connection.
 
@@ -19,7 +22,7 @@ Codex quota history is owned by the `codex.usage-limits` source: app-server coll
 
 Owns pure domain data and deterministic calculations:
 
-- usage row and provenance types;
+- usage row, provenance, and bounded credential-free session VCS types;
 - row derivations such as active dates, token totals, line deltas, and cost approximation helpers;
 - pricing, analytics, project aliases, strict report-query requests and results, report payload serialization, and usage snapshot parsing/creation.
 
@@ -40,6 +43,13 @@ separate, but decode messages and derive tokens, model attribution, costs,
 activity intervals, parent kinds, turns, and tools through one shared internal
 session-facts module. The report projection and local detail therefore do not
 maintain competing semantic implementations.
+
+Claude follows the same semantic-ownership rule. One pure session-facts parser
+owns direct-prompt classification, assistant deduplication, models, token
+buckets, tools, lineage, recorded turn durations, branch spans, and recorded
+pull requests. The report collector and bounded exact-session detail reader
+consume that parser instead of maintaining parallel interpretations. Session
+span remains separate from recorded turn activity, and effort is unavailable.
 
 History files are read through explicit byte/file/depth budgets, no-follow regular-file checks, strict UTF-8 decoding, and WAL-aware SQLite snapshots. Usage-bearing values are validated as finite, non-negative runtime data before aggregation. Private ai-usage state is owner-only; harness-owned files are never chmodded.
 
@@ -132,7 +142,8 @@ Owns web runtime and UI:
 - file-based merge bundle import/export on `/sync`, including bounded local upload handling;
 - client-first Report and Skills data reads with shell-only SSR;
 - dashboard, `/sources`, overview, table schema, and UI model modules;
-- a dedicated bounded stored-history runner and the Codex history drawer.
+- bounded local Claude/Codex/OpenCode detail adapters in one unified drawer;
+- an explicit session-VCS resolver separated from collection and publication.
 
 Client-visible modules must not import `*.server.*`. Shared calculations should live in small model modules such as `dashboard-model.ts`, `overview-model.ts`, and `session-table-schema.ts`. TanStack Query owns ordinary finite Skills, project-source, and quota-history reads/mutations. Skills mutations carry discriminated domain requests through one validated browser-safe result contract rather than arbitrary closures. It intentionally does not own exact report revisions.
 
@@ -158,8 +169,23 @@ session, private source authority, and projection facts with the
 `session-detail-anchor` query under the same exact-revision lease and budgets.
 Only a `local-observed` anchor may be validated against the local machine and
 then dereferenced into current local detail; a portable row remains opaque even
-when its machine and session identifiers happen to match. Paths and prompt
-bodies are neither anchor fields nor comparison inputs.
+when its machine and session identifiers happen to match. The same private
+authority gate applies before provider resolution. The browser supplies only
+revision and row identity, never machine, source session, repository, remote,
+branch, or path authority. Paths and prompt bodies are neither anchor fields
+nor comparison inputs.
+
+Session VCS facts live on `UsageRowSource.vcs`, pass strict per-field and total
+budgets, and contain no credentials or filesystem paths. Portable snapshots and
+merge bundles write schema version 3 and preserve those display facts while
+changing source authority to `portable-opaque`; v1/v2 readers migrate with VCS
+absent. VCS affects semantic content hashes but not `sessionRowIdentity`.
+
+Provider resolution is neither a collector nor a publication step. After an
+explicit user action, the server re-resolves the exact revision anchor and may
+invoke `gh` with a fixed argument vector, no shell, timeout, output cap, strict
+GitHub URL validation, and sanitized typed failures. Provider stderr and
+resolved URLs are never persisted or included in portable formats.
 
 ## Source control invariants
 

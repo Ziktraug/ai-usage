@@ -40,7 +40,7 @@ pull request unless the user explicitly asks.
 | 024 | Close Source-Control Data, Cancellation, State, and Client Review Gaps | P1 | L | 023 implementation | DONE |
 | 025 | Make Session Analysis Trustworthy End to End | P1 | L | 016-018, 024 | DONE |
 | 026 | Unify the Session Drawer and Make Chronology Readable | P1 | M | 025 | DONE |
-| 027 | Extend Session Insight to Claude and Add Trustworthy Git Links | P1 | XL | 025, 026 | IN PROGRESS |
+| 027 | Extend Session Insight to Claude and Add Trustworthy Git Links | P1 | XL | 025, 026 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
