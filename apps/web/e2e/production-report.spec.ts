@@ -368,15 +368,24 @@ test('opens Claude chronology and recorded source control from the production re
   const sessionViewport = page.locator('[data-session-surface="desktop"]');
   await expect(sessionViewport).toBeVisible();
   await expect
-    .poll(async () => {
-      await sessionViewport.evaluate((element) => {
-        element.scrollTop = element.scrollHeight;
-      });
-      return await page.locator('tr[data-index]').filter({ hasText: 'claude claude-f' }).count();
-    })
-    .toBe(1);
+    .poll(
+      async () =>
+        await sessionViewport.evaluate((element) => {
+          element.scrollTop = element.scrollHeight;
 
-  await page.locator('tr[data-index]').filter({ hasText: 'claude claude-f' }).click({ force: true });
+          const claudeRow = Array.from(element.querySelectorAll('tr[data-index]')).find((row) =>
+            row.textContent?.includes('claude claude-f'),
+          );
+          if (!(claudeRow instanceof HTMLElement)) {
+            return false;
+          }
+
+          claudeRow.click();
+          return true;
+        }),
+    )
+    .toBe(true);
+
   const claudeDrawer = page.getByRole('dialog');
   const claudeSourceControl = claudeDrawer.getByRole('region', { name: 'Session source control' });
   await expect(claudeSourceControl).toContainText('fixture/main → fixture/topic');
