@@ -325,9 +325,11 @@ const phaseTone = (phase: SessionDetailPhase, phases: readonly SessionDetailPhas
   phaseToneClasses[phaseToneIndex(phase, phases)] ?? phaseToneClasses[0];
 const promptPreviewText = (text: string): string => {
   const normalized = text.replace(COLLAPSE_WHITESPACE, ' ').trim();
-  return normalized.length > PROMPT_PREVIEW_LENGTH
-    ? `${normalized.slice(0, PROMPT_PREVIEW_LENGTH).trimEnd()}…`
-    : normalized;
+  if (!normalized) {
+    return '';
+  }
+  const preview = normalized.length > PROMPT_PREVIEW_LENGTH ? normalized.slice(0, PROMPT_PREVIEW_LENGTH) : normalized;
+  return `${preview.trimEnd()}…`;
 };
 const formatPhaseCost = (phase: SessionDetailPhase): string => {
   if (phase.cost === null) {
