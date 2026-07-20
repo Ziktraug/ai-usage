@@ -16,8 +16,8 @@
 | C — Shared Claude facts, detail, and harness VCS | DONE | `af1c418` | PASS — 53 focused tests; collector check and lint |
 | D — Exact-revision Claude wiring and explicit resolver | DONE | `e74bee3`, `d5176c4` | PASS — 21 focused tests; web/report checks and lint |
 | E — Claude chronology and VCS UI | DONE | `dcedbb6` | PASS — 67 UI tests, 4 Claude-fact tests, 6 production E2E tests, web check |
-| F — OpenCode VCS and Cursor decision | DONE | pending | PASS — 30 focused tests |
-| G — Vertical proof, docs, measurements, and closure | PENDING | — | — |
+| F — OpenCode VCS and Cursor decision | DONE | `a5d6db9` | PASS — 30 focused tests |
+| G — Vertical proof, docs, measurements, and closure | DONE | `e1b3341`, final closure | PASS — 40 focused tests; 7 production E2E tests; all final gates |
 
 ## Baseline
 
@@ -45,7 +45,26 @@
 
 ## Measurements
 
-- Pending Package G. Measurements will retain only counts, durations, and artifact sizes.
+All measurements used a generated temporary home, retained only aggregate
+durations/counts/sizes, and removed both temporary directories afterward.
+
+- Claude fixture collection: 13.425 ms cold cache miss and 1.337 ms cache hit
+  for two rows. No equal-fixture preimplementation benchmark existed, so the
+  recommended 10% regression threshold cannot be calculated honestly; the
+  absolute result and cache behavior are recorded instead.
+- Exact Claude detail, median of seven opens: 0.794 ms for the small fixture
+  and 14.309 ms after expanding it to 1,203,949 bytes / 12,000 additional safe
+  metadata events. Both opened exactly one transcript per request and stayed
+  inside the unchanged byte/line/file budgets.
+- Five-row portable snapshot: v2-equivalent without VCS 8,089 bytes; v3 with
+  VCS 12,326 bytes, a 4,237-byte increase. Five VCS contexts averaged 532.6
+  bytes and the largest was 766 bytes, far below the 64 KiB per-row bound.
+- Five-row `sessions.sqlite`: 94,208 bytes.
+- Implicit provider processes: zero. Component SSR keeps the fake resolver
+  request counter at 0, and server authority rejection keeps its resolver-call
+  counter at 0. Production E2E installs a fake local `gh`; its successful PR
+  appears only after the explicit Resolve action, while its stderr sentinel is
+  absent from responses.
 
 ## Commits
 
@@ -109,13 +128,50 @@
   passes 67 tests; the Claude semantic regression file passes 4 tests; a fresh
   build and the production Playwright suite pass all 6 scenarios; the web
   check, focused Biome check, and `git diff --check` pass.
-- Package F: pending commit. The OpenCode integration test first failed with
+- Package F: `a5d6db9`. The OpenCode integration test first failed with
   absent VCS and a cache hit from version 8. OpenCode now derives only a
   repository from the session's recorded absolute `directory`, through the
   existing bounded no-follow local Git reader. It memoizes directories per
   database collection and deliberately emits no branch, commit, or PR; the
   current checkout's `HEAD` in the fixture therefore never becomes session
   history. The row-changing cache version is 9.
+- Package G: `e1b3341` plus the final documentation/closure commit. The
+  extended golden first exposed a real privacy defect: Claude's first detailed
+  prompt was also used as a portable row title.
+  Claude now uses source-provided AI titles or technical identifiers, while
+  prompt bodies remain solely in local on-demand detail. The golden proves
+  source -> store -> payload -> `sessions.sqlite` -> exact anchor -> local
+  detail, Claude match -> differs -> match, v3 snapshot and merge roundtrips,
+  portable opacity, Codex/OpenCode VCS survival, and absence of prompt,
+  credential remote, dangerous URL, provider stderr, and ephemeral resolver
+  sentinels from durable/public artifacts. The final focused suite passes 40
+  tests.
+  Production E2E now seeds Claude plus Codex and uses a fake executable resolver
+  to prove recorded Claude chronology/VCS and click-only Codex PR resolution.
+
+## Final gates
+
+All required commands completed with exit code 0 on 2026-07-20:
+
+- `bun install --frozen-lockfile`: 518 installs checked across 637 packages;
+  no changes.
+- `bun x ultracite fix`: 452 files checked; two intentional package-G files
+  formatted. The subsequent `bun run check` checked all 452 files with no
+  fixes required.
+- `bun run lint`: Biome plus workspace export/path/package-boundary guards
+  passed.
+- `bun run typecheck`: 16/16 Turbo tasks passed.
+- `bun run test`: 15/15 package tasks plus 8/8 tool tests passed; the web suite
+  reported 397 tests, report-data 95, and all other workspace suites zero
+  failures.
+- `bun run build`: 9/9 package builds passed.
+- `bun run test:web-production`: production routes healthy, trusted-local
+  only, IPv4 loopback.
+- `bun run test:e2e`: 36/36 passed.
+- `bun run test:e2e-production`: 7/7 passed, including Claude chronology,
+  Codex VCS, and the explicit fake resolver.
+- `git diff --check 9545fb8...HEAD` and `git diff --check`: passed before
+  closure; both are rerun after the final commit.
 
 ## Cursor decision evidence
 

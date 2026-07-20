@@ -38,7 +38,7 @@
 
 ## Status
 
-- **Status**: TODO
+- **Status**: DONE
 - **Priority**: P1
 - **Effort**: XL, delivered in seven packages
 - **Risk**: HIGH
@@ -1125,43 +1125,43 @@ and Cursor decision; coordinator marks 027 DONE only after all criteria pass.
 
 ## Done Criteria
 
-- [ ] Claude is in `sessionDetailHarnessKeys` with exhaustive dispatch, reader,
+- [x] Claude is in `sessionDetailHarnessKeys` with exhaustive dispatch, reader,
       and tests.
-- [ ] Claude report and detail share one owner for tokens, models, tools, turns,
+- [x] Claude report and detail share one owner for tokens, models, tools, turns,
       and deduplication.
-- [ ] Active, idle, and turn duration explicitly support unavailable without
+- [x] Active, idle, and turn duration explicitly support unavailable without
       zero sentinels.
-- [ ] Recorded/partial/unavailable states are strictly validated.
-- [ ] Untimed Claude sessions show span/events but no fake active/idle.
-- [ ] Partial sessions show targeted bounds.
-- [ ] Claude effort remains unavailable.
-- [ ] Human prompts exclude tool-result, meta, and synthetic events.
-- [ ] Orphan assistants remain counted without invented association.
-- [ ] Claude golden demonstrates match -> differs -> match.
-- [ ] `UsageRowSource.vcs` is bounded, strict, credential-free, and portable.
-- [ ] Snapshot/merge write v3, migrate v1/v2, and reject v3 fields under old
+- [x] Recorded/partial/unavailable states are strictly validated.
+- [x] Untimed Claude sessions show span/events but no fake active/idle.
+- [x] Partial sessions show targeted bounds.
+- [x] Claude effort remains unavailable.
+- [x] Human prompts exclude tool-result, meta, and synthetic events.
+- [x] Orphan assistants remain counted without invented association.
+- [x] Claude golden demonstrates match -> differs -> match.
+- [x] `UsageRowSource.vcs` is bounded, strict, credential-free, and portable.
+- [x] Snapshot/merge write v3, migrate v1/v2, and reject v3 fields under old
       versions.
-- [ ] `sessionRowIdentity` is identical with and without VCS.
-- [ ] Content hash/store updates when collected VCS changes.
-- [ ] Codex preserves recorded repository, branch, and commit.
-- [ ] Claude preserves branch spans and recorded PRs.
-- [ ] OpenCode never presents current checkout branch as historical.
-- [ ] Cursor shows only proven fields or is rejected with evidence without
+- [x] `sessionRowIdentity` is identical with and without VCS.
+- [x] Content hash/store updates when collected VCS changes.
+- [x] Codex preserves recorded repository, branch, and commit.
+- [x] Claude preserves branch spans and recorded PRs.
+- [x] OpenCode never presents current checkout branch as historical.
+- [x] Cursor shows only proven fields or is rejected with evidence without
       blocking other harnesses.
-- [ ] Drawer renders repo/branches/commit/PR without mobile/desktop overflow.
-- [ ] Values without URL are not links.
-- [ ] External URLs are safe, accessible, and noopener.
-- [ ] Provider URLs are never resolved automatically.
-- [ ] `gh` receives only server-trusted anchor facts and runs bounded without
+- [x] Drawer renders repo/branches/commit/PR without mobile/desktop overflow.
+- [x] Values without URL are not links.
+- [x] External URLs are safe, accessible, and noopener.
+- [x] Provider URLs are never resolved automatically.
+- [x] `gh` receives only server-trusted anchor facts and runs bounded without
       shell.
-- [ ] Provider result remains ephemeral and absent from portable formats.
-- [ ] Portable rows trigger neither local detail nor provider resolution.
-- [ ] No prompt, fake credential, provider stderr, or dangerous URL leaks into
+- [x] Provider result remains ephemeral and absent from portable formats.
+- [x] Portable rows trigger neither local detail nor provider resolution.
+- [x] No prompt, fake credential, provider stderr, or dangerous URL leaks into
       store, initial payload, SQLite, cache, or export.
-- [ ] Documentation states exact per-harness guarantees.
-- [ ] Focused tests, check, lint, typecheck, build, and E2E pass.
-- [ ] Log 027 contains commits, measures, deviations, and Cursor decision.
-- [ ] Plan 027 is marked DONE in `plans/README.md`.
+- [x] Documentation states exact per-harness guarantees.
+- [x] Focused tests, check, lint, typecheck, build, and E2E pass.
+- [x] Log 027 contains commits, measures, deviations, and Cursor decision.
+- [x] Plan 027 is marked DONE in `plans/README.md`.
 
 ## STOP Conditions
 
