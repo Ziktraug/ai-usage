@@ -1716,6 +1716,61 @@ describe('Codex local history', () => {
     });
   });
 
+  test('treats an aborted turn as a recorded terminal event', () => {
+    const storage = new TestMemoryStorage();
+    storage.writeText(
+      '.codex/sessions/2026/aborted-turn-thread.jsonl',
+      jsonl(
+        {
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { id: 'aborted-turn-thread', cwd: '/work/aborted-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:01.000Z',
+          payload: { type: 'task_started', turn_id: 'aborted-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:01.010Z',
+          type: 'turn_context',
+          payload: { model: 'gpt-5.6-sol', turn_id: 'aborted-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:01.020Z',
+          type: 'event_msg',
+          payload: { message: 'Stop this turn', type: 'user_message' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:10.000Z',
+          type: 'event_msg',
+          payload: {
+            completed_at: 1_767_225_609,
+            duration_ms: 7500,
+            type: 'turn_aborted',
+            turn_id: 'aborted-turn',
+          },
+        },
+      ),
+    );
+
+    const analysis = runWithStorage(readCodexSessionAnalysis('aborted-turn-thread'), storage);
+    const detail = requireSessionDetail(analysis?.detail ?? null);
+    const session = runWithStorage(readCodexUsageSessions, storage).find(
+      ({ source }) => source.sourceSessionId === 'aborted-turn-thread',
+    );
+
+    expect(parseSessionDetail(detail)).toEqual(detail);
+    expect(analysis?.projection.partial).toBe(false);
+    expect(session).toMatchObject({ durationMs: 7500, partial: false });
+    expect(detail).toMatchObject({
+      activeDurationMs: 7500,
+      durationStatus: 'recorded',
+      prompts: [{ id: 'prompt-1', text: 'Stop this turn' }],
+      turns: [{ durationMs: 7500, promptIds: ['prompt-1'] }],
+      turnsStatus: 'recorded',
+    });
+  });
+
   test('keeps contextual open turns visible and marks their coverage as partial', () => {
     const storage = new TestMemoryStorage();
     storage.writeText(
@@ -1734,6 +1789,11 @@ describe('Codex local history', () => {
           timestamp: '2026-01-01T00:00:00.001Z',
           type: 'turn_context',
           payload: { model: 'gpt-5.6-sol', turn_id: 'completed-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:00.002Z',
+          type: 'event_msg',
+          payload: { message: 'Complete this turn', type: 'user_message' },
         },
         {
           timestamp: '2026-01-01T00:00:05.000Z',
@@ -1761,6 +1821,11 @@ describe('Codex local history', () => {
           timestamp: '2026-01-01T00:00:20.001Z',
           type: 'turn_context',
           payload: { model: 'gpt-5.6-sol', turn_id: 'open-turn' },
+        },
+        {
+          timestamp: '2026-01-01T00:00:20.002Z',
+          type: 'event_msg',
+          payload: { message: 'Keep this turn open', type: 'user_message' },
         },
         {
           timestamp: '2026-01-01T00:00:25.000Z',
@@ -1799,8 +1864,9 @@ describe('Codex local history', () => {
     expect(session?.durationMs).toBe(20_000);
     expect(session?.turns).toBe(2);
     expect(validDetail.durationStatus).toBe('partial');
-    expect(validDetail.turnsStatus).toBe('partial');
+    expect(validDetail.turnsStatus).toBe('recorded');
     expect(validDetail.activeDurationMs).toBe(20_000);
+    expect(validDetail.turns.map(({ promptIds }) => promptIds)).toEqual([['prompt-1'], ['prompt-2']]);
     expect(validDetail.turns.map((turn) => [turn.durationMs, turn.tokens.total, turn.tools])).toEqual([
       [10_000, 10, 0],
       [10_000, 15, 1],
@@ -1954,7 +2020,7 @@ describe('Codex local history', () => {
     expect(session?.turns).toBe(1);
     expect(session?.tokens).toEqual({ cr: 30, cw: 0, in: 10, out: 10 });
     expect(validDetail.durationStatus).toBe('partial');
-    expect(validDetail.turnsStatus).toBe('partial');
+    expect(validDetail.turnsStatus).toBe('recorded');
     expect(validDetail.turns.map((turn) => [turn.model, turn.tokens.total])).toEqual([['gpt-5.6-sol', 50]]);
   });
 

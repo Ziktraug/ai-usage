@@ -31,6 +31,15 @@ export interface SessionAnalysisProps {
   target: SessionAnalysisTarget;
 }
 
+type SessionMetricBound = 'lower' | 'upper' | null;
+
+interface SessionMetricItem {
+  bound: SessionMetricBound;
+  hint: string;
+  label: string;
+  value: string;
+}
+
 const dateTimeFormatter = new Intl.DateTimeFormat('en', {
   day: '2-digit',
   hour: '2-digit',
@@ -235,7 +244,7 @@ const statePanel = css({
   textAlign: 'center',
 });
 const stateTitle = css({ color: 'ink', fontSize: '15px', fontWeight: 700 });
-const liveStatus = css({ srOnly: true });
+const visuallyHidden = css({ srOnly: true });
 const retryButton = css({
   px: '12px',
   py: '7px',
@@ -369,6 +378,16 @@ const TurnRow = (props: {
 
 const EmptyTimeline = (props: { children: string }) => <div class={empty}>{props.children}</div>;
 
+const MetricValue = (props: { bound: SessionMetricBound; value: string }) => (
+  <dd class={metricValue}>
+    <Show when={props.bound !== null}>
+      <span class={visuallyHidden}>{props.bound === 'lower' ? 'At least ' : 'At most '}</span>
+      <span aria-hidden="true">{props.bound === 'lower' ? '≥ ' : '≤ '}</span>
+    </Show>
+    {props.value}
+  </dd>
+);
+
 const PresentationItem = (props: { item: SessionAnalysisPresentationItem }) => (
   <div
     class={props.item.tone === 'warning' ? cx(notice, warningNotice) : muted}
@@ -376,7 +395,6 @@ const PresentationItem = (props: { item: SessionAnalysisPresentationItem }) => (
     data-tone={props.item.tone}
     role={props.item.tone === 'warning' ? 'status' : undefined}
   >
-    {'title' in props.item ? <strong>{props.item.title}</strong> : null}
     <span>{props.item.text}</span>
   </div>
 );
@@ -409,7 +427,6 @@ const AvailableSessionAnalysis = (props: {
     buildSessionAnalysisPresentation({
       consistency: props.consistency,
       durationPartialBody: durationSemantics().partialBody,
-      durationPartialTitle: durationSemantics().partialTitle,
       durationStatus: props.detail.durationStatus,
       promptDataTruncated: promptDataTruncated(),
       target: props.target,
@@ -419,23 +436,27 @@ const AvailableSessionAnalysis = (props: {
   const itemsOfKind = (kind: SessionAnalysisPresentationItem['kind']) =>
     presentationItems().filter((item) => item.kind === kind);
 
-  const metricItems = () => [
+  const metricItems = (): SessionMetricItem[] => [
     {
+      bound: props.detail.durationStatus === 'partial' ? 'lower' : null,
       hint: durationSemantics().metricHint,
       label: durationSemantics().metricLabel,
       value: formatSessionDuration(props.detail.activeDurationMs),
     },
     {
+      bound: null,
       hint: durationSemantics().elapsedHint,
       label: durationSemantics().elapsedLabel,
       value: formatSessionDuration(props.detail.elapsedDurationMs),
     },
     {
+      bound: props.detail.durationStatus === 'partial' ? 'upper' : null,
       hint: durationSemantics().gapHint,
       label: durationSemantics().gapLabel,
       value: formatSessionDuration(props.detail.idleDurationMs),
     },
     {
+      bound: null,
       hint: durationSemantics().burstHint,
       label: durationSemantics().burstLabel,
       value: String(burstCount()),
@@ -457,19 +478,20 @@ const AvailableSessionAnalysis = (props: {
       </header>
 
       <For each={itemsOfKind('consistency-warning')}>{(item) => <PresentationItem item={item} />}</For>
-      <For each={itemsOfKind('partial-duration')}>{(item) => <PresentationItem item={item} />}</For>
-      <For each={itemsOfKind('partial-turns')}>{(item) => <PresentationItem item={item} />}</For>
 
-      <dl class={metrics}>
-        <For each={metricItems()}>
-          {(item) => (
-            <div class={metric} title={item.hint}>
-              <dt class={metricLabel}>{item.label}</dt>
-              <dd class={metricValue}>{item.value}</dd>
-            </div>
-          )}
-        </For>
-      </dl>
+      <div class={section}>
+        <dl class={metrics}>
+          <For each={metricItems()}>
+            {(item) => (
+              <div class={metric} title={item.hint}>
+                <dt class={metricLabel}>{item.label}</dt>
+                <MetricValue bound={item.bound} value={item.value} />
+              </div>
+            )}
+          </For>
+        </dl>
+        <For each={itemsOfKind('partial-duration')}>{(item) => <PresentationItem item={item} />}</For>
+      </div>
 
       <section aria-labelledby="session-model-phases" class={section}>
         <div class={sectionHeader}>
@@ -519,6 +541,7 @@ const AvailableSessionAnalysis = (props: {
             Prompts ({chronologicalPrompts().length})
           </h3>
           <div class={muted}>Prompt bodies are collapsed by default.</div>
+          <For each={itemsOfKind('partial-turns')}>{(item) => <PresentationItem item={item} />}</For>
           <For each={itemsOfKind('privacy')}>{(item) => <PresentationItem item={item} />}</For>
         </div>
         <For each={itemsOfKind('prompt-truncation')}>{(item) => <PresentationItem item={item} />}</For>
@@ -622,7 +645,7 @@ export const SessionAnalysis = (props: SessionAnalysisProps) => {
 
   return (
     <section aria-label="Session analysis" class={panel}>
-      <div aria-atomic="true" aria-live="polite" class={liveStatus} data-session-analysis-live-status role="status">
+      <div aria-atomic="true" aria-live="polite" class={visuallyHidden} data-session-analysis-live-status role="status">
         {liveAnnouncement()}
       </div>
       <Switch>

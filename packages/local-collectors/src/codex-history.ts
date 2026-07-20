@@ -33,6 +33,7 @@ interface CodexSession {
   activeDurationMs: number | null;
   agentNickname: string | null;
   cwd: string | null;
+  durationPartial: boolean;
   end: Date | null;
   firstUser: string | null;
   hasTokenUsage: boolean;
@@ -42,9 +43,9 @@ interface CodexSession {
   models: string[];
   observedPriorTokenUsage: boolean;
   parent: string | null;
-  partial: boolean;
   phases: CodexSessionPhase[];
   rejectedMetricRecords: number;
+  reportPartial: boolean;
   source: string | null;
   start: Date | null;
   subscription: boolean;
@@ -166,7 +167,7 @@ interface SqliteDatabase {
 
 // This cache stores normalized parser output, not raw JSONL. Bump whenever an
 // unchanged rollout could produce different counters, lineage, phases, or turns.
-const CODEX_SESSION_CACHE_VERSION = 13;
+const CODEX_SESSION_CACHE_VERSION = 14;
 const CODEX_DETAIL_MAX_TOTAL_BYTES = 128 * 1024 * 1024;
 const CODEX_LINEAGE_MAX_DEPTH = 32;
 const CODEX_DETAIL_MAX_LINE_BYTES = 8 * 1024 * 1024;
@@ -427,7 +428,8 @@ const emptySession = (): CodexSession => ({
   activeDurationMs: null,
   id: null,
   parent: null,
-  partial: false,
+  durationPartial: false,
+  reportPartial: false,
   observedPriorTokenUsage: false,
   rejectedMetricRecords: 0,
   start: null,
@@ -566,6 +568,7 @@ const shouldParseCodexPrefix = (prefix: string) =>
   prefix.includes('turn_context') ||
   prefix.includes('task_started') ||
   prefix.includes('task_complete') ||
+  prefix.includes('turn_aborted') ||
   prefix.includes('user_message') ||
   prefix.includes('"role":"user"') ||
   prefix.includes('"role": "user"');
@@ -668,7 +671,8 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       typeof value.subscription !== 'boolean' ||
       typeof value.hasTokenUsage !== 'boolean' ||
       typeof value.observedPriorTokenUsage !== 'boolean' ||
-      typeof value.partial !== 'boolean' ||
+      typeof value.durationPartial !== 'boolean' ||
+      typeof value.reportPartial !== 'boolean' ||
       !(activeDuration === null || activeDuration.ok) ||
       models === null ||
       models.length !== rawModels?.length ||
@@ -684,7 +688,8 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       activeDurationMs: activeDuration?.value ?? null,
       id: typeof value.id === 'string' ? value.id : null,
       parent: typeof value.parent === 'string' ? value.parent : null,
-      partial: value.partial,
+      durationPartial: value.durationPartial,
+      reportPartial: value.reportPartial,
       observedPriorTokenUsage: value.observedPriorTokenUsage,
       start,
       end,
@@ -1176,7 +1181,8 @@ const createCodexSessionParser = (captureDetail = false) => {
       );
       const hasReplayLineage = session.parent !== null || session.threadSource === 'subagent';
       if (replayed && !hasReplayLineage) {
-        session.partial = true;
+        session.durationPartial = true;
+        session.reportPartial = true;
       }
       if (!(openTasks.has(turnId) || openTasks.size < CODEX_DETAIL_MAX_TURNS)) {
         const oldestUnanchored = [...openTasks].find(([, task]) => !task.hasContext)?.[0];
@@ -1202,7 +1208,7 @@ const createCodexSessionParser = (captureDetail = false) => {
         turnId,
       });
     }
-    if (payload.type === 'task_complete') {
+    if (payload.type === 'task_complete' || payload.type === 'turn_aborted') {
       const turnId = nonEmpty(payload.turn_id);
       const task = turnId ? (openTasks.get(turnId) ?? null) : latestOpenTask();
       const taskEnd = unixDate(payload.completed_at) ?? date;
@@ -1250,7 +1256,8 @@ const createCodexSessionParser = (captureDetail = false) => {
       if (!(task.hasContext && !task.replayed)) {
         continue;
       }
-      session.partial = true;
+      session.durationPartial = true;
+      session.reportPartial = true;
       flushResponsePrompt(task);
       observedTaskIntervals.push({
         endMs: task.observedEnd.getTime(),
@@ -1340,9 +1347,10 @@ const createCodexSessionParser = (captureDetail = false) => {
     }
     const activeDurationMs = session.activeDurationMs ?? 0;
     const elapsedDurationMs = session.end.getTime() - session.start.getTime();
+    const turns = detailTurns();
     return {
       activeDurationMs,
-      durationStatus: session.partial ? 'partial' : 'recorded',
+      durationStatus: session.durationPartial ? 'partial' : 'recorded',
       efforts: [...new Set(session.phases.flatMap((phase) => (phase.effort ? [phase.effort] : [])))],
       elapsedDurationMs,
       endedAt: session.end.toISOString(),
@@ -1354,8 +1362,8 @@ const createCodexSessionParser = (captureDetail = false) => {
       promptsTruncated,
       sourceSessionId: session.id,
       startedAt: session.start.toISOString(),
-      turns: detailTurns(),
-      turnsStatus: session.partial ? 'partial' : 'recorded',
+      turns,
+      turnsStatus: 'recorded',
     };
   };
 
@@ -1708,7 +1716,7 @@ const codexProjectionFacts = (session: CodexSession, usageOwnership: CodexUsageO
     calls: 1,
     durationMs: session.activeDurationMs ?? 0,
     modelSegments,
-    partial: session.partial,
+    partial: session.reportPartial,
     tokens: usageUnavailable ? null : projectionTokens({ cr: session.tcr, cw: 0, in: session.tin, out: session.tout }),
     tools: session.tools,
     turns: session.turns,
@@ -1795,7 +1803,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
         costKnown: usageOwnedByRoot || costKnown,
         calls: 1,
         durationMs: session.activeDurationMs ?? 0,
-        partial: session.partial,
+        partial: session.reportPartial,
         turns: session.turns,
         tools: session.tools,
         linesAdded: null,

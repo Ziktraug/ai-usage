@@ -24,7 +24,6 @@ const present = (
   buildSessionAnalysisPresentation({
     consistency,
     durationPartialBody: 'Partial duration body.',
-    durationPartialTitle: 'Partial duration',
     durationStatus: 'recorded',
     promptDataTruncated: false,
     target: sessionTarget,
@@ -73,33 +72,43 @@ describe('session analysis presentation', () => {
     });
   });
 
-  test('combines match with metric-level warnings without making metadata alarming', () => {
+  test('keeps static local limitations neutral when comparable metrics match', () => {
     const items = present(matches, {
       durationStatus: 'partial',
       promptDataTruncated: true,
       turnsStatus: 'partial',
     });
-    expect(items.filter(({ tone }) => tone === 'warning').map(({ kind }) => kind)).toEqual([
+    expect(items.filter(({ tone }) => tone === 'warning').map(({ kind }) => kind)).toEqual([]);
+    expect(items.filter(({ tone }) => tone === 'neutral').map(({ kind }) => kind)).toEqual([
+      'consistency-meta',
       'partial-duration',
       'partial-turns',
+      'privacy',
       'prompt-truncation',
     ]);
-    expect(items.find(({ kind }) => kind === 'consistency-meta')?.tone).toBe('neutral');
     expect(items.find(({ kind }) => kind === 'privacy')).toEqual({
       kind: 'privacy',
       text: 'Local only · detailed prompt bodies are not included in reports or exports.',
       tone: 'neutral',
     });
+    expect(items.find(({ kind }) => kind === 'partial-turns')).toEqual({
+      kind: 'partial-turns',
+      text: 'Some recorded assistant activity cannot be linked to a user prompt. It remains visible without an invented association.',
+      tone: 'neutral',
+    });
+    expect(items.find(({ kind }) => kind === 'prompt-truncation')).toEqual({
+      kind: 'prompt-truncation',
+      text: 'Some prompt text is truncated in this local view. Timeline and usage totals are unaffected.',
+      tone: 'neutral',
+    });
   });
 
-  test('keeps divergence and partial duration as two targeted warnings', () => {
+  test('reserves warning tone for report divergence', () => {
     const items = present(
       { checkedFields: ['tokens'], differingFields: ['tokens'], status: 'differs-from-report' },
       { durationStatus: 'partial' },
     );
-    expect(items.filter(({ tone }) => tone === 'warning').map(({ kind }) => kind)).toEqual([
-      'consistency-warning',
-      'partial-duration',
-    ]);
+    expect(items.filter(({ tone }) => tone === 'warning').map(({ kind }) => kind)).toEqual(['consistency-warning']);
+    expect(items.find(({ kind }) => kind === 'partial-duration')?.tone).toBe('neutral');
   });
 });
