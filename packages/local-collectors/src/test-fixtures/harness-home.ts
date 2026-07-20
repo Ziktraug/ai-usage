@@ -106,7 +106,7 @@ const codexUsage = (input: number, cached: number, output: number) => ({
 const codexSessionEvents = (
   id: string,
   start: string,
-  options: { child?: boolean; prompt: string },
+  options: { abortSecond?: boolean; child?: boolean; prompt: string },
 ): readonly unknown[] => {
   const startMs = Date.parse(start);
   const turnOneStart = new Date(startMs + 10_000).toISOString();
@@ -176,7 +176,14 @@ const codexSessionEvents = (
     },
     {
       timestamp: turnTwoEnd,
-      payload: { type: 'task_complete', turn_id: `${id}-turn-2`, duration_ms: 60_000 },
+      payload: {
+        ...(options.abortSecond
+          ? { completed_at: Math.floor(Date.parse(turnTwoEnd) / 1000), reason: 'interrupted' }
+          : {}),
+        duration_ms: 60_000,
+        type: options.abortSecond ? 'turn_aborted' : 'task_complete',
+        turn_id: `${id}-turn-2`,
+      },
     },
     ...(options.child
       ? []
@@ -205,7 +212,10 @@ const writeCodexFixture = async (home: string, sessionCount: number): Promise<st
   await writeFile(
     rootPath,
     jsonLines(
-      ...codexSessionEvents(FIXTURE_IDS.codexRoot, '2026-07-02T09:00:00.000Z', { prompt: 'Implement fixture root' }),
+      ...codexSessionEvents(FIXTURE_IDS.codexRoot, '2026-07-02T09:00:00.000Z', {
+        abortSecond: true,
+        prompt: 'Implement fixture root',
+      }),
     ),
   );
   await writeFile(

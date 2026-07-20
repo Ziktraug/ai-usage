@@ -15,7 +15,6 @@ export interface SessionDurationSemantics {
   metricHint: string;
   metricLabel: string;
   partialBody: string;
-  partialTitle: string;
   timelineDescription: string;
   timelineHeading: string;
   turnSpanNoun: string;
@@ -24,16 +23,14 @@ export interface SessionDurationSemantics {
 const CODEX_DURATION_SEMANTICS: SessionDurationSemantics = {
   burstHint: 'Codex task-open intervals are merged into blocks when they overlap or touch.',
   burstLabel: 'Task blocks',
-  elapsedHint: 'Wall-clock span from the first local task start to the final local task completion.',
+  elapsedHint: 'Wall-clock span from the first local task start to the last observed local task event.',
   elapsedLabel: 'Session span',
   gapHint: 'Wall-clock time outside recorded Codex task-open spans.',
   gapLabel: 'Between tasks',
   metricHint:
     'Sum of recorded Codex task-open spans. This includes time waiting for tools and subagents; it is not model runtime.',
   metricLabel: 'Task-open time',
-  partialBody:
-    'At least one task-open span was unavailable; task-open time is a lower bound and outside-task time is an upper bound.',
-  partialTitle: 'Partial task-time coverage',
+  partialBody: 'Timing coverage is incomplete. Values marked ≥ or ≤ are bounds based on recorded local activity.',
   timelineDescription:
     'Bars show when each Codex task was open, including waits for tools or subagents. Empty gaps are time between tasks.',
   timelineHeading: 'Task timeline',
@@ -50,9 +47,7 @@ const OPENCODE_DURATION_SEMANTICS: SessionDurationSemantics = {
   metricHint:
     'Union of recorded OpenCode assistant intervals. This is observed assistant wall-clock span, not model runtime.',
   metricLabel: 'Assistant time',
-  partialBody:
-    'At least one assistant interval was unavailable; assistant time is a lower bound and unattributed time is an upper bound.',
-  partialTitle: 'Partial assistant-time coverage',
+  partialBody: 'Timing coverage is incomplete. Values marked ≥ or ≤ are bounds based on recorded local activity.',
   timelineDescription:
     'Bars show recorded OpenCode assistant intervals. Empty gaps are time without a completed assistant interval.',
   timelineHeading: 'Assistant timeline',
@@ -68,9 +63,7 @@ const GENERIC_DURATION_SEMANTICS: SessionDurationSemantics = {
   gapLabel: 'Unattributed',
   metricHint: 'Time covered by recorded activity intervals; this is not model runtime.',
   metricLabel: 'Interval time',
-  partialBody:
-    'At least one activity interval was unavailable; interval time is a lower bound and unattributed time is an upper bound.',
-  partialTitle: 'Partial interval coverage',
+  partialBody: 'Timing coverage is incomplete. Values marked ≥ or ≤ are bounds based on recorded local activity.',
   timelineDescription:
     'Bars show recorded intervals on the shared elapsed-time axis. Empty gaps are unattributed time.',
   timelineHeading: 'Recorded timeline',

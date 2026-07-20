@@ -10,9 +10,9 @@ export type SessionAnalysisPresentationItem =
   | { kind: 'consistency-warning'; text: string; tone: 'warning' }
   | { kind: 'scope'; text: string; tone: 'neutral' }
   | { kind: 'privacy'; text: string; tone: 'neutral' }
-  | { kind: 'partial-duration'; text: string; title: string; tone: 'warning' }
-  | { kind: 'partial-turns'; text: string; title: string; tone: 'warning' }
-  | { kind: 'prompt-truncation'; text: string; title: string; tone: 'warning' };
+  | { kind: 'partial-duration'; text: string; tone: 'neutral' }
+  | { kind: 'partial-turns'; text: string; tone: 'neutral' }
+  | { kind: 'prompt-truncation'; text: string; tone: 'neutral' };
 
 const comparableFieldLabels: Record<SessionDetailComparableField, string> = {
   calls: 'calls',
@@ -61,7 +61,6 @@ const scopeItem = (target: SessionAnalysisTarget): SessionAnalysisPresentationIt
 export const buildSessionAnalysisPresentation = (input: {
   consistency: SessionDetailConsistency;
   durationPartialBody: string;
-  durationPartialTitle: string;
   durationStatus: SessionDetailCoverageStatus;
   promptDataTruncated: boolean;
   target: SessionAnalysisTarget;
@@ -76,16 +75,14 @@ export const buildSessionAnalysisPresentation = (input: {
     items.push({
       kind: 'partial-duration',
       text: input.durationPartialBody,
-      title: input.durationPartialTitle,
-      tone: 'warning',
+      tone: 'neutral',
     });
   }
   if (input.turnsStatus === 'partial') {
     items.push({
       kind: 'partial-turns',
-      text: 'Some legacy assistant activity has no resolvable parent user message. It remains visible without an invented prompt association.',
-      title: 'Partial turn attribution',
-      tone: 'warning',
+      text: 'Some recorded assistant activity cannot be linked to a user prompt. It remains visible without an invented association.',
+      tone: 'neutral',
     });
   }
   items.push({
@@ -96,9 +93,8 @@ export const buildSessionAnalysisPresentation = (input: {
   if (input.promptDataTruncated) {
     items.push({
       kind: 'prompt-truncation',
-      text: 'The local detail budget was reached. The timeline and usage totals remain available.',
-      title: 'Some prompt text is truncated',
-      tone: 'warning',
+      text: 'Some prompt text is truncated in this local view. Timeline and usage totals are unaffected.',
+      tone: 'neutral',
     });
   }
   return items;

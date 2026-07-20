@@ -196,22 +196,83 @@ describe('SessionAnalysis SSR semantics', () => {
     expect(html.indexOf('session-prompts')).toBeLessThan(html.indexOf('data-session-analysis-item="privacy"'));
   });
 
-  test.each([
-    [{ durationStatus: 'partial' } satisfies Partial<SessionDetail>, 'partial-duration'],
-    [{ turnsStatus: 'partial' } satisfies Partial<SessionDetail>, 'partial-turns'],
-    [{ promptsTruncated: true } satisfies Partial<SessionDetail>, 'prompt-truncation'],
-  ])('renders each metric limitation as a warning status', (overrides, kind) => {
-    const markup = itemMarkup(renderAnalysis(matches, overrides), kind);
-    expect(markup).toContain('data-tone="warning"');
-    expect(markup).toContain('role="status"');
+  test('renders incomplete timing as accessible bounds with a neutral note below the metrics', () => {
+    const html = renderAnalysis(matches, {
+      activeDurationMs: 60_000,
+      durationStatus: 'partial',
+      elapsedDurationMs: 180_000,
+      idleDurationMs: 120_000,
+    });
+    const markup = itemMarkup(html, 'partial-duration');
+
+    expect(markup).toContain('data-tone="neutral"');
+    expect(markup).not.toContain('role="status"');
+    expect(html).toContain('aria-hidden="true">≥ ');
+    expect(html).toContain('aria-hidden="true">≤ ');
+    expect(html).toContain('>At least </span>');
+    expect(html).toContain('>At most </span>');
+    expect(html).toContain(
+      'Timing coverage is incomplete. Values marked ≥ or ≤ are bounds based on recorded local activity.',
+    );
+    expect(html).toContain(
+      'title="Wall-clock span from the first local task start to the last observed local task event."',
+    );
+    expect(html).not.toContain('final local task completion');
+    expect(html.indexOf('<dl')).toBeLessThan(html.indexOf('data-session-analysis-item="partial-duration"'));
+    expect(html.indexOf('data-session-analysis-item="partial-duration"')).toBeLessThan(
+      html.indexOf('id="session-model-phases"'),
+    );
   });
 
-  test('renders exactly two warning items for divergence plus partial duration', () => {
+  test('does not add timing bounds when coverage is recorded', () => {
+    const html = renderAnalysis();
+
+    expect(html).not.toContain('data-session-analysis-item="partial-duration"');
+    expect(html).not.toContain('aria-hidden="true">≥ ');
+    expect(html).not.toContain('aria-hidden="true">≤ ');
+  });
+
+  test('places partial turn attribution beside Prompts as neutral static metadata', () => {
+    const html = renderAnalysis(matches, { turnsStatus: 'partial' });
+    const markup = itemMarkup(html, 'partial-turns');
+
+    expect(markup).toContain('data-tone="neutral"');
+    expect(markup).not.toContain('role="status"');
+    expect(html.indexOf('id="session-prompts"')).toBeLessThan(
+      html.indexOf('data-session-analysis-item="partial-turns"'),
+    );
+    expect(html.indexOf('data-session-analysis-item="partial-turns"')).toBeLessThan(
+      html.indexOf('data-session-analysis-item="privacy"'),
+    );
+    expect(html).toContain(
+      'Some recorded assistant activity cannot be linked to a user prompt. It remains visible without an invented association.',
+    );
+  });
+
+  test('omits partial turn attribution when attribution is recorded', () => {
+    expect(renderAnalysis()).not.toContain('data-session-analysis-item="partial-turns"');
+  });
+
+  test('keeps prompt truncation beside Prompts as neutral static metadata', () => {
+    const html = renderAnalysis(matches, { promptsTruncated: true });
+    const markup = itemMarkup(html, 'prompt-truncation');
+
+    expect(markup).toContain('data-tone="neutral"');
+    expect(markup).not.toContain('role="status"');
+    expect(html.indexOf('id="session-prompts"')).toBeLessThan(
+      html.indexOf('data-session-analysis-item="prompt-truncation"'),
+    );
+    expect(html).toContain(
+      'Some prompt text is truncated in this local view. Timeline and usage totals are unaffected.',
+    );
+  });
+
+  test('renders exactly one warning item for divergence plus static local limitations', () => {
     const html = renderAnalysis(
       { checkedFields: ['tokens'], differingFields: ['tokens'], status: 'differs-from-report' },
-      { durationStatus: 'partial' },
+      { durationStatus: 'partial', promptsTruncated: true, turnsStatus: 'partial' },
     );
-    expect(html.match(/data-tone="warning"/g)).toHaveLength(2);
+    expect(html.match(/data-tone="warning"/g)).toHaveLength(1);
   });
 
   test('never claims that a differing local source is newer', () => {

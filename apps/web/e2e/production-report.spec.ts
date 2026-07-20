@@ -278,7 +278,15 @@ test('hydrates and automatically pages Sessions through the production revision 
   await expect(consistencyMetadata).toHaveAttribute('data-tone', 'neutral');
   await expect(consistencyMetadata).not.toHaveAttribute('role', 'status');
   await expect(sessionAnalysis.locator('[data-tone="neutral"][role="status"]')).toHaveCount(0);
+  await expect(sessionAnalysis.locator('[data-tone="warning"]')).toHaveCount(0);
   await expect(sessionAnalysis).not.toContainText('may be newer');
+  const timingCoverage = sessionAnalysis.locator('[data-session-analysis-item="partial-duration"]');
+  await expect(timingCoverage).toBeVisible();
+  await expect(timingCoverage).toHaveAttribute('data-tone', 'neutral');
+  await expect(timingCoverage).not.toHaveAttribute('role', 'status');
+  await expect(sessionAnalysis.locator('[data-session-analysis-item="partial-turns"]')).toHaveCount(0);
+  await expect(sessionAnalysis.getByText('Root task-open time', { exact: true }).locator('..')).toContainText('≥');
+  await expect(sessionAnalysis.getByText('Between tasks', { exact: true }).locator('..')).toContainText('≤');
   const privacyMetadata = promptSection.locator('[data-session-analysis-item="privacy"]');
   await expect(privacyMetadata).toBeVisible();
   await expect(privacyMetadata).toHaveAttribute('data-tone', 'neutral');

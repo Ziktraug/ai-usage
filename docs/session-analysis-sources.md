@@ -44,6 +44,12 @@ data-quality warning, such as partial usage, unavailable counters, ambiguous
 reconciliation, or missing model pricing. The marker describes the affected
 metric; it does not mean that the whole source run failed.
 
+The on-demand analysis uses the same scoping rule. A report-versus-local
+divergence is the only full warning in that panel. Incomplete timing is shown
+beside the affected values as a recorded lower bound (`≥`) and derived upper
+bound (`≤`); incomplete prompt attribution and prompt truncation are neutral
+notes in the relevant section rather than global session warnings.
+
 ## Collection freshness
 
 The served report has two durable steps: a source run replaces that source's
@@ -111,8 +117,9 @@ that their prompt or timeline detail is available in the UI.
 Codex session analysis reads the matching rollout JSONL under
 ~/.codex/sessions through the hardened local-history reader:
 
-- completed task-open windows use the source duration field, while an open task
-  is bounded by the last locally observed event rather than discarded;
+- completed and aborted task-open windows use the source duration field, while
+  an open task is bounded by the last locally observed event rather than
+  discarded;
 - model and effort changes come from turn context;
 - cumulative token observations are converted into non-negative deltas and
   assigned to their model/effort phase;
@@ -130,19 +137,26 @@ Histories without modern local token snapshots attributable to a task context
 retain the legacy cumulative-snapshot fallback.
 
 Task-open time is the union of bounded local task windows: completed tasks use
-their recorded durations and open tasks end at the last observed local event.
-Overlapping windows are counted once. The metric includes time a request
-remains open while Codex waits for tools or subagents, so it must not be
-described as model runtime. Session span is the first local task start to the
-last observed local task event, and between-task time is the remainder. A
-grouped campaign displays the root rollout's task-open time rather than summing
-overlapping children. Tokens remain observed counters and API cost remains an
-estimate from the pricing table, not an invoice.
+their recorded durations, aborted tasks use the terminal `turn_aborted`
+duration, and open tasks end at the last observed local event. Overlapping
+windows are counted once. The metric includes time a request remains open while
+Codex waits for tools or subagents, so it must not be described as model
+runtime. Session span is the first local task start to the last observed local
+task event, and between-task time is the remainder. A grouped campaign displays
+the root rollout's task-open time rather than summing overlapping children.
+Tokens remain observed counters and API cost remains an estimate from the
+pricing table, not an invoice.
+
+Codex does not expose an equivalent of OpenCode's unresolved parent-message
+signal. Missing captured prompt text is therefore never reinterpreted as failed
+turn attribution. Timing coverage, conservative report coverage, and prompt
+attribution are derived independently.
 
 ### Sanitized audit observation
 
-One real rollout used to validate the parser contained seven completed turns
-and seven deduplicated prompts. It changed from one GPT-5.6 variant at ultra
+One real rollout used to validate the parser contained seven terminal turns
+(including an interrupted turn) and seven deduplicated prompts. It changed from
+one GPT-5.6 variant at ultra
 effort to another at high effort, with 94,279,695 observed tokens. Its recorded
 task-open time was 16,361,730 ms, compared with a 31,009,000 ms session span and
 14,647,270 ms between tasks. The segmented API-value estimate was about $68.09.
