@@ -38,7 +38,7 @@ pull request unless the user explicitly asks.
 | 023 | Harden Source Ownership, Publication, Cancellation, and Client Contracts | P1 | L | 022 initial implementation | DONE |
 | 024 | Close Source-Control Data, Cancellation, State, and Client Review Gaps | P1 | L | 023 implementation | DONE |
 | 025 | Make Session Analysis Trustworthy End to End | P1 | L | 016-018, 024 | DONE |
-| 026 | Unify the Session Drawer and Make Chronology Readable | P1 | M | 025 | TODO |
+| 026 | Unify the Session Drawer and Make Chronology Readable | P1 | M | 025 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).

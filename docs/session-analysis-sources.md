@@ -50,6 +50,26 @@ beside the affected values as a recorded lower bound (`≥`) and derived upper
 bound (`≤`); incomplete prompt attribution and prompt truncation are neutral
 notes in the relevant section rather than global session warnings.
 
+## Unified drawer chronology
+
+The session drawer has one continuous view. Its report summary remains visible,
+and an explicit analysis action loads local chronology beneath it in the same
+scroll. Merely opening the drawer never reads prompt bodies.
+
+The chronology joins tasks and prompts into one ordered timeline. Each task is
+one row labelled by its primary prompt preview, with time intervals in the
+middle and an aligned token bar on wider screens. A prompt that cannot be
+attributed remains an explicit point row instead of being attached to an
+invented task. Model and effort phases use a separate band only when at least
+two phases exist; a single phase is summarized as a compact legend.
+
+Long gaps between activity blocks are compressed by default into marked breaks,
+with a control for restoring the wall-clock scale. Compression changes only
+positions: captions, accessible labels, break titles, and displayed durations
+always retain the real values. Harness duration semantics also own the row
+vocabulary: Codex uses `Task`, while OpenCode and the generic fallback use
+`Turn`.
+
 ## Collection freshness
 
 The served report has two durable steps: a source run replaces that source's
