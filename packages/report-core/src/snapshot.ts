@@ -16,7 +16,8 @@ import type { CollectedUsageRow, UsageRow, UsageRowSource, UsageRowWithOptionalS
 import { usageRowActiveDate, usageRowTokenTotal } from './usage-row';
 
 const LEGACY_USAGE_SNAPSHOT_SCHEMA_VERSION = 1 as const;
-export const USAGE_SNAPSHOT_SCHEMA_VERSION = 2 as const;
+const LEGACY_USAGE_SNAPSHOT_SCHEMA_VERSION_V2 = 2 as const;
+export const USAGE_SNAPSHOT_SCHEMA_VERSION = 3 as const;
 // Manual merge is measured and supported through 50,000 rows. Keeping the file
 // format at that same boundary bounds validation work without truncating history.
 
@@ -125,6 +126,7 @@ const toSnapshotRow = (row: UsageRowWithOptionalSource, machine: UsageMachine): 
       ...(source?.parentSourceSessionId === undefined ? {} : { parentSourceSessionId: source.parentSourceSessionId }),
       ...(source?.rootSourceSessionId === undefined ? {} : { rootSourceSessionId: source.rootSourceSessionId }),
       ...(source?.sourcePath === undefined ? {} : { sourcePath: source.sourcePath }),
+      ...(source?.vcs === undefined ? {} : { vcs: source.vcs }),
       machineId: machine.id,
       machineLabel: machine.label,
     },
@@ -142,6 +144,7 @@ export const parseUsageSnapshot = (text: string): UsageSnapshot => {
   }
   if (
     value.schemaVersion !== LEGACY_USAGE_SNAPSHOT_SCHEMA_VERSION &&
+    value.schemaVersion !== LEGACY_USAGE_SNAPSHOT_SCHEMA_VERSION_V2 &&
     value.schemaVersion !== USAGE_SNAPSHOT_SCHEMA_VERSION
   ) {
     throw new Error('Unsupported snapshot schemaVersion');
@@ -170,6 +173,13 @@ export const parseUsageSnapshot = (text: string): UsageSnapshot => {
     value.rows.some((row) => row.modelSegments !== undefined)
   ) {
     throw new Error('Snapshot legacy v1 rows cannot contain modelSegments');
+  }
+  if (
+    (value.schemaVersion === LEGACY_USAGE_SNAPSHOT_SCHEMA_VERSION ||
+      value.schemaVersion === LEGACY_USAGE_SNAPSHOT_SCHEMA_VERSION_V2) &&
+    value.rows.some((row) => row.source.vcs !== undefined)
+  ) {
+    throw new Error(`Snapshot legacy v${value.schemaVersion} rows cannot contain source.vcs`);
   }
   for (const row of value.rows) {
     if (row.source.machineId !== value.machine.id) {

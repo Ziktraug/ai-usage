@@ -34,7 +34,7 @@ describe('usage merge bundles', () => {
       rows: [{ ...row, source: { harnessKey: 'codex', sourceSessionId: 'session-1' } }],
     });
 
-    expect(bundle.version).toBe(2);
+    expect(bundle.version).toBe(3);
     expect(bundle.rows).toHaveLength(1);
     expect(bundle.rows[0]?.source.machineId).toBe('machine-a');
     expect(bundle.rows[0]?.source.machineLabel).toBe('Machine A');
@@ -73,10 +73,44 @@ describe('usage merge bundles', () => {
   test('parses valid bundles and rejects invalid row provenance', () => {
     const bundle = createUsageMergeBundle({ machine, rows: [{ ...row }] });
     expect(parseUsageMergeBundle(JSON.stringify(bundle)).machine.id).toBe('machine-a');
-    expect(parseUsageMergeBundle(JSON.stringify({ ...bundle, version: 1 })).version).toBe(2);
+    expect(parseUsageMergeBundle(JSON.stringify({ ...bundle, version: 1 })).version).toBe(3);
+    expect(parseUsageMergeBundle(JSON.stringify({ ...bundle, version: 2 })).version).toBe(3);
 
     const invalid = { ...bundle, rows: [{ ...bundle.rows[0], source: { harnessKey: 'codex' } }] };
     expect(() => parseUsageMergeBundle(JSON.stringify(invalid))).toThrow('invalid rows');
+  });
+
+  test('preserves VCS in v3, rejects it under v2, and changes content without changing identity', () => {
+    const vcs = {
+      branches: [],
+      headCommit: null,
+      partial: false,
+      pullRequests: [],
+      repository: {
+        host: 'github.com',
+        ownerPath: 'example/project',
+        provenance: 'harness-recorded' as const,
+        webUrl: 'https://github.com/example/project',
+      },
+    };
+    const withoutVcs = toSerializedMergeRow(
+      { ...row, source: { harnessKey: 'codex', sourceSessionId: 'stable-vcs' } },
+      machine,
+    );
+    const withVcs = toSerializedMergeRow(
+      { ...row, source: { harnessKey: 'codex', sourceSessionId: 'stable-vcs', vcs } },
+      machine,
+    );
+    const bundle = createUsageMergeBundle({
+      machine,
+      rows: [{ ...row, source: { harnessKey: 'codex', sourceSessionId: 'stable-vcs', vcs } }],
+    });
+
+    expect(parseUsageMergeBundle(serializeUsageMergeBundle(bundle)).rows[0]?.source.vcs).toEqual(vcs);
+    expect(withVcs.rowKey).toBe(withoutVcs.rowKey);
+    expect(withVcs.sourceFingerprint).not.toBe(withoutVcs.sourceFingerprint);
+    expect(withVcs.contentHash).not.toBe(withoutVcs.contentHash);
+    expect(() => parseUsageMergeBundle(JSON.stringify({ ...bundle, version: 2 }))).toThrow('legacy v2');
   });
 
   test('rejects malformed dates, numbers, derived fields, and unknown row fields', () => {

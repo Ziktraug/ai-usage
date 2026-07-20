@@ -6,7 +6,7 @@ import { createUsageMergeBundle, parseUsageMergeBundle } from '@ai-usage/report-
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
-import { importLocalRows } from '@ai-usage/usage-store';
+import { importLocalRows, queryReportRows } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 import { createUsageFileMergeService, UsageMergeError } from './index';
 
@@ -93,9 +93,22 @@ describe('usage file merge public boundary', () => {
   test('imports a manual merge bundle idempotently', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-manual-import-'));
     try {
+      const peerRow = makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-1' });
+      const vcs = {
+        branches: [],
+        headCommit: null,
+        partial: false,
+        pullRequests: [],
+        repository: {
+          host: 'github.com',
+          ownerPath: 'example/project',
+          provenance: 'local-derived' as const,
+          webUrl: 'https://github.com/example/project',
+        },
+      };
       const bundle = createUsageMergeBundle({
         machine: peerMachine,
-        rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-1' })],
+        rows: [{ ...peerRow, source: { ...peerRow.source, vcs } }],
         warnings: [{ message: 'manual warning' }],
       });
       const service = createUsageFileMergeService({
@@ -114,6 +127,10 @@ describe('usage file merge public boundary', () => {
         result: { inserted: 1 },
       });
       expect(repeated.result.unchanged).toBe(1);
+      expect(bundle.version).toBe(3);
+      expect(
+        (await Effect.runPromise(queryReportRows({ dbPath: path.join(home, 'usage.sqlite') }))).rows[0]?.source.vcs,
+      ).toEqual(vcs);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

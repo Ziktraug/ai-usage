@@ -357,7 +357,7 @@ describe('OpenCode session detail', () => {
     });
     expect(detail.turns.reduce((total, turn) => total + turn.tokens.total, 0)).toBe(30);
     expect(detail.phases.reduce((total, phase) => total + phase.tokens.total, 0)).toBe(30);
-    expect(detail.turns.reduce((total, turn) => total + turn.durationMs, 0)).toBe(detail.activeDurationMs);
+    expect(detail.turns.reduce((total, turn) => total + (turn.durationMs ?? 0), 0)).toBe(detail.activeDurationMs ?? -1);
     expect(detail.activeDurationMs).toBe(25_000);
     expect(detail.elapsedDurationMs).toBe(55_000);
   });
@@ -451,6 +451,6 @@ describe('OpenCode session detail', () => {
     expect(detail.turns.every(({ promptIds }) => promptIds.length === 0)).toBe(true);
     expect(detail.turns.reduce((total, turn) => total + turn.tokens.total, 0)).toBe(24);
     expect(detail.phases.reduce((total, phase) => total + phase.tokens.total, 0)).toBe(24);
-    expect(detail.turns.reduce((total, turn) => total + turn.durationMs, 0)).toBe(detail.activeDurationMs);
+    expect(detail.turns.reduce((total, turn) => total + (turn.durationMs ?? 0), 0)).toBe(detail.activeDurationMs ?? -1);
   });
 });
