@@ -9,6 +9,18 @@ export interface SourcePresentation {
   readonly tone: SourcePresentationTone;
 }
 
+export type SourceProgressPresentation =
+  | { readonly kind: 'determinate'; readonly max: number; readonly value: number }
+  | { readonly kind: 'indeterminate' };
+
+export const presentSourceProgress = (source: SourceControlEntryView): SourceProgressPresentation => {
+  const { completed, total } = source.progress ?? {};
+  if (completed === undefined || total === undefined || total <= 0) {
+    return { kind: 'indeterminate' };
+  }
+  return { kind: 'determinate', max: total, value: Math.min(completed, total) };
+};
+
 export const sourceToneClass = (tone: SourcePresentationTone): string => {
   if (tone === 'ok') {
     return statusPillOk;

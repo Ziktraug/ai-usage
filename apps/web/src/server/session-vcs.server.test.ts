@@ -184,7 +184,6 @@ describe('session VCS server', () => {
         ],
         command: '/usr/bin/gh',
         maximumOutputBytes: 262_144,
-        shell: false,
         timeoutMs: 5000,
       },
     ]);
@@ -197,6 +196,18 @@ describe('session VCS server', () => {
     const failure = await failed.resolve({ branch: 'main', repository: vcs.repository! });
     expect(failure).toEqual({ reason: 'resolver-unavailable', status: 'unavailable' });
     expect(JSON.stringify(failure)).not.toContain(privateStderr);
+  });
+
+  test('maps an empty provider result to not-found', async () => {
+    const resolver = createGhSessionVcsProviderResolver({
+      findExecutable: () => Promise.resolve('/usr/bin/gh'),
+      run: () => Promise.resolve({ stdout: '[]' }),
+    });
+
+    expect(await resolver.resolve({ branch: 'missing', repository: vcs.repository! })).toEqual({
+      reason: 'not-found',
+      status: 'unavailable',
+    });
   });
 
   test('maps missing gh, timeout, invalid JSON, and unsafe provider URLs without leaking output', async () => {
@@ -246,7 +257,6 @@ describe('session VCS server', () => {
         args: ['-e', "process.stdout.write('ok')"],
         command: process.execPath,
         maximumOutputBytes: 16,
-        shell: false,
         timeoutMs: 1000,
       }),
     ).toEqual({ stdout: 'ok' });
@@ -255,7 +265,6 @@ describe('session VCS server', () => {
         args: ['-e', "process.stdout.write('too much output')"],
         command: process.execPath,
         maximumOutputBytes: 4,
-        shell: false,
         timeoutMs: 1000,
       }),
     ).rejects.toMatchObject({ kind: 'output-limit' });
@@ -264,7 +273,6 @@ describe('session VCS server', () => {
         args: ['-e', 'setInterval(() => undefined, 1000)'],
         command: process.execPath,
         maximumOutputBytes: 16,
-        shell: false,
         timeoutMs: 10,
       }),
     ).rejects.toMatchObject({ kind: 'timed-out' });

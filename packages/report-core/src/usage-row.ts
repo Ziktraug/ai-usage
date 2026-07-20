@@ -194,8 +194,10 @@ export const normalizeUsageRow = (input: UsageRowInput): Row => {
     ? segments.reduce((total, segment) => total + segment.costApprox, 0)
     : (input.costApprox ?? approxCost(rates, input.tokens));
   const normalizedCostKnown = segments ? segments.every(segmentCostKnown) : (input.costKnown ?? known);
-  const computedDurationMs =
-    input.durationMs ?? (input.date && input.endDate ? input.endDate.getTime() - input.date.getTime() : null);
+  let computedDurationMs = input.durationMs;
+  if (computedDurationMs === undefined) {
+    computedDurationMs = input.date && input.endDate ? input.endDate.getTime() - input.date.getTime() : null;
+  }
   // A duration where the end precedes the start is not a real elapsed time (clock skew or
   // reversed source timestamps); treat it as unknown so it never persists as a negative metric.
   const durationMs = computedDurationMs !== null && computedDurationMs >= 0 ? computedDurationMs : null;

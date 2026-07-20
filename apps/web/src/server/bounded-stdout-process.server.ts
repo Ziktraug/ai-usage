@@ -16,14 +16,13 @@ export interface BoundedStdoutProcessOptions {
   args: readonly string[];
   command: string;
   maximumOutputBytes: number;
-  shell: false;
   timeoutMs: number;
 }
 
 export const runBoundedStdoutProcess = (options: BoundedStdoutProcessOptions): Promise<{ stdout: string }> =>
   new Promise((resolve, reject) => {
     const child = spawn(options.command, [...options.args], {
-      shell: options.shell,
+      shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const chunks: Buffer[] = [];

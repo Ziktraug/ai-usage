@@ -272,4 +272,143 @@ describe('parseClaudeSessionFacts', () => {
       idleDurationMs: null,
     });
   });
+
+  test('treats zero timing and timing followed by later turn activity as unavailable', () => {
+    const records = [
+      event({
+        type: 'user',
+        timestamp: '2026-07-01T13:00:00.000Z',
+        uuid: 'user',
+        message: { content: 'Investigate timing closure' },
+      }),
+      event({
+        type: 'assistant',
+        timestamp: '2026-07-01T13:00:05.000Z',
+        uuid: 'assistant-1',
+        parentUuid: 'user',
+        requestId: 'request-1',
+        message: { id: 'message-1', model: 'claude-a', usage: { input_tokens: 1, output_tokens: 1 } },
+      }),
+      event({
+        type: 'system',
+        subtype: 'turn_duration',
+        timestamp: '2026-07-01T13:00:10.000Z',
+        parentUuid: 'assistant-1',
+        durationMs: 5000,
+      }),
+      event({
+        type: 'assistant',
+        timestamp: '2026-07-01T13:00:20.000Z',
+        uuid: 'assistant-2',
+        parentUuid: 'assistant-1',
+        requestId: 'request-2',
+        message: { id: 'message-2', model: 'claude-a', usage: { input_tokens: 1, output_tokens: 1 } },
+      }),
+    ];
+    const followedByActivity = parseClaudeSessionFacts({
+      records,
+      repository: null,
+      sourceSessionId: 'later-activity',
+    });
+    const zeroTiming = parseClaudeSessionFacts({
+      records: [
+        ...records.slice(0, 2),
+        event({
+          type: 'system',
+          subtype: 'turn_duration',
+          timestamp: '2026-07-01T13:00:10.000Z',
+          parentUuid: 'assistant-1',
+          durationMs: 0,
+        }),
+      ],
+      repository: null,
+      sourceSessionId: 'zero-timing',
+    });
+
+    expect(followedByActivity?.detailFacts).toMatchObject({
+      activeDurationMs: null,
+      durationStatus: 'unavailable',
+      idleDurationMs: null,
+    });
+    expect(zeroTiming?.detailFacts).toMatchObject({
+      activeDurationMs: null,
+      durationStatus: 'unavailable',
+      idleDurationMs: null,
+    });
+  });
+
+  test('isolates conflicting UUIDs instead of reparenting metrics to the last duplicate', () => {
+    const facts = parseClaudeSessionFacts({
+      records: [
+        event({
+          type: 'user',
+          timestamp: '2026-07-01T14:00:00.000Z',
+          uuid: 'user-1',
+          message: { content: 'First eligible prompt' },
+        }),
+        event({
+          type: 'system',
+          timestamp: '2026-07-01T14:00:01.000Z',
+          uuid: 'conflict',
+          parentUuid: 'user-1',
+        }),
+        event({
+          type: 'user',
+          timestamp: '2026-07-01T14:00:02.000Z',
+          uuid: 'user-2',
+          message: { content: 'Second eligible prompt' },
+        }),
+        event({
+          type: 'system',
+          timestamp: '2026-07-01T14:00:03.000Z',
+          uuid: 'conflict',
+          parentUuid: 'user-2',
+        }),
+        event({
+          type: 'assistant',
+          timestamp: '2026-07-01T14:00:04.000Z',
+          uuid: 'assistant',
+          parentUuid: 'conflict',
+          requestId: 'request',
+          message: { id: 'message', model: 'claude-a', usage: { input_tokens: 1, output_tokens: 1 } },
+        }),
+      ],
+      repository: null,
+      sourceSessionId: 'conflicting-uuid',
+    });
+
+    const metricTurn = facts?.detailFacts.turns.find((turn) => turn.tokens.total === 2);
+    expect(metricTurn?.promptIds).toEqual([]);
+    expect(facts?.detailFacts.turnsStatus).toBe('partial');
+  });
+
+  test('does not attach branches from multiple cwd values to one repository', () => {
+    const repository = normalizeSessionVcsRepository('https://github.com/second/repository.git', 'local-derived');
+    const facts = parseClaudeSessionFacts({
+      records: [
+        event({
+          type: 'user',
+          timestamp: '2026-07-01T15:00:00.000Z',
+          uuid: 'user-1',
+          cwd: '/first/repository',
+          gitBranch: 'first-branch',
+          message: { content: 'Work in the first repository' },
+        }),
+        event({
+          type: 'user',
+          timestamp: '2026-07-01T15:01:00.000Z',
+          uuid: 'user-2',
+          cwd: '/second/repository',
+          gitBranch: 'second-branch',
+          message: { content: 'Work in the second repository' },
+        }),
+      ],
+      repository,
+      sourceSessionId: 'multiple-repositories',
+    });
+
+    expect(facts?.source.vcs?.partial).toBe(true);
+    expect(facts?.source.vcs?.repository).toEqual(repository);
+    expect(facts?.source.vcs?.branches.every(({ webUrl }) => webUrl === null)).toBe(true);
+  });
 });

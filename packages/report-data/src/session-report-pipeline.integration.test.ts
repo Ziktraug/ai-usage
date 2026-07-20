@@ -257,7 +257,7 @@ describe('session report pipeline', () => {
             costActual: 0,
             costKnown: true,
             date: '2026-07-01T08:00:30.000Z',
-            durationMs: 0,
+            durationMs: null,
             endDate: '2026-07-01T08:00:40.000Z',
             modelSegments: [{ costKnown: true, model: 'claude-sonnet-4-6', tokCr: 0, tokCw: 0, tokIn: 5, tokOut: 3 }],
             models: ['claude-sonnet-4-6'],

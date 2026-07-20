@@ -20,6 +20,7 @@ import {
 } from '@ai-usage/report-core/session-detail';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
 import { Effect } from 'effect';
+import { authorizeLocalSessionAnchor } from './local-session-authority.server';
 import { runRevisionQueryForServer } from './revision-query-runner.server';
 
 export interface SessionDetailServerDependencies {
@@ -71,9 +72,6 @@ export const getLocalSessionDetailForServer = async (
   if (!anchor) {
     return unavailable('report-row-not-found', 'This row does not exist in the requested report revision.');
   }
-  if (anchor.sourceAuthority !== 'local-observed') {
-    return unavailable('not-local', 'Detailed chronology is only available for locally observed sessions.');
-  }
   if (!(anchor.harnessKey && anchor.machineId && anchor.sourceSessionId)) {
     return unavailable(
       'report-provenance-unavailable',
@@ -84,11 +82,21 @@ export const getLocalSessionDetailForServer = async (
     return unavailable('unsupported', 'Detailed chronology is not available for this harness yet.');
   }
 
-  try {
-    const machine = await dependencies.readMachine();
-    if (machine.id !== anchor.machineId) {
+  const authorization = await authorizeLocalSessionAnchor(anchor, dependencies.readMachine);
+  if (authorization.status === 'unauthorized') {
+    if (authorization.reason === 'not-local') {
       return unavailable('not-local', 'Detailed chronology is only available on the session source machine.');
     }
+    if (authorization.reason === 'provenance-unavailable') {
+      return unavailable(
+        'report-provenance-unavailable',
+        'This report row does not include enough provenance to find local history.',
+      );
+    }
+    return unavailable('history-unavailable', 'The local machine identity could not be read safely.');
+  }
+
+  try {
     const analysis = await dependencies.readAnalysis(anchor.harnessKey, anchor.sourceSessionId);
     if (!analysis) {
       return unavailable(

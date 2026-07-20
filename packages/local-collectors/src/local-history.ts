@@ -153,7 +153,11 @@ export const readRegularFileTextRange = (
     }
     return {
       bytesRead,
-      text: new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, bytesRead)),
+      // A bounded byte range may end between the bytes of one UTF-8 code point.
+      // Streaming decode retains that incomplete suffix while still rejecting
+      // invalid byte sequences inside the range. Callers commit only complete
+      // newline-delimited records and will reread the retained suffix.
+      text: new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, bytesRead), { stream: true }),
     };
   } finally {
     fs.closeSync(descriptor);

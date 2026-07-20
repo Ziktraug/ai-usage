@@ -11,6 +11,7 @@ import {
   createUsageMergeBundle,
   deserializeMergeRow,
   isSerializedMergeRow,
+  migrateLegacySerializedMergeRow,
   parseUsageMergeBundleValue,
   type SerializedMergeRow,
   toSerializedMergeRow,
@@ -555,6 +556,7 @@ const migrate = (db: SqliteDatabase) => {
 
     INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('generation', 0);
     INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('migration.rtk-contributions-v1', 0);
+    INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('migration.merge-row-v3-vcs', 0);
 
     CREATE TABLE IF NOT EXISTS usage_row_enrichments (
       row_key TEXT NOT NULL,
@@ -658,6 +660,58 @@ const migrate = (db: SqliteDatabase) => {
   }
   db.exec('BEGIN IMMEDIATE');
   try {
+    const mergeRowMigration = db
+      .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.merge-row-v3-vcs'")
+      .get() as UsageStoreGenerationRecord | null;
+    if (mergeRowMigration?.value === 0) {
+      const migratedAt = new Date().toISOString();
+      const legacyRows = db
+        .query('SELECT row_key, source_fingerprint, content_hash, row_json, status FROM usage_rows')
+        .all() as Array<{
+        content_hash: string;
+        row_json: string;
+        row_key: string;
+        source_fingerprint: string;
+        status: StoredUsageRowStatus;
+      }>;
+      const updateLegacyRow = db.query(`
+        UPDATE usage_rows
+        SET source_fingerprint = ?, content_hash = ?, row_json = ?, updated_at = ?
+        WHERE row_key = ?
+      `);
+      let activeProjectionChanged = false;
+      for (const legacy of legacyRows) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(legacy.row_json) as unknown;
+        } catch {
+          continue;
+        }
+        const migrationResult = migrateLegacySerializedMergeRow(parsed);
+        if (
+          !migrationResult ||
+          migrationResult.legacy.rowKey !== legacy.row_key ||
+          migrationResult.legacy.sourceFingerprint !== legacy.source_fingerprint ||
+          migrationResult.legacy.contentHash !== legacy.content_hash ||
+          migrationResult.legacy.status !== legacy.status
+        ) {
+          continue;
+        }
+        const migrated = migrationResult.row;
+        updateLegacyRow.run(
+          migrated.sourceFingerprint,
+          migrated.contentHash,
+          JSON.stringify(migrated),
+          migratedAt,
+          migrated.rowKey,
+        );
+        activeProjectionChanged ||= migrated.status === 'active';
+      }
+      if (activeProjectionChanged) {
+        db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
+      }
+      db.query("UPDATE usage_store_metadata SET value = 1 WHERE key = 'migration.merge-row-v3-vcs'").run();
+    }
     const migration = db
       .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.rtk-contributions-v1'")
       .get() as UsageStoreGenerationRecord | null;

@@ -352,7 +352,7 @@ export const collectClaudeResult = Effect.gen(function* () {
           tokens: report.tokens,
           cost: provider === 'Claude API' ? approximateApiCost : actualCost(0),
           calls: report.calls,
-          durationMs: projection.durationMs ?? 0,
+          durationMs: projection.durationMs,
           partial: projection.partial,
           turns: report.turns,
           tools: report.tools,
