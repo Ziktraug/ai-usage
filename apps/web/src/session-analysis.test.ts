@@ -1,11 +1,23 @@
 import { describe, expect, test } from 'bun:test';
-import type { SessionDetailPhase, SessionDetailTurn } from '@ai-usage/report-core/session-detail';
+import type {
+  SessionDetail,
+  SessionDetailPhase,
+  SessionDetailPrompt,
+  SessionDetailTurn,
+} from '@ai-usage/report-core/session-detail';
 import {
+  buildSessionTimelineRows,
+  buildTimelineScale,
   countActivityBursts,
+  countLabel,
   formatSessionDuration,
+  GAP_COMPRESSION_THRESHOLD_MS,
   phaseTokenShare,
+  positionOnScale,
   positionOnTimeline,
+  sessionDurationCaption,
   sessionDurationSemantics,
+  timelineHasCompressibleGaps,
 } from './session-analysis-model';
 
 const tokens = (total: number) => ({
@@ -27,7 +39,12 @@ const phase = (total: number, startAt = '2026-07-18T10:00:00.000Z'): SessionDeta
   tokens: tokens(total),
 });
 
-const turn = (index: number, startAt: string, endAt: string): SessionDetailTurn => ({
+const turn = (
+  index: number,
+  startAt: string,
+  endAt: string,
+  overrides: Partial<SessionDetailTurn> = {},
+): SessionDetailTurn => ({
   durationMs: Date.parse(endAt) - Date.parse(startAt),
   effort: 'high',
   effortKind: 'recorded',
@@ -39,6 +56,33 @@ const turn = (index: number, startAt: string, endAt: string): SessionDetailTurn 
   startAt,
   tokens: tokens(10),
   tools: 0,
+  ...overrides,
+});
+
+const prompt = (id: string, timestamp: string): SessionDetailPrompt => ({
+  id,
+  text: `Prompt ${id}`,
+  timestamp,
+  truncated: false,
+});
+
+const detail = (overrides: Partial<SessionDetail> = {}): SessionDetail => ({
+  activeDurationMs: 30 * 60_000,
+  durationStatus: 'recorded',
+  efforts: ['high'],
+  elapsedDurationMs: 60 * 60_000,
+  endedAt: '2026-07-18T11:00:00.000Z',
+  idleDurationMs: 30 * 60_000,
+  models: ['gpt-5.6-sol'],
+  observedAt: '2026-07-18T11:00:00.000Z',
+  phases: [],
+  prompts: [],
+  promptsTruncated: false,
+  sourceSessionId: 'session-1',
+  startedAt: '2026-07-18T10:00:00.000Z',
+  turns: [],
+  turnsStatus: 'recorded',
+  ...overrides,
 });
 
 describe('session analysis model', () => {
@@ -108,21 +152,297 @@ describe('session analysis model', () => {
       elapsedLabel: 'Session span',
       gapLabel: 'Between tasks',
       metricLabel: 'Task-open time',
+      rowNoun: 'Task',
       timelineHeading: 'Task timeline',
     });
     expect(sessionDurationSemantics('codex').metricHint).toContain('not model runtime');
     expect(sessionDurationSemantics('opencode')).toMatchObject({
       gapLabel: 'Outside assistant',
       metricLabel: 'Assistant time',
+      rowNoun: 'Turn',
       timelineHeading: 'Assistant timeline',
     });
     expect(sessionDurationSemantics('claude')).toMatchObject({
       gapLabel: 'Unattributed',
       metricLabel: 'Interval time',
+      rowNoun: 'Turn',
     });
     expect(sessionDurationSemantics('codex', true)).toMatchObject({
       metricLabel: 'Root task-open time',
+      rowNoun: 'Task',
     });
     expect(sessionDurationSemantics('codex', true).metricHint).toContain('root session only');
+  });
+
+  test('builds duration captions from each harness semantics and coverage status', () => {
+    const harnesses = [
+      { harnessKey: 'codex', labels: ['Task-open time', 'Session span', 'Between tasks', 'Task blocks'] },
+      { harnessKey: 'opencode', labels: ['Assistant time', 'Session span', 'Outside assistant', 'Assistant bursts'] },
+      { harnessKey: 'claude', labels: ['Interval time', 'Session span', 'Unattributed', 'Interval blocks'] },
+    ];
+
+    for (const { harnessKey, labels } of harnesses) {
+      const semantics = sessionDurationSemantics(harnessKey);
+      for (const durationStatus of ['recorded', 'partial'] as const) {
+        const parts = sessionDurationCaption(detail({ durationStatus }), semantics, 3);
+        const partial = durationStatus === 'partial';
+
+        expect(parts.map(({ key }) => key)).toEqual(['active', 'span', 'gap', 'blocks']);
+        expect(parts.map(({ label }) => label)).toEqual(labels);
+        expect(parts.map(({ value }) => value)).toEqual(['30m', '1h', '30m', '3']);
+        expect(parts.map(({ bound }) => bound)).toEqual([
+          partial ? 'lower' : null,
+          null,
+          partial ? 'upper' : null,
+          null,
+        ]);
+        expect(parts.map(({ hint }) => hint)).toEqual([
+          semantics.metricHint,
+          semantics.elapsedHint,
+          semantics.gapHint,
+          semantics.burstHint,
+        ]);
+      }
+    }
+  });
+
+  test('pluralizes simple count labels', () => {
+    expect(countLabel(1, 'prompt')).toBe('1 prompt');
+    expect(countLabel(2, 'prompt')).toBe('2 prompts');
+    expect(countLabel(0, 'tool')).toBe('0 tools');
+  });
+
+  test('joins nominal task prompts in chronological task order', () => {
+    const rows = buildSessionTimelineRows(
+      detail({
+        prompts: [prompt('late', '2026-07-18T10:31:00.000Z'), prompt('early', '2026-07-18T10:01:00.000Z')],
+        turns: [
+          turn(1, '2026-07-18T10:30:00.000Z', '2026-07-18T10:40:00.000Z', { promptIds: ['late'] }),
+          turn(0, '2026-07-18T10:00:00.000Z', '2026-07-18T10:10:00.000Z', { promptIds: ['early'] }),
+        ],
+      }),
+    );
+
+    expect(rows.map((row) => (row.kind === 'task' ? row.prompts[0]?.id : 'orphan'))).toEqual(['early', 'late']);
+  });
+
+  test('joins each prompt to its first chronological task and sorts unified rows', () => {
+    const earlyTurn = turn(0, '2026-07-18T10:00:00.000Z', '2026-07-18T10:10:00.000Z', {
+      promptIds: ['p1', 'shared'],
+      tokens: tokens(100),
+    });
+    const lateTurn = turn(1, '2026-07-18T10:30:00.000Z', '2026-07-18T10:40:00.000Z', {
+      promptIds: ['p2', 'shared', 'missing'],
+      tokens: tokens(200),
+    });
+    const noPromptTurn = turn(2, '2026-07-18T10:50:00.000Z', '2026-07-18T11:00:00.000Z', {
+      tokens: tokens(50),
+    });
+    const rows = buildSessionTimelineRows(
+      detail({
+        prompts: [
+          prompt('p2', '2026-07-18T10:31:00.000Z'),
+          prompt('orphan', '2026-07-18T10:20:00.000Z'),
+          prompt('shared', '2026-07-18T10:02:00.000Z'),
+          prompt('p1', '2026-07-18T10:01:00.000Z'),
+        ],
+        turns: [lateTurn, noPromptTurn, earlyTurn],
+      }),
+    );
+
+    expect(rows.map((row) => (row.kind === 'task' ? `task-${row.index}` : row.prompt.id))).toEqual([
+      'task-0',
+      'orphan',
+      'task-1',
+      'task-2',
+    ]);
+    const taskRows = rows.filter((row) => row.kind === 'task');
+    expect(taskRows.map((row) => row.prompts.map(({ id }) => id))).toEqual([['p1', 'shared'], ['p2'], []]);
+    expect(taskRows.map(({ tokenShareOfMax }) => tokenShareOfMax)).toEqual([0.5, 1, 0.25]);
+    expect(taskRows.every(({ tokenShareOfMax }) => Number.isFinite(tokenShareOfMax))).toBe(true);
+  });
+
+  test('keeps zero-token task shares finite', () => {
+    const rows = buildSessionTimelineRows(
+      detail({
+        turns: [
+          turn(0, '2026-07-18T10:00:00.000Z', '2026-07-18T10:10:00.000Z', { tokens: tokens(0) }),
+          turn(1, '2026-07-18T10:20:00.000Z', '2026-07-18T10:30:00.000Z', { tokens: tokens(0) }),
+        ],
+      }),
+    );
+
+    const shares = rows.flatMap((row) => (row.kind === 'task' ? [row.tokenShareOfMax] : []));
+    expect(shares).toEqual([0, 0]);
+    expect(shares.every((share) => Number.isFinite(share))).toBe(true);
+  });
+
+  test('renders all prompts as orphan rows when there are no tasks', () => {
+    const rows = buildSessionTimelineRows(
+      detail({
+        prompts: [prompt('late', '2026-07-18T10:40:00.000Z'), prompt('early', '2026-07-18T10:10:00.000Z')],
+      }),
+    );
+
+    expect(rows.map((row) => (row.kind === 'orphan-prompt' ? row.prompt.id : 'task'))).toEqual(['early', 'late']);
+  });
+
+  test('breaks equal row timestamps by their source index', () => {
+    const sharedTimestamp = '2026-07-18T10:10:00.000Z';
+    const rows = buildSessionTimelineRows(
+      detail({
+        prompts: [prompt('orphan', sharedTimestamp)],
+        turns: [turn(2, sharedTimestamp, '2026-07-18T10:20:00.000Z')],
+      }),
+    );
+
+    expect(rows.map(({ kind }) => kind)).toEqual(['orphan-prompt', 'task']);
+  });
+
+  test('keeps wall-clock scale positions identical to the existing timeline', () => {
+    const session = detail({
+      turns: [turn(0, '2026-07-18T10:10:00.000Z', '2026-07-18T10:50:00.000Z')],
+    });
+    const scale = buildTimelineScale(session, 'wall-clock');
+    const intervals = [
+      ['2026-07-18T09:50:00.000Z', '2026-07-18T10:15:00.000Z'],
+      ['2026-07-18T10:15:00.000Z', '2026-07-18T10:45:00.000Z'],
+      ['2026-07-18T10:50:00.000Z', '2026-07-18T11:10:00.000Z'],
+    ];
+
+    for (const [startAt, endAt] of intervals) {
+      expect(positionOnScale(scale, startAt!, endAt!)).toEqual(
+        positionOnTimeline(startAt!, endAt!, session.startedAt, session.endedAt),
+      );
+    }
+  });
+
+  test('keeps compressed scale linear when no gap exceeds the threshold', () => {
+    const session = detail({
+      turns: [
+        turn(0, '2026-07-18T10:00:00.000Z', '2026-07-18T10:10:00.000Z'),
+        turn(1, '2026-07-18T10:25:00.000Z', '2026-07-18T10:35:00.000Z'),
+      ],
+    });
+    const scale = buildTimelineScale(session, 'compressed');
+
+    expect(GAP_COMPRESSION_THRESHOLD_MS).toBe(15 * 60 * 1000);
+    expect(timelineHasCompressibleGaps(session)).toBe(false);
+    expect(scale.breaks).toEqual([]);
+    expect(positionOnScale(scale, session.startedAt, session.endedAt)).toEqual({
+      leftPercent: 0,
+      widthPercent: 100,
+    });
+    expect(positionOnScale(scale, '2026-07-18T10:15:00.000Z', '2026-07-18T10:45:00.000Z')).toEqual(
+      positionOnTimeline('2026-07-18T10:15:00.000Z', '2026-07-18T10:45:00.000Z', session.startedAt, session.endedAt),
+    );
+  });
+
+  test('compresses each long inter-block gap to two percent', () => {
+    const session = detail({
+      activeDurationMs: 10 * 3_600_000,
+      elapsedDurationMs: 18 * 3_600_000,
+      endedAt: '2026-07-19T04:00:00.000Z',
+      idleDurationMs: 8 * 3_600_000,
+      turns: [
+        turn(0, '2026-07-18T10:00:00.000Z', '2026-07-18T12:00:00.000Z'),
+        turn(1, '2026-07-18T17:00:00.000Z', '2026-07-18T21:00:00.000Z'),
+        turn(2, '2026-07-19T00:00:00.000Z', '2026-07-19T04:00:00.000Z'),
+      ],
+    });
+    const scale = buildTimelineScale(session, 'compressed');
+    const positions = [
+      positionOnScale(scale, '2026-07-18T10:00:00.000Z', '2026-07-18T12:00:00.000Z'),
+      positionOnScale(scale, '2026-07-18T12:00:00.000Z', '2026-07-18T17:00:00.000Z'),
+      positionOnScale(scale, '2026-07-18T17:00:00.000Z', '2026-07-18T21:00:00.000Z'),
+      positionOnScale(scale, '2026-07-18T21:00:00.000Z', '2026-07-19T00:00:00.000Z'),
+      positionOnScale(scale, '2026-07-19T00:00:00.000Z', '2026-07-19T04:00:00.000Z'),
+    ];
+
+    expect(timelineHasCompressibleGaps(session)).toBe(true);
+    expect(scale.breaks).toHaveLength(2);
+    expect(scale.breaks.map(({ gapMs }) => gapMs)).toEqual([5 * 3_600_000, 3 * 3_600_000]);
+    expect(scale.breaks[0]?.atPercent).toBeCloseTo(20.2);
+    expect(scale.breaks[1]?.atPercent).toBeCloseTo(60.6);
+    const expectedWidths = [19.2, 2, 38.4, 2, 38.4];
+    for (const [index, position] of positions.entries()) {
+      expect(position.widthPercent).toBeCloseTo(expectedWidths[index]!);
+    }
+    expect(positions.reduce((total, { widthPercent }) => total + widthPercent, 0)).toBeCloseTo(100);
+  });
+
+  test('clamps compressed positions and preserves monotonicity', () => {
+    const session = detail({
+      turns: [
+        turn(0, '2026-07-18T10:00:00.000Z', '2026-07-18T10:10:00.000Z'),
+        turn(1, '2026-07-18T10:40:00.000Z', '2026-07-18T11:00:00.000Z'),
+      ],
+    });
+    const scale = buildTimelineScale(session, 'compressed');
+    const timestamps = [
+      '2026-07-18T09:00:00.000Z',
+      '2026-07-18T10:00:00.000Z',
+      '2026-07-18T10:20:00.000Z',
+      '2026-07-18T10:40:00.000Z',
+      '2026-07-18T11:00:00.000Z',
+      '2026-07-18T12:00:00.000Z',
+    ];
+    const points = timestamps.map((value) => positionOnScale(scale, value, value).leftPercent);
+
+    expect(positionOnScale(scale, timestamps[0]!, timestamps.at(-1)!)).toEqual({
+      leftPercent: 0,
+      widthPercent: 100,
+    });
+    expect(positionOnScale(scale, '2026-07-18T10:50:00.000Z', '2026-07-18T10:30:00.000Z').widthPercent).toBe(0);
+    for (let index = 1; index < points.length; index += 1) {
+      expect(points[index]!).toBeGreaterThanOrEqual(points[index - 1]!);
+    }
+  });
+
+  test('keeps wall-clock scale when fixed-width breaks would consume the axis', () => {
+    const sessionStartMs = Date.parse('2026-07-18T10:00:00.000Z');
+    const minuteMs = 60_000;
+    const turns = Array.from({ length: 51 }, (_, index) => {
+      const startAt = new Date(sessionStartMs + index * 17 * minuteMs).toISOString();
+      const endAt = new Date(Date.parse(startAt) + minuteMs).toISOString();
+      return turn(index, startAt, endAt);
+    });
+    const endedAt = turns.at(-1)?.endAt ?? new Date(sessionStartMs).toISOString();
+    const session = detail({
+      activeDurationMs: turns.length * minuteMs,
+      elapsedDurationMs: Date.parse(endedAt) - sessionStartMs,
+      endedAt,
+      idleDurationMs: (turns.length - 1) * 16 * minuteMs,
+      turns,
+    });
+    const scale = buildTimelineScale(session, 'compressed');
+
+    expect(timelineHasCompressibleGaps(session)).toBe(false);
+    expect(scale.breaks).toEqual([]);
+    expect(positionOnScale(scale, session.startedAt, session.endedAt)).toEqual({
+      leftPercent: 0,
+      widthPercent: 100,
+    });
+    expect(positionOnScale(scale, turns[25]!.startAt, turns[25]!.endAt)).toEqual(
+      positionOnTimeline(turns[25]!.startAt, turns[25]!.endAt, session.startedAt, session.endedAt),
+    );
+  });
+
+  test('handles a zero-duration session like the existing timeline', () => {
+    const timestamp = '2026-07-18T10:00:00.000Z';
+    const session = detail({
+      activeDurationMs: 0,
+      elapsedDurationMs: 0,
+      endedAt: timestamp,
+      idleDurationMs: 0,
+      startedAt: timestamp,
+    });
+
+    for (const mode of ['wall-clock', 'compressed'] as const) {
+      const scale = buildTimelineScale(session, mode);
+      expect(positionOnScale(scale, timestamp, timestamp)).toEqual({ leftPercent: 0, widthPercent: 100 });
+      expect(scale.breaks).toEqual([]);
+    }
+    expect(timelineHasCompressibleGaps(session)).toBe(false);
   });
 });
