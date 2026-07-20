@@ -792,16 +792,16 @@ Expected: all exit 0; only in-scope files changed. Update the plan 002 row in
 `plans/README.md` to DONE and finish `plans/002-skills-inventory-ui-log.md`.
 Visual sign-off checklist (operator's real data, light + dark, 1440px + 390px):
 
-- [ ] Page height < ~2,500 px on desktop; actions reachable on mobile.
-- [ ] Every skill row shows name **and** description.
-- [ ] Matrix dots match the legend; disabled skills struck through, last.
-- [ ] `Reconcile all` enabled with 159 unmanaged entries present; result
+- [x] Page height < ~2,500 px on desktop; actions reachable on mobile.
+- [x] Every skill row shows name **and** description.
+- [x] Matrix dots match the legend; disabled skills struck through, last.
+- [x] `Reconcile all` enabled with 159 unmanaged entries present; result
       message lists applied and skipped actions.
-- [ ] `To consolidate` fold shows grouped per-runtime counts, collapsed by
+- [x] `To consolidate` fold shows grouped per-runtime counts, collapsed by
       default.
-- [ ] Drawer: full description, worded exposure with paths, working toggle and
+- [x] Drawer: full description, worded exposure with paths, working toggle and
       reconcile; SKILL.md editor saves and surfaces conflicts (if Step 8 ran).
-- [ ] Projects tab renders configured projects with the same matrix language.
+- [x] Projects tab renders configured projects with the same matrix language.
 
 ## Test plan (summary)
 
@@ -820,19 +820,19 @@ Visual sign-off checklist (operator's real data, light + dark, 1440px + 390px):
 
 All must hold:
 
-- [ ] Status tokens exist in the design system; severity is color-coded via
+- [x] Status tokens exist in the design system; severity is color-coded via
       `statusPill*`/`statusDot*` only (no ad-hoc hex in app code).
-- [ ] `reconcileSkill`/`reconcileAllActiveSkills` apply safe actions and
+- [x] `reconcileSkill`/`reconcileAllActiveSkills` apply safe actions and
       report refused ones; UI gate no longer requires zero unmanaged entries.
-- [ ] `/skills` Global tab = health strip → skills×runtimes matrix (with
+- [x] `/skills` Global tab = health strip → skills×runtimes matrix (with
       descriptions) → collapsed folds; no flat unmanaged list anywhere.
-- [ ] Row click opens the detail drawer with worded per-runtime exposure.
-- [ ] Projects tab observes configured projects read-only with the same
+- [x] Row click opens the detail drawer with worded per-runtime exposure.
+- [x] Projects tab observes configured projects read-only with the same
       matrix language.
-- [ ] If Step 8 ran: SKILL.md editing is confined to
+- [x] If Step 8 ran: SKILL.md editing is confined to
       `<sourceRepoPath>/skills/<name>/SKILL.md` with sha-conflict protection.
-- [ ] `bun run test` / `typecheck` / `lint` / `build` all exit 0.
-- [ ] `plans/README.md` row updated; log file complete.
+- [x] `bun run test` / `typecheck` / `lint` / `build` all exit 0.
+- [x] `plans/README.md` row updated; log file complete.
 
 ## STOP conditions
 

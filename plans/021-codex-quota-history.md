@@ -740,21 +740,23 @@ Use the existing tests as structural patterns:
 
 All criteria must hold:
 
-- [ ] A live Codex quota read uses only `codex app-server` and performs no model turn.
-- [ ] Codex rollout backfill resumes incrementally and does not rescan unchanged file contents.
-- [ ] SQLite retains normalized provider-neutral observations/windows and atomic source checkpoints.
-- [ ] Duplicate snapshots coalesce while 30-minute heartbeats preserve coverage.
-- [ ] Live, backfill, reset, gap, error, and auth states have deterministic tests.
-- [ ] The common ingestion/store/query contracts contain no Codex-only window fields.
-- [ ] A served dashboard refreshes quota at most once per five minutes and independently of report revision refresh.
-- [ ] The Codex history surface supports 24h/7d/30d and provider-defined window identities.
-- [ ] Resets and collection gaps are not drawn as continuous consumption changes.
-- [ ] Static HTML and existing CLI quota behavior remain compatible.
-- [ ] No raw provider response or credential is persisted/logged.
-- [ ] `bun run typecheck`, `bun run lint`, `bun x ultracite check`, and `bun run test` exit 0.
-- [ ] The focused Playwright quota-history scenario passes on desktop and mobile.
-- [ ] No files outside Scope are modified, apart from updating `plans/README.md` status.
-- [ ] `plans/README.md` status row is updated.
+- [x] A live Codex quota read uses only `codex app-server` and performs no model turn.
+- [x] Codex rollout backfill resumes incrementally and does not rescan unchanged file contents.
+- [x] SQLite retains normalized provider-neutral observations/windows and atomic source checkpoints.
+- [x] Duplicate snapshots coalesce while 30-minute heartbeats preserve coverage.
+- [x] Live, backfill, reset, gap, error, and auth states have deterministic tests.
+- [x] The common ingestion/store/query contracts contain no Codex-only window fields.
+- [x] The server-owned `codex.usage-limits` source refreshes quota on its own
+      bounded cadence, independently of report publication and browser refresh.
+- [x] The Codex history surface supports 24h/7d/30d and provider-defined window identities.
+- [x] Resets and collection gaps are not drawn as continuous consumption changes.
+- [x] The retired static HTML export remains absent, and existing CLI quota
+      behavior remains compatible.
+- [x] No raw provider response or credential is persisted/logged.
+- [x] `bun run typecheck`, `bun run lint`, `bun x ultracite check`, and `bun run test` exit 0.
+- [x] The focused Playwright quota-history scenario passes on desktop and mobile.
+- [x] No files outside Scope are modified, apart from updating `plans/README.md` status.
+- [x] `plans/README.md` status row is updated.
 
 ## STOP conditions
 
