@@ -3,6 +3,7 @@ import {
   type SessionDetailAnchorResult,
   type SessionDetailRequest,
   sessionDetailRequestFingerprint,
+  sessionDetailSourceAuthorities,
   sessionProjectionFactsForSerializedRow,
 } from '@ai-usage/report-core/session-detail';
 import type {
@@ -40,7 +41,7 @@ export interface SessionQuerySqliteDatabase {
 
 export type SessionQuerySqliteTrace = (query: { params: readonly unknown[]; sql: string }) => void;
 
-const SESSION_QUERY_SCHEMA_VERSION = 6;
+const SESSION_QUERY_SCHEMA_VERSION = 8;
 const CURSOR_PATTERN = /^sq1\.([0-9a-f]{16})\.([0-9a-z]+)$/;
 const CAMPAIGN_EXACT_COST_SORT_FIELDS = new Set<SessionSortField>(['actual', 'cost', 'quota']);
 const isUnknownRecord = (value: unknown): value is Record<string, unknown> =>
@@ -123,6 +124,7 @@ interface NeighborRecord {
 }
 
 interface SessionDetailAnchorRecord {
+  source_authority: string;
   source_row_json: string;
 }
 
@@ -717,7 +719,7 @@ const runSessionDetailAnchor = (
   const request = parseSessionDetailRequest(input);
   const rows = executeAll<SessionDetailAnchorRecord>(
     database,
-    `SELECT source_row_json
+    `SELECT source_authority, source_row_json
     FROM session_rows
     WHERE row_id = ?
     ORDER BY ordinal
@@ -735,6 +737,10 @@ const runSessionDetailAnchor = (
       requestFingerprint: sessionDetailRequestFingerprint(request),
       revision: request.revision,
     };
+  }
+  const sourceAuthority = sessionDetailSourceAuthorities.find((authority) => authority === sourceRow.source_authority);
+  if (!sourceAuthority) {
+    throw new Error('Report revision session detail source authority is invalid');
   }
   let serializedRow: unknown;
   try {
@@ -758,6 +764,7 @@ const runSessionDetailAnchor = (
       harnessKey: nullableIdentity('harnessKey'),
       machineId: nullableIdentity('machineId'),
       projection,
+      sourceAuthority,
       sourceSessionId: nullableIdentity('sourceSessionId'),
     },
     requestFingerprint: sessionDetailRequestFingerprint(request),

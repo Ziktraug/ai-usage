@@ -22,9 +22,10 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./report-data`: serialized usage report payloads and report preparation.
 - `./report-budgets`: shared frozen byte, row, artifact, and import-query acceptance budgets.
 - `./session-query`: strict JSON-safe session filter, sort, page, campaign-child, neighbor, cursor, and request-fingerprint contracts.
-- `./session-detail`: strict revision/row detail requests, report anchors,
-  prompt-free projection facts, deterministic consistency comparison, bounded
-  local detail responses, phases, turns, intervals, and parsers.
+- `./session-detail`: strict revision/row detail requests, private
+  source-authority-gated report anchors, prompt-free projection facts,
+  deterministic consistency comparison, bounded local detail responses,
+  phases, turns, intervals, and parsers.
 - `./session-lineage`: parent/root source-session normalization across harnesses.
 - `./snapshot`: multi-machine usage snapshot creation, parsing, and source labels.
 - `./source-control`: browser-safe collection-source identifiers, defaults, policy contracts, state axes, strict snapshot/command/publication-event decoders, and newest-snapshot replacement.
@@ -50,7 +51,10 @@ The workspace packages expose only these public seams. Cross-package imports mus
 
 ## `@ai-usage/report-data`
 
-- `.`: local report row/payload requests, focused known-project-source discovery, snapshot assembly, and full compatibility payload creation over core plus local collectors.
+- `.`: local report row/payload requests, stored report captures with a private
+  row-authority sidecar, focused known-project-source discovery, snapshot
+  assembly, and full compatibility payload creation over core plus local
+  collectors.
 - `./one-shot-sources`: explicit timer-free source execution application ports, including policy-aware fresh local merge/project discovery and the combined quota refresh/latest-durable-read operation used by CLI.
 - `./provider-quota`: local provider-quota refresh, typed `ProviderQuotaRefreshAborted` cancellation, provider-neutral latest-durable projection, and bounded history-query orchestration.
 - `./report-payload-artifact`: shared owner-only artifact writer and byte budget used by bounded internal Bun runners.

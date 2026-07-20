@@ -23,10 +23,23 @@ const databaseParameterKey = (parameter: LocalHistorySqlParameter): unknown => {
 const databaseStatementKey = (sql: string, parameters: readonly LocalHistorySqlParameter[]): string =>
   JSON.stringify([sql, parameters.map(databaseParameterKey)]);
 
+const databaseParametersKey = (parameters: readonly LocalHistorySqlParameter[]): string =>
+  JSON.stringify(parameters.map(databaseParameterKey));
+
+export interface TestSqlMatcher {
+  includes: readonly string[];
+}
+
+interface TestDatabaseRowsMatcher extends TestSqlMatcher {
+  parametersKey: string;
+  rows: Record<string, unknown>[];
+}
+
 export class TestMemoryStorage implements LocalHistoryStorage {
   readonly home: string;
   private readonly files = new Map<string, string>();
   private readonly databases = new Map<string, Map<string, Record<string, unknown>[]>>();
+  private readonly databaseRowsMatchers = new Map<string, TestDatabaseRowsMatcher[]>();
 
   constructor(home = '/home/test') {
     this.home = home;
@@ -38,14 +51,23 @@ export class TestMemoryStorage implements LocalHistoryStorage {
 
   writeDatabaseRows(
     relativePath: string,
-    sql: string,
+    sql: string | TestSqlMatcher,
     rows: Record<string, unknown>[],
     parameters: readonly LocalHistorySqlParameter[] = [],
   ) {
     const dbPath = path.join(this.home, relativePath);
     const database = this.databases.get(dbPath) ?? new Map<string, Record<string, unknown>[]>();
-    database.set(databaseStatementKey(sql, parameters), rows);
     this.databases.set(dbPath, database);
+    if (typeof sql === 'string') {
+      database.set(databaseStatementKey(sql, parameters), rows);
+      return;
+    }
+    if (sql.includes.length === 0) {
+      throw new Error('A database SQL matcher must contain at least one required fragment');
+    }
+    const matchers = this.databaseRowsMatchers.get(dbPath) ?? [];
+    matchers.push({ includes: [...sql.includes], parametersKey: databaseParametersKey(parameters), rows });
+    this.databaseRowsMatchers.set(dbPath, matchers);
   }
 
   exists(filePath: string) {
@@ -156,7 +178,23 @@ export class TestMemoryStorage implements LocalHistoryStorage {
         sql: string,
         parameters: readonly LocalHistorySqlParameter[] = [],
       ) => {
-        const rows = database.get(databaseStatementKey(sql, parameters));
+        const exactRows = database.get(databaseStatementKey(sql, parameters));
+        const matchingRows = (this.databaseRowsMatchers.get(dbPath) ?? []).filter(
+          (fixture) =>
+            fixture.parametersKey === databaseParametersKey(parameters) &&
+            fixture.includes.every((fragment) => sql.includes(fragment)),
+        );
+        if (exactRows === undefined && matchingRows.length > 1) {
+          return Effect.fail(
+            new LocalHistoryError({
+              operation: 'sqlite.all',
+              path: dbPath,
+              sql,
+              cause: new Error(`Multiple fixture row sets match SQL: ${sql}`),
+            }),
+          );
+        }
+        const rows = exactRows ?? matchingRows[0]?.rows;
         if (!rows) {
           return Effect.fail(
             new LocalHistoryError({

@@ -3,6 +3,7 @@ import {
   parseSessionDetailResponse,
   type SessionDetailRequest,
   type SessionDetailResponse,
+  SessionDetailValidationError,
 } from '@ai-usage/report-core/session-detail';
 
 export interface SessionDetailSource {
@@ -29,5 +30,9 @@ export const loadSessionDetail = async (
   source: SessionDetailSource = servedSessionDetailSource,
 ): Promise<SessionDetailResponse> => {
   const request = parseSessionDetailRequest(input);
-  return parseSessionDetailResponse(await source.getDetail(request));
+  const response = parseSessionDetailResponse(await source.getDetail(request));
+  if (response.status === 'available' && response.revision !== request.revision) {
+    throw new SessionDetailValidationError('Session detail response does not match its requested revision');
+  }
+  return response;
 };

@@ -3,7 +3,11 @@ import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-
 import { updateAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
 import { type ProjectGroupConfig, parseProjectGroupConfigs } from '@ai-usage/report-core/project-group';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
-import { runConsistentStoredReportPayload, type StoredReportPayloadRequest } from '@ai-usage/report-data';
+import {
+  runConsistentStoredReportCapture,
+  type StoredReportCapture,
+  type StoredReportPayloadRequest,
+} from '@ai-usage/report-data';
 import { Effect } from 'effect';
 import {
   type ReportRevision,
@@ -28,6 +32,12 @@ const { rootDir, rootEnvPath } = resolveReportRuntimePaths({
 const LINE_SEPARATOR = /\r?\n/;
 export const REVISION_RENEWAL_WINDOW_MS = 60_000;
 type ReportRevisionRegistry = ReturnType<typeof createReportRevisionRegistry>;
+
+export interface EnsurePublishedRevisionDependencies {
+  now(): number;
+  publications: WeakMap<UsageReportPayload, Promise<WebReportRevisionManifest>>;
+  registry: ReportRevisionRegistry;
+}
 
 const reportPublicationState = globalThis as typeof globalThis & {
   __aiUsageReportPublicationState:
@@ -114,16 +124,16 @@ const withRootPerfEnv = async <A>(run: () => Promise<A>) => {
   }
 };
 
-const loadStoredPayloadDirect = async (): Promise<UsageReportPayload> => {
+const loadStoredPayloadDirect = async (): Promise<StoredReportCapture> => {
   const startedAt = Date.now();
   try {
-    const payload = await withRootPerfEnv(() => runConsistentStoredReportPayload(payloadRequest()));
+    const capture = await withRootPerfEnv(() => runConsistentStoredReportCapture(payloadRequest()));
     if (perfEnabled()) {
       console.error(
-        `[perf] aiUsage.web.reportPayloadDirect ok mode=stored durationMs=${Date.now() - startedAt} rows=${payload.rows.length}`,
+        `[perf] aiUsage.web.reportPayloadDirect ok mode=stored durationMs=${Date.now() - startedAt} rows=${capture.payload.rows.length}`,
       );
     }
-    return payload;
+    return capture;
   } catch (error) {
     if (perfEnabled()) {
       console.error(`[perf] aiUsage.web.reportPayloadDirect failed mode=stored durationMs=${Date.now() - startedAt}`);
@@ -132,38 +142,52 @@ const loadStoredPayloadDirect = async (): Promise<UsageReportPayload> => {
   }
 };
 
-const ensurePublishedRevision = async (payload: UsageReportPayload): Promise<WebReportRevisionManifest> => {
-  const existingPublication = revisionPublicationByPayload.get(payload);
+export const ensurePublishedRevision = async (
+  capture: StoredReportCapture,
+  dependencies: EnsurePublishedRevisionDependencies = {
+    now: Date.now,
+    publications: revisionPublicationByPayload,
+    registry: reportRevisionRegistry,
+  },
+): Promise<WebReportRevisionManifest> => {
+  const { payload, rowSourceAuthorities } = capture;
+  const { now, publications, registry } = dependencies;
+  const webPayload = toWebReportPayload(payload);
+  const privateCaptureFingerprint = reportCaptureFingerprintForPayload(webPayload, rowSourceAuthorities);
+  const existingPublication = publications.get(payload);
   if (existingPublication) {
     const manifest = await existingPublication;
-    const current = await reportRevisionRegistry.getCurrentManifest();
+    const current = await registry.getCurrentManifestForCapture(privateCaptureFingerprint);
     if (current.ok && current.manifest.revision === manifest.revision) {
       return manifest;
     }
   }
 
-  const webPayload = toWebReportPayload(payload);
-  const captureFingerprint = reportCaptureFingerprintForPayload(webPayload);
-  const current = await reportRevisionRegistry.getCurrentManifest();
-  if (current.ok && current.manifest.captureFingerprint === captureFingerprint) {
-    let manifest = current.manifest;
-    if (current.manifest.expiresAt - Date.now() <= REVISION_RENEWAL_WINDOW_MS) {
-      const renewal = await reportRevisionRegistry.renewCurrent();
-      if (renewal.ok) {
-        manifest = renewal.manifest;
-      }
+  const current = await registry.getCurrentManifestForCapture(privateCaptureFingerprint);
+  if (current.ok) {
+    if (current.manifest.expiresAt - now() > REVISION_RENEWAL_WINDOW_MS) {
+      publications.set(payload, Promise.resolve(current.manifest));
+      return current.manifest;
     }
-    revisionPublicationByPayload.set(payload, Promise.resolve(manifest));
-    return manifest;
+    const renewal = await registry.renewCurrentForCapture(current.manifest.revision, privateCaptureFingerprint);
+    if (renewal.ok) {
+      publications.set(payload, Promise.resolve(renewal.manifest));
+      return renewal.manifest;
+    }
+    const rematched = await registry.getCurrentManifestForCapture(privateCaptureFingerprint);
+    if (rematched.ok) {
+      publications.set(payload, Promise.resolve(rematched.manifest));
+      return rematched.manifest;
+    }
   }
 
-  const publication = reportRevisionRegistry.publish(webPayload, { captureFingerprint });
-  revisionPublicationByPayload.set(payload, publication);
+  const publication = registry.publish(webPayload, { rowSourceAuthorities });
+  publications.set(payload, publication);
   try {
     return await publication;
   } catch (error) {
-    if (revisionPublicationByPayload.get(payload) === publication) {
-      revisionPublicationByPayload.delete(payload);
+    if (publications.get(payload) === publication) {
+      publications.delete(payload);
     }
     throw error;
   }
@@ -174,8 +198,8 @@ export const publishStoredReportRevisionForSourceControl = async (): Promise<{
   revision: string;
 }> => {
   const previous = await reportRevisionRegistry.getCurrentManifest();
-  const payload = await loadStoredPayloadDirect();
-  const manifest = await ensurePublishedRevision(payload);
+  const capture = await loadStoredPayloadDirect();
+  const manifest = await ensurePublishedRevision(capture);
   return {
     changed: !(previous.ok && previous.manifest.revision === manifest.revision),
     revision: manifest.revision,
@@ -191,10 +215,10 @@ export const getReportRevisionManifestForServer = async (): Promise<WebReportRev
   return current;
 };
 
-export const withReportRevisionDirectoryForServer = <Result>(
+export const withReportRevisionQueryLeaseForServer = <Result>(
   revision: ReportRevision,
   operation: (directory: string, manifest: WebReportRevisionManifest) => Promise<Result>,
-): Promise<ReportRevisionLeaseResult<Result>> => reportRevisionRegistry.withRevisionDirectory(revision, operation);
+): Promise<ReportRevisionLeaseResult<Result>> => reportRevisionRegistry.withSessionQueryLease(revision, operation);
 
 export const invalidateReportPayloadForMutation = async (
   options: { scheduleRefresh?: boolean } = {},

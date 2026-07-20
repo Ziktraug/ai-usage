@@ -6,6 +6,7 @@ import path from 'node:path';
 import { readCodexSessionAnalysis } from '@ai-usage/local-collectors/codex-history';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import { writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
+import { readOpenCodeSessionAnalysis } from '@ai-usage/local-collectors/opencode-history';
 import {
   appendCodexRootUsage,
   HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
@@ -16,7 +17,7 @@ import { projectSessionPage, type SessionQueryRequest } from '@ai-usage/report-c
 import type { CollectedUsageRow } from '@ai-usage/report-core/types';
 import { queryReportRows, usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
-import { createStoredReportPayload } from './index';
+import { createStoredReportCapture } from './index';
 import { materializeSessionQueryDatabase, SESSION_QUERY_DATABASE_NAME } from './session-query-materialization';
 import { assertSessionQueryDatabase, executeMaterializedSessionQuery } from './session-query-sqlite';
 import { createScheduledSourceRegistry, type SourceRunContext } from './source-adapters';
@@ -104,24 +105,59 @@ describe('session report pipeline', () => {
     }
 
     const stored = await Effect.runPromise(queryReportRows({ dbPath: usageStorePath(home) }));
-    const payload = await Effect.runPromise(
-      createStoredReportPayload({
+    const capture = await Effect.runPromise(
+      createStoredReportCapture({
         generatedAt: GENERATED_AT,
         harness: null,
         includeCursor: true,
         options: { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
       }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
     );
-    await materializeSessionQueryDatabase(revisionDirectory, payload.rows);
+    const { payload } = capture;
+    await materializeSessionQueryDatabase(revisionDirectory, payload.rows, undefined, capture.rowSourceAuthorities);
     const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), {
       readonly: true,
       strict: true,
     });
     try {
       assertSessionQueryDatabase(database);
-      expect(executeMaterializedSessionQuery(database, 'sessions', request())).toEqual(
-        projectSessionPage(payload.rows, request()),
+      const materializedPage = executeMaterializedSessionQuery(database, 'sessions', request());
+      expect(materializedPage).toEqual(projectSessionPage(payload.rows, request()));
+      const materializedOpenCode = materializedPage.items.find(
+        ({ row: materializedRow }) => materializedRow.source?.sourceSessionId === fixture.ids.opencode,
+      )?.row;
+      expect(materializedOpenCode).toMatchObject({
+        calls: 3,
+        durationMs: 90_000,
+        modelSegments: [
+          { model: 'openai/gpt-5', tokCr: 23, tokCw: 4, tokIn: 60, tokOut: 18 },
+          { model: 'anthropic/claude-sonnet-4-6', tokCr: 6, tokCw: 1, tokIn: 30, tokOut: 10 },
+        ],
+        tokCr: 29,
+        tokCw: 5,
+        tokIn: 90,
+        tokOut: 28,
+        tools: 1,
+        turns: 1,
+      });
+      if (!materializedOpenCode) {
+        throw new Error('Missing materialized OpenCode fixture row');
+      }
+      const openCodeAnchor = executeMaterializedSessionQuery(database, 'session-detail-anchor', {
+        revision: request().revision,
+        rowId: materializedOpenCode.rowId,
+      }).anchor;
+      const openCodeAnalysis = await Effect.runPromise(
+        readOpenCodeSessionAnalysis(fixture.ids.opencode).pipe(Effect.provideService(LocalHistoryStorage, storage)),
       );
+      if (!(openCodeAnchor && openCodeAnalysis)) {
+        throw new Error('Missing OpenCode report anchor or local analysis');
+      }
+      expect(openCodeAnchor.sourceAuthority).toBe('local-observed');
+      expect(compareSessionProjectionFacts(openCodeAnchor.projection, openCodeAnalysis.projection)).toEqual({
+        checkedFields: ['calls', 'duration', 'model-attribution', 'coverage', 'tokens', 'tools', 'turns'],
+        status: 'matches-report',
+      });
 
       const byHarness = new Map<string, CollectedUsageRow[]>();
       for (const row of stored.rows) {
@@ -367,20 +403,26 @@ describe('session report pipeline', () => {
     }
 
     await Effect.runPromise(codexSource.run(sourceContext));
-    const firstPayload = await Effect.runPromise(
-      createStoredReportPayload({
+    const firstCapture = await Effect.runPromise(
+      createStoredReportCapture({
         generatedAt: GENERATED_AT,
         harness: null,
         includeCursor: false,
         options: { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
       }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
     );
+    const firstPayload = firstCapture.payload;
     const firstPage = projectSessionPage(firstPayload.rows, request());
     const rootItem = firstPage.items.find((item) => item.row.source?.sourceSessionId === fixture.ids.codexRoot);
     if (!rootItem) {
       throw new Error('Missing Codex root row in the first published projection');
     }
-    await materializeSessionQueryDatabase(firstRevisionDirectory, firstPayload.rows);
+    await materializeSessionQueryDatabase(
+      firstRevisionDirectory,
+      firstPayload.rows,
+      undefined,
+      firstCapture.rowSourceAuthorities,
+    );
     const firstDatabase = new Database(path.join(firstRevisionDirectory, SESSION_QUERY_DATABASE_NAME), {
       readonly: true,
       strict: true,
@@ -393,6 +435,7 @@ describe('session report pipeline', () => {
     if (!firstAnchorResult.anchor) {
       throw new Error('Missing Codex root anchor in the first report revision');
     }
+    expect(firstAnchorResult.anchor.sourceAuthority).toBe('local-observed');
 
     const initialAnalysis = await Effect.runPromise(
       readCodexSessionAnalysis(fixture.ids.codexRoot).pipe(Effect.provideService(LocalHistoryStorage, storage)),
@@ -419,14 +462,15 @@ describe('session report pipeline', () => {
     });
 
     await Effect.runPromise(codexSource.run(sourceContext));
-    const secondPayload = await Effect.runPromise(
-      createStoredReportPayload({
+    const secondCapture = await Effect.runPromise(
+      createStoredReportCapture({
         generatedAt: GENERATED_AT,
         harness: null,
         includeCursor: false,
         options: { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
       }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
     );
+    const secondPayload = secondCapture.payload;
     const secondPage = projectSessionPage(secondPayload.rows, request());
     const republishedRootItem = secondPage.items.find(
       (item) => item.row.source?.sourceSessionId === fixture.ids.codexRoot,
@@ -434,7 +478,12 @@ describe('session report pipeline', () => {
     if (!republishedRootItem) {
       throw new Error('Missing Codex root row in the republished projection');
     }
-    await materializeSessionQueryDatabase(secondRevisionDirectory, secondPayload.rows);
+    await materializeSessionQueryDatabase(
+      secondRevisionDirectory,
+      secondPayload.rows,
+      undefined,
+      secondCapture.rowSourceAuthorities,
+    );
     const secondDatabase = new Database(path.join(secondRevisionDirectory, SESSION_QUERY_DATABASE_NAME), {
       readonly: true,
       strict: true,
@@ -447,6 +496,7 @@ describe('session report pipeline', () => {
     if (!secondAnchorResult.anchor) {
       throw new Error('Missing Codex root anchor in the republished revision');
     }
+    expect(secondAnchorResult.anchor.sourceAuthority).toBe('local-observed');
     expect(compareSessionProjectionFacts(secondAnchorResult.anchor.projection, mutatedAnalysis.projection)).toEqual({
       checkedFields: ['calls', 'duration', 'model-attribution', 'coverage', 'tokens', 'tools', 'turns'],
       status: 'matches-report',

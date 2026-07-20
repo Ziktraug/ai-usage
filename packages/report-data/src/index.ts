@@ -172,6 +172,11 @@ export interface StoredReportSourceFingerprint {
   usageStoreGeneration: number;
 }
 
+export interface StoredReportCapture {
+  payload: UsageReportPayload;
+  rowSourceAuthorities: StoredSourceAuthority[];
+}
+
 export interface LocalReportRowsResult {
   authorizedRows: AuthorizedSourceRow[];
   collection: SelectedHarnessCollectionResult;
@@ -509,6 +514,7 @@ export interface ProjectedLocalReportRowsResult
 interface ProjectProjection {
   projectGroups: UsageReportProjectGroup[];
   rows: ProjectedRow[];
+  sourceAuthorities: SourceAuthority[];
   warnings: UsageReportWarning[];
 }
 
@@ -704,10 +710,10 @@ export const createLocalReportPayload = (request: LocalReportPayloadRequest) =>
     }),
   );
 
-export const createStoredReportPayload = (
+export const createStoredReportCapture = (
   request: StoredReportPayloadRequest,
 ): Effect.Effect<
-  UsageReportPayload,
+  StoredReportCapture,
   LocalHistoryError,
   import('@ai-usage/local-collectors/local-history').LocalHistoryStorage
 > =>
@@ -746,30 +752,51 @@ export const createStoredReportPayload = (
       const facets = request.includeFacets ? mirrorDatasetsToLegacyFacets(datasets) : undefined;
       return yield* withPerfSpan(
         'aiUsage.report.serializeStoredPayload',
-        Effect.sync(
-          () =>
-            assembleReport({
-              configuredProjectGroups: config.projectGroups ?? [],
-              datasets,
-              facets,
-              generatedAt: request.generatedAt ?? new Date(),
-              options: request.options,
-              projectGroups: projection.projectGroups,
-              rows: projection.rows,
-              warnings: [...datasetResult.warnings, ...projection.warnings],
-            }).payload,
-        ),
-        (payload) => ({
-          rows: payload.rows.length,
-          tableRows: payload.tableRows.length,
+        Effect.sync(() => {
+          const assembly = assembleReport({
+            configuredProjectGroups: config.projectGroups ?? [],
+            datasets,
+            facets,
+            generatedAt: request.generatedAt ?? new Date(),
+            options: request.options,
+            projectGroups: projection.projectGroups,
+            rows: projection.rows,
+            warnings: [...datasetResult.warnings, ...projection.warnings],
+          });
+          if (assembly.rows.length !== projection.sourceAuthorities.length) {
+            throw new Error('Stored report projection lost source-authority alignment');
+          }
+          const authorityByRow = new Map<Row, SourceAuthority>();
+          for (const [index, row] of assembly.rows.entries()) {
+            const authority = projection.sourceAuthorities[index];
+            if (!authority) {
+              throw new Error(`Stored report projection row ${index} is missing its source authority`);
+            }
+            authorityByRow.set(row, authority);
+          }
+          const rowSourceAuthorities = assembly.report.rows.map((row, index) => {
+            const authority = authorityByRow.get(row);
+            if (!authority) {
+              throw new Error(`Stored report row ${index} is missing its source authority`);
+            }
+            return authority;
+          });
+          return { payload: assembly.payload, rowSourceAuthorities };
+        }),
+        (capture) => ({
+          rows: capture.payload.rows.length,
+          tableRows: capture.payload.tableRows.length,
         }),
       );
     }),
-    (payload) => ({
-      rows: payload.rows.length,
-      tableRows: payload.tableRows.length,
+    (capture) => ({
+      rows: capture.payload.rows.length,
+      tableRows: capture.payload.tableRows.length,
     }),
   );
+
+export const createStoredReportPayload = (request: StoredReportPayloadRequest) =>
+  createStoredReportCapture(request).pipe(Effect.map((capture) => capture.payload));
 
 export const readStoredReportSourceFingerprint = (
   request: Pick<StoredReportPayloadRequest, 'configCwd'>,
@@ -1366,6 +1393,7 @@ const buildProjectProjection = (
   return {
     rows: projectedRows,
     projectGroups: projectGroups.sort((a, b) => b.cost - a.cost || b.fresh - a.fresh),
+    sourceAuthorities: candidates.map(({ authority }) => authority),
     warnings,
   };
 };
@@ -1409,6 +1437,9 @@ export const runLocalReportCapture = (
 export const runStoredReportPayload = (request: StoredReportPayloadRequest): Promise<UsageReportPayload> =>
   Effect.runPromise(createStoredReportPayload(request).pipe(Effect.provide(LocalHistoryStorageLive)));
 
+export const runStoredReportCapture = (request: StoredReportPayloadRequest): Promise<StoredReportCapture> =>
+  Effect.runPromise(createStoredReportCapture(request).pipe(Effect.provide(LocalHistoryStorageLive)));
+
 export const runStoredReportSourceFingerprint = (
   request: Pick<StoredReportPayloadRequest, 'configCwd'>,
 ): Promise<StoredReportSourceFingerprint> =>
@@ -1417,15 +1448,22 @@ export const runStoredReportSourceFingerprint = (
 export const runConsistentStoredReportPayload = async (
   request: StoredReportPayloadRequest,
 ): Promise<UsageReportPayload> => {
+  const capture = await runConsistentStoredReportCapture(request);
+  return capture.payload;
+};
+
+export const runConsistentStoredReportCapture = async (
+  request: StoredReportPayloadRequest,
+): Promise<StoredReportCapture> => {
   for (let attempt = 1; attempt <= MAX_STABLE_REPORT_CAPTURE_ATTEMPTS; attempt += 1) {
     const before = await runStoredReportSourceFingerprint(request);
-    const payload = await runStoredReportPayload(request);
+    const capture = await runStoredReportCapture(request);
     const after = await runStoredReportSourceFingerprint(request);
     if (
       before.configFingerprint === after.configFingerprint &&
       before.usageStoreGeneration === after.usageStoreGeneration
     ) {
-      return payload;
+      return capture;
     }
   }
   throw new Error(`Report source changed during ${MAX_STABLE_REPORT_CAPTURE_ATTEMPTS} consecutive capture attempts`);

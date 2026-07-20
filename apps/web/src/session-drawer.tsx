@@ -27,6 +27,7 @@ import type { CampaignTotals, CampaignView } from './dashboard-model';
 import type { FieldFilterKey } from './dashboard-search';
 import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from './dashboard-sort';
 import { SessionAnalysis } from './session-analysis';
+import { classifySessionAnalysisError, type SessionAnalysisError } from './session-analysis-error';
 import { sessionDurationSemantics } from './session-analysis-model';
 import type { SessionAnalysisTarget } from './session-analysis-target';
 import { canAnalyzeSession, loadSessionDetail } from './session-detail-client';
@@ -101,7 +102,7 @@ export const SessionDrawer = (props: {
   const [analysisOpen, setAnalysisOpen] = createSignal(false);
   const [analysisLoading, setAnalysisLoading] = createSignal(false);
   const [analysisResponse, setAnalysisResponse] = createSignal<SessionDetailResponse | null>(null);
-  const [analysisError, setAnalysisError] = createSignal<string | null>(null);
+  const [analysisError, setAnalysisError] = createSignal<SessionAnalysisError | null>(null);
   let analysisSequence = 0;
 
   createEffect(() => {
@@ -133,7 +134,7 @@ export const SessionDrawer = (props: {
       }
     } catch (error) {
       if (sequence === analysisSequence) {
-        setAnalysisError(error instanceof Error ? error.message : 'The session analysis could not be loaded.');
+        setAnalysisError(classifySessionAnalysisError(error));
       }
     } finally {
       if (sequence === analysisSequence) {

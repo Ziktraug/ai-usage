@@ -1,8 +1,30 @@
 import { describe, expect, test } from 'bun:test';
-import { SessionDetailValidationError } from '@ai-usage/report-core/session-detail';
+import { type SessionDetailResponse, SessionDetailValidationError } from '@ai-usage/report-core/session-detail';
 import { canAnalyzeSession, loadSessionDetail } from './session-detail-client';
 
 const request = { revision: 'revision-a', rowId: 'row-a' };
+const availableResponse = {
+  consistency: { checkedFields: ['tokens'], status: 'matches-report' },
+  detail: {
+    activeDurationMs: 60_000,
+    durationStatus: 'recorded',
+    efforts: [],
+    elapsedDurationMs: 60_000,
+    endedAt: '2026-07-18T10:01:00.000Z',
+    idleDurationMs: 0,
+    models: [],
+    observedAt: '2026-07-18T10:01:01.000Z',
+    phases: [],
+    prompts: [],
+    promptsTruncated: false,
+    sourceSessionId: 'session-a',
+    startedAt: '2026-07-18T10:00:00.000Z',
+    turns: [],
+    turnsStatus: 'recorded',
+  },
+  revision: request.revision,
+  status: 'available',
+} satisfies SessionDetailResponse;
 
 describe('session detail client', () => {
   test('sends only exact revision and row identity', async () => {
@@ -35,5 +57,13 @@ describe('session detail client', () => {
         getDetail: () => Promise.resolve({ detail: {}, status: 'available' }),
       }),
     ).rejects.toThrow(SessionDetailValidationError);
+  });
+
+  test('rejects an available detail from a different report revision', async () => {
+    await expect(
+      loadSessionDetail(request, {
+        getDetail: () => Promise.resolve({ ...availableResponse, revision: 'revision-b' }),
+      }),
+    ).rejects.toThrow('Session detail response does not match its requested revision');
   });
 });

@@ -26,6 +26,7 @@ const anchorResult: SessionDetailAnchorResult = {
       tools: 0,
       turns: 1,
     },
+    sourceAuthority: 'local-observed',
     sourceSessionId: 'session-a',
   },
   requestFingerprint: fingerprint,

@@ -1,8 +1,8 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Effect } from 'effect';
 import { collectCursorResult } from './collectors/cursor';
 import { collectOpenCodeResult } from './collectors/opencode';
@@ -12,14 +12,14 @@ import { seedHarnessHome } from './test-fixtures/harness-home';
 const temporaryHomes: string[] = [];
 
 const makeHome = async (): Promise<string> => {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-usage-db-integration-'));
+  const home = await mkdtemp(join(tmpdir(), 'ai-usage-db-integration-'));
   temporaryHomes.push(home);
   return home;
 };
 
 afterEach(async () => {
   for (const home of temporaryHomes.splice(0)) {
-    await fs.rm(home, { force: true, recursive: true });
+    await rm(home, { force: true, recursive: true });
   }
 });
 
@@ -40,6 +40,7 @@ describe('real SQLite harness collectors', () => {
       'openai/gpt-5',
       'anthropic/claude-sonnet-4-6',
     ]);
+    expect(row?.endDate?.toISOString()).toBe('2026-07-04T10:02:00.000Z');
     expect(row).toMatchObject({
       calls: 3,
       durationMs: 90_000,
@@ -53,19 +54,65 @@ describe('real SQLite harness collectors', () => {
     });
   });
 
-  test('ignores an isolated invalid OpenCode JSON row without losing valid neighbors', async () => {
+  test('invalidates OpenCode v7 row caches after the projection semantics change', async () => {
+    const home = await makeHome();
+    const fixture = await seedHarnessHome(home, { harnesses: ['opencode'] });
+    await runAtHome(home, collectOpenCodeResult);
+    const cachePath = join(home, '.config', 'ai-usage', 'opencode-db-cache.json');
+    const currentCache = await readFile(cachePath, 'utf8');
+    const staleCache = currentCache
+      .replace('"name":"OpenCode fixture"', '"name":"stale-v7-cache"')
+      .replace('"version":8', '"version":7');
+    expect(staleCache).toContain('"name":"stale-v7-cache"');
+    expect(staleCache).toContain('"version":7');
+    await writeFile(cachePath, staleCache);
+
+    const result = await runAtHome(home, collectOpenCodeResult);
+    const row = result.rows.find((candidate) => candidate.source?.sourceSessionId === fixture.ids.opencode);
+
+    expect(row?.name).toBe('OpenCode fixture');
+    expect(await readFile(cachePath, 'utf8')).toContain('"version":8');
+  });
+
+  test('keeps valid OpenCode sessions when joined message and part JSON are malformed', async () => {
     const home = await makeHome();
     const fixture = await seedHarnessHome(home, { harnesses: ['opencode'] });
     const database = new Database(fixture.paths.opencodeDatabase);
     database
       .prepare('INSERT INTO message VALUES (?, ?, ?, ?)')
       .run('invalid-json', fixture.ids.opencode, Date.parse('2026-07-04T10:00:20.000Z'), '{invalid');
+    database
+      .prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?)')
+      .run(
+        'valid-part-for-invalid-message',
+        'invalid-json',
+        fixture.ids.opencode,
+        Date.parse('2026-07-04T10:00:20.000Z'),
+        JSON.stringify({ text: 'ignored invalid message', type: 'text' }),
+      );
+    database
+      .prepare('INSERT INTO message VALUES (?, ?, ?, ?)')
+      .run(
+        'valid-user-with-invalid-part',
+        fixture.ids.opencode,
+        Date.parse('2026-07-04T10:00:21.000Z'),
+        JSON.stringify({ role: 'user' }),
+      );
+    database
+      .prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?)')
+      .run(
+        'invalid-part-json',
+        'valid-user-with-invalid-part',
+        fixture.ids.opencode,
+        Date.parse('2026-07-04T10:00:21.000Z'),
+        '{invalid',
+      );
     database.close();
 
     const result = await runAtHome(home, collectOpenCodeResult);
     const row = result.rows.find((candidate) => candidate.source?.sourceSessionId === fixture.ids.opencode);
 
-    expect(row).toMatchObject({ calls: 3, tokIn: 90, tokOut: 28 });
+    expect(row).toMatchObject({ calls: 3, tokIn: 90, tokOut: 28, turns: 1 });
   });
 
   test('collects partial Cursor composer tokens through a real state database', async () => {
@@ -91,8 +138,8 @@ describe('real SQLite harness collectors', () => {
   test('reconciles Cursor DB and CSV without double counting the DB usage', async () => {
     const home = await makeHome();
     const fixture = await seedHarnessHome(home, { harnesses: ['cursor'] });
-    const csvPath = path.join(home, 'cursor-usage.csv');
-    await fs.writeFile(
+    const csvPath = join(home, 'cursor-usage.csv');
+    await writeFile(
       csvPath,
       [
         'Date,User,Cloud Agent ID,Automation ID,Kind,Model,Max Mode,Input (w/ Cache Write),Input (w/o Cache Write),Cache Read,Output Tokens,Total Tokens,Cost',

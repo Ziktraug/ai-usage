@@ -15,6 +15,7 @@ describe('production Session query materializer boundary', () => {
     try {
       await chmod(revisionDirectory, 0o700);
       await writeFile(path.join(revisionDirectory, 'rows.json'), '[]', { mode: 0o600 });
+      await writeFile(path.join(revisionDirectory, 'row-source-authorities.json'), '[]', { mode: 0o600 });
       await writeFile(path.join(revisionDirectory, 'support.json'), '{}', { mode: 0o600 });
 
       await materializeSessionQueryRevision(revisionDirectory);

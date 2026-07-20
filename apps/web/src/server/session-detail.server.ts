@@ -62,6 +62,9 @@ export const getLocalSessionDetailForServer = async (
   if (!anchor) {
     return unavailable('report-row-not-found', 'This row does not exist in the requested report revision.');
   }
+  if (anchor.sourceAuthority !== 'local-observed') {
+    return unavailable('not-local', 'Detailed chronology is only available for locally observed sessions.');
+  }
   if (!(anchor.harnessKey && anchor.machineId && anchor.sourceSessionId)) {
     return unavailable(
       'report-provenance-unavailable',

@@ -41,7 +41,7 @@ import {
 } from '@ai-usage/report-core/session-query';
 import { parseReportRevision, type ReportRevision } from '../web-report-payload';
 import { runBoundedArtifactProcess } from './bounded-artifact-process.server';
-import { withReportRevisionDirectoryForServer } from './report-payload.server';
+import { withReportRevisionQueryLeaseForServer } from './report-payload.server';
 import { resolveReportRuntimePaths } from './report-runtime-paths.server';
 
 export type RevisionQueryKind =
@@ -92,7 +92,7 @@ const jsonValue = (serialized: string): unknown => JSON.parse(serialized);
 
 const defaultDependencies: RevisionQueryRunnerDependencies = {
   execute: async ({ kind, revision, serializedRequest }) => {
-    const lease = await withReportRevisionDirectoryForServer(revision, async (revisionDirectory) => {
+    const lease = await withReportRevisionQueryLeaseForServer(revision, async (revisionDirectory) => {
       const result = await runBoundedArtifactProcess({
         args: [revisionQueryRunner, revisionDirectory, kind, serializedRequest],
         command: 'bun',

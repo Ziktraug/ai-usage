@@ -761,17 +761,22 @@ const activeTimeForRow = (row: SerializedRow): number | null => {
 };
 
 export const sessionRowIdentity = (row: SerializedRow): string =>
-  [
-    row.source?.machineId ?? '',
-    row.source?.sourceSessionId ?? '',
-    row.activeDate ?? row.date ?? '',
-    row.harness,
-    row.provider,
-    row.model,
-    row.models?.join('+') ?? '',
-    row.project,
-    row.sessionLabel,
-  ].join('|');
+  `session-row-v1:${fnv1a64(
+    JSON.stringify([
+      row.source?.machineId ?? '',
+      row.source?.sourceSessionId ?? '',
+      row.projectSourceId ?? '',
+      row.source?.sourcePath ?? '',
+      row.source?.artifactPath ?? '',
+      row.activeDate ?? row.date ?? '',
+      row.harness,
+      row.provider,
+      row.model,
+      row.models ?? [],
+      row.project,
+      row.sessionLabel,
+    ]),
+  )}`;
 
 const sessionModelLabel = (row: SerializedRow): string => (row.models?.length ? row.models.join(' → ') : row.model);
 

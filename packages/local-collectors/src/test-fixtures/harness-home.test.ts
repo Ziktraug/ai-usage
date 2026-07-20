@@ -1,8 +1,8 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
+import { access, mkdtemp, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Effect } from 'effect';
 import { readCodexUsageSessions } from '../codex-history';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '../local-history';
@@ -11,14 +11,14 @@ import { appendCodexRootUsage, seedHarnessHome } from './harness-home';
 const temporaryHomes: string[] = [];
 
 const makeHome = async (): Promise<string> => {
-  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-usage-harness-home-'));
+  const home = await mkdtemp(join(tmpdir(), 'ai-usage-harness-home-'));
   temporaryHomes.push(home);
   return home;
 };
 
 afterEach(async () => {
   for (const home of temporaryHomes.splice(0)) {
-    await fs.rm(home, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
   }
 });
 
@@ -28,6 +28,15 @@ const integrityCheck = (databasePath: string): string => {
     return database.query<{ integrity_check: string }, []>('PRAGMA integrity_check').get()?.integrity_check ?? '';
   } finally {
     database.close();
+  }
+};
+
+const pathExists = async (filePath: string): Promise<boolean> => {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
   }
 };
 
@@ -44,7 +53,7 @@ describe('seedHarnessHome', () => {
       opencode: 'opencode-fixture-025',
     });
     expect(fixture.seededHarnesses).toEqual(['claude', 'codex', 'opencode', 'cursor']);
-    expect(await fs.stat(fixture.paths.codexRootRollout)).toBeDefined();
+    expect(await stat(fixture.paths.codexRootRollout)).toBeDefined();
     expect(integrityCheck(fixture.paths.opencodeDatabase)).toBe('ok');
     expect(integrityCheck(fixture.paths.cursorDatabase)).toBe('ok');
   });
@@ -54,9 +63,9 @@ describe('seedHarnessHome', () => {
     const fixture = await seedHarnessHome(home, { harnesses: ['codex'] });
 
     expect(fixture.seededHarnesses).toEqual(['codex']);
-    expect(await fs.exists(path.join(home, '.claude'))).toBe(false);
-    expect(await fs.exists(fixture.paths.opencodeDatabase)).toBe(false);
-    expect(await fs.exists(fixture.paths.cursorDatabase)).toBe(false);
+    expect(await pathExists(join(home, '.claude'))).toBe(false);
+    expect(await pathExists(fixture.paths.opencodeDatabase)).toBe(false);
+    expect(await pathExists(fixture.paths.cursorDatabase)).toBe(false);
   });
 
   test('seeds 205 Codex sessions without changing the root scenario', async () => {

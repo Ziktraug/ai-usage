@@ -7,6 +7,7 @@ import type {
   SessionDetailTurn,
 } from '@ai-usage/report-core/session-detail';
 import { createMemo, For, Match, Show, Switch } from 'solid-js';
+import type { SessionAnalysisError } from './session-analysis-error';
 import {
   countActivityBursts,
   formatSessionDuration,
@@ -22,7 +23,7 @@ import {
 import type { SessionAnalysisTarget } from './session-analysis-target';
 
 export interface SessionAnalysisProps {
-  error?: string | null;
+  error?: SessionAnalysisError | null;
   harnessKey: string;
   loading: boolean;
   onRetry?: () => void;
@@ -234,6 +235,7 @@ const statePanel = css({
   textAlign: 'center',
 });
 const stateTitle = css({ color: 'ink', fontSize: '15px', fontWeight: 700 });
+const liveStatus = css({ srOnly: true });
 const retryButton = css({
   px: '12px',
   py: '7px',
@@ -569,7 +571,7 @@ const StatePanel = (props: {
   onAction?: (() => void) | undefined;
   title: string;
 }) => (
-  <div aria-busy={props.busy} aria-live={props.busy ? 'polite' : undefined} class={statePanel}>
+  <div aria-busy={props.busy} class={statePanel}>
     <div class={stateTitle}>{props.title}</div>
     <div>{props.message}</div>
     <Show when={props.actionLabel && props.onAction}>
@@ -580,30 +582,59 @@ const StatePanel = (props: {
   </div>
 );
 
-const unavailableTitle = (response: Extract<SessionDetailResponse, { status: 'unavailable' }>): string => {
-  if (response.reason === 'not-local') {
-    return 'Local history required';
-  }
-  if (response.reason === 'history-unavailable') {
-    return 'Local history unavailable';
-  }
-  if (response.reason === 'unsupported') {
-    return 'Analysis not supported';
-  }
-  return 'Session detail not found';
-};
+type UnavailableResponse = Extract<SessionDetailResponse, { status: 'unavailable' }>;
+
+const unavailablePresentation = {
+  'history-unavailable': { retryable: true, title: 'Local history unavailable' },
+  'not-found': { retryable: false, title: 'Local session history not found' },
+  'not-local': { retryable: false, title: 'Local history required' },
+  'report-provenance-unavailable': { retryable: false, title: 'Session provenance unavailable' },
+  'report-row-not-found': { retryable: false, title: 'Session not found in report' },
+  'revision-expired': { retryable: false, title: 'Report revision expired' },
+  unsupported: { retryable: false, title: 'Analysis not supported' },
+} as const satisfies Record<UnavailableResponse['reason'], { retryable: boolean; title: string }>;
 
 export const SessionAnalysis = (props: SessionAnalysisProps) => {
-  const unavailable = createMemo(() => (props.response?.status === 'unavailable' ? props.response : null));
+  const unavailable = createMemo(() => {
+    const response = props.response;
+    if (response?.status !== 'unavailable') {
+      return null;
+    }
+    return { ...response, ...unavailablePresentation[response.reason] };
+  });
   const available = createMemo(() => (props.response?.status === 'available' ? props.response : null));
+  const liveAnnouncement = createMemo(() => {
+    if (props.error) {
+      return '';
+    }
+    if (props.loading) {
+      return 'Loading session analysis';
+    }
+    const unavailableState = unavailable();
+    if (unavailableState) {
+      return `${unavailableState.title}. ${unavailableState.message}`;
+    }
+    if (available()) {
+      return 'Session analysis loaded';
+    }
+    return '';
+  });
 
   return (
     <section aria-label="Session analysis" class={panel}>
+      <div aria-atomic="true" aria-live="polite" class={liveStatus} data-session-analysis-live-status role="status">
+        {liveAnnouncement()}
+      </div>
       <Switch>
         <Match when={props.error}>
-          {(message) => (
+          {(error) => (
             <div role="alert">
-              <StatePanel actionLabel="Retry" message={message()} onAction={props.onRetry} title="Analysis failed" />
+              <StatePanel
+                actionLabel={error().kind === 'transient' && props.onRetry ? 'Retry' : undefined}
+                message={error().message}
+                onAction={error().kind === 'transient' ? props.onRetry : undefined}
+                title={error().kind === 'transient' ? 'Analysis failed' : 'Analysis unavailable'}
+              />
             </div>
           )}
         </Match>
@@ -611,12 +642,12 @@ export const SessionAnalysis = (props: SessionAnalysisProps) => {
           <StatePanel busy message="Reading the bounded local session trace…" title="Loading session analysis" />
         </Match>
         <Match when={unavailable()}>
-          {(response) => (
+          {(state) => (
             <StatePanel
-              actionLabel={props.onRetry ? 'Retry' : undefined}
-              message={response().message}
-              onAction={props.onRetry}
-              title={unavailableTitle(response())}
+              actionLabel={state().retryable && props.onRetry ? 'Retry' : undefined}
+              message={state().message}
+              onAction={state().retryable ? props.onRetry : undefined}
+              title={state().title}
             />
           )}
         </Match>

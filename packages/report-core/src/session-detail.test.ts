@@ -193,12 +193,18 @@ describe('session detail contract', () => {
             harnessKey: null,
             machineId: null,
             projection: sessionProjectionFactsForSerializedRow(serializeUsageRow(usageRow)),
+            sourceAuthority: 'portable-opaque',
             sourceSessionId: null,
           },
         },
         request,
       ).anchor,
-    ).toMatchObject({ harnessKey: null, machineId: null, sourceSessionId: null });
+    ).toMatchObject({
+      harnessKey: null,
+      machineId: null,
+      sourceAuthority: 'portable-opaque',
+      sourceSessionId: null,
+    });
     expect(() =>
       parseSessionDetailAnchorResult(
         { ...baseResult, requestFingerprint: 'session-detail-v2:wrong', anchor: null },

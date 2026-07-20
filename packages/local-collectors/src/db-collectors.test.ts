@@ -6,7 +6,6 @@ import { collectCursor } from './collectors/cursor';
 import { classifyOpenCodeTitle, collectOpenCode } from './collectors/opencode';
 import { CURSOR_COMMIT_ATTRIBUTION_SQL, collectCursorCommitAttribution } from './facets';
 import { LocalHistoryStorage } from './local-history';
-import { OPENCODE_DIRECT_USER_PART_PREDICATE } from './opencode-schema';
 import { TestMemoryStorage } from './test-memory-storage';
 
 const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, storage: TestMemoryStorage) =>
@@ -14,11 +13,12 @@ const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, 
 
 const OPENCODE_DB = '.local/share/opencode/opencode.db';
 const OPENCODE_STABLE_DB = '.local/share/opencode/opencode-stable.db';
-const OPENCODE_SESSION_SQL =
-  'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
-const OPENCODE_TOOL_SQL = `SELECT session_id, count(*) n FROM part WHERE data LIKE '%"type":"tool"%' GROUP BY session_id`;
-const OPENCODE_TURN_SQL = `SELECT m.session_id, count(DISTINCT m.id) n FROM message m JOIN part p ON p.message_id = m.id WHERE json_extract(m.data, '$.role') = 'user' AND ${OPENCODE_DIRECT_USER_PART_PREDICATE} GROUP BY m.session_id`;
-const OPENCODE_MESSAGE_SQL = 'SELECT session_id, data FROM message ORDER BY session_id, time_created, id';
+const OPENCODE_SESSION_SQL = { includes: ['SELECT id, parent_id, title, directory', 'FROM session'] } as const;
+const OPENCODE_TOOL_SQL = {
+  includes: ['FROM part WHERE', "json_extract(data, '$.type') = 'tool'"],
+} as const;
+const OPENCODE_TURN_SQL = { includes: ['count(DISTINCT m.id)', 'FROM message m JOIN part p'] } as const;
+const OPENCODE_MESSAGE_SQL = { includes: ['SELECT session_id, data, time_created FROM message'] } as const;
 
 const CURSOR_DB = '.config/Cursor/User/globalStorage/state.vscdb';
 const CURSOR_AI_TRACKING_DB = '.cursor/ai-tracking/ai-code-tracking.db';

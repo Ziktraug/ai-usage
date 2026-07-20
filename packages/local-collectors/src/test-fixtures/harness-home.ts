@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
-import fs from 'node:fs/promises';
-import path from 'node:path';
+import { appendFile, mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 export type HarnessFixtureKey = 'claude' | 'codex' | 'cursor' | 'opencode';
 
@@ -39,13 +39,13 @@ const jsonLines = (...events: readonly unknown[]): string =>
   `${events.map((event) => JSON.stringify(event)).join('\n')}\n`;
 
 const ensureParent = async (filePath: string): Promise<void> => {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await mkdir(dirname(filePath), { recursive: true });
 };
 
 const writeClaudeFixture = async (home: string): Promise<void> => {
-  const filePath = path.join(home, '.claude', 'projects', '-work-fixture', `${FIXTURE_IDS.claude}.jsonl`);
+  const filePath = join(home, '.claude', 'projects', '-work-fixture', `${FIXTURE_IDS.claude}.jsonl`);
   await ensureParent(filePath);
-  await fs.writeFile(
+  await writeFile(
     filePath,
     jsonLines(
       {
@@ -198,17 +198,17 @@ const writeCodexFixture = async (home: string, sessionCount: number): Promise<st
   if (!(Number.isSafeInteger(sessionCount) && sessionCount >= 2)) {
     throw new Error('codexSessionCount must be a safe integer of at least 2');
   }
-  const sessionsDirectory = path.join(home, '.codex', 'sessions', '2026', '07');
-  await fs.mkdir(sessionsDirectory, { recursive: true });
-  const rootPath = path.join(sessionsDirectory, `rollout-2026-07-02T09-00-00-${FIXTURE_IDS.codexRoot}.jsonl`);
-  const childPath = path.join(sessionsDirectory, `rollout-2026-07-02T09-10-00-${FIXTURE_IDS.codexChild}.jsonl`);
-  await fs.writeFile(
+  const sessionsDirectory = join(home, '.codex', 'sessions', '2026', '07');
+  await mkdir(sessionsDirectory, { recursive: true });
+  const rootPath = join(sessionsDirectory, `rollout-2026-07-02T09-00-00-${FIXTURE_IDS.codexRoot}.jsonl`);
+  const childPath = join(sessionsDirectory, `rollout-2026-07-02T09-10-00-${FIXTURE_IDS.codexChild}.jsonl`);
+  await writeFile(
     rootPath,
     jsonLines(
       ...codexSessionEvents(FIXTURE_IDS.codexRoot, '2026-07-02T09:00:00.000Z', { prompt: 'Implement fixture root' }),
     ),
   );
-  await fs.writeFile(
+  await writeFile(
     childPath,
     jsonLines(
       ...codexSessionEvents(FIXTURE_IDS.codexChild, '2026-07-02T09:10:00.000Z', {
@@ -219,8 +219,8 @@ const writeCodexFixture = async (home: string, sessionCount: number): Promise<st
   );
   for (let index = 2; index < sessionCount; index++) {
     const id = `codex-extra-025-${String(index).padStart(3, '0')}`;
-    const filePath = path.join(sessionsDirectory, `${id}.jsonl`);
-    await fs.writeFile(
+    const filePath = join(sessionsDirectory, `${id}.jsonl`);
+    await writeFile(
       filePath,
       jsonLines(
         {
@@ -244,13 +244,35 @@ const writeOpenCodeFixture = async (databasePath: string): Promise<void> => {
   const database = new Database(databasePath, { create: true });
   try {
     database.exec(
-      'CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, title TEXT, directory TEXT, summary_additions INTEGER, summary_deletions INTEGER)',
+      'CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, title TEXT, directory TEXT, summary_additions INTEGER, summary_deletions INTEGER, time_created INTEGER, time_updated INTEGER)',
     );
     database.exec('CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT)');
-    database.exec('CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT)');
-    const insertSession = database.prepare('INSERT INTO session VALUES (?, ?, ?, ?, ?, ?)');
-    insertSession.run(FIXTURE_IDS.opencode, 'opencode-human-parent-025', 'OpenCode fixture', '/work/fixture', 12, 3);
-    insertSession.run('opencode-human-parent-025', null, 'Human parent', '/work/fixture', 0, 0);
+    database.exec(
+      'CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT)',
+    );
+    const insertSession = database.prepare(
+      'INSERT INTO session (id, parent_id, title, directory, summary_additions, summary_deletions, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    );
+    insertSession.run(
+      FIXTURE_IDS.opencode,
+      'opencode-human-parent-025',
+      'OpenCode fixture',
+      '/work/fixture',
+      12,
+      3,
+      Date.parse('2026-07-04T10:00:00.000Z'),
+      Date.parse('2026-07-04T10:02:00.000Z'),
+    );
+    insertSession.run(
+      'opencode-human-parent-025',
+      null,
+      'Human parent',
+      '/work/fixture',
+      0,
+      0,
+      Date.parse('2026-07-04T09:59:00.000Z'),
+      Date.parse('2026-07-04T09:59:00.000Z'),
+    );
     const insertMessage = database.prepare('INSERT INTO message VALUES (?, ?, ?, ?)');
     insertMessage.run(
       'opencode-user-1',
@@ -264,6 +286,7 @@ const writeOpenCodeFixture = async (databasePath: string): Promise<void> => {
       Date.parse('2026-07-04T10:00:10.000Z'),
       JSON.stringify({
         role: 'assistant',
+        parentID: 'opencode-user-1',
         providerID: 'openai',
         modelID: 'gpt-5',
         cost: 0.25,
@@ -272,11 +295,43 @@ const writeOpenCodeFixture = async (databasePath: string): Promise<void> => {
       }),
     );
     insertMessage.run(
+      'opencode-assistant-without-tokens',
+      FIXTURE_IDS.opencode,
+      Date.parse('2026-07-04T10:00:15.000Z'),
+      JSON.stringify({
+        role: 'assistant',
+        parentID: 'opencode-user-1',
+        providerID: 'openai',
+        modelID: 'gpt-5',
+        time: { created: '2026-07-04T10:00:15.000Z', completed: '2026-07-04T10:00:16.000Z' },
+      }),
+    );
+    insertMessage.run(
+      'opencode-assistant-with-null-tokens',
+      FIXTURE_IDS.opencode,
+      Date.parse('2026-07-04T10:00:16.000Z'),
+      JSON.stringify({
+        role: 'assistant',
+        parentID: 'opencode-user-1',
+        providerID: 'openai',
+        modelID: 'gpt-5',
+        tokens: null,
+        time: { created: '2026-07-04T10:00:16.000Z', completed: '2026-07-04T10:00:17.000Z' },
+      }),
+    );
+    insertMessage.run(
+      'opencode-user-internal',
+      FIXTURE_IDS.opencode,
+      Date.parse('2026-07-04T10:00:35.000Z'),
+      JSON.stringify({ role: 'user', time: { created: '2026-07-04T10:00:35.000Z' } }),
+    );
+    insertMessage.run(
       'opencode-assistant-2',
       FIXTURE_IDS.opencode,
       Date.parse('2026-07-04T10:00:40.000Z'),
       JSON.stringify({
         role: 'assistant',
+        parentID: 'opencode-user-internal',
         providerID: 'anthropic',
         modelID: 'claude-sonnet-4-6',
         cost: 0.5,
@@ -290,30 +345,42 @@ const writeOpenCodeFixture = async (databasePath: string): Promise<void> => {
       Date.parse('2026-07-04T10:02:00.000Z'),
       JSON.stringify({
         role: 'assistant',
+        parentID: 'opencode-user-missing',
         providerID: 'openai',
         modelID: 'gpt-5',
         cost: 0.1,
         tokens: { input: 10, output: 2, reasoning: 1, cache: { read: 3, write: 0 } },
-        time: { created: '2026-07-04T10:02:00.000Z' },
       }),
     );
-    const insertPart = database.prepare('INSERT INTO part VALUES (?, ?, ?, ?)');
+    const insertPart = database.prepare(
+      'INSERT INTO part (id, message_id, session_id, time_created, data) VALUES (?, ?, ?, ?, ?)',
+    );
     insertPart.run(
       'opencode-user-part',
       'opencode-user-1',
       FIXTURE_IDS.opencode,
+      Date.parse('2026-07-04T10:00:00.000Z'),
       JSON.stringify({ type: 'text', text: 'Run the OpenCode fixture' }),
     );
     insertPart.run(
       'opencode-tool-part',
       'opencode-assistant-1',
       FIXTURE_IDS.opencode,
-      JSON.stringify({ type: 'tool', tool: 'bash' }),
+      Date.parse('2026-07-04T10:00:30.000Z'),
+      JSON.stringify({ type: 'tool', tool: 'bash' }, null, 2),
+    );
+    insertPart.run(
+      'opencode-internal-user-part',
+      'opencode-user-internal',
+      FIXTURE_IDS.opencode,
+      Date.parse('2026-07-04T10:00:35.000Z'),
+      JSON.stringify({ synthetic: true, text: 'Internal compaction context', type: 'text' }),
     );
     insertPart.run(
       'opencode-internal-part',
       'opencode-assistant-2',
       FIXTURE_IDS.opencode,
+      Date.parse('2026-07-04T10:00:50.000Z'),
       JSON.stringify({ type: 'subtask', sessionID: 'opencode-internal-parent-025' }),
     );
   } finally {
@@ -360,7 +427,7 @@ export const seedHarnessHome = async (
     throw new Error('harnesses contains an unsupported fixture key');
   }
   const paths = {
-    codexRootRollout: path.join(
+    codexRootRollout: join(
       home,
       '.codex',
       'sessions',
@@ -368,8 +435,8 @@ export const seedHarnessHome = async (
       '07',
       `rollout-2026-07-02T09-00-00-${FIXTURE_IDS.codexRoot}.jsonl`,
     ),
-    cursorDatabase: path.join(home, '.config', 'Cursor', 'User', 'globalStorage', 'state.vscdb'),
-    opencodeDatabase: path.join(home, '.local', 'share', 'opencode', 'opencode.db'),
+    cursorDatabase: join(home, '.config', 'Cursor', 'User', 'globalStorage', 'state.vscdb'),
+    opencodeDatabase: join(home, '.local', 'share', 'opencode', 'opencode.db'),
   };
   if (seededHarnesses.includes('claude')) {
     await writeClaudeFixture(home);
@@ -390,7 +457,7 @@ export const appendCodexRootUsage = async (fixture: SeededHarnessHome): Promise<
   if (!fixture.seededHarnesses.includes('codex')) {
     throw new Error('Cannot append Codex usage: the codex harness was not seeded');
   }
-  await fs.appendFile(
+  await appendFile(
     fixture.paths.codexRootRollout,
     jsonLines({
       timestamp: '2026-07-02T09:04:00.000Z',
