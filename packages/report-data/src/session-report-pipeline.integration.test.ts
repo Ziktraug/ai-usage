@@ -177,19 +177,41 @@ describe('session report pipeline', () => {
       expect(compactByHarness).toEqual({
         claude: [
           {
+            calls: 1,
+            costActual: 0,
+            costKnown: true,
+            date: '2026-07-01T08:00:30.000Z',
+            durationMs: 0,
+            endDate: '2026-07-01T08:00:40.000Z',
+            modelSegments: [{ costKnown: true, model: 'claude-sonnet-4-6', tokCr: 0, tokCw: 0, tokIn: 5, tokOut: 3 }],
+            models: ['claude-sonnet-4-6'],
+            parentSourceSessionId: 'claude-fixture-025',
+            partial: false,
+            rootSourceSessionId: null,
+            sourceSessionId: 'agent-claude-fixture-027',
+            tokCr: 0,
+            tokCw: 0,
+            tokIn: 5,
+            tokOut: 3,
+            tokenTotal: 8,
+            tools: 0,
+            turns: 1,
+            usageUnavailable: false,
+          },
+          {
             calls: 2,
             costActual: 0,
             costKnown: true,
             date: '2026-07-01T08:00:00.000Z',
-            durationMs: 240_000,
-            endDate: '2026-07-01T08:04:00.000Z',
+            durationMs: 60_000,
+            endDate: '2026-07-01T08:04:30.000Z',
             modelSegments: [
               { costKnown: true, model: 'claude-sonnet-4-6', tokCr: 30, tokCw: 10, tokIn: 100, tokOut: 20 },
               { costKnown: true, model: 'claude-opus-4-1', tokCr: 5, tokCw: 2, tokIn: 40, tokOut: 15 },
             ],
             models: ['claude-sonnet-4-6', 'claude-opus-4-1'],
             parentSourceSessionId: null,
-            partial: false,
+            partial: true,
             rootSourceSessionId: null,
             sourceSessionId: 'claude-fixture-025',
             tokCr: 35,
@@ -305,6 +327,7 @@ describe('session report pipeline', () => {
       });
 
       const expectedCosts = new Map([
+        ['agent-claude-fixture-027', 0.000_06],
         ['claude-fixture-025', 0.002_416_5],
         ['codex-child-025', 0.000_66],
         ['codex-root-025', 0.001_092_5],
@@ -315,6 +338,7 @@ describe('session report pipeline', () => {
         expect(row.costApprox).toBeCloseTo(expectedCosts.get(row.source?.sourceSessionId ?? '') ?? -1, 12);
       }
       const expectedSegmentCosts = new Map<string, readonly number[]>([
+        ['agent-claude-fixture-027', [0.000_06]],
         ['claude-fixture-025', [0.000_646_5, 0.001_77]],
         ['codex-child-025', [0.000_66]],
         ['codex-root-025', [0.000_865, 0.000_227_5]],

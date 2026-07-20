@@ -12,8 +12,8 @@
 | --- | --- | --- | --- |
 | 0 — Baseline, fixtures, and portable-format proof | DONE | `76d1212` | PASS — 4 fixture tests |
 | A — Honest recorded/partial/unavailable timing | DONE | `3e08ba6` | PASS — 40 focused tests; 31 collector regressions |
-| B — Portable VCS contract and v3 migration | DONE | pending | PASS — 103 focused tests; four package checks |
-| C — Shared Claude facts, detail, and harness VCS | PENDING | — | — |
+| B — Portable VCS contract and v3 migration | DONE | `5fb1464` | PASS — 103 focused tests; four package checks |
+| C — Shared Claude facts, detail, and harness VCS | DONE | pending | PASS — 53 focused tests; collector check and lint |
 | D — Exact-revision Claude wiring and explicit resolver | PENDING | — | — |
 | E — Claude chronology and VCS UI | PENDING | — | — |
 | F — OpenCode VCS and Cursor decision | PENDING | — | — |
@@ -49,10 +49,21 @@
   web checks, and `git diff --check`. Existing replay ambiguity remains report
   coverage rather than being mislabeled as timing coverage; open OpenCode
   assistant turns now carry unavailable timing instead of a zero sentinel.
-- Package B: pending commit. VCS/domain and v3 tests first failed on the absent
+- Package B: `5fb1464`. VCS/domain and v3 tests first failed on the absent
   module and version-2 writers. The completed package passes 103 focused tests
   plus report-core, local-collectors, usage-store, and usage-merge checks.
   Snapshots and merge bundles now write v3, migrate v1/v2 without VCS, reject
   `source.vcs` under old versions, and preserve VCS through cache/store/manual
   merge. VCS changes source/content hashes and store generation but not the
   stable merge row key or `sessionRowIdentity`. CSV remains unchanged.
+- Package C: pending commit. Claude facts/history tests first failed because
+  the shared parser and exact reader did not exist; the Codex VCS test first
+  failed because `session_meta.payload.git` was discarded. The collector now
+  calls the same pure parser as local detail for prompts, deduplication,
+  tokens, tools, model attribution, lineage, timing, branches, and recorded
+  PRs. Claude detail proves match -> differs -> match, unsafe transcript
+  symlinks fail through a typed boundary, and neither report rows nor caches
+  receive the detail prompt collection. Codex selects Git metadata from the
+  first identity-owning session meta, preserves repository/branch/commit, and
+  ignores later metas. The package passes 53 focused tests, local-collectors
+  type checking and lint, and `git diff --check`.
