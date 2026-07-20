@@ -6,7 +6,7 @@
 - Plan 026 baseline: `9545fb8`
 - Pre-existing user changes: none; worktree was clean
 - Drift check: no scoped changes from `9545fb8` to the starting commit
-- Cursor decision: pending Package F evidence audit
+- Cursor decision: **REJECTED for Cursor in plan 027**; see evidence below
 
 | Work package | Status | Commit | Verification |
 | --- | --- | --- | --- |
@@ -15,8 +15,8 @@
 | B — Portable VCS contract and v3 migration | DONE | `5fb1464` | PASS — 103 focused tests; four package checks |
 | C — Shared Claude facts, detail, and harness VCS | DONE | `af1c418` | PASS — 53 focused tests; collector check and lint |
 | D — Exact-revision Claude wiring and explicit resolver | DONE | `e74bee3`, `d5176c4` | PASS — 21 focused tests; web/report checks and lint |
-| E — Claude chronology and VCS UI | DONE | pending | PASS — 67 UI tests, 4 Claude-fact tests, 6 production E2E tests, web check |
-| F — OpenCode VCS and Cursor decision | PENDING | — | — |
+| E — Claude chronology and VCS UI | DONE | `dcedbb6` | PASS — 67 UI tests, 4 Claude-fact tests, 6 production E2E tests, web check |
+| F — OpenCode VCS and Cursor decision | DONE | pending | PASS — 30 focused tests |
 | G — Vertical proof, docs, measurements, and closure | PENDING | — | — |
 
 ## Baseline
@@ -95,7 +95,7 @@
   are not cached or persisted, and retry/row changes issue distinct requests.
   The 21-test package gate, web/report checks and web lint pass; tests use fake
   provider ports and a local subprocess only, never real GitHub.
-- Package E: pending commit. The VCS component test first failed because the
+- Package E: `dcedbb6`. The VCS component test first failed because the
   component was absent; the Claude render test then failed because an untimed
   turn had no point marker. The unified drawer now renders strict portable VCS
   facts without a new surface, truncates long values, discloses branch spans,
@@ -109,3 +109,35 @@
   passes 67 tests; the Claude semantic regression file passes 4 tests; a fresh
   build and the production Playwright suite pass all 6 scenarios; the web
   check, focused Biome check, and `git diff --check` pass.
+- Package F: pending commit. The OpenCode integration test first failed with
+  absent VCS and a cache hit from version 8. OpenCode now derives only a
+  repository from the session's recorded absolute `directory`, through the
+  existing bounded no-follow local Git reader. It memoizes directories per
+  database collection and deliberately emits no branch, commit, or PR; the
+  current checkout's `HEAD` in the fixture therefore never becomes session
+  history. The row-changing cache version is 9.
+
+## Cursor decision evidence
+
+**REJECTED for Cursor in plan 027.** No Cursor row or cache changed.
+
+- A read-only schema/count audit on 2026-07-20 observed 342 `composerData`
+  keys (338 valid JSON). Only 5 records had `workspaceIdentifier`; only 2 had
+  `activeBranch`, 15 had `createdOnBranch`, and none had `commitHash` or a
+  repository field. No record had both `workspaceIdentifier` and either
+  recorded branch field. The 9 `trackedGitRepos` fields were empty arrays.
+- The sparse `workspaceIdentifier` shape was `{ id: text, uri: object }`, but
+  its 5/342 coverage cannot deterministically map the other composers to a
+  recorded workspace/worktree. Joining current workspace storage would
+  substitute present checkout authority for session-time evidence.
+- The separate AI tracking database had 369 `scored_commits` over 12 branch
+  names. Its schema has `commitHash` and `branchName` but no `composerId` or
+  `conversationId`. The only table with a `composerId`, `ai_deleted_files`,
+  had zero rows and contains neither repository nor commit authority.
+- Consequently composer-to-workspace is not generally deterministic,
+  recorded workspace/branch evidence does not overlap, and commit attribution
+  would require the prohibited global branch/time proximity join. Cursor
+  remains VCS-unavailable. The focused suite proves its fixture row still has
+  no `source.vcs`.
+- The package gate passes 30 tests across OpenCode facts/detail and real/in-
+  memory DB collectors; no test or collector invokes GitHub.
