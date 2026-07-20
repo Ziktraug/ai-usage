@@ -716,24 +716,24 @@ and adapt config/state storage to `ai-usage` conventions.
 
 All must hold:
 
-- [ ] `@ai-usage/skills` exists with public package exports only.
-- [ ] `docs/architecture.md` and `docs/public-package-interfaces.md` document
+- [x] `@ai-usage/skills` exists with public package exports only.
+- [x] `docs/architecture.md` and `docs/public-package-interfaces.md` document
       the new package boundary.
-- [ ] `~/.config/ai-usage/config.json` supports optional `skills` config
+- [x] `~/.config/ai-usage/config.json` supports optional `skills` config
       without breaking existing config fields.
-- [ ] Portable skill source state is JSON-only; no dynamic import fallback is
+- [x] Portable skill source state is JSON-only; no dynamic import fallback is
       used for source repo state.
-- [ ] `/skills` route exists and renders a read-only snapshot when configured.
-- [ ] Enabled `missing` projections are visibly not healthy.
-- [ ] Reconciliation actions never overwrite or delete unmanaged content.
-- [ ] Runtime validation exists for every server function input.
-- [ ] `bun run test` exits 0.
-- [ ] `bun run typecheck` exits 0.
-- [ ] `bun run lint` exits 0.
-- [ ] `bun run build` exits 0.
-- [ ] `git status --short` contains only intentional files in scope plus
+- [x] `/skills` route exists and renders a read-only snapshot when configured.
+- [x] Enabled `missing` projections are visibly not healthy.
+- [x] Reconciliation actions never overwrite or delete unmanaged content.
+- [x] Runtime validation exists for every server function input.
+- [x] `bun run test` exits 0.
+- [x] `bun run typecheck` exits 0.
+- [x] `bun run lint` exits 0.
+- [x] `bun run build` exits 0.
+- [x] `git status --short` contains only intentional files in scope plus
       generated files expected by the repo.
-- [ ] `plans/README.md` status row is updated.
+- [x] `plans/README.md` status row is updated.
 
 ## STOP conditions
 

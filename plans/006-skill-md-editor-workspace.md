@@ -730,31 +730,31 @@ Use `apps/web/e2e/skills.spec.ts` and its existing deterministic backend. Cover:
 
 All items are required:
 
-- [ ] Selecting a managed global skill displays a textarea without clicking an
+- [x] Selecting a managed global skill displays a textarea without clicking an
       Edit button.
-- [ ] `rg -n ">Edit<|startEditing|cancelEditing"` returns no managed-editor
+- [x] `rg -n ">Edit<|startEditing|cancelEditing"` returns no managed-editor
       implementation matches.
-- [ ] Save is disabled for clean content, enabled for dirty content, and leaves
+- [x] Save is disabled for clean content, enabled for dirty content, and leaves
       the document immediately editable after success.
-- [ ] `Ctrl+S` and `Cmd+S` use the same save path as the button.
-- [ ] Save never invokes enable/disable or reconciliation operations.
-- [ ] The UI clearly distinguishes `Saved`, `Unsaved changes`, `Saving…`, and
+- [x] `Ctrl+S` and `Cmd+S` use the same save path as the button.
+- [x] Save never invokes enable/disable or reconciliation operations.
+- [x] The UI clearly distinguishes `Saved`, `Unsaved changes`, `Saving…`, and
       `Changed on disk` states.
-- [ ] Revert and reload never silently discard a dirty draft.
-- [ ] Navigation and snapshot replacement draft guards still work.
-- [ ] The editor precedes runtime exposure, technical paths, and diagnostics in
+- [x] Revert and reload never silently discard a dirty draft.
+- [x] Navigation and snapshot replacement draft guards still work.
+- [x] The editor precedes runtime exposure, technical paths, and diagnostics in
       the global-skill experience.
-- [ ] Global-skill validation, tokens, source paths, invocation, and runtime
+- [x] Global-skill validation, tokens, source paths, invocation, and runtime
       states appear in the Inspector.
-- [ ] Global-skill mutation actions are not duplicated between center and right
+- [x] Global-skill mutation actions are not duplicated between center and right
       columns.
-- [ ] Project-owned skills remain read-only.
-- [ ] No new editor dependency is added to `apps/web/package.json` or lockfile.
-- [ ] Unit, typecheck, lint, Ultracite, build, and Skills E2E commands all exit 0.
-- [ ] Documentation describes Draft → Source repository → Runtimes and explicit
+- [x] Project-owned skills remain read-only.
+- [x] No new editor dependency is added to `apps/web/package.json` or lockfile.
+- [x] Unit, typecheck, lint, Ultracite, build, and Skills E2E commands all exit 0.
+- [x] Documentation describes Draft → Source repository → Runtimes and explicit
       source-only Save.
-- [ ] `git diff --check` exits 0 and the diff stays inside declared scope.
-- [ ] `plans/README.md` marks plan 006 DONE only after all gates pass.
+- [x] `git diff --check` exits 0 and the diff stays inside declared scope.
+- [x] `plans/README.md` marks plan 006 DONE only after all gates pass.
 
 ## STOP conditions
 
