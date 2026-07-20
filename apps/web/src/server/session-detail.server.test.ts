@@ -43,6 +43,7 @@ const anchor: SessionDetailReportAnchor = {
   projection,
   sourceAuthority: 'local-observed',
   sourceSessionId: 'session-a',
+  vcs: null,
 };
 const analysis: LocalSessionAnalysis = { detail, projection };
 

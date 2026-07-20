@@ -208,11 +208,36 @@ describe('session query SQLite materialization', () => {
   });
 
   test('resolves exact session detail anchors and preserves nullable provenance', async () => {
+    const anchorVcs = {
+      branches: [
+        {
+          firstObservedAt: '2026-07-01T10:00:00.000Z',
+          lastObservedAt: '2026-07-01T10:01:00.000Z',
+          name: 'main',
+          provenance: 'harness-recorded' as const,
+          webUrl: 'https://github.com/fixture/project/tree/main',
+        },
+      ],
+      headCommit: null,
+      partial: false,
+      pullRequests: [],
+      repository: {
+        host: 'github.com',
+        ownerPath: 'fixture/project',
+        provenance: 'harness-recorded' as const,
+        webUrl: 'https://github.com/fixture/project',
+      },
+    };
+    const baseAnchorFixture = row('anchor-session', 10);
+    if (!baseAnchorFixture.source) {
+      throw new Error('Anchor fixture requires source provenance');
+    }
     const anchorFixture = {
-      ...row('anchor-session', 10),
+      ...baseAnchorFixture,
       activeDate: '2026-07-01T10:01:00.000Z',
       freshTokens: 30,
       lineDelta: 12,
+      source: { ...baseAnchorFixture.source, vcs: anchorVcs },
       tokenTotal: 40,
     };
     const { source: _source, ...rowWithoutProvenance } = row('without-provenance', 7);
@@ -254,6 +279,7 @@ describe('session query SQLite materialization', () => {
           },
           sourceAuthority: 'local-observed',
           sourceSessionId: 'anchor-session',
+          vcs: anchorVcs,
         },
         requestFingerprint: sessionDetailRequestFingerprint(foundRequest),
         revision: 'revision-a',

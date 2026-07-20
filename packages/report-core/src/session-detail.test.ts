@@ -196,6 +196,7 @@ describe('session detail contract', () => {
             projection: sessionProjectionFactsForSerializedRow(serializeUsageRow(usageRow)),
             sourceAuthority: 'portable-opaque',
             sourceSessionId: null,
+            vcs: null,
           },
         },
         request,

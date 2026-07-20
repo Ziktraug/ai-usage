@@ -10,6 +10,7 @@ import {
   parseSessionNeighborRequest,
   parseSessionQueryRequest,
 } from '@ai-usage/report-core/session-query';
+import { parseSessionVcsResolveRequest } from '@ai-usage/report-core/session-vcs';
 import { parseSourceControlCommand } from '@ai-usage/report-core/source-control';
 import { createServerFn } from '@tanstack/solid-start';
 import type { JsonValue } from '../web-report-payload';
@@ -63,6 +64,21 @@ export const getReportSessionDetail = createServerFn({ method: 'POST' })
       throw trustFailure;
     }
     return await sessionDetailApi.getLocalSessionDetailForServer(data);
+  });
+
+export const resolveReportSessionVcs = createServerFn({ method: 'POST' })
+  .validator(parseSessionVcsResolveRequest)
+  .handler(async ({ data }) => {
+    const [{ getRequest }, { validateTrustedLocalRequest }, sessionVcsApi] = await Promise.all([
+      import('@tanstack/solid-start/server'),
+      import('./local-request-trust.server'),
+      import('./session-vcs.server'),
+    ]);
+    const trustFailure = validateTrustedLocalRequest(getRequest());
+    if (trustFailure) {
+      throw trustFailure;
+    }
+    return await sessionVcsApi.resolveSessionVcsForServer(data);
   });
 
 export const getReportRevisionManifest = createServerFn({ method: 'GET' }).handler(() =>

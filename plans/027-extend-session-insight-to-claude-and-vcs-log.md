@@ -14,7 +14,7 @@
 | A — Honest recorded/partial/unavailable timing | DONE | `3e08ba6` | PASS — 40 focused tests; 31 collector regressions |
 | B — Portable VCS contract and v3 migration | DONE | `5fb1464` | PASS — 103 focused tests; four package checks |
 | C — Shared Claude facts, detail, and harness VCS | DONE | `af1c418` | PASS — 53 focused tests; collector check and lint |
-| D — Exact-revision Claude wiring and explicit resolver | IN PROGRESS | pending | PASS — Claude exact-revision dispatch (13 focused tests) |
+| D — Exact-revision Claude wiring and explicit resolver | DONE | `e74bee3` + pending | PASS — 21 focused tests; web/report checks and lint |
 | E — Claude chronology and VCS UI | PENDING | — | — |
 | F — OpenCode VCS and Cursor decision | PENDING | — | — |
 | G — Vertical proof, docs, measurements, and closure | PENDING | — | — |
@@ -67,10 +67,22 @@
   first identity-owning session meta, preserves repository/branch/commit, and
   ignores later metas. The package passes 53 focused tests, local-collectors
   type checking and lint, and `git diff --check`.
-- Package D.1: pending commit. The dispatch test first returned `unsupported`
+- Package D.1: `e74bee3`. The dispatch test first returned `unsupported`
   for a Claude anchor. Claude is now a declared detail harness and the default
   server uses an exhaustive reader map after revision authority, provenance,
   and source-machine checks. Portable, wrong-machine, missing-provenance,
   missing-history, expired-revision, and Cursor cases remain unavailable before
   any local analysis read. The focused server/client/runner suite passes 13
   tests and the web package type check passes.
+- Package D.2: pending commit. Client/server tests first failed because the
+  explicit resolution modules did not exist. The immutable anchor now carries
+  strictly parsed VCS from `source_row_json`; the browser still submits only
+  revision and row ID. Portable, wrong-machine, missing-VCS, and unsupported-
+  forge anchors perform zero resolver calls. The GitHub adapter locates `gh`
+  without a shell, invokes one structured final-branch query with a 5-second
+  timeout and 256 KiB stdout limit, caps results at 16, validates repository-
+  matching HTTPS PR URLs, drains but never retains stderr, and returns only
+  sanitized typed failures. Pending client calls deduplicate, completed values
+  are not cached or persisted, and retry/row changes issue distinct requests.
+  The 21-test package gate, web/report checks and web lint pass; tests use fake
+  provider ports and a local subprocess only, never real GitHub.

@@ -28,6 +28,7 @@ const anchorResult: SessionDetailAnchorResult = {
     },
     sourceAuthority: 'local-observed',
     sourceSessionId: 'session-a',
+    vcs: null,
   },
   requestFingerprint: fingerprint,
   revision: request.revision,
