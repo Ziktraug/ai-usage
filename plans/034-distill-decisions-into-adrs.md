@@ -23,7 +23,7 @@ The 2026-07-19 audit confirmed this slice in the current Solid/TanStack/Panda we
 
 ## Scope
 
-- **In scope**: exactly six ADRs: URL state; loopback no-LAN; file Sync; exact revisions; fixed window; two-tier design system.
+- **In scope**: exactly six additional frontend ADRs: URL state; loopback no-LAN; file Sync; exact revisions; fixed window; two-tier design system. Allocate the next available ADR numbers; existing ADRs are unrelated accepted records and are neither counted nor modified.
 - **Out of scope**: provider credentials/APIs, real histories, non-loopback serving, HTML export, LAN sync, framework migration, unlisted product behavior, external publication.
 
 ## Steps
@@ -48,7 +48,7 @@ Use existing colocated Bun model tests and role-based Playwright tests as struct
 
 ## STOP conditions
 
-Stop on unmerged parallel work, placeholder SHA/evidence, source drift, missing deterministic fixture, need for an out-of-scope contract, inconclusive measurement, any external write, or the same gate failing twice.
+Stop on unmerged parallel work, placeholder SHA/evidence, source drift, missing deterministic fixture, an ADR filename collision, any attempt to overwrite an existing ADR, need for an out-of-scope contract, inconclusive measurement, any external write, or the same gate failing twice.
 
 ## Maintenance notes
 
