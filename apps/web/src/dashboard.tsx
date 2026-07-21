@@ -127,6 +127,7 @@ import { buildProviderStatusViews } from './provider-status-model';
 import { ProviderStatusPanel } from './provider-status-panel';
 import { cursorCommitAttributionFacet, demoReportPayload } from './report-data';
 import { ReportWarnings } from './report-warnings';
+import type { RuntimeMode } from './runtime-mode';
 import {
   type SessionAnalysisTarget,
   sessionAnalysisTargetForSession,
@@ -290,6 +291,7 @@ export const Dashboard = (props: {
   initialPayload?: WebReportPayload;
   quotaHistoryFixture?: ProviderQuotaHistoryResult;
   quotaSource?: ProviderQuotaSource;
+  runtimeMode?: RuntimeMode;
   servedBootstrap?: FocusedSupportResult;
 }) => {
   const sourceControl = useSourceControl();
@@ -320,9 +322,10 @@ export const Dashboard = (props: {
   });
   const providerStatusClock = createProviderStatusClock({ initialNow: initialPayload.generatedAt });
   onMount(providerStatusClock.start);
-  const isDemo = !(props.initialPayload || props.servedBootstrap);
-  const quotaFixture =
-    props.quotaHistoryFixture ?? (import.meta.env?.VITE_AI_USAGE_E2E === '1' ? e2eQuotaHistoryFixture : undefined);
+  const runtimeMode = props.runtimeMode ?? 'live';
+  const isDemo = runtimeMode === 'demo';
+  const hasReportData = Boolean(props.initialPayload || props.servedBootstrap || runtimeMode !== 'live');
+  const quotaFixture = props.quotaHistoryFixture ?? (runtimeMode === 'e2e' ? e2eQuotaHistoryFixture : undefined);
   const quotaSource = props.quotaSource ?? (props.servedBootstrap ? createServedProviderQuotaSource() : undefined);
   const [quotaHistoryOpen, setQuotaHistoryOpen] = createSignal(false);
   const [quotaHistoryRange, setQuotaHistoryRange] = createSignal<ProviderQuotaHistoryRange>('24h');
@@ -839,6 +842,9 @@ export const Dashboard = (props: {
     onCleanup(() => document.removeEventListener('keydown', onKeyDown));
   });
   onMount(() => {
+    if (isDemo) {
+      return;
+    }
     resolveClientPerfEnabled()
       .then((enabled) => {
         if (!enabled) {
@@ -1091,27 +1097,29 @@ export const Dashboard = (props: {
               </div>
               <h1 class={title}>Usage report</h1>
               <div class={meta}>
-                <Show fallback="Report payload unavailable" when={!isDemo}>
+                <Show fallback="Report payload unavailable" when={hasReportData}>
                   Generated {fmtDate(reportSupport().generatedAt)}
                 </Show>
               </div>
             </div>
             <div class={headerActions}>
-              <Link class={navButton} to="/skills">
-                Skills
-              </Link>
-              <Link class={navButton} to="/sync">
-                Sync
-              </Link>
-              <Link class={navButton} to="/sources">
-                Sources
-              </Link>
+              <Show when={!isDemo}>
+                <Link class={navButton} to="/skills">
+                  Skills
+                </Link>
+                <Link class={navButton} to="/sync">
+                  Sync
+                </Link>
+                <Link class={navButton} to="/sources">
+                  Sources
+                </Link>
+              </Show>
               <ThemeToggle />
             </div>
           </div>
         </header>
 
-        <Show when={!isDemo}>
+        <Show when={hasReportData}>
           <div class={toolbar}>
             <input
               aria-label="Filter sessions by title, project, model, provider, or harness"
@@ -1147,7 +1155,9 @@ export const Dashboard = (props: {
                 value={machine()}
               />
             </Show>
-            <SourceControlSummary />
+            <Show when={!isDemo}>
+              <SourceControlSummary />
+            </Show>
           </div>
         </Show>
 
@@ -1163,7 +1173,7 @@ export const Dashboard = (props: {
               </div>
             </section>
           }
-          when={!isDemo}
+          when={hasReportData}
         >
           <TimeRangeControl
             {...(focusedStore ? { onFocusedTimelineRequest: requestFocusedTimeline } : {})}

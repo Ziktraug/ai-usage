@@ -28,11 +28,13 @@ import { createFileRoute, Link } from '@tanstack/solid-router';
 import { createMemo, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
+import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
 import { fmtDate, fmtNum } from '../shared';
 import { useSourceControl } from '../source-control-context';
 import { presentSourceProgress, presentSourceState, sourceToneClass } from '../source-control-presentation';
 
 export const Route = createFileRoute('/sources')({
+  beforeLoad: enforceReportOnlyDemoNavigation,
   component: SourcesRoute,
 });
 

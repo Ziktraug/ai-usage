@@ -1,6 +1,6 @@
 # Plan 028: Ship a privacy-safe local demo
 
-> **Status: TODO** — first plan in the frontend step-up sequence.
+> **Status: DONE** — the deterministic privacy-safe demo and its regression coverage are complete.
 >
 > **Baseline**: re-read at commit `6135fe7` on 2026-07-21. If the named runtime
 > boundaries changed, update this plan before implementing.
@@ -88,11 +88,11 @@ new demo content, README artwork, and external publication.
 
 ## Done
 
-- [ ] `bun run demo` is deterministic, synthetic, read-only, and loopback-only.
-- [ ] Overview and session detail remain fully usable.
-- [ ] Browser and server privacy assertions pass.
-- [ ] Existing live, E2E, and production behavior remains green.
-- [ ] Only this plan's runtime, test, and script files changed.
+- [x] `bun run demo` is deterministic, synthetic, read-only, and loopback-only.
+- [x] Overview and session detail remain fully usable.
+- [x] Browser and server privacy assertions pass.
+- [x] Existing live, E2E, and production behavior remains green.
+- [x] Only this plan's runtime, test, and script files changed.
 
 ## STOP conditions
 

@@ -14,16 +14,23 @@ import { parseSessionVcsResolveRequest } from '@ai-usage/report-core/session-vcs
 import { parseSourceControlCommand } from '@ai-usage/report-core/source-control';
 import { createServerFn } from '@tanstack/solid-start';
 import type { JsonValue } from '../web-report-payload';
+import { assertOutsideDemo } from './demo-boundary.server';
 
 const toSerializableJson = (value: unknown): JsonValue => JSON.parse(JSON.stringify(value)) as JsonValue;
 
+const runLiveServerFunction = async <Result>(operation: () => Promise<Result> | Result): Promise<Result> => {
+  assertOutsideDemo();
+  return await operation();
+};
+
 export const getReportPerfEnabled = createServerFn({ method: 'GET' }).handler(() =>
-  import('./report-payload.server').then(({ reportPerfEnabled }) => reportPerfEnabled()),
+  runLiveServerFunction(() => import('./report-payload.server').then(({ reportPerfEnabled }) => reportPerfEnabled())),
 );
 
 export const getSourceControlSnapshot = createServerFn({
   method: 'GET',
 }).handler(async () => {
+  assertOutsideDemo();
   const [{ getRequest }, { validateTrustedLocalRequest }, sourceControlApi] = await Promise.all([
     import('@tanstack/solid-start/server'),
     import('./local-request-trust.server'),
@@ -39,6 +46,7 @@ export const getSourceControlSnapshot = createServerFn({
 export const applySourceControlCommand = createServerFn({ method: 'POST' })
   .validator(parseSourceControlCommand)
   .handler(async ({ data }) => {
+    assertOutsideDemo();
     const [{ getRequest }, { validateTrustedLocalRequest }, sourceControlApi] = await Promise.all([
       import('@tanstack/solid-start/server'),
       import('./local-request-trust.server'),
@@ -54,6 +62,7 @@ export const applySourceControlCommand = createServerFn({ method: 'POST' })
 export const getReportSessionDetail = createServerFn({ method: 'POST' })
   .validator(parseSessionDetailRequest)
   .handler(async ({ data }) => {
+    assertOutsideDemo();
     const [{ getRequest }, { validateTrustedLocalRequest }, sessionDetailApi] = await Promise.all([
       import('@tanstack/solid-start/server'),
       import('./local-request-trust.server'),
@@ -69,6 +78,7 @@ export const getReportSessionDetail = createServerFn({ method: 'POST' })
 export const resolveReportSessionVcs = createServerFn({ method: 'POST' })
   .validator(parseSessionVcsResolveRequest)
   .handler(async ({ data }) => {
+    assertOutsideDemo();
     const [{ getRequest }, { validateTrustedLocalRequest }, sessionVcsApi] = await Promise.all([
       import('@tanstack/solid-start/server'),
       import('./local-request-trust.server'),
@@ -82,58 +92,73 @@ export const resolveReportSessionVcs = createServerFn({ method: 'POST' })
   });
 
 export const getReportRevisionManifest = createServerFn({ method: 'GET' }).handler(() =>
-  import('./report-payload.server').then(({ getReportRevisionManifestForServer }) =>
-    getReportRevisionManifestForServer(),
+  runLiveServerFunction(() =>
+    import('./report-payload.server').then(({ getReportRevisionManifestForServer }) =>
+      getReportRevisionManifestForServer(),
+    ),
   ),
 );
 
 export const getReportSessionPage = createServerFn({ method: 'POST' })
   .validator(parseSessionQueryRequest)
   .handler(({ data }) =>
-    import('./revision-query-runner.server').then(({ runRevisionQueryForServer }) =>
-      runRevisionQueryForServer('sessions', data),
+    runLiveServerFunction(() =>
+      import('./revision-query-runner.server').then(({ runRevisionQueryForServer }) =>
+        runRevisionQueryForServer('sessions', data),
+      ),
     ),
   );
 
 export const getReportSessionCampaignChildren = createServerFn({ method: 'POST' })
   .validator(parseSessionCampaignChildrenRequest)
   .handler(({ data }) =>
-    import('./revision-query-runner.server').then(({ runRevisionQueryForServer }) =>
-      runRevisionQueryForServer('campaign-children', data),
+    runLiveServerFunction(() =>
+      import('./revision-query-runner.server').then(({ runRevisionQueryForServer }) =>
+        runRevisionQueryForServer('campaign-children', data),
+      ),
     ),
   );
 
 export const getReportSessionNeighbors = createServerFn({ method: 'POST' })
   .validator(parseSessionNeighborRequest)
   .handler(({ data }) =>
-    import('./revision-query-runner.server').then(({ runRevisionQueryForServer }) =>
-      runRevisionQueryForServer('neighbors', data),
+    runLiveServerFunction(() =>
+      import('./revision-query-runner.server').then(({ runRevisionQueryForServer }) =>
+        runRevisionQueryForServer('neighbors', data),
+      ),
     ),
   );
 
 export const getFocusedReportSupport = createServerFn({ method: 'POST' })
   .validator(parseFocusedRevisionRequest)
-  .handler(async ({ data }) =>
-    toSerializableJson(
-      await import('./revision-query-runner.server').then(({ runRevisionQueryForServer }) =>
-        runRevisionQueryForServer('support', data),
+  .handler(
+    async ({ data }) =>
+      await runLiveServerFunction(async () =>
+        toSerializableJson(
+          await import('./revision-query-runner.server').then(({ runRevisionQueryForServer }) =>
+            runRevisionQueryForServer('support', data),
+          ),
+        ),
       ),
-    ),
   );
 
 export const getFocusedReportOverview = createServerFn({ method: 'POST' })
   .validator(parseFocusedOverviewRequest)
   .handler(({ data }) =>
-    import('./revision-query-runner.server').then(({ runRevisionQueryForServer }) =>
-      runRevisionQueryForServer('overview', data),
+    runLiveServerFunction(() =>
+      import('./revision-query-runner.server').then(({ runRevisionQueryForServer }) =>
+        runRevisionQueryForServer('overview', data),
+      ),
     ),
   );
 
 export const getFocusedReportBreakdown = createServerFn({ method: 'POST' })
   .validator(parseFocusedBreakdownRequest)
   .handler(({ data }) =>
-    import('./revision-query-runner.server').then(({ runRevisionQueryForServer }) =>
-      runRevisionQueryForServer('breakdown', data),
+    runLiveServerFunction(() =>
+      import('./revision-query-runner.server').then(({ runRevisionQueryForServer }) =>
+        runRevisionQueryForServer('breakdown', data),
+      ),
     ),
   );
 
@@ -142,7 +167,9 @@ export const saveProjectGroups = createServerFn({ method: 'POST' })
     projectGroups: parseProjectGroupConfigs(input.projectGroups),
   }))
   .handler(({ data }) =>
-    import('./report-payload.server').then(({ saveProjectGroupsForServer }) =>
-      saveProjectGroupsForServer(data.projectGroups),
+    runLiveServerFunction(() =>
+      import('./report-payload.server').then(({ saveProjectGroupsForServer }) =>
+        saveProjectGroupsForServer(data.projectGroups),
+      ),
     ),
   );

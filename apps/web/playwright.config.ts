@@ -10,7 +10,7 @@ export default defineConfig({
   workers: process.env.CI ? 4 : undefined,
   reporter: process.env.CI ? 'github' : 'line',
   testDir: './e2e',
-  testIgnore: ['production-report.spec.ts'],
+  testIgnore: ['demo-privacy.spec.ts', 'production-report.spec.ts'],
   use: {
     baseURL: 'http://127.0.0.1:4174',
     ...devices['Desktop Chrome'],

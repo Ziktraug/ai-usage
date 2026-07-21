@@ -1,21 +1,28 @@
 import type { FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
+import { getBrowserRuntimeMode } from './browser-runtime-mode';
 import { createServedFocusedReportSource, fetchFocusedReportBootstrap } from './focused-report-client';
 import { demoReportPayload } from './report-data';
+import type { RuntimeMode } from './runtime-mode';
 import { toWebReportPayload, type WebReportPayload } from './web-report-payload';
 
-const isE2ERuntime = () => import.meta.env?.VITE_AI_USAGE_E2E === '1';
 const demoWebReportPayload = toWebReportPayload(demoReportPayload);
 
 export type ReportLoaderData =
-  | { kind: 'payload'; payload: WebReportPayload }
-  | { bootstrap: FocusedSupportResult; kind: 'served' };
+  | { kind: 'payload'; mode: 'demo' | 'e2e'; payload: WebReportPayload }
+  | { bootstrap: FocusedSupportResult; kind: 'served'; mode: 'live' };
 
-export const loadReportPayload = async (): Promise<ReportLoaderData> => {
-  if (isE2ERuntime()) {
-    const currentLoads = Number(Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads') ?? 0);
-    Reflect.set(globalThis, '__aiUsageE2EReportOwnerLoads', currentLoads + 1);
-    return { kind: 'payload', payload: demoWebReportPayload };
+export const loadReportPayload = async (mode: RuntimeMode = getBrowserRuntimeMode()): Promise<ReportLoaderData> => {
+  if (mode === 'demo' || mode === 'e2e') {
+    if (mode === 'e2e') {
+      const currentLoads = Number(Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads') ?? 0);
+      Reflect.set(globalThis, '__aiUsageE2EReportOwnerLoads', currentLoads + 1);
+    }
+    return { kind: 'payload', mode, payload: demoWebReportPayload };
   }
 
-  return { bootstrap: await fetchFocusedReportBootstrap(createServedFocusedReportSource()), kind: 'served' };
+  return {
+    bootstrap: await fetchFocusedReportBootstrap(createServedFocusedReportSource()),
+    kind: 'served',
+    mode,
+  };
 };

@@ -1,6 +1,8 @@
 import { parseSkillConfigInput } from '@ai-usage/skills/config';
 import { createServerFn } from '@tanstack/solid-start';
 import { type ProjectRuntimeDirId, projectSkillDirectories } from '../project-skill-directories';
+import { assertOutsideDemo } from './demo-boundary.server';
+import { getServerRuntimeMode } from './runtime-mode.server';
 import { skillNameInputForClient, targetIdInputForClient } from './skill-input-validation';
 import type { SkillsServerAdapter } from './skills-contracts';
 
@@ -11,10 +13,10 @@ type JsonRecord = Record<string, unknown>;
 const sha256Pattern = /^[a-f0-9]{64}$/;
 const maxSkillMarkdownBytes = 256 * 1024;
 
-const isE2ERuntime = () => import.meta.env?.VITE_AI_USAGE_E2E === '1';
-
 const loadSkillsServerAdapter = async (): Promise<SkillsServerAdapter> => {
-  if (isE2ERuntime()) {
+  const runtimeMode = getServerRuntimeMode();
+  assertOutsideDemo(runtimeMode);
+  if (runtimeMode === 'e2e') {
     const fixture = await import('./skills-e2e-fixture.server');
     return {
       createTargetDirectory: fixture.createE2ESkillTargetDirectory,

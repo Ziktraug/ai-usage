@@ -23,29 +23,17 @@ import { createFileRoute, Link } from '@tanstack/solid-router';
 import { createEffect, createSignal, onCleanup, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
+import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
 import type { ManualOperationError, ManualOperationResult } from '../manual-transfer-contract';
 import { formatManualImportSummary, formatTransferBytes } from '../manual-transfer-model';
 import { exportManualMergeBundle } from '../server/sync';
+import { handleSyncUploadRequest } from '../server/sync-upload.server';
 
 export const Route = createFileRoute('/sync')({
+  beforeLoad: enforceReportOnlyDemoNavigation,
   server: {
     handlers: {
-      POST: async ({ request }) => {
-        const [mergeServer, { handleManualMergeUpload }] = await Promise.all([
-          import('../server/manual-merge.server'),
-          import('../server/manual-merge-upload.server'),
-        ]);
-        return handleManualMergeUpload(request, {
-          previewBundle: (document) => mergeServer.previewManualMergeBundleForServer(document),
-          confirmBundle: (document, expected) =>
-            mergeServer.confirmManualMergeBundleForServer({
-              ...document,
-              expectedDigest: expected.digest,
-              expectedStoreGeneration: expected.generation,
-              expectedStoreStateToken: expected.storeStateToken,
-            }),
-        });
-      },
+      POST: ({ request }) => handleSyncUploadRequest(request),
     },
   },
   component: SyncRoute,

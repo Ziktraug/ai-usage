@@ -8,6 +8,7 @@ import {
   type SourceControlCommandResponse,
   type SourceControlView,
 } from '@ai-usage/report-core/source-control';
+import type { RuntimeMode } from './runtime-mode';
 
 export type { SourceControlCommandResponse } from '@ai-usage/report-core/source-control';
 
@@ -184,3 +185,19 @@ export const createSourceControlClient = (options: SourceControlClientOptions = 
     },
   };
 };
+
+export const createInertSourceControlClient = (): SourceControlClient => ({
+  execute: () => Promise.resolve(false),
+  getState: () => initialState,
+  start: () => undefined,
+  stop: () => undefined,
+  subscribe: (listener) => {
+    listener(initialState);
+    return () => undefined;
+  },
+});
+
+export const createSourceControlClientForMode = (
+  mode: RuntimeMode,
+  createLiveClient: () => SourceControlClient = createSourceControlClient,
+): SourceControlClient => (mode === 'demo' ? createInertSourceControlClient() : createLiveClient());

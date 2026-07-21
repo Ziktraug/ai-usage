@@ -1,6 +1,6 @@
 # Plan 029: Close the verified accessibility gaps
 
-> **Status: BLOCKED** — ready after plan 028 is DONE.
+> **Status: TODO** — ready to start after plan 028 completed.
 >
 > **Baseline**: commit `6135fe7`. Re-check the named tokens and components after
 > plan 028; preserve its demo navigation contract.

@@ -27,6 +27,7 @@ import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
 import { isServer } from 'solid-js/web';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
+import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
 import { DiscardConfirmationDialog } from '../discard-confirmation-dialog';
 import type { getKnownSkillProjectPaths, getSkillManagementSnapshot, KnownSkillProjectPath } from '../server/skills';
 import {
@@ -42,6 +43,7 @@ import { type ProjectInventoriesResult, type SkillMarkdownDraftGuard, SkillsWork
 import { loadSkillsInitialData, webQueryKeys } from '../web-query-options';
 
 export const Route = createFileRoute('/skills')({
+  beforeLoad: enforceReportOnlyDemoNavigation,
   component: SkillsRoute,
 });
 

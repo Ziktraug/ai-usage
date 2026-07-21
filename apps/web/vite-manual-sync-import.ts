@@ -1,13 +1,21 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
 import type { ManualOperationResult } from './src/manual-transfer-contract';
-import { handleManualMergeUpload } from './src/server/manual-merge-upload.server';
+import type { RuntimeMode } from './src/runtime-mode';
+import { demoNotFoundResponse } from './src/server/demo-boundary.server';
+import { getServerRuntimeMode } from './src/server/runtime-mode.server';
 
 type ImportBundle = (text: string) => Promise<ManualOperationResult<unknown>>;
+export type ManualUploadHandler = (
+  request: Request,
+  options: { importBundle: ImportBundle; maxBytes?: number },
+) => Promise<Response>;
 
-interface ManualSyncImportDevOptions {
+export interface ManualSyncImportDevOptions {
   importBundle: ImportBundle;
+  loadUploadHandler?: () => Promise<ManualUploadHandler>;
   maxBytes?: number;
+  runtimeMode?: RuntimeMode;
 }
 
 const manualMergeServerModuleUrl = new URL('./src/server/manual-merge.server.ts', import.meta.url).href;
@@ -129,8 +137,22 @@ export const handleManualSyncImportDevRequest = async (
   response: ServerResponse,
   options: ManualSyncImportDevOptions,
 ): Promise<void> => {
+  if ((options.runtimeMode ?? getServerRuntimeMode()) === 'demo') {
+    await sendFetchResponse(demoNotFoundResponse(), response);
+    return;
+  }
+  const handleUpload = await (
+    options.loadUploadHandler ??
+    (async () => {
+      const { handleManualMergeUpload } = await import('./src/server/manual-merge-upload.server');
+      return handleManualMergeUpload;
+    })
+  )();
   const fetchRequest = nodeRequestToFetchRequest(request);
-  const fetchResponse = await handleManualMergeUpload(fetchRequest, options);
+  const fetchResponse = await handleUpload(fetchRequest, {
+    importBundle: options.importBundle,
+    ...(options.maxBytes === undefined ? {} : { maxBytes: options.maxBytes }),
+  });
   if (!(request.readableEnded || request.destroyed)) {
     request.resume();
   }
@@ -149,11 +171,13 @@ export const manualSyncImportDevPlugin = (): Plugin => ({
       }
 
       try {
-        const { importManualMergeBundleForServer } = (await import(
-          manualMergeServerModuleUrl
-        )) as typeof import('./src/server/manual-merge.server');
         await handleManualSyncImportDevRequest(request, response, {
-          importBundle: (text) => importManualMergeBundleForServer({ text }),
+          importBundle: async (text) => {
+            const { importManualMergeBundleForServer } = (await import(
+              manualMergeServerModuleUrl
+            )) as typeof import('./src/server/manual-merge.server');
+            return await importManualMergeBundleForServer({ text });
+          },
         });
       } catch {
         response.statusCode = 500;

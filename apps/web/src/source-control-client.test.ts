@@ -6,6 +6,7 @@ import {
 } from '@ai-usage/report-core/source-control';
 import {
   createSourceControlClient,
+  createSourceControlClientForMode,
   type SourceControlCommandResponse,
   type SourceControlEventSource,
 } from './source-control-client';
@@ -73,6 +74,24 @@ class FakeEventSource implements SourceControlEventSource {
 }
 
 describe('source control client', () => {
+  test('does not construct transport or command clients in demo mode', async () => {
+    let liveConstructions = 0;
+    const client = createSourceControlClientForMode('demo', () => {
+      liveConstructions += 1;
+      return createSourceControlClient({
+        createEventSource: () => {
+          throw new Error('EventSource must not be constructed in demo mode.');
+        },
+        sendCommand: () => Promise.reject(new Error('Commands must not run in demo mode.')),
+      });
+    });
+
+    client.start();
+    expect(await client.execute({ command: 'run-all' })).toBe(false);
+    expect(client.getState().connection).toBe('stopped');
+    expect(liveConstructions).toBe(0);
+  });
+
   test('starts only once, replaces snapshots, and closes cleanly', () => {
     const eventSource = new FakeEventSource();
     let connectionCount = 0;

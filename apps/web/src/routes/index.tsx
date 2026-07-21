@@ -34,9 +34,9 @@ const loadingPanel = css({ display: 'grid', gap: '12px', maxW: '640px' });
 
 const LoadedReport = (props: { data: ReportLoaderData }) =>
   props.data.kind === 'payload' ? (
-    <Dashboard initialPayload={props.data.payload} />
+    <Dashboard initialPayload={props.data.payload} runtimeMode={props.data.mode} />
   ) : (
-    <Dashboard servedBootstrap={props.data.bootstrap} />
+    <Dashboard runtimeMode={props.data.mode} servedBootstrap={props.data.bootstrap} />
   );
 
 function IndexRoute() {
