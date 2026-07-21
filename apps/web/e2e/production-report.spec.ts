@@ -271,9 +271,22 @@ test('hydrates and automatically pages Sessions through the production revision 
     .toBe(204);
   await expect(page.getByRole('button', { name: 'Load more sessions' })).toHaveCount(0);
 
-  const rootSessionRow = page.locator('tr[data-index]').filter({ hasText: 'Implement fixture root' });
-  await expect(rootSessionRow).toHaveCount(1);
-  await rootSessionRow.click({ force: true });
+  await expect
+    .poll(
+      async () =>
+        await sessionViewport.evaluate((element) => {
+          const rootSessionRow = Array.from(element.querySelectorAll('tr[data-index]')).find((row) =>
+            row.textContent?.includes('Implement fixture root'),
+          );
+          if (!(rootSessionRow instanceof HTMLElement)) {
+            return false;
+          }
+
+          rootSessionRow.click();
+          return true;
+        }),
+    )
+    .toBe(true);
   const rootDrawer = page.getByRole('dialog');
   await expect(rootDrawer).toBeVisible();
   const codexSourceControl = rootDrawer.getByRole('region', { name: 'Session source control' });
