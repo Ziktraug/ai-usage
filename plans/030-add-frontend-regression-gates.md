@@ -1,6 +1,6 @@
 # Plan 030: Add durable frontend regression gates
 
-> **Status: BLOCKED** — ready after plan 029 is DONE.
+> **Status: TODO** — ready to start after plan 029 completed.
 >
 > **Baseline**: commit `6135fe7`. Baselines must be created from the accessible
 > state delivered by plan 029.

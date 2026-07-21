@@ -4,6 +4,7 @@ import {
   ghostButton,
   header,
   headerActions,
+  headerNavigation,
   headerTop,
   inlineFieldLabel,
   meta,
@@ -489,12 +490,14 @@ function SyncRoute() {
             <h1 class={title}>Sync</h1>
           </div>
           <div class={headerActions}>
-            <Link class={navButton} search={dashboardSearchDefaults} to="/">
-              Dashboard
-            </Link>
-            <Link class={navButton} to="/sources">
-              Sources
-            </Link>
+            <nav aria-label="Primary navigation" class={headerNavigation}>
+              <Link class={navButton} search={dashboardSearchDefaults} to="/">
+                Dashboard
+              </Link>
+              <Link class={navButton} to="/sources">
+                Sources
+              </Link>
+            </nav>
             <ThemeToggle />
           </div>
         </div>

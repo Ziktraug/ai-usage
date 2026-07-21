@@ -252,6 +252,22 @@ export const heatLegendCell = css({
   borderRadius: '3px',
 });
 
+export const heatDayControl = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  alignItems: 'end',
+  gap: '8px 12px',
+  pt: '10px',
+});
+
+export const heatDayDetail = css({
+  minW: 0,
+  pb: '8px',
+  color: 'muted',
+  fontSize: '11px',
+  overflowWrap: 'anywhere',
+});
+
 export const scatterWrap = css({
   position: 'relative',
   h: '240px',

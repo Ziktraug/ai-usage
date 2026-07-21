@@ -6,6 +6,7 @@ import {
   ghostButton,
   header,
   headerActions,
+  headerNavigation,
   headerTop,
   meta,
   navButton,
@@ -40,8 +41,6 @@ export const Route = createFileRoute('/sources')({
 
 const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
 const pageStack = css({ display: 'grid', gap: '18px' });
-const headerWrap = css({ flexWrap: 'wrap' });
-const actionsWrap = css({ flexWrap: 'wrap', justifyContent: 'flex-end' });
 const groupStack = css({ display: 'grid', gap: '10px' });
 const groupHeader = css({
   display: 'flex',
@@ -277,13 +276,13 @@ function SourcesRoute() {
     <main class={page} data-hydrated={sourceControl.state().connection === 'stopped' ? 'false' : 'true'}>
       <div class={shell}>
         <header class={header}>
-          <div class={cx(headerTop, headerWrap)}>
+          <div class={headerTop}>
             <div class={titleBlock}>
               <p class={meta}>Server-owned collection</p>
               <h1 class={title}>Sources</h1>
               <p class={meta}>Policy, availability, lifecycle, and outcomes stay independent for every collector.</p>
             </div>
-            <div class={cx(headerActions, actionsWrap)}>
+            <div class={headerActions}>
               <button
                 class={ghostButton}
                 disabled={!snapshot() || pending()}
@@ -304,9 +303,11 @@ function SourcesRoute() {
               >
                 Run all enabled
               </button>
-              <Link class={navButton} search={dashboardSearchDefaults} to="/">
-                Report
-              </Link>
+              <nav aria-label="Primary navigation" class={headerNavigation}>
+                <Link class={navButton} search={dashboardSearchDefaults} to="/">
+                  Report
+                </Link>
+              </nav>
               <ThemeToggle />
             </div>
           </div>

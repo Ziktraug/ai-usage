@@ -52,6 +52,18 @@ test('shows analysis and report metrics without disclosure gates', async ({ page
   await expect(advancedSummary).toHaveCount(0);
   await expect(punchcard).toBeVisible();
   await expect(page.getByText('Punchcard data', { exact: true })).toHaveCount(0);
+  const punchcardTable = page.getByRole('table', { name: 'Punchcard' });
+  await expect(punchcardTable).toBeAttached();
+  await expect(punchcardTable.getByRole('columnheader')).toHaveText([
+    'Weekday',
+    'Hour',
+    'Sessions',
+    'API-equivalent value',
+  ]);
+  expect(await punchcardTable.getByRole('row').count()).toBeGreaterThan(1);
+  await expect(punchcardTable.getByRole('row', { name: 'Monday 16:00 1 $0.84' })).toBeAttached();
+  await expect(page.locator('[data-punchcard-visual]')).toHaveAttribute('aria-hidden', 'true');
+  await expect(page.locator('[data-punchcard-visual]').getByRole('button')).toHaveCount(0);
 
   const reportMetrics = page.getByRole('region', { name: 'More report metrics' });
   await expect(reportMetrics.getByRole('heading', { level: 2, name: 'More report metrics' })).toBeVisible();
@@ -225,12 +237,15 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   await page.goto('/');
 
   const calendar = page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN });
+  const dayControl = page.getByLabel('Select activity day');
   const focusedCalendarDay = calendar.locator('button[tabindex="0"]');
   await expect(focusedCalendarDay).toHaveCount(1);
+  await expect(dayControl).toHaveValue((await focusedCalendarDay.getAttribute('data-heatmap-day')) ?? '');
   const initialDayLabel = await focusedCalendarDay.getAttribute('aria-label');
   await focusedCalendarDay.focus();
   await focusedCalendarDay.press('ArrowLeft');
   await expect(calendar.locator('button:focus')).not.toHaveAttribute('aria-label', initialDayLabel ?? '');
+  await expect(dayControl).toHaveValue((await calendar.locator('button:focus').getAttribute('data-heatmap-day')) ?? '');
   await expect(calendar.locator('button[tabindex="0"]')).toHaveCount(1);
 
   await page.getByRole('tab', { name: 'Sessions' }).click();
@@ -253,6 +268,55 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   await breakdownTabs.getByRole('tab', { name: 'Projects' }).click();
   await expect(page.getByRole('list', { name: 'Project summaries' })).toBeVisible();
   await expect(page.getByRole('table')).toHaveCount(0);
+});
+
+test('keeps compact heatmap geometry beside an equivalent touch control', async ({ page }) => {
+  await page.setViewportSize({ height: 800, width: 361 });
+  await page.goto('/');
+
+  const calendar = page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN });
+  const dayControl = page.getByLabel('Select activity day');
+  const cell = calendar.locator('button').first();
+
+  // The labelled 36px date control provides the equivalent target-size path;
+  // the GitHub-style visual cells intentionally remain compact and non-overlapping.
+  const narrowCellBox = await cell.boundingBox();
+  const narrowControlBox = await dayControl.boundingBox();
+  expect(Math.round(narrowCellBox?.width ?? 0)).toBe(18);
+  expect(Math.round(narrowCellBox?.height ?? 0)).toBe(18);
+  expect(Math.round(narrowControlBox?.height ?? 0)).toBeGreaterThanOrEqual(24);
+  await expect(calendar).toHaveCSS('column-gap', '3px');
+
+  await page.setViewportSize({ height: 900, width: 1024 });
+  const desktopCellBox = await cell.boundingBox();
+  expect(Math.round(desktopCellBox?.width ?? 0)).toBe(12);
+  expect(Math.round(desktopCellBox?.height ?? 0)).toBe(12);
+  await expect(calendar).toHaveCSS('column-gap', '3px');
+});
+
+test('selects the same heatmap day with mouse, keyboard, and the equivalent control', async ({ page }) => {
+  const selectedDay = '2026-05-25';
+  const assertSelectedDay = async () => {
+    await expect(page.getByRole('tab', { name: 'Sessions' })).toHaveAttribute('aria-selected', 'true');
+    const range = page.getByRole('region', { name: 'Date range' });
+    await expect(range.getByRole('textbox', { name: 'Start date' })).toHaveValue(selectedDay);
+    await expect(range.getByRole('textbox', { name: 'End date' })).toHaveValue(selectedDay);
+  };
+  const selectedCell = () =>
+    page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN }).locator(`button[data-heatmap-day="${selectedDay}"]`);
+
+  await page.goto('/');
+  await selectedCell().click();
+  await assertSelectedDay();
+
+  await page.goto('/');
+  await selectedCell().focus();
+  await selectedCell().press('Enter');
+  await assertSelectedDay();
+
+  await page.goto('/');
+  await page.getByLabel('Select activity day').fill(selectedDay);
+  await assertSelectedDay();
 });
 
 test('mounts one Sessions surface across viewport changes without losing state', async ({ page }) => {

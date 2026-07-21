@@ -43,8 +43,8 @@ pull request unless the user explicitly asks.
 | 026 | Unify the Session Drawer and Make Chronology Readable | P1 | M | 025 | DONE |
 | 027 | Extend Session Insight to Claude and Add Trustworthy Git Links | P1 | XL | 025, 026 | DONE |
 | 028 | Ship a Privacy-safe Local Demo | P0 | L | - | DONE |
-| 029 | Close the Verified Accessibility Gaps | P0 | M | 028 | TODO |
-| 030 | Add Durable Frontend Regression Gates | P0 | M | 029 | BLOCKED — 029 |
+| 029 | Close the Verified Accessibility Gaps | P0 | M | 028 | DONE |
+| 030 | Add Durable Frontend Regression Gates | P0 | M | 029 | TODO |
 | 031 | Make Session Scrolling Trustworthy at 5,000 Rows | P0 | M | 030 | BLOCKED — 030 |
 | 032 | Simplify the Frontend and Prepare the Public Showcase | P1 | L | 031 | BLOCKED — 031 |
 

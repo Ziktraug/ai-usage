@@ -1,4 +1,4 @@
-import { cx } from '@ai-usage/design-system/css';
+import { css, cx } from '@ai-usage/design-system/css';
 import {
   accentFill,
   advancedAnalysis,
@@ -10,6 +10,8 @@ import {
   anatomyLegendItem,
   anatomyLegendSwatch,
   anatomyLegendValue,
+  dateFieldGroup,
+  dateInput,
   emptyPanel,
   HarnessBadge,
   harnessSvgFillFor,
@@ -17,6 +19,8 @@ import {
   heatCell,
   heatCellToday,
   heatCellZero,
+  heatDayControl,
+  heatDayDetail,
   heatGrid,
   heatLegend,
   heatLegendCell,
@@ -33,6 +37,7 @@ import {
   heroText,
   heroValue,
   inkFill,
+  inlineFieldLabel,
   muted,
   overviewGrid,
   panel,
@@ -120,10 +125,14 @@ export interface OverviewProps {
   timelineRows: DashboardRow[];
 }
 
-const Panel = (props: { title: string; sub?: string; children: JSX.Element }) => (
+const visuallyHidden = css({ srOnly: true });
+
+const Panel = (props: { title: string; sub?: string; children: JSX.Element; headingId?: string }) => (
   <section class={panel}>
     <header class={panelHeader}>
-      <h2 class={panelTitle}>{props.title}</h2>
+      <h2 class={panelTitle} id={props.headingId}>
+        {props.title}
+      </h2>
       <Show when={props.sub}>
         <div class={panelSub}>{props.sub}</div>
       </Show>
@@ -198,6 +207,7 @@ const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
 // date navigator: clicking a day focuses the dashboard on it.
 
 const HEAT_OPACITY = [0.28, 0.52, 0.76, 1];
+const HEAT_DAY_DETAIL_ID = 'overview-heatmap-day-detail';
 
 const focusedCalendarHeatmap = (data: FocusedCalendarHeatmap | null) =>
   data && {
@@ -238,6 +248,35 @@ const CalendarHeatmap = (props: {
     }
   });
 
+  const heatDayForKey = (key: string) => heatDays().find((day) => toDateInputValue(day.date) === key);
+  const describeHeatDay = (day: HeatDay) =>
+    `${fmtDateOnly(day.date)} — ${fmtMoney(day.cost)} · ${fmtNum(day.sessions)} sessions`;
+  const focusedHeatDay = createMemo(() => {
+    const key = focusedDayKey();
+    return key ? heatDayForKey(key) : undefined;
+  });
+  const focusedHeatDayDescription = createMemo(() => {
+    const day = focusedHeatDay();
+    return day ? describeHeatDay(day) : 'Choose a day in the activity range.';
+  });
+  const focusHeatDay = (key: string, moveDomFocus = false): void => {
+    if (!heatDayForKey(key)) {
+      return;
+    }
+    setFocusedDayKey(key);
+    if (moveDomFocus) {
+      cellElements.get(key)?.focus();
+    }
+  };
+  const selectHeatDay = (key: string): void => {
+    const day = heatDayForKey(key);
+    if (!day) {
+      return;
+    }
+    setFocusedDayKey(key);
+    props.onSelectDay(day.date);
+  };
+
   const moveHeatmapFocus = (event: KeyboardEvent, currentKey: string) => {
     const days = heatDays();
     const currentIndex = days.findIndex((day) => toDateInputValue(day.date) === currentKey);
@@ -251,8 +290,7 @@ const CalendarHeatmap = (props: {
     }
     event.preventDefault();
     const nextKey = toDateInputValue(nextDay.date);
-    setFocusedDayKey(nextKey);
-    cellElements.get(nextKey)?.focus();
+    focusHeatDay(nextKey, true);
   };
 
   // Most recent activity matters most: keep the right edge in view.
@@ -264,7 +302,7 @@ const CalendarHeatmap = (props: {
 
   return (
     <Panel
-      sub="Daily activity across the whole filtered history — click a day to focus the dashboard on it"
+      sub="Daily activity across the whole filtered history — choose a day to focus the dashboard on it"
       title="Rhythm"
     >
       <Show fallback={<div class={emptyPanel}>No dated sessions match the current filters</div>} when={data()}>
@@ -302,8 +340,7 @@ const CalendarHeatmap = (props: {
                             <Show fallback={<span />} when={day}>
                               {(cell) => {
                                 const key = () => toDateInputValue(cell().date);
-                                const description = () =>
-                                  `${fmtDateOnly(cell().date)} — ${fmtMoney(cell().cost)} · ${fmtNum(cell().sessions)} sessions`;
+                                const description = () => describeHeatDay(cell());
                                 return (
                                   <button
                                     aria-current={key() === heat().todayKey ? 'date' : undefined}
@@ -313,11 +350,9 @@ const CalendarHeatmap = (props: {
                                       cell().level === 0 ? heatCellZero : accentFill,
                                       key() === heat().todayKey ? heatCellToday : undefined,
                                     )}
-                                    onClick={() => {
-                                      setFocusedDayKey(key());
-                                      props.onSelectDay(cell().date);
-                                    }}
-                                    onFocus={() => setFocusedDayKey(key())}
+                                    data-heatmap-day={key()}
+                                    onClick={() => selectHeatDay(key())}
+                                    onFocus={() => focusHeatDay(key())}
                                     onKeyDown={(event) => moveHeatmapFocus(event, key())}
                                     ref={(element) => cellElements.set(key(), element)}
                                     style={cell().level > 0 ? { opacity: HEAT_OPACITY[cell().level - 1] } : undefined}
@@ -335,6 +370,24 @@ const CalendarHeatmap = (props: {
                   </For>
                 </div>
               </div>
+            </div>
+            <div class={heatDayControl}>
+              <label class={dateFieldGroup}>
+                <span class={inlineFieldLabel}>Select activity day</span>
+                <input
+                  aria-describedby={HEAT_DAY_DETAIL_ID}
+                  class={dateInput}
+                  max={toDateInputValue(heatDays().at(-1)?.date ?? new Date())}
+                  min={toDateInputValue(heatDays()[0]?.date ?? new Date())}
+                  onChange={(event) => selectHeatDay(event.currentTarget.value)}
+                  onInput={(event) => focusHeatDay(event.currentTarget.value)}
+                  type="date"
+                  value={focusedDayKey() ?? ''}
+                />
+              </label>
+              <span class={heatDayDetail} id={HEAT_DAY_DETAIL_ID}>
+                {focusedHeatDayDescription()}
+              </span>
             </div>
             <div class={heatLegend}>
               <span>Less</span>
@@ -544,15 +597,26 @@ const SessionShape = (props: {
 // Punchcard — hour × weekday density. Nightly auto-review bots and weekend
 // streaks show up immediately.
 
+const PUNCHCARD_HEADING_ID = 'overview-punchcard-title';
+const PUNCH_DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
+
 const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: DashboardRow[] }) => {
   const data = createMemo(() => (props.focused === undefined ? buildPunchcardData(props.rows) : props.focused));
+  const accessibleCells = createMemo(
+    () =>
+      data()?.cells.flatMap((dayCells, dayIndex) =>
+        dayCells.flatMap((cell, hour) =>
+          cell.sessions > 0 ? [{ ...cell, day: PUNCH_DAY_NAMES[dayIndex] ?? '', hour }] : [],
+        ),
+      ) ?? [],
+  );
 
   return (
-    <Panel sub="When the sessions happen — hour of day × weekday" title="Punchcard">
+    <Panel headingId={PUNCHCARD_HEADING_ID} sub="When the sessions happen — hour of day × weekday" title="Punchcard">
       <Show fallback={<div class={emptyPanel}>No dated sessions in range</div>} when={data()}>
         {(punch) => (
           <>
-            <div class={punchGrid}>
+            <div aria-hidden="true" class={punchGrid} data-punchcard-visual>
               <For each={punch().cells}>
                 {(dayCells, dayIndex) => (
                   <>
@@ -585,6 +649,31 @@ const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: 
               <For each={Array.from({ length: 24 }, (_, hour) => hour)}>
                 {(hour) => <span class={punchHourLabel}>{hour % 3 === 0 ? hour : ''}</span>}
               </For>
+            </div>
+            <div class={visuallyHidden}>
+              <table aria-labelledby={PUNCHCARD_HEADING_ID}>
+                <caption>Non-empty activity periods</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Weekday</th>
+                    <th scope="col">Hour</th>
+                    <th scope="col">Sessions</th>
+                    <th scope="col">API-equivalent value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <For each={accessibleCells()}>
+                    {(cell) => (
+                      <tr>
+                        <th scope="row">{cell.day}</th>
+                        <td>{String(cell.hour).padStart(2, '0')}:00</td>
+                        <td>{fmtNum(cell.sessions)}</td>
+                        <td>{fmtMoney(cell.cost)}</td>
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
             </div>
           </>
         )}

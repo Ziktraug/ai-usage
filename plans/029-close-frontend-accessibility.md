@@ -1,6 +1,6 @@
 # Plan 029: Close the verified accessibility gaps
 
-> **Status: TODO** — ready to start after plan 028 completed.
+> **Status: DONE** — verified accessibility gaps are closed with regression coverage.
 >
 > **Baseline**: commit `6135fe7`. Re-check the named tokens and components after
 > plan 028; preserve its demo navigation contract.
@@ -78,11 +78,11 @@ every visual cell 24 px, or introducing a component-test framework.
 
 ## Done
 
-- [ ] Confirmed contrast pairs pass in both themes.
-- [ ] Punchcard is understandable without relying on color or hover.
-- [ ] Heatmap cells retain their compact dimensions and spacing.
-- [ ] The equivalent day control and roving keyboard focus stay synchronized.
-- [ ] Shared navigation, narrow layouts, and reduced motion pass.
+- [x] Confirmed contrast pairs pass in both themes.
+- [x] Punchcard is understandable without relying on color or hover.
+- [x] Heatmap cells retain their compact dimensions and spacing.
+- [x] The equivalent day control and roving keyboard focus stay synchronized.
+- [x] Shared navigation, narrow layouts, and reduced motion pass.
 
 ## STOP conditions
 

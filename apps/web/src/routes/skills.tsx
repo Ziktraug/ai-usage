@@ -7,6 +7,7 @@ import {
   ghostButton,
   header,
   headerActions,
+  headerNavigation,
   headerTop,
   meta,
   navButton,
@@ -52,19 +53,6 @@ const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
 const pageStack = css({
   display: 'grid',
   gap: '16px',
-});
-
-// The shared headerTop does not wrap; with this page's long title the fixed
-// header actions overflow the 390px viewport, so allow wrapping here.
-const headerWrap = css({
-  flexWrap: 'wrap',
-});
-
-const headerActionsWrap = css({
-  flexWrap: 'wrap',
-  flexShrink: 1,
-  justifyContent: 'flex-end',
-  maxW: '100%',
 });
 
 const stack = css({
@@ -352,7 +340,7 @@ function SkillsClientRoute() {
     >
       <div class={shell}>
         <header class={header}>
-          <div class={cx(headerTop, headerWrap)}>
+          <div class={headerTop}>
             <div class={titleBlock}>
               <h1 class={title}>Skill management</h1>
               <div class={meta}>
@@ -365,7 +353,7 @@ function SkillsClientRoute() {
                 </Show>
               </div>
             </div>
-            <div class={cx(headerActions, headerActionsWrap)}>
+            <div class={headerActions}>
               <button
                 aria-busy={pendingOperation() === 'refresh-skills' ? 'true' : undefined}
                 class={navButton}
@@ -378,15 +366,17 @@ function SkillsClientRoute() {
               >
                 Refresh skills
               </button>
-              <Link class={navButton} search={dashboardSearchDefaults} to="/">
-                Report
-              </Link>
-              <Link class={navButton} to="/sync">
-                Sync
-              </Link>
-              <Link class={navButton} to="/sources">
-                Sources
-              </Link>
+              <nav aria-label="Primary navigation" class={headerNavigation}>
+                <Link class={navButton} search={dashboardSearchDefaults} to="/">
+                  Report
+                </Link>
+                <Link class={navButton} to="/sync">
+                  Sync
+                </Link>
+                <Link class={navButton} to="/sources">
+                  Sources
+                </Link>
+              </nav>
               <ThemeToggle />
             </div>
           </div>

@@ -11,6 +11,7 @@ import {
   ghostButton,
   header,
   headerActions,
+  headerNavigation,
   headerTop,
   meta,
   metricGrid,
@@ -1006,8 +1007,12 @@ export const Dashboard = (props: {
   const focusDay = (day: Date) => {
     const value = toDateInputValue(day);
     dateRange.setCustom(value, value);
-    commitTableDateRange();
-    setTab('sessions');
+    setTableDateBounds(dateRange.bounds());
+    updateSearch((current) => ({
+      ...current,
+      range: searchRangeFromDateRange(),
+      tab: 'sessions',
+    }));
   };
   const inspectOverviewSession = (row: DashboardRow) => {
     setSessionSelection({
@@ -1104,15 +1109,17 @@ export const Dashboard = (props: {
             </div>
             <div class={headerActions}>
               <Show when={!isDemo}>
-                <Link class={navButton} to="/skills">
-                  Skills
-                </Link>
-                <Link class={navButton} to="/sync">
-                  Sync
-                </Link>
-                <Link class={navButton} to="/sources">
-                  Sources
-                </Link>
+                <nav aria-label="Primary navigation" class={headerNavigation}>
+                  <Link class={navButton} to="/skills">
+                    Skills
+                  </Link>
+                  <Link class={navButton} to="/sync">
+                    Sync
+                  </Link>
+                  <Link class={navButton} to="/sources">
+                    Sources
+                  </Link>
+                </nav>
               </Show>
               <ThemeToggle />
             </div>
