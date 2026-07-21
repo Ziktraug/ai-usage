@@ -1,55 +1,107 @@
-# Plan 028: Build a privacy-safe read-only demo
+# Plan 028: Ship a privacy-safe local demo
 
-> **Status: BLOCKED** until the parallel session-analysis work is merged into main, the portfolio worktree is recreated/rebased, cited code is re-read, and `<NEW_MAIN_SHA>` is replaced. Then set TODO. Execute sequentially after plan merged-main.
+> **Status: TODO** — first plan in the frontend step-up sequence.
 >
-> **Drift check**: `git diff --stat <NEW_MAIN_SHA>..HEAD -- README.md package.json bun.lock .github apps/web packages/design-system docs plans`
+> **Baseline**: re-read at commit `6135fe7` on 2026-07-21. If the named runtime
+> boundaries changed, update this plan before implementing.
 
-## Status
+## Outcome
 
-- **Priority**: P0
-- **Effort**: M
-- **Risk**: MED
-- **Depends on**: merged-main
-- **Category**: frontend portfolio program
-- **Planned at**: pending merged-main SHA, 2026-07-20
+`bun run demo` opens a loopback-only, read-only version of the app backed by the
+committed synthetic report. It looks and behaves like the real report, including
+session detail, but cannot read local histories or invoke collection, sync, or
+source-control mutations.
 
 ## Why this matters
 
-This is one required, separately reviewable slice of the public frontend signal. It must produce evidence an agent can verify without changing product semantics or using real user data.
+The repository already contains convincing synthetic data for E2E tests, but
+there is no public demo contract. Reusing the ordinary runtime and merely hiding
+navigation would leave local server paths active. The portfolio value is a demo
+that reviewers can start safely and understand immediately.
 
-## Current state to revalidate after merge
+## Current evidence
 
-The 2026-07-19 audit confirmed this slice in the current Solid/TanStack/Panda web app. Before TODO, replace this paragraph with exact post-merge paths, symbols, line references, and short excerpts. If evidence moved or disappeared, STOP and revise rather than guessing.
+- `apps/web/src/report-data.ts` owns the deterministic `demoReportPayload`.
+- `apps/web/src/report-runtime.ts` switches only for `VITE_AI_USAGE_E2E`.
+- `apps/web/src/source-control-context.tsx` starts the browser source-control
+  client when the root mounts.
+- `apps/web/server/plugins/source-control.ts` starts the server source runtime.
+- `/sources`, `/sync`, Skills server functions, source-control API routes, and
+  the Vite Sync middleware can reach local state or mutations.
+- The architecture contract is loopback-only; preserve it.
 
 ## Scope
 
-- **In scope**: demo runtime; inert client; guarded local routes; synthetic badge.
-- **Out of scope**: provider credentials/APIs, real histories, non-loopback serving, HTML export, LAN sync, framework migration, unlisted product behavior, external publication.
+In scope:
 
-## Steps
+- One explicit `live | e2e | demo` runtime-mode parser shared by thin browser
+  and server adapters.
+- A root `demo` script using `127.0.0.1`, a fixed port, and a temporary home.
+- Synthetic report loading and a persistent “Demo data” label.
+- Report navigation, filtering, session selection, and the session drawer.
+- Inert browser source-control behavior in demo mode.
+- Server guards that reject local-read and mutation routes before their live
+  handlers/runtimes are constructed.
+- A focused Playwright privacy test.
 
-1. Add characterization or a failing regression test for every behavior named in Scope. **Verify**: each test fails for the intended reason before implementation.
-2. Implement the smallest behavior-preserving change matching repository patterns and AGENTS.md. **Verify**: focused unit/type/browser commands exit 0.
-3. Run the slice-specific gates: runtime-mode tests; zero SSE/fetch/source construction; demo Playwright; full gates. **Expected**: every named invariant is machine-checked and passes.
-4. Run `bun run check && bun run lint && bun run typecheck && bun run test && bun run build && bun run test:web-production && bun run test:setup-loopback && bun run test:e2e && bun run test:e2e-production`. **Expected**: all exit 0.
-5. Confirm `git status --short` contains only the post-merge in-scope file list recorded before execution; update this plan/index status and commit this slice before the next agent.
+Out of scope: hosted deployment, provider calls, real histories, LAN serving,
+new demo content, README artwork, and external publication.
 
-## Test plan
+## Implementation
 
-Use existing colocated Bun model tests and role-based Playwright tests as structural patterns. Add deterministic synthetic fixtures only. Required oracle: runtime-mode tests; zero SSE/fetch/source construction; demo Playwright; full gates.
+1. Add a small typed runtime-mode owner. Default to `live`; reject conflicting
+   E2E/demo flags. Add focused Bun tests.
+2. Make report loading mode-explicit. Demo and E2E may share
+   `demoReportPayload`, but only demo displays the label.
+3. Inject an inert `SourceControlClient` in demo mode. It must not construct an
+   `EventSource`, call `fetch`, or execute commands.
+4. In demo mode, remove non-report destinations from navigation and redirect
+   their direct UI routes to `/` before data loading.
+5. Guard server functions, source-control API routes, the source-control Nitro
+   plugin, and both Sync upload paths before live module/runtime construction.
+   Return one non-disclosing `404` contract and test zero handler/factory calls,
+   not only the status code.
+6. Add `bun run demo` and `bun run test:e2e-demo`. The launcher must use a
+   temporary home, bind only to `127.0.0.1`, forward shutdown, and remove only
+   its own temporary directory.
 
-## Done criteria
+## Verification
 
-- [ ] Post-merge SHA, excerpts and exact file scope are filled in.
-- [ ] Characterization/regression tests prove the intended failure and fix.
-- [ ] Slice-specific and full gates pass.
-- [ ] No real data, unsupported claim, external mutation or out-of-scope file enters the diff.
-- [ ] Index status accurately reflects completion.
+- Runtime unit tests cover default, demo, E2E, and conflicting flags.
+- Boundary tests prove zero runtime construction, handler import, body read,
+  local read, and mutation in demo mode.
+- Playwright renders Overview, opens a synthetic session drawer, finds the demo
+  label, and observes no business `fetch`, XHR, or EventSource request.
+- Direct requests to guarded endpoints return `404`.
+- Run:
+
+  ```sh
+  bun run check
+  bun run lint
+  bun run typecheck
+  bun run test
+  bun run build
+  bun run test:e2e
+  bun run test:e2e-demo
+  bun run test:e2e-production
+  ```
+
+## Done
+
+- [ ] `bun run demo` is deterministic, synthetic, read-only, and loopback-only.
+- [ ] Overview and session detail remain fully usable.
+- [ ] Browser and server privacy assertions pass.
+- [ ] Existing live, E2E, and production behavior remains green.
+- [ ] Only this plan's runtime, test, and script files changed.
 
 ## STOP conditions
 
-Stop on unmerged parallel work, placeholder SHA/evidence, source drift, missing deterministic fixture, need for an out-of-scope contract, inconclusive measurement, any external write, or the same gate failing twice.
+Stop if the demo requires real local data, a non-loopback listener, collector or
+persistence changes, or weakening an existing security boundary. Do not commit,
+push, host, or publish unless separately requested.
 
-## Maintenance notes
+## Maintenance
 
-Review future changes against the named oracle. Do not weaken a gate to make CI green; update evidence and thresholds only with a measured, reviewed reason.
+Every new root provider, server function, API route, or Vite/Nitro middleware
+must declare and test its demo behavior. Hidden navigation is never the privacy
+boundary.

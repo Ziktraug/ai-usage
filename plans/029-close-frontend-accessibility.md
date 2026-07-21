@@ -1,55 +1,96 @@
-# Plan 029: Close verified accessibility and responsive gaps
+# Plan 029: Close the verified accessibility gaps
 
-> **Status: BLOCKED** until the parallel session-analysis work is merged into main, the portfolio worktree is recreated/rebased, cited code is re-read, and `<NEW_MAIN_SHA>` is replaced. Then set TODO. Execute sequentially after plan 028.
+> **Status: BLOCKED** — ready after plan 028 is DONE.
 >
-> **Drift check**: `git diff --stat <NEW_MAIN_SHA>..HEAD -- README.md package.json bun.lock .github apps/web packages/design-system docs plans`
+> **Baseline**: commit `6135fe7`. Re-check the named tokens and components after
+> plan 028; preserve its demo navigation contract.
 
-## Status
+## Outcome
 
-- **Priority**: P0
-- **Effort**: M
-- **Risk**: MED
-- **Depends on**: 028
-- **Category**: frontend portfolio program
-- **Planned at**: pending merged-main SHA, 2026-07-20
+The report and supporting routes work with keyboard, screen reader, touch, both
+themes, reduced motion, and a narrow viewport without changing the compact
+visual identity of the data visualizations.
 
-## Why this matters
+## Current evidence
 
-This is one required, separately reviewable slice of the public frontend signal. It must produce evidence an agent can verify without changing product semantics or using real user data.
+- `packages/design-system/src/preset.ts` contains text/background token pairs
+  that need contrast verification in both themes.
+- `apps/web/src/overview.tsx` exposes Punchcard information primarily through
+  visual cells/tooltips.
+- The calendar heatmap already implements roving keyboard focus and deliberately
+  follows the familiar dense GitHub contribution-graph rhythm.
+- Shared header layout lives in
+  `packages/design-system/src/components/layout.ts`; some routes patch wrapping
+  locally, notably `apps/web/src/routes/skills.tsx`.
+- Drawer and tooltip transitions do not consistently honor reduced motion.
 
-## Current state to revalidate after merge
+## Non-negotiable heatmap decision
 
-The 2026-07-19 audit confirmed this slice in the current Solid/TanStack/Panda web app. Before TODO, replace this paragraph with exact post-merge paths, symbols, line references, and short excerpts. If evidence moved or disappeared, STOP and revise rather than guessing.
+Do **not** enlarge heatmap cells to 24 px and do not add oversized overlapping
+hit areas. The compact grid and its GitHub-like visual cadence are part of the
+design intent.
+
+Keep the existing roving keyboard interaction. For touch target-size guidance,
+provide an equivalent accessible day-selection control adjacent to the heatmap
+(for example a labelled date input/select that moves the same focused day and
+updates the same detail). Document in the component test why this equivalent
+control satisfies the exception without distorting the visualization.
 
 ## Scope
 
-- **In scope**: contrast; Punchcard alternative; heatmap targets; AppHeader; reduced motion.
-- **Out of scope**: provider credentials/APIs, real histories, non-loopback serving, HTML export, LAN sync, framework migration, unlisted product behavior, external publication.
+- Fix confirmed WCAG AA text contrast failures in light and dark themes.
+- Give Punchcard a structured accessible summary for non-empty cells while
+  keeping the visual grid concise.
+- Preserve heatmap density and add the equivalent day-selection control.
+- Make the shared app header wrap cleanly and expose one navigation landmark;
+  remove route-specific patches made redundant by the shared fix.
+- Add a global `prefers-reduced-motion: reduce` override for nonessential
+  transitions and animations.
+- Verify the report, Skills, Sources, and Sync at desktop and narrow widths.
 
-## Steps
+Out of scope: redesigning charts, changing information architecture, making
+every visual cell 24 px, or introducing a component-test framework.
 
-1. Add characterization or a failing regression test for every behavior named in Scope. **Verify**: each test fails for the intended reason before implementation.
-2. Implement the smallest behavior-preserving change matching repository patterns and AGENTS.md. **Verify**: focused unit/type/browser commands exit 0.
-3. Run the slice-specific gates: both-theme contrast; accessibility tree; keyboard; one nav/H1; 361/390 overflow; full gates. **Expected**: every named invariant is machine-checked and passes.
-4. Run `bun run check && bun run lint && bun run typecheck && bun run test && bun run build && bun run test:web-production && bun run test:setup-loopback && bun run test:e2e && bun run test:e2e-production`. **Expected**: all exit 0.
-5. Confirm `git status --short` contains only the post-merge in-scope file list recorded before execution; update this plan/index status and commit this slice before the next agent.
+## Implementation
 
-## Test plan
+1. Measure the actual token pairs and change the smallest set of semantic
+   tokens needed to reach 4.5:1 for normal text and 3:1 for large text/UI.
+2. Expose Punchcard's non-empty day/hour/count values as a screen-reader
+   structure linked to its heading. Avoid 168 noisy focus stops.
+3. Connect the heatmap's existing focus state to a labelled equivalent control.
+   Mouse, keyboard, and equivalent-control selection must show the same day.
+4. Move header wrapping and landmark semantics into the shared layout owner,
+   then delete redundant local header CSS.
+5. Add reduced-motion behavior without disabling meaningful state feedback.
+6. Add ordinary Playwright coverage for roles, keyboard flow, the equivalent
+   heatmap control, and narrow viewports.
 
-Use existing colocated Bun model tests and role-based Playwright tests as structural patterns. Add deterministic synthetic fixtures only. Required oracle: both-theme contrast; accessibility tree; keyboard; one nav/H1; 361/390 overflow; full gates.
+## Verification
 
-## Done criteria
+- Automated contrast checks cover changed semantic pairs in both themes.
+- Playwright proves keyboard navigation, Punchcard accessible text, synchronized
+  heatmap selection, shared navigation, no horizontal overflow at 390 px, and
+  reduced-motion behavior.
+- Run `bun run check`, `bun run lint`, `bun run typecheck`, `bun run test`,
+  `bun run test:e2e`, and `bun run test:e2e-demo`.
+- Manually inspect the heatmap before/after: cell density and overall rhythm are
+  visually unchanged.
 
-- [ ] Post-merge SHA, excerpts and exact file scope are filled in.
-- [ ] Characterization/regression tests prove the intended failure and fix.
-- [ ] Slice-specific and full gates pass.
-- [ ] No real data, unsupported claim, external mutation or out-of-scope file enters the diff.
-- [ ] Index status accurately reflects completion.
+## Done
+
+- [ ] Confirmed contrast pairs pass in both themes.
+- [ ] Punchcard is understandable without relying on color or hover.
+- [ ] Heatmap cells retain their compact dimensions and spacing.
+- [ ] The equivalent day control and roving keyboard focus stay synchronized.
+- [ ] Shared navigation, narrow layouts, and reduced motion pass.
 
 ## STOP conditions
 
-Stop on unmerged parallel work, placeholder SHA/evidence, source drift, missing deterministic fixture, need for an out-of-scope contract, inconclusive measurement, any external write, or the same gate failing twice.
+Stop if a proposed fix changes chart meaning, enlarges the heatmap cells, or
+requires a broad redesign. Do not waive a confirmed accessibility failure; use
+the smallest equivalent interaction that preserves the visualization.
 
-## Maintenance notes
+## Maintenance
 
-Review future changes against the named oracle. Do not weaken a gate to make CI green; update evidence and thresholds only with a measured, reviewed reason.
+Keep accessibility semantics near the state they describe. Future heatmap work
+must test the visual grid and its equivalent control as one interaction.

@@ -1,55 +1,99 @@
-# Plan 030: Add trustworthy frontend regression gates
+# Plan 030: Add durable frontend regression gates
 
-> **Status: BLOCKED** until the parallel session-analysis work is merged into main, the portfolio worktree is recreated/rebased, cited code is re-read, and `<NEW_MAIN_SHA>` is replaced. Then set TODO. Execute sequentially after plan 029.
+> **Status: BLOCKED** — ready after plan 029 is DONE.
 >
-> **Drift check**: `git diff --stat <NEW_MAIN_SHA>..HEAD -- README.md package.json bun.lock .github apps/web packages/design-system docs plans`
+> **Baseline**: commit `6135fe7`. Baselines must be created from the accessible
+> state delivered by plan 029.
 
-## Status
+## Outcome
 
-- **Priority**: P0
-- **Effort**: M
-- **Risk**: MED
-- **Depends on**: 029
-- **Category**: frontend portfolio program
-- **Planned at**: pending merged-main SHA, 2026-07-20
+CI catches broken user flows, serious accessibility violations, unexpected
+browser errors, and meaningful visual regressions with a small, conventional
+Playwright suite.
 
-## Why this matters
+## Current evidence
 
-This is one required, separately reviewable slice of the public frontend signal. It must produce evidence an agent can verify without changing product semantics or using real user data.
-
-## Current state to revalidate after merge
-
-The 2026-07-19 audit confirmed this slice in the current Solid/TanStack/Panda web app. Before TODO, replace this paragraph with exact post-merge paths, symbols, line references, and short excerpts. If evidence moved or disappeared, STOP and revise rather than guessing.
+- Playwright already covers dashboard, time range, Skills, Sources, and the
+  production report.
+- There is no axe gate and no screenshot baseline.
+- `apps/web/src/css-bundle.test.ts` checks the web CSS entry but does not wire a
+  design-system package test into Turbo.
+- `packages/design-system/package.json` has no `test` script.
+- `.github/workflows/pr-checks.yml` runs `bun run test`, whose root script
+  already includes tool tests, then runs `bun run test:tools` again.
 
 ## Scope
 
-- **In scope**: reproduce 404; console gate; axe; 3-5 visuals; focus/heatmap render tests; design-system test; CI dedupe; MIT/license docs.
-- **Out of scope**: provider credentials/APIs, real histories, non-loopback serving, HTML export, LAN sync, framework migration, unlisted product behavior, external publication.
+- Add `@axe-core/playwright` as the only new test dependency.
+- Add shared Playwright assertions that fail on uncaught page errors, unexpected
+  console errors, and failed critical document/API requests.
+- Run axe on the stable states of Overview, an open session drawer, Skills, and
+  Sources/Sync; document only narrow, evidence-backed exclusions.
+- Add three or four screenshots at stable product boundaries, not one snapshot
+  per component.
+- Wire design-system tests into its package and therefore `turbo run test`.
+- Remove the duplicate CI tool-test step while keeping root test coverage.
 
-## Steps
+Out of scope: Storybook, a second component-test stack, Nix/browser fingerprint
+infrastructure, pixel hashes across operating systems, GIF capture, and custom
+snapshot manifests.
 
-1. Add characterization or a failing regression test for every behavior named in Scope. **Verify**: each test fails for the intended reason before implementation.
-2. Implement the smallest behavior-preserving change matching repository patterns and AGENTS.md. **Verify**: focused unit/type/browser commands exit 0.
-3. Run the slice-specific gates: zero serious axe; stable snapshots; named focus tests; Turbo includes design-system; full gates. **Expected**: every named invariant is machine-checked and passes.
-4. Run `bun run check && bun run lint && bun run typecheck && bun run test && bun run build && bun run test:web-production && bun run test:setup-loopback && bun run test:e2e && bun run test:e2e-production`. **Expected**: all exit 0.
-5. Confirm `git status --short` contains only the post-merge in-scope file list recorded before execution; update this plan/index status and commit this slice before the next agent.
+## Implementation
 
-## Test plan
+1. Add a Playwright helper that starts error/request collection before
+   navigation. Allow-list only errors proven intentional by an existing test.
+2. Add axe scans to stable routes/states. Keep keyboard/focus assertions in
+   Playwright rather than adding Solid Testing Library or a DOM emulator.
+3. Add snapshots for:
+   - Overview desktop;
+   - Overview with a session drawer open;
+   - Overview narrow viewport;
+   - Skills or Sources, whichever best catches shared shell regression.
+4. Freeze only the inputs needed for stability: synthetic fixture, viewport,
+   timezone, theme, disabled animation, and completed loading. Use Playwright's
+   normal snapshot tolerance; do not build a second baseline system.
+5. Add/rename the design-system CSS/token tests so
+   `bun --filter @ai-usage/design-system test` is real and automatically
+   included by the root suite.
+6. Delete the redundant standalone Tool tests CI step. Keep browser installation
+   and existing E2E commands conventional.
 
-Use existing colocated Bun model tests and role-based Playwright tests as structural patterns. Add deterministic synthetic fixtures only. Required oracle: zero serious axe; stable snapshots; named focus tests; Turbo includes design-system; full gates.
+## Verification
 
-## Done criteria
+- Demonstrate each new gate once: inject a temporary axe issue, console error,
+  request failure, and visual change; confirm the intended test fails, then
+  revert the injection.
+- Run:
 
-- [ ] Post-merge SHA, excerpts and exact file scope are filled in.
-- [ ] Characterization/regression tests prove the intended failure and fix.
-- [ ] Slice-specific and full gates pass.
-- [ ] No real data, unsupported claim, external mutation or out-of-scope file enters the diff.
-- [ ] Index status accurately reflects completion.
+  ```sh
+  bun --filter @ai-usage/design-system test
+  bun run test
+  bun run test:e2e
+  bun run test:e2e-demo
+  bun run check
+  bun run lint
+  bun run typecheck
+  bun run build
+  ```
+
+- Re-run the screenshot suite from a clean worktree; it must produce no diff.
+
+## Done
+
+- [ ] Axe, console/page error, critical-request, and visual gates run in CI.
+- [ ] The suite contains no broad accessibility or console suppression.
+- [ ] Three or four stable snapshots cover high-value states.
+- [ ] Design-system tests are part of the root test graph.
+- [ ] Tool tests execute once, not twice.
 
 ## STOP conditions
 
-Stop on unmerged parallel work, placeholder SHA/evidence, source drift, missing deterministic fixture, need for an out-of-scope contract, inconclusive measurement, any external write, or the same gate failing twice.
+Stop if stability appears to require machine fingerprints, broad masks, disabled
+assertions, or a new test framework. Fix deterministic product/test inputs
+instead; keep timing-only performance claims out of this plan.
 
-## Maintenance notes
+## Maintenance
 
-Review future changes against the named oracle. Do not weaken a gate to make CI green; update evidence and thresholds only with a measured, reviewed reason.
+Update a baseline only with an intentional UI change and visual review. New
+top-level routes should adopt the shared error/request helper and one axe scan
+when they introduce a distinct interaction surface.
