@@ -25,6 +25,7 @@ const hotReloadFixture = () => {
 describe('persistent source runtime hot reload', () => {
   test('keeps every source-runtime workspace package inside the Nitro module graph', () => {
     expect(PERSISTENT_SOURCE_RUNTIME_PACKAGES).toEqual([
+      '@ai-usage/effect-runtime',
       '@ai-usage/local-collectors',
       '@ai-usage/report-core',
       '@ai-usage/report-data',
@@ -33,7 +34,6 @@ describe('persistent source runtime hot reload', () => {
     ]);
     expect(PERSISTENT_SOURCE_RUNTIME_PACKAGES).not.toContain('@ai-usage/design-system');
   });
-
   test('awaits teardown before a full reload and unregisters the old listener', async () => {
     const { hot, listeners } = hotReloadFixture();
     let closeCount = 0;

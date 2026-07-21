@@ -1,3 +1,4 @@
+import { runBoundaryEffect } from '@ai-usage/effect-runtime';
 import {
   type FocusedBreakdownRequest,
   type FocusedBreakdownResult,
@@ -39,10 +40,12 @@ import {
   sessionNeighborFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
+import { Effect } from 'effect';
 import { parseReportRevision, type ReportRevision } from '../web-report-payload';
 import { runBoundedArtifactProcess } from './bounded-artifact-process.server';
 import { withReportRevisionQueryLeaseForServer } from './report-payload.server';
 import { resolveReportRuntimePaths } from './report-runtime-paths.server';
+import { getWebSourceControlRuntime } from './source-control.server';
 
 export type RevisionQueryKind =
   | FocusedReportQueryKind
@@ -231,11 +234,19 @@ export async function runRevisionQueryForServer(
 ): Promise<SessionQueryServerResult<RevisionQueryResult>> {
   const request = revisionQuerySpecs[kind].parse(input);
   try {
-    const execution = await dependencies.execute({
-      kind,
-      revision: request.revision,
-      serializedRequest: request.serializedRequest,
-    });
+    const executeRequest = { kind, revision: request.revision, serializedRequest: request.serializedRequest };
+    const execution =
+      kind === 'sessions'
+        ? await getWebSourceControlRuntime().runEffect(
+            runBoundaryEffect(
+              {
+                boundary: 'web.sessions.read',
+                annotations: { fingerprint: request.fingerprint, revision: request.revision },
+              },
+              Effect.tryPromise({ try: () => dependencies.execute(executeRequest), catch: (error) => error }),
+            ),
+          )
+        : await dependencies.execute(executeRequest);
     if (!execution.ok) {
       return {
         error: { message: execution.message, revision: request.revision, tag: 'RevisionExpired' },

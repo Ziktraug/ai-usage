@@ -1,3 +1,4 @@
+import { makeSilentWideEventSinkLayer, makeWebWideEventSinkLayer } from '@ai-usage/effect-runtime/node';
 import { Effect } from 'effect';
 import { definePlugin } from 'nitro';
 import { registerPersistentSourceRuntimeHotReload } from '../../src/server/persistent-source-runtime';
@@ -18,6 +19,7 @@ export default definePlugin(async (nitroApp) => {
       }),
     },
     sources: fixture?.sources,
+    wideEventSinkLayer: fixtureRuntime ? makeSilentWideEventSinkLayer() : makeWebWideEventSinkLayer(),
   });
   let uninstall = () => undefined;
   let shutdown: Promise<void> | undefined;

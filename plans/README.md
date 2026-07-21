@@ -51,7 +51,7 @@ pull request unless the user explicitly asks.
 | 033 | Align Router and Design System | P1 | M | 032 | BLOCKED |
 | 034 | Distill Decisions Into ADRs | P1 | M | 033 | BLOCKED |
 | 035 | Prepare Frontend Showcase | P0 | M | 034 | BLOCKED |
-| 036 | Wide-event Logging for Effect Program Executions | P1 | L | 022-024 | TODO |
+| 036 | Wide-event Logging for Effect Program Executions | P1 | L | 022-024 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).

@@ -2,6 +2,8 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { runBoundaryEffect } from '@ai-usage/effect-runtime';
+import { makeCliWideEventSinkLayer } from '@ai-usage/effect-runtime/node';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import { deserializeUsageRow, type UsageReportWarning } from '@ai-usage/report-core/report-data';
@@ -37,16 +39,21 @@ export const app = Effect.gen(function* () {
   }
 
   if (command._tag === 'Quota') {
-    yield* Effect.sync(() => setColor(command.color === null ? runtime.stdoutIsTTY : command.color));
-    const { collection, latest } = yield* runOneShotQuotaAndReadLatest();
-    if (collection.outcomes[0]?.status === 'paused') {
-      return yield* Effect.fail(
-        new CliArgumentError({
-          message: 'Codex usage-limit collection is paused; re-enable codex.usage-limits first.',
-        }),
-      );
-    }
-    yield* Console.log(renderQuota(latest));
+    yield* runBoundaryEffect(
+      { boundary: 'cli.quota' },
+      Effect.gen(function* () {
+        yield* Effect.sync(() => setColor(command.color === null ? runtime.stdoutIsTTY : command.color));
+        const { collection, latest } = yield* runOneShotQuotaAndReadLatest();
+        if (collection.outcomes[0]?.status === 'paused') {
+          return yield* Effect.fail(
+            new CliArgumentError({
+              message: 'Codex usage-limit collection is paused; re-enable codex.usage-limits first.',
+            }),
+          );
+        }
+        yield* Console.log(renderQuota(latest));
+      }),
+    );
     return;
   }
 
@@ -252,7 +259,7 @@ const runnable = app.pipe(
     Console.error(`Error: ${isAppError(error) ? formatAppError(error) : formatDefect(error)}`).pipe(Effect.as(1)),
   ),
   Effect.catchAllDefect((defect: unknown) => Console.error(`Error: ${formatDefect(defect)}`).pipe(Effect.as(1))),
-  Effect.provide(Layer.mergeAll(LocalHistoryStorageLive, CliRuntimeLive)),
+  Effect.provide(Layer.mergeAll(LocalHistoryStorageLive, CliRuntimeLive, makeCliWideEventSinkLayer())),
 );
 
 Effect.runPromise(runnable).then((code) => {

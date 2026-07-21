@@ -11,3 +11,4 @@ ai-usage-reports/
 .agent-memory/
 apps/web/playwright-report/
 apps/web/test-results/
+logs/

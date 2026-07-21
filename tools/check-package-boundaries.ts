@@ -3,7 +3,15 @@ import path from 'node:path';
 
 const workspacePackageParents = ['apps', 'packages'];
 const dependencyFields = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'] as const;
-const ignoredDirectories = new Set(['.git', '.turbo', '.output', 'dist', 'node_modules', 'styled-system']);
+const ignoredDirectories = new Set([
+  '.git',
+  '.turbo',
+  '.output',
+  '.worktrees',
+  'dist',
+  'node_modules',
+  'styled-system',
+]);
 const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.ts', '.tsx']);
 const workspaceImportPattern =
   /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"](@ai-usage\/[^'"]+)['"]|\bimport\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)|\brequire\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)/g;
@@ -44,6 +52,12 @@ const retiredPackages = [`${workspacePackageScope}lan-pairing`, `${workspacePack
 // packages/skills owns a local filesystem control plane. It must remain independent from reporting,
 // persistence, transport, and app packages.
 const boundaryPolicies: BoundaryPolicy[] = [
+  {
+    packageName: '@ai-usage/effect-runtime',
+    forbiddenDependencies: ['@ai-usage/*'],
+    forbiddenImports: ['@ai-usage/*'],
+    reason: 'effect-runtime must stay domain-free and independent of workspace packages.',
+  },
   {
     packageName: '@ai-usage/report-core',
     forbiddenDependencies: ['@ai-usage/*'],

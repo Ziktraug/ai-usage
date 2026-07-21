@@ -124,23 +124,8 @@ const withRootPerfEnv = async <A>(run: () => Promise<A>) => {
   }
 };
 
-const loadStoredPayloadDirect = async (): Promise<StoredReportCapture> => {
-  const startedAt = Date.now();
-  try {
-    const capture = await withRootPerfEnv(() => runConsistentStoredReportCapture(payloadRequest()));
-    if (perfEnabled()) {
-      console.error(
-        `[perf] aiUsage.web.reportPayloadDirect ok mode=stored durationMs=${Date.now() - startedAt} rows=${capture.payload.rows.length}`,
-      );
-    }
-    return capture;
-  } catch (error) {
-    if (perfEnabled()) {
-      console.error(`[perf] aiUsage.web.reportPayloadDirect failed mode=stored durationMs=${Date.now() - startedAt}`);
-    }
-    throw error;
-  }
-};
+const loadStoredPayloadDirect = async (): Promise<StoredReportCapture> =>
+  withRootPerfEnv(() => runConsistentStoredReportCapture(payloadRequest()));
 
 export const ensurePublishedRevision = async (
   capture: StoredReportCapture,

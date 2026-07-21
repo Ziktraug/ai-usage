@@ -22,7 +22,7 @@
 
 ## Status
 
-- **Status**: TODO
+- **Status**: DONE
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: HIGH
@@ -481,18 +481,18 @@ git diff --check
 
 ## Success Criteria
 
-- [ ] Existing bounded workers and queue behavior are unchanged
-- [ ] Every runnable source/publication job gets fresh isolated event state
-- [ ] Stale/skipped jobs emit nothing; active shutdown emits `interrupted`
-- [ ] Domain failures, degradation, timeout, and interruption are classified honestly
-- [ ] Canonical snapshots are sanitized, versioned, timestamped, traced, and bounded
-- [ ] Hop nesting/parallelism is deterministic and event emission is exactly once
-- [ ] Web owns one scoped file + console sink; CLI owns one scoped file-only sink
-- [ ] CLI failure events drain before explicit exit without terminal pollution
-- [ ] File queue, lock, permissions, rotation, retention, and multi-process tests pass
-- [ ] Quota owner/joiner semantics produce one owner hop and no nested event
-- [ ] `source.run`, `publication`, `web.sessions.read`, and `cli.quota` are wired
-- [ ] Package boundaries, public exports, docs, lint, types, and tests are green
+- [x] Existing bounded workers and queue behavior are unchanged
+- [x] Every runnable source/publication job gets fresh isolated event state
+- [x] Stale/skipped jobs emit nothing; active shutdown emits `interrupted`
+- [x] Domain failures, degradation, timeout, and interruption are classified honestly
+- [x] Canonical snapshots are sanitized, versioned, timestamped, traced, and bounded
+- [x] Hop nesting/parallelism is deterministic and event emission is exactly once
+- [x] Web owns one scoped file + console sink; CLI owns one scoped file-only sink
+- [x] CLI failure events drain before explicit exit without terminal pollution
+- [x] File queue, lock, permissions, rotation, retention, and multi-process tests pass
+- [x] Quota owner/joiner semantics produce one owner hop and no nested event
+- [x] `source.run`, `publication`, `web.sessions.read`, and `cli.quota` are wired
+- [x] Package boundaries, public exports, docs, lint, types, and tests are green
 
 ## References
 
