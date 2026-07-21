@@ -99,6 +99,11 @@ export type TimeRangeControlEvent =
       shiftKey: boolean;
       type: 'keyboardMove';
     }
+  | {
+      key: string;
+      type: 'timelineKeyboardMove';
+      visibleRange: TimeRangeIndexRange;
+    }
   | { clientX: number; pointerId: number; type: 'pointerMove' }
   | { pointerId: number; type: 'pointerEnd' | 'pointerCancel' | 'pointerCaptureLost' }
   | { bucketIndex: number | null; key: string | null; type: 'hoverChanged' }
@@ -106,8 +111,7 @@ export type TimeRangeControlEvent =
 
 export type TimeRangeControlCommand =
   | { indexes: TimeRangeSelectionIndexes; type: 'setSelectionIndexes' }
-  | { type: 'commitReportRange' }
-  | { type: 'clearHover' };
+  | { type: 'commitReportRange' };
 
 export interface TimeRangeControlTransition {
   commands: readonly TimeRangeControlCommand[];
@@ -133,7 +137,7 @@ const normalizeSelectionIndexes = (
   return first <= second ? [first, second] : [second, first];
 };
 
-export const sliderIndexForKey = (key: string, current: number, maximum: number, step: number): number | null => {
+const sliderIndexForKey = (key: string, current: number, maximum: number, step: number): number | null => {
   if (key === 'ArrowLeft' || key === 'ArrowDown') {
     return current - step;
   }
@@ -155,7 +159,7 @@ export const sliderIndexForKey = (key: string, current: number, maximum: number,
   return null;
 };
 
-export const pointerIndexDelta = (options: {
+const pointerIndexDelta = (options: {
   clientX: number;
   scale: number;
   startClientX: number;
@@ -320,6 +324,26 @@ const transitionKeyboardMove = (
   ]);
 };
 
+const transitionTimelineKeyboardMove = (
+  state: TimeRangeControlState,
+  event: Extract<TimeRangeControlEvent, { type: 'timelineKeyboardMove' }>,
+): TimeRangeControlTransition => {
+  const from = Math.min(event.visibleRange.from, event.visibleRange.to);
+  const to = Math.max(event.visibleRange.from, event.visibleRange.to);
+  const current = Math.min(to, Math.max(from, state.hover.bucketIndex ?? from));
+  let bucketIndex: number | null = null;
+  if (event.key === 'ArrowLeft') {
+    bucketIndex = Math.max(from, current - 1);
+  } else if (event.key === 'ArrowRight') {
+    bucketIndex = Math.min(to, current + 1);
+  } else if (event.key === 'Home') {
+    bucketIndex = from;
+  } else if (event.key === 'End') {
+    bucketIndex = to;
+  }
+  return bucketIndex === null ? unchanged(state) : changed({ ...state, hover: { bucketIndex, key: null } });
+};
+
 export const transitionTimeRangeControl = (
   state: TimeRangeControlState,
   event: TimeRangeControlEvent,
@@ -333,7 +357,6 @@ export const transitionTimeRangeControl = (
           interaction: IDLE_INTERACTION,
           selectionIndexes: normalizeSelectionIndexes(event.selectionIndexesFromDates, context.selectionMaxIndex),
         }),
-        [{ type: 'clearHover' }],
       );
     case 'selectionSynchronized': {
       const nextState = {
@@ -360,7 +383,6 @@ export const transitionTimeRangeControl = (
             options: { ...state.options, granularity: event.value },
             selectionIndexes: normalizeSelectionIndexes(event.selectionIndexesFromDates, context.selectionMaxIndex),
           }),
-          [{ type: 'clearHover' }],
         );
       }
       return changed(
@@ -371,7 +393,6 @@ export const transitionTimeRangeControl = (
               ? { ...state.options, dimension: event.value }
               : { ...state.options, value: event.value },
         }),
-        [{ type: 'clearHover' }],
       );
     }
     case 'pointerStart':
@@ -384,10 +405,12 @@ export const transitionTimeRangeControl = (
       return transitionPointerFinish(state, event);
     case 'keyboardMove':
       return transitionKeyboardMove(state, event, context);
+    case 'timelineKeyboardMove':
+      return transitionTimelineKeyboardMove(state, event);
     case 'hoverChanged':
       return changed({ ...state, hover: { bucketIndex: event.bucketIndex, key: event.key } });
     case 'clearHover':
-      return changed(clearHoverState(state), [{ type: 'clearHover' }]);
+      return changed(clearHoverState(state));
     default:
       return unchanged(state);
   }

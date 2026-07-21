@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createProviderStatusDataset } from '@ai-usage/report-core/provider-status';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
-import { buildProviderStatusViews } from './provider-status-model';
+import { buildProviderStatusViews, providerHistoryAvailable } from './provider-status-model';
 import type { DashboardRow } from './shared';
 
 const FIXTURE_NOW = '2026-01-01T00:00:00.000Z';
@@ -28,6 +28,13 @@ const row = (input: { harness: string; provider: string; machine?: string }): Da
   }) as DashboardRow;
 
 describe('provider status model', () => {
+  test('makes source-backed history reachable without eager query data', () => {
+    expect(providerHistoryAvailable(undefined, true)).toBe(true);
+    expect(providerHistoryAvailable(undefined, false)).toBe(false);
+    expect(providerHistoryAvailable(1, false)).toBe(true);
+    expect(providerHistoryAvailable(0, true)).toBe(false);
+  });
+
   test('uses explicit provider status dataset and infers missing providers from usage rows', () => {
     const providerStatus = createProviderStatusDataset(
       [

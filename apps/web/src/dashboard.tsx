@@ -28,29 +28,17 @@ import {
   unavailableText,
   unavailableTitle,
 } from '@ai-usage/design-system/report';
-import {
-  type FocusedReportQueryScope,
-  type FocusedSupportResult,
-  type FocusedTimelineDimension,
-  type FocusedTimelineGranularity,
-  focusedAdvancedAnalysisFingerprint,
-} from '@ai-usage/report-core/focused-report-query';
+import type { FocusedReportQueryScope, FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
 import {
   type ProjectGroupConfig,
   type ProjectSourceSelector,
   projectSourceSelectorKey,
 } from '@ai-usage/report-core/project-group';
-import type { ProviderQuotaHistoryPoint, ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
-import {
-  type SessionNeighborResult,
-  sessionNeighborFingerprint,
-  sessionQueryFingerprint,
-} from '@ai-usage/report-core/session-query';
-import { createQuery } from '@tanstack/solid-query';
+import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
+import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
 import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import {
-  batch,
   createEffect,
   createMemo,
   createSignal,
@@ -89,6 +77,8 @@ import {
   filterTimelineRows,
   hiddenSessionCount,
 } from './dashboard-model';
+import { DashboardProviderStatus } from './dashboard-provider-status';
+import { createDashboardReportLifecycle, type DashboardReportDestinationScope } from './dashboard-report-lifecycle';
 import {
   breakdownTabFor,
   type DashboardSearch,
@@ -102,11 +92,8 @@ import {
   sortingStateFromSearch,
   toggleExactFieldFilter,
 } from './dashboard-search';
-import {
-  createDashboardServedReportSession,
-  type DashboardServedDestination,
-  dashboardDestinationTimelineMatches,
-} from './dashboard-served-report-session';
+import { createDashboardServedReportSession } from './dashboard-served-report-session';
+import { createDashboardSessionSelection } from './dashboard-session-selection';
 import { ThemeToggle } from './dashboard-theme';
 import { type DateBounds, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
 import { createDateRangeController } from './date-range-controller';
@@ -120,22 +107,12 @@ import { Overview } from './overview';
 import type { TimelineDimension } from './overview-model';
 import { ProjectGroupEditor } from './project-group-editor';
 import { ProjectSummary } from './project-summary';
-import { createServedProviderQuotaSource, type ProviderQuotaSource } from './provider-quota-client';
-import type { ProviderQuotaHistoryRange } from './provider-quota-history-model';
-import { ProviderQuotaHistoryPanel } from './provider-quota-history-panel';
-import { createProviderStatusClock } from './provider-status-clock';
-import { buildProviderStatusViews } from './provider-status-model';
-import { ProviderStatusPanel } from './provider-status-panel';
+import type { ProviderQuotaSource } from './provider-quota-client';
 import { cursorCommitAttributionFacet, demoReportPayload } from './report-data';
 import { ReportWarnings } from './report-warnings';
 import type { RuntimeMode } from './runtime-mode';
-import {
-  type SessionAnalysisTarget,
-  sessionAnalysisTargetForSession,
-  sessionAnalysisTargetForTopLevelRow,
-} from './session-analysis-target';
+import { sessionAnalysisTargetForSession } from './session-analysis-target';
 import { SessionDrawer } from './session-drawer';
-import { createSessionNeighborRequestController } from './session-neighbor-request-controller';
 import {
   buildDashboardSessionQueryScope,
   createServedSessionQuerySource,
@@ -148,11 +125,10 @@ import {
   columnVisibilitySearchForVisibility,
   sortFromSortingState,
 } from './session-table-schema';
-import { type DashboardRow, enrichReportRow, fmtDate, fmtDateOnly, fmtNum, rowKey } from './shared';
+import { enrichReportRow, fmtDate, fmtDateOnly, fmtNum } from './shared';
 import { useSourceControl } from './source-control-context';
 import { applyTableUpdate } from './table-utils';
 import { TimeRangeControl } from './time-range-control';
-import { loadProviderQuotaHistory, webQueryKeys } from './web-query-options';
 import { toWebReportPayload, type WebReportPayload, type WebReportPayloadWithoutRows } from './web-report-payload';
 
 const FORM_CONTROL_TAG_PATTERN = /^(INPUT|SELECT|TEXTAREA)$/;
@@ -160,75 +136,6 @@ const SessionTable = lazy(async () => {
   const module = await import('./session-table');
   return { default: module.SessionTable };
 });
-
-const fixtureQuotaPoint = (input: {
-  at: string;
-  resetAt: string;
-  usedPercent: number;
-  window: '5h' | 'weekly';
-}): ProviderQuotaHistoryPoint => ({
-  accountScope: 'fixture-account',
-  blocked: false,
-  firstObservedAt: input.at,
-  group: input.window,
-  lastObservedAt: input.at,
-  limitSeconds: input.window === '5h' ? 18_000 : 604_800,
-  machineId: 'fixture-machine',
-  machineLabel: 'Fixture Machine',
-  providerKey: 'codex',
-  providerLabel: 'Codex',
-  resetAt: input.resetAt,
-  source: { confidence: 'authoritative', key: 'codex-app-server', mode: 'poll' },
-  usedPercent: input.usedPercent,
-  windowId: `codex:${input.window}`,
-  windowLabel: input.window === '5h' ? '5h' : 'Weekly',
-});
-
-const e2eQuotaHistoryFixture: ProviderQuotaHistoryResult = {
-  coverage: [],
-  generatedAt: '2026-07-15T10:40:00.000Z',
-  latest: [],
-  points: [
-    fixtureQuotaPoint({
-      at: '2026-07-15T09:00:00.000Z',
-      resetAt: '2026-07-15T12:00:00.000Z',
-      usedPercent: 22,
-      window: '5h',
-    }),
-    fixtureQuotaPoint({
-      at: '2026-07-15T09:05:00.000Z',
-      resetAt: '2026-07-15T12:00:00.000Z',
-      usedPercent: 28,
-      window: '5h',
-    }),
-    fixtureQuotaPoint({
-      at: '2026-07-15T09:30:00.000Z',
-      resetAt: '2026-07-15T12:00:00.000Z',
-      usedPercent: 35,
-      window: '5h',
-    }),
-    fixtureQuotaPoint({
-      at: '2026-07-15T09:35:00.000Z',
-      resetAt: '2026-07-15T17:00:00.000Z',
-      usedPercent: 4,
-      window: '5h',
-    }),
-    fixtureQuotaPoint({
-      at: '2026-07-15T09:00:00.000Z',
-      resetAt: '2026-07-21T00:00:00.000Z',
-      usedPercent: 61,
-      window: 'weekly',
-    }),
-    fixtureQuotaPoint({
-      at: '2026-07-15T09:35:00.000Z',
-      resetAt: '2026-07-21T00:00:00.000Z',
-      usedPercent: 63,
-      window: 'weekly',
-    }),
-  ],
-  skipped: 0,
-  truncated: false,
-};
 
 const secondaryMetrics = css({
   my: '20px',
@@ -321,40 +228,15 @@ export const Dashboard = (props: {
     const truncation = focusedStore?.truncation();
     return truncation ? Object.values(truncation).reduce((total, omitted) => total + omitted, 0) : 0;
   });
-  const providerStatusClock = createProviderStatusClock({ initialNow: initialPayload.generatedAt });
-  onMount(providerStatusClock.start);
   const runtimeMode = props.runtimeMode ?? 'live';
   const isDemo = runtimeMode === 'demo';
   const hasReportData = Boolean(props.initialPayload || props.servedBootstrap || runtimeMode !== 'live');
-  const quotaFixture = props.quotaHistoryFixture ?? (runtimeMode === 'e2e' ? e2eQuotaHistoryFixture : undefined);
-  const quotaSource = props.quotaSource ?? (props.servedBootstrap ? createServedProviderQuotaSource() : undefined);
-  const [quotaHistoryOpen, setQuotaHistoryOpen] = createSignal(false);
-  const [quotaHistoryRange, setQuotaHistoryRange] = createSignal<ProviderQuotaHistoryRange>('24h');
-  const quotaHistoryQuery = createQuery(() => ({
-    enabled: quotaHistoryOpen() && quotaSource !== undefined && quotaFixture === undefined,
-    queryFn: async () => {
-      if (!quotaSource) {
-        throw new Error('Quota history is unavailable.');
-      }
-      return await loadProviderQuotaHistory(quotaSource, quotaHistoryRange());
-    },
-    queryKey: webQueryKeys.providerQuotaHistory(quotaHistoryRange()),
-  }));
-  const quotaHistory = (): ProviderQuotaHistoryResult | null => quotaFixture ?? quotaHistoryQuery.data ?? null;
-  const quotaHistoryError = (): string | null =>
-    quotaHistoryQuery.error instanceof Error ? quotaHistoryQuery.error.message : null;
-  const quotaHistoryLoading = (): boolean => quotaHistoryQuery.isFetching;
-  const loadQuotaRange = (range: ProviderQuotaHistoryRange): Promise<void> => {
-    setQuotaHistoryRange(range);
-    return Promise.resolve();
-  };
   const servedSessionQueries = Boolean(focusedStore);
   const [servedSessionState, setServedSessionState] = createSignal<SessionQueryState>();
   const servedSessionFingerprint = () => {
     const state = servedSessionState();
     return state ? sessionQueryFingerprint(state.query) : undefined;
   };
-  const [sessionQueryLoading, setSessionQueryLoading] = createSignal(false);
   const sessionQueryCoordinator = servedSessionQueries
     ? createSessionQueryCoordinator({
         onStateChange: setServedSessionState,
@@ -405,38 +287,11 @@ export const Dashboard = (props: {
       }),
     ),
   );
-  const [selectedKey, setSelectedKey] = createSignal<string | null>(null);
-  const [selectedNavigationRow, setSelectedNavigationRow] = createSignal<DashboardRow | null>(null);
-  const [selectedAnalysisTarget, setSelectedAnalysisTarget] = createSignal<SessionAnalysisTarget | null>(null);
-  const [selectedAnalysisRevision, setSelectedAnalysisRevision] = createSignal<string | null>(null);
-  const [sessionNeighbors, setSessionNeighbors] = createSignal<SessionNeighborResult>();
-  const [sessionNeighborsLoading, setSessionNeighborsLoading] = createSignal(false);
-  const setSessionSelection = (selection: {
-    key: string | null;
-    navigationRow: DashboardRow | null;
-    revision: string | null;
-    target: SessionAnalysisTarget | null;
-  }): void => {
-    batch(() => {
-      setSelectedNavigationRow(selection.navigationRow);
-      setSelectedAnalysisTarget(selection.target);
-      setSelectedAnalysisRevision(selection.revision);
-      setSelectedKey(selection.key);
-      sessionQueryCoordinator?.select(selection.key);
-    });
-  };
   let searchInputEl: HTMLInputElement | undefined;
   const cursorCommitRows = createMemo(() =>
     focusedStore
       ? (focusedStore.breakdown()?.context.cursorCommitAttribution ?? [])
       : cursorCommitAttributionFacet(reportSupport()),
-  );
-  const providerStatusViews = createMemo(() =>
-    buildProviderStatusViews(
-      reportSupport(),
-      focusedStore ? focusedStore.providerRows() : reportRows(),
-      providerStatusClock.now(),
-    ),
   );
   const harnessOptions = createMemo(() =>
     focusedStore ? focusedStore.filterOptions().harness : [...new Set(reportRows().map((row) => row.harness))],
@@ -482,26 +337,6 @@ export const Dashboard = (props: {
     ...(initialRange.to ? { initialTo: initialRange.to } : {}),
   });
   const [tableDateBounds, setTableDateBounds] = createSignal<DateBounds>(dateRange.bounds());
-  const [focusedTimelineOptions, setFocusedTimelineOptions] = createSignal<{
-    dimension: FocusedTimelineDimension;
-    granularity: FocusedTimelineGranularity;
-  }>({ dimension: 'harness', granularity: 'day' });
-  const [advancedAnalysisFailure, setAdvancedAnalysisFailure] = createSignal<{
-    message: string;
-    scopeFingerprint: string;
-  }>();
-  const [focusedTimelineError, setFocusedTimelineError] = createSignal<string | null>(null);
-  const [focusedTimelineLoading, setFocusedTimelineLoading] = createSignal(Boolean(focusedStore));
-  const [advancedAnalysisLoading, setAdvancedAnalysisLoading] = createSignal(false);
-  const requestFocusedTimeline = (options: {
-    dimension: FocusedTimelineDimension;
-    granularity: FocusedTimelineGranularity;
-  }): void => {
-    batch(() => {
-      setFocusedTimelineLoading(true);
-      setFocusedTimelineOptions(options);
-    });
-  };
   const focusedQueryScopeForRevision = (revision: string): FocusedReportQueryScope => {
     if (!focusedStore) {
       throw new Error('Focused report queries require a served report store');
@@ -528,15 +363,6 @@ export const Dashboard = (props: {
     return focusedQueryScopeForRevision(focusedStore.revision());
   };
   const focusedOverviewForDisplay = createMemo(() => focusedStore?.overviewForDisplay());
-  const advancedAnalysisError = createMemo(() => {
-    if (!focusedStore) {
-      return null;
-    }
-    const failure = advancedAnalysisFailure();
-    return failure?.scopeFingerprint === focusedAdvancedAnalysisFingerprint(focusedQueryScope())
-      ? failure.message
-      : null;
-  });
   const activeSessionQueryScope = () =>
     buildDashboardSessionQueryScope({
       campaigns: groupCampaigns(),
@@ -617,223 +443,63 @@ export const Dashboard = (props: {
   const visibleSessionTableRows = createMemo(() =>
     servedSessionQueries ? sessionRowsForState(servedSessionState()) : sessionTableRows(),
   );
+  const sessionSelection = createDashboardSessionSelection({
+    local: { campaigns: campaignViews, groupCampaigns, reportRows, sortedRows },
+    onError: setOperationError,
+    overviewRevision: () => focusedStore?.revision() ?? null,
+    ...(sessionQueryCoordinator
+      ? {
+          served: {
+            active: servedSessionViewActive,
+            coordinator: sessionQueryCoordinator,
+            rows: visibleSessionTableRows,
+            state: servedSessionState,
+          },
+        }
+      : {}),
+  });
+  const drawerNavigationProps = createMemo(() => {
+    const navigation = sessionSelection.drawerNavigation();
+    return navigation ? { navigation } : {};
+  });
   const servedReportSession =
     focusedSource && focusedStore && sessionQueryCoordinator
       ? createDashboardServedReportSession({ focusedSource, focusedStore, sessionCoordinator: sessionQueryCoordinator })
       : undefined;
-  const servedDestination = createMemo<DashboardServedDestination | undefined>(() => {
+  const destinationScope = createMemo<DashboardReportDestinationScope | undefined>(() => {
     if (!(focusedStore && servedReportSession)) {
       return;
     }
     const { revision: _revision, ...queryScope } = focusedQueryScope();
-    const timeline = focusedTimelineOptions();
     const destination = primaryDashboardTabFor(search().tab);
     if (destination === 'overview') {
-      const advancedFingerprint = focusedAdvancedAnalysisFingerprint(focusedQueryScope());
-      return {
-        includeAdvanced: advancedAnalysisFailure()?.scopeFingerprint !== advancedFingerprint,
-        kind: 'overview',
-        query: queryScope,
-        timeline,
-      };
+      return { kind: 'overview', query: queryScope };
     }
     if (destination === 'breakdown') {
-      return { kind: 'breakdown', query: queryScope, timeline };
+      return { kind: 'breakdown', query: queryScope };
     }
-    return { kind: 'sessions', query: queryScope, sessions: activeSessionQueryScope(), timeline };
+    return { kind: 'sessions', query: queryScope, sessions: activeSessionQueryScope() };
   });
-  const refreshServedDestination = async (): Promise<void> => {
-    const destination = servedDestination();
-    if (!(destination && servedReportSession)) {
-      return;
-    }
-    const outcome = await servedReportSession.refresh(destination);
-    if (outcome.status === 'superseded') {
-      return;
-    }
-    if (outcome.status === 'failed-preserving-previous') {
-      const message = outcome.error instanceof Error ? outcome.error.message : 'Failed to load report destination';
-      setFocusedTimelineError(message);
-      setOperationError(message);
-      if (destination.kind === 'overview' && destination.includeAdvanced) {
-        setAdvancedAnalysisFailure({
-          message,
-          scopeFingerprint: focusedAdvancedAnalysisFingerprint({
-            ...destination.query,
-            revision: focusedStore?.revision() ?? 'unavailable',
-          }),
-        });
-      }
-      return;
-    }
-    batch(() => {
-      setFocusedTimelineError(null);
-      setFocusedTimelineLoading(false);
-      setAdvancedAnalysisLoading(false);
-      setSessionQueryLoading(false);
-      if (destination.kind === 'overview' && destination.includeAdvanced) {
-        setAdvancedAnalysisFailure(undefined);
-      }
-    });
-  };
-  restartServedDestination = () => refreshServedDestination();
+  const reportLifecycle = createDashboardReportLifecycle({
+    currentOverviewRequestFingerprint: () => focusedStore?.overview()?.requestFingerprint,
+    currentRevision: () => focusedStore?.revision() ?? 'unavailable',
+    destinationScope,
+    onError: setOperationError,
+    publicationRevision: () => {
+      const state = sourceControl.state();
+      return state.publication?.revision ?? state.snapshot?.publication.revision;
+    },
+    ready: clientReady,
+    sessionState: servedSessionState,
+    ...(servedReportSession ? { servedReportSession } : {}),
+    ...(sessionQueryCoordinator ? { sessionCoordinator: sessionQueryCoordinator } : {}),
+  });
+  restartServedDestination = reportLifecycle.refresh;
   createEffect(() => {
-    const destination = servedDestination();
-    if (!(clientReady() && destination && servedReportSession && focusedStore)) {
+    if (!sessionSelection.selectedRow()) {
       return;
     }
-    batch(() => {
-      setFocusedTimelineLoading(
-        !dashboardDestinationTimelineMatches(
-          destination,
-          focusedStore.revision(),
-          focusedStore.overview()?.requestFingerprint,
-        ),
-      );
-      setAdvancedAnalysisLoading(destination.kind === 'overview' && destination.includeAdvanced);
-      setSessionQueryLoading(destination.kind === 'sessions' && !servedSessionState());
-    });
-    refreshServedDestination().catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : 'Failed to coordinate report destination';
-      setOperationError(message);
-    });
-  });
-  let observedPublicationRevision: string | undefined;
-  createEffect(() => {
-    const sourceState = sourceControl.state();
-    const revision = sourceState.publication?.revision ?? sourceState.snapshot?.publication.revision;
-    if (!revision || revision === observedPublicationRevision) {
-      return;
-    }
-    observedPublicationRevision = revision;
-    if (!clientReady()) {
-      return;
-    }
-    if (focusedStore && focusedStore.revision() !== revision) {
-      refreshServedDestination().catch((error: unknown) => {
-        setOperationError(error instanceof Error ? error.message : 'Published report data could not be loaded');
-      });
-    }
-  });
-  onCleanup(() => {
-    servedReportSession?.abort();
-    sessionQueryCoordinator?.close();
-  });
-  // Campaign context rows can select their atomic root even when the root is outside
-  // the current table filter, so resolve selection against the payload rows.
-  const selectedRow = createMemo(() => {
-    const key = selectedKey();
-    if (!key) {
-      return null;
-    }
-    const target = selectedAnalysisTarget();
-    if (target?.summaryRow.rowId === key) {
-      return target.summaryRow;
-    }
-    if (!servedSessionQueries) {
-      return reportRows().find((row) => rowKey(row) === key) ?? null;
-    }
-    const servedRow = visibleSessionTableRows()
-      .flatMap((row) => [row, ...(row.children ?? [])])
-      .find((row) => rowKey(row) === key);
-    const navigationRow = selectedNavigationRow();
-    return (
-      servedRow ??
-      (navigationRow?.rowId === key ? navigationRow : null) ??
-      reportRows().find((row) => rowKey(row) === key) ??
-      null
-    );
-  });
-  const selectedCampaign = createMemo(() => {
-    if (servedSessionViewActive() && servedSessionState()) {
-      return null;
-    }
-    const row = selectedRow();
-    if (!row) {
-      return null;
-    }
-    const key = rowKey(row);
-    return (
-      campaignViews().find((campaign) => campaign.allRows.some((campaignRow) => rowKey(campaignRow) === key)) ?? null
-    );
-  });
-  const navigateSelected = (delta: number) => {
-    if (servedSessionViewActive() && servedSessionState()) {
-      const next = delta > 0 ? sessionNeighbors()?.next : sessionNeighbors()?.previous;
-      if (next) {
-        setSessionSelection({
-          key: rowKey(next),
-          navigationRow: next,
-          revision: servedSessionState()?.query.revision ?? null,
-          target: sessionAnalysisTargetForSession(next),
-        });
-      }
-      return;
-    }
-    const rows = sortedRows();
-    const key = selectedKey();
-    const index = rows.findIndex((row) => rowKey(row) === key);
-    if (index === -1) {
-      return;
-    }
-    const next = rows[index + delta];
-    if (next) {
-      setSessionSelection({
-        key: rowKey(next),
-        navigationRow: next,
-        revision: null,
-        target: sessionAnalysisTargetForSession(next),
-      });
-    }
-  };
-  const neighborRequests = sessionQueryCoordinator
-    ? createSessionNeighborRequestController({
-        loadNeighbors: (rowId) => sessionQueryCoordinator.loadNeighbors(rowId),
-        onError: (error) => {
-          setOperationError(error instanceof Error ? error.message : 'Failed to load session neighbors');
-        },
-        onLoadingChange: (loading) => setSessionNeighborsLoading(loading),
-        onNeighbors: (neighbors) => setSessionNeighbors(neighbors),
-      })
-    : undefined;
-  onCleanup(() => neighborRequests?.close());
-  createEffect(() => {
-    const row = selectedRow();
-    const state = servedSessionState();
-    if (!(servedSessionQueries && neighborRequests && state && row)) {
-      neighborRequests?.close();
-      setSessionNeighbors();
-      setSessionNeighborsLoading(false);
-      return;
-    }
-    neighborRequests
-      .load({
-        requestKey: sessionNeighborFingerprint({ query: state.query, rowId: row.rowId }),
-        rowId: row.rowId,
-      })
-      .catch((error: unknown) => {
-        setOperationError(error instanceof Error ? error.message : 'Failed to coordinate session neighbors');
-      });
-  });
-  createEffect(() => {
-    if (!selectedRow()) {
-      return;
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target instanceof HTMLElement ? event.target : null;
-      if (target && (FORM_CONTROL_TAG_PATTERN.test(target.tagName) || target.isContentEditable)) {
-        return;
-      }
-      if (event.key === 'Escape') {
-        setSessionSelection({ key: null, navigationRow: null, revision: null, target: null });
-      } else if (event.key === 'j' || event.key === 'ArrowDown') {
-        event.preventDefault();
-        navigateSelected(1);
-      } else if (event.key === 'k' || event.key === 'ArrowUp') {
-        event.preventDefault();
-        navigateSelected(-1);
-      }
-    };
+    const onKeyDown = (event: KeyboardEvent) => sessionSelection.handleKeyDown(event);
     document.addEventListener('keydown', onKeyDown);
     onCleanup(() => document.removeEventListener('keydown', onKeyDown));
   });
@@ -854,7 +520,7 @@ export const Dashboard = (props: {
     onCleanup(() => document.removeEventListener('keydown', onKeyDown));
   });
   onMount(() => {
-    if (isDemo) {
+    if (runtimeMode !== 'live') {
       return;
     }
     resolveClientPerfEnabled()
@@ -984,22 +650,6 @@ export const Dashboard = (props: {
       .finally(() => setCleanupWarningGroupId());
   };
   onMount(() => setClientReady(true));
-  const toggleSelected = (row: DashboardRow) => {
-    const next = selectedKey() === rowKey(row) ? null : rowKey(row);
-    const target = next
-      ? sessionAnalysisTargetForTopLevelRow({
-          campaigns: servedSessionViewActive() || !groupCampaigns() ? [] : campaignViews(),
-          pageItems: servedSessionViewActive() ? (servedSessionState()?.items ?? []) : [],
-          row,
-        })
-      : null;
-    setSessionSelection({
-      key: next,
-      navigationRow: next ? row : null,
-      revision: next ? (servedSessionState()?.query.revision ?? null) : null,
-      target,
-    });
-  };
   let activeQueryEdit = false;
   const commitQueryEdit = () => {
     activeQueryEdit = false;
@@ -1024,14 +674,6 @@ export const Dashboard = (props: {
       range: searchRangeFromDateRange(),
       tab: 'sessions',
     }));
-  };
-  const inspectOverviewSession = (row: DashboardRow) => {
-    setSessionSelection({
-      key: rowKey(row),
-      navigationRow: row,
-      revision: focusedStore?.revision() ?? null,
-      target: sessionAnalysisTargetForSession(row),
-    });
   };
   const setFieldFilters = (updater: Updater<FieldFilters>) =>
     updateSearch((current) => ({ ...current, filters: applyTableUpdate(updater, current.filters) }));
@@ -1194,13 +836,13 @@ export const Dashboard = (props: {
           when={hasReportData}
         >
           <TimeRangeControl
-            {...(focusedStore ? { onFocusedTimelineRequest: requestFocusedTimeline } : {})}
+            {...(reportLifecycle.available ? { onFocusedTimelineRequest: reportLifecycle.requestTimeline } : {})}
             activeFieldFilters={fieldFilters()}
             activeHarness={harness()}
             dateRange={dateRange}
             focusedTimeline={focusedStore ? (focusedStore.overview()?.timeline ?? null) : undefined}
-            focusedTimelineError={focusedTimelineError()}
-            focusedTimelineLoading={focusedTimelineLoading()}
+            focusedTimelineError={reportLifecycle.focusedTimelineError()}
+            focusedTimelineLoading={reportLifecycle.focusedTimelineLoading()}
             onDateRangeCommit={commitTableDateRange}
             onDimensionFilter={setTimelineDimensionFilter}
             rows={timelineRows()}
@@ -1252,12 +894,12 @@ export const Dashboard = (props: {
                     content: () => (
                       <section class={section}>
                         <Overview
-                          advancedAnalysisError={advancedAnalysisError()}
-                          advancedAnalysisLoading={advancedAnalysisLoading()}
+                          advancedAnalysisError={reportLifecycle.advancedAnalysisError()}
+                          advancedAnalysisLoading={reportLifecycle.advancedAnalysisLoading()}
                           campaigns={campaignViews()}
                           focused={focusedOverviewForDisplay()}
                           onSelectDay={focusDay}
-                          onSelectSession={inspectOverviewSession}
+                          onSelectSession={sessionSelection.inspectOverview}
                           rangeLabel={dateRange.label()}
                           rows={tableRows()}
                           summary={visibleSummary()}
@@ -1303,18 +945,18 @@ export const Dashboard = (props: {
                             columnVisibility={columnVisibility()}
                             groupCampaigns={groupCampaigns()}
                             hasMoreRows={Boolean(servedSessionState()?.nextCursor)}
-                            loading={sessionQueryLoading()}
+                            loading={reportLifecycle.sessionQueryLoading()}
                             onClearFilters={clearFilters}
                             onColumnVisibilityChange={handleColumnVisibilityChange}
                             onFieldFilter={setFieldFilter}
                             onGroupCampaignsChange={setCampaignGrouping}
                             onHarnessFilter={toggleHarness}
-                            onSelect={toggleSelected}
+                            onSelect={sessionSelection.toggleTableRow}
                             onSortingChange={handleSortingChange}
                             queryResetKey={sessionTableQueryResetKey()}
                             rows={visibleSessionTableRows()}
                             searchQuery={query()}
-                            selectedKey={selectedKey()}
+                            selectedKey={sessionSelection.selectedKey()}
                             sorting={sorting()}
                           />
                         </Suspense>
@@ -1377,7 +1019,7 @@ export const Dashboard = (props: {
                             content: () => (
                               <section class={section}>
                                 <ProjectGroupEditor
-                                  disabled={!servedReportSession}
+                                  disabled={!reportLifecycle.available}
                                   onSave={saveProjectGroupConfigs}
                                   payload={projectGroupPayload()}
                                 />
@@ -1428,64 +1070,33 @@ export const Dashboard = (props: {
                 </div>
               </section>
 
-              <Show when={!isDemo}>
-                <ProviderStatusPanel
-                  historyAvailable={(quotaHistory()?.points.length ?? 0) > 0}
-                  onViewHistory={() => {
-                    setQuotaHistoryOpen(true);
-                  }}
-                  providers={providerStatusViews()}
-                />
-              </Show>
+              <DashboardProviderStatus
+                {...(props.quotaHistoryFixture === undefined ? {} : { quotaHistoryFixture: props.quotaHistoryFixture })}
+                {...(props.quotaSource === undefined ? {} : { quotaSource: props.quotaSource })}
+                report={reportSupport()}
+                rows={focusedStore ? focusedStore.providerRows() : reportRows()}
+                runtimeMode={runtimeMode}
+                served={Boolean(focusedStore)}
+              />
             </div>
           </div>
 
-          <Show when={selectedRow()}>
+          <Show when={sessionSelection.selectedRow()}>
             {(row) => (
               <SessionDrawer
-                {...(servedSessionViewActive() && servedSessionState()
-                  ? {
-                      navigation: {
-                        loading: sessionNeighborsLoading(),
-                        next: sessionNeighbors()?.next ?? null,
-                        previous: sessionNeighbors()?.previous ?? null,
-                        total: servedSessionState()?.sessionCount ?? 0,
-                      },
-                    }
-                  : {})}
+                {...drawerNavigationProps()}
                 onClearFilters={clearFilters}
-                onClose={() => {
-                  setSessionSelection({ key: null, navigationRow: null, revision: null, target: null });
-                }}
+                onClose={sessionSelection.close}
                 onFieldFilter={setFieldFilter}
-                onNavigate={navigateSelected}
-                onSelectSession={(session) => {
-                  setSessionSelection({
-                    key: rowKey(session),
-                    navigationRow: session,
-                    revision: servedSessionState()?.query.revision ?? null,
-                    target: sessionAnalysisTargetForSession(session),
-                  });
-                }}
-                revision={selectedAnalysisRevision()}
+                onNavigate={sessionSelection.navigate}
+                onSelectSession={sessionSelection.selectDrawerSession}
+                revision={sessionSelection.analysisRevision()}
                 row={row()}
-                rows={servedSessionViewActive() ? visibleSessionTableRows() : sortedRows()}
-                selectedCampaign={selectedCampaign()}
-                target={selectedAnalysisTarget() ?? sessionAnalysisTargetForSession(row())}
+                rows={sessionSelection.drawerRows()}
+                selectedCampaign={sessionSelection.selectedCampaign()}
+                target={sessionSelection.analysisTarget() ?? sessionAnalysisTargetForSession(row())}
               />
             )}
-          </Show>
-          <Show when={quotaHistoryOpen()}>
-            <ProviderQuotaHistoryPanel
-              error={quotaHistoryError()}
-              loading={quotaHistoryLoading()}
-              onClose={() => setQuotaHistoryOpen(false)}
-              onRangeChange={(range) => {
-                loadQuotaRange(range).catch(() => undefined);
-              }}
-              range={quotaHistoryRange()}
-              result={quotaHistory()}
-            />
           </Show>
         </Show>
       </div>

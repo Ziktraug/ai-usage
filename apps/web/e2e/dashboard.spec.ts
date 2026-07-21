@@ -25,6 +25,22 @@ test('loads a deterministic report overview', async ({ page }) => {
   await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
 });
 
+test('retries a failed report through the Router loading lifecycle', async ({ page }) => {
+  await page.addInitScript(() => {
+    Reflect.set(globalThis, '__aiUsageE2EDisableReportPublicationRetry', true);
+    Reflect.set(globalThis, '__aiUsageE2EReportLoadFailures', 1);
+  });
+  await page.goto('/');
+
+  await expect(page.getByRole('heading', { level: 2, name: 'Report unavailable' })).toBeVisible();
+  await expect(page.getByText('Synthetic report load failed for retry coverage.')).toBeVisible();
+  await page.getByRole('button', { name: 'Retry' }).click();
+
+  await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+  await expect.poll(() => page.evaluate(() => Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads'))).toBe(2);
+});
+
 test('opens legacy analysis deep links inside the compact Breakdown navigation', async ({ page }) => {
   await page.goto('/?tab=projects');
 
@@ -140,6 +156,7 @@ test('Codex quota history shows reset and gap-aware ranges on desktop and mobile
 
 test('persists exploration state in the URL', async ({ page }) => {
   await page.goto('/');
+  await expect.poll(() => page.evaluate(() => Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads'))).toBe(1);
   await page.keyboard.press('/');
 
   const search = page.getByRole('textbox', {
@@ -149,6 +166,7 @@ test('persists exploration state in the URL', async ({ page }) => {
   await search.press('Enter');
 
   await expect(page).toHaveURL(QUERY_URL_PATTERN);
+  await expect.poll(() => page.evaluate(() => Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads'))).toBe(1);
   await page.reload();
   await expect(search).toHaveValue('ai-usage');
 });
@@ -191,6 +209,20 @@ test('opens a session from Overview without leaving the current analysis', async
 
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('navigates and closes the selected session with drawer keyboard commands', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
+
+  const drawer = page.getByRole('dialog', { name: 'Session details' });
+  await expect(drawer.getByText('Build report UI', { exact: true }).first()).toBeVisible();
+  await page.keyboard.press('j');
+  await expect(drawer.getByText('Review analytics model', { exact: true }).first()).toBeVisible();
+  await page.keyboard.press('k');
+  await expect(drawer.getByText('Build report UI', { exact: true }).first()).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(drawer).not.toBeVisible();
 });
 
 test('starts sessions with focused work columns and switches metric presets', async ({ page }) => {

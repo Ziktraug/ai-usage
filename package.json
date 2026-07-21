@@ -11,6 +11,7 @@
   },
   "name": "ai-usage",
   "scripts": {
+    "capture:hero": "bun --no-env-file tools/capture-readme-hero.ts",
     "cli": "bun apps/cli/src/main.ts",
     "dev": "exec turbo watch dev --filter @ai-usage/web --ui=stream --log-order=stream",
     "dev:once": "bun run --cwd apps/web dev:standalone",

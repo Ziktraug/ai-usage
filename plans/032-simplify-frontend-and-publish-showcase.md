@@ -1,6 +1,6 @@
 # Plan 032: Simplify the frontend and prepare the public showcase
 
-> **Status: TODO** — ready to start after plan 031 completed.
+> **Status: DONE** — frontend ownership is simplified and the evidence-backed public materials are prepared.
 >
 > This is the final frontend step-up plan. It combines the remaining internal
 > cleanup with truthful public documentation so the screenshot reflects the
@@ -112,14 +112,14 @@ publication.
 
 ## Done
 
-- [ ] Dashboard, TimeRange, Router loading, and repeated Skills styles have clear
+- [x] Dashboard, TimeRange, Router loading, and repeated Skills styles have clear
   owners with behavior preserved.
-- [ ] No more than six concise, evidence-backed ADRs exist.
-- [ ] License, contributing, security, and case-study documents are accurate.
-- [ ] One synthetic hero communicates Overview and session-detail value.
-- [ ] README is useful to a recruiter before implementation details.
-- [ ] Exact publication copy is prepared but nothing external was changed.
-- [ ] Full gates pass and the demo server is stopped.
+- [x] No more than six concise, evidence-backed ADRs exist.
+- [x] License, contributing, security, and case-study documents are accurate.
+- [x] One synthetic hero communicates Overview and session-detail value.
+- [x] README is useful to a recruiter before implementation details.
+- [x] Exact publication copy is prepared but nothing external was changed.
+- [x] Full gates pass and the demo server is stopped.
 
 ## STOP conditions
 

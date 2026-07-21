@@ -16,6 +16,11 @@ export const loadReportPayload = async (mode: RuntimeMode = getBrowserRuntimeMod
     if (mode === 'e2e') {
       const currentLoads = Number(Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads') ?? 0);
       Reflect.set(globalThis, '__aiUsageE2EReportOwnerLoads', currentLoads + 1);
+      const remainingFailures = Number(Reflect.get(globalThis, '__aiUsageE2EReportLoadFailures') ?? 0);
+      if (remainingFailures > 0) {
+        Reflect.set(globalThis, '__aiUsageE2EReportLoadFailures', remainingFailures - 1);
+        throw new Error('Synthetic report load failed for retry coverage.');
+      }
     }
     return { kind: 'payload', mode, payload: demoWebReportPayload };
   }

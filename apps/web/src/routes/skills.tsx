@@ -4,6 +4,7 @@ import {
   bannerError,
   bannerOk,
   commandButton,
+  formField,
   ghostButton,
   header,
   headerActions,
@@ -12,11 +13,15 @@ import {
   meta,
   navButton,
   page,
+  pageStack,
   panel,
   panelHeader,
   panelSub,
   panelTitle,
+  pendingButton,
   shell,
+  skillsDisclosurePanel,
+  skillsDisclosureSummary,
   strongCell,
   title,
   titleBlock,
@@ -50,28 +55,9 @@ export const Route = createFileRoute('/skills')({
 
 const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
 
-const pageStack = css({
-  display: 'grid',
-  gap: '16px',
-});
-
 const stack = css({
   display: 'grid',
   gap: '12px',
-});
-
-const fold = css({
-  p: '0',
-  overflow: 'hidden',
-});
-
-const foldSummary = css({
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  gap: '12px',
-  p: '14px 16px',
-  cursor: 'pointer',
 });
 
 const foldBody = css({
@@ -115,12 +101,6 @@ const configStack = css({
   gap: '16px',
 });
 
-const formField = css({
-  display: 'grid',
-  gap: '4px',
-  minW: 0,
-});
-
 const labelText = css({
   color: 'muted',
   fontSize: '12px',
@@ -142,15 +122,6 @@ const inputClass = css({
   bg: 'surface',
   color: 'ink',
   fontSize: '13px',
-});
-
-const busyButton = css({
-  '&[data-pending=true]': {
-    _after: {
-      content: '" ..."',
-      color: 'accent',
-    },
-  },
 });
 
 const projectPathList = css({
@@ -563,8 +534,8 @@ function DisabledFold(props: {
   toggleSkill: (skillName: string, enabled: boolean) => void;
 }) {
   return (
-    <details class={cx(panel, fold)}>
-      <summary class={foldSummary}>
+    <details class={cx(panel, skillsDisclosurePanel)}>
+      <summary class={skillsDisclosureSummary}>
         <span class={strongCell}>Disabled</span>
         <span class={meta}>{props.disabledRows.length}</span>
       </summary>
@@ -579,7 +550,7 @@ function DisabledFold(props: {
                 </div>
                 <button
                   aria-busy={props.pendingOperation === `toggle:${row.name}` ? 'true' : undefined}
-                  class={cx(ghostButton, busyButton)}
+                  class={cx(ghostButton, pendingButton)}
                   data-pending={props.pendingOperation === `toggle:${row.name}` ? 'true' : undefined}
                   disabled={props.pendingOperation !== null}
                   onClick={() => props.toggleSkill(row.name, true)}
@@ -613,8 +584,8 @@ function ConfigurationFold(props: {
   sourceRepoPath: string;
 }) {
   return (
-    <details class={cx(panel, fold)}>
-      <summary class={foldSummary}>
+    <details class={cx(panel, skillsDisclosurePanel)}>
+      <summary class={skillsDisclosureSummary}>
         <span class={strongCell}>Configuration & runtimes</span>
         <span class={meta}>
           {props.snapshot.targets.filter((target) => target.enabled).length} enabled / {props.snapshot.targets.length}{' '}
@@ -694,7 +665,7 @@ function ConfigPanel(props: {
           </label>
           <button
             aria-busy={props.pendingOperation === 'save-config' ? 'true' : undefined}
-            class={cx(commandButton, busyButton)}
+            class={cx(commandButton, pendingButton)}
             data-pending={props.pendingOperation === 'save-config' ? 'true' : undefined}
             disabled={props.pendingOperation !== null}
             onClick={submitSourceRepoPath}
@@ -765,7 +736,7 @@ function ProjectPathsPanel(props: {
         />
         <button
           aria-busy={props.pendingOperation?.startsWith('project:add:') ? 'true' : undefined}
-          class={cx(ghostButton, busyButton)}
+          class={cx(ghostButton, pendingButton)}
           data-pending={props.pendingOperation?.startsWith('project:add:') ? 'true' : undefined}
           disabled={props.pendingOperation !== null || props.projectPathDraft.trim().length === 0}
           onClick={props.addProjectPath}
@@ -785,7 +756,7 @@ function ProjectPathsPanel(props: {
                 <span class={meta}>{projectPath}</span>
                 <button
                   aria-busy={props.pendingOperation === `project:remove:${projectPath}` ? 'true' : undefined}
-                  class={cx(ghostButton, busyButton)}
+                  class={cx(ghostButton, pendingButton)}
                   data-pending={props.pendingOperation === `project:remove:${projectPath}` ? 'true' : undefined}
                   disabled={props.pendingOperation !== null}
                   onClick={() => props.removeProjectPath(projectPath)}
@@ -851,7 +822,7 @@ function TargetsPanel(props: {
             <Show when={target.missing}>
               <button
                 aria-busy={props.pendingOperation === `target:${target.id}` ? 'true' : undefined}
-                class={cx(ghostButton, busyButton)}
+                class={cx(ghostButton, pendingButton)}
                 data-pending={props.pendingOperation === `target:${target.id}` ? 'true' : undefined}
                 disabled={props.pendingOperation !== null}
                 onClick={() => props.createTargetDirectory(target.id)}

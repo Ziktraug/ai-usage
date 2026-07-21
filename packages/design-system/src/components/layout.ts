@@ -1,5 +1,17 @@
 import { css } from '@ai-usage/design-system/css';
 
+export const pageStack = css({
+  display: 'grid',
+  gap: '16px',
+});
+
+export const actionRow = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '8px',
+  alignItems: 'center',
+});
+
 export const page = css({
   minHeight: '100vh',
   bg: 'canvas',

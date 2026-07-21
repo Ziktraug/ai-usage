@@ -1,5 +1,6 @@
 import { css, cx } from '@ai-usage/design-system/css';
 import {
+  actionRow,
   activeFilterButton,
   commandButton,
   filterTextButton,
@@ -10,7 +11,9 @@ import {
   panelHeaderRow,
   panelSub,
   panelTitle,
+  pendingButton,
   searchInput,
+  skillsReconcilePlanList,
   statusDot,
   statusDotBroken,
   statusDotCopy,
@@ -53,15 +56,7 @@ const activeFilter = css({
   bg: 'accentTint',
 });
 
-const busyButton = css({
-  position: 'relative',
-  '&[data-pending=true]': {
-    _after: {
-      content: '" ..."',
-      color: 'accent',
-    },
-  },
-});
+const positionedButton = css({ position: 'relative' });
 
 const matrixTable = css({
   minW: '860px',
@@ -277,17 +272,6 @@ const planPanel = css({
   bg: 'accentTint',
 });
 
-const planList = css({
-  display: 'grid',
-  gap: '3px',
-  m: 0,
-  pl: '18px',
-  fontFamily: 'mono',
-  fontSize: '12px',
-  color: 'ink',
-  overflowWrap: 'anywhere',
-});
-
 const planSkippedList = css({
   color: 'muted',
 });
@@ -298,13 +282,6 @@ const planLabel = css({
   letterSpacing: '0.07em',
   textTransform: 'uppercase',
   color: 'muted',
-});
-
-const planActions = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '8px',
-  alignItems: 'center',
 });
 
 const originTone = (origin: string) => {
@@ -453,7 +430,7 @@ export const SkillsMatrix = (props: {
         </div>
         <button
           aria-busy={props.pendingOperation === 'preview-reconcile' ? 'true' : undefined}
-          class={cx(commandButton, busyButton)}
+          class={cx(commandButton, pendingButton, positionedButton)}
           data-pending={props.pendingOperation === 'preview-reconcile' ? 'true' : undefined}
           disabled={props.pendingOperation !== null || !canRunReconcile()}
           onClick={props.onPreviewReconcile}
@@ -470,20 +447,20 @@ export const SkillsMatrix = (props: {
               fallback={<p class={muted}>Nothing to apply — every active skill is already linked.</p>}
               when={plan().apply.length > 0}
             >
-              <ul class={planList}>
+              <ul class={skillsReconcilePlanList}>
                 <For each={plan().apply}>{(line) => <li>{line}</li>}</For>
               </ul>
             </Show>
             <Show when={plan().skipped.length > 0}>
               <div class={planLabel}>Skipped ({plan().skipped.length}) — unmanaged content is never touched</div>
-              <ul class={cx(planList, planSkippedList)}>
+              <ul class={cx(skillsReconcilePlanList, planSkippedList)}>
                 <For each={plan().skipped}>{(line) => <li>{line}</li>}</For>
               </ul>
             </Show>
-            <div class={planActions}>
+            <div class={actionRow}>
               <button
                 aria-busy={props.pendingOperation === 'reconcile-all' ? 'true' : undefined}
-                class={cx(commandButton, busyButton)}
+                class={cx(commandButton, pendingButton, positionedButton)}
                 data-pending={props.pendingOperation === 'reconcile-all' ? 'true' : undefined}
                 disabled={props.pendingOperation !== null || plan().apply.length === 0}
                 onClick={props.onApplyReconcile}

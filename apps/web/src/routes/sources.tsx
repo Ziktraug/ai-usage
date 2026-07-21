@@ -1,5 +1,6 @@
 import { css, cx } from '@ai-usage/design-system/css';
 import {
+  actionRow,
   banner,
   bannerError,
   commandButton,
@@ -73,7 +74,6 @@ const axis = css({ display: 'grid', gap: '3px', minW: 0 });
 const axisLabel = css({ color: 'muted', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase' });
 const axisValue = css({ fontSize: '12px', overflowWrap: 'anywhere' });
 const detailList = css({ display: 'grid', gap: '5px', color: 'muted', fontSize: '12px', lineHeight: 1.5 });
-const cardActions = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' });
 const switchLabel = css({
   display: 'inline-flex',
   alignItems: 'center',
@@ -212,7 +212,7 @@ const SourceCard = (props: {
         </p>
         <For each={props.source.warnings}>{(warning) => <p>Warning: {warning.message ?? warning.code}</p>}</For>
       </div>
-      <div class={cardActions}>
+      <div class={actionRow}>
         <label class={switchLabel}>
           <input
             checked={props.source.policy === 'enabled'}

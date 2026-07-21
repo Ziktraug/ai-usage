@@ -15,10 +15,21 @@ describe('report runtime loading', () => {
 
   test('keeps E2E synthetic loading distinct from the public demo label', async () => {
     Reflect.deleteProperty(globalThis, '__aiUsageE2EReportOwnerLoads');
+    Reflect.deleteProperty(globalThis, '__aiUsageE2EReportLoadFailures');
     const result = await loadReportPayload('e2e');
 
     expect(result.kind).toBe('payload');
     expect(result.mode).toBe('e2e');
     expect(Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads')).toBe(1);
+  });
+
+  test('supports a deterministic E2E-only load failure without touching demo data', async () => {
+    Reflect.set(globalThis, '__aiUsageE2EReportLoadFailures', 1);
+
+    await expect(loadReportPayload('e2e')).rejects.toThrow('Synthetic report load failed for retry coverage.');
+    const retried = await loadReportPayload('e2e');
+
+    expect(retried.kind).toBe('payload');
+    Reflect.deleteProperty(globalThis, '__aiUsageE2EReportLoadFailures');
   });
 });

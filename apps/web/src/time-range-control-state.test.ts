@@ -1,8 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
   createTimeRangeControlState,
-  pointerIndexDelta,
-  sliderIndexForKey,
   type TimeRangeControlContext,
   transitionTimeRangeControl,
 } from './time-range-control-state';
@@ -49,7 +47,7 @@ describe('time range control normalization', () => {
 
     expect(result.state.selectionIndexes).toEqual([9, 12]);
     expect(result.state.interaction.type).toBe('idle');
-    expect(result.commands).toEqual([{ type: 'clearHover' }]);
+    expect(result.commands).toEqual([]);
   });
 });
 
@@ -146,9 +144,73 @@ describe('time range control options and inspection', () => {
     expect(result.state.hover).toEqual({ bucketIndex: null, key: null });
   });
 
-  test('keeps pointer and keyboard calculations deterministic', () => {
-    expect(pointerIndexDelta({ clientX: 70, scale: 20, startClientX: 20, trackWidth: 100 })).toBe(10);
-    expect(sliderIndexForKey('PageUp', 5, 100, 1)).toBe(35);
-    expect(sliderIndexForKey('Escape', 5, 100, 1)).toBeNull();
+  test('owns timeline inspection keys and clamps them to the visible range', () => {
+    const hovered = transitionTimeRangeControl(
+      initialState(),
+      { bucketIndex: 8, key: 'Codex', type: 'hoverChanged' },
+      context(20),
+    );
+    const moved = transitionTimeRangeControl(
+      hovered.state,
+      { key: 'ArrowRight', type: 'timelineKeyboardMove', visibleRange: { from: 4, to: 9 } },
+      context(20),
+    );
+    const clamped = transitionTimeRangeControl(
+      moved.state,
+      { key: 'ArrowRight', type: 'timelineKeyboardMove', visibleRange: { from: 4, to: 9 } },
+      context(20),
+    );
+
+    expect(moved.state.hover).toEqual({ bucketIndex: 9, key: null });
+    expect(clamped.state.hover).toEqual({ bucketIndex: 9, key: null });
+    expect(
+      transitionTimeRangeControl(
+        clamped.state,
+        { key: 'Escape', type: 'timelineKeyboardMove', visibleRange: { from: 4, to: 9 } },
+        context(20),
+      ).handled,
+    ).toBe(false);
+  });
+
+  test('treats Home and End as visible-timeline boundaries', () => {
+    const home = transitionTimeRangeControl(
+      initialState(),
+      { key: 'Home', type: 'timelineKeyboardMove', visibleRange: { from: 3, to: 12 } },
+      context(20),
+    );
+    const end = transitionTimeRangeControl(
+      home.state,
+      { key: 'End', type: 'timelineKeyboardMove', visibleRange: { from: 3, to: 12 } },
+      context(20),
+    );
+
+    expect(home.state.hover.bucketIndex).toBe(3);
+    expect(end.state.hover.bucketIndex).toBe(12);
+  });
+
+  test('ignores foreign pointers and commits every owned finish event once', () => {
+    const started = transitionTimeRangeControl(
+      initialState(),
+      {
+        button: 0,
+        clientX: 20,
+        interaction: 'selection-handle',
+        handle: 'start',
+        pointerId: 7,
+        trackWidth: 100,
+        type: 'pointerStart',
+      },
+      context(20),
+    );
+    expect(
+      transitionTimeRangeControl(started.state, { clientX: 50, pointerId: 8, type: 'pointerMove' }, context(20))
+        .handled,
+    ).toBe(false);
+
+    for (const type of ['pointerEnd', 'pointerCancel', 'pointerCaptureLost'] as const) {
+      const finished = transitionTimeRangeControl(started.state, { pointerId: 7, type }, context(20));
+      expect(finished.state.interaction.type).toBe('idle');
+      expect(finished.commands).toEqual([{ type: 'commitReportRange' }]);
+    }
   });
 });

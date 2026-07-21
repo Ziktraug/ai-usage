@@ -1,6 +1,8 @@
 import { css } from '@ai-usage/design-system/css';
 import {
+  actionRow,
   field,
+  formField,
   ghostButton,
   header,
   headerActions,
@@ -10,6 +12,7 @@ import {
   meta,
   navButton,
   page,
+  pageStack,
   panel,
   panelHeader,
   panelSub,
@@ -41,24 +44,6 @@ export const Route = createFileRoute('/sync')({
 });
 
 const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
-
-const pageStack = css({
-  display: 'grid',
-  gap: '16px',
-});
-
-const actionRow = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '8px',
-  alignItems: 'center',
-});
-
-const formField = css({
-  display: 'grid',
-  gap: '4px',
-  minW: 0,
-});
 
 const operationPanel = css({
   display: 'grid',
