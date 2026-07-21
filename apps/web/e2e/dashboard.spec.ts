@@ -92,7 +92,7 @@ test('shows analysis and report metrics without disclosure gates', async ({ page
     'API-equivalent value',
   ]);
   expect(await punchcardTable.getByRole('row').count()).toBeGreaterThan(1);
-  await expect(punchcardTable.getByRole('row', { name: 'Monday 16:00 1 $0.84' })).toBeAttached();
+  await expect(punchcardTable.getByRole('row', { name: 'Monday 14:00 1 $0.84' })).toBeAttached();
   await expect(page.locator('[data-punchcard-visual]')).toHaveAttribute('aria-hidden', 'true');
   await expect(page.locator('[data-punchcard-visual]').getByRole('button')).toHaveCount(0);
 

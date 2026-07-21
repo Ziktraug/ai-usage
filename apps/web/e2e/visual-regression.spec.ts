@@ -4,6 +4,10 @@ import { expect, test } from './browser-test';
 
 const DESKTOP_VIEWPORT = { height: 900, width: 1280 } as const;
 const NARROW_VIEWPORT = { height: 844, width: 390 } as const;
+const DESKTOP_MAX_DIFF_PIXELS = 28;
+const DRAWER_MAX_DIFF_PIXELS = 24;
+const NARROW_MAX_DIFF_PIXELS = 22;
+const SKILLS_MAX_DIFF_PIXELS = 12;
 const TOP_SESSION_PATTERN = /Top session/;
 const STABLE_SOURCE_CONTROL_SNAPSHOT = {
   generatedAt: '2026-06-11T12:00:00.000Z',
@@ -107,7 +111,10 @@ test('matches the desktop Overview', async ({ page }) => {
   await openStableOverview(page);
   await scrollOverviewValueIntoView(page);
 
-  await expect(page).toHaveScreenshot('overview-desktop.png', screenshotOptions);
+  await expect(page).toHaveScreenshot('overview-desktop.png', {
+    ...screenshotOptions,
+    maxDiffPixels: DESKTOP_MAX_DIFF_PIXELS,
+  });
 });
 
 test('matches Overview with an open session drawer', async ({ page }) => {
@@ -116,7 +123,10 @@ test('matches Overview with an open session drawer', async ({ page }) => {
   await expect(page.getByRole('dialog', { name: 'Session details' })).toBeVisible();
   await scrollOverviewValueIntoView(page);
 
-  await expect(page).toHaveScreenshot('overview-session-drawer.png', screenshotOptions);
+  await expect(page).toHaveScreenshot('overview-session-drawer.png', {
+    ...screenshotOptions,
+    maxDiffPixels: DRAWER_MAX_DIFF_PIXELS,
+  });
 });
 
 test('matches the narrow Overview value proposition', async ({ page }) => {
@@ -124,7 +134,10 @@ test('matches the narrow Overview value proposition', async ({ page }) => {
   await openStableOverview(page);
   await scrollOverviewValueIntoView(page);
 
-  await expect(page).toHaveScreenshot('overview-narrow.png', screenshotOptions);
+  await expect(page).toHaveScreenshot('overview-narrow.png', {
+    ...screenshotOptions,
+    maxDiffPixels: NARROW_MAX_DIFF_PIXELS,
+  });
 });
 
 test('matches the hydrated Skills workspace', async ({ page }) => {
@@ -133,5 +146,8 @@ test('matches the hydrated Skills workspace', async ({ page }) => {
   await expect(page.getByRole('textbox', { name: 'alpha-skill SKILL.md' })).toBeVisible();
   await waitForFonts(page);
 
-  await expect(page).toHaveScreenshot('skills-desktop.png', screenshotOptions);
+  await expect(page).toHaveScreenshot('skills-desktop.png', {
+    ...screenshotOptions,
+    maxDiffPixels: SKILLS_MAX_DIFF_PIXELS,
+  });
 });

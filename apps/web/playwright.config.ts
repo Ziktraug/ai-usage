@@ -16,6 +16,7 @@ export default defineConfig({
     ...devices['Desktop Chrome'],
     launchOptions: executablePath ? { executablePath } : {},
     screenshot: 'only-on-failure',
+    timezoneId: 'UTC',
     trace: 'retain-on-failure',
   },
   webServer: {
@@ -24,7 +25,7 @@ export default defineConfig({
     // Keep E2E in-process so Playwright exercises the app without that
     // development-only transport hop; production tests still use the Bun host.
     command:
-      'BROWSER=none NITRO_DEV_RUNNER=self VITE_AI_USAGE_E2E=1 bun run dev:standalone -- --port 4174 --strictPort',
+      'BROWSER=none NITRO_DEV_RUNNER=self TZ=UTC VITE_AI_USAGE_E2E=1 bun run dev:standalone -- --port 4174 --strictPort',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     url: 'http://127.0.0.1:4174',
