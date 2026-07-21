@@ -5,7 +5,9 @@ commit `17bcf28` on 2026-07-13, extended with plan 025 at `cb9bc22` on
 2026-07-19, plan 026 at `b24f6a2`, and plan 027 from the local-data audit at
 `23a6230` on 2026-07-20. Plans 028-032 were reconciled against the integrated
 frontend at `6135fe7` on 2026-07-21; their former post-merge blocker is
-retired. Execute in the order below unless dependencies say otherwise. Each
+retired. Plan 036 records the reviewed wide-event logging design at `4e2cc48`
+on 2026-07-21. Execute in the order below unless dependencies say otherwise.
+Each
 executor: read the plan fully before starting, honor its STOP conditions, and
 update the row only when its done criteria actually pass. These plans authorize
 local implementation and verification only; do not push a branch or open a
@@ -47,6 +49,7 @@ pull request unless the user explicitly asks.
 | 030 | Add Durable Frontend Regression Gates | P0 | M | 029 | DONE |
 | 031 | Make Session Scrolling Trustworthy at 5,000 Rows | P0 | M | 030 | DONE |
 | 032 | Simplify Frontend Ownership and Document Decisions | P1 | L | 031 | DONE |
+| 036 | Wide-event Logging for Effect Program Executions | P1 | L | 022-024 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -185,6 +188,16 @@ REJECTED (with one-line rationale).
 - Plan 032 runs last so its architecture notes describe the stabilized code. It
   performs scoped Dashboard/TimeRange/Router/style cleanup, records durable
   decisions, and adds concise legal, contribution, and security documentation.
+- Plan 036 adds Effect-native wide-event observability without an OTLP exporter
+  so operators can see what Effect boundaries do, especially collectors:
+  business outcome, duration, measured hops, and allowlisted local context. The
+  existing bounded workers stay unchanged; every runnable job gets a fresh
+  boundary scope and stale/skipped jobs emit nothing. A shared domain-free
+  `@ai-usage/effect-runtime` serves web and CLI; web composes one scoped file +
+  console sink, while CLI composes a scoped file-only sink under private locked
+  `logs/` rotation. It may execute independently of the sequential frontend
+  portfolio program. See ADRs 0001-0002 and the `CONTEXT.md` terms Wide event /
+  Effect program execution.
 
 ## Remediation waves
 
@@ -201,11 +214,11 @@ Wave 1: 009 remove HTML export
 017 + 018 + 021 complete ── 022 initial plane ── 023 first hardening ── 024 second-review closure
 016-018 + 024 complete ────────────────────────── 025 trustworthy Session Analysis
 025 complete ── 026 unified drawer ── 027 Claude Session Insight + Git context
-
 Frontend:
 028 synthetic runtime ── 029 accessibility ── 030 regression gates
     ── 031 measure + implement 5k scrolling
     ── 032 ownership cleanup + ADRs
+022-024 complete ──────────────────────────────── 036 wide-event logging
 ```
 
 Plans on separate Wave 2 branches may run in parallel. Do not parallel-edit the
@@ -324,3 +337,5 @@ sequence overlapping files and rebase/re-read before execution.
 - These plans authorize local implementation and verification only. They never
   authorize `gh repo edit`, repository visibility/metadata changes, push, PR
   creation, hosting, or repository metadata changes.
+
+Plan 036 is outside this sequence and its accepted ADRs must not be overwritten.
