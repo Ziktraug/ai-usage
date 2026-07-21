@@ -16,7 +16,7 @@ import { createEffect } from 'solid-js';
 import { getBrowserRuntimeMode } from '../browser-runtime-mode';
 import { Dashboard } from '../dashboard';
 import { type DashboardSearch, dashboardSearchDefaultsFor, validateDashboardSearch } from '../dashboard-search';
-import { loadReportPayload, type ReportLoaderData } from '../report-runtime';
+import { loadReportRouteData, type ReportLoaderData } from '../report-runtime';
 import { useSourceControl } from '../source-control-context';
 
 const fallbackSort = 'date' as const;
@@ -29,7 +29,7 @@ export const Route = createFileRoute('/')({
     middlewares: [stripSearchParams<DashboardSearch>(dashboardSearchDefaults)],
   },
   staleTime: Number.POSITIVE_INFINITY,
-  loader: async () => await loadReportPayload(),
+  loader: async () => await loadReportRouteData(),
   errorComponent: ReportLoadError,
   component: IndexRoute,
 });

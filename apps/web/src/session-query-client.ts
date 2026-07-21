@@ -19,7 +19,11 @@ import {
 import type { SortingState } from '@tanstack/solid-table';
 import type { FieldFilters } from './dashboard-search';
 import type { DateBounds } from './date-range';
-import { createSessionQueryOperationOwner, type SessionQueryOperationContext } from './session-query-operation-owner';
+import {
+  createSessionQueryOperationOwner,
+  type SessionQueryOperationContext,
+  type SessionQueryPreparedTicket,
+} from './session-query-operation-owner';
 import { reportManifestRequestFingerprint, type WebReportRevisionManifestResult } from './web-report-payload';
 
 export const SERVED_SESSION_PAGE_SIZE = 100;
@@ -69,9 +73,8 @@ export interface SessionQueryState {
 }
 
 export interface PreparedSessionQueryState {
-  generation: number;
-  requestId: number;
   state: SessionQueryState;
+  ticket: SessionQueryPreparedTicket;
 }
 
 const canonicalDate = (value: Date | null): string | null => {
@@ -145,28 +148,11 @@ const rowsForState = (state: SessionQueryState): SessionPresentationRow[] =>
 export const sessionRowsForState = (state: SessionQueryState | undefined): SessionPresentationRow[] =>
   state === undefined ? [] : rowsForState(state);
 
-const appendUniqueRows = (
-  current: SessionPresentationRow[],
-  incoming: SessionPresentationRow[],
-): SessionPresentationRow[] => {
-  const ids = new Set(current.map((row) => row.rowId));
-  const combined = [...current];
-  for (const row of incoming) {
-    if (!ids.has(row.rowId)) {
-      ids.add(row.rowId);
-      combined.push(row);
-    }
-  }
-  return combined;
-};
-
-const appendUniqueItems = (current: SessionPageItem[], incoming: SessionPageItem[]): SessionPageItem[] => {
-  const itemKey = (item: SessionPageItem): string =>
-    item.kind === 'campaign' ? `campaign:${item.campaignKey}` : `session:${item.row.rowId}`;
-  const keys = new Set(current.map(itemKey));
+const appendUniqueBy = <Item>(current: Item[], incoming: Item[], keyFor: (item: Item) => string): Item[] => {
+  const keys = new Set(current.map(keyFor));
   const combined = [...current];
   for (const item of incoming) {
-    const key = itemKey(item);
+    const key = keyFor(item);
     if (!keys.has(key)) {
       keys.add(key);
       combined.push(item);
@@ -174,6 +160,11 @@ const appendUniqueItems = (current: SessionPageItem[], incoming: SessionPageItem
   }
   return combined;
 };
+
+const presentationRowKey = (row: SessionPresentationRow): string => row.rowId;
+
+const pageItemKey = (item: SessionPageItem): string =>
+  item.kind === 'campaign' ? `campaign:${item.campaignKey}` : `session:${item.row.rowId}`;
 
 export interface SessionQueryCoordinator {
   canCommitPrepared: (prepared: PreparedSessionQueryState) => boolean;
@@ -362,8 +353,6 @@ export const createSessionQueryCoordinator = (options: {
           throw new SessionRevisionExpiredError();
         }
         return {
-          generation: ticket.generation,
-          requestId: ticket.requestId,
           state: {
             campaignChildren: new Map(),
             itemCount: page.itemCount,
@@ -374,13 +363,14 @@ export const createSessionQueryCoordinator = (options: {
             selectedRowId,
             sessionCount: page.sessionCount,
           },
+          ticket,
         };
       },
       { generation: ticket.generation },
     );
   };
 
-  const canCommitPrepared = (prepared: PreparedSessionQueryState): boolean => operationOwner.canCommit(prepared);
+  const canCommitPrepared = (prepared: PreparedSessionQueryState): boolean => operationOwner.canCommit(prepared.ticket);
 
   const commitPrepared = (prepared: PreparedSessionQueryState): SessionQueryState | undefined => {
     if (!canCommitPrepared(prepared)) {
@@ -412,7 +402,7 @@ export const createSessionQueryCoordinator = (options: {
       const nextState: SessionQueryState = {
         ...currentState,
         itemCount: page.itemCount,
-        items: appendUniqueItems(currentState.items, page.items),
+        items: appendUniqueBy(currentState.items, page.items, pageItemKey),
         loadingMore: false,
         nextCursor: page.nextCursor,
         selectedRowId,
@@ -483,7 +473,7 @@ export const createSessionQueryCoordinator = (options: {
       }
       const campaignChildren = new Map(currentState.campaignChildren);
       campaignChildren.set(campaignKey, {
-        items: appendUniqueRows(existing?.items ?? [], result.data.items),
+        items: appendUniqueBy(existing?.items ?? [], result.data.items, presentationRowKey),
         loading: false,
         nextCursor: result.data.nextCursor,
         totalCount: result.data.itemCount,

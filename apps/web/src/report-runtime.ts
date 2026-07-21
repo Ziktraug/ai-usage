@@ -11,7 +11,7 @@ export type ReportLoaderData =
   | { kind: 'payload'; mode: 'demo' | 'e2e'; payload: WebReportPayload }
   | { bootstrap: FocusedSupportResult; kind: 'served'; mode: 'live' };
 
-export const loadReportPayload = async (mode: RuntimeMode = getBrowserRuntimeMode()): Promise<ReportLoaderData> => {
+export const loadReportRouteData = async (mode: RuntimeMode = getBrowserRuntimeMode()): Promise<ReportLoaderData> => {
   if (mode === 'demo' || mode === 'e2e') {
     if (mode === 'e2e') {
       const currentLoads = Number(Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads') ?? 0);

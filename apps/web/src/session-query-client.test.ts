@@ -322,7 +322,7 @@ describe('served session query coordination', () => {
     const first = await coordinator.prepare(scopeFor('first'), 'revision-b');
     const second = await coordinator.prepare(scopeFor('second'), 'revision-c');
 
-    expect(first.requestId).not.toBe(second.requestId);
+    expect(first.ticket.requestId).not.toBe(second.ticket.requestId);
     expect(coordinator.canCommitPrepared(first)).toBe(false);
     expect(coordinator.canCommitPrepared(second)).toBe(true);
     expect(coordinator.commitPrepared(first)).toBeUndefined();
