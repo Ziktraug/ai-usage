@@ -49,7 +49,7 @@ pull request unless the user explicitly asks.
 | 030 | Add Durable Frontend Regression Gates | P0 | M | 029 | DONE |
 | 031 | Make Session Scrolling Trustworthy at 5,000 Rows | P0 | M | 030 | DONE |
 | 032 | Simplify Frontend Ownership and Document Decisions | P1 | L | 031 | DONE |
-| 036 | Wide-event Logging for Effect Program Executions | P1 | L | 022-024 | TODO |
+| 036 | Wide-event Logging for Effect Program Executions | P1 | L | 022-024 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).

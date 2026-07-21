@@ -77,6 +77,7 @@ describe('web source-control runtime', () => {
       getSnapshot: unavailable,
       requestPublication: async () => false,
       runAllEnabled: async () => 0,
+      runEffect: unavailable,
       runNow: async () => false,
       setEnabled: async () => undefined,
       start: unavailable,
@@ -114,6 +115,7 @@ describe('web source-control runtime', () => {
       getSnapshot: unavailable,
       requestPublication: async () => false,
       runAllEnabled: async () => 0,
+      runEffect: unavailable,
       runNow: async () => false,
       setEnabled: async () => undefined,
       start: unavailable,
@@ -152,6 +154,7 @@ describe('web source-control runtime', () => {
         return Promise.resolve(false);
       },
       runAllEnabled: async () => 0,
+      runEffect: unavailable,
       runNow: async () => false,
       setEnabled: async () => undefined,
       start: unavailable,
@@ -300,8 +303,9 @@ describe('web source-control runtime', () => {
         (snapshot) => sourceView(snapshot, 'codex.sessions').lastOutcome === 'success',
       );
       const stored = await Effect.runPromise(queryReportRows({ dbPath, originMachineIds: [machine.id] }));
-      expect(stored.rows).toHaveLength(1);
-      expect(stored.rows[0]?.source.sourceSessionId).toBe('runtime-session');
+      const codexRows = stored.rows.filter((row) => row.source.harnessKey === 'codex');
+      expect(codexRows).toHaveLength(1);
+      expect(codexRows[0]?.source.sourceSessionId).toBe('runtime-session');
     } finally {
       await runtime.dispose();
       await rm(home, { force: true, recursive: true });

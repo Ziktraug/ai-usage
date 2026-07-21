@@ -21,6 +21,7 @@
         "ai-usage": "./src/main.ts",
       },
       "dependencies": {
+        "@ai-usage/effect-runtime": "workspace:*",
         "@ai-usage/local-collectors": "workspace:*",
         "@ai-usage/report-core": "workspace:*",
         "@ai-usage/report-data": "workspace:*",
@@ -32,6 +33,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@ai-usage/design-system": "workspace:*",
+        "@ai-usage/effect-runtime": "workspace:*",
         "@ai-usage/local-collectors": "workspace:*",
         "@ai-usage/report-core": "workspace:*",
         "@ai-usage/report-data": "workspace:*",
@@ -69,6 +71,13 @@
         "solid-js": "^1.9.13",
       },
     },
+    "packages/effect-runtime": {
+      "name": "@ai-usage/effect-runtime",
+      "version": "0.1.0",
+      "dependencies": {
+        "effect": "^3.21.4",
+      },
+    },
     "packages/local-collectors": {
       "name": "@ai-usage/local-collectors",
       "version": "0.1.0",
@@ -86,6 +95,7 @@
       "name": "@ai-usage/report-data",
       "version": "0.1.0",
       "dependencies": {
+        "@ai-usage/effect-runtime": "workspace:*",
         "@ai-usage/local-collectors": "workspace:*",
         "@ai-usage/report-core": "workspace:*",
         "@ai-usage/usage-store": "workspace:*",
@@ -118,6 +128,8 @@
     "@ai-usage/cli": ["@ai-usage/cli@workspace:apps/cli"],
 
     "@ai-usage/design-system": ["@ai-usage/design-system@workspace:packages/design-system"],
+
+    "@ai-usage/effect-runtime": ["@ai-usage/effect-runtime@workspace:packages/effect-runtime"],
 
     "@ai-usage/local-collectors": ["@ai-usage/local-collectors@workspace:packages/local-collectors"],
 

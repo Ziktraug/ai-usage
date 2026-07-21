@@ -1,5 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import {
+  annotateWideEvent,
+  type BoundaryClassification,
+  classifyExit,
+  type LogValue,
+  runBoundaryEffect,
+  type WideEventService,
+  type WideEventSink,
+  withMeasured,
+} from '@ai-usage/effect-runtime';
+import {
   type CollectionSourceId,
   type SourceControlView,
   type SourcePolicyOverrides,
@@ -11,6 +21,7 @@ import {
   Data,
   Duration,
   Effect,
+  Exit,
   FiberMap,
   Layer,
   Option,
@@ -27,9 +38,11 @@ import {
   finishSourceJobTransition,
   type InternalControlState,
   initialSourceControlState,
+  outcomeAfterRun,
   type PublicationJob,
   requestPublicationTransition,
   type SourceExecutionCompletion,
+  type SourceFinishDecision,
   type SourceJob,
   type StateTransition,
   scheduleSourceTransition,
@@ -245,25 +258,44 @@ const createSourceControlScheduler = (runtime: SourceControlRuntime): SourceCont
   };
 };
 
-const processSourceJob = (
+const sourceRunAnnotations = (
+  completion: SourceExecutionCompletion,
+  changed: boolean,
+): Readonly<Record<string, LogValue>> => {
+  const result = completion._tag === 'success' ? completion.result : undefined;
+  const domainOutcome = outcomeAfterRun(completion, result?.unavailable, result?.warnings.length ?? 0);
+  return {
+    changed,
+    domainOutcome,
+    ...(result === undefined
+      ? {}
+      : { inputCount: result.inputCount, outputCount: result.outputCount, warningsCount: result.warnings.length }),
+  };
+};
+
+const classifySourceRunOutcome = (exit: Exit.Exit<SourceExecutionCompletion, never>): BoundaryClassification => {
+  if (Exit.isFailure(exit)) {
+    return classifyExit(exit);
+  }
+  const completion = exit.value;
+  if (completion._tag === 'timed-out') {
+    return { outcome: 'timed-out' };
+  }
+  if (completion._tag === 'failed') {
+    return { outcome: 'failure' };
+  }
+  const { unavailable, warnings } = completion.result;
+  return { outcome: unavailable || warnings.length > 0 ? 'degraded' : 'success' };
+};
+
+const runSourceJobBody = (
   runtime: SourceControlRuntime,
   scheduler: SourceControlScheduler,
   job: SourceJob,
-): Effect.Effect<void> =>
+  source: ScheduledSource,
+  decision: { readonly rtkTargetGeneration: number; readonly startedAt: number },
+): Effect.Effect<SourceExecutionCompletion, never, WideEventService> =>
   Effect.gen(function* () {
-    const decision = yield* modifyControlState(runtime, (state, startedAt) =>
-      startSourceJobTransition(state, job, startedAt),
-    );
-    if (!decision.run) {
-      if (decision.staleRequeue) {
-        yield* scheduler.enqueueSource(job.sourceId);
-      }
-      return;
-    }
-    const source = runtime.options.sources.get(job.sourceId);
-    if (!source) {
-      return;
-    }
     const controller = new AbortController();
     const completion = yield* source
       .run({
@@ -274,6 +306,7 @@ const processSourceJob = (
         signal: controller.signal,
       })
       .pipe(
+        withMeasured('source.execute'),
         Effect.onInterrupt(() => Effect.sync(() => controller.abort())),
         Effect.timeoutOption(runtime.sourceTimeout),
         Effect.match({
@@ -285,9 +318,10 @@ const processSourceJob = (
     if (completion._tag === 'timed-out') {
       controller.abort();
     }
-    const completed = yield* modifyControlState(runtime, (state, finishedAt) =>
+    const completed: SourceFinishDecision = yield* modifyControlState(runtime, (state, finishedAt) =>
       finishSourceJobTransition(state, job, decision.startedAt, decision.rtkTargetGeneration, completion, finishedAt),
     );
+    yield* annotateWideEvent(sourceRunAnnotations(completion, completed.changed));
     if (completed.needsRtk || completed.needsRtkRerun) {
       yield* scheduler.enqueueSource('rtk.savings');
     }
@@ -302,20 +336,63 @@ const processSourceJob = (
     } else {
       yield* FiberMap.remove(runtime.timers, job.sourceId);
     }
+    return completion;
   });
 
-const processPublicationJob = (runtime: SourceControlRuntime, scheduler: SourceControlScheduler): Effect.Effect<void> =>
+const processSourceJob = (
+  runtime: SourceControlRuntime,
+  scheduler: SourceControlScheduler,
+  job: SourceJob,
+): Effect.Effect<void, never, WideEventSink> =>
   Effect.gen(function* () {
-    const decision = yield* modifyControlState(runtime, startPublicationJobTransition);
-    if (!decision.ready) {
+    const decision = yield* modifyControlState(runtime, (state, startedAt) =>
+      startSourceJobTransition(state, job, startedAt),
+    );
+    if (!decision.run) {
+      if (decision.staleRequeue) {
+        yield* scheduler.enqueueSource(job.sourceId);
+      }
       return;
     }
+    const source = runtime.options.sources.get(job.sourceId);
+    if (!source) {
+      return;
+    }
+    yield* runBoundaryEffect(
+      {
+        boundary: 'source.run',
+        annotations: { sourceId: job.sourceId },
+        classify: classifySourceRunOutcome,
+      },
+      runSourceJobBody(runtime, scheduler, job, source, decision),
+    );
+  });
+
+const classifyPublicationOutcome = (
+  exit: Exit.Exit<ReportPublicationResult | undefined, never>,
+): BoundaryClassification => {
+  if (Exit.isFailure(exit)) {
+    return classifyExit(exit);
+  }
+  return { outcome: exit.value === undefined ? 'failure' : 'success' };
+};
+
+const runPublicationJobBody = (
+  runtime: SourceControlRuntime,
+  scheduler: SourceControlScheduler,
+  decision: { readonly dataTarget: number; readonly requestTarget: number; readonly startedAt: number },
+): Effect.Effect<ReportPublicationResult | undefined, never, WideEventService> =>
+  Effect.gen(function* () {
     const result = yield* runtime.options.publication.publish.pipe(
+      withMeasured('publication.publish'),
       Effect.match({
         onFailure: () => undefined,
         onSuccess: (value) => value,
       }),
     );
+    if (result?.revision !== undefined) {
+      yield* annotateWideEvent({ revision: result.revision });
+    }
     const remainsPending = yield* modifyControlState(runtime, (state, finishedAt) =>
       finishPublicationJobTransition(
         state,
@@ -329,15 +406,31 @@ const processPublicationJob = (runtime: SourceControlRuntime, scheduler: SourceC
     if (remainsPending) {
       yield* scheduler.ensurePublicationQueued;
     }
+    return result;
+  });
+
+const processPublicationJob = (
+  runtime: SourceControlRuntime,
+  scheduler: SourceControlScheduler,
+): Effect.Effect<void, never, WideEventSink> =>
+  Effect.gen(function* () {
+    const decision = yield* modifyControlState(runtime, startPublicationJobTransition);
+    if (!decision.ready) {
+      return;
+    }
+    yield* runBoundaryEffect(
+      { boundary: 'publication', classify: classifyPublicationOutcome },
+      runPublicationJobBody(runtime, scheduler, decision),
+    );
   });
 
 const startSourceControlWorkers = (
   runtime: SourceControlRuntime,
   scheduler: SourceControlScheduler,
   workerCount: number,
-): Effect.Effect<void, never, import('effect').Scope.Scope> =>
+): Effect.Effect<void, never, import('effect').Scope.Scope | WideEventSink> =>
   Effect.gen(function* () {
-    const processJob = (job: ControlPlaneJob): Effect.Effect<void> =>
+    const processJob = (job: ControlPlaneJob): Effect.Effect<void, never, WideEventSink> =>
       job._tag === 'source' ? processSourceJob(runtime, scheduler, job) : processPublicationJob(runtime, scheduler);
     for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
       yield* Effect.forkScoped(Effect.forever(runtime.queue.take.pipe(Effect.flatMap(processJob))));
@@ -430,7 +523,7 @@ const createSourceControlCommands = (
 
 export const createSourceControl = (
   options: SourceControlOptions,
-): Effect.Effect<SourceControlService, never, import('effect').Scope.Scope> =>
+): Effect.Effect<SourceControlService, never, import('effect').Scope.Scope | WideEventSink> =>
   Effect.gen(function* () {
     const validatedOptions = yield* validateSourceControlOptions(options);
     const runtime = yield* createSourceControlRuntime(options, validatedOptions.sourceTimeout);
@@ -448,5 +541,5 @@ export const createSourceControl = (
     };
   });
 
-export const sourceControlLayer = (options: SourceControlOptions): Layer.Layer<SourceControl> =>
+export const sourceControlLayer = (options: SourceControlOptions): Layer.Layer<SourceControl, never, WideEventSink> =>
   Layer.scoped(SourceControl, createSourceControl(options));

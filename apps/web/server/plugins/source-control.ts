@@ -6,12 +6,14 @@ export default definePlugin(async (nitroApp) => {
   await startSourceControlPluginOutsideDemo(async () => {
     const [
       { Effect },
+      { makeSilentWideEventSinkLayer, makeWebWideEventSinkLayer },
       { registerPersistentSourceRuntimeHotReload },
       { publishStoredReportRevisionForSourceControl },
       { createSourceControlE2EFixture },
       { createWebSourceControlRuntime, replaceWebSourceControlRuntime },
     ] = await Promise.all([
       import('effect'),
+      import('@ai-usage/effect-runtime/node'),
       import('../../src/server/persistent-source-runtime'),
       import('../../src/server/report-payload.server'),
       import('../../src/server/source-control-e2e-fixture.server'),
@@ -29,6 +31,7 @@ export default definePlugin(async (nitroApp) => {
         }),
       },
       sources: fixture?.sources,
+      wideEventSinkLayer: fixtureRuntime ? makeSilentWideEventSinkLayer() : makeWebWideEventSinkLayer(),
     });
     let uninstall = () => undefined;
     let shutdown: Promise<void> | undefined;
