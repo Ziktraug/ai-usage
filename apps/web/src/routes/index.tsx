@@ -28,17 +28,13 @@ export const Route = createFileRoute('/')({
   search: {
     middlewares: [stripSearchParams<DashboardSearch>(dashboardSearchDefaults)],
   },
-  ssr: false,
   staleTime: Number.POSITIVE_INFINITY,
-  pendingMs: 0,
-  pendingMinMs: 0,
   loader: async () => await loadReportPayload(),
-  pendingComponent: ReportLoading,
   errorComponent: ReportLoadError,
   component: IndexRoute,
 });
 
-const loadingPanel = css({ display: 'grid', gap: '12px', maxW: '640px' });
+const statusPanel = css({ display: 'grid', gap: '12px', maxW: '640px' });
 
 const publicationRevision = (sourceControl: ReturnType<typeof useSourceControl>): string | undefined => {
   const state = sourceControl.state();
@@ -53,7 +49,7 @@ const runRouteInvalidation = async (invalidate: () => Promise<unknown>): Promise
   }
 };
 
-const ReportShell = (props: { action?: () => void; message?: string; title: string }) => (
+const ReportErrorShell = (props: { action?: () => void; message?: string; title: string }) => (
   <main class={page} data-hydrated="false">
     <div class={shell}>
       <header class={header}>
@@ -62,7 +58,7 @@ const ReportShell = (props: { action?: () => void; message?: string; title: stri
           <h1 class={title}>Usage report</h1>
         </div>
       </header>
-      <section aria-live="polite" class={`${panel} ${loadingPanel}`}>
+      <section aria-live="polite" class={`${panel} ${statusPanel}`}>
         <h2 class={panelTitle}>{props.title}</h2>
         {props.message ? <p class={panelSub}>{props.message}</p> : null}
         {props.action ? (
@@ -74,10 +70,6 @@ const ReportShell = (props: { action?: () => void; message?: string; title: stri
     </div>
   </main>
 );
-
-function ReportLoading() {
-  return <ReportShell title="Loading report data…" />;
-}
 
 function ReportLoadError(props: ErrorComponentProps) {
   const router = useRouter();
@@ -103,7 +95,7 @@ function ReportLoadError(props: ErrorComponentProps) {
   });
 
   return (
-    <ReportShell
+    <ReportErrorShell
       action={retry}
       message={props.error instanceof Error ? props.error.message : 'Report data could not be loaded.'}
       title="Report unavailable"

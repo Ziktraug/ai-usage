@@ -10,7 +10,7 @@ The frontend is not a hosted analytics service. It is a local application whose 
 
 ## Constraints
 
-- Normal report data comes from local histories and must not be rendered into server HTML.
+- Normal report data comes from local histories and is served only through the trusted loopback application; the bounded initial bootstrap may be rendered into its HTML.
 - Demo, browser tests, benchmarks, and screenshots must use deterministic synthetic records only.
 - Live collection may publish while a user is filtering or reading a session.
 - A useful report can contain thousands of sessions, but requests, the DOM, and the client bundle remain bounded.
@@ -20,7 +20,7 @@ The frontend is not a hosted analytics service. It is a local application whose 
 
 The app is built with Solid, TanStack Router, TanStack Query, Panda CSS, and a workspace design-system package.
 
-The report route uses a client-only Router loader with explicit pending and error states. In live mode, that loader returns a bounded support bootstrap for one immutable report revision. A dashboard lifecycle owner then coordinates destination-focused Overview, Breakdown, and paged Session requests against the exact revision. Ordinary finite reads such as Skills and quota history use TanStack Query instead of sharing the report's consistency machinery. [ADR 0001](adr/0001-client-only-report-route-loading.md) and [ADR 0002](adr/0002-immutable-focused-report-revisions.md) record the boundary.
+The report route uses a server-rendered Router loader with an explicit error state. In live mode, that loader returns a bounded support bootstrap for one immutable report revision, so the initial response contains the report frame and support data without a global loading screen. A dashboard lifecycle owner then coordinates destination-focused Overview, Breakdown, and paged Session requests against the exact revision. Ordinary finite reads such as Skills and quota history use TanStack Query instead of sharing the report's consistency machinery. [ADR 0007](adr/0007-server-render-report-bootstrap.md) and [ADR 0002](adr/0002-immutable-focused-report-revisions.md) record the boundary.
 
 Dashboard remains the composition root, while three concrete modules own the complicated state transitions: report destination lifecycle, session selection/navigation, and provider status/history. TimeRange keeps DOM measurement and pointer capture in its component, with keyboard/pointer state transitions in a pure reducer. Shared styles are promoted only when they have a stable semantic name and more than one consumer.
 

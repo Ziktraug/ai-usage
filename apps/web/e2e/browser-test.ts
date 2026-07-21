@@ -14,6 +14,7 @@ const SERVER_FUNCTION_PATH_PREFIX = '/_serverFn/';
 const INTENTIONAL_EVENT_SOURCE_ABORT = 'net::ERR_ABORTED';
 const REPORT_REQUEST_OWNER_HEADER = 'x-ai-usage-request-owner';
 const INTENTIONAL_REPORT_REQUEST_OWNERS = new Set(['focused-report', 'session-query']);
+const ROOT_ROUTE_MATCH_WARNING = 'Warning: Error in route match: __root__';
 
 const requestPath = (request: Request): string => new URL(request.url()).pathname;
 
@@ -59,12 +60,14 @@ export const test = base.extend<{ browserFailureGate: undefined }>({
         }
         const listeners: PageListeners = {
           console: (message) => {
-            if (message.type() !== 'error') {
+            const messageType = message.type();
+            const isRouteMatchWarning = messageType === 'warning' && message.text() === ROOT_ROUTE_MATCH_WARNING;
+            if (messageType !== 'error' && !isRouteMatchWarning) {
               return;
             }
             const location = message.location();
             const source = location.url ? ` at ${location.url}:${location.lineNumber}:${location.columnNumber}` : '';
-            failures.push(`console error${source}: ${message.text()}`);
+            failures.push(`console ${messageType}${source}: ${message.text()}`);
           },
           pageError: (error) => failures.push(`uncaught page error: ${error.message}`),
           requestFailed: (request) => {

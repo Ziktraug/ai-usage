@@ -44,10 +44,6 @@ _Avoid_: raw event, database row
 A named set of collected and enriched report data transported alongside usage rows, such as provider status or Cursor commit attribution. Skill inventory is a separate local control-plane query, not a collected report dataset.
 _Avoid_: facet, metadata blob, app state
 
-**Client-first route**:
-A web route whose SSR response contains shell and routing markup only. Business data is read after hydration with explicit loading, error, empty, and retry behavior.
-_Avoid_: client-only app, embedded payload
-
 **Report payload**:
 The complete JSON-serializable compatibility aggregate used by CLI output and compatible consumers. It contains serialized usage rows, filters, analytics, collected datasets, and optional local history warnings. The served report app reads exact-revision focused results instead of transporting this complete aggregate during refresh.
 _Avoid_: app state, served refresh response

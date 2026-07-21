@@ -19,7 +19,7 @@ The demo binds only to `127.0.0.1` and uses committed deterministic synthetic da
 
 ## Frontend engineering highlights
 
-- A client-only TanStack Router loader keeps report data out of server HTML, while exact-revision destination queries prevent mixed live snapshots ([ADR](docs/adr/0001-client-only-report-route-loading.md)).
+- A server-rendered TanStack Router bootstrap removes the first-load blank state, while exact-revision destination queries prevent mixed live snapshots ([ADR](docs/adr/0007-server-render-report-bootstrap.md)).
 - Continuous, windowed scrolling makes all 5,000 synthetic session IDs reachable exactly once on desktop and mobile with bounded requests and DOM size ([measurements](docs/session-scroll-benchmark.md)).
 - Compact heatmap and Punchcard visuals retain their density while exposing equivalent keyboard, touch, and semantic-table interactions ([accessibility decision](docs/adr/0005-compact-accessible-visualizations.md)).
 - One Playwright stack covers behavior, privacy, production integration, axe, visual snapshots, browser errors, and failed critical requests ([regression decision](docs/adr/0006-one-browser-regression-stack.md)).
@@ -233,7 +233,7 @@ Merged CSV/JSON payloads include row provenance (`source.machineLabel`, `source.
 - `packages/skills` (`@ai-usage/skills`): local skill inventory, validation, projection, and reconciliation workflows
 - `packages/design-system` (`@ai-usage/design-system`): Panda/Solid primitives, report style slots, and generated Panda consumer exports
 - `apps/cli`: terminal CLI, quota/setup commands, portable snapshots, and table/CSV/JSON/payload output adapters
-- `apps/web`: Bun/Nitro source-control host plus the client-first Solid/TanStack report, `/sources`, local Skills, and file-only `/sync` workspaces
+- `apps/web`: Bun/Nitro source-control host plus the server-rendered Solid/TanStack report, `/sources`, local Skills, and file-only `/sync` workspaces
 
 Architecture docs:
 

@@ -91,7 +91,8 @@ test('renders the report timeline on the initial production Overview', async ({ 
   const initialResponse = await page.request.get('/');
   const initialHtml = await initialResponse.text();
   expect(initialResponse.ok()).toBe(true);
-  expect(initialHtml).toContain('Loading report data');
+  expect(initialHtml).toContain('Usage report');
+  expect(initialHtml).not.toContain('Loading report data');
   expect(initialHtml).not.toContain('Implement fixture root');
   expect(initialHtml).not.toContain('codex-root-025');
 

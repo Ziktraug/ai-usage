@@ -17,7 +17,11 @@ const SORT_URL_PATTERN = /sort=/;
 const TOP_SESSION_PATTERN = /Top session/;
 
 test('loads a deterministic report overview', async ({ page }) => {
-  await page.goto('/');
+  const response = await page.goto('/');
+  expect(response).not.toBeNull();
+  const initialHtml = await response?.text();
+  expect(initialHtml).not.toContain('Loading report data…');
+  expect(initialHtml).toContain('Daily activity calendar');
 
   await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Date range' })).toBeVisible();
@@ -26,11 +30,23 @@ test('loads a deterministic report overview', async ({ page }) => {
 });
 
 test('retries a failed report through the Router loading lifecycle', async ({ page }) => {
-  await page.addInitScript(() => {
+  await page.goto('/');
+  await page.evaluate(async () => {
     Reflect.set(globalThis, '__aiUsageE2EDisableReportPublicationRetry', true);
     Reflect.set(globalThis, '__aiUsageE2EReportLoadFailures', 1);
+    const router = Reflect.get(globalThis, '__TSR_ROUTER__');
+    const invalidate = router && typeof router === 'object' ? Reflect.get(router, 'invalidate') : undefined;
+    if (typeof invalidate !== 'function') {
+      throw new Error('TanStack Router test handle is unavailable.');
+    }
+    try {
+      await Reflect.apply(invalidate, router, [
+        { filter: (match: { routeId?: unknown }) => match.routeId === '/', forcePending: true },
+      ]);
+    } catch {
+      // The route error boundary owns the synthetic loader failure.
+    }
   });
-  await page.goto('/');
 
   await expect(page.getByRole('heading', { level: 2, name: 'Report unavailable' })).toBeVisible();
   await expect(page.getByText('Synthetic report load failed for retry coverage.')).toBeVisible();
@@ -156,7 +172,7 @@ test('Codex quota history shows reset and gap-aware ranges on desktop and mobile
 
 test('persists exploration state in the URL', async ({ page }) => {
   await page.goto('/');
-  await expect.poll(() => page.evaluate(() => Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads'))).toBe(1);
+  await expect.poll(() => page.evaluate(() => Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads'))).toBeUndefined();
   await page.keyboard.press('/');
 
   const search = page.getByRole('textbox', {
@@ -166,7 +182,7 @@ test('persists exploration state in the URL', async ({ page }) => {
   await search.press('Enter');
 
   await expect(page).toHaveURL(QUERY_URL_PATTERN);
-  await expect.poll(() => page.evaluate(() => Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads'))).toBe(1);
+  await expect.poll(() => page.evaluate(() => Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads'))).toBeUndefined();
   await page.reload();
   await expect(search).toHaveValue('ai-usage');
 });

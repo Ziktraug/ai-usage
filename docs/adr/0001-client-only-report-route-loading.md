@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0007
+---
+
 # ADR 0001: Load report data in the client Router lifecycle
 
 ## Context
@@ -22,3 +26,5 @@ TanStack Query does not own the report: ordinary finite queries and exact report
 - [Runtime privacy boundary](../../apps/web/src/report-runtime.ts)
 - [Production route coverage](../../apps/web/e2e/production-report.spec.ts)
 - [Retry coverage](../../apps/web/e2e/dashboard.spec.ts)
+
+Superseded by [ADR 0007](0007-server-render-report-bootstrap.md).

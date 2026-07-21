@@ -96,6 +96,41 @@ export interface DashboardProviderStatusProps {
   served: boolean;
 }
 
+interface ProviderQuotaHistoryDialogProps {
+  fixture?: ProviderQuotaHistoryResult;
+  onClose: () => void;
+  source?: ProviderQuotaSource;
+}
+
+const ProviderQuotaHistoryDialog = (props: ProviderQuotaHistoryDialogProps) => {
+  const [range, setRange] = createSignal<ProviderQuotaHistoryRange>('24h');
+  const query = createQuery(() => ({
+    enabled: props.source !== undefined,
+    queryFn: async () => {
+      if (!props.source) {
+        throw new Error('Quota history is unavailable.');
+      }
+      return await loadProviderQuotaHistory(props.source, range());
+    },
+    queryKey: webQueryKeys.providerQuotaHistory(range()),
+  }));
+  const result = (): ProviderQuotaHistoryResult | null => props.fixture ?? query.data ?? null;
+  const error = (): string | null => (query.error instanceof Error ? query.error.message : null);
+
+  return (
+    <Suspense fallback={null}>
+      <ProviderQuotaHistoryPanel
+        error={error()}
+        loading={query.isFetching}
+        onClose={props.onClose}
+        onRangeChange={setRange}
+        range={range()}
+        result={result()}
+      />
+    </Suspense>
+  );
+};
+
 export const DashboardProviderStatus = (props: DashboardProviderStatusProps) => {
   if (props.runtimeMode === 'demo') {
     return null;
@@ -113,20 +148,6 @@ export const DashboardProviderStatus = (props: DashboardProviderStatusProps) => 
     buildProviderStatusViews(props.report, props.rows, providerStatusClock.now()),
   );
   const [quotaHistoryOpen, setQuotaHistoryOpen] = createSignal(false);
-  const [quotaHistoryRange, setQuotaHistoryRange] = createSignal<ProviderQuotaHistoryRange>('24h');
-  const quotaHistoryQuery = createQuery(() => ({
-    enabled: quotaHistoryOpen() && quotaSource !== undefined,
-    queryFn: async () => {
-      if (!quotaSource) {
-        throw new Error('Quota history is unavailable.');
-      }
-      return await loadProviderQuotaHistory(quotaSource, quotaHistoryRange());
-    },
-    queryKey: webQueryKeys.providerQuotaHistory(quotaHistoryRange()),
-  }));
-  const quotaHistory = (): ProviderQuotaHistoryResult | null => quotaFixture ?? quotaHistoryQuery.data ?? null;
-  const quotaHistoryError = (): string | null =>
-    quotaHistoryQuery.error instanceof Error ? quotaHistoryQuery.error.message : null;
   const historyAvailable = (): boolean =>
     providerHistoryAvailable(quotaFixture?.points.length, quotaSource !== undefined);
 
@@ -138,16 +159,11 @@ export const DashboardProviderStatus = (props: DashboardProviderStatusProps) => 
         providers={providerStatusViews()}
       />
       <Show when={quotaHistoryOpen()}>
-        <Suspense fallback={null}>
-          <ProviderQuotaHistoryPanel
-            error={quotaHistoryError()}
-            loading={quotaHistoryQuery.isFetching}
-            onClose={() => setQuotaHistoryOpen(false)}
-            onRangeChange={setQuotaHistoryRange}
-            range={quotaHistoryRange()}
-            result={quotaHistory()}
-          />
-        </Suspense>
+        <ProviderQuotaHistoryDialog
+          {...(quotaFixture === undefined ? {} : { fixture: quotaFixture })}
+          onClose={() => setQuotaHistoryOpen(false)}
+          {...(quotaSource === undefined ? {} : { source: quotaSource })}
+        />
       </Show>
     </>
   );
