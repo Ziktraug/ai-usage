@@ -123,6 +123,21 @@ export const createDashboardReportLifecycle = (options: DashboardReportLifecycle
     });
   };
 
+  const settleFailure = (nextDestination: DashboardServedDestination, message: string): void => {
+    batch(() => {
+      setFocusedTimelineError(message);
+      setFocusedTimelineLoading(false);
+      setAdvancedAnalysisLoading(false);
+      setSessionQueryLoading(false);
+      if (nextDestination.kind === 'overview' && nextDestination.includeAdvanced) {
+        setAdvancedAnalysisFailure({
+          message,
+          scopeFingerprint: advancedScopeFingerprint(nextDestination.query),
+        });
+      }
+    });
+  };
+
   const refreshDestination = async (
     nextDestination: DashboardServedDestination,
     thrownErrorFallback: string,
@@ -137,7 +152,9 @@ export const createDashboardReportLifecycle = (options: DashboardReportLifecycle
       outcome = await servedReportSession.refresh(nextDestination);
     } catch (error) {
       if (!disposed) {
-        options.onError(errorMessage(error, thrownErrorFallback));
+        const message = errorMessage(error, thrownErrorFallback);
+        settleFailure(nextDestination, message);
+        options.onError(message);
       }
       return;
     }
@@ -146,14 +163,8 @@ export const createDashboardReportLifecycle = (options: DashboardReportLifecycle
     }
     if (outcome.status === 'failed-preserving-previous') {
       const message = errorMessage(outcome.error, 'Failed to load report destination');
-      setFocusedTimelineError(message);
+      settleFailure(nextDestination, message);
       options.onError(message);
-      if (nextDestination.kind === 'overview' && nextDestination.includeAdvanced) {
-        setAdvancedAnalysisFailure({
-          message,
-          scopeFingerprint: advancedScopeFingerprint(nextDestination.query),
-        });
-      }
       return;
     }
 
@@ -176,6 +187,19 @@ export const createDashboardReportLifecycle = (options: DashboardReportLifecycle
     await refreshDestination(nextDestination, 'Failed to coordinate report destination');
   };
 
+  const coordinateRefresh = async (
+    nextDestination: DashboardServedDestination,
+    fallbackMessage: string,
+  ): Promise<void> => {
+    try {
+      await refreshDestination(nextDestination, fallbackMessage);
+    } catch (error) {
+      if (!disposed) {
+        options.onError(errorMessage(error, fallbackMessage));
+      }
+    }
+  };
+
   createEffect(() => {
     const isReady = options.ready();
     const nextDestination = destination();
@@ -183,11 +207,7 @@ export const createDashboardReportLifecycle = (options: DashboardReportLifecycle
       return;
     }
     markLoading(nextDestination);
-    refreshDestination(nextDestination, 'Failed to coordinate report destination').catch((error: unknown) => {
-      if (!disposed) {
-        options.onError(errorMessage(error, 'Failed to coordinate report destination'));
-      }
-    });
+    coordinateRefresh(nextDestination, 'Failed to coordinate report destination');
   });
 
   let observedPublicationRevision: string | undefined;
@@ -207,11 +227,7 @@ export const createDashboardReportLifecycle = (options: DashboardReportLifecycle
     if (!(nextDestination && available && !disposed)) {
       return;
     }
-    refreshDestination(nextDestination, 'Published report data could not be loaded').catch((error: unknown) => {
-      if (!disposed) {
-        options.onError(errorMessage(error, 'Published report data could not be loaded'));
-      }
-    });
+    coordinateRefresh(nextDestination, 'Published report data could not be loaded');
   });
 
   const requestTimeline = (nextTimeline: DashboardReportTimeline): void => {

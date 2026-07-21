@@ -399,23 +399,25 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
 
 export const createServedFocusedReportSource = (): FocusedReportSource => {
   const serverApi = () => import('./server/report-payload');
+  const requestHeaders = { 'x-ai-usage-request-owner': 'focused-report' };
   return {
     getBreakdown: async (request) => {
       const { getFocusedReportBreakdown } = await serverApi();
-      return await getFocusedReportBreakdown({ data: request });
+      return await getFocusedReportBreakdown({ data: request, headers: requestHeaders });
     },
     getManifest: async () => {
       const { getReportRevisionManifest } = await serverApi();
-      return await getReportRevisionManifest();
+      return await getReportRevisionManifest({ headers: requestHeaders });
     },
     getOverview: async (request) => {
       const { getFocusedReportOverview } = await serverApi();
-      return await getFocusedReportOverview({ data: request });
+      return await getFocusedReportOverview({ data: request, headers: requestHeaders });
     },
     getSupport: async (request) => {
       const { getFocusedReportSupport } = await serverApi();
       return (await getFocusedReportSupport({
         data: request,
+        headers: requestHeaders,
       })) as unknown as SessionQueryServerResult<FocusedSupportResult>;
     },
   };

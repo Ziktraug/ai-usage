@@ -45,6 +45,14 @@ const publicationRevision = (sourceControl: ReturnType<typeof useSourceControl>)
   return state.publication?.revision ?? state.snapshot?.publication.revision;
 };
 
+const runRouteInvalidation = async (invalidate: () => Promise<unknown>): Promise<void> => {
+  try {
+    await invalidate();
+  } catch (error) {
+    console.error(error);
+  }
+};
+
 const ReportShell = (props: { action?: () => void; message?: string; title: string }) => (
   <main class={page} data-hydrated="false">
     <div class={shell}>
@@ -76,9 +84,7 @@ function ReportLoadError(props: ErrorComponentProps) {
   const sourceControl = useSourceControl();
   let observedPublicationRevision = publicationRevision(sourceControl);
   const retry = (): void => {
-    router.invalidate({ filter: (match) => match.routeId === '/', forcePending: true }).catch((error: unknown) => {
-      console.error(error);
-    });
+    runRouteInvalidation(() => router.invalidate({ filter: (match) => match.routeId === '/', forcePending: true }));
   };
 
   createEffect(() => {
@@ -129,9 +135,7 @@ function IndexRoute() {
     }
     observedPublicationRevision = revision;
     if (data().kind === 'payload') {
-      router.invalidate({ filter: (match) => match.routeId === '/' }).catch((error: unknown) => {
-        console.error(error);
-      });
+      runRouteInvalidation(() => router.invalidate({ filter: (match) => match.routeId === '/' }));
     }
   });
 

@@ -52,13 +52,20 @@ const waitForDemo = async (child: Bun.Subprocess): Promise<void> => {
   throw new Error(`Demo did not start on ${demoUrl} within ${SERVER_START_TIMEOUT_MS}ms.`);
 };
 
+const waitForProcessExit = async (child: Bun.Subprocess): Promise<boolean> => {
+  await child.exited;
+  return true;
+};
+
+const waitForStopTimeout = async (): Promise<boolean> => {
+  await delay(SERVER_STOP_TIMEOUT_MS);
+  return false;
+};
+
 const stopDemo = async (child: Bun.Subprocess): Promise<void> => {
   if (child.exitCode === null) {
     child.kill('SIGTERM');
-    const stopped = await Promise.race([
-      child.exited.then(() => true),
-      delay(SERVER_STOP_TIMEOUT_MS).then(() => false),
-    ]);
+    const stopped = await Promise.race([waitForProcessExit(child), waitForStopTimeout()]);
     if (!stopped && child.exitCode === null) {
       child.kill('SIGKILL');
       await child.exited;

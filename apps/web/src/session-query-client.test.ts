@@ -513,6 +513,46 @@ describe('served session query coordination', () => {
     ]);
   });
 
+  test('releases a failed load-more before publishing its cleanup state', async () => {
+    let armed = false;
+    let pageReads = 0;
+    let retryRequested = false;
+    let retry: Promise<SessionQueryState | undefined> | undefined;
+    let coordinator: ReturnType<typeof createSessionQueryCoordinator>;
+    coordinator = createSessionQueryCoordinator({
+      onStateChange: (state) => {
+        if (armed && state?.nextCursor && !state.loadingMore && !retryRequested) {
+          retryRequested = true;
+          retry = coordinator.loadMore();
+        }
+      },
+      source: sourceWith({
+        getPage: (request) => {
+          pageReads += 1;
+          if (request.cursor === null) {
+            return Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[0]! }], 'sq1.0000000000000000.1'));
+          }
+          if (pageReads === 2) {
+            return Promise.reject(new Error('first page continuation failed'));
+          }
+          return Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[1]! }]));
+        },
+      }),
+    });
+    await coordinator.start(scopeFor());
+    armed = true;
+
+    await expect(coordinator.loadMore()).rejects.toThrow('first page continuation failed');
+    if (!retry) {
+      throw new Error('The cleanup publication did not start a fresh load-more request');
+    }
+    const finalState = await retry;
+
+    expect(pageReads).toBe(3);
+    expect(finalState?.loadingMore).toBe(false);
+    expect(sessionRowsForState(finalState).map((row) => row.rowId)).toEqual([rows[0]!.rowId, rows[1]!.rowId]);
+  });
+
   test('loads bounded campaign children incrementally', async () => {
     const campaignKey = 'machine:codex:root';
     const campaignRow = { ...rows[0]!, campaignKey };
@@ -544,6 +584,128 @@ describe('served session query coordination', () => {
 
     expect(next?.campaignChildren.get(campaignKey)).toMatchObject({ loading: false, nextCursor: null, totalCount: 2 });
     expect(sessionRowsForState(next)[0]?.children?.map((row) => row.rowId)).toEqual([rows[1]!.rowId, rows[2]!.rowId]);
+  });
+
+  test('does not let stale campaign cleanup release a newer generation request', async () => {
+    const campaignKey = 'machine:codex:replacement';
+    const campaignRow = { ...rows[0]!, campaignKey };
+    const staleChildren = deferred<Awaited<ReturnType<SessionQuerySource['getCampaignChildren']>>>();
+    const latestChildren = deferred<Awaited<ReturnType<SessionQuerySource['getCampaignChildren']>>>();
+    let staleRequest: Parameters<SessionQuerySource['getCampaignChildren']>[0] | undefined;
+    let latestRequest: Parameters<SessionQuerySource['getCampaignChildren']>[0] | undefined;
+    let childReads = 0;
+    const coordinator = createSessionQueryCoordinator({
+      source: sourceWith({
+        getCampaignChildren: (request) => {
+          childReads += 1;
+          if (request.query.filters.query === 'stale') {
+            staleRequest = request;
+            return staleChildren.promise;
+          }
+          latestRequest = request;
+          return latestChildren.promise;
+        },
+        getPage: (request) =>
+          Promise.resolve(pageResult(request, [{ campaignKey, kind: 'campaign', row: campaignRow }])),
+      }),
+    });
+
+    await coordinator.start(scopeFor('stale'));
+    const staleLoad = coordinator.loadCampaignChildren(campaignKey);
+    await coordinator.start(scopeFor('latest'));
+    const latestLoad = coordinator.loadCampaignChildren(campaignKey);
+    expect(coordinator.loadCampaignChildren(campaignKey)).toBe(latestLoad);
+
+    staleChildren.resolve({
+      data: {
+        campaignKey,
+        itemCount: 1,
+        items: [rows[1]!],
+        nextCursor: null,
+        requestFingerprint: sessionCampaignChildrenFingerprint(staleRequest!),
+        revision: staleRequest!.query.revision,
+        sessionCount: 1,
+      },
+      ok: true,
+      requestFingerprint: sessionCampaignChildrenFingerprint(staleRequest!),
+      revision: staleRequest!.query.revision,
+    });
+    await staleLoad;
+
+    expect(coordinator.loadCampaignChildren(campaignKey)).toBe(latestLoad);
+    expect(childReads).toBe(2);
+
+    latestChildren.resolve({
+      data: {
+        campaignKey,
+        itemCount: 1,
+        items: [rows[2]!],
+        nextCursor: null,
+        requestFingerprint: sessionCampaignChildrenFingerprint(latestRequest!),
+        revision: latestRequest!.query.revision,
+        sessionCount: 1,
+      },
+      ok: true,
+      requestFingerprint: sessionCampaignChildrenFingerprint(latestRequest!),
+      revision: latestRequest!.query.revision,
+    });
+    const finalState = await latestLoad;
+
+    expect(finalState?.campaignChildren.get(campaignKey)?.items.map((row) => row.rowId)).toEqual([rows[2]!.rowId]);
+  });
+
+  test('releases a failed campaign request before publishing its cleanup state', async () => {
+    const campaignKey = 'machine:codex:retry';
+    const campaignRow = { ...rows[0]!, campaignKey };
+    let armed = false;
+    let childReads = 0;
+    let retryRequested = false;
+    let retry: Promise<SessionQueryState | undefined> | undefined;
+    let coordinator: ReturnType<typeof createSessionQueryCoordinator>;
+    coordinator = createSessionQueryCoordinator({
+      onStateChange: (state) => {
+        const children = state?.campaignChildren.get(campaignKey);
+        if (armed && state && !children?.loading && !retryRequested) {
+          retryRequested = true;
+          retry = coordinator.loadCampaignChildren(campaignKey);
+        }
+      },
+      source: sourceWith({
+        getCampaignChildren: (request) => {
+          childReads += 1;
+          if (childReads === 1) {
+            return Promise.reject(new Error('first campaign request failed'));
+          }
+          return Promise.resolve({
+            data: {
+              campaignKey,
+              itemCount: 1,
+              items: [rows[1]!],
+              nextCursor: null,
+              requestFingerprint: sessionCampaignChildrenFingerprint(request),
+              revision: request.query.revision,
+              sessionCount: 1,
+            },
+            ok: true,
+            requestFingerprint: sessionCampaignChildrenFingerprint(request),
+            revision: request.query.revision,
+          });
+        },
+        getPage: (request) =>
+          Promise.resolve(pageResult(request, [{ campaignKey, kind: 'campaign', row: campaignRow }])),
+      }),
+    });
+    await coordinator.start(scopeFor());
+    armed = true;
+
+    await expect(coordinator.loadCampaignChildren(campaignKey)).rejects.toThrow('first campaign request failed');
+    if (!retry) {
+      throw new Error('The cleanup publication did not start a fresh campaign request');
+    }
+    const finalState = await retry;
+
+    expect(childReads).toBe(2);
+    expect(finalState?.campaignChildren.get(campaignKey)).toMatchObject({ loading: false, nextCursor: null });
   });
 
   test('returns exact-revision neighbors over the full filtered sequence', async () => {
@@ -667,6 +829,62 @@ describe('served session query coordination', () => {
     expect(sessionRowsForState(restarted).map((row) => row.rowId)).toEqual([rows[2]!.rowId]);
   });
 
+  test('clears load-more state when a revision restart fails', async () => {
+    const coordinator = createSessionQueryCoordinator({
+      onRevisionExpired: () => Promise.reject(new Error('focused refresh failed')),
+      source: sourceWith({
+        getPage: (request) => {
+          if (request.cursor === null) {
+            return Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[0]! }], 'sq1.0000000000000000.1'));
+          }
+          return Promise.resolve({
+            error: {
+              message: 'expired',
+              revision: parseReportRevision(request.revision),
+              tag: 'RevisionExpired' as const,
+            },
+            ok: false as const,
+            requestFingerprint: sessionQueryFingerprint(request),
+            revision: parseReportRevision(request.revision),
+          });
+        },
+      }),
+    });
+    await coordinator.start(scopeFor());
+
+    await expect(coordinator.loadMore()).rejects.toThrow('focused refresh failed');
+
+    expect(coordinator.state()?.loadingMore).toBe(false);
+  });
+
+  test('clears campaign loading state when a revision restart fails', async () => {
+    const campaignKey = 'machine:codex:expired';
+    const campaignRow = { ...rows[0]!, campaignKey };
+    const coordinator = createSessionQueryCoordinator({
+      onRevisionExpired: () => Promise.reject(new Error('focused refresh failed')),
+      source: sourceWith({
+        getCampaignChildren: (request) =>
+          Promise.resolve({
+            error: {
+              message: 'expired',
+              revision: parseReportRevision(request.query.revision),
+              tag: 'RevisionExpired' as const,
+            },
+            ok: false as const,
+            requestFingerprint: sessionCampaignChildrenFingerprint(request),
+            revision: parseReportRevision(request.query.revision),
+          }),
+        getPage: (request) =>
+          Promise.resolve(pageResult(request, [{ campaignKey, kind: 'campaign', row: campaignRow }])),
+      }),
+    });
+    await coordinator.start(scopeFor());
+
+    await expect(coordinator.loadCampaignChildren(campaignKey)).rejects.toThrow('focused refresh failed');
+
+    expect(coordinator.state()?.campaignChildren.get(campaignKey)?.loading ?? false).toBe(false);
+  });
+
   test('closes idempotently, aborts an initial page, and prevents late publication', async () => {
     const firstPage = deferred<ReturnType<typeof pageResult>>();
     const published: SessionQueryState[] = [];
@@ -756,10 +974,14 @@ describe('served session query coordination', () => {
     const childLoad = coordinator.loadCampaignChildren(campaignKey);
     const neighborLoad = coordinator.loadNeighbors(rows[0]!.rowId);
     const prepare = coordinator.prepare(scopeFor('prepared'), 'revision-b');
-    const prepareOutcome = prepare.then(
-      () => 'fulfilled' as const,
-      (error: unknown) => (error instanceof DOMException ? error.name : 'rejected'),
-    );
+    const prepareOutcome = (async (): Promise<string> => {
+      try {
+        await prepare;
+        return 'fulfilled';
+      } catch (error) {
+        return error instanceof DOMException ? error.name : 'rejected';
+      }
+    })();
     const publicationCountAtClose = published.length;
     coordinator.close();
 

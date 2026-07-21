@@ -249,6 +249,78 @@ describe('dashboard session selection', () => {
     }
   });
 
+  test('loads neighbors once for each reactive selection', async () => {
+    const loadedRows: string[] = [];
+    const [state] = createSignal<SessionQueryState | undefined>(servedState([firstStandalone, secondStandalone]));
+    const { dispose, selection } = createOwnedSelection({
+      local: localData(),
+      onError: () => undefined,
+      overviewRevision: () => 'overview-revision',
+      served: {
+        active: () => true,
+        coordinator: {
+          loadNeighbors: (rowId) => {
+            loadedRows.push(rowId);
+            return Promise.resolve(neighborResult({ next: null, previous: null, rowId }));
+          },
+          select: () => undefined,
+        },
+        rows: () => [firstStandalone, secondStandalone],
+        state,
+      },
+    });
+
+    try {
+      selection.selectDrawerSession(firstStandalone);
+      await flushPromises();
+      selection.selectDrawerSession(secondStandalone);
+      await flushPromises();
+
+      expect(loadedRows).toEqual([firstStandalone.rowId, secondStandalone.rowId]);
+    } finally {
+      dispose();
+    }
+  });
+
+  test('stops loading served neighbors when Sessions becomes inactive', async () => {
+    const loadedRows: string[] = [];
+    const [active, setActive] = createSignal(true);
+    const [state] = createSignal<SessionQueryState | undefined>(servedState([firstStandalone, secondStandalone]));
+    const { dispose, selection } = createOwnedSelection({
+      local: localData(),
+      onError: () => undefined,
+      overviewRevision: () => 'overview-revision',
+      served: {
+        active,
+        coordinator: {
+          loadNeighbors: (rowId) => {
+            loadedRows.push(rowId);
+            return Promise.resolve(neighborResult({ next: secondStandalone, previous: null, rowId }));
+          },
+          select: () => undefined,
+        },
+        rows: () => [firstStandalone, secondStandalone],
+        state,
+      },
+    });
+
+    try {
+      selection.selectDrawerSession(firstStandalone);
+      await flushPromises();
+      await flushPromises();
+      expect(loadedRows).toEqual([firstStandalone.rowId]);
+
+      setActive(false);
+      selection.inspectOverview(secondStandalone);
+      await flushPromises();
+
+      expect(loadedRows).toEqual([firstStandalone.rowId]);
+      expect(selection.drawerNavigation()).toBeUndefined();
+    } finally {
+      dispose();
+    }
+  });
+
   test('maps drawer keyboard commands while ignoring editable targets', () => {
     const { dispose, selection } = createOwnedSelection({
       local: localData([campaignRoot, firstStandalone, secondStandalone]),

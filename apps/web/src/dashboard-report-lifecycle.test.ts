@@ -24,6 +24,18 @@ const overviewScope = (query = ''): DashboardReportDestinationScope => ({
   },
 });
 
+const sessionsScope = (): DashboardReportDestinationScope => ({
+  kind: 'sessions',
+  query: overviewScope().query,
+  sessions: {
+    campaigns: false,
+    filters: { fields: {}, harness: [], machine: [], query: '' },
+    pageSize: 100,
+    range: { from: null, to: null },
+    sort: [{ desc: true, id: 'date' }],
+  },
+});
+
 interface LifecycleHarness {
   abortCount: () => number;
   calls: DashboardServedDestination[];
@@ -166,6 +178,43 @@ describe('dashboard report lifecycle', () => {
 
     expect(harness.calls.at(-1)).toMatchObject({ includeAdvanced: true, kind: 'overview' });
     expect(harness.lifecycle.advancedAnalysisError()).toBeNull();
+
+    harness.dispose();
+  });
+
+  test('settles Overview loading state when refresh throws', async () => {
+    const harness = createLifecycleHarness(() => Promise.reject(new Error('Overview transport failed')));
+
+    harness.setReady(true);
+    await harness.lifecycle.refresh();
+
+    expect(harness.lifecycle.focusedTimelineLoading()).toBe(false);
+    expect(harness.lifecycle.advancedAnalysisLoading()).toBe(false);
+    expect(harness.lifecycle.sessionQueryLoading()).toBe(false);
+    expect(harness.lifecycle.focusedTimelineError()).toBe('Overview transport failed');
+    expect(harness.lifecycle.advancedAnalysisError()).toBe('Overview transport failed');
+    expect(harness.errors).toContain('Overview transport failed');
+
+    harness.dispose();
+  });
+
+  test('settles Session loading state when the previous destination is preserved', async () => {
+    const harness = createLifecycleHarness(() =>
+      Promise.resolve({
+        error: new Error('Session destination failed'),
+        status: 'failed-preserving-previous',
+      }),
+    );
+
+    harness.setDestinationScope(sessionsScope());
+    harness.setReady(true);
+    await harness.lifecycle.refresh();
+
+    expect(harness.lifecycle.focusedTimelineLoading()).toBe(false);
+    expect(harness.lifecycle.advancedAnalysisLoading()).toBe(false);
+    expect(harness.lifecycle.sessionQueryLoading()).toBe(false);
+    expect(harness.lifecycle.focusedTimelineError()).toBe('Session destination failed');
+    expect(harness.errors).toContain('Session destination failed');
 
     harness.dispose();
   });

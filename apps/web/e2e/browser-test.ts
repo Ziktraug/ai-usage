@@ -12,8 +12,8 @@ const SOURCE_CONTROL_EVENTS_PATH = '/api/source-control';
 const SOURCE_CONTROL_COMMAND_PATH = '/api/source-control/command';
 const SERVER_FUNCTION_PATH_PREFIX = '/_serverFn/';
 const INTENTIONAL_EVENT_SOURCE_ABORT = 'net::ERR_ABORTED';
-const SESSION_QUERY_REQUEST_OWNER_HEADER = 'x-ai-usage-request-owner';
-const SESSION_QUERY_REQUEST_OWNER = 'session-query';
+const REPORT_REQUEST_OWNER_HEADER = 'x-ai-usage-request-owner';
+const INTENTIONAL_REPORT_REQUEST_OWNERS = new Set(['focused-report', 'session-query']);
 
 const requestPath = (request: Request): string => new URL(request.url()).pathname;
 
@@ -34,10 +34,10 @@ const isIntentionalSourceControlCancellation = (request: Request, errorText: str
   requestPath(request) === SOURCE_CONTROL_EVENTS_PATH &&
   errorText === INTENTIONAL_EVENT_SOURCE_ABORT;
 
-const isIntentionalSessionQueryCancellation = (request: Request, errorText: string): boolean =>
+const isIntentionalReportRequestCancellation = (request: Request, errorText: string): boolean =>
   (request.resourceType() === 'fetch' || request.resourceType() === 'xhr') &&
   requestPath(request).startsWith(SERVER_FUNCTION_PATH_PREFIX) &&
-  request.headers()[SESSION_QUERY_REQUEST_OWNER_HEADER] === SESSION_QUERY_REQUEST_OWNER &&
+  INTENTIONAL_REPORT_REQUEST_OWNERS.has(request.headers()[REPORT_REQUEST_OWNER_HEADER] ?? '') &&
   errorText === INTENTIONAL_EVENT_SOURCE_ABORT;
 
 interface PageListeners {
@@ -74,7 +74,7 @@ export const test = base.extend<{ browserFailureGate: undefined }>({
             const errorText = request.failure()?.errorText ?? 'unknown transport failure';
             if (
               isIntentionalSourceControlCancellation(request, errorText) ||
-              isIntentionalSessionQueryCancellation(request, errorText)
+              isIntentionalReportRequestCancellation(request, errorText)
             ) {
               return;
             }

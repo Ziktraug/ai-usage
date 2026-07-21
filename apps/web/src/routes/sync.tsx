@@ -31,13 +31,15 @@ import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
 import type { ManualOperationError, ManualOperationResult } from '../manual-transfer-contract';
 import { formatManualImportSummary, formatTransferBytes } from '../manual-transfer-model';
 import { exportManualMergeBundle } from '../server/sync';
-import { handleSyncUploadRequest } from '../server/sync-upload.server';
 
 export const Route = createFileRoute('/sync')({
   beforeLoad: enforceReportOnlyDemoNavigation,
   server: {
     handlers: {
-      POST: ({ request }) => handleSyncUploadRequest(request),
+      POST: async ({ request }) => {
+        const { handleSyncUploadRequest } = await import('../server/sync-upload.server');
+        return await handleSyncUploadRequest(request);
+      },
     },
   },
   component: SyncRoute,

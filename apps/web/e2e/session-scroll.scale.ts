@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Locator, Page, Response, TestInfo } from '@playwright/test';
 import { expect, test } from './browser-test';
+import { afterAnimationFrame, type SessionSurfaceMode, sessionSurface } from './session-scroll-driver';
 import { SESSION_SCROLL_EXPECTED_COUNT } from './session-scroll-fixture';
 
 const SESSION_ROUTE = '/?campaigns=off&tab=sessions';
@@ -46,7 +47,7 @@ interface ScrollResult {
 interface ViewportCase {
   height: number;
   maximumRenderedItems: number;
-  mode: 'desktop' | 'mobile';
+  mode: SessionSurfaceMode;
   width: number;
 }
 
@@ -156,14 +157,6 @@ const readSurfaceSnapshot = (surface: Locator): Promise<SessionSurfaceSnapshot> 
     };
   });
 
-const afterAnimationFrame = (page: Page): Promise<void> =>
-  page.evaluate(
-    () =>
-      new Promise<void>((resolve) => {
-        requestAnimationFrame(() => resolve());
-      }),
-  );
-
 const moveSurface = async (surface: Locator, target: 'end' | 'start' | number): Promise<void> => {
   await surface.evaluate((element, destination) => {
     if (!(element instanceof HTMLElement)) {
@@ -235,7 +228,7 @@ const inspectAllSessions = async (
     throw new Error('The production Session report must expose its request fingerprint');
   }
 
-  const surface = page.locator(`[data-session-surface="${viewportCase.mode}"]`);
+  const surface = sessionSurface(page, viewportCase.mode);
   await expect(surface).toBeVisible();
   await expect(page.getByRole('button', { name: LOAD_MORE_SESSION_BUTTON_PATTERN })).toHaveCount(0);
   await expect(page.getByText(LOAD_MORE_SESSION_TEXT_PATTERN)).toHaveCount(0);

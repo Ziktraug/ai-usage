@@ -19,6 +19,7 @@ import {
 import type { SortingState } from '@tanstack/solid-table';
 import type { FieldFilters } from './dashboard-search';
 import type { DateBounds } from './date-range';
+import { createSessionQueryOperationOwner, type SessionQueryOperationContext } from './session-query-operation-owner';
 import { reportManifestRequestFingerprint, type WebReportRevisionManifestResult } from './web-report-payload';
 
 export const SERVED_SESSION_PAGE_SIZE = 100;
@@ -194,6 +195,12 @@ export class SessionRevisionExpiredError extends Error {
   }
 }
 
+const START_OPERATION = 'start';
+const PREPARE_OPERATION = 'prepare';
+const LOAD_MORE_OPERATION = 'load-more';
+const NEIGHBOR_OPERATION = 'neighbor';
+const campaignChildrenOperation = (campaignKey: string): string => `campaign:${campaignKey}`;
+
 export const createSessionQueryCoordinator = (options: {
   onStateChange?: (state: SessionQueryState | undefined) => void;
   onRevisionExpired?: () => Promise<void>;
@@ -201,69 +208,11 @@ export const createSessionQueryCoordinator = (options: {
   source: SessionQuerySource;
 }): SessionQueryCoordinator => {
   let currentState: SessionQueryState | undefined;
-  let generation = 0;
   let selectedRowId: string | null = null;
-  let closed = false;
-  let operationId = 0;
-  let preparedRequestId = 0;
-
-  interface Operation {
-    controller: AbortController;
-    generation: number;
-    id: number;
-  }
-
-  interface LoadMoreOperation extends Operation {
-    promise: Promise<SessionQueryState | undefined>;
-  }
-
-  interface CampaignChildrenOperation extends Operation {
-    promise: Promise<SessionQueryState | undefined>;
-  }
-
-  let startOperation: Operation | undefined;
-  let prepareOperation: Operation | undefined;
-  let loadMoreOperation: LoadMoreOperation | undefined;
-  let neighborOperation: Operation | undefined;
-  const campaignChildrenOperations = new Map<string, CampaignChildrenOperation>();
-
-  const createOperation = (targetGeneration = generation): Operation => ({
-    controller: new AbortController(),
-    generation: targetGeneration,
-    id: ++operationId,
-  });
-
-  const abortOperation = (operation: Operation | undefined): void => {
-    operation?.controller.abort();
-  };
-
-  const cancelOperations = (): void => {
-    abortOperation(startOperation);
-    abortOperation(prepareOperation);
-    abortOperation(loadMoreOperation);
-    abortOperation(neighborOperation);
-    for (const operation of campaignChildrenOperations.values()) {
-      abortOperation(operation);
-    }
-    startOperation = undefined;
-    prepareOperation = undefined;
-    loadMoreOperation = undefined;
-    neighborOperation = undefined;
-    campaignChildrenOperations.clear();
-  };
-
-  const beginGeneration = (): number => {
-    generation += 1;
-    preparedRequestId += 1;
-    cancelOperations();
-    return generation;
-  };
-
-  const operationIsCurrent = (operation: Operation): boolean =>
-    !(closed || operation.controller.signal.aborted) && operation.generation === generation;
+  const operationOwner = createSessionQueryOperationOwner();
 
   const publish = (state: SessionQueryState | undefined): void => {
-    if (closed) {
+    if (operationOwner.isClosed()) {
       return;
     }
     currentState = state;
@@ -298,30 +247,31 @@ export const createSessionQueryCoordinator = (options: {
 
   const startGeneration = async (
     scope: SessionQueryScope,
-    operation: Operation,
+    operation: SessionQueryOperationContext,
     retries: number,
+    beforePublish?: () => void,
   ): Promise<SessionQueryState | undefined> => {
-    if (!operationIsCurrent(operation)) {
+    if (!operation.isCurrent()) {
       return currentState;
     }
     let revision = options.revision?.();
     if (revision === undefined) {
       let manifestResult: WebReportRevisionManifestResult;
       try {
-        manifestResult = await options.source.getManifest(operation.controller.signal);
+        manifestResult = await options.source.getManifest(operation.signal);
       } catch (error) {
-        if (!operationIsCurrent(operation)) {
+        if (!operation.isCurrent()) {
           return currentState;
         }
         throw error;
       }
-      if (!operationIsCurrent(operation)) {
+      if (!operation.isCurrent()) {
         return currentState;
       }
       revision = manifestRevision(manifestResult);
     }
     const request = parseSessionQueryRequest({ ...scope, cursor: null, revision });
-    const page = await readPage(request, operation.controller.signal);
+    const page = await readPage(request, operation.signal);
     if (page === 'aborted') {
       return currentState;
     }
@@ -330,12 +280,12 @@ export const createSessionQueryCoordinator = (options: {
         throw new Error('Report revision expired while restarting the session query');
       }
       await options.onRevisionExpired?.();
-      if (!operationIsCurrent(operation)) {
+      if (!operation.isCurrent()) {
         return currentState;
       }
-      return await startGeneration(scope, operation, retries - 1);
+      return await startGeneration(scope, operation, retries - 1, beforePublish);
     }
-    if (!operationIsCurrent(operation)) {
+    if (!operation.isCurrent()) {
       return currentState;
     }
     const state: SessionQueryState = {
@@ -348,23 +298,25 @@ export const createSessionQueryCoordinator = (options: {
       selectedRowId,
       sessionCount: page.sessionCount,
     };
+    beforePublish?.();
     publish(state);
     return state;
   };
 
   const restartCurrentGeneration = async (
     scope: SessionQueryScope,
-    operation: Operation,
+    operation: SessionQueryOperationContext,
+    beforePublish?: () => void,
   ): Promise<SessionQueryState | undefined> => {
     await options.onRevisionExpired?.();
-    if (!operationIsCurrent(operation)) {
+    if (!operation.isCurrent()) {
       return currentState;
     }
-    return await startGeneration(scope, operation, 1);
+    return await startGeneration(scope, operation, 1, beforePublish);
   };
 
   const start = (scope: SessionQueryScope): Promise<SessionQueryState | undefined> => {
-    if (closed) {
+    if (operationOwner.isClosed()) {
       return Promise.resolve(currentState);
     }
     const revision = options.revision?.();
@@ -376,90 +328,83 @@ export const createSessionQueryCoordinator = (options: {
     ) {
       return Promise.resolve(currentState);
     }
-    const operation = createOperation(beginGeneration());
-    startOperation = operation;
-    const promise = startGeneration(scope, operation, 1).catch((error: unknown) => {
-      if (!operationIsCurrent(operation)) {
-        return currentState;
-      }
-      throw error;
-    });
-    return promise.finally(() => {
-      if (startOperation?.id === operation.id) {
-        startOperation = undefined;
-      }
-    });
+    const generation = operationOwner.beginGeneration();
+    return operationOwner.run(
+      START_OPERATION,
+      async (operation) => {
+        try {
+          return await startGeneration(scope, operation, 1);
+        } catch (error) {
+          if (!operation.isCurrent()) {
+            return currentState;
+          }
+          throw error;
+        }
+      },
+      { generation },
+    );
   };
 
   const prepare = async (scope: SessionQueryScope, revision: string): Promise<PreparedSessionQueryState> => {
-    if (closed) {
+    if (operationOwner.isClosed()) {
       throw new DOMException('The session query coordinator is closed', 'AbortError');
     }
-    abortOperation(prepareOperation);
-    const preparedGeneration = generation;
-    preparedRequestId += 1;
-    const requestId = preparedRequestId;
-    const operation = createOperation(preparedGeneration);
-    prepareOperation = operation;
+    const ticket = operationOwner.prepareTicket();
     const request = parseSessionQueryRequest({ ...scope, cursor: null, revision });
-    try {
-      const page = await readPage(request, operation.controller.signal);
-      if (page === 'aborted') {
-        throw operation.controller.signal.reason;
-      }
-      if (page === 'expired') {
-        throw new SessionRevisionExpiredError();
-      }
-      return {
-        generation: preparedGeneration,
-        requestId,
-        state: {
-          campaignChildren: new Map(),
-          itemCount: page.itemCount,
-          items: page.items,
-          loadingMore: false,
-          nextCursor: page.nextCursor,
-          query: request,
-          selectedRowId,
-          sessionCount: page.sessionCount,
-        },
-      };
-    } finally {
-      if (prepareOperation?.id === operation.id) {
-        prepareOperation = undefined;
-      }
-    }
+    return await operationOwner.run(
+      PREPARE_OPERATION,
+      async (operation) => {
+        const page = await readPage(request, operation.signal);
+        if (page === 'aborted') {
+          throw operation.signal.reason;
+        }
+        if (page === 'expired') {
+          throw new SessionRevisionExpiredError();
+        }
+        return {
+          generation: ticket.generation,
+          requestId: ticket.requestId,
+          state: {
+            campaignChildren: new Map(),
+            itemCount: page.itemCount,
+            items: page.items,
+            loadingMore: false,
+            nextCursor: page.nextCursor,
+            query: request,
+            selectedRowId,
+            sessionCount: page.sessionCount,
+          },
+        };
+      },
+      { generation: ticket.generation },
+    );
   };
 
-  const canCommitPrepared = (prepared: PreparedSessionQueryState): boolean =>
-    !closed && prepared.generation === generation && prepared.requestId === preparedRequestId;
+  const canCommitPrepared = (prepared: PreparedSessionQueryState): boolean => operationOwner.canCommit(prepared);
 
   const commitPrepared = (prepared: PreparedSessionQueryState): SessionQueryState | undefined => {
     if (!canCommitPrepared(prepared)) {
       return;
     }
-    beginGeneration();
+    operationOwner.beginGeneration();
     publish(prepared.state);
     return prepared.state;
   };
 
   const runLoadMore = async (
-    operation: LoadMoreOperation,
+    operation: SessionQueryOperationContext,
     state: SessionQueryState,
   ): Promise<SessionQueryState | undefined> => {
     const scope: SessionQueryScope = (({ cursor: _cursor, revision: _revision, ...value }) => value)(state.query);
     publish({ ...state, loadingMore: true });
     try {
       const request = parseSessionQueryRequest({ ...state.query, cursor: state.nextCursor });
-      const page = await readPage(request, operation.controller.signal);
-      if (page === 'aborted' || !operationIsCurrent(operation)) {
+      const page = await readPage(request, operation.signal);
+      if (page === 'aborted' || !operation.isCurrent()) {
         return currentState;
       }
       if (page === 'expired') {
-        if (loadMoreOperation?.id === operation.id) {
-          loadMoreOperation = undefined;
-        }
-        return await restartCurrentGeneration(scope, operation);
+        return await restartCurrentGeneration(scope, operation, operation.release);
       }
       if (currentState?.query.revision !== request.revision) {
         return currentState;
@@ -473,65 +418,63 @@ export const createSessionQueryCoordinator = (options: {
         selectedRowId,
         sessionCount: page.sessionCount,
       };
-      if (loadMoreOperation?.id === operation.id) {
-        loadMoreOperation = undefined;
-      }
+      operation.release();
       publish(nextState);
       return nextState;
     } catch (error) {
-      if (!operationIsCurrent(operation)) {
+      if (!operation.isCurrent()) {
         return currentState;
       }
       throw error;
     } finally {
-      if (loadMoreOperation?.id === operation.id) {
-        loadMoreOperation = undefined;
-        if (currentState?.loadingMore) {
-          publish({ ...currentState, loadingMore: false });
-        }
+      const loadingState = currentState;
+      if (loadingState?.loadingMore && operation.release()) {
+        publish({ ...loadingState, loadingMore: false });
       }
     }
   };
 
   const loadMore = (): Promise<SessionQueryState | undefined> => {
-    if (closed) {
+    if (operationOwner.isClosed()) {
       return Promise.resolve(currentState);
-    }
-    if (loadMoreOperation && operationIsCurrent(loadMoreOperation)) {
-      return loadMoreOperation.promise;
     }
     const state = currentState;
     if (!state?.nextCursor) {
       return Promise.resolve(state);
     }
-    const baseOperation = createOperation();
-    const operation = baseOperation as LoadMoreOperation;
-    operation.promise = runLoadMore(operation, state);
-    loadMoreOperation = operation;
-    return operation.promise;
+    return operationOwner.run(LOAD_MORE_OPERATION, (operation) => runLoadMore(operation, state), {
+      policy: 'coalesce',
+    });
   };
 
   const runLoadCampaignChildren = async (
     campaignKey: string,
-    operation: CampaignChildrenOperation,
+    operation: SessionQueryOperationContext,
     state: SessionQueryState,
     existing: CampaignChildrenPageState | undefined,
   ): Promise<SessionQueryState | undefined> => {
+    const loadingChildren = new Map(state.campaignChildren);
+    loadingChildren.set(campaignKey, {
+      items: existing?.items ?? [],
+      loading: true,
+      nextCursor: existing?.nextCursor ?? null,
+      totalCount: existing?.totalCount ?? 0,
+    });
+    publish({ ...state, campaignChildren: loadingChildren });
     const request: SessionCampaignChildrenRequest = {
       campaignKey,
       query: parseSessionQueryRequest({ ...state.query, cursor: existing?.nextCursor ?? null }),
     };
     try {
-      const sourceResult = await options.source.getCampaignChildren(request, operation.controller.signal);
-      if (!operationIsCurrent(operation) || campaignChildrenOperations.get(campaignKey)?.id !== operation.id) {
+      const sourceResult = await options.source.getCampaignChildren(request, operation.signal);
+      if (!operation.owns()) {
         return currentState;
       }
       const result = parseSessionCampaignChildrenServerResult(sourceResult, request);
       if (!result.ok) {
         if (revisionExpired(result)) {
-          campaignChildrenOperations.delete(campaignKey);
           const { cursor: _cursor, revision: _revision, ...scope } = state.query;
-          return await restartCurrentGeneration(scope, operation);
+          return await restartCurrentGeneration(scope, operation, operation.release);
         }
         throw errorFromResult(result);
       }
@@ -545,64 +488,58 @@ export const createSessionQueryCoordinator = (options: {
         nextCursor: result.data.nextCursor,
         totalCount: result.data.itemCount,
       });
-      campaignChildrenOperations.delete(campaignKey);
       const nextState = { ...currentState, campaignChildren };
+      operation.release();
       publish(nextState);
       return nextState;
     } catch (error) {
-      if (!operationIsCurrent(operation) || campaignChildrenOperations.get(campaignKey)?.id !== operation.id) {
+      if (!operation.owns()) {
         return currentState;
       }
       throw error;
     } finally {
-      if (campaignChildrenOperations.get(campaignKey)?.id === operation.id) {
-        campaignChildrenOperations.delete(campaignKey);
-        if (currentState) {
-          const campaignChildren = new Map(currentState.campaignChildren);
-          const currentChildren = campaignChildren.get(campaignKey);
-          if (currentChildren?.loading) {
-            campaignChildren.set(campaignKey, { ...currentChildren, loading: false });
-            publish({ ...currentState, campaignChildren });
+      const activeState = currentState;
+      if (activeState) {
+        const campaignChildren = new Map(activeState.campaignChildren);
+        const currentChildren = campaignChildren.get(campaignKey);
+        if (currentChildren?.loading && operation.release()) {
+          if (existing) {
+            campaignChildren.set(campaignKey, { ...existing, loading: false });
+          } else {
+            campaignChildren.delete(campaignKey);
           }
+          publish({ ...activeState, campaignChildren });
         }
       }
     }
   };
 
   const loadCampaignChildren = (campaignKey: string): Promise<SessionQueryState | undefined> => {
-    if (closed) {
+    if (operationOwner.isClosed()) {
       return Promise.resolve(currentState);
     }
-    const activeOperation = campaignChildrenOperations.get(campaignKey);
-    if (activeOperation && operationIsCurrent(activeOperation)) {
-      return activeOperation.promise;
-    }
+    const operationKey = campaignChildrenOperation(campaignKey);
     const state = currentState;
     if (!state) {
       return Promise.resolve(undefined);
     }
-    const existing = state.campaignChildren.get(campaignKey);
-    if (existing !== undefined && existing.nextCursor === null) {
-      return Promise.resolve(state);
-    }
-    const loadingChildren = new Map(state.campaignChildren);
-    loadingChildren.set(campaignKey, {
-      items: existing?.items ?? [],
-      loading: true,
-      nextCursor: existing?.nextCursor ?? null,
-      totalCount: existing?.totalCount ?? 0,
-    });
-    publish({ ...state, campaignChildren: loadingChildren });
-    const baseOperation = createOperation();
-    const operation = baseOperation as CampaignChildrenOperation;
-    operation.promise = runLoadCampaignChildren(campaignKey, operation, state, existing);
-    campaignChildrenOperations.set(campaignKey, operation);
-    return operation.promise;
+    return operationOwner.run(
+      operationKey,
+      async (operation) => {
+        const activeState = currentState ?? state;
+        const existing = activeState.campaignChildren.get(campaignKey);
+        if (existing !== undefined && existing.nextCursor === null && !existing.loading) {
+          return activeState;
+        }
+        return await runLoadCampaignChildren(campaignKey, operation, activeState, existing);
+      },
+      { policy: 'coalesce' },
+    );
   };
 
   const loadNeighborsWithRetry = async (
     rowId: string,
-    operation: Operation,
+    operation: SessionQueryOperationContext,
     retryExpired: boolean,
   ): Promise<SessionNeighborResult | undefined> => {
     const state = currentState;
@@ -615,14 +552,14 @@ export const createSessionQueryCoordinator = (options: {
     };
     let sourceResult: Awaited<ReturnType<SessionQuerySource['getNeighbors']>>;
     try {
-      sourceResult = await options.source.getNeighbors(request, operation.controller.signal);
+      sourceResult = await options.source.getNeighbors(request, operation.signal);
     } catch (error) {
-      if (!operationIsCurrent(operation) || neighborOperation?.id !== operation.id) {
+      if (!operation.owns()) {
         return;
       }
       throw error;
     }
-    if (!operationIsCurrent(operation) || neighborOperation?.id !== operation.id) {
+    if (!operation.owns()) {
       return;
     }
     const result = parseSessionNeighborServerResult(sourceResult, request);
@@ -630,7 +567,7 @@ export const createSessionQueryCoordinator = (options: {
       if (revisionExpired(result) && retryExpired) {
         const { cursor: _cursor, revision: _revision, ...scope } = state.query;
         const restarted = await restartCurrentGeneration(scope, operation);
-        if (restarted && operationIsCurrent(operation) && neighborOperation?.id === operation.id) {
+        if (restarted && operation.owns()) {
           return await loadNeighborsWithRetry(rowId, operation, false);
         }
         return;
@@ -638,29 +575,21 @@ export const createSessionQueryCoordinator = (options: {
       throw errorFromResult(result);
     }
     const neighbors = result.data;
-    if (!operationIsCurrent(operation) || neighborOperation?.id !== operation.id) {
+    if (!operation.owns()) {
       return;
     }
     return neighbors;
   };
 
   const loadNeighbors = (rowId: string): Promise<SessionNeighborResult | undefined> => {
-    if (closed) {
+    if (operationOwner.isClosed()) {
       return Promise.resolve(undefined);
     }
-    abortOperation(neighborOperation);
-    const operation = createOperation();
-    neighborOperation = operation;
-    const promise = loadNeighborsWithRetry(rowId, operation, true);
-    return promise.finally(() => {
-      if (neighborOperation?.id === operation.id) {
-        neighborOperation = undefined;
-      }
-    });
+    return operationOwner.run(NEIGHBOR_OPERATION, (operation) => loadNeighborsWithRetry(rowId, operation, true));
   };
 
   const select = (rowId: string | null): void => {
-    if (closed) {
+    if (operationOwner.isClosed()) {
       return;
     }
     selectedRowId = rowId;
@@ -670,13 +599,7 @@ export const createSessionQueryCoordinator = (options: {
   };
 
   const close = (): void => {
-    if (closed) {
-      return;
-    }
-    closed = true;
-    generation += 1;
-    preparedRequestId += 1;
-    cancelOperations();
+    operationOwner.close();
   };
 
   return {

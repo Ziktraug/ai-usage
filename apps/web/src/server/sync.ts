@@ -1,9 +1,9 @@
 import { createServerFn } from '@tanstack/solid-start';
-import { assertOutsideDemo } from './demo-boundary.server';
 
 export const exportManualMergeBundle = createServerFn({ method: 'POST' })
   .validator((input) => input)
   .handler(async () => {
+    const { assertOutsideDemo } = await import('./demo-boundary.server');
     assertOutsideDemo();
     const { exportManualMergeBundleForServer } = await import('./manual-merge.server');
     const result = await exportManualMergeBundleForServer();

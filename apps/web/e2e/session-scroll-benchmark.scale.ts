@@ -1,5 +1,6 @@
 import type { CDPSession, Page, Response } from '@playwright/test';
 import { expect, test } from './browser-test';
+import { afterAnimationFrame, type SessionSurfaceMode, sessionSurface } from './session-scroll-driver';
 import { SESSION_SCROLL_EXPECTED_COUNT, SESSION_SCROLL_FILTER_QUERY } from './session-scroll-fixture';
 
 interface SessionScrollSample {
@@ -21,14 +22,6 @@ const samples: SessionScrollSample[] = [];
 
 test.describe.configure({ mode: 'serial' });
 
-const afterAnimationFrame = (page: Page): Promise<void> =>
-  page.evaluate(
-    () =>
-      new Promise<void>((resolve) => {
-        requestAnimationFrame(() => resolve());
-      }),
-  );
-
 const readHeapBytes = async (client: CDPSession): Promise<number | null> => {
   try {
     await client.send('HeapProfiler.collectGarbage');
@@ -41,9 +34,9 @@ const readHeapBytes = async (client: CDPSession): Promise<number | null> => {
 
 const waitForAllRows = async (
   page: Page,
-  surfaceMode: 'desktop' | 'mobile',
+  surfaceMode: SessionSurfaceMode,
 ): Promise<{ maximumItems: number; maximumNodes: number }> => {
-  const surface = page.locator(`[data-session-surface="${surfaceMode}"]`);
+  const surface = sessionSurface(page, surfaceMode);
   const mobileSentinel = page.locator('[data-session-paging-sentinel="mobile"]');
   let maximumItems = 0;
   let maximumNodes = 0;
@@ -74,11 +67,14 @@ const waitForAllRows = async (
   return { maximumItems, maximumNodes };
 };
 
-const responseBytes = (response: Response): Promise<number> =>
-  response
-    .body()
-    .then((body) => (body.includes('session-query-v1:') ? body.byteLength : 0))
-    .catch(() => 0);
+const responseBytes = async (response: Response): Promise<number> => {
+  try {
+    const body = await response.body();
+    return body.includes('session-query-v1:') ? body.byteLength : 0;
+  } catch {
+    return 0;
+  }
+};
 
 const runSample = async (page: Page): Promise<SessionScrollSample> => {
   const sessionResponseBytes: Promise<number>[] = [];

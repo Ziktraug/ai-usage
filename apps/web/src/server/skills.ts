@@ -1,8 +1,6 @@
 import { parseSkillConfigInput } from '@ai-usage/skills/config';
 import { createServerFn } from '@tanstack/solid-start';
 import { type ProjectRuntimeDirId, projectSkillDirectories } from '../project-skill-directories';
-import { assertOutsideDemo } from './demo-boundary.server';
-import { getServerRuntimeMode } from './runtime-mode.server';
 import { skillNameInputForClient, targetIdInputForClient } from './skill-input-validation';
 import type { SkillsServerAdapter } from './skills-contracts';
 
@@ -14,6 +12,10 @@ const sha256Pattern = /^[a-f0-9]{64}$/;
 const maxSkillMarkdownBytes = 256 * 1024;
 
 const loadSkillsServerAdapter = async (): Promise<SkillsServerAdapter> => {
+  const [{ assertOutsideDemo }, { getServerRuntimeMode }] = await Promise.all([
+    import('./demo-boundary.server'),
+    import('./runtime-mode.server'),
+  ]);
   const runtimeMode = getServerRuntimeMode();
   assertOutsideDemo(runtimeMode);
   if (runtimeMode === 'e2e') {

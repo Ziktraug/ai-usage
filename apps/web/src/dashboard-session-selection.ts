@@ -1,5 +1,5 @@
 import { type SessionNeighborResult, sessionNeighborFingerprint } from '@ai-usage/report-core/session-query';
-import { type Accessor, batch, createEffect, createSignal, onCleanup } from 'solid-js';
+import { type Accessor, batch, createEffect, createSignal, onCleanup, untrack } from 'solid-js';
 import type { CampaignView } from './dashboard-model';
 import {
   type SessionAnalysisTarget,
@@ -136,23 +136,24 @@ export const createDashboardSessionSelection = (
       })
     : undefined;
 
-  const synchronizeNeighbors = (): void => {
+  const synchronizeNeighbors = async (): Promise<void> => {
+    const active = options.served?.active() ?? false;
     const row = selectedRow();
     const state = options.served?.state();
-    if (!(options.served && neighborRequests && state && row)) {
+    if (!(active && options.served && neighborRequests && state && row)) {
       neighborRequests?.close();
       setNeighbors();
       setNeighborsLoading(false);
       return;
     }
-    neighborRequests
-      .load({
+    try {
+      await neighborRequests.load({
         requestKey: sessionNeighborFingerprint({ query: state.query, rowId: row.rowId }),
         rowId: row.rowId,
-      })
-      .catch((error: unknown) => {
-        options.onError(error instanceof Error ? error.message : 'Failed to coordinate session neighbors');
       });
+    } catch (error) {
+      options.onError(error instanceof Error ? error.message : 'Failed to coordinate session neighbors');
+    }
   };
 
   const setSelection = (selection: SessionSelectionValue): void => {
@@ -201,7 +202,11 @@ export const createDashboardSessionSelection = (
   };
 
   onCleanup(() => neighborRequests?.close());
-  createEffect(synchronizeNeighbors);
+  createEffect(() => {
+    options.served?.active();
+    options.served?.state();
+    untrack(synchronizeNeighbors);
+  });
 
   const toggleTableRow = (row: DashboardRow): void => {
     const next = selectedKey() === rowKey(row) ? null : rowKey(row);
