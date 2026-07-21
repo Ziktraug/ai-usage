@@ -60,3 +60,15 @@ git diff --check
 - `bun run typecheck` — PASS (18 turbo tasks)
 - `bun run test` — PASS (turbo packages + tools)
 - `git diff --check` — PASS
+
+## CI follow-up
+
+The production browser test originally used a Playwright pointer action for a
+virtualized session row. The row could be replaced after locator resolution,
+causing the click to land below the table. The test now dispatches the click
+from the currently rendered row, matching the existing virtualized-row test
+pattern.
+
+- Targeted production scenario, repeated three times — PASS
+- Full production browser suite — PASS (7 tests)
+- Full development browser suite — PASS (37 tests)
