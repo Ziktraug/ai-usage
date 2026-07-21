@@ -11,11 +11,12 @@ import {
   title,
   titleBlock,
 } from '@ai-usage/design-system/report';
-import { createFileRoute, stripSearchParams } from '@tanstack/solid-router';
-import { createEffect, createSignal, ErrorBoundary, onMount, Show } from 'solid-js';
+import { createFileRoute, type ErrorComponentProps, stripSearchParams, useRouter } from '@tanstack/solid-router';
+import { createEffect } from 'solid-js';
+import { getBrowserRuntimeMode } from '../browser-runtime-mode';
 import { Dashboard } from '../dashboard';
 import { type DashboardSearch, dashboardSearchDefaultsFor, validateDashboardSearch } from '../dashboard-search';
-import { loadReportPayload, type ReportLoaderData } from '../report-runtime';
+import { loadReportRouteData, type ReportLoaderData } from '../report-runtime';
 import { useSourceControl } from '../source-control-context';
 
 const fallbackSort = 'date' as const;
@@ -27,96 +28,108 @@ export const Route = createFileRoute('/')({
   search: {
     middlewares: [stripSearchParams<DashboardSearch>(dashboardSearchDefaults)],
   },
+  staleTime: Number.POSITIVE_INFINITY,
+  loader: async () => await loadReportRouteData(),
+  errorComponent: ReportLoadError,
   component: IndexRoute,
 });
 
-const loadingPanel = css({ display: 'grid', gap: '12px', maxW: '640px' });
+const statusPanel = css({ display: 'grid', gap: '12px', maxW: '640px' });
 
-const LoadedReport = (props: { data: ReportLoaderData }) =>
-  props.data.kind === 'payload' ? (
-    <Dashboard initialPayload={props.data.payload} />
-  ) : (
-    <Dashboard servedBootstrap={props.data.bootstrap} />
-  );
+const publicationRevision = (sourceControl: ReturnType<typeof useSourceControl>): string | undefined => {
+  const state = sourceControl.state();
+  return state.publication?.revision ?? state.snapshot?.publication.revision;
+};
 
-function IndexRoute() {
+const runRouteInvalidation = async (invalidate: () => Promise<unknown>): Promise<void> => {
+  try {
+    await invalidate();
+  } catch (error) {
+    console.error(error);
+  }
+};
+
+const ReportErrorShell = (props: { action?: () => void; message?: string; title: string }) => (
+  <main class={page} data-hydrated="false">
+    <div class={shell}>
+      <header class={header}>
+        <div class={titleBlock}>
+          <p class={meta}>ai-usage</p>
+          <h1 class={title}>Usage report</h1>
+        </div>
+      </header>
+      <section aria-live="polite" class={`${panel} ${statusPanel}`}>
+        <h2 class={panelTitle}>{props.title}</h2>
+        {props.message ? <p class={panelSub}>{props.message}</p> : null}
+        {props.action ? (
+          <button class={commandButton} onClick={props.action} type="button">
+            Retry
+          </button>
+        ) : null}
+      </section>
+    </div>
+  </main>
+);
+
+function ReportLoadError(props: ErrorComponentProps) {
+  const router = useRouter();
   const sourceControl = useSourceControl();
-  const [data, setData] = createSignal<ReportLoaderData>();
-  const [error, setError] = createSignal<string>();
-  const [loading, setLoading] = createSignal(true);
-
-  const load = async (): Promise<void> => {
-    setLoading(true);
-    setError();
-    try {
-      setData(await loadReportPayload());
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Report data could not be loaded.');
-    } finally {
-      setLoading(false);
-    }
+  let observedPublicationRevision = publicationRevision(sourceControl);
+  const retry = (): void => {
+    runRouteInvalidation(() => router.invalidate({ filter: (match) => match.routeId === '/', forcePending: true }));
   };
 
-  onMount(() => {
-    load().catch(() => undefined);
-  });
-
-  let retriedPublicationRevision: string | undefined;
   createEffect(() => {
-    const sourceState = sourceControl.state();
-    const revision = sourceState.publication?.revision ?? sourceState.snapshot?.publication.revision;
-    const currentData = data();
-    if (!revision || revision === retriedPublicationRevision || loading()) {
+    if (
+      getBrowserRuntimeMode() === 'e2e' &&
+      Reflect.get(globalThis, '__aiUsageE2EDisableReportPublicationRetry') === true
+    ) {
       return;
     }
-    if (retriedPublicationRevision === undefined && currentData) {
-      retriedPublicationRevision = revision;
+    const revision = publicationRevision(sourceControl);
+    if (!revision || revision === observedPublicationRevision) {
       return;
     }
-    retriedPublicationRevision = revision;
-    if (!currentData || currentData.kind === 'payload') {
-      load().catch(() => undefined);
-    }
+    observedPublicationRevision = revision;
+    retry();
   });
 
   return (
-    <ErrorBoundary fallback={(error) => <pre>{error instanceof Error ? error.message : String(error)}</pre>}>
-      <Show
-        fallback={
-          <main class={page} data-hydrated="false">
-            <div class={shell}>
-              <header class={header}>
-                <div class={titleBlock}>
-                  <p class={meta}>ai-usage</p>
-                  <h1 class={title}>Usage report</h1>
-                </div>
-              </header>
-              <section aria-live="polite" class={`${panel} ${loadingPanel}`}>
-                <h2 class={panelTitle}>{loading() ? 'Loading report data…' : 'Report unavailable'}</h2>
-                <Show when={error()}>
-                  {(message) => (
-                    <>
-                      <p class={panelSub}>{message()}</p>
-                      <button
-                        class={commandButton}
-                        onClick={() => {
-                          load().catch(() => undefined);
-                        }}
-                        type="button"
-                      >
-                        Retry
-                      </button>
-                    </>
-                  )}
-                </Show>
-              </section>
-            </div>
-          </main>
-        }
-        when={data()}
-      >
-        {(value) => <LoadedReport data={value()} />}
-      </Show>
-    </ErrorBoundary>
+    <ReportErrorShell
+      action={retry}
+      message={props.error instanceof Error ? props.error.message : 'Report data could not be loaded.'}
+      title="Report unavailable"
+    />
   );
+}
+
+const LoadedReport = (props: { data: ReportLoaderData }) =>
+  props.data.kind === 'payload' ? (
+    <Dashboard initialPayload={props.data.payload} runtimeMode={props.data.mode} />
+  ) : (
+    <Dashboard runtimeMode={props.data.mode} servedBootstrap={props.data.bootstrap} />
+  );
+
+function IndexRoute() {
+  const data = Route.useLoaderData();
+  const router = useRouter();
+  const sourceControl = useSourceControl();
+  let observedPublicationRevision: string | undefined;
+
+  createEffect(() => {
+    const revision = publicationRevision(sourceControl);
+    if (!revision || revision === observedPublicationRevision) {
+      return;
+    }
+    if (observedPublicationRevision === undefined) {
+      observedPublicationRevision = revision;
+      return;
+    }
+    observedPublicationRevision = revision;
+    if (data().kind === 'payload') {
+      runRouteInvalidation(() => router.invalidate({ filter: (match) => match.routeId === '/' }));
+    }
+  });
+
+  return <LoadedReport data={data()} />;
 }

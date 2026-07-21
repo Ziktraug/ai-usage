@@ -109,17 +109,17 @@ export const aiUsagePreset = definePreset({
           ink: dual('#1F1D19', '#EAEBEE'),
           inkHover: dual('#3B3833', '#D3D5DA'),
           muted: dual('#6E6A60', '#8F9199'),
-          faint: dual('#9C978B', '#686A72'),
+          faint: dual('#706A62', '#898B93'),
 
           // Hairlines and control borders.
           line: dual('#E5E2DA', '#292B30'),
-          lineStrong: dual('#D2CEC3', '#383B41'),
+          lineStrong: dual('#89857D', '#74777F'),
 
           // Copper accent — the single brand color.
           // Dark soft/tint are desaturated "warm graphite": the neutral dark
           // surface plus a whisper of copper, so they read as tinted surfaces
           // rather than saturated brown blocks against the cool neutrals.
-          accent: dual('#B14E12', '#E0833C'),
+          accent: dual('#AC4B12', '#E0833C'),
           accentSoft: dual('#F5E6D8', '#332A20'),
           accentTint: dual('#F8F0E5', '#23201B'),
           focusRing: dual('rgba(177, 78, 18, 0.28)', 'rgba(224, 131, 60, 0.35)'),
@@ -138,7 +138,7 @@ export const aiUsagePreset = definePreset({
 
           // Harness badge pairs, recalibrated per scheme.
           harness: {
-            claude: { fg: dual('#B05730', '#E5915F'), bg: dual('#F7E9E0', '#3B2415') },
+            claude: { fg: dual('#A8512C', '#E5915F'), bg: dual('#F7E9E0', '#3B2415') },
             codex: { fg: dual('#0E7569', '#46C3AC'), bg: dual('#E0F0EB', '#11302A') },
             cursor: { fg: dual('#6A47C8', '#AC92F2'), bg: dual('#EDE8FB', '#271F40') },
             opencode: { fg: dual('#2061B4', '#7FA9E8'), bg: dual('#E3EDF9', '#15263C') },
@@ -146,9 +146,9 @@ export const aiUsagePreset = definePreset({
           },
 
           status: {
-            ok: dual('#2E7D5B', '#5BA97E'),
+            ok: dual('#2C7858', '#5BA97E'),
             okSoft: dual('#E4F0EA', '#14302A'),
-            warn: dual('#9A6B10', '#D9AC5A'),
+            warn: dual('#8F620E', '#D9AC5A'),
             warnSoft: dual('#F6ECD5', '#35290F'),
             danger: dual('#B3261E', '#E08A80'),
             dangerSoft: dual('#F6E1DD', '#3A1E1B'),

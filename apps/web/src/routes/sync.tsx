@@ -1,14 +1,18 @@
 import { css } from '@ai-usage/design-system/css';
 import {
+  actionRow,
   field,
+  formField,
   ghostButton,
   header,
   headerActions,
+  headerNavigation,
   headerTop,
   inlineFieldLabel,
   meta,
   navButton,
   page,
+  pageStack,
   panel,
   panelHeader,
   panelSub,
@@ -23,28 +27,18 @@ import { createFileRoute, Link } from '@tanstack/solid-router';
 import { createEffect, createSignal, onCleanup, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
+import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
 import type { ManualOperationError, ManualOperationResult } from '../manual-transfer-contract';
 import { formatManualImportSummary, formatTransferBytes } from '../manual-transfer-model';
 import { exportManualMergeBundle } from '../server/sync';
 
 export const Route = createFileRoute('/sync')({
+  beforeLoad: enforceReportOnlyDemoNavigation,
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const [mergeServer, { handleManualMergeUpload }] = await Promise.all([
-          import('../server/manual-merge.server'),
-          import('../server/manual-merge-upload.server'),
-        ]);
-        return handleManualMergeUpload(request, {
-          previewBundle: (document) => mergeServer.previewManualMergeBundleForServer(document),
-          confirmBundle: (document, expected) =>
-            mergeServer.confirmManualMergeBundleForServer({
-              ...document,
-              expectedDigest: expected.digest,
-              expectedStoreGeneration: expected.generation,
-              expectedStoreStateToken: expected.storeStateToken,
-            }),
-        });
+        const { handleSyncUploadRequest } = await import('../server/sync-upload.server');
+        return await handleSyncUploadRequest(request);
       },
     },
   },
@@ -52,24 +46,6 @@ export const Route = createFileRoute('/sync')({
 });
 
 const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
-
-const pageStack = css({
-  display: 'grid',
-  gap: '16px',
-});
-
-const actionRow = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '8px',
-  alignItems: 'center',
-});
-
-const formField = css({
-  display: 'grid',
-  gap: '4px',
-  minW: 0,
-});
 
 const operationPanel = css({
   display: 'grid',
@@ -501,12 +477,14 @@ function SyncRoute() {
             <h1 class={title}>Sync</h1>
           </div>
           <div class={headerActions}>
-            <Link class={navButton} search={dashboardSearchDefaults} to="/">
-              Dashboard
-            </Link>
-            <Link class={navButton} to="/sources">
-              Sources
-            </Link>
+            <nav aria-label="Primary navigation" class={headerNavigation}>
+              <Link class={navButton} search={dashboardSearchDefaults} to="/">
+                Dashboard
+              </Link>
+              <Link class={navButton} to="/sources">
+                Sources
+              </Link>
+            </nav>
             <ThemeToggle />
           </div>
         </div>

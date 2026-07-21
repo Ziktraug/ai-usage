@@ -38,7 +38,7 @@ import {
 } from '@ai-usage/design-system/report';
 import type { Column, ExpandedState, OnChangeFn, Row, SortingState, VisibilityState } from '@tanstack/solid-table';
 import { createSolidTable, flexRender, getCoreRowModel, getExpandedRowModel } from '@tanstack/solid-table';
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
+import { type Accessor, createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { measureClientPerf } from './client-perf';
 import type { FieldFilterKey } from './dashboard-search';
 import { HighlightedText } from './highlighted-text';
@@ -52,6 +52,7 @@ import {
   sessionColumns,
   visibleSessionColumns,
 } from './session-columns';
+import { calculateSessionRowWindow } from './session-row-window';
 import {
   browserSessionSurfaceModeEnvironment,
   createSessionSurfaceModeController,
@@ -76,8 +77,95 @@ import {
 const track = (..._values: unknown[]) => _values.length;
 const DESKTOP_ROW_HEIGHT = 43;
 const DESKTOP_OVERSCAN_ROWS = 8;
+const DESKTOP_MAX_WINDOW_ROWS = 300;
 const DESKTOP_PAGE_PREFETCH_ROWS = 12;
+const MOBILE_ROW_HEIGHT = 188;
+const MOBILE_OVERSCAN_ROWS = 8;
+const MOBILE_MAX_WINDOW_ROWS = 600;
+const MOBILE_PAGE_PREFETCH_PX = MOBILE_ROW_HEIGHT * 3;
 const MIN_SESSION_TABLE_WIDTH = 720;
+const SESSION_VIEWPORT_FALLBACK_HEIGHT = 520;
+
+interface SessionVirtualRow<RowValue> {
+  index: number;
+  row: RowValue;
+}
+
+interface SessionVirtualWindow<RowValue> {
+  bottomHeight: number;
+  lastIndex: number;
+  rows: SessionVirtualRow<RowValue>[];
+  topHeight: number;
+}
+
+const createSessionVirtualSurface = <Element extends HTMLElement, RowValue>(options: {
+  active: Accessor<boolean>;
+  maxRows: number;
+  metricName: string;
+  overscanRows: number;
+  rowHeight: number;
+  rows: Accessor<RowValue[]>;
+}) => {
+  const [element, setElement] = createSignal<Element>();
+  const [viewport, setViewport] = createSignal({ height: SESSION_VIEWPORT_FALLBACK_HEIGHT, scrollTop: 0 });
+  const updateViewport = (): void => {
+    const currentElement = element();
+    const next = {
+      height: currentElement?.clientHeight || SESSION_VIEWPORT_FALLBACK_HEIGHT,
+      scrollTop: currentElement?.scrollTop ?? 0,
+    };
+    setViewport((current) => (current.height === next.height && current.scrollTop === next.scrollTop ? current : next));
+  };
+  const rowWindow = createMemo<SessionVirtualWindow<RowValue>>(() => {
+    const rows = options.rows();
+    if (!options.active()) {
+      return { bottomHeight: 0, lastIndex: -1, rows: [], topHeight: 0 };
+    }
+    const currentViewport = viewport();
+    const window = calculateSessionRowWindow({
+      maxRows: options.maxRows,
+      overscanRows: options.overscanRows,
+      rowCount: rows.length,
+      rowHeight: options.rowHeight,
+      scrollTop: currentViewport.scrollTop,
+      viewportHeight: currentViewport.height,
+    });
+    return measureClientPerf(
+      options.metricName,
+      () => ({
+        bottomHeight: window.bottomHeight,
+        lastIndex: window.endIndex - 1,
+        rows: rows
+          .slice(window.startIndex, window.endIndex)
+          .map((row, index) => ({ index: window.startIndex + index, row })),
+        topHeight: window.topHeight,
+      }),
+      (result) => ({ rows: result.rows.length }),
+    );
+  });
+
+  createEffect(() => {
+    const currentElement = element();
+    if (!(currentElement && options.active())) {
+      return;
+    }
+    updateViewport();
+    const observer = new ResizeObserver(updateViewport);
+    observer.observe(currentElement);
+    onCleanup(() => observer.disconnect());
+  });
+
+  return {
+    element,
+    reset: (): void => {
+      element()?.scrollTo({ top: 0 });
+      updateViewport();
+    },
+    rowWindow,
+    setElement,
+    updateViewport,
+  };
+};
 
 const MobileSessionSummary = (props: {
   onFieldFilter: (key: FieldFilterKey, value: string) => void;
@@ -95,7 +183,13 @@ const MobileSessionSummary = (props: {
   const durationSemantics = () => sessionDurationSemantics(row().source?.harnessKey, rootSessionOnly());
 
   return (
-    <li aria-posinset={props.position} aria-setsize={props.total} class={sessionSummaryRow}>
+    <li
+      aria-posinset={props.position}
+      aria-setsize={props.total}
+      class={sessionSummaryRow}
+      data-index={props.position - 1}
+      data-session-row-id={row().rowId}
+    >
       <article class={sessionSummaryCard} data-depth={props.tableRow.depth} data-selected={String(props.selected)}>
         <header class={sessionSummaryHeader}>
           <span class={sessionSummaryDate}>{fmtDate(row().activeDate)}</span>
@@ -280,6 +374,7 @@ export const SessionTable = (props: {
   onLoadMoreRows?: () => void;
   onSelect: (row: DashboardRow) => void;
   onSortingChange: OnChangeFn<SortingState>;
+  queryResetKey: string;
   rows: DashboardRow[];
   searchQuery: string;
   selectedKey: string | null;
@@ -360,18 +455,6 @@ export const SessionTable = (props: {
       MIN_SESSION_TABLE_WIDTH,
       visibleColumns().reduce((sum, { columnDef }) => sum + (columnDef.meta?.widthPx ?? 140), 0),
     );
-  const [desktopViewportEl, setDesktopViewportEl] = createSignal<HTMLDivElement>();
-  const [tableViewport, setTableViewport] = createSignal({ height: 520, scrollTop: 0 });
-  const updateTableViewport = (): void => {
-    const element = desktopViewportEl();
-    const next = {
-      height: element?.clientHeight || 520,
-      scrollTop: element?.scrollTop ?? 0,
-    };
-    setTableViewport((current) =>
-      current.height === next.height && current.scrollTop === next.scrollTop ? current : next,
-    );
-  };
   const rowModelRows = createMemo(() => {
     track(tableData(), props.sorting);
     return measureClientPerf(
@@ -380,53 +463,33 @@ export const SessionTable = (props: {
       (rows) => ({ rows: rows.length }),
     );
   });
-  const mobileRows = createMemo(() => (surfaceMode() === 'mobile' ? rowModelRows() : []));
   const visibleColumnCount = () => visibleColumns().length;
-  const virtualRows = createMemo(() => {
-    const rows = rowModelRows();
-    if (surfaceMode() !== 'desktop') {
-      return {
-        bottomHeight: 0,
-        lastIndex: -1,
-        rows: [],
-        topHeight: 0,
-      };
-    }
-    const viewport = tableViewport();
-    const start = Math.max(0, Math.floor(viewport.scrollTop / DESKTOP_ROW_HEIGHT) - DESKTOP_OVERSCAN_ROWS);
-    const end = Math.min(
-      rows.length,
-      start + Math.ceil(viewport.height / DESKTOP_ROW_HEIGHT) + DESKTOP_OVERSCAN_ROWS * 2,
-    );
-    return measureClientPerf(
-      'aiUsage.web.client.compute.sessionTableVirtualRows',
-      () => ({
-        bottomHeight: Math.max(0, rows.length - end) * DESKTOP_ROW_HEIGHT,
-        lastIndex: end - 1,
-        rows: rows.slice(start, end).map((row, index) => ({ index: start + index, row })),
-        topHeight: start * DESKTOP_ROW_HEIGHT,
-      }),
-      (result) => ({ rows: result.rows.length }),
-    );
+  const desktopVirtualSurface = createSessionVirtualSurface<HTMLDivElement, Row<DashboardRow>>({
+    active: () => surfaceMode() === 'desktop',
+    maxRows: DESKTOP_MAX_WINDOW_ROWS,
+    metricName: 'aiUsage.web.client.compute.sessionTableVirtualRows',
+    overscanRows: DESKTOP_OVERSCAN_ROWS,
+    rowHeight: DESKTOP_ROW_HEIGHT,
+    rows: rowModelRows,
   });
+  const virtualRows = desktopVirtualSurface.rowWindow;
   const shouldLoadNextDesktopPage = createMemo(() => {
     if (surfaceMode() !== 'desktop' || !props.hasMoreRows || props.loadingMoreRows || !props.onLoadMoreRows) {
       return false;
     }
     return virtualRows().lastIndex >= rowModelRows().length - DESKTOP_PAGE_PREFETCH_ROWS;
   });
-  const [mobilePagingEl, setMobilePagingEl] = createSignal<HTMLDivElement>();
-  const [mobilePagingActivated, setMobilePagingActivated] = createSignal(false);
-  const [mobileViewportRevision, setMobileViewportRevision] = createSignal(0);
-  const mobilePagingNearViewport = createMemo(() => {
-    track(mobileViewportRevision(), rowModelRows().length);
-    const element = mobilePagingEl();
-    return (
-      surfaceMode() === 'mobile' &&
-      element !== undefined &&
-      element.getBoundingClientRect().top <= window.innerHeight + 240
-    );
+  const [mobilePagingEl, setMobilePagingEl] = createSignal<HTMLLIElement>();
+  const [mobilePagingNearEnd, setMobilePagingNearEnd] = createSignal(false);
+  const mobileVirtualSurface = createSessionVirtualSurface<HTMLUListElement, Row<DashboardRow>>({
+    active: () => surfaceMode() === 'mobile',
+    maxRows: MOBILE_MAX_WINDOW_ROWS,
+    metricName: 'aiUsage.web.client.compute.sessionSummaryVirtualRows',
+    overscanRows: MOBILE_OVERSCAN_ROWS,
+    rowHeight: MOBILE_ROW_HEIGHT,
+    rows: rowModelRows,
   });
+  const mobileVirtualRows = mobileVirtualSurface.rowWindow;
 
   onMount(() => {
     const controller = createSessionSurfaceModeController(browserSessionSurfaceModeEnvironment());
@@ -434,30 +497,26 @@ export const SessionTable = (props: {
   });
 
   createEffect(() => {
-    const element = mobilePagingEl();
-    if (!(element && surfaceMode() === 'mobile')) {
+    const root = mobileVirtualSurface.element();
+    const sentinel = mobilePagingEl();
+    if (!(root && sentinel && surfaceMode() === 'mobile')) {
+      setMobilePagingNearEnd(false);
       return;
     }
-    const updateMobileViewport = (): void => {
-      setMobileViewportRevision((revision) => revision + 1);
-    };
-    window.addEventListener('resize', updateMobileViewport);
-    window.addEventListener('scroll', updateMobileViewport, { passive: true });
-    updateMobileViewport();
-    onCleanup(() => {
-      window.removeEventListener('resize', updateMobileViewport);
-      window.removeEventListener('scroll', updateMobileViewport);
-    });
+    const observer = new IntersectionObserver(
+      (entries) => setMobilePagingNearEnd(entries.some((entry) => entry.isIntersecting)),
+      {
+        root,
+        rootMargin: `0px 0px ${MOBILE_PAGE_PREFETCH_PX}px 0px`,
+      },
+    );
+    observer.observe(sentinel);
+    onCleanup(() => observer.disconnect());
   });
 
   createEffect(() => {
-    if (mobilePagingNearViewport()) {
-      setMobilePagingActivated(true);
-    }
-  });
-
-  createEffect(() => {
-    if (surfaceMode() === 'mobile' && mobilePagingActivated() && props.hasMoreRows && !props.loadingMoreRows) {
+    if (surfaceMode() === 'mobile' && mobilePagingNearEnd() && props.hasMoreRows && !props.loadingMoreRows) {
+      setMobilePagingNearEnd(false);
       props.onLoadMoreRows?.();
     }
   });
@@ -468,34 +527,16 @@ export const SessionTable = (props: {
     }
   });
 
+  let previousQueryResetKey: string | undefined;
   createEffect(() => {
-    const element = desktopViewportEl();
-    if (!(surfaceMode() === 'desktop' && element)) {
+    const nextQueryResetKey = props.queryResetKey;
+    if (nextQueryResetKey === previousQueryResetKey) {
       return;
     }
-    updateTableViewport();
-    const observer = new ResizeObserver(updateTableViewport);
-    observer.observe(element);
-    onCleanup(() => observer.disconnect());
-  });
-
-  let previousRowKeys: string[] = [];
-  createEffect(() => {
-    track(props.sorting);
-    const nextRowKeys = tableData().map(rowKey);
-    const existingRowsUnchanged =
-      previousRowKeys.length > 0 &&
-      previousRowKeys.length <= nextRowKeys.length &&
-      previousRowKeys.every((key, index) => nextRowKeys[index] === key);
-    previousRowKeys = nextRowKeys;
-    if (existingRowsUnchanged) {
-      return;
-    }
-    setMobilePagingActivated(false);
-    if (surfaceMode() === 'desktop') {
-      desktopViewportEl()?.scrollTo({ top: 0 });
-      updateTableViewport();
-    }
+    previousQueryResetKey = nextQueryResetKey;
+    setMobilePagingNearEnd(false);
+    desktopVirtualSurface.reset();
+    mobileVirtualSurface.reset();
   });
 
   const expandedCampaignLoads = createMemo(() => {
@@ -615,8 +656,8 @@ export const SessionTable = (props: {
         <div
           class={cx(tableWrap, surfaceMode() === 'desktop' ? desktopTableSurface : undefined)}
           data-session-surface={surfaceMode()}
-          onScroll={updateTableViewport}
-          ref={setDesktopViewportEl}
+          onScroll={desktopVirtualSurface.updateViewport}
+          ref={desktopVirtualSurface.setElement}
         >
           <table class={cx(table, sessionsTable)} style={{ 'min-width': `${tableMinWidth()}px` }}>
             <thead>
@@ -651,6 +692,7 @@ export const SessionTable = (props: {
                       data-depth={tableRow.depth}
                       data-index={virtualRow.index}
                       data-selected={String(props.selectedKey === tableRow.id)}
+                      data-session-row-id={tableRow.original.rowId}
                       onClick={() => props.onSelect(tableRow.original)}
                       onKeyDown={(event) => {
                         if (event.target !== event.currentTarget) {
@@ -692,28 +734,48 @@ export const SessionTable = (props: {
           aria-label="Session summaries"
           class={cx(mobileSummarySurface, sessionSummaryViewport)}
           data-session-surface="mobile"
+          onScroll={mobileVirtualSurface.updateViewport}
+          ref={mobileVirtualSurface.setElement}
         >
-          <For each={mobileRows()}>
-            {(tableRow, index) => (
+          <Show when={mobileVirtualRows().topHeight > 0}>
+            <li
+              aria-hidden="true"
+              data-virtual-spacer="top"
+              role="presentation"
+              style={{ height: `${mobileVirtualRows().topHeight}px` }}
+            />
+          </Show>
+          <For each={mobileVirtualRows().rows}>
+            {(virtualRow) => (
               <MobileSessionSummary
                 onFieldFilter={props.onFieldFilter}
                 onHarnessFilter={props.onHarnessFilter}
                 onSelect={props.onSelect}
-                position={index() + 1}
+                position={virtualRow.index + 1}
                 searchQuery={props.searchQuery}
-                selected={props.selectedKey === tableRow.id}
-                tableRow={tableRow}
-                total={props.totalRows ?? rowModelRows().length}
+                selected={props.selectedKey === virtualRow.row.id}
+                tableRow={virtualRow.row}
+                total={Math.max(props.totalRows ?? rowModelRows().length, rowModelRows().length)}
               />
             )}
           </For>
+          <Show when={mobileVirtualRows().bottomHeight > 0}>
+            <li
+              aria-hidden="true"
+              data-virtual-spacer="bottom"
+              role="presentation"
+              style={{ height: `${mobileVirtualRows().bottomHeight}px` }}
+            />
+          </Show>
+          <li
+            aria-hidden="true"
+            class={sessionSummaryLoadMore}
+            data-session-paging-sentinel="mobile"
+            ref={setMobilePagingEl}
+            role="presentation"
+            style={{ height: '1px', padding: '0' }}
+          />
         </ul>
-        <div
-          aria-hidden="true"
-          class={sessionSummaryLoadMore}
-          data-session-paging-sentinel="mobile"
-          ref={setMobilePagingEl}
-        />
       </Show>
       <For each={expandedCampaignLoads()}>
         {(campaign) => (

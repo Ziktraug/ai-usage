@@ -677,26 +677,18 @@ export const TimeRangeControl = (props: {
   const clearHover = () => dispatchControl({ type: 'clearHover' });
 
   const inspectTimelineWithKeyboard = (event: KeyboardEvent & { currentTarget: HTMLButtonElement }) => {
-    const chart = data();
-    if (!chart) {
+    if (!data()) {
       return;
     }
-    const range = visibleBucketRange();
-    const current = hoveredBucket() ?? range.from;
-    let next: number | null = null;
-    if (event.key === 'ArrowLeft') {
-      next = Math.max(range.from, current - 1);
-    } else if (event.key === 'ArrowRight') {
-      next = Math.min(range.to, current + 1);
-    } else if (event.key === 'Home') {
-      next = range.from;
-    } else if (event.key === 'End') {
-      next = range.to;
-    }
-    if (next === null) {
+    if (
+      !dispatchControl({
+        key: event.key,
+        type: 'timelineKeyboardMove',
+        visibleRange: visibleBucketRange(),
+      })
+    ) {
       return;
     }
-    dispatchControl({ type: 'hoverChanged', bucketIndex: next, key: null });
     event.preventDefault();
   };
 

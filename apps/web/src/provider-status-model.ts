@@ -37,6 +37,9 @@ export interface ProviderStatusView {
   worstUsedPercent: number | null;
 }
 
+export const providerHistoryAvailable = (fixturePointCount: number | undefined, sourceAvailable: boolean): boolean =>
+  fixturePointCount === undefined ? sourceAvailable : fixturePointCount > 0;
+
 const KNOWN_PROVIDER_KEYS = new Set(['claude', 'codex', 'cursor', 'gemini', 'opencode', 'rtk']);
 
 const providerKeyFromRow = (row: DashboardRow) => providerStatusKeyForUsage(row.harness, row.provider);

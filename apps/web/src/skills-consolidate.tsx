@@ -4,26 +4,15 @@ import {
   meta,
   muted,
   panel,
+  skillsDisclosurePanel,
+  skillsDisclosureSummary,
+  skillsPathText,
   statusPill,
   statusPillWarn,
   strongCell,
 } from '@ai-usage/design-system/report';
 import { For, Show } from 'solid-js';
 import { count, type UnmanagedGroup } from './skills-page-model';
-
-const fold = css({
-  p: '0',
-  overflow: 'hidden',
-});
-
-const summaryRow = css({
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: '12px',
-  p: '14px 16px',
-  cursor: 'pointer',
-});
 
 const body = css({
   display: 'grid',
@@ -58,16 +47,9 @@ const entryRow = css({
   alignItems: 'center',
 });
 
-const monoPath = css({
-  fontFamily: 'mono',
-  fontSize: '12px',
-  color: 'muted',
-  overflowWrap: 'anywhere',
-});
-
 export const SkillsConsolidate = (props: { groups: readonly UnmanagedGroup[]; total: number }) => (
-  <details class={cx(panel, fold)}>
-    <summary class={summaryRow}>
+  <details class={cx(panel, skillsDisclosurePanel)}>
+    <summary class={skillsDisclosureSummary}>
       <span class={strongCell}>To consolidate</span>
       <span class={cx(statusPill, statusPillWarn)}>{count(props.total, 'entry', 'entries')}</span>
     </summary>
@@ -82,7 +64,7 @@ export const SkillsConsolidate = (props: { groups: readonly UnmanagedGroup[]; to
             <details class={groupRow}>
               <summary class={groupSummary}>
                 <HarnessBadge name={group.targetLabel} />
-                <span class={monoPath}>{group.targetPath}</span>
+                <span class={skillsPathText}>{group.targetPath}</span>
                 <span class={meta}>
                   {count(group.copies, 'copy', 'copies')} · {count(group.symlinks, 'symlink')}
                 </span>
@@ -94,7 +76,7 @@ export const SkillsConsolidate = (props: { groups: readonly UnmanagedGroup[]; to
                       <span class={cx(statusPill, statusPillWarn)}>
                         {entry.state === 'unmanaged-copy' ? 'copy' : 'symlink'}
                       </span>
-                      <span class={monoPath} title={entry.path}>
+                      <span class={skillsPathText} title={entry.path}>
                         {entry.name}
                       </span>
                     </div>

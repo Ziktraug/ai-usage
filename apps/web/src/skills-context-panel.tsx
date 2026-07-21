@@ -7,6 +7,9 @@ import {
   panelHeader,
   panelSub,
   panelTitle,
+  pendingButton,
+  skillsDiagnosticRow,
+  skillsReconcilePlanList,
   statusPill,
   statusPillDanger,
   statusPillInfo,
@@ -86,13 +89,6 @@ const metricStaticRow = css({
   fontSize: '13px',
 });
 
-const issueRow = css({
-  display: 'grid',
-  gap: '3px',
-  p: '8px 0',
-  borderTop: '1px solid token(colors.line)',
-});
-
 const inspectorSection = css({
   display: 'grid',
   gap: '8px',
@@ -158,26 +154,6 @@ const diagnosticHeading = css({
   flexWrap: 'wrap',
   gap: '6px',
   alignItems: 'center',
-});
-
-const planList = css({
-  display: 'grid',
-  gap: '3px',
-  m: 0,
-  pl: '18px',
-  fontFamily: 'mono',
-  fontSize: '12px',
-  color: 'ink',
-  overflowWrap: 'anywhere',
-});
-
-const busyButton = css({
-  '&[data-pending=true]': {
-    _after: {
-      content: '" ..."',
-      color: 'accent',
-    },
-  },
 });
 
 export const SkillsContextPanel = (props: {
@@ -367,7 +343,7 @@ const ScopeActions = (props: {
       </button>
       <button
         aria-busy={props.pendingOperation === 'preview-reconcile' ? 'true' : undefined}
-        class={cx(ghostButton, busyButton)}
+        class={cx(ghostButton, pendingButton)}
         data-pending={props.pendingOperation === 'preview-reconcile' ? 'true' : undefined}
         disabled={props.pendingOperation !== null || !props.canReconcile}
         onClick={props.onPreviewReconcile}
@@ -384,19 +360,19 @@ const ScopeActions = (props: {
             <div class={meta}>{plan().apply.length} changes ready</div>
           </div>
           <Show when={plan().apply.length > 0}>
-            <ul class={planList}>
+            <ul class={skillsReconcilePlanList}>
               <For each={plan().apply}>{(action) => <li>{action}</li>}</For>
             </ul>
           </Show>
           <Show when={plan().skipped.length > 0}>
-            <ul class={planList}>
+            <ul class={skillsReconcilePlanList}>
               <For each={plan().skipped}>{(action) => <li>{action}</li>}</For>
             </ul>
           </Show>
           <div class={actionGrid}>
             <button
               aria-busy={props.pendingOperation === 'reconcile-all' ? 'true' : undefined}
-              class={cx(commandButton, busyButton)}
+              class={cx(commandButton, pendingButton)}
               data-pending={props.pendingOperation === 'reconcile-all' ? 'true' : undefined}
               disabled={props.pendingOperation !== null || plan().apply.length === 0}
               onClick={props.onApplyReconcile}
@@ -486,7 +462,7 @@ const GlobalSkillInspector = (props: {
         <Show fallback={<p class={meta}>No validation diagnostics.</p>} when={diagnostics().length > 0}>
           <For each={diagnostics()}>
             {(diagnostic) => (
-              <div class={issueRow}>
+              <div class={skillsDiagnosticRow}>
                 <div class={diagnosticHeading}>
                   <span class={cx(statusPill, diagnosticTones[diagnostic.severity])}>{diagnostic.severity}</span>
                   <span class={strongCell}>{diagnostic.code}</span>
@@ -597,7 +573,7 @@ const GlobalSkillInspector = (props: {
         <div class={actionGrid}>
           <button
             aria-busy={props.pendingOperation === `toggle:${props.skill.name}` ? 'true' : undefined}
-            class={cx(ghostButton, busyButton)}
+            class={cx(ghostButton, pendingButton)}
             data-pending={props.pendingOperation === `toggle:${props.skill.name}` ? 'true' : undefined}
             disabled={props.pendingOperation !== null}
             onClick={() => props.toggleSkill(props.skill.name, !props.skill.enabled)}
@@ -607,7 +583,7 @@ const GlobalSkillInspector = (props: {
           </button>
           <button
             aria-busy={props.pendingOperation === installationOperation() ? 'true' : undefined}
-            class={cx(commandButton, busyButton)}
+            class={cx(commandButton, pendingButton)}
             data-pending={props.pendingOperation === installationOperation() ? 'true' : undefined}
             disabled={props.pendingOperation !== null || installationAction().mode === 'none'}
             onClick={runInstallationAction}
@@ -642,7 +618,7 @@ const ProjectActions = (props: {
     </div>
     <For each={props.diagnostics}>
       {(diagnostic) => (
-        <div class={issueRow}>
+        <div class={skillsDiagnosticRow}>
           <span class={cx(statusPill, diagnostic.severity === 'error' ? statusPillDanger : statusPillWarn)}>
             {diagnostic.severity}
           </span>

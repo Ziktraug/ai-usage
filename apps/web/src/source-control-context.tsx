@@ -1,8 +1,9 @@
 import type { SourceControlCommand } from '@ai-usage/report-core/source-control';
 import { useQueryClient } from '@tanstack/solid-query';
 import { createContext, createEffect, createSignal, type JSX, onCleanup, onMount, useContext } from 'solid-js';
+import { getBrowserRuntimeMode } from './browser-runtime-mode';
 import {
-  createSourceControlClient,
+  createSourceControlClientForMode,
   type SourceControlClient,
   type SourceControlClientState,
 } from './source-control-client';
@@ -17,7 +18,7 @@ const SourceControlContext = createContext<SourceControlContextValue>();
 
 export const SourceControlProvider = (props: { children: JSX.Element; client?: SourceControlClient }) => {
   const queryClient = useQueryClient();
-  const client = props.client ?? createSourceControlClient();
+  const client = props.client ?? createSourceControlClientForMode(getBrowserRuntimeMode());
   const [state, setState] = createSignal(client.getState());
   const unsubscribe = client.subscribe(setState);
 

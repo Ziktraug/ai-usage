@@ -20,6 +20,7 @@
     "solid-js": "^1.9.13"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
     "@pandacss/dev": "^1.11.3",
     "@playwright/test": "1.61.1",
     "nitro": "^3.0.260610-beta",
@@ -34,7 +35,9 @@
     "check": "bun --filter @ai-usage/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit",
     "test": "bun --filter @ai-usage/design-system build && bun test src",
     "test:e2e": "playwright test",
-    "test:e2e-production": "bun --bun playwright test --config playwright.production.config.ts e2e/production-report.spec.ts",
+    "test:e2e-demo": "playwright test --config playwright.demo.config.ts",
+    "test:e2e-production": "bun --bun playwright test --config playwright.production.config.ts e2e/production-report.spec.ts && bun --bun playwright test --config playwright.session-scroll.config.ts e2e/session-scroll.scale.ts",
+    "benchmark:session-scroll": "bun --bun playwright test --config playwright.session-scroll.config.ts e2e/session-scroll-benchmark.scale.ts",
     "preview": "vite preview --host 127.0.0.1",
     "start": "bun start.mjs",
     "lint": "biome check .",

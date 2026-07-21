@@ -8,6 +8,8 @@ import {
   panelHeaderRow,
   panelSub,
   panelTitle,
+  skillsDiagnosticRow,
+  skillsPathText,
   statusPill,
   statusPillDanger,
   statusPillInfo,
@@ -109,13 +111,6 @@ const exposureRow = css({
   borderTop: '1px solid token(colors.line)',
 });
 
-const pathText = css({
-  fontFamily: 'mono',
-  fontSize: '12px',
-  color: 'muted',
-  overflowWrap: 'anywhere',
-});
-
 const editorBlock = css({
   maxH: '460px',
   overflow: 'auto',
@@ -173,13 +168,6 @@ const chipButton = css({
     outline: '2px solid token(colors.accent)',
     outlineOffset: '2px',
   },
-});
-
-const diagnosticRow = css({
-  display: 'grid',
-  gap: '3px',
-  p: '8px 0',
-  borderTop: '1px solid token(colors.line)',
 });
 
 const compactList = css({
@@ -531,7 +519,7 @@ const ProjectScopeDetail = (props: {
     <div class={detailStack}>
       <div class={hero}>
         <h2 class={skillTitle}>{title()}</h2>
-        <For each={props.sourcePaths}>{(sourcePath) => <p class={pathText}>{sourcePath}</p>}</For>
+        <For each={props.sourcePaths}>{(sourcePath) => <p class={skillsPathText}>{sourcePath}</p>}</For>
       </div>
       <Show fallback={<p class={meta}>Loading project skills...</p>} when={!props.loading}>
         <div class={metadataGrid}>
@@ -624,11 +612,11 @@ const ProjectSkillDetail = (props: {
                 <div class={cx(strongCell, exposureStateClass(observation.placement))}>
                   {projectPlacementLabel(observation.placement)}
                 </div>
-                <div class={pathText} title={observation.skillMdPath}>
+                <div class={skillsPathText} title={observation.skillMdPath}>
                   {observation.skillMdPath}
                 </div>
                 <Show when={props.row.observations.length > 1}>
-                  <div class={pathText}>{observation.projectPath}</div>
+                  <div class={skillsPathText}>{observation.projectPath}</div>
                 </Show>
               </div>
             </div>
@@ -793,7 +781,7 @@ const Diagnostics = (props: { diagnostics: readonly SkillDiagnostic[] }) => (
       </div>
       <For each={props.diagnostics}>
         {(diagnostic) => (
-          <div class={diagnosticRow}>
+          <div class={skillsDiagnosticRow}>
             <span class={cx(statusPill, diagnosticPillClass(diagnostic))}>{diagnostic.severity}</span>
             <div class={strongCell}>{diagnostic.code}</div>
             <div class={meta}>{diagnostic.message}</div>

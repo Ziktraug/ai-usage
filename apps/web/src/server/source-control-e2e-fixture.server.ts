@@ -9,6 +9,7 @@ import { Duration, Effect } from 'effect';
 
 const policyChangePollInterval = Duration.millis(10);
 const pausingStateObservationWindow = Duration.millis(250);
+const sourceCadenceOutsideTestRun = Duration.hours(24);
 
 export interface SourceControlE2EFixture {
   policyStore: SourcePolicyStore;
@@ -36,7 +37,7 @@ export const createSourceControlE2EFixture = (): SourceControlE2EFixture => {
   for (const definition of collectionSourceDefinitions) {
     let runCount = 0;
     sources.set(definition.id, {
-      cadence: Duration.millis(definition.cadenceMs),
+      cadence: sourceCadenceOutsideTestRun,
       detect: Effect.succeed({ availability: 'detected', reason: { code: 'none' } }),
       id: definition.id,
       run: () =>

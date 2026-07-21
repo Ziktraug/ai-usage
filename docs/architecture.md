@@ -12,7 +12,7 @@
    source-control snapshots/events/command responses, and request-fingerprinted
    report-query contracts.
 5. `@ai-usage/usage-merge` performs explicit merge-bundle export/import; successful mutations request publication without invoking collectors.
-6. The CLI uses timer-free report-data one-shot application ports and complete compatibility payloads. The served app loads exact-revision focused projections after hydration and receives operational snapshots plus explicit publication events through one SSE connection.
+6. The CLI uses timer-free report-data one-shot application ports and complete compatibility payloads. The served app server-renders a bounded exact-revision support bootstrap, loads destination-focused projections after hydration, and receives operational snapshots plus explicit publication events through one SSE connection.
 
 Codex quota history is owned by the `codex.usage-limits` source: app-server collection and rollout backfill emit provider-neutral observation batches that are imported transactionally. One Effect-native single flight owns query, collection, import/checkpoint, attempt recording, and final projection in the scheduler fiber. Joiners await its Deferred without owning cancellation; owner interruption aborts the provider child and prevents any later durable phase from starting. A synchronous SQLite transaction that has begun remains atomic, and timeout cannot become observable until it returns. The web app reads stored history through a dedicated bounded query only when the drawer is open. History is not part of `UsageReportPayload`, report revisions, snapshots, or merge bundles.
 
@@ -140,7 +140,7 @@ Owns web runtime and UI:
 - one server exact-revision lifecycle and bounded Bun artifact runners for focused query kinds;
 - shared focused/Session request validation, projection, cursor, budget, and fingerprint contracts;
 - file-based merge bundle import/export on `/sync`, including bounded local upload handling;
-- client-first Report and Skills data reads with shell-only SSR;
+- a server-rendered Report bootstrap and client-first Skills reads;
 - dashboard, `/sources`, overview, table schema, and UI model modules;
 - bounded local Claude/Codex/OpenCode detail adapters in one unified drawer;
 - an explicit session-VCS resolver separated from collection and publication.
@@ -149,7 +149,7 @@ Client-visible modules must not import `*.server.*`. Shared calculations should 
 
 The browser-side served report session owns revision acquisition, canonical destination fingerprints, supersession, one expiry retry, atomic commit, and same-revision no-op detection. Server publication uses a canonical semantic capture fingerprint that excludes only observation time; unchanged forced captures retain the last good immutable revision and skip Session rematerialization.
 
-After hydration, the served root requests a bounded support bootstrap. Filter options,
+During SSR, the served root requests a bounded support bootstrap. Filter options,
 provider representative rows, provider-status records, and warnings are
 admitted under the shared 512 KiB budget; the result carries exact omission
 counts and the UI identifies the summary as truncated when anything is left

@@ -4,18 +4,24 @@ import {
   bannerError,
   bannerOk,
   commandButton,
+  formField,
   ghostButton,
   header,
   headerActions,
+  headerNavigation,
   headerTop,
   meta,
   navButton,
   page,
+  pageStack,
   panel,
   panelHeader,
   panelSub,
   panelTitle,
+  pendingButton,
   shell,
+  skillsDisclosurePanel,
+  skillsDisclosureSummary,
   strongCell,
   title,
   titleBlock,
@@ -27,6 +33,7 @@ import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
 import { isServer } from 'solid-js/web';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
+import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
 import { DiscardConfirmationDialog } from '../discard-confirmation-dialog';
 import type { getKnownSkillProjectPaths, getSkillManagementSnapshot, KnownSkillProjectPath } from '../server/skills';
 import {
@@ -42,46 +49,15 @@ import { type ProjectInventoriesResult, type SkillMarkdownDraftGuard, SkillsWork
 import { loadSkillsInitialData, webQueryKeys } from '../web-query-options';
 
 export const Route = createFileRoute('/skills')({
+  beforeLoad: enforceReportOnlyDemoNavigation,
   component: SkillsRoute,
 });
 
 const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
 
-const pageStack = css({
-  display: 'grid',
-  gap: '16px',
-});
-
-// The shared headerTop does not wrap; with this page's long title the fixed
-// header actions overflow the 390px viewport, so allow wrapping here.
-const headerWrap = css({
-  flexWrap: 'wrap',
-});
-
-const headerActionsWrap = css({
-  flexWrap: 'wrap',
-  flexShrink: 1,
-  justifyContent: 'flex-end',
-  maxW: '100%',
-});
-
 const stack = css({
   display: 'grid',
   gap: '12px',
-});
-
-const fold = css({
-  p: '0',
-  overflow: 'hidden',
-});
-
-const foldSummary = css({
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  gap: '12px',
-  p: '14px 16px',
-  cursor: 'pointer',
 });
 
 const foldBody = css({
@@ -125,12 +101,6 @@ const configStack = css({
   gap: '16px',
 });
 
-const formField = css({
-  display: 'grid',
-  gap: '4px',
-  minW: 0,
-});
-
 const labelText = css({
   color: 'muted',
   fontSize: '12px',
@@ -152,15 +122,6 @@ const inputClass = css({
   bg: 'surface',
   color: 'ink',
   fontSize: '13px',
-});
-
-const busyButton = css({
-  '&[data-pending=true]': {
-    _after: {
-      content: '" ..."',
-      color: 'accent',
-    },
-  },
 });
 
 const projectPathList = css({
@@ -350,7 +311,7 @@ function SkillsClientRoute() {
     >
       <div class={shell}>
         <header class={header}>
-          <div class={cx(headerTop, headerWrap)}>
+          <div class={headerTop}>
             <div class={titleBlock}>
               <h1 class={title}>Skill management</h1>
               <div class={meta}>
@@ -363,7 +324,7 @@ function SkillsClientRoute() {
                 </Show>
               </div>
             </div>
-            <div class={cx(headerActions, headerActionsWrap)}>
+            <div class={headerActions}>
               <button
                 aria-busy={pendingOperation() === 'refresh-skills' ? 'true' : undefined}
                 class={navButton}
@@ -376,15 +337,17 @@ function SkillsClientRoute() {
               >
                 Refresh skills
               </button>
-              <Link class={navButton} search={dashboardSearchDefaults} to="/">
-                Report
-              </Link>
-              <Link class={navButton} to="/sync">
-                Sync
-              </Link>
-              <Link class={navButton} to="/sources">
-                Sources
-              </Link>
+              <nav aria-label="Primary navigation" class={headerNavigation}>
+                <Link class={navButton} search={dashboardSearchDefaults} to="/">
+                  Report
+                </Link>
+                <Link class={navButton} to="/sync">
+                  Sync
+                </Link>
+                <Link class={navButton} to="/sources">
+                  Sources
+                </Link>
+              </nav>
               <ThemeToggle />
             </div>
           </div>
@@ -571,8 +534,8 @@ function DisabledFold(props: {
   toggleSkill: (skillName: string, enabled: boolean) => void;
 }) {
   return (
-    <details class={cx(panel, fold)}>
-      <summary class={foldSummary}>
+    <details class={cx(panel, skillsDisclosurePanel)}>
+      <summary class={skillsDisclosureSummary}>
         <span class={strongCell}>Disabled</span>
         <span class={meta}>{props.disabledRows.length}</span>
       </summary>
@@ -587,7 +550,7 @@ function DisabledFold(props: {
                 </div>
                 <button
                   aria-busy={props.pendingOperation === `toggle:${row.name}` ? 'true' : undefined}
-                  class={cx(ghostButton, busyButton)}
+                  class={cx(ghostButton, pendingButton)}
                   data-pending={props.pendingOperation === `toggle:${row.name}` ? 'true' : undefined}
                   disabled={props.pendingOperation !== null}
                   onClick={() => props.toggleSkill(row.name, true)}
@@ -621,8 +584,8 @@ function ConfigurationFold(props: {
   sourceRepoPath: string;
 }) {
   return (
-    <details class={cx(panel, fold)}>
-      <summary class={foldSummary}>
+    <details class={cx(panel, skillsDisclosurePanel)}>
+      <summary class={skillsDisclosureSummary}>
         <span class={strongCell}>Configuration & runtimes</span>
         <span class={meta}>
           {props.snapshot.targets.filter((target) => target.enabled).length} enabled / {props.snapshot.targets.length}{' '}
@@ -702,7 +665,7 @@ function ConfigPanel(props: {
           </label>
           <button
             aria-busy={props.pendingOperation === 'save-config' ? 'true' : undefined}
-            class={cx(commandButton, busyButton)}
+            class={cx(commandButton, pendingButton)}
             data-pending={props.pendingOperation === 'save-config' ? 'true' : undefined}
             disabled={props.pendingOperation !== null}
             onClick={submitSourceRepoPath}
@@ -773,7 +736,7 @@ function ProjectPathsPanel(props: {
         />
         <button
           aria-busy={props.pendingOperation?.startsWith('project:add:') ? 'true' : undefined}
-          class={cx(ghostButton, busyButton)}
+          class={cx(ghostButton, pendingButton)}
           data-pending={props.pendingOperation?.startsWith('project:add:') ? 'true' : undefined}
           disabled={props.pendingOperation !== null || props.projectPathDraft.trim().length === 0}
           onClick={props.addProjectPath}
@@ -793,7 +756,7 @@ function ProjectPathsPanel(props: {
                 <span class={meta}>{projectPath}</span>
                 <button
                   aria-busy={props.pendingOperation === `project:remove:${projectPath}` ? 'true' : undefined}
-                  class={cx(ghostButton, busyButton)}
+                  class={cx(ghostButton, pendingButton)}
                   data-pending={props.pendingOperation === `project:remove:${projectPath}` ? 'true' : undefined}
                   disabled={props.pendingOperation !== null}
                   onClick={() => props.removeProjectPath(projectPath)}
@@ -859,7 +822,7 @@ function TargetsPanel(props: {
             <Show when={target.missing}>
               <button
                 aria-busy={props.pendingOperation === `target:${target.id}` ? 'true' : undefined}
-                class={cx(ghostButton, busyButton)}
+                class={cx(ghostButton, pendingButton)}
                 data-pending={props.pendingOperation === `target:${target.id}` ? 'true' : undefined}
                 disabled={props.pendingOperation !== null}
                 onClick={() => props.createTargetDirectory(target.id)}

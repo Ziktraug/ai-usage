@@ -13,6 +13,7 @@ export * from './components/panel';
 export * from './components/popover';
 export * from './components/refresh';
 export * from './components/segment-bar';
+export * from './components/skills';
 export * from './components/status';
 export * from './components/table';
 export * from './components/tabs';

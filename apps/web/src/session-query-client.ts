@@ -19,6 +19,11 @@ import {
 import type { SortingState } from '@tanstack/solid-table';
 import type { FieldFilters } from './dashboard-search';
 import type { DateBounds } from './date-range';
+import {
+  createSessionQueryOperationOwner,
+  type SessionQueryOperationContext,
+  type SessionQueryPreparedTicket,
+} from './session-query-operation-owner';
 import { reportManifestRequestFingerprint, type WebReportRevisionManifestResult } from './web-report-payload';
 
 export const SERVED_SESSION_PAGE_SIZE = 100;
@@ -39,10 +44,14 @@ export interface DashboardSessionQueryInput {
 export interface SessionQuerySource {
   getCampaignChildren: (
     request: SessionCampaignChildrenRequest,
+    signal: AbortSignal,
   ) => Promise<SessionQueryServerResult<SessionCampaignChildrenResult>>;
-  getManifest: () => Promise<WebReportRevisionManifestResult>;
-  getNeighbors: (request: SessionNeighborRequest) => Promise<SessionQueryServerResult<SessionNeighborResult>>;
-  getPage: (request: SessionQueryRequest) => Promise<SessionQueryServerResult<SessionPageResult>>;
+  getManifest: (signal: AbortSignal) => Promise<WebReportRevisionManifestResult>;
+  getNeighbors: (
+    request: SessionNeighborRequest,
+    signal: AbortSignal,
+  ) => Promise<SessionQueryServerResult<SessionNeighborResult>>;
+  getPage: (request: SessionQueryRequest, signal: AbortSignal) => Promise<SessionQueryServerResult<SessionPageResult>>;
 }
 
 export interface CampaignChildrenPageState {
@@ -64,8 +73,8 @@ export interface SessionQueryState {
 }
 
 export interface PreparedSessionQueryState {
-  generation: number;
   state: SessionQueryState;
+  ticket: SessionQueryPreparedTicket;
 }
 
 const canonicalDate = (value: Date | null): string | null => {
@@ -139,23 +148,27 @@ const rowsForState = (state: SessionQueryState): SessionPresentationRow[] =>
 export const sessionRowsForState = (state: SessionQueryState | undefined): SessionPresentationRow[] =>
   state === undefined ? [] : rowsForState(state);
 
-const appendUniqueRows = (
-  current: SessionPresentationRow[],
-  incoming: SessionPresentationRow[],
-): SessionPresentationRow[] => {
-  const ids = new Set(current.map((row) => row.rowId));
-  return [...current, ...incoming.filter((row) => !ids.has(row.rowId))];
+const appendUniqueBy = <Item>(current: Item[], incoming: Item[], keyFor: (item: Item) => string): Item[] => {
+  const keys = new Set(current.map(keyFor));
+  const combined = [...current];
+  for (const item of incoming) {
+    const key = keyFor(item);
+    if (!keys.has(key)) {
+      keys.add(key);
+      combined.push(item);
+    }
+  }
+  return combined;
 };
 
-const appendUniqueItems = (current: SessionPageItem[], incoming: SessionPageItem[]): SessionPageItem[] => {
-  const itemKey = (item: SessionPageItem): string =>
-    item.kind === 'campaign' ? `campaign:${item.campaignKey}` : `session:${item.row.rowId}`;
-  const keys = new Set(current.map(itemKey));
-  return [...current, ...incoming.filter((item) => !keys.has(itemKey(item)))];
-};
+const presentationRowKey = (row: SessionPresentationRow): string => row.rowId;
+
+const pageItemKey = (item: SessionPageItem): string =>
+  item.kind === 'campaign' ? `campaign:${item.campaignKey}` : `session:${item.row.rowId}`;
 
 export interface SessionQueryCoordinator {
   canCommitPrepared: (prepared: PreparedSessionQueryState) => boolean;
+  close: () => void;
   commitPrepared: (prepared: PreparedSessionQueryState) => SessionQueryState | undefined;
   loadCampaignChildren: (campaignKey: string) => Promise<SessionQueryState | undefined>;
   loadMore: () => Promise<SessionQueryState | undefined>;
@@ -173,6 +186,12 @@ export class SessionRevisionExpiredError extends Error {
   }
 }
 
+const START_OPERATION = 'start';
+const PREPARE_OPERATION = 'prepare';
+const LOAD_MORE_OPERATION = 'load-more';
+const NEIGHBOR_OPERATION = 'neighbor';
+const campaignChildrenOperation = (campaignKey: string): string => `campaign:${campaignKey}`;
+
 export const createSessionQueryCoordinator = (options: {
   onStateChange?: (state: SessionQueryState | undefined) => void;
   onRevisionExpired?: () => Promise<void>;
@@ -180,19 +199,34 @@ export const createSessionQueryCoordinator = (options: {
   source: SessionQuerySource;
 }): SessionQueryCoordinator => {
   let currentState: SessionQueryState | undefined;
-  let generation = 0;
   let selectedRowId: string | null = null;
-  let loadMoreInFlight = false;
-  let neighborSequence = 0;
-  const childrenSequences = new Map<string, number>();
+  const operationOwner = createSessionQueryOperationOwner();
 
   const publish = (state: SessionQueryState | undefined): void => {
+    if (operationOwner.isClosed()) {
+      return;
+    }
     currentState = state;
     options.onStateChange?.(state);
   };
 
-  const readPage = async (request: SessionQueryRequest): Promise<SessionPageResult | 'expired'> => {
-    const result = parseSessionPageServerResult(await options.source.getPage(request), request);
+  const readPage = async (
+    request: SessionQueryRequest,
+    signal: AbortSignal,
+  ): Promise<SessionPageResult | 'aborted' | 'expired'> => {
+    let sourceResult: Awaited<ReturnType<SessionQuerySource['getPage']>>;
+    try {
+      sourceResult = await options.source.getPage(request, signal);
+    } catch (error) {
+      if (signal.aborted) {
+        return 'aborted';
+      }
+      throw error;
+    }
+    if (signal.aborted) {
+      return 'aborted';
+    }
+    const result = parseSessionPageServerResult(sourceResult, request);
     if (!result.ok) {
       if (revisionExpired(result)) {
         return 'expired';
@@ -204,24 +238,46 @@ export const createSessionQueryCoordinator = (options: {
 
   const startGeneration = async (
     scope: SessionQueryScope,
-    targetGeneration: number,
+    operation: SessionQueryOperationContext,
     retries: number,
+    beforePublish?: () => void,
   ): Promise<SessionQueryState | undefined> => {
-    const revision = options.revision?.() ?? manifestRevision(await options.source.getManifest());
+    if (!operation.isCurrent()) {
+      return currentState;
+    }
+    let revision = options.revision?.();
+    if (revision === undefined) {
+      let manifestResult: WebReportRevisionManifestResult;
+      try {
+        manifestResult = await options.source.getManifest(operation.signal);
+      } catch (error) {
+        if (!operation.isCurrent()) {
+          return currentState;
+        }
+        throw error;
+      }
+      if (!operation.isCurrent()) {
+        return currentState;
+      }
+      revision = manifestRevision(manifestResult);
+    }
     const request = parseSessionQueryRequest({ ...scope, cursor: null, revision });
-    const page = await readPage(request);
+    const page = await readPage(request, operation.signal);
+    if (page === 'aborted') {
+      return currentState;
+    }
     if (page === 'expired') {
       if (retries <= 0) {
         throw new Error('Report revision expired while restarting the session query');
       }
       await options.onRevisionExpired?.();
-      if (generation !== targetGeneration) {
+      if (!operation.isCurrent()) {
         return currentState;
       }
-      return await startGeneration(scope, targetGeneration, retries - 1);
+      return await startGeneration(scope, operation, retries - 1, beforePublish);
     }
-    if (generation !== targetGeneration) {
-      return;
+    if (!operation.isCurrent()) {
+      return currentState;
     }
     const state: SessionQueryState = {
       campaignChildren: new Map(),
@@ -233,22 +289,27 @@ export const createSessionQueryCoordinator = (options: {
       selectedRowId,
       sessionCount: page.sessionCount,
     };
+    beforePublish?.();
     publish(state);
     return state;
   };
 
   const restartCurrentGeneration = async (
     scope: SessionQueryScope,
-    targetGeneration: number,
+    operation: SessionQueryOperationContext,
+    beforePublish?: () => void,
   ): Promise<SessionQueryState | undefined> => {
     await options.onRevisionExpired?.();
-    if (generation !== targetGeneration) {
+    if (!operation.isCurrent()) {
       return currentState;
     }
-    return await startGeneration(scope, targetGeneration, 1);
+    return await startGeneration(scope, operation, 1, beforePublish);
   };
 
-  const start = async (scope: SessionQueryScope): Promise<SessionQueryState | undefined> => {
+  const start = (scope: SessionQueryScope): Promise<SessionQueryState | undefined> => {
+    if (operationOwner.isClosed()) {
+      return Promise.resolve(currentState);
+    }
     const revision = options.revision?.();
     if (
       revision !== undefined &&
@@ -256,103 +317,132 @@ export const createSessionQueryCoordinator = (options: {
       sessionQueryFingerprint(currentState.query) ===
         sessionQueryFingerprint(parseSessionQueryRequest({ ...scope, cursor: null, revision }))
     ) {
-      return currentState;
+      return Promise.resolve(currentState);
     }
-    generation += 1;
-    const targetGeneration = generation;
-    loadMoreInFlight = false;
-    neighborSequence += 1;
-    childrenSequences.clear();
-    return await startGeneration(scope, targetGeneration, 1);
+    const generation = operationOwner.beginGeneration();
+    return operationOwner.run(
+      START_OPERATION,
+      async (operation) => {
+        try {
+          return await startGeneration(scope, operation, 1);
+        } catch (error) {
+          if (!operation.isCurrent()) {
+            return currentState;
+          }
+          throw error;
+        }
+      },
+      { generation },
+    );
   };
 
   const prepare = async (scope: SessionQueryScope, revision: string): Promise<PreparedSessionQueryState> => {
-    const preparedGeneration = generation;
-    const request = parseSessionQueryRequest({ ...scope, cursor: null, revision });
-    const page = await readPage(request);
-    if (page === 'expired') {
-      throw new SessionRevisionExpiredError();
+    if (operationOwner.isClosed()) {
+      throw new DOMException('The session query coordinator is closed', 'AbortError');
     }
-    return {
-      generation: preparedGeneration,
-      state: {
-        campaignChildren: new Map(),
-        itemCount: page.itemCount,
-        items: page.items,
-        loadingMore: false,
-        nextCursor: page.nextCursor,
-        query: request,
-        selectedRowId,
-        sessionCount: page.sessionCount,
+    const ticket = operationOwner.prepareTicket();
+    const request = parseSessionQueryRequest({ ...scope, cursor: null, revision });
+    return await operationOwner.run(
+      PREPARE_OPERATION,
+      async (operation) => {
+        const page = await readPage(request, operation.signal);
+        if (page === 'aborted') {
+          throw operation.signal.reason;
+        }
+        if (page === 'expired') {
+          throw new SessionRevisionExpiredError();
+        }
+        return {
+          state: {
+            campaignChildren: new Map(),
+            itemCount: page.itemCount,
+            items: page.items,
+            loadingMore: false,
+            nextCursor: page.nextCursor,
+            query: request,
+            selectedRowId,
+            sessionCount: page.sessionCount,
+          },
+          ticket,
+        };
       },
-    };
+      { generation: ticket.generation },
+    );
   };
 
-  const canCommitPrepared = (prepared: PreparedSessionQueryState): boolean => prepared.generation === generation;
+  const canCommitPrepared = (prepared: PreparedSessionQueryState): boolean => operationOwner.canCommit(prepared.ticket);
 
   const commitPrepared = (prepared: PreparedSessionQueryState): SessionQueryState | undefined => {
     if (!canCommitPrepared(prepared)) {
       return;
     }
-    generation += 1;
-    loadMoreInFlight = false;
-    neighborSequence += 1;
-    childrenSequences.clear();
+    operationOwner.beginGeneration();
     publish(prepared.state);
     return prepared.state;
   };
 
-  const loadMore = async (): Promise<SessionQueryState | undefined> => {
-    const state = currentState;
-    if (!(state?.nextCursor && !loadMoreInFlight)) {
-      return state;
-    }
-    const targetGeneration = generation;
+  const runLoadMore = async (
+    operation: SessionQueryOperationContext,
+    state: SessionQueryState,
+  ): Promise<SessionQueryState | undefined> => {
     const scope: SessionQueryScope = (({ cursor: _cursor, revision: _revision, ...value }) => value)(state.query);
-    loadMoreInFlight = true;
     publish({ ...state, loadingMore: true });
-    let nextState: SessionQueryState | undefined;
     try {
       const request = parseSessionQueryRequest({ ...state.query, cursor: state.nextCursor });
-      const page = await readPage(request);
-      if (page === 'expired') {
-        loadMoreInFlight = false;
-        return await restartCurrentGeneration(scope, targetGeneration);
-      }
-      if (generation !== targetGeneration || currentState?.query.revision !== request.revision) {
+      const page = await readPage(request, operation.signal);
+      if (page === 'aborted' || !operation.isCurrent()) {
         return currentState;
       }
-      nextState = {
+      if (page === 'expired') {
+        return await restartCurrentGeneration(scope, operation, operation.release);
+      }
+      if (currentState?.query.revision !== request.revision) {
+        return currentState;
+      }
+      const nextState: SessionQueryState = {
         ...currentState,
         itemCount: page.itemCount,
-        items: appendUniqueItems(currentState.items, page.items),
+        items: appendUniqueBy(currentState.items, page.items, pageItemKey),
         loadingMore: false,
         nextCursor: page.nextCursor,
         selectedRowId,
         sessionCount: page.sessionCount,
       };
+      operation.release();
+      publish(nextState);
+      return nextState;
+    } catch (error) {
+      if (!operation.isCurrent()) {
+        return currentState;
+      }
+      throw error;
     } finally {
-      loadMoreInFlight = false;
-      if (!nextState && currentState?.loadingMore) {
-        publish({ ...currentState, loadingMore: false });
+      const loadingState = currentState;
+      if (loadingState?.loadingMore && operation.release()) {
+        publish({ ...loadingState, loadingMore: false });
       }
     }
-    publish(nextState);
-    return nextState;
   };
 
-  const loadCampaignChildren = async (campaignKey: string): Promise<SessionQueryState | undefined> => {
+  const loadMore = (): Promise<SessionQueryState | undefined> => {
+    if (operationOwner.isClosed()) {
+      return Promise.resolve(currentState);
+    }
     const state = currentState;
-    if (!state) {
-      return;
+    if (!state?.nextCursor) {
+      return Promise.resolve(state);
     }
-    const existing = state.campaignChildren.get(campaignKey);
-    if (existing?.loading || (existing !== undefined && existing.nextCursor === null)) {
-      return state;
-    }
-    const targetGeneration = generation;
-    const sequence = (childrenSequences.get(campaignKey) ?? 0) + 1;
-    childrenSequences.set(campaignKey, sequence);
+    return operationOwner.run(LOAD_MORE_OPERATION, (operation) => runLoadMore(operation, state), {
+      policy: 'coalesce',
+    });
+  };
+
+  const runLoadCampaignChildren = async (
+    campaignKey: string,
+    operation: SessionQueryOperationContext,
+    state: SessionQueryState,
+    existing: CampaignChildrenPageState | undefined,
+  ): Promise<SessionQueryState | undefined> => {
     const loadingChildren = new Map(state.campaignChildren);
     loadingChildren.set(campaignKey, {
       items: existing?.items ?? [],
@@ -365,52 +455,81 @@ export const createSessionQueryCoordinator = (options: {
       campaignKey,
       query: parseSessionQueryRequest({ ...state.query, cursor: existing?.nextCursor ?? null }),
     };
-    const clearLoading = (): void => {
-      if (generation !== targetGeneration || childrenSequences.get(campaignKey) !== sequence || !currentState) {
+    try {
+      const sourceResult = await options.source.getCampaignChildren(request, operation.signal);
+      if (!operation.owns()) {
+        return currentState;
+      }
+      const result = parseSessionCampaignChildrenServerResult(sourceResult, request);
+      if (!result.ok) {
+        if (revisionExpired(result)) {
+          const { cursor: _cursor, revision: _revision, ...scope } = state.query;
+          return await restartCurrentGeneration(scope, operation, operation.release);
+        }
+        throw errorFromResult(result);
+      }
+      if (!currentState) {
         return;
       }
       const campaignChildren = new Map(currentState.campaignChildren);
-      const currentChildren = campaignChildren.get(campaignKey);
-      if (currentChildren) {
-        campaignChildren.set(campaignKey, { ...currentChildren, loading: false });
-        publish({ ...currentState, campaignChildren });
-      }
-    };
-    let result: Awaited<ReturnType<SessionQuerySource['getCampaignChildren']>>;
-    try {
-      result = parseSessionCampaignChildrenServerResult(await options.source.getCampaignChildren(request), request);
+      campaignChildren.set(campaignKey, {
+        items: appendUniqueBy(existing?.items ?? [], result.data.items, presentationRowKey),
+        loading: false,
+        nextCursor: result.data.nextCursor,
+        totalCount: result.data.itemCount,
+      });
+      const nextState = { ...currentState, campaignChildren };
+      operation.release();
+      publish(nextState);
+      return nextState;
     } catch (error) {
-      clearLoading();
-      throw error;
-    }
-    if (!result.ok) {
-      if (revisionExpired(result)) {
-        const { cursor: _cursor, revision: _revision, ...scope } = state.query;
-        return await restartCurrentGeneration(scope, targetGeneration);
+      if (!operation.owns()) {
+        return currentState;
       }
-      clearLoading();
-      throw errorFromResult(result);
+      throw error;
+    } finally {
+      const activeState = currentState;
+      if (activeState) {
+        const campaignChildren = new Map(activeState.campaignChildren);
+        const currentChildren = campaignChildren.get(campaignKey);
+        if (currentChildren?.loading && operation.release()) {
+          if (existing) {
+            campaignChildren.set(campaignKey, { ...existing, loading: false });
+          } else {
+            campaignChildren.delete(campaignKey);
+          }
+          publish({ ...activeState, campaignChildren });
+        }
+      }
     }
-    const page = result.data;
-    if (generation !== targetGeneration || childrenSequences.get(campaignKey) !== sequence || !currentState) {
-      return currentState;
+  };
+
+  const loadCampaignChildren = (campaignKey: string): Promise<SessionQueryState | undefined> => {
+    if (operationOwner.isClosed()) {
+      return Promise.resolve(currentState);
     }
-    const campaignChildren = new Map(currentState.campaignChildren);
-    campaignChildren.set(campaignKey, {
-      items: appendUniqueRows(existing?.items ?? [], page.items),
-      loading: false,
-      nextCursor: page.nextCursor,
-      totalCount: page.itemCount,
-    });
-    const nextState = { ...currentState, campaignChildren };
-    publish(nextState);
-    return nextState;
+    const operationKey = campaignChildrenOperation(campaignKey);
+    const state = currentState;
+    if (!state) {
+      return Promise.resolve(undefined);
+    }
+    return operationOwner.run(
+      operationKey,
+      async (operation) => {
+        const activeState = currentState ?? state;
+        const existing = activeState.campaignChildren.get(campaignKey);
+        if (existing !== undefined && existing.nextCursor === null && !existing.loading) {
+          return activeState;
+        }
+        return await runLoadCampaignChildren(campaignKey, operation, activeState, existing);
+      },
+      { policy: 'coalesce' },
+    );
   };
 
   const loadNeighborsWithRetry = async (
     rowId: string,
-    targetGeneration: number,
-    sequence: number,
+    operation: SessionQueryOperationContext,
     retryExpired: boolean,
   ): Promise<SessionNeighborResult | undefined> => {
     const state = currentState;
@@ -421,39 +540,61 @@ export const createSessionQueryCoordinator = (options: {
       query: parseSessionQueryRequest({ ...state.query, cursor: null }),
       rowId,
     };
-    const result = parseSessionNeighborServerResult(await options.source.getNeighbors(request), request);
+    let sourceResult: Awaited<ReturnType<SessionQuerySource['getNeighbors']>>;
+    try {
+      sourceResult = await options.source.getNeighbors(request, operation.signal);
+    } catch (error) {
+      if (!operation.owns()) {
+        return;
+      }
+      throw error;
+    }
+    if (!operation.owns()) {
+      return;
+    }
+    const result = parseSessionNeighborServerResult(sourceResult, request);
     if (!result.ok) {
       if (revisionExpired(result) && retryExpired) {
         const { cursor: _cursor, revision: _revision, ...scope } = state.query;
-        const restarted = await restartCurrentGeneration(scope, targetGeneration);
-        if (restarted && generation === targetGeneration && neighborSequence === sequence) {
-          return await loadNeighborsWithRetry(rowId, targetGeneration, sequence, false);
+        const restarted = await restartCurrentGeneration(scope, operation);
+        if (restarted && operation.owns()) {
+          return await loadNeighborsWithRetry(rowId, operation, false);
         }
         return;
       }
       throw errorFromResult(result);
     }
     const neighbors = result.data;
-    if (generation !== targetGeneration || neighborSequence !== sequence) {
+    if (!operation.owns()) {
       return;
     }
     return neighbors;
   };
 
-  const loadNeighbors = async (rowId: string): Promise<SessionNeighborResult | undefined> => {
-    neighborSequence += 1;
-    return await loadNeighborsWithRetry(rowId, generation, neighborSequence, true);
+  const loadNeighbors = (rowId: string): Promise<SessionNeighborResult | undefined> => {
+    if (operationOwner.isClosed()) {
+      return Promise.resolve(undefined);
+    }
+    return operationOwner.run(NEIGHBOR_OPERATION, (operation) => loadNeighborsWithRetry(rowId, operation, true));
   };
 
   const select = (rowId: string | null): void => {
+    if (operationOwner.isClosed()) {
+      return;
+    }
     selectedRowId = rowId;
     if (currentState) {
       publish({ ...currentState, selectedRowId });
     }
   };
 
+  const close = (): void => {
+    operationOwner.close();
+  };
+
   return {
     canCommitPrepared,
+    close,
     commitPrepared,
     loadCampaignChildren,
     loadMore,
@@ -467,22 +608,23 @@ export const createSessionQueryCoordinator = (options: {
 
 export const createServedSessionQuerySource = (): SessionQuerySource => {
   const serverApi = () => import('./server/report-payload');
+  const requestHeaders = { 'x-ai-usage-request-owner': 'session-query' };
   return {
-    getCampaignChildren: async (request) => {
+    getCampaignChildren: async (request, signal) => {
       const { getReportSessionCampaignChildren } = await serverApi();
-      return await getReportSessionCampaignChildren({ data: request });
+      return await getReportSessionCampaignChildren({ data: request, headers: requestHeaders, signal });
     },
-    getManifest: async () => {
+    getManifest: async (signal) => {
       const { getReportRevisionManifest } = await serverApi();
-      return await getReportRevisionManifest();
+      return await getReportRevisionManifest({ headers: requestHeaders, signal });
     },
-    getNeighbors: async (request) => {
+    getNeighbors: async (request, signal) => {
       const { getReportSessionNeighbors } = await serverApi();
-      return await getReportSessionNeighbors({ data: request });
+      return await getReportSessionNeighbors({ data: request, headers: requestHeaders, signal });
     },
-    getPage: async (request) => {
+    getPage: async (request, signal) => {
       const { getReportSessionPage } = await serverApi();
-      return await getReportSessionPage({ data: request });
+      return await getReportSessionPage({ data: request, headers: requestHeaders, signal });
     },
   };
 };

@@ -4,6 +4,7 @@ import { nitro } from 'nitro/vite';
 import { defineConfig, type Plugin } from 'vite';
 import solid from 'vite-plugin-solid';
 import { PERSISTENT_SOURCE_RUNTIME_PACKAGES } from './src/server/persistent-source-runtime';
+import { getServerRuntimeMode } from './src/server/runtime-mode.server';
 import { manualSyncImportDevPlugin } from './vite-manual-sync-import';
 import { createRetryableWarmup } from './vite-warmup';
 
@@ -50,7 +51,11 @@ const tanStackServerFunctionWarmupPlugin = (): Plugin => ({
   name: 'ai-usage-tanstack-server-fn-warmup',
   apply: 'serve',
   configureServer(server) {
+    const runtimeMode = getServerRuntimeMode();
     const warmup = async () => {
+      if (runtimeMode === 'demo') {
+        return;
+      }
       const ssrEnvironment = server.environments.ssr;
       if (!ssrEnvironment) {
         return;
@@ -70,6 +75,13 @@ const tanStackServerFunctionWarmupPlugin = (): Plugin => ({
         return;
       }
 
+      if (runtimeMode === 'demo') {
+        _res.statusCode = 404;
+        _res.setHeader('cache-control', 'no-store');
+        _res.end();
+        return;
+      }
+
       try {
         await ensureWarmup();
         next();
@@ -79,6 +91,9 @@ const tanStackServerFunctionWarmupPlugin = (): Plugin => ({
     });
 
     server.httpServer?.once('listening', () => {
+      if (runtimeMode === 'demo') {
+        return;
+      }
       ensureWarmup().catch((error: unknown) => {
         server.config.logger.warn(
           `[ai-usage] Failed to warm TanStack server functions: ${
@@ -91,6 +106,7 @@ const tanStackServerFunctionWarmupPlugin = (): Plugin => ({
 });
 
 export default defineConfig({
+  ...(getServerRuntimeMode() === 'demo' ? { envDir: false } : {}),
   optimizeDeps: {
     entries: ['src/routes/**/*.tsx'],
     include: [...clientOptimizeDeps],

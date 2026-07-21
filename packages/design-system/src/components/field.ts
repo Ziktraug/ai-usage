@@ -32,3 +32,9 @@ export const inlineFieldLabel = css({
   textStyle: 'label',
   color: 'muted',
 });
+
+export const formField = css({
+  display: 'grid',
+  gap: '4px',
+  minW: 0,
+});

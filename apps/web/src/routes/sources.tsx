@@ -1,11 +1,13 @@
 import { css, cx } from '@ai-usage/design-system/css';
 import {
+  actionRow,
   banner,
   bannerError,
   commandButton,
   ghostButton,
   header,
   headerActions,
+  headerNavigation,
   headerTop,
   meta,
   navButton,
@@ -28,18 +30,18 @@ import { createFileRoute, Link } from '@tanstack/solid-router';
 import { createMemo, For, Show } from 'solid-js';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
+import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
 import { fmtDate, fmtNum } from '../shared';
 import { useSourceControl } from '../source-control-context';
 import { presentSourceProgress, presentSourceState, sourceToneClass } from '../source-control-presentation';
 
 export const Route = createFileRoute('/sources')({
+  beforeLoad: enforceReportOnlyDemoNavigation,
   component: SourcesRoute,
 });
 
 const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
 const pageStack = css({ display: 'grid', gap: '18px' });
-const headerWrap = css({ flexWrap: 'wrap' });
-const actionsWrap = css({ flexWrap: 'wrap', justifyContent: 'flex-end' });
 const groupStack = css({ display: 'grid', gap: '10px' });
 const groupHeader = css({
   display: 'flex',
@@ -72,7 +74,6 @@ const axis = css({ display: 'grid', gap: '3px', minW: 0 });
 const axisLabel = css({ color: 'muted', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase' });
 const axisValue = css({ fontSize: '12px', overflowWrap: 'anywhere' });
 const detailList = css({ display: 'grid', gap: '5px', color: 'muted', fontSize: '12px', lineHeight: 1.5 });
-const cardActions = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' });
 const switchLabel = css({
   display: 'inline-flex',
   alignItems: 'center',
@@ -211,7 +212,7 @@ const SourceCard = (props: {
         </p>
         <For each={props.source.warnings}>{(warning) => <p>Warning: {warning.message ?? warning.code}</p>}</For>
       </div>
-      <div class={cardActions}>
+      <div class={actionRow}>
         <label class={switchLabel}>
           <input
             checked={props.source.policy === 'enabled'}
@@ -275,13 +276,13 @@ function SourcesRoute() {
     <main class={page} data-hydrated={sourceControl.state().connection === 'stopped' ? 'false' : 'true'}>
       <div class={shell}>
         <header class={header}>
-          <div class={cx(headerTop, headerWrap)}>
+          <div class={headerTop}>
             <div class={titleBlock}>
               <p class={meta}>Server-owned collection</p>
               <h1 class={title}>Sources</h1>
               <p class={meta}>Policy, availability, lifecycle, and outcomes stay independent for every collector.</p>
             </div>
-            <div class={cx(headerActions, actionsWrap)}>
+            <div class={headerActions}>
               <button
                 class={ghostButton}
                 disabled={!snapshot() || pending()}
@@ -302,9 +303,11 @@ function SourcesRoute() {
               >
                 Run all enabled
               </button>
-              <Link class={navButton} search={dashboardSearchDefaults} to="/">
-                Report
-              </Link>
+              <nav aria-label="Primary navigation" class={headerNavigation}>
+                <Link class={navButton} search={dashboardSearchDefaults} to="/">
+                  Report
+                </Link>
+              </nav>
               <ThemeToggle />
             </div>
           </div>

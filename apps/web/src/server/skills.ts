@@ -11,10 +11,14 @@ type JsonRecord = Record<string, unknown>;
 const sha256Pattern = /^[a-f0-9]{64}$/;
 const maxSkillMarkdownBytes = 256 * 1024;
 
-const isE2ERuntime = () => import.meta.env?.VITE_AI_USAGE_E2E === '1';
-
 const loadSkillsServerAdapter = async (): Promise<SkillsServerAdapter> => {
-  if (isE2ERuntime()) {
+  const [{ assertOutsideDemo }, { getServerRuntimeMode }] = await Promise.all([
+    import('./demo-boundary.server'),
+    import('./runtime-mode.server'),
+  ]);
+  const runtimeMode = getServerRuntimeMode();
+  assertOutsideDemo(runtimeMode);
+  if (runtimeMode === 'e2e') {
     const fixture = await import('./skills-e2e-fixture.server');
     return {
       createTargetDirectory: fixture.createE2ESkillTargetDirectory,

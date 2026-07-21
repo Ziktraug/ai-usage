@@ -1,5 +1,14 @@
 import { css } from '@ai-usage/design-system/css';
 
+export const pendingButton = css({
+  '&[data-pending=true]': {
+    _after: {
+      content: '" ..."',
+      color: 'accent',
+    },
+  },
+});
+
 export const commandButton = css({
   h: '36px',
   px: '16px',

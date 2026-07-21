@@ -1,5 +1,17 @@
 import { css } from '@ai-usage/design-system/css';
 
+export const pageStack = css({
+  display: 'grid',
+  gap: '16px',
+});
+
+export const actionRow = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '8px',
+  alignItems: 'center',
+});
+
 export const page = css({
   minHeight: '100vh',
   bg: 'canvas',
@@ -22,6 +34,7 @@ export const header = css({
 
 export const headerTop = css({
   display: 'flex',
+  flexWrap: 'wrap',
   justifyContent: 'space-between',
   alignItems: 'flex-start',
   gap: '16px',
@@ -29,15 +42,28 @@ export const headerTop = css({
 
 export const headerActions = css({
   display: 'flex',
+  flexWrap: 'wrap',
   alignItems: 'center',
+  justifyContent: 'flex-end',
   gap: '8px',
-  flexShrink: 0,
+  flexShrink: 1,
+  maxW: '100%',
   _print: { display: 'none' },
+});
+
+export const headerNavigation = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  alignItems: 'center',
+  justifyContent: 'flex-end',
+  gap: '8px',
+  maxW: '100%',
 });
 
 export const titleBlock = css({
   display: 'grid',
   gap: '8px',
+  minW: 0,
 });
 
 export const eyebrowRow = css({

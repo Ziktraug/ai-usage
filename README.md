@@ -1,8 +1,8 @@
 # ai-usage
 
-Unified local AI usage report for the coding tools installed on this machine — and across multiple machines via portable snapshots.
+Unified local AI usage reporting for the coding tools installed on this machine — and across multiple machines through portable snapshots.
 
-The CLI reads local history files and databases written by each tool, then reports per-session token usage, estimated cost, and aggregate analytics — in the terminal or the interactive web app. Normal report collection never calls provider APIs; everything is computed from local data. While the long-lived served app is running, its Codex usage-limit source may invoke the installed `codex app-server`, which owns any provider communication and authentication refresh. `ai-usage` never reads or stores Codex credentials or raw app-server responses.
+ai-usage reads sessions from Codex, Claude Code, OpenCode, and Cursor, then makes their token usage, estimated cost, activity, and chronology available through a CLI and an interactive dashboard. Normal report collection stays on the local machine. The optional served Codex usage-limit source is the narrow exception: it may invoke the installed `codex app-server`, which owns provider communication and authentication refresh. ai-usage never reads Codex credentials or stores or logs raw app-server payloads.
 
 ## Supported session sources
 
@@ -209,16 +209,25 @@ Merged CSV/JSON payloads include row provenance (`source.machineLabel`, `source.
 - `packages/skills` (`@ai-usage/skills`): local skill inventory, validation, projection, and reconciliation workflows
 - `packages/design-system` (`@ai-usage/design-system`): Panda/Solid primitives, report style slots, and generated Panda consumer exports
 - `apps/cli`: terminal CLI, quota/setup commands, portable snapshots, and table/CSV/JSON/payload output adapters
-- `apps/web`: Bun/Nitro source-control host plus the client-first Solid/TanStack report, `/sources`, local Skills, and file-only `/sync` workspaces
+- `apps/web`: Bun/Nitro source-control host plus the server-rendered Solid/TanStack report, `/sources`, local Skills, and file-only `/sync` workspaces
 
 Architecture docs:
 
 - `docs/architecture.md`: package ownership, data flow, adapter rules, and guardrails
+- `docs/adr/`: short records for the implemented frontend decisions
 - `docs/future-work.md`: global backlog for known follow-ups
 - `docs/public-package-interfaces.md`: public package exports and import rules
 - `docs/generated-tooling-ownership.md`: Panda/TanStack/Nitro/Turbo generated file ownership
 
 ## Development
+
+Run the app against deterministic synthetic data without reading local histories:
+
+```sh
+bun run demo
+```
+
+This isolated runtime binds only to `127.0.0.1`, uses a temporary home, and disables local reads, mutations, source events, and live collector construction. It is intended for development, reproduction, and browser tests.
 
 Typecheck:
 
@@ -244,10 +253,11 @@ Run unit/integration tests:
 bun run test
 ```
 
-Run the deterministic browser suite (after `bun x playwright install chromium` once):
+Run the deterministic browser suites (after `bun x playwright install chromium` once):
 
 ```sh
 bun run test:e2e
+bun run test:e2e-demo
 ```
 
 After a production build, exercise the loopback production listener and the real
@@ -255,8 +265,11 @@ revision/query subprocess path:
 
 ```sh
 bun run test:web-production
+bun run test:setup-loopback
 bun run test:e2e-production
 ```
+
+The ordinary suite includes axe accessibility checks and four focused visual snapshots. The demo suite proves the synthetic runtime makes no business requests. The production suite exercises exact-revision server functions and the 5,000-session scroll proof.
 
 Run the report app in development:
 
@@ -264,9 +277,13 @@ Run the report app in development:
 bun run dev
 ```
 
-The dev server collects this machine's real usage data and refreshes the dashboard through immutable, destination-focused report queries. Its bounded support bootstrap reports omitted-item counts when summary metadata does not fit; row-derived destination queries remain independent of those summary omissions. When local collection fails, development falls back to a demo payload that is flagged in the UI.
+The dev server intentionally reads this machine's configured local data and refreshes the dashboard through immutable, destination-focused report queries. Its bounded support bootstrap reports omitted-item counts when summary metadata does not fit; row-derived destination queries remain independent of those summary omissions. A failed live bootstrap stays in the route's error/retry state. Synthetic data is selected only by explicit demo or E2E modes.
 
 ## Notes
 
 - **`$API`** is an estimated cost at standard API prices, computed from local token counters and the editable pricing table in `packages/report-core/src/pricing.ts`. A `≥` value is the known subtotal when only some model segments have pricing; wholly unpriced usage remains unknown.
 - **`$Actual`** is out-of-pocket spend when a harness reports it. Subscription products bill differently from per-token API rates, so the two columns can diverge.
+
+## Contributing and license
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and synthetic-fixture guidance and [SECURITY.md](SECURITY.md) for private vulnerability reporting. ai-usage is available under the [MIT License](LICENSE).

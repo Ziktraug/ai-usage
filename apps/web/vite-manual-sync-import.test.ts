@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createServer, request as httpRequest, type Server } from 'node:http';
-import type { ManualOperationResult } from './src/manual-transfer-contract';
-import { handleManualSyncImportDevRequest } from './vite-manual-sync-import';
+import { handleManualSyncImportDevRequest, type ManualSyncImportDevOptions } from './vite-manual-sync-import';
 
 const servers: Server[] = [];
 
@@ -16,10 +15,7 @@ afterEach(async () => {
   );
 });
 
-const startDevUploadServer = async (options: {
-  importBundle: (text: string) => Promise<ManualOperationResult<unknown>>;
-  maxBytes: number;
-}) => {
+const startDevUploadServer = async (options: ManualSyncImportDevOptions & { maxBytes: number }) => {
   const server = createServer((request, response) => {
     handleManualSyncImportDevRequest(request, response, options).catch(() => {
       response.writeHead(500).end();
@@ -133,5 +129,33 @@ describe('Vite manual sync import middleware', () => {
     expect(response.status).toBe(413);
     expect(JSON.parse(response.body)).toMatchObject({ error: { tag: 'UploadTooLarge' }, ok: false });
     expect(imports).toBe(0);
+  });
+
+  test('rejects demo uploads before reading a body or invoking the importer', async () => {
+    let imports = 0;
+    let uploadHandlerLoads = 0;
+    const port = await startDevUploadServer({
+      importBundle: () => {
+        imports += 1;
+        return Promise.resolve({ ok: true as const, data: {} });
+      },
+      loadUploadHandler: () => {
+        uploadHandlerLoads += 1;
+        throw new Error('The upload handler must not load in demo mode.');
+      },
+      maxBytes: 1024,
+      runtimeMode: 'demo',
+    });
+
+    const response = await sendChunkedUpload(port, ['{"rows":[]}'], {
+      'content-type': 'application/json',
+      host: `localhost:${port}`,
+      origin: `http://localhost:${port}`,
+    });
+
+    expect(response.status).toBe(404);
+    expect(response.body).toBe('');
+    expect(imports).toBe(0);
+    expect(uploadHandlerLoads).toBe(0);
   });
 });
