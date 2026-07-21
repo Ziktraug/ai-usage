@@ -25,13 +25,16 @@ import {
 } from './web-report-payload';
 
 const rows = demoReportPayload.rows.map(enrichSessionPresentationRow);
+const pagingRows = [rows[0]!, rows[1]!, rows[2]!, { ...rows[0]!, rowId: 'session-row-v1:0000000000000004' }];
 
 const deferred = <Value>() => {
   let resolve!: (value: Value) => void;
-  const promise = new Promise<Value>((nextResolve) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<Value>((nextResolve, nextReject) => {
     resolve = nextResolve;
+    reject = nextReject;
   });
-  return { promise, resolve };
+  return { promise, reject, resolve };
 };
 
 const manifest = (revision: string): WebReportRevisionManifestResult => ({
@@ -91,6 +94,17 @@ const scopeFor = (query = '') =>
     query,
     range: { from: null, to: null },
     sorting: [{ desc: true, id: 'date' }],
+  });
+
+const scopeForSort = (query: string, desc: boolean) =>
+  buildDashboardSessionQueryScope({
+    campaigns: true,
+    fields: {},
+    harness: [],
+    machine: [],
+    query,
+    range: { from: null, to: null },
+    sorting: [{ desc, id: 'cost' }],
   });
 
 describe('dashboard session query mapping', () => {
@@ -204,6 +218,43 @@ describe('served session query coordination', () => {
     expect(sessionRowsForState(coordinator.state()).map((row) => row.rowId)).toEqual([rows[1]!.rowId]);
   });
 
+  test('aborts rapid query and sort changes while publishing only the latest request', async () => {
+    const slowPage = deferred<ReturnType<typeof pageResult>>();
+    const signals: AbortSignal[] = [];
+    const published: string[] = [];
+    const coordinator = createSessionQueryCoordinator({
+      onStateChange: (state) => {
+        if (state) {
+          published.push(`${state.query.filters.query}:${state.query.sort[0]?.desc}`);
+        }
+      },
+      revision: () => 'revision-a',
+      source: sourceWith({
+        getPage: (request, signal) => {
+          signals.push(signal);
+          if (request.filters.query === 'slow') {
+            signal.addEventListener('abort', () => slowPage.reject(signal.reason), { once: true });
+            return slowPage.promise;
+          }
+          return Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[1]! }]));
+        },
+      }),
+    });
+
+    const stale = coordinator.start(scopeForSort('slow', true));
+    const latest = coordinator.start(scopeForSort('latest', false));
+    const [staleResult, latestResult] = await Promise.allSettled([stale, latest]);
+
+    expect(staleResult.status).toBe('fulfilled');
+    expect(latestResult.status).toBe('fulfilled');
+    expect(signals[0]?.aborted).toBe(true);
+    expect(coordinator.state()?.query).toMatchObject({
+      filters: { query: 'latest' },
+      sort: [{ desc: false, id: 'cost' }],
+    });
+    expect(published).toEqual(['latest:false']);
+  });
+
   test('keeps the active page visible when a staged revision fails', async () => {
     const published: string[][] = [];
     const coordinator = createSessionQueryCoordinator({
@@ -252,7 +303,30 @@ describe('served session query coordination', () => {
     expect(coordinator.state()?.query.revision).toBe('revision-a');
     expect(coordinator.canCommitPrepared(prepared)).toBe(true);
     expect(coordinator.commitPrepared(prepared)?.query.revision).toBe('revision-b');
+    expect(coordinator.canCommitPrepared(prepared)).toBe(false);
+    expect(coordinator.commitPrepared(prepared)).toBeUndefined();
     expect(published).toEqual([`revision-a:${rows[0]!.rowId}`, `revision-b:${rows[2]!.rowId}`]);
+  });
+
+  test('gives prepared requests identity so only the latest destination can commit', async () => {
+    const coordinator = createSessionQueryCoordinator({
+      revision: () => 'revision-a',
+      source: sourceWith({
+        getPage: (request) =>
+          Promise.resolve(
+            pageResult(request, [{ kind: 'session', row: request.revision === 'revision-b' ? rows[1]! : rows[2]! }]),
+          ),
+      }),
+    });
+
+    const first = await coordinator.prepare(scopeFor('first'), 'revision-b');
+    const second = await coordinator.prepare(scopeFor('second'), 'revision-c');
+
+    expect(first.requestId).not.toBe(second.requestId);
+    expect(coordinator.canCommitPrepared(first)).toBe(false);
+    expect(coordinator.canCommitPrepared(second)).toBe(true);
+    expect(coordinator.commitPrepared(first)).toBeUndefined();
+    expect(coordinator.commitPrepared(second)?.query.filters.query).toBe('second');
   });
 
   test('appends top-level pages without losing selection', async () => {
@@ -273,6 +347,138 @@ describe('served session query coordination', () => {
 
     expect(next?.selectedRowId).toBe(rows[0]!.rowId);
     expect(sessionRowsForState(next).map((row) => row.rowId)).toEqual([rows[0]!.rowId, rows[1]!.rowId]);
+  });
+
+  test('crosses more than two page boundaries in exact order and stops at the end', async () => {
+    const cursors = [null, 'sq1.0000000000000000.1', 'sq1.0000000000000000.2', 'sq1.0000000000000000.3'];
+    const requestedCursors: (string | null)[] = [];
+    const coordinator = createSessionQueryCoordinator({
+      source: sourceWith({
+        getPage: (request) => {
+          requestedCursors.push(request.cursor);
+          const pageIndex = cursors.indexOf(request.cursor);
+          const nextCursor = cursors[pageIndex + 1] ?? null;
+          const result = pageResult(request, [{ kind: 'session', row: pagingRows[pageIndex]! }], nextCursor);
+          return Promise.resolve({
+            ...result,
+            data: { ...result.data, itemCount: pagingRows.length, sessionCount: pagingRows.length },
+          });
+        },
+      }),
+    });
+
+    await coordinator.start(scopeFor());
+    await coordinator.loadMore();
+    await coordinator.loadMore();
+    await coordinator.loadMore();
+    const endState = await coordinator.loadMore();
+
+    expect(requestedCursors).toEqual(cursors);
+    expect(sessionRowsForState(endState).map((row) => row.rowId)).toEqual(pagingRows.map((row) => row.rowId));
+    expect(new Set(sessionRowsForState(endState).map((row) => row.rowId)).size).toBe(pagingRows.length);
+    expect(endState).toMatchObject({ itemCount: pagingRows.length, nextCursor: null, sessionCount: pagingRows.length });
+  });
+
+  test('coalesces concurrent load-more requests into one page fetch', async () => {
+    const nextPage = deferred<ReturnType<typeof pageResult>>();
+    let loadMoreRequest: SessionQueryRequest | undefined;
+    let pageReads = 0;
+    const coordinator = createSessionQueryCoordinator({
+      source: sourceWith({
+        getPage: (request) => {
+          pageReads += 1;
+          if (request.cursor === null) {
+            return Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[0]! }], 'sq1.0000000000000000.1'));
+          }
+          loadMoreRequest = request;
+          return nextPage.promise;
+        },
+      }),
+    });
+    await coordinator.start(scopeFor());
+
+    const first = coordinator.loadMore();
+    const second = coordinator.loadMore();
+    expect(second).toBe(first);
+    expect(pageReads).toBe(2);
+    nextPage.resolve(pageResult(loadMoreRequest!, [{ kind: 'session', row: rows[1]! }]));
+
+    const [firstState, secondState] = await Promise.all([first, second]);
+    expect(firstState).toBe(secondState);
+    expect(sessionRowsForState(firstState).map((row) => row.rowId)).toEqual([rows[0]!.rowId, rows[1]!.rowId]);
+  });
+
+  test('does not let a stale load-more cleanup release a newer generation request', async () => {
+    const stalePage = deferred<ReturnType<typeof pageResult>>();
+    const latestPage = deferred<ReturnType<typeof pageResult>>();
+    let staleRequest: SessionQueryRequest | undefined;
+    let latestRequest: SessionQueryRequest | undefined;
+    const signals: AbortSignal[] = [];
+    let pageReads = 0;
+    const coordinator = createSessionQueryCoordinator({
+      source: sourceWith({
+        getPage: (request, signal) => {
+          pageReads += 1;
+          signals.push(signal);
+          if (request.cursor === null) {
+            const row = request.filters.query === 'stale' ? rows[0]! : rows[2]!;
+            return Promise.resolve(pageResult(request, [{ kind: 'session', row }], 'sq1.0000000000000000.1'));
+          }
+          if (request.filters.query === 'stale') {
+            staleRequest = request;
+            return stalePage.promise;
+          }
+          latestRequest = request;
+          return latestPage.promise;
+        },
+      }),
+    });
+
+    await coordinator.start(scopeFor('stale'));
+    const staleLoad = coordinator.loadMore();
+    await coordinator.start(scopeFor('latest'));
+    const latestLoad = coordinator.loadMore();
+    expect(coordinator.loadMore()).toBe(latestLoad);
+    expect(signals[1]?.aborted).toBe(true);
+
+    stalePage.resolve(pageResult(staleRequest!, [{ kind: 'session', row: rows[1]! }]));
+    await staleLoad;
+    expect(coordinator.state()).toMatchObject({ loadingMore: true, query: { filters: { query: 'latest' } } });
+    expect(coordinator.loadMore()).toBe(latestLoad);
+    expect(pageReads).toBe(4);
+
+    latestPage.resolve(pageResult(latestRequest!, [{ kind: 'session', row: rows[1]! }]));
+    const finalState = await latestLoad;
+    expect(sessionRowsForState(finalState).map((row) => row.rowId)).toEqual([rows[2]!.rowId, rows[1]!.rowId]);
+    expect(finalState?.loadingMore).toBe(false);
+  });
+
+  test('deduplicates repeated items within an incoming page', async () => {
+    const coordinator = createSessionQueryCoordinator({
+      source: sourceWith({
+        getPage: (request) =>
+          Promise.resolve(
+            request.cursor === null
+              ? pageResult(request, [{ kind: 'session', row: rows[0]! }], 'sq1.0000000000000000.1')
+              : pageResult(request, [
+                  { kind: 'session', row: rows[1]! },
+                  { kind: 'session', row: rows[1]! },
+                  { kind: 'session', row: rows[0]! },
+                  { kind: 'session', row: rows[2]! },
+                  { kind: 'session', row: rows[2]! },
+                ]),
+          ),
+      }),
+    });
+
+    await coordinator.start(scopeFor());
+    const state = await coordinator.loadMore();
+
+    expect(sessionRowsForState(state).map((row) => row.rowId)).toEqual([
+      rows[0]!.rowId,
+      rows[1]!.rowId,
+      rows[2]!.rowId,
+    ]);
   });
 
   test('accepts the next page request immediately after publishing the previous page', async () => {
@@ -317,7 +523,7 @@ describe('served session query coordination', () => {
             data: {
               campaignKey,
               itemCount: 2,
-              items: [request.query.cursor === null ? rows[1]! : rows[2]!],
+              items: request.query.cursor === null ? [rows[1]!, rows[1]!] : [rows[2]!, rows[2]!],
               nextCursor: request.query.cursor === null ? 'sq1.0000000000000000.1' : null,
               requestFingerprint: sessionCampaignChildrenFingerprint(request),
               revision: request.query.revision,
@@ -459,6 +665,137 @@ describe('served session query coordination', () => {
     expect(requested).toEqual(['revision-a', 'revision-a', 'revision-b']);
     expect(restarted?.query.revision).toBe('revision-b');
     expect(sessionRowsForState(restarted).map((row) => row.rowId)).toEqual([rows[2]!.rowId]);
+  });
+
+  test('closes idempotently, aborts an initial page, and prevents late publication', async () => {
+    const firstPage = deferred<ReturnType<typeof pageResult>>();
+    const published: SessionQueryState[] = [];
+    let request: SessionQueryRequest | undefined;
+    let signal: AbortSignal | undefined;
+    let pageReads = 0;
+    const coordinator = createSessionQueryCoordinator({
+      onStateChange: (state) => {
+        if (state) {
+          published.push(state);
+        }
+      },
+      revision: () => 'revision-a',
+      source: sourceWith({
+        getPage: (nextRequest, nextSignal) => {
+          pageReads += 1;
+          request = nextRequest;
+          signal = nextSignal;
+          return firstPage.promise;
+        },
+      }),
+    });
+
+    const start = coordinator.start(scopeFor());
+    coordinator.close();
+    coordinator.close();
+    expect(signal?.aborted).toBe(true);
+    firstPage.resolve(pageResult(request!, [{ kind: 'session', row: rows[0]! }]));
+
+    await expect(start).resolves.toBeUndefined();
+    await expect(coordinator.start(scopeFor('after-close'))).resolves.toBeUndefined();
+    expect(pageReads).toBe(1);
+    expect(published).toEqual([]);
+  });
+
+  test('close aborts staged, paging, child, and neighbor work without late state changes', async () => {
+    const campaignKey = 'machine:codex:close';
+    const campaignRow = { ...rows[0]!, campaignKey };
+    const page = deferred<ReturnType<typeof pageResult>>();
+    const preparedPage = deferred<ReturnType<typeof pageResult>>();
+    const children = deferred<Awaited<ReturnType<SessionQuerySource['getCampaignChildren']>>>();
+    const neighbors = deferred<Awaited<ReturnType<SessionQuerySource['getNeighbors']>>>();
+    const signals = new Map<string, AbortSignal>();
+    let pageRequest: SessionQueryRequest | undefined;
+    let prepareRequest: SessionQueryRequest | undefined;
+    let childrenRequest: Parameters<SessionQuerySource['getCampaignChildren']>[0] | undefined;
+    let neighborRequest: SessionNeighborRequest | undefined;
+    const published: SessionQueryState[] = [];
+    const coordinator = createSessionQueryCoordinator({
+      onStateChange: (state) => {
+        if (state) {
+          published.push(state);
+        }
+      },
+      revision: () => 'revision-a',
+      source: sourceWith({
+        getCampaignChildren: (request, signal) => {
+          childrenRequest = request;
+          signals.set('children', signal);
+          return children.promise;
+        },
+        getNeighbors: (request, signal) => {
+          neighborRequest = request;
+          signals.set('neighbors', signal);
+          return neighbors.promise;
+        },
+        getPage: (request, signal) => {
+          if (request.revision === 'revision-b') {
+            prepareRequest = request;
+            signals.set('prepare', signal);
+            return preparedPage.promise;
+          }
+          if (request.cursor !== null) {
+            pageRequest = request;
+            signals.set('page', signal);
+            return page.promise;
+          }
+          return Promise.resolve(
+            pageResult(request, [{ campaignKey, kind: 'campaign', row: campaignRow }], 'sq1.0000000000000000.1'),
+          );
+        },
+      }),
+    });
+    await coordinator.start(scopeFor());
+
+    const paging = coordinator.loadMore();
+    const childLoad = coordinator.loadCampaignChildren(campaignKey);
+    const neighborLoad = coordinator.loadNeighbors(rows[0]!.rowId);
+    const prepare = coordinator.prepare(scopeFor('prepared'), 'revision-b');
+    const prepareOutcome = prepare.then(
+      () => 'fulfilled' as const,
+      (error: unknown) => (error instanceof DOMException ? error.name : 'rejected'),
+    );
+    const publicationCountAtClose = published.length;
+    coordinator.close();
+
+    expect([...signals.values()].every((operationSignal) => operationSignal.aborted)).toBe(true);
+    page.resolve(pageResult(pageRequest!, [{ kind: 'session', row: rows[1]! }]));
+    preparedPage.resolve(pageResult(prepareRequest!, [{ kind: 'session', row: rows[2]! }]));
+    children.resolve({
+      data: {
+        campaignKey,
+        itemCount: 1,
+        items: [rows[1]!],
+        nextCursor: null,
+        requestFingerprint: sessionCampaignChildrenFingerprint(childrenRequest!),
+        revision: childrenRequest!.query.revision,
+        sessionCount: 1,
+      },
+      ok: true,
+      requestFingerprint: sessionCampaignChildrenFingerprint(childrenRequest!),
+      revision: childrenRequest!.query.revision,
+    });
+    neighbors.resolve({
+      data: {
+        found: true,
+        next: rows[1]!,
+        previous: null,
+        requestFingerprint: sessionNeighborFingerprint(neighborRequest!),
+        revision: neighborRequest!.query.revision,
+      },
+      ok: true,
+      requestFingerprint: sessionNeighborFingerprint(neighborRequest!),
+      revision: neighborRequest!.query.revision,
+    });
+
+    await Promise.all([paging, childLoad, neighborLoad]);
+    expect(await prepareOutcome).toBe('AbortError');
+    expect(published).toHaveLength(publicationCountAtClose);
   });
 
   test('rejects a manifest fingerprint before issuing a session query', async () => {

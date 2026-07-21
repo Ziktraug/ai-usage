@@ -405,11 +405,22 @@ test('automatically pages mobile Sessions while scrolling', async ({ page }) => 
   const summaries = page.getByRole('list', { name: 'Session summaries' });
   await expect(summaries).toBeVisible();
   const pagingSentinel = page.locator('[data-session-paging-sentinel="mobile"]');
+  await expect(pagingSentinel).toHaveCount(1);
+  expect(await pagingSentinel.evaluate((element) => element.parentElement?.dataset.sessionSurface === 'mobile')).toBe(
+    true,
+  );
   await expect
-    .poll(async () => {
-      await pagingSentinel.scrollIntoViewIfNeeded();
-      return await summaries.locator('li').count();
-    })
-    .toBe(205);
+    .poll(
+      async () =>
+        await summaries.evaluate((element) => {
+          element.scrollTop = element.scrollHeight;
+          const indices = Array.from(element.querySelectorAll<HTMLElement>('[data-session-row-id][data-index]')).map(
+            (row) => Number(row.dataset.index),
+          );
+          return Math.max(...indices, -1);
+        }),
+    )
+    .toBe(204);
+  expect(await summaries.locator('[data-session-row-id][data-index]').count()).toBeLessThanOrEqual(600);
   await expect(page.getByRole('button', { name: 'Load more sessions' })).toHaveCount(0);
 });

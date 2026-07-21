@@ -1,6 +1,6 @@
 # Plan 031: Make session scrolling trustworthy at 5,000 rows
 
-> **Status: TODO** — ready to start after plan 030 completed.
+> **Status: DONE** — bounded paging and windowing now prove all 5,000 sessions reachable on desktop and mobile.
 >
 > This is one measure-and-implement plan. Do not stop after producing a report
 > or create a second decision plan.
@@ -87,12 +87,12 @@ cards. The executor implements the selected branch in this plan.
 
 ## Done
 
-- [ ] The benchmark records comparable before/after facts and the selected row
+- [x] The benchmark records comparable before/after facts and the selected row
   of the decision table.
-- [ ] The selected architecture is implemented in this plan.
-- [ ] 5,000 sessions are reachable exactly once on desktop and mobile.
-- [ ] DOM, existing payload, heap, interaction, and bundle conditions pass.
-- [ ] Rapid query changes cannot publish stale or duplicate rows.
+- [x] The selected architecture is implemented in this plan.
+- [x] 5,000 sessions are reachable exactly once on desktop and mobile.
+- [x] DOM, existing payload, heap, interaction, and bundle conditions pass.
+- [x] Rapid query changes cannot publish stale or duplicate rows.
 
 ## STOP conditions
 

@@ -45,8 +45,8 @@ pull request unless the user explicitly asks.
 | 028 | Ship a Privacy-safe Local Demo | P0 | L | - | DONE |
 | 029 | Close the Verified Accessibility Gaps | P0 | M | 028 | DONE |
 | 030 | Add Durable Frontend Regression Gates | P0 | M | 029 | DONE |
-| 031 | Make Session Scrolling Trustworthy at 5,000 Rows | P0 | M | 030 | TODO |
-| 032 | Simplify the Frontend and Prepare the Public Showcase | P1 | L | 031 | BLOCKED — 031 |
+| 031 | Make Session Scrolling Trustworthy at 5,000 Rows | P0 | M | 030 | DONE |
+| 032 | Simplify the Frontend and Prepare the Public Showcase | P1 | L | 031 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).

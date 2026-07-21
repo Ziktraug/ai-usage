@@ -6,9 +6,21 @@ import {
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
   seedHarnessHome,
 } from '@ai-usage/local-collectors/test-fixtures/harness-home';
+import { SESSION_SCROLL_EXPECTED_COUNT } from './session-scroll-fixture';
 
-const SESSION_COUNT = 205;
+const DEFAULT_CODEX_SESSION_COUNT = 205;
+const DEFAULT_LISTENER_PORT = '4175';
+const SCALE_FIXTURE_ENVIRONMENT_KEY = 'AI_USAGE_SESSION_SCALE_E2E';
+const LISTENER_PORT_ENVIRONMENT_KEY = 'AI_USAGE_PRODUCTION_E2E_PORT';
+const LISTENER_PORT_PATTERN = /^\d{1,5}$/;
 const rootDirectory = path.resolve(import.meta.dirname, '../../..');
+const scaleFixture = process.env[SCALE_FIXTURE_ENVIRONMENT_KEY] === '1';
+const listenerPort = process.env[LISTENER_PORT_ENVIRONMENT_KEY] ?? DEFAULT_LISTENER_PORT;
+
+if (!(LISTENER_PORT_PATTERN.test(listenerPort) && Number(listenerPort) <= 65_535)) {
+  throw new Error(`${LISTENER_PORT_ENVIRONMENT_KEY} must be a valid TCP port`);
+}
+
 const temporaryHome = await mkdtemp(path.join(tmpdir(), 'ai-usage-production-browser-'));
 const fixtureBinDirectory = path.join(temporaryHome, 'fixture-bin');
 
@@ -25,8 +37,8 @@ try {
   );
   await chmod(fakeGhPath, 0o700);
   await seedHarnessHome(temporaryHome, {
-    codexSessionCount: SESSION_COUNT,
-    harnesses: ['claude', 'codex'],
+    codexSessionCount: scaleFixture ? SESSION_SCROLL_EXPECTED_COUNT : DEFAULT_CODEX_SESSION_COUNT,
+    harnesses: scaleFixture ? ['codex'] : ['claude', 'codex'],
   });
   const child = Bun.spawn(['bun', 'run', '--cwd', 'apps/web', 'start'], {
     cwd: rootDirectory,
@@ -36,9 +48,9 @@ try {
       HOME: temporaryHome,
       HOST: '127.0.0.1',
       NITRO_HOST: '127.0.0.1',
-      NITRO_PORT: '4175',
+      NITRO_PORT: listenerPort,
       PATH: `${fixtureBinDirectory}${path.delimiter}${process.env.PATH ?? ''}`,
-      PORT: '4175',
+      PORT: listenerPort,
       TZ: 'Europe/Paris',
     },
     stderr: 'inherit',

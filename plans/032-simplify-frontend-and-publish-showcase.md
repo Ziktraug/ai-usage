@@ -1,6 +1,6 @@
 # Plan 032: Simplify the frontend and prepare the public showcase
 
-> **Status: BLOCKED** — ready after plan 031 is DONE.
+> **Status: TODO** — ready to start after plan 031 completed.
 >
 > This is the final frontend step-up plan. It combines the remaining internal
 > cleanup with truthful public documentation so the screenshot reflects the

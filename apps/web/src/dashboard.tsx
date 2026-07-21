@@ -547,6 +547,14 @@ export const Dashboard = (props: {
       range: tableDateBounds(),
       sorting: sorting(),
     });
+  const sessionTableQueryResetKey = createMemo(() => {
+    const revision = focusedStore?.revision() ?? 'local-report';
+    return `${revision}:${sessionQueryFingerprint({
+      ...activeSessionQueryScope(),
+      cursor: null,
+      revision,
+    })}`;
+  });
   const searchRangeFromDateRange = (): DashboardSearch['range'] => {
     const mode = dateRange.mode();
     if (mode !== 'custom') {
@@ -707,7 +715,10 @@ export const Dashboard = (props: {
       });
     }
   });
-  onCleanup(() => servedReportSession?.abort());
+  onCleanup(() => {
+    servedReportSession?.abort();
+    sessionQueryCoordinator?.close();
+  });
   // Campaign context rows can select their atomic root even when the root is outside
   // the current table filter, so resolve selection against the payload rows.
   const selectedRow = createMemo(() => {
@@ -1300,6 +1311,7 @@ export const Dashboard = (props: {
                             onHarnessFilter={toggleHarness}
                             onSelect={toggleSelected}
                             onSortingChange={handleSortingChange}
+                            queryResetKey={sessionTableQueryResetKey()}
                             rows={visibleSessionTableRows()}
                             searchQuery={query()}
                             selectedKey={selectedKey()}

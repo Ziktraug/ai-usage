@@ -259,6 +259,7 @@ export const sessionSummaryViewport = css({
   gap: 0,
   maxH: 'calc(100dvh - 240px)',
   minH: '320px',
+  overflowAnchor: 'none',
   overflowY: 'auto',
   overscrollBehavior: 'contain',
   m: 0,
