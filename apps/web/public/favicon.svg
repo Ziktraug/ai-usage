@@ -1,0 +1,5 @@
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <title>ai-usage</title>
+  <rect fill="#1f1d19" height="64" rx="14" width="64" />
+  <path d="M14 42h8V27h-8zm14 0h8V14h-8zm14 0h8V21h-8z" fill="#e0833c" />
+</svg>

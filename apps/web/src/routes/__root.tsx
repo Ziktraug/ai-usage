@@ -10,6 +10,7 @@ function RootDocument(props: { children: JSX.Element }) {
     <html lang="en">
       <head>
         <meta content="light dark" name="color-scheme" />
+        <link href="/favicon.svg" rel="icon" type="image/svg+xml" />
         <script>
           {`try{var theme=localStorage.getItem('ai-usage-theme');if(theme==='light'||theme==='dark'){document.documentElement.dataset.theme=theme;document.querySelector('meta[name="color-scheme"]')?.setAttribute('content',theme)}}catch(_){}`}
         </script>

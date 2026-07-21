@@ -1,4 +1,5 @@
-import { expect, type Locator, type Page, test } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
+import { expect, test } from './browser-test';
 
 interface SessionDomMeasurement {
   mobileSummaryNodes: number;
@@ -12,7 +13,9 @@ const countDomNodes = async (locator: Locator): Promise<number> =>
 
 const measureSessionsAt = async (page: Page, viewportWidth: number): Promise<SessionDomMeasurement> => {
   await page.setViewportSize({ height: 900, width: viewportWidth });
-  await page.goto('/?tab=sessions');
+  if (new URL(page.url()).searchParams.get('tab') !== 'sessions') {
+    await page.goto('/?tab=sessions');
+  }
   await expect(page.getByText('3 / 4 sessions', { exact: true })).toBeVisible();
 
   const table = page.locator('table');
@@ -42,7 +45,7 @@ test('records deterministic bounded DOM measurements for the audit', async ({ pa
   const mobile = await measureSessionsAt(page, 361);
   const desktop = await measureSessionsAt(page, 1024);
 
-  await page.goto('/');
+  await page.getByRole('tab', { name: 'Overview' }).click();
   await expect(page.getByText('3 / 4 sessions', { exact: true })).toBeVisible();
   const advancedAnalysis = page.getByRole('region', { name: 'Advanced analysis' });
   await expect(advancedAnalysis).toHaveCount(1);

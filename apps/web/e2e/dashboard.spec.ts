@@ -1,11 +1,10 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './browser-test';
 
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const COLUMN_URL_PATTERN = /cols=/;
 const DATE_HEADER_PATTERN = /Date/;
 const ESTIMATED_API_VALUE_HELP_PATTERN =
   /Estimated cost at standard API prices for \d+ of \d+ fully priced sessions, including usage covered by subscriptions/;
-const HYDRATION_ERROR_PATTERN = /hydrat/i;
 const HYDRATION_TIMEOUT_MS = 15_000;
 const INSPECT_SESSION_PATTERN = /Inspect session/;
 const LEGACY_PROJECT_TAB_URL_PATTERN = /tab=projects/;
@@ -320,12 +319,6 @@ test('selects the same heatmap day with mouse, keyboard, and the equivalent cont
 });
 
 test('mounts one Sessions surface across viewport changes without losing state', async ({ page }) => {
-  const hydrationErrors: string[] = [];
-  page.on('console', (message) => {
-    if (message.type() === 'error' && HYDRATION_ERROR_PATTERN.test(message.text())) {
-      hydrationErrors.push(message.text());
-    }
-  });
   await page.setViewportSize({ height: 800, width: 361 });
   await page.goto('/');
   await page.getByRole('tab', { name: 'Sessions' }).click();
@@ -356,7 +349,6 @@ test('mounts one Sessions surface across viewport changes without losing state',
   await page.keyboard.press('Escape');
 
   await expect(page.locator('[data-session-surface="desktop"]')).toHaveCount(1);
-  expect(hydrationErrors).toEqual([]);
 });
 
 test('keeps sync limited to explicit file transfers', async ({ page }) => {

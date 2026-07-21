@@ -1,6 +1,6 @@
 # Plan 030: Add durable frontend regression gates
 
-> **Status: TODO** — ready to start after plan 029 completed.
+> **Status: DONE** — the shared browser, axe, visual, and package-test gates pass after each failure mode was proven.
 >
 > **Baseline**: commit `6135fe7`. Baselines must be created from the accessible
 > state delivered by plan 029.
@@ -80,11 +80,11 @@ snapshot manifests.
 
 ## Done
 
-- [ ] Axe, console/page error, critical-request, and visual gates run in CI.
-- [ ] The suite contains no broad accessibility or console suppression.
-- [ ] Three or four stable snapshots cover high-value states.
-- [ ] Design-system tests are part of the root test graph.
-- [ ] Tool tests execute once, not twice.
+- [x] Axe, console/page error, critical-request, and visual gates run in CI.
+- [x] The suite contains no broad accessibility or console suppression.
+- [x] Three or four stable snapshots cover high-value states.
+- [x] Design-system tests are part of the root test graph.
+- [x] Tool tests execute once, not twice.
 
 ## STOP conditions
 

@@ -1,6 +1,6 @@
 # Plan 031: Make session scrolling trustworthy at 5,000 rows
 
-> **Status: BLOCKED** — ready after plan 030 is DONE.
+> **Status: TODO** — ready to start after plan 030 completed.
 >
 > This is one measure-and-implement plan. Do not stop after producing a report
 > or create a second decision plan.

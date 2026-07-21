@@ -34,6 +34,7 @@
     "ship": "CI=1 panda ship --outfile styled-system/panda.buildinfo.json --silent",
     "build": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && bun run ship && tsc --noEmit",
     "check": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && bun run ship && tsc --noEmit",
+    "test": "bun test",
     "lint": "biome check .",
     "format": "biome format --write ."
   },
