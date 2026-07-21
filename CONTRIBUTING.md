@@ -11,7 +11,7 @@ bun install
 bun run demo
 ```
 
-`bun run demo` is the safe way to explore the frontend: it binds to loopback and uses only committed synthetic data. `bun run dev` reads this machine's real local usage history, so use it only when that is intentional.
+`bun run demo` starts an isolated development runtime backed by committed synthetic data. It binds to loopback and does not read local histories or enable mutations. Use `bun run dev` only when reading this machine's configured local data is intentional.
 
 ## Changes
 

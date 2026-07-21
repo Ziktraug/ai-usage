@@ -12,4 +12,4 @@ The report shell and bootstrap-backed dashboard render in the initial response. 
 
 ## Considered option
 
-ADR 0001 kept all report data out of server HTML with `ssr: false`. That boundary was rejected after it introduced a visible first-render loading state and a deterministic Solid hydration mismatch in TanStack Router's pending route path.
+The previous client-only route kept all report data out of server HTML with `ssr: false`. That boundary was rejected after it introduced a visible first-render loading state and a deterministic Solid hydration mismatch in TanStack Router's pending route path.

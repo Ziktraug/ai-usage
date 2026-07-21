@@ -1,32 +1,8 @@
 # ai-usage
 
-Local AI coding-tool usage, made explorable.
+Unified local AI usage reporting for the coding tools installed on this machine — and across multiple machines through portable snapshots.
 
-ai-usage brings Codex, Claude Code, OpenCode, and Cursor sessions into one CLI and interactive Solid dashboard. See activity at a glance, filter and sort the session history, compare harnesses/models/projects, and open detailed chronology without sending normal report data to a hosted analytics service.
-
-![Synthetic ai-usage Overview with an open session detail drawer](docs/assets/ai-usage-overview-session-detail.png)
-
-## Try the privacy-safe demo
-
-With [Bun](https://bun.sh/) installed:
-
-```sh
-bun install
-bun run demo
-```
-
-The demo binds only to `127.0.0.1` and uses committed deterministic synthetic data. It preserves Overview, filters, session selection, and the full detail drawer while local reads, mutations, business fetch/XHR, source events, and live collector construction stay disabled. The browser test for that boundary lives in [demo-privacy.spec.ts](apps/web/e2e/demo-privacy.spec.ts).
-
-## Frontend engineering highlights
-
-- A server-rendered TanStack Router bootstrap removes the first-load blank state, while exact-revision destination queries prevent mixed live snapshots ([ADR](docs/adr/0007-server-render-report-bootstrap.md)).
-- Continuous, windowed scrolling makes all 5,000 synthetic session IDs reachable exactly once on desktop and mobile with bounded requests and DOM size ([measurements](docs/session-scroll-benchmark.md)).
-- Compact heatmap and Punchcard visuals retain their density while exposing equivalent keyboard, touch, and semantic-table interactions ([accessibility decision](docs/adr/0005-compact-accessible-visualizations.md)).
-- One Playwright stack covers behavior, privacy, production integration, axe, visual snapshots, browser errors, and failed critical requests ([regression decision](docs/adr/0006-one-browser-regression-stack.md)).
-
-Read the [frontend case study](docs/frontend-case-study.md) for the constraints, architecture, performance evidence, testing strategy, and honest trade-offs. Package ownership and private-data boundaries are documented in [architecture](docs/architecture.md).
-
-Normal report collection stays on the local machine. The optional served Codex usage-limit source is the narrow exception: it may invoke the installed `codex app-server`, which owns provider communication and authentication refresh. ai-usage never reads Codex credentials or stores or logs raw app-server payloads.
+ai-usage reads sessions from Codex, Claude Code, OpenCode, and Cursor, then makes their token usage, estimated cost, activity, and chronology available through a CLI and an interactive dashboard. Normal report collection stays on the local machine. The optional served Codex usage-limit source is the narrow exception: it may invoke the installed `codex app-server`, which owns provider communication and authentication refresh. ai-usage never reads Codex credentials or stores or logs raw app-server payloads.
 
 ## Supported session sources
 
@@ -238,13 +214,20 @@ Merged CSV/JSON payloads include row provenance (`source.machineLabel`, `source.
 Architecture docs:
 
 - `docs/architecture.md`: package ownership, data flow, adapter rules, and guardrails
-- `docs/frontend-case-study.md`: frontend constraints, decisions, performance evidence, and trade-offs
 - `docs/adr/`: short records for the implemented frontend decisions
 - `docs/future-work.md`: global backlog for known follow-ups
 - `docs/public-package-interfaces.md`: public package exports and import rules
 - `docs/generated-tooling-ownership.md`: Panda/TanStack/Nitro/Turbo generated file ownership
 
 ## Development
+
+Run the app against deterministic synthetic data without reading local histories:
+
+```sh
+bun run demo
+```
+
+This isolated runtime binds only to `127.0.0.1`, uses a temporary home, and disables local reads, mutations, source events, and live collector construction. It is intended for development, reproduction, and browser tests.
 
 Typecheck:
 

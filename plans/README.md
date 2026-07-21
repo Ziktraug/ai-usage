@@ -42,11 +42,11 @@ pull request unless the user explicitly asks.
 | 025 | Make Session Analysis Trustworthy End to End | P1 | L | 016-018, 024 | DONE |
 | 026 | Unify the Session Drawer and Make Chronology Readable | P1 | M | 025 | DONE |
 | 027 | Extend Session Insight to Claude and Add Trustworthy Git Links | P1 | XL | 025, 026 | DONE |
-| 028 | Ship a Privacy-safe Local Demo | P0 | L | - | DONE |
+| 028 | Build an Isolated Synthetic Runtime | P0 | L | - | DONE |
 | 029 | Close the Verified Accessibility Gaps | P0 | M | 028 | DONE |
 | 030 | Add Durable Frontend Regression Gates | P0 | M | 029 | DONE |
 | 031 | Make Session Scrolling Trustworthy at 5,000 Rows | P0 | M | 030 | DONE |
-| 032 | Simplify the Frontend and Prepare the Public Showcase | P1 | L | 031 | DONE |
+| 032 | Simplify Frontend Ownership and Document Decisions | P1 | L | 031 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -167,9 +167,10 @@ REJECTED (with one-line rationale).
   proving a deterministic composer/workspace relation; a documented rejection
   does not block Claude, Codex or OpenCode.
 - Plan 028 is now independent: plans 025-027 are integrated in the current
-  baseline. It establishes the synthetic/no-local-data boundary that every
-  later browser asset and demo test relies on.
-- Plan 029 follows 028 because AppHeader must honor the demo navigation policy.
+  baseline. It establishes the synthetic/no-local-data boundary used by later
+  browser tests and contributor workflows.
+- Plan 029 follows 028 because AppHeader must honor the synthetic-runtime
+  navigation policy.
   It owns verified contrast, Punchcard semantics, shared header, reduced motion,
   narrow layouts, and an equivalent day-selection control. The heatmap keeps its
   compact GitHub-like cell density.
@@ -181,11 +182,9 @@ REJECTED (with one-line rationale).
   between a simpler full query and bounded paging/windowing from reachability,
   existing payload budgets, DOM size, heap, and local interaction evidence.
   There is no owner pause and no follow-up implementation plan.
-- Plan 032 runs last so architecture notes and the README hero describe the
-  final product. It performs scoped Dashboard/TimeRange/Router/style cleanup,
-  writes at most six evidence-backed ADRs, and prepares the case study, legal
-  files, one synthetic Overview-plus-session image, README, and exact publication
-  copy. External metadata, push, PR, hosting, and publication remain manual.
+- Plan 032 runs last so its architecture notes describe the stabilized code. It
+  performs scoped Dashboard/TimeRange/Router/style cleanup, records durable
+  decisions, and adds concise legal, contribution, and security documentation.
 
 ## Remediation waves
 
@@ -204,9 +203,9 @@ Wave 1: 009 remove HTML export
 025 complete ── 026 unified drawer ── 027 Claude Session Insight + Git context
 
 Frontend:
-028 synthetic demo ── 029 accessibility ── 030 regression gates
+028 synthetic runtime ── 029 accessibility ── 030 regression gates
     ── 031 measure + implement 5k scrolling
-    ── 032 scoped cleanup + ADRs + public showcase
+    ── 032 ownership cleanup + ADRs
 ```
 
 Plans on separate Wave 2 branches may run in parallel. Do not parallel-edit the
@@ -268,7 +267,6 @@ sequence overlapping files and rebase/re-read before execution.
 | F49 | Dashboard/TimeRange coordination has too many responsibilities for a clear composition root | 032 |
 | F50 | Report loading does not use a consistent Router lifecycle and repeated Skills styles lack a clear promotion rule | 032 |
 | F51 | Important shipped architecture choices lack concise evidence-linked rationale | 032 |
-| F52 | The public repository lacks a strong synthetic hero, case study, and publication-readiness checklist | 032 |
 
 ## Findings considered and rejected
 
@@ -309,7 +307,7 @@ sequence overlapping files and rebase/re-read before execution.
   form. A future non-HTML recap needs its own product design, privacy rules, and
   bounded output contract.
 
-## Frontend portfolio execution protocol (plans 028–032)
+## Frontend hardening execution protocol (plans 028–032)
 
 - The external merge blocker is resolved: `origin/main` and this branch share
   integrated base `4e2cc48`; the plans were re-read at `6135fe7`.
@@ -319,10 +317,10 @@ sequence overlapping files and rebase/re-read before execution.
   one deliberate commit per plan. Re-read named files after each predecessor.
 - Plan 031's table is the decision authority: measure, select, and implement in
   the same plan. Do not create an approval pause or another planning document.
-- Plan 032 writes public claims and captures the hero only after the code and
-  tests they describe are final.
+- Plan 032 records architectural decisions only after the code and tests they
+  describe are final.
 - Every executor uses synthetic fixtures, preserves loopback-only behavior, and
   stops on real/local/private data.
 - These plans authorize local implementation and verification only. They never
   authorize `gh repo edit`, repository visibility/metadata changes, push, PR
-  creation, hosting, or external publication.
+  creation, hosting, or repository metadata changes.

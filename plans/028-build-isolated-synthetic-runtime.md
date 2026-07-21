@@ -1,23 +1,23 @@
-# Plan 028: Ship a privacy-safe local demo
+# Plan 028: Build an isolated synthetic runtime
 
-> **Status: DONE** — the deterministic privacy-safe demo and its regression coverage are complete.
+> **Status: DONE** — the deterministic synthetic runtime and its regression coverage are complete.
 >
 > **Baseline**: re-read at commit `6135fe7` on 2026-07-21. If the named runtime
 > boundaries changed, update this plan before implementing.
 
 ## Outcome
 
-`bun run demo` opens a loopback-only, read-only version of the app backed by the
-committed synthetic report. It looks and behaves like the real report, including
+`bun run demo` opens a loopback-only, read-only development runtime backed by
+the committed synthetic report. It preserves report interactions, including
 session detail, but cannot read local histories or invoke collection, sync, or
 source-control mutations.
 
 ## Why this matters
 
-The repository already contains convincing synthetic data for E2E tests, but
-there is no public demo contract. Reusing the ordinary runtime and merely hiding
-navigation would leave local server paths active. The portfolio value is a demo
-that reviewers can start safely and understand immediately.
+The repository already contains synthetic data for E2E tests, but reusing the
+ordinary runtime and merely hiding navigation would leave local server paths
+active. A dedicated runtime gives contributors and regression tests a safe,
+reproducible environment without depending on operator data.
 
 ## Current evidence
 
@@ -45,7 +45,7 @@ In scope:
 - A focused Playwright privacy test.
 
 Out of scope: hosted deployment, provider calls, real histories, LAN serving,
-new demo content, README artwork, and external publication.
+new synthetic content, and product behavior unrelated to runtime isolation.
 
 ## Implementation
 
@@ -96,12 +96,12 @@ new demo content, README artwork, and external publication.
 
 ## STOP conditions
 
-Stop if the demo requires real local data, a non-loopback listener, collector or
-persistence changes, or weakening an existing security boundary. Do not commit,
-push, host, or publish unless separately requested.
+Stop if the synthetic runtime requires real local data, a non-loopback listener,
+collector or persistence changes, or weakening an existing security boundary.
+Do not commit, push, or host unless separately requested.
 
 ## Maintenance
 
 Every new root provider, server function, API route, or Vite/Nitro middleware
-must declare and test its demo behavior. Hidden navigation is never the privacy
-boundary.
+must declare and test its synthetic-runtime behavior. Hidden navigation is never
+the privacy boundary.
