@@ -101,7 +101,7 @@ The newest local Codex `token_count.rate_limits` event used to render subscripti
 _Avoid_: billing limit, provider quota API
 
 **Wide event**:
-One sanitized, bounded, structured observability record emitted exactly once at the end of an Effect program execution so an operator can see what ran, its business outcome, how long it took, and allowlisted local context (for example which collector), without requiring an OpenTelemetry exporter. Same ecosystem pattern as Stripe canonical log lines / Observability 2.0 structured events.
+One sanitized, bounded, schema-v2 structured observability record emitted exactly once at the end of an Effect program execution so an operator can see what ran, its business outcome, how long it took, allowlisted local context (for example which collector), and process-scoped producer provenance without requiring an OpenTelemetry exporter. The exhaustive NDJSON/JSON record remains one physical line; a severity-aware application projector may render a concise multi-line TTY view. Same ecosystem pattern as Stripe canonical log lines / Observability 2.0 structured events.
 _Avoid_: boundary log, harness history event, SSE publication event, scattered per-step log lines, OTel-required setup
 
 **Effect program execution**:

@@ -22,13 +22,17 @@ Codex quota history is owned by the `codex.usage-limits` source: app-server coll
 
 Owns domain-free Effect observability primitives:
 
-- wide-event model, boundary runner, hop measurement, and sanitize-on-emit;
-- capture/no-op sinks plus Node-only console and bounded NDJSON file sinks;
+- schema-v2 wide-event model, required process resource layer, boundary runner,
+  hop measurement, stable classification, and sanitize-on-emit;
+- capture/no-op sinks plus Node-only severity/projector-aware console and
+  bounded NDJSON file sinks with typed delivery diagnostics;
 - cooperative interprocess locking, rotation, retention, and workspace log-dir
   resolution under `logs/` or absolute `AI_USAGE_LOG_DIR`.
 
 Must not import other `@ai-usage/*` packages. Application adapters own boundary
-names and annotation allowlists.
+names, annotation allowlists, resource configuration, and semantic terminal
+projectors. Historical schema-v1 files remain valid append-only records with no
+resource field.
 
 ### `@ai-usage/report-core`
 
@@ -150,8 +154,9 @@ The CLI calls `@ai-usage/report-data` for report data. It should not be called b
 Owns web runtime and UI:
 
 - the official Nitro Bun preset and one scoped in-process ManagedRuntime that
-  owns source-control layers plus one process-scoped wide-event sink (NDJSON
-  file under `logs/` or `AI_USAGE_LOG_DIR`, plus pretty/JSON stderr);
+  owns source-control layers plus one process-scoped schema-v2 resource and
+  wide-event sink (NDJSON file under `logs/` or `AI_USAGE_LOG_DIR`, plus
+  severity-aware pretty/JSON stderr);
 - finite Effect adapters such as `web.sessions.read` run through that same
   runtime;
 - direct source adapters and SQLite access, with no generic collection subprocess;
@@ -207,6 +212,41 @@ explicit user action, the server re-resolves the exact revision anchor and may
 invoke `gh` with a fixed argument vector, no shell, timeout, output cap, strict
 GitHub URL validation, and sanitized typed failures. Provider stderr and
 resolved URLs are never persisted or included in portable formats.
+
+## Wide-event observability
+
+Each real boundary emits one exhaustive, bounded schema-v2 record. Its
+`resource` identifies one process lifetime (`instanceId`), runtime mode,
+`ai-usage` version, and `web`/`cli` surface. Trace and span ids remain scoped to
+that boundary. Source-to-publication causality instead uses monotonic domain
+generations: a changed source records `publicationDataGeneration`, and a
+publication records `previousPublishedGeneration`, `dataTarget`, and
+`requestTarget`. The interval
+`previousPublishedGeneration < publicationDataGeneration <= dataTarget`
+identifies changes consumed by a coalesced publication without inventing a
+cross-boundary trace.
+
+NDJSON and JSON console output remain one object per physical line. Pretty TTY
+output is a separate application-owned projection: success routes to info,
+degraded/interrupted/timed-out to warn, and failure to error. `LOG_LEVEL`
+filters only the console; debug expands the complete bounded hop tree,
+annotations, and resource. Web file-delivery warnings use fixed rate-limited
+kinds and direct console writes, while CLI observability remains file-only.
+
+### Scheduler signal exposed by wide events
+
+Scheduler investigations should group `source.run` by bounded `sourceId` and
+`trigger`, then compare `queueDelayMs` with boundary and `source.execute`
+duration. Publication generation intervals show whether delayed source work was
+consumed by the expected publication. The 2026-07-22 audit observed queue delay
+on 147 records; 40 exceeded one second, the maximum was 5,054 ms, and
+`cursor.commit-attribution` had roughly 3,043 ms median queue delay for roughly
+7.8 ms median execution. These aggregate values intentionally omit event ids,
+revisions, fingerprints, paths, and payload data.
+
+That evidence warrants a separate scheduler performance plan, but it does not
+choose more workers, priority lanes, or queue partitioning. Plan 037 changes no
+worker count, admission rule, cadence, dependency, or publication ordering.
 
 ## Source control invariants
 

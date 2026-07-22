@@ -20,6 +20,14 @@ export interface ServiceHop {
   readonly traceId: string;
 }
 
+export interface WideEventResource {
+  readonly instanceId: string;
+  readonly runtimeMode: 'development' | 'production' | 'test' | 'unknown';
+  readonly serviceName: 'ai-usage';
+  readonly serviceVersion: string;
+  readonly surface: 'cli' | 'web';
+}
+
 export interface WideEventSnapshot {
   readonly annotations: Readonly<Record<string, LogValue>>;
   readonly boundary: string;
@@ -29,7 +37,8 @@ export interface WideEventSnapshot {
   readonly event: 'wide-event';
   readonly eventId: string;
   readonly outcome: BoundaryOutcome;
-  readonly schemaVersion: 1;
+  readonly resource: WideEventResource;
+  readonly schemaVersion: 2;
   readonly services: readonly ServiceHop[];
   readonly spanId: string;
   readonly startedAt: string;

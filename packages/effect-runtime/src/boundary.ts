@@ -1,6 +1,7 @@
 import { Clock, Effect, type Exit, Option } from 'effect';
 import { safeClassify } from './classifier';
 import type { BoundaryClassification, LogValue } from './model';
+import { WideEventResourceService } from './resource';
 import { submitWideEventBestEffort, WideEventSink } from './sink';
 import {
   createWideEventController,
@@ -24,15 +25,17 @@ const newEventId = (): string => globalThis.crypto.randomUUID();
 export const runBoundaryEffect = <A, E, R>(
   options: BoundaryRunOptions<A, E>,
   effect: Effect.Effect<A, E, R | WideEventService>,
-): Effect.Effect<A, E, Exclude<R, WideEventService> | WideEventSink> =>
+): Effect.Effect<A, E, Exclude<R, WideEventService> | WideEventResourceService | WideEventSink> =>
   Effect.gen(function* () {
     const sink = yield* WideEventSink;
+    const resource = yield* WideEventResourceService;
     const eventId = newEventId();
     const startedAt = wallClockIso();
     const startedAtNanos = yield* Clock.currentTimeNanos;
     const controller = createWideEventController({
       boundary: options.boundary,
       eventId,
+      resource,
       startedAt,
       ...(options.annotations === undefined ? {} : { annotations: options.annotations }),
     });
@@ -71,4 +74,4 @@ export const runBoundaryEffect = <A, E, R>(
     );
 
     return yield* body;
-  }) as Effect.Effect<A, E, Exclude<R, WideEventService> | WideEventSink>;
+  }) as Effect.Effect<A, E, Exclude<R, WideEventService> | WideEventResourceService | WideEventSink>;

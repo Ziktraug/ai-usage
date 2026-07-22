@@ -1,5 +1,6 @@
 import { Cause, Exit, Option } from 'effect';
 import type { BoundaryClassification, BoundaryOutcome, SanitizedTaggedError } from './model';
+import { scrubApprovedPublicString } from './sanitize';
 
 const ALLOWED_PUBLIC_ERROR_TAGS = new Set(['ProviderQuotaRefreshAborted', 'CliArgumentError', 'SourceControlDisabled']);
 
@@ -24,11 +25,11 @@ export const sanitizeKnownTaggedError = (value: unknown): SanitizedTaggedError |
     return null;
   }
   const code = readOwnString(value, 'code');
-  const message = readOwnString(value, 'publicMessage') ?? readOwnString(value, 'message');
+  const publicMessage = readOwnString(value, 'publicMessage');
   return {
     tag,
     ...(code === undefined ? {} : { code }),
-    ...(message === undefined ? {} : { message }),
+    ...(publicMessage === undefined ? {} : { message: scrubApprovedPublicString(publicMessage) }),
   };
 };
 

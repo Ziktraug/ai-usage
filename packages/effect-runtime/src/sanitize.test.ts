@@ -1,10 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import { Redacted } from 'effect';
-import { MAX_ANNOTATION_LEVELS, MAX_COMPLETED_HOPS, MAX_SERIALIZED_EVENT_BYTES, type WideEventSnapshot } from './model';
+import {
+  MAX_ANNOTATION_KEYS,
+  MAX_ANNOTATION_LEVELS,
+  MAX_COMPLETED_HOPS,
+  MAX_SERIALIZED_EVENT_BYTES,
+  type WideEventSnapshot,
+} from './model';
 import { sanitizeWideEventSnapshot, serializeWideEventSnapshot } from './sanitize';
 
 const baseEvent = (overrides: Partial<WideEventSnapshot> = {}): WideEventSnapshot => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   event: 'wide-event',
   eventId: 'event-1',
   boundary: 'test.boundary',
@@ -15,6 +21,13 @@ const baseEvent = (overrides: Partial<WideEventSnapshot> = {}): WideEventSnapsho
   outcome: 'success',
   durationMs: 12,
   error: null,
+  resource: {
+    instanceId: 'fixture-instance',
+    runtimeMode: 'test',
+    serviceName: 'ai-usage',
+    serviceVersion: '0.1.0-test',
+    surface: 'web',
+  },
   annotations: {},
   services: [],
   ...overrides,
@@ -77,9 +90,39 @@ describe('wide-event sanitizer', () => {
     expect(result.value.annotations.big).toBe('10');
   });
 
+  test('keeps hostile annotation containers inside the object contract', () => {
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error('unreadable annotations');
+        },
+      },
+    );
+    const result = sanitizeWideEventSnapshot(
+      baseEvent({
+        annotations: hostile as never,
+        services: [
+          {
+            annotations: hostile as never,
+            durationMs: 1,
+            name: 'hostile-hop',
+            outcome: 'success',
+            spanId: 'span',
+            traceId: 'trace',
+          },
+        ],
+      }),
+    );
+
+    expect(result.truncated).toBe(true);
+    expect(result.value.annotations).toEqual({ observabilityTruncated: true });
+    expect(result.value.services[0]?.annotations).toEqual({});
+  });
+
   test('truncates deep annotation trees', () => {
     let deep: Record<string, unknown> = { leaf: 'x' };
-    for (let index = 0; index < MAX_ANNOTATION_LEVELS + 2; index += 1) {
+    for (const _level of Array.from({ length: MAX_ANNOTATION_LEVELS + 2 })) {
       deep = { child: deep };
     }
     const result = sanitizeWideEventSnapshot(baseEvent({ annotations: { deep: deep as never } }));
@@ -99,6 +142,18 @@ describe('wide-event sanitizer', () => {
     expect(result.truncated).toBe(true);
     expect(result.value.services.length).toBeLessThanOrEqual(MAX_COMPLETED_HOPS);
     expect(result.value.annotations.observabilityTruncated).toBe(true);
+  });
+
+  test('keeps the truncation marker inside the annotation key budget', () => {
+    const annotations = Object.fromEntries(
+      Array.from({ length: MAX_ANNOTATION_KEYS + 1 }, (_, index) => [`key-${index}`, index]),
+    );
+
+    const result = sanitizeWideEventSnapshot(baseEvent({ annotations }));
+
+    expect(result.truncated).toBe(true);
+    expect(result.value.annotations.observabilityTruncated).toBe(true);
+    expect(Object.keys(result.value.annotations)).toHaveLength(MAX_ANNOTATION_KEYS);
   });
 
   test('oversized events fall back to a minimal safe snapshot', () => {
@@ -134,6 +189,36 @@ describe('wide-event sanitizer', () => {
       }),
     );
     expect(result.value.error?.message?.length).toBeLessThanOrEqual(1024);
+  });
+
+  test('scrubs credential-shaped public messages and bounds hostile resources', () => {
+    const result = sanitizeWideEventSnapshot(
+      baseEvent({
+        error: {
+          message: 'Prefix Bearer private-token and Basic dXNlcjpwYXNz at https://fixture.invalid?api_key=private-key',
+          tag: 'CliArgumentError',
+        },
+        resource: {
+          instanceId: `instance-${'x'.repeat(8192)}`,
+          runtimeMode: 'invalid' as never,
+          serviceName: 'hostile' as never,
+          serviceVersion: 'Bearer resource-secret',
+          surface: 'invalid' as never,
+        },
+      }),
+    );
+
+    const serialized = serializeWideEventSnapshot(result.value);
+    expect(serialized).not.toContain('private-token');
+    expect(serialized).not.toContain('private-key');
+    expect(serialized).not.toContain('resource-secret');
+    expect(result.value.error?.message).toContain('Prefix Bearer [REDACTED]');
+    expect(result.value.resource).toMatchObject({
+      runtimeMode: 'unknown',
+      serviceName: 'ai-usage',
+      surface: 'web',
+    });
+    expect(result.value.resource.instanceId.length).toBeLessThanOrEqual(4096);
   });
 
   test('marks truncated hop identity strings at the root', () => {

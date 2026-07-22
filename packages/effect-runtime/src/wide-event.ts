@@ -1,5 +1,12 @@
 import { Context, Effect, FiberRef, Layer, Ref } from 'effect';
-import type { BoundaryOutcome, LogValue, SanitizedTaggedError, ServiceHop, WideEventSnapshot } from './model';
+import type {
+  BoundaryOutcome,
+  LogValue,
+  SanitizedTaggedError,
+  ServiceHop,
+  WideEventResource,
+  WideEventSnapshot,
+} from './model';
 import { sanitizeWideEventSnapshot } from './sanitize';
 
 interface HopEnrichment {
@@ -122,12 +129,14 @@ const buildServices = (completed: readonly CompletedHop[]): ServiceHop[] => {
 export const createWideEventController = ({
   boundary,
   eventId,
+  resource,
   startedAt,
   annotations = {},
 }: {
   readonly annotations?: Readonly<Record<string, LogValue>>;
   readonly boundary: string;
   readonly eventId: string;
+  readonly resource: WideEventResource;
   readonly startedAt: string;
 }): WideEventController => {
   const state = Ref.unsafeMake<WideEventState>({
@@ -148,7 +157,7 @@ export const createWideEventController = ({
       const current = yield* Ref.get(state);
       const services = buildServices(current.completedHops);
       const raw: WideEventSnapshot = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         event: 'wide-event',
         eventId,
         boundary,
@@ -159,6 +168,7 @@ export const createWideEventController = ({
         outcome: current.finalOutcome ?? 'failure',
         durationMs,
         error: current.finalError,
+        resource,
         annotations: {
           ...current.rootAnnotations,
           ...current.finalAnnotations,
@@ -169,7 +179,7 @@ export const createWideEventController = ({
     }).pipe(
       Effect.catchAllCause(() =>
         Effect.succeed({
-          schemaVersion: 1 as const,
+          schemaVersion: 2 as const,
           event: 'wide-event' as const,
           eventId,
           boundary,
@@ -180,6 +190,7 @@ export const createWideEventController = ({
           outcome: 'failure' as const,
           durationMs,
           error: null,
+          resource,
           annotations: { observabilityTruncated: true },
           services: [],
         }),

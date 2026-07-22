@@ -1,17 +1,30 @@
 import { describe, expect, test } from 'bun:test';
-import { Deferred, Effect, Exit, Fiber } from 'effect';
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Option } from 'effect';
 import { runBoundaryEffect, withMeasured, withMeasuredIfAvailable } from './index';
-import { makeCaptureWideEventSink, makeWideEventSinkLayer, noopWideEventSink, type WideEventSink } from './sink';
+import { type WideEventResourceService, WideEventResourceService as WideEventResourceTag } from './resource';
+import {
+  makeCaptureWideEventSink,
+  makeTestWideEventSinkLayer,
+  makeWideEventSinkLayer,
+  noopWideEventSink,
+  type WideEventSink,
+} from './sink';
 
-const runWithCapture = <A, E>(effect: Effect.Effect<A, E, WideEventSink>) => {
+const runWithCapture = <A, E>(effect: Effect.Effect<A, E, WideEventResourceService | WideEventSink>) => {
   const sink = makeCaptureWideEventSink();
   return {
     sink,
-    program: effect.pipe(Effect.provide(makeWideEventSinkLayer(sink))),
+    program: effect.pipe(Effect.provide(makeTestWideEventSinkLayer(sink))),
   };
 };
 
 describe('boundary runner and hop tree', () => {
+  test('sink layers do not invent process resource identity', async () => {
+    const context = await Effect.runPromise(Effect.scoped(Layer.build(makeWideEventSinkLayer(noopWideEventSink))));
+
+    expect(Option.isNone(Context.getOption(context, WideEventResourceTag))).toBe(true);
+  });
+
   test('reconstructs nested hops in sequence order', async () => {
     const { sink, program } = runWithCapture(
       runBoundaryEffect(
@@ -48,7 +61,7 @@ describe('boundary runner and hop tree', () => {
     const program = Effect.gen(function* () {
       yield* runBoundaryEffect({ boundary: 'one', annotations: { n: 1 } }, withMeasured('h1')(Effect.succeed(1)));
       yield* runBoundaryEffect({ boundary: 'two', annotations: { n: 2 } }, withMeasured('h2')(Effect.succeed(2)));
-    }).pipe(Effect.provide(makeWideEventSinkLayer(sink)));
+    }).pipe(Effect.provide(makeTestWideEventSinkLayer(sink)));
 
     await Effect.runPromise(program);
     expect(sink.events()).toHaveLength(2);
@@ -62,7 +75,7 @@ describe('boundary runner and hop tree', () => {
   test('emits exactly once even under concurrent finalize pressure', async () => {
     const sink = makeCaptureWideEventSink();
     const program = runBoundaryEffect({ boundary: 'once' }, Effect.succeed('ok')).pipe(
-      Effect.provide(makeWideEventSinkLayer(sink)),
+      Effect.provide(makeTestWideEventSinkLayer(sink)),
     );
     await Effect.runPromise(program);
     expect(sink.events()).toHaveLength(1);
@@ -77,7 +90,7 @@ describe('boundary runner and hop tree', () => {
         yield* Deferred.succeed(started, undefined);
         yield* Effect.never;
       }),
-    ).pipe(Effect.provide(makeWideEventSinkLayer(sink)));
+    ).pipe(Effect.provide(makeTestWideEventSinkLayer(sink)));
 
     const fiber = Effect.runFork(program);
     await Effect.runPromise(Deferred.await(started));
@@ -109,7 +122,7 @@ describe('boundary runner and hop tree', () => {
     };
     const result = await Effect.runPromise(
       runBoundaryEffect({ boundary: 'safe' }, Effect.succeed('value')).pipe(
-        Effect.provide(makeWideEventSinkLayer(failingSink)),
+        Effect.provide(makeTestWideEventSinkLayer(failingSink)),
       ),
     );
     expect(result).toBe('value');
@@ -126,7 +139,7 @@ describe('boundary runner and hop tree', () => {
           },
         },
         Effect.fail('domain-error' as const),
-      ).pipe(Effect.provide(makeWideEventSinkLayer(sink))),
+      ).pipe(Effect.provide(makeTestWideEventSinkLayer(sink))),
     );
     expect(Exit.isFailure(exit)).toBe(true);
     expect(sink.events()[0]?.outcome).toBe('failure');
@@ -135,7 +148,7 @@ describe('boundary runner and hop tree', () => {
   test('noop sink accepts submissions without mutable global state', async () => {
     const result = await Effect.runPromise(
       runBoundaryEffect({ boundary: 'noop' }, Effect.succeed(1)).pipe(
-        Effect.provide(makeWideEventSinkLayer(noopWideEventSink)),
+        Effect.provide(makeTestWideEventSinkLayer(noopWideEventSink)),
       ),
     );
     expect(result).toBe(1);

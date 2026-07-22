@@ -72,3 +72,16 @@ pattern.
 - Targeted production scenario, repeated three times — PASS
 - Full production browser suite — PASS (7 tests)
 - Full development browser suite — PASS (37 tests)
+
+## Local review follow-up
+
+The persisted NDJSON records were compared directly with their TTY rendering.
+The follow-up keeps the terminal output to one context-rich physical line per
+event, fixes business-outcome classification for Sessions reads and CLI quota,
+adds queue-delay and publication-change annotations, keeps the annotation key
+budget strict, and makes file-sink disposal respect its shutdown deadline even
+when an append ignores cancellation.
+
+Regression coverage now includes blocked shutdown, Sessions revision expiry,
+CLI quota success-with-degradation and failure-without-data, owner/joiner quota
+interruption, hostile annotation containers, and the compact pretty format.

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Effect, Layer, Ref } from 'effect';
 import type { WideEventSnapshot } from '../model';
 import { serializeWideEventSnapshot } from '../sanitize';
-import { noopWideEventSink, WideEventSink, type WideEventSinkDiagnostics, type WideEventSinkShape } from '../sink';
+import { makeEmptyWideEventSinkDiagnostics, noopWideEventSink, WideEventSink, type WideEventSinkShape } from '../sink';
 import { assertSafeRegularFilePath, ensureOwnedLogDirectory, withCooperativeLock } from './lock';
 import { resolveWideEventLogDirectory } from './resolve-log-dir';
 
@@ -16,6 +16,7 @@ const DEFAULT_QUEUE_CAPACITY = 128;
 const DEFAULT_DRAIN_TIMEOUT_MS = 2000;
 const DEFAULT_MAX_FILES = 30;
 const DEFAULT_MAX_SIZE_MB = 50;
+const WARNING_RATE_LIMIT_MS = 30_000;
 
 type AppendLine = (filePath: string, line: string, signal: AbortSignal) => Promise<void>;
 
@@ -29,8 +30,35 @@ export interface FileWideEventSinkOptions {
   readonly maxSizeMb?: number;
   readonly now?: () => Date;
   readonly queueCapacity?: number;
-  readonly warn?: (message: string) => void;
+  readonly sweepFiles?: (directory: string, maxFiles: number) => Promise<void>;
+  readonly warn?: (warning: FileWideEventWarning) => void;
 }
+
+export type FileWideEventWarningKind =
+  | 'append-failure'
+  | 'append-timeout'
+  | 'circuit-open'
+  | 'lock-timeout'
+  | 'queue-full'
+  | 'sweep-failure';
+
+export interface FileWideEventWarning {
+  readonly counters: {
+    readonly dropped: number;
+    readonly failed: number;
+  };
+  readonly kind: FileWideEventWarningKind;
+  readonly message: string;
+}
+
+const WARNING_MESSAGES: Readonly<Record<FileWideEventWarningKind, string>> = {
+  'append-failure': 'Wide-event file append failed.',
+  'append-timeout': 'Wide-event file append exceeded its deadline; the circuit is open.',
+  'circuit-open': 'Wide-event file delivery is disabled because its circuit is open.',
+  'lock-timeout': 'Wide-event file lock acquisition timed out.',
+  'queue-full': 'Wide-event file queue is full; the record was dropped.',
+  'sweep-failure': 'Wide-event file retention sweep failed.',
+};
 
 interface PendingRecord {
   readonly event: WideEventSnapshot;
@@ -44,11 +72,9 @@ class AppendInterruptedError extends Error {
   override readonly name = 'AppendInterruptedError';
 }
 
-const emptyDiagnostics = (): WideEventSinkDiagnostics => ({
-  accepted: 0,
-  dropped: 0,
-  failed: 0,
-});
+class LockTimeoutError extends Error {
+  override readonly name = 'LockTimeoutError';
+}
 
 const dateKey = (date: Date): string => date.toISOString().slice(0, 10);
 
@@ -67,6 +93,7 @@ const withTimeout = async (
   operation: (signal: AbortSignal) => Promise<void>,
   timeoutMs: number,
   registerExternalAbort: (abort: (() => void) | undefined) => void,
+  onTimeout: () => void,
 ): Promise<void> => {
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -81,6 +108,7 @@ const withTimeout = async (
   };
   registerExternalAbort(() => abort(new AppendInterruptedError('Wide-event file append interrupted by shutdown')));
   timeout = setTimeout(() => {
+    onTimeout();
     abort(new AppendBlockedError(`Wide-event file append exceeded ${timeoutMs}ms`));
   }, timeoutMs);
   try {
@@ -194,8 +222,9 @@ export const createFileWideEventSink = (
   const queueCapacity = options.queueCapacity ?? DEFAULT_QUEUE_CAPACITY;
   const now = options.now ?? (() => new Date());
   const warn = options.warn ?? (() => undefined);
+  const sweepFiles = options.sweepFiles ?? sweepOldFiles;
 
-  const diagnostics = Ref.unsafeMake(emptyDiagnostics());
+  const diagnostics = Ref.unsafeMake(makeEmptyWideEventSinkDiagnostics());
   const pending: PendingRecord[] = [];
   let circuitOpen = false;
   let outstanding = 0;
@@ -205,6 +234,8 @@ export const createFileWideEventSink = (
   let accepting = true;
   let disposed = false;
   let abortActiveAppend: (() => void) | undefined;
+  let lastSweptTarget: string | undefined;
+  const warningTimes = new Map<FileWideEventWarningKind, number>();
 
   const markSettled = (): void => {
     outstanding -= 1;
@@ -214,7 +245,7 @@ export const createFileWideEventSink = (
     }
   };
 
-  const bump = (field: keyof WideEventSinkDiagnostics): void => {
+  const bump = (field: 'accepted' | 'dropped' | 'failed'): void => {
     Effect.runSync(
       Ref.update(diagnostics, (current) => ({
         ...current,
@@ -223,11 +254,37 @@ export const createFileWideEventSink = (
     );
   };
 
+  const warnKind = (kind: FileWideEventWarningKind): void => {
+    const warningAt = now().getTime();
+    const previous = warningTimes.get(kind);
+    if (previous !== undefined && warningAt - previous < WARNING_RATE_LIMIT_MS) {
+      return;
+    }
+    warningTimes.set(kind, warningAt);
+    const current = Effect.runSync(Ref.get(diagnostics));
+    try {
+      warn({
+        counters: { dropped: current.dropped, failed: current.failed },
+        kind,
+        message: WARNING_MESSAGES[kind],
+      });
+    } catch {
+      // A diagnostic callback must never change delivery behavior.
+    }
+  };
+
   const dropPending = (): void => {
-    const dropped = pending.splice(0).length;
-    for (let index = 0; index < dropped; index += 1) {
+    for (const _record of pending.splice(0)) {
       bump('dropped');
       markSettled();
+    }
+  };
+
+  const openCircuitAtDeadline = (): void => {
+    if (!circuitOpen) {
+      circuitOpen = true;
+      warnKind('append-timeout');
+      dropPending();
     }
   };
 
@@ -252,13 +309,21 @@ export const createFileWideEventSink = (
           (abort) => {
             abortActiveAppend = abort;
           },
+          openCircuitAtDeadline,
         );
-        await sweepOldFiles(directory, maxFiles);
+        if (lastSweptTarget !== target) {
+          try {
+            await sweepFiles(directory, maxFiles);
+            lastSweptTarget = target;
+          } catch {
+            warnKind('sweep-failure');
+          }
+        }
       },
       lockTimeoutMs,
     );
     if (locked === null) {
-      throw new Error('Wide-event file lock timed out');
+      throw new LockTimeoutError('Wide-event file lock timed out');
     }
   };
 
@@ -275,13 +340,15 @@ export const createFileWideEventSink = (
       } catch (error) {
         if (error instanceof AppendBlockedError) {
           circuitOpen = true;
-          warn('Wide-event file appender timed out; disabling the file sink for this process');
           bump('failed');
         } else if (error instanceof AppendInterruptedError) {
           bump('dropped');
-        } else {
-          warn('Unable to append wide-event log file');
+        } else if (error instanceof LockTimeoutError) {
           bump('failed');
+          warnKind('lock-timeout');
+        } else {
+          bump('failed');
+          warnKind('append-failure');
         }
       } finally {
         markSettled();
@@ -296,11 +363,14 @@ export const createFileWideEventSink = (
   const enqueue = (event: WideEventSnapshot): void => {
     if (!accepting || circuitOpen) {
       bump('dropped');
+      if (circuitOpen) {
+        warnKind('circuit-open');
+      }
       return;
     }
     if (outstanding >= queueCapacity) {
       bump('dropped');
-      warn('Dropping wide-event file append because the bounded queue is full');
+      warnKind('queue-full');
       return;
     }
     if (outstanding === 0) {
@@ -339,14 +409,16 @@ export const createFileWideEventSink = (
       abortActiveAppend?.();
     }
     dropPending();
-    if (!drained) {
-      await idle;
-    }
   };
 
   return {
     submit: (event) => Effect.sync(() => enqueue(event)),
-    diagnostics: () => Ref.get(diagnostics),
+    diagnostics: () =>
+      Ref.get(diagnostics).pipe(
+        Effect.map((current) =>
+          disposed && outstanding > 0 ? { ...current, dropped: current.dropped + outstanding } : current,
+        ),
+      ),
     drain,
     dispose,
   };

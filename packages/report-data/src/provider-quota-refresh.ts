@@ -258,12 +258,11 @@ export const createProviderQuotaRefresh = <PersistenceError>(
         return { flight, owner: true } as const;
       });
       if (!selection.owner) {
-        const joined = Deferred.await(selection.flight.result).pipe(
+        return yield* withAbortSignal(Deferred.await(selection.flight.result), input.signal).pipe(
           withMeasuredIfAvailable<ProviderQuotaRefreshResult, PersistenceError | ProviderQuotaRefreshAborted>(
             'quota.refresh.wait',
           ),
         );
-        return yield* withAbortSignal(joined, input.signal);
       }
 
       const controller = new AbortController();

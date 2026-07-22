@@ -15,9 +15,8 @@ import path from 'node:path';
 import { Effect } from 'effect';
 import { runBoundaryEffect } from '../boundary';
 import type { WideEventSnapshot } from '../model';
-import { makeWideEventSinkLayer } from '../sink';
-import { makeConsoleWideEventSink, renderPrettyWideEvent } from './console-sink';
-import { createFileWideEventSink } from './file-sink';
+import { makeTestWideEventSinkLayer } from '../sink';
+import { createFileWideEventSink, type FileWideEventWarning } from './file-sink';
 import { acquireCooperativeLock, ensureOwnedLogDirectory, withCooperativeLock } from './lock';
 import { resolveWideEventLogDirectory } from './resolve-log-dir';
 
@@ -36,7 +35,7 @@ afterEach(() => {
 });
 
 const sampleEvent = (id: string): WideEventSnapshot => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   event: 'wide-event',
   eventId: id,
   boundary: 'test.boundary',
@@ -47,6 +46,13 @@ const sampleEvent = (id: string): WideEventSnapshot => ({
   outcome: 'success',
   durationMs: 1,
   error: null,
+  resource: {
+    instanceId: 'fixture-instance',
+    runtimeMode: 'test',
+    serviceName: 'ai-usage',
+    serviceVersion: '0.1.0-test',
+    surface: 'web',
+  },
   annotations: { sourceId: 'cursor' },
   services: [],
 });
@@ -152,6 +158,108 @@ describe('node wide-event sinks', () => {
     await sink.dispose();
   });
 
+  test('opens the circuit at the deadline while a non-cooperative append keeps the lock', async () => {
+    const directory = makeTempDir();
+    let appendCount = 0;
+    let releaseAppend!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    const sink = createFileWideEventSink({
+      directory,
+      appendTimeoutMs: 15,
+      appendLine: async () => {
+        appendCount++;
+        await blocked;
+      },
+    });
+
+    await Effect.runPromise(sink.submit(sampleEvent('non-cooperative')));
+    await Bun.sleep(30);
+    await Effect.runPromise(sink.submit(sampleEvent('after-deadline')));
+
+    expect((await Effect.runPromise(sink.diagnostics())).dropped).toBe(1);
+    expect(await withCooperativeLock(directory, async () => 'acquired', 20)).toBeNull();
+    expect(appendCount).toBe(1);
+
+    releaseAppend();
+    await sink.drain();
+    expect(await withCooperativeLock(directory, async () => 'acquired', 200)).toBe('acquired');
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({ accepted: 0, dropped: 1, failed: 1 });
+    await sink.dispose();
+  });
+
+  test('rate-limits typed warning kinds without exposing append errors', async () => {
+    const directory = makeTempDir();
+    let current = new Date('2026-07-21T12:00:00.000Z');
+    const warnings: FileWideEventWarning[] = [];
+    const sink = createFileWideEventSink({
+      directory,
+      appendLine: () => Promise.reject(new Error('credential Bearer fixture-secret')),
+      now: () => current,
+      warn: (warning) => warnings.push(warning),
+    });
+
+    for (const [index, seconds] of [0, 10, 31].entries()) {
+      current = new Date(`2026-07-21T12:00:${seconds.toString().padStart(2, '0')}.000Z`);
+      await Effect.runPromise(sink.submit(sampleEvent(`warning-${index}`)));
+      await sink.drain();
+    }
+
+    expect(warnings.map(({ kind }) => kind)).toEqual(['append-failure', 'append-failure']);
+    expect(warnings.every(({ message }) => !message.includes('fixture-secret'))).toBe(true);
+    await sink.dispose();
+  });
+
+  test('sweeps once per selected target and retries a failed sweep', async () => {
+    const directory = makeTempDir();
+    let current = new Date('2026-07-21T12:00:00.000Z');
+    let sweepCount = 0;
+    let failFirstSweep = true;
+    const sink = createFileWideEventSink({
+      directory,
+      now: () => current,
+      sweepFiles: () => {
+        sweepCount++;
+        if (failFirstSweep) {
+          failFirstSweep = false;
+          return Promise.reject(new Error('fixture sweep failure'));
+        }
+        return Promise.resolve();
+      },
+    });
+
+    for (const id of ['steady-1', 'steady-2', 'steady-3']) {
+      await Effect.runPromise(sink.submit(sampleEvent(id)));
+      await sink.drain();
+    }
+    expect(sweepCount).toBe(2);
+
+    current = new Date('2026-07-22T12:00:00.000Z');
+    await Effect.runPromise(sink.submit(sampleEvent('next-day')));
+    await sink.drain();
+    expect(sweepCount).toBe(3);
+    await sink.dispose();
+
+    const rotationDirectory = makeTempDir();
+    let rotationSweeps = 0;
+    const rotationSink = createFileWideEventSink({
+      directory: rotationDirectory,
+      maxSizeMb: 0.0001,
+      now: () => new Date('2026-07-21T12:00:00.000Z'),
+      sweepFiles: () => {
+        rotationSweeps++;
+        return Promise.resolve();
+      },
+    });
+    for (const id of ['rotation-1', 'rotation-2']) {
+      await Effect.runPromise(rotationSink.submit(sampleEvent(id)));
+      await rotationSink.drain();
+    }
+    expect(rotationSweeps).toBe(2);
+    await rotationSink.dispose();
+  });
+
   test('rotates before exceeding max size and retains newest files', async () => {
     const directory = makeTempDir();
     const sink = createFileWideEventSink({
@@ -160,7 +268,7 @@ describe('node wide-event sinks', () => {
       maxFiles: 2,
       now: () => new Date('2026-07-21T12:00:00.000Z'),
     });
-    for (let index = 0; index < 8; index += 1) {
+    for (const index of Array.from({ length: 8 }, (_, itemIndex) => itemIndex)) {
       await Effect.runPromise(sink.submit(sampleEvent(`rot-${index}`)));
       await sink.drain();
     }
@@ -186,45 +294,11 @@ describe('node wide-event sinks', () => {
     });
     const result = await Effect.runPromise(
       runBoundaryEffect({ boundary: 'fs-fail' }, Effect.succeed('ok')).pipe(
-        Effect.provide(makeWideEventSinkLayer(sink)),
+        Effect.provide(makeTestWideEventSinkLayer(sink)),
       ),
     );
     expect(result).toBe('ok');
     await sink.dispose();
-  });
-
-  test('pretty console sink renders a tree and json sink writes one line', () => {
-    const lines: string[] = [];
-    const pretty = makeConsoleWideEventSink({
-      format: 'pretty',
-      write: (line) => lines.push(line),
-    });
-    Effect.runSync(
-      pretty.submit({
-        ...sampleEvent('pretty'),
-        services: [
-          {
-            name: 'child',
-            traceId: 't',
-            spanId: 's',
-            outcome: 'success',
-            durationMs: 2,
-          },
-        ],
-      }),
-    );
-    expect(lines[0]).toContain('[wide-event]');
-    expect(lines[0]).toContain('- child');
-
-    const jsonLines: string[] = [];
-    const json = makeConsoleWideEventSink({
-      format: 'json',
-      write: (line) => jsonLines.push(line),
-    });
-    Effect.runSync(json.submit(sampleEvent('json')));
-    expect(jsonLines).toHaveLength(1);
-    expect(jsonLines[0]?.includes('\n')).toBe(false);
-    expect(JSON.parse(jsonLines[0]!).eventId).toBe('json');
   });
 
   test('scoped file sink drains before explicit process exit style completion', async () => {
@@ -301,6 +375,38 @@ describe('node wide-event sinks', () => {
     expect(await withCooperativeLock(directory, async () => 'acquired', 200)).toBe('acquired');
   });
 
+  test('dispose respects its deadline when an active append ignores cancellation', async () => {
+    const directory = makeTempDir();
+    let markAppendStarted!: () => void;
+    const appendStarted = new Promise<void>((resolve) => {
+      markAppendStarted = resolve;
+    });
+    let releaseAppend!: () => void;
+    const appendBlocked = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    const sink = createFileWideEventSink({
+      directory,
+      appendTimeoutMs: 5000,
+      drainTimeoutMs: 20,
+      appendLine: async () => {
+        markAppendStarted();
+        await appendBlocked;
+      },
+    });
+
+    await Effect.runPromise(sink.submit(sampleEvent('shutdown-ignores-abort')));
+    await appendStarted;
+    const disposalOutcome = await Promise.race([
+      sink.dispose().then(() => 'disposed' as const),
+      Bun.sleep(100).then(() => 'deadline-exceeded' as const),
+    ]);
+
+    expect(disposalOutcome).toBe('disposed');
+    releaseAppend();
+    await sink.drain();
+  });
+
   test('stale lock recovery allows a later writer', async () => {
     const directory = makeTempDir();
     ensureOwnedLogDirectory(directory);
@@ -331,12 +437,6 @@ describe('node wide-event sinks', () => {
     }
   });
 
-  test('renderPrettyWideEvent keeps identity fields', () => {
-    const text = renderPrettyWideEvent(sampleEvent('pretty-id'));
-    expect(text).toContain('test.boundary');
-    expect(text).toContain('pretty-id');
-  });
-
   test('concurrent subprocess writers append under the lock', async () => {
     const directory = makeTempDir();
     const scriptPath = path.join(import.meta.dir, `writer-${process.pid}.ts`);
@@ -348,11 +448,11 @@ import { createFileWideEventSink } from './file-sink.ts';
 
 const directory = process.argv[2]!;
 const sink = createFileWideEventSink({ directory, lockTimeoutMs: 5_000, appendTimeoutMs: 5_000 });
-for (let i = 0; i < 5; i++) {
+for (const index of Array.from({ length: 5 }, (_, itemIndex) => itemIndex)) {
   await Effect.runPromise(sink.submit({
-    schemaVersion: 1,
+    schemaVersion: 2,
     event: 'wide-event',
-    eventId: \`\${process.pid}-\${i}\`,
+    eventId: \`\${process.pid}-\${index}\`,
     boundary: 'subprocess',
     startedAt: new Date().toISOString(),
     emittedAt: new Date().toISOString(),
@@ -361,6 +461,13 @@ for (let i = 0; i < 5; i++) {
     outcome: 'success',
     durationMs: 1,
     error: null,
+    resource: {
+      instanceId: 'subprocess-fixture',
+      runtimeMode: 'test',
+      serviceName: 'ai-usage',
+      serviceVersion: '0.1.0-test',
+      surface: 'web',
+    },
     annotations: {},
     services: [],
   }));

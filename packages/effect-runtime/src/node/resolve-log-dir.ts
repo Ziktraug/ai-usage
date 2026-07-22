@@ -1,4 +1,4 @@
-import { access, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,7 +10,12 @@ const isAbsoluteOverride = (value: string | undefined): value is string =>
 const packageJsonAt = async (directory: string): Promise<{ name?: string } | null> => {
   try {
     const text = await readFile(path.join(directory, 'package.json'), 'utf8');
-    return JSON.parse(text) as { name?: string };
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return null;
+    }
+    const name = Object.getOwnPropertyDescriptor(parsed, 'name')?.value;
+    return typeof name === 'string' ? { name } : {};
   } catch {
     return null;
   }
@@ -39,13 +44,4 @@ export const resolveWideEventLogDirectory = async (
   }
 
   return null;
-};
-
-export const ensureDirectoryAccessible = async (directory: string): Promise<boolean> => {
-  try {
-    await access(directory);
-    return true;
-  } catch {
-    return false;
-  }
 };

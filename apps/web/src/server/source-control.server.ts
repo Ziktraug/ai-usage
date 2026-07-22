@@ -1,4 +1,4 @@
-import { makeWideEventSinkLayer, noopWideEventSink, type WideEventSink } from '@ai-usage/effect-runtime';
+import type { WideEventResourceService, WideEventSink } from '@ai-usage/effect-runtime';
 import {
   createLocalHistoryStorage,
   LocalHistoryStorage,
@@ -27,7 +27,9 @@ export interface WebSourceControlRuntime {
   readonly getSnapshot: () => Promise<SourceControlView>;
   readonly requestPublication: () => Promise<boolean>;
   readonly runAllEnabled: () => Promise<number>;
-  readonly runEffect: <A, E>(effect: Effect.Effect<A, E, SourceControl | WideEventSink>) => Promise<A>;
+  readonly runEffect: <A, E>(
+    effect: Effect.Effect<A, E, SourceControl | WideEventResourceService | WideEventSink>,
+  ) => Promise<A>;
   readonly runNow: (sourceId: CollectionSourceId) => Promise<boolean>;
   readonly setEnabled: (sourceId: CollectionSourceId, enabled: boolean) => Promise<void>;
   readonly start: () => Promise<SourceControlView>;
@@ -42,7 +44,7 @@ export interface WebSourceControlRuntimeOptions {
   readonly sources?: ReadonlyMap<CollectionSourceId, ScheduledSource>;
   readonly sourceTimeout?: Duration.DurationInput;
   readonly storage?: LocalHistoryStorageService;
-  readonly wideEventSinkLayer?: Layer.Layer<WideEventSink>;
+  readonly wideEventSinkLayer: Layer.Layer<WideEventResourceService | WideEventSink>;
   readonly workerCount?: number;
 }
 
@@ -76,13 +78,14 @@ const sourceControlOptionsEffect = (
     };
   });
 
-const sourceControlLayer = (options: WebSourceControlRuntimeOptions): Layer.Layer<SourceControl | WideEventSink> => {
-  const sinkLayer = options.wideEventSinkLayer ?? makeWideEventSinkLayer(noopWideEventSink);
+const sourceControlLayer = (
+  options: WebSourceControlRuntimeOptions,
+): Layer.Layer<SourceControl | WideEventResourceService | WideEventSink> => {
   const controlLayer = Layer.scoped(
     SourceControl,
     sourceControlOptionsEffect(options).pipe(Effect.flatMap(createSourceControl)),
   );
-  return controlLayer.pipe(Layer.provideMerge(sinkLayer));
+  return controlLayer.pipe(Layer.provideMerge(options.wideEventSinkLayer));
 };
 
 const withSourceControl = <A, E>(

@@ -11,11 +11,14 @@ import {
   MAX_STRING_BYTES,
   type SanitizedTaggedError,
   type ServiceHop,
+  type WideEventResource,
   type WideEventSnapshot,
 } from './model';
 
 const REDACTED = '[REDACTED]';
 const SENSITIVE_KEY = /authorization|cookie|password|secret|token/i;
+const AUTHORIZATION_CREDENTIAL = /\b(Bearer|Basic)\s+[^\s,;]+/gi;
+const CREDENTIAL_QUERY_VALUE = /([?&](?:access_token|api_key|apikey|password|secret|token)=)[^&#\s]+/gi;
 const UTF8 = new TextEncoder();
 
 export interface SanitizeResult {
@@ -39,7 +42,50 @@ const truncateString = (value: string, maxBytes: number): { readonly truncated: 
   return { truncated: true, value: new TextDecoder().decode(encoded.subarray(0, end)) };
 };
 
+export const scrubApprovedPublicString = (value: string): string =>
+  value
+    .replace(AUTHORIZATION_CREDENTIAL, (_match, scheme: string) => `${scheme} ${REDACTED}`)
+    .replace(CREDENTIAL_QUERY_VALUE, `$1${REDACTED}`);
+
+const safeOwnString = (value: unknown, key: string): string | undefined => {
+  if (typeof value !== 'object' || value === null) {
+    return;
+  }
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && 'value' in descriptor && typeof descriptor.value === 'string' ? descriptor.value : undefined;
+  } catch {
+    return;
+  }
+};
+
+const sanitizeResourceString = (value: string | undefined, fallback: string): string =>
+  truncateString(scrubApprovedPublicString(value ?? fallback), MAX_STRING_BYTES).value || fallback;
+
+export const sanitizeWideEventResource = (value: unknown): WideEventResource => {
+  const runtimeMode = safeOwnString(value, 'runtimeMode');
+  const surface = safeOwnString(value, 'surface');
+  return {
+    instanceId: sanitizeResourceString(safeOwnString(value, 'instanceId'), 'unknown-instance'),
+    runtimeMode:
+      runtimeMode === 'development' || runtimeMode === 'production' || runtimeMode === 'test' ? runtimeMode : 'unknown',
+    serviceName: 'ai-usage',
+    serviceVersion: sanitizeResourceString(safeOwnString(value, 'serviceVersion'), 'unknown'),
+    surface: surface === 'cli' ? 'cli' : 'web',
+  };
+};
+
 const isFiniteNumber = (value: number): boolean => Number.isFinite(value);
+
+const isLogRecord = (value: LogValue): value is Readonly<Record<string, LogValue>> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const withTruncationMarker = (annotations: Readonly<Record<string, LogValue>>): Readonly<Record<string, LogValue>> => {
+  const retained = Object.entries(annotations)
+    .filter(([key]) => key !== 'observabilityTruncated')
+    .slice(0, MAX_ANNOTATION_KEYS - 1);
+  return Object.fromEntries([...retained, ['observabilityTruncated', true]]);
+};
 
 const sanitizeScalar = (
   value: unknown,
@@ -157,7 +203,10 @@ const sanitizeError = (
   }
   const tag = truncateString(error.tag, MAX_STRING_BYTES);
   const code = error.code === undefined ? undefined : truncateString(error.code, MAX_STRING_BYTES);
-  const message = error.message === undefined ? undefined : truncateString(error.message, MAX_ERROR_MESSAGE_BYTES);
+  const message =
+    error.message === undefined
+      ? undefined
+      : truncateString(scrubApprovedPublicString(error.message), MAX_ERROR_MESSAGE_BYTES);
   return {
     truncated: tag.truncated || (code?.truncated ?? false) || (message?.truncated ?? false),
     value: {
@@ -218,8 +267,9 @@ const sanitizeHop = (
       ? undefined
       : (() => {
           const nested = sanitizeLogValue(hop.annotations, seen, 0);
-          truncated ||= nested.truncated;
-          return nested.value as Readonly<Record<string, LogValue>>;
+          const record = isLogRecord(nested.value) ? nested.value : {};
+          truncated ||= nested.truncated || !isLogRecord(nested.value);
+          return record;
         })();
 
   const children: ServiceHop[] = [];
@@ -253,12 +303,13 @@ const sanitizeHop = (
 const minimalSafeSnapshot = (event: WideEventSnapshot): WideEventSnapshot => {
   const identity = sanitizeSnapshotIdentity(event).value;
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     event: 'wide-event',
     ...identity,
     outcome: event.outcome,
     durationMs: isFiniteNumber(event.durationMs) ? event.durationMs : 0,
     error: null,
+    resource: sanitizeWideEventResource(event.resource),
     annotations: { observabilityTruncated: true },
     services: [],
   };
@@ -286,6 +337,8 @@ export const sanitizeWideEventSnapshot = (event: WideEventSnapshot): SanitizeRes
     const error = sanitizeError(event.error);
     truncated ||= error.truncated;
 
+    const resource = sanitizeWideEventResource(event.resource);
+
     const hopBudget = { remaining: MAX_COMPLETED_HOPS };
     const services: ServiceHop[] = [];
     for (const hop of event.services) {
@@ -302,15 +355,17 @@ export const sanitizeWideEventSnapshot = (event: WideEventSnapshot): SanitizeRes
       truncated = true;
     }
 
-    const annotationsRecord = annotations.value as Readonly<Record<string, LogValue>>;
+    const annotationsRecord = isLogRecord(annotations.value) ? annotations.value : {};
+    truncated ||= !isLogRecord(annotations.value);
     let snapshot: WideEventSnapshot = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       event: 'wide-event',
       ...identity.value,
       outcome: event.outcome,
       durationMs: isFiniteNumber(event.durationMs) ? event.durationMs : 0,
       error: error.value,
-      annotations: truncated ? { ...annotationsRecord, observabilityTruncated: true } : annotationsRecord,
+      resource,
+      annotations: truncated ? withTruncationMarker(annotationsRecord) : annotationsRecord,
       services,
     };
 
@@ -318,7 +373,7 @@ export const sanitizeWideEventSnapshot = (event: WideEventSnapshot): SanitizeRes
       truncated = true;
       snapshot = {
         ...snapshot,
-        annotations: { ...snapshot.annotations, observabilityTruncated: true },
+        annotations: withTruncationMarker(snapshot.annotations),
         services: [],
         error: null,
       };

@@ -14,6 +14,7 @@ export type {
   LogValue,
   SanitizedTaggedError,
   ServiceHop,
+  WideEventResource,
   WideEventSnapshot,
 } from './model';
 export {
@@ -26,10 +27,23 @@ export {
   MAX_SERIALIZED_EVENT_BYTES,
   MAX_STRING_BYTES,
 } from './model';
-export { sanitizeWideEventSnapshot, serializeWideEventSnapshot } from './sanitize';
+export {
+  makeWideEventResourceLayer,
+  testWideEventResource,
+  testWideEventResourceLayer,
+  type WideEventResourceInput,
+  WideEventResourceService,
+} from './resource';
+export {
+  sanitizeWideEventResource,
+  sanitizeWideEventSnapshot,
+  scrubApprovedPublicString,
+  serializeWideEventSnapshot,
+} from './sanitize';
 export {
   combineWideEventSinks,
   makeCaptureWideEventSink,
+  makeTestWideEventSinkLayer,
   makeWideEventSinkLayer,
   noopWideEventSink,
   submitWideEventBestEffort,

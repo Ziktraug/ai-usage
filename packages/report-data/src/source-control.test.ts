@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   makeCaptureWideEventSink,
-  makeWideEventSinkLayer,
+  makeTestWideEventSinkLayer,
   noopWideEventSink,
   type WideEventSnapshot,
 } from '@ai-usage/effect-runtime';
@@ -22,11 +22,11 @@ import {
   type SourcePolicyStore,
 } from './source-control';
 
-const testEnvLayer = Layer.merge(TestContext.TestContext, makeWideEventSinkLayer(noopWideEventSink));
+const testEnvLayer = Layer.merge(TestContext.TestContext, makeTestWideEventSinkLayer(noopWideEventSink));
 
 const withCaptureSink = () => {
   const sink = makeCaptureWideEventSink();
-  return { events: sink.events, layer: Layer.merge(TestContext.TestContext, makeWideEventSinkLayer(sink)) };
+  return { events: sink.events, layer: Layer.merge(TestContext.TestContext, makeTestWideEventSinkLayer(sink)) };
 };
 
 const boundaryEvents = (events: readonly WideEventSnapshot[], boundary: string): readonly WideEventSnapshot[] =>
@@ -179,20 +179,29 @@ describe('source control plane', () => {
         domainOutcome: 'success',
         inputCount: 1,
         outputCount: 1,
+        queueDelayMs: 0,
         sourceId: 'claude.sessions',
+        trigger: 'detection',
         warningsCount: 0,
       },
       outcome: 'success',
       services: [{ name: 'source.execute', outcome: 'success' }],
     });
     expect(runEvents[1]).toMatchObject({
-      annotations: { sourceId: 'codex.sessions' },
+      annotations: { sourceId: 'codex.sessions', trigger: 'manual' },
       outcome: 'success',
     });
     const publicationEvents = boundaryEvents(capture.events(), 'publication');
     expect(publicationEvents).toHaveLength(1);
     expect(publicationEvents[0]).toMatchObject({
-      annotations: { revision: 'revision-1' },
+      annotations: {
+        changed: true,
+        dataTarget: 0,
+        previousPublishedGeneration: 0,
+        queueDelayMs: 0,
+        requestTarget: 1,
+        revision: 'revision-1',
+      },
       outcome: 'success',
       services: [{ name: 'publication.publish', outcome: 'success' }],
     });
@@ -230,6 +239,7 @@ describe('source control plane', () => {
   });
 
   test('retries failures at normal cadence', async () => {
+    const capture = withCaptureSink();
     const program = Effect.scoped(
       Effect.gen(function* () {
         const events = yield* Ref.make<string[]>([]);
@@ -269,7 +279,14 @@ describe('source control plane', () => {
       }),
     );
 
-    await Effect.runPromise(program.pipe(Effect.provide(testEnvLayer)));
+    await Effect.runPromise(program.pipe(Effect.provide(capture.layer)));
+    const [failedEvent, recoveredEvent] = boundaryEvents(capture.events(), 'source.run');
+    expect(failedEvent).toMatchObject({
+      annotations: { failureKind: 'source-run-error', trigger: 'detection' },
+      outcome: 'failure',
+    });
+    expect(JSON.stringify(failedEvent)).not.toContain('private failure');
+    expect(recoveredEvent?.annotations.trigger).toBe('cadence');
   });
 
   test('lets a running source finish while disabling prevents future runs', async () => {
@@ -448,6 +465,43 @@ describe('source control plane', () => {
     await Effect.runPromise(program.pipe(Effect.provide(testEnvLayer)));
   });
 
+  test('correlates a changed source generation with the publication interval', async () => {
+    const capture = withCaptureSink();
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const events = yield* Ref.make<string[]>([]);
+        const { store } = yield* makePolicyStore();
+        const publication = yield* makePublication(events);
+        const control = yield* createSourceControl({
+          policyStore: store,
+          publication: publication.port,
+          sources: new Map([
+            [
+              'cursor.commit-attribution',
+              fakeSource('cursor.commit-attribution', () => Effect.succeed(successResult(true))),
+            ],
+          ]),
+        });
+        yield* waitFor(control, (view) => view.publication.revision === 'revision-1');
+      }),
+    );
+
+    await Effect.runPromise(program.pipe(Effect.provide(capture.layer)));
+
+    const sourceEvent = boundaryEvents(capture.events(), 'source.run')[0];
+    const publicationEvent = boundaryEvents(capture.events(), 'publication')[0];
+    expect(sourceEvent?.annotations).toMatchObject({
+      publicationDataGeneration: 1,
+      sourceId: 'cursor.commit-attribution',
+      trigger: 'detection',
+    });
+    expect(publicationEvent?.annotations).toMatchObject({
+      dataTarget: 1,
+      previousPublishedGeneration: 0,
+      requestTarget: 2,
+    });
+  });
+
   test('records publication demand arriving during a running attempt and coalesces a successor', async () => {
     const capture = withCaptureSink();
     const program = Effect.scoped(
@@ -491,6 +545,29 @@ describe('source control plane', () => {
     const publicationEvents = boundaryEvents(capture.events(), 'publication');
     expect(publicationEvents.map((event) => event.annotations.revision)).toEqual(['revision-1', 'revision-2']);
     expect(publicationEvents.every((event) => event.outcome === 'success')).toBe(true);
+  });
+
+  test('records a bounded publication failure kind without the port cause', async () => {
+    const capture = withCaptureSink();
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const { store } = yield* makePolicyStore();
+        const control = yield* createSourceControl({
+          policyStore: store,
+          publication: { publish: Effect.fail(new Error('private publication cause')) },
+          sources: new Map(),
+        });
+        yield* waitFor(control, (view) => view.publication.lastOutcome === 'failed');
+      }),
+    );
+
+    await Effect.runPromise(program.pipe(Effect.provide(capture.layer)));
+    const event = boundaryEvents(capture.events(), 'publication')[0];
+    expect(event).toMatchObject({
+      annotations: { failureKind: 'publication-failed' },
+      outcome: 'failure',
+    });
+    expect(JSON.stringify(event)).not.toContain('private publication cause');
   });
 
   test('does not publish again for an unchanged periodic RTK run', async () => {
@@ -694,7 +771,12 @@ describe('source control plane', () => {
     const runEvents = boundaryEvents(capture.events(), 'source.run');
     expect(runEvents).toHaveLength(1);
     expect(runEvents[0]).toMatchObject({
-      annotations: { domainOutcome: 'timed-out', sourceId: 'claude.sessions' },
+      annotations: {
+        domainOutcome: 'timed-out',
+        failureKind: 'source-timeout',
+        sourceId: 'claude.sessions',
+        trigger: 'detection',
+      },
       outcome: 'timed-out',
       services: [{ name: 'source.execute', outcome: 'interrupted' }],
     });

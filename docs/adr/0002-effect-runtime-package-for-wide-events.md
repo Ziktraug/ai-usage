@@ -36,7 +36,7 @@ filesystem code.
 `apps/web` owns one process-scoped Effect runtime created by a Nitro plugin. It
 owns the file appender and web console sink, supplies the same sink instance to
 source control and finite server adapters, and drains it during Nitro shutdown.
-TTY web logging uses a pretty tree on stderr. Non-TTY output, or
+TTY web logging uses one compact, context-rich line per event on stderr. Non-TTY output, or
 `LOG_FORMAT=json`, uses one-line JSON on stderr.
 
 `apps/cli` uses the same boundary and sink primitives but composes only the file

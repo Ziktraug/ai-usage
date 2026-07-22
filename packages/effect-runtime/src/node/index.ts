@@ -1,4 +1,5 @@
 import { Effect, Layer } from 'effect';
+import { makeWideEventResourceLayer, type WideEventResourceInput, type WideEventResourceService } from '../resource';
 import {
   combineWideEventSinks,
   makeWideEventSinkLayer,
@@ -6,15 +7,34 @@ import {
   WideEventSink,
   type WideEventSinkShape,
 } from '../sink';
-import { type ConsoleLogFormat, makeConsoleWideEventSink, selectConsoleLogFormat } from './console-sink';
+import {
+  type ConsoleLogFormat,
+  type ConsoleWideEventWriter,
+  defaultConsoleWideEventWriter,
+  makeConsoleWideEventSink,
+  type PrettyWideEventProjector,
+  selectConsoleLogFormat,
+} from './console-sink';
 import { createFileWideEventSink, type FileWideEventSinkOptions, makeFileWideEventSinkLayer } from './file-sink';
 import { resolveWideEventLogDirectory } from './resolve-log-dir';
 
-export type { ConsoleLogFormat } from './console-sink';
+export type { LogValue, WideEventSnapshot } from '../model';
+export type {
+  ConsoleLogFormat,
+  ConsoleLogLevel,
+  ConsoleSeverity,
+  ConsoleWideEventWriter,
+  PrettyWideEventProjector,
+  PrettyWideEventView,
+} from './console-sink';
 export {
+  defaultConsoleWideEventWriter,
+  genericPrettyWideEventProjector,
   makeConsoleWideEventSink,
   renderPrettyWideEvent,
   selectConsoleLogFormat,
+  selectConsoleLogLevel,
+  stripWideEventAnsi,
 } from './console-sink';
 export type { FileWideEventSinkOptions } from './file-sink';
 export { createFileWideEventSink, makeFileWideEventSinkLayer } from './file-sink';
@@ -29,46 +49,86 @@ export { resolveWideEventLogDirectory } from './resolve-log-dir';
 export const makeCliWideEventSinkLayer = (
   options: Omit<FileWideEventSinkOptions, 'directory'> & {
     readonly directory?: string | null;
-  } = {},
-): Layer.Layer<WideEventSink> => makeFileWideEventSinkLayer(options);
+    readonly resource: WideEventResourceInput;
+  },
+): Layer.Layer<WideEventResourceService | WideEventSink> =>
+  Layer.merge(makeFileWideEventSinkLayer(options), makeWideEventResourceLayer(options.resource));
 
 export const makeWebWideEventSinkLayer = (
   options: Omit<FileWideEventSinkOptions, 'directory'> & {
     readonly directory?: string | null;
     readonly format?: ConsoleLogFormat;
-    readonly consoleWrite?: (line: string) => void;
+    readonly resource: WideEventResourceInput;
+    readonly consoleWrite?: ConsoleWideEventWriter;
+    readonly projector?: PrettyWideEventProjector;
     readonly silenceConsole?: boolean;
-  } = {},
-): Layer.Layer<WideEventSink> =>
-  Layer.scoped(
-    WideEventSink,
-    Effect.gen(function* () {
-      const directory =
-        options.directory === undefined
-          ? yield* Effect.promise(() => resolveWideEventLogDirectory())
-          : options.directory;
+  },
+): Layer.Layer<WideEventResourceService | WideEventSink> =>
+  Layer.merge(
+    Layer.scoped(
+      WideEventSink,
+      Effect.gen(function* () {
+        const directory =
+          options.directory === undefined
+            ? yield* Effect.promise(() => resolveWideEventLogDirectory())
+            : options.directory;
 
-      const fileSink = directory === null ? noopWideEventSink : createFileWideEventSink({ ...options, directory });
+        const consoleWriter = options.consoleWrite ?? defaultConsoleWideEventWriter;
+        const fileSink =
+          directory === null
+            ? noopWideEventSink
+            : createFileWideEventSink({
+                ...options,
+                directory,
+                warn: ({ counters, kind, message }) =>
+                  consoleWriter(
+                    `[wide-event:file] ${kind} ${message} dropped=${counters.dropped} failed=${counters.failed}`,
+                    'warn',
+                  ),
+              });
 
-      if (directory !== null && 'dispose' in fileSink) {
-        yield* Effect.addFinalizer(() =>
-          Effect.promise(() => (fileSink as ReturnType<typeof createFileWideEventSink>).dispose()),
-        );
-      }
-
-      const sinks: WideEventSinkShape[] = [fileSink];
-      if (!options.silenceConsole) {
-        sinks.push(
-          makeConsoleWideEventSink({
+        const sinks: Array<{ name: string; sink: WideEventSinkShape }> = [{ name: 'file', sink: fileSink }];
+        let consoleSink: WideEventSinkShape = noopWideEventSink;
+        if (!options.silenceConsole) {
+          consoleSink = makeConsoleWideEventSink({
             format: options.format ?? selectConsoleLogFormat(),
-            ...(options.consoleWrite === undefined ? {} : { write: options.consoleWrite }),
+            write: consoleWriter,
+            ...(options.projector === undefined ? {} : { projector: options.projector }),
+          });
+          sinks.push({ name: 'console', sink: consoleSink });
+        }
+
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(async () => {
+            if (directory !== null && 'dispose' in fileSink) {
+              await (fileSink as ReturnType<typeof createFileWideEventSink>).dispose();
+            }
+            const [fileDiagnostics, consoleDiagnostics] = await Promise.all([
+              Effect.runPromise(fileSink.diagnostics()),
+              Effect.runPromise(consoleSink.diagnostics()),
+            ]);
+            const lost =
+              fileDiagnostics.dropped + fileDiagnostics.failed + consoleDiagnostics.dropped + consoleDiagnostics.failed;
+            if (lost > 0) {
+              try {
+                consoleWriter(
+                  `[wide-event] delivery summary file(dropped=${fileDiagnostics.dropped},failed=${fileDiagnostics.failed}) console(dropped=${consoleDiagnostics.dropped},failed=${consoleDiagnostics.failed})`,
+                  'warn',
+                );
+              } catch {
+                // Observability diagnostics must not fail runtime shutdown.
+              }
+            }
           }),
         );
-      }
 
-      const [only] = sinks;
-      return sinks.length === 1 && only !== undefined ? only : combineWideEventSinks(...sinks);
-    }),
+        return combineWideEventSinks(...sinks);
+      }),
+    ),
+    makeWideEventResourceLayer(options.resource),
   );
 
-export const makeSilentWideEventSinkLayer = (): Layer.Layer<WideEventSink> => makeWideEventSinkLayer(noopWideEventSink);
+export const makeSilentWideEventSinkLayer = (
+  resource: WideEventResourceInput,
+): Layer.Layer<WideEventResourceService | WideEventSink> =>
+  Layer.merge(makeWideEventSinkLayer(noopWideEventSink), makeWideEventResourceLayer(resource));
