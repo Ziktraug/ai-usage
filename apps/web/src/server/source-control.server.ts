@@ -1,3 +1,4 @@
+import type { WideEventResourceService, WideEventSink } from '@ai-usage/effect-runtime';
 import {
   createLocalHistoryStorage,
   LocalHistoryStorage,
@@ -26,6 +27,9 @@ export interface WebSourceControlRuntime {
   readonly getSnapshot: () => Promise<SourceControlView>;
   readonly requestPublication: () => Promise<boolean>;
   readonly runAllEnabled: () => Promise<number>;
+  readonly runEffect: <A, E>(
+    effect: Effect.Effect<A, E, SourceControl | WideEventResourceService | WideEventSink>,
+  ) => Promise<A>;
   readonly runNow: (sourceId: CollectionSourceId) => Promise<boolean>;
   readonly setEnabled: (sourceId: CollectionSourceId, enabled: boolean) => Promise<void>;
   readonly start: () => Promise<SourceControlView>;
@@ -40,6 +44,7 @@ export interface WebSourceControlRuntimeOptions {
   readonly sources?: ReadonlyMap<CollectionSourceId, ScheduledSource>;
   readonly sourceTimeout?: Duration.DurationInput;
   readonly storage?: LocalHistoryStorageService;
+  readonly wideEventSinkLayer: Layer.Layer<WideEventResourceService | WideEventSink>;
   readonly workerCount?: number;
 }
 
@@ -73,8 +78,15 @@ const sourceControlOptionsEffect = (
     };
   });
 
-const sourceControlLayer = (options: WebSourceControlRuntimeOptions): Layer.Layer<SourceControl> =>
-  Layer.scoped(SourceControl, sourceControlOptionsEffect(options).pipe(Effect.flatMap(createSourceControl)));
+const sourceControlLayer = (
+  options: WebSourceControlRuntimeOptions,
+): Layer.Layer<SourceControl | WideEventResourceService | WideEventSink> => {
+  const controlLayer = Layer.scoped(
+    SourceControl,
+    sourceControlOptionsEffect(options).pipe(Effect.flatMap(createSourceControl)),
+  );
+  return controlLayer.pipe(Layer.provideMerge(options.wideEventSinkLayer));
+};
 
 const withSourceControl = <A, E>(
   operation: (service: SourceControlService) => Effect.Effect<A, E>,
@@ -96,6 +108,7 @@ export const createWebSourceControlRuntime = (options: WebSourceControlRuntimeOp
     getSnapshot: () => run((service) => service.getSnapshot),
     requestPublication: () => run((service) => service.requestPublication),
     runAllEnabled: () => run((service) => service.runAllEnabled),
+    runEffect: (effect) => managedRuntime.runPromise(effect),
     runNow: (sourceId) => run((service) => service.runNow(sourceId)),
     setEnabled: (sourceId, enabled) => run((service) => service.setEnabled(sourceId, enabled)),
     start: () => run((service) => service.getSnapshot),

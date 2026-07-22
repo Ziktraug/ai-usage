@@ -2,13 +2,20 @@ import { describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import {
+  makeTestWideEventSinkLayer,
+  noopWideEventSink,
+  WideEventSink,
+  type WideEventSnapshot,
+} from '@ai-usage/effect-runtime';
+import { makeWebWideEventSinkLayer } from '@ai-usage/effect-runtime/node';
 import { createLocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { CollectionSourceId, SourceControlView } from '@ai-usage/report-core/source-control';
 import type { ScheduledSource } from '@ai-usage/report-data/source-adapters';
 import type { SourcePolicyStore } from '@ai-usage/report-data/source-control';
 import { queryReportRows } from '@ai-usage/usage-store';
-import { Duration, Effect, Ref } from 'effect';
+import { Duration, Effect, ManagedRuntime, Ref } from 'effect';
 import {
   createWebSourceControlRuntime,
   installWebSourceControlRuntime,
@@ -25,6 +32,31 @@ const detected = {
 const policyStore = (): SourcePolicyStore => ({
   load: Effect.succeed({}),
   setEnabled: () => Effect.void,
+});
+
+const testWideEventSinkLayer = () => makeTestWideEventSinkLayer(noopWideEventSink);
+
+const wideEventFixture = (eventId: string, instanceId: string): WideEventSnapshot => ({
+  annotations: {},
+  boundary: 'fixture.boundary',
+  durationMs: 1,
+  emittedAt: '2026-07-22T00:00:00.001Z',
+  error: null,
+  event: 'wide-event',
+  eventId,
+  outcome: 'success',
+  resource: {
+    instanceId,
+    runtimeMode: 'test',
+    serviceName: 'ai-usage',
+    serviceVersion: '0.1.0-test',
+    surface: 'web',
+  },
+  schemaVersion: 2,
+  services: [],
+  spanId: 'span',
+  startedAt: '2026-07-22T00:00:00.000Z',
+  traceId: 'trace',
 });
 
 const waitForSnapshot = async (
@@ -77,6 +109,7 @@ describe('web source-control runtime', () => {
       getSnapshot: unavailable,
       requestPublication: async () => false,
       runAllEnabled: async () => 0,
+      runEffect: unavailable,
       runNow: async () => false,
       setEnabled: async () => undefined,
       start: unavailable,
@@ -114,6 +147,7 @@ describe('web source-control runtime', () => {
       getSnapshot: unavailable,
       requestPublication: async () => false,
       runAllEnabled: async () => 0,
+      runEffect: unavailable,
       runNow: async () => false,
       setEnabled: async () => undefined,
       start: unavailable,
@@ -152,6 +186,7 @@ describe('web source-control runtime', () => {
         return Promise.resolve(false);
       },
       runAllEnabled: async () => 0,
+      runEffect: unavailable,
       runNow: async () => false,
       setEnabled: async () => undefined,
       start: unavailable,
@@ -190,6 +225,7 @@ describe('web source-control runtime', () => {
           warnings: [],
         }),
       ),
+      wideEventSinkLayer: testWideEventSinkLayer(),
     });
 
     expect((await runtime.start()).instanceId).toBe('runtime-test');
@@ -216,6 +252,7 @@ describe('web source-control runtime', () => {
         publish: Effect.succeed({ changed: false }),
       },
       sources: fakeSource(() => Effect.never.pipe(Effect.onInterrupt(() => Ref.set(interrupted, true)))),
+      wideEventSinkLayer: testWideEventSinkLayer(),
     });
 
     await runtime.start();
@@ -236,6 +273,7 @@ describe('web source-control runtime', () => {
       },
       sourceTimeout: Duration.millis(10),
       sources: fakeSource(() => Effect.never),
+      wideEventSinkLayer: testWideEventSinkLayer(),
     });
 
     try {
@@ -250,6 +288,136 @@ describe('web source-control runtime', () => {
       });
     } finally {
       await runtime.dispose();
+    }
+  });
+
+  test('routes file delivery warnings and shutdown loss summaries directly to the console writer', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'ai-usage-web-wide-event-'));
+    const writes: Array<{ line: string; severity: string }> = [];
+    const runtime = createWebSourceControlRuntime({
+      policyStore: policyStore(),
+      publication: { publish: Effect.succeed({ changed: false }) },
+      sources: fakeSource(() => Effect.succeed({ changed: false, inputCount: 1, outputCount: 1, warnings: [] })),
+      wideEventSinkLayer: makeWebWideEventSinkLayer({
+        appendLine: () => Promise.reject(new Error('fixture write failure')),
+        consoleWrite: (line, severity) => writes.push({ line, severity }),
+        directory,
+        format: 'pretty',
+        resource: {
+          instanceId: 'web-delivery-test',
+          runtimeMode: 'test',
+          serviceName: 'ai-usage',
+          serviceVersion: '0.1.0-test',
+          surface: 'web',
+        },
+      }),
+    });
+
+    try {
+      await runtime.start();
+      await waitForSnapshot(
+        runtime.getSnapshot,
+        (snapshot) => sourceView(snapshot, 'claude.sessions').lastOutcome === 'success',
+      );
+    } finally {
+      await runtime.dispose();
+      await rm(directory, { force: true, recursive: true });
+    }
+
+    expect(writes.some(({ line }) => line.includes('[wide-event:file] append-failure'))).toBe(true);
+    expect(writes.some(({ line }) => line.includes('[wide-event] delivery summary'))).toBe(true);
+    expect(
+      writes
+        .filter(({ line }) => line.includes('[wide-event:file]') || line.includes('delivery summary'))
+        .every(({ severity }) => severity === 'warn'),
+    ).toBe(true);
+  });
+
+  test('reports an unsettled file append as lost before shutdown completes', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'ai-usage-web-wide-event-shutdown-'));
+    const writes: Array<{ line: string; severity: string }> = [];
+    let markAppendStarted!: () => void;
+    const appendStarted = new Promise<void>((resolve) => {
+      markAppendStarted = resolve;
+    });
+    let releaseAppend!: () => void;
+    const blockedAppend = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    const layer = makeWebWideEventSinkLayer({
+      appendLine: async () => {
+        markAppendStarted();
+        await blockedAppend;
+      },
+      appendTimeoutMs: 5000,
+      consoleWrite: (line, severity) => writes.push({ line, severity }),
+      directory,
+      drainTimeoutMs: 10,
+      resource: {
+        instanceId: 'web-shutdown-loss-test',
+        runtimeMode: 'test',
+        serviceName: 'ai-usage',
+        serviceVersion: '0.1.0-test',
+        surface: 'web',
+      },
+      silenceConsole: true,
+    });
+    const runtime = ManagedRuntime.make(layer);
+    const event = wideEventFixture('shutdown-loss', 'web-shutdown-loss-test');
+
+    try {
+      await runtime.runPromise(WideEventSink.pipe(Effect.flatMap((sink) => sink.submit(event))));
+      await appendStarted;
+      await runtime.dispose();
+
+      expect(writes.filter(({ line }) => line.includes('[wide-event] delivery summary'))).toEqual([
+        {
+          line: '[wide-event] delivery summary file(dropped=1,failed=0) console(dropped=0,failed=0)',
+          severity: 'warn',
+        },
+      ]);
+    } finally {
+      releaseAppend();
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  test('keeps shutdown best-effort when the diagnostic console writer fails', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'ai-usage-web-wide-event-writer-'));
+    let markWarningObserved!: () => void;
+    const warningObserved = new Promise<void>((resolve) => {
+      markWarningObserved = resolve;
+    });
+    const layer = makeWebWideEventSinkLayer({
+      appendLine: () => Promise.reject(new Error('fixture append failure')),
+      consoleWrite: (line) => {
+        if (line.includes('[wide-event:file] append-failure')) {
+          markWarningObserved();
+        }
+        if (line.includes('[wide-event] delivery summary')) {
+          throw new Error('fixture console writer failure');
+        }
+      },
+      directory,
+      resource: {
+        instanceId: 'web-writer-failure-test',
+        runtimeMode: 'test',
+        serviceName: 'ai-usage',
+        serviceVersion: '0.1.0-test',
+        surface: 'web',
+      },
+      silenceConsole: true,
+    });
+    const runtime = ManagedRuntime.make(layer);
+    const event = wideEventFixture('writer-failure', 'web-writer-failure-test');
+
+    try {
+      await runtime.runPromise(WideEventSink.pipe(Effect.flatMap((sink) => sink.submit(event))));
+      await warningObserved;
+
+      await expect(runtime.dispose()).resolves.toBeUndefined();
+    } finally {
+      await rm(directory, { force: true, recursive: true });
     }
   });
 
@@ -291,6 +459,7 @@ describe('web source-control runtime', () => {
         publish: Effect.succeed({ changed: false }),
       },
       storage,
+      wideEventSinkLayer: testWideEventSinkLayer(),
     });
 
     try {
@@ -300,8 +469,9 @@ describe('web source-control runtime', () => {
         (snapshot) => sourceView(snapshot, 'codex.sessions').lastOutcome === 'success',
       );
       const stored = await Effect.runPromise(queryReportRows({ dbPath, originMachineIds: [machine.id] }));
-      expect(stored.rows).toHaveLength(1);
-      expect(stored.rows[0]?.source.sourceSessionId).toBe('runtime-session');
+      const codexRows = stored.rows.filter((row) => row.source.harnessKey === 'codex');
+      expect(codexRows).toHaveLength(1);
+      expect(codexRows[0]?.source.sourceSessionId).toBe('runtime-session');
     } finally {
       await runtime.dispose();
       await rm(home, { force: true, recursive: true });

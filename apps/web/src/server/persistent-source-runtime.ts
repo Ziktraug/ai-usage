@@ -1,4 +1,5 @@
 export const PERSISTENT_SOURCE_RUNTIME_PACKAGES = [
+  '@ai-usage/effect-runtime',
   '@ai-usage/local-collectors',
   '@ai-usage/report-core',
   '@ai-usage/report-data',

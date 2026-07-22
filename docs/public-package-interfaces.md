@@ -2,6 +2,20 @@
 
 The workspace packages expose only these public seams. Cross-package imports must use these package exports, not private `src` paths or relative workspace paths.
 
+## `@ai-usage/effect-runtime`
+
+- `.`: domain-free schema-v2 wide-event model, required process resource
+  service/layer, boundary runner (`runBoundaryEffect`), hop measurement
+  (`withMeasured` / `withMeasuredIfAvailable`), sanitize-on-emit, explicit
+  public-message scrubbing, and capture/no-op sinks. Must not import other
+  `@ai-usage/*` packages. Generic sink layers remain sink-only; the explicitly
+  named test layer is the only helper that also supplies deterministic fixture
+  resource identity.
+- `./node`: Node-only severity/detail-aware console projection, generic
+  projector contract, bounded NDJSON file sink, typed delivery warnings,
+  per-transport diagnostics, workspace log-dir resolution, cooperative
+  interprocess lock, rotation, and bounded retention sweeps.
+
 ## `@ai-usage/report-core`
 
 - `.`: core barrel for stable domain helpers.
@@ -64,10 +78,10 @@ The workspace packages expose only these public seams. Cross-package imports mus
   assembly, and full compatibility payload creation over core plus local
   collectors.
 - `./one-shot-sources`: explicit timer-free source execution application ports, including policy-aware fresh local merge/project discovery and the combined quota refresh/latest-durable-read operation used by CLI.
-- `./provider-quota`: local provider-quota refresh, typed `ProviderQuotaRefreshAborted` cancellation, provider-neutral latest-durable projection, and bounded history-query orchestration.
+- `./provider-quota`: local provider-quota refresh, typed `ProviderQuotaRefreshAborted` cancellation, provider-neutral latest-durable projection, and bounded history-query orchestration. Inside an outer wide-event boundary, the single-flight owner records `quota.refresh` and joiners record `quota.refresh.wait`.
 - `./report-payload-artifact`: shared owner-only artifact writer and byte budget used by bounded internal Bun runners.
 - `./source-adapters`: autonomous detected source adapters that persist normalized contributions.
-- `./source-control`: deep scoped bounded Effect scheduler facade, server policy/publication ports, commands, and snapshot stream; its pure transition model remains internal.
+- `./source-control`: deep scoped bounded Effect scheduler facade, server policy/publication ports, commands, and snapshot stream; its pure transition model remains internal. Runnable source and publication jobs emit one wide event each (`source.run`, `publication`) with stable trigger/reason codes and publication-generation correlation through `@ai-usage/effect-runtime` when sink and resource layers are provided.
 
 ## `@ai-usage/usage-store`
 

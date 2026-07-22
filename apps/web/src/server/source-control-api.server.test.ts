@@ -141,6 +141,7 @@ const commandRuntime = (): {
         update();
         return Promise.resolve(1);
       },
+      runEffect: () => Promise.reject(new Error('Unexpected runEffect call.')),
       runNow: (_sourceId: CollectionSourceId) => {
         update();
         return Promise.resolve(true);

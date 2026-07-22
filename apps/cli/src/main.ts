@@ -2,6 +2,8 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { type BoundaryClassification, classifyExit, runBoundaryEffect } from '@ai-usage/effect-runtime';
+import { makeCliWideEventSinkLayer } from '@ai-usage/effect-runtime/node';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import { deserializeUsageRow, type UsageReportWarning } from '@ai-usage/report-core/report-data';
@@ -15,7 +17,7 @@ import {
   runOneShotLocalSources,
   runOneShotQuotaAndReadLatest,
 } from '@ai-usage/report-data/one-shot-sources';
-import { Console, Effect, Layer } from 'effect';
+import { Console, Effect, Exit, Layer } from 'effect';
 import { type Args, helpText, parseCommand } from './cli';
 import { importCursorUsageExportFile } from './cursor-import-file';
 import { type AppError, CliArgumentError, formatAppError } from './errors';
@@ -27,6 +29,46 @@ import { CliRuntime, CliRuntimeLive } from './runtime';
 import { runSetupServer } from './setup';
 import { readUsageSnapshotFile } from './snapshot-file';
 
+interface CliQuotaBoundaryResult {
+  readonly collection: OneShotExecutionResult;
+  readonly latest: readonly unknown[];
+}
+
+const wideEventRuntimeMode = (nodeEnvironment: string | undefined): 'development' | 'production' | 'test' => {
+  if (nodeEnvironment === 'production') {
+    return 'production';
+  }
+  return nodeEnvironment === 'test' ? 'test' : 'development';
+};
+
+const classifyCliQuotaOutcome = (exit: Exit.Exit<CliQuotaBoundaryResult, unknown>): BoundaryClassification => {
+  if (Exit.isFailure(exit)) {
+    return { ...classifyExit(exit), annotations: { failureKind: 'quota-command-failed' } };
+  }
+  const sourceOutcome = exit.value.collection.outcomes[0];
+  const sourceStatus = sourceOutcome?.status ?? 'unavailable';
+  const hasUsableLatest = exit.value.latest.length > 0;
+  const warningCodes = [...new Set((sourceOutcome?.warnings ?? []).map(({ code }) => code))].sort();
+  let outcome: BoundaryClassification['outcome'] = 'failure';
+  if (sourceStatus === 'success') {
+    outcome = 'success';
+  } else if (hasUsableLatest) {
+    outcome = 'degraded';
+  }
+  return {
+    outcome,
+    annotations: {
+      domainOutcome: sourceStatus,
+      outputCount: exit.value.latest.length,
+      ...(sourceStatus === 'failed' ? { failureKind: 'quota-refresh-failed' } : {}),
+      ...(sourceOutcome?.result?.unavailable === undefined
+        ? {}
+        : { unavailableCode: sourceOutcome.result.unavailable.code }),
+      ...(warningCodes.length === 0 ? {} : { warningCodes }),
+    },
+  };
+};
+
 export const app = Effect.gen(function* () {
   const runtime = yield* CliRuntime;
   const command = yield* parseCommand(runtime.argv);
@@ -37,16 +79,22 @@ export const app = Effect.gen(function* () {
   }
 
   if (command._tag === 'Quota') {
-    yield* Effect.sync(() => setColor(command.color === null ? runtime.stdoutIsTTY : command.color));
-    const { collection, latest } = yield* runOneShotQuotaAndReadLatest();
-    if (collection.outcomes[0]?.status === 'paused') {
-      return yield* Effect.fail(
-        new CliArgumentError({
-          message: 'Codex usage-limit collection is paused; re-enable codex.usage-limits first.',
-        }),
-      );
-    }
-    yield* Console.log(renderQuota(latest));
+    yield* runBoundaryEffect(
+      { boundary: 'cli.quota', classify: classifyCliQuotaOutcome },
+      Effect.gen(function* () {
+        yield* Effect.sync(() => setColor(command.color === null ? runtime.stdoutIsTTY : command.color));
+        const { collection, latest } = yield* runOneShotQuotaAndReadLatest();
+        if (collection.outcomes[0]?.status === 'paused') {
+          return yield* Effect.fail(
+            new CliArgumentError({
+              message: 'Codex usage-limit collection is paused; re-enable codex.usage-limits first.',
+            }),
+          );
+        }
+        yield* Console.log(renderQuota(latest));
+        return { collection, latest };
+      }),
+    );
     return;
   }
 
@@ -252,7 +300,21 @@ const runnable = app.pipe(
     Console.error(`Error: ${isAppError(error) ? formatAppError(error) : formatDefect(error)}`).pipe(Effect.as(1)),
   ),
   Effect.catchAllDefect((defect: unknown) => Console.error(`Error: ${formatDefect(defect)}`).pipe(Effect.as(1))),
-  Effect.provide(Layer.mergeAll(LocalHistoryStorageLive, CliRuntimeLive)),
+  Effect.provide(
+    Layer.mergeAll(
+      LocalHistoryStorageLive,
+      CliRuntimeLive,
+      makeCliWideEventSinkLayer({
+        resource: {
+          instanceId: randomUUID(),
+          runtimeMode: wideEventRuntimeMode(process.env.NODE_ENV),
+          serviceName: 'ai-usage',
+          serviceVersion: '0.1.0',
+          surface: 'cli',
+        },
+      }),
+    ),
+  ),
 );
 
 Effect.runPromise(runnable).then((code) => {

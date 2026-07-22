@@ -1,7 +1,15 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const ignoredDirectories = new Set(['.git', '.turbo', '.output', 'dist', 'node_modules', 'styled-system']);
+const ignoredDirectories = new Set([
+  '.git',
+  '.turbo',
+  '.output',
+  '.worktrees',
+  'dist',
+  'node_modules',
+  'styled-system',
+]);
 const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.ts', '.tsx']);
 const workspacePackageParents = ['apps', 'packages'];
 const workspaceImportPattern =

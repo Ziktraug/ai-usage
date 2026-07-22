@@ -1,4 +1,11 @@
 import {
+  annotateWideEvent,
+  type BoundaryClassification,
+  classifyExit,
+  runBoundaryEffect,
+  withMeasured,
+} from '@ai-usage/effect-runtime';
+import {
   type FocusedBreakdownRequest,
   type FocusedBreakdownResult,
   type FocusedOverviewRequest,
@@ -39,10 +46,13 @@ import {
   sessionNeighborFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
+import { sourceControlBounds } from '@ai-usage/report-core/source-control';
+import { Effect, Exit } from 'effect';
 import { parseReportRevision, type ReportRevision } from '../web-report-payload';
 import { runBoundedArtifactProcess } from './bounded-artifact-process.server';
 import { withReportRevisionQueryLeaseForServer } from './report-payload.server';
 import { resolveReportRuntimePaths } from './report-runtime-paths.server';
+import { getWebSourceControlRuntime } from './source-control.server';
 
 export type RevisionQueryKind =
   | FocusedReportQueryKind
@@ -64,6 +74,10 @@ interface ParsedRevisionRequest<Result extends RevisionQueryResult> {
   parseResult(serialized: string): Result;
   revision: ReportRevision;
   serializedRequest: string;
+  sessionSummary?: {
+    readonly hasCursor: boolean;
+    readonly pageSize: number;
+  };
 }
 
 interface RevisionQuerySpec<Result extends RevisionQueryResult> {
@@ -76,7 +90,31 @@ interface RevisionQueryExecutionRequest {
   serializedRequest: string;
 }
 
-type RevisionQueryExecutionResult = { ok: true; serializedPayload: string } | { message: string; ok: false };
+interface RevisionQueryExecutionDiagnostics {
+  readonly boundedRunnerMs?: number;
+  readonly leaseWaitMs?: number;
+}
+
+type RevisionQueryExecutionResult =
+  | { diagnostics?: RevisionQueryExecutionDiagnostics; ok: true; serializedPayload: string }
+  | { diagnostics?: RevisionQueryExecutionDiagnostics; message: string; ok: false };
+
+const classifySessionQueryResult = (
+  exit: Exit.Exit<SessionQueryServerResult<SessionPageResult>, unknown>,
+): BoundaryClassification => {
+  if (Exit.isFailure(exit)) {
+    return { ...classifyExit(exit), annotations: { failureKind: 'query-failed' } };
+  }
+  if (exit.value.ok) {
+    return { outcome: 'success' };
+  }
+  return {
+    outcome: 'failure',
+    annotations: {
+      failureKind: exit.value.error.tag === 'RevisionExpired' ? 'revision-expired' : 'query-failed',
+    },
+  };
+};
 
 export interface RevisionQueryRunnerDependencies {
   execute(request: RevisionQueryExecutionRequest): Promise<RevisionQueryExecutionResult>;
@@ -90,22 +128,121 @@ const { revisionQueryRunner, rootDir } = resolveReportRuntimePaths({
 
 const jsonValue = (serialized: string): unknown => JSON.parse(serialized);
 
+const boundedPhaseDuration = (value: number): number =>
+  Number.isFinite(value) && value >= 0 ? Math.min(value, sourceControlBounds.maxDurationMs) : 0;
+
 const defaultDependencies: RevisionQueryRunnerDependencies = {
   execute: async ({ kind, revision, serializedRequest }) => {
+    const leaseRequestedAt = performance.now();
     const lease = await withReportRevisionQueryLeaseForServer(revision, async (revisionDirectory) => {
+      const leaseWaitMs = boundedPhaseDuration(performance.now() - leaseRequestedAt);
+      const boundedRunnerStartedAt = performance.now();
       const result = await runBoundedArtifactProcess({
         args: [revisionQueryRunner, revisionDirectory, kind, serializedRequest],
         command: 'bun',
         cwd: rootDir,
       });
-      return result.serializedPayload;
+      return {
+        boundedRunnerMs: boundedPhaseDuration(performance.now() - boundedRunnerStartedAt),
+        leaseWaitMs,
+        serializedPayload: result.serializedPayload,
+      };
     });
     if (!lease.ok) {
       return { message: lease.error.message, ok: false };
     }
-    return { ok: true, serializedPayload: lease.value };
+    return {
+      diagnostics: {
+        boundedRunnerMs: lease.value.boundedRunnerMs,
+        leaseWaitMs: lease.value.leaseWaitMs,
+      },
+      ok: true,
+      serializedPayload: lease.value.serializedPayload,
+    };
   },
 };
+
+const executionAnnotations = (diagnostics: RevisionQueryExecutionDiagnostics | undefined): Record<string, number> => ({
+  ...(diagnostics?.boundedRunnerMs === undefined ? {} : { boundedRunnerMs: diagnostics.boundedRunnerMs }),
+  ...(diagnostics?.leaseWaitMs === undefined ? {} : { leaseWaitMs: diagnostics.leaseWaitMs }),
+});
+
+type SessionQueryFailure = Extract<SessionQueryServerResult<never>, { ok: false }>;
+
+const queryFailedResult = (
+  request: { readonly fingerprint: string; readonly revision: ReportRevision },
+  error: unknown,
+): SessionQueryFailure => ({
+  error: {
+    message: error instanceof Error ? error.message : String(error),
+    revision: request.revision,
+    tag: 'QueryFailed',
+  },
+  ok: false,
+  requestFingerprint: request.fingerprint,
+  revision: request.revision,
+});
+
+const runSessionQueryBoundary = (
+  request: ParsedRevisionRequest<SessionPageResult>,
+  executeRequest: RevisionQueryExecutionRequest,
+  dependencies: RevisionQueryRunnerDependencies,
+): Promise<SessionQueryServerResult<SessionPageResult>> =>
+  getWebSourceControlRuntime().runEffect(
+    runBoundaryEffect(
+      {
+        boundary: 'web.sessions.read',
+        annotations: { fingerprint: request.fingerprint, revision: request.revision },
+        classify: classifySessionQueryResult,
+      },
+      Effect.gen(function* () {
+        const execution = yield* Effect.tryPromise({
+          try: () => dependencies.execute(executeRequest),
+          catch: (error) => error,
+        }).pipe(
+          Effect.tap(({ diagnostics }) => annotateWideEvent(executionAnnotations(diagnostics))),
+          withMeasured('revision.execute'),
+        );
+
+        if (!execution.ok) {
+          return {
+            error: { message: execution.message, revision: request.revision, tag: 'RevisionExpired' },
+            ok: false,
+            requestFingerprint: request.fingerprint,
+            revision: request.revision,
+          } as const;
+        }
+
+        const parsed = yield* Effect.try({
+          try: () => request.parseResult(execution.serializedPayload),
+          catch: (error) => error,
+        }).pipe(
+          withMeasured('revision.parse'),
+          Effect.match({
+            onFailure: (error) => queryFailedResult(request, error),
+            onSuccess: (data) => ({
+              data,
+              ok: true as const,
+              requestFingerprint: request.fingerprint,
+              revision: request.revision,
+            }),
+          }),
+        );
+
+        if (parsed.ok) {
+          yield* annotateWideEvent({
+            hasCursor: request.sessionSummary?.hasCursor ?? false,
+            hasMore: parsed.data.nextCursor !== null,
+            itemCount: parsed.data.itemCount,
+            pageSize: request.sessionSummary?.pageSize ?? parsed.data.items.length,
+            queryKind: 'sessions',
+            sessionCount: parsed.data.sessionCount,
+          });
+        }
+        return parsed;
+      }),
+    ),
+  );
 
 const revisionQuerySpecs: {
   breakdown: RevisionQuerySpec<FocusedBreakdownResult>;
@@ -179,6 +316,7 @@ const revisionQuerySpecs: {
         parseResult: (serialized) => parseSessionPageResult(jsonValue(serialized), request),
         revision: parseReportRevision(request.revision),
         serializedRequest: JSON.stringify(request),
+        sessionSummary: { hasCursor: request.cursor !== null, pageSize: request.pageSize },
       };
     },
   },
@@ -219,6 +357,7 @@ export function runRevisionQueryForServer(
 export function runRevisionQueryForServer(
   kind: 'sessions',
   input: SessionQueryRequest,
+  dependencies?: RevisionQueryRunnerDependencies,
 ): Promise<SessionQueryServerResult<SessionPageResult>>;
 export function runRevisionQueryForServer(
   kind: 'support',
@@ -229,13 +368,20 @@ export async function runRevisionQueryForServer(
   input: unknown,
   dependencies: RevisionQueryRunnerDependencies = defaultDependencies,
 ): Promise<SessionQueryServerResult<RevisionQueryResult>> {
+  if (kind === 'sessions') {
+    const request = revisionQuerySpecs.sessions.parse(input);
+    const executeRequest = { kind, revision: request.revision, serializedRequest: request.serializedRequest };
+    try {
+      return await runSessionQueryBoundary(request, executeRequest, dependencies);
+    } catch (error) {
+      return queryFailedResult(request, error);
+    }
+  }
+
   const request = revisionQuerySpecs[kind].parse(input);
+  const executeRequest = { kind, revision: request.revision, serializedRequest: request.serializedRequest };
   try {
-    const execution = await dependencies.execute({
-      kind,
-      revision: request.revision,
-      serializedRequest: request.serializedRequest,
-    });
+    const execution = await dependencies.execute(executeRequest);
     if (!execution.ok) {
       return {
         error: { message: execution.message, revision: request.revision, tag: 'RevisionExpired' },
@@ -251,15 +397,6 @@ export async function runRevisionQueryForServer(
       revision: request.revision,
     };
   } catch (error) {
-    return {
-      error: {
-        message: error instanceof Error ? error.message : String(error),
-        revision: request.revision,
-        tag: 'QueryFailed',
-      },
-      ok: false,
-      requestFingerprint: request.fingerprint,
-      revision: request.revision,
-    };
+    return queryFailedResult(request, error);
   }
 }

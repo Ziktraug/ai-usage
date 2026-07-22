@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { makeCaptureWideEventSink, makeTestWideEventSinkLayer, runBoundaryEffect } from '@ai-usage/effect-runtime';
 import type { ProviderQuotaBatch, ProviderQuotaBatchSource } from '@ai-usage/local-collectors';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
@@ -353,5 +354,184 @@ describe('provider quota orchestration', () => {
     expect(calls).toBe(1);
     expect(history.points).toHaveLength(1);
     expect(history.latest[0]?.source).toBe('live-api');
+  });
+
+  test('measures the owner as quota.refresh and a joiner as quota.refresh.wait with no nested event', async () => {
+    const sink = makeCaptureWideEventSink();
+    const entered = await Effect.runPromise(Deferred.make<void>());
+    const release = await Effect.runPromise(Deferred.make<void>());
+    const refresh = createProviderQuotaRefresh(
+      fakePersistence(() =>
+        Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as({ coalesced: 0, inserted: 0, unchanged: 0 }),
+        ),
+      ),
+    );
+    const input = refreshInput();
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const owner = yield* Effect.fork(runBoundaryEffect({ boundary: 'test.owner' }, refresh(input)));
+        yield* Deferred.await(entered);
+        const joiner = yield* Effect.fork(runBoundaryEffect({ boundary: 'test.joiner' }, refresh(input)));
+        yield* Effect.yieldNow();
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.await(owner);
+        yield* Fiber.await(joiner);
+      }).pipe(Effect.provide(makeTestWideEventSinkLayer(sink))),
+    );
+
+    const events = sink.events();
+    const ownerEvent = events.find((event) => event.boundary === 'test.owner');
+    const joinerEvent = events.find((event) => event.boundary === 'test.joiner');
+    expect(ownerEvent).toMatchObject({
+      outcome: 'success',
+      services: [{ name: 'quota.refresh', outcome: 'success' }],
+    });
+    expect(joinerEvent).toMatchObject({
+      outcome: 'success',
+      services: [{ name: 'quota.refresh.wait', outcome: 'success' }],
+    });
+  });
+
+  test('records an interrupted owner hop when its enclosing boundary is cancelled', async () => {
+    const sink = makeCaptureWideEventSink();
+    const entered = await Effect.runPromise(Deferred.make<void>());
+    const release = await Effect.runPromise(Deferred.make<void>());
+    const refresh = createProviderQuotaRefresh(
+      fakePersistence(() =>
+        Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as({ coalesced: 0, inserted: 0, unchanged: 0 }),
+        ),
+      ),
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const owner = yield* Effect.fork(
+          runBoundaryEffect({ boundary: 'test.owner-interrupted' }, refresh(refreshInput())),
+        );
+        yield* Deferred.await(entered);
+        yield* Fiber.interrupt(owner);
+        yield* Deferred.succeed(release, undefined);
+      }).pipe(Effect.provide(makeTestWideEventSinkLayer(sink))),
+    );
+
+    expect(sink.events().find(({ boundary }) => boundary === 'test.owner-interrupted')).toMatchObject({
+      outcome: 'interrupted',
+      services: [{ name: 'quota.refresh', outcome: 'interrupted' }],
+    });
+  });
+
+  test('records an interrupted joiner without reclassifying the shared owner', async () => {
+    const sink = makeCaptureWideEventSink();
+    const entered = await Effect.runPromise(Deferred.make<void>());
+    const release = await Effect.runPromise(Deferred.make<void>());
+    const refresh = createProviderQuotaRefresh(
+      fakePersistence(() =>
+        Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as({ coalesced: 0, inserted: 0, unchanged: 0 }),
+        ),
+      ),
+    );
+    const joinerController = new AbortController();
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const owner = yield* Effect.fork(runBoundaryEffect({ boundary: 'test.owner-shared' }, refresh(refreshInput())));
+        yield* Deferred.await(entered);
+        const joiner = yield* Effect.fork(
+          runBoundaryEffect(
+            { boundary: 'test.joiner-interrupted' },
+            refresh(refreshInput({ signal: joinerController.signal })),
+          ),
+        );
+        yield* Effect.sleep('5 millis');
+        joinerController.abort();
+        yield* Fiber.await(joiner);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.await(owner);
+      }).pipe(Effect.provide(makeTestWideEventSinkLayer(sink))),
+    );
+
+    expect(sink.events().find(({ boundary }) => boundary === 'test.joiner-interrupted')).toMatchObject({
+      outcome: 'interrupted',
+      services: [{ name: 'quota.refresh.wait', outcome: 'interrupted' }],
+    });
+    expect(sink.events().find(({ boundary }) => boundary === 'test.owner-shared')).toMatchObject({
+      outcome: 'success',
+      services: [{ name: 'quota.refresh', outcome: 'success' }],
+    });
+  });
+
+  test('classifies a partial live failure with usable latest data as a degraded owner hop', async () => {
+    const sink = makeCaptureWideEventSink();
+    const persistence: ProviderQuotaPersistence<never> = {
+      ...fakePersistence(() => Effect.succeed({ coalesced: 0, inserted: 0, unchanged: 0 })),
+      queryLatest: () =>
+        Effect.succeed({
+          observations: [
+            {
+              firstObservedAt: '2026-07-15T09:00:00.000Z',
+              id: 1,
+              lastObservedAt: '2026-07-15T09:00:00.000Z',
+              observation: observation('2026-07-15T09:00:00.000Z'),
+            },
+          ],
+          skipped: 0,
+          truncated: false,
+        }),
+    };
+    const refresh = createProviderQuotaRefresh(persistence);
+    const input: ResolvedProviderQuotaRefreshInput<Error> = {
+      backfillSource: null,
+      dbPath: '/private/provider-quota-test.sqlite',
+      liveCadenceMs: 0,
+      liveSource: { collect: () => Effect.fail(new Error('live failed')) },
+      machine: { id: 'machine-1', label: 'Laptop' },
+      now: new Date('2026-07-15T10:00:00.000Z'),
+    };
+
+    await Effect.runPromise(
+      runBoundaryEffect({ boundary: 'test.degraded' }, refresh(input)).pipe(
+        Effect.provide(makeTestWideEventSinkLayer(sink)),
+      ),
+    );
+
+    const event = sink.events().find((entry) => entry.boundary === 'test.degraded');
+    expect(event).toMatchObject({
+      outcome: 'success',
+      services: [{ name: 'quota.refresh', outcome: 'degraded' }],
+    });
+  });
+
+  test('classifies a refresh failure without usable latest data as a failed owner hop', async () => {
+    const sink = makeCaptureWideEventSink();
+    const refresh = createProviderQuotaRefresh(
+      fakePersistence(() => Effect.succeed({ coalesced: 0, inserted: 0, unchanged: 0 })),
+    );
+    const input: ResolvedProviderQuotaRefreshInput<Error> = {
+      backfillSource: null,
+      dbPath: '/private/provider-quota-test.sqlite',
+      liveCadenceMs: 0,
+      liveSource: { collect: () => Effect.fail(new Error('live failed')) },
+      machine: { id: 'machine-1', label: 'Laptop' },
+      now: new Date('2026-07-15T10:00:00.000Z'),
+    };
+
+    await Effect.runPromise(
+      runBoundaryEffect({ boundary: 'test.failed' }, refresh(input)).pipe(
+        Effect.provide(makeTestWideEventSinkLayer(sink)),
+      ),
+    );
+
+    const event = sink.events().find((entry) => entry.boundary === 'test.failed');
+    expect(event).toMatchObject({
+      outcome: 'success',
+      services: [{ name: 'quota.refresh', outcome: 'failure' }],
+    });
   });
 });
