@@ -488,6 +488,7 @@ ownership documentation, regression coverage, and repository validation seams:
 - `apps/web/e2e/session-scroll.scale.ts`
 - `apps/web/e2e/visual-regression.spec.ts`
 - `apps/web/package.json`
+- `apps/web/playwright.demo.config.ts`
 - `apps/web/playwright.config.ts`
 - `apps/web/src/server/persistent-source-runtime.test.ts`
 - `apps/web/src/server/persistent-source-runtime.ts`
@@ -1156,3 +1157,8 @@ the web check, regression tests, and all repository gates then passed.
   `git diff --check` all exited zero. Browser verification passed with 55
   standard E2E tests, one demo-privacy test, seven production report tests, and
   two production scale tests.
+- The first GitHub Actions run reached the demo step but its cold Panda
+  preparation exceeded the 120-second Playwright server budget. A rerun then
+  exhausted the 20-minute job budget during a build that had already passed on
+  the first runner. The CI-only server and job budgets are now 240 seconds and
+  30 minutes respectively; product and test assertion timeouts are unchanged.
