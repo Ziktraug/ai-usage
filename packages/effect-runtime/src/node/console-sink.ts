@@ -168,6 +168,7 @@ export const renderPrettyWideEvent = (
   const detail = options.detail ?? 'info';
   const event = sanitizeWideEventSnapshot(input).value;
   const projected = (options.projector ?? genericPrettyWideEventProjector)(event);
+  const usesGenericProjector = options.projector === undefined;
   const summary = (projected.summary ?? []).map(truncatePrettyValue);
   const header = [
     renderEventTime(event.emittedAt),
@@ -192,12 +193,13 @@ export const renderPrettyWideEvent = (
     detail === 'debug'
       ? renderAnnotations(event.annotations, MAX_ANNOTATION_KEYS)
       : renderAnnotations(event.annotations);
+  const includeRootAnnotations = detail === 'debug' || (anomaly && usesGenericProjector);
   const details = [
     ...(projected.details ?? []).map(truncatePrettyValue),
     ...(anomaly ? anomalyDetails(event) : []),
+    ...(includeRootAnnotations && rootAnnotations !== null ? [`annotations ${rootAnnotations}`] : []),
     ...(detail === 'debug'
       ? [
-          ...(rootAnnotations === null ? [] : [`annotations ${rootAnnotations}`]),
           `resource ${event.resource.surface}/${event.resource.runtimeMode} ${event.resource.serviceName}@${truncatePrettyValue(event.resource.serviceVersion)} instance=${truncatePrettyValue(event.resource.instanceId)}`,
         ]
       : []),

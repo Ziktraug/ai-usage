@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  getPersistentWebWideEventInstanceId,
   PERSISTENT_SOURCE_RUNTIME_PACKAGES,
   registerPersistentSourceRuntimeHotReload,
   type ViteHotReloadPort,
@@ -34,6 +35,21 @@ describe('persistent source runtime hot reload', () => {
     ]);
     expect(PERSISTENT_SOURCE_RUNTIME_PACKAGES).not.toContain('@ai-usage/design-system');
   });
+
+  test('keeps one wide-event instance identity across runtime recreation', () => {
+    let generatedCount = 0;
+    const generateInstanceId = (): string => {
+      generatedCount += 1;
+      return `fixture-instance-${generatedCount}`;
+    };
+
+    const first = getPersistentWebWideEventInstanceId(generateInstanceId);
+    const second = getPersistentWebWideEventInstanceId(generateInstanceId);
+
+    expect(second).toBe(first);
+    expect(generatedCount).toBe(1);
+  });
+
   test('awaits teardown before a full reload and unregisters the old listener', async () => {
     const { hot, listeners } = hotReloadFixture();
     let closeCount = 0;

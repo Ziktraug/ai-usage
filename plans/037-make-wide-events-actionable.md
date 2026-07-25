@@ -476,6 +476,45 @@ Do not run `bun install`; the verified workspace already has its dependencies.
 - `plans/037-make-wide-events-actionable.md`
 - `plans/README.md`
 
+Post-review remediation was explicitly authorized to include the following
+ownership documentation, regression coverage, and repository validation seams:
+
+- `.github/workflows/pr-checks.yml`
+- `apps/cli/README.md`
+- `apps/web/README.md`
+- `apps/web/e2e/accessibility.spec.ts`
+- `apps/web/e2e/browser-test.ts`
+- `apps/web/e2e/production-report.spec.ts`
+- `apps/web/e2e/session-scroll.scale.ts`
+- `apps/web/e2e/visual-regression.spec.ts`
+- `apps/web/package.json`
+- `apps/web/playwright.config.ts`
+- `apps/web/src/server/persistent-source-runtime.test.ts`
+- `apps/web/src/server/persistent-source-runtime.ts`
+- `apps/web/tsconfig.e2e.json`
+- `apps/web/tsconfig.json`
+- `apps/web/tsconfig.server.json`
+- `docs/adr/0002-effect-runtime-package-for-wide-events.md`
+- `package.json`
+- `packages/effect-runtime/src/duration.ts`
+- `packages/effect-runtime/src/measured.ts`
+- `packages/effect-runtime/src/node/lock.ts`
+- `packages/effect-runtime/src/node/resolve-log-dir.ts`
+- `packages/effect-runtime/src/resource.test.ts`
+- `packages/report-data/README.md`
+- `packages/report-data/src/provider-quota-refresh.ts`
+- `packages/report-data/src/provider-quota.test.ts`
+- `plans/036-wide-event-logging-log.md`
+- `plans/036-wide-event-logging.md`
+- `tools/check-package-boundaries.ts`
+- `tools/check-public-package-exports.ts`
+- `tools/check-typescript-coverage.test.ts`
+- `tools/check-typescript-coverage.ts`
+- `tools/check-workspace-relative-paths.ts`
+- `tools/measure-audit-baseline.ts`
+- `tools/run-web-demo.ts`
+- `tsconfig.tools.json`
+
 If generated formatting changes are required in an in-scope file, they are
 allowed. Revert or exclude unrelated generated output before completion.
 
@@ -1106,3 +1145,14 @@ the web check, regression tests, and all repository gates then passed.
   (`check`, `lint`, `typecheck`, `test`, `build`, and `git diff --check`) passed;
   the full web suite contains 460 passing tests, the runtime package contains
   61 passing tests, and the tool suite contains 9 passing tests.
+- A subsequent mergeability review required POSIX directory-mode repair to fail
+  closed, generic anomaly projections to retain bounded root annotations, and
+  web hot reload to preserve one process-scoped instance identity. Ownership
+  READMEs now document every `@ai-usage/effect-runtime` dependency, and the
+  post-review validation-file scope is recorded explicitly above.
+- Regression verification passed with 36 focused tests. `bun run check`,
+  `bun run lint`, `bun run typecheck` (18/18 tasks), `bun run test` (including
+  466 web tests and 12 tool tests), `bun run build`, both listener checks, and
+  `git diff --check` all exited zero. Browser verification passed with 55
+  standard E2E tests, one demo-privacy test, seven production report tests, and
+  two production scale tests.

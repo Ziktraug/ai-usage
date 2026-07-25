@@ -12,8 +12,10 @@ import {
 import path from 'node:path';
 
 const LOCK_FILE_NAME = 'wide-events.lock';
-const DEFAULT_LOCK_TIMEOUT_MS = 1000;
+export const DEFAULT_LOCK_TIMEOUT_MS = 1000;
 const STALE_LOCK_MS = 30_000;
+
+type DirectoryModeRepair = (directory: string, mode: number) => void;
 
 export interface CooperativeLockHandle {
   readonly release: () => void;
@@ -64,13 +66,19 @@ const assertSafePath = (targetPath: string, kind: 'directory' | 'file'): void =>
   }
 };
 
-export const ensureOwnedLogDirectory = (directory: string): void => {
+export const ensureOwnedLogDirectory = (
+  directory: string,
+  repairMode: DirectoryModeRepair = chmodSync,
+  platform: NodeJS.Platform = process.platform,
+): void => {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   assertSafePath(directory, 'directory');
   try {
-    chmodSync(directory, 0o700);
-  } catch {
-    // Best-effort mode repair on platforms that support it.
+    repairMode(directory, 0o700);
+  } catch (error) {
+    if (platform !== 'win32') {
+      throw error;
+    }
   }
 };
 

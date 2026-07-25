@@ -2,7 +2,7 @@
 
 ## Owns
 
-The Solid/TanStack web runtime, report dashboard and `/skills` routes, the preview/confirm file-based `/sync` route, immutable report revisions, a unified exact-revision server executor, a browser served-session coordinator, and UI read models.
+The Solid/TanStack web runtime, report dashboard and `/skills` routes, the preview/confirm file-based `/sync` route, immutable report revisions, a unified exact-revision server executor, a browser served-session coordinator, process-scoped wide-event composition, and UI read models.
 
 ## Does Not Own
 
@@ -14,7 +14,7 @@ The public interface is the app route tree, server functions under `src/server`,
 
 ## Depends On
 
-`apps/web` may depend on `@ai-usage/report-data`, `@ai-usage/report-core`, `@ai-usage/design-system`, `@ai-usage/local-collectors`, `@ai-usage/skills`, `@ai-usage/usage-merge`, and `@ai-usage/usage-store` through public package exports.
+`apps/web` may depend on `@ai-usage/effect-runtime`, `@ai-usage/report-data`, `@ai-usage/report-core`, `@ai-usage/design-system`, `@ai-usage/local-collectors`, `@ai-usage/skills`, `@ai-usage/usage-merge`, and `@ai-usage/usage-store` through public package exports.
 
 ## Must Not Import
 

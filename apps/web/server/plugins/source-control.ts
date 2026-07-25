@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { definePlugin } from 'nitro';
 import { getServerRuntimeMode } from '../../src/server/runtime-mode.server';
 import { startSourceControlPluginOutsideDemo } from '../../src/server/source-control-plugin-boundary.server';
@@ -9,7 +8,7 @@ export default definePlugin(async (nitroApp) => {
       { Effect },
       { makeAiUsageWideEventResource },
       { makeSilentWideEventSinkLayer, makeWebWideEventSinkLayer },
-      { registerPersistentSourceRuntimeHotReload },
+      { getPersistentWebWideEventInstanceId, registerPersistentSourceRuntimeHotReload },
       { publishStoredReportRevisionForSourceControl },
       { createSourceControlE2EFixture },
       { createWebSourceControlRuntime, replaceWebSourceControlRuntime },
@@ -29,7 +28,7 @@ export default definePlugin(async (nitroApp) => {
     const productionSmoke = process.env.AI_USAGE_PRODUCTION_SMOKE === '1';
     const fixture = fixtureRuntime ? createSourceControlE2EFixture() : undefined;
     const wideEventResource = makeAiUsageWideEventResource({
-      instanceId: fixtureRuntime ? 'e2e-fixture-process' : randomUUID(),
+      instanceId: fixtureRuntime ? 'e2e-fixture-process' : getPersistentWebWideEventInstanceId(),
       nodeEnvironment: process.env.NODE_ENV,
       surface: 'web',
       testRuntime: fixtureRuntime,

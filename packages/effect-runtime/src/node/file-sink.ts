@@ -5,7 +5,12 @@ import { Effect, Layer, Ref } from 'effect';
 import type { WideEventSnapshot } from '../model';
 import { serializeWideEventSnapshot } from '../sanitize';
 import { makeEmptyWideEventSinkDiagnostics, noopWideEventSink, WideEventSink, type WideEventSinkShape } from '../sink';
-import { assertSafeRegularFilePath, ensureOwnedLogDirectory, withCooperativeLock } from './lock';
+import {
+  assertSafeRegularFilePath,
+  DEFAULT_LOCK_TIMEOUT_MS,
+  ensureOwnedLogDirectory,
+  withCooperativeLock,
+} from './lock';
 import { resolveWideEventLogDirectory } from './resolve-log-dir';
 
 const FILE_PREFIX = 'wide-events-';
@@ -234,7 +239,7 @@ export const createFileWideEventSink = (
   const appendLine = options.appendLine ?? appendLineToOwnedFile;
   const appendTimeoutMs = options.appendTimeoutMs ?? DEFAULT_APPEND_TIMEOUT_MS;
   const drainTimeoutMs = options.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
-  const lockTimeoutMs = options.lockTimeoutMs ?? 1000;
+  const lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
   const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES;
   const maxBytes = Math.max(0, (options.maxSizeMb ?? DEFAULT_MAX_SIZE_MB) * 1024 * 1024);
   const queueCapacity = options.queueCapacity ?? DEFAULT_QUEUE_CAPACITY;

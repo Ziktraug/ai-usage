@@ -220,6 +220,7 @@ describe('console wide-event sink', () => {
     );
 
     expect(text).toContain('└─ ✗ revision.parse 1.0ms');
+    expect(text).toContain('annotations failureKind=query-failed');
   });
 
   test('parses LOG_LEVEL defensively', () => {

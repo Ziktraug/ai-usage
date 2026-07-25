@@ -81,6 +81,16 @@ describe('node wide-event sinks', () => {
     await sink.dispose();
   });
 
+  test('fails closed when POSIX directory-mode repair fails', () => {
+    const directory = makeTempDir();
+    const repairMode = () => {
+      throw new Error('fixture directory chmod failure');
+    };
+
+    expect(() => ensureOwnedLogDirectory(directory, repairMode, 'linux')).toThrow('fixture directory chmod failure');
+    expect(() => ensureOwnedLogDirectory(directory, repairMode, 'win32')).not.toThrow();
+  });
+
   test('repairs an existing log file to 0600 before appending', async () => {
     const directory = makeTempDir();
     const filePath = path.join(directory, 'wide-events-2026-07-21.ndjson');
