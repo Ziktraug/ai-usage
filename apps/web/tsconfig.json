@@ -11,6 +11,7 @@
     "src/**/*.ts",
     "src/**/*.tsx",
     "vite.config.ts",
+    "vite-*.ts",
     "panda.config.ts",
     "styled-system"
   ]

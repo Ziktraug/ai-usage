@@ -44,9 +44,11 @@ const STABLE_SOURCE_CONTROL_SNAPSHOT = {
 
 test.use({
   colorScheme: 'light',
+  contextOptions: {
+    reducedMotion: 'reduce',
+  },
   deviceScaleFactor: 1,
   locale: 'en-US',
-  reducedMotion: 'reduce',
   timezoneId: 'Europe/Paris',
   viewport: DESKTOP_VIEWPORT,
 });

@@ -33,14 +33,13 @@ export default definePlugin(async (nitroApp) => {
       testRuntime: fixtureRuntime,
     });
     const runtime = createWebSourceControlRuntime({
-      policyStore: fixture?.policyStore,
+      ...(fixture === undefined ? {} : { policyStore: fixture.policyStore, sources: fixture.sources }),
       publication: fixture?.publication ?? {
         publish: Effect.tryPromise({
           try: publishStoredReportRevisionForSourceControl,
           catch: (cause) => cause,
         }),
       },
-      sources: fixture?.sources,
       wideEventSinkLayer: fixtureRuntime
         ? makeSilentWideEventSinkLayer(wideEventResource)
         : makeWebWideEventSinkLayer({
@@ -48,9 +47,9 @@ export default definePlugin(async (nitroApp) => {
             resource: wideEventResource,
           }),
     });
-    let uninstall = () => undefined;
+    let uninstall: () => void = () => undefined;
     let shutdown: Promise<void> | undefined;
-    let unregisterHotReload = () => undefined;
+    let unregisterHotReload: () => void = () => undefined;
     const closeRuntime = (): Promise<void> => {
       shutdown ??= (async () => {
         unregisterHotReload();

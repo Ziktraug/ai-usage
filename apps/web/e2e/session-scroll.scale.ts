@@ -327,13 +327,18 @@ const inspectAllSessions = async (
     }
     return rowId;
   });
+  const firstRowId = orderedRowIds[0];
+  const lastRowId = orderedRowIds[SESSION_SCROLL_EXPECTED_COUNT - 1];
+  if (!(firstRowId && lastRowId)) {
+    throw new Error('Expected the session fixture to contain first and last row identifiers');
+  }
 
   await moveSurface(surface, 'start');
-  await expect(surface.locator('[data-index="0"]')).toHaveAttribute('data-session-row-id', orderedRowIds[0]);
+  await expect(surface.locator('[data-index="0"]')).toHaveAttribute('data-session-row-id', firstRowId);
   await moveSurface(surface, 'end');
   await expect(surface.locator(`[data-index="${SESSION_SCROLL_EXPECTED_COUNT - 1}"]`)).toHaveAttribute(
     'data-session-row-id',
-    orderedRowIds[SESSION_SCROLL_EXPECTED_COUNT - 1],
+    lastRowId,
   );
   await expect(report).toHaveAttribute('data-request-fingerprint', requestFingerprint);
   await expect(page.getByText('Loading more sessions…', { exact: true })).toHaveCount(0);

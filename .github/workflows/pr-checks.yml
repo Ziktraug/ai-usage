@@ -56,5 +56,8 @@ jobs:
       - name: Browser tests
         run: bun run test:e2e
 
+      - name: Demo privacy browser test
+        run: bun run test:e2e-demo
+
       - name: Production revision browser test
         run: bun run test:e2e-production

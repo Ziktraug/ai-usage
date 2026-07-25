@@ -7,7 +7,7 @@ export const PERSISTENT_SOURCE_RUNTIME_PACKAGES = [
   '@ai-usage/usage-store',
 ] as const;
 
-type BeforeFullReloadListener = (payload: unknown) => Promise<void> | void;
+type BeforeFullReloadListener = () => void;
 
 export interface ViteHotReloadPort {
   readonly off: (event: 'vite:beforeFullReload', listener: BeforeFullReloadListener) => void;
