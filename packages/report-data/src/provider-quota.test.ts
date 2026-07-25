@@ -2,7 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { makeCaptureWideEventSink, makeTestWideEventSinkLayer, runBoundaryEffect } from '@ai-usage/effect-runtime';
+import {
+  classifyExit,
+  makeCaptureWideEventSink,
+  makeTestWideEventSinkLayer,
+  runBoundaryEffect,
+} from '@ai-usage/effect-runtime';
 import type { ProviderQuotaBatch, ProviderQuotaBatchSource } from '@ai-usage/local-collectors';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
@@ -14,6 +19,11 @@ import {
   type ProviderQuotaPersistence,
   type ResolvedProviderQuotaRefreshInput,
 } from './provider-quota-refresh';
+
+const providerQuotaTestErrorPolicy = {
+  allowedTags: new Set(['ProviderQuotaRefreshAborted']),
+  interruptedTags: new Set(['ProviderQuotaRefreshAborted']),
+};
 
 const observation = (observedAt: string): ProviderQuotaObservation => ({
   accountScope: null,
@@ -445,7 +455,10 @@ describe('provider quota orchestration', () => {
         yield* Deferred.await(entered);
         const joiner = yield* Effect.fork(
           runBoundaryEffect(
-            { boundary: 'test.joiner-interrupted' },
+            {
+              boundary: 'test.joiner-interrupted',
+              classify: (exit) => classifyExit(exit, providerQuotaTestErrorPolicy),
+            },
             refresh(refreshInput({ signal: joinerController.signal })),
           ),
         );

@@ -6,12 +6,6 @@ import {
   type WideEventSnapshot,
 } from '@ai-usage/effect-runtime/node';
 
-type KnownBoundary = 'publication' | 'source.run' | 'web.sessions.read';
-
-const knownBoundaries = new Set<string>(['publication', 'source.run', 'web.sessions.read']);
-
-const isKnownBoundary = (boundary: string): boundary is KnownBoundary => knownBoundaries.has(boundary);
-
 const stringField = (annotations: Readonly<Record<string, LogValue>>, key: string): string | undefined => {
   const value = annotations[key];
   return typeof value === 'string' ? value : undefined;
@@ -47,6 +41,23 @@ const hasMoreSummary = (event: WideEventSnapshot): string | undefined => {
 
 const compact = (values: readonly (string | undefined)[]): string[] =>
   values.filter((value): value is string => value !== undefined);
+
+const renderLogValue = (value: LogValue): string => {
+  if (typeof value === 'string') {
+    return value;
+  }
+  return JSON.stringify(value) ?? 'null';
+};
+
+const anomalyDetails = (event: WideEventSnapshot): string[] => {
+  if (event.outcome === 'success') {
+    return [];
+  }
+  return ['failureKind', 'unavailableCode', 'warningCodes']
+    .map((key) => [key, event.annotations[key]] as const)
+    .filter((entry): entry is readonly [string, LogValue] => entry[1] !== undefined)
+    .map(([key, value]) => `${key}=${renderLogValue(value)}`);
+};
 
 const projectSourceRun = (event: WideEventSnapshot): PrettyWideEventView => {
   const inputCount = numberField(event.annotations, 'inputCount');
@@ -90,18 +101,21 @@ const projectSessionsRead = (event: WideEventSnapshot): PrettyWideEventView => {
   };
 };
 
+const boundaryProjectors = {
+  publication: projectPublication,
+  'source.run': projectSourceRun,
+  'web.sessions.read': projectSessionsRead,
+} satisfies Readonly<Record<string, PrettyWideEventProjector>>;
+
+type KnownBoundary = keyof typeof boundaryProjectors;
+
+const isKnownBoundary = (boundary: string): boundary is KnownBoundary => Object.hasOwn(boundaryProjectors, boundary);
+
 export const projectWebWideEvent: PrettyWideEventProjector = (event) => {
-  if (!isKnownBoundary(event.boundary)) {
-    return genericPrettyWideEventProjector(event);
-  }
-  switch (event.boundary) {
-    case 'source.run':
-      return projectSourceRun(event);
-    case 'publication':
-      return projectPublication(event);
-    case 'web.sessions.read':
-      return projectSessionsRead(event);
-    default:
-      return genericPrettyWideEventProjector(event);
-  }
+  const projector = isKnownBoundary(event.boundary)
+    ? boundaryProjectors[event.boundary]
+    : genericPrettyWideEventProjector;
+  const projected = projector(event);
+  const details = [...(projected.details ?? []), ...anomalyDetails(event)];
+  return details.length === 0 ? projected : { ...projected, details };
 };

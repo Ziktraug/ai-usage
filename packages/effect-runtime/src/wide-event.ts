@@ -7,7 +7,7 @@ import type {
   WideEventResource,
   WideEventSnapshot,
 } from './model';
-import { sanitizeWideEventSnapshot } from './sanitize';
+import { sanitizeWideEventAnnotations, sanitizeWideEventSnapshot } from './sanitize';
 
 interface HopEnrichment {
   readonly annotations: Readonly<Record<string, LogValue>>;
@@ -74,6 +74,16 @@ export class WideEventService extends Context.Tag('@ai-usage/effect-runtime/Wide
 >() {}
 
 export const currentWideEventHop = FiberRef.unsafeMake<string | undefined>(undefined);
+
+const mergeAnnotations = (
+  existing: Readonly<Record<string, LogValue>>,
+  incoming: Readonly<Record<string, LogValue>>,
+): Readonly<Record<string, LogValue>> => {
+  const merged = { ...existing, ...incoming };
+  return existing.observabilityTruncated === true || incoming.observabilityTruncated === true
+    ? { ...merged, observabilityTruncated: true }
+    : merged;
+};
 
 const buildServices = (completed: readonly CompletedHop[]): ServiceHop[] => {
   type MutableHop = Omit<ServiceHop, 'annotations' | 'children'> & {
@@ -146,7 +156,7 @@ export const createWideEventController = ({
     finalAnnotations: {},
     finalError: null,
     finalOutcome: undefined,
-    rootAnnotations: annotations,
+    rootAnnotations: sanitizeWideEventAnnotations(annotations),
     rootSpanId: undefined,
     rootTraceId: undefined,
     sequence: 0,
@@ -169,10 +179,7 @@ export const createWideEventController = ({
         durationMs,
         error: current.finalError,
         resource,
-        annotations: {
-          ...current.rootAnnotations,
-          ...current.finalAnnotations,
-        },
+        annotations: mergeAnnotations(current.rootAnnotations, current.finalAnnotations),
         services,
       };
       return sanitizeWideEventSnapshot(raw).value;
@@ -198,8 +205,9 @@ export const createWideEventController = ({
     );
 
   return {
-    annotate: (fields) =>
-      FiberRef.get(currentWideEventHop).pipe(
+    annotate: (fields) => {
+      const sanitizedFields = sanitizeWideEventAnnotations(fields);
+      return FiberRef.get(currentWideEventHop).pipe(
         Effect.flatMap((hopId) =>
           Ref.update(state, (current) => {
             if (current.emitted) {
@@ -208,10 +216,7 @@ export const createWideEventController = ({
             if (hopId === undefined) {
               return {
                 ...current,
-                rootAnnotations: {
-                  ...current.rootAnnotations,
-                  ...fields,
-                },
+                rootAnnotations: mergeAnnotations(current.rootAnnotations, sanitizedFields),
               };
             }
             const enrichment = current.enrichments[hopId] ?? { annotations: {} };
@@ -220,16 +225,14 @@ export const createWideEventController = ({
               enrichments: {
                 ...current.enrichments,
                 [hopId]: {
-                  annotations: {
-                    ...enrichment.annotations,
-                    ...fields,
-                  },
+                  annotations: mergeAnnotations(enrichment.annotations, sanitizedFields),
                 },
               },
             };
           }),
         ),
-      ),
+      );
+    },
     completeHop: (handle, durationMs, outcome) =>
       Ref.update(state, (current) => {
         if (current.emitted) {
@@ -265,7 +268,7 @@ export const createWideEventController = ({
             {
               ...current,
               emitted: true,
-              finalAnnotations: fields.annotations ?? {},
+              finalAnnotations: sanitizeWideEventAnnotations(fields.annotations ?? {}),
               finalError: fields.error ?? null,
               finalOutcome: fields.outcome,
             },

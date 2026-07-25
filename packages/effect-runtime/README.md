@@ -8,8 +8,8 @@ Domain-free schema-v2 wide-event primitives for Effect program executions.
   file sinks
 
 This package must not import other `@ai-usage/*` packages. Application adapters
-own boundary names and annotation allowlists; this package owns emission,
-sanitize-on-emit, and best-effort sink delivery.
+own boundary names, annotation allowlists, and tagged-error policies; this
+package owns emission, sanitize-on-emit, and best-effort sink delivery.
 
 Every new event carries a bounded `resource` identifying the process instance,
 runtime mode, `ai-usage` version, and `web`/`cli` surface. The application

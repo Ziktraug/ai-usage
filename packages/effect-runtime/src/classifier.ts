@@ -2,7 +2,10 @@ import { Cause, Exit, Option } from 'effect';
 import type { BoundaryClassification, BoundaryOutcome, SanitizedTaggedError } from './model';
 import { scrubApprovedPublicString } from './sanitize';
 
-const ALLOWED_PUBLIC_ERROR_TAGS = new Set(['ProviderQuotaRefreshAborted', 'CliArgumentError', 'SourceControlDisabled']);
+export interface TaggedErrorPolicy {
+  readonly allowedTags: ReadonlySet<string>;
+  readonly interruptedTags?: ReadonlySet<string>;
+}
 
 const readOwnString = (value: object, key: string): string | undefined => {
   try {
@@ -16,12 +19,15 @@ const readOwnString = (value: object, key: string): string | undefined => {
   return;
 };
 
-export const sanitizeKnownTaggedError = (value: unknown): SanitizedTaggedError | null => {
+export const sanitizeAllowedTaggedError = (
+  value: unknown,
+  allowedTags: ReadonlySet<string>,
+): SanitizedTaggedError | null => {
   if (typeof value !== 'object' || value === null) {
     return null;
   }
   const tag = readOwnString(value, '_tag');
-  if (tag === undefined || !ALLOWED_PUBLIC_ERROR_TAGS.has(tag)) {
+  if (tag === undefined || !allowedTags.has(tag)) {
     return null;
   }
   const code = readOwnString(value, 'code');
@@ -33,15 +39,19 @@ export const sanitizeKnownTaggedError = (value: unknown): SanitizedTaggedError |
   };
 };
 
-export const classifyExit = <A, E>(exit: Exit.Exit<A, E>): BoundaryClassification => {
+export const classifyExit = <A, E>(
+  exit: Exit.Exit<A, E>,
+  taggedErrorPolicy?: TaggedErrorPolicy,
+): BoundaryClassification => {
   if (Exit.isSuccess(exit)) {
     return { outcome: 'success', error: null };
   }
 
   const failure = Option.getOrUndefined(Cause.failureOption(exit.cause));
   if (failure !== undefined) {
-    const tagged = sanitizeKnownTaggedError(failure);
-    if (tagged?.tag === 'ProviderQuotaRefreshAborted') {
+    const tagged =
+      taggedErrorPolicy === undefined ? null : sanitizeAllowedTaggedError(failure, taggedErrorPolicy.allowedTags);
+    if (tagged !== null && taggedErrorPolicy?.interruptedTags?.has(tagged.tag)) {
       return { outcome: 'interrupted', error: tagged };
     }
     return {

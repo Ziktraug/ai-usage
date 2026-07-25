@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Option } from 'effect';
-import { runBoundaryEffect, withMeasured, withMeasuredIfAvailable } from './index';
+import { Context, Deferred, Duration, Effect, Exit, Fiber, Layer, Option, TestClock, TestContext } from 'effect';
+import { annotateWideEvent, runBoundaryEffect, withMeasured, withMeasuredIfAvailable } from './index';
 import { type WideEventResourceService, WideEventResourceService as WideEventResourceTag } from './resource';
 import {
   makeCaptureWideEventSink,
@@ -72,6 +72,26 @@ describe('boundary runner and hop tree', () => {
     expect(sink.events()[0]?.eventId).not.toBe(sink.events()[1]?.eventId);
   });
 
+  test('derives canonical timestamps and duration from the injected clock', async () => {
+    const sink = makeCaptureWideEventSink();
+    const startedAt = new Date('2026-07-25T12:34:56.000Z');
+    const program = Effect.gen(function* () {
+      yield* TestClock.setTime(startedAt);
+      yield* runBoundaryEffect(
+        { boundary: 'injected-clock' },
+        Effect.gen(function* () {
+          yield* TestClock.adjust(Duration.millis(1500));
+        }),
+      );
+    }).pipe(Effect.provide(Layer.merge(TestContext.TestContext, makeTestWideEventSinkLayer(sink))));
+
+    await Effect.runPromise(program);
+
+    expect(sink.events()[0]?.startedAt).toBe('2026-07-25T12:34:56.000Z');
+    expect(sink.events()[0]?.emittedAt).toBe('2026-07-25T12:34:57.500Z');
+    expect(sink.events()[0]?.durationMs).toBe(1500);
+  });
+
   test('emits exactly once even under concurrent finalize pressure', async () => {
     const sink = makeCaptureWideEventSink();
     const program = runBoundaryEffect({ boundary: 'once' }, Effect.succeed('ok')).pipe(
@@ -126,6 +146,38 @@ describe('boundary runner and hop tree', () => {
       ),
     );
     expect(result).toBe('value');
+  });
+
+  test('hostile root and hop annotations cannot change the business result', async () => {
+    const sink = makeCaptureWideEventSink();
+    const hostileAnnotations = new Proxy(
+      {},
+      {
+        ownKeys: () => {
+          throw new Error('hostile annotations');
+        },
+      },
+    );
+    const result = await Effect.runPromise(
+      runBoundaryEffect(
+        { boundary: 'hostile-annotations', annotations: hostileAnnotations },
+        Effect.gen(function* () {
+          yield* annotateWideEvent(hostileAnnotations);
+          yield* withMeasured('hostile-hop')(
+            Effect.gen(function* () {
+              yield* annotateWideEvent(hostileAnnotations);
+            }),
+          );
+          return 'business-success';
+        }),
+      ).pipe(Effect.provide(makeTestWideEventSinkLayer(sink))),
+    );
+
+    expect(result).toBe('business-success');
+    expect(sink.events()).toHaveLength(1);
+    expect(sink.events()[0]?.outcome).toBe('success');
+    expect(sink.events()[0]?.annotations.observabilityTruncated).toBe(true);
+    expect(sink.events()[0]?.services[0]?.annotations?.observabilityTruncated).toBe(true);
   });
 
   test('classifier failure falls back without changing the business exit', async () => {

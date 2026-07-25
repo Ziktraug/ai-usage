@@ -168,17 +168,14 @@ const sanitizeLogValue = (
       }
       const descriptor = descriptors[key];
       try {
-        let nested: unknown;
         if (descriptor && 'value' in descriptor) {
-          nested = descriptor.value;
-        } else if (descriptor?.get) {
-          nested = descriptor.get.call(value);
-        } else {
-          nested = undefined;
+          const sanitized = sanitizeLogValue(descriptor.value, seen, depth + 1);
+          truncated ||= sanitized.truncated;
+          result[key] = sanitized.value;
+          continue;
         }
-        const sanitized = sanitizeLogValue(nested, seen, depth + 1);
-        truncated ||= sanitized.truncated;
-        result[key] = sanitized.value;
+        truncated = true;
+        result[key] = '[Unreadable]';
       } catch {
         truncated = true;
         result[key] = '[Unreadable]';
@@ -189,6 +186,16 @@ const sanitizeLogValue = (
     return { truncated: true, value: '[Unreadable]' };
   } finally {
     seen.delete(value);
+  }
+};
+
+export const sanitizeWideEventAnnotations = (value: unknown): Readonly<Record<string, LogValue>> => {
+  try {
+    const sanitized = sanitizeLogValue(value, new WeakSet<object>(), 0);
+    const record = isLogRecord(sanitized.value) ? sanitized.value : {};
+    return sanitized.truncated || !isLogRecord(sanitized.value) ? withTruncationMarker(record) : record;
+  } catch {
+    return { observabilityTruncated: true };
   }
 };
 

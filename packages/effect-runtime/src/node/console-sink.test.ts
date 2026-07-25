@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
-import type { WideEventSnapshot } from '../model';
+import { MAX_ANNOTATION_KEYS, MAX_COMPLETED_HOPS, type WideEventSnapshot } from '../model';
 import { combineWideEventSinks, makeCaptureWideEventSink } from '../sink';
 import {
   makeConsoleWideEventSink,
@@ -169,40 +169,27 @@ describe('console wide-event sink', () => {
     expect(stripped).toContain('resource web/test ai-usage@0.1.0-test instance=fixture-instance');
   });
 
-  test('reports omitted hops only when the rendering budget was exceeded', () => {
-    const services = Array.from({ length: 32 }, (_, index) => ({
+  test('debug renders the complete canonically bounded hop tree and root annotations', () => {
+    const services = Array.from({ length: MAX_COMPLETED_HOPS }, (_, index) => ({
       durationMs: 1,
       name: `hop-${index}`,
       outcome: 'success' as const,
       spanId: `span-${index}`,
       traceId: 'trace',
     }));
+    const annotations = Object.fromEntries(
+      Array.from({ length: MAX_ANNOTATION_KEYS }, (_, index) => [`field-${index}`, index]),
+    );
 
     const text = stripWideEventAnsi(
-      renderPrettyWideEvent({ ...sampleEvent('exact-hop-budget'), services }, { detail: 'debug' }),
+      renderPrettyWideEvent({ ...sampleEvent('complete-debug'), annotations, services }, { detail: 'debug' }),
     );
 
     expect(text).not.toContain('additional hops omitted');
-    expect(
-      stripWideEventAnsi(
-        renderPrettyWideEvent(
-          {
-            ...sampleEvent('exceeded-hop-budget'),
-            services: [
-              ...services,
-              {
-                durationMs: 1,
-                name: 'hop-32',
-                outcome: 'success',
-                spanId: 'span-32',
-                traceId: 'trace',
-              },
-            ],
-          },
-          { detail: 'debug' },
-        ),
-      ),
-    ).toContain('additional hops omitted');
+    expect(text).toContain(`└─ ✓ hop-${MAX_COMPLETED_HOPS - 1} 1.0ms`);
+    for (let index = 0; index < MAX_ANNOTATION_KEYS; index++) {
+      expect(text).toContain(`field-${index}=${index}`);
+    }
   });
 
   test('shows a nested failing hop in anomaly output at info detail', () => {

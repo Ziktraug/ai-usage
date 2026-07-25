@@ -1,5 +1,6 @@
 import { Clock, Effect, type Exit, Option } from 'effect';
 import { safeClassify } from './classifier';
+import { nanosToMillis } from './duration';
 import type { BoundaryClassification, LogValue } from './model';
 import { WideEventResourceService } from './resource';
 import { submitWideEventBestEffort, WideEventSink } from './sink';
@@ -16,9 +17,7 @@ export interface BoundaryRunOptions<A, E> {
   readonly classify?: (exit: Exit.Exit<A, E>) => BoundaryClassification;
 }
 
-const nanosToMillis = (value: bigint): number => Number(value) / 1_000_000;
-
-const wallClockIso = (): string => new Date().toISOString();
+const millisecondsToIso = (milliseconds: number): string => new Date(milliseconds).toISOString();
 
 const newEventId = (): string => globalThis.crypto.randomUUID();
 
@@ -30,7 +29,8 @@ export const runBoundaryEffect = <A, E, R>(
     const sink = yield* WideEventSink;
     const resource = yield* WideEventResourceService;
     const eventId = newEventId();
-    const startedAt = wallClockIso();
+    const startedAtMillis = yield* Clock.currentTimeMillis;
+    const startedAt = millisecondsToIso(startedAtMillis);
     const startedAtNanos = yield* Clock.currentTimeNanos;
     const controller = createWideEventController({
       boundary: options.boundary,
@@ -43,11 +43,12 @@ export const runBoundaryEffect = <A, E, R>(
     const finalize = (exit: Exit.Exit<A, E>) =>
       Effect.uninterruptible(
         Effect.gen(function* () {
+          const emittedAtMillis = yield* Clock.currentTimeMillis;
           const completedAtNanos = yield* Clock.currentTimeNanos;
           const classification = safeClassify(exit, options.classify);
           const event = yield* controller.emit({
             durationMs: nanosToMillis(completedAtNanos - startedAtNanos),
-            emittedAt: wallClockIso(),
+            emittedAt: millisecondsToIso(emittedAtMillis),
             outcome: classification.outcome,
             error: classification.error ?? null,
             ...(classification.annotations === undefined ? {} : { annotations: classification.annotations }),

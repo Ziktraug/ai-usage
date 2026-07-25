@@ -34,6 +34,11 @@ interface CliQuotaBoundaryResult {
   readonly latest: readonly unknown[];
 }
 
+const CLI_QUOTA_ERROR_POLICY = {
+  allowedTags: new Set(['CliArgumentError', 'ProviderQuotaRefreshAborted']),
+  interruptedTags: new Set(['ProviderQuotaRefreshAborted']),
+};
+
 const wideEventRuntimeMode = (nodeEnvironment: string | undefined): 'development' | 'production' | 'test' => {
   if (nodeEnvironment === 'production') {
     return 'production';
@@ -43,7 +48,10 @@ const wideEventRuntimeMode = (nodeEnvironment: string | undefined): 'development
 
 const classifyCliQuotaOutcome = (exit: Exit.Exit<CliQuotaBoundaryResult, unknown>): BoundaryClassification => {
   if (Exit.isFailure(exit)) {
-    return { ...classifyExit(exit), annotations: { failureKind: 'quota-command-failed' } };
+    return {
+      ...classifyExit(exit, CLI_QUOTA_ERROR_POLICY),
+      annotations: { failureKind: 'quota-command-failed' },
+    };
   }
   const sourceOutcome = exit.value.collection.outcomes[0];
   const sourceStatus = sourceOutcome?.status ?? 'unavailable';

@@ -9,9 +9,10 @@
 The schema-v1 implementation produced truthful machine records for most
 boundaries, but its serialization-shaped TTY line was unreadable, Session
 validation could fail after a success event, retained files could mix producer
-versions without provenance, and web file-delivery loss was silent. The default
-tagged-error classifier also accepted a generic `.message` from allowlisted
-errors even though only explicitly public text should cross the boundary.
+versions without provenance, and web file-delivery loss was silent. The
+tagged-error classifier also owned application-specific tags and accepted a
+generic `.message` from allowlisted errors even though only explicitly public
+text should cross the boundary.
 
 ## Decision
 
@@ -28,10 +29,12 @@ contract. Web injects application-owned summaries; unknown boundaries use the
 generic total fallback. Outcomes select info/warn/error, while `LOG_LEVEL`
 controls only console filtering and debug expansion.
 
-Tagged errors expose a message only through explicit `publicMessage`; generic
-`.message` fallback is removed. Approved public text is bounded and scrubbed
-for credential-shaped query and authorization values. Domain boundaries prefer
-stable reason and warning codes.
+Tagged errors are projected only through an explicit application-owned policy
+and expose a message only through `publicMessage`; the domain-free default owns
+no application tags and generic `.message` fallback is removed. Approved
+public text is bounded and scrubbed for credential-shaped query and
+authorization values. Domain boundaries prefer stable reason and warning
+codes.
 
 Web file warnings use fixed typed kinds, bounded counters, and per-kind
 rate-limiting. They write directly to the console warning channel and never
@@ -44,7 +47,7 @@ steady-state appends.
 
 This ADR supersedes only ADR 0002/plan 036 choices that required one physical
 TTY line, omitted producer resource context, kept web file diagnostics silent,
-or allowed generic `.message` fallback.
+owned application tags in the runtime, or allowed generic `.message` fallback.
 
 ## Preserved decisions
 

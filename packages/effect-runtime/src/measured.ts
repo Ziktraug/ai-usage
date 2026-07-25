@@ -1,13 +1,12 @@
 import { Clock, Effect, type Exit, FiberRef, Option } from 'effect';
 import { safeClassifyHop } from './classifier';
+import { nanosToMillis } from './duration';
 import type { BoundaryOutcome } from './model';
 import { currentWideEventHop, type OpenHopHandle, WideEventService } from './wide-event';
 
 export interface MeasuredOptions<A, E> {
   readonly classify?: (exit: Exit.Exit<A, E>) => BoundaryOutcome;
 }
-
-const nanosToMillis = (value: bigint): number => Number(value) / 1_000_000;
 
 const openMeasuredHop = (name: string): Effect.Effect<OpenHopHandle, never, WideEventService> =>
   Effect.gen(function* () {

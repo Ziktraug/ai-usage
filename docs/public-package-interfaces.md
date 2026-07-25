@@ -7,14 +7,15 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `.`: domain-free schema-v2 wide-event model, required process resource
   service/layer, boundary runner (`runBoundaryEffect`), hop measurement
   (`withMeasured` / `withMeasuredIfAvailable`), sanitize-on-emit, explicit
-  public-message scrubbing, and capture/no-op sinks. Must not import other
-  `@ai-usage/*` packages. Generic sink layers remain sink-only; the explicitly
-  named test layer is the only helper that also supplies deterministic fixture
-  resource identity.
+  application-owned tagged-error policies, public-message scrubbing, and
+  capture/no-op sinks. Must not import other `@ai-usage/*` packages. Generic
+  sink layers remain sink-only; the explicitly named test layer is the only
+  helper that also supplies deterministic fixture resource identity.
 - `./node`: Node-only severity/detail-aware console projection, generic
-  projector contract, bounded NDJSON file sink, typed delivery warnings,
-  per-transport diagnostics, workspace log-dir resolution, cooperative
-  interprocess lock, rotation, and bounded retention sweeps.
+  projector contract, bounded NDJSON file sink, exported
+  `FileWideEventWarning`/`FileWideEventWarningKind` delivery contracts,
+  exported `WideEventTransportDiagnostics`, workspace log-dir resolution,
+  cooperative interprocess lock, rotation, and bounded retention sweeps.
 
 ## `@ai-usage/report-core`
 

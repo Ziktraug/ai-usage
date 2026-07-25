@@ -272,11 +272,12 @@ already owns one:
 - invalid or failed revision result: `failureKind: 'query-failed'`.
 
 Do not persist raw causes, stack traces, arbitrary exception messages, provider
-bodies, filesystem records, requests, or response payloads. Default tagged-error
-classification may use `_tag`, `code`, and explicit `publicMessage`; it must not
-fall back to generic `.message`. Any explicitly approved public error message
-must pass a bounded credential-string scrubber before persistence or console
-rendering.
+bodies, filesystem records, requests, or response payloads. Tagged-error
+classification may use `_tag`, `code`, and explicit `publicMessage` only through
+an application-owned allowlist; the domain-free default has no application
+tags. It must not fall back to generic `.message`. Any explicitly approved
+public error message must pass a bounded credential-string scrubber before
+persistence or console rendering.
 
 ### 3. Schema v2 resource context
 
@@ -591,8 +592,8 @@ and event outcome equals the final protocol result.
    publication port's unknown failure value.
 4. Update Session and CLI classifiers to return stable failure/degradation
    annotations where their domain result already owns a code.
-5. Change default tagged-error projection to use explicit `publicMessage` only;
-   remove fallback to generic `.message`.
+5. Require an application-owned allowlist for tagged-error projection, use
+   explicit `publicMessage` only, and remove fallback to generic `.message`.
 6. Add a small, top-level, reusable string scrubber in the sanitizer for
    approved public error messages. It must redact credential-bearing URL query
    values and common authorization credential forms while preserving a bounded
@@ -808,7 +809,8 @@ changes worker count or scheduling policy.
    - one physical line for TTY pretty output;
    - absence of producer resource context;
    - silent web file-sink diagnostics;
-   - generic `.message` fallback for allowlisted tagged errors.
+   - generic `.message` fallback for allowlisted tagged errors;
+   - runtime-owned application tag allowlists.
 2. Preserve these plan-036 decisions:
    - one canonical event per real boundary;
    - fresh isolated event state;
@@ -1084,3 +1086,21 @@ the web check, regression tests, and all repository gates then passed.
   sequential gate (`check`, `lint`, `typecheck`, `test`, `build`, and
   `git diff --check`) passed; the full web suite contains 460 passing tests and
   the runtime package contains 59 passing tests.
+
+### 2026-07-25 final review remediation
+
+- Sanitization no longer invokes accessor descriptors, so hostile getters
+  cannot mutate or block the product execution. Canonical wall-clock
+  timestamps now use Effect's injected `Clock`, with deterministic regression
+  coverage.
+- Tagged-error allowlists are explicitly application-owned, preserving the
+  domain-free runtime while keeping `ProviderQuotaRefreshAborted`
+  classification explicit at the CLI boundary. Public warning and transport
+  diagnostic types are exported through the documented package seams.
+- The web console documentation now matches severity routing: info uses stdout,
+  while warnings and failures use stderr. The file queue stores snapshots
+  directly without a speculative wrapper type.
+- Focused verification passed with 84 tests. The complete sequential gate
+  (`check`, `lint`, `typecheck`, `test`, `build`, and `git diff --check`) passed;
+  the full web suite contains 460 passing tests, the runtime package contains
+  61 passing tests, and the tool suite contains 9 passing tests.

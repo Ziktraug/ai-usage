@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Cause, Data, Effect, Exit } from 'effect';
-import { classifyExit, runBoundaryEffect, safeClassify, withMeasured } from './index';
+import { classifyExit, runBoundaryEffect, safeClassify, sanitizeAllowedTaggedError, withMeasured } from './index';
 import { makeCaptureWideEventSink, makeTestWideEventSinkLayer } from './sink';
 
 class ProviderQuotaRefreshAborted extends Data.TaggedError('ProviderQuotaRefreshAborted')<{
@@ -17,6 +17,11 @@ class CliArgumentError extends Data.TaggedError('CliArgumentError')<{
 }> {}
 
 describe('wide-event model and classifier', () => {
+  const applicationErrorPolicy = {
+    allowedTags: new Set(['CliArgumentError', 'ProviderQuotaRefreshAborted']),
+    interruptedTags: new Set(['ProviderQuotaRefreshAborted']),
+  };
+
   test('default success classification', () => {
     expect(classifyExit(Exit.succeed(1))).toEqual({ outcome: 'success', error: null });
   });
@@ -35,7 +40,10 @@ describe('wide-event model and classifier', () => {
   });
 
   test('ProviderQuotaRefreshAborted becomes interrupted with allowlisted tag', () => {
-    const classification = classifyExit(Exit.fail(new ProviderQuotaRefreshAborted({ publicMessage: 'aborted' })));
+    const classification = classifyExit(
+      Exit.fail(new ProviderQuotaRefreshAborted({ publicMessage: 'aborted' })),
+      applicationErrorPolicy,
+    );
     expect(classification.outcome).toBe('interrupted');
     expect(classification.error).toEqual({
       tag: 'ProviderQuotaRefreshAborted',
@@ -44,22 +52,23 @@ describe('wide-event model and classifier', () => {
   });
 
   test('allowlisted errors require an explicit scrubbed publicMessage', () => {
-    expect(classifyExit(Exit.fail(new CliArgumentError({ message: 'Bearer private-token' }))).error).toEqual({
+    const allowedTags = applicationErrorPolicy.allowedTags;
+    expect(sanitizeAllowedTaggedError(new CliArgumentError({ message: 'Bearer private-token' }), allowedTags)).toEqual({
       tag: 'CliArgumentError',
     });
     expect(
-      classifyExit(
-        Exit.fail(
-          new CliArgumentError({
-            message: 'internal detail',
-            publicMessage: 'Request failed: https://fixture.invalid?access_token=private-token',
-          }),
-        ),
-      ).error,
+      sanitizeAllowedTaggedError(
+        new CliArgumentError({
+          message: 'internal detail',
+          publicMessage: 'Request failed: https://fixture.invalid?access_token=private-token',
+        }),
+        allowedTags,
+      ),
     ).toEqual({
       message: 'Request failed: https://fixture.invalid?access_token=[REDACTED]',
       tag: 'CliArgumentError',
     });
+    expect(sanitizeAllowedTaggedError(new UnknownDomainError({ message: 'secret body' }), allowedTags)).toBeNull();
   });
 
   test('custom classifier can mark timed-out and degraded; thrown classifier falls back', () => {

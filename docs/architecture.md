@@ -30,9 +30,9 @@ Owns domain-free Effect observability primitives:
   resolution under `logs/` or absolute `AI_USAGE_LOG_DIR`.
 
 Must not import other `@ai-usage/*` packages. Application adapters own boundary
-names, annotation allowlists, resource configuration, and semantic terminal
-projectors. Historical schema-v1 files remain valid append-only records with no
-resource field.
+names, annotation allowlists, tagged-error policies, resource configuration,
+and semantic terminal projectors. Historical schema-v1 files remain valid
+append-only records with no resource field.
 
 ### `@ai-usage/report-core`
 
@@ -156,7 +156,8 @@ Owns web runtime and UI:
 - the official Nitro Bun preset and one scoped in-process ManagedRuntime that
   owns source-control layers plus one process-scoped schema-v2 resource and
   wide-event sink (NDJSON file under `logs/` or `AI_USAGE_LOG_DIR`, plus
-  severity-aware pretty/JSON stderr);
+  severity-aware pretty/JSON console output: info on stdout, warnings and
+  failures on stderr);
 - finite Effect adapters such as `web.sessions.read` run through that same
   runtime;
 - direct source adapters and SQLite access, with no generic collection subprocess;

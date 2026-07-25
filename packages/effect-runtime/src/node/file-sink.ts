@@ -60,10 +60,6 @@ const WARNING_MESSAGES: Readonly<Record<FileWideEventWarningKind, string>> = {
   'sweep-failure': 'Wide-event file retention sweep failed.',
 };
 
-interface PendingRecord {
-  readonly event: WideEventSnapshot;
-}
-
 class AppendBlockedError extends Error {
   override readonly name = 'AppendBlockedError';
 }
@@ -97,7 +93,11 @@ const withTimeout = async (
 ): Promise<void> => {
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | undefined;
-  const pending = Promise.resolve().then(() => operation(controller.signal));
+  const runOperation = async (): Promise<void> => {
+    await Promise.resolve();
+    await operation(controller.signal);
+  };
+  const pending = runOperation();
   let rejectCancellation!: (error: Error) => void;
   const cancellation = new Promise<never>((_resolve, reject) => {
     rejectCancellation = reject;
@@ -114,7 +114,11 @@ const withTimeout = async (
   try {
     await Promise.race([pending, cancellation]);
   } catch (error) {
-    await pending.catch(() => undefined);
+    try {
+      await pending;
+    } catch {
+      // The cancellation error below owns the observable failure.
+    }
     throw error;
   } finally {
     registerExternalAbort(undefined);
@@ -225,7 +229,7 @@ export const createFileWideEventSink = (
   const sweepFiles = options.sweepFiles ?? sweepOldFiles;
 
   const diagnostics = Ref.unsafeMake(makeEmptyWideEventSinkDiagnostics());
-  const pending: PendingRecord[] = [];
+  const pending: WideEventSnapshot[] = [];
   let circuitOpen = false;
   let outstanding = 0;
   let resolveIdle: (() => void) | undefined;
@@ -330,12 +334,12 @@ export const createFileWideEventSink = (
   const drainQueue = async (): Promise<void> => {
     workerRunning = true;
     while (!(circuitOpen || disposed)) {
-      const item = pending.shift();
-      if (!item) {
+      const event = pending.shift();
+      if (!event) {
         break;
       }
       try {
-        await appendEvent(item.event);
+        await appendEvent(event);
         bump('accepted');
       } catch (error) {
         if (error instanceof AppendBlockedError) {
@@ -379,7 +383,7 @@ export const createFileWideEventSink = (
       });
     }
     outstanding += 1;
-    pending.push({ event });
+    pending.push(event);
     if (!workerRunning) {
       drainQueue().catch(() => undefined);
     }
@@ -390,8 +394,12 @@ export const createFileWideEventSink = (
     const timeout = new Promise<false>((resolve) => {
       timeoutHandle = setTimeout(() => resolve(false), drainTimeoutMs);
     });
+    const waitUntilIdle = async (): Promise<true> => {
+      await idle;
+      return true;
+    };
     try {
-      return await Promise.race([idle.then(() => true as const), timeout]);
+      return await Promise.race([waitUntilIdle(), timeout]);
     } finally {
       clearTimeout(timeoutHandle);
     }

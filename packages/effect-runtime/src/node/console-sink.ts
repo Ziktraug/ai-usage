@@ -1,6 +1,13 @@
 import { Effect, Ref } from 'effect';
-import type { BoundaryOutcome, LogValue, ServiceHop, WideEventSnapshot } from '../model';
-import { serializeWideEventSnapshot } from '../sanitize';
+import {
+  type BoundaryOutcome,
+  type LogValue,
+  MAX_ANNOTATION_KEYS,
+  MAX_COMPLETED_HOPS,
+  type ServiceHop,
+  type WideEventSnapshot,
+} from '../model';
+import { sanitizeWideEventSnapshot, serializeWideEventSnapshot } from '../sanitize';
 import { makeEmptyWideEventSinkDiagnostics, type WideEventSinkShape } from '../sink';
 
 export type ConsoleLogFormat = 'json' | 'pretty';
@@ -23,8 +30,8 @@ const ANSI_GREEN = '\u001B[32m';
 const ANSI_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[(?:0|31|32|33)m`, 'g');
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T(\d{2}:\d{2}:\d{2}\.\d{3})Z$/;
 const WHITESPACE = /\s/;
-const MAX_PRETTY_ANNOTATIONS = 12;
-const MAX_PRETTY_HOPS = 32;
+const MAX_INFO_ANNOTATIONS = 12;
+const MAX_INFO_HOPS = 32;
 const MAX_PRETTY_VALUE_LENGTH = 120;
 
 const formatDuration = (value: number): string => `${value.toFixed(1)}ms`;
@@ -39,14 +46,17 @@ const renderLogValue = (value: LogValue): string => {
   return truncatePrettyValue(JSON.stringify(value) ?? 'null');
 };
 
-const renderAnnotations = (annotations: Readonly<Record<string, LogValue>>): string | null => {
+const renderAnnotations = (
+  annotations: Readonly<Record<string, LogValue>>,
+  maximumEntries: number = MAX_INFO_ANNOTATIONS,
+): string | null => {
   const entries = Object.entries(annotations).sort(([left], [right]) => left.localeCompare(right));
   if (entries.length === 0) {
     return null;
   }
-  const fields = entries.slice(0, MAX_PRETTY_ANNOTATIONS).map(([key, value]) => `${key}=${renderLogValue(value)}`);
-  if (entries.length > MAX_PRETTY_ANNOTATIONS) {
-    fields.push(`+${entries.length - MAX_PRETTY_ANNOTATIONS} fields`);
+  const fields = entries.slice(0, maximumEntries).map(([key, value]) => `${key}=${renderLogValue(value)}`);
+  if (entries.length > maximumEntries) {
+    fields.push(`+${entries.length - maximumEntries} fields`);
   }
   return fields.join(' ');
 };
@@ -99,17 +109,23 @@ const shouldSuppressRepeatingHop = (event: WideEventSnapshot): boolean => {
 const containsAnomalousHop = (hop: ServiceHop): boolean =>
   hop.outcome !== 'success' || (hop.children?.some(containsAnomalousHop) ?? false);
 
-const renderHopTree = (services: readonly ServiceHop[], includeAll: boolean, anomaliesOnly = false): string[] => {
+const renderHopTree = (
+  services: readonly ServiceHop[],
+  includeAll: boolean,
+  anomaliesOnly: boolean,
+  maximumHops: number,
+  annotationLimit: number,
+): string[] => {
   const lines: string[] = [];
   let omitted = false;
   let rendered = 0;
   const visit = (hop: ServiceHop, prefix: string, isLast: boolean): void => {
-    if (rendered >= MAX_PRETTY_HOPS) {
+    if (rendered >= maximumHops) {
       omitted = true;
       return;
     }
     rendered += 1;
-    const annotations = renderAnnotations(hop.annotations ?? {});
+    const annotations = renderAnnotations(hop.annotations ?? {}, annotationLimit);
     lines.push(
       `${prefix}${isLast ? '└─' : '├─'} ${outcomeSymbol(hop.outcome)} ${truncatePrettyValue(hop.name)} ${formatDuration(hop.durationMs)}${annotations === null ? '' : `  ${annotations}`}`,
     );
@@ -132,12 +148,8 @@ const renderHopTree = (services: readonly ServiceHop[], includeAll: boolean, ano
 };
 
 const anomalyDetails = (event: WideEventSnapshot): string[] => {
-  const fields = ['failureKind', 'unavailableCode', 'warningCodes']
-    .map((key) => [key, event.annotations[key]] as const)
-    .filter((entry): entry is readonly [string, LogValue] => entry[1] !== undefined)
-    .map(([key, value]) => `${key}=${renderLogValue(value)}`);
   const error = renderError(event);
-  return [...fields, ...(error === null ? [] : [error])];
+  return error === null ? [] : [error];
 };
 
 export const genericPrettyWideEventProjector: PrettyWideEventProjector = (event) => ({
@@ -147,13 +159,14 @@ export const genericPrettyWideEventProjector: PrettyWideEventProjector = (event)
 export const stripWideEventAnsi = (value: string): string => value.replace(ANSI_PATTERN, '');
 
 export const renderPrettyWideEvent = (
-  event: WideEventSnapshot,
+  input: WideEventSnapshot,
   options: {
     readonly detail?: 'debug' | 'info';
     readonly projector?: PrettyWideEventProjector;
   } = {},
 ): string => {
   const detail = options.detail ?? 'info';
+  const event = sanitizeWideEventSnapshot(input).value;
   const projected = (options.projector ?? genericPrettyWideEventProjector)(event);
   const summary = (projected.summary ?? []).map(truncatePrettyValue);
   const header = [
@@ -172,15 +185,19 @@ export const renderPrettyWideEvent = (
           anomaly && detail === 'info' ? event.services.filter(containsAnomalousHop) : event.services,
           detail === 'debug' || anomaly,
           anomaly && detail === 'info',
+          detail === 'debug' ? MAX_COMPLETED_HOPS : MAX_INFO_HOPS,
+          detail === 'debug' ? MAX_ANNOTATION_KEYS : MAX_INFO_ANNOTATIONS,
         );
+  const rootAnnotations =
+    detail === 'debug'
+      ? renderAnnotations(event.annotations, MAX_ANNOTATION_KEYS)
+      : renderAnnotations(event.annotations);
   const details = [
     ...(projected.details ?? []).map(truncatePrettyValue),
     ...(anomaly ? anomalyDetails(event) : []),
     ...(detail === 'debug'
       ? [
-          ...(renderAnnotations(event.annotations) === null
-            ? []
-            : [`annotations ${renderAnnotations(event.annotations)}`]),
+          ...(rootAnnotations === null ? [] : [`annotations ${rootAnnotations}`]),
           `resource ${event.resource.surface}/${event.resource.runtimeMode} ${event.resource.serviceName}@${truncatePrettyValue(event.resource.serviceVersion)} instance=${truncatePrettyValue(event.resource.instanceId)}`,
         ]
       : []),

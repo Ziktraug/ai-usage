@@ -62,14 +62,16 @@ describe('wide-event sanitizer', () => {
     expect(result.value.annotations.redacted).toBe('[REDACTED]');
   });
 
-  test('handles cycles, throwing getters, and bigint', () => {
+  test('handles cycles and bigint without invoking accessors', () => {
     const cyclic: Record<string, unknown> = { a: 1 };
     cyclic.self = cyclic;
+    let getterCalls = 0;
     const hostile = {};
     Object.defineProperty(hostile, 'boom', {
       enumerable: true,
       get() {
-        throw new Error('getter boom');
+        getterCalls += 1;
+        return 'must-not-be-read';
       },
     });
 
@@ -84,6 +86,7 @@ describe('wide-event sanitizer', () => {
     );
 
     expect(result.truncated).toBe(true);
+    expect(getterCalls).toBe(0);
     const cyclicValue = result.value.annotations.cyclic as Record<string, unknown>;
     expect(cyclicValue.self).toBe('[Circular]');
     expect(result.value.annotations.hostile).toEqual({ boom: '[Unreadable]' });

@@ -19,6 +19,7 @@ import { createFileWideEventSink, type FileWideEventSinkOptions, makeFileWideEve
 import { resolveWideEventLogDirectory } from './resolve-log-dir';
 
 export type { LogValue, WideEventSnapshot } from '../model';
+export type { WideEventTransportDiagnostics } from '../sink';
 export type {
   ConsoleLogFormat,
   ConsoleLogLevel,
@@ -36,7 +37,11 @@ export {
   selectConsoleLogLevel,
   stripWideEventAnsi,
 } from './console-sink';
-export type { FileWideEventSinkOptions } from './file-sink';
+export type {
+  FileWideEventSinkOptions,
+  FileWideEventWarning,
+  FileWideEventWarningKind,
+} from './file-sink';
 export { createFileWideEventSink, makeFileWideEventSinkLayer } from './file-sink';
 export {
   acquireCooperativeLock,

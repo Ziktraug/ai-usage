@@ -4,7 +4,8 @@ export {
   classifyHopExit,
   safeClassify,
   safeClassifyHop,
-  sanitizeKnownTaggedError,
+  sanitizeAllowedTaggedError,
+  type TaggedErrorPolicy,
 } from './classifier';
 export { type MeasuredOptions, withMeasured, withMeasuredIfAvailable } from './measured';
 export type {
@@ -50,6 +51,7 @@ export {
   WideEventSink,
   type WideEventSinkDiagnostics,
   type WideEventSinkShape,
+  type WideEventTransportDiagnostics,
 } from './sink';
 export {
   annotateWideEvent,

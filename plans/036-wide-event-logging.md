@@ -133,7 +133,9 @@ Required mappings:
 
 - Effect success -> `success`
 - typed failure or defect -> `failure`
-- interruption-only cause or `ProviderQuotaRefreshAborted` -> `interrupted`
+- interruption-only cause -> `interrupted`
+- `ProviderQuotaRefreshAborted` -> `interrupted` through an explicit
+  application-owned classifier/tagged-error policy
 - source `timed-out` completion -> `timed-out`
 - source warnings/unavailable result -> `degraded`
 - publication `undefined` failure result -> `failure`
@@ -141,8 +143,10 @@ Required mappings:
 - quota success without a degraded sub-result -> `success`
 
 Known tagged errors may contribute an allowlisted public tag, code, and public
-message. Generic `Error.message`, `Cause.pretty`, stack traces, defects, and raw
-causes never enter the snapshot or a default console/file sink.
+message only through an application-owned policy. The domain-free runtime has
+no built-in application tags. Generic `Error.message`, `Cause.pretty`, stack
+traces, defects, and raw causes never enter the snapshot or a default
+console/file sink.
 
 ### 3. Canonical event contract
 
@@ -286,8 +290,9 @@ model/runner exports and Node-only sink exports use separate package subpaths.
 
 ### 7. Sink and lifecycle contract
 
-- **Web**: NDJSON file plus pretty stderr when `process.stderr.isTTY`; one-line
-  JSON stderr when non-TTY or `LOG_FORMAT=json`.
+- **Web**: NDJSON file plus pretty console output when `process.stderr.isTTY`;
+  one-line JSON console output when non-TTY or `LOG_FORMAT=json`. Outcome
+  severity routes info to stdout and warnings/failures to stderr.
 - **CLI**: NDJSON file only, including on failures. No wide-event or sink
   diagnostic output on stdout/stderr.
 - **Tests**: injected capture or no-op sink; no mutable global event state.
