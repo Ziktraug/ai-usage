@@ -14,6 +14,7 @@ import {
   type CollectionSourceId,
   type SourceControlView,
   type SourcePolicyOverrides,
+  sanitizeSourceWarningCodes,
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
 import {
@@ -266,9 +267,7 @@ const sourceRunAnnotations = (
 ): Readonly<Record<string, LogValue>> => {
   const result = completion._tag === 'success' ? completion.result : undefined;
   const domainOutcome = outcomeAfterRun(completion, result?.unavailable, result?.warnings.length ?? 0);
-  const warningCodes = [...new Set((result?.warnings ?? []).map(({ code }) => code))]
-    .sort()
-    .slice(0, sourceControlBounds.maxWarningsPerSource);
+  const warningCodes = sanitizeSourceWarningCodes(result?.warnings ?? []);
   return {
     changed,
     domainOutcome,

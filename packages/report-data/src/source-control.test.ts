@@ -10,6 +10,7 @@ import {
   type SourceControlView,
   type SourceDetectionResult,
   type SourcePolicyOverrides,
+  sanitizeSourceWarningCode,
   updateSourcePolicyOverrides,
 } from '@ai-usage/report-core/source-control';
 import { Deferred, Duration, Effect, Layer, Ref, TestClock, TestContext } from 'effect';
@@ -205,6 +206,35 @@ describe('source control plane', () => {
       outcome: 'success',
       services: [{ name: 'publication.publish', outcome: 'success' }],
     });
+  });
+
+  test('emits normalized, deduplicated warning codes within the source budget', async () => {
+    const capture = withCaptureSink();
+    const unsafeCode = `provider/${'secret'.repeat(20)}`;
+    const expectedCode = sanitizeSourceWarningCode(unsafeCode);
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const events = yield* Ref.make<string[]>([]);
+        const { store } = yield* makePolicyStore();
+        const publication = yield* makePublication(events);
+        const source = fakeSource('claude.sessions', () =>
+          Effect.succeed({
+            ...successResult(),
+            warnings: [{ code: unsafeCode }, { code: unsafeCode }],
+          }),
+        );
+        const control = yield* createSourceControl({
+          policyStore: store,
+          publication: publication.port,
+          sources: new Map([['claude.sessions', source]]),
+        });
+        yield* waitFor(control, (view) => sourceView(view, 'claude.sessions').lastOutcome === 'warning');
+      }),
+    );
+
+    await Effect.runPromise(program.pipe(Effect.provide(capture.layer)));
+
+    expect(boundaryEvents(capture.events(), 'source.run')[0]?.annotations.warningCodes).toEqual([expectedCode]);
   });
 
   test('uses completion-relative cadence and resets it after a manual run', async () => {

@@ -314,6 +314,7 @@ export const sourceControlBounds = {
   maxQueueDepth: MAX_QUEUE_DEPTH,
   maxRunningCount: MAX_CONCURRENT_SOURCES,
   maxSnapshotBytes: 64 * 1024,
+  maxWarningCodeLength: 64,
   maxWarningsPerSource: 8,
   minCadenceMs: Math.min(...collectionSourceDefinitions.map(({ cadenceMs }) => cadenceMs)),
 } as const;
@@ -368,6 +369,18 @@ const publicationOutcomes = new Set<SourcePublicationView['lastOutcome']>(['not-
 const isoTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const revisionPattern = /^[a-zA-Z0-9._-]{1,160}$/;
 const boundedCodePattern = /^[a-zA-Z0-9._-]{1,64}$/;
+const unsafeWarningCodeCharacterPattern = /[^a-zA-Z0-9._-]/g;
+
+export const sanitizeSourceWarningCode = (code: string): string =>
+  code.replace(unsafeWarningCodeCharacterPattern, '-').slice(0, sourceControlBounds.maxWarningCodeLength) ||
+  'source-warning';
+
+export const sanitizeSourceWarningCodes = (warnings: readonly SourceWarning[]): readonly string[] =>
+  [
+    ...new Set(
+      warnings.slice(0, sourceControlBounds.maxWarningsPerSource).map(({ code }) => sanitizeSourceWarningCode(code)),
+    ),
+  ].sort();
 
 const parseFailure = (message: string): never => {
   throw new SourceControlParseError(message);

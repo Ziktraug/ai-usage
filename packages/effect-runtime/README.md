@@ -3,7 +3,8 @@
 Domain-free schema-v2 wide-event primitives for Effect program executions.
 
 - `.` — model, required process resource layer, boundary runner, hop
-  measurement, sanitization, classification, and capture/no-op sinks
+  measurement, sanitization, classification, shared application-resource
+  construction, and capture/no-op sinks
 - `./node` — Node-only severity-aware console projection and bounded NDJSON
   file sinks
 
@@ -13,9 +14,10 @@ package owns emission, sanitize-on-emit, and best-effort sink delivery.
 
 Every new event carries a bounded `resource` identifying the process instance,
 runtime mode, `ai-usage` version, and `web`/`cli` surface. The application
-composition root supplies that resource once; the package does not read
-environment or package configuration. Historical schema-v1 NDJSON remains
-append-only and has no resource field.
+composition root supplies its environment and process identity to
+`makeAiUsageWideEventResource` once; the package does not read environment or
+package configuration. Historical schema-v1 NDJSON remains append-only and has
+no resource field.
 
 `makeWideEventSinkLayer` provides only the sink service and never invents
 producer identity. Tests that need the deterministic fixture resource use the

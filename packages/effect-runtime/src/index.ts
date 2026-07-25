@@ -29,6 +29,8 @@ export {
   MAX_STRING_BYTES,
 } from './model';
 export {
+  type AiUsageWideEventResourceOptions,
+  makeAiUsageWideEventResource,
   makeWideEventResourceLayer,
   testWideEventResource,
   testWideEventResourceLayer,

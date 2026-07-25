@@ -2,13 +2,19 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { type BoundaryClassification, classifyExit, runBoundaryEffect } from '@ai-usage/effect-runtime';
+import {
+  type BoundaryClassification,
+  classifyExit,
+  makeAiUsageWideEventResource,
+  runBoundaryEffect,
+} from '@ai-usage/effect-runtime';
 import { makeCliWideEventSinkLayer } from '@ai-usage/effect-runtime/node';
 import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import { deserializeUsageRow, type UsageReportWarning } from '@ai-usage/report-core/report-data';
 import type { UsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { serializeUsageSnapshot } from '@ai-usage/report-core/snapshot';
+import { sanitizeSourceWarningCodes } from '@ai-usage/report-core/source-control';
 import { createStoredReportPayload, createStoredUsageSnapshot, type ProjectSource } from '@ai-usage/report-data';
 import {
   createMergedUsageReportWithFreshLocal,
@@ -39,13 +45,6 @@ const CLI_QUOTA_ERROR_POLICY = {
   interruptedTags: new Set(['ProviderQuotaRefreshAborted']),
 };
 
-const wideEventRuntimeMode = (nodeEnvironment: string | undefined): 'development' | 'production' | 'test' => {
-  if (nodeEnvironment === 'production') {
-    return 'production';
-  }
-  return nodeEnvironment === 'test' ? 'test' : 'development';
-};
-
 const classifyCliQuotaOutcome = (exit: Exit.Exit<CliQuotaBoundaryResult, unknown>): BoundaryClassification => {
   if (Exit.isFailure(exit)) {
     return {
@@ -56,7 +55,7 @@ const classifyCliQuotaOutcome = (exit: Exit.Exit<CliQuotaBoundaryResult, unknown
   const sourceOutcome = exit.value.collection.outcomes[0];
   const sourceStatus = sourceOutcome?.status ?? 'unavailable';
   const hasUsableLatest = exit.value.latest.length > 0;
-  const warningCodes = [...new Set((sourceOutcome?.warnings ?? []).map(({ code }) => code))].sort();
+  const warningCodes = sanitizeSourceWarningCodes(sourceOutcome?.warnings ?? []);
   let outcome: BoundaryClassification['outcome'] = 'failure';
   if (sourceStatus === 'success') {
     outcome = 'success';
@@ -313,13 +312,11 @@ const runnable = app.pipe(
       LocalHistoryStorageLive,
       CliRuntimeLive,
       makeCliWideEventSinkLayer({
-        resource: {
+        resource: makeAiUsageWideEventResource({
           instanceId: randomUUID(),
-          runtimeMode: wideEventRuntimeMode(process.env.NODE_ENV),
-          serviceName: 'ai-usage',
-          serviceVersion: '0.1.0',
+          nodeEnvironment: process.env.NODE_ENV,
           surface: 'cli',
-        },
+        }),
       }),
     ),
   ),

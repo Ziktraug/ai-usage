@@ -183,6 +183,20 @@ const queryFailedResult = (
   revision: request.revision,
 });
 
+const revisionExpiredResult = (
+  request: { readonly fingerprint: string; readonly revision: ReportRevision },
+  message: string,
+): SessionQueryFailure => ({
+  error: {
+    message,
+    revision: request.revision,
+    tag: 'RevisionExpired',
+  },
+  ok: false,
+  requestFingerprint: request.fingerprint,
+  revision: request.revision,
+});
+
 const runSessionQueryBoundary = (
   request: ParsedRevisionRequest<SessionPageResult>,
   executeRequest: RevisionQueryExecutionRequest,
@@ -205,12 +219,7 @@ const runSessionQueryBoundary = (
         );
 
         if (!execution.ok) {
-          return {
-            error: { message: execution.message, revision: request.revision, tag: 'RevisionExpired' },
-            ok: false,
-            requestFingerprint: request.fingerprint,
-            revision: request.revision,
-          } as const;
+          return revisionExpiredResult(request, execution.message);
         }
 
         const parsed = yield* Effect.try({
@@ -383,12 +392,7 @@ export async function runRevisionQueryForServer(
   try {
     const execution = await dependencies.execute(executeRequest);
     if (!execution.ok) {
-      return {
-        error: { message: execution.message, revision: request.revision, tag: 'RevisionExpired' },
-        ok: false,
-        requestFingerprint: request.fingerprint,
-        revision: request.revision,
-      };
+      return revisionExpiredResult(request, execution.message);
     }
     return {
       data: request.parseResult(execution.serializedPayload),

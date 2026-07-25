@@ -11,9 +11,13 @@ import {
   parseSourceControlCommandResponse,
   parseSourceControlSnapshot,
   resolveSourceEnabled,
+  sanitizeSourceWarningCode,
+  sanitizeSourceWarningCodes,
   sourceControlBounds,
   updateSourcePolicyOverrides,
 } from './source-control';
+
+const warningCodePattern = /^[a-zA-Z0-9._-]+$/;
 
 const snapshot = (generation = 1) => ({
   generatedAt: '2026-07-16T10:00:00.000Z',
@@ -74,6 +78,37 @@ describe('collection source contracts', () => {
     expect(isSourcePolicyOverrides({ 'unknown.sessions': { enabled: false } })).toBe(false);
     expect(isSourcePolicyOverrides({ 'codex.sessions': { enabled: 'false' } })).toBe(false);
     expect(isSourcePolicyOverrides({ 'codex.sessions': { enabled: false, cadence: 1 } })).toBe(false);
+  });
+
+  test('normalizes, deduplicates, sorts, and bounds source warning codes', () => {
+    const oversizedCode = `provider/${'x'.repeat(sourceControlBounds.maxWarningCodeLength * 2)}`;
+    const warnings = [
+      { code: 'z-warning' },
+      { code: oversizedCode },
+      { code: 'z-warning' },
+      { code: '' },
+      ...Array.from({ length: sourceControlBounds.maxWarningsPerSource }, (_, index) => ({
+        code: `extra-${index}`,
+      })),
+    ];
+    const sanitized = sanitizeSourceWarningCodes(warnings);
+
+    expect(sanitizeSourceWarningCode('')).toBe('source-warning');
+    expect(sanitized).toEqual(
+      [
+        ...new Set(
+          warnings
+            .slice(0, sourceControlBounds.maxWarningsPerSource)
+            .map(({ code }) => sanitizeSourceWarningCode(code)),
+        ),
+      ].sort(),
+    );
+    expect(sanitized.length).toBeLessThanOrEqual(sourceControlBounds.maxWarningsPerSource);
+    expect(
+      sanitized.every(
+        (code) => code.length <= sourceControlBounds.maxWarningCodeLength && warningCodePattern.test(code),
+      ),
+    ).toBe(true);
   });
 
   test('resolves defaults and removes redundant overrides', () => {

@@ -14,6 +14,7 @@ import {
   type SourceReason,
   type SourceRunResult,
   type SourceWarning,
+  sanitizeSourceWarningCode,
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
 
@@ -201,7 +202,7 @@ const sanitizeDuration = (value: number, maximum: number): number =>
 
 export const sanitizeWarnings = (warnings: readonly SourceWarning[]): readonly SourceWarning[] =>
   warnings.slice(0, sourceControlBounds.maxWarningsPerSource).map((warning) => ({
-    code: warning.code.replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 64) || 'source-warning',
+    code: sanitizeSourceWarningCode(warning.code),
     ...(warning.message === undefined
       ? {}
       : { message: warning.message.slice(0, sourceControlBounds.maxMessageLength) }),

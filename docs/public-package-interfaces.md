@@ -5,12 +5,13 @@ The workspace packages expose only these public seams. Cross-package imports mus
 ## `@ai-usage/effect-runtime`
 
 - `.`: domain-free schema-v2 wide-event model, required process resource
-  service/layer, boundary runner (`runBoundaryEffect`), hop measurement
-  (`withMeasured` / `withMeasuredIfAvailable`), sanitize-on-emit, explicit
-  application-owned tagged-error policies, public-message scrubbing, and
-  capture/no-op sinks. Must not import other `@ai-usage/*` packages. Generic
-  sink layers remain sink-only; the explicitly named test layer is the only
-  helper that also supplies deterministic fixture resource identity.
+  service/layer and shared `makeAiUsageWideEventResource` constructor, boundary
+  runner (`runBoundaryEffect`), hop measurement (`withMeasured` /
+  `withMeasuredIfAvailable`), sanitize-on-emit, explicit application-owned
+  tagged-error policies, public-message scrubbing, and capture/no-op sinks. Must
+  not import other `@ai-usage/*` packages. Generic sink layers remain sink-only;
+  the explicitly named test layer is the only helper that also supplies
+  deterministic fixture resource identity.
 - `./node`: Node-only severity/detail-aware console projection, generic
   projector contract, bounded NDJSON file sink, exported
   `FileWideEventWarning`/`FileWideEventWarningKind` delivery contracts,

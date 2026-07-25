@@ -25,6 +25,7 @@ interface CompletedHop extends HopEnrichment {
 }
 
 interface WideEventState {
+  readonly canonicalSnapshot: WideEventSnapshot | undefined;
   readonly completedHops: readonly CompletedHop[];
   readonly emitted: boolean;
   readonly enrichments: Readonly<Record<string, HopEnrichment>>;
@@ -150,6 +151,7 @@ export const createWideEventController = ({
   readonly startedAt: string;
 }): WideEventController => {
   const state = Ref.unsafeMake<WideEventState>({
+    canonicalSnapshot: undefined,
     completedHops: [],
     emitted: false,
     enrichments: {},
@@ -162,9 +164,8 @@ export const createWideEventController = ({
     sequence: 0,
   });
 
-  const buildSnapshot = (durationMs: number, emittedAt: string): Effect.Effect<WideEventSnapshot> =>
-    Effect.gen(function* () {
-      const current = yield* Ref.get(state);
+  const buildSnapshot = (current: WideEventState, durationMs: number, emittedAt: string): WideEventSnapshot => {
+    try {
       const services = buildServices(current.completedHops);
       const raw: WideEventSnapshot = {
         schemaVersion: 2,
@@ -183,26 +184,25 @@ export const createWideEventController = ({
         services,
       };
       return sanitizeWideEventSnapshot(raw).value;
-    }).pipe(
-      Effect.catchAllCause(() =>
-        Effect.succeed({
-          schemaVersion: 2 as const,
-          event: 'wide-event' as const,
-          eventId,
-          boundary,
-          startedAt,
-          emittedAt,
-          traceId: 'untraced',
-          spanId: 'untraced',
-          outcome: 'failure' as const,
-          durationMs,
-          error: null,
-          resource,
-          annotations: { observabilityTruncated: true },
-          services: [],
-        }),
-      ),
-    );
+    } catch {
+      return {
+        schemaVersion: 2,
+        event: 'wide-event',
+        eventId,
+        boundary,
+        startedAt,
+        emittedAt,
+        traceId: 'untraced',
+        spanId: 'untraced',
+        outcome: 'failure',
+        durationMs,
+        error: null,
+        resource,
+        annotations: { observabilityTruncated: true },
+        services: [],
+      };
+    }
+  };
 
   return {
     annotate: (fields) => {
@@ -258,27 +258,19 @@ export const createWideEventController = ({
         };
       }),
     emit: (fields) =>
-      Effect.gen(function* () {
-        const shouldEmit = yield* Ref.modify(state, (current) => {
-          if (current.emitted) {
-            return [false, current] as const;
-          }
-          return [
-            true,
-            {
-              ...current,
-              emitted: true,
-              finalAnnotations: sanitizeWideEventAnnotations(fields.annotations ?? {}),
-              finalError: fields.error ?? null,
-              finalOutcome: fields.outcome,
-            },
-          ] as const;
-        });
-        const event = yield* buildSnapshot(fields.durationMs, fields.emittedAt);
-        if (!shouldEmit) {
-          return event;
+      Ref.modify(state, (current) => {
+        if (current.canonicalSnapshot !== undefined) {
+          return [current.canonicalSnapshot, current] as const;
         }
-        return event;
+        const finalized: WideEventState = {
+          ...current,
+          emitted: true,
+          finalAnnotations: sanitizeWideEventAnnotations(fields.annotations ?? {}),
+          finalError: fields.error ?? null,
+          finalOutcome: fields.outcome,
+        };
+        const canonicalSnapshot = buildSnapshot(finalized, fields.durationMs, fields.emittedAt);
+        return [canonicalSnapshot, { ...finalized, canonicalSnapshot }] as const;
       }),
     openHop: ({ name, parentId, spanId, traceId }) =>
       Ref.modify(state, (current) => {

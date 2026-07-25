@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { Context, Deferred, Duration, Effect, Exit, Fiber, Layer, Option, TestClock, TestContext } from 'effect';
 import { annotateWideEvent, runBoundaryEffect, withMeasured, withMeasuredIfAvailable } from './index';
-import { type WideEventResourceService, WideEventResourceService as WideEventResourceTag } from './resource';
+import {
+  testWideEventResource,
+  type WideEventResourceService,
+  WideEventResourceService as WideEventResourceTag,
+} from './resource';
 import {
   makeCaptureWideEventSink,
   makeTestWideEventSinkLayer,
@@ -9,6 +13,7 @@ import {
   noopWideEventSink,
   type WideEventSink,
 } from './sink';
+import { createWideEventController } from './wide-event';
 
 const runWithCapture = <A, E>(effect: Effect.Effect<A, E, WideEventResourceService | WideEventSink>) => {
   const sink = makeCaptureWideEventSink();
@@ -99,6 +104,34 @@ describe('boundary runner and hop tree', () => {
     );
     await Effect.runPromise(program);
     expect(sink.events()).toHaveLength(1);
+  });
+
+  test('returns one canonical snapshot from concurrent controller finalization', async () => {
+    const controller = createWideEventController({
+      boundary: 'canonical',
+      eventId: 'event-id',
+      resource: testWideEventResource,
+      startedAt: '2026-07-25T12:00:00.000Z',
+    });
+    const [first, second] = await Effect.runPromise(
+      Effect.all(
+        [
+          controller.emit({
+            durationMs: 10,
+            emittedAt: '2026-07-25T12:00:00.010Z',
+            outcome: 'success',
+          }),
+          controller.emit({
+            durationMs: 20,
+            emittedAt: '2026-07-25T12:00:00.020Z',
+            outcome: 'failure',
+          }),
+        ],
+        { concurrency: 'unbounded' },
+      ),
+    );
+
+    expect(first).toBe(second);
   });
 
   test('finalizes interrupted boundaries as interrupted', async () => {
