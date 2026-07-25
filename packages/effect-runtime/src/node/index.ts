@@ -18,8 +18,6 @@ import {
 import { createFileWideEventSink, type FileWideEventSinkOptions, makeFileWideEventSinkLayer } from './file-sink';
 import { resolveWideEventLogDirectory } from './resolve-log-dir';
 
-export type { LogValue, WideEventSnapshot } from '../model';
-export { makeAiUsageWideEventResource } from '../resource';
 export type { WideEventTransportDiagnostics } from '../sink';
 export type {
   ConsoleLogFormat,

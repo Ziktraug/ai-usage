@@ -454,6 +454,8 @@ Do not run `bun install`; the verified workspace already has its dependencies.
 - `packages/effect-runtime/src/node/file-sink.test.ts`
 - `packages/effect-runtime/src/node/index.ts`
 - `packages/effect-runtime/README.md`
+- `packages/report-core/src/source-control.ts`
+- `packages/report-core/src/source-control.test.ts`
 - `packages/report-data/src/source-control.ts`
 - `packages/report-data/src/source-control.test.ts`
 - `packages/report-data/src/source-control-state.ts`

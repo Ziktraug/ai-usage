@@ -1,9 +1,8 @@
+import type { LogValue, WideEventSnapshot } from '@ai-usage/effect-runtime';
 import {
   genericPrettyWideEventProjector,
-  type LogValue,
   type PrettyWideEventProjector,
   type PrettyWideEventView,
-  type WideEventSnapshot,
 } from '@ai-usage/effect-runtime/node';
 
 const stringField = (annotations: Readonly<Record<string, LogValue>>, key: string): string | undefined => {

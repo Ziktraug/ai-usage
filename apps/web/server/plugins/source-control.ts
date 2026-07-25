@@ -7,7 +7,8 @@ export default definePlugin(async (nitroApp) => {
   await startSourceControlPluginOutsideDemo(async () => {
     const [
       { Effect },
-      { makeAiUsageWideEventResource, makeSilentWideEventSinkLayer, makeWebWideEventSinkLayer },
+      { makeAiUsageWideEventResource },
+      { makeSilentWideEventSinkLayer, makeWebWideEventSinkLayer },
       { registerPersistentSourceRuntimeHotReload },
       { publishStoredReportRevisionForSourceControl },
       { createSourceControlE2EFixture },
@@ -15,6 +16,7 @@ export default definePlugin(async (nitroApp) => {
       { projectWebWideEvent },
     ] = await Promise.all([
       import('effect'),
+      import('@ai-usage/effect-runtime'),
       import('@ai-usage/effect-runtime/node'),
       import('../../src/server/persistent-source-runtime'),
       import('../../src/server/report-payload.server'),

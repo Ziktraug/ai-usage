@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
+  chmodSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -16,7 +17,7 @@ import { Effect } from 'effect';
 import { runBoundaryEffect } from '../boundary';
 import type { WideEventSnapshot } from '../model';
 import { makeTestWideEventSinkLayer } from '../sink';
-import { createFileWideEventSink, type FileWideEventWarning } from './file-sink';
+import { appendLineToOwnedHandle, createFileWideEventSink, type FileWideEventWarning } from './file-sink';
 import { acquireCooperativeLock, ensureOwnedLogDirectory, withCooperativeLock } from './lock';
 import { resolveWideEventLogDirectory } from './resolve-log-dir';
 
@@ -78,6 +79,48 @@ describe('node wide-event sinks', () => {
     const fileMode = permissionBits(lstatSync(path.join(directory, files[0]!)).mode);
     expect(fileMode).toBe(0o600);
     await sink.dispose();
+  });
+
+  test('repairs an existing log file to 0600 before appending', async () => {
+    const directory = makeTempDir();
+    const filePath = path.join(directory, 'wide-events-2026-07-21.ndjson');
+    writeFileSync(filePath, 'existing\n', { mode: 0o644 });
+    chmodSync(filePath, 0o644);
+    const sink = createFileWideEventSink({
+      directory,
+      now: () => new Date('2026-07-21T12:00:00.000Z'),
+    });
+
+    await Effect.runPromise(sink.submit(sampleEvent('perm-existing')));
+    await sink.drain();
+
+    expect(permissionBits(lstatSync(filePath).mode)).toBe(0o600);
+    expect(readFileSync(filePath, 'utf8')).toContain('perm-existing');
+    await sink.dispose();
+  });
+
+  test('does not append when file-mode repair fails', async () => {
+    const operations: string[] = [];
+    const handle = {
+      appendFile: () => {
+        operations.push('append');
+        return Promise.resolve();
+      },
+      chmod: () => {
+        operations.push('chmod');
+        return Promise.reject(new Error('fixture chmod failure'));
+      },
+      stat: () =>
+        Promise.resolve({
+          isFile: () => true,
+          nlink: 1,
+        }),
+    };
+
+    await expect(
+      appendLineToOwnedHandle(handle, '/fixture/wide-events.ndjson', 'sensitive\n', new AbortController().signal),
+    ).rejects.toThrow('fixture chmod failure');
+    expect(operations).toEqual(['chmod']);
   });
 
   test('rejects symlink log directories', () => {

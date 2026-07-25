@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { renderPrettyWideEvent, stripWideEventAnsi, type WideEventSnapshot } from '@ai-usage/effect-runtime/node';
+import type { WideEventSnapshot } from '@ai-usage/effect-runtime';
+import { renderPrettyWideEvent, stripWideEventAnsi } from '@ai-usage/effect-runtime/node';
 import { projectWebWideEvent } from './wide-event-presentation.server';
 
 const baseEvent = (overrides: Partial<WideEventSnapshot> = {}): WideEventSnapshot => ({

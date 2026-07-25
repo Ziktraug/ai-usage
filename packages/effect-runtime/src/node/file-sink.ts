@@ -20,6 +20,15 @@ const WARNING_RATE_LIMIT_MS = 30_000;
 
 type AppendLine = (filePath: string, line: string, signal: AbortSignal) => Promise<void>;
 
+interface OwnedAppendHandle {
+  readonly appendFile: (
+    line: string,
+    options: { readonly encoding: 'utf8'; readonly signal: AbortSignal },
+  ) => Promise<void>;
+  readonly chmod: (mode: number) => Promise<void>;
+  readonly stat: () => Promise<{ readonly isFile: () => boolean; readonly nlink: number }>;
+}
+
 export interface FileWideEventSinkOptions {
   readonly appendLine?: AppendLine;
   readonly appendTimeoutMs?: number;
@@ -190,21 +199,26 @@ const sweepOldFiles = async (directory: string, maxFiles: number): Promise<void>
   }
 };
 
-const defaultAppendLine: AppendLine = async (filePath, line, signal) => {
+export const appendLineToOwnedHandle = async (
+  handle: OwnedAppendHandle,
+  filePath: string,
+  line: string,
+  signal: AbortSignal,
+): Promise<void> => {
+  const metadata = await handle.stat();
+  if (!(metadata.isFile() && metadata.nlink === 1)) {
+    throw new Error(`Refusing unsafe wide-event log file: ${filePath}`);
+  }
+  await handle.chmod(0o600);
+  await handle.appendFile(line, { encoding: 'utf8', signal });
+};
+
+export const appendLineToOwnedFile: AppendLine = async (filePath, line, signal) => {
   // biome-ignore lint/suspicious/noBitwiseOperators: open flags are OR'd intentionally
   const flags = constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_WRONLY;
   const handle = await open(filePath, flags, 0o600);
   try {
-    const metadata = await handle.stat();
-    if (!(metadata.isFile() && metadata.nlink === 1)) {
-      throw new Error(`Refusing unsafe wide-event log file: ${filePath}`);
-    }
-    await handle.appendFile(line, { encoding: 'utf8', signal });
-    try {
-      await handle.chmod(0o600);
-    } catch {
-      // Best-effort mode repair.
-    }
+    await appendLineToOwnedHandle(handle, filePath, line, signal);
   } finally {
     await handle.close();
   }
@@ -217,7 +231,7 @@ export const createFileWideEventSink = (
   readonly dispose: () => Promise<void>;
 } => {
   const directory = options.directory;
-  const appendLine = options.appendLine ?? defaultAppendLine;
+  const appendLine = options.appendLine ?? appendLineToOwnedFile;
   const appendTimeoutMs = options.appendTimeoutMs ?? DEFAULT_APPEND_TIMEOUT_MS;
   const drainTimeoutMs = options.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
   const lockTimeoutMs = options.lockTimeoutMs ?? 1000;
