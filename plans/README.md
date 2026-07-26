@@ -65,6 +65,9 @@ request unless the user explicitly asks.
 | 042 | Document the quota app-server boundary | P1 | S | - | DONE |
 | 043 | Deepen the web process runtime seam | P2 | M | 038 | DONE |
 | 044 | Unify the exact-revision query lifecycle | P2 | M | 043 | DONE |
+| 045 | Valorize the Report Dimensions and Make the Work Unit Honest | P1 | XL | - | TODO |
+| 046 | Close the Verified Presentation Defects | P2 | M | - | TODO |
+| 047 | Make Grouping Portable User Data, for Projects and Campaigns | P2 | L | 045 wave 4 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -456,3 +459,50 @@ sequence overlapping files and rebase/re-read before execution.
 Plans 036-037 are outside this sequence. Plan 036 remains historical design
 context; plan 037 may supersede only the clauses named in its ADR 0008 step and
 must preserve all other accepted plan-036 guarantees.
+
+Plans 045-047 are outside this sequence too. All three were sourced from the
+2026-07-26 UI/UX/product review of the running app, conducted against the live dev
+server rather than by reading source, then refined through a decision interview
+with the maintainer the same day. They were written at `96b3dff` and re-verified
+against `3406147`: that merge touches none of their report, dimension, collector, or
+provenance files, and their code anchors were re-checked line by line.
+
+- Plan 045 owns product direction: the work-volume unit, which dimensions carry
+  reading weight, origin and campaign modelling, and the navigation of the three
+  principal views. Its framing section and its *Decisions locked* table are
+  authoritative — "Estimated API-equivalent value" is a proxy for quantity of work,
+  not a spend or value claim, so no executor may add ROI, break-even, or budget
+  features under it.
+- Plan 046 owns presentation only: 26 verified defects in labels, layout, and
+  vocabulary. It must not change aggregation or information architecture.
+- Plan 047 owns grouping as portable user data, for projects and campaigns. It
+  **supersedes two adopted clauses of `docs/project-grouping-plan.md`** and is
+  BLOCKED until its merge model is recorded in the plan itself. Plan 040's
+  confirmation-token idiom is its starting point, not its answer: that mechanism
+  detects whole-store staleness at import, not per-record divergence.
+- Ownership boundaries that prevent duplicated work: plan 046 defers its row 16
+  (navigation divergence) to plan 045 wave 5, because the left rail replaces
+  per-route headers entirely; it defers its row 25 to plan 045 wave 4; and it stops
+  on its row 5 until plan 045 wave 1 lands the three-state result. Plan 046's mobile
+  item is scoped to the filter stack only, since the rail removes the mobile
+  navigation buttons.
+- Plans 045 and 046 may run in parallel with different executors. Plan 047 must not
+  start before plan 045 wave 4, and plan 045 must not introduce any storage for
+  campaign labels — its sequencing exists specifically to avoid migrating
+  hand-authored data.
+- Plan 045 waves 0 and 3b are measurement-only and produce no production diff. Both
+  gate later scope, so take them first. Their findings belong in plan 045's
+  Execution log, which is currently empty by design.
+- Plan 045 deliberately leaves one dimension unpromoted: git awareness is recent and
+  its cross-harness reliability is unmeasured, so branch and commit stay a drawer
+  detail until wave 0 reports. Promotion is a separate decision, and wave 0 carries
+  a STOP forbidding it inside that plan.
+- Nothing in plan 045 is open: its *Decisions locked* table and its *Copy* section
+  are both authoritative. The Report range card is explicitly **not** to be
+  compacted — it is the maintainer's primary indicator and it filters the Sessions
+  view — but its internal order is reversed so that what you read sits above what
+  you adjust.
+- Plan 047's merge model is recorded: per-field last-write-wins, with `members` as a
+  per-membership set carrying tombstones. Conflicts are scoped to one scalar field
+  or one membership, and `usage-store` owns the semantics — no caller decodes
+  version state, per plan 040's confirmed design amendment.
