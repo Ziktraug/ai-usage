@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Effect } from 'effect';
@@ -179,5 +179,83 @@ describe('real SQLite harness collectors', () => {
     expect(row).toMatchObject({ tokCr: 8, tokCw: 2, tokIn: 35, tokOut: 11 });
     expect((row?.tokCr ?? 0) + (row?.tokCw ?? 0) + (row?.tokIn ?? 0) + (row?.tokOut ?? 0)).toBe(56);
     expect(row?.models).toEqual(['gpt-5.3', 'claude-sonnet-4-6']);
+  });
+
+  test('rejects Cursor database main and WAL symlink redirection', async () => {
+    const mainHome = await makeHome();
+    const mainFixture = await seedHarnessHome(mainHome, { harnesses: ['cursor'] });
+    const redirectedMainPath = `${mainFixture.paths.cursorDatabase}.redirected`;
+    await rename(mainFixture.paths.cursorDatabase, redirectedMainPath);
+    await symlink(redirectedMainPath, mainFixture.paths.cursorDatabase);
+
+    const mainResult = await runAtHome(mainHome, collectCursorResult());
+
+    expect(mainResult.rows).toEqual([]);
+    expect(mainResult.warnings).toHaveLength(1);
+    expect(mainResult.warnings[0]).toMatchObject({
+      harness: 'cursor',
+      operation: 'sqlite.identity',
+      path: mainFixture.paths.cursorDatabase,
+    });
+    expect(mainResult.warnings[0]?.message).toContain('Failed to read Cursor database');
+    expect(mainResult.warnings[0]?.message).not.toContain(mainFixture.ids.cursor);
+
+    const walHome = await makeHome();
+    const walFixture = await seedHarnessHome(walHome, { harnesses: ['cursor'] });
+    const walPath = `${walFixture.paths.cursorDatabase}-wal`;
+    const redirectedWalPath = `${walPath}.redirected`;
+    await writeFile(redirectedWalPath, `redirected ${walFixture.ids.cursor}`);
+    await symlink(redirectedWalPath, walPath);
+
+    const walResult = await runAtHome(walHome, collectCursorResult());
+
+    expect(walResult.rows).toEqual([]);
+    expect(walResult.warnings).toHaveLength(1);
+    expect(walResult.warnings[0]).toMatchObject({
+      harness: 'cursor',
+      operation: 'sqlite.identity',
+      path: walPath,
+    });
+    expect(walResult.warnings[0]?.message).toContain('Failed to read Cursor database');
+    expect(walResult.warnings[0]?.message).not.toContain(walFixture.ids.cursor);
+  });
+
+  test('rejects OpenCode database main and WAL symlink redirection', async () => {
+    const mainHome = await makeHome();
+    const mainFixture = await seedHarnessHome(mainHome, { harnesses: ['opencode'] });
+    const redirectedMainPath = `${mainFixture.paths.opencodeDatabase}.redirected`;
+    await rename(mainFixture.paths.opencodeDatabase, redirectedMainPath);
+    await symlink(redirectedMainPath, mainFixture.paths.opencodeDatabase);
+
+    const mainResult = await runAtHome(mainHome, collectOpenCodeResult);
+
+    expect(mainResult.rows).toEqual([]);
+    expect(mainResult.warnings).toHaveLength(1);
+    expect(mainResult.warnings[0]).toMatchObject({
+      harness: 'opencode',
+      operation: 'sqlite.identity',
+      path: mainFixture.paths.opencodeDatabase,
+    });
+    expect(mainResult.warnings[0]?.message).toContain('Failed to read OpenCode live database');
+    expect(mainResult.warnings[0]?.message).not.toContain(mainFixture.ids.opencode);
+
+    const walHome = await makeHome();
+    const walFixture = await seedHarnessHome(walHome, { harnesses: ['opencode'] });
+    const walPath = `${walFixture.paths.opencodeDatabase}-wal`;
+    const redirectedWalPath = `${walPath}.redirected`;
+    await writeFile(redirectedWalPath, `redirected ${walFixture.ids.opencode}`);
+    await symlink(redirectedWalPath, walPath);
+
+    const walResult = await runAtHome(walHome, collectOpenCodeResult);
+
+    expect(walResult.rows).toEqual([]);
+    expect(walResult.warnings).toHaveLength(1);
+    expect(walResult.warnings[0]).toMatchObject({
+      harness: 'opencode',
+      operation: 'sqlite.identity',
+      path: walPath,
+    });
+    expect(walResult.warnings[0]?.message).toContain('Failed to read OpenCode live database');
+    expect(walResult.warnings[0]?.message).not.toContain(walFixture.ids.opencode);
   });
 });
