@@ -86,7 +86,7 @@ interface SqliteFileIdentity {
   readonly size: bigint;
 }
 
-export interface SqliteHistoryIdentity {
+interface SqliteHistoryIdentity {
   readonly main: SqliteFileIdentity;
   readonly wal: SqliteFileIdentity | null;
 }
@@ -126,8 +126,8 @@ const readPresentSqliteFileIdentity = (filePath: string): SqliteFileIdentity | n
   };
 };
 
-/** @internal Capture the regular-file identities SQLite may read for one database. */
-export const readSqliteHistoryIdentity = (dbPath: string): SqliteHistoryIdentity => {
+/** Capture the regular-file identities SQLite may read for one database. */
+const readSqliteHistoryIdentity = (dbPath: string): SqliteHistoryIdentity => {
   const main = readPresentSqliteFileIdentity(dbPath);
   if (!main) {
     throw sqliteIdentityError('sqlite.identity', dbPath, 'SQLite history identity is unavailable.');

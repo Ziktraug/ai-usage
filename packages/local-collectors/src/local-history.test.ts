@@ -4,30 +4,11 @@ import fs, { type BigIntStats, type PathLike, type StatOptions, type Stats } fro
 import os from 'node:os';
 import path from 'node:path';
 import { Effect } from 'effect';
-import { LocalHistoryError } from './errors';
-import {
-  createLocalHistoryStorage,
-  readConfigFileText,
-  readRegularFileText,
-  readSqliteHistoryIdentity,
-  walkFiles,
-} from './local-history';
+import { createLocalHistoryStorage, readConfigFileText, readRegularFileText, walkFiles } from './local-history';
 import { TestMemoryStorage } from './test-memory-storage';
 
 const PREVIOUS_AGGREGATE_HISTORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024;
 const SIMULATED_LARGE_SESSION_BYTES = 600 * 1024 * 1024;
-
-const captureLocalHistoryError = (run: () => unknown): LocalHistoryError => {
-  try {
-    run();
-  } catch (cause) {
-    if (cause instanceof LocalHistoryError) {
-      return cause;
-    }
-    throw cause;
-  }
-  throw new Error('Expected LocalHistoryError');
-};
 
 const originalLstatSync = fs.lstatSync;
 let beforeLstatRead: ((filePath: PathLike) => void) | undefined;
@@ -169,45 +150,55 @@ test('discovers large streaming histories without treating total bytes as reside
   expect(explicitlyBounded._tag).toBe('Left');
 });
 
-test('captures regular SQLite main and optional WAL identities without following redirects', () => {
+test('accepts a regular SQLite main without a WAL and rejects unsafe identities', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-sqlite-identity-'));
   try {
+    const storage = createLocalHistoryStorage(root);
     const dbPath = path.join(root, 'history.sqlite');
-    fs.writeFileSync(dbPath, 'main');
-    const withoutWal = readSqliteHistoryIdentity(dbPath);
-    expect(withoutWal.wal).toBeNull();
-    expect(typeof withoutWal.main.dev).toBe('bigint');
-    expect(typeof withoutWal.main.ino).toBe('bigint');
-    expect(typeof withoutWal.main.mtimeNs).toBe('bigint');
-    expect(withoutWal.main.size).toBe(4n);
+    const writer = new Database(dbPath, { create: true });
+    writer.exec('CREATE TABLE events (id TEXT PRIMARY KEY)');
+    writer.query('INSERT INTO events (id) VALUES (?)').run('regular-row');
+    writer.close();
+    expect(fs.existsSync(`${dbPath}-wal`)).toBe(false);
 
-    fs.writeFileSync(`${dbPath}-wal`, 'wal');
-    const withWal = readSqliteHistoryIdentity(dbPath);
-    expect(withWal.wal?.size).toBe(3n);
+    const regularDatabase = await Effect.runPromise(storage.openDatabase(dbPath));
+    try {
+      const rows = await Effect.runPromise(regularDatabase.all<{ id: string }>('SELECT id FROM events'));
+      expect(rows).toEqual([{ id: 'regular-row' }]);
+    } finally {
+      await Effect.runPromise(regularDatabase.close);
+    }
+    expect(fs.existsSync(`${dbPath}-wal`)).toBe(false);
 
-    const redirectedTarget = path.join(root, 'redirected.sqlite');
-    fs.writeFileSync(redirectedTarget, 'redirected database contents');
     const redirectedMain = path.join(root, 'redirected-main.sqlite');
-    fs.symlinkSync(redirectedTarget, redirectedMain);
-    const mainError = captureLocalHistoryError(() => readSqliteHistoryIdentity(redirectedMain));
-    expect(mainError).toMatchObject({ operation: 'sqlite.identity', path: redirectedMain });
-    expect(String(mainError.cause)).not.toContain('redirected database contents');
+    fs.symlinkSync(dbPath, redirectedMain);
 
     const walSymlinkMain = path.join(root, 'wal-symlink.sqlite');
-    fs.writeFileSync(walSymlinkMain, 'main');
-    fs.symlinkSync(redirectedTarget, `${walSymlinkMain}-wal`);
-    const walError = captureLocalHistoryError(() => readSqliteHistoryIdentity(walSymlinkMain));
-    expect(walError).toMatchObject({ operation: 'sqlite.identity', path: `${walSymlinkMain}-wal` });
-    expect(String(walError.cause)).not.toContain('redirected database contents');
+    const walMainWriter = new Database(walSymlinkMain, { create: true });
+    walMainWriter.exec('CREATE TABLE events (id TEXT PRIMARY KEY)');
+    walMainWriter.close();
+    const walPath = `${walSymlinkMain}-wal`;
+    fs.symlinkSync(dbPath, walPath);
 
     const directoryPath = path.join(root, 'directory.sqlite');
     fs.mkdirSync(directoryPath);
-    const directoryError = captureLocalHistoryError(() => readSqliteHistoryIdentity(directoryPath));
-    expect(directoryError).toMatchObject({ operation: 'sqlite.identity', path: directoryPath });
-
     const absentPath = path.join(root, 'absent.sqlite');
-    const absentError = captureLocalHistoryError(() => readSqliteHistoryIdentity(absentPath));
-    expect(absentError).toMatchObject({ operation: 'sqlite.identity', path: absentPath });
+
+    for (const [candidatePath, rejectedPath] of [
+      [redirectedMain, redirectedMain],
+      [walSymlinkMain, walPath],
+      [directoryPath, directoryPath],
+      [absentPath, absentPath],
+    ] as const) {
+      const result = await Effect.runPromise(Effect.either(storage.openDatabase(candidatePath)));
+      expect(result._tag).toBe('Left');
+      if (result._tag === 'Right') {
+        await Effect.runPromise(result.right.close);
+        throw new Error(`Expected SQLite identity rejection for ${candidatePath}`);
+      }
+      expect(result.left).toMatchObject({ operation: 'sqlite.identity', path: rejectedPath });
+      expect(String(result.left.cause)).not.toContain('regular-row');
+    }
   } finally {
     fs.rmSync(root, { force: true, recursive: true });
   }
