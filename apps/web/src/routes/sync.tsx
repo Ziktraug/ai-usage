@@ -252,6 +252,7 @@ const downloadJsonFile = (filename: string, text: string) => {
 
 const HTTP_OK_MIN = 200;
 const HTTP_OK_MAX = 300;
+const MAX_CONFIRMATION_TOKEN_CHARACTERS = 128;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -275,8 +276,9 @@ const isManualPreviewData = (value: unknown): value is ManualMergePreviewResult 
   typeof value.generatedAt === 'string' &&
   isMachine(value.machine) &&
   isNonNegativeSafeInteger(value.rows) &&
-  isNonNegativeSafeInteger(value.storeGeneration) &&
-  typeof value.storeStateToken === 'string' &&
+  typeof value.confirmationToken === 'string' &&
+  value.confirmationToken.length > 0 &&
+  value.confirmationToken.length <= MAX_CONFIRMATION_TOKEN_CHARACTERS &&
   isNonNegativeSafeInteger(value.warningCount) &&
   Array.isArray(value.warningItems) &&
   value.warningItems.every((item) => typeof item === 'string');
@@ -346,8 +348,7 @@ const uploadManualMergeFile = <Value,>(
     xhr.setRequestHeader('X-Ai-Usage-Merge-Action', action);
     if (expected) {
       xhr.setRequestHeader('X-Ai-Usage-Merge-Digest', expected.digest);
-      xhr.setRequestHeader('X-Ai-Usage-Store-Generation', String(expected.storeGeneration));
-      xhr.setRequestHeader('X-Ai-Usage-Store-State', expected.storeStateToken);
+      xhr.setRequestHeader('X-Ai-Usage-Merge-Confirmation', expected.confirmationToken);
     }
     xhr.upload.addEventListener('progress', (event) => {
       if (event.lengthComputable) {

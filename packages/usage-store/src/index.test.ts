@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { CursorCommitAttributionDatasetItem } from '@ai-usage/report-core/datasets';
@@ -23,6 +23,7 @@ import {
   importNormalizedDatasetItems,
   importPeerMergeBundle,
   importProviderQuotaBatch,
+  type PreviewPeerMergeBundleResult,
   previewPeerMergeBundle,
   queryEnrichableUsageRows,
   queryNormalizedDatasetItems,
@@ -37,6 +38,7 @@ import {
 
 const machineA: UsageMachine = { id: 'machine-a', label: 'Machine A' };
 const machineB: UsageMachine = { id: 'machine-b', label: 'Machine B' };
+const CONFIRMATION_TOKEN_PATTERN = /^v1\.[0-9a-f]{64}$/;
 
 const makeRow = (input: {
   sourceSessionId: string;
@@ -68,6 +70,174 @@ const makeBundle = (machine: UsageMachine, rows: UsageRowWithOptionalSource[]): 
     machine,
     rows,
   });
+
+interface BarrierChild {
+  complete: () => Promise<string>;
+  release: () => void;
+}
+
+type ConcurrentConfirmOutcome = { kind: 'preview-stale' } | { kind: 'success'; result: unknown };
+
+const USAGE_STORE_MODULE_URL = new URL('./index.ts', import.meta.url).href;
+const CONFIRM_SUCCESS_PREFIX = 'result:success:';
+
+const startBarrierChild = async (program: string): Promise<BarrierChild> => {
+  const child = spawn(process.execPath, ['-e', program]);
+  let errorOutput = '';
+  let output = '';
+  child.stderr.on('data', (chunk) => {
+    errorOutput += chunk.toString();
+  });
+  await new Promise<void>((resolve, reject) => {
+    child.stdout.on('data', (chunk) => {
+      output += chunk.toString();
+      if (output.includes('ready')) {
+        resolve();
+      }
+    });
+    child.once('error', reject);
+    child.once('exit', (code) => {
+      if (!output.includes('ready')) {
+        reject(new Error(`Child exited before the barrier with code ${code}: ${errorOutput}`));
+      }
+    });
+  });
+  const completion = new Promise<void>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', (code) => {
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`Child exited with code ${code}: ${errorOutput}`));
+      }
+    });
+  });
+  return {
+    complete: async () => {
+      await completion;
+      return output;
+    },
+    release: () => child.stdin.end('continue\\n'),
+  };
+};
+
+const startCompetingImport = async (dbPath: string, bundle: UsageMergeBundle): Promise<() => Promise<void>> => {
+  const child = await startBarrierChild(`
+    const { Effect } = await import('effect');
+    const { importPeerMergeBundle } = await import(${JSON.stringify(USAGE_STORE_MODULE_URL)});
+    process.stdout.write('ready\\n');
+    await new Promise((resolve) => process.stdin.once('data', resolve));
+    await Effect.runPromise(importPeerMergeBundle({
+      bundle: ${JSON.stringify(bundle)},
+      dbPath: ${JSON.stringify(dbPath)},
+      localMachineId: ${JSON.stringify(machineA.id)},
+    }));
+  `);
+  return async () => {
+    child.release();
+    await child.complete();
+  };
+};
+
+const parseConcurrentConfirmOutcome = (output: string): ConcurrentConfirmOutcome => {
+  const resultLine = output.split('\n').find((line) => line.startsWith('result:'));
+  if (resultLine === 'result:preview-stale') {
+    return { kind: 'preview-stale' };
+  }
+  if (resultLine?.startsWith(CONFIRM_SUCCESS_PREFIX)) {
+    return { kind: 'success', result: JSON.parse(resultLine.slice(CONFIRM_SUCCESS_PREFIX.length)) as unknown };
+  }
+  throw new Error(`Confirmation child returned no result: ${output}`);
+};
+
+const runConcurrentConfirms = async (
+  dbPath: string,
+  bundle: UsageMergeBundle,
+  confirmationToken: string,
+): Promise<ConcurrentConfirmOutcome[]> => {
+  const program = `
+    const { Database } = await import('bun:sqlite');
+    const fs = await import('node:fs');
+    const originalExec = Database.prototype.exec;
+    let confirmationBarrierReached = false;
+    Database.prototype.exec = function (sql, ...params) {
+      if (!confirmationBarrierReached && sql.trim() === 'BEGIN IMMEDIATE') {
+        confirmationBarrierReached = true;
+        fs.writeSync(1, 'ready\\n');
+        fs.readFileSync(0, 'utf8');
+      }
+      return originalExec.call(this, sql, ...params);
+    };
+    const { Effect } = await import('effect');
+    const { confirmPeerMergeBundle } = await import(${JSON.stringify(USAGE_STORE_MODULE_URL)});
+    const outcome = await Effect.runPromise(Effect.either(confirmPeerMergeBundle({
+      bundle: ${JSON.stringify(bundle)},
+      confirmationToken: ${JSON.stringify(confirmationToken)},
+      dbPath: ${JSON.stringify(dbPath)},
+      localMachineId: ${JSON.stringify(machineA.id)},
+    })));
+    if (outcome._tag === 'Right') {
+      process.stdout.write('result:success:' + JSON.stringify(outcome.right) + '\\n');
+    } else if (outcome.left.reason === 'preview-stale') {
+      process.stdout.write('result:preview-stale\\n');
+    } else {
+      throw outcome.left;
+    }
+  `;
+  const children = await Promise.all([startBarrierChild(program), startBarrierChild(program)]);
+  for (const child of children) {
+    child.release();
+  }
+  return (await Promise.all(children.map(({ complete }) => complete()))).map(parseConcurrentConfirmOutcome);
+};
+
+const previewAcrossNoGenerationMutation = async (
+  dbPath: string,
+  bundle: UsageMergeBundle,
+  mutate: () => Promise<void>,
+): Promise<PreviewPeerMergeBundleResult> => {
+  const child = await startBarrierChild(`
+    const { Database } = await import('bun:sqlite');
+    const fs = await import('node:fs');
+    const originalQuery = Database.prototype.query;
+    let previewSnapshotReady = false;
+    Database.prototype.query = function (sql, ...params) {
+      const statement = originalQuery.call(this, sql, ...params);
+      if (previewSnapshotReady || !sql.includes("WHERE key = 'generation'")) {
+        return statement;
+      }
+      return {
+        get(...getParams) {
+          const result = statement.get(...getParams);
+          previewSnapshotReady = true;
+          fs.writeSync(1, 'ready\\n');
+          fs.readFileSync(0, 'utf8');
+          return result;
+        },
+      };
+    };
+    const { Effect } = await import('effect');
+    const { previewPeerMergeBundle } = await import(${JSON.stringify(USAGE_STORE_MODULE_URL)});
+    const preview = await Effect.runPromise(previewPeerMergeBundle({
+      bundle: ${JSON.stringify(bundle)},
+      dbPath: ${JSON.stringify(dbPath)},
+      localMachineId: ${JSON.stringify(machineA.id)},
+    }));
+    process.stdout.write('result:preview:' + JSON.stringify(preview) + '\\n');
+  `);
+  try {
+    await mutate();
+  } finally {
+    child.release();
+  }
+  const output = await child.complete();
+  const prefix = 'result:preview:';
+  const resultLine = output.split('\n').find((line) => line.startsWith(prefix));
+  if (!resultLine) {
+    throw new Error(`Preview child returned no result: ${output}`);
+  }
+  return JSON.parse(resultLine.slice(prefix.length)) as PreviewPeerMergeBundleResult;
+};
 
 const makeDatasetItem = (itemKey: string, linesAdded = 3): CursorCommitAttributionDatasetItem => ({
   datasetKey: 'cursor.commit-attribution',
@@ -174,8 +344,7 @@ describe('usage-store public boundary', () => {
       confirmPeerMergeBundle({
         bundle,
         dbPath: machineBDbPath,
-        expectedGeneration: preview.generation,
-        expectedStoreStateToken: preview.storeStateToken,
+        confirmationToken: preview.confirmationToken,
         localMachineId: machineB.id,
       }),
     );
@@ -212,8 +381,7 @@ describe('usage-store public boundary', () => {
       confirmPeerMergeBundle({
         bundle: changedBundle,
         dbPath: machineBDbPath,
-        expectedGeneration: changedPreview.generation,
-        expectedStoreStateToken: changedPreview.storeStateToken,
+        confirmationToken: changedPreview.confirmationToken,
         localMachineId: machineB.id,
       }),
     );
@@ -357,7 +525,7 @@ describe('usage-store public boundary', () => {
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(2);
   });
 
-  test('previews an absent store without creating it and confirms against the same state token', async () => {
+  test('initializes an absent store and confirms against one opaque token', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-preview-'));
     const dbPath = usageStorePath(home);
     const bundle = createUsageMergeBundle({
@@ -366,21 +534,286 @@ describe('usage-store public boundary', () => {
       generatedAt: new Date('2026-01-01T00:00:00.000Z'),
     });
     const preview = await Effect.runPromise(previewPeerMergeBundle({ bundle, dbPath, localMachineId: machineA.id }));
-    await expect(Bun.file(dbPath).exists()).resolves.toBe(false);
+    await expect(Bun.file(dbPath).exists()).resolves.toBe(true);
     expect(preview.inserted).toBe(1);
-    expect(preview.generation).toBe(0);
+    expect(preview.confirmationToken.length).toBeGreaterThan(0);
 
     const confirmed = await Effect.runPromise(
       confirmPeerMergeBundle({
         bundle,
         dbPath,
         localMachineId: machineA.id,
-        expectedGeneration: preview.generation,
-        expectedStoreStateToken: preview.storeStateToken,
+        confirmationToken: preview.confirmationToken,
       }),
     );
     expect(confirmed.inserted).toBe(1);
     expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(1);
+  });
+
+  test('keeps opaque tokens stable for unchanged state and binds them to the canonical bundle', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-token-binding-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(
+      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'token-seed' })] }),
+    );
+    const bundle = makeBundle(machineB, [makeRow({ sourceSessionId: 'token-peer' })]);
+    const first = await Effect.runPromise(previewPeerMergeBundle({ bundle, dbPath, localMachineId: machineA.id }));
+    const repeated = await Effect.runPromise(previewPeerMergeBundle({ bundle, dbPath, localMachineId: machineA.id }));
+    const differentBundle = makeBundle(machineB, [makeRow({ sourceSessionId: 'token-other' })]);
+    const different = await Effect.runPromise(
+      previewPeerMergeBundle({ bundle: differentBundle, dbPath, localMachineId: machineA.id }),
+    );
+
+    expect(first.confirmationToken).toMatch(CONFIRMATION_TOKEN_PATTERN);
+    expect(repeated.confirmationToken).toBe(first.confirmationToken);
+    expect(different.confirmationToken).not.toBe(first.confirmationToken);
+    const generationBeforeStale = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+    const error = await Effect.runPromise(
+      confirmPeerMergeBundle({
+        bundle: differentBundle,
+        confirmationToken: first.confirmationToken,
+        dbPath,
+        localMachineId: machineA.id,
+      }).pipe(Effect.flip),
+    );
+    expect(error.reason).toBe('preview-stale');
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(generationBeforeStale);
+    expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(1);
+  });
+
+  test('does not recreate a store removed after preview', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-confirm-removed-'));
+    const dbPath = usageStorePath(home);
+    const movedDbPath = `${dbPath}.previewed`;
+    const bundle = makeBundle(machineB, [makeRow({ sourceSessionId: 'removed-peer' })]);
+    const preview = await Effect.runPromise(previewPeerMergeBundle({ bundle, dbPath, localMachineId: machineA.id }));
+    renameSync(dbPath, movedDbPath);
+
+    const error = await Effect.runPromise(
+      confirmPeerMergeBundle({
+        bundle,
+        confirmationToken: preview.confirmationToken,
+        dbPath,
+        localMachineId: machineA.id,
+      }).pipe(Effect.flip),
+    );
+
+    expect(error.reason).toBe('preview-stale');
+    await expect(Bun.file(dbPath).exists()).resolves.toBe(false);
+    await expect(Bun.file(movedDbPath).exists()).resolves.toBe(true);
+  });
+
+  test('rejects stale schema metadata without migrating or writing the bundle', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-confirm-schema-stale-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(
+      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'schema-seed' })] }),
+    );
+    const peerRow = makeRow({ sourceSessionId: 'schema-peer' });
+    const bundle = makeBundle(machineB, [peerRow]);
+    const peerRowKey = toSerializedMergeRow(peerRow, machineB).rowKey;
+    const preview = await Effect.runPromise(previewPeerMergeBundle({ bundle, dbPath, localMachineId: machineA.id }));
+    const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+    const { Database } = await import('bun:sqlite');
+    const drift = new Database(dbPath);
+    drift.query("UPDATE usage_store_metadata SET value = 0 WHERE key LIKE 'migration.%'").run();
+    drift.close();
+
+    const error = await Effect.runPromise(
+      confirmPeerMergeBundle({
+        bundle,
+        confirmationToken: preview.confirmationToken,
+        dbPath,
+        localMachineId: machineA.id,
+      }).pipe(Effect.flip),
+    );
+    expect(error.reason).toBe('preview-stale');
+
+    const inspection = new Database(dbPath, { readonly: true });
+    const migrationValues = inspection
+      .query("SELECT value FROM usage_store_metadata WHERE key LIKE 'migration.%' ORDER BY key")
+      .all() as Array<{ value: number }>;
+    const generation = inspection.query("SELECT value FROM usage_store_metadata WHERE key = 'generation'").get() as {
+      value: number;
+    };
+    const peerCount = inspection
+      .query('SELECT COUNT(*) AS count FROM usage_rows WHERE row_key = ?')
+      .get(peerRowKey) as {
+      count: number;
+    };
+    inspection.close();
+    expect(migrationValues.map(({ value }) => value)).toEqual([0, 0]);
+    expect(generation.value).toBe(generationBefore);
+    expect(peerCount.count).toBe(0);
+  });
+
+  test('binds preview counts and token to one snapshot across a no-generation write', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-preview-snapshot-'));
+    const dbPath = usageStorePath(home);
+    const row = makeRow({ sourceSessionId: 'snapshot-race-peer' });
+    const deletedBundle = {
+      ...makeBundle(machineB, []),
+      rows: [toSerializedMergeRow(row, machineB, 'deleted')],
+    };
+    const supersededBundle = {
+      ...makeBundle(machineB, []),
+      rows: [toSerializedMergeRow(row, machineB, 'superseded')],
+    };
+    await Effect.runPromise(importPeerMergeBundle({ bundle: deletedBundle, dbPath, localMachineId: machineA.id }));
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(0);
+
+    const preview = await previewAcrossNoGenerationMutation(dbPath, deletedBundle, async () => {
+      const mutation = await Effect.runPromise(
+        importPeerMergeBundle({ bundle: supersededBundle, dbPath, localMachineId: machineA.id }),
+      );
+      expect(mutation).toMatchObject({ superseded: 1 });
+    });
+
+    expect(preview).toMatchObject({ deleted: 0, unchanged: 1 });
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(0);
+    const error = await Effect.runPromise(
+      confirmPeerMergeBundle({
+        bundle: deletedBundle,
+        confirmationToken: preview.confirmationToken,
+        dbPath,
+        localMachineId: machineA.id,
+      }).pipe(Effect.flip),
+    );
+    expect(error.reason).toBe('preview-stale');
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(0);
+    expect((await Effect.runPromise(queryReportRows({ dbPath, statuses: ['deleted'] }))).rows).toHaveLength(0);
+    expect((await Effect.runPromise(queryReportRows({ dbPath, statuses: ['superseded'] }))).rows).toHaveLength(1);
+  });
+
+  test('serializes two concurrent confirms from one preview with exact result parity', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-confirm-concurrent-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(
+      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'confirm-seed' })] }),
+    );
+    const bundle = makeBundle(machineB, [
+      {
+        ...makeRow({ sourceSessionId: 'confirm-peer' }),
+        rtkCommandCount: 2,
+        rtkInputTokens: 30,
+        rtkOutputTokens: 10,
+        rtkSavedTokens: 20,
+      },
+    ]);
+    const preview = await Effect.runPromise(previewPeerMergeBundle({ bundle, dbPath, localMachineId: machineA.id }));
+    const outcomes = await runConcurrentConfirms(dbPath, bundle, preview.confirmationToken);
+    const successes = outcomes.filter((outcome) => outcome.kind === 'success');
+    const { confirmationToken: _confirmationToken, ...expectedResult } = preview;
+
+    expect(successes).toHaveLength(1);
+    expect(successes[0]?.result).toEqual(expectedResult);
+    expect(outcomes.filter((outcome) => outcome.kind === 'preview-stale')).toHaveLength(1);
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(2);
+    const stored = await Effect.runPromise(queryReportRows({ dbPath }));
+    expect(stored.rows).toHaveLength(2);
+    expect(stored.rows.find((row) => row.source.sourceSessionId === 'confirm-peer')).toMatchObject({
+      rtkSavedTokens: 20,
+    });
+  });
+
+  test('stales behind a competing import without writing previewed rows, RTK, or generation', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-confirm-race-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(
+      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'race-seed' })] }),
+    );
+    const bundle = makeBundle(machineB, [
+      {
+        ...makeRow({ sourceSessionId: 'race-peer' }),
+        rtkCommandCount: 2,
+        rtkInputTokens: 30,
+        rtkOutputTokens: 10,
+        rtkSavedTokens: 20,
+      },
+    ]);
+    const preview = await Effect.runPromise(previewPeerMergeBundle({ bundle, dbPath, localMachineId: machineA.id }));
+    const releaseCompetingImport = await startCompetingImport(
+      dbPath,
+      makeBundle(machineB, [makeRow({ sourceSessionId: 'race-competitor' })]),
+    );
+    await releaseCompetingImport();
+    const error = await Effect.runPromise(
+      confirmPeerMergeBundle({
+        bundle,
+        confirmationToken: preview.confirmationToken,
+        dbPath,
+        localMachineId: machineA.id,
+      }).pipe(Effect.flip),
+    );
+
+    expect(error.reason).toBe('preview-stale');
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(2);
+    const stored = await Effect.runPromise(queryReportRows({ dbPath }));
+    expect(stored.rows.map((row) => row.source.sourceSessionId).sort()).toEqual(['race-competitor', 'race-seed']);
+    expect(stored.rows.every((row) => row.rtkSavedTokens === undefined)).toBe(true);
+  });
+
+  test('serializes two concurrent confirms after preview initializes an absent store', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-confirm-absent-concurrent-'));
+    const dbPath = usageStorePath(home);
+    const bundle = makeBundle(machineB, [
+      {
+        ...makeRow({ sourceSessionId: 'absent-confirm-peer' }),
+        rtkCommandCount: 2,
+        rtkInputTokens: 30,
+        rtkOutputTokens: 10,
+        rtkSavedTokens: 20,
+      },
+    ]);
+    const preview = await Effect.runPromise(previewPeerMergeBundle({ bundle, dbPath, localMachineId: machineA.id }));
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(0);
+    const outcomes = await runConcurrentConfirms(dbPath, bundle, preview.confirmationToken);
+    const successes = outcomes.filter((outcome) => outcome.kind === 'success');
+    const { confirmationToken: _confirmationToken, ...expectedResult } = preview;
+
+    expect(successes).toHaveLength(1);
+    expect(successes[0]?.result).toEqual(expectedResult);
+    expect(outcomes.filter((outcome) => outcome.kind === 'preview-stale')).toHaveLength(1);
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(1);
+    const stored = await Effect.runPromise(queryReportRows({ dbPath }));
+    expect(stored.rows).toHaveLength(1);
+    expect(stored.rows[0]).toMatchObject({ rtkSavedTokens: 20 });
+  });
+
+  test('stales the same race after preview initializes an absent store', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-confirm-absent-race-'));
+    const dbPath = usageStorePath(home);
+    const bundle = makeBundle(machineB, [
+      {
+        ...makeRow({ sourceSessionId: 'absent-race-peer' }),
+        rtkCommandCount: 2,
+        rtkInputTokens: 30,
+        rtkOutputTokens: 10,
+        rtkSavedTokens: 20,
+      },
+    ]);
+    const preview = await Effect.runPromise(previewPeerMergeBundle({ bundle, dbPath, localMachineId: machineA.id }));
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(0);
+    const releaseCompetingImport = await startCompetingImport(
+      dbPath,
+      makeBundle(machineB, [makeRow({ sourceSessionId: 'absent-race-competitor' })]),
+    );
+    await releaseCompetingImport();
+    const error = await Effect.runPromise(
+      confirmPeerMergeBundle({
+        bundle,
+        confirmationToken: preview.confirmationToken,
+        dbPath,
+        localMachineId: machineA.id,
+      }).pipe(Effect.flip),
+    );
+
+    expect(error.reason).toBe('preview-stale');
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(1);
+
+    const stored = await Effect.runPromise(queryReportRows({ dbPath }));
+    expect(stored.rows.map((row) => row.source.sourceSessionId)).toEqual(['absent-race-competitor']);
+    expect(stored.rows[0]?.rtkSavedTokens).toBeUndefined();
   });
 
   test('keeps portable authority opaque, blocks local collisions, and permits a genuine local upgrade', async () => {

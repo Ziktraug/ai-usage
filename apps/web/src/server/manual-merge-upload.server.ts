@@ -3,6 +3,7 @@ import type { ManualOperationResult } from '../manual-transfer-contract';
 import { validateTrustedLocalRequest } from './local-request-trust.server';
 
 const BYTE_COUNT_PATTERN = /^\d+$/;
+const MAX_CONFIRMATION_TOKEN_CHARACTERS = 128;
 const WHITESPACE_PATTERN = /\s/;
 
 type ManualMergeUploadResult = ManualOperationResult<unknown>;
@@ -11,7 +12,7 @@ type ManualMergeUploadFailure = Extract<ManualMergeUploadResult, { ok: false }>;
 interface ManualMergeUploadOptions {
   confirmBundle?: (
     document: { bytes: Uint8Array; text: string },
-    expected: { digest: string; generation: number; storeStateToken: string },
+    expected: { confirmationToken: string; digest: string },
   ) => Promise<ManualMergeUploadResult>;
   importBundle?: (text: string) => Promise<ManualMergeUploadResult>;
   maxBytes?: number;
@@ -231,13 +232,11 @@ export const handleManualMergeUpload = async (
       result = await options.previewBundle(body);
     } else if (action === 'confirm' && options.confirmBundle) {
       const digest = request.headers.get('x-ai-usage-merge-digest') ?? '';
-      const generationText = request.headers.get('x-ai-usage-store-generation') ?? '';
-      const storeStateToken = request.headers.get('x-ai-usage-store-state') ?? '';
-      const generation = Number(generationText);
-      if (!(digest && storeStateToken && Number.isSafeInteger(generation) && generation >= 0)) {
+      const confirmationToken = request.headers.get('x-ai-usage-merge-confirmation') ?? '';
+      if (!(digest && confirmationToken && confirmationToken.length <= MAX_CONFIRMATION_TOKEN_CHARACTERS)) {
         return jsonFailure(400, 'InvalidConfirmation', 'Manual import confirmation preconditions are missing.');
       }
-      result = await options.confirmBundle(body, { digest, generation, storeStateToken });
+      result = await options.confirmBundle(body, { confirmationToken, digest });
     } else if (action === 'import' && options.importBundle) {
       result = await options.importBundle(body.text);
     } else {

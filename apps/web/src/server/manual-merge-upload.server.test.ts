@@ -106,4 +106,75 @@ describe('manual merge upload boundary', () => {
       error: { tag: 'UsageMergeError', message: 'Invalid bundle schema.', reason: 'invalid-input' },
     });
   });
+
+  test('transports one bounded opaque confirmation token with the separate digest', async () => {
+    const confirmations: Array<{ confirmationToken: string; digest: string }> = [];
+    const response = await handleManualMergeUpload(
+      jsonRequest('{"rows":[]}', {
+        'x-ai-usage-merge-action': 'confirm',
+        'x-ai-usage-merge-confirmation': 'opaque-token',
+        'x-ai-usage-merge-digest': 'document-digest',
+      }),
+      {
+        confirmBundle: (_document, expected) => {
+          confirmations.push(expected);
+          return Promise.resolve({ ok: true as const, data: { rows: 0 } });
+        },
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(confirmations).toEqual([{ confirmationToken: 'opaque-token', digest: 'document-digest' }]);
+  });
+
+  test('rejects missing or oversized confirmation tokens and preserves preview-stale as HTTP 409', async () => {
+    let confirmations = 0;
+    const confirmBundle = () => {
+      confirmations += 1;
+      return Promise.resolve({
+        ok: false as const,
+        error: {
+          tag: 'UsageMergeError',
+          message: 'Create a new preview before confirming.',
+          reason: 'preview-stale',
+        },
+      });
+    };
+    const missingToken = await handleManualMergeUpload(
+      jsonRequest('{"rows":[]}', {
+        'x-ai-usage-merge-action': 'confirm',
+        'x-ai-usage-merge-digest': 'document-digest',
+      }),
+      { confirmBundle },
+    );
+    const oversized = await handleManualMergeUpload(
+      jsonRequest('{"rows":[]}', {
+        'x-ai-usage-merge-action': 'confirm',
+        'x-ai-usage-merge-confirmation': 'x'.repeat(129),
+        'x-ai-usage-merge-digest': 'document-digest',
+      }),
+      { confirmBundle },
+    );
+    const stale = await handleManualMergeUpload(
+      jsonRequest('{"rows":[]}', {
+        'x-ai-usage-merge-action': 'confirm',
+        'x-ai-usage-merge-confirmation': 'opaque-token',
+        'x-ai-usage-merge-digest': 'document-digest',
+      }),
+      { confirmBundle },
+    );
+
+    expect(missingToken.status).toBe(400);
+    expect(oversized.status).toBe(400);
+    expect(confirmations).toBe(1);
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({
+      ok: false,
+      error: {
+        tag: 'UsageMergeError',
+        message: 'Create a new preview before confirming.',
+        reason: 'preview-stale',
+      },
+    });
+  });
 });

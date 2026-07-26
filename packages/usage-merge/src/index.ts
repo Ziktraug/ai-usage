@@ -29,20 +29,18 @@ export interface ManualMergeDocumentInput {
 
 export interface ManualMergePreviewResult extends ImportResult {
   bytes: number;
+  confirmationToken: string;
   digest: string;
   generatedAt: string;
   machine: UsageMachine;
   rows: number;
-  storeGeneration: number;
-  storeStateToken: string;
   warningCount: number;
   warningItems: string[];
 }
 
 export interface ManualMergeConfirmInput extends ManualMergeDocumentInput {
+  confirmationToken: string;
   expectedDigest: string;
-  expectedStoreGeneration: number;
-  expectedStoreStateToken: string;
 }
 
 export interface ManualMergeImportResult {
@@ -82,6 +80,9 @@ const WHITESPACE_PATTERN = /\s+/g;
 const documentDigest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 
 const mergeReasonFromStore = (reason: string | undefined): UsageMergeErrorReason => {
+  if (reason === 'invalid-input') {
+    return 'invalid-input';
+  }
   if (reason === 'preview-stale') {
     return 'preview-stale';
   }
@@ -195,7 +196,7 @@ export const createUsageFileMergeService = (options: UsageFileMergeServiceOption
             ),
           ),
         );
-        const { generation, storeStateToken, ...result } = preview;
+        const { confirmationToken, ...result } = preview;
         return {
           ...result,
           bytes: input.bytes.byteLength,
@@ -203,8 +204,7 @@ export const createUsageFileMergeService = (options: UsageFileMergeServiceOption
           generatedAt: bundle.generatedAt,
           machine: bundle.machine,
           rows: bundle.rows.length,
-          storeGeneration: generation,
-          storeStateToken,
+          confirmationToken,
           warningCount: bundle.warnings.length,
           warningItems: bundle.warnings
             .slice(0, MAX_MANUAL_MERGE_PREVIEW_WARNINGS)
@@ -236,8 +236,7 @@ export const createUsageFileMergeService = (options: UsageFileMergeServiceOption
           localMachineId: options.localMachine.id,
           bundle,
           importedAt: now(),
-          expectedGeneration: input.expectedStoreGeneration,
-          expectedStoreStateToken: input.expectedStoreStateToken,
+          confirmationToken: input.confirmationToken,
         }).pipe(
           Effect.mapError((cause) =>
             usageMergeError(

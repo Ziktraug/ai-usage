@@ -136,7 +136,7 @@ describe('usage file merge public boundary', () => {
     }
   });
 
-  test('previews without mutation and binds confirmation to raw bytes and store state', async () => {
+  test('previews without usage rows and binds confirmation to raw bytes and one opaque token', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'usage-merge-preview-'));
     try {
       const dbPath = path.join(home, 'usage.sqlite');
@@ -149,7 +149,7 @@ describe('usage file merge public boundary', () => {
       const text = `${JSON.stringify(bundle)}\n`;
       const bytes = new TextEncoder().encode(text);
       const preview = await Effect.runPromise(service.previewManualMergeBundle({ bytes, text }));
-      await expect(Bun.file(dbPath).exists()).resolves.toBe(false);
+      await expect(Bun.file(dbPath).exists()).resolves.toBe(true);
       expect(preview.inserted).toBe(1);
       expect(preview.digest).toHaveLength(64);
 
@@ -159,18 +159,28 @@ describe('usage file merge public boundary', () => {
             bytes: new TextEncoder().encode(`${text} `),
             text,
             expectedDigest: preview.digest,
-            expectedStoreGeneration: preview.storeGeneration,
-            expectedStoreStateToken: preview.storeStateToken,
+            confirmationToken: preview.confirmationToken,
           }),
         ),
       ).rejects.toThrow('changed after preview');
+      const invalidTokenError = await Effect.runPromise(
+        service
+          .confirmManualMergeBundle({
+            bytes,
+            text,
+            expectedDigest: preview.digest,
+            confirmationToken: 'unsupported-token',
+          })
+          .pipe(Effect.flip),
+      );
+      expect(invalidTokenError.reason).toBe('invalid-input');
+
       const confirmed = await Effect.runPromise(
         service.confirmManualMergeBundle({
           bytes,
           text,
           expectedDigest: preview.digest,
-          expectedStoreGeneration: preview.storeGeneration,
-          expectedStoreStateToken: preview.storeStateToken,
+          confirmationToken: preview.confirmationToken,
         }),
       );
       expect(confirmed.result.inserted).toBe(1);

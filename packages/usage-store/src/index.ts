@@ -64,13 +64,11 @@ export interface ImportPeerMergeBundleInput {
 export interface PreviewPeerMergeBundleInput extends ImportPeerMergeBundleInput {}
 
 export interface PreviewPeerMergeBundleResult extends ImportResult {
-  generation: number;
-  storeStateToken: string;
+  confirmationToken: string;
 }
 
 export interface ConfirmPeerMergeBundleInput extends ImportPeerMergeBundleInput {
-  expectedGeneration: number;
-  expectedStoreStateToken: string;
+  confirmationToken: string;
 }
 
 export interface QueryReportRowsInput {
@@ -777,6 +775,42 @@ const openUsageStoreDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, U
     catch: (cause) => usageStoreError('openUsageStore', dbPath, cause, 'storage-failure'),
   });
 
+const assertExistingPrivateUsageStore = (dbPath: string): void => {
+  const directory = fs.lstatSync(path.dirname(dbPath), { throwIfNoEntry: false });
+  if (!(directory?.isDirectory() && !directory.isSymbolicLink())) {
+    throw new Error('Usage store directory is unavailable or unsafe for confirmation.');
+  }
+  for (const [filePath, required] of [
+    [dbPath, true],
+    [`${dbPath}-wal`, false],
+    [`${dbPath}-shm`, false],
+  ] as const) {
+    const stat = fs.lstatSync(filePath, { throwIfNoEntry: false });
+    if (!stat) {
+      if (required) {
+        throw new Error('Usage store is unavailable for confirmation.');
+      }
+      continue;
+    }
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink > 1) {
+      throw new Error(`Usage store file is unsafe for confirmation: ${filePath}`);
+    }
+  }
+};
+
+const openConfirmationUsageStoreDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
+  Effect.tryPromise({
+    try: async () => {
+      assertExistingPrivateUsageStore(dbPath);
+      const { Database } = await import('bun:sqlite');
+      const db = new Database(dbPath, { create: false, readwrite: true }) as SqliteDatabase;
+      db.exec('PRAGMA busy_timeout = 5000');
+      db.exec('PRAGMA foreign_keys = ON');
+      return db;
+    },
+    catch: (cause) => (cause instanceof UsageStoreError ? cause : previewStaleError(cause)),
+  });
+
 const closeUsageStoreDatabase = (dbPath: string, db: SqliteDatabase): Effect.Effect<void> =>
   Effect.try({
     try: () => db.close(),
@@ -788,6 +822,14 @@ const withUsageStore = <A>(
   use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
 ): Effect.Effect<A, UsageStoreError> =>
   Effect.acquireUseRelease(openUsageStoreDatabase(dbPath), use, (db) => closeUsageStoreDatabase(dbPath, db));
+
+const withConfirmationUsageStore = <A>(
+  dbPath: string,
+  use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
+): Effect.Effect<A, UsageStoreError> =>
+  Effect.acquireUseRelease(openConfirmationUsageStoreDatabase(dbPath), use, (db) =>
+    closeUsageStoreDatabase(dbPath, db),
+  );
 
 const emptyImportResult = (): ImportResult => ({
   deleted: 0,
@@ -974,6 +1016,37 @@ const summarizeClassifications = (classifiedRows: Pick<ClassifiedMergeRow, 'clas
   return result;
 };
 
+const writeClassifiedMergeRows = (
+  db: SqliteDatabase,
+  preparedRows: PreparedMergeRow[],
+  classifiedRows: ClassifiedMergeRow[],
+  now: string,
+  authority: StoredSourceAuthority,
+): ImportResult => {
+  const result = summarizeClassifications(classifiedRows);
+  const statements = prepareImportStatements(db);
+  const enrichmentStatements = prepareEnrichmentStatements(db);
+  let enrichmentProjectionChanged = false;
+  for (const [index, { classification, row }] of classifiedRows.entries()) {
+    if (classification === 'inserted') {
+      insertMergeRow(statements.insert, row, now, authority);
+    } else if (classification === 'unchanged') {
+      touchMergeRow(statements.touch, row.rowKey, now);
+    } else {
+      updateMergeRow(statements.update, row, now, authority);
+    }
+    const contribution = preparedRows[index]?.contribution;
+    if (contribution) {
+      const enrichmentClassification = upsertRtkContribution(enrichmentStatements, row.rowKey, contribution, now);
+      enrichmentProjectionChanged ||= row.status === 'active' && enrichmentClassification !== 'unchanged';
+    }
+  }
+  if (enrichmentProjectionChanged || classifiedRows.some(({ reportProjectionChanged }) => reportProjectionChanged)) {
+    db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
+  }
+  return result;
+};
+
 const importMergeRows = (
   dbPath: string,
   rows: SerializedMergeRow[],
@@ -983,10 +1056,7 @@ const importMergeRows = (
   withUsageStore(dbPath, (db) =>
     Effect.try({
       try: () => {
-        const result = emptyImportResult();
         const now = importedAt.toISOString();
-        const statements = prepareImportStatements(db);
-        const enrichmentStatements = prepareEnrichmentStatements(db);
         const preparedRows = rows.map(prepareMergeRow);
 
         db.exec('BEGIN IMMEDIATE');
@@ -996,42 +1066,13 @@ const importMergeRows = (
             preparedRows.map(({ row }) => row),
             authority,
           );
-          let enrichmentProjectionChanged = false;
-          for (const [index, { classification, row }] of classifiedRows.entries()) {
-            if (classification === 'inserted') {
-              insertMergeRow(statements.insert, row, now, authority);
-              result.inserted++;
-            } else if (classification === 'unchanged') {
-              touchMergeRow(statements.touch, row.rowKey, now);
-              result.unchanged++;
-            } else {
-              updateMergeRow(statements.update, row, now, authority);
-              result[classification]++;
-            }
-            const contribution = preparedRows[index]?.contribution;
-            if (contribution) {
-              const enrichmentClassification = upsertRtkContribution(
-                enrichmentStatements,
-                row.rowKey,
-                contribution,
-                now,
-              );
-              enrichmentProjectionChanged ||= row.status === 'active' && enrichmentClassification !== 'unchanged';
-            }
-          }
-          if (
-            enrichmentProjectionChanged ||
-            classifiedRows.some(({ reportProjectionChanged }) => reportProjectionChanged)
-          ) {
-            db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
-          }
+          const result = writeClassifiedMergeRows(db, preparedRows, classifiedRows, now, authority);
           db.exec('COMMIT');
+          return result;
         } catch (error) {
           db.exec('ROLLBACK');
           throw error;
         }
-
-        return result;
       },
       catch: (cause) => usageStoreError('importMergeRows', dbPath, cause, 'storage-failure'),
     }),
@@ -1073,16 +1114,19 @@ export const importPeerMergeBundle = (
   return importMergeRows(input.dbPath, bundle.rows, input.importedAt, 'portable-opaque');
 };
 
+type PeerConfirmationOperation = 'confirmPeerMergeBundle' | 'previewPeerMergeBundle';
+
 const validatePeerBundle = (
   bundleInput: UsageMergeBundle,
   localMachineId: string,
+  operation: PeerConfirmationOperation,
 ): Effect.Effect<UsageMergeBundle, UsageStoreError> => {
   try {
     const bundle = parseUsageMergeBundleValue(bundleInput);
     if (bundle.machine.id === localMachineId) {
       return Effect.fail(
         new UsageStoreError({
-          operation: 'previewPeerMergeBundle',
+          operation,
           message: 'Cannot import a peer merge bundle from the local machine.',
           reason: 'self-import',
         }),
@@ -1092,8 +1136,8 @@ const validatePeerBundle = (
   } catch (cause) {
     return Effect.fail(
       new UsageStoreError({
-        operation: 'previewPeerMergeBundle',
-        message: `Cannot preview an invalid peer merge bundle: ${cause instanceof Error ? cause.message : String(cause)}`,
+        operation,
+        message: `Cannot process an invalid peer merge bundle: ${cause instanceof Error ? cause.message : String(cause)}`,
         reason: 'invalid-input',
         cause,
       }),
@@ -1101,39 +1145,121 @@ const validatePeerBundle = (
   }
 };
 
-const storeIdentity = (dbPath: string, generation: number): string => {
-  const identity = [dbPath, `${dbPath}-wal`].map((filePath) => {
-    const stat = fs.lstatSync(filePath, { throwIfNoEntry: false });
-    return stat ? { dev: stat.dev, ino: stat.ino, mtimeMs: stat.mtimeMs, size: stat.size } : null;
-  });
-  return createHash('sha256').update(JSON.stringify({ generation, identity })).digest('hex');
+const CONFIRMATION_TOKEN_VERSION = 'v1';
+const CONFIRMATION_TOKEN_PATTERN = /^v1\.[0-9a-f]{64}$/;
+const MAX_CONFIRMATION_TOKEN_CHARACTERS = 128;
+const canonicalBundleDigest = (bundle: UsageMergeBundle, preparedRows: PreparedMergeRow[]): string => {
+  const rows = preparedRows.map(({ contribution, row }) =>
+    contribution === undefined ? row : { ...row, ...contribution },
+  );
+  return createHash('sha256')
+    .update(canonicalJson({ ...bundle, rows }))
+    .digest('hex');
 };
 
-const readStorePreview = async (dbPath: string, rows: SerializedMergeRow[]): Promise<PreviewPeerMergeBundleResult> => {
-  const canonicalRows = rows.map(prepareMergeRow).map(({ row }) => row);
-  if (!fs.existsSync(dbPath)) {
-    return {
-      ...summarizeClassifications(canonicalRows.map((row) => ({ classification: 'inserted', row }))),
-      generation: 0,
-      storeStateToken: createHash('sha256').update('absent').digest('hex'),
-    };
+const storeStateFingerprint = (db: SqliteDatabase, rows: SerializedMergeRow[]): string => {
+  const metadata = db.query('SELECT key, value FROM usage_store_metadata ORDER BY key').all();
+  const schema = db
+    .query(`
+      SELECT type, name, tbl_name, sql
+      FROM sqlite_schema
+      WHERE name NOT LIKE 'sqlite_%'
+      ORDER BY type, name
+    `)
+    .all();
+  const rowKeys = [...new Set(rows.map(({ rowKey }) => rowKey))].sort();
+  const storedRows: unknown[] = [];
+  const enrichments: unknown[] = [];
+  for (const batch of chunkRows(rowKeys, IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE)) {
+    const placeholders = batch.map(() => '?').join(', ');
+    storedRows.push(
+      ...db.query(`SELECT * FROM usage_rows WHERE row_key IN (${placeholders}) ORDER BY row_key`).all(...batch),
+    );
+    enrichments.push(
+      ...db
+        .query(`
+          SELECT *
+          FROM usage_row_enrichments
+          WHERE row_key IN (${placeholders})
+          ORDER BY row_key, source_id
+        `)
+        .all(...batch),
+    );
   }
-  if (fs.existsSync(`${dbPath}-wal`) && !fs.existsSync(`${dbPath}-shm`)) {
-    throw new Error('Usage store preview is unavailable while WAL coordination state is absent.');
+  return createHash('sha256').update(canonicalJson({ enrichments, metadata, schema, storedRows })).digest('hex');
+};
+
+const readUsageStoreGeneration = (db: SqliteDatabase): number => {
+  const record = db
+    .query("SELECT value FROM usage_store_metadata WHERE key = 'generation'")
+    .get() as UsageStoreGenerationRecord | null;
+  if (!(record && Number.isSafeInteger(record.value) && record.value >= 0)) {
+    throw new Error('Usage store generation metadata is missing or invalid.');
   }
-  const { Database } = await import('bun:sqlite');
-  const db = new Database(dbPath, { readonly: true }) as SqliteDatabase;
+  return record.value;
+};
+
+const confirmationTokenFor = (bundleDigest: string, generation: number, storeFingerprint: string): string => {
+  const digest = createHash('sha256')
+    .update(canonicalJson({ bundleDigest, generation, storeFingerprint }))
+    .digest('hex');
+  return `${CONFIRMATION_TOKEN_VERSION}.${digest}`;
+};
+
+const isConfirmationToken = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.length <= MAX_CONFIRMATION_TOKEN_CHARACTERS &&
+  CONFIRMATION_TOKEN_PATTERN.test(value);
+
+const previewStaleError = (cause?: unknown): UsageStoreError =>
+  new UsageStoreError({
+    operation: 'confirmPeerMergeBundle',
+    message: 'The usage-store state changed after preview; create a new preview before confirming.',
+    reason: 'preview-stale',
+    ...(cause === undefined ? {} : { cause }),
+  });
+
+const readCurrentUsageStoreGeneration = (db: SqliteDatabase): number => {
   try {
-    db.exec('BEGIN');
-    const record = db
-      .query("SELECT value FROM usage_store_metadata WHERE key = 'generation'")
-      .get() as UsageStoreGenerationRecord | null;
-    if (!(record && Number.isSafeInteger(record.value) && record.value >= 0)) {
-      throw new Error('Usage store generation metadata is missing or invalid.');
+    const records = db
+      .query(`
+        SELECT key, value
+        FROM usage_store_metadata
+        WHERE key IN (
+          'generation',
+          'migration.rtk-contributions-v1',
+          'migration.merge-row-v3-vcs'
+        )
+      `)
+      .all() as Array<{ key: string; value: number }>;
+    const metadata = new Map(records.map(({ key, value }) => [key, value]));
+    const generation = metadata.get('generation');
+    const hasCurrentSchema =
+      metadata.get('migration.rtk-contributions-v1') === 1 && metadata.get('migration.merge-row-v3-vcs') === 1;
+    if (!(hasCurrentSchema && typeof generation === 'number' && Number.isSafeInteger(generation) && generation >= 0)) {
+      throw new Error('Usage store schema or generation metadata changed after preview.');
     }
-    const result = summarizeClassifications(classifyMergeRows(db, canonicalRows, 'portable-opaque'));
+    return generation;
+  } catch (cause) {
+    if (cause instanceof UsageStoreError) {
+      throw cause;
+    }
+    throw previewStaleError(cause);
+  }
+};
+
+const readStorePreview = (db: SqliteDatabase, bundle: UsageMergeBundle): PreviewPeerMergeBundleResult => {
+  const preparedRows = bundle.rows.map(prepareMergeRow);
+  const rows = preparedRows.map(({ row }) => row);
+  const bundleDigest = canonicalBundleDigest(bundle, preparedRows);
+  db.exec('BEGIN');
+  try {
+    const generation = readUsageStoreGeneration(db);
+    const result = summarizeClassifications(classifyMergeRows(db, rows, 'portable-opaque'));
+    const storeFingerprint = storeStateFingerprint(db, rows);
+    const confirmationToken = confirmationTokenFor(bundleDigest, generation, storeFingerprint);
     db.exec('ROLLBACK');
-    return { ...result, generation: record.value, storeStateToken: storeIdentity(dbPath, record.value) };
+    return { ...result, confirmationToken };
   } catch (error) {
     try {
       db.exec('ROLLBACK');
@@ -1141,43 +1267,75 @@ const readStorePreview = async (dbPath: string, rows: SerializedMergeRow[]): Pro
       // The original preview error remains authoritative.
     }
     throw error;
-  } finally {
-    db.close();
   }
 };
 
 export const previewPeerMergeBundle = (
   input: PreviewPeerMergeBundleInput,
 ): Effect.Effect<PreviewPeerMergeBundleResult, UsageStoreError> =>
-  validatePeerBundle(input.bundle, input.localMachineId).pipe(
+  validatePeerBundle(input.bundle, input.localMachineId, 'previewPeerMergeBundle').pipe(
     Effect.flatMap((bundle) =>
-      Effect.tryPromise({
-        try: () => readStorePreview(input.dbPath, bundle.rows),
-        catch: (cause) => usageStoreError('previewPeerMergeBundle', input.dbPath, cause, 'storage-failure'),
-      }),
+      withUsageStore(input.dbPath, (db) =>
+        Effect.try({
+          try: () => readStorePreview(db, bundle),
+          catch: (cause) => usageStoreError('previewPeerMergeBundle', input.dbPath, cause, 'storage-failure'),
+        }),
+      ),
     ),
   );
 
 export const confirmPeerMergeBundle = (
   input: ConfirmPeerMergeBundleInput,
-): Effect.Effect<ImportResult, UsageStoreError> =>
-  previewPeerMergeBundle(input).pipe(
-    Effect.flatMap((preview) => {
-      if (
-        preview.generation !== input.expectedGeneration ||
-        preview.storeStateToken !== input.expectedStoreStateToken
-      ) {
-        return Effect.fail(
-          new UsageStoreError({
-            operation: 'confirmPeerMergeBundle',
-            message: 'The usage-store state changed after preview; create a new preview before confirming.',
-            reason: 'preview-stale',
-          }),
-        );
-      }
-      return importPeerMergeBundle(input);
-    }),
+): Effect.Effect<ImportResult, UsageStoreError> => {
+  if (!isConfirmationToken(input.confirmationToken)) {
+    return Effect.fail(
+      new UsageStoreError({
+        operation: 'confirmPeerMergeBundle',
+        message: 'Usage merge confirmation token is invalid.',
+        reason: 'invalid-input',
+      }),
+    );
+  }
+  return validatePeerBundle(input.bundle, input.localMachineId, 'confirmPeerMergeBundle').pipe(
+    Effect.flatMap((bundle) =>
+      withConfirmationUsageStore(input.dbPath, (db) =>
+        Effect.try({
+          try: () => {
+            const preparedRows = bundle.rows.map(prepareMergeRow);
+            const rows = preparedRows.map(({ row }) => row);
+            const bundleDigest = canonicalBundleDigest(bundle, preparedRows);
+            db.exec('BEGIN IMMEDIATE');
+            try {
+              const generation = readCurrentUsageStoreGeneration(db);
+              const storeFingerprint = storeStateFingerprint(db, rows);
+              const confirmationToken = confirmationTokenFor(bundleDigest, generation, storeFingerprint);
+              if (confirmationToken !== input.confirmationToken) {
+                throw previewStaleError();
+              }
+              const classifiedRows = classifyMergeRows(db, rows, 'portable-opaque');
+              const result = writeClassifiedMergeRows(
+                db,
+                preparedRows,
+                classifiedRows,
+                (input.importedAt ?? new Date()).toISOString(),
+                'portable-opaque',
+              );
+              db.exec('COMMIT');
+              return result;
+            } catch (error) {
+              db.exec('ROLLBACK');
+              throw error;
+            }
+          },
+          catch: (cause) =>
+            cause instanceof UsageStoreError
+              ? cause
+              : usageStoreError('confirmPeerMergeBundle', input.dbPath, cause, 'storage-failure'),
+        }),
+      ),
+    ),
   );
+};
 
 export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<QueryRowsResult, UsageStoreError> =>
   withUsageStore(input.dbPath, (db) =>
