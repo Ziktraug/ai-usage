@@ -45,7 +45,7 @@ const disposeRuntime =
 
 export const installWebProcessRuntime = (runtime: WebProcessRuntime): (() => void) => {
   if (runtimeRegistry.__aiUsageWebProcessRuntime !== undefined) {
-    throw new Error('A source-control runtime is already installed in this process.');
+    throw new Error('A web process runtime is already installed in this process.');
   }
   runtimeRegistry.__aiUsageWebProcessRuntime = runtime;
   runtimeRegistry.__aiUsageWebProcessRuntimeTeardown = disposeRuntime(runtime);
@@ -84,7 +84,7 @@ export const tryGetWebProcessRuntime = (): WebProcessRuntime | undefined => runt
 export const getWebProcessRuntime = (): WebProcessRuntime => {
   const runtime = tryGetWebProcessRuntime();
   if (!runtime) {
-    throw new Error('The source-control runtime has not started.');
+    throw new Error('The web process runtime has not started.');
   }
   return runtime;
 };
