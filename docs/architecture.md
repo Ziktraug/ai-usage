@@ -100,6 +100,7 @@ Owns durable usage facts and merge bundle persistence:
 - active report-row queries with corrupt-row isolation.
 - local-observed versus portable-opaque source authority and semantic generation changes only when the active report projection changes.
 - canonical preparation of every local/peer/preview/confirm merge row: portable embedded RTK fields are split into a hash-recomputed base row plus a validated `rtk.savings` contribution in the same import transaction, without rewriting historical rows or changing the wire format.
+- atomic peer preview/confirmation with one bounded, versioned, opaque, stateless `confirmationToken` bound to the canonical bundle and relevant logical store state; a first preview may initialize an empty current-schema private store without inserting usage rows or advancing semantic generation, while previewing an existing store may run migrations but never imports the peer bundle.
 - normalized append-only provider-quota observations/windows, duplicate coalescing, coverage heartbeats, source-event idempotency, and atomic source checkpoints.
 
 The store does not collect local history, choose files, render import progress, or orchestrate app workflows.
@@ -110,8 +111,9 @@ Owns application-facing file transfer workflows:
 
 - exporting this machine's usage as a portable merge bundle with a suggested filename;
 - parsing and importing a merge bundle copied from another machine;
-- exact row/byte preflight and a preview/confirm token bound to the current store generation;
-- translating store failures into typed, JSON-safe operation results.
+- exact row/byte preflight with a separately owned document digest;
+- transport of usage-store's single opaque `confirmationToken` without decoding it;
+- translating store failures into typed, JSON-safe operation results, including `preview-stale`.
 
 Merge actions are explicit and file-based. This package does not discover peers, open a LAN listener, exchange credentials, or render UI.
 
@@ -166,7 +168,7 @@ Owns web runtime and UI:
 - exact-revision Overview, Breakdown, support, Session page, campaign-child, neighbor, and `session-detail-anchor` queries through bounded Bun artifact runners;
 - one server exact-revision lifecycle and bounded Bun artifact runners for focused query kinds;
 - shared focused/Session request validation, projection, cursor, budget, and fingerprint contracts;
-- file-based merge bundle import/export on `/sync`, including bounded local upload handling;
+- file-based merge bundle import/export on `/sync`, including bounded local upload handling and transport of the separate document digest plus opaque confirmation token without decoding it;
 - a server-rendered Report bootstrap and client-first Skills reads;
 - dashboard, `/sources`, overview, table schema, and UI model modules;
 - bounded local Claude/Codex/OpenCode detail adapters in one unified drawer;
