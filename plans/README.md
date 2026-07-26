@@ -5,7 +5,11 @@ commit `17bcf28` on 2026-07-13, extended with plan 025 at `cb9bc22` on
 2026-07-19, plan 026 at `b24f6a2`, and plan 027 from the local-data audit at
 `23a6230` on 2026-07-20. Plans 028-032 were reconciled against the integrated
 frontend at `6135fe7` on 2026-07-21; their former post-merge blocker is
-retired. Execute in the order below unless dependencies say otherwise. Each
+retired. Plan 036 records the reviewed wide-event logging design at `4e2cc48`
+on 2026-07-21. Plan 037 records the post-implementation wide-event audit and
+operator-experience follow-up at `a186682` plus the documented 2026-07-22 dirty
+worktree baseline. Execute in the order below unless dependencies say otherwise.
+Each
 executor: read the plan fully before starting, honor its STOP conditions, and
 update the row only when its done criteria actually pass. These plans authorize
 local implementation and verification only; do not push a branch or open a
@@ -47,6 +51,8 @@ pull request unless the user explicitly asks.
 | 030 | Add Durable Frontend Regression Gates | P0 | M | 029 | DONE |
 | 031 | Make Session Scrolling Trustworthy at 5,000 Rows | P0 | M | 030 | DONE |
 | 032 | Simplify Frontend Ownership and Document Decisions | P1 | L | 031 | DONE |
+| 036 | Wide-event Logging for Effect Program Executions | P1 | L | 022-024 | DONE |
+| 037 | Make Wide Events Truthful, Actionable, and Readable | P1 | L | 036 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -185,6 +191,25 @@ REJECTED (with one-line rationale).
 - Plan 032 runs last so its architecture notes describe the stabilized code. It
   performs scoped Dashboard/TimeRange/Router/style cleanup, records durable
   decisions, and adds concise legal, contribution, and security documentation.
+- Plan 036 adds Effect-native wide-event observability without an OTLP exporter
+  so operators can see what Effect boundaries do, especially collectors:
+  business outcome, duration, measured hops, and allowlisted local context. The
+  existing bounded workers stay unchanged; every runnable job gets a fresh
+  boundary scope and stale/skipped jobs emit nothing. A shared domain-free
+  `@ai-usage/effect-runtime` serves web and CLI; web composes one scoped file +
+  console sink, while CLI composes a scoped file-only sink under private locked
+  `logs/` rotation. It may execute independently of the sequential frontend
+  portfolio program. See ADRs 0001-0002 and the `CONTEXT.md` terms Wide event /
+  Effect program execution.
+- Plan 037 follows the reviewed plan-036 implementation. It makes the Session
+  boundary own its final validated result, adds stable anomaly codes and
+  producer/generation context, replaces serialization-shaped TTY output with an
+  injected application projection, makes web delivery loss visible while
+  keeping the CLI silent, opens the file circuit at the real deadline, and
+  removes steady-state retention sweeps. It preserves the domain-free package,
+  one event per boundary, one-line NDJSON, private file/lock guarantees, and the
+  existing worker pool. ADR 0008 supersedes only the affected presentation,
+  provenance, public-message, and web-diagnostics clauses from plan 036.
 
 ## Remediation waves
 
@@ -201,11 +226,12 @@ Wave 1: 009 remove HTML export
 017 + 018 + 021 complete ── 022 initial plane ── 023 first hardening ── 024 second-review closure
 016-018 + 024 complete ────────────────────────── 025 trustworthy Session Analysis
 025 complete ── 026 unified drawer ── 027 Claude Session Insight + Git context
-
 Frontend:
 028 synthetic runtime ── 029 accessibility ── 030 regression gates
     ── 031 measure + implement 5k scrolling
     ── 032 ownership cleanup + ADRs
+022-024 complete ──────────────────────────────── 036 wide-event logging
+036 complete ──────────────────────────────────── 037 actionable wide events
 ```
 
 Plans on separate Wave 2 branches may run in parallel. Do not parallel-edit the
@@ -267,6 +293,14 @@ sequence overlapping files and rebase/re-read before execution.
 | F49 | Dashboard/TimeRange coordination has too many responsibilities for a clear composition root | 032 |
 | F50 | Report loading does not use a consistent Router lifecycle and repeated Skills styles lack a clear promotion rule | 032 |
 | F51 | Important shipped architecture choices lack concise evidence-linked rationale | 032 |
+| F52 | Session result validation happens after `web.sessions.read` emits, allowing a success event for a returned `QueryFailed` | 037 |
+| F53 | Every real pretty rendering exceeds 160 characters and every outcome is routed through `console.error` | 037 |
+| F54 | Source/publication degradation and failure records omit stable reason/warning codes already owned by the domain | 037 |
+| F55 | All persisted Session read events lack useful measured execution/parse detail | 037 |
+| F56 | Retained events lack producer resource context and source-to-publication generation correlation | 037 |
+| F57 | File-sink drops/failures are counted but invisible in web production and aggregate diagnostics double-count transports | 037 |
+| F58 | A non-cooperative append delays circuit opening past the configured timeout | 037 |
+| F59 | The file sink performs a full retention scan after every append under the interprocess lock | 037 |
 
 ## Findings considered and rejected
 
@@ -296,6 +330,16 @@ sequence overlapping files and rebase/re-read before execution.
   shallow speculative interface. Plan 021 standardizes normalized ingestion and
   keeps source-specific lifecycle behind focused adapters until a second real
   provider proves what must vary.
+- Copy Exalibur's HTTP/cache event model into ai-usage: rejected because plan
+  037 needs its terminal projection and detail-level pattern, not its unrelated
+  domain fields. The `@ai-usage/effect-runtime` model remains domain-free.
+- Make pretty JSON or NDJSON multi-line: rejected. Plan 037 permits multi-line
+  TTY presentation only; machine-oriented console JSON and file NDJSON remain
+  exactly one JSON object per physical line.
+- Correlate coalesced source/publication work by forcing one trace across queue
+  boundaries: rejected because publications can consume multiple source
+  generations. Plan 037 uses explicit monotonic generation intervals and keeps
+  traces scoped to one boundary.
 
 ## Product directions explicitly deferred
 
@@ -306,6 +350,9 @@ sequence overlapping files and rebase/re-read before execution.
 - A Wrapped/shareable recap based on self-contained HTML is rejected in that
   form. A future non-HTML recap needs its own product design, privacy rules, and
   bounded output contract.
+- Source-control scheduler changes are deferred until a separate measured plan
+  evaluates queue delay by source and trigger. Plan 037 documents the current
+  signal but does not choose more workers, priority lanes, or queue partitioning.
 
 ## Frontend hardening execution protocol (plans 028–032)
 
@@ -324,3 +371,7 @@ sequence overlapping files and rebase/re-read before execution.
 - These plans authorize local implementation and verification only. They never
   authorize `gh repo edit`, repository visibility/metadata changes, push, PR
   creation, hosting, or repository metadata changes.
+
+Plans 036-037 are outside this sequence. Plan 036 remains historical design
+context; plan 037 may supersede only the clauses named in its ADR 0008 step and
+must preserve all other accepted plan-036 guarantees.

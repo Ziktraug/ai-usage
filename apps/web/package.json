@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@ai-usage/design-system": "workspace:*",
+    "@ai-usage/effect-runtime": "workspace:*",
     "@ai-usage/local-collectors": "workspace:*",
     "@ai-usage/report-core": "workspace:*",
     "@ai-usage/report-data": "workspace:*",
@@ -31,15 +32,16 @@
     "dev": "bun --bun vite --host 127.0.0.1",
     "dev:prepare": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent",
     "dev:standalone": "bun --filter @ai-usage/design-system build && bun run dev:prepare && bun run dev",
-    "build": "bun --filter @ai-usage/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit && rm -rf dist .output && vite build",
-    "check": "bun --filter @ai-usage/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && tsc --noEmit",
-    "test": "bun --filter @ai-usage/design-system build && bun test src",
+    "build": "bun --filter @ai-usage/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && bun run typecheck && rm -rf dist .output && vite build",
+    "check": "bun --filter @ai-usage/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && bun run typecheck",
+    "test": "bun --filter @ai-usage/design-system build && bun test src ./*.test.ts",
     "test:e2e": "playwright test",
     "test:e2e-demo": "playwright test --config playwright.demo.config.ts",
     "test:e2e-production": "bun --bun playwright test --config playwright.production.config.ts e2e/production-report.spec.ts && bun --bun playwright test --config playwright.session-scroll.config.ts e2e/session-scroll.scale.ts",
     "benchmark:session-scroll": "bun --bun playwright test --config playwright.session-scroll.config.ts e2e/session-scroll-benchmark.scale.ts",
     "preview": "vite preview --host 127.0.0.1",
     "start": "bun start.mjs",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.e2e.json --noEmit",
     "lint": "biome check .",
     "format": "biome format --write ."
   }

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  getPersistentWebWideEventInstanceId,
   PERSISTENT_SOURCE_RUNTIME_PACKAGES,
   registerPersistentSourceRuntimeHotReload,
   type ViteHotReloadPort,
@@ -25,6 +26,7 @@ const hotReloadFixture = () => {
 describe('persistent source runtime hot reload', () => {
   test('keeps every source-runtime workspace package inside the Nitro module graph', () => {
     expect(PERSISTENT_SOURCE_RUNTIME_PACKAGES).toEqual([
+      '@ai-usage/effect-runtime',
       '@ai-usage/local-collectors',
       '@ai-usage/report-core',
       '@ai-usage/report-data',
@@ -32,6 +34,20 @@ describe('persistent source runtime hot reload', () => {
       '@ai-usage/usage-store',
     ]);
     expect(PERSISTENT_SOURCE_RUNTIME_PACKAGES).not.toContain('@ai-usage/design-system');
+  });
+
+  test('keeps one wide-event instance identity across runtime recreation', () => {
+    let generatedCount = 0;
+    const generateInstanceId = (): string => {
+      generatedCount += 1;
+      return `fixture-instance-${generatedCount}`;
+    };
+
+    const first = getPersistentWebWideEventInstanceId(generateInstanceId);
+    const second = getPersistentWebWideEventInstanceId(generateInstanceId);
+
+    expect(second).toBe(first);
+    expect(generatedCount).toBe(1);
   });
 
   test('awaits teardown before a full reload and unregisters the old listener', async () => {

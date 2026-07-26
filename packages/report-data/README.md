@@ -2,7 +2,7 @@
 
 ## Owns
 
-Application-facing report orchestration: autonomous durable source adapters, the scoped Effect source control plane, applying aliases, composing warnings, reading stored-only known local project sources without collecting, creating compatibility payloads for CLI consumers, and executing strict focused/Session queries over web-supplied immutable revision artifacts.
+Application-facing report orchestration: autonomous durable source adapters, the scoped Effect source control plane and its application-owned wide-event annotations, applying aliases, composing warnings, reading stored-only known local project sources without collecting, creating compatibility payloads for CLI consumers, and executing strict focused/Session queries over web-supplied immutable revision artifacts.
 
 ## Does Not Own
 
@@ -14,7 +14,7 @@ The root package export exposes report request/result helpers and compatibility 
 
 ## Depends On
 
-`@ai-usage/report-data` may depend on `@ai-usage/report-core`, `@ai-usage/local-collectors`, and `@ai-usage/usage-store`.
+`@ai-usage/report-data` may depend on `@ai-usage/effect-runtime`, `@ai-usage/report-core`, `@ai-usage/local-collectors`, and `@ai-usage/usage-store`.
 
 ## Must Not Import
 

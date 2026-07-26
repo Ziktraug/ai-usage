@@ -1,0 +1,303 @@
+import { Context, Effect, FiberRef, Layer, Ref } from 'effect';
+import type {
+  BoundaryOutcome,
+  LogValue,
+  SanitizedTaggedError,
+  ServiceHop,
+  WideEventResource,
+  WideEventSnapshot,
+} from './model';
+import { sanitizeWideEventAnnotations, sanitizeWideEventSnapshot } from './sanitize';
+
+interface HopEnrichment {
+  readonly annotations: Readonly<Record<string, LogValue>>;
+}
+
+interface CompletedHop extends HopEnrichment {
+  readonly durationMs: number;
+  readonly id: string;
+  readonly name: string;
+  readonly outcome: BoundaryOutcome;
+  readonly parentId?: string;
+  readonly sequence: number;
+  readonly spanId: string;
+  readonly traceId: string;
+}
+
+interface WideEventState {
+  readonly canonicalSnapshot: WideEventSnapshot | undefined;
+  readonly completedHops: readonly CompletedHop[];
+  readonly emitted: boolean;
+  readonly enrichments: Readonly<Record<string, HopEnrichment>>;
+  readonly finalAnnotations: Readonly<Record<string, LogValue>>;
+  readonly finalError: SanitizedTaggedError | null;
+  readonly finalOutcome: BoundaryOutcome | undefined;
+  readonly rootAnnotations: Readonly<Record<string, LogValue>>;
+  readonly rootSpanId: string | undefined;
+  readonly rootTraceId: string | undefined;
+  readonly sequence: number;
+}
+
+export interface OpenHopHandle {
+  readonly id: string;
+  readonly name: string;
+  readonly parentId?: string;
+  readonly sequence: number;
+  readonly spanId: string;
+  readonly traceId: string;
+}
+
+export interface WideEventShape {
+  readonly annotate: (fields: Readonly<Record<string, LogValue>>) => Effect.Effect<void>;
+  readonly completeHop: (handle: OpenHopHandle, durationMs: number, outcome: BoundaryOutcome) => Effect.Effect<void>;
+  readonly openHop: (options: {
+    readonly name: string;
+    readonly parentId?: string;
+    readonly spanId: string;
+    readonly traceId: string;
+  }) => Effect.Effect<OpenHopHandle>;
+  readonly setRootTrace: (fields: { readonly spanId: string; readonly traceId: string }) => Effect.Effect<void>;
+}
+
+export interface WideEventController extends WideEventShape {
+  readonly emit: (fields: {
+    readonly durationMs: number;
+    readonly emittedAt: string;
+    readonly error?: SanitizedTaggedError | null;
+    readonly outcome: BoundaryOutcome;
+    readonly annotations?: Readonly<Record<string, LogValue>>;
+  }) => Effect.Effect<WideEventSnapshot>;
+}
+
+export class WideEventService extends Context.Tag('@ai-usage/effect-runtime/WideEventService')<
+  WideEventService,
+  WideEventShape
+>() {}
+
+export const currentWideEventHop = FiberRef.unsafeMake<string | undefined>(undefined);
+
+const mergeAnnotations = (
+  existing: Readonly<Record<string, LogValue>>,
+  incoming: Readonly<Record<string, LogValue>>,
+): Readonly<Record<string, LogValue>> => {
+  const merged = { ...existing, ...incoming };
+  return existing.observabilityTruncated === true || incoming.observabilityTruncated === true
+    ? { ...merged, observabilityTruncated: true }
+    : merged;
+};
+
+const buildServices = (completed: readonly CompletedHop[]): ServiceHop[] => {
+  type MutableHop = Omit<ServiceHop, 'annotations' | 'children'> & {
+    annotations?: Readonly<Record<string, LogValue>>;
+    children: MutableHop[];
+  };
+
+  const byId = new Map<string, MutableHop>();
+  const roots: MutableHop[] = [];
+  const ordered = [...completed].sort((left, right) => left.sequence - right.sequence);
+
+  for (const hop of ordered) {
+    const mutable: MutableHop = {
+      children: [],
+      durationMs: hop.durationMs,
+      name: hop.name,
+      outcome: hop.outcome,
+      spanId: hop.spanId,
+      traceId: hop.traceId,
+    };
+    if (Object.keys(hop.annotations).length > 0) {
+      mutable.annotations = hop.annotations;
+    }
+    byId.set(hop.id, mutable);
+  }
+
+  for (const hop of ordered) {
+    const rendered = byId.get(hop.id);
+    if (!rendered) {
+      continue;
+    }
+    const parent = hop.parentId === undefined ? undefined : byId.get(hop.parentId);
+    if (parent) {
+      parent.children.push(rendered);
+    } else {
+      roots.push(rendered);
+    }
+  }
+
+  const freezeHop = (hop: MutableHop): ServiceHop => ({
+    name: hop.name,
+    traceId: hop.traceId,
+    spanId: hop.spanId,
+    outcome: hop.outcome,
+    durationMs: hop.durationMs,
+    ...(hop.annotations === undefined ? {} : { annotations: hop.annotations }),
+    ...(hop.children.length > 0 ? { children: hop.children.map(freezeHop) } : {}),
+  });
+
+  return roots.map(freezeHop);
+};
+
+export const createWideEventController = ({
+  boundary,
+  eventId,
+  resource,
+  startedAt,
+  annotations = {},
+}: {
+  readonly annotations?: Readonly<Record<string, LogValue>>;
+  readonly boundary: string;
+  readonly eventId: string;
+  readonly resource: WideEventResource;
+  readonly startedAt: string;
+}): WideEventController => {
+  const state = Ref.unsafeMake<WideEventState>({
+    canonicalSnapshot: undefined,
+    completedHops: [],
+    emitted: false,
+    enrichments: {},
+    finalAnnotations: {},
+    finalError: null,
+    finalOutcome: undefined,
+    rootAnnotations: sanitizeWideEventAnnotations(annotations),
+    rootSpanId: undefined,
+    rootTraceId: undefined,
+    sequence: 0,
+  });
+
+  const buildSnapshot = (current: WideEventState, durationMs: number, emittedAt: string): WideEventSnapshot => {
+    try {
+      const services = buildServices(current.completedHops);
+      const raw: WideEventSnapshot = {
+        schemaVersion: 2,
+        event: 'wide-event',
+        eventId,
+        boundary,
+        startedAt,
+        emittedAt,
+        traceId: current.rootTraceId ?? current.completedHops[0]?.traceId ?? 'untraced',
+        spanId: current.rootSpanId ?? current.completedHops[0]?.spanId ?? 'untraced',
+        outcome: current.finalOutcome ?? 'failure',
+        durationMs,
+        error: current.finalError,
+        resource,
+        annotations: mergeAnnotations(current.rootAnnotations, current.finalAnnotations),
+        services,
+      };
+      return sanitizeWideEventSnapshot(raw).value;
+    } catch {
+      return {
+        schemaVersion: 2,
+        event: 'wide-event',
+        eventId,
+        boundary,
+        startedAt,
+        emittedAt,
+        traceId: 'untraced',
+        spanId: 'untraced',
+        outcome: 'failure',
+        durationMs,
+        error: null,
+        resource,
+        annotations: { observabilityTruncated: true },
+        services: [],
+      };
+    }
+  };
+
+  return {
+    annotate: (fields) => {
+      const sanitizedFields = sanitizeWideEventAnnotations(fields);
+      return FiberRef.get(currentWideEventHop).pipe(
+        Effect.flatMap((hopId) =>
+          Ref.update(state, (current) => {
+            if (current.emitted) {
+              return current;
+            }
+            if (hopId === undefined) {
+              return {
+                ...current,
+                rootAnnotations: mergeAnnotations(current.rootAnnotations, sanitizedFields),
+              };
+            }
+            const enrichment = current.enrichments[hopId] ?? { annotations: {} };
+            return {
+              ...current,
+              enrichments: {
+                ...current.enrichments,
+                [hopId]: {
+                  annotations: mergeAnnotations(enrichment.annotations, sanitizedFields),
+                },
+              },
+            };
+          }),
+        ),
+      );
+    },
+    completeHop: (handle, durationMs, outcome) =>
+      Ref.update(state, (current) => {
+        if (current.emitted) {
+          return current;
+        }
+        const enrichment = current.enrichments[handle.id] ?? { annotations: {} };
+        return {
+          ...current,
+          completedHops: [
+            ...current.completedHops,
+            {
+              ...enrichment,
+              durationMs,
+              id: handle.id,
+              name: handle.name,
+              outcome,
+              ...(handle.parentId === undefined ? {} : { parentId: handle.parentId }),
+              sequence: handle.sequence,
+              spanId: handle.spanId,
+              traceId: handle.traceId,
+            },
+          ],
+        };
+      }),
+    emit: (fields) =>
+      Ref.modify(state, (current) => {
+        if (current.canonicalSnapshot !== undefined) {
+          return [current.canonicalSnapshot, current] as const;
+        }
+        const finalized: WideEventState = {
+          ...current,
+          emitted: true,
+          finalAnnotations: sanitizeWideEventAnnotations(fields.annotations ?? {}),
+          finalError: fields.error ?? null,
+          finalOutcome: fields.outcome,
+        };
+        const canonicalSnapshot = buildSnapshot(finalized, fields.durationMs, fields.emittedAt);
+        return [canonicalSnapshot, { ...finalized, canonicalSnapshot }] as const;
+      }),
+    openHop: ({ name, parentId, spanId, traceId }) =>
+      Ref.modify(state, (current) => {
+        const handle: OpenHopHandle = {
+          id: current.emitted ? 'closed' : `hop-${current.sequence}`,
+          name,
+          ...(parentId === undefined ? {} : { parentId }),
+          sequence: current.sequence,
+          spanId,
+          traceId,
+        };
+        return [handle, current.emitted ? current : { ...current, sequence: current.sequence + 1 }] as const;
+      }),
+    setRootTrace: (fields) =>
+      Ref.update(state, (current) =>
+        current.emitted || current.rootTraceId !== undefined
+          ? current
+          : {
+              ...current,
+              rootSpanId: fields.spanId,
+              rootTraceId: fields.traceId,
+            },
+      ),
+  };
+};
+
+export const makeWideEventLayer = (wideEvent: WideEventShape) => Layer.succeed(WideEventService, wideEvent);
+
+export const annotateWideEvent = (fields: Readonly<Record<string, LogValue>>) =>
+  WideEventService.pipe(Effect.flatMap((wideEvent) => wideEvent.annotate(fields)));

@@ -15,8 +15,10 @@ const documentOverflow = () =>
 
 test.use({
   colorScheme: 'light',
+  contextOptions: {
+    reducedMotion: 'reduce',
+  },
   locale: 'en-US',
-  reducedMotion: 'reduce',
   timezoneId: 'Europe/Paris',
 });
 

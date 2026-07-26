@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["ai-usage.config.ts", "tools/**/*.ts"]
+}

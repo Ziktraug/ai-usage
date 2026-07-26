@@ -104,7 +104,7 @@ export const test = base.extend<{ browserFailureGate: undefined }>({
       }
       context.on('page', attach);
 
-      await use();
+      await use(undefined);
 
       context.off('page', attach);
       for (const [page, listeners] of listenersByPage) {

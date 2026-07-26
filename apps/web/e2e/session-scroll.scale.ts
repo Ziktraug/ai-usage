@@ -4,9 +4,10 @@ import { expect, test } from './browser-test';
 import { afterAnimationFrame, type SessionSurfaceMode, sessionSurface } from './session-scroll-driver';
 import { SESSION_SCROLL_EXPECTED_COUNT } from './session-scroll-fixture';
 
-const SESSION_ROUTE = '/?campaigns=off&tab=sessions';
+const SESSION_ROUTE = '/?campaigns=off&range=%7B%22mode%22%3A%22all%22%7D&tab=sessions';
 const SERVER_FUNCTION_PATH_PREFIX = '/_serverFn/';
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
+const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
 const LOAD_MORE_SESSION_BUTTON_PATTERN = /load more sessions/i;
 const LOAD_MORE_SESSION_TEXT_PATTERN = /^Load more sessions/;
 const SCROLLABLE_OVERFLOW_PATTERN = /^(auto|scroll)$/;
@@ -19,6 +20,7 @@ const SCROLL_STEP_RATIO = 0.75;
 interface CapturedSessionPage {
   bytes: number;
   fingerprints: string[];
+  revisions: string[];
   rowIds: string[];
   url: string;
 }
@@ -110,12 +112,15 @@ const readCapturedSessionPage = async (response: Response): Promise<CapturedSess
   }
   const serialized: unknown = JSON.parse(body.toString('utf8'));
   const fingerprints: string[] = [];
+  const revisions: string[] = [];
   const rowIds: string[] = [];
   collectWireFieldValues(serialized, 'requestFingerprint', fingerprints);
+  collectWireFieldValues(serialized, 'revision', revisions);
   collectWireFieldValues(serialized, 'rowId', rowIds);
   return {
     bytes: body.byteLength,
     fingerprints,
+    revisions,
     rowIds,
     url: response.url(),
   };
@@ -178,11 +183,16 @@ const assertPageBudgets = (
   capturedPages: CapturedSessionPage[],
   orderedRowIds: string[],
   requestFingerprint: string,
+  reportRevision: string,
 ): { maximumBytes: number; pageCount: number } => {
-  expect(capturedPages.length, 'At least one focused Session page must cross the production wire').toBeGreaterThan(0);
+  const revisionPages = capturedPages.filter(({ revisions }) => revisions.includes(reportRevision));
+  expect(
+    revisionPages.length,
+    'At least one focused Session page for the displayed revision must cross the production wire',
+  ).toBeGreaterThan(0);
   const wireRowIds = new Set<string>();
   let maximumBytes = 0;
-  for (const capturedPage of capturedPages) {
+  for (const capturedPage of revisionPages) {
     maximumBytes = Math.max(maximumBytes, capturedPage.bytes);
     expect(capturedPage.bytes, `Session response exceeded its 2 MiB wire cap: ${capturedPage.url}`).toBeLessThanOrEqual(
       MAXIMUM_SESSION_RESPONSE_BYTES,
@@ -208,7 +218,7 @@ const assertPageBudgets = (
     }
   }
   expect(wireRowIds).toEqual(new Set(orderedRowIds));
-  return { maximumBytes, pageCount: capturedPages.length };
+  return { maximumBytes, pageCount: revisionPages.length };
 };
 
 const inspectAllSessions = async (
@@ -222,10 +232,12 @@ const inspectAllSessions = async (
   const report = page.locator('main[data-hydrated="true"]');
   await expect(report).toBeVisible();
   await expect(page.getByText('5,000 / 5,000 sessions', { exact: true })).toBeVisible();
+  await expect(report).toHaveAttribute('data-report-revision', NON_EMPTY_ATTRIBUTE_PATTERN);
   await expect(report).toHaveAttribute('data-request-fingerprint', SESSION_QUERY_FINGERPRINT_PATTERN);
+  const reportRevision = await report.getAttribute('data-report-revision');
   const requestFingerprint = await report.getAttribute('data-request-fingerprint');
-  if (!requestFingerprint) {
-    throw new Error('The production Session report must expose its request fingerprint');
+  if (!(reportRevision && requestFingerprint)) {
+    throw new Error('The production Session report must expose its revision and request fingerprint');
   }
 
   const surface = sessionSurface(page, viewportCase.mode);
@@ -327,18 +339,24 @@ const inspectAllSessions = async (
     }
     return rowId;
   });
+  const firstRowId = orderedRowIds[0];
+  const lastRowId = orderedRowIds[SESSION_SCROLL_EXPECTED_COUNT - 1];
+  if (!(firstRowId && lastRowId)) {
+    throw new Error('Expected the session fixture to contain first and last row identifiers');
+  }
 
   await moveSurface(surface, 'start');
-  await expect(surface.locator('[data-index="0"]')).toHaveAttribute('data-session-row-id', orderedRowIds[0]);
+  await expect(surface.locator('[data-index="0"]')).toHaveAttribute('data-session-row-id', firstRowId);
   await moveSurface(surface, 'end');
   await expect(surface.locator(`[data-index="${SESSION_SCROLL_EXPECTED_COUNT - 1}"]`)).toHaveAttribute(
     'data-session-row-id',
-    orderedRowIds[SESSION_SCROLL_EXPECTED_COUNT - 1],
+    lastRowId,
   );
+  await expect(report).toHaveAttribute('data-report-revision', reportRevision);
   await expect(report).toHaveAttribute('data-request-fingerprint', requestFingerprint);
   await expect(page.getByText('Loading more sessions…', { exact: true })).toHaveCount(0);
 
-  const pageBudgets = assertPageBudgets(await capture.finish(), orderedRowIds, requestFingerprint);
+  const pageBudgets = assertPageBudgets(await capture.finish(), orderedRowIds, requestFingerprint, reportRevision);
   const sequenceFingerprint = createHash('sha256').update(JSON.stringify(orderedRowIds)).digest('hex');
   const result = {
     maximumRenderedItems,

@@ -14,6 +14,7 @@ import {
   type SourceReason,
   type SourceRunResult,
   type SourceWarning,
+  sanitizeSourceWarningCode,
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
 
@@ -63,15 +64,18 @@ export interface InternalControlState {
 }
 
 export type SourceExecutionCompletion =
-  | { readonly _tag: 'failed' }
+  | { readonly _tag: 'failed'; readonly failureKind: 'source-run-error' }
   | { readonly _tag: 'success'; readonly result: SourceRunResult }
-  | { readonly _tag: 'timed-out' };
+  | { readonly _tag: 'timed-out'; readonly failureKind: 'source-timeout' };
+
+export type SourceJobTrigger = 'cadence' | 'dependency' | 'detection' | 'manual';
 
 export interface SourceJob {
   readonly _tag: 'source';
   readonly policyRevision: number;
   readonly queuedAt: number;
   readonly sourceId: CollectionSourceId;
+  readonly trigger: SourceJobTrigger;
 }
 
 export interface PublicationJob {
@@ -90,6 +94,7 @@ export type PublicationStartDecision =
   | { readonly ready: false }
   | {
       readonly dataTarget: number;
+      readonly previousPublishedGeneration: number;
       readonly ready: true;
       readonly requestTarget: number;
       readonly startedAt: number;
@@ -103,6 +108,7 @@ export interface SourceFinishDecision {
   readonly needsPublicationWake: boolean;
   readonly needsRtk: boolean;
   readonly needsRtkRerun: boolean;
+  readonly publicationDataGeneration?: number;
 }
 
 export interface StateTransition<Decision> {
@@ -196,7 +202,7 @@ const sanitizeDuration = (value: number, maximum: number): number =>
 
 export const sanitizeWarnings = (warnings: readonly SourceWarning[]): readonly SourceWarning[] =>
   warnings.slice(0, sourceControlBounds.maxWarningsPerSource).map((warning) => ({
-    code: warning.code.replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 64) || 'source-warning',
+    code: sanitizeSourceWarningCode(warning.code),
     ...(warning.message === undefined
       ? {}
       : { message: warning.message.slice(0, sourceControlBounds.maxMessageLength) }),
@@ -347,6 +353,7 @@ export const admitSourceJob = (
   sourceId: CollectionSourceId,
   sourceExists: boolean,
   queuedAt: number,
+  trigger: SourceJobTrigger,
 ): StateTransition<SourceJob | undefined> => {
   const source = state.sources[sourceId];
   if (!(sourceExists && source.enabled) || source.availability !== 'detected' || source.queued || source.running) {
@@ -357,6 +364,7 @@ export const admitSourceJob = (
     policyRevision: source.policyRevision,
     queuedAt,
     sourceId,
+    trigger,
   };
   const next = withSourceState({ ...state, queueDepth: state.queueDepth + 1 }, sourceId, (current) => {
     const { nextDueAt: _nextDueAt, ...rest } = current;
@@ -598,6 +606,7 @@ export const finishSourceJobTransition = (
       needsPublicationWake: releasedRtkDependency,
       needsRtk,
       needsRtkRerun: job.sourceId === 'rtk.savings' && rtkRequiredGeneration > rtkCompletedGeneration,
+      ...(changed ? { publicationDataGeneration: dirtyGeneration } : {}),
     },
     finishedAt,
   );
@@ -624,6 +633,7 @@ export const startPublicationJobTransition = (
     { ...state, publication: { ...state.publication, queued: false, running: true }, queueDepth },
     {
       dataTarget: state.publication.dirtyGeneration,
+      previousPublishedGeneration: state.publication.publishedGeneration,
       ready: true,
       requestTarget: state.publication.requestedGeneration,
       startedAt,

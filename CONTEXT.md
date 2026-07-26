@@ -99,3 +99,11 @@ _Avoid_: bill, invoice, actual spend
 **Quota snapshot**:
 The newest local Codex `token_count.rate_limits` event used to render subscription quota windows.
 _Avoid_: billing limit, provider quota API
+
+**Wide event**:
+One sanitized, bounded, schema-v2 structured observability record emitted exactly once at the end of an Effect program execution so an operator can see what ran, its business outcome, how long it took, allowlisted local context (for example which collector), and process-scoped producer provenance without requiring an OpenTelemetry exporter. The exhaustive NDJSON/JSON record remains one physical line; a severity-aware application projector may render a concise multi-line TTY view. Same ecosystem pattern as Stripe canonical log lines / Observability 2.0 structured events.
+_Avoid_: boundary log, harness history event, SSE publication event, scattered per-step log lines, OTel-required setup
+
+**Effect program execution**:
+A fresh, scoped application or control-plane boundary that runs one complete job or adapter entry to a business outcome. The scope may run inside a long-lived worker fiber, but its wide-event controller, annotations, and hop parent state never survive into the next execution. Queue admission, stale/skipped jobs, reusable helpers, and long-lived worker loops are not executions and do not emit their own event.
+_Avoid_: carrier fiber identity, enqueue-only command, nested Effect.gen helper, source-control-only logging

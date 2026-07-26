@@ -1,3 +1,4 @@
+import { type BoundaryOutcome, withMeasuredIfAvailable } from '@ai-usage/effect-runtime';
 import type { ProviderQuotaBatch, ProviderQuotaBatchSource } from '@ai-usage/local-collectors';
 import { projectProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
@@ -12,7 +13,7 @@ import type {
   QueryProviderQuotaSourceStatesInput,
   RecordProviderQuotaSourceAttemptInput,
 } from '@ai-usage/usage-store';
-import { Data, Deferred, Effect } from 'effect';
+import { Cause, Data, Deferred, Effect, Exit, Option } from 'effect';
 
 const LIVE_SOURCE_KEY = 'codex-app-server';
 const LIVE_CURSOR_KEY = 'refresh';
@@ -68,6 +69,34 @@ const waitForAbort = (signal: AbortSignal): Effect.Effect<never, ProviderQuotaRe
     signal.addEventListener('abort', onAbort, { once: true });
     return Effect.sync(() => signal.removeEventListener('abort', onAbort));
   });
+
+const quotaRefreshWasInterrupted = <A>(exit: Exit.Exit<A, unknown>): boolean => {
+  if (Exit.isSuccess(exit)) {
+    return false;
+  }
+  const failure = Option.getOrUndefined(Cause.failureOption(exit.cause));
+  return Cause.isInterruptedOnly(exit.cause) || failure instanceof ProviderQuotaRefreshAborted;
+};
+
+const classifyQuotaRefreshWaitOutcome = (exit: Exit.Exit<ProviderQuotaRefreshResult, unknown>): BoundaryOutcome => {
+  if (Exit.isSuccess(exit)) {
+    return 'success';
+  }
+  return quotaRefreshWasInterrupted(exit) ? 'interrupted' : 'failure';
+};
+
+const classifyQuotaRefreshOwnerOutcome = (exit: Exit.Exit<ProviderQuotaRefreshResult, unknown>): BoundaryOutcome => {
+  if (Exit.isFailure(exit)) {
+    return quotaRefreshWasInterrupted(exit) ? 'interrupted' : 'failure';
+  }
+  const { backfill, latest, live } = exit.value;
+  const hasPartialFailure = live === 'failed' || backfill === 'failed';
+  const hasUsableLatest = latest.length > 0;
+  if (!hasPartialFailure) {
+    return 'success';
+  }
+  return hasUsableLatest ? 'degraded' : 'failure';
+};
 
 const withAbortSignal = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -244,12 +273,20 @@ export const createProviderQuotaRefresh = <PersistenceError>(
         return { flight, owner: true } as const;
       });
       if (!selection.owner) {
-        return yield* withAbortSignal(Deferred.await(selection.flight.result), input.signal);
+        return yield* withAbortSignal(Deferred.await(selection.flight.result), input.signal).pipe(
+          withMeasuredIfAvailable<ProviderQuotaRefreshResult, PersistenceError | ProviderQuotaRefreshAborted>(
+            'quota.refresh.wait',
+            { classify: classifyQuotaRefreshWaitOutcome },
+          ),
+        );
       }
 
       const controller = new AbortController();
       const ownerInput = { ...input, signal: controller.signal };
       const owner = runRefresh(persistence, ownerInput).pipe(
+        withMeasuredIfAvailable<ProviderQuotaRefreshResult, PersistenceError>('quota.refresh', {
+          classify: classifyQuotaRefreshOwnerOutcome,
+        }),
         Effect.onInterrupt(() => Effect.sync(() => controller.abort())),
       );
       return yield* withAbortSignal(owner, input.signal).pipe(

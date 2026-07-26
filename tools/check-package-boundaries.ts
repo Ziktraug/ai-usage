@@ -45,6 +45,12 @@ const retiredPackages = [`${workspacePackageScope}lan-pairing`, `${workspacePack
 // persistence, transport, and app packages.
 const boundaryPolicies: BoundaryPolicy[] = [
   {
+    packageName: '@ai-usage/effect-runtime',
+    forbiddenDependencies: ['@ai-usage/*'],
+    forbiddenImports: ['@ai-usage/*'],
+    reason: 'effect-runtime must stay domain-free and independent of workspace packages.',
+  },
+  {
     packageName: '@ai-usage/report-core',
     forbiddenDependencies: ['@ai-usage/*'],
     forbiddenImports: ['@ai-usage/*'],

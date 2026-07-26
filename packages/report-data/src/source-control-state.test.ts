@@ -20,8 +20,8 @@ import {
 const detected = { availability: 'detected', reason: { code: 'none' } } as const;
 
 const completionCases = [
-  ['timed-out', { _tag: 'timed-out' } as const, 'timed-out', 'timed-out'],
-  ['failed', { _tag: 'failed' } as const, 'failed', 'run-failed'],
+  ['timed-out', { _tag: 'timed-out', failureKind: 'source-timeout' } as const, 'timed-out', 'timed-out'],
+  ['failed', { _tag: 'failed', failureKind: 'source-run-error' } as const, 'failed', 'run-failed'],
   [
     'unavailable',
     {
@@ -73,8 +73,9 @@ describe('source control state transitions', () => {
 
   test('classifies timeout distinctly and re-enables unavailable state without a disabled reason', () => {
     const source = initialSourceControlState('instance-a', ['claude.sessions'], {}, 0).sources['claude.sessions'];
-    expect(outcomeAfterRun({ _tag: 'timed-out' }, undefined, 0)).toBe('timed-out');
-    expect(reasonAfterCompletion({ _tag: 'timed-out' }, undefined, true).code).toBe('timed-out');
+    const timedOut = { _tag: 'timed-out', failureKind: 'source-timeout' } as const;
+    expect(outcomeAfterRun(timedOut, undefined, 0)).toBe('timed-out');
+    expect(reasonAfterCompletion(timedOut, undefined, true).code).toBe('timed-out');
     expect(lifecycleAfterPolicyChange({ ...source, availability: 'not-detected' }, true)).toBe('dormant');
     expect(reasonForAvailability('not-detected').code).toBe('input-missing');
   });
@@ -86,8 +87,8 @@ describe('source control state transitions', () => {
 
   test('balances queue depth for accepted, rejected, stale, and completed source jobs', () => {
     const initial = detectedState('claude.sessions');
-    const accepted = admitSourceJob(initial, 'claude.sessions', true, 10);
-    const rejected = admitSourceJob(accepted.state, 'claude.sessions', true, 11);
+    const accepted = admitSourceJob(initial, 'claude.sessions', true, 10, 'detection');
+    const rejected = admitSourceJob(accepted.state, 'claude.sessions', true, 11, 'manual');
     expect(accepted.state.queueDepth).toBe(1);
     expect(rejected.decision).toBeUndefined();
     expect(rejected.state).toBe(accepted.state);
@@ -99,7 +100,7 @@ describe('source control state transitions', () => {
     expect(stale.state.queueDepth).toBe(0);
 
     const reEnabled = setSourcePolicyTransition(stale.state, 'claude.sessions', true, 14).state;
-    const queued = admitSourceJob(reEnabled, 'claude.sessions', true, 15);
+    const queued = admitSourceJob(reEnabled, 'claude.sessions', true, 15, 'manual');
     const started = startSourceJobTransition(queued.state, queued.decision!, 16);
     const finished = finishSourceJobTransition(
       started.state,
@@ -116,7 +117,7 @@ describe('source control state transitions', () => {
 
   test('preserves disable-after-pick and re-enables unavailable sources with an availability reason', () => {
     const initial = detectedState('claude.sessions');
-    const queued = admitSourceJob(initial, 'claude.sessions', true, 10);
+    const queued = admitSourceJob(initial, 'claude.sessions', true, 10, 'detection');
     const started = startSourceJobTransition(queued.state, queued.decision!, 11);
     const disabled = setSourcePolicyTransition(started.state, 'claude.sessions', false, 12);
     expect(disabled.state.sources['claude.sessions'].lifecycle).toBe('pausing');
@@ -149,7 +150,7 @@ describe('source control state transitions', () => {
 
   test.each(completionCases)('classifies %s source completion', (_label, completion, outcome, reason) => {
     const initial = detectedState('claude.sessions');
-    const queued = admitSourceJob(initial, 'claude.sessions', true, 10);
+    const queued = admitSourceJob(initial, 'claude.sessions', true, 10, 'detection');
     const started = startSourceJobTransition(queued.state, queued.decision!, 11);
     const finished = finishSourceJobTransition(
       started.state,
@@ -165,7 +166,7 @@ describe('source control state transitions', () => {
 
   test('releases producer dirty data only after the captured RTK dependency completes', () => {
     let state = detectedState('claude.sessions', 'rtk.savings');
-    const producer = admitSourceJob(state, 'claude.sessions', true, 10);
+    const producer = admitSourceJob(state, 'claude.sessions', true, 10, 'detection');
     const producerStart = startSourceJobTransition(producer.state, producer.decision!, 11);
     const producerFinish = finishSourceJobTransition(
       producerStart.state,
@@ -180,7 +181,7 @@ describe('source control state transitions', () => {
     expect(state.rtkRequiredGeneration).toBe(1);
     expect(producerFinish.decision.needsRtk).toBe(true);
 
-    const rtk = admitSourceJob(state, 'rtk.savings', true, 13);
+    const rtk = admitSourceJob(state, 'rtk.savings', true, 13, 'dependency');
     const rtkStart = startSourceJobTransition(rtk.state, rtk.decision!, 14);
     const rtkFinish = finishSourceJobTransition(
       rtkStart.state,

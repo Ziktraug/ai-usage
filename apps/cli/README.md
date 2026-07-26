@@ -2,7 +2,7 @@
 
 ## Owns
 
-The terminal command surface, argument parsing, terminal/CSV/JSON/payload rendering adapters, bounded portable snapshot files, the loopback-only setup command, and the quota command.
+The terminal command surface, argument parsing, terminal/CSV/JSON/payload rendering adapters, bounded portable snapshot files, the loopback-only setup command, the quota command, and its scoped file-only wide-event sink.
 
 ## Does Not Own
 
@@ -14,7 +14,7 @@ The public interface is the `ai-usage` binary, `bun run cli`, command-line optio
 
 ## Depends On
 
-`apps/cli` may depend on `@ai-usage/report-data`, `@ai-usage/report-core`, and `@ai-usage/local-collectors` through public package exports.
+`apps/cli` may depend on `@ai-usage/effect-runtime`, `@ai-usage/report-data`, `@ai-usage/report-core`, and `@ai-usage/local-collectors` through public package exports.
 
 ## Must Not Import
 

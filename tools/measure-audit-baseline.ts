@@ -12,6 +12,7 @@ import {
   MAX_SESSION_QUERY_RESULT_BYTES,
   REPORT_AUDIT_FIXTURE_SEED,
 } from '@ai-usage/report-core/report-budgets';
+import type { KnownLocalProjectSourcesRequest } from '@ai-usage/report-data';
 
 const MEASURED_REPETITIONS = 5;
 const WARMUP_REPETITIONS = 1;
@@ -193,7 +194,7 @@ const run = async () => {
     const dependencies = skillsServer.createSkillsServerDependencies();
     const adapter = skillsServer.createSkillsServerAdapter({
       ...dependencies,
-      readKnownProjectSources: ({ request }) =>
+      readKnownProjectSources: ({ request }: { request: KnownLocalProjectSourcesRequest }) =>
         knownProjectRunner.runKnownProjectSourcesRunner(request, {
           env: { ...process.env, AI_USAGE_PERF: '1' },
           onStderr: (chunk: string) => {

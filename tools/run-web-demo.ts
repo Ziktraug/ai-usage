@@ -9,10 +9,17 @@ export const DEMO_PORT = 4176;
 const rootDirectory = path.resolve(import.meta.dirname, '..');
 const webDirectory = path.join(rootDirectory, 'apps', 'web');
 
+export interface DemoEnvironment extends Record<string, string> {
+  TMPDIR: string;
+  XDG_CACHE_HOME: string;
+  XDG_CONFIG_HOME: string;
+  XDG_DATA_HOME: string;
+}
+
 export const createDemoEnvironment = (
   temporaryHome: string,
   executablePath: string = process.env.PATH ?? '',
-): Record<string, string> => ({
+): DemoEnvironment => ({
   AI_USAGE_ROOT_DIR: temporaryHome,
   BROWSER: 'none',
   HOME: temporaryHome,

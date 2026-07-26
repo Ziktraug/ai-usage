@@ -18,6 +18,22 @@ Codex quota history is owned by the `codex.usage-limits` source: app-server coll
 
 ## Package Ownership
 
+### `@ai-usage/effect-runtime`
+
+Owns domain-free Effect observability primitives:
+
+- schema-v2 wide-event model, required process resource layer, boundary runner,
+  hop measurement, stable classification, and sanitize-on-emit;
+- capture/no-op sinks plus Node-only severity/projector-aware console and
+  bounded NDJSON file sinks with typed delivery diagnostics;
+- cooperative interprocess locking, rotation, retention, and workspace log-dir
+  resolution under `logs/` or absolute `AI_USAGE_LOG_DIR`.
+
+Must not import other `@ai-usage/*` packages. Application adapters own boundary
+names, annotation allowlists, tagged-error policies, resource configuration,
+and semantic terminal projectors. Historical schema-v1 files remain valid
+append-only records with no resource field.
+
 ### `@ai-usage/report-core`
 
 Owns pure domain data and deterministic calculations:
@@ -67,6 +83,9 @@ Owns application-facing report orchestration:
 - usage snapshot and merge assembly.
 - one pure final report assembler shared by local, stored, merged, and fresh paths.
 - autonomous source adapters, source checkpoint composition, the pure source-control state machine, the bounded Effect scheduler, stored-only publication, provider-neutral latest-status projection, and bounded history queries.
+- wide-event boundaries for runnable `source.run` and `publication` jobs, with
+  quota single-flight hops (`quota.refresh` / `quota.refresh.wait`) when an outer
+  boundary is present.
 
 Apps use this package for application workflows. CLI quota collection plus its newest durable read is one report-data operation; the CLI does not reach into `usage-store` or raw quota collectors.
 
@@ -124,7 +143,9 @@ Owns terminal and file output adapters:
 - CLI argument parsing;
 - terminal table, CSV, JSON, and payload JSON rendering;
 - machine/setup/project-source commands;
-- bounded portable snapshot files and the quota command.
+- bounded portable snapshot files and the quota command;
+- one scoped file-only wide-event sink for `cli.quota` (no wide-event output on
+  stdout/stderr; the sink drains before explicit `process.exit`).
 
 The CLI calls `@ai-usage/report-data` for report data. It should not be called by the report app.
 
@@ -132,7 +153,13 @@ The CLI calls `@ai-usage/report-data` for report data. It should not be called b
 
 Owns web runtime and UI:
 
-- the official Nitro Bun preset and one scoped in-process source-control runtime;
+- the official Nitro Bun preset and one scoped in-process ManagedRuntime that
+  owns source-control layers plus one process-scoped schema-v2 resource and
+  wide-event sink (NDJSON file under `logs/` or `AI_USAGE_LOG_DIR`, plus
+  severity-aware pretty/JSON console output: info on stdout, warnings and
+  failures on stderr);
+- finite Effect adapters such as `web.sessions.read` run through that same
+  runtime;
 - direct source adapters and SQLite access, with no generic collection subprocess;
 - trusted-local source commands and a sanitized bounded SSE replacement stream;
 - immutable report revision manifests, read-only SQLite materializations, and exact-revision focused-result adapters;
@@ -187,12 +214,53 @@ invoke `gh` with a fixed argument vector, no shell, timeout, output cap, strict
 GitHub URL validation, and sanitized typed failures. Provider stderr and
 resolved URLs are never persisted or included in portable formats.
 
+## Wide-event observability
+
+Each real boundary emits one exhaustive, bounded schema-v2 record. Its
+`resource` identifies one process lifetime (`instanceId`), runtime mode,
+`ai-usage` version, and `web`/`cli` surface. Trace and span ids remain scoped to
+that boundary. Source-to-publication causality instead uses monotonic domain
+generations: a changed source records `publicationDataGeneration`, and a
+publication records `previousPublishedGeneration`, `dataTarget`, and
+`requestTarget`. The interval
+`previousPublishedGeneration < publicationDataGeneration <= dataTarget`
+identifies changes consumed by a coalesced publication without inventing a
+cross-boundary trace.
+
+NDJSON and JSON console output remain one object per physical line. Pretty TTY
+output is a separate application-owned projection: success routes to info,
+degraded/interrupted/timed-out to warn, and failure to error. `LOG_LEVEL`
+filters only the console; debug expands the complete bounded hop tree,
+annotations, and resource. Web file-delivery warnings use fixed rate-limited
+kinds and direct console writes, while CLI observability remains file-only.
+
+### Scheduler signal exposed by wide events
+
+Scheduler investigations should group `source.run` by bounded `sourceId` and
+`trigger`, then compare `queueDelayMs` with boundary and `source.execute`
+duration. Publication generation intervals show whether delayed source work was
+consumed by the expected publication. The 2026-07-22 audit observed queue delay
+on 147 records; 40 exceeded one second, the maximum was 5,054 ms, and
+`cursor.commit-attribution` had roughly 3,043 ms median queue delay for roughly
+7.8 ms median execution. These aggregate values intentionally omit event ids,
+revisions, fingerprints, paths, and payload data.
+
+That evidence warrants a separate scheduler performance plan, but it does not
+choose more workers, priority lanes, or queue partitioning. Plan 037 changes no
+worker count, admission rule, cadence, dependency, or publication ordering.
+
 ## Source control invariants
 
 - Stable sources are `claude.sessions`, `codex.sessions`, `opencode.sessions`, `cursor.sessions`, `codex.usage-limits`, `rtk.savings`, and `cursor.commit-attribution`.
 - Sparse `sourcePolicies` overrides are read only from the user-home config. Repository config cannot authorize background work or provider communication.
 - Policy, availability, lifecycle, last outcome, and progress are independent axes. Disabled does not mean unavailable, and failed does not mean disabled.
 - The queue is finite, one worker is the default, RTK waits for session producers, and publication has one runtime owner. Pure transitions in `source-control-state.ts` own admission, detection, policy, source completion, RTK, and publication generations; the Effect runtime only applies them atomically and interprets their decisions. Queue deduplication is separate from monotonic request/data demand, so a request arriving during publication produces a successor attempt.
+- Web cold start admits one stored-only bootstrap publication before initial
+  collection. Initial source jobs yield to the host event loop and remain
+  behind a web-owned gate until Nitro has constructed the first HTML response;
+  a 30-second fallback releases the gate when no browser request arrives, so
+  collection remains autonomous. Other source-control consumers retain
+  collection-before-publication startup ordering.
 - Every picked source owns an `AbortController`. Timeout and runtime shutdown reach the provider/child-process boundary and cancellation is checked before every durable phase; disabling after pick does not abort the run.
 - Runtime state is ephemeral. Normalized contributions, policy, source checkpoints, and semantic store generation are durable.
 - Disable, missing/unreadable input, unsupported platform, empty output, failure, redetection, and restart preserve prior contributions. There is no source delete command.

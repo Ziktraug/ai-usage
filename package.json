@@ -27,7 +27,7 @@
     "test:setup-loopback": "bun tools/check-setup-loopback.ts",
     "test:tools": "bun test tools",
     "test:web-production": "bun tools/check-web-production-start.ts",
-    "typecheck": "turbo run check",
+    "typecheck": "bun tools/check-typescript-coverage.ts && tsc -p tsconfig.tools.json --noEmit && turbo run check",
     "update": "bun update --interactive --recursive",
     "fix": "ultracite fix",
     "prepare": "lefthook install"
