@@ -27,7 +27,7 @@ const runtimeFixture = (dispose: () => Promise<void> = async () => undefined): W
 describe('web process runtime registry', () => {
   test('offers optional and strict lookup before the process runtime starts', () => {
     expect(tryGetWebProcessRuntime()).toBeUndefined();
-    expect(() => getWebProcessRuntime()).toThrow('The web process runtime has not started.');
+    expect(() => getWebProcessRuntime()).toThrow('The source-control runtime has not started.');
   });
 
   test('rejects a second direct install', () => {
@@ -36,7 +36,7 @@ describe('web process runtime registry', () => {
     try {
       expect(getWebProcessRuntime()).toBe(runtime);
       expect(() => installWebProcessRuntime(runtimeFixture())).toThrow(
-        'A web process runtime is already installed in this process.',
+        'A source-control runtime is already installed in this process.',
       );
     } finally {
       uninstall();
