@@ -11,8 +11,12 @@ afterEach(async () => {
   temporaryDirectories.clear();
 });
 
-const run = async (cwd: string, command: string[]): Promise<string> => {
-  const child = Bun.spawn(command, { cwd, env: process.env, stderr: 'pipe', stdout: 'pipe' });
+const run = async (
+  cwd: string,
+  command: string[],
+  environment: Record<string, string | undefined> = process.env,
+): Promise<string> => {
+  const child = Bun.spawn(command, { cwd, env: environment, stderr: 'pipe', stdout: 'pipe' });
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),
@@ -24,10 +28,27 @@ const run = async (cwd: string, command: string[]): Promise<string> => {
   return stdout;
 };
 
+const captureRepositoryGitState = async (): Promise<{
+  indexDiff: string;
+  status: string;
+  worktreeDiff: string;
+}> => {
+  const repositoryWorkingDirectory = repositoryRoot;
+  const [status, worktreeDiff, indexDiff] = await Promise.all([
+    run(repositoryWorkingDirectory, ['git', 'status', '--porcelain=v1', '-z']),
+    run(repositoryWorkingDirectory, ['git', 'diff', '--binary']),
+    run(repositoryWorkingDirectory, ['git', 'diff', '--cached', '--binary']),
+  ]);
+  return { indexDiff, status, worktreeDiff };
+};
+
 describe('staged-only pre-commit formatting', () => {
   test('formats the index while preserving unstaged and untracked bytes', async () => {
     const fixture = await mkdtemp(path.join(tmpdir(), 'ai-usage-lint-staged-'));
     temporaryDirectories.add(fixture);
+    const runtimeBinaryDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-lint-staged-bin-'));
+    temporaryDirectories.add(runtimeBinaryDirectory);
+    await symlink(process.execPath, path.join(runtimeBinaryDirectory, 'node'));
     await run(fixture, ['git', 'init', '--quiet']);
     await run(fixture, ['git', 'config', 'user.email', 'fixture@example.invalid']);
     await run(fixture, ['git', 'config', 'user.name', 'Fixture']);
@@ -51,13 +72,22 @@ describe('staged-only pre-commit formatting', () => {
     const untrackedBytes = await readFile(path.join(fixture, 'untracked.ts'));
 
     const lintStaged = path.join(repositoryRoot, 'node_modules/.bin/lint-staged');
-    await run(repositoryRoot, [
+    const repositoryBinaryDirectory = path.join(repositoryRoot, 'node_modules/.bin');
+    const childBinaryPath = `${repositoryBinaryDirectory}${path.delimiter}${runtimeBinaryDirectory}`;
+    const inheritedPath = process.env.PATH;
+    const lintStagedEnvironment = {
+      ...process.env,
+      PATH: inheritedPath ? `${childBinaryPath}${path.delimiter}${inheritedPath}` : childBinaryPath,
+    };
+    const lintStagedCommand = [
       lintStaged,
       '--config',
       path.join(repositoryRoot, '.lintstagedrc.json'),
       '--cwd',
       fixture,
-    ]);
+    ];
+    const repositoryGitState = await captureRepositoryGitState();
+    await run(fixture, lintStagedCommand, lintStagedEnvironment);
 
     const stagedBlob = await run(fixture, ['git', 'show', ':staged.ts']);
     const partialBlob = await run(fixture, ['git', 'show', ':partial.ts']);
@@ -67,14 +97,11 @@ describe('staged-only pre-commit formatting', () => {
     expect(await readFile(path.join(fixture, 'untracked.ts'))).toEqual(untrackedBytes);
     expect(await run(fixture, ['git', 'status', '--porcelain=v1'])).toContain('?? untracked.ts');
 
-    await run(fixture, ['git', 'add', '.']);
     await run(fixture, ['git', 'commit', '--quiet', '-m', 'formatted']);
-    await run(repositoryRoot, [
-      lintStaged,
-      '--config',
-      path.join(repositoryRoot, '.lintstagedrc.json'),
-      '--cwd',
-      fixture,
-    ]);
+    expect(await run(fixture, ['git', 'diff', '--cached', '--name-only'])).toBe('');
+    const fixtureStatus = await run(fixture, ['git', 'status', '--porcelain=v1', '-z']);
+    await run(fixture, lintStagedCommand, lintStagedEnvironment);
+    expect(await run(fixture, ['git', 'status', '--porcelain=v1', '-z'])).toBe(fixtureStatus);
+    expect(await captureRepositoryGitState()).toEqual(repositoryGitState);
   });
 });
