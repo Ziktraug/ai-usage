@@ -29,7 +29,7 @@ import {
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import { createQuery } from '@tanstack/solid-query';
 import { ClientOnly, createFileRoute, Link, useLocation } from '@tanstack/solid-router';
-import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { isServer } from 'solid-js/web';
 import { dashboardSearchDefaultsFor } from '../dashboard-search';
 import { ThemeToggle } from '../dashboard-theme';
@@ -54,10 +54,25 @@ export const Route = createFileRoute('/skills')({
 });
 
 const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
+const SUCCESS_NOTICE_DURATION_MS = 5000;
 
 const stack = css({
   display: 'grid',
   gap: '12px',
+});
+
+const operationBanner = css({
+  position: 'fixed',
+  zIndex: 50,
+  bottom: { base: '80px', lg: '16px' },
+  right: { base: '12px', sm: '16px' },
+  w: { base: 'calc(100vw - 24px)', sm: 'auto' },
+  maxW: '420px',
+  boxShadow: 'overlay',
+});
+
+const passiveOperationBanner = css({
+  pointerEvents: 'none',
 });
 
 const foldBody = css({
@@ -857,17 +872,46 @@ function ErrorPanel(props: { message: string; onRetry?: () => void }) {
 }
 
 function OperationBanner(props: { notice: OperationNotice | null; onDismiss: () => void }) {
+  let dismissTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const clearDismissTimer = (): void => {
+    if (dismissTimer === undefined) {
+      return;
+    }
+    clearTimeout(dismissTimer);
+    dismissTimer = undefined;
+  };
+
+  createEffect(() => {
+    clearDismissTimer();
+    const notice = props.notice;
+    if (notice?.tone !== 'ok') {
+      return;
+    }
+    dismissTimer = setTimeout(() => {
+      dismissTimer = undefined;
+      props.onDismiss();
+    }, SUCCESS_NOTICE_DURATION_MS);
+  });
+  onCleanup(clearDismissTimer);
+
   return (
     <Show when={props.notice}>
       {(notice) => (
         <div
-          class={cx(banner, notice().tone === 'error' ? bannerError : bannerOk)}
+          class={cx(
+            banner,
+            operationBanner,
+            notice().tone === 'error' ? bannerError : cx(bannerOk, passiveOperationBanner),
+          )}
           role={notice().tone === 'error' ? 'alert' : 'status'}
         >
           <span>{notice().message}</span>
-          <button class={ghostButton} onClick={props.onDismiss} type="button">
-            Dismiss
-          </button>
+          <Show when={notice().tone === 'error'}>
+            <button class={ghostButton} onClick={props.onDismiss} type="button">
+              Dismiss
+            </button>
+          </Show>
         </div>
       )}
     </Show>

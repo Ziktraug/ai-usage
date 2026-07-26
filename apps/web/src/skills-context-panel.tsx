@@ -12,12 +12,11 @@ import {
   skillsReconcilePlanList,
   statusPill,
   statusPillDanger,
-  statusPillInfo,
   statusPillOk,
   statusPillWarn,
   strongCell,
 } from '@ai-usage/design-system/report';
-import type { SkillDiagnosticSeverity, SkillManagementSnapshot, SkillValidationStatus } from '@ai-usage/skills';
+import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import { useNavigate } from '@tanstack/solid-router';
 import { createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { deriveInstallationAction, groupSkillDiagnostics } from './skill-document-inspector-model';
@@ -150,10 +149,28 @@ const runtimePaths = css({
 });
 
 const diagnosticHeading = css({
+  display: 'grid',
+  gridTemplateColumns: 'auto minmax(0, 1fr)',
+  gap: '6px',
+  alignItems: 'baseline',
+});
+
+const diagnosticIdentity = css({
   display: 'flex',
+  minW: 0,
   flexWrap: 'wrap',
   gap: '6px',
-  alignItems: 'center',
+  alignItems: 'baseline',
+});
+
+const diagnosticCode = css({
+  display: 'block',
+  minW: 0,
+  maxW: '100%',
+  flex: '1 1 120px',
+  overflowWrap: 'anywhere',
+  whiteSpace: 'normal',
+  wordBreak: 'break-word',
 });
 
 export const SkillsContextPanel = (props: {
@@ -397,18 +414,6 @@ const ScopeActions = (props: {
 
 type GlobalSkillExposure = ReturnType<typeof buildGlobalSkillExposure>[number];
 
-const validationTones = {
-  invalid: statusPillDanger,
-  valid: statusPillOk,
-  warning: statusPillWarn,
-} satisfies Record<SkillValidationStatus, string>;
-
-const diagnosticTones = {
-  error: statusPillDanger,
-  info: statusPillInfo,
-  warning: statusPillWarn,
-} satisfies Record<SkillDiagnosticSeverity, string>;
-
 const exposureTones = {
   'broken-link': statusPillDanger,
   'disabled-exposed': statusPillDanger,
@@ -454,21 +459,22 @@ const GlobalSkillInspector = (props: {
         <summary class={inspectorSummary}>
           <h3 class={inspectorHeading}>Validation</h3>
         </summary>
-        <div>
-          <span class={cx(statusPill, validationTones[props.skill.validationStatus])}>
-            {props.skill.validationStatus}
-          </span>
-        </div>
         <Show fallback={<p class={meta}>No validation diagnostics.</p>} when={diagnostics().length > 0}>
           <For each={diagnostics()}>
-            {(diagnostic) => (
-              <div class={skillsDiagnosticRow}>
+            {(diagnostic, index) => (
+              <div
+                class={skillsDiagnosticRow}
+                data-severity={diagnostic.severity}
+                data-validation-finding={index() + 1}
+              >
                 <div class={diagnosticHeading}>
-                  <span class={cx(statusPill, diagnosticTones[diagnostic.severity])}>{diagnostic.severity}</span>
-                  <span class={strongCell}>{diagnostic.code}</span>
-                  <Show when={diagnostic.count > 1}>
-                    <span class={meta}>{diagnostic.count} occurrences</span>
-                  </Show>
+                  <span class={meta}>Finding {index() + 1}</span>
+                  <div class={diagnosticIdentity}>
+                    <code class={cx(strongCell, diagnosticCode)}>{diagnostic.code}</code>
+                    <Show when={diagnostic.count > 1}>
+                      <span class={meta}>{diagnostic.count} occurrences</span>
+                    </Show>
+                  </div>
                 </div>
                 <p class={meta}>{diagnostic.message}</p>
                 <Show when={diagnostic.paths.length > 0}>

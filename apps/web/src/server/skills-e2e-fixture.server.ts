@@ -56,7 +56,26 @@ const projection = (skillName: string, targetId: string, state: Projection['stat
   targetId,
 });
 
-const skills = [skill('alpha-skill'), skill('beta-skill')];
+const betaSkill: SourceSkill = {
+  ...skill('beta-skill'),
+  diagnostics: [
+    {
+      code: 'SkillMarkdownTokenWarning',
+      message: 'SKILL.md is approaching the recommended token limit.',
+      severity: 'warning',
+      skillName: 'beta-skill',
+    },
+    {
+      code: 'SkillReferenceTokenWarning',
+      message: 'Reference files are approaching the recommended token limit.',
+      severity: 'warning',
+      skillName: 'beta-skill',
+    },
+  ],
+  validationStatus: 'warning',
+};
+
+const skills = [skill('alpha-skill'), betaSkill];
 const targets = [target('claude', 'Claude Code'), target('codex', 'Codex', true)];
 const projections = [
   projection('alpha-skill', 'claude', 'linked'),
@@ -83,7 +102,7 @@ const snapshot: SkillManagementSnapshot = {
   },
   summary: {
     activeSkillCount: 2,
-    diagnosticCount: 0,
+    diagnosticCount: 2,
     healthyProjectionCount: 3,
     skillCount: 2,
     targetCount: 2,
@@ -137,7 +156,14 @@ export const readE2ERefreshedSkillManagementSnapshot = (): SkillsServerResult<Sk
 };
 
 export const readE2EKnownSkillProjectPaths = (): SkillsServerResult<readonly KnownSkillProjectPath[]> => ({
-  data: [],
+  data: [
+    {
+      label: 'customer-analytics-platform-with-an-exceptionally-long-scope-name',
+      path: '/fixture/projects/customer-analytics-platform-with-an-exceptionally-long-scope-name',
+      project: 'customer-analytics-platform',
+      sessions: 1,
+    },
+  ],
   ok: true,
 });
 

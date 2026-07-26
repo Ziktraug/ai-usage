@@ -107,7 +107,16 @@ const scopeLabel = css({
   whiteSpace: 'nowrap',
 });
 
+const scopeName = css({
+  display: 'block',
+  minW: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+});
+
 const scopePath = css({
+  minW: 0,
   color: 'muted',
   fontSize: '12px',
   overflow: 'hidden',
@@ -233,7 +242,9 @@ export const SkillsTree = (props: {
                           title={scope.path}
                         >
                           <span class={scopeLabel}>
-                            <span class={strongCell}>{scope.label}</span>
+                            <span class={cx(strongCell, scopeName)} data-skill-scope-name title={scope.label}>
+                              {scope.label}
+                            </span>
                             <Show when={scope.shortPath}>
                               {(shortPath) => <span class={scopePath}>{shortPath()}</span>}
                             </Show>
@@ -285,7 +296,9 @@ export const SkillsTree = (props: {
                     title={scope.path}
                   >
                     <span class={scopeLabel}>
-                      <span class={strongCell}>{scope.label}</span>
+                      <span class={cx(strongCell, scopeName)} data-skill-scope-name title={scope.label}>
+                        {scope.label}
+                      </span>
                       <Show when={scope.shortPath}>{(shortPath) => <span class={scopePath}>{shortPath()}</span>}</Show>
                     </span>
                     <span class={subtleCount}>0</span>
