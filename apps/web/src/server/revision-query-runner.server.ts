@@ -52,7 +52,7 @@ import { parseReportRevision, type ReportRevision } from '../web-report-payload'
 import { runBoundedArtifactProcess } from './bounded-artifact-process.server';
 import { withReportRevisionQueryLeaseForServer } from './report-payload.server';
 import { resolveReportRuntimePaths } from './report-runtime-paths.server';
-import { getWebSourceControlRuntime } from './source-control.server';
+import { getWebProcessRuntime } from './web-process-runtime.server';
 
 export type RevisionQueryKind =
   | FocusedReportQueryKind
@@ -202,7 +202,7 @@ const runSessionQueryBoundary = (
   executeRequest: RevisionQueryExecutionRequest,
   dependencies: RevisionQueryRunnerDependencies,
 ): Promise<SessionQueryServerResult<SessionPageResult>> =>
-  getWebSourceControlRuntime().runEffect(
+  getWebProcessRuntime().effects.runEffect(
     runBoundaryEffect(
       {
         boundary: 'web.sessions.read',

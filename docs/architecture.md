@@ -153,13 +153,13 @@ The CLI calls `@ai-usage/report-data` for report data. It should not be called b
 
 Owns web runtime and UI:
 
-- the official Nitro Bun preset and one scoped in-process ManagedRuntime that
-  owns source-control layers plus one process-scoped schema-v2 resource and
-  wide-event sink (NDJSON file under `logs/` or `AI_USAGE_LOG_DIR`, plus
-  severity-aware pretty/JSON console output: info on stdout, warnings and
-  failures on stderr);
-- finite Effect adapters such as `web.sessions.read` run through that same
-  runtime;
+- the official Nitro Bun preset and one process-scoped ManagedRuntime that owns
+  the source-control service, the schema-v2 resource, and the wide-event sink
+  (NDJSON file under `logs/` or `AI_USAGE_LOG_DIR`, plus severity-aware
+  pretty/JSON console output: info on stdout, warnings and failures on stderr);
+- web runtime adapters consume either its narrow source-control port or its
+  effect executor, so finite Effect boundaries such as `web.sessions.read` run
+  through that same runtime;
 - direct source adapters and SQLite access, with no generic collection subprocess;
 - trusted-local source commands and a sanitized bounded SSE replacement stream;
 - immutable report revision manifests, read-only SQLite materializations, and exact-revision focused-result adapters;

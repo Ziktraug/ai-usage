@@ -6,9 +6,13 @@ import {
   sessionDetailRequestFingerprint,
 } from '@ai-usage/report-core/session-detail';
 import { type SessionQueryRequest, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
-import { Effect } from 'effect';
+import { ManagedRuntime } from 'effect';
 import { type RevisionQueryRunnerDependencies, runRevisionQueryForServer } from './revision-query-runner.server';
-import { createWebSourceControlRuntime, installWebSourceControlRuntime } from './source-control.server';
+import {
+  installWebProcessRuntime,
+  type WebProcessRuntime,
+  type WebSourceControlPort,
+} from './web-process-runtime.server';
 
 const request: SessionDetailRequest = { revision: 'revision-a', rowId: 'row-a' };
 const fingerprint = sessionDetailRequestFingerprint(request);
@@ -59,6 +63,48 @@ const emptySessionPage = {
   requestFingerprint: sessionFingerprint,
   revision: sessionRequest.revision,
   sessionCount: 0,
+};
+
+const failSourceControlOperation = (): Promise<never> =>
+  Promise.reject(new Error('Unexpected source-control operation.'));
+
+const failSourceControlSubscription = (): never => {
+  throw new Error('Unexpected source-control subscription.');
+};
+
+const failingSourceControlPort: WebSourceControlPort = {
+  detectAll: failSourceControlOperation,
+  getSnapshot: failSourceControlOperation,
+  requestPublication: failSourceControlOperation,
+  runAllEnabled: failSourceControlOperation,
+  runNow: failSourceControlOperation,
+  setEnabled: failSourceControlOperation,
+  start: failSourceControlOperation,
+  subscribe: failSourceControlSubscription,
+};
+
+const makeWebEventRuntimeFixture = () => {
+  const sink = makeCaptureWideEventSink();
+  const managedRuntime = ManagedRuntime.make(makeTestWideEventSinkLayer(sink));
+  let disposal: Promise<void> | undefined;
+  const runtime: WebProcessRuntime = {
+    dispose: () => {
+      disposal ??= managedRuntime.dispose();
+      return disposal;
+    },
+    effects: {
+      runEffect: (effect) => managedRuntime.runPromise(effect),
+    },
+    sourceControl: failingSourceControlPort,
+  };
+  const uninstall = installWebProcessRuntime(runtime);
+  return {
+    dispose: async () => {
+      uninstall();
+      await runtime.dispose();
+    },
+    sink,
+  };
 };
 
 describe('revision query runner server session detail anchor', () => {
@@ -132,14 +178,7 @@ describe('revision query runner server session detail anchor', () => {
   });
 
   test('logs an expired sessions revision as a failed business boundary', async () => {
-    const sink = makeCaptureWideEventSink();
-    const runtime = createWebSourceControlRuntime({
-      policyStore: { load: Effect.succeed({}), setEnabled: () => Effect.void },
-      publication: { publish: Effect.succeed({ changed: false }) },
-      sources: new Map(),
-      wideEventSinkLayer: makeTestWideEventSinkLayer(sink),
-    });
-    const uninstall = installWebSourceControlRuntime(runtime);
+    const fixture = makeWebEventRuntimeFixture();
 
     try {
       const result = await runRevisionQueryForServer('sessions', sessionRequest, {
@@ -147,25 +186,17 @@ describe('revision query runner server session detail anchor', () => {
       });
 
       expect(result.ok).toBe(false);
-      const sessionEvents = sink.events().filter(({ boundary }) => boundary === 'web.sessions.read');
+      const sessionEvents = fixture.sink.events().filter(({ boundary }) => boundary === 'web.sessions.read');
       expect(sessionEvents).toHaveLength(1);
       expect(sessionEvents[0]?.outcome).toBe('failure');
       expect(sessionEvents[0]?.annotations.failureKind).toBe('revision-expired');
     } finally {
-      uninstall();
-      await runtime.dispose();
+      await fixture.dispose();
     }
   });
 
   test('keeps sessions parsing inside the boundary so the protocol result and event agree', async () => {
-    const sink = makeCaptureWideEventSink();
-    const runtime = createWebSourceControlRuntime({
-      policyStore: { load: Effect.succeed({}), setEnabled: () => Effect.void },
-      publication: { publish: Effect.succeed({ changed: false }) },
-      sources: new Map(),
-      wideEventSinkLayer: makeTestWideEventSinkLayer(sink),
-    });
-    const uninstall = installWebSourceControlRuntime(runtime);
+    const fixture = makeWebEventRuntimeFixture();
 
     try {
       const result = await runRevisionQueryForServer('sessions', sessionRequest, {
@@ -178,26 +209,18 @@ describe('revision query runner server session detail anchor', () => {
         requestFingerprint: sessionFingerprint,
         revision: sessionRequest.revision,
       });
-      const sessionEvents = sink.events().filter(({ boundary }) => boundary === 'web.sessions.read');
+      const sessionEvents = fixture.sink.events().filter(({ boundary }) => boundary === 'web.sessions.read');
       expect(sessionEvents).toHaveLength(1);
       expect(sessionEvents[0]?.outcome).toBe('failure');
       expect(sessionEvents[0]?.annotations.failureKind).toBe('query-failed');
       expect(sessionEvents[0]?.services.map(({ name }) => name)).toEqual(['revision.execute', 'revision.parse']);
     } finally {
-      uninstall();
-      await runtime.dispose();
+      await fixture.dispose();
     }
   });
 
   test('records sessions execution phases and bounded result summaries on success', async () => {
-    const sink = makeCaptureWideEventSink();
-    const runtime = createWebSourceControlRuntime({
-      policyStore: { load: Effect.succeed({}), setEnabled: () => Effect.void },
-      publication: { publish: Effect.succeed({ changed: false }) },
-      sources: new Map(),
-      wideEventSinkLayer: makeTestWideEventSinkLayer(sink),
-    });
-    const uninstall = installWebSourceControlRuntime(runtime);
+    const fixture = makeWebEventRuntimeFixture();
 
     try {
       const result = await runRevisionQueryForServer('sessions', sessionRequest, {
@@ -215,7 +238,7 @@ describe('revision query runner server session detail anchor', () => {
         requestFingerprint: sessionFingerprint,
         revision: sessionRequest.revision,
       });
-      const event = sink.events().find(({ boundary }) => boundary === 'web.sessions.read');
+      const event = fixture.sink.events().find(({ boundary }) => boundary === 'web.sessions.read');
       expect(event?.outcome).toBe('success');
       expect(event?.annotations).toMatchObject({
         hasCursor: false,
@@ -228,8 +251,7 @@ describe('revision query runner server session detail anchor', () => {
       expect(event?.services.map(({ name }) => name)).toEqual(['revision.execute', 'revision.parse']);
       expect(event?.services[0]?.annotations).toEqual({ boundedRunnerMs: 12, leaseWaitMs: 3 });
     } finally {
-      uninstall();
-      await runtime.dispose();
+      await fixture.dispose();
     }
   });
 
@@ -244,25 +266,17 @@ describe('revision query runner server session detail anchor', () => {
     ];
 
     for (const dependencies of executions) {
-      const sink = makeCaptureWideEventSink();
-      const runtime = createWebSourceControlRuntime({
-        policyStore: { load: Effect.succeed({}), setEnabled: () => Effect.void },
-        publication: { publish: Effect.succeed({ changed: false }) },
-        sources: new Map(),
-        wideEventSinkLayer: makeTestWideEventSinkLayer(sink),
-      });
-      const uninstall = installWebSourceControlRuntime(runtime);
+      const fixture = makeWebEventRuntimeFixture();
       try {
         const result = await runRevisionQueryForServer('sessions', sessionRequest, dependencies);
         expect(result.ok).toBe(false);
         expect(result.ok ? undefined : result.error.tag).toBe('QueryFailed');
-        const events = sink.events().filter(({ boundary }) => boundary === 'web.sessions.read');
+        const events = fixture.sink.events().filter(({ boundary }) => boundary === 'web.sessions.read');
         expect(events).toHaveLength(1);
         expect(events[0]?.outcome).toBe('failure');
         expect(events[0]?.annotations.failureKind).toBe('query-failed');
       } finally {
-        uninstall();
-        await runtime.dispose();
+        await fixture.dispose();
       }
     }
   });

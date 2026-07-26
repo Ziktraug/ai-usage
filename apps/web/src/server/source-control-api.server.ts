@@ -8,7 +8,7 @@ import {
 } from '@ai-usage/report-core/source-control';
 import { Cause, Option, Runtime } from 'effect';
 import { validateTrustedLocalRequest } from './local-request-trust.server';
-import { getWebSourceControlRuntime, type WebSourceControlRuntime } from './source-control.server';
+import { getWebProcessRuntime, type WebSourceControlPort } from './web-process-runtime.server';
 
 // Bun's default HTTP idle timeout is ten seconds. Keep the stream active
 // without requiring deployment-specific server tuning.
@@ -35,17 +35,12 @@ export interface SourceControlCommandFailure {
 
 export type SourceControlCommandResult = SourceControlCommandFailure | SourceControlCommandSuccess;
 
-export interface SourceControlStreamRuntime {
-  readonly getSnapshot: () => Promise<SourceControlView>;
-  readonly subscribe: (listener: (snapshot: SourceControlView) => void) => () => void;
-}
-
 export interface SourceControlEventStreamOptions {
   readonly heartbeatMs?: number;
   readonly maximumSnapshotBytes?: number;
   readonly onCleanup?: () => void;
   readonly retryMs?: number;
-  readonly runtime?: SourceControlStreamRuntime;
+  readonly runtime?: WebSourceControlPort;
   readonly scheduleHeartbeat?: (heartbeat: () => void, intervalMs: number) => () => void;
 }
 
@@ -104,7 +99,7 @@ const commandFailure = (error: unknown): SourceControlCommandFailure => {
 
 export const applySourceControlCommandForServer = async (
   command: SourceControlCommand,
-  runtime: WebSourceControlRuntime = getWebSourceControlRuntime(),
+  runtime: WebSourceControlPort = getWebProcessRuntime().sourceControl,
 ): Promise<SourceControlCommandResult> => {
   try {
     let accepted: boolean | number = true;
@@ -128,7 +123,7 @@ export const applySourceControlCommandForServer = async (
 };
 
 export const getSourceControlSnapshotForServer = (
-  runtime: WebSourceControlRuntime = getWebSourceControlRuntime(),
+  runtime: WebSourceControlPort = getWebProcessRuntime().sourceControl,
 ): Promise<SourceControlView> => runtime.getSnapshot();
 
 const commandRequestFailure = (status: number, reason: string, message: string): Response =>
@@ -189,7 +184,7 @@ const readCommandBody = async (request: Request): Promise<string | Response> => 
 
 export const handleSourceControlCommandRequest = async (
   request: Request,
-  runtime?: WebSourceControlRuntime,
+  runtime?: WebSourceControlPort,
 ): Promise<Response> => {
   const trustFailure = validateTrustedLocalRequest(request);
   if (trustFailure) {
@@ -205,7 +200,7 @@ export const handleSourceControlCommandRequest = async (
   } catch {
     return commandRequestFailure(400, 'invalid-command', 'Source control command is invalid.');
   }
-  const result = await applySourceControlCommandForServer(command, runtime ?? getWebSourceControlRuntime());
+  const result = await applySourceControlCommandForServer(command, runtime ?? getWebProcessRuntime().sourceControl);
   if (result.ok) {
     return Response.json(result);
   }
@@ -245,7 +240,7 @@ export const createSourceControlEventStream = (
   // intermediaries, but must not be the correctness boundary under CI load.
   disableRequestIdleTimeout(request);
 
-  const runtime = options.runtime ?? getWebSourceControlRuntime();
+  const runtime = options.runtime ?? getWebProcessRuntime().sourceControl;
   const heartbeatMs = options.heartbeatMs ?? SSE_HEARTBEAT_MS;
   const maximumSnapshotBytes = options.maximumSnapshotBytes ?? sourceControlBounds.maxSnapshotBytes;
   const retryMs = options.retryMs ?? SSE_RETRY_MS;

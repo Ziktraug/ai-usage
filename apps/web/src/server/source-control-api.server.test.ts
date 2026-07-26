@@ -1,12 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { CollectionSourceId, SourceControlView } from '@ai-usage/report-core/source-control';
-import type { WebSourceControlRuntime } from './source-control.server';
 import {
   applySourceControlCommandForServer,
   createSourceControlEventStream,
   handleSourceControlCommandRequest,
-  type SourceControlStreamRuntime,
 } from './source-control-api.server';
+import type { WebSourceControlPort } from './web-process-runtime.server';
 
 const trustedRequest = (signal?: AbortSignal, headers: Record<string, string> = {}): Request =>
   new Request('http://localhost:3000/api/source-control', {
@@ -66,6 +65,9 @@ const snapshot = (generation: number, instanceId = 'instance-a'): SourceControlV
   ],
 });
 
+const unexpectedRuntimeOperation = (): Promise<never> =>
+  Promise.reject(new Error('Unexpected source-control runtime operation.'));
+
 const streamRuntime = (initial = snapshot(0)) => {
   let current = initial;
   const listeners = new Set<(value: SourceControlView) => void>();
@@ -78,7 +80,13 @@ const streamRuntime = (initial = snapshot(0)) => {
       }
     },
     runtime: {
+      detectAll: unexpectedRuntimeOperation,
       getSnapshot: async () => current,
+      requestPublication: unexpectedRuntimeOperation,
+      runAllEnabled: unexpectedRuntimeOperation,
+      runNow: unexpectedRuntimeOperation,
+      setEnabled: unexpectedRuntimeOperation,
+      start: unexpectedRuntimeOperation,
       subscribe: (listener) => {
         listeners.add(listener);
         return () => {
@@ -87,7 +95,7 @@ const streamRuntime = (initial = snapshot(0)) => {
           }
         };
       },
-    } satisfies SourceControlStreamRuntime,
+    } satisfies WebSourceControlPort,
     unsubscribeCount: () => unsubscribeCount,
   };
 };
@@ -120,7 +128,7 @@ const readSnapshotEvent = async (
 };
 
 const commandRuntime = (): {
-  runtime: WebSourceControlRuntime;
+  runtime: WebSourceControlPort;
   state: () => SourceControlView;
 } => {
   let current = snapshot(0);
@@ -134,14 +142,12 @@ const commandRuntime = (): {
   return {
     runtime: {
       detectAll: async () => update(),
-      dispose: async () => undefined,
       getSnapshot: async () => current,
       requestPublication: async () => true,
       runAllEnabled: () => {
         update();
         return Promise.resolve(1);
       },
-      runEffect: () => Promise.reject(new Error('Unexpected runEffect call.')),
       runNow: (_sourceId: CollectionSourceId) => {
         update();
         return Promise.resolve(true);
