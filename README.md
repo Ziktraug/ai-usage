@@ -55,11 +55,15 @@ Filter by harness:
 bun run cli -- --harness codex
 ```
 
-Show Codex subscription quota (5h / 7d windows) from the newest local rate-limit snapshot:
+Request a fresh Codex subscription quota observation (5h / 7d windows) through the installed `codex app-server`, then render the newest durable local observation:
 
 ```sh
 bun run cli -- quota
 ```
+
+`ai-usage` does not read Codex credentials. The app-server owns provider communication and authentication refresh; after the refresh attempt, `ai-usage` reads the newest durable usage-limit observation.
+
+If refresh fails and a durable observation exists, the command renders that observation successfully while the `cli.quota` diagnostic boundary is degraded. Without a durable observation, it still exits successfully with `No stored Codex usage-limit observation is available.` while diagnostics record the failed refresh. A source paused by user policy is distinct from provider unavailability: the command exits 1 with `Codex usage-limit collection is paused; re-enable codex.usage-limits first.`
 
 The served app runs a Bun-owned control plane even when no browser is open. Its seven independent collection sources are Claude, Codex, OpenCode, and Cursor sessions; Codex usage limits; RTK savings; and Cursor commit attribution. Each source has separate policy, detection, lifecycle, outcome, and cadence state on `/sources`. Sparse policy overrides live only in `~/.config/ai-usage/config.json`; repository config cannot enable background work.
 

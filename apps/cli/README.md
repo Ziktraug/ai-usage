@@ -22,7 +22,7 @@ It must not import `apps/web`, private package `src` paths, relative workspace p
 
 ## Data Boundary
 
-The CLI consumes report payloads, normalized rows, snapshots, and command results from package APIs, then renders terminal/file output. Snapshot inputs are explicit bounded regular files. The setup listener is numeric-loopback-only. The CLI should not become a shared data source for other apps.
+The CLI consumes report payloads, normalized rows, snapshots, and command results from package APIs, then renders terminal/file output. Snapshot inputs are explicit bounded regular files. The setup listener is numeric-loopback-only. The `quota` command invokes report-data's one-shot provider-quota workflow, which may use the installed `codex app-server`, and renders its durable result; the CLI owns neither Codex credentials nor provider transport. The CLI should not become a shared data source for other apps.
 
 ## Test Strategy
 
