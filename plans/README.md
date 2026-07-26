@@ -58,7 +58,7 @@ request unless the user explicitly asks.
 | 032 | Simplify Frontend Ownership and Document Decisions | P1 | L | 031 | DONE |
 | 036 | Wide-event Logging for Effect Program Executions | P1 | L | 022-024 | DONE |
 | 037 | Make Wide Events Truthful, Actionable, and Readable | P1 | L | 036 | DONE |
-| 038 | Make the staged-only pre-commit regression hermetic | P1 | S | - | TODO |
+| 038 | Make the staged-only pre-commit regression hermetic | P1 | S | - | DONE |
 | 039 | Return post-reconcile Skills state | P1 | S | - | TODO |
 | 040 | Make peer confirmation an atomic usage-store capability | P1 | L | - | TODO |
 | 041 | Validate stable SQLite history identity | P1 | M | - | TODO |
@@ -222,10 +222,9 @@ REJECTED (with one-line rationale).
   one event per boundary, one-line NDJSON, private file/lock guarantees, and the
   existing worker pool. ADR 0008 supersedes only the affected presentation,
   provenance, public-message, and web-diagnostics clauses from plan 036.
-- Plan 038 reopens the staged-only guarantee from completed plan 020 at the
-  regression-harness seam. Run it first because the current tooling test is
-  unsafe to use as a general verification gate until its child process is
-  isolated from the real worktree.
+- Plan 038 completes the staged-only guarantee from plan 020 at the hermetic
+  regression-harness seam. The targeted test, `test:tools`, `check`,
+  `typecheck`, diff check, and scope audit were rerun successfully.
 - Plan 039 is independent and corrects only the post-mutation result returned by
   Skills workflows. Preview semantics and projection mutation safety remain
   unchanged.
