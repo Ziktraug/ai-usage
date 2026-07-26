@@ -11,38 +11,64 @@ afterEach(async () => {
   temporaryDirectories.clear();
 });
 
-const run = async (
+const runBytes = async (
   cwd: string,
   command: string[],
   environment: Record<string, string | undefined> = process.env,
-): Promise<string> => {
+): Promise<Uint8Array> => {
   const child = Bun.spawn(command, { cwd, env: environment, stderr: 'pipe', stdout: 'pipe' });
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,
-    new Response(child.stdout).text(),
+    new Response(child.stdout).arrayBuffer(),
     new Response(child.stderr).text(),
   ]);
   if (exitCode !== 0) {
     throw new Error(`${command.join(' ')} failed (${exitCode}): ${stderr}`);
   }
-  return stdout;
+  return new Uint8Array(stdout);
 };
 
-const captureRepositoryGitState = async (): Promise<{
-  indexDiff: string;
-  status: string;
-  worktreeDiff: string;
+const run = async (
+  cwd: string,
+  command: string[],
+  environment: Record<string, string | undefined> = process.env,
+): Promise<string> => new TextDecoder().decode(await runBytes(cwd, command, environment));
+
+const captureGitState = async (
+  repositoryWorkingDirectory: string = repositoryRoot,
+): Promise<{
+  indexDiff: Uint8Array;
+  status: Uint8Array;
+  worktreeDiff: Uint8Array;
 }> => {
-  const repositoryWorkingDirectory = repositoryRoot;
   const [status, worktreeDiff, indexDiff] = await Promise.all([
-    run(repositoryWorkingDirectory, ['git', 'status', '--porcelain=v1', '-z']),
-    run(repositoryWorkingDirectory, ['git', 'diff', '--binary']),
-    run(repositoryWorkingDirectory, ['git', 'diff', '--cached', '--binary']),
+    runBytes(repositoryWorkingDirectory, ['git', 'status', '--porcelain=v1', '-z']),
+    runBytes(repositoryWorkingDirectory, ['git', 'diff', '--binary']),
+    runBytes(repositoryWorkingDirectory, ['git', 'diff', '--cached', '--binary']),
   ]);
   return { indexDiff, status, worktreeDiff };
 };
 
 describe('staged-only pre-commit formatting', () => {
+  test('distinguishes non-UTF-8 repository status bytes', async () => {
+    const fixture = await mkdtemp(path.join(tmpdir(), 'ai-usage-git-state-'));
+    temporaryDirectories.add(fixture);
+    await run(fixture, ['git', 'init', '--quiet']);
+
+    const makeNonUtf8Path = (filenameByte: number): Buffer =>
+      Buffer.concat([Buffer.from(`${fixture}${path.sep}`), Buffer.from([filenameByte]), Buffer.from('.ts')]);
+    const firstPath = makeNonUtf8Path(0x80);
+    const secondPath = makeNonUtf8Path(0x81);
+
+    await writeFile(firstPath, 'export {};\n');
+    const firstState = await captureGitState(fixture);
+    await rm(firstPath);
+    await writeFile(secondPath, 'export {};\n');
+    const secondState = await captureGitState(fixture);
+
+    expect(firstState.status).not.toEqual(secondState.status);
+  });
+
   test('formats the index while preserving unstaged and untracked bytes', async () => {
     const fixture = await mkdtemp(path.join(tmpdir(), 'ai-usage-lint-staged-'));
     temporaryDirectories.add(fixture);
@@ -86,7 +112,7 @@ describe('staged-only pre-commit formatting', () => {
       '--cwd',
       fixture,
     ];
-    const repositoryGitState = await captureRepositoryGitState();
+    const repositoryGitState = await captureGitState();
     await run(fixture, lintStagedCommand, lintStagedEnvironment);
 
     const stagedBlob = await run(fixture, ['git', 'show', ':staged.ts']);
@@ -102,6 +128,6 @@ describe('staged-only pre-commit formatting', () => {
     const fixtureStatus = await run(fixture, ['git', 'status', '--porcelain=v1', '-z']);
     await run(fixture, lintStagedCommand, lintStagedEnvironment);
     expect(await run(fixture, ['git', 'status', '--porcelain=v1', '-z'])).toBe(fixtureStatus);
-    expect(await captureRepositoryGitState()).toEqual(repositoryGitState);
+    expect(await captureGitState()).toEqual(repositoryGitState);
   });
 });
