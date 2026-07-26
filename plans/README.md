@@ -64,7 +64,7 @@ request unless the user explicitly asks.
 | 041 | Validate stable SQLite history identity | P1 | M | - | DONE |
 | 042 | Document the quota app-server boundary | P1 | S | - | DONE |
 | 043 | Deepen the web process runtime seam | P2 | M | 038 | DONE |
-| 044 | Unify the exact-revision query lifecycle | P2 | M | 043 | TODO |
+| 044 | Unify the exact-revision query lifecycle | P2 | M | 043 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
