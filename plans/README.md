@@ -62,7 +62,7 @@ request unless the user explicitly asks.
 | 039 | Return post-reconcile Skills state | P1 | S | - | DONE |
 | 040 | Make peer confirmation an atomic usage-store capability | P1 | L | - | TODO |
 | 041 | Validate stable SQLite history identity | P1 | M | - | DONE |
-| 042 | Document the quota app-server boundary | P1 | S | - | TODO |
+| 042 | Document the quota app-server boundary | P1 | S | - | DONE |
 | 043 | Deepen the web process runtime seam | P2 | M | 038 | TODO |
 | 044 | Unify the exact-revision query lifecycle | P2 | M | 043 | TODO |
 
