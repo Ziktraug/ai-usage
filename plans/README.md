@@ -60,7 +60,7 @@ request unless the user explicitly asks.
 | 037 | Make Wide Events Truthful, Actionable, and Readable | P1 | L | 036 | DONE |
 | 038 | Make the staged-only pre-commit regression hermetic | P1 | S | - | DONE |
 | 039 | Return post-reconcile Skills state | P1 | S | - | DONE |
-| 040 | Make peer confirmation an atomic usage-store capability | P1 | L | - | TODO |
+| 040 | Make peer confirmation an atomic usage-store capability | P1 | L | - | DONE |
 | 041 | Validate stable SQLite history identity | P1 | M | - | DONE |
 | 042 | Document the quota app-server boundary | P1 | S | - | DONE |
 | 043 | Deepen the web process runtime seam | P2 | M | 038 | DONE |
