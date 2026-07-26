@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { scheduler as hostScheduler } from 'node:timers/promises';
 import {
   makeCaptureWideEventSink,
   makeTestWideEventSinkLayer,
@@ -67,7 +68,7 @@ const waitFor = (
       if (predicate(snapshot)) {
         return snapshot;
       }
-      yield* Effect.yieldNow();
+      yield* Effect.promise(() => hostScheduler.yield());
     }
     return yield* Effect.die(new Error('Timed out waiting for source-control state'));
   });
@@ -113,6 +114,82 @@ const makePublication = (
   });
 
 describe('source control plane', () => {
+  test('returns a host event-loop turn before initial jobs execute', async () => {
+    let hostTurnCompleted = false;
+    let sourceObservedHostTurn = false;
+    const markHostTurn = new Promise<void>((resolve) => {
+      setImmediate(() => {
+        hostTurnCompleted = true;
+        resolve();
+      });
+    });
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const events = yield* Ref.make<string[]>([]);
+        const { store } = yield* makePolicyStore();
+        const publication = yield* makePublication(events);
+        const control = yield* createSourceControl({
+          policyStore: store,
+          publication: publication.port,
+          sources: new Map([
+            [
+              'claude.sessions',
+              fakeSource('claude.sessions', () =>
+                Effect.sync(() => {
+                  sourceObservedHostTurn = hostTurnCompleted;
+                  return successResult();
+                }),
+              ),
+            ],
+          ]),
+        });
+
+        yield* waitFor(control, (view) => sourceView(view, 'claude.sessions').lastOutcome === 'success');
+      }),
+    );
+
+    await Effect.runPromise(program.pipe(Effect.provide(testEnvLayer)));
+    await markHostTurn;
+    expect(sourceObservedHostTurn).toBe(true);
+  });
+
+  test('publishes the stored bootstrap before initial collection begins', async () => {
+    const program = Effect.scoped(
+      Effect.gen(function* () {
+        const events = yield* Ref.make<string[]>([]);
+        const allowInitialCollection = yield* Deferred.make<void>();
+        const { store } = yield* makePolicyStore();
+        const publication = yield* makePublication(events);
+        const control = yield* createSourceControl({
+          beforeInitialCollection: Deferred.await(allowInitialCollection),
+          initialPublicationOrder: 'before-collection',
+          policyStore: store,
+          publication: publication.port,
+          sources: new Map([
+            [
+              'claude.sessions',
+              fakeSource('claude.sessions', () =>
+                Ref.update(events, (current) => [...current, 'run:claude']).pipe(Effect.as(successResult())),
+              ),
+            ],
+          ]),
+        });
+
+        yield* waitFor(control, (view) => view.publication.revision === 'revision-1');
+        expect(yield* Ref.get(events)).toEqual(['publish:1']);
+        yield* Deferred.succeed(allowInitialCollection, undefined);
+        yield* waitFor(
+          control,
+          (view) =>
+            view.publication.revision === 'revision-1' && sourceView(view, 'claude.sessions').lastOutcome === 'success',
+        );
+        expect(yield* Ref.get(events)).toEqual(['publish:1', 'run:claude']);
+      }),
+    );
+
+    await Effect.runPromise(program.pipe(Effect.provide(testEnvLayer)));
+  });
+
   test('detects disabled sources, runs enabled sources, and publishes bootstrap last', async () => {
     const capture = withCaptureSink();
     const program = Effect.scoped(

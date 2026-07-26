@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { setTimeout as delay } from 'node:timers/promises';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import { updateAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
 import { type ProjectGroupConfig, parseProjectGroupConfigs } from '@ai-usage/report-core/project-group';
@@ -30,6 +31,8 @@ const { rootDir, rootEnvPath } = resolveReportRuntimePaths({
   ...(configuredRoot === undefined ? {} : { configuredRoot }),
 });
 const LINE_SEPARATOR = /\r?\n/;
+const INITIAL_PUBLICATION_WAIT_MS = 2000;
+const PUBLICATION_POLL_INTERVAL_MS = 25;
 export const REVISION_RENEWAL_WINDOW_MS = 60_000;
 type ReportRevisionRegistry = ReturnType<typeof createReportRevisionRegistry>;
 
@@ -37,6 +40,13 @@ export interface EnsurePublishedRevisionDependencies {
   now(): number;
   publications: WeakMap<UsageReportPayload, Promise<WebReportRevisionManifest>>;
   registry: ReportRevisionRegistry;
+}
+
+export interface GetReportRevisionManifestDependencies {
+  now(): number;
+  readCurrent(): Promise<WebReportRevisionManifestResult>;
+  requestPublication(): Promise<boolean>;
+  wait(milliseconds: number): Promise<void>;
 }
 
 const reportPublicationState = globalThis as typeof globalThis & {
@@ -191,13 +201,34 @@ export const publishStoredReportRevisionForSourceControl = async (): Promise<{
   };
 };
 
-export const getReportRevisionManifestForServer = async (): Promise<WebReportRevisionManifestResult> => {
-  const current = await reportRevisionRegistry.getCurrentManifest();
+export const getReportRevisionManifestForServer = async (
+  dependencies: GetReportRevisionManifestDependencies = {
+    now: Date.now,
+    readCurrent: () => reportRevisionRegistry.getCurrentManifest(),
+    requestPublication: requestSourceControlPublicationForServer,
+    wait: delay,
+  },
+): Promise<WebReportRevisionManifestResult> => {
+  const { now, readCurrent, requestPublication, wait } = dependencies;
+  const current = await readCurrent();
   if (current.ok) {
     return current;
   }
-  await requestSourceControlPublicationForServer();
-  return current;
+  const publicationRequested = await requestPublication();
+  if (!publicationRequested) {
+    return current;
+  }
+
+  const deadline = now() + INITIAL_PUBLICATION_WAIT_MS;
+  let latest: WebReportRevisionManifestResult = current;
+  while (now() < deadline) {
+    await wait(PUBLICATION_POLL_INTERVAL_MS);
+    latest = await readCurrent();
+    if (latest.ok) {
+      return latest;
+    }
+  }
+  return latest;
 };
 
 export const withReportRevisionQueryLeaseForServer = <Result>(

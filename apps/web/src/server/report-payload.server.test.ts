@@ -5,8 +5,51 @@ import path from 'node:path';
 import type { StoredReportCapture } from '@ai-usage/report-data';
 import { demoReportPayload } from '../report-data';
 import { parseReportRevision, toWebReportPayload } from '../web-report-payload';
-import { ensurePublishedRevision } from './report-payload.server';
+import { ensurePublishedRevision, getReportRevisionManifestForServer } from './report-payload.server';
 import { createReportRevisionRegistry, type ReportRevisionRegistry } from './report-revision.server';
+
+test('waits briefly for an in-flight bootstrap publication before reporting it unavailable', async () => {
+  const parent = await mkdtemp(path.join(tmpdir(), 'ai-usage-report-bootstrap-wait-test-'));
+  const registry = createReportRevisionRegistry({
+    revisionId: () => 'revision-bootstrap',
+    rootDirectory: path.join(parent, 'revisions'),
+  });
+  try {
+    const unavailable = await registry.getCurrentManifest();
+    const payload = structuredClone(demoReportPayload);
+    await registry.publish(toWebReportPayload(payload), {
+      rowSourceAuthorities: payload.rows.map(() => 'local-observed' as const),
+    });
+    let currentTime = 0;
+    let reads = 0;
+    let publicationRequests = 0;
+    let waits = 0;
+
+    const result = await getReportRevisionManifestForServer({
+      now: () => currentTime,
+      readCurrent: async () => {
+        reads += 1;
+        return reads < 3 ? unavailable : await registry.getCurrentManifest();
+      },
+      requestPublication: () => {
+        publicationRequests += 1;
+        return Promise.resolve(true);
+      },
+      wait: (milliseconds) => {
+        currentTime += milliseconds;
+        waits += 1;
+        return Promise.resolve();
+      },
+    });
+
+    expect(result.ok && result.manifest.revision).toBe(parseReportRevision('revision-bootstrap'));
+    expect(publicationRequests).toBe(1);
+    expect(waits).toBe(2);
+  } finally {
+    await registry.dispose();
+    await rm(parent, { force: true, recursive: true });
+  }
+});
 
 test('publishes a fresh exact capture when the matched revision expires before renewal', async () => {
   const parent = await mkdtemp(path.join(tmpdir(), 'ai-usage-report-publication-test-'));

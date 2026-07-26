@@ -255,6 +255,12 @@ worker count, admission rule, cadence, dependency, or publication ordering.
 - Sparse `sourcePolicies` overrides are read only from the user-home config. Repository config cannot authorize background work or provider communication.
 - Policy, availability, lifecycle, last outcome, and progress are independent axes. Disabled does not mean unavailable, and failed does not mean disabled.
 - The queue is finite, one worker is the default, RTK waits for session producers, and publication has one runtime owner. Pure transitions in `source-control-state.ts` own admission, detection, policy, source completion, RTK, and publication generations; the Effect runtime only applies them atomically and interprets their decisions. Queue deduplication is separate from monotonic request/data demand, so a request arriving during publication produces a successor attempt.
+- Web cold start admits one stored-only bootstrap publication before initial
+  collection. Initial source jobs yield to the host event loop and remain
+  behind a web-owned gate until Nitro has constructed the first HTML response;
+  a 30-second fallback releases the gate when no browser request arrives, so
+  collection remains autonomous. Other source-control consumers retain
+  collection-before-publication startup ordering.
 - Every picked source owns an `AbortController`. Timeout and runtime shutdown reach the provider/child-process boundary and cancellation is checked before every durable phase; disabling after pick does not abort the run.
 - Runtime state is ephemeral. Normalized contributions, policy, source checkpoints, and semantic store generation are durable.
 - Disable, missing/unreadable input, unsupported platform, empty output, failure, redetection, and restart preserve prior contributions. There is no source delete command.

@@ -38,6 +38,8 @@ export interface WebSourceControlRuntime {
 
 export interface WebSourceControlRuntimeOptions {
   readonly adapterOptions?: SourceAdapterOptions;
+  readonly beforeInitialCollection?: Effect.Effect<void>;
+  readonly initialPublicationOrder?: SourceControlOptions['initialPublicationOrder'];
   readonly instanceId?: string;
   readonly policyStore?: SourcePolicyStore;
   readonly publication: ReportPublicationPort;
@@ -69,6 +71,12 @@ const sourceControlOptionsEffect = (
         Effect.orDie,
       ));
     return {
+      ...(options.beforeInitialCollection === undefined
+        ? {}
+        : { beforeInitialCollection: options.beforeInitialCollection }),
+      ...(options.initialPublicationOrder === undefined
+        ? {}
+        : { initialPublicationOrder: options.initialPublicationOrder }),
       policyStore: options.policyStore ?? createLivePolicyStore(storage),
       publication: options.publication,
       sources,

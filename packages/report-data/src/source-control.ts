@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { scheduler as hostScheduler } from 'node:timers/promises';
 import {
   annotateWideEvent,
   type BoundaryClassification,
@@ -71,6 +72,8 @@ export interface ReportPublicationPort {
 }
 
 export interface SourceControlOptions {
+  readonly beforeInitialCollection?: Effect.Effect<void>;
+  readonly initialPublicationOrder?: 'after-collection' | 'before-collection';
   readonly instanceId?: string;
   readonly policyStore: SourcePolicyStore;
   readonly publication: ReportPublicationPort;
@@ -110,6 +113,7 @@ type ControlPlaneJob = PublicationJob | SourceJob;
 
 const DEFAULT_WORKER_COUNT = 1;
 const DEFAULT_SOURCE_TIMEOUT = Duration.minutes(10);
+const yieldToHost = Effect.promise(() => hostScheduler.yield());
 
 interface ValidatedSourceControlOptions {
   readonly sourceTimeout: Duration.Duration;
@@ -117,6 +121,7 @@ interface ValidatedSourceControlOptions {
 }
 
 interface SourceControlRuntime {
+  readonly beforeInitialCollection: Effect.Effect<void>;
   readonly options: SourceControlOptions;
   readonly queue: Queue.Queue<ControlPlaneJob>;
   readonly sourceIds: readonly CollectionSourceId[];
@@ -157,6 +162,7 @@ const createSourceControlRuntime = (
 ): Effect.Effect<SourceControlRuntime, never, import('effect').Scope.Scope> =>
   Effect.gen(function* () {
     const policies = yield* options.policyStore.load.pipe(Effect.orDie);
+    const beforeInitialCollection = yield* Effect.cached(options.beforeInitialCollection ?? Effect.void);
     const now = yield* Clock.currentTimeMillis;
     const sourceIds = [...options.sources.keys()];
     const stateRef = yield* SubscriptionRef.make(
@@ -165,7 +171,7 @@ const createSourceControlRuntime = (
     const queue = yield* Queue.bounded<ControlPlaneJob>(sourceControlBounds.maxQueueDepth);
     yield* Effect.addFinalizer(() => Queue.shutdown(queue));
     const timers = yield* FiberMap.make<CollectionSourceId>();
-    return { options, queue, sourceIds, sourceTimeout, stateRef, timers };
+    return { beforeInitialCollection, options, queue, sourceIds, sourceTimeout, stateRef, timers };
   });
 
 const modifyControlState = <Decision>(
@@ -483,10 +489,14 @@ const startSourceControlWorkers = (
   Effect.gen(function* () {
     const processJob = (job: ControlPlaneJob): Effect.Effect<void, never, WideEventResourceService | WideEventSink> =>
       job._tag === 'source'
-        ? processSourceJob(runtime, scheduler, job)
+        ? runtime.beforeInitialCollection.pipe(Effect.andThen(processSourceJob(runtime, scheduler, job)))
         : processPublicationJob(runtime, scheduler, job);
     for (let workerIndex = 0; workerIndex < workerCount; workerIndex++) {
-      yield* Effect.forkScoped(Effect.forever(runtime.queue.take.pipe(Effect.flatMap(processJob))));
+      yield* Effect.forkScoped(
+        Effect.forever(
+          runtime.queue.take.pipe(Effect.flatMap((job) => yieldToHost.pipe(Effect.andThen(processJob(job))))),
+        ),
+      );
     }
   });
 
@@ -586,8 +596,13 @@ export const createSourceControl = (
     const runtime = yield* createSourceControlRuntime(options, validatedOptions.sourceTimeout);
     const scheduler = createSourceControlScheduler(runtime);
     const commands = createSourceControlCommands(runtime, scheduler);
+    if (options.initialPublicationOrder === 'before-collection') {
+      yield* scheduler.requestPublication;
+    }
     yield* scheduler.detectAll;
-    yield* scheduler.requestPublication;
+    if (options.initialPublicationOrder !== 'before-collection') {
+      yield* scheduler.requestPublication;
+    }
     yield* startSourceControlWorkers(runtime, scheduler, validatedOptions.workerCount);
     return {
       changes: Stream.map(runtime.stateRef.changes, sourceControlView),
