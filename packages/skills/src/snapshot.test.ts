@@ -382,6 +382,14 @@ description: Mixes safe and refused targets
       });
 
       expect(result.actions.map((action) => action.type)).toEqual(['create-symlink', 'refuse-unmanaged-mutation']);
+      expect(result.snapshot.projections.find((projection) => projection.targetId === 'target-a')?.state).toBe(
+        'linked',
+      );
+      expect(result.snapshot.projections.find((projection) => projection.targetId === 'target-b')?.state).toBe(
+        'unmanaged-copy',
+      );
+      expect(result.snapshot.summary.healthyProjectionCount).toBe(1);
+      expect(result.snapshot.summary.unhealthyProjectionCount).toBe(1);
       expect(await Bun.file(path.join(targetAPath, 'mixed-skill', 'SKILL.md')).text()).toContain('# Mixed');
       expect((await lstat(path.join(targetBPath, 'mixed-skill'))).isDirectory()).toBe(true);
     } finally {
