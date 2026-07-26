@@ -135,6 +135,9 @@ description: Helps with examples
       });
 
       expect(result.actions.map((action) => action.type)).toEqual(['create-symlink']);
+      expect(result.snapshot.projections.map((projection) => projection.state)).toEqual(['linked']);
+      expect(result.snapshot.summary.healthyProjectionCount).toBe(1);
+      expect(result.snapshot.summary.unhealthyProjectionCount).toBe(0);
       await expect(Bun.file(path.join(targetPath, 'example-skill', 'SKILL.md')).text()).resolves.toContain('# Example');
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -316,6 +319,16 @@ description: Has unmanaged content
 
       expect(result.actions.map((action) => action.type)).toContain('refuse-unmanaged-mutation');
       expect(result.actions.map((action) => action.type)).toContain('create-symlink');
+      expect(
+        result.snapshot.projections.find(
+          (projection) => projection.skillName === 'safe-skill' && projection.targetId === 'target-a',
+        )?.state,
+      ).toBe('linked');
+      expect(
+        result.snapshot.projections.find(
+          (projection) => projection.skillName === 'blocked-skill' && projection.targetId === 'target-b',
+        )?.state,
+      ).toBe('unmanaged-copy');
       expect(await Bun.file(path.join(targetAPath, 'safe-skill', 'SKILL.md')).text()).toContain('# Safe');
       expect((await lstat(path.join(targetBPath, 'blocked-skill'))).isDirectory()).toBe(true);
     } finally {
@@ -371,6 +384,55 @@ description: Mixes safe and refused targets
       expect(result.actions.map((action) => action.type)).toEqual(['create-symlink', 'refuse-unmanaged-mutation']);
       expect(await Bun.file(path.join(targetAPath, 'mixed-skill', 'SKILL.md')).text()).toContain('# Mixed');
       expect((await lstat(path.join(targetBPath, 'mixed-skill'))).isDirectory()).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('reconcile skill returns the missing projection after unlinking a disabled skill', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-disable-reconcile-'));
+    try {
+      const sourceRepoPath = path.join(root, 'source');
+      const targetPath = path.join(root, 'target');
+      const skillPath = path.join(sourceRepoPath, 'skills', 'example-skill');
+      await mkdir(skillPath, { recursive: true });
+      await mkdir(targetPath, { recursive: true });
+      await writeFile(
+        path.join(skillPath, 'SKILL.md'),
+        `---
+name: example-skill
+description: Helps with examples
+---
+# Example
+`,
+        'utf8',
+      );
+      const input = {
+        config: {
+          skills: {
+            sourceRepoPath,
+            targets: {
+              codex: {
+                enabled: true,
+                kind: 'standard-interop',
+                path: targetPath,
+                scope: 'system',
+              },
+            },
+          },
+        },
+        homePath: root,
+        skillName: 'example-skill',
+      } as const;
+
+      await reconcileSkill(input);
+      await toggleSkillEnabled({ enabled: false, skillName: 'example-skill', sourceRepoPath });
+      const result = await reconcileSkill(input);
+
+      expect(result.actions.map((action) => action.type)).toEqual(['unlink-managed-symlink']);
+      expect(result.snapshot.projections[0]?.state).toBe('missing');
+      expect(result.snapshot.summary.healthyProjectionCount).toBe(0);
+      await expect(lstat(path.join(targetPath, 'example-skill'))).rejects.toThrow();
     } finally {
       await rm(root, { recursive: true, force: true });
     }

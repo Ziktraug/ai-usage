@@ -204,6 +204,13 @@ description: Helps with adapter tests
         'unlink-managed-symlink',
         'refuse-unmanaged-mutation',
       ]);
+      expect(
+        disabled.ok
+          ? disabled.data.snapshot.projections.find(
+              (projection) => projection.skillName === 'example-skill' && projection.targetId === 'safe',
+            )?.state
+          : undefined,
+      ).toBe('missing');
       const enabled = await adapter.toggleSkill({ enabled: true, skillName: 'example-skill' });
       expect(enabled).toMatchObject({ ok: true, data: { actions: [] } });
       const reconciledSkill = await adapter.reconcileSkill('example-skill');
