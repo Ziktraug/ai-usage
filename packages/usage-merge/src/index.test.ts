@@ -13,6 +13,7 @@ import { createUsageFileMergeService, UsageMergeError } from './index';
 const localMachine: UsageMachine = { id: 'local-machine', label: 'Local Machine' };
 const peerMachine: UsageMachine = { id: 'peer-machine', label: 'Peer Machine' };
 const generatedAt = new Date('2026-06-19T12:30:00.000Z');
+const CONFIRMATION_TOKEN_PATTERN = /^v1\.[0-9a-f]{64}$/;
 
 const makeSourcedRow = (input: { project: string; sourcePath: string; sessionId: string }): SourcedRow => ({
   ...normalizeUsageRow({
@@ -184,6 +185,48 @@ describe('usage file merge public boundary', () => {
         }),
       );
       expect(confirmed.result.inserted).toBe(1);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('maps a valid opaque token to preview-stale after real store drift', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'usage-merge-store-drift-'));
+    try {
+      const dbPath = path.join(home, 'usage.sqlite');
+      const service = createUsageFileMergeService({ dbPath, localMachine, now: () => generatedAt });
+      const bundle = createUsageMergeBundle({
+        generatedAt,
+        machine: peerMachine,
+        rows: [makeSourcedRow({ project: 'peer', sessionId: 'peer-stale', sourcePath: '/peer/stale' })],
+      });
+      const text = JSON.stringify(bundle);
+      const bytes = new TextEncoder().encode(text);
+      const preview = await Effect.runPromise(service.previewManualMergeBundle({ bytes, text }));
+      expect(preview.confirmationToken).toMatch(CONFIRMATION_TOKEN_PATTERN);
+
+      await Effect.runPromise(
+        importLocalRows({
+          dbPath,
+          machine: localMachine,
+          rows: [makeSourcedRow({ project: 'local', sessionId: 'local-drift', sourcePath: '/local/drift' })],
+        }),
+      );
+      const error = await Effect.runPromise(
+        service
+          .confirmManualMergeBundle({
+            bytes,
+            confirmationToken: preview.confirmationToken,
+            expectedDigest: preview.digest,
+            text,
+          })
+          .pipe(Effect.flip),
+      );
+
+      expect(error).toBeInstanceOf(UsageMergeError);
+      expect(error.reason).toBe('preview-stale');
+      const stored = await Effect.runPromise(queryReportRows({ dbPath }));
+      expect(stored.rows.map((row) => row.source.sourceSessionId)).toEqual(['local-drift']);
     } finally {
       rmSync(home, { force: true, recursive: true });
     }
