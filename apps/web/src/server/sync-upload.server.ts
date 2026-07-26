@@ -16,8 +16,7 @@ const loadSyncUploadHandler = async (): Promise<SyncUploadHandler> => {
         mergeServer.confirmManualMergeBundleForServer({
           ...document,
           expectedDigest: expected.digest,
-          expectedStoreGeneration: expected.generation,
-          expectedStoreStateToken: expected.storeStateToken,
+          confirmationToken: expected.confirmationToken,
         }),
     });
 };

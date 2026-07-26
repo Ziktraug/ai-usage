@@ -13,7 +13,8 @@ export default definePlugin(async (nitroApp) => {
       { getPersistentWebWideEventInstanceId, registerPersistentSourceRuntimeHotReload },
       { publishStoredReportRevisionForSourceControl },
       { createSourceControlE2EFixture },
-      { createWebSourceControlRuntime, replaceWebSourceControlRuntime },
+      { createWebProcessRuntime },
+      { replaceWebProcessRuntime },
       { projectWebWideEvent },
     ] = await Promise.all([
       import('effect'),
@@ -23,6 +24,7 @@ export default definePlugin(async (nitroApp) => {
       import('../../src/server/report-payload.server'),
       import('../../src/server/source-control-e2e-fixture.server'),
       import('../../src/server/source-control.server'),
+      import('../../src/server/web-process-runtime.server'),
       import('../../src/server/wide-event-presentation.server'),
     ]);
     const serverRuntimeMode = getServerRuntimeMode();
@@ -67,7 +69,7 @@ export default definePlugin(async (nitroApp) => {
       surface: 'web',
       testRuntime: fixtureRuntime,
     });
-    const runtime = createWebSourceControlRuntime({
+    const runtime = createWebProcessRuntime({
       beforeInitialCollection: Effect.promise(() => initialCollectionReady),
       initialPublicationOrder: 'before-collection',
       ...(fixture === undefined ? {} : { policyStore: fixture.policyStore, sources: fixture.sources }),
@@ -110,7 +112,7 @@ export default definePlugin(async (nitroApp) => {
         );
       }
     };
-    uninstall = await replaceWebSourceControlRuntime(runtime, closeRuntime);
+    uninstall = await replaceWebProcessRuntime(runtime, closeRuntime);
     unregisterHotReload = registerPersistentSourceRuntimeHotReload(import.meta.hot, closeRuntime);
 
     process.once('SIGINT', closeAfterSignal);
@@ -120,7 +122,7 @@ export default definePlugin(async (nitroApp) => {
     });
 
     try {
-      await runtime.start();
+      await runtime.sourceControl.start();
       if (productionSmoke) {
         console.error('[ai-usage] Source control started.');
       }

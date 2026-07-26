@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  makeCaptureWideEventSink,
   makeTestWideEventSinkLayer,
   noopWideEventSink,
   WideEventSink,
@@ -16,13 +17,8 @@ import type { ScheduledSource } from '@ai-usage/report-data/source-adapters';
 import type { SourcePolicyStore } from '@ai-usage/report-data/source-control';
 import { queryReportRows } from '@ai-usage/usage-store';
 import { Duration, Effect, ManagedRuntime, Ref } from 'effect';
-import {
-  createWebSourceControlRuntime,
-  installWebSourceControlRuntime,
-  replaceWebSourceControlRuntime,
-  requestSourceControlPublicationForServer,
-  type WebSourceControlRuntime,
-} from './source-control.server';
+import { createWebProcessRuntime, requestSourceControlPublicationForServer } from './source-control.server';
+import { installWebProcessRuntime, type WebProcessRuntime } from './web-process-runtime.server';
 
 const detected = {
   availability: 'detected',
@@ -96,103 +92,27 @@ const fakeSource = (run: ScheduledSource['run']): ReadonlyMap<CollectionSourceId
   ]);
 
 describe('web source-control runtime', () => {
-  test('runs the complete registered lifecycle teardown before hot replacement', async () => {
-    let lifecycleTeardowns = 0;
-    let runtimeDisposals = 0;
-    const unavailable = (): Promise<never> => Promise.reject(new Error('Unexpected runtime operation.'));
-    const staleRuntime: WebSourceControlRuntime = {
-      detectAll: async () => undefined,
-      dispose: () => {
-        runtimeDisposals += 1;
-        return Promise.resolve();
-      },
-      getSnapshot: unavailable,
-      requestPublication: async () => false,
-      runAllEnabled: async () => 0,
-      runEffect: unavailable,
-      runNow: async () => false,
-      setEnabled: async () => undefined,
-      start: unavailable,
-      subscribe: () => () => undefined,
-    };
-    const replacementRuntime: WebSourceControlRuntime = {
-      ...staleRuntime,
-      dispose: async () => undefined,
-    };
-    const uninstallStale = await replaceWebSourceControlRuntime(staleRuntime, () => {
-      lifecycleTeardowns += 1;
-      return Promise.resolve();
-    });
-
-    const uninstallReplacement = await replaceWebSourceControlRuntime(replacementRuntime);
-    try {
-      expect(lifecycleTeardowns).toBe(1);
-      expect(runtimeDisposals).toBe(0);
-    } finally {
-      uninstallReplacement();
-      uninstallStale();
-    }
-  });
-
-  test('disposes a stale installed runtime before replacing it during hot reload', async () => {
-    let disposed = 0;
-    let replacementRequests = 0;
-    const unavailable = (): Promise<never> => Promise.reject(new Error('Unexpected runtime operation.'));
-    const staleRuntime: WebSourceControlRuntime = {
-      detectAll: async () => undefined,
-      dispose: () => {
-        disposed += 1;
-        return Promise.resolve();
-      },
-      getSnapshot: unavailable,
-      requestPublication: async () => false,
-      runAllEnabled: async () => 0,
-      runEffect: unavailable,
-      runNow: async () => false,
-      setEnabled: async () => undefined,
-      start: unavailable,
-      subscribe: () => () => undefined,
-    };
-    const replacementRuntime: WebSourceControlRuntime = {
-      ...staleRuntime,
-      dispose: async () => undefined,
-      requestPublication: () => {
-        replacementRequests += 1;
-        return Promise.resolve(false);
-      },
-    };
-    const uninstallStale = installWebSourceControlRuntime(staleRuntime);
-
-    const uninstallReplacement = await replaceWebSourceControlRuntime(replacementRuntime);
-    try {
-      expect(disposed).toBe(1);
-      expect(await requestSourceControlPublicationForServer()).toBe(true);
-      expect(replacementRequests).toBe(1);
-    } finally {
-      uninstallReplacement();
-      uninstallStale();
-    }
-  });
-
   test('treats a deduplicated publication request as handled by the installed runtime', async () => {
     let requests = 0;
     const unavailable = (): Promise<never> => Promise.reject(new Error('Unexpected runtime operation.'));
-    const runtime: WebSourceControlRuntime = {
-      detectAll: async () => undefined,
+    const runtime: WebProcessRuntime = {
       dispose: async () => undefined,
-      getSnapshot: unavailable,
-      requestPublication: () => {
-        requests += 1;
-        return Promise.resolve(false);
+      effects: { runEffect: unavailable },
+      sourceControl: {
+        detectAll: async () => undefined,
+        getSnapshot: unavailable,
+        requestPublication: () => {
+          requests += 1;
+          return Promise.resolve(false);
+        },
+        runAllEnabled: async () => 0,
+        runNow: async () => false,
+        setEnabled: async () => undefined,
+        start: unavailable,
+        subscribe: () => () => undefined,
       },
-      runAllEnabled: async () => 0,
-      runEffect: unavailable,
-      runNow: async () => false,
-      setEnabled: async () => undefined,
-      start: unavailable,
-      subscribe: () => () => undefined,
     };
-    const uninstall = installWebSourceControlRuntime(runtime);
+    const uninstall = installWebProcessRuntime(runtime);
 
     try {
       expect(await requestSourceControlPublicationForServer()).toBe(true);
@@ -206,7 +126,8 @@ describe('web source-control runtime', () => {
 
   test('starts once, publishes, and disposes idempotently', async () => {
     const publications = await Effect.runPromise(Ref.make(0));
-    const runtime = createWebSourceControlRuntime({
+    const sink = makeCaptureWideEventSink();
+    const runtime = createWebProcessRuntime({
       instanceId: 'runtime-test',
       policyStore: policyStore(),
       publication: {
@@ -225,12 +146,16 @@ describe('web source-control runtime', () => {
           warnings: [],
         }),
       ),
-      wideEventSinkLayer: testWideEventSinkLayer(),
+      wideEventSinkLayer: makeTestWideEventSinkLayer(sink),
     });
 
-    expect((await runtime.start()).instanceId).toBe('runtime-test');
+    expect((await runtime.sourceControl.start()).instanceId).toBe('runtime-test');
+    const portEvent = wideEventFixture('runtime-port-test', 'runtime-test');
+    await runtime.effects.runEffect(WideEventSink.pipe(Effect.flatMap((eventSink) => eventSink.submit(portEvent))));
+    expect(sink.events()).toContainEqual(portEvent);
+
     const completed = await waitForSnapshot(
-      runtime.getSnapshot,
+      runtime.sourceControl.getSnapshot,
       (snapshot) =>
         sourceView(snapshot, 'claude.sessions').lastOutcome === 'success' &&
         snapshot.publication.revision === 'revision-1',
@@ -238,15 +163,12 @@ describe('web source-control runtime', () => {
     expect(completed.runningCount).toBe(0);
     expect(await Effect.runPromise(Ref.get(publications))).toBe(1);
 
-    const uninstall = installWebSourceControlRuntime(runtime);
-    expect(() => installWebSourceControlRuntime(runtime)).toThrow('already installed');
-    uninstall();
     await Promise.all([runtime.dispose(), runtime.dispose()]);
   });
 
   test('interrupts in-flight adapter work during disposal', async () => {
     const interrupted = await Effect.runPromise(Ref.make(false));
-    const runtime = createWebSourceControlRuntime({
+    const runtime = createWebProcessRuntime({
       policyStore: policyStore(),
       publication: {
         publish: Effect.succeed({ changed: false }),
@@ -255,9 +177,9 @@ describe('web source-control runtime', () => {
       wideEventSinkLayer: testWideEventSinkLayer(),
     });
 
-    await runtime.start();
+    await runtime.sourceControl.start();
     await waitForSnapshot(
-      runtime.getSnapshot,
+      runtime.sourceControl.getSnapshot,
       (snapshot) => sourceView(snapshot, 'claude.sessions').lifecycle === 'running',
     );
     await runtime.dispose();
@@ -266,7 +188,7 @@ describe('web source-control runtime', () => {
   });
 
   test('applies the bounded source timeout inside the managed runtime', async () => {
-    const runtime = createWebSourceControlRuntime({
+    const runtime = createWebProcessRuntime({
       policyStore: policyStore(),
       publication: {
         publish: Effect.succeed({ changed: false }),
@@ -277,9 +199,9 @@ describe('web source-control runtime', () => {
     });
 
     try {
-      await runtime.start();
+      await runtime.sourceControl.start();
       const timedOut = await waitForSnapshot(
-        runtime.getSnapshot,
+        runtime.sourceControl.getSnapshot,
         (snapshot) => sourceView(snapshot, 'claude.sessions').lastOutcome === 'timed-out',
       );
       expect(sourceView(timedOut, 'claude.sessions').reason).toEqual({
@@ -294,7 +216,7 @@ describe('web source-control runtime', () => {
   test('routes file delivery warnings and shutdown loss summaries directly to the console writer', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'ai-usage-web-wide-event-'));
     const writes: Array<{ line: string; severity: string }> = [];
-    const runtime = createWebSourceControlRuntime({
+    const runtime = createWebProcessRuntime({
       policyStore: policyStore(),
       publication: { publish: Effect.succeed({ changed: false }) },
       sources: fakeSource(() => Effect.succeed({ changed: false, inputCount: 1, outputCount: 1, warnings: [] })),
@@ -314,9 +236,9 @@ describe('web source-control runtime', () => {
     });
 
     try {
-      await runtime.start();
+      await runtime.sourceControl.start();
       await waitForSnapshot(
-        runtime.getSnapshot,
+        runtime.sourceControl.getSnapshot,
         (snapshot) => sourceView(snapshot, 'claude.sessions').lastOutcome === 'success',
       );
     } finally {
@@ -452,7 +374,7 @@ describe('web source-control runtime', () => {
         timestamp: '2026-01-01T00:01:00.000Z',
       })}\n`,
     );
-    const runtime = createWebSourceControlRuntime({
+    const runtime = createWebProcessRuntime({
       adapterOptions: { dbPath, machine },
       policyStore: policyStore(),
       publication: {
@@ -463,9 +385,9 @@ describe('web source-control runtime', () => {
     });
 
     try {
-      await runtime.start();
+      await runtime.sourceControl.start();
       await waitForSnapshot(
-        runtime.getSnapshot,
+        runtime.sourceControl.getSnapshot,
         (snapshot) => sourceView(snapshot, 'codex.sessions').lastOutcome === 'success',
       );
       const stored = await Effect.runPromise(queryReportRows({ dbPath, originMachineIds: [machine.id] }));

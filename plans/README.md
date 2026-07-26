@@ -9,11 +9,16 @@ retired. Plan 036 records the reviewed wide-event logging design at `4e2cc48`
 on 2026-07-21. Plan 037 records the post-implementation wide-event audit and
 operator-experience follow-up at `a186682` plus the documented 2026-07-22 dirty
 worktree baseline. Execute in the order below unless dependencies say otherwise.
-Each
+Plans 038-042 record the second-pass audit at `96b3dff` on 2026-07-26:
+the former demo-privacy CI gap is closed, while five still-current correctness,
+security, tooling, and trust-boundary findings receive focused follow-up plans.
+Plans 043-044 complete the architecture follow-up at the same baseline: first
+name the web process lifetime honestly and expose narrow capability ports, then
+make every exact-revision query share one execute/validate lifecycle. Each
 executor: read the plan fully before starting, honor its STOP conditions, and
 update the row only when its done criteria actually pass. These plans authorize
-local implementation and verification only; do not push a branch or open a
-pull request unless the user explicitly asks.
+local implementation and verification only; do not push a branch or open a pull
+request unless the user explicitly asks.
 
 ## Execution order & status
 
@@ -53,6 +58,13 @@ pull request unless the user explicitly asks.
 | 032 | Simplify Frontend Ownership and Document Decisions | P1 | L | 031 | DONE |
 | 036 | Wide-event Logging for Effect Program Executions | P1 | L | 022-024 | DONE |
 | 037 | Make Wide Events Truthful, Actionable, and Readable | P1 | L | 036 | DONE |
+| 038 | Make the staged-only pre-commit regression hermetic | P1 | S | - | DONE |
+| 039 | Return post-reconcile Skills state | P1 | S | - | DONE |
+| 040 | Make peer confirmation an atomic usage-store capability | P1 | L | - | DONE |
+| 041 | Validate stable SQLite history identity | P1 | M | - | DONE |
+| 042 | Document the quota app-server boundary | P1 | S | - | DONE |
+| 043 | Deepen the web process runtime seam | P2 | M | 038 | DONE |
+| 044 | Unify the exact-revision query lifecycle | P2 | M | 043 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -210,6 +222,23 @@ REJECTED (with one-line rationale).
   one event per boundary, one-line NDJSON, private file/lock guarantees, and the
   existing worker pool. ADR 0008 supersedes only the affected presentation,
   provenance, public-message, and web-diagnostics clauses from plan 036.
+- Plan 038 completes the staged-only guarantee from plan 020 at the hermetic
+  regression-harness seam. The targeted test, `test:tools`, `check`,
+  `typecheck`, diff check, and scope audit were rerun successfully.
+- Plan 039 is independent and corrects only the post-mutation result returned by
+  Skills workflows. Preview semantics and projection mutation safety remain
+  unchanged.
+- Plan 040 deepens the preview/confirm surface left by plan 014: `usage-store` owns one opaque stateless token and compares it under the same write transaction as import. It is independent of the other P1 plans; complete it before later usage-store query optimization or module extraction.
+- Plan 041 closes the residual SQLite pathname gap left after plan 012: cache fingerprinting is not an enforcement boundary. It rejects static main/WAL symlinks and detects ordinary identity changes without claiming resistance to a hostile same-UID race. It may run independently of plan 040.
+- Plan 042 is documentation-only and may run independently. Its wording must
+  preserve the distinction between provider-free local history and the explicit
+  Codex app-server quota source.
+- Plan 043 depends only on plan 038 because its full verification gate must not run the unsafe pre-commit regression. Plans 039-042 are technically independent and may execute in parallel. Plan 043 renames the actual web process lifetime and exposes source-control/effect-execution
+  ports without adding a second runtime, sink, or registry.
+- Plan 044 follows 043 because it uses the narrow effect-executor port and its
+  lightweight test fixture. It makes Session observability decorate the same
+  execute/validate lifecycle as every other exact-revision query; it adds no
+  events to generic query kinds.
 
 ## Remediation waves
 
@@ -232,6 +261,14 @@ Frontend:
     ── 032 ownership cleanup + ADRs
 022-024 complete ──────────────────────────────── 036 wide-event logging
 036 complete ──────────────────────────────────── 037 actionable wide events
+Second pass:
+038 hermetic commit tooling
+039 fresh Skills reconcile state
+040 opaque atomic peer confirmation
+041 stable SQLite history identity
+042 truthful quota boundary docs
+038 complete ────── 043 deep web process runtime
+043 complete ────── 044 unified exact-revision query lifecycle
 ```
 
 Plans on separate Wave 2 branches may run in parallel. Do not parallel-edit the
@@ -301,6 +338,13 @@ sequence overlapping files and rebase/re-read before execution.
 | F57 | File-sink drops/failures are counted but invisible in web production and aggregate diagnostics double-count transports | 037 |
 | F58 | A non-cooperative append delays circuit opening past the configured timeout | 037 |
 | F59 | The file sink performs a full retention scan after every append under the interprocess lock | 037 |
+| F60 | The staged-only regression launches formatter work from the real repository and can mutate unrelated files | 038 |
+| F61 | Skills reconcile-one, reconcile-all, and toggle-disable return a pre-mutation snapshot | 039 |
+| F62 | Peer confirmation leaks store mechanics and checks preview state before a separate importing transaction | 040 |
+| F63 | Cursor/OpenCode treat static SQLite symlinks only as cache misses while the opener lacks practical identity validation | 041 |
+| F64 | CLI quota documentation hides the explicit Codex app-server refresh boundary | 042 |
+| F65 | Session queries reach through a source-control-named process runtime only to execute a wide-event Effect | 043 |
+| F66 | Session and generic exact-revision queries duplicate execution, expiry, parse, and failure mapping | 044 |
 
 ## Findings considered and rejected
 
@@ -340,6 +384,43 @@ sequence overlapping files and rebase/re-read before execution.
   boundaries: rejected because publications can consume multiple source
   generations. Plan 037 uses explicit monotonic generation intervals and keeps
   traces scoped to one boundary.
+- Add the demo-privacy browser suite to PR CI: rejected as already fixed at
+  `96b3dff`; `.github/workflows/pr-checks.yml` now runs
+  `bun run test:e2e-demo`.
+- Extract source-control transition state solely because its current owner is
+  large: rejected until a concrete ordering defect or a second transition
+  consumer proves a deeper package seam. Plan 043 narrows process capabilities
+  without moving the state machine speculatively.
+- Create a semantic definition registry for every wide-event boundary now:
+  rejected while each existing boundary still has one implementation owner.
+  Plan 044 removes the current lifecycle duplication; add shared metadata only
+  when a second real consumer would otherwise duplicate it.
+
+## Second-pass findings deliberately deferred
+
+- Claude JSONL parsing still retains records up to the 1 GiB byte budget before
+  applying the 100,000-record cap. This is valid but follows the five higher
+  priority trust/correctness items selected for plans 038-042.
+- Cursor/OpenCode full collection still materializes unbounded SQLite result
+  arrays. Correct remediation needs paging or explicit partial-result semantics,
+  so it should receive a separate measured plan rather than an incidental
+  `LIMIT`.
+- RTK enrichment and quota-history reads still materialize more stored rows than
+  their selected result needs. Sequence those optimizations after plan 040
+  because they overlap `packages/usage-store/src/index.ts`.
+- The PR workflow remains serialized and repeats some Panda/design-system work;
+  no wall-time benchmark was captured, so CI graph changes are deferred pending
+  measurement.
+- The lockfile currently contains six HIGH advisories across four transitive
+  build/dev packages. Reachability in deployed runtime was not established;
+  parent-package upgrade and full build/E2E validation need a dedicated
+  dependency plan.
+- `@ai-usage/report-core/portable-usage` is omitted from the internal public
+  interface document. This is a valid low-impact documentation follow-up, not
+  bundled into the quota trust-boundary correction.
+- `packages/usage-store/src/index.ts` remains a broad 2,033-line owner. Mechanical
+  decomposition is deferred until atomic confirmation and bounded query plans
+  land, to avoid obscuring behavioral fixes.
 
 ## Product directions explicitly deferred
 

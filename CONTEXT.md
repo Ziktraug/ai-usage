@@ -1,6 +1,6 @@
 # ai-usage Context
 
-This context describes the local AI usage reporting domain. The CLI reads local history from installed AI coding tools and turns it into usage rows, analytics, CSV, and quota output without calling provider APIs.
+This context describes the local AI usage reporting domain. The CLI turns provider-free local history from installed AI coding tools into usage rows, analytics, and CSV. Quota collection is the explicit exception: report-data may ask the installed `codex app-server` for a fresh usage-limit observation before reading the durable local result, while app-server owns provider communication and authentication refresh.
 
 ## Language
 
@@ -25,7 +25,7 @@ A versioned, validated value owned by one enricher and keyed to a stable base us
 _Avoid_: JSON patch, enriched base row
 
 **Local history**:
-The files or databases written by a harness on this machine. It is the only live collection input; a caller may also supply an explicit portable snapshot or previously imported merge bundle. Provider APIs are not called.
+The files or databases written by a harness on this machine. It is the live collection input for ordinary sessions; a caller may also supply an explicit portable snapshot or previously imported merge bundle. Reading local history never calls provider APIs.
 _Avoid_: remote usage, cloud billing data
 
 **Session**:
@@ -97,7 +97,7 @@ A hypothetical API-rate cost calculated from local token counters and the editab
 _Avoid_: bill, invoice, actual spend
 
 **Quota snapshot**:
-The newest local Codex `token_count.rate_limits` event used to render subscription quota windows.
+A durable local Codex usage-limit observation used to render subscription quota windows. It can be populated from recorded Codex `token_count.rate_limits` events and/or the explicit `codex app-server` usage-limit source; app-server refresh is provider-facing collection, not local history.
 _Avoid_: billing limit, provider quota API
 
 **Wide event**:

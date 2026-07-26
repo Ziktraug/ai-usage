@@ -5,10 +5,23 @@ import {
   type SessionDetailRequest,
   sessionDetailRequestFingerprint,
 } from '@ai-usage/report-core/session-detail';
-import { type SessionQueryRequest, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
-import { Effect } from 'effect';
-import { type RevisionQueryRunnerDependencies, runRevisionQueryForServer } from './revision-query-runner.server';
-import { createWebSourceControlRuntime, installWebSourceControlRuntime } from './source-control.server';
+import {
+  type SessionQueryRequest,
+  type SessionQueryServerResult,
+  sessionQueryFingerprint,
+} from '@ai-usage/report-core/session-query';
+import { ManagedRuntime } from 'effect';
+import {
+  type RevisionQueryKind,
+  type RevisionQueryRunnerDependencies,
+  runRevisionQueryForServer,
+} from './revision-query-runner.server';
+import {
+  installWebProcessRuntime,
+  tryGetWebProcessRuntime,
+  type WebProcessRuntime,
+  type WebSourceControlPort,
+} from './web-process-runtime.server';
 
 const request: SessionDetailRequest = { revision: 'revision-a', rowId: 'row-a' };
 const fingerprint = sessionDetailRequestFingerprint(request);
@@ -38,9 +51,12 @@ const anchorResult: SessionDetailAnchorResult = {
   revision: request.revision,
 };
 
-const dependenciesReturning = (value: unknown): RevisionQueryRunnerDependencies => ({
-  execute: () => Promise.resolve({ ok: true, serializedPayload: JSON.stringify(value) }),
+const dependenciesReturningSerialized = (serializedPayload: string): RevisionQueryRunnerDependencies => ({
+  execute: () => Promise.resolve({ ok: true, serializedPayload }),
 });
+
+const dependenciesReturning = (value: unknown): RevisionQueryRunnerDependencies =>
+  dependenciesReturningSerialized(JSON.stringify(value));
 
 const sessionRequest: SessionQueryRequest = {
   campaigns: true,
@@ -61,85 +77,159 @@ const emptySessionPage = {
   sessionCount: 0,
 };
 
-describe('revision query runner server session detail anchor', () => {
-  test('parses the exact request and successful bounded-runner result', async () => {
-    const executions: unknown[] = [];
-    const result = await runRevisionQueryForServer('session-detail-anchor', request, {
-      execute: (execution) => {
-        executions.push(execution);
-        return Promise.resolve({ ok: true, serializedPayload: JSON.stringify(anchorResult) });
-      },
-    });
+const failSourceControlOperation = (): Promise<never> =>
+  Promise.reject(new Error('Unexpected source-control operation.'));
 
-    expect(executions).toEqual([
-      {
-        kind: 'session-detail-anchor',
-        revision: request.revision,
-        serializedRequest: JSON.stringify(request),
-      },
-    ]);
-    expect(result).toEqual({
-      data: anchorResult,
-      ok: true,
-      requestFingerprint: fingerprint,
-      revision: request.revision,
-    });
-  });
+const failSourceControlSubscription = (): never => {
+  throw new Error('Unexpected source-control subscription.');
+};
 
-  test('maps fingerprint and revision result mismatches to QueryFailed', async () => {
-    for (const invalidResult of [
-      { ...anchorResult, requestFingerprint: 'session-detail-v2:wrong' },
-      { ...anchorResult, revision: 'revision-b' },
-    ]) {
-      const result = await runRevisionQueryForServer(
-        'session-detail-anchor',
-        request,
-        dependenciesReturning(invalidResult),
-      );
-      expect(result).toMatchObject({
-        error: { revision: request.revision, tag: 'QueryFailed' },
-        ok: false,
-        requestFingerprint: fingerprint,
-        revision: request.revision,
+const failingSourceControlPort: WebSourceControlPort = {
+  detectAll: failSourceControlOperation,
+  getSnapshot: failSourceControlOperation,
+  requestPublication: failSourceControlOperation,
+  runAllEnabled: failSourceControlOperation,
+  runNow: failSourceControlOperation,
+  setEnabled: failSourceControlOperation,
+  start: failSourceControlOperation,
+  subscribe: failSourceControlSubscription,
+};
+
+const makeWebEventRuntimeFixture = () => {
+  const sink = makeCaptureWideEventSink();
+  const managedRuntime = ManagedRuntime.make(makeTestWideEventSinkLayer(sink));
+  let disposal: Promise<void> | undefined;
+  const runtime: WebProcessRuntime = {
+    dispose: () => {
+      disposal ??= managedRuntime.dispose();
+      return disposal;
+    },
+    effects: {
+      runEffect: (effect) => managedRuntime.runPromise(effect),
+    },
+    sourceControl: failingSourceControlPort,
+  };
+  const uninstall = installWebProcessRuntime(runtime);
+  return {
+    dispose: async () => {
+      uninstall();
+      await runtime.dispose();
+    },
+    sink,
+  };
+};
+
+interface RevisionQueryParityPath {
+  readonly fingerprint: string;
+  readonly kind: RevisionQueryKind;
+  readonly name: string;
+  readonly revision: string;
+  readonly run: (dependencies: RevisionQueryRunnerDependencies) => Promise<SessionQueryServerResult<unknown>>;
+  readonly serializedRequest: string;
+  readonly successfulPayload: unknown;
+  readonly wrongFingerprintPayload: unknown;
+  readonly wrongRevisionPayload: unknown;
+}
+
+const revisionQueryParityPaths: readonly RevisionQueryParityPath[] = [
+  {
+    fingerprint,
+    kind: 'session-detail-anchor',
+    name: 'generic session detail',
+    revision: request.revision,
+    run: (dependencies) => runRevisionQueryForServer('session-detail-anchor', request, dependencies),
+    serializedRequest: JSON.stringify(request),
+    successfulPayload: anchorResult,
+    wrongFingerprintPayload: { ...anchorResult, requestFingerprint: 'session-detail-v2:wrong' },
+    wrongRevisionPayload: { ...anchorResult, revision: 'revision-b' },
+  },
+  {
+    fingerprint: sessionFingerprint,
+    kind: 'sessions',
+    name: 'observed sessions',
+    revision: sessionRequest.revision,
+    run: async (dependencies) => {
+      const fixture = makeWebEventRuntimeFixture();
+      try {
+        return await runRevisionQueryForServer('sessions', sessionRequest, dependencies);
+      } finally {
+        await fixture.dispose();
+      }
+    },
+    serializedRequest: JSON.stringify(sessionRequest),
+    successfulPayload: emptySessionPage,
+    wrongFingerprintPayload: { ...emptySessionPage, requestFingerprint: 'session-query-v1:wrong' },
+    wrongRevisionPayload: { ...emptySessionPage, revision: 'revision-b' },
+  },
+];
+
+const expectedQueryFailure = (path: RevisionQueryParityPath) => ({
+  error: { revision: path.revision, tag: 'QueryFailed' },
+  ok: false,
+  requestFingerprint: path.fingerprint,
+  revision: path.revision,
+});
+
+describe('revision query runner server', () => {
+  for (const queryPath of revisionQueryParityPaths) {
+    test(`${queryPath.name} preserves the exact revision query lifecycle`, async () => {
+      expect(tryGetWebProcessRuntime()).toBeUndefined();
+      const executions: unknown[] = [];
+      const successful = await queryPath.run({
+        execute: (execution) => {
+          executions.push(execution);
+          return Promise.resolve({ ok: true, serializedPayload: JSON.stringify(queryPath.successfulPayload) });
+        },
       });
-    }
-  });
 
-  test('maps a missing lease to RevisionExpired without parsing a result', async () => {
-    const result = await runRevisionQueryForServer('session-detail-anchor', request, {
-      execute: () => Promise.resolve({ message: 'Revision expired', ok: false }),
-    });
+      expect(executions).toEqual([
+        {
+          kind: queryPath.kind,
+          revision: queryPath.revision,
+          serializedRequest: queryPath.serializedRequest,
+        },
+      ]);
+      expect(successful).toEqual({
+        data: queryPath.successfulPayload,
+        ok: true,
+        requestFingerprint: queryPath.fingerprint,
+        revision: queryPath.revision,
+      });
 
-    expect(result).toEqual({
-      error: { message: 'Revision expired', revision: request.revision, tag: 'RevisionExpired' },
-      ok: false,
-      requestFingerprint: fingerprint,
-      revision: request.revision,
-    });
-  });
+      const expired = await queryPath.run({
+        execute: () => Promise.resolve({ message: 'Revision expired', ok: false }),
+      });
+      expect(expired).toEqual({
+        error: { message: 'Revision expired', revision: queryPath.revision, tag: 'RevisionExpired' },
+        ok: false,
+        requestFingerprint: queryPath.fingerprint,
+        revision: queryPath.revision,
+      });
 
-  test('maps bounded process failures to QueryFailed', async () => {
-    const result = await runRevisionQueryForServer('session-detail-anchor', request, {
-      execute: () => Promise.reject(new Error('bounded runner failed')),
-    });
+      const rejected = await queryPath.run({
+        execute: () => Promise.reject(new Error('bounded runner failed')),
+      });
+      expect(rejected).toEqual({
+        error: { message: 'bounded runner failed', revision: queryPath.revision, tag: 'QueryFailed' },
+        ok: false,
+        requestFingerprint: queryPath.fingerprint,
+        revision: queryPath.revision,
+      });
 
-    expect(result).toEqual({
-      error: { message: 'bounded runner failed', revision: request.revision, tag: 'QueryFailed' },
-      ok: false,
-      requestFingerprint: fingerprint,
-      revision: request.revision,
+      const invalidJson = await queryPath.run(dependenciesReturningSerialized('{invalid-json'));
+      expect(invalidJson).toMatchObject(expectedQueryFailure(queryPath));
+
+      for (const invalidPayload of [queryPath.wrongFingerprintPayload, queryPath.wrongRevisionPayload]) {
+        const invalidResult = await queryPath.run(dependenciesReturning(invalidPayload));
+        expect(invalidResult).toMatchObject(expectedQueryFailure(queryPath));
+      }
+
+      expect(tryGetWebProcessRuntime()).toBeUndefined();
     });
-  });
+  }
 
   test('logs an expired sessions revision as a failed business boundary', async () => {
-    const sink = makeCaptureWideEventSink();
-    const runtime = createWebSourceControlRuntime({
-      policyStore: { load: Effect.succeed({}), setEnabled: () => Effect.void },
-      publication: { publish: Effect.succeed({ changed: false }) },
-      sources: new Map(),
-      wideEventSinkLayer: makeTestWideEventSinkLayer(sink),
-    });
-    const uninstall = installWebSourceControlRuntime(runtime);
+    const fixture = makeWebEventRuntimeFixture();
 
     try {
       const result = await runRevisionQueryForServer('sessions', sessionRequest, {
@@ -147,25 +237,17 @@ describe('revision query runner server session detail anchor', () => {
       });
 
       expect(result.ok).toBe(false);
-      const sessionEvents = sink.events().filter(({ boundary }) => boundary === 'web.sessions.read');
+      const sessionEvents = fixture.sink.events().filter(({ boundary }) => boundary === 'web.sessions.read');
       expect(sessionEvents).toHaveLength(1);
       expect(sessionEvents[0]?.outcome).toBe('failure');
       expect(sessionEvents[0]?.annotations.failureKind).toBe('revision-expired');
     } finally {
-      uninstall();
-      await runtime.dispose();
+      await fixture.dispose();
     }
   });
 
   test('keeps sessions parsing inside the boundary so the protocol result and event agree', async () => {
-    const sink = makeCaptureWideEventSink();
-    const runtime = createWebSourceControlRuntime({
-      policyStore: { load: Effect.succeed({}), setEnabled: () => Effect.void },
-      publication: { publish: Effect.succeed({ changed: false }) },
-      sources: new Map(),
-      wideEventSinkLayer: makeTestWideEventSinkLayer(sink),
-    });
-    const uninstall = installWebSourceControlRuntime(runtime);
+    const fixture = makeWebEventRuntimeFixture();
 
     try {
       const result = await runRevisionQueryForServer('sessions', sessionRequest, {
@@ -178,26 +260,18 @@ describe('revision query runner server session detail anchor', () => {
         requestFingerprint: sessionFingerprint,
         revision: sessionRequest.revision,
       });
-      const sessionEvents = sink.events().filter(({ boundary }) => boundary === 'web.sessions.read');
+      const sessionEvents = fixture.sink.events().filter(({ boundary }) => boundary === 'web.sessions.read');
       expect(sessionEvents).toHaveLength(1);
       expect(sessionEvents[0]?.outcome).toBe('failure');
       expect(sessionEvents[0]?.annotations.failureKind).toBe('query-failed');
       expect(sessionEvents[0]?.services.map(({ name }) => name)).toEqual(['revision.execute', 'revision.parse']);
     } finally {
-      uninstall();
-      await runtime.dispose();
+      await fixture.dispose();
     }
   });
 
   test('records sessions execution phases and bounded result summaries on success', async () => {
-    const sink = makeCaptureWideEventSink();
-    const runtime = createWebSourceControlRuntime({
-      policyStore: { load: Effect.succeed({}), setEnabled: () => Effect.void },
-      publication: { publish: Effect.succeed({ changed: false }) },
-      sources: new Map(),
-      wideEventSinkLayer: makeTestWideEventSinkLayer(sink),
-    });
-    const uninstall = installWebSourceControlRuntime(runtime);
+    const fixture = makeWebEventRuntimeFixture();
 
     try {
       const result = await runRevisionQueryForServer('sessions', sessionRequest, {
@@ -215,7 +289,7 @@ describe('revision query runner server session detail anchor', () => {
         requestFingerprint: sessionFingerprint,
         revision: sessionRequest.revision,
       });
-      const event = sink.events().find(({ boundary }) => boundary === 'web.sessions.read');
+      const event = fixture.sink.events().find(({ boundary }) => boundary === 'web.sessions.read');
       expect(event?.outcome).toBe('success');
       expect(event?.annotations).toMatchObject({
         hasCursor: false,
@@ -228,8 +302,7 @@ describe('revision query runner server session detail anchor', () => {
       expect(event?.services.map(({ name }) => name)).toEqual(['revision.execute', 'revision.parse']);
       expect(event?.services[0]?.annotations).toEqual({ boundedRunnerMs: 12, leaseWaitMs: 3 });
     } finally {
-      uninstall();
-      await runtime.dispose();
+      await fixture.dispose();
     }
   });
 
@@ -244,25 +317,17 @@ describe('revision query runner server session detail anchor', () => {
     ];
 
     for (const dependencies of executions) {
-      const sink = makeCaptureWideEventSink();
-      const runtime = createWebSourceControlRuntime({
-        policyStore: { load: Effect.succeed({}), setEnabled: () => Effect.void },
-        publication: { publish: Effect.succeed({ changed: false }) },
-        sources: new Map(),
-        wideEventSinkLayer: makeTestWideEventSinkLayer(sink),
-      });
-      const uninstall = installWebSourceControlRuntime(runtime);
+      const fixture = makeWebEventRuntimeFixture();
       try {
         const result = await runRevisionQueryForServer('sessions', sessionRequest, dependencies);
         expect(result.ok).toBe(false);
         expect(result.ok ? undefined : result.error.tag).toBe('QueryFailed');
-        const events = sink.events().filter(({ boundary }) => boundary === 'web.sessions.read');
+        const events = fixture.sink.events().filter(({ boundary }) => boundary === 'web.sessions.read');
         expect(events).toHaveLength(1);
         expect(events[0]?.outcome).toBe('failure');
         expect(events[0]?.annotations.failureKind).toBe('query-failed');
       } finally {
-        uninstall();
-        await runtime.dispose();
+        await fixture.dispose();
       }
     }
   });

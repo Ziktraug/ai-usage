@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
-import { expect, test } from 'bun:test';
-import fs from 'node:fs';
+import { expect, spyOn, test } from 'bun:test';
+import fs, { type BigIntStats, type PathLike, type StatOptions, type Stats } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Effect } from 'effect';
@@ -9,6 +9,35 @@ import { TestMemoryStorage } from './test-memory-storage';
 
 const PREVIOUS_AGGREGATE_HISTORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024;
 const SIMULATED_LARGE_SESSION_BYTES = 600 * 1024 * 1024;
+
+const originalLstatSync = fs.lstatSync;
+let beforeLstatRead: ((filePath: PathLike) => void) | undefined;
+
+function instrumentedLstatSync(
+  filePath: PathLike,
+  options?: StatOptions & { bigint?: false | undefined; throwIfNoEntry?: true | undefined },
+): Stats;
+function instrumentedLstatSync(
+  filePath: PathLike,
+  options: StatOptions & { bigint: true; throwIfNoEntry?: true | undefined },
+): BigIntStats;
+function instrumentedLstatSync(
+  filePath: PathLike,
+  options: StatOptions & { bigint?: false | undefined; throwIfNoEntry: false },
+): Stats | undefined;
+function instrumentedLstatSync(
+  filePath: PathLike,
+  options: StatOptions & { bigint: true; throwIfNoEntry: false },
+): BigIntStats | undefined;
+function instrumentedLstatSync(
+  filePath: PathLike,
+  options: StatOptions & { throwIfNoEntry?: true | undefined },
+): BigIntStats | Stats;
+function instrumentedLstatSync(filePath: PathLike, options?: StatOptions): BigIntStats | Stats | undefined;
+function instrumentedLstatSync(filePath: PathLike, options?: StatOptions): BigIntStats | Stats | undefined {
+  beforeLstatRead?.(filePath);
+  return originalLstatSync(filePath, options);
+}
 
 test('reads exact-limit regular UTF-8 files and rejects limit+1 and symlinks', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-read-'));
@@ -121,6 +150,142 @@ test('discovers large streaming histories without treating total bytes as reside
   expect(explicitlyBounded._tag).toBe('Left');
 });
 
+test('accepts a regular SQLite main without a WAL and rejects unsafe identities', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-sqlite-identity-'));
+  try {
+    const storage = createLocalHistoryStorage(root);
+    const dbPath = path.join(root, 'history.sqlite');
+    const writer = new Database(dbPath, { create: true });
+    writer.exec('CREATE TABLE events (id TEXT PRIMARY KEY)');
+    writer.query('INSERT INTO events (id) VALUES (?)').run('regular-row');
+    writer.close();
+    expect(fs.existsSync(`${dbPath}-wal`)).toBe(false);
+
+    const regularDatabase = await Effect.runPromise(storage.openDatabase(dbPath));
+    try {
+      const rows = await Effect.runPromise(regularDatabase.all<{ id: string }>('SELECT id FROM events'));
+      expect(rows).toEqual([{ id: 'regular-row' }]);
+    } finally {
+      await Effect.runPromise(regularDatabase.close);
+    }
+    expect(fs.existsSync(`${dbPath}-wal`)).toBe(false);
+
+    const redirectedMain = path.join(root, 'redirected-main.sqlite');
+    fs.symlinkSync(dbPath, redirectedMain);
+
+    const walSymlinkMain = path.join(root, 'wal-symlink.sqlite');
+    const walMainWriter = new Database(walSymlinkMain, { create: true });
+    walMainWriter.exec('CREATE TABLE events (id TEXT PRIMARY KEY)');
+    walMainWriter.close();
+    const walPath = `${walSymlinkMain}-wal`;
+    fs.symlinkSync(dbPath, walPath);
+
+    const directoryPath = path.join(root, 'directory.sqlite');
+    fs.mkdirSync(directoryPath);
+    const absentPath = path.join(root, 'absent.sqlite');
+
+    for (const [candidatePath, rejectedPath] of [
+      [redirectedMain, redirectedMain],
+      [walSymlinkMain, walPath],
+      [directoryPath, directoryPath],
+      [absentPath, absentPath],
+    ] as const) {
+      const result = await Effect.runPromise(Effect.either(storage.openDatabase(candidatePath)));
+      expect(result._tag).toBe('Left');
+      if (result._tag === 'Right') {
+        await Effect.runPromise(result.right.close);
+        throw new Error(`Expected SQLite identity rejection for ${candidatePath}`);
+      }
+      expect(result.left).toMatchObject({ operation: 'sqlite.identity', path: rejectedPath });
+      expect(String(result.left.cause)).not.toContain('regular-row');
+    }
+  } finally {
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('rejects a main identity replacement after BEGIN and closes the opened database', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-sqlite-replacement-'));
+  const dbPath = path.join(root, 'history.sqlite');
+  const replacementPath = path.join(root, 'replacement.sqlite');
+  const displacedPath = path.join(root, 'opened.sqlite');
+  for (const [filePath, id] of [
+    [dbPath, 'original-row'],
+    [replacementPath, 'redirected-row'],
+  ] as const) {
+    const database = new Database(filePath, { create: true });
+    database.exec('CREATE TABLE events (id TEXT PRIMARY KEY)');
+    database.query('INSERT INTO events (id) VALUES (?)').run(id);
+    database.close();
+  }
+
+  let mainIdentityReads = 0;
+  beforeLstatRead = (filePath) => {
+    if (filePath === dbPath) {
+      mainIdentityReads++;
+      if (mainIdentityReads === 2) {
+        fs.renameSync(dbPath, displacedPath);
+        fs.renameSync(replacementPath, dbPath);
+      }
+    }
+  };
+  const lstatSpy = spyOn(fs, 'lstatSync').mockImplementation(instrumentedLstatSync);
+  const closeSpy = spyOn(Database.prototype, 'close');
+  try {
+    const storage = createLocalHistoryStorage(root);
+    const result = await Effect.runPromise(Effect.either(storage.openDatabase(dbPath)));
+    expect(result._tag).toBe('Left');
+    if (result._tag === 'Right') {
+      await Effect.runPromise(result.right.close);
+      throw new Error('Expected replacement to reject openDatabase');
+    }
+    expect(result.left).toMatchObject({ operation: 'sqlite.identityChanged', path: dbPath });
+    expect(String(result.left.cause)).not.toContain('redirected-row');
+    expect(mainIdentityReads).toBe(2);
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  } finally {
+    beforeLstatRead = undefined;
+    lstatSpy.mockRestore();
+    closeSpy.mockRestore();
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
+test('rejects an absent-to-present WAL transition for the current collection attempt', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-sqlite-new-wal-'));
+  const dbPath = path.join(root, 'history.sqlite');
+  const walPath = `${dbPath}-wal`;
+  const writer = new Database(dbPath, { create: true });
+  writer.exec('CREATE TABLE events (id TEXT PRIMARY KEY)');
+  writer.close();
+
+  let walIdentityReads = 0;
+  beforeLstatRead = (filePath) => {
+    if (filePath === walPath) {
+      walIdentityReads++;
+      if (walIdentityReads === 2) {
+        fs.writeFileSync(walPath, 'new WAL from a concurrent writer');
+      }
+    }
+  };
+  const lstatSpy = spyOn(fs, 'lstatSync').mockImplementation(instrumentedLstatSync);
+  try {
+    const storage = createLocalHistoryStorage(root);
+    const result = await Effect.runPromise(Effect.either(storage.openDatabase(dbPath)));
+    expect(result._tag).toBe('Left');
+    if (result._tag === 'Right') {
+      await Effect.runPromise(result.right.close);
+      throw new Error('Expected new WAL identity to reject openDatabase');
+    }
+    expect(result.left).toMatchObject({ operation: 'sqlite.identityChanged', path: walPath });
+    expect(walIdentityReads).toBe(2);
+  } finally {
+    beforeLstatRead = undefined;
+    lstatSpy.mockRestore();
+    fs.rmSync(root, { force: true, recursive: true });
+  }
+});
+
 test('keeps one read-only SQLite snapshot and sees committed WAL rows', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-history-wal-'));
   const dbPath = path.join(root, 'history.sqlite');
@@ -144,6 +309,7 @@ test('keeps one read-only SQLite snapshot and sees committed WAL rows', async ()
       const sameSnapshot = await Effect.runPromise(database.all<{ id: number }>('SELECT id FROM events ORDER BY id'));
       expect(sameSnapshot).toEqual([{ id: 1 }]);
     } finally {
+      await Effect.runPromise(database.close);
       await Effect.runPromise(database.close);
     }
   } finally {

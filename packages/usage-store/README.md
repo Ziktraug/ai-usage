@@ -10,7 +10,7 @@ It does not own raw local history collection, file selection or transfer, networ
 
 ## Public Interface
 
-The root export provides typed APIs for importing local base rows and normalized dataset items, querying enrichable rows with stable keys, idempotently upserting validated RTK savings contributions, previewing/confirming portable bundles against a store-state token, exporting local merge bundles, and querying composed projections plus semantic generation.
+The root export provides typed APIs for importing local base rows and normalized dataset items, querying enrichable rows with stable keys, idempotently upserting validated RTK savings contributions, previewing and atomically confirming portable bundles with one bounded, versioned, opaque, stateless `confirmationToken`, exporting local merge bundles, and querying composed projections plus semantic generation.
 
 ## Depends On
 
@@ -22,7 +22,7 @@ It must not import `@ai-usage/local-collectors`, `@ai-usage/report-data`, `@ai-u
 
 ## Data Boundary
 
-SQLite stores normalized machine-scoped base usage facts keyed by stable row identity. Enrichers own separate versioned contributions keyed by row and enrichment source; report reads validate and overlay them without teaching base upserts about enrichment fields. Every local or portable merge import canonicalizes validated RTK fields into a hash-recomputed base row plus a separate contribution inside one transaction; preview uses the identical preparation. Missing incoming RTK fields never clear an existing contribution, and the transaction advances semantic generation at most once. Empty or unmatched enrichment runs never clear prior contributions. Versioned dataset items remain keyed by source, machine, dataset, schema, and stable item identity. Generation advances only when the active composed report projection changes; observation timestamps and identical imports do not invalidate report captures.
+SQLite stores normalized machine-scoped base usage facts keyed by stable row identity. Enrichers own separate versioned contributions keyed by row and enrichment source; report reads validate and overlay them without teaching base upserts about enrichment fields. Every local or portable merge import canonicalizes validated RTK fields into a hash-recomputed base row plus a separate contribution inside one transaction; preview uses the identical preparation. A first preview may initialize an empty current-schema private store without inserting usage rows or advancing semantic generation. Previewing an existing store may run migrations, but never imports the peer bundle. Its `confirmationToken` binds the canonical bundle to the relevant logical store state without exposing its contents or persisting token state. Missing incoming RTK fields never clear an existing contribution, and the transaction advances semantic generation at most once. Empty or unmatched enrichment runs never clear prior contributions. Versioned dataset items remain keyed by source, machine, dataset, schema, and stable item identity. Generation advances only when the active composed report projection changes; observation timestamps and identical imports do not invalidate report captures.
 
 ## Test Strategy
 

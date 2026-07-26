@@ -201,6 +201,7 @@ const planReconcileActions = (
 };
 
 const applyPlannedActions = async (
+  input: LoadSkillManagementSnapshotInput,
   snapshot: SkillManagementSnapshot,
   predicate: (skill: SourceSkill) => boolean,
   privateStatePath: string,
@@ -215,13 +216,14 @@ const applyPlannedActions = async (
       await applyProjectionAction(action, { privateStatePath });
     }
   }
-  return { actions, snapshot };
+  return { actions, snapshot: await loadSkillManagementSnapshot(input) };
 };
 
 export const reconcileSkill = async (input: ReconcileSkillInput): Promise<SkillReconcileResult> => {
   const skillName = parseSkillName(input.skillName);
   const snapshot = await loadSkillManagementSnapshot(input);
   return applyPlannedActions(
+    input,
     snapshot,
     (skill) => skill.name === skillName,
     path.join(input.homePath, '.config', 'ai-usage'),
@@ -232,14 +234,15 @@ export const reconcileAllActiveSkills = async (
   input: LoadSkillManagementSnapshotInput,
 ): Promise<SkillReconcileResult> => {
   const snapshot = await loadSkillManagementSnapshot(input);
-  return applyPlannedActions(snapshot, activeSkillPredicate, path.join(input.homePath, '.config', 'ai-usage'));
+  return applyPlannedActions(input, snapshot, activeSkillPredicate, path.join(input.homePath, '.config', 'ai-usage'));
 };
 
 export const previewReconcileAllActiveSkills = async (
   input: LoadSkillManagementSnapshotInput,
 ): Promise<SkillReconcileResult> => {
   const snapshot = await loadSkillManagementSnapshot(input);
-  return { actions: planReconcileActions(snapshot, activeSkillPredicate), snapshot };
+  const actions = planReconcileActions(snapshot, activeSkillPredicate);
+  return { actions, snapshot };
 };
 
 export const createSkillTargetDirectory = async (input: CreateSkillTargetDirectoryInput): Promise<void> => {

@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+import fs, { type BigIntStats } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -78,6 +78,93 @@ const localHistoryError =
   (operation: string, details: LocalHistoryErrorDetails = {}) =>
   (cause: unknown) =>
     new LocalHistoryError({ operation, cause, ...details });
+
+interface SqliteFileIdentity {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly mtimeNs: bigint;
+  readonly size: bigint;
+}
+
+interface SqliteHistoryIdentity {
+  readonly main: SqliteFileIdentity;
+  readonly wal: SqliteFileIdentity | null;
+}
+
+const sqliteIdentityError = (operation: string, filePath: string, message: string): LocalHistoryError =>
+  new LocalHistoryError({
+    operation,
+    path: filePath,
+    cause: new Error(message),
+  });
+
+const lstatSqlitePath = (filePath: string): BigIntStats | undefined => {
+  try {
+    return fs.lstatSync(filePath, { bigint: true, throwIfNoEntry: false });
+  } catch {
+    throw sqliteIdentityError('sqlite.identity', filePath, 'SQLite history identity could not be inspected.');
+  }
+};
+
+const readPresentSqliteFileIdentity = (filePath: string): SqliteFileIdentity | null => {
+  const stat = lstatSqlitePath(filePath);
+  if (!stat) {
+    return null;
+  }
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw sqliteIdentityError(
+      'sqlite.identity',
+      filePath,
+      'SQLite history identity is not a non-symlink regular file.',
+    );
+  }
+  return {
+    dev: stat.dev,
+    ino: stat.ino,
+    mtimeNs: stat.mtimeNs,
+    size: stat.size,
+  };
+};
+
+/** Capture the regular-file identities SQLite may read for one database. */
+const readSqliteHistoryIdentity = (dbPath: string): SqliteHistoryIdentity => {
+  const main = readPresentSqliteFileIdentity(dbPath);
+  if (!main) {
+    throw sqliteIdentityError('sqlite.identity', dbPath, 'SQLite history identity is unavailable.');
+  }
+  return {
+    main,
+    wal: readPresentSqliteFileIdentity(`${dbPath}-wal`),
+  };
+};
+
+const sqliteFileIdentitiesMatch = (left: SqliteFileIdentity, right: SqliteFileIdentity): boolean =>
+  left.dev === right.dev && left.ino === right.ino && left.mtimeNs === right.mtimeNs && left.size === right.size;
+
+const changedSqliteIdentityPath = (
+  dbPath: string,
+  before: SqliteHistoryIdentity,
+  after: SqliteHistoryIdentity,
+): string | null => {
+  if (!sqliteFileIdentitiesMatch(before.main, after.main)) {
+    return dbPath;
+  }
+  if (before.wal === null || after.wal === null) {
+    return before.wal === after.wal ? null : `${dbPath}-wal`;
+  }
+  return sqliteFileIdentitiesMatch(before.wal, after.wal) ? null : `${dbPath}-wal`;
+};
+
+const assertStableSqliteHistoryIdentity = (
+  dbPath: string,
+  before: SqliteHistoryIdentity,
+  after: SqliteHistoryIdentity,
+): void => {
+  const changedPath = changedSqliteIdentityPath(dbPath, before, after);
+  if (changedPath) {
+    throw sqliteIdentityError('sqlite.identityChanged', changedPath, 'SQLite history identity changed while opening.');
+  }
+};
 
 export const readRegularFileText = (filePath: string, maxBytes: number): string => {
   const before = fs.lstatSync(filePath);
@@ -320,10 +407,48 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
     Effect.tryPromise({
       try: async () => {
         const { Database } = await import('bun:sqlite');
+        const beforeIdentity = readSqliteHistoryIdentity(dbPath);
+        // Bun 1.3.13 has no supported SQLITE_OPEN_NOFOLLOW option. This
+        // lstat/open/post-lstat fallback rejects static redirection and
+        // ordinary replacement, but not a hostile same-UID pathname race.
         // Read-only SQLite connections include committed WAL pages without
         // checkpointing or mutating the harness-owned database.
         const db = new Database(dbPath, { readonly: true });
-        db.exec('BEGIN');
+        let closed = false;
+        const rollbackAndClose = (): void => {
+          if (closed) {
+            return;
+          }
+          closed = true;
+          let cleanupFailure: unknown;
+          try {
+            if (db.inTransaction) {
+              db.exec('ROLLBACK');
+            }
+          } catch (cause) {
+            cleanupFailure = cause;
+          }
+          try {
+            db.close();
+          } catch (cause) {
+            cleanupFailure ??= cause;
+          }
+          if (cleanupFailure !== undefined) {
+            throw cleanupFailure;
+          }
+        };
+        try {
+          db.exec('BEGIN');
+          const afterIdentity = readSqliteHistoryIdentity(dbPath);
+          assertStableSqliteHistoryIdentity(dbPath, beforeIdentity, afterIdentity);
+        } catch (cause) {
+          try {
+            rollbackAndClose();
+          } catch {
+            // Preserve the identity/open failure after attempting both cleanup operations.
+          }
+          throw cause;
+        }
         return {
           all: <T extends object = Record<string, unknown>>(
             sql: string,
@@ -334,15 +459,13 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
               catch: localHistoryError('sqlite.all', { path: dbPath, sql }),
             }),
           close: Effect.try({
-            try: () => {
-              db.exec('ROLLBACK');
-              db.close();
-            },
+            try: rollbackAndClose,
             catch: localHistoryError('sqlite.close', { path: dbPath }),
           }).pipe(Effect.ignore),
         };
       },
-      catch: localHistoryError('openDatabase', { path: dbPath }),
+      catch: (cause) =>
+        cause instanceof LocalHistoryError ? cause : localHistoryError('openDatabase', { path: dbPath })(cause),
     }),
 });
 

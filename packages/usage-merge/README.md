@@ -13,10 +13,12 @@ It does not own network discovery, LAN transport, pairing, peer credentials, SQL
 `createUsageFileMergeService` creates a `UsageFileMergeService` with explicit Effect-based operations:
 
 - `exportManualMergeBundle` returns a local `UsageMergeBundle` and a suggested JSON filename.
-- preview validates exact bytes/rows and returns count-based effects plus generation/state token without mutation;
-- confirm requires that exact digest/generation/state token before importing idempotently.
+- preview validates exact bytes/rows and returns count-based effects, a separate document digest, and one `confirmationToken`; a first preview may initialize an empty current-schema private store without inserting usage rows or advancing semantic generation, while previewing an existing store may run migrations but never imports the peer bundle;
+- confirm requires that exact digest and `confirmationToken` before importing idempotently.
 
-Failures use `UsageMergeError` with one of three reasons: `invalid-input`, `self-merge`, or `store-failed`.
+The bounded, versioned `confirmationToken` is opaque and stateless. It binds the canonical bundle to the relevant logical store state. Callers transport it without decoding it.
+
+Failures use `UsageMergeError` with one of four reasons: `invalid-input`, `self-merge`, `store-failed`, or `preview-stale`.
 
 ## Depends On
 

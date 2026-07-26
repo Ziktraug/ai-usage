@@ -3,7 +3,8 @@ import {
   type BoundaryClassification,
   classifyExit,
   runBoundaryEffect,
-  withMeasured,
+  WideEventService,
+  withMeasuredIfAvailable,
 } from '@ai-usage/effect-runtime';
 import {
   type FocusedBreakdownRequest,
@@ -47,12 +48,12 @@ import {
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
 import { sourceControlBounds } from '@ai-usage/report-core/source-control';
-import { Effect, Exit } from 'effect';
+import { Effect, Exit, Option } from 'effect';
 import { parseReportRevision, type ReportRevision } from '../web-report-payload';
 import { runBoundedArtifactProcess } from './bounded-artifact-process.server';
 import { withReportRevisionQueryLeaseForServer } from './report-payload.server';
 import { resolveReportRuntimePaths } from './report-runtime-paths.server';
-import { getWebSourceControlRuntime } from './source-control.server';
+import { getWebProcessRuntime } from './web-process-runtime.server';
 
 export type RevisionQueryKind =
   | FocusedReportQueryKind
@@ -60,14 +61,16 @@ export type RevisionQueryKind =
   | 'neighbors'
   | 'session-detail-anchor'
   | 'sessions';
-type RevisionQueryResult =
-  | FocusedBreakdownResult
-  | FocusedOverviewResult
-  | FocusedSupportResult
-  | SessionCampaignChildrenResult
-  | SessionNeighborResult
-  | SessionDetailAnchorResult
-  | SessionPageResult;
+interface RevisionQueryResultByKind {
+  breakdown: FocusedBreakdownResult;
+  'campaign-children': SessionCampaignChildrenResult;
+  neighbors: SessionNeighborResult;
+  overview: FocusedOverviewResult;
+  'session-detail-anchor': SessionDetailAnchorResult;
+  sessions: SessionPageResult;
+  support: FocusedSupportResult;
+}
+type RevisionQueryResult = RevisionQueryResultByKind[RevisionQueryKind];
 
 interface ParsedRevisionRequest<Result extends RevisionQueryResult> {
   fingerprint: string;
@@ -197,70 +200,81 @@ const revisionExpiredResult = (
   revision: request.revision,
 });
 
-const runSessionQueryBoundary = (
-  request: ParsedRevisionRequest<SessionPageResult>,
-  executeRequest: RevisionQueryExecutionRequest,
+const successfulQueryResult = <Result extends RevisionQueryResult>(
+  request: { readonly fingerprint: string; readonly revision: ReportRevision },
+  data: Result,
+): SessionQueryServerResult<Result> => ({
+  data,
+  ok: true,
+  requestFingerprint: request.fingerprint,
+  revision: request.revision,
+});
+
+const annotateWideEventIfAvailable = (annotations: Readonly<Record<string, number>>): Effect.Effect<void> =>
+  Effect.serviceOption(WideEventService).pipe(
+    Effect.flatMap((wideEvent) => (Option.isNone(wideEvent) ? Effect.void : wideEvent.value.annotate(annotations))),
+  );
+
+const runParsedRevisionQuery = <Result extends RevisionQueryResult>(
+  kind: RevisionQueryKind,
+  request: ParsedRevisionRequest<Result>,
   dependencies: RevisionQueryRunnerDependencies,
-): Promise<SessionQueryServerResult<SessionPageResult>> =>
-  getWebSourceControlRuntime().runEffect(
-    runBoundaryEffect(
-      {
-        boundary: 'web.sessions.read',
-        annotations: { fingerprint: request.fingerprint, revision: request.revision },
-        classify: classifySessionQueryResult,
-      },
-      Effect.gen(function* () {
-        const execution = yield* Effect.tryPromise({
-          try: () => dependencies.execute(executeRequest),
-          catch: (error) => error,
-        }).pipe(
-          Effect.tap(({ diagnostics }) => annotateWideEvent(executionAnnotations(diagnostics))),
-          withMeasured('revision.execute'),
-        );
+): Effect.Effect<SessionQueryServerResult<Result>, never> =>
+  Effect.gen(function* () {
+    const execution = yield* Effect.tryPromise({
+      try: () =>
+        dependencies.execute({
+          kind,
+          revision: request.revision,
+          serializedRequest: request.serializedRequest,
+        }),
+      catch: (error) => error,
+    }).pipe(
+      Effect.tap(({ diagnostics }) => annotateWideEventIfAvailable(executionAnnotations(diagnostics))),
+      withMeasuredIfAvailable('revision.execute'),
+    );
 
-        if (!execution.ok) {
-          return revisionExpiredResult(request, execution.message);
+    if (!execution.ok) {
+      return revisionExpiredResult(request, execution.message);
+    }
+
+    const data = yield* Effect.try({
+      try: () => request.parseResult(execution.serializedPayload),
+      catch: (error) => error,
+    }).pipe(withMeasuredIfAvailable('revision.parse'));
+
+    return successfulQueryResult(request, data);
+  }).pipe(Effect.catchAll((error) => Effect.succeed(queryFailedResult(request, error))));
+
+const withSessionQueryBoundary = (
+  request: ParsedRevisionRequest<SessionPageResult>,
+  query: Effect.Effect<SessionQueryServerResult<SessionPageResult>, never>,
+) =>
+  runBoundaryEffect(
+    {
+      boundary: 'web.sessions.read',
+      annotations: { fingerprint: request.fingerprint, revision: request.revision },
+      classify: classifySessionQueryResult,
+    },
+    query.pipe(
+      Effect.tap((result) => {
+        if (!result.ok) {
+          return Effect.void;
         }
-
-        const parsed = yield* Effect.try({
-          try: () => request.parseResult(execution.serializedPayload),
-          catch: (error) => error,
-        }).pipe(
-          withMeasured('revision.parse'),
-          Effect.match({
-            onFailure: (error) => queryFailedResult(request, error),
-            onSuccess: (data) => ({
-              data,
-              ok: true as const,
-              requestFingerprint: request.fingerprint,
-              revision: request.revision,
-            }),
-          }),
-        );
-
-        if (parsed.ok) {
-          yield* annotateWideEvent({
-            hasCursor: request.sessionSummary?.hasCursor ?? false,
-            hasMore: parsed.data.nextCursor !== null,
-            itemCount: parsed.data.itemCount,
-            pageSize: request.sessionSummary?.pageSize ?? parsed.data.items.length,
-            queryKind: 'sessions',
-            sessionCount: parsed.data.sessionCount,
-          });
-        }
-        return parsed;
+        return annotateWideEvent({
+          hasCursor: request.sessionSummary?.hasCursor ?? false,
+          hasMore: result.data.nextCursor !== null,
+          itemCount: result.data.itemCount,
+          pageSize: request.sessionSummary?.pageSize ?? result.data.items.length,
+          queryKind: 'sessions',
+          sessionCount: result.data.sessionCount,
+        });
       }),
     ),
   );
 
 const revisionQuerySpecs: {
-  breakdown: RevisionQuerySpec<FocusedBreakdownResult>;
-  'campaign-children': RevisionQuerySpec<SessionCampaignChildrenResult>;
-  neighbors: RevisionQuerySpec<SessionNeighborResult>;
-  overview: RevisionQuerySpec<FocusedOverviewResult>;
-  sessions: RevisionQuerySpec<SessionPageResult>;
-  'session-detail-anchor': RevisionQuerySpec<SessionDetailAnchorResult>;
-  support: RevisionQuerySpec<FocusedSupportResult>;
+  readonly [Kind in RevisionQueryKind]: RevisionQuerySpec<RevisionQueryResultByKind[Kind]>;
 } = {
   breakdown: {
     parse: (input) => {
@@ -342,6 +356,11 @@ const revisionQuerySpecs: {
   },
 };
 
+const parseRevisionRequest = <Kind extends RevisionQueryKind>(
+  kind: Kind,
+  input: unknown,
+): ParsedRevisionRequest<RevisionQueryResultByKind[Kind]> => revisionQuerySpecs[kind].parse(input);
+
 export function runRevisionQueryForServer(
   kind: 'breakdown',
   input: FocusedBreakdownRequest,
@@ -378,29 +397,15 @@ export async function runRevisionQueryForServer(
   dependencies: RevisionQueryRunnerDependencies = defaultDependencies,
 ): Promise<SessionQueryServerResult<RevisionQueryResult>> {
   if (kind === 'sessions') {
-    const request = revisionQuerySpecs.sessions.parse(input);
-    const executeRequest = { kind, revision: request.revision, serializedRequest: request.serializedRequest };
+    const request = parseRevisionRequest(kind, input);
+    const query = runParsedRevisionQuery(kind, request, dependencies);
     try {
-      return await runSessionQueryBoundary(request, executeRequest, dependencies);
+      return await getWebProcessRuntime().effects.runEffect(withSessionQueryBoundary(request, query));
     } catch (error) {
       return queryFailedResult(request, error);
     }
   }
 
-  const request = revisionQuerySpecs[kind].parse(input);
-  const executeRequest = { kind, revision: request.revision, serializedRequest: request.serializedRequest };
-  try {
-    const execution = await dependencies.execute(executeRequest);
-    if (!execution.ok) {
-      return revisionExpiredResult(request, execution.message);
-    }
-    return {
-      data: request.parseResult(execution.serializedPayload),
-      ok: true,
-      requestFingerprint: request.fingerprint,
-      revision: request.revision,
-    };
-  } catch (error) {
-    return queryFailedResult(request, error);
-  }
+  const request = parseRevisionRequest(kind, input);
+  return await Effect.runPromise(runParsedRevisionQuery(kind, request, dependencies));
 }

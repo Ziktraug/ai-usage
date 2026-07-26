@@ -190,6 +190,7 @@ test('refreshes the skills snapshot and inventories without silently replacing a
   await page.goto('/skills/global/alpha-skill');
   const editor = page.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
   await editor.fill('# Preserve me during refresh\n');
+  await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
 
   const refreshButton = page.getByRole('button', { name: 'Refresh skills' });
   await refreshButton.click();
