@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import fs from 'node:fs';
 import path from 'node:path';
 import {
   isNormalizedDatasetIdentity,
@@ -27,7 +26,12 @@ import { IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE } from '@ai-usage/report-core/rep
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow, UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { Data, Effect } from 'effect';
-import { preparePrivateStoreFile } from './private-storage';
+import {
+  inspectPrivateStoreForConfirmation,
+  type PrivateStoreConfirmationIdentity,
+  preparePrivateStoreFile,
+  revalidatePrivateStoreForConfirmation,
+} from './private-storage';
 
 export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
@@ -775,38 +779,32 @@ const openUsageStoreDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, U
     catch: (cause) => usageStoreError('openUsageStore', dbPath, cause, 'storage-failure'),
   });
 
-const assertExistingPrivateUsageStore = (dbPath: string): void => {
-  const directory = fs.lstatSync(path.dirname(dbPath), { throwIfNoEntry: false });
-  if (!(directory?.isDirectory() && !directory.isSymbolicLink())) {
-    throw new Error('Usage store directory is unavailable or unsafe for confirmation.');
-  }
-  for (const [filePath, required] of [
-    [dbPath, true],
-    [`${dbPath}-wal`, false],
-    [`${dbPath}-shm`, false],
-  ] as const) {
-    const stat = fs.lstatSync(filePath, { throwIfNoEntry: false });
-    if (!stat) {
-      if (required) {
-        throw new Error('Usage store is unavailable for confirmation.');
-      }
-      continue;
-    }
-    if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink > 1) {
-      throw new Error(`Usage store file is unsafe for confirmation: ${filePath}`);
-    }
-  }
-};
+interface ConfirmationUsageStoreResource {
+  readonly db: SqliteDatabase;
+  readonly identity: PrivateStoreConfirmationIdentity;
+}
 
-const openConfirmationUsageStoreDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
+const openConfirmationUsageStoreDatabase = (
+  dbPath: string,
+): Effect.Effect<ConfirmationUsageStoreResource, UsageStoreError> =>
   Effect.tryPromise({
     try: async () => {
-      assertExistingPrivateUsageStore(dbPath);
+      const identity = inspectPrivateStoreForConfirmation(dbPath);
       const { Database } = await import('bun:sqlite');
       const db = new Database(dbPath, { create: false, readwrite: true }) as SqliteDatabase;
-      db.exec('PRAGMA busy_timeout = 5000');
-      db.exec('PRAGMA foreign_keys = ON');
-      return db;
+      try {
+        db.exec('PRAGMA busy_timeout = 5000');
+        db.exec('PRAGMA foreign_keys = ON');
+        revalidatePrivateStoreForConfirmation(dbPath, identity);
+        return { db, identity };
+      } catch (cause) {
+        try {
+          db.close();
+        } catch {
+          // The validation or setup failure remains authoritative.
+        }
+        throw cause;
+      }
     },
     catch: (cause) => (cause instanceof UsageStoreError ? cause : previewStaleError(cause)),
   });
@@ -825,9 +823,9 @@ const withUsageStore = <A>(
 
 const withConfirmationUsageStore = <A>(
   dbPath: string,
-  use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
+  use: (resource: ConfirmationUsageStoreResource) => Effect.Effect<A, UsageStoreError>,
 ): Effect.Effect<A, UsageStoreError> =>
-  Effect.acquireUseRelease(openConfirmationUsageStoreDatabase(dbPath), use, (db) =>
+  Effect.acquireUseRelease(openConfirmationUsageStoreDatabase(dbPath), use, ({ db }) =>
     closeUsageStoreDatabase(dbPath, db),
   );
 
@@ -1172,19 +1170,23 @@ const storeStateFingerprint = (db: SqliteDatabase, rows: SerializedMergeRow[]): 
   const enrichments: unknown[] = [];
   for (const batch of chunkRows(rowKeys, IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE)) {
     const placeholders = batch.map(() => '?').join(', ');
-    storedRows.push(
-      ...db.query(`SELECT * FROM usage_rows WHERE row_key IN (${placeholders}) ORDER BY row_key`).all(...batch),
-    );
-    enrichments.push(
-      ...db
-        .query(`
+    const storedBatch = db
+      .query(`SELECT * FROM usage_rows WHERE row_key IN (${placeholders}) ORDER BY row_key`)
+      .all(...batch);
+    for (const storedRow of storedBatch) {
+      storedRows.push(storedRow);
+    }
+    const enrichmentBatch = db
+      .query(`
           SELECT *
           FROM usage_row_enrichments
           WHERE row_key IN (${placeholders})
           ORDER BY row_key, source_id
         `)
-        .all(...batch),
-    );
+      .all(...batch);
+    for (const enrichment of enrichmentBatch) {
+      enrichments.push(enrichment);
+    }
   }
   return createHash('sha256').update(canonicalJson({ enrichments, metadata, schema, storedRows })).digest('hex');
 };
@@ -1298,14 +1300,19 @@ export const confirmPeerMergeBundle = (
   }
   return validatePeerBundle(input.bundle, input.localMachineId, 'confirmPeerMergeBundle').pipe(
     Effect.flatMap((bundle) =>
-      withConfirmationUsageStore(input.dbPath, (db) =>
+      withConfirmationUsageStore(input.dbPath, ({ db, identity }) =>
         Effect.try({
           try: () => {
             const preparedRows = bundle.rows.map(prepareMergeRow);
             const rows = preparedRows.map(({ row }) => row);
             const bundleDigest = canonicalBundleDigest(bundle, preparedRows);
-            db.exec('BEGIN IMMEDIATE');
             try {
+              db.exec('BEGIN IMMEDIATE');
+              try {
+                revalidatePrivateStoreForConfirmation(input.dbPath, identity);
+              } catch (cause) {
+                throw previewStaleError(cause);
+              }
               const generation = readCurrentUsageStoreGeneration(db);
               const storeFingerprint = storeStateFingerprint(db, rows);
               const confirmationToken = confirmationTokenFor(bundleDigest, generation, storeFingerprint);
@@ -1323,7 +1330,11 @@ export const confirmPeerMergeBundle = (
               db.exec('COMMIT');
               return result;
             } catch (error) {
-              db.exec('ROLLBACK');
+              try {
+                db.exec('ROLLBACK');
+              } catch {
+                // The validation, stale-state, or write failure remains authoritative.
+              }
               throw error;
             }
           },

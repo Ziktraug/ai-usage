@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, renameSync } from 'node:fs';
+import { chmodSync, copyFileSync, lstatSync, mkdtempSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { CursorCommitAttributionDatasetItem } from '@ai-usage/report-core/datasets';
@@ -645,6 +645,138 @@ describe('usage-store public boundary', () => {
     expect(migrationValues.map(({ value }) => value)).toEqual([0, 0]);
     expect(generation.value).toBe(generationBefore);
     expect(peerCount.count).toBe(0);
+  });
+
+  test('rejects owner-only permission drift without repairing or mutating the store', async () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    for (const drift of [
+      { label: 'database file access', mode: 0o644, target: 'database' },
+      { label: 'store directory access', mode: 0o755, target: 'directory' },
+    ]) {
+      const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-confirm-private-drift-'));
+      const dbPath = usageStorePath(home);
+      const peerRow = {
+        ...makeRow({ sourceSessionId: `private-drift-${drift.label}` }),
+        rtkCommandCount: 2,
+        rtkInputTokens: 30,
+        rtkOutputTokens: 10,
+        rtkSavedTokens: 20,
+      };
+      const bundle = makeBundle(machineB, [peerRow]);
+      const peerRowKey = toSerializedMergeRow(peerRow, machineB).rowKey;
+      const preview = await Effect.runPromise(previewPeerMergeBundle({ bundle, dbPath, localMachineId: machineA.id }));
+      const driftPath = drift.target === 'database' ? dbPath : path.dirname(dbPath);
+      const statBeforeDrift = lstatSync(driftPath);
+      if (typeof process.getuid === 'function') {
+        expect(statBeforeDrift.uid).toBe(process.getuid());
+      }
+      chmodSync(driftPath, drift.mode);
+
+      const error = await Effect.runPromise(
+        confirmPeerMergeBundle({
+          bundle,
+          confirmationToken: preview.confirmationToken,
+          dbPath,
+          localMachineId: machineA.id,
+        }).pipe(Effect.flip),
+      );
+
+      expect(error.reason).toBe('preview-stale');
+      expect(lstatSync(driftPath).mode % 0o1_0000).toBe(drift.mode);
+      const { Database } = await import('bun:sqlite');
+      const inspection = new Database(dbPath, { readonly: true });
+      const migrationValues = inspection
+        .query("SELECT value FROM usage_store_metadata WHERE key LIKE 'migration.%' ORDER BY key")
+        .all() as Array<{ value: number }>;
+      const generation = inspection.query("SELECT value FROM usage_store_metadata WHERE key = 'generation'").get() as {
+        value: number;
+      };
+      const peerCount = inspection
+        .query('SELECT COUNT(*) AS count FROM usage_rows WHERE row_key = ?')
+        .get(peerRowKey) as { count: number };
+      const enrichmentCount = inspection
+        .query('SELECT COUNT(*) AS count FROM usage_row_enrichments WHERE row_key = ?')
+        .get(peerRowKey) as { count: number };
+      inspection.close();
+      expect(migrationValues.map(({ value }) => value)).toEqual([1, 1]);
+      expect(generation.value).toBe(0);
+      expect(peerCount.count).toBe(0);
+      expect(enrichmentCount.count).toBe(0);
+    }
+  });
+
+  test('rejects database identity replacement during confirmation before writing', async () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    for (const replacementPhase of [
+      { label: 'open', sql: 'PRAGMA foreign_keys = ON' },
+      { label: 'begin', sql: 'BEGIN IMMEDIATE' },
+    ]) {
+      const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-confirm-identity-drift-'));
+      const dbPath = usageStorePath(home);
+      const movedDbPath = `${dbPath}.${replacementPhase.label}.original`;
+      const peerRow = {
+        ...makeRow({ sourceSessionId: `identity-drift-${replacementPhase.label}` }),
+        rtkCommandCount: 2,
+        rtkInputTokens: 30,
+        rtkOutputTokens: 10,
+        rtkSavedTokens: 20,
+      };
+      const bundle = makeBundle(machineB, [peerRow]);
+      const peerRowKey = toSerializedMergeRow(peerRow, machineB).rowKey;
+      const preview = await Effect.runPromise(previewPeerMergeBundle({ bundle, dbPath, localMachineId: machineA.id }));
+      const { Database } = await import('bun:sqlite');
+      const originalExec = Database.prototype.exec;
+      let replacementOccurred = false;
+      Database.prototype.exec = function (sql, ...bindings) {
+        const result = originalExec.call(this, sql, ...bindings);
+        if (!(replacementOccurred || sql.trim() !== replacementPhase.sql)) {
+          replacementOccurred = true;
+          renameSync(dbPath, movedDbPath);
+          copyFileSync(movedDbPath, dbPath);
+          chmodSync(dbPath, 0o600);
+        }
+        return result;
+      };
+      const error = await (async () => {
+        try {
+          return await Effect.runPromise(
+            confirmPeerMergeBundle({
+              bundle,
+              confirmationToken: preview.confirmationToken,
+              dbPath,
+              localMachineId: machineA.id,
+            }).pipe(Effect.flip),
+          );
+        } finally {
+          Database.prototype.exec = originalExec;
+        }
+      })();
+
+      expect(replacementOccurred).toBe(true);
+      expect(error.reason).toBe('preview-stale');
+      for (const inspectedPath of [dbPath, movedDbPath]) {
+        const inspection = new Database(inspectedPath, { readonly: true });
+        const generation = inspection
+          .query("SELECT value FROM usage_store_metadata WHERE key = 'generation'")
+          .get() as { value: number };
+        const peerCount = inspection
+          .query('SELECT COUNT(*) AS count FROM usage_rows WHERE row_key = ?')
+          .get(peerRowKey) as { count: number };
+        const enrichmentCount = inspection
+          .query('SELECT COUNT(*) AS count FROM usage_row_enrichments WHERE row_key = ?')
+          .get(peerRowKey) as { count: number };
+        inspection.close();
+        expect(generation.value).toBe(0);
+        expect(peerCount.count).toBe(0);
+        expect(enrichmentCount.count).toBe(0);
+      }
+    }
   });
 
   test('binds preview counts and token to one snapshot across a no-generation write', async () => {
