@@ -356,9 +356,9 @@ test('keeps the tree, editor, and Inspector in one bounded desktop workspace row
   expect((inspectorBox?.x ?? 0) + (inspectorBox?.width ?? 0)).toBeLessThanOrEqual(DESKTOP_WORKSPACE_VIEWPORT.width);
   expect(inspectorBox?.y ?? -1).toBeGreaterThanOrEqual(0);
   expect(inspectorBox?.y ?? DESKTOP_WORKSPACE_VIEWPORT.height).toBeLessThan(DESKTOP_WORKSPACE_VIEWPORT.height);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(
-    true,
-  );
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth))
+    .toBe(true);
 });
 
 test('bounds long scope labels and makes validation findings individually identifiable', async ({ page }) => {
@@ -425,18 +425,22 @@ test('prioritizes the editor on mobile and keeps the compact picker behavior', a
   await expect(inspector.getByRole('button', { name: 'Disable' })).toBeHidden();
 
   const inspectorElement = await inspector.elementHandle();
-  const editorPrecedesInspector = await editor.evaluate(
-    (element, target) =>
-      target !== null && (element.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
-    inspectorElement,
-  );
+  const editorPrecedesInspector = await editor.evaluate((element, target) => {
+    if (target === null) {
+      return false;
+    }
+    // biome-ignore lint/suspicious/noBitwiseOperators: compareDocumentPosition returns a bitmask.
+    return (element.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  }, inspectorElement);
   expect(editorPrecedesInspector).toBe(true);
   const saveButtonElement = await saveButton.elementHandle();
-  const editorPrecedesActions = await editor.evaluate(
-    (element, target) =>
-      target !== null && (element.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
-    saveButtonElement,
-  );
+  const editorPrecedesActions = await editor.evaluate((element, target) => {
+    if (target === null) {
+      return false;
+    }
+    // biome-ignore lint/suspicious/noBitwiseOperators: compareDocumentPosition returns a bitmask.
+    return (element.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  }, saveButtonElement);
   expect(editorPrecedesActions).toBe(true);
 
   await editor.fill('# Reachable mobile save\n');
@@ -448,9 +452,9 @@ test('prioritizes the editor on mobile and keeps the compact picker behavior', a
   expect((saveButtonBox?.x ?? 0) + (saveButtonBox?.width ?? 0)).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
   expect(saveButtonBox?.y).toBeGreaterThanOrEqual(0);
   expect((saveButtonBox?.y ?? 0) + (saveButtonBox?.height ?? 0)).toBeLessThanOrEqual(MOBILE_VIEWPORT.height);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(
-    true,
-  );
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth))
+    .toBe(true);
 
   await page.getByRole('button', { name: 'Revert changes' }).click();
   await picker.getByText('Browse skills').click();

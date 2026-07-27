@@ -90,7 +90,7 @@ for (const route of routes) {
     const firstLink = desktopNavigation.getByRole('link').first();
     await firstLink.focus();
     await expect(firstLink).toBeFocused();
-    expect(await page.evaluate(documentOverflow)).toBeLessThanOrEqual(0);
+    await expect.poll(() => page.evaluate(documentOverflow)).toBeLessThanOrEqual(0);
 
     await page.setViewportSize({ height: 844, width: 390 });
     const mobileNavigation = page.locator('[data-app-navigation="mobile"]');
@@ -108,7 +108,7 @@ for (const route of routes) {
     await page.keyboard.press('Escape');
     await expect(manageNavigation).toHaveCount(0);
     await expect(manageButton).toBeFocused();
-    expect(await page.evaluate(documentOverflow)).toBeLessThanOrEqual(0);
+    await expect.poll(() => page.evaluate(documentOverflow)).toBeLessThanOrEqual(0);
   });
 }
 
