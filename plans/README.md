@@ -67,7 +67,9 @@ request unless the user explicitly asks.
 | 044 | Unify the exact-revision query lifecycle | P2 | M | 043 | DONE |
 | 045 | Valorize the Report Dimensions and Make the Work Unit Honest | P1 | XL | - | DONE |
 | 046 | Close the Verified Presentation Defects | P2 | M | - | DONE |
-| 047 | Make Grouping Portable User Data, for Projects and Campaigns | P2 | L | 045 wave 4 | BLOCKED — causal merge model decision required |
+| 047 | Make Grouping Portable User Data, for Projects and Campaigns | P2 | L | 045 wave 4 | TODO |
+| 048 | Restore Multi-Harness Visibility After the Origin Default | P0 | S | 045 | TODO |
+| 049 | Make Undeclared Origin a Gap, Not a Category | P1 | M | 048 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).

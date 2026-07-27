@@ -1,11 +1,11 @@
 # Plan 047: Make grouping portable user data, for projects and campaigns
 
-> **Status: BLOCKED BY AN IMPLEMENTATION STOP.** The intended merge granularity
-> was settled with the maintainer on 2026-07-26, but execution proved that the
-> recorded timestamp model cannot distinguish causal succession from concurrency
-> and cannot preserve the current exclusive-membership invariant. No production
-> implementation has started. The required decision is recorded in
-> *Implementation audit — STOP triggered* below.
+> **Status: DRAFT — unblocked.** Execution correctly stopped on 2026-07-27 because
+> the timestamp model recorded on 2026-07-26 could not distinguish causal succession
+> from concurrency, nor preserve the exclusive-membership invariant. The maintainer
+> **accepted the implementation audit's amendment on 2026-07-27**; *The merge model*
+> now records the causal design and is executable authority. No production code has
+> been written yet.
 >
 > **Baseline**: written at `96b3dff`, rebased onto `3406147` (PR #21). That merge
 > reworked the peer-confirmation protocol this plan builds on — see *Current state*.
@@ -106,44 +106,107 @@ confirmation boundary this plan's conflict resolution sits on.
 
 ## The merge model
 
-**Recorded 2026-07-26 as the intended merge granularity. The implementation audit
-below proved that its timestamp representation is not causally complete. This
-section and the options table are retained as rationale, not executable authority,
-until the STOP is resolved.**
+**Settled. The maintainer accepted the implementation audit's amendment on
+2026-07-27. This section is the executable authority. The timestamp model recorded
+on 2026-07-26 is superseded and survives only as rationale in
+*Rationale: the options considered*.**
 
-Two rules, and one constraint inherited from plan 040.
+The intended *granularity* was right and is preserved: a conflict is scoped to one
+field or one membership, and anything the model can settle is settled with no
+prompt. What changed is the *representation* — wall-clock timestamps cannot support
+that granularity, for the reasons in *Implementation audit* below.
 
-**Rule 1 — scalar fields use last-write-wins with a per-field timestamp.** Renaming
-a group on one machine while adding a member on the other merges with no prompt. A
-conflict is raised only when the **same scalar field** was edited on both sides.
+### Rule 1 — a causal version register per field, not a timestamp
 
-**Rule 2 — `members` is a set with a per-membership timestamp, not a scalar.** Each
-membership carries its own add-or-remove timestamp. Two different additions merge;
-two different removals merge; a conflict is raised only when the **same member** was
-added on one side and removed on the other, and it is scoped to that member — the
-rest of the set still merges. Removals are retained as tombstones, otherwise a
-removal cannot propagate.
+Each scalar field carries a causal register recording how much of every other
+machine's history the writer had incorporated when it wrote. Wall-clock timestamps
+and origin machine labels are retained as **display metadata only**; they never
+decide a merge.
 
-**Constraint — the store owns the semantics.** Plan 040's confirmed design amendment
-states that `usage-store` owns "state fingerprinting, token construction and
-interpretation, write serialization, and stale detection", and that callers
-"never decode store state". Grouping follows the same rule: the store decides what
-is a conflict and hands the UI a described conflict, for example
-`{ group, field: 'name', local, incoming }` or
-`{ group, member, localOp: 'add', incomingOp: 'remove' }`. The route and the browser
-never compare timestamps and never decode a version.
+This is the rule that makes the model correct. A timestamp answers *when*; it never
+answers *whether the writer had seen the other side*. The distinction is not an edge
+case — importing and then continuing to work is the normal flow:
 
-Consequences to carry into the steps:
+| | Genuine concurrency | Causal succession |
+| --- | --- | --- |
+| A writes | rename at 10:00 | rename at 10:00 |
+| B imports | — | at 10:30, sees A's value |
+| B writes | rename at 11:00, unaware of A | rename at 11:00, deliberately replacing A |
+| Under timestamps | `A@10:00` vs `B@11:00` | `A@10:00` vs `B@11:00` — **identical** |
+| Under causal registers | neither includes the other → conflict | B includes A → B wins, silently |
 
-- A conflict is always scoped: one scalar field, or one membership. There is no
-  whole-group conflict, and no whole-import conflict.
-- Anything the two rules can settle is settled silently. A prompt appears only where
-  it carries information — that is the property the model was chosen for, and a
-  later change that widens conflicts violates it.
-- Tombstone growth is bounded by the number of memberships ever created, which is
-  small. Do **not** add a retention sweep for them; plan 037 removed steady-state
-  retention work deliberately. If tombstones ever need pruning, that is its own
-  plan.
+### Rule 2 — membership is an exclusive assignment, not a per-group set
+
+Model membership as one record per member: `(kind, member) -> groupId | ungrouped`,
+each carrying its own causal register. **Not** an independent set per group.
+
+The current project model rejects overlapping selectors, and moving a member removes
+it from its previous group. Independent per-group sets cannot preserve that
+invariant across a merge:
+
+```
+A moves X from group 1 to group 2
+B moves X from group 1 to group 3
+
+merging per-group sets, group by group:
+  group 1: X removed on both sides   ✓
+  group 2: X added                   ✓
+  group 3: X added                   ✓
+→ X is now in two groups, and nothing detected it, because each
+  set merged cleanly in isolation.
+```
+
+With one record per member, both machines edit the **same** record, so the conflict
+is representable and detectable. Model the constraint, not the collection.
+
+### Rule 3 — a group's existence is itself versioned
+
+Each group carries an `active | deleted` causal register, and deletions are
+retained. Without it, an older portable copy resurrects a group another machine
+deleted — membership tombstones alone do not cover the group's own existence.
+
+### Rule 4 — resolve in preview, then write once
+
+Every conflict is resolved during preview. The confirmation step then revalidates
+the opaque confirmation token, the grouping state, and the recorded resolutions, and
+writes the entire import in **one** transaction.
+
+There is no partial application and no queue of pending conflicts. Plan 040 already
+makes peer confirmation a single `BEGIN IMMEDIATE` transaction; a partially applied
+import would need a separate durable queue and lifecycle that this plan does not
+define and should not invent.
+
+### Rule 5 — `keep both` is conditional
+
+Offer `keep both` only when the resulting assignments are disjoint. When they are
+not — the same member claimed by two groups — the user must choose one, or
+explicitly repartition the conflicting membership. A resolution that produces an
+invalid state is not a resolution.
+
+### Constraint — the store owns the semantics
+
+Plan 040's confirmed design amendment states that `usage-store` owns "state
+fingerprinting, token construction and interpretation, write serialization, and
+stale detection", and that callers "never decode store state". Grouping follows the
+same rule: the store decides what is a conflict and hands the UI a described
+conflict, for example `{ group, field: 'name', local, incoming }` or
+`{ kind, member, local: groupId, incoming: groupId }`. The route and the browser
+never compare registers, never compare timestamps, and never decode a version.
+
+### Consequences to carry into the steps
+
+- A conflict is always scoped: one field, or one membership. There is no whole-group
+  conflict and no whole-import conflict.
+- Anything the rules can settle is settled silently. A prompt appears only where it
+  carries information, and a later change that widens conflicts violates the
+  property the granularity was chosen for.
+- Migration must preserve canonical project selectors and their overlap semantics.
+  Resolving broad or unmatched selectors to current paths is **not** equivalent and
+  loses the invariant.
+- Register and tombstone growth is bounded by machine count and by memberships ever
+  created, which are both small. Do **not** add a retention sweep; plan 037 removed
+  steady-state retention work deliberately. If pruning is ever needed — for instance
+  when a machine is retired — that is its own plan.
 
 ### Rationale: the options considered
 
@@ -158,11 +221,19 @@ conflict interface.
 | Per-field last-write-wins with per-field timestamps | Field-level divergence | Moderate. Timestamp per field. | A rename on A and a member addition on B merge cleanly with no prompt at all — which may be desirable, or may be surprising. |
 | Version vector per record | True causality: concurrent vs superseded | Highest. A vector per record, pruned per machine. | Over-engineered for a two-machine single-user setup, and the vector grows with machine count. |
 
-**Recommendation**: per-field last-write-wins with per-field timestamps, and a
-conflict prompt reserved for the one case it cannot settle — the same field edited
-on both machines. That gives the maintainer's requested interface where it carries
-information, and silence where a prompt would be noise. It also means adding a
-member on one machine while renaming on the other simply works.
+**Superseded recommendation (2026-07-26), kept as the record of a wrong turn.** The
+original recommendation was per-field last-write-wins with per-field timestamps, with a
+prompt reserved for the same field edited on both machines.
+
+It was wrong, and the reason is worth keeping: the table above dismissed the version
+vector as "over-engineered for a two-machine single-user setup", judging the causality
+problem to be an edge case. It is not — *import, then keep working* is the normal flow,
+so the timestamp model fails on the **common** case. Machine count was the wrong axis to
+judge on; what matters is whether writes can observe each other, and here they routinely
+do.
+
+The accepted design is in *The merge model*, which adopts the causal register this table
+had rejected.
 
 **Precedent added by plan 040** (`Make peer confirmation an atomic usage-store
 capability`, merged in #21). The store now derives a single `confirmationToken` of
@@ -219,10 +290,14 @@ The smallest coherent amendment recommended by the execution audit is:
 - offer `keep both` only when the resulting assignments are disjoint; otherwise the
   user must choose or explicitly repartition the conflicting membership.
 
-This amendment is a recommendation, not a retroactive product decision. Step 1
-must not start, and the recorded “merge model is decided” done criterion must not
-be treated as satisfied, until the maintainer explicitly accepts this amendment or
-records another causally complete model.
+**Accepted by the maintainer on 2026-07-27.** The amendment is now part of *The merge
+model* above, which is the executable authority; this section is retained as the
+record of how the defect was found and why the design changed.
+
+The stop was correct and the plan worked as intended: its STOP condition said to halt
+if a conflict case appeared that the recorded model could not express, and execution
+halted before Step 1 touched production code. A plan that cannot be refuted by its own
+executor is a worse plan.
 
 ## Scope
 
@@ -275,33 +350,53 @@ row-level grouping field this plan forbids.
 
 ## Steps
 
-### Step 1: Model the grouping contribution
+### Step 1: Model the grouping contribution and its causal registers
 
-1. Define it: a generated stable id, a kind (`project` | `campaign`), a
-   user-authored name, and a member set — with a timestamp per scalar field and a
-   timestamp per membership, per *The merge model*.
-2. Members are keys, not rows: project members are project sources, campaign members
+1. Define the group: a generated stable id, a kind (`project` | `campaign`), a
+   user-authored name, and an `active | deleted` state. Each scalar field and the
+   state each carry a **causal version register** (Rules 1 and 3). Wall-clock time
+   and origin machine are stored for display only.
+2. Define membership separately as an **exclusive assignment**:
+   `(kind, member) -> groupId | ungrouped`, one record per member, each with its own
+   causal register (Rule 2). Do not store a member set on the group.
+3. Members are keys, not rows: project members are project sources, campaign members
    are `campaignKeyFor` values. Rows stay facts.
-3. Removals are tombstoned memberships, not deletions.
-4. Conflict detection lives in `usage-store` and returns a described conflict. No
-   caller compares timestamps.
+4. Retain deleted groups and `ungrouped` assignments; they are how a removal
+   propagates.
+5. Conflict detection lives in `usage-store` and returns a described conflict. No
+   caller compares registers or timestamps.
 
-**Verify**: `bun test packages/usage-store/src` — a contribution survives a base-row
-re-import, matching the RTK guarantee; a rename on one side and a member addition on
-the other merge with no conflict; the same member added on one side and removed on
-the other yields exactly one conflict scoped to that member, with the rest of the set
-merged.
+**Verify**: `bun test packages/usage-store/src`
+
+Expected, as distinct cases:
+
+- a contribution survives a base-row re-import, matching the RTK guarantee;
+- **causal succession**: a side that incorporated the other's write wins with no
+  conflict — this is the case wall-clock timestamps could not express;
+- **genuine concurrency**: neither register includes the other, so exactly one
+  conflict is raised, scoped to that field;
+- a rename on one side and a membership change on the other merge with no conflict;
+- **exclusive membership**: the same member assigned to two different groups yields
+  one conflict on that member, and never a double membership;
+- **deletion**: importing an older copy of a deleted group does not resurrect it.
 
 ### Step 2: Migrate project groups without losing any
 
 1. Read existing `projectGroups` from `config.json` and write them as contributions.
-2. Decide and document whether `config.json` remains a read-only input or is
+2. **Preserve the canonical selectors and their overlap semantics.** Resolving a
+   broad or currently-unmatched selector to the paths it happens to match today is
+   **not** equivalent: it silently narrows the group and discards the invariant that
+   made overlap detectable. Migrate the selector, not its current expansion.
+3. Decide and document whether `config.json` remains a read-only input or is
    retired. If it remains, the precedence rule must be explicit.
-3. The migration is idempotent and never produces duplicate groups on repeated runs.
+4. The migration is idempotent and never produces duplicate groups on repeated runs.
 
 **Verify**: `bun test packages/local-collectors/src && bun test packages/report-core/src`
-— a config with existing project groups yields identical report grouping before and
-after migration.
+
+Expected: a config with existing project groups yields identical report grouping
+before and after migration; a selector that currently matches nothing survives
+migration and still matches nothing rather than disappearing; an overlapping selector
+is still rejected after migration.
 
 ### Step 3: Add campaign groups and the label override
 
@@ -327,18 +422,27 @@ expandable underneath.
 — a round-trip preserves groupings; an oversized or malformed name is rejected at the
 boundary, not stored.
 
-### Step 5: Resolve conflicts on `/sync`
+### Step 5: Resolve conflicts in preview, then write once
 
-1. Surface each unresolved conflict from an import with both sides, their origin
-   machine, and their timestamps.
-2. Resolution is explicit: keep local, take incoming, or keep both as separate
-   groups. Never resolve silently in the case the merge model cannot settle.
-3. An import must not be partially applied and then abandoned: either the
-   non-conflicting part applies and conflicts remain queued, or nothing applies.
-   Decide which, and state it.
+1. Surface each unresolved conflict during **preview**, with both sides and their
+   origin machine and wall-clock time shown as human context. The store describes the
+   conflict; the browser does not decode registers.
+2. Resolution is explicit: keep local, take incoming, or keep both. Offer
+   `keep both` **only when the resulting assignments are disjoint** (Rule 5); when the
+   same member is claimed twice the user must choose one or explicitly repartition.
+3. **Every conflict must be resolved before confirmation.** There is no partial
+   application and no pending-conflict queue.
+4. On confirmation, revalidate the opaque confirmation token, the grouping state, and
+   the recorded resolutions, then write the whole import in **one** transaction
+   (Rule 4). A resolution recorded against state that has since moved must fail stale,
+   exactly as plan 040 already does for rows.
 
-**Verify**: `bun run test:e2e` — an import with one same-field conflict presents a
-choice, applies the chosen side, and leaves the rest of the import intact.
+**Verify**: `bun run test:e2e && bun test packages/usage-store/src`
+
+Expected: an import with one field conflict cannot be confirmed until it is resolved;
+the chosen side and every non-conflicting change land in the same transaction; a
+resolution confirmed after the store moved fails stale and writes nothing;
+`keep both` is unavailable on an overlapping membership conflict.
 
 ### Step 6: Supersede the documents
 
@@ -379,22 +483,33 @@ standing rule on real, local, and private data.
 
 ## Verification
 
-- The merge model is recorded in this plan before Step 1 lands.
+- Causal succession and genuine concurrency are covered as **separate** tests. This is
+  the pair the superseded timestamp model could not tell apart; if only one exists, the
+  amendment has not really been implemented.
+- Exclusive membership holds across a merge: no input produces a member in two groups.
+- A deleted group is not resurrected by importing an older copy.
 - A grouping contribution survives a base-row re-import (the RTK guarantee).
-- Migration is idempotent and grouping-equivalent before and after.
+- Migration is idempotent and grouping-equivalent, and preserves selectors rather than
+  their current expansion.
 - A bundle round-trip preserves groupings; malformed or oversized names are rejected
   at the boundary.
-- The conflict surface is exercised for every case the merge model does not settle.
+- Every conflict must be resolved before confirmation, and confirmation writes once or
+  fails stale.
 - No document still describes grouping as local-only.
 - `bun run check`, `bun run lint`, `bun run typecheck`, `bun run test`,
   `bun run test:e2e` all pass.
 
 ## Done criteria
 
-- [ ] A causally complete merge model is decided and written down (*Implementation
-      audit — STOP triggered*).
-- [ ] Conflicts are scoped to one scalar field or one membership, never wider.
-- [ ] Anything the two rules can settle is settled with no prompt.
+- [x] A causally complete merge model is decided and written down (*The merge model*,
+      accepted 2026-07-27).
+- [ ] Causal succession merges silently; genuine concurrency raises exactly one
+      conflict. Both are tested separately.
+- [ ] Membership is an exclusive assignment; no merge can produce a double membership.
+- [ ] A group's existence is versioned, and deletions are not resurrected.
+- [ ] Conflicts are scoped to one field or one membership, never wider.
+- [ ] Anything the rules can settle is settled with no prompt.
+- [ ] `keep both` is offered only when the resulting assignments are disjoint.
 - [ ] Grouping is a user-owned contribution, separate from collector-owned rows.
 - [ ] Usage rows still carry no grouping field.
 - [ ] Existing project groups are migrated with identical report output.
@@ -420,7 +535,15 @@ Stop and report if:
 - making grouping portable would require a grouping field on a usage row. That is
   the one clause of `docs/project-grouping-plan.md` this plan explicitly preserves;
 - a conflict case appears that the recorded merge model cannot express — extend the
-  model deliberately rather than adding an ad-hoc branch to the UI;
+  model deliberately rather than adding an ad-hoc branch to the UI. This condition
+  already fired once, on 2026-07-27, and it was right to: it caught a model that could
+  not distinguish causal succession from concurrency before any production code was
+  written. Treat a second firing the same way;
+- a shortcut replaces a causal register with a wall-clock comparison "just for this
+  field". That is the exact defect the amendment corrected, and it reappears silently
+  because the wrong behaviour only shows up after an import-then-edit cycle;
+- migrating a project selector requires resolving it to the paths it matches today.
+  That loses the overlap invariant and is not an equivalent migration;
 - plan 045 has already introduced any storage for campaign labels. It is sequenced
   not to; if it did, reconcile before proceeding rather than migrating twice.
 
