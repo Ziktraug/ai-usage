@@ -9,6 +9,9 @@ const HYDRATION_TIMEOUT_MS = 15_000;
 const INSPECT_SESSION_PATTERN = /Inspect session/;
 const LEGACY_PROJECT_TAB_URL_PATTERN = /tab=projects/;
 const PROVIDER_DETAILS_PATTERN = /^Provider details \(/;
+const PROVIDER_CATEGORY_COUNT_PATTERN = /: (\d+) providers?$/;
+const PROVIDER_CATEGORY_TOTAL_PATTERN = /\((\d+) providers?\)$/;
+const PROVIDER_CATEGORIES_PATTERN = /^Provider categories/;
 const QUERY_URL_PATTERN = /q=ai-usage/;
 const RANGE_URL_PATTERN = /range=/;
 const RESET_COUNT_PATTERN = /1 reset/;
@@ -143,6 +146,14 @@ test('keeps provider details collapsed until they are requested', async ({ page 
 
   await expect(providerDetails).toBeVisible();
   await expect(page.getByRole('list', { name: 'Providers requiring attention' })).toBeVisible();
+  const providerCategories = page.getByRole('list', { name: PROVIDER_CATEGORIES_PATTERN });
+  const categoryLabel = await providerCategories.getAttribute('aria-label');
+  const providerTotal = Number(categoryLabel?.match(PROVIDER_CATEGORY_TOTAL_PATTERN)?.[1]);
+  const categoryCounts = (await providerCategories.getByRole('listitem').allTextContents()).map((text) =>
+    Number(text.match(PROVIDER_CATEGORY_COUNT_PATTERN)?.[1]),
+  );
+  expect(categoryCounts.every(Number.isFinite)).toBe(true);
+  expect(categoryCounts.reduce((total, count) => total + count, 0)).toBe(providerTotal);
   await expect(noQuotaDetail).not.toBeVisible();
   await providerDetails.click();
   await expect(noQuotaDetail).toBeVisible();
@@ -151,7 +162,9 @@ test('keeps provider details collapsed until they are requested', async ({ page 
 test('Codex quota history shows reset and gap-aware ranges on desktop and mobile', async ({ page }) => {
   await page.goto('/');
 
-  await page.getByRole('button', { name: 'View Codex history' }).click();
+  const historyButton = page.getByRole('button', { name: 'View Codex history' });
+  await expect(historyButton).toHaveCount(1);
+  await historyButton.click();
   const history = page.getByRole('dialog', { name: 'Codex quota history' });
   await expect(history.getByRole('heading', { name: 'Codex quota history' })).toBeVisible();
   await expect(history.getByText('5h', { exact: true }).first()).toBeVisible();
@@ -164,7 +177,7 @@ test('Codex quota history shows reset and gap-aware ranges on desktop and mobile
   await expect(history).not.toBeVisible();
 
   await page.setViewportSize({ height: 800, width: 390 });
-  await page.getByRole('button', { name: 'View Codex history' }).click();
+  await historyButton.click();
   await expect(page.getByRole('dialog', { name: 'Codex quota history' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Codex quota history' })).not.toBeVisible();
@@ -204,12 +217,12 @@ test('shows the text query as a directly removable active filter', async ({ page
 });
 
 test('updates the date range and opens a session drawer', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?origin=%5B%5D');
   const range = page.getByRole('region', { name: 'Date range' });
 
   await range.getByRole('button', { exact: true, name: 'All' }).click();
   await expect(page).toHaveURL(RANGE_URL_PATTERN);
-  await expect(range.getByRole('textbox', { name: 'Start date' })).toHaveValue('2026-04-12');
+  await expect(range.getByRole('textbox', { name: 'Start date' })).toHaveValue('Apr 12, 2026');
 
   await page.getByRole('tab', { name: 'Sessions' }).click();
   await page.locator('tbody tr').first().locator('td').first().click();
@@ -343,11 +356,12 @@ test('keeps compact heatmap geometry beside an equivalent touch control', async 
 
 test('selects the same heatmap day with mouse, keyboard, and the equivalent control', async ({ page }) => {
   const selectedDay = '2026-05-25';
+  const selectedDayDisplay = 'May 25, 2026';
   const assertSelectedDay = async () => {
     await expect(page.getByRole('tab', { name: 'Sessions' })).toHaveAttribute('aria-selected', 'true');
     const range = page.getByRole('region', { name: 'Date range' });
-    await expect(range.getByRole('textbox', { name: 'Start date' })).toHaveValue(selectedDay);
-    await expect(range.getByRole('textbox', { name: 'End date' })).toHaveValue(selectedDay);
+    await expect(range.getByRole('textbox', { name: 'Start date' })).toHaveValue(selectedDayDisplay);
+    await expect(range.getByRole('textbox', { name: 'End date' })).toHaveValue(selectedDayDisplay);
   };
   const selectedCell = () =>
     page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN }).locator(`button[data-heatmap-day="${selectedDay}"]`);
@@ -403,8 +417,10 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
   await page.goto('/sync');
 
   await expect(page.getByRole('heading', { level: 1, name: 'Sync' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Export file' })).toBeVisible();
-  await expect(page.getByLabel('Import file')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Export current machine' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Machine fleet' })).toBeVisible();
+  await expect(page.getByText('Current machine', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Drop a merge file here or choose a file' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start LAN merge' })).toHaveCount(0);
   await expect(page.getByLabel('Scan host')).toHaveCount(0);
   await expect(page.getByText('Pair nearby machine')).toHaveCount(0);

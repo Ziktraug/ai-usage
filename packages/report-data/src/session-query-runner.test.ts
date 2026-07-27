@@ -122,9 +122,8 @@ const rows: SerializedRow[] = [
 ];
 
 const queryRequest = (overrides: Partial<SessionQueryRequest> = {}): SessionQueryRequest => ({
-  campaigns: true,
   cursor: null,
-  filters: { fields: {}, harness: [], machine: [], query: '' },
+  filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
   pageSize: 2,
   range: { from: null, to: null },
   revision: 'revision-a',
@@ -251,14 +250,7 @@ describe('session query SQLite materialization', () => {
     const anchorRows = [...rows, anchorFixture, provenanceFreeRow];
     const { database } = await openRowsDatabase(anchorRows);
     try {
-      const anchorPage = projectSessionPage(anchorRows, queryRequest({ campaigns: false, pageSize: 200 }));
-      const anchorItem = anchorPage.items.find(
-        ({ row: projectedRow }) => projectedRow.source?.sourceSessionId === 'anchor-session',
-      );
-      if (!anchorItem) {
-        throw new Error('Missing valid anchor fixture row');
-      }
-      const foundRequest = { revision: 'revision-a', rowId: anchorItem.row.rowId };
+      const foundRequest = { revision: 'revision-a', rowId: sessionRowIdentity(anchorFixture) };
       expect(executeMaterializedSessionQuery(database, 'session-detail-anchor', foundRequest)).toEqual({
         anchor: {
           harnessKey: 'codex',
@@ -291,17 +283,11 @@ describe('session query SQLite materialization', () => {
         revision: 'revision-a',
       });
 
-      const noSourcePage = projectSessionPage(anchorRows, queryRequest({ campaigns: false, pageSize: 200 }));
-      const noSource = noSourcePage.items.find(
-        ({ row: projectedRow }) => projectedRow.sessionLabel === 'without-provenance',
-      );
-      if (!noSource) {
-        throw new Error('Missing provenance-free fixture row');
-      }
+      const noSourceRowId = sessionRowIdentity(provenanceFreeRow);
       expect(
         executeMaterializedSessionQuery(database, 'session-detail-anchor', {
           revision: 'revision-a',
-          rowId: noSource.row.rowId,
+          rowId: noSourceRowId,
         }),
       ).toMatchObject({
         anchor: {
@@ -314,11 +300,7 @@ describe('session query SQLite materialization', () => {
 
       const portable = await openRowsDatabase([anchorFixture], ['portable-opaque']);
       try {
-        const portablePage = projectSessionPage([anchorFixture], queryRequest({ campaigns: false, pageSize: 200 }));
-        const portableRowId = portablePage.items[0]?.row.rowId;
-        if (!portableRowId) {
-          throw new Error('Missing portable anchor fixture row');
-        }
+        const portableRowId = sessionRowIdentity(anchorFixture);
         expect(
           executeMaterializedSessionQuery(portable.database, 'session-detail-anchor', {
             revision: 'revision-a',
@@ -337,17 +319,16 @@ describe('session query SQLite materialization', () => {
     const revisionDirectory = await createRevision();
     const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME));
     try {
-      const target = projectSessionPage(rows, queryRequest({ campaigns: false, pageSize: 200 })).items.find(
-        ({ row: targetRow }) => targetRow.source?.sourceSessionId === 'standalone-a',
-      );
+      const target = rows.find((candidate) => candidate.source?.sourceSessionId === 'standalone-a');
       if (!target) {
         throw new Error('Missing invalid JSON target row');
       }
-      database.query('UPDATE session_rows SET source_row_json = ? WHERE row_id = ?').run('{invalid', target.row.rowId);
+      const targetRowId = sessionRowIdentity(target);
+      database.query('UPDATE session_rows SET source_row_json = ? WHERE row_id = ?').run('{invalid', targetRowId);
       expect(() =>
         executeMaterializedSessionQuery(database, 'session-detail-anchor', {
           revision: 'revision-a',
-          rowId: target.row.rowId,
+          rowId: targetRowId,
         }),
       ).toThrow('invalid JSON');
     } finally {
@@ -479,16 +460,43 @@ describe('session query SQLite materialization', () => {
     }
   });
 
+  test('filters materialized sessions by machine ID when display labels collide', async () => {
+    const first = row('machine-a-row', 10);
+    const second = row('machine-b-row', 20);
+    if (!(first.source && second.source)) {
+      throw new Error('Machine filter fixtures require source identity');
+    }
+    const fixtureRows = [
+      { ...first, source: { ...first.source, machineId: 'machine-a', machineLabel: 'Shared machine' } },
+      { ...second, source: { ...second.source, machineId: 'machine-b', machineLabel: 'Shared machine' } },
+    ];
+    const { database } = await openRowsDatabase(fixtureRows);
+    const request = queryRequest({
+      filters: {
+        ...queryRequest().filters,
+        machine: ['machine-b'],
+      },
+      pageSize: 200,
+    });
+    try {
+      const actual = executeMaterializedSessionQuery(database, 'sessions', request);
+      expect(actual).toEqual(projectSessionPage(fixtureRows, request));
+      expect(actual.items.map(({ row: itemRow }) => itemRow.sessionLabel)).toEqual(['machine-b-row']);
+    } finally {
+      database.close();
+    }
+  });
+
   test('preserves locale-sensitive text ordering and the exact identity tie-breaker', async () => {
     const textRows = ['a', 'A', 'ä', 'z', 'É', 'e', '_', '-', '10', '2'].map(textRow);
     const identityRows = [row('identity-a', 20), row('identity-A', 20)];
     const fixtureRows = [...textRows, ...identityRows];
     const { database } = await openRowsDatabase(fixtureRows);
     try {
-      const identityRequest = queryRequest({ campaigns: false, pageSize: 200, sort: [{ desc: false, id: 'cost' }] });
+      const identityRequest = queryRequest({ pageSize: 200, sort: [{ desc: false, id: 'cost' }] });
 
       for (const field of sessionTextSortFields) {
-        const textRequest = queryRequest({ campaigns: false, pageSize: 200, sort: [{ desc: false, id: field }] });
+        const textRequest = queryRequest({ pageSize: 200, sort: [{ desc: false, id: field }] });
         expect(executeMaterializedSessionQuery(database, 'sessions', textRequest)).toEqual(
           projectSessionPage(fixtureRows, textRequest),
         );
@@ -552,12 +560,23 @@ describe('session query SQLite materialization', () => {
       expect(second.items[0]?.row).toMatchObject({
         costApprox: 69.3,
         costKnown: false,
+        priceMeasurement: {
+          knownCost: 69.3,
+          state: 'partially measured',
+          unpricedFreshTokens: 3,
+        },
         sessionLabel: 'partial-root',
       });
 
       const ascendingRequest = queryRequest({ pageSize: 200, sort: [{ desc: false, id: 'cost' }] });
       const ascending = executeMaterializedSessionQuery(database, 'sessions', ascendingRequest);
       expect(ascending).toEqual(projectSessionPage(fixtureRows, ascendingRequest));
+      const unknownCampaign = ascending.items.find(({ row: itemRow }) => itemRow.sessionLabel === 'unknown-root');
+      expect(unknownCampaign?.row.priceMeasurement).toEqual({
+        knownCost: 0,
+        state: 'partially measured',
+        unpricedFreshTokens: 3,
+      });
       expect(ascending.items.map(({ row: itemRow }) => itemRow.sessionLabel)).toEqual([
         'unknown-root',
         'exact-low-root',
@@ -602,11 +621,12 @@ describe('session query SQLite materialization', () => {
 
   test('finds neighbors through the full filtered and sorted SQL sequence', async () => {
     const { database } = await openFixtureDatabase();
-    const request = queryRequest({ campaigns: false, pageSize: 1 });
-    const rowId = projectSessionPage(rows, request).items[0]?.row.rowId;
-    if (!rowId) {
-      throw new Error('Expected a projected session row');
+    const request = queryRequest({ pageSize: 1 });
+    const target = rows.find((candidate) => candidate.source?.sourceSessionId === 'campaign-root');
+    if (!target) {
+      throw new Error('Expected an atomic neighbor target');
     }
+    const rowId = sessionRowIdentity(target);
     const neighborRequest = { query: request, rowId };
     const traces: { params: readonly unknown[]; sql: string }[] = [];
     try {
@@ -630,6 +650,54 @@ describe('session query SQLite materialization', () => {
     });
     try {
       expect(executeMaterializedSessionQuery(database, 'sessions', request)).toEqual(projectSessionPage(rows, request));
+    } finally {
+      database.close();
+    }
+  });
+
+  test('keeps classifier rollups and active campaign counts in pure and SQLite parity', async () => {
+    const fixtureRows = [
+      { ...row('campaign-root', 10, { root: 'campaign-root' }), origin: 'human' as const },
+      {
+        ...row('campaign-child', 20, { parent: 'campaign-root', root: 'campaign-root' }),
+        origin: 'subagent' as const,
+      },
+      {
+        ...row('classifier-review', 5, { parent: 'campaign-root', root: 'campaign-root' }),
+        origin: 'classifier' as const,
+      },
+    ];
+    const { database } = await openRowsDatabase(fixtureRows);
+    const request = queryRequest({
+      filters: {
+        fields: {},
+        harness: [],
+        machine: [],
+        origin: ['human', 'subagent'],
+        query: '',
+      },
+      pageSize: 200,
+      sort: [{ desc: true, id: 'cost' }],
+    });
+    try {
+      const expectedPage = projectSessionPage(fixtureRows, request);
+      const page = executeMaterializedSessionQuery(database, 'sessions', request);
+      expect(page).toEqual(expectedPage);
+      if (!('items' in page) || page.items[0]?.kind !== 'campaign') {
+        throw new Error('Expected a campaign page fixture');
+      }
+      expect(page.items[0].row).toMatchObject({
+        campaignClassifierCount: 1,
+        campaignClassifierFreshTokens: 5,
+        campaignTotalCount: 3,
+        campaignVisibleCount: 2,
+        freshTokens: 35,
+      });
+
+      const childrenRequest = { campaignKey: page.items[0].campaignKey, query: request };
+      expect(executeMaterializedSessionQuery(database, 'campaign-children', childrenRequest)).toEqual(
+        projectSessionCampaignChildren(fixtureRows, childrenRequest),
+      );
     } finally {
       database.close();
     }
@@ -671,7 +739,6 @@ describe('session query SQLite materialization', () => {
     const fixtureRows = [segmentedRow, row('single-model', 20)];
     const { database } = await openRowsDatabase(fixtureRows);
     const request = queryRequest({
-      campaigns: false,
       filters: {
         fields: { model: 'claude-opus-4-6' },
         harness: [],
@@ -696,6 +763,27 @@ describe('session query SQLite materialization', () => {
     expect(databaseStat.mode & 0o777).toBe(0o600);
     expect(databaseStat.isFile()).toBe(true);
   });
+
+  test('pages 5,000 singleton campaigns within the production query budget', async () => {
+    const fixtureRows = Array.from({ length: 5000 }, (_, index) => row(`scale-session-${index}`, (index % 1000) + 1));
+    const { database } = await openRowsDatabase(fixtureRows);
+    const request = queryRequest({
+      pageSize: 100,
+      sort: [{ desc: true, id: 'date' }],
+    });
+    try {
+      const startedAt = performance.now();
+      const actual = executeMaterializedSessionQuery(database, 'sessions', request);
+      const durationMs = performance.now() - startedAt;
+
+      expect(actual).toEqual(projectSessionPage(fixtureRows, request));
+      expect(actual.itemCount).toBe(5000);
+      expect(actual.sessionCount).toBe(5000);
+      expect(durationMs).toBeLessThan(5000);
+    } finally {
+      database.close();
+    }
+  }, 30_000);
 
   test('keeps the supported 50,000-row database inside its explicit artifact ceiling', async () => {
     const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-session-maximum-'));

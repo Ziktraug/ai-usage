@@ -28,6 +28,7 @@ describe('usage row', () => {
     expect(row.costApprox).toBeGreaterThan(0);
     expect(row.costActual).toBe(row.costApprox);
     expect(row.durationMs).toBe(120_000);
+    expect(row.origin).toBe('unknown');
     expect(row.turns).toBe(0);
     expect(row.linesAdded).toBeNull();
   });
@@ -207,8 +208,9 @@ describe('usage row', () => {
     });
   });
 
-  test('owns active date and marker labels', () => {
+  test('owns active date without decorating the session label with metric markers', () => {
     const row = normalizeUsageRow({
+      ambiguous: true,
       date: new Date('2026-01-01T00:00:00.000Z'),
       endDate: new Date('2026-01-01T00:02:00.000Z'),
       harness: 'Cursor',
@@ -224,6 +226,6 @@ describe('usage row', () => {
     });
 
     expect(usageRowActiveDate(row)?.toISOString()).toBe('2026-01-01T00:02:00.000Z');
-    expect(usageRowSessionLabel(row)).toBe('fixture ~ ↳ (usage unavailable)');
+    expect(usageRowSessionLabel(row)).toBe('fixture');
   });
 });

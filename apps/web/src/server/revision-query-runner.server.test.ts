@@ -59,9 +59,8 @@ const dependenciesReturning = (value: unknown): RevisionQueryRunnerDependencies 
   dependenciesReturningSerialized(JSON.stringify(value));
 
 const sessionRequest: SessionQueryRequest = {
-  campaigns: true,
   cursor: null,
-  filters: { fields: {}, harness: [], machine: [], query: '' },
+  filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
   pageSize: 20,
   range: { from: null, to: null },
   revision: 'revision-a',

@@ -1,3 +1,4 @@
+import { Tooltip } from '@ai-usage/design-system';
 import { css, cx } from '@ai-usage/design-system/css';
 import {
   accentFill,
@@ -100,6 +101,8 @@ import {
   PUNCH_DAYS,
 } from './overview-model';
 import {
+  aggregateApiPriceProvenance,
+  aggregateApiValuePresentation,
   apiValuePresentation,
   type DashboardRow,
   fmtCompact,
@@ -126,7 +129,6 @@ export interface OverviewProps {
 }
 
 const visuallyHidden = css({ srOnly: true });
-
 const Panel = (props: { title: string; sub?: string; children: JSX.Element; headingId?: string }) => (
   <section class={panel}>
     <header class={panelHeader}>
@@ -155,7 +157,14 @@ const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
         <section aria-label="API-equivalent value" class={heroPanel}>
           <div>
             <div class={heroLabel}>Estimated API-equivalent value</div>
-            <div class={heroValue}>{fmtMoney(hero().apiEquivalentValue)}</div>
+            <div class={heroValue}>{aggregateApiValuePresentation(hero().priceMeasurement).label}</div>
+            <Show when={aggregateApiPriceProvenance(hero().priceMeasurement)}>
+              {(fact) => (
+                <Tooltip content={fact().description}>
+                  <span class={heroText}>{fact().label}</span>
+                </Tooltip>
+              )}
+            </Show>
             <div class={heroText}>
               Standard API-price estimate for {fmtNum(hero().apiPricedSessions)} of {fmtNum(hero().sessionCount)}{' '}
               sessions ({props.rangeLabel}). This is a comparison value, not savings or ROI.
@@ -249,8 +258,18 @@ const CalendarHeatmap = (props: {
   });
 
   const heatDayForKey = (key: string) => heatDays().find((day) => toDateInputValue(day.date) === key);
-  const describeHeatDay = (day: HeatDay) =>
-    `${fmtDateOnly(day.date)} — ${fmtMoney(day.cost)} · ${fmtNum(day.sessions)} sessions`;
+  const describeHeatDay = (day: HeatDay) => {
+    const value = aggregateApiValuePresentation(day.priceMeasurement).label;
+    const provenance = aggregateApiPriceProvenance(day.priceMeasurement);
+    return `${fmtDateOnly(day.date)} — ${value} · ${fmtNum(day.sessions)} sessions${
+      provenance ? ` · ${provenance.label}` : ''
+    }`;
+  };
+  const describeHeatDayWithProvenance = (day: HeatDay) => {
+    const description = describeHeatDay(day);
+    const provenance = aggregateApiPriceProvenance(day.priceMeasurement);
+    return provenance ? `${description}. ${provenance.description}` : description;
+  };
   const focusedHeatDay = createMemo(() => {
     const key = focusedDayKey();
     return key ? heatDayForKey(key) : undefined;
@@ -340,7 +359,7 @@ const CalendarHeatmap = (props: {
                             <Show fallback={<span />} when={day}>
                               {(cell) => {
                                 const key = () => toDateInputValue(cell().date);
-                                const description = () => describeHeatDay(cell());
+                                const description = () => describeHeatDayWithProvenance(cell());
                                 return (
                                   <button
                                     aria-current={key() === heat().todayKey ? 'date' : undefined}
@@ -428,10 +447,14 @@ const TokenAnatomy = (props: { summary: ReportSummary }) => {
           agentic sessions affordable.
         </div>
         <SegmentBar ariaLabel="Token anatomy" segments={segments()} />
-        <div class={anatomyLegend}>
+        <div class={anatomyLegend} data-overview-token-legend>
           <For each={segments()}>
             {(segment) => (
-              <span class={anatomyLegendItem} title={`${segment.label}: ${fmtNum(segment.value)} tokens`}>
+              <span
+                class={anatomyLegendItem}
+                data-token-legend-item
+                title={`${segment.label}: ${fmtNum(segment.value)} tokens`}
+              >
                 <span class={cx(anatomyLegendSwatch, segment.class)} />
                 {segment.label}
                 <span class={anatomyLegendValue}>{fmtCompact(segment.value)}</span>

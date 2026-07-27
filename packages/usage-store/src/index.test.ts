@@ -30,6 +30,7 @@ import {
   queryProviderQuotaObservations,
   queryProviderQuotaSourceState,
   queryReportRows,
+  queryUsageMachineFleet,
   queryUsageStoreGeneration,
   UsageStoreError,
   upsertRtkSavingsContributions,
@@ -1034,6 +1035,87 @@ describe('usage-store public boundary', () => {
     expect(repeated.unchanged).toBe(1);
     expect(queried.rows).toHaveLength(1);
     expect(queried.rows[0]?.source.machineId).toBe('machine-a');
+  });
+
+  test('round-trips declared origin and revives legacy stored rows as unknown', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-origin-'));
+    const dbPath = usageStorePath(home);
+    const classifierParentId = '11111111-2222-4333-8444-555555555555';
+    const classifier = {
+      ...makeRow({ sourceSessionId: 'classifier' }),
+      origin: 'classifier' as const,
+      source: {
+        harnessKey: 'codex',
+        rootSourceSessionId: classifierParentId,
+        sourceSessionId: 'classifier',
+      },
+    };
+    await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [classifier] }));
+
+    const currentLegacy = toSerializedMergeRow(makeRow({ sourceSessionId: 'legacy' }), machineB);
+    const { contentHash: _contentHash, origin: _origin, ...legacyContent } = currentLegacy;
+    const legacyRow = { ...legacyContent, contentHash: usageContentHash(legacyContent) };
+    const legacyBundle: UsageMergeBundle = { ...makeBundle(machineB, []), rows: [legacyRow] };
+    await Effect.runPromise(importPeerMergeBundle({ bundle: legacyBundle, dbPath, localMachineId: machineA.id }));
+
+    const queried = await Effect.runPromise(queryReportRows({ dbPath }));
+    const rowsById = new Map(queried.rows.map((row) => [row.source.sourceSessionId, row]));
+
+    expect(rowsById.get('classifier')?.origin).toBe('classifier');
+    expect(rowsById.get('classifier')?.source.rootSourceSessionId).toBe(classifierParentId);
+    expect(rowsById.get('legacy')?.origin).toBe('unknown');
+  });
+
+  test('projects active rows into per-machine fleet freshness', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-fleet-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: new Date('2026-06-12T12:00:00.000Z'),
+        machine: machineA,
+        rows: [makeRow({ sourceSessionId: 'fleet-local' })],
+      }),
+    );
+    const latestPeerRow = {
+      ...makeRow({ sourceSessionId: 'fleet-peer-latest' }),
+      date: new Date('2026-06-11T10:00:00.000Z'),
+      endDate: new Date('2026-06-11T10:01:00.000Z'),
+    };
+    await Effect.runPromise(
+      importPeerMergeBundle({
+        bundle: makeBundle(machineB, [makeRow({ sourceSessionId: 'fleet-peer-oldest' }), latestPeerRow]),
+        dbPath,
+        importedAt: new Date('2026-06-15T12:00:00.000Z'),
+        localMachineId: machineA.id,
+      }),
+    );
+
+    const fleet = await Effect.runPromise(queryUsageMachineFleet({ dbPath }));
+
+    expect(fleet).toEqual({
+      machines: [
+        {
+          id: machineB.id,
+          label: machineB.label,
+          hasLocalObservedRows: false,
+          hasPortableRows: true,
+          lastSeenAt: '2026-06-15T12:00:00.000Z',
+          newestSessionAt: '2026-06-11T10:01:00.000Z',
+          sessionCount: 2,
+        },
+        {
+          id: machineA.id,
+          label: machineA.label,
+          hasLocalObservedRows: true,
+          hasPortableRows: false,
+          lastSeenAt: '2026-06-12T12:00:00.000Z',
+          newestSessionAt: '2026-06-01T10:01:00.000Z',
+          sessionCount: 1,
+        },
+      ],
+      skipped: 0,
+    });
   });
 
   test('advances generation only when the active report projection changes', async () => {

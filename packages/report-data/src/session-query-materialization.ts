@@ -18,12 +18,12 @@ import {
   sessionTextSortFields,
   sortValueForSessionColumn,
 } from '@ai-usage/report-core/session-query';
-import { usageRowModelContributions } from '@ai-usage/report-core/usage-row';
+import { usageRowModelApiPriceMeasurements, usageRowModelContributions } from '@ai-usage/report-core/usage-row';
 
 export const SESSION_QUERY_DATABASE_NAME = 'sessions.sqlite';
 
-const SESSION_QUERY_SCHEMA_VERSION = 8;
-const SESSION_ROW_INSERT_VALUE_COUNT = 75;
+const SESSION_QUERY_SCHEMA_VERSION = 12;
+const SESSION_ROW_INSERT_VALUE_COUNT = 78;
 const createFileFlags =
   // biome-ignore lint/suspicious/noBitwiseOperators: Node file-open flags are a documented bitmask API.
   fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW;
@@ -103,7 +103,10 @@ const createSchema = (database: SqliteDatabase): void => {
       provider_display TEXT NOT NULL,
       model_key TEXT NOT NULL,
       project_key TEXT NOT NULL,
+      project_label TEXT NOT NULL,
+      origin TEXT NOT NULL CHECK (origin IN ('human', 'subagent', 'classifier', 'unknown')),
       campaign_key TEXT,
+      campaign_label TEXT NOT NULL,
       campaign_root INTEGER NOT NULL CHECK (campaign_root IN (0, 1)),
       campaign_total_count INTEGER,
       sort_date REAL NOT NULL,
@@ -169,6 +172,7 @@ const createSchema = (database: SqliteDatabase): void => {
       segment_position INTEGER NOT NULL,
       cost_approx REAL NOT NULL,
       cost_known INTEGER NOT NULL CHECK (cost_known IN (0, 1)),
+      unpriced_fresh_tokens REAL NOT NULL,
       tok_cr REAL NOT NULL,
       tok_cw REAL NOT NULL,
       tok_in REAL NOT NULL,
@@ -184,7 +188,7 @@ const createSchema = (database: SqliteDatabase): void => {
     );
     CREATE INDEX session_rows_campaign ON session_rows(campaign_key, campaign_root, ordinal);
     CREATE INDEX session_rows_active_time ON session_rows(active_time);
-    CREATE INDEX session_rows_facets ON session_rows(harness, machine_label, provider_display, model_key, project_key);
+    CREATE INDEX session_rows_facets ON session_rows(harness, machine_id, provider_display, model_key, project_key);
     CREATE INDEX session_rows_provider_scope ON session_rows(provider_scope_key, ordinal);
     CREATE INDEX session_model_segments_model ON session_model_segments(model_key, ordinal);
     CREATE INDEX session_model_filter_keys_model ON session_model_filter_keys(model_key, ordinal);
@@ -195,7 +199,8 @@ const insertSql = `
   INSERT INTO session_rows (
     ordinal, row_id, row_json, source_row_json, source_authority, active_date, active_time, search_text, harness,
     machine_id, machine_label,
-    provider_scope_key, provider, provider_display, model_key, project_key, campaign_key, campaign_root, campaign_total_count,
+    provider_scope_key, provider, provider_display, model_key, project_key, project_label, origin,
+    campaign_key, campaign_label, campaign_root, campaign_total_count,
     ${sessionSortFields.map((field) => `sort_${field === 'cache' ? 'cache' : field.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`).join(', ')},
     ${sessionTextSortFields.map((field) => `sort_${field}_rank`).join(', ')},
     row_identity_rank, session_item_identity_rank, campaign_item_identity_rank,
@@ -208,8 +213,8 @@ const insertSql = `
 
 const modelSegmentInsertSql = `
   INSERT INTO session_model_segments (
-    ordinal, model_key, segment_position, cost_approx, cost_known, tok_cr, tok_cw, tok_in, tok_out
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ordinal, model_key, segment_position, cost_approx, cost_known, unpriced_fresh_tokens, tok_cr, tok_cw, tok_in, tok_out
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 const modelFilterKeyInsertSql = `
@@ -278,7 +283,7 @@ const insertRow = (
   sourceRow: SerializedRow,
   sourceAuthority: SessionDetailSourceAuthority,
   ordinal: number,
-  campaign: { key: string; root: boolean; totalCount: number } | undefined,
+  campaign: { key: string; label: string; root: boolean; totalCount: number } | undefined,
   ranks: MaterializedSessionRanks,
 ): void => {
   const sortValues = sessionSortFields.map((field) => sortValueForSessionColumn(row, field));
@@ -305,7 +310,10 @@ const insertRow = (
     row.providerDisplay,
     row.modelKey,
     row.projectKey,
+    row.projectLabel,
+    row.origin,
     campaign?.key ?? null,
+    campaign?.label ?? row.sessionLabel,
     campaign?.root ? 1 : 0,
     campaign?.totalCount ?? null,
     ...sortValues,
@@ -388,12 +396,16 @@ export const materializeSessionQueryDatabase = async (
     database = new Database(databasePath, { create: false, strict: true }) as SqliteDatabase;
     createSchema(database);
     const presentationRows = rows.map(enrichSessionPresentationRow);
-    const campaignByRow = new Map<SessionPresentationRow, { key: string; root: boolean; totalCount: number }>();
+    const campaignByRow = new Map<
+      SessionPresentationRow,
+      { key: string; label: string; root: boolean; totalCount: number }
+    >();
     const campaigns = buildSessionCampaignViews(presentationRows, presentationRows);
     for (const campaign of campaigns) {
       for (const campaignRow of campaign.allRows) {
         campaignByRow.set(campaignRow, {
           key: campaign.campaignKey,
+          label: campaign.root.sessionLabel,
           root: campaignRow === campaign.root,
           totalCount: campaign.totalCount,
         });
@@ -413,13 +425,19 @@ export const materializeSessionQueryDatabase = async (
           throw new Error(`Session query row ${ordinal} is missing its source authority`);
         }
         insertRow(insert, row, sourceRow, sourceAuthority, ordinal, campaignByRow.get(row), ranks);
+        const modelPriceMeasurements = usageRowModelApiPriceMeasurements(sourceRow);
         for (const [segmentPosition, segment] of usageRowModelContributions(sourceRow).entries()) {
+          const priceMeasurement = modelPriceMeasurements.get(segment.key);
+          if (!priceMeasurement) {
+            throw new Error(`Session query row ${ordinal} is missing model price coverage for ${segment.key}`);
+          }
           insertModelSegment.run(
             ordinal,
             segment.key,
             segmentPosition,
             segment.costApprox,
             segment.costKnown ? 1 : 0,
+            priceMeasurement.unpricedFreshTokens,
             segment.tokCr,
             segment.tokCw,
             segment.tokIn,

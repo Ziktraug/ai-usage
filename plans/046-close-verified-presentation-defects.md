@@ -1,6 +1,6 @@
 # Plan 046: Close the verified presentation defects
 
-> **Status: TODO**
+> **Status: DONE** — implemented and verified on 2026-07-26.
 >
 > **Baseline**: commit `96b3dff`. Every row in the defect table was observed
 > directly against the dev server on `:3000` on 2026-07-26 (headless Chrome,
@@ -240,19 +240,19 @@ interaction will silently no-op.
 
 ## Done
 
-- [ ] No control's label contradicts its behaviour or the resolved theme.
-- [ ] Every delta states its comparison basis without a second interaction.
-- [ ] Provider status categories are disjoint and reconcilable.
-- [ ] Zero, unknown, and small-positive values are mutually distinguishable in
+- [x] No control's label contradicts its behaviour or the resolved theme.
+- [x] Every delta states its comparison basis without a second interaction.
+- [x] Provider status categories are disjoint and reconcilable.
+- [x] Zero, unknown, and small-positive values are mutually distinguishable in
       every bar and every value cell.
-- [ ] Missing data uses one vocabulary across report, drawer, and Breakdown.
-- [ ] One baseline and no orphan card in the metric row.
-- [ ] Provenance is discoverable, and present in the drawer.
-- [ ] Skills labels ellipsise, identifiers wrap, findings are individually
+- [x] Missing data uses one vocabulary across report, drawer, and Breakdown.
+- [x] One baseline and no orphan card in the metric row.
+- [x] Provenance is discoverable, and present in the drawer.
+- [x] Skills labels ellipsise, identifiers wrap, findings are individually
       identifiable, and SKILL.md prose is readable.
-- [ ] Pluralisation, capitalisation, placeholder names, and date format are
+- [x] Pluralisation, capitalisation, placeholder names, and date format are
       consistent.
-- [ ] Content is visible above the fold at 390x844.
+- [x] Content is visible above the fold at 390x844.
 
 ## STOP conditions
 
@@ -274,3 +274,24 @@ Missing-data vocabulary and metric-card layout each have exactly one owner after
 this plan: a future metric must not introduce a fourth way to render absence, and a
 future card must not reintroduce a second value baseline. Navigation is **not** this
 plan's to own — plan 045 Wave 5 makes the left rail its single owner.
+
+## Execution log
+
+Implemented and verified on 2026-07-26 on the operator-requested shared branch
+`feat/implement-plans-045-047`.
+
+- Theme, delta, provider-status, pluralisation, capitalisation, placeholder, and
+  date copy now describe their actual state without hidden comparison context.
+- Missing values use the three-state vocabulary established by plan 045. Metric
+  cards share one baseline and provenance remains discoverable in detail views.
+- Skills labels ellipsise without widening their container, identifiers wrap, and
+  findings and SKILL.md prose retain readable, individually addressable structure.
+- Mobile content remains visible and bounded at 390x844. The Sources action layout
+  keeps its two-column structure while safely truncating long status text.
+
+Verification completed with `bun x ultracite fix`, `bun run check`,
+`bun run lint`, `bun run typecheck`, `bun run test`, `bun run test:e2e`, and
+`bun run test:e2e-demo`. The normal browser suite passes 75/75 and the demo suite
+passes 1/1. Visual baselines were reviewed at 1440x1000 and 390x844 in both themes;
+four intentional snapshots were updated, while chart density, heatmap cadence,
+and table-row density stayed intact.

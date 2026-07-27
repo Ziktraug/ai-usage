@@ -7,16 +7,12 @@ import {
   ghostButton,
   header,
   headerActions,
-  headerNavigation,
   headerTop,
   meta,
-  navButton,
   page,
   panel,
   shell,
   statusPill,
-  statusPillInfo,
-  statusPillOk,
   title,
   titleBlock,
 } from '@ai-usage/design-system/report';
@@ -26,10 +22,8 @@ import {
   type SourceControlEntryView,
   type SourcePublicationView,
 } from '@ai-usage/report-core/source-control';
-import { createFileRoute, Link } from '@tanstack/solid-router';
-import { createMemo, For, Show } from 'solid-js';
-import { dashboardSearchDefaultsFor } from '../dashboard-search';
-import { ThemeToggle } from '../dashboard-theme';
+import { createFileRoute } from '@tanstack/solid-router';
+import { createMemo, createSignal, For, Show } from 'solid-js';
 import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
 import { fmtDate, fmtNum } from '../shared';
 import { useSourceControl } from '../source-control-context';
@@ -40,7 +34,6 @@ export const Route = createFileRoute('/sources')({
   component: SourcesRoute,
 });
 
-const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
 const pageStack = css({ display: 'grid', gap: '18px' });
 const groupStack = css({ display: 'grid', gap: '10px' });
 const groupHeader = css({
@@ -67,12 +60,14 @@ const sourceId = css({ color: 'muted', fontFamily: 'mono', fontSize: '11px', ove
 const sourceBadges = css({ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'flex-end' });
 const axes = css({
   display: 'grid',
-  gridTemplateColumns: { base: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(5, minmax(0, 1fr))' },
+  gridTemplateColumns: { base: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(4, minmax(0, 1fr))' },
   gap: '8px',
 });
 const axis = css({ display: 'grid', gap: '3px', minW: 0 });
 const axisLabel = css({ color: 'muted', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase' });
 const axisValue = css({ fontSize: '12px', overflowWrap: 'anywhere' });
+const revisionValue = css({ display: 'flex', alignItems: 'center', gap: '6px', minW: 0 });
+const revisionCode = css({ overflow: 'hidden', fontFamily: 'mono', fontSize: '11px', textOverflow: 'ellipsis' });
 const detailList = css({ display: 'grid', gap: '5px', color: 'muted', fontSize: '12px', lineHeight: 1.5 });
 const switchLabel = css({
   display: 'inline-flex',
@@ -88,6 +83,48 @@ const groupLabels: Record<CollectionSourceGroup, string> = {
   enrichments: 'Enrichments',
   'provider-usage': 'Provider usage',
   sessions: 'Sessions',
+};
+
+const sourceCountLabel = (count: number): string => `${count} source${count === 1 ? '' : 's'}`;
+
+const MAX_INLINE_REVISION_LENGTH = 24;
+const REVISION_PREFIX_LENGTH = 12;
+const REVISION_SUFFIX_LENGTH = 8;
+
+const compactRevision = (revision: string): string =>
+  revision.length <= MAX_INLINE_REVISION_LENGTH
+    ? revision
+    : `${revision.slice(0, REVISION_PREFIX_LENGTH)}…${revision.slice(-REVISION_SUFFIX_LENGTH)}`;
+
+const PublicationRevision = (props: { value: string | null | undefined }) => {
+  const [copied, setCopied] = createSignal(false);
+  const copyRevision = async (): Promise<void> => {
+    if (!props.value) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(props.value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <Show fallback={<span class={axisValue}>Not published yet</span>} when={props.value}>
+      {(revision) => (
+        <div class={revisionValue}>
+          <code class={revisionCode} title={revision()}>
+            {compactRevision(revision())}
+          </code>
+          <button aria-label="Copy publication revision" class={ghostButton} onClick={copyRevision} type="button">
+            {copied() ? 'Copied' : 'Copy'}
+          </button>
+        </div>
+      )}
+    </Show>
+  );
 };
 
 const publicationStatus = (publication: SourcePublicationView): string => {
@@ -133,16 +170,15 @@ const SourceCard = (props: {
   };
 
   return (
-    <article class={cx(panel, sourceCard)}>
+    <article class={cx(panel, sourceCard)} data-source-card>
       <div class={sourceHeader}>
         <div>
           <h3 class={sourceName}>{props.source.label}</h3>
           <p class={sourceId}>{props.source.id}</p>
         </div>
         <div class={sourceBadges}>
-          <span class={cx(statusPill, sourceToneClass(presentation().tone))}>{presentation().label}</span>
-          <span class={cx(statusPill, props.source.policy === 'enabled' ? statusPillOk : statusPillInfo)}>
-            {props.source.policy}
+          <span class={cx(statusPill, sourceToneClass(presentation().tone))} data-source-health>
+            {presentation().label}
           </span>
         </div>
       </div>
@@ -192,7 +228,6 @@ const SourceCard = (props: {
         )}
       </Show>
       <div class={detailList}>
-        <p>{presentation().explanation}</p>
         <Show when={props.source.reason.code !== 'none'}>
           <p>Reason: {props.source.reason.message ?? props.source.reason.code}</p>
         </Show>
@@ -269,7 +304,7 @@ function SourcesRoute() {
     if (state.connection === 'stale') {
       return 'Connection interrupted; reconnecting.';
     }
-    return state.publication ? `Report ${state.publication.revision} published.` : '';
+    return state.publication ? 'Report published.' : '';
   });
 
   return (
@@ -303,12 +338,6 @@ function SourcesRoute() {
               >
                 Run all enabled
               </button>
-              <nav aria-label="Primary navigation" class={headerNavigation}>
-                <Link class={navButton} search={dashboardSearchDefaults} to="/">
-                  Report
-                </Link>
-              </nav>
-              <ThemeToggle />
             </div>
           </div>
         </header>
@@ -335,7 +364,7 @@ function SourcesRoute() {
                   <div class={axes}>
                     <div class={axis}>
                       <span class={axisLabel}>Revision</span>
-                      <span class={axisValue}>{current().publication.revision ?? 'Not published yet'}</span>
+                      <PublicationRevision value={current().publication.revision} />
                     </div>
                     <div class={axis}>
                       <span class={axisLabel}>Last outcome</span>
@@ -365,7 +394,7 @@ function SourcesRoute() {
                         <h2 class={groupTitle} id={`source-group-${group.id}`}>
                           {groupLabels[group.id]}
                         </h2>
-                        <span class={meta}>{group.sources.length} sources</span>
+                        <span class={meta}>{sourceCountLabel(group.sources.length)}</span>
                       </div>
                       <div class={sourceGrid}>
                         <For each={group.sources}>

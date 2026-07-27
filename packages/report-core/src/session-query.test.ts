@@ -3,6 +3,8 @@ import { MAX_SESSION_QUERY_RESULT_BYTES } from './report-budgets';
 import type { SerializedRow } from './report-data';
 import { parseSessionDetailRequest } from './session-detail';
 import {
+  campaignBadgeLabelForSessionRow,
+  classifierRollupLabelForSessionRow,
   compareSessionPresentationRows,
   enrichSessionPresentationRow,
   MAX_SESSION_QUERY_PAGE_SIZE,
@@ -21,12 +23,14 @@ import {
   SessionQueryCursorError,
   type SessionQueryRequest,
   SessionQueryValidationError,
+  sessionOriginLabels,
   sessionQueryFingerprint,
   sessionQueryNextCursor,
   sessionQueryPageOffset,
   sessionRowIdentity,
   sessionSortFields,
   sortValueForSessionColumn,
+  UNDECLARED_ORIGIN_DESCRIPTION,
 } from './session-query';
 
 const MINUTE_MS = 60_000;
@@ -80,12 +84,12 @@ const sourcedRow = (sourceSessionId: string, overrides: Partial<SerializedRow> =
   });
 
 const defaultRequest = (overrides: Partial<SessionQueryRequest> = {}): SessionQueryRequest => ({
-  campaigns: true,
   cursor: null,
   filters: {
     fields: {},
     harness: [],
     machine: [],
+    origin: [],
     query: '',
   },
   pageSize: 2,
@@ -96,6 +100,48 @@ const defaultRequest = (overrides: Partial<SessionQueryRequest> = {}): SessionQu
 });
 
 describe('session query contracts', () => {
+  test('keeps project identity stable when its display label changes', () => {
+    const original = enrichSessionPresentationRow(
+      row('Original project label', {
+        project: 'Acme App',
+        projectGroupId: 'group:acme-app',
+        projectSourceId: 'machine-a|/work/acme-app',
+        rawProject: 'acme/app',
+      }),
+    );
+    const renamed = enrichSessionPresentationRow(
+      row('Renamed project label', {
+        project: 'Customer Portal',
+        projectGroupId: 'group:acme-app',
+        projectSourceId: 'machine-a|/work/acme-app',
+        rawProject: 'acme/app',
+      }),
+    );
+
+    expect(original.projectKey).toBe('group:acme-app');
+    expect(renamed.projectKey).toBe(original.projectKey);
+    expect(original.projectLabel).toBe('Acme App');
+    expect(renamed.projectLabel).toBe('Customer Portal');
+  });
+
+  test('falls back from project source identity to a normalized legacy identity', () => {
+    const sourced = enrichSessionPresentationRow(
+      row('Source identity', {
+        project: 'Acme App — Build Host',
+        projectSourceId: 'machine-a|/work/acme-app',
+        rawProject: 'acme/app',
+      }),
+    );
+    const legacy = enrichSessionPresentationRow(
+      row('Legacy identity', { project: '  Acme / APP  ', rawProject: '  Acme / APP  ' }),
+    );
+
+    expect(sourced.projectKey).toBe('machine-a|/work/acme-app');
+    expect(sourced.projectLabel).toBe('Acme App — Build Host');
+    expect(legacy.projectKey).toBe('acme app');
+    expect(legacy.projectLabel).toBe('  Acme / APP  ');
+  });
+
   test('keeps session identity stable when only VCS context changes', () => {
     const withoutVcs = sourcedRow('stable-vcs');
     const withVcs = sourcedRow('stable-vcs', {
@@ -150,6 +196,15 @@ describe('session query contracts', () => {
         subagent: true,
       }),
     );
+    expect(presentation.origin).toBe('unknown');
+    expect(enrichSessionPresentationRow({ ...baseRow, origin: 'classifier' }).origin).toBe('classifier');
+    expect(sessionOriginLabels).toEqual({
+      classifier: 'Automated review',
+      human: 'Human',
+      subagent: 'Delegated',
+      unknown: 'Undeclared',
+    });
+    expect(UNDECLARED_ORIGIN_DESCRIPTION).toBe('Undeclared — this harness did not state how the session was started.');
     expect(sessionSortFields.map((field) => sortValueForSessionColumn(presentation, field))).toEqual([
       presentation.sortDate,
       'sort fixture',
@@ -243,7 +298,6 @@ describe('session query contracts', () => {
 
   test('strictly validates and canonically normalizes query inputs', () => {
     const parsed = parseSessionQueryRequest({
-      campaigns: false,
       cursor: 'opaque-client-value',
       filters: {
         fields: { project: 'alpha' },
@@ -264,6 +318,7 @@ describe('session query contracts', () => {
       fields: { project: 'alpha' },
       harness: ['Claude', 'Codex'],
       machine: ['Machine A', 'Machine B'],
+      origin: [],
       query: 'cost review',
     });
     expect(parsed.cursor).toBe('opaque-client-value');
@@ -276,8 +331,8 @@ describe('session query contracts', () => {
       { ...valid, pageSize: MAX_SESSION_QUERY_PAGE_SIZE + 1 },
       { ...valid, cursor: '' },
       { ...valid, revision: '' },
+      { ...valid, campaigns: false },
       {
-        campaigns: valid.campaigns,
         cursor: valid.cursor,
         filters: valid.filters,
         pageSize: valid.pageSize,
@@ -317,7 +372,12 @@ describe('session query contracts', () => {
 
     expect(sessionQueryFingerprint(first)).toBe(sessionQueryFingerprint(reordered));
     expect(sessionQueryFingerprint({ ...first, pageSize: 3 })).not.toBe(sessionQueryFingerprint(first));
-    expect(sessionQueryFingerprint({ ...first, campaigns: false })).not.toBe(sessionQueryFingerprint(first));
+    expect(
+      sessionQueryFingerprint({
+        ...first,
+        filters: { ...first.filters, origin: ['human', 'subagent'] },
+      }),
+    ).not.toBe(sessionQueryFingerprint(first));
   });
 
   test('uses stable presentation identity as the final sort tie-breaker', () => {
@@ -341,11 +401,10 @@ describe('session query contracts', () => {
     const page = projectSessionPage(
       [matching, outsideRange],
       defaultRequest({
-        campaigns: false,
         filters: {
-          fields: { model: 'gpt-5.4', project: 'alpha', provider: 'Codex API' },
+          fields: { model: 'gpt-5.4', project: 'needle', provider: 'Codex API' },
           harness: ['Codex'],
-          machine: ['Machine A'],
+          machine: ['machine-a'],
           query: 'needle',
         },
         range: { from: '2026-06-10T12:00:00.000Z', to: '2026-06-10T12:00:00.000Z' },
@@ -393,7 +452,6 @@ describe('session query contracts', () => {
     const page = projectSessionPage(
       [mixed],
       defaultRequest({
-        campaigns: false,
         filters: { fields: { model: 'claude-sonnet-4-6' }, harness: [], machine: [], query: '' },
       }),
     );
@@ -404,7 +462,6 @@ describe('session query contracts', () => {
     const legacyPage = projectSessionPage(
       [legacy],
       defaultRequest({
-        campaigns: false,
         filters: { fields: { model: 'claude-sonnet-4-6' }, harness: [], machine: [], query: '' },
       }),
     );
@@ -445,6 +502,124 @@ describe('session query contracts', () => {
     expect(second.items.map((item) => item.row.sessionLabel)).toEqual(['standalone-b']);
     expect(second.nextCursor).toBeNull();
     expect(second.requestFingerprint).toBe(first.requestFingerprint);
+  });
+
+  test('keeps singleton campaigns visible and rolls classifier usage into the filtered parent campaign', () => {
+    const root = sourcedRow('campaign-root', { freshTokens: 20, origin: 'human' });
+    const delegated = sourcedRow('campaign-child', {
+      freshTokens: 7,
+      origin: 'subagent',
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        machineLabel: 'Machine A',
+        parentSourceSessionId: 'campaign-root',
+        rootSourceSessionId: 'campaign-root',
+        sourceSessionId: 'campaign-child',
+      },
+    });
+    const classifier = sourcedRow('classifier-review', {
+      freshTokens: 3,
+      origin: 'classifier',
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        machineLabel: 'Machine A',
+        parentSourceSessionId: 'campaign-root',
+        rootSourceSessionId: 'campaign-root',
+        sourceSessionId: 'classifier-review',
+      },
+    });
+    const rows = [root, delegated, classifier];
+    const request = defaultRequest({
+      filters: {
+        fields: {},
+        harness: [],
+        machine: [],
+        origin: ['human', 'subagent'],
+        query: '',
+      },
+      pageSize: 10,
+    });
+
+    const page = projectSessionPage(rows, request);
+    const item = page.items[0];
+    if (item?.kind !== 'campaign') {
+      throw new Error('Expected a campaign fixture');
+    }
+    expect(page.itemCount).toBe(1);
+    expect(page.sessionCount).toBe(2);
+    expect(item.row).toMatchObject({
+      campaignClassifierCount: 1,
+      campaignClassifierFreshTokens: 3,
+      campaignTotalCount: 3,
+      campaignVisibleCount: 2,
+      freshTokens: 30,
+      sessionLabel: 'campaign-root',
+    });
+    expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 2 sessions');
+    expect(classifierRollupLabelForSessionRow(item.row)).toBe('+ 1 automated review');
+
+    const children = projectSessionCampaignChildren(rows, {
+      campaignKey: item.campaignKey,
+      query: request,
+    });
+    expect(children.itemCount).toBe(2);
+    expect(children.sessionCount).toBe(1);
+    expect(children.items.map(({ origin }) => origin).sort()).toEqual(['classifier', 'subagent']);
+
+    const classifierOnly = projectSessionPage(
+      rows,
+      defaultRequest({
+        filters: { fields: {}, harness: [], machine: [], origin: ['classifier'], query: '' },
+        pageSize: 10,
+      }),
+    );
+    expect(classifierOnly).toMatchObject({
+      itemCount: 1,
+      items: [{ kind: 'campaign', row: { campaignVisibleCount: 1, sessionLabel: 'campaign-root' } }],
+      sessionCount: 1,
+    });
+  });
+
+  test('represents every singleton as a one-session campaign', () => {
+    const page = projectSessionPage(
+      [sourcedRow('singleton', { origin: 'human' })],
+      defaultRequest({
+        filters: { fields: {}, harness: [], machine: [], origin: ['human', 'subagent'], query: '' },
+        pageSize: 10,
+      }),
+    );
+    const item = page.items[0];
+    if (item?.kind !== 'campaign') {
+      throw new Error('Expected a singleton campaign fixture');
+    }
+    expect(item.row).toMatchObject({ campaignTotalCount: 1, campaignVisibleCount: 1 });
+    expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 1 session');
+  });
+
+  test('rejects classifier sessions without a resolvable declared parent campaign', () => {
+    expect(() =>
+      projectSessionPage([sourcedRow('classifier-root', { origin: 'classifier' })], defaultRequest()),
+    ).toThrow('has no declared parent campaign');
+    expect(() =>
+      projectSessionPage(
+        [
+          sourcedRow('classifier-review', {
+            origin: 'classifier',
+            source: {
+              harnessKey: 'codex',
+              machineId: 'machine-a',
+              machineLabel: 'Machine A',
+              parentSourceSessionId: 'missing-root',
+              rootSourceSessionId: 'missing-root',
+              sourceSessionId: 'classifier-review',
+            },
+          }),
+        ],
+        defaultRequest(),
+      ),
+    ).toThrow('has no resolvable parent session');
   });
 
   test('uses root duration and model identity for campaigns with overlapping child rollouts', () => {
@@ -542,6 +717,26 @@ describe('session query contracts', () => {
 
     expect(item.row.costKnown).toBe(false);
     expect(item.row.costApprox).toBeCloseTo(69.3);
+    expect(item.row.priceMeasurement).toEqual({
+      knownCost: 69.3,
+      state: 'partially measured',
+      unpricedFreshTokens: 17,
+    });
+  });
+
+  test('preserves partial measurement provenance for a wholly unpriced singleton campaign', () => {
+    const unpriced = sourcedRow('unknown-price-root', { costApprox: 0, costKnown: false });
+    const page = projectSessionPage([unpriced], defaultRequest({ pageSize: 1 }));
+    const item = page.items[0];
+    if (item?.kind !== 'campaign') {
+      throw new Error('Expected an unpriced campaign fixture');
+    }
+
+    expect(item.row.priceMeasurement).toEqual({
+      knownCost: 0,
+      state: 'partially measured',
+      unpricedFreshTokens: 17,
+    });
   });
 
   test('rejects cursors issued for another validated query scope', () => {
@@ -558,6 +753,16 @@ describe('session query contracts', () => {
       projectSessionPage(
         [row('one'), row('two')],
         defaultRequest({ cursor: first.nextCursor, pageSize: 1, revision: 'revision-2' }),
+      ),
+    ).toThrow(SessionQueryCursorError);
+    expect(() =>
+      projectSessionPage(
+        [row('one'), row('two')],
+        defaultRequest({
+          cursor: first.nextCursor,
+          filters: { ...firstRequest.filters, origin: ['classifier'] },
+          pageSize: 1,
+        }),
       ),
     ).toThrow(SessionQueryCursorError);
     expect(() =>
@@ -635,7 +840,7 @@ describe('session query contracts', () => {
 
   test('strictly parses every Session query result and server error envelope', () => {
     const rows = [sourcedRow('alpha'), sourcedRow('beta')];
-    const pageRequest = defaultRequest({ campaigns: false });
+    const pageRequest = defaultRequest();
     const page = projectSessionPage(rows, pageRequest);
     expect(parseSessionPageResult(page, pageRequest)).toEqual(page);
     expect(
@@ -695,7 +900,7 @@ describe('session query contracts', () => {
   });
 
   test('rejects malformed Session rows, counts, cursors, identities, and error envelopes', () => {
-    const request = defaultRequest({ campaigns: false });
+    const request = defaultRequest();
     const page = projectSessionPage([sourcedRow('alpha')], request);
     const invalidResults = [
       { ...page, extra: true },
@@ -711,7 +916,10 @@ describe('session query contracts', () => {
         items: [
           {
             ...page.items[0],
-            row: { ...page.items[0]?.row, tokenTotal: (page.items[0]?.row.tokenTotal ?? 0) + 1 },
+            row: {
+              ...page.items[0]?.row,
+              priceMeasurement: { knownCost: 2, state: 'measured', unpricedFreshTokens: 0 },
+            },
           },
         ],
       },
@@ -719,44 +927,50 @@ describe('session query contracts', () => {
     for (const result of invalidResults) {
       expect(() => parseSessionPageResult(result, request)).toThrow(SessionQueryValidationError);
     }
-    const segmentedPage = projectSessionPage(
-      [
-        sourcedRow('segmented', {
-          modelSegments: [
-            {
-              costApprox: 1,
-              costKnown: true,
-              model: 'openai/gpt-5.4-high',
-              tokCr: 3,
-              tokCw: 2,
-              tokIn: 10,
-              tokOut: 5,
-            },
-          ],
-        }),
-      ],
-      request,
-    );
-    const segmentedItem = segmentedPage.items[0];
-    if (segmentedItem?.kind !== 'session' || !segmentedItem.row.modelSegments?.[0]) {
-      throw new Error('Expected a segmented Session fixture');
-    }
-    const segment = segmentedItem.row.modelSegments[0];
-    expect(() =>
-      parseSessionPageResult(
+    const segmentedRoot = sourcedRow('segmented-root');
+    const segmentedChild = sourcedRow('segmented-child', {
+      modelSegments: [
         {
-          ...segmentedPage,
+          costApprox: 1,
+          costKnown: true,
+          model: 'openai/gpt-5.4-high',
+          tokCr: 3,
+          tokCw: 2,
+          tokIn: 10,
+          tokOut: 5,
+        },
+      ],
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        machineLabel: 'Machine A',
+        parentSourceSessionId: 'segmented-root',
+        rootSourceSessionId: 'segmented-root',
+        sourceSessionId: 'segmented-child',
+      },
+    });
+    const segmentedRequest = parseSessionCampaignChildrenRequest({
+      campaignKey: 'machine-a:codex:segmented-root',
+      query: request,
+    });
+    const segmentedChildren = projectSessionCampaignChildren([segmentedRoot, segmentedChild], segmentedRequest);
+    const segmentedItem = segmentedChildren.items[0];
+    if (!segmentedItem?.modelSegments?.[0]) {
+      throw new Error('Expected a segmented campaign child fixture');
+    }
+    const segment = segmentedItem.modelSegments[0];
+    expect(() =>
+      parseSessionCampaignChildrenResult(
+        {
+          ...segmentedChildren,
           items: [
             {
               ...segmentedItem,
-              row: {
-                ...segmentedItem.row,
-                modelSegments: [{ ...segment, tokIn: segment.tokIn + 1 }],
-              },
+              modelSegments: [{ ...segment, tokIn: segment.tokIn + 1 }],
             },
           ],
         },
-        request,
+        segmentedRequest,
       ),
     ).toThrow(SessionQueryValidationError);
     expect(() =>
@@ -773,7 +987,7 @@ describe('session query contracts', () => {
   });
 
   test('keeps a maximum Session page within frozen row and byte budgets', () => {
-    const request = defaultRequest({ campaigns: false, pageSize: MAX_SESSION_QUERY_PAGE_SIZE });
+    const request = defaultRequest({ pageSize: MAX_SESSION_QUERY_PAGE_SIZE });
     const result = projectSessionPage(
       Array.from({ length: MAX_SESSION_QUERY_PAGE_SIZE + 1 }, (_, index) => sourcedRow(`budget-${index}`)),
       request,
@@ -793,11 +1007,11 @@ describe('session query contracts', () => {
   });
 
   test('rejects an otherwise valid Session result above the frozen byte budget', () => {
-    const request = defaultRequest({ campaigns: false, pageSize: 1 });
+    const request = defaultRequest({ pageSize: 1 });
     const result = projectSessionPage([sourcedRow('oversized')], request);
     const item = result.items[0];
-    if (item?.kind !== 'session') {
-      throw new Error('Expected a Session fixture');
+    if (item?.kind !== 'campaign') {
+      throw new Error('Expected a campaign fixture');
     }
     const oversizedResult = {
       ...result,

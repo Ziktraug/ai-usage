@@ -28,7 +28,6 @@ const sessionsScope = (): DashboardReportDestinationScope => ({
   kind: 'sessions',
   query: overviewScope().query,
   sessions: {
-    campaigns: false,
     filters: { fields: {}, harness: [], machine: [], query: '' },
     pageSize: 100,
     range: { from: null, to: null },
@@ -230,6 +229,19 @@ describe('dashboard report lifecycle', () => {
     expect(harness.lifecycle.advancedAnalysisLoading()).toBe(false);
     expect(harness.lifecycle.focusedTimelineError()).toBeNull();
     expect(harness.errors).toEqual([]);
+
+    harness.dispose();
+  });
+
+  test('coordinates campaign, machine, and origin timeline destinations', async () => {
+    const harness = createLifecycleHarness(() => Promise.resolve(committedOutcome()));
+    harness.setReady(true);
+
+    for (const dimension of ['campaign', 'machine', 'origin'] as const) {
+      harness.lifecycle.requestTimeline({ dimension, granularity: 'day' });
+      await harness.lifecycle.refresh();
+      expect(harness.calls.at(-1)?.timeline).toEqual({ dimension, granularity: 'day' });
+    }
 
     harness.dispose();
   });

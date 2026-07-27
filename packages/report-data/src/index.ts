@@ -21,6 +21,7 @@ import {
   type ProjectGroupConfig,
   type ProjectGroupingWarning,
   type ProjectSourceSelector,
+  projectLabelWithMachine,
   projectSourceId,
   projectSourceSelectorLabel,
 } from '@ai-usage/report-core/project-group';
@@ -1193,8 +1194,7 @@ const legacyAliasMatchesSource = (source: ProjectSource, alias: ProjectAliasEntr
     return [source.sourcePath, source.project].some((candidate) => candidate && regex.test(candidate));
   });
 
-const sourceLabel = (source: ProjectSource) =>
-  source.machine ? `${source.project} · ${source.machine}` : source.project;
+const sourceLabel = (source: ProjectSource) => projectLabelWithMachine(source.project, source.machine);
 
 const lineDeltaForRows = (rows: SourcedRow[]) =>
   rows.reduce(

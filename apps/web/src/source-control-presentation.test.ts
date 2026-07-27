@@ -39,6 +39,12 @@ describe('source control presentation', () => {
     expect(presentSourceState(source(overrides))).toMatchObject({ label, tone });
   });
 
+  test('keeps a disabled policy separate from a failed last outcome', () => {
+    const disabledFailure = source({ lastOutcome: 'failed', policy: 'disabled' });
+    expect(presentSourceState(disabledFailure)).toMatchObject({ label: 'Disabled' });
+    expect(disabledFailure.lastOutcome).toBe('failed');
+  });
+
   test('maps every semantic tone to one shared CSS class', () => {
     const tones: readonly SourcePresentationTone[] = ['danger', 'info', 'ok', 'warning'];
     expect(new Set(tones.map(sourceToneClass)).size).toBe(tones.length);

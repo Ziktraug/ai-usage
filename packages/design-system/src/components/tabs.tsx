@@ -55,9 +55,31 @@ export const tabTrigger = css({
   },
 });
 
+export const tabContent = css({
+  minW: 0,
+  _focus: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '4px',
+  },
+});
+
+const keepTabPanelInTabOrder = (element: HTMLDivElement): void => {
+  element.tabIndex = 0;
+  // Zag removes tabindex in its next animation frame when a panel already
+  // contains focusable controls. This component intentionally keeps the active
+  // panel itself keyboard-reachable, so reassert the shared accessibility
+  // contract after that synchronization.
+  element.ownerDocument.defaultView?.requestAnimationFrame(() => {
+    if (element.isConnected) {
+      element.tabIndex = 0;
+    }
+  });
+};
+
 export const Tabs = (props: TabsProps) => (
   <ArkTabs.Root
     class={tabsRoot}
+    composite
     lazyMount
     onValueChange={(details) => props.onValueChange(details.value)}
     unmountOnExit
@@ -72,6 +94,12 @@ export const Tabs = (props: TabsProps) => (
         )}
       </For>
     </ArkTabs.List>
-    <For each={props.items}>{(item) => <ArkTabs.Content value={item.value}>{item.content()}</ArkTabs.Content>}</For>
+    <For each={props.items}>
+      {(item) => (
+        <ArkTabs.Content class={tabContent} ref={keepTabPanelInTabOrder} tabIndex={0} value={item.value}>
+          {item.content()}
+        </ArkTabs.Content>
+      )}
+    </For>
   </ArkTabs.Root>
 );

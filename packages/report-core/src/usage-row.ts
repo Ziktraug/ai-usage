@@ -1,6 +1,7 @@
 import { modelGroupKey } from './model-identity';
 import { approxCost, priceFor } from './pricing';
-import type { Row, TitleSource, UsageModelSegment } from './types';
+import { type ApiPriceMeasurement, apiPriceMeasurement, combineApiPriceMeasurements } from './provenance';
+import type { Row, SessionOrigin, TitleSource, UsageModelSegment } from './types';
 
 export interface TokenCounts {
   cr: number;
@@ -35,6 +36,7 @@ export interface UsageRowInput {
   modelSegments?: UsageModelSegment[];
   models?: string[];
   name: string;
+  origin?: SessionOrigin;
   partial?: boolean;
   pricingModel?: string;
   project?: string | null;
@@ -208,6 +210,7 @@ export const normalizeUsageRow = (input: UsageRowInput): Row => {
     harness: input.harness,
     provider: input.provider,
     name: input.name,
+    origin: input.origin ?? 'unknown',
     model,
     ...(segments === undefined ? {} : { modelSegments: segments }),
     ...(models === undefined ? {} : { models }),
@@ -260,20 +263,29 @@ export const usageRowLineDelta = (row: Row): UsageRowLineDelta => {
 
 export const usageRowPricedCost = (row: Row) => (row.costKnown ? row.costApprox : null);
 
-export const usageRowMarkers = (row: Row) => ({
-  partial: row.partial ?? false,
-  subagent: row.subagent ?? false,
-  usageUnavailable: row.usageUnavailable ?? false,
-  ambiguous: row.ambiguous ?? false,
-});
+const usageSegmentFreshTokens = (segment: UsageModelSegment): number => segment.tokIn + segment.tokOut + segment.tokCw;
 
-export const usageRowSessionLabel = (row: Row) => {
-  const markers = usageRowMarkers(row);
-  return (
-    row.name +
-    (markers.partial ? ' ~' : '') +
-    (markers.subagent ? ' ↳' : '') +
-    (markers.ambiguous ? ' ?' : '') +
-    (markers.usageUnavailable ? ' (usage unavailable)' : '')
-  );
+export const usageModelSegmentApiPriceMeasurement = (segment: UsageModelSegment): ApiPriceMeasurement =>
+  apiPriceMeasurement({
+    costKnown: segmentCostKnown(segment),
+    freshTokens: usageSegmentFreshTokens(segment),
+    knownCost: segment.costApprox,
+  });
+
+/** Preserves price coverage before source variants collapse to one model key. */
+export const usageRowModelApiPriceMeasurements = (row: ModelSegmentRow): ReadonlyMap<string, ApiPriceMeasurement> => {
+  const measurements = new Map<string, ApiPriceMeasurement>();
+  for (const segment of usageRowModelSegments(row)) {
+    const key = modelGroupKey(segment.model);
+    const current = measurements.get(key);
+    const segmentMeasurement = usageModelSegmentApiPriceMeasurement(segment);
+    measurements.set(key, current ? combineApiPriceMeasurements([current, segmentMeasurement]) : segmentMeasurement);
+  }
+  return measurements;
 };
+
+/** Returns the segment-accurate API-price measurement for one usage row. */
+export const usageRowApiPriceMeasurement = (row: ModelSegmentRow): ApiPriceMeasurement =>
+  combineApiPriceMeasurements(usageRowModelSegments(row).map(usageModelSegmentApiPriceMeasurement));
+
+export const usageRowSessionLabel = (row: Row): string => row.name;

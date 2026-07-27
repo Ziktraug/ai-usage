@@ -20,7 +20,7 @@ export const metricTile = css({
   bg: 'surface',
   boxShadow: 'card',
   display: 'grid',
-  alignContent: 'space-between',
+  alignContent: 'start',
   gap: '10px',
 });
 

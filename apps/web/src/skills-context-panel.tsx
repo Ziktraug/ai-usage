@@ -462,7 +462,8 @@ const GlobalSkillInspector = (props: {
         <Show fallback={<p class={meta}>No validation diagnostics.</p>} when={diagnostics().length > 0}>
           <For each={diagnostics()}>
             {(diagnostic, index) => (
-              <div
+              <fieldset
+                aria-label={`Finding ${index() + 1}: ${diagnostic.severity}`}
                 class={skillsDiagnosticRow}
                 data-severity={diagnostic.severity}
                 data-validation-finding={index() + 1}
@@ -489,7 +490,7 @@ const GlobalSkillInspector = (props: {
                     </For>
                   </details>
                 </Show>
-              </div>
+              </fieldset>
             )}
           </For>
         </Show>

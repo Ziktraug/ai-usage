@@ -64,11 +64,22 @@ describe('usage file merge public boundary', () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-manual-export-'));
     try {
       const dbPath = path.join(home, 'usage.sqlite');
+      const classifierParentId = '11111111-2222-4333-8444-555555555555';
+      const classifier = {
+        ...makeSourcedRow({ project: 'local-project', sourcePath: '/work/local', sessionId: 'local-1' }),
+        origin: 'classifier' as const,
+        source: {
+          harnessKey: 'codex',
+          rootSourceSessionId: classifierParentId,
+          sourceSessionId: 'local-1',
+          sourcePath: '/work/local',
+        },
+      };
       await Effect.runPromise(
         importLocalRows({
           dbPath,
           machine: localMachine,
-          rows: [makeSourcedRow({ project: 'local-project', sourcePath: '/work/local', sessionId: 'local-1' })],
+          rows: [classifier],
         }),
       );
       const service = createUsageFileMergeService({
@@ -86,6 +97,8 @@ describe('usage file merge public boundary', () => {
       expect(bundle.machine).toEqual(localMachine);
       expect(bundle.rows).toHaveLength(1);
       expect(bundle.rows[0]?.source.machineId).toBe(localMachine.id);
+      expect(bundle.rows[0]?.origin).toBe('classifier');
+      expect(bundle.rows[0]?.source.rootSourceSessionId).toBe(classifierParentId);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -95,6 +108,7 @@ describe('usage file merge public boundary', () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-manual-import-'));
     try {
       const peerRow = makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-1' });
+      const classifierParentId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
       const vcs = {
         branches: [],
         headCommit: null,
@@ -109,7 +123,13 @@ describe('usage file merge public boundary', () => {
       };
       const bundle = createUsageMergeBundle({
         machine: peerMachine,
-        rows: [{ ...peerRow, source: { ...peerRow.source, vcs } }],
+        rows: [
+          {
+            ...peerRow,
+            origin: 'classifier',
+            source: { ...peerRow.source, rootSourceSessionId: classifierParentId, vcs },
+          },
+        ],
         warnings: [{ message: 'manual warning' }],
       });
       const service = createUsageFileMergeService({
@@ -129,9 +149,10 @@ describe('usage file merge public boundary', () => {
       });
       expect(repeated.result.unchanged).toBe(1);
       expect(bundle.version).toBe(3);
-      expect(
-        (await Effect.runPromise(queryReportRows({ dbPath: path.join(home, 'usage.sqlite') }))).rows[0]?.source.vcs,
-      ).toEqual(vcs);
+      const stored = (await Effect.runPromise(queryReportRows({ dbPath: path.join(home, 'usage.sqlite') }))).rows[0];
+      expect(stored?.origin).toBe('classifier');
+      expect(stored?.source.rootSourceSessionId).toBe(classifierParentId);
+      expect(stored?.source.vcs).toEqual(vcs);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

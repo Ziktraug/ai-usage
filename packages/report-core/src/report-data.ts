@@ -360,6 +360,7 @@ export const serializeUsageRow = (row: UsageRowWithOptionalSource): SerializedUs
   };
   return {
     ...row,
+    origin: row.origin ?? 'unknown',
     date: row.date?.toISOString() ?? null,
     endDate: row.endDate?.toISOString() ?? null,
     activeDate: usageRowActiveDate(row)?.toISOString() ?? null,
@@ -388,6 +389,7 @@ export const deserializeUsageRow = (row: SerializedUsageRow): UsageRow => {
   } = row;
   return {
     ...serializedRow,
+    origin: row.origin ?? 'unknown',
     date: row.date === null ? null : new Date(row.date),
     endDate: row.endDate === null ? null : new Date(row.endDate),
   };

@@ -65,9 +65,9 @@ request unless the user explicitly asks.
 | 042 | Document the quota app-server boundary | P1 | S | - | DONE |
 | 043 | Deepen the web process runtime seam | P2 | M | 038 | DONE |
 | 044 | Unify the exact-revision query lifecycle | P2 | M | 043 | DONE |
-| 045 | Valorize the Report Dimensions and Make the Work Unit Honest | P1 | XL | - | TODO |
-| 046 | Close the Verified Presentation Defects | P2 | M | - | TODO |
-| 047 | Make Grouping Portable User Data, for Projects and Campaigns | P2 | L | 045 wave 4 | TODO |
+| 045 | Valorize the Report Dimensions and Make the Work Unit Honest | P1 | XL | - | DONE |
+| 046 | Close the Verified Presentation Defects | P2 | M | - | DONE |
+| 047 | Make Grouping Portable User Data, for Projects and Campaigns | P2 | L | 045 wave 4 | BLOCKED — causal merge model decision required |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).

@@ -4,11 +4,13 @@ import {
   type SessionNeighborRequest,
   type SessionPageItem,
   type SessionPageResult,
+  type SessionPresentationRow,
   type SessionQueryRequest,
   sessionCampaignChildrenFingerprint,
   sessionNeighborFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
+import { usageRowApiPriceMeasurement } from '@ai-usage/report-core/usage-row';
 import { demoReportPayload } from './report-data';
 import {
   buildDashboardSessionQueryScope,
@@ -77,6 +79,21 @@ const pageResult = (
   };
 };
 
+const campaignItem = (row: SessionPresentationRow): SessionPageItem => {
+  const campaignKey = ['test-campaign', row.rowId].join(':');
+  return {
+    campaignKey,
+    kind: 'campaign',
+    row: {
+      ...row,
+      campaignKey,
+      campaignTotalCount: 1,
+      campaignVisibleCount: 1,
+      priceMeasurement: usageRowApiPriceMeasurement(row),
+    },
+  };
+};
+
 const sourceWith = (overrides: Partial<SessionQuerySource>): SessionQuerySource => ({
   getCampaignChildren: () => Promise.reject(new Error('Unexpected campaign children request')),
   getManifest: () => Promise.resolve(manifest('revision-a')),
@@ -87,10 +104,10 @@ const sourceWith = (overrides: Partial<SessionQuerySource>): SessionQuerySource 
 
 const scopeFor = (query = '') =>
   buildDashboardSessionQueryScope({
-    campaigns: true,
     fields: {},
     harness: [],
     machine: [],
+    origin: [],
     query,
     range: { from: null, to: null },
     sorting: [{ desc: true, id: 'date' }],
@@ -98,22 +115,22 @@ const scopeFor = (query = '') =>
 
 const scopeForSort = (query: string, desc: boolean) =>
   buildDashboardSessionQueryScope({
-    campaigns: true,
     fields: {},
     harness: [],
     machine: [],
+    origin: [],
     query,
     range: { from: null, to: null },
     sorting: [{ desc, id: 'cost' }],
   });
 
 describe('dashboard session query mapping', () => {
-  test('maps filters, exact ISO bounds, campaign mode, sort, and a bounded page size', () => {
+  test('maps filters, exact ISO bounds, sort, and a bounded page size', () => {
     const scope = buildDashboardSessionQueryScope({
-      campaigns: false,
       fields: { model: 'gpt-5', project: 'ai-usage' },
       harness: ['codex', 'claude'],
       machine: ['workstation'],
+      origin: ['human', 'subagent'],
       pageSize: 200,
       query: '  EXPENSIVE  ',
       range: {
@@ -124,11 +141,11 @@ describe('dashboard session query mapping', () => {
     });
 
     expect(scope).toEqual({
-      campaigns: false,
       filters: {
         fields: { model: 'gpt-5', project: 'ai-usage' },
         harness: ['claude', 'codex'],
         machine: ['workstation'],
+        origin: ['human', 'subagent'],
         query: 'expensive',
       },
       pageSize: 200,
@@ -140,10 +157,10 @@ describe('dashboard session query mapping', () => {
   test('rejects an unsupported sort or an oversized page before making a request', () => {
     expect(() =>
       buildDashboardSessionQueryScope({
-        campaigns: true,
         fields: {},
         harness: [],
         machine: [],
+        origin: [],
         pageSize: 201,
         query: '',
         range: { from: null, to: null },
@@ -152,10 +169,10 @@ describe('dashboard session query mapping', () => {
     ).toThrow('pageSize');
     expect(() =>
       buildDashboardSessionQueryScope({
-        campaigns: true,
         fields: {},
         harness: [],
         machine: [],
+        origin: [],
         query: '',
         range: { from: null, to: null },
         sorting: [{ desc: true, id: 'not-a-column' }],
@@ -170,10 +187,10 @@ describe('served session query coordination', () => {
       source: sourceWith({
         getPage: (request) =>
           Promise.resolve({
-            ...pageResult(request, [{ kind: 'session', row: rows[0]! }]),
+            ...pageResult(request, [campaignItem(rows[0]!)]),
             data: {
               ...pageResult(request, []).data,
-              items: [{ kind: 'session' as const, row: rows[0]! }],
+              items: [campaignItem(rows[0]!)],
               requestFingerprint: 'session-query-v1:0000000000000000',
             },
           }),
@@ -193,6 +210,33 @@ describe('served session query coordination', () => {
     await expect(wrongRevision.start(scopeFor())).rejects.toThrow('mismatched revision or request fingerprint');
   });
 
+  test('restarts when only the origin filter changes', async () => {
+    const requestedOrigins: string[][] = [];
+    const coordinator = createSessionQueryCoordinator({
+      revision: () => 'revision-a',
+      source: sourceWith({
+        getPage: (request) => {
+          const origins = request.filters.origin ?? [];
+          requestedOrigins.push([...origins]);
+          const row = origins.includes('human') ? rows[1]! : rows[0]!;
+          return Promise.resolve(pageResult(request, [campaignItem(row)]));
+        },
+      }),
+    });
+    const initialScope = scopeFor();
+    const humanScope = {
+      ...initialScope,
+      filters: { ...initialScope.filters, origin: ['human' as const] },
+    };
+
+    await coordinator.start(initialScope);
+    const changed = await coordinator.start(humanScope);
+
+    expect(requestedOrigins).toEqual([[], ['human']]);
+    expect(changed?.query.filters.origin).toEqual(['human']);
+    expect(sessionRowsForState(changed).map((row) => row.rowId)).toEqual([rows[1]!.rowId]);
+  });
+
   test('ignores a stale first page that resolves after a newer query', async () => {
     const slowPage = deferred<ReturnType<typeof pageResult>>();
     const coordinator = createSessionQueryCoordinator({
@@ -200,7 +244,7 @@ describe('served session query coordination', () => {
         getPage: (request) =>
           request.filters.query === 'slow'
             ? slowPage.promise
-            : Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[1]! }])),
+            : Promise.resolve(pageResult(request, [campaignItem(rows[1]!)])),
       }),
     });
 
@@ -211,7 +255,7 @@ describe('served session query coordination', () => {
       cursor: null,
       revision: 'revision-a',
     } satisfies SessionQueryRequest;
-    slowPage.resolve(pageResult(slowRequest, [{ kind: 'session', row: rows[0]! }]));
+    slowPage.resolve(pageResult(slowRequest, [campaignItem(rows[0]!)]));
     await first;
 
     expect(second?.query.filters.query).toBe('fast');
@@ -236,7 +280,7 @@ describe('served session query coordination', () => {
             signal.addEventListener('abort', () => slowPage.reject(signal.reason), { once: true });
             return slowPage.promise;
           }
-          return Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[1]! }]));
+          return Promise.resolve(pageResult(request, [campaignItem(rows[1]!)]));
         },
       }),
     });
@@ -268,7 +312,7 @@ describe('served session query coordination', () => {
         getPage: (request) =>
           request.revision === 'revision-b'
             ? Promise.reject(new Error('staged destination failed'))
-            : Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[0]! }])),
+            : Promise.resolve(pageResult(request, [campaignItem(rows[0]!)])),
       }),
     });
 
@@ -291,9 +335,7 @@ describe('served session query coordination', () => {
       revision: () => 'revision-a',
       source: sourceWith({
         getPage: (request) =>
-          Promise.resolve(
-            pageResult(request, [{ kind: 'session', row: request.revision === 'revision-a' ? rows[0]! : rows[2]! }]),
-          ),
+          Promise.resolve(pageResult(request, [campaignItem(request.revision === 'revision-a' ? rows[0]! : rows[2]!)])),
       }),
     });
 
@@ -313,9 +355,7 @@ describe('served session query coordination', () => {
       revision: () => 'revision-a',
       source: sourceWith({
         getPage: (request) =>
-          Promise.resolve(
-            pageResult(request, [{ kind: 'session', row: request.revision === 'revision-b' ? rows[1]! : rows[2]! }]),
-          ),
+          Promise.resolve(pageResult(request, [campaignItem(request.revision === 'revision-b' ? rows[1]! : rows[2]!)])),
       }),
     });
 
@@ -335,8 +375,8 @@ describe('served session query coordination', () => {
         getPage: (request) =>
           Promise.resolve(
             request.cursor === null
-              ? pageResult(request, [{ kind: 'session', row: rows[0]! }], 'sq1.0000000000000000.1')
-              : pageResult(request, [{ kind: 'session', row: rows[1]! }]),
+              ? pageResult(request, [campaignItem(rows[0]!)], 'sq1.0000000000000000.1')
+              : pageResult(request, [campaignItem(rows[1]!)]),
           ),
       }),
     });
@@ -358,7 +398,7 @@ describe('served session query coordination', () => {
           requestedCursors.push(request.cursor);
           const pageIndex = cursors.indexOf(request.cursor);
           const nextCursor = cursors[pageIndex + 1] ?? null;
-          const result = pageResult(request, [{ kind: 'session', row: pagingRows[pageIndex]! }], nextCursor);
+          const result = pageResult(request, [campaignItem(pagingRows[pageIndex]!)], nextCursor);
           return Promise.resolve({
             ...result,
             data: { ...result.data, itemCount: pagingRows.length, sessionCount: pagingRows.length },
@@ -388,7 +428,7 @@ describe('served session query coordination', () => {
         getPage: (request) => {
           pageReads += 1;
           if (request.cursor === null) {
-            return Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[0]! }], 'sq1.0000000000000000.1'));
+            return Promise.resolve(pageResult(request, [campaignItem(rows[0]!)], 'sq1.0000000000000000.1'));
           }
           loadMoreRequest = request;
           return nextPage.promise;
@@ -401,7 +441,7 @@ describe('served session query coordination', () => {
     const second = coordinator.loadMore();
     expect(second).toBe(first);
     expect(pageReads).toBe(2);
-    nextPage.resolve(pageResult(loadMoreRequest!, [{ kind: 'session', row: rows[1]! }]));
+    nextPage.resolve(pageResult(loadMoreRequest!, [campaignItem(rows[1]!)]));
 
     const [firstState, secondState] = await Promise.all([first, second]);
     expect(firstState).toBe(secondState);
@@ -422,7 +462,7 @@ describe('served session query coordination', () => {
           signals.push(signal);
           if (request.cursor === null) {
             const row = request.filters.query === 'stale' ? rows[0]! : rows[2]!;
-            return Promise.resolve(pageResult(request, [{ kind: 'session', row }], 'sq1.0000000000000000.1'));
+            return Promise.resolve(pageResult(request, [campaignItem(row)], 'sq1.0000000000000000.1'));
           }
           if (request.filters.query === 'stale') {
             staleRequest = request;
@@ -441,13 +481,13 @@ describe('served session query coordination', () => {
     expect(coordinator.loadMore()).toBe(latestLoad);
     expect(signals[1]?.aborted).toBe(true);
 
-    stalePage.resolve(pageResult(staleRequest!, [{ kind: 'session', row: rows[1]! }]));
+    stalePage.resolve(pageResult(staleRequest!, [campaignItem(rows[1]!)]));
     await staleLoad;
     expect(coordinator.state()).toMatchObject({ loadingMore: true, query: { filters: { query: 'latest' } } });
     expect(coordinator.loadMore()).toBe(latestLoad);
     expect(pageReads).toBe(4);
 
-    latestPage.resolve(pageResult(latestRequest!, [{ kind: 'session', row: rows[1]! }]));
+    latestPage.resolve(pageResult(latestRequest!, [campaignItem(rows[1]!)]));
     const finalState = await latestLoad;
     expect(sessionRowsForState(finalState).map((row) => row.rowId)).toEqual([rows[2]!.rowId, rows[1]!.rowId]);
     expect(finalState?.loadingMore).toBe(false);
@@ -459,13 +499,13 @@ describe('served session query coordination', () => {
         getPage: (request) =>
           Promise.resolve(
             request.cursor === null
-              ? pageResult(request, [{ kind: 'session', row: rows[0]! }], 'sq1.0000000000000000.1')
+              ? pageResult(request, [campaignItem(rows[0]!)], 'sq1.0000000000000000.1')
               : pageResult(request, [
-                  { kind: 'session', row: rows[1]! },
-                  { kind: 'session', row: rows[1]! },
-                  { kind: 'session', row: rows[0]! },
-                  { kind: 'session', row: rows[2]! },
-                  { kind: 'session', row: rows[2]! },
+                  campaignItem(rows[1]!),
+                  campaignItem(rows[1]!),
+                  campaignItem(rows[0]!),
+                  campaignItem(rows[2]!),
+                  campaignItem(rows[2]!),
                 ]),
           ),
       }),
@@ -496,7 +536,7 @@ describe('served session query coordination', () => {
           requestedCursors.push(request.cursor);
           const pageIndex = requestedCursors.length - 1;
           const nextCursor = pageIndex < 2 ? `sq1.0000000000000000.${pageIndex + 1}` : null;
-          return Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[pageIndex]! }], nextCursor));
+          return Promise.resolve(pageResult(request, [campaignItem(rows[pageIndex]!)], nextCursor));
         },
       }),
     });
@@ -530,12 +570,12 @@ describe('served session query coordination', () => {
         getPage: (request) => {
           pageReads += 1;
           if (request.cursor === null) {
-            return Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[0]! }], 'sq1.0000000000000000.1'));
+            return Promise.resolve(pageResult(request, [campaignItem(rows[0]!)], 'sq1.0000000000000000.1'));
           }
           if (pageReads === 2) {
             return Promise.reject(new Error('first page continuation failed'));
           }
-          return Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[1]! }]));
+          return Promise.resolve(pageResult(request, [campaignItem(rows[1]!)]));
         },
       }),
     });
@@ -727,7 +767,7 @@ describe('served session query coordination', () => {
             revision: request.query.revision,
           });
         },
-        getPage: (request) => Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[1]! }])),
+        getPage: (request) => Promise.resolve(pageResult(request, [campaignItem(rows[1]!)])),
       }),
     });
     await coordinator.start(scopeFor('needle'));
@@ -753,7 +793,7 @@ describe('served session query coordination', () => {
         getPage: (request) => {
           pageReads += 1;
           if (pageReads === 1) {
-            return Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[0]! }], 'sq1.0000000000000000.1'));
+            return Promise.resolve(pageResult(request, [campaignItem(rows[0]!)], 'sq1.0000000000000000.1'));
           }
           if (request.revision === 'revision-a') {
             return Promise.resolve({
@@ -767,7 +807,7 @@ describe('served session query coordination', () => {
               revision: parseReportRevision('revision-a'),
             });
           }
-          return Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[2]! }]));
+          return Promise.resolve(pageResult(request, [campaignItem(rows[2]!)]));
         },
       }),
     });
@@ -812,7 +852,7 @@ describe('served session query coordination', () => {
           return Promise.resolve(
             pageResult(
               request,
-              [{ kind: 'session', row: request.revision === 'revision-a' ? rows[0]! : rows[2]! }],
+              [campaignItem(request.revision === 'revision-a' ? rows[0]! : rows[2]!)],
               request.revision === 'revision-a' ? 'sq1.0000000000000000.1' : null,
             ),
           );
@@ -835,7 +875,7 @@ describe('served session query coordination', () => {
       source: sourceWith({
         getPage: (request) => {
           if (request.cursor === null) {
-            return Promise.resolve(pageResult(request, [{ kind: 'session', row: rows[0]! }], 'sq1.0000000000000000.1'));
+            return Promise.resolve(pageResult(request, [campaignItem(rows[0]!)], 'sq1.0000000000000000.1'));
           }
           return Promise.resolve({
             error: {
@@ -912,7 +952,7 @@ describe('served session query coordination', () => {
     coordinator.close();
     coordinator.close();
     expect(signal?.aborted).toBe(true);
-    firstPage.resolve(pageResult(request!, [{ kind: 'session', row: rows[0]! }]));
+    firstPage.resolve(pageResult(request!, [campaignItem(rows[0]!)]));
 
     await expect(start).resolves.toBeUndefined();
     await expect(coordinator.start(scopeFor('after-close'))).resolves.toBeUndefined();
@@ -986,8 +1026,8 @@ describe('served session query coordination', () => {
     coordinator.close();
 
     expect([...signals.values()].every((operationSignal) => operationSignal.aborted)).toBe(true);
-    page.resolve(pageResult(pageRequest!, [{ kind: 'session', row: rows[1]! }]));
-    preparedPage.resolve(pageResult(prepareRequest!, [{ kind: 'session', row: rows[2]! }]));
+    page.resolve(pageResult(pageRequest!, [campaignItem(rows[1]!)]));
+    preparedPage.resolve(pageResult(prepareRequest!, [campaignItem(rows[2]!)]));
     children.resolve({
       data: {
         campaignKey,

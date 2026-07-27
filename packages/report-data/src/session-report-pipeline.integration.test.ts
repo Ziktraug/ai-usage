@@ -22,7 +22,7 @@ import {
   serializeUsageMergeBundle,
 } from '@ai-usage/report-core/merge-bundle';
 import { compareSessionProjectionFacts } from '@ai-usage/report-core/session-detail';
-import { projectSessionPage, type SessionQueryRequest } from '@ai-usage/report-core/session-query';
+import { projectSessionPage, type SessionQueryRequest, sessionRowIdentity } from '@ai-usage/report-core/session-query';
 import { parseUsageSnapshot, serializeUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow } from '@ai-usage/report-core/types';
 import { queryReportRows, usageStorePath } from '@ai-usage/usage-store';
@@ -52,7 +52,6 @@ afterEach(async () => {
 const sourceContext: SourceRunContext = { reportProgress: () => Effect.void };
 
 const request = (overrides: Partial<SessionQueryRequest> = {}): SessionQueryRequest => ({
-  campaigns: true,
   cursor: null,
   filters: { fields: {}, harness: [], machine: [], query: '' },
   pageSize: 20,
@@ -154,29 +153,15 @@ describe('session report pipeline', () => {
       assertSessionQueryDatabase(database);
       const materializedPage = executeMaterializedSessionQuery(database, 'sessions', request());
       expect(materializedPage).toEqual(projectSessionPage(payload.rows, request()));
-      const materializedOpenCode = materializedPage.items.find(
-        ({ row: materializedRow }) => materializedRow.source?.sourceSessionId === fixture.ids.opencode,
-      )?.row;
-      expect(materializedOpenCode).toMatchObject({
-        calls: 3,
-        durationMs: 90_000,
-        modelSegments: [
-          { model: 'openai/gpt-5', tokCr: 23, tokCw: 4, tokIn: 60, tokOut: 18 },
-          { model: 'anthropic/claude-sonnet-4-6', tokCr: 6, tokCw: 1, tokIn: 30, tokOut: 10 },
-        ],
-        tokCr: 29,
-        tokCw: 5,
-        tokIn: 90,
-        tokOut: 28,
-        tools: 1,
-        turns: 1,
-      });
-      if (!materializedOpenCode) {
-        throw new Error('Missing materialized OpenCode fixture row');
+      const openCodeSourceRow = payload.rows.find(
+        (payloadRow) => payloadRow.source?.sourceSessionId === fixture.ids.opencode,
+      );
+      if (!openCodeSourceRow) {
+        throw new Error('Missing source OpenCode fixture row');
       }
       const openCodeAnchor = executeMaterializedSessionQuery(database, 'session-detail-anchor', {
         revision: request().revision,
-        rowId: materializedOpenCode.rowId,
+        rowId: sessionRowIdentity(openCodeSourceRow),
       }).anchor;
       const openCodeAnalysis = await Effect.runPromise(
         readOpenCodeSessionAnalysis(fixture.ids.opencode).pipe(Effect.provideService(LocalHistoryStorage, storage)),
@@ -185,6 +170,24 @@ describe('session report pipeline', () => {
         throw new Error('Missing OpenCode report anchor or local analysis');
       }
       expect(openCodeAnchor.sourceAuthority).toBe('local-observed');
+      expect(openCodeAnchor.projection).toEqual({
+        calls: 3,
+        durationMs: 90_000,
+        modelSegments: [
+          {
+            model: 'anthropic/claude-sonnet-4-6',
+            tokens: { cacheRead: 6, cacheWrite: 1, input: 30, output: 10, total: 47 },
+          },
+          {
+            model: 'openai/gpt-5',
+            tokens: { cacheRead: 23, cacheWrite: 4, input: 60, output: 18, total: 105 },
+          },
+        ],
+        partial: true,
+        tokens: { cacheRead: 29, cacheWrite: 5, input: 90, output: 28, total: 152 },
+        tools: 1,
+        turns: 1,
+      });
       expect(compareSessionProjectionFacts(openCodeAnchor.projection, openCodeAnalysis.projection)).toEqual({
         checkedFields: ['calls', 'duration', 'model-attribution', 'coverage', 'tokens', 'tools', 'turns'],
         status: 'matches-report',
@@ -211,7 +214,7 @@ describe('session report pipeline', () => {
         pullRequests: [],
         repository: { ownerPath: 'fixture/ai-usage', provenance: 'harness-recorded' },
       });
-      expect(materializedOpenCode.source?.vcs).toMatchObject({
+      expect(openCodeAnchor.vcs).toMatchObject({
         branches: [],
         headCommit: null,
         pullRequests: [],

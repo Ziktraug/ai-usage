@@ -3,7 +3,9 @@ import {
   isProjectGroupConfig,
   isProjectSourceSelector,
   matchesProjectSourceSelector,
+  normalizeProjectIdentity,
   parseProjectGroupConfigs,
+  projectLabelWithMachine,
   projectSourceId,
   projectSourceSelectorFor,
   projectSourceSelectorsEqual,
@@ -11,6 +13,18 @@ import {
 } from './project-group';
 
 describe('project groups', () => {
+  test('normalizes project identity across case, spacing, and punctuation', () => {
+    expect(normalizeProjectIdentity('  Acme / BUILD-host  ')).toBe('acme build host');
+  });
+
+  test('adds a machine label only when it disambiguates the project', () => {
+    expect(projectLabelWithMachine('acme/app', 'app')).toBe('acme/app');
+    expect(projectLabelWithMachine('Acme / Build Host', ' build-host ')).toBe('Acme / Build Host');
+    expect(projectLabelWithMachine('acme/app', 'build-host')).toBe('acme/app — build-host');
+    expect(projectLabelWithMachine('app/acme', 'app')).toBe('app/acme — app');
+    expect(projectLabelWithMachine('happyapp', 'app')).toBe('happyapp — app');
+  });
+
   test('uses machine and folder identity for project sources', () => {
     expect(projectSourceId({ machineId: 'machine-a', project: 'exalibur', sourcePath: '/work/exalibur' })).toBe(
       'machine-a|/work/exalibur',

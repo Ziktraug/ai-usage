@@ -4,6 +4,10 @@ import { expect, test } from './browser-test';
 const ALPHA_SKILL_CONTENT = '# alpha-skill\n\nDeterministic Playwright fixture.\n';
 const ALPHA_SKILL_URL = /\/skills\/global\/alpha-skill$/;
 const APPLY_ACTION_PATTERN = /Apply 1 action|Apply$/;
+const DESKTOP_WORKSPACE_VIEWPORT = { height: 900, width: 1280 } as const;
+const MIN_DESKTOP_EDITOR_WIDTH_PX = 320;
+const MIN_DESKTOP_INSPECTOR_WIDTH_PX = 260;
+const MIN_DESKTOP_TREE_WIDTH_PX = 190;
 const BETA_SKILL_URL = /\/skills\/global\/beta-skill$/;
 const CREATED_TARGET_PATTERN = /Created target directory/;
 const LONG_PROJECT_LABEL = 'customer-analytics-platform-with-an-exceptionally-long-scope-name';
@@ -180,12 +184,15 @@ test('saves SKILL.md source without installing it into runtimes', async ({ page 
 
 test('protects an unsaved SKILL.md draft during navigation and reload', async ({ page }) => {
   await page.goto('/skills/global/alpha-skill');
+  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
 
   await expect(page.getByRole('heading', { level: 2, name: 'alpha-skill' })).toBeVisible();
   const editor = page.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
+  const betaSkillLink = page.getByRole('link', { exact: true, name: 'beta-skill' }).first();
   await editor.fill('# Unsaved local draft\n');
+  await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
 
-  await page.getByRole('link', { exact: true, name: 'beta-skill' }).first().click();
+  await betaSkillLink.press('Enter');
   const discardDialog = page.getByRole('alertdialog', { name: 'Discard unsaved changes?' });
   await expect(discardDialog).toBeVisible();
   await discardDialog.getByRole('button', { name: 'Keep editing' }).click();
@@ -207,7 +214,8 @@ test('protects an unsaved SKILL.md draft during navigation and reload', async ({
   await expect(page.getByText('Saved', { exact: true })).toBeVisible();
 
   await editor.fill('# Discard before navigation\n');
-  await page.getByRole('link', { exact: true, name: 'beta-skill' }).first().click();
+  await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
+  await betaSkillLink.press('Enter');
   await discardDialog.getByRole('button', { name: 'Discard changes' }).click();
   await expect(page).toHaveURL(BETA_SKILL_URL);
   await expect(page.getByRole('heading', { level: 2, name: 'beta-skill' })).toBeVisible();
@@ -309,33 +317,81 @@ test('shows the document inspector with actions in a single place', async ({ pag
   await expect(page.getByRole('button', { exact: true, name: 'Review installation' })).toHaveCount(0);
 });
 
+test('keeps the tree, editor, and Inspector in one bounded desktop workspace row', async ({ page }) => {
+  await page.setViewportSize(DESKTOP_WORKSPACE_VIEWPORT);
+  await page.goto('/skills/global/alpha-skill');
+
+  const tree = page.getByRole('complementary', { name: 'Skill scopes' }).last();
+  const detail = page.getByRole('region', { name: 'Selected skill detail' });
+  const editor = detail.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
+  const inspector = page.getByRole('complementary', { name: 'Inspector' });
+  await expect(tree).toBeVisible();
+  await expect(detail).toBeVisible();
+  await expect(editor).toBeVisible();
+  await expect(inspector).toBeVisible();
+
+  const [treeBox, detailBox, editorBox, inspectorBox] = await Promise.all([
+    tree.boundingBox(),
+    detail.boundingBox(),
+    editor.boundingBox(),
+    inspector.boundingBox(),
+  ]);
+  expect(treeBox).not.toBeNull();
+  expect(detailBox).not.toBeNull();
+  expect(inspectorBox).not.toBeNull();
+  expect(editorBox).not.toBeNull();
+
+  const rowTops = [treeBox?.y ?? 0, detailBox?.y ?? 0, inspectorBox?.y ?? 0];
+  expect(Math.max(...rowTops) - Math.min(...rowTops)).toBeLessThanOrEqual(1);
+  expect((treeBox?.x ?? 0) + (treeBox?.width ?? 0)).toBeLessThanOrEqual(detailBox?.x ?? 0);
+  expect(treeBox?.width ?? 0).toBeGreaterThanOrEqual(MIN_DESKTOP_TREE_WIDTH_PX);
+  expect(editorBox?.width ?? 0).toBeGreaterThanOrEqual(MIN_DESKTOP_EDITOR_WIDTH_PX);
+  expect(inspectorBox?.width ?? 0).toBeGreaterThanOrEqual(MIN_DESKTOP_INSPECTOR_WIDTH_PX);
+  expect(editorBox?.x ?? 0).toBeGreaterThanOrEqual(detailBox?.x ?? 0);
+  expect((editorBox?.x ?? 0) + (editorBox?.width ?? 0)).toBeLessThanOrEqual(
+    (detailBox?.x ?? 0) + (detailBox?.width ?? 0),
+  );
+  expect((detailBox?.x ?? 0) + (detailBox?.width ?? 0)).toBeLessThanOrEqual(inspectorBox?.x ?? 0);
+  expect(inspectorBox?.x ?? -1).toBeGreaterThanOrEqual(0);
+  expect((inspectorBox?.x ?? 0) + (inspectorBox?.width ?? 0)).toBeLessThanOrEqual(DESKTOP_WORKSPACE_VIEWPORT.width);
+  expect(inspectorBox?.y ?? -1).toBeGreaterThanOrEqual(0);
+  expect(inspectorBox?.y ?? DESKTOP_WORKSPACE_VIEWPORT.height).toBeLessThan(DESKTOP_WORKSPACE_VIEWPORT.height);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(
+    true,
+  );
+});
+
 test('bounds long scope labels and makes validation findings individually identifiable', async ({ page }) => {
   await page.goto('/skills/global/beta-skill');
 
-  const tree = page.getByRole('complementary', { name: 'Skill scopes' }).last();
+  const tree = page.getByRole('complementary', { exact: true, name: 'Skill scopes' });
   await tree.getByText('Projects without skills').click();
   const scopeName = tree.locator('[data-skill-scope-name]').filter({ hasText: LONG_PROJECT_LABEL });
+  await expect(scopeName).toHaveCount(1);
   await expect(scopeName).toBeVisible();
-  const scopeDimensions = await scopeName.evaluate((element) => {
-    const styles = getComputedStyle(element);
-    const scopeLink = element.closest('a');
-    return {
-      clientWidth: element.clientWidth,
-      linkIsBounded: scopeLink !== null && scopeLink.scrollWidth <= scopeLink.clientWidth,
-      scrollWidth: element.scrollWidth,
-      textOverflow: styles.textOverflow,
-    };
-  });
-  expect(scopeDimensions.textOverflow).toBe('ellipsis');
-  expect(scopeDimensions.scrollWidth).toBeGreaterThan(scopeDimensions.clientWidth);
-  expect(scopeDimensions.linkIsBounded).toBe(true);
+  await expect(scopeName).toHaveCSS('text-overflow', 'ellipsis');
+  await expect
+    .poll(() =>
+      scopeName.evaluate((element) => {
+        const scopeLink = element.closest('a');
+        return (
+          element.isConnected &&
+          element.scrollWidth > element.clientWidth &&
+          scopeLink !== null &&
+          scopeLink.scrollWidth <= scopeLink.clientWidth
+        );
+      }),
+    )
+    .toBe(true);
 
   const inspector = page.getByRole('complementary', { name: 'Inspector' });
   const findings = inspector.locator('[data-validation-finding]');
   await expect(findings).toHaveCount(2);
+  await expect(findings.nth(0)).toHaveAccessibleName('Finding 1: warning');
   await expect(findings.nth(0)).toContainText('Finding 1');
   await expect(findings.nth(0)).toContainText('SkillMarkdownTokenWarning');
   await expect(findings.nth(0)).toContainText('SKILL.md is approaching the recommended token limit.');
+  await expect(findings.nth(1)).toHaveAccessibleName('Finding 2: warning');
   await expect(findings.nth(1)).toContainText('Finding 2');
   await expect(findings.nth(1)).toContainText('SkillReferenceTokenWarning');
   await expect(findings.nth(1)).toContainText('Reference files are approaching the recommended token limit.');

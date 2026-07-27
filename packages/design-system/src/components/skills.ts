@@ -22,9 +22,12 @@ export const skillsPathText = css({
 });
 
 export const skillsDiagnosticRow = css({
+  border: 0,
   display: 'grid',
   gap: '3px',
   p: '8px 0',
+  m: 0,
+  minW: 0,
   borderTop: '1px solid token(colors.line)',
 });
 

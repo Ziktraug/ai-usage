@@ -41,6 +41,28 @@ describe('usage merge bundles', () => {
     expect(bundle.rows[0]?.source.machineLabel).toBe('Machine A');
     expect(bundle.rows[0]?.rowKey).toBe('v1:machine-a:codex:session-1');
     expect(bundle.rows[0]?.contentHash).toHaveLength(64);
+    expect(bundle.rows[0]?.origin).toBe('unknown');
+  });
+
+  test('round-trips declared origin and defaults legacy rows without inference', () => {
+    const classifierParentId = '11111111-2222-4333-8444-555555555555';
+    const serialized = toSerializedMergeRow(
+      {
+        ...row,
+        origin: 'classifier',
+        source: {
+          harnessKey: 'codex',
+          rootSourceSessionId: classifierParentId,
+          sourceSessionId: 'classifier-1',
+        },
+      },
+      machine,
+    );
+    const { origin: _origin, ...legacySerialized } = serialized;
+
+    expect(deserializeMergeRow(serialized).origin).toBe('classifier');
+    expect(deserializeMergeRow(serialized).source.rootSourceSessionId).toBe(classifierParentId);
+    expect(deserializeMergeRow(legacySerialized).origin).toBe('unknown');
   });
 
   test('preserves import artifact provenance separately from project paths', () => {
@@ -154,6 +176,7 @@ describe('usage merge bundles', () => {
       { ...serialized, tokIn: Number.POSITIVE_INFINITY },
       { ...serialized, models: ['gpt-5', 1] },
       { ...serialized, costQuota: -1 },
+      { ...serialized, origin: 'automated' },
       { ...serialized, subagent: 'yes' },
       { ...serialized, tokenTotal: serialized.tokenTotal + 1 },
       { ...serialized, unexpected: 'field' },

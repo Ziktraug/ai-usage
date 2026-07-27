@@ -37,6 +37,7 @@ describe('dashboard search params', () => {
           campaigns: 'off',
           cols: ['tokIn', 'session', 'tokIn', 'missing'],
           filters: {
+            campaign: ' fixture:codex:root ',
             ignored: 'x',
             model: ' gpt-5 ',
             project: '',
@@ -44,6 +45,7 @@ describe('dashboard search params', () => {
           },
           harness: [' Codex ', 'Codex', 'all'],
           machine: ' work-laptop ',
+          origin: ['unknown', 'classifier', 'human', 'human', 'invalid'],
           q: ' search text ',
           range: { mode: 'custom', from: '2026-06-01', to: 'not-a-date' },
           sort: { id: 'fresh', desc: false },
@@ -52,12 +54,12 @@ describe('dashboard search params', () => {
         defaults,
       ),
     ).toEqual({
-      campaigns: 'off',
       cols: ['tokIn'],
       colsBase: 'auto',
-      filters: { model: 'gpt-5', provider: 'Codex API' },
+      filters: { campaign: 'fixture:codex:root', model: 'gpt-5', provider: 'Codex API' },
       harness: ['Codex'],
       machine: ['work-laptop'],
+      origin: ['human', 'classifier', 'unknown'],
       q: 'search text',
       range: { mode: '30d' },
       sort: { id: 'fresh', desc: false },
@@ -79,6 +81,21 @@ describe('dashboard search params', () => {
         defaults,
       ),
     ).toEqual(defaults);
+  });
+
+  test('keeps the declared-origin default explicit while accepting all and uncommon origins', () => {
+    const defaults = dashboardSearchDefaultsFor('date');
+
+    expect(defaults.origin).toEqual(['human', 'subagent']);
+    expect(validateDashboardSearch({ origin: ['classifier', 'unknown'] }, defaults).origin).toEqual([
+      'classifier',
+      'unknown',
+    ]);
+    expect(
+      validateDashboardSearch({ origin: ['human', 'subagent', 'classifier', 'unknown'] }, defaults).origin,
+    ).toEqual([]);
+    expect(validateDashboardSearch({ origin: [] }, defaults).origin).toEqual([]);
+    expect(validateDashboardSearch({ origin: ['invalid'] }, defaults).origin).toEqual(defaults.origin);
   });
 
   test('versions column visibility while preserving unversioned legacy links', () => {
@@ -123,6 +140,8 @@ describe('dashboard search params', () => {
     const defaults = dashboardSearchDefaultsFor('cost');
 
     expect(hasActiveDashboardFilters(defaults)).toBe(false);
+    expect(hasActiveDashboardFilters({ ...defaults, origin: [] })).toBe(true);
+    expect(hasActiveDashboardFilters({ ...defaults, origin: ['classifier'] })).toBe(true);
     expect(hasActiveDashboardFilters({ ...defaults, q: 'collector' })).toBe(true);
     expect(hasActiveDashboardFilters({ ...defaults, range: { mode: 'all' } })).toBe(true);
     expect(hasActiveDashboardFilters({ ...defaults, tab: 'sessions' })).toBe(false);

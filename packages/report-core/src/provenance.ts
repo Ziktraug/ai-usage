@@ -22,6 +22,63 @@ export type UsageProvenanceKind =
   | 'unknown-actual-cost'
   | 'unknown-subscription-value';
 
+export type ApiPriceMeasurementState = 'measured' | 'partially measured' | 'zero';
+
+/**
+ * A priced aggregate always carries the known subtotal and the amount of fresh
+ * work that could not be priced. The state prevents an incomplete $0 subtotal
+ * from being presented as genuinely zero work.
+ */
+export interface ApiPriceMeasurement {
+  knownCost: number;
+  state: ApiPriceMeasurementState;
+  unpricedFreshTokens: number;
+}
+
+export interface ApiPriceMeasurementInput {
+  costKnown: boolean;
+  freshTokens: number;
+  knownCost: number;
+}
+
+const apiPriceMeasurementState = (costKnown: boolean, knownCost: number): ApiPriceMeasurementState => {
+  if (!costKnown) {
+    return 'partially measured';
+  }
+  return knownCost === 0 ? 'zero' : 'measured';
+};
+
+export const apiPriceMeasurement = ({
+  costKnown,
+  freshTokens,
+  knownCost,
+}: ApiPriceMeasurementInput): ApiPriceMeasurement => ({
+  knownCost,
+  state: apiPriceMeasurementState(costKnown, knownCost),
+  unpricedFreshTokens: costKnown ? 0 : freshTokens,
+});
+
+export const combineApiPriceMeasurements = (measurements: Iterable<ApiPriceMeasurement>): ApiPriceMeasurement => {
+  let knownCost = 0;
+  let partiallyMeasured = false;
+  let unpricedFreshTokens = 0;
+  for (const measurement of measurements) {
+    knownCost += measurement.knownCost;
+    partiallyMeasured ||= measurement.state === 'partially measured';
+    unpricedFreshTokens += measurement.unpricedFreshTokens;
+  }
+  return {
+    knownCost,
+    state: apiPriceMeasurementState(!partiallyMeasured, knownCost),
+    unpricedFreshTokens,
+  };
+};
+
+export const PARTIALLY_MEASURED_LABEL = 'Partially measured';
+
+export const partiallyMeasuredApiPriceDescription = (formattedTokenCount: string): string =>
+  `${PARTIALLY_MEASURED_LABEL} — ${formattedTokenCount} tokens in this slice come from models with no published price. Their work is counted, their value is not.`;
+
 export interface UsageRowProvenance {
   appliesTo: UsageMetricKey[];
   description: string;

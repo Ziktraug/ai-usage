@@ -112,7 +112,7 @@ const support: FocusedReportSupport = {
 const overviewRequest: FocusedOverviewRequest = {
   includeAdvanced: true,
   query: {
-    filters: { fields: {}, harness: [], machine: [], query: '' },
+    filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
     range: { from: '2026-07-02T00:00:00.000Z', to: '2026-07-04T23:59:59.999Z' },
     revision: 'revision-a',
   },
@@ -126,6 +126,22 @@ describe('focused report query contracts', () => {
     expect(focusedOverviewFingerprint({ ...overviewRequest, includeAdvanced: false })).not.toBe(
       focusedOverviewFingerprint(overviewRequest),
     );
+    const dimensions: FocusedOverviewRequest['timeline']['dimension'][] = ['campaign', 'machine', 'origin'];
+    const dimensionFingerprints = dimensions.map((dimension) =>
+      focusedOverviewFingerprint({
+        ...overviewRequest,
+        timeline: { ...overviewRequest.timeline, dimension },
+      }),
+    );
+    expect(new Set(dimensionFingerprints).size).toBe(3);
+    for (const dimension of ['campaign', 'machine', 'origin'] as const) {
+      expect(
+        parseFocusedOverviewRequest({
+          ...overviewRequest,
+          timeline: { ...overviewRequest.timeline, dimension },
+        }).timeline.dimension,
+      ).toBe(dimension);
+    }
     expect(focusedAdvancedAnalysisFingerprint(overviewRequest.query)).toStartWith('focused-advanced-analysis-v1:');
     expect(focusedAdvancedAnalysisFingerprint(overviewRequest.query)).not.toBe(
       focusedAdvancedAnalysisFingerprint({ ...overviewRequest.query, revision: 'revision-b' }),
@@ -175,6 +191,121 @@ describe('focused report query contracts', () => {
     ).toThrow('fingerprint');
   });
 
+  test('groups focused timelines by campaign, machine, project identity, and explicit undeclared origin', () => {
+    const request = {
+      ...overviewRequest,
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    };
+
+    const campaignRows = rows.map((sourceRow) =>
+      sourceRow.name === 'two'
+        ? {
+            ...sourceRow,
+            source: {
+              ...sourceRow.source!,
+              parentSourceSessionId: 'one',
+              rootSourceSessionId: 'one',
+            },
+          }
+        : sourceRow,
+    );
+    const campaign = projectFocusedOverview(campaignRows, support, {
+      ...request,
+      timeline: { dimension: 'campaign', granularity: 'day' },
+    });
+    const machine = projectFocusedOverview(campaignRows, support, {
+      ...request,
+      timeline: { dimension: 'machine', granularity: 'day' },
+    });
+    const origin = projectFocusedOverview(campaignRows, support, {
+      ...request,
+      timeline: { dimension: 'origin', granularity: 'day' },
+    });
+    const project = projectFocusedOverview(
+      campaignRows.map((sourceRow) => ({
+        ...sourceRow,
+        project: 'AI Usage — Machine A',
+        projectGroupId: 'group:ai-usage',
+        rawProject: 'ai-usage',
+      })),
+      support,
+      { ...request, timeline: { dimension: 'project', granularity: 'day' } },
+    );
+
+    expect(campaign.timeline?.series.find(({ label }) => label === 'one')).toMatchObject({
+      label: 'one',
+      sessions: 2,
+      total: 3,
+    });
+    expect(machine.timeline?.series).toEqual([
+      expect.objectContaining({ key: 'machine-a', label: 'Machine A', sessions: 4, total: 10 }),
+    ]);
+    expect(origin.timeline?.series).toEqual([
+      expect.objectContaining({ key: 'unknown', label: 'Undeclared', sessions: 4, total: 10 }),
+    ]);
+    expect(project.timeline?.series).toEqual([
+      expect.objectContaining({ key: 'group:ai-usage', label: 'AI Usage — Machine A', sessions: 4, total: 10 }),
+    ]);
+
+    const filteredCampaign = projectFocusedOverview(campaignRows, support, {
+      ...request,
+      query: {
+        ...request.query,
+        filters: { ...request.query.filters, harness: ['Claude Code'] },
+      },
+      timeline: { dimension: 'campaign', granularity: 'day' },
+    });
+    expect(filteredCampaign.timeline?.series.find(({ label }) => label === 'one')).toMatchObject({
+      label: 'one',
+      sessions: 1,
+      total: 2,
+    });
+  });
+
+  test('uses stable machine IDs for filters and timeline keys when labels collide', () => {
+    const machineRows = [
+      {
+        ...rows[0]!,
+        source: {
+          ...rows[0]!.source!,
+          machineId: 'machine-a',
+          machineLabel: 'Shared machine',
+        },
+      },
+      {
+        ...rows[1]!,
+        source: {
+          ...rows[1]!.source!,
+          machineId: 'machine-b',
+          machineLabel: 'Shared machine',
+        },
+      },
+    ];
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+      timeline: { dimension: 'machine', granularity: 'day' },
+    };
+
+    const unfiltered = projectFocusedOverview(machineRows, support, request);
+    expect(unfiltered.timeline?.series.map(({ key, label, sessions }) => ({ key, label, sessions }))).toEqual([
+      { key: 'machine-b', label: 'Shared machine', sessions: 1 },
+      { key: 'machine-a', label: 'Shared machine', sessions: 1 },
+    ]);
+
+    const filtered = projectFocusedOverview(machineRows, support, {
+      ...request,
+      query: {
+        ...request.query,
+        filters: { ...request.query.filters, machine: ['machine-b'] },
+      },
+    });
+    expect(filtered.summary.sessionCount).toBe(1);
+    expect(filtered.timeline?.series.map(({ key }) => key)).toEqual(['machine-b']);
+  });
+
   test('preserves known API-value subtotals and completeness for top sessions and campaigns', () => {
     const campaignRoot = {
       ...row('campaign-root', 2, 5),
@@ -211,10 +342,58 @@ describe('focused report query contracts', () => {
       })),
     ).toEqual([
       { costApprox: 12, costKnown: false, kind: 'campaign', label: 'campaign-root' },
-      { costApprox: 10, costKnown: false, kind: 'session', label: 'partial-session' },
+      { costApprox: 10, costKnown: false, kind: 'campaign', label: 'partial-session' },
     ]);
     expect(result.view.sessionShape).toBeNull();
     expect(result.view.advancedSummary?.hasSessionShape).toBe(false);
+  });
+
+  test('keeps partial known subtotals aligned between an identical summary and timeline range', () => {
+    const partialSegmentedRow: SerializedRow = {
+      ...row('partial-segmented', 3, 2),
+      costKnown: false,
+      freshTokens: 18,
+      modelSegments: [
+        {
+          costApprox: 2,
+          costKnown: true,
+          model: 'gpt-5.4',
+          tokCr: 1,
+          tokCw: 2,
+          tokIn: 3,
+          tokOut: 4,
+        },
+        {
+          costApprox: 0,
+          costKnown: false,
+          model: 'unpriced-model',
+          tokCr: 5,
+          tokCw: 5,
+          tokIn: 6,
+          tokOut: 7,
+        },
+      ],
+    };
+    const exactRangeRequest: FocusedOverviewRequest = {
+      ...overviewRequest,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    };
+
+    const result = projectFocusedOverview([row('measured', 2, 4), partialSegmentedRow], support, exactRangeRequest);
+
+    expect(result.summary.totalCost).toBe(6);
+    expect(result.summary.priceMeasurement).toEqual({
+      knownCost: 6,
+      state: 'partially measured',
+      unpricedFreshTokens: 18,
+    });
+    expect(result.timeline?.grandTotal).toBe(result.summary.totalCost);
+    expect(result.timeline?.priceMeasurement).toEqual(result.summary.priceMeasurement);
+    expect(result.timeline?.series.find(({ key }) => key === 'unpriced-model')?.priceMeasurement).toEqual({
+      knownCost: 0,
+      state: 'partially measured',
+      unpricedFreshTokens: 18,
+    });
   });
 
   test('excludes partial API-value lower bounds from exact session-shape analysis', () => {
@@ -331,7 +510,8 @@ describe('focused report query contracts', () => {
   test('projects breakdown groups with Cursor and project-editor context', () => {
     const result = projectFocusedBreakdown(rows, support, { query: overviewRequest.query });
 
-    expect(result.groups.projects.map(({ key }) => key)).toEqual(['ai-usage', 'side']);
+    expect(result.groups.projects.map(({ key }) => key)).toEqual(['ai usage', 'side']);
+    expect(result.groups.projects.map(({ label }) => label)).toEqual(['ai-usage', 'side']);
     expect(result.groups.models.reduce((sum, group) => sum + group.sessions, 0)).toBe(3);
     expect(result.context.cursorCommitAttribution).toEqual(support.datasets?.cursorCommitAttribution ?? []);
     expect(result.context.projectGroupConfigs).toEqual(support.projectGroupConfigs);
@@ -441,7 +621,11 @@ describe('focused report query contracts', () => {
     };
     const result = projectFocusedSupport(
       bloatedSupport,
-      { harness: ['Claude Code', 'Codex'], machine: ['Machine A'], truncated: false },
+      {
+        harness: ['Claude Code', 'Codex'],
+        machine: [{ label: 'Machine A', value: 'machine-a' }],
+        truncated: false,
+      },
       { revision: 'revision-a' },
     );
 
@@ -459,7 +643,11 @@ describe('focused report query contracts', () => {
     const dateDomain = { first: '2026-07-01T10:00:00.000Z', last: '2026-07-04T10:00:00.000Z' };
     const result = projectFocusedSupport(
       support,
-      { harness: ['Claude Code', 'Codex'], machine: ['Machine A'], truncated: false },
+      {
+        harness: ['Claude Code', 'Codex'],
+        machine: [{ label: 'Machine A', value: 'machine-a' }],
+        truncated: false,
+      },
       request,
       { dateDomain },
     );
@@ -558,7 +746,11 @@ describe('focused report query contracts', () => {
     };
     const bootstrap = projectFocusedSupport(
       maximumSupport,
-      { harness: ['Claude Code', 'Codex'], machine: ['Machine A'], truncated: false },
+      {
+        harness: ['Claude Code', 'Codex'],
+        machine: [{ label: 'Machine A', value: 'machine-a' }],
+        truncated: false,
+      },
       { revision: request.query.revision },
     );
     const overview = projectFocusedOverview(maximumRows, maximumSupport, request);

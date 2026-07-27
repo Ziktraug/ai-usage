@@ -11,6 +11,13 @@ export const timeRangePanel = css({
   boxShadow: 'card',
 });
 
+export const timeRangeAdjustments = css({
+  display: 'grid',
+  gap: '10px',
+  pt: '14px',
+  borderTop: '1px solid token(colors.line)',
+});
+
 export const timeRangeHeader = css({
   display: 'grid',
   gridTemplateColumns: { base: '1fr', md: 'max-content minmax(0, 1fr)' },
@@ -255,6 +262,10 @@ export const timelineHoverLayer = css({
   cursor: 'default',
   pointerEvents: 'auto',
   zIndex: 2,
+  _focus: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
   '&[data-zoomed="true"]': {
     cursor: 'grab',
   },

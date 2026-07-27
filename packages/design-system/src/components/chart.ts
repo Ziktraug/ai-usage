@@ -69,19 +69,26 @@ export interface DimensionSwatch {
 }
 
 export const dimensionSwatch = (
-  dimension: 'harness' | 'model' | 'project' | 'provider',
+  dimension: 'campaign' | 'harness' | 'machine' | 'model' | 'origin' | 'project' | 'provider',
   key: string,
 ): DimensionSwatch => {
-  if (dimension === 'harness') {
-    const className = harnessFillFor(key);
-    return className ? { className } : {};
+  // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
+  switch (dimension) {
+    case 'harness': {
+      const className = harnessFillFor(key);
+      return className ? { className } : {};
+    }
+    case 'model': {
+      const className = chartSwatchClasses[stableSeriesIndex(key, chartSwatchClasses.length)];
+      return className ? { className } : {};
+    }
+    case 'campaign':
+    case 'machine':
+    case 'origin':
+    case 'project':
+    case 'provider':
+      return { style: { background: stableSeriesColor(key) } };
   }
-  const className =
-    dimension === 'model' ? chartSwatchClasses[stableSeriesIndex(key, chartSwatchClasses.length)] : undefined;
-  if (className) {
-    return { className };
-  }
-  return { style: { background: stableSeriesColor(key) } };
 };
 
 export const scatterGridline = css({

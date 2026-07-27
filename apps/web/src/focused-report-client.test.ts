@@ -37,7 +37,7 @@ const revisionRequest = (revision = 'revision-a'): FocusedRevisionRequest => ({ 
 const supportResult = (revision = 'revision-a'): FocusedSupportResult =>
   projectFocusedSupport(
     support(),
-    { harness: ['codex'], machine: ['Fixture Machine'], truncated: false },
+    { harness: ['codex'], machine: [{ label: 'Fixture Machine', value: 'fixture-machine' }], truncated: false },
     revisionRequest(revision),
   );
 

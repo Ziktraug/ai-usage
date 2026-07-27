@@ -1,7 +1,15 @@
 import { cx } from '@ai-usage/design-system/css';
 import { segmentBarPart, segmentBarTrack, unavailableCell } from '@ai-usage/design-system/report';
 import { modelGroupKey } from '@ai-usage/report-core/model-identity';
+import {
+  type ApiPriceMeasurement,
+  apiPriceMeasurement,
+  combineApiPriceMeasurements,
+  PARTIALLY_MEASURED_LABEL,
+  partiallyMeasuredApiPriceDescription,
+} from '@ai-usage/report-core/provenance';
 import { enrichSessionPresentationRow, type SessionPresentationRow } from '@ai-usage/report-core/session-query';
+import { usageRowApiPriceMeasurement } from '@ai-usage/report-core/usage-row';
 import { For } from 'solid-js';
 
 export {
@@ -98,6 +106,30 @@ export const apiValuePresentation = (row: { costApprox: number; costKnown: boole
   return { label: '—', status: 'unknown', title: UNKNOWN_PRICE_HINT };
 };
 
+export const aggregateApiValuePresentation = (measurement: ApiPriceMeasurement): ApiValuePresentation => {
+  if (measurement.state !== 'partially measured') {
+    return {
+      label: fmtMoney(measurement.knownCost),
+      status: 'exact',
+      title: 'Estimated API value at standard prices',
+    };
+  }
+  return {
+    label: measurement.knownCost > 0 ? `≥ ${fmtMoney(measurement.knownCost)}` : '—',
+    status: measurement.knownCost > 0 ? 'lower-bound' : 'unknown',
+    title: partiallyMeasuredApiPriceDescription(fmtCompact(measurement.unpricedFreshTokens)),
+  };
+};
+
+export const aggregateApiPriceProvenance = (measurement: ApiPriceMeasurement) =>
+  measurement.state === 'partially measured'
+    ? {
+        description: partiallyMeasuredApiPriceDescription(fmtCompact(measurement.unpricedFreshTokens)),
+        label: PARTIALLY_MEASURED_LABEL,
+        severity: 'warning' as const,
+      }
+    : null;
+
 export const enrichReportRow = enrichSessionPresentationRow;
 
 export const rowKey = (row: DashboardRow) => row.rowId;
@@ -110,6 +142,7 @@ export interface ReportSummary {
   fresh: number;
   meanCost: number;
   pricedSessions: number;
+  priceMeasurement: ApiPriceMeasurement;
   rtkInput: number;
   rtkOutput: number;
   rtkSaved: number;
@@ -130,6 +163,7 @@ const createReportSummary = (): ReportSummary => ({
   cacheWrite: 0,
   fresh: 0,
   meanCost: 0,
+  priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
   pricedSessions: 0,
   rtkInput: 0,
   rtkOutput: 0,
@@ -146,16 +180,17 @@ const createReportSummary = (): ReportSummary => ({
 
 export const buildReportSummary = (rows: DashboardRow[], acceptsRow: (row: DashboardRow) => boolean) => {
   const summary = createReportSummary();
-  let pricedCount = 0;
+  const priceMeasurements: ApiPriceMeasurement[] = [];
+  let fullyPricedCost = 0;
 
   for (const row of rows) {
     if (!acceptsRow(row)) {
       continue;
     }
     summary.sessionCount++;
+    priceMeasurements.push(usageRowApiPriceMeasurement(row));
     if (row.costKnown) {
-      summary.totalCost += row.costApprox;
-      pricedCount++;
+      fullyPricedCost += row.costApprox;
       summary.pricedSessions++;
     }
     summary.actualCost += row.costActual ?? 0;
@@ -178,7 +213,9 @@ export const buildReportSummary = (rows: DashboardRow[], acceptsRow: (row: Dashb
     summary.tools += row.tools;
   }
 
-  summary.meanCost = summary.totalCost / (pricedCount || 1);
+  summary.priceMeasurement = combineApiPriceMeasurements(priceMeasurements);
+  summary.totalCost = summary.priceMeasurement.knownCost;
+  summary.meanCost = fullyPricedCost / (summary.pricedSessions || 1);
   return summary;
 };
 
@@ -191,7 +228,7 @@ export interface BarSegment {
 
 export const UsageUnavailableCell = () => (
   <span class={unavailableCell} title={USAGE_UNAVAILABLE_HINT}>
-    n/a
+    —
   </span>
 );
 

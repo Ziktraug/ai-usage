@@ -46,13 +46,11 @@ const createOwnedSelection = (options: DashboardSessionSelectionOptions) => {
 
 const localData = (sortedRows: DashboardRow[] = rows): DashboardSessionSelectionOptions['local'] => ({
   campaigns: () => [campaign],
-  groupCampaigns: () => true,
   reportRows: () => rows,
   sortedRows: () => sortedRows,
 });
 
 const query = parseSessionQueryRequest({
-  campaigns: false,
   cursor: null,
   filters: { fields: {}, harness: [], machine: [], query: '' },
   pageSize: 100,
@@ -62,7 +60,14 @@ const query = parseSessionQueryRequest({
 });
 
 const servedState = (servedRows: DashboardRow[]): SessionQueryState => {
-  const items: SessionPageItem[] = servedRows.map((row) => ({ kind: 'session', row }));
+  const items: SessionPageItem[] = servedRows.map((row) => {
+    const campaignKey = `campaign:${row.rowId}`;
+    return {
+      campaignKey,
+      kind: 'campaign',
+      row: { ...row, campaignKey, campaignTotalCount: 1, campaignVisibleCount: 1 },
+    };
+  });
   return {
     campaignChildren: new Map(),
     itemCount: items.length,
@@ -138,7 +143,7 @@ describe('dashboard session selection', () => {
       expect(selection.analysisRevision()).toBeNull();
 
       selection.navigate(-1);
-      expect(selection.selectedRow()).toBe(firstStandalone);
+      expect(selection.selectedRow()?.rowId).toBe(firstStandalone.rowId);
       expect(selection.drawerRows()).toEqual([firstStandalone, secondStandalone]);
     } finally {
       dispose();
@@ -182,7 +187,7 @@ describe('dashboard session selection', () => {
       });
 
       setVisibleRows([]);
-      expect(selection.selectedRow()).toBe(firstStandalone);
+      expect(selection.selectedRow()?.rowId).toBe(firstStandalone.rowId);
       expect(selection.drawerRows()).toEqual([]);
       expect(selection.selectedCampaign()).toBeNull();
 
@@ -335,7 +340,7 @@ describe('dashboard session selection', () => {
 
       const ignoredInputCommand = keyboardEvent('j', inputTarget);
       selection.handleKeyDown(ignoredInputCommand.event);
-      expect(selection.selectedRow()).toBe(firstStandalone);
+      expect(selection.selectedRow()?.rowId).toBe(firstStandalone.rowId);
       expect(ignoredInputCommand.prevented()).toBe(false);
 
       const downCommand = keyboardEvent('ArrowDown');
@@ -345,12 +350,12 @@ describe('dashboard session selection', () => {
 
       const upCommand = keyboardEvent('k');
       selection.handleKeyDown(upCommand.event);
-      expect(selection.selectedRow()).toBe(firstStandalone);
+      expect(selection.selectedRow()?.rowId).toBe(firstStandalone.rowId);
       expect(upCommand.prevented()).toBe(true);
 
       const ignoredEditableCommand = keyboardEvent('ArrowUp', editableTarget);
       selection.handleKeyDown(ignoredEditableCommand.event);
-      expect(selection.selectedRow()).toBe(firstStandalone);
+      expect(selection.selectedRow()?.rowId).toBe(firstStandalone.rowId);
       expect(ignoredEditableCommand.prevented()).toBe(false);
 
       const closeCommand = keyboardEvent('Escape');

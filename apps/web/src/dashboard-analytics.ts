@@ -6,6 +6,7 @@ export interface ProjectGroup {
   cost: number;
   fresh: number;
   key: string;
+  label: string;
   linesAdded: number;
   linesDeleted: number;
   priced: number;
@@ -29,8 +30,9 @@ const dashboardRowToAnalyticsInput = (row: DashboardRow): AnalyticsRowInput => (
   pricedCost: row.costKnown ? row.costApprox : null,
 });
 
-const createProjectGroup = (key: string): ProjectGroup => ({
+const createProjectGroup = (key: string, label: string): ProjectGroup => ({
   key,
+  label,
   sessions: 0,
   fresh: 0,
   cache: 0,
@@ -45,7 +47,7 @@ const createProjectGroup = (key: string): ProjectGroup => ({
 const addProjectRow = (groups: Map<string, ProjectGroup>, row: DashboardRow) => {
   let group = groups.get(row.projectKey);
   if (!group) {
-    group = createProjectGroup(row.projectKey);
+    group = createProjectGroup(row.projectKey, row.projectLabel);
     groups.set(row.projectKey, group);
   }
 

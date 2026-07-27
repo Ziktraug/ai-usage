@@ -10,7 +10,8 @@ import {
   sessionCell,
   sessionTitleClamp,
 } from '@ai-usage/design-system/report';
-import { provenanceForMetric, type UsageMetricKey } from '@ai-usage/report-core/provenance';
+import { provenanceForMetric, type UsageMetricKey, type UsageRowProvenance } from '@ai-usage/report-core/provenance';
+import { classifierRollupLabelForSessionRow, sessionOriginLabel } from '@ai-usage/report-core/session-query';
 import type { ColumnDef, RowData, VisibilityState } from '@tanstack/solid-table';
 import { type JSX, Show } from 'solid-js';
 import { campaignBadgeLabelForRow } from './dashboard-model';
@@ -21,6 +22,8 @@ import { sessionDurationSemantics } from './session-analysis-model';
 import type { SessionColumnId } from './session-table-schema';
 import { isSessionColumnVisible as isSessionColumnVisibleForSchema } from './session-table-schema';
 import {
+  aggregateApiPriceProvenance,
+  aggregateApiValuePresentation,
   apiValuePresentation,
   type DashboardRow,
   fmtCompact,
@@ -56,6 +59,18 @@ const withProvenance = (row: DashboardRow, metric: UsageMetricKey, value: string
 );
 const tokenCell = (row: DashboardRow, value: number) =>
   withProvenance(row, 'tokens', row.usageUnavailable ? <UsageUnavailableCell /> : fmtCompact(value));
+const apiValueProvenanceFacts = (row: DashboardRow): UsageRowProvenance[] => {
+  const facts = provenanceFacts(row, 'api-value');
+  const aggregateFact = row.priceMeasurement ? aggregateApiPriceProvenance(row.priceMeasurement) : null;
+  if (!aggregateFact) {
+    return facts;
+  }
+  return [
+    ...facts.filter(({ kind }) => kind !== 'partial-api-price' && kind !== 'unknown-api-price'),
+    { ...aggregateFact, appliesTo: ['api-value'], kind: 'partial-api-price' },
+  ];
+};
+
 const countCell = (row: DashboardRow, value: number, metric: UsageMetricKey) =>
   withProvenance(row, metric, row.usageUnavailable ? <UsageUnavailableCell /> : fmtNum(value));
 
@@ -74,6 +89,7 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => row.sessionLabel.toLowerCase(),
     cell: (info) => {
       const campaignLabel = () => campaignBadgeLabelForRow(info.row.original);
+      const classifierRollupLabel = () => classifierRollupLabelForSessionRow(info.row.original);
       const titleFacts = () => provenanceFacts(info.row.original, 'title');
       return (
         <div class={sessionTitleClamp} style={{ 'padding-left': `${info.row.depth * 14}px` }}>
@@ -92,11 +108,25 @@ export const sessionColumns: SessionColumnDef[] = [
           </Show>
           <HighlightedText query={info.table.options.meta?.searchQuery ?? ''} text={info.row.original.sessionLabel} />
           <ProvenanceMarker facts={titleFacts()} />
+          <Show when={info.row.depth > 0 && info.row.original.origin === 'classifier'}>
+            <span class={muted} data-session-origin="classifier">
+              {' '}
+              {sessionOriginLabel('classifier')}
+            </span>
+          </Show>
           <Show when={campaignLabel()}>
             {(label) => (
               <span class={muted} title={label()}>
                 {' '}
                 {label()}
+              </span>
+            )}
+          </Show>
+          <Show when={classifierRollupLabel()}>
+            {(label) => (
+              <span class={muted} data-campaign-classifier-rollup title={label()}>
+                {' '}
+                {label()} · {fmtCompact(info.row.original.campaignClassifierFreshTokens ?? 0)} fresh
               </span>
             )}
           </Show>
@@ -154,18 +184,18 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => sortValueForRow(row, 'project'),
     cell: (info) => {
       const row = info.row.original;
-      const label = row.projectKey;
+      const projectLabel = row.projectLabel === '(unknown)' ? 'No project' : row.projectLabel;
       return (
         <button
           class={filterTextButton}
           onClick={(event) => {
             event.stopPropagation();
-            info.table.options.meta?.onFieldFilter?.('project', label);
+            info.table.options.meta?.onFieldFilter?.('project', row.projectKey);
           }}
-          title={`Filter by ${label}`}
+          title={`Filter by ${projectLabel}`}
           type="button"
         >
-          {row.projectLabel === '(unknown)' ? '—' : row.projectLabel}
+          {row.projectLabel === '(unknown)' ? '—' : projectLabel}
         </button>
       );
     },
@@ -279,13 +309,15 @@ export const sessionColumns: SessionColumnDef[] = [
     accessorFn: (row) => sortValueForRow(row, 'cost'),
     cell: (info) => {
       const row = info.row.original;
-      const apiValue = apiValuePresentation(row);
-      return withProvenance(
-        row,
-        'api-value',
-        <Show fallback={<UsageUnavailableCell />} when={!row.usageUnavailable}>
-          <span title={apiValue.title}>{apiValue.label}</span>
-        </Show>,
+      const apiValue = row.priceMeasurement
+        ? aggregateApiValuePresentation(row.priceMeasurement)
+        : apiValuePresentation(row);
+      return (
+        <CellWithProvenance facts={apiValueProvenanceFacts(row)}>
+          <Show fallback={<UsageUnavailableCell />} when={!row.usageUnavailable}>
+            <span title={apiValue.title}>{apiValue.label}</span>
+          </Show>
+        </CellWithProvenance>
       );
     },
     sortDescFirst: true,

@@ -1,6 +1,7 @@
 # Plan 045: Valorize the report dimensions and make the work unit honest
 
-> **Status: DRAFT** — product framing, ten design decisions (*Decisions locked*) and
+> **Status: DONE** — implemented and verified on 2026-07-26. Product framing,
+> ten design decisions (*Decisions locked*) and
 > the user-facing strings (*Copy*) were all settled with the maintainer on
 > 2026-07-26. **Nothing in this plan is open.** Wave 0 and Wave 3b are
 > measurement-only and produce no production diff.
@@ -654,24 +655,24 @@ grouping; nothing in this plan may anticipate its storage model.
 
 ## Done criteria
 
-- [ ] Git-awareness reliability is measured and published; branch stays a detail.
-- [ ] No aggregate renders unpriced token volume as `$0.00` or a bare `—`.
-- [ ] One range yields one total, or the narrower total states why it differs.
-- [ ] The timeline groups by campaign, machine, and origin.
-- [ ] Origin is classified from declared fields, with `unknown` for silence, and
+- [x] Git-awareness reliability is measured and published; branch stays a detail.
+- [x] No aggregate renders unpriced token volume as `$0.00` or a bare `—`.
+- [x] One range yields one total, or the narrower total states why it differs.
+- [x] The timeline groups by campaign, machine, and origin.
+- [x] Origin is classified from declared fields, with `unknown` for silence, and
       coverage stated per harness.
-- [ ] Every top-level row is a campaign; no classifier is an orphan; classifiers
+- [x] Every top-level row is a campaign; no classifier is an orphan; classifiers
       appear as an expandable aggregate on their parent.
-- [ ] The campaign count follows the active filter, and the default origin filter
+- [x] The campaign count follows the active filter, and the default origin filter
       shows its non-neutral state.
-- [ ] `usageRowSessionLabel` no longer concatenates markers, and the derived label
+- [x] `usageRowSessionLabel` no longer concatenates markers, and the derived label
       handles markdown-structured prompts.
-- [ ] `projectKey` is independent of `projectLabel`; one project is one thing across
+- [x] `projectKey` is independent of `projectLabel`; one project is one thing across
       the report and `/skills`.
-- [ ] The rail exposes all six destinations on every route, stays visible at depth,
+- [x] The rail exposes all six destinations on every route, stays visible at depth,
       and degrades to a bottom bar below `48rem`.
-- [ ] `/sync` reports per-machine freshness and staleness reaches the report.
-- [ ] The focus ring is visible on every focusable element in both themes.
+- [x] `/sync` reports per-machine freshness and staleness reaches the report.
+- [x] The focus ring is visible on every focusable element in both themes.
 
 ## STOP conditions
 
@@ -748,3 +749,36 @@ Codex, surveyed 2026-07-26 over all 2,156 files under `~/.codex/sessions`
 733/733 guardian sessions with a resolvable parent id; `thread_spawn_edges` holds
 1,034 edges and zero guardian children; `title` is a prompt echo in 2,050 of 2,190
 titled threads.
+
+### Implementation — waves 1 to 6
+
+Implemented and verified on 2026-07-26 on `feat/implement-plans-045-047`.
+The operator requested one dedicated branch for all changed plans, so this run
+intentionally shares the branch with plan 046.
+
+- Pricing and provenance now preserve measured, partially measured, and
+  unmeasured states from aggregation through every value renderer.
+- The report exposes campaign, machine, and declared-origin timelines; campaign
+  rows are universal, including single-session campaigns, and delegated sessions
+  remain attached to their resolvable parent.
+- Derived session labels understand structured Markdown prompts. Project identity
+  is separated from its display label across the report and Skills.
+- One navigation owner exposes all six destinations as a persistent rail and a
+  mobile bottom bar. Focus treatment is durable in both themes.
+- Sync exposes per-machine fleet freshness, and stale authority propagates to the
+  report rather than disappearing at the boundary.
+
+The report campaign query now pre-aggregates visible counts and selects latest
+rows with a windowed CTE. On a 5,000-campaign fixture, the prior query shape took
+about 22 seconds; the replacement remained between 74 and 385 ms, with a durable
+five-second regression guard.
+
+### Verification
+
+- `bun x ultracite fix`, `bun run check`, `bun run lint`, and
+  `bun run typecheck` pass.
+- `bun run test` passes all workspace and tool tests, including 497 web tests.
+- `bun run test:e2e` passes 75/75 scenarios; `bun run test:e2e-demo` passes 1/1.
+- The report scale and benchmark specifications pass 2/2 and 4/4 respectively.
+- Mobile overflow, source scheduling, Skills ellipsis and draft-guard scenarios
+  were repeated under load after their deterministic fixes.

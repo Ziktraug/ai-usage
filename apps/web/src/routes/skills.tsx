@@ -8,7 +8,6 @@ import {
   ghostButton,
   header,
   headerActions,
-  headerNavigation,
   headerTop,
   meta,
   navButton,
@@ -28,11 +27,9 @@ import {
 } from '@ai-usage/design-system/report';
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import { createQuery } from '@tanstack/solid-query';
-import { ClientOnly, createFileRoute, Link, useLocation } from '@tanstack/solid-router';
+import { ClientOnly, createFileRoute, useLocation } from '@tanstack/solid-router';
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { isServer } from 'solid-js/web';
-import { dashboardSearchDefaultsFor } from '../dashboard-search';
-import { ThemeToggle } from '../dashboard-theme';
 import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
 import { DiscardConfirmationDialog } from '../discard-confirmation-dialog';
 import type { getKnownSkillProjectPaths, getSkillManagementSnapshot, KnownSkillProjectPath } from '../server/skills';
@@ -53,7 +50,6 @@ export const Route = createFileRoute('/skills')({
   component: SkillsRoute,
 });
 
-const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
 const SUCCESS_NOTICE_DURATION_MS = 5000;
 
 const stack = css({
@@ -171,18 +167,7 @@ const disabledRow = css({
   borderTop: '1px solid token(colors.line)',
 });
 
-const projectGroupRoutePrefixPattern = /^group:/;
-const legacyAliasRoutePrefixPattern = /^legacy-alias:/;
-
-const groupRouteKey = (project: KnownSkillProjectPath): string | undefined => {
-  if (project.groupId === undefined) {
-    return;
-  }
-  const withoutPrefix = project.groupId
-    .replace(projectGroupRoutePrefixPattern, '')
-    .replace(legacyAliasRoutePrefixPattern, '');
-  return withoutPrefix || project.groupLabel || project.label;
-};
+const groupRouteKey = (project: KnownSkillProjectPath): string | undefined => project.groupId;
 
 const knownProjectScopesFromPaths = (projects: readonly KnownSkillProjectPath[]): readonly KnownProjectScope[] => {
   const scopes = new Map<string, KnownProjectScope>();
@@ -352,18 +337,6 @@ function SkillsClientRoute() {
               >
                 Refresh skills
               </button>
-              <nav aria-label="Primary navigation" class={headerNavigation}>
-                <Link class={navButton} search={dashboardSearchDefaults} to="/">
-                  Report
-                </Link>
-                <Link class={navButton} to="/sync">
-                  Sync
-                </Link>
-                <Link class={navButton} to="/sources">
-                  Sources
-                </Link>
-              </nav>
-              <ThemeToggle />
             </div>
           </div>
         </header>

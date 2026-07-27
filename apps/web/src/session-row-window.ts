@@ -14,7 +14,29 @@ export interface SessionRowWindow {
   topHeight: number;
 }
 
+export interface SessionViewportHeightInput {
+  bottomInset: number;
+  minimumHeight: number;
+  surfaceTop: number;
+  viewportHeight: number;
+}
+
 const nonNegativeInteger = (value: number): number => (Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0);
+
+export const calculateSessionViewportHeight = (input: SessionViewportHeightInput): number => {
+  const viewportHeight = Math.max(1, nonNegativeInteger(input.viewportHeight));
+  const bottomInset = Math.min(viewportHeight - 1, nonNegativeInteger(input.bottomInset));
+  const usableHeight = viewportHeight - bottomInset;
+  const minimumHeight = Math.min(usableHeight, Math.max(1, nonNegativeInteger(input.minimumHeight)));
+  const surfaceTop = Number.isFinite(input.surfaceTop) ? input.surfaceTop : viewportHeight;
+
+  if (surfaceTop >= viewportHeight) {
+    return usableHeight;
+  }
+
+  const availableHeight = usableHeight - Math.max(0, surfaceTop);
+  return Math.max(minimumHeight, availableHeight);
+};
 
 export const calculateSessionRowWindow = (input: SessionRowWindowInput): SessionRowWindow => {
   const rowCount = nonNegativeInteger(input.rowCount);

@@ -15,8 +15,10 @@ const summary = css({
 
 const summaryLink = css({
   display: 'inline-flex',
+  flex: '1 1 auto',
   alignItems: 'center',
   gap: '6px',
+  minW: 0,
   h: '36px',
   px: '10px',
   border: '1px solid token(colors.lineStrong)',
@@ -48,6 +50,13 @@ const summaryDot = css({
 
 const summaryDotWarn = css({ bg: 'status.warn' });
 const summaryDotDanger = css({ bg: 'status.danger' });
+
+const summaryLabel = css({
+  minW: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+});
 
 const card = css({
   display: 'none',
@@ -163,7 +172,7 @@ export const SourceControlSummary = () => {
             statusTone() === 'danger' ? summaryDotDanger : undefined,
           )}
         />
-        {statusLabel()}
+        <span class={summaryLabel}>{statusLabel()}</span>
         <div class={card} data-source-card="">
           <div class={cardHeader}>
             <span class={cardTitle}>Collection sources</span>

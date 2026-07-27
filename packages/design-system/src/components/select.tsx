@@ -7,8 +7,8 @@ import { field } from './field';
 const selectRoot = css({
   display: 'inline-flex',
   flexDirection: 'column',
-  flex: '0 1 180px',
-  minW: '150px',
+  flex: { base: '1 1 120px', sm: '0 1 180px' },
+  minW: { base: 0, sm: '150px' },
 });
 
 const selectControl = css({ display: 'flex', w: 'full' });
@@ -94,6 +94,8 @@ export interface MultiSelectProps {
   /** Plural noun shown when more than one option is selected (e.g. "machines"). */
   noun: string;
   onValueChange: (value: string[]) => void;
+  /** Presents a value without changing the value emitted by the select. */
+  optionLabel?: (value: string) => string;
   options: string[];
   /** Shown when nothing is selected (e.g. "All machines"). */
   placeholder: string;
@@ -101,11 +103,12 @@ export interface MultiSelectProps {
 }
 
 export const MultiSelect = (props: MultiSelectProps) => {
+  const optionLabel = (value: string): string => props.optionLabel?.(value) ?? value;
   const collection = createMemo(() =>
     createListCollection({
       items: props.options,
       itemToValue: (item) => item,
-      itemToString: (item) => item,
+      itemToString: optionLabel,
     }),
   );
   const triggerLabel = createMemo(() => {
@@ -114,7 +117,7 @@ export const MultiSelect = (props: MultiSelectProps) => {
       return props.placeholder;
     }
     if (count === 1) {
-      return props.value[0];
+      return optionLabel(props.value[0] ?? '');
     }
     return `${count} ${props.noun}`;
   });
@@ -143,7 +146,7 @@ export const MultiSelect = (props: MultiSelectProps) => {
             <For each={props.options}>
               {(option) => (
                 <Select.Item class={selectItem} item={option}>
-                  <Select.ItemText>{option}</Select.ItemText>
+                  <Select.ItemText>{optionLabel(option)}</Select.ItemText>
                   <Select.ItemIndicator class={selectItemIndicator}>✓</Select.ItemIndicator>
                 </Select.Item>
               )}

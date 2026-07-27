@@ -27,11 +27,13 @@ import {
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
 import { MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
+import { type ApiPriceMeasurement, apiPriceMeasurement } from '@ai-usage/report-core/provenance';
 import type {
   SessionPresentationRow,
   SessionQueryRequest,
   SessionQuerySort,
 } from '@ai-usage/report-core/session-query';
+import { isSessionOrigin, sessionOriginLabel } from '@ai-usage/report-core/session-query';
 import {
   buildSessionQuerySqlFilter,
   type SessionQuerySqliteDatabase,
@@ -64,7 +66,6 @@ const sessionRequest = (
   query: FocusedReportQueryScope,
   sort: SessionQuerySort[] = [{ desc: true, id: 'date' }],
 ): SessionQueryRequest => ({
-  campaigns: false,
   cursor: null,
   filters: query.filters,
   pageSize: 1,
@@ -91,6 +92,8 @@ interface SummaryRecord {
   cache_write: number | null;
   cost_quota: number | null;
   fresh: number | null;
+  fully_priced_cost: number | null;
+  partial_price_rows: number | null;
   priced_sessions: number | null;
   rtk_input: number | null;
   rtk_output: number | null;
@@ -103,6 +106,7 @@ interface SummaryRecord {
   total_cost: number | null;
   turns: number | null;
   unknown_actual: number | null;
+  unpriced_fresh_tokens: number | null;
 }
 
 interface TimelineRecord {
@@ -111,20 +115,27 @@ interface TimelineRecord {
   first_ordinal: number;
   first_time: number;
   key: string;
+  label: string;
   last_time: number;
+  partial_price_rows: number;
   sessions: number;
+  unpriced_fresh_tokens: number;
 }
 
 interface ModelTimelineRecord extends TimelineRecord {
   day_cost: number;
+  day_partial_price_rows: number;
   day_sessions: number;
+  day_unpriced_fresh_tokens: number;
 }
 
 interface DayRecord {
   cost: number;
   day_key: string;
   first_ordinal: number;
+  partial_price_rows: number;
   sessions: number;
+  unpriced_fresh_tokens: number;
 }
 
 interface RecordCandidates {
@@ -146,6 +157,17 @@ type SqlFilter = ReturnType<typeof buildSessionQuerySqlFilter>;
 const parsePresentationRow = (serialized: string): SessionPresentationRow =>
   JSON.parse(serialized) as SessionPresentationRow;
 
+const priceMeasurementFromSql = (
+  knownCost: number,
+  partialPriceRows: number,
+  unpricedFreshTokens: number,
+): ApiPriceMeasurement =>
+  apiPriceMeasurement({
+    costKnown: partialPriceRows === 0,
+    freshTokens: unpricedFreshTokens,
+    knownCost,
+  });
+
 const summaryFromRecord = (record: SummaryRecord | null): FocusedReportSummary => {
   const pricedSessions = record?.priced_sessions ?? 0;
   const totalCost = record?.total_cost ?? 0;
@@ -155,7 +177,12 @@ const summaryFromRecord = (record: SummaryRecord | null): FocusedReportSummary =
     cacheWrite: record?.cache_write ?? 0,
     costQuota: record?.cost_quota ?? 0,
     fresh: record?.fresh ?? 0,
-    meanCost: totalCost / (pricedSessions || 1),
+    meanCost: (record?.fully_priced_cost ?? 0) / (pricedSessions || 1),
+    priceMeasurement: priceMeasurementFromSql(
+      totalCost,
+      record?.partial_price_rows ?? 0,
+      record?.unpriced_fresh_tokens ?? 0,
+    ),
     pricedSessions,
     rtkInput: record?.rtk_input ?? 0,
     rtkOutput: record?.rtk_output ?? 0,
@@ -179,9 +206,37 @@ const readSummary = (
   summaryFromRecord(
     executeGet<SummaryRecord>(
       database,
-      `SELECT
+      `WITH visible AS (
+        SELECT
+          ordinal,
+          cost_approx,
+          cost_known,
+          cost_actual,
+          cost_quota,
+          fresh_tokens,
+          tok_cr,
+          tok_cw,
+          tok_in,
+          tok_out,
+          rtk_saved_tokens,
+          rtk_input_tokens,
+          rtk_output_tokens,
+          turns,
+          tools
+        FROM session_rows
+        WHERE ${filter.where}
+      ),
+      price_coverage AS (
+        SELECT
+          COALESCE(SUM(segments.unpriced_fresh_tokens), 0) AS unpriced_fresh_tokens
+        FROM session_model_segments AS segments
+        INNER JOIN visible USING (ordinal)
+      )
+      SELECT
         COUNT(*) AS session_count,
-        SUM(CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END) AS total_cost,
+        SUM(cost_approx) AS total_cost,
+        SUM(CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END) AS fully_priced_cost,
+        SUM(CASE WHEN cost_known = 0 THEN 1 ELSE 0 END) AS partial_price_rows,
         SUM(cost_known) AS priced_sessions,
         SUM(COALESCE(cost_actual, 0)) AS actual_cost,
         SUM(COALESCE(cost_quota, 0)) AS cost_quota,
@@ -196,22 +251,68 @@ const readSummary = (
         SUM(rtk_output_tokens) AS rtk_output,
         SUM(CASE WHEN rtk_saved_tokens <> 0 THEN 1 ELSE 0 END) AS rtk_sessions,
         SUM(turns) AS turns,
-        SUM(tools) AS tools
-      FROM session_rows
-      WHERE ${filter.where}`,
+        SUM(tools) AS tools,
+        price_coverage.unpriced_fresh_tokens AS unpriced_fresh_tokens
+      FROM visible
+      CROSS JOIN price_coverage`,
       filter.params,
       trace,
     ),
   );
 
-const timelineDimensionColumn = (dimension: FocusedOverviewRequest['timeline']['dimension']): string => {
-  if (dimension === 'harness') {
-    return 'harness';
+interface TimelineDimensionProjection {
+  key: string;
+  label: string;
+}
+
+const timelineDimensionProjection = (
+  dimension: FocusedOverviewRequest['timeline']['dimension'],
+): TimelineDimensionProjection => {
+  // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
+  switch (dimension) {
+    case 'campaign':
+      return {
+        key: "CASE WHEN session_rows.campaign_key IS NULL THEN 'session:' || session_rows.row_id ELSE 'campaign:' || session_rows.campaign_key END",
+        label: 'session_rows.campaign_label',
+      };
+    case 'harness':
+      return { key: 'session_rows.harness', label: 'session_rows.harness' };
+    case 'machine':
+      return {
+        key: 'session_rows.machine_id',
+        label: "CASE WHEN session_rows.machine_label = '' THEN 'Unknown machine' ELSE session_rows.machine_label END",
+      };
+    case 'model':
+      return { key: 'session_rows.model_key', label: 'session_rows.model_key' };
+    case 'origin':
+      return { key: 'session_rows.origin', label: 'session_rows.origin' };
+    case 'project':
+      return { key: 'session_rows.project_key', label: 'session_rows.project_label' };
+    case 'provider':
+      return { key: 'session_rows.provider_display', label: 'session_rows.provider_display' };
   }
-  if (dimension === 'model') {
-    return 'model_key';
+};
+
+const timelineLabelFromRecord = (
+  dimension: FocusedOverviewRequest['timeline']['dimension'],
+  key: string,
+  label: string,
+): string => {
+  // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
+  switch (dimension) {
+    case 'campaign':
+    case 'harness':
+    case 'machine':
+    case 'model':
+    case 'project':
+    case 'provider':
+      return label;
+    case 'origin':
+      if (!isSessionOrigin(key)) {
+        throw new Error('Report revision contains an invalid session origin');
+      }
+      return sessionOriginLabel(key);
   }
-  return dimension === 'project' ? 'project_key' : 'provider_display';
 };
 
 const timeForLocalDay = (dayKey: string): number => {
@@ -229,16 +330,35 @@ const readModelTimeline = (
 ): { dateDomain: FocusedDateDomain | null; days: FocusedDayAggregate[]; timeline: FocusedTimelineAggregate[] } => {
   const records = executeAll<ModelTimelineRecord>(
     database,
-    `WITH visible AS (
-      SELECT ordinal, active_time, cost_approx, cost_known, model_key AS primary_model_key
+    `WITH segment_coverage AS (
+      SELECT
+        ordinal,
+        MAX(CASE WHEN cost_known = 0 THEN 1 ELSE 0 END) AS partial_price_rows,
+        SUM(unpriced_fresh_tokens) AS unpriced_fresh_tokens
+      FROM session_model_segments
+      GROUP BY ordinal
+    ),
+    visible AS (
+      SELECT
+        session_rows.ordinal,
+        active_time,
+        cost_approx,
+        cost_known,
+        model_key AS primary_model_key,
+        segment_coverage.partial_price_rows,
+        segment_coverage.unpriced_fresh_tokens
       FROM session_rows
+      INNER JOIN segment_coverage USING (ordinal)
       WHERE ${filter.where} AND active_time IS NOT NULL
     ),
     timeline AS (
       SELECT
         strftime('%Y-%m-%d', visible.active_time / 1000, 'unixepoch', 'localtime') AS day_key,
         segments.model_key AS key,
-        SUM(CASE WHEN visible.cost_known = 1 THEN segments.cost_approx ELSE 0 END) AS cost,
+        segments.model_key AS label,
+        SUM(segments.cost_approx) AS cost,
+        MAX(CASE WHEN segments.cost_known = 0 THEN 1 ELSE 0 END) AS partial_price_rows,
+        SUM(segments.unpriced_fresh_tokens) AS unpriced_fresh_tokens,
         SUM(
           CASE
             WHEN segments.model_key = visible.primary_model_key THEN 1
@@ -261,12 +381,19 @@ const readModelTimeline = (
     days AS (
       SELECT
         strftime('%Y-%m-%d', active_time / 1000, 'unixepoch', 'localtime') AS day_key,
-        SUM(CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END) AS day_cost,
+        SUM(cost_approx) AS day_cost,
+        MAX(partial_price_rows) AS day_partial_price_rows,
+        SUM(unpriced_fresh_tokens) AS day_unpriced_fresh_tokens,
         COUNT(*) AS day_sessions
       FROM visible
       GROUP BY day_key
     )
-    SELECT timeline.*, days.day_cost, days.day_sessions
+    SELECT
+      timeline.*,
+      days.day_cost,
+      days.day_partial_price_rows,
+      days.day_sessions,
+      days.day_unpriced_fresh_tokens
     FROM timeline
     INNER JOIN days USING (day_key)
     ORDER BY timeline.first_ordinal`,
@@ -275,12 +402,36 @@ const readModelTimeline = (
   );
   const byDay = new Map<string, FocusedDayAggregate>();
   const timeline = records.map(
-    ({ cost, day_cost: dayCost, day_key: dayKey, day_sessions: daySessions, key, sessions }) => {
+    ({
+      cost,
+      day_cost: dayCost,
+      day_key: dayKey,
+      day_partial_price_rows: dayPartialPriceRows,
+      day_sessions: daySessions,
+      day_unpriced_fresh_tokens: dayUnpricedFreshTokens,
+      key,
+      label,
+      partial_price_rows: partialPriceRows,
+      sessions,
+      unpriced_fresh_tokens: unpricedFreshTokens,
+    }) => {
       const time = timeForLocalDay(dayKey);
       if (!byDay.has(dayKey)) {
-        byDay.set(dayKey, { cost: dayCost, sessions: daySessions, time });
+        byDay.set(dayKey, {
+          cost: dayCost,
+          priceMeasurement: priceMeasurementFromSql(dayCost, dayPartialPriceRows, dayUnpricedFreshTokens),
+          sessions: daySessions,
+          time,
+        });
       }
-      return { cost, key, sessions, time };
+      return {
+        cost,
+        key,
+        label,
+        priceMeasurement: priceMeasurementFromSql(cost, partialPriceRows, unpricedFreshTokens),
+        sessions,
+        time,
+      };
     },
   );
   return {
@@ -299,33 +450,77 @@ const readTimeline = (
   if (dimension === 'model') {
     return readModelTimeline(database, filter, trace);
   }
-  const dimensionColumn = timelineDimensionColumn(dimension);
+  const projection = timelineDimensionProjection(dimension);
   const records = executeAll<TimelineRecord>(
     database,
-    `SELECT
+    `WITH segment_coverage AS (
+      SELECT
+        ordinal,
+        MAX(CASE WHEN cost_known = 0 THEN 1 ELSE 0 END) AS partial_price_rows,
+        SUM(unpriced_fresh_tokens) AS unpriced_fresh_tokens
+      FROM session_model_segments
+      GROUP BY ordinal
+    ),
+    visible AS (
+      SELECT
+        session_rows.ordinal,
+        session_rows.active_time,
+        ${projection.key} AS timeline_key,
+        ${projection.label} AS timeline_label,
+        session_rows.cost_approx,
+        segment_coverage.partial_price_rows,
+        segment_coverage.unpriced_fresh_tokens
+      FROM session_rows
+      INNER JOIN segment_coverage USING (ordinal)
+      WHERE ${filter.where} AND active_time IS NOT NULL
+    )
+    SELECT
       strftime('%Y-%m-%d', active_time / 1000, 'unixepoch', 'localtime') AS day_key,
-      ${dimensionColumn} AS key,
-      SUM(CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END) AS cost,
+      timeline_key AS key,
+      MIN(timeline_label) AS label,
+      SUM(cost_approx) AS cost,
+      MAX(partial_price_rows) AS partial_price_rows,
+      SUM(unpriced_fresh_tokens) AS unpriced_fresh_tokens,
       COUNT(*) AS sessions,
       MIN(active_time) AS first_time,
       MAX(active_time) AS last_time,
       MIN(ordinal) AS first_ordinal
-    FROM session_rows
-    WHERE ${filter.where} AND active_time IS NOT NULL
-    GROUP BY day_key, ${dimensionColumn}
+    FROM visible
+    GROUP BY day_key, timeline_key
     ORDER BY first_ordinal`,
     filter.params,
     trace,
   );
   const byDay = new Map<string, FocusedDayAggregate>();
-  const timeline = records.map(({ cost, day_key: dayKey, key, sessions }) => {
-    const time = timeForLocalDay(dayKey);
-    const day = byDay.get(dayKey) ?? { cost: 0, sessions: 0, time };
-    day.cost += cost;
-    day.sessions += sessions;
-    byDay.set(dayKey, day);
-    return { cost, key, sessions, time };
-  });
+  const timeline = records.map(
+    ({ cost, day_key: dayKey, key, label, partial_price_rows: partialPriceRows, sessions, unpriced_fresh_tokens }) => {
+      const time = timeForLocalDay(dayKey);
+      const priceMeasurement = priceMeasurementFromSql(cost, partialPriceRows, unpriced_fresh_tokens);
+      const day = byDay.get(dayKey) ?? {
+        cost: 0,
+        priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
+        sessions: 0,
+        time,
+      };
+      day.cost += cost;
+      day.priceMeasurement = apiPriceMeasurement({
+        costKnown:
+          day.priceMeasurement.state !== 'partially measured' && priceMeasurement.state !== 'partially measured',
+        freshTokens: day.priceMeasurement.unpricedFreshTokens + priceMeasurement.unpricedFreshTokens,
+        knownCost: day.priceMeasurement.knownCost + priceMeasurement.knownCost,
+      });
+      day.sessions += sessions;
+      byDay.set(dayKey, day);
+      return {
+        cost,
+        key,
+        label: timelineLabelFromRecord(dimension, key, label),
+        priceMeasurement,
+        sessions,
+        time,
+      };
+    },
+  );
   return {
     dateDomain: buildFocusedDateDomain(records.flatMap(({ first_time, last_time }) => [first_time, last_time])),
     days: [...byDay.values()],
@@ -340,18 +535,43 @@ const readDays = (
 ): FocusedDayAggregate[] =>
   executeAll<DayRecord>(
     database,
-    `SELECT
+    `WITH segment_coverage AS (
+      SELECT
+        ordinal,
+        MAX(CASE WHEN cost_known = 0 THEN 1 ELSE 0 END) AS partial_price_rows,
+        SUM(unpriced_fresh_tokens) AS unpriced_fresh_tokens
+      FROM session_model_segments
+      GROUP BY ordinal
+    ),
+    visible AS (
+      SELECT
+        session_rows.ordinal,
+        session_rows.active_time,
+        session_rows.cost_approx,
+        segment_coverage.partial_price_rows,
+        segment_coverage.unpriced_fresh_tokens
+      FROM session_rows
+      INNER JOIN segment_coverage USING (ordinal)
+      WHERE ${filter.where} AND active_time IS NOT NULL
+    )
+    SELECT
       strftime('%Y-%m-%d', active_time / 1000, 'unixepoch', 'localtime') AS day_key,
-      SUM(CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END) AS cost,
+      SUM(cost_approx) AS cost,
+      MAX(partial_price_rows) AS partial_price_rows,
+      SUM(unpriced_fresh_tokens) AS unpriced_fresh_tokens,
       COUNT(*) AS sessions,
       MIN(ordinal) AS first_ordinal
-    FROM session_rows
-    WHERE ${filter.where} AND active_time IS NOT NULL
+    FROM visible
     GROUP BY day_key
     ORDER BY first_ordinal`,
     filter.params,
     trace,
-  ).map(({ cost, day_key: dayKey, sessions }) => ({ cost, sessions, time: timeForLocalDay(dayKey) }));
+  ).map(({ cost, day_key: dayKey, partial_price_rows, sessions, unpriced_fresh_tokens }) => ({
+    cost,
+    priceMeasurement: priceMeasurementFromSql(cost, partial_price_rows, unpriced_fresh_tokens),
+    sessions,
+    time: timeForLocalDay(dayKey),
+  }));
 
 const readRecordCandidates = (
   database: SessionQuerySqliteDatabase,
@@ -393,21 +613,38 @@ const readTopSessions = (
       FROM session_rows
       WHERE ${filter.where}
     ),
+    campaign_rollup AS (
+      SELECT * FROM visible
+      UNION ALL
+      SELECT ordinal, row_json, campaign_key, cost_known, cost_approx, duration_ms
+      FROM session_rows AS classifier
+      WHERE classifier.origin = 'classifier'
+        AND classifier.ordinal NOT IN (SELECT ordinal FROM visible)
+        AND classifier.campaign_key IN (
+          SELECT campaign_key
+          FROM visible
+          WHERE campaign_key IS NOT NULL
+        )
+    ),
     items AS (
       SELECT
         'campaign' AS item_kind,
         root.row_json AS row_json,
-        SUM(visible.cost_approx) AS cost_approx,
-        MIN(visible.cost_known) AS cost_known,
+        SUM(rollup.cost_approx) AS cost_approx,
+        MIN(rollup.cost_known) AS cost_known,
         MAX(root.duration_ms) AS duration_ms,
-        COUNT(*) AS session_count,
+        (
+          SELECT COUNT(*)
+          FROM visible AS matched
+          WHERE matched.campaign_key = rollup.campaign_key
+        ) AS session_count,
         0 AS kind_order,
-        MIN(visible.ordinal) AS item_ordinal
-      FROM visible
+        MIN(rollup.ordinal) AS item_ordinal
+      FROM campaign_rollup AS rollup
       INNER JOIN session_rows AS root
-        ON root.campaign_key = visible.campaign_key AND root.campaign_root = 1
-      WHERE visible.campaign_key IS NOT NULL
-      GROUP BY visible.campaign_key
+        ON root.campaign_key = rollup.campaign_key AND root.campaign_root = 1
+      WHERE rollup.campaign_key IS NOT NULL
+      GROUP BY rollup.campaign_key
       UNION ALL
       SELECT
         'session' AS item_kind,
@@ -556,6 +793,7 @@ interface ProjectAggregateRecord {
   first_ordinal: number;
   fresh: number;
   key: string;
+  label: string;
   lines_added: number;
   lines_deleted: number;
   priced: number;
@@ -759,6 +997,7 @@ const readProjectGroups = (
     database,
     `SELECT
       project_key AS key,
+      MIN(project_label) AS label,
       MIN(ordinal) AS first_ordinal,
       COUNT(*) AS sessions,
       SUM(fresh_tokens) AS fresh,
@@ -780,6 +1019,7 @@ const readProjectGroups = (
     cost: record.cost,
     fresh: record.fresh,
     key: record.key,
+    label: record.label,
     linesAdded: record.lines_added,
     linesDeleted: record.lines_deleted,
     priced: record.priced,
@@ -828,24 +1068,27 @@ const runSupport = (
       MIN(active_time) AS first_time,
       MAX(active_time) AS last_time,
       COUNT(DISTINCT harness) AS harness_count,
-      COUNT(DISTINCT CASE WHEN machine_label <> '' THEN machine_label END) AS machine_count,
+      COUNT(DISTINCT CASE WHEN machine_id <> '' THEN machine_id END) AS machine_count,
       COUNT(DISTINCT provider_scope_key) AS provider_scope_count
     FROM session_rows`,
     [],
     trace,
   ) ?? { first_time: null, harness_count: 0, last_time: null, machine_count: 0, provider_scope_count: 0 };
-  const options = executeAll<{ kind: 'harness' | 'machine'; value: string }>(
+  const options = executeAll<{ kind: 'harness' | 'machine'; label: string; value: string }>(
     database,
-    `SELECT 'harness' AS kind, harness AS value FROM (SELECT DISTINCT harness FROM session_rows ORDER BY harness LIMIT 100)
+    `SELECT 'harness' AS kind, harness AS label, harness AS value FROM (
+       SELECT DISTINCT harness FROM session_rows ORDER BY harness LIMIT 100
+     )
      UNION ALL
-     SELECT 'machine' AS kind, machine_label AS value FROM (
-       SELECT DISTINCT machine_label FROM session_rows WHERE machine_label <> '' ORDER BY machine_label LIMIT 100
+     SELECT 'machine' AS kind, label, value FROM (
+       SELECT machine_id AS value, COALESCE(MIN(NULLIF(machine_label, '')), machine_id) AS label
+       FROM session_rows WHERE machine_id <> '' GROUP BY machine_id ORDER BY label, value LIMIT 100
      )`,
     [],
     trace,
   );
   const harness = options.filter(({ kind }) => kind === 'harness').map(({ value }) => value);
-  const machine = options.filter(({ kind }) => kind === 'machine').map(({ value }) => value);
+  const machine = options.filter(({ kind }) => kind === 'machine').map(({ label, value }) => ({ label, value }));
   const providerRows = executeAll<{ row_json: string }>(
     database,
     `SELECT row_json FROM session_rows

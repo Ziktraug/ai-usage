@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { provenanceForMetric, provenanceForUsageRow } from './provenance';
+import {
+  apiPriceMeasurement,
+  combineApiPriceMeasurements,
+  partiallyMeasuredApiPriceDescription,
+  provenanceForMetric,
+  provenanceForUsageRow,
+} from './provenance';
 import type { Row } from './types';
 
 const row = (overrides: Partial<Row> = {}): Row => ({
@@ -28,6 +34,31 @@ const row = (overrides: Partial<Row> = {}): Row => ({
 });
 
 describe('usage row provenance', () => {
+  test('distinguishes measured, partially measured, and genuine zero aggregates', () => {
+    const measured = apiPriceMeasurement({ costKnown: true, freshTokens: 10, knownCost: 2 });
+    const unpriced = apiPriceMeasurement({ costKnown: false, freshTokens: 57_500_000, knownCost: 0 });
+
+    expect(measured).toEqual({ knownCost: 2, state: 'measured', unpricedFreshTokens: 0 });
+    expect(unpriced).toEqual({
+      knownCost: 0,
+      state: 'partially measured',
+      unpricedFreshTokens: 57_500_000,
+    });
+    expect(combineApiPriceMeasurements([measured, unpriced])).toEqual({
+      knownCost: 2,
+      state: 'partially measured',
+      unpricedFreshTokens: 57_500_000,
+    });
+    expect(combineApiPriceMeasurements([])).toEqual({
+      knownCost: 0,
+      state: 'zero',
+      unpricedFreshTokens: 0,
+    });
+    expect(partiallyMeasuredApiPriceDescription('57.5M')).toBe(
+      'Partially measured — 57.5M tokens in this slice come from models with no published price. Their work is counted, their value is not.',
+    );
+  });
+
   test('marks non-ai titles as derived title provenance', () => {
     expect(provenanceForMetric(row({ titleSource: 'first-prompt' }), 'title').map((item) => item.kind)).toEqual([
       'title-derived',

@@ -1,7 +1,8 @@
-import { cx } from '@ai-usage/design-system/css';
+import { css, cx } from '@ai-usage/design-system/css';
 import {
   barFill,
   barTrack,
+  CellWithProvenance,
   groupCount,
   groupHeader,
   groupKeyButton,
@@ -16,7 +17,14 @@ import {
   strongCell,
 } from '@ai-usage/design-system/report';
 import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
+import { PARTIALLY_MEASURED_LABEL } from '@ai-usage/report-core/provenance';
 import { createMemo, For, Show } from 'solid-js';
+import {
+  breakdownBarPresentation,
+  breakdownModelLabel,
+  breakdownPriceState,
+  breakdownPriceStateLabel,
+} from './group-panel-presentation';
 import {
   accentFill,
   apiValuePresentation,
@@ -25,27 +33,63 @@ import {
   fmtPct,
   harnessFillFor,
   USAGE_UNAVAILABLE_HINT,
-  UsageUnavailableCell,
 } from './shared';
 
 const analyticsGroupUnavailableOnly = (group: AnalyticsGroup) => group.usageUnavailable === group.sessions;
 const groupFreshLabel = (group: AnalyticsGroup) =>
-  analyticsGroupUnavailableOnly(group) ? 'n/a fresh' : `${fmtCompact(group.fresh)} fresh`;
+  analyticsGroupUnavailableOnly(group) ? '— fresh' : `${fmtCompact(group.fresh)} fresh`;
 const groupFreshTitle = (group: AnalyticsGroup) =>
   analyticsGroupUnavailableOnly(group) ? USAGE_UNAVAILABLE_HINT : `${fmtNum(group.fresh)} fresh tokens`;
 const groupCacheLabel = (group: AnalyticsGroup) =>
-  analyticsGroupUnavailableOnly(group) ? 'n/a cache' : `${fmtPct(group.cacheHitPct)} cache`;
+  analyticsGroupUnavailableOnly(group) ? '— cache' : `${fmtPct(group.cacheHitPct)} cache`;
 const groupPricingCoverage = (group: AnalyticsGroup) =>
-  group.unpriced > 0 ? ` · ${fmtNum(group.priced)}/${fmtNum(group.sessions)} fully priced` : '';
+  group.unpriced > 0
+    ? ` · ${PARTIALLY_MEASURED_LABEL} (${fmtNum(group.priced)}/${fmtNum(group.sessions)} fully priced)`
+    : '';
 const PRICED_SHARE_HINT =
   'Share of the known API-value subtotal in this breakdown; ≥ values include lower bounds from incomplete pricing';
+const partiallyMeasuredBarTrack = css({
+  border: '1px dashed token(colors.accent)',
+  bg: 'surfaceMuted',
+  boxSizing: 'border-box',
+});
+const groupBarPresentation = (group: AnalyticsGroup, maxKnownCost: number) =>
+  breakdownBarPresentation({
+    knownCost: group.costSum,
+    maxKnownCost,
+    unpricedCount: group.unpriced,
+  });
+const groupDisplayKey = (group: AnalyticsGroup, countLabel: string) =>
+  countLabel === 'models' ? breakdownModelLabel(group.key) : group.key;
+const groupBarAriaLabel = (group: AnalyticsGroup, maxKnownCost: number) =>
+  `${breakdownPriceStateLabel(groupBarPresentation(group, maxKnownCost).state)} API-value bar`;
 
 const GroupApiValue = (props: { group: AnalyticsGroup }) => {
+  const state = breakdownPriceState({
+    knownCost: props.group.costSum,
+    unpricedCount: props.group.unpriced,
+  });
   const presentation = apiValuePresentation({
     costApprox: props.group.costSum,
-    costKnown: props.group.unpriced === 0,
+    costKnown: state !== 'partially measured',
   });
-  return <span title={presentation.title}>{presentation.label}</span>;
+  const facts =
+    state === 'partially measured'
+      ? [
+          {
+            description: `${fmtNum(props.group.unpriced)} of ${fmtNum(
+              props.group.sessions,
+            )} sessions in this slice include work from models with no published price. Their work is counted; its API value is not.`,
+            label: PARTIALLY_MEASURED_LABEL,
+            severity: 'warning' as const,
+          },
+        ]
+      : [];
+  return (
+    <CellWithProvenance facts={facts}>
+      <span title={presentation.title}>{presentation.label}</span>
+    </CellWithProvenance>
+  );
 };
 
 export const GroupPanel = (props: {
@@ -55,7 +99,7 @@ export const GroupPanel = (props: {
   harnessTones?: boolean;
   onFilter?: (value: string) => void;
 }) => {
-  const maxCost = createMemo(() => Math.max(1, ...props.groups.map((group) => group.costSum)));
+  const maxCost = createMemo(() => Math.max(0, ...props.groups.map((group) => group.costSum)));
   return (
     <div class={groupPanel}>
       <div class={groupHeader}>
@@ -67,11 +111,14 @@ export const GroupPanel = (props: {
       <div class={groupRows}>
         <For each={props.groups}>
           {(group) => (
-            <div class={groupRow}>
+            <div class={groupRow} data-price-state={groupBarPresentation(group, maxCost()).state}>
               <div>
-                <Show fallback={<div class={strongCell}>{group.key}</div>} when={props.onFilter}>
+                <Show
+                  fallback={<div class={strongCell}>{groupDisplayKey(group, props.countLabel)}</div>}
+                  when={props.onFilter}
+                >
                   <button class={groupKeyButton} onClick={() => props.onFilter?.(group.key)} type="button">
-                    {group.key}
+                    {groupDisplayKey(group, props.countLabel)}
                   </button>
                 </Show>
                 <div class={groupSub} title={groupFreshTitle(group)}>
@@ -79,22 +126,27 @@ export const GroupPanel = (props: {
                   · {groupCacheLabel(group)}
                   {groupPricingCoverage(group)}
                 </div>
-                <div class={barTrack}>
+                <div
+                  aria-label={groupBarAriaLabel(group, maxCost())}
+                  class={cx(
+                    barTrack,
+                    groupBarPresentation(group, maxCost()).state === 'partially measured'
+                      ? partiallyMeasuredBarTrack
+                      : undefined,
+                  )}
+                  data-price-bar={groupBarPresentation(group, maxCost()).state}
+                  data-width-percent={String(groupBarPresentation(group, maxCost()).widthPercent)}
+                  role="img"
+                >
                   <div
                     class={cx(barFill, (props.harnessTones ? harnessFillFor(group.harness) : undefined) ?? accentFill)}
-                    style={{
-                      width: analyticsGroupUnavailableOnly(group)
-                        ? '0%'
-                        : `${Math.max(3, (group.costSum / maxCost()) * 100)}%`,
-                    }}
+                    style={{ width: `${groupBarPresentation(group, maxCost()).widthPercent}%` }}
                   />
                 </div>
               </div>
               <div class={right}>
                 <div class={groupValue}>
-                  <Show fallback={<UsageUnavailableCell />} when={!analyticsGroupUnavailableOnly(group)}>
-                    <GroupApiValue group={group} />
-                  </Show>
+                  <GroupApiValue group={group} />
                 </div>
                 <div class={groupPct} title={PRICED_SHARE_HINT}>
                   {fmtPct(group.costPercent)}

@@ -1,8 +1,11 @@
 # Plan 047: Make grouping portable user data, for projects and campaigns
 
-> **Status: DRAFT.** The merge model was settled with the maintainer on 2026-07-26
-> and is recorded in *The merge model* below; this plan is no longer blocked. It
-> still depends on plan 045 wave 4 for the derived label.
+> **Status: BLOCKED BY AN IMPLEMENTATION STOP.** The intended merge granularity
+> was settled with the maintainer on 2026-07-26, but execution proved that the
+> recorded timestamp model cannot distinguish causal succession from concurrency
+> and cannot preserve the current exclusive-membership invariant. No production
+> implementation has started. The required decision is recorded in
+> *Implementation audit — STOP triggered* below.
 >
 > **Baseline**: written at `96b3dff`, rebased onto `3406147` (PR #21). That merge
 > reworked the peer-confirmation protocol this plan builds on — see *Current state*.
@@ -103,8 +106,10 @@ confirmation boundary this plan's conflict resolution sits on.
 
 ## The merge model
 
-**Settled 2026-07-26. This section is the authority; the options table below is
-retained only as rationale.**
+**Recorded 2026-07-26 as the intended merge granularity. The implementation audit
+below proved that its timestamp representation is not causally complete. This
+section and the options table are retained as rationale, not executable authority,
+until the STOP is resolved.**
 
 Two rules, and one constraint inherited from plan 040.
 
@@ -177,6 +182,47 @@ matches the state it previewed. Two consequences:
 
 Recorded: **per-field last-write-wins, plus a per-membership set** (see *The merge
 model*).
+
+## Implementation audit — STOP triggered
+
+Execution reached the plan's explicit “recorded merge model cannot express this
+case” condition before Step 1 changed production code. Four cases exceed the
+current model:
+
+1. **Causality.** A machine can import a rename and then rename the same field
+   again. That causally newer value is indistinguishable from two genuinely
+   concurrent renames when records carry only values and wall-clock timestamps.
+   A timestamp orders events; it does not prove that one edit observed the other.
+2. **Exclusive membership.** The current project model rejects overlapping
+   selectors and a move removes the old membership. Two independent per-group
+   sets would silently merge concurrent assignments of one member to two groups
+   into an invalid double membership.
+3. **Group deletion.** Membership removals have tombstones, but deleting the group
+   itself has no versioned state. An older portable copy can therefore resurrect a
+   group that another machine deleted.
+4. **Confirmation atomicity.** Step 5 leaves non-conflicting partial application
+   versus no write undecided. Plan 040 already makes peer confirmation one atomic
+   `BEGIN IMMEDIATE` transaction; partially applied conflicts need another durable
+   queue and lifecycle that this plan does not define.
+
+The smallest coherent amendment recommended by the execution audit is:
+
+- use a causal version register per scalar field and membership, keeping wall-clock
+  timestamps and origin machines as display metadata only;
+- model membership as one exclusive assignment `(kind, member) -> groupId | ungrouped`
+  rather than independent sets whose cross-group invariants cannot be merged;
+- preserve canonical project selectors and their overlap semantics during
+  migration; resolving broad or unmatched selectors to current paths is not equivalent;
+- add an `active | deleted` causal register to each group and retain deletions;
+- resolve every conflict in preview, then revalidate the opaque confirmation token,
+  grouping state, and resolutions and write the whole import in one transaction;
+- offer `keep both` only when the resulting assignments are disjoint; otherwise the
+  user must choose or explicitly repartition the conflicting membership.
+
+This amendment is a recommendation, not a retroactive product decision. Step 1
+must not start, and the recorded “merge model is decided” done criterion must not
+be treated as satisfied, until the maintainer explicitly accepts this amendment or
+records another causally complete model.
 
 ## Scope
 
@@ -345,7 +391,8 @@ standing rule on real, local, and private data.
 
 ## Done criteria
 
-- [x] The merge model is decided and written down (*The merge model*, 2026-07-26).
+- [ ] A causally complete merge model is decided and written down (*Implementation
+      audit — STOP triggered*).
 - [ ] Conflicts are scoped to one scalar field or one membership, never wider.
 - [ ] Anything the two rules can settle is settled with no prompt.
 - [ ] Grouping is a user-owned contribution, separate from collector-owned rows.

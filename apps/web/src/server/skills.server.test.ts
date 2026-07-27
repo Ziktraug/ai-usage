@@ -345,6 +345,8 @@ describe('skills server input validation', () => {
       ),
     ).toEqual([
       {
+        groupId: 'source:ai-usage',
+        groupLabel: 'ai-usage',
         label: 'ai-usage',
         machineLabel: 'Workstation',
         path: '/home/nathan/Projects/Github/ai-usage',
@@ -361,7 +363,7 @@ describe('skills server input validation', () => {
           projectGroups: [
             {
               grouped: true,
-              id: 'group:exalibur',
+              id: 'group:019f9e7d-1111-4111-8111-111111111111',
               name: 'exalibur',
               sources: [
                 {
@@ -390,7 +392,7 @@ describe('skills server input validation', () => {
       ),
     ).toEqual([
       {
-        groupId: 'group:exalibur',
+        groupId: 'group:019f9e7d-1111-4111-8111-111111111111',
         groupLabel: 'exalibur',
         label: 'exalibur',
         machineLabel: 'Workstation',
@@ -399,7 +401,7 @@ describe('skills server input validation', () => {
         sessions: 4,
       },
       {
-        groupId: 'group:exalibur',
+        groupId: 'group:019f9e7d-1111-4111-8111-111111111111',
         groupLabel: 'exalibur',
         label: 'exalibur',
         machineLabel: 'Workstation',
@@ -481,6 +483,8 @@ describe('skills server input validation', () => {
       ),
     ).toEqual([
       {
+        groupId: 'source:local',
+        groupLabel: 'local',
         label: 'local',
         path: '/local/project',
         project: 'local',

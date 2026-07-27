@@ -90,6 +90,24 @@ export interface QueryRowsResult {
   sourceAuthorities: StoredSourceAuthority[];
 }
 
+export interface UsageMachineFleetItem extends UsageMachine {
+  hasLocalObservedRows: boolean;
+  hasPortableRows: boolean;
+  lastSeenAt: string;
+  newestSessionAt: string | null;
+  sessionCount: number;
+}
+
+export interface QueryUsageMachineFleetInput {
+  dbPath: string;
+}
+
+export interface QueryUsageMachineFleetResult {
+  machines: UsageMachineFleetItem[];
+  /** Stored rows that failed validation and were skipped from fleet metadata. */
+  skipped: number;
+}
+
 export interface EnrichableUsageRow {
   readonly row: CollectedUsageRow;
   readonly rowKey: string;
@@ -274,6 +292,9 @@ export interface UsageStore {
     input?: QueryNormalizedDatasetItemsInput,
   ): Effect.Effect<QueryNormalizedDatasetItemsResult, UsageStoreError>;
   queryReportRows(input?: QueryReportRowsInput): Effect.Effect<QueryRowsResult, UsageStoreError>;
+  queryUsageMachineFleet(
+    input?: QueryUsageMachineFleetInput,
+  ): Effect.Effect<QueryUsageMachineFleetResult, UsageStoreError>;
   queryUsageStoreGeneration(input?: QueryUsageStoreGenerationInput): Effect.Effect<number, UsageStoreError>;
   upsertRtkSavingsContributions(
     input: UpsertRtkSavingsContributionsInput,
@@ -303,6 +324,14 @@ interface StoredRowRecord {
   row_json: string;
   row_key: string;
   source_authority: StoredSourceAuthority;
+}
+
+interface StoredMachineFleetRow {
+  last_seen_at: string;
+  origin_machine_id: string;
+  row_json: string;
+  source_authority: StoredSourceAuthority;
+  status: StoredUsageRowStatus;
 }
 
 interface StoredEnrichmentRecord {
@@ -1427,6 +1456,84 @@ export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<Quer
     }),
   );
 
+export const queryUsageMachineFleet = (
+  input: QueryUsageMachineFleetInput,
+): Effect.Effect<QueryUsageMachineFleetResult, UsageStoreError> =>
+  withUsageStore(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const records = db
+          .query(`
+            SELECT origin_machine_id, row_json, status, last_seen_at, source_authority
+            FROM usage_rows
+            ORDER BY last_seen_at DESC, row_key ASC
+          `)
+          .all() as StoredMachineFleetRow[];
+        const machines = new Map<string, UsageMachineFleetItem>();
+        let skipped = 0;
+
+        for (const record of records) {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(record.row_json) as unknown;
+          } catch {
+            skipped += 1;
+            continue;
+          }
+          const parsedLastSeenAt = new Date(record.last_seen_at);
+          if (
+            !isSerializedMergeRow(parsed) ||
+            parsed.source.machineId !== record.origin_machine_id ||
+            !Number.isFinite(parsedLastSeenAt.getTime()) ||
+            parsedLastSeenAt.toISOString() !== record.last_seen_at
+          ) {
+            skipped += 1;
+            continue;
+          }
+
+          const existing = machines.get(record.origin_machine_id);
+          const isActive = record.status === 'active';
+          const activeDate = isActive ? parsed.activeDate : null;
+          if (!existing) {
+            machines.set(record.origin_machine_id, {
+              id: record.origin_machine_id,
+              label: parsed.source.machineLabel || record.origin_machine_id,
+              hasLocalObservedRows: record.source_authority === 'local-observed',
+              hasPortableRows: record.source_authority === 'portable-opaque',
+              lastSeenAt: record.last_seen_at,
+              newestSessionAt: activeDate,
+              sessionCount: isActive ? 1 : 0,
+            });
+            continue;
+          }
+
+          existing.hasLocalObservedRows ||= record.source_authority === 'local-observed';
+          existing.hasPortableRows ||= record.source_authority === 'portable-opaque';
+          if (record.last_seen_at > existing.lastSeenAt) {
+            existing.lastSeenAt = record.last_seen_at;
+            existing.label = parsed.source.machineLabel || record.origin_machine_id;
+          }
+          if (isActive) {
+            existing.sessionCount += 1;
+            if (activeDate && (!existing.newestSessionAt || activeDate > existing.newestSessionAt)) {
+              existing.newestSessionAt = activeDate;
+            }
+          }
+        }
+
+        return {
+          machines: [...machines.values()].sort(
+            (left, right) =>
+              (right.newestSessionAt ?? '').localeCompare(left.newestSessionAt ?? '') ||
+              left.label.localeCompare(right.label),
+          ),
+          skipped,
+        };
+      },
+      catch: (cause) => usageStoreError('queryUsageMachineFleet', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
 export const queryEnrichableUsageRows = (
   input: QueryEnrichableUsageRowsInput,
 ): Effect.Effect<QueryEnrichableUsageRowsResult, UsageStoreError> =>
@@ -2196,6 +2303,7 @@ export const createUsageStore = (dbPath: string): UsageStore => ({
   queryEnrichableUsageRows: (input) => queryEnrichableUsageRows({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryNormalizedDatasetItems: (input) =>
     queryNormalizedDatasetItems({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
+  queryUsageMachineFleet: (input) => queryUsageMachineFleet({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryUsageStoreGeneration: (input) =>
     queryUsageStoreGeneration({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   upsertRtkSavingsContributions: (input) => upsertRtkSavingsContributions({ ...input, dbPath: input.dbPath ?? dbPath }),

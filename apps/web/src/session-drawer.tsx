@@ -1,9 +1,6 @@
 import { Drawer } from '@ai-usage/design-system';
 import { css, cx } from '@ai-usage/design-system/css';
 import {
-  detailItem,
-  detailLabel,
-  detailValue,
   drawer,
   drawerActions,
   drawerBody,
@@ -21,12 +18,14 @@ import {
   ghostButton,
   muted,
 } from '@ai-usage/design-system/report';
+import { provenanceForUsageRow } from '@ai-usage/report-core/provenance';
 import type { SessionDetailResponse } from '@ai-usage/report-core/session-detail';
 import type { SessionVcsResolveResponse } from '@ai-usage/report-core/session-vcs';
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import type { CampaignTotals, CampaignView } from './dashboard-model';
 import type { FieldFilterKey } from './dashboard-search';
 import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from './dashboard-sort';
+import { DrawerDetailItem as DetailItem } from './drawer-detail-item';
 import { SessionAnalysis } from './session-analysis';
 import { classifySessionAnalysisError, type SessionAnalysisError } from './session-analysis-error';
 import { sessionDurationSemantics } from './session-analysis-model';
@@ -48,13 +47,6 @@ import {
   SegmentBar,
   tokenSegmentClasses,
 } from './shared';
-
-const DetailItem = (props: { label: string; value: string; hint?: string }) => (
-  <div class={detailItem} title={props.hint}>
-    <div class={detailLabel}>{props.label}</div>
-    <div class={detailValue}>{props.value}</div>
-  </div>
-);
 
 const analysisDrawer = css({ w: { base: '100vw', md: 'min(960px, 94vw)' } });
 const SESSION_ANALYSIS_PANEL_ID = 'session-analysis-panel';
@@ -223,6 +215,9 @@ export const SessionDrawer = (props: {
   const apiValue = () => apiValuePresentation(props.row);
   const durationSemantics = () =>
     sessionDurationSemantics(props.row.source?.harnessKey, props.target.kind === 'campaign-root');
+  const partialSessionHint = () =>
+    provenanceForUsageRow(props.row).find((fact) => fact.kind === 'partial-session')?.description ??
+    'Local history did not cover the whole session.';
   const isInNavigation = () => position() >= 0;
   const previousAvailable = () =>
     props.navigation ? props.navigation.previous !== null : isInNavigation() && position() > 0;
@@ -405,7 +400,11 @@ export const SessionDrawer = (props: {
         <div class={drawerGrid}>
           <DetailItem label="Started" value={fmtDate(props.row.date)} />
           <DetailItem label="Ended" value={fmtDate(props.row.endDate)} />
-          <DetailItem label="Total tokens" value={fmtNum(props.row.tokenTotal)} />
+          <DetailItem
+            hint={`Exact token count: ${fmtNum(props.row.tokenTotal)}`}
+            label="Total tokens"
+            value={fmtCompact(props.row.tokenTotal)}
+          />
           <DetailItem hint={rtkSavedTitle(props.row)} label="RTK savings" value={rtkSavedLabel(props.row)} />
           <DetailItem hint={apiValue().title} label="API value" value={apiValue().label} />
           <DetailItem
@@ -429,7 +428,7 @@ export const SessionDrawer = (props: {
           <DetailItem label="Lines" value={lineDeltaLabel(props.row)} />
           <DetailItem label="Subagent" value={props.row.subagent ? 'Yes' : 'No'} />
           <Show when={props.row.partial}>
-            <DetailItem hint="Local history did not cover the whole session" label="Partial" value="Yes" />
+            <DetailItem hint={partialSessionHint()} label="Partial" value="Yes" />
           </Show>
           <Show when={props.row.usageUnavailable}>
             <DetailItem
@@ -462,7 +461,7 @@ export const SessionDrawer = (props: {
             onClick={() => props.onFieldFilter('project', props.row.projectKey)}
             type="button"
           >
-            Filter project: {props.row.projectKey}
+            Filter project: {props.row.projectLabel}
           </button>
           <button class={ghostButton} onClick={() => props.onFieldFilter('model', props.row.modelKey)} type="button">
             Filter model: {props.row.modelKey}

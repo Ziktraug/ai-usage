@@ -36,9 +36,6 @@ export const sessionAnalysisTargetForCampaign = (
 });
 
 export const sessionAnalysisTargetForPageItem = (item: SessionPageItem): SessionAnalysisTarget => {
-  if (item.kind === 'session') {
-    return sessionAnalysisTargetForSession(item.row);
-  }
   const { campaignTotalCount, campaignVisibleCount } = item.row;
   if (campaignTotalCount === undefined || campaignVisibleCount === undefined) {
     throw new Error('Served campaign rows must include visible and total counts');
@@ -63,5 +60,8 @@ export const sessionAnalysisTargetForTopLevelRow = (input: {
     return sessionAnalysisTargetForPageItem(pageItem);
   }
   const campaign = input.campaigns.find((candidate) => candidate.root.rowId === input.row.rowId);
-  return campaign ? sessionAnalysisTargetForCampaign(input.row, campaign) : sessionAnalysisTargetForSession(input.row);
+  if (!campaign) {
+    throw new Error('Top-level session rows must resolve to a campaign');
+  }
+  return sessionAnalysisTargetForCampaign(input.row, campaign);
 };

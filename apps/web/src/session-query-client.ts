@@ -9,6 +9,7 @@ import {
   type SessionCampaignChildrenResult,
   type SessionNeighborRequest,
   type SessionNeighborResult,
+  type SessionOrigin,
   type SessionPageItem,
   type SessionPageResult,
   type SessionPresentationRow,
@@ -31,10 +32,10 @@ export const SERVED_SESSION_PAGE_SIZE = 100;
 export type SessionQueryScope = Omit<SessionQueryRequest, 'cursor' | 'revision'>;
 
 export interface DashboardSessionQueryInput {
-  campaigns: boolean;
   fields: FieldFilters;
   harness: string[];
   machine: string[];
+  origin: SessionOrigin[];
   pageSize?: number;
   query: string;
   range: DateBounds;
@@ -96,12 +97,12 @@ export const buildDashboardSessionQueryScope = (input: DashboardSessionQueryInpu
     return { desc, id };
   });
   const validated = parseSessionQueryRequest({
-    campaigns: input.campaigns,
     cursor: null,
     filters: {
       fields: input.fields,
       harness: input.harness,
       machine: input.machine,
+      origin: input.origin,
       query: input.query,
     },
     pageSize: input.pageSize ?? SERVED_SESSION_PAGE_SIZE,
@@ -134,9 +135,6 @@ const manifestRevision = (result: WebReportRevisionManifestResult): string => {
 
 const rowsForState = (state: SessionQueryState): SessionPresentationRow[] =>
   state.items.map((item) => {
-    if (item.kind !== 'campaign') {
-      return item.row;
-    }
     const children = state.campaignChildren.get(item.campaignKey)?.items;
     return {
       ...item.row,
@@ -163,8 +161,7 @@ const appendUniqueBy = <Item>(current: Item[], incoming: Item[], keyFor: (item: 
 
 const presentationRowKey = (row: SessionPresentationRow): string => row.rowId;
 
-const pageItemKey = (item: SessionPageItem): string =>
-  item.kind === 'campaign' ? `campaign:${item.campaignKey}` : `session:${item.row.rowId}`;
+const pageItemKey = (item: SessionPageItem): string => `campaign:${item.campaignKey}`;
 
 export interface SessionQueryCoordinator {
   canCommitPrepared: (prepared: PreparedSessionQueryState) => boolean;

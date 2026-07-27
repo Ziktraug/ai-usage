@@ -20,12 +20,11 @@ import {
   type SessionVcsRepository,
   sessionVcsCommitUrl,
 } from '@ai-usage/report-core/session-vcs';
-import type { UsageModelSegment } from '@ai-usage/report-core/types';
+import type { SessionOrigin, UsageModelSegment } from '@ai-usage/report-core/types';
 import { actualCost, approximateApiCost, UNSEGMENTED_MULTI_MODEL_LABEL } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import type { CollectedSession } from './collected-session';
 import type { LocalHistoryError } from './errors';
-import { SMALL_HISTORY_JSON_MAX_BYTES } from './history-budgets';
 import {
   historyPath,
   type LocalHistoryDatabase,
@@ -36,11 +35,27 @@ import {
 import { parseNonNegativeSafeInteger } from './metric-validation';
 import { withPerfSpan } from './perf';
 import { firstExisting, resolvePaths } from './platform-paths';
+import { deriveSessionLabelFromPrompt } from './session-label';
 import { base, safeJSON, usablePrompt } from './text';
+
+type CodexSubagent =
+  | { kind: 'guardian' }
+  | { kind: 'review' }
+  | { kind: 'thread-spawn'; threadSpawn: Record<string, unknown> };
+
+type CodexSubagentKind = CodexSubagent['kind'];
+
+const isCodexSubagentKind = (value: unknown): value is CodexSubagentKind =>
+  value === 'guardian' || value === 'review' || value === 'thread-spawn';
+
+export interface CodexCollectedSession extends CollectedSession {
+  origin: SessionOrigin;
+}
 
 interface CodexSession {
   activeDurationMs: number | null;
   agentNickname: string | null;
+  classifierParent: string | null;
   cwd: string | null;
   durationPartial: boolean;
   end: Date | null;
@@ -55,8 +70,8 @@ interface CodexSession {
   phases: CodexSessionPhase[];
   rejectedMetricRecords: number;
   reportPartial: boolean;
-  source: string | null;
   start: Date | null;
+  subagentKind: CodexSubagentKind | null;
   subscription: boolean;
   tcr: number;
   threadSource: string | null;
@@ -90,10 +105,9 @@ interface CodexThreadMetadata {
   id: string;
   model: string | null;
   parent: string | null;
-  source: string | null;
   start: Date | null;
+  subagentKind: CodexSubagentKind | null;
   threadSource: string | null;
-  title: string | null;
 }
 
 export interface CodexQuotaWindow {
@@ -176,8 +190,9 @@ interface SqliteDatabase {
 }
 
 // This cache stores normalized parser output, not raw JSONL. Bump whenever an
-// unchanged rollout could produce different counters, lineage, phases, or turns.
-const CODEX_SESSION_CACHE_VERSION = 15;
+// unchanged rollout could produce different counters, labels, origin, lineage,
+// phases, or turns.
+const CODEX_SESSION_CACHE_VERSION = 17;
 const CODEX_DETAIL_MAX_TOTAL_BYTES = 128 * 1024 * 1024;
 const CODEX_LINEAGE_MAX_DEPTH = 32;
 const CODEX_DETAIL_MAX_LINE_BYTES = 8 * 1024 * 1024;
@@ -218,36 +233,6 @@ export const listCodexSessionFiles: Effect.Effect<string[], LocalHistoryError, L
     (files) => ({ files: files.length }),
   );
 
-const readCodexThreadNames: Effect.Effect<
-  Map<string, string>,
-  LocalHistoryError,
-  LocalHistoryStorageService
-> = withPerfSpan(
-  'aiUsage.collect.codex.threadNames',
-  Effect.gen(function* () {
-    const storage = yield* LocalHistoryStorage;
-    const paths = resolvePaths(storage);
-    const names = new Map<string, string>();
-    const indexPath = paths.codex.sessionIndexFile;
-    if (!(yield* storage.exists(indexPath))) {
-      return names;
-    }
-
-    yield* storage.readLines(
-      indexPath,
-      (line) => {
-        const event = safeJSON(line);
-        if (typeof event?.id === 'string' && typeof event.thread_name === 'string') {
-          names.set(event.id, event.thread_name);
-        }
-      },
-      { maxBytes: SMALL_HISTORY_JSON_MAX_BYTES },
-    );
-    return names;
-  }),
-  (names) => ({ names: names.size }),
-);
-
 const codexStateDbCandidates = (storage: LocalHistoryStorageService) => [
   historyPath(storage, '.codex', 'state_5.sqlite'),
   historyPath(storage, '.codex', 'sqlite', 'state_5.sqlite'),
@@ -257,7 +242,6 @@ const THREAD_METADATA_SQL = `
 select
   id,
   cwd,
-  title,
   first_user_message as firstUser,
   source,
   thread_source as threadSource,
@@ -291,7 +275,6 @@ interface CodexThreadMetadataRow {
   model?: string | null;
   source?: string | null;
   threadSource?: string | null;
-  title?: string | null;
   updatedAt?: number | null;
 }
 
@@ -354,15 +337,15 @@ const codexThreadMetadataFromRow = (row: CodexThreadMetadataRow, parent: string 
   if (!id) {
     return null;
   }
+  const subagent = codexSubagentFromSource(row.source);
   return {
     id,
     parent,
     cwd: nonEmpty(row.cwd),
-    title: nonEmpty(row.title),
     firstUser: nonEmpty(row.firstUser),
-    source: nonEmpty(row.source),
     threadSource: nonEmpty(row.threadSource),
     agentNickname: agentNicknameFromSource(row.source),
+    subagentKind: subagent?.kind ?? null,
     model: nonEmpty(row.model),
     start: unixDate(row.createdAt),
     end: unixDate(row.updatedAt),
@@ -436,6 +419,7 @@ const readCodexThreadMetadataForSession = (
 
 const emptySession = (): CodexSession => ({
   activeDurationMs: null,
+  classifierParent: null,
   id: null,
   parent: null,
   durationPartial: false,
@@ -448,7 +432,7 @@ const emptySession = (): CodexSession => ({
   model: 'codex',
   models: [],
   phases: [],
-  source: null,
+  subagentKind: null,
   threadSource: null,
   agentNickname: null,
   subscription: false,
@@ -690,6 +674,8 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       typeof value.observedPriorTokenUsage !== 'boolean' ||
       typeof value.durationPartial !== 'boolean' ||
       typeof value.reportPartial !== 'boolean' ||
+      (value.classifierParent !== null && typeof value.classifierParent !== 'string') ||
+      (value.subagentKind !== null && !isCodexSubagentKind(value.subagentKind)) ||
       !(activeDuration === null || activeDuration.ok) ||
       models === null ||
       models.length !== rawModels?.length ||
@@ -703,6 +689,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
     }
     return {
       activeDurationMs: activeDuration?.value ?? null,
+      classifierParent: value.classifierParent,
       id: typeof value.id === 'string' ? value.id : null,
       parent: typeof value.parent === 'string' ? value.parent : null,
       durationPartial: value.durationPartial,
@@ -714,7 +701,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       model: value.model,
       models,
       phases,
-      source: typeof value.source === 'string' ? value.source : null,
+      subagentKind: value.subagentKind,
       threadSource: typeof value.threadSource === 'string' ? value.threadSource : null,
       agentNickname: typeof value.agentNickname === 'string' ? value.agentNickname : null,
       subscription: value.subscription,
@@ -976,7 +963,7 @@ const createCodexSessionParser = (captureDetail = false) => {
       return;
     }
     if (!session.firstUser) {
-      session.firstUser = normalized.slice(0, 200);
+      session.firstUser = deriveSessionLabelFromPrompt(text);
     }
     if (!captureDetail) {
       return;
@@ -1195,12 +1182,19 @@ const createCodexSessionParser = (captureDetail = false) => {
       if (sessionVcs) {
         session.vcs = sessionVcs;
       }
-      session.source = payload.source == null ? session.source : JSON.stringify(payload.source);
       session.threadSource = typeof payload.thread_source === 'string' ? payload.thread_source : session.threadSource;
-      const spawn = threadSpawnFromSource(payload.source);
-      if (spawn) {
-        session.parent = typeof spawn.parent_thread_id === 'string' ? spawn.parent_thread_id : session.parent;
-        session.agentNickname = nonEmpty(spawn.agent_nickname) ?? nonEmpty(spawn.agent_role) ?? session.agentNickname;
+      const subagent = codexSubagentFromSource(payload.source);
+      if (subagent) {
+        session.subagentKind = subagent.kind;
+      }
+      if (subagent?.kind === 'thread-spawn') {
+        session.parent = nonEmpty(subagent.threadSpawn.parent_thread_id) ?? session.parent;
+        session.agentNickname =
+          nonEmpty(subagent.threadSpawn.agent_nickname) ??
+          nonEmpty(subagent.threadSpawn.agent_role) ??
+          session.agentNickname;
+      } else if (subagent?.kind === 'guardian' || subagent?.kind === 'review') {
+        session.classifierParent = nonEmpty(payload.parent_thread_id) ?? session.classifierParent;
       }
     }
     if (event.type === 'turn_context' && typeof payload.model === 'string') {
@@ -1225,6 +1219,9 @@ const createCodexSessionParser = (captureDetail = false) => {
     }
     const userText = userTextFromPayload(payload);
     if (userText) {
+      if (session.subagentKind === 'guardian' && !session.classifierParent) {
+        session.classifierParent = guardianParentSessionId(userText);
+      }
       const canonical = payload.type === 'user_message';
       const promptMetadata = isRecord(payload.internal_chat_message_metadata_passthrough)
         ? payload.internal_chat_message_metadata_passthrough
@@ -1488,52 +1485,46 @@ const mergeMetadata = (session: CodexSession, metadata: CodexThreadMetadata | un
       }
     }
   }
-  session.source = session.source ?? metadata.source;
   session.threadSource = session.threadSource ?? metadata.threadSource;
   session.agentNickname = session.agentNickname ?? metadata.agentNickname;
-  session.firstUser = session.firstUser ?? (metadata.firstUser ? usablePrompt(metadata.firstUser.slice(0, 200)) : null);
+  session.subagentKind = session.subagentKind ?? metadata.subagentKind;
+  if (session.subagentKind === 'guardian' && !session.classifierParent) {
+    session.classifierParent = guardianParentSessionId(metadata.firstUser);
+  }
+  const metadataFirstUser =
+    metadata.firstUser && usablePrompt(metadata.firstUser) ? deriveSessionLabelFromPrompt(metadata.firstUser) : null;
+  session.firstUser = session.firstUser ?? metadataFirstUser;
   return removeSelfParent(session);
 };
 
-const isGuardianSession = (session: CodexSession, candidateName: string | null) =>
-  session.source?.includes('"guardian"') || candidateName?.startsWith('The following is the Codex agent history');
+const REVIEWED_CODEX_SESSION_ID =
+  /Reviewed Codex session id:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/iu;
 
-const REVIEWED_CODEX_SESSION_ID = /Reviewed Codex session id:\s*([0-9a-f-]{36})/i;
+const guardianParentSessionId = (conversation: string | null | undefined): string | null =>
+  conversation?.match(REVIEWED_CODEX_SESSION_ID)?.[1] ?? null;
 
-const guardianName = (candidateName: string | null) => {
-  const reviewedId = candidateName?.match(REVIEWED_CODEX_SESSION_ID)?.[1];
-  return reviewedId ? `Codex guardian approval (${reviewedId.slice(0, 8)})` : 'Codex guardian approval';
-};
-
-const codexSessionName = (
-  session: CodexSession,
-  indexedName: string | undefined,
-  metadata: CodexThreadMetadata | undefined,
-) => {
+const codexSessionName = (session: CodexSession) => {
   if (session.agentNickname) {
     return session.agentNickname;
   }
-  if (indexedName) {
-    return indexedName;
-  }
-  const candidate = metadata?.title || session.firstUser;
-  if (isGuardianSession(session, candidate ?? null)) {
-    return guardianName(candidate ?? null);
-  }
-  return candidate || (session.id ? `codex ${session.id.slice(0, 8)}` : 'codex');
+  return session.firstUser || (session.id ? `codex ${session.id}` : 'codex');
 };
 
-const codexTitleSource = (
-  session: CodexSession,
-  indexedName: string | undefined,
-  metadata: CodexThreadMetadata | undefined,
-  isSubagent: boolean,
-) => {
+const codexOrigin = (session: CodexSession): SessionOrigin => {
+  if (session.subagentKind === 'thread-spawn') {
+    return 'subagent';
+  }
+  if (session.subagentKind === 'guardian' || session.subagentKind === 'review') {
+    return 'classifier';
+  }
+  return session.threadSource === 'user' ? 'human' : 'unknown';
+};
+
+const codexTitleSource = (session: CodexSession, isSubagent: boolean) => {
   if (isSubagent && session.agentNickname) {
     return 'agent-role';
   }
-  const candidate = indexedName || metadata?.title || session.firstUser;
-  return candidate ? 'first-prompt' : 'id';
+  return session.firstUser ? 'first-prompt' : 'id';
 };
 
 const readCodexSessions = (
@@ -1663,7 +1654,7 @@ const readCodexSessions = (
 
 export interface CodexUsageSessionsResult {
   rejectedMetricRecords: number;
-  sessions: CollectedSession[];
+  sessions: CodexCollectedSession[];
 }
 
 const resolveCodexRootId = (session: CodexSession, sessionsById: ReadonlyMap<string, CodexSession>): string | null => {
@@ -1810,7 +1801,6 @@ export const readCodexUsageSessionsResult: Effect.Effect<
 > = withPerfSpan(
   'aiUsage.collect.codex.usageSessions',
   Effect.gen(function* () {
-    const names = yield* readCodexThreadNames;
     const metadata = yield* readCodexThreadMetadata;
     const { rejectedMetricRecords, sessions } = yield* readCodexSessions(metadata);
     const byId = new Map<string, CodexSession>();
@@ -1820,30 +1810,28 @@ export const readCodexUsageSessionsResult: Effect.Effect<
       }
     }
     const children = new Map<string, CodexSession[]>();
-    const childIds = new Set<string>();
     for (const session of sessions) {
       if (session.id && session.parent && byId.has(session.parent)) {
-        childIds.add(session.id);
         const siblings = children.get(session.parent) ?? [];
         siblings.push(session);
         children.set(session.parent, siblings);
       }
     }
 
-    const usageSessions: CollectedSession[] = [];
+    const usageSessions: CodexCollectedSession[] = [];
     for (const session of sessions) {
       const kids = (session.id && children.get(session.id)) || [];
-      const meta = session.id ? metadata.get(session.id) : undefined;
       const tokens = {
         in: session.tin,
         out: session.tout,
         cr: session.tcr,
         cw: 0,
       };
-      const isSubagent = (session.id ? childIds.has(session.id) : false) || session.threadSource === 'subagent';
+      const origin = codexOrigin(session);
+      const isSubagent = origin === 'subagent';
+      const classifierRootSourceSessionId = origin === 'classifier' ? session.classifierParent : null;
       const parentSession = session.parent ? byId.get(session.parent) : undefined;
       const subscription = session.subscription || Boolean(parentSession?.subscription);
-      const indexedName = session.id ? names.get(session.id) : undefined;
       const usageOwnedByRoot = isCodexUsageOwnedByRoot(session, byId);
       const modelSegments = codexModelSegments(session);
       const costApprox = modelSegments.reduce((total, segment) => total + segment.costApprox, 0);
@@ -1853,6 +1841,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
           harnessKey: 'codex',
           sourceSessionId: session.id,
           ...(session.parent === null ? {} : { parentSourceSessionId: session.parent }),
+          ...(classifierRootSourceSessionId ? { rootSourceSessionId: classifierRootSourceSessionId } : {}),
           sourcePath: session.cwd,
           ...(session.vcs ? { vcs: session.vcs } : {}),
         },
@@ -1863,8 +1852,9 @@ export const readCodexUsageSessionsResult: Effect.Effect<
         model: session.model,
         ...(usageOwnedByRoot ? {} : { modelSegments }),
         models: session.models,
-        name: codexSessionName(session, indexedName, meta),
-        titleSource: codexTitleSource(session, indexedName, meta, isSubagent),
+        name: codexSessionName(session),
+        origin,
+        titleSource: codexTitleSource(session, isSubagent),
         project: base(session.cwd),
         tokens: usageOwnedByRoot ? { cr: 0, cw: 0, in: 0, out: 0 } : tokens,
         cost: subscription ? actualCost(0) : approximateApiCost,
@@ -1887,8 +1877,11 @@ export const readCodexUsageSessionsResult: Effect.Effect<
   (result) => ({ rejectedMetricRecords: result.rejectedMetricRecords, sessions: result.sessions.length }),
 );
 
-export const readCodexUsageSessions: Effect.Effect<CollectedSession[], LocalHistoryError, LocalHistoryStorageService> =
-  readCodexUsageSessionsResult.pipe(Effect.map((result) => result.sessions));
+export const readCodexUsageSessions: Effect.Effect<
+  CodexCollectedSession[],
+  LocalHistoryError,
+  LocalHistoryStorageService
+> = readCodexUsageSessionsResult.pipe(Effect.map((result) => result.sessions));
 
 const indexCodexRolloutFiles = (files: readonly string[]): ReadonlyMap<string, readonly string[]> => {
   const filesBySessionId = new Map<string, string[]>();
@@ -2056,16 +2049,34 @@ const findLatestRawCodexRateLimits = (
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const threadSpawnFromSource = (source: unknown): Record<string, unknown> | null => {
-  if (!isRecord(source)) {
+const codexSourceRecord = (source: unknown): Record<string, unknown> | null => {
+  if (typeof source === 'string') {
+    return safeJSON(source);
+  }
+  return isRecord(source) ? source : null;
+};
+
+const codexSubagentFromSource = (source: unknown): CodexSubagent | null => {
+  const parsedSource = codexSourceRecord(source);
+  if (!parsedSource) {
     return null;
   }
-  const { subagent } = source;
+  const { subagent } = parsedSource;
+  if (subagent === 'review') {
+    return { kind: 'review' };
+  }
   if (!isRecord(subagent)) {
     return null;
   }
-  const threadSpawn = subagent.thread_spawn;
-  return isRecord(threadSpawn) ? threadSpawn : null;
+  if (isRecord(subagent.thread_spawn)) {
+    return { kind: 'thread-spawn', threadSpawn: subagent.thread_spawn };
+  }
+  return subagent.other === 'guardian' ? { kind: 'guardian' } : null;
+};
+
+const threadSpawnFromSource = (source: unknown): Record<string, unknown> | null => {
+  const subagent = codexSubagentFromSource(source);
+  return subagent?.kind === 'thread-spawn' ? subagent.threadSpawn : null;
 };
 
 export const findLatestCodexQuotaSnapshot = (

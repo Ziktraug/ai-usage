@@ -1,7 +1,11 @@
 import type { CDPSession, Page, Response } from '@playwright/test';
 import { expect, test } from './browser-test';
 import { afterAnimationFrame, type SessionSurfaceMode, sessionSurface } from './session-scroll-driver';
-import { SESSION_SCROLL_EXPECTED_COUNT, SESSION_SCROLL_FILTER_QUERY } from './session-scroll-fixture';
+import {
+  SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT,
+  SESSION_SCROLL_EXPECTED_COUNT,
+  SESSION_SCROLL_FILTER_QUERY,
+} from './session-scroll-fixture';
 
 interface SessionScrollSample {
   desktopMaximumRenderedItems: number;
@@ -15,7 +19,7 @@ interface SessionScrollSample {
   sortMs: number;
 }
 
-const LAST_SESSION_INDEX = SESSION_SCROLL_EXPECTED_COUNT - 1;
+const LAST_CAMPAIGN_INDEX = SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT - 1;
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:/;
 const SERVER_FUNCTION_PATH = '/_serverFn/';
 const samples: SessionScrollSample[] = [];
@@ -62,7 +66,7 @@ const waitForAllRows = async (
       },
       { intervals: [25, 50, 100], timeout: 120_000 },
     )
-    .toBe(LAST_SESSION_INDEX);
+    .toBe(LAST_CAMPAIGN_INDEX);
 
   return { maximumItems, maximumNodes };
 };
@@ -86,7 +90,7 @@ const runSample = async (page: Page): Promise<SessionScrollSample> => {
 
   await page.setViewportSize({ height: 900, width: 1024 });
   const initialStartedAt = performance.now();
-  await page.goto('/?campaigns=off&tab=sessions');
+  await page.goto('/?origin=%5B%5D&tab=sessions');
   const report = page.locator('main[data-hydrated="true"]');
   await expect(report).toBeVisible();
   await expect(page.getByText('5,000 / 5,000 sessions', { exact: true })).toBeVisible();
@@ -128,7 +132,7 @@ const runSample = async (page: Page): Promise<SessionScrollSample> => {
   const filterMs = performance.now() - filterStartedAt;
 
   await page.setViewportSize({ height: 844, width: 390 });
-  await page.goto('/?campaigns=off&tab=sessions');
+  await page.goto('/?origin=%5B%5D&tab=sessions');
   await expect(page.getByText('5,000 / 5,000 sessions', { exact: true })).toBeVisible();
   const mobileMaximum = await waitForAllRows(page, 'mobile');
 
@@ -167,7 +171,7 @@ test.afterAll(() => {
     sample.heapDeltaBytes === null ? [] : [sample.heapDeltaBytes],
   );
   const output = {
-    fixture: { campaigns: false, sessions: SESSION_SCROLL_EXPECTED_COUNT },
+    fixture: { campaigns: SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT, sessions: SESSION_SCROLL_EXPECTED_COUNT },
     medians: {
       desktopMaximumRenderedItems: median(samples.map((sample) => sample.desktopMaximumRenderedItems)),
       desktopMaximumSessionDomNodes: median(samples.map((sample) => sample.desktopMaximumSessionDomNodes)),

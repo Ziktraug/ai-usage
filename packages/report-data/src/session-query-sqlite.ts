@@ -1,3 +1,4 @@
+import { type ApiPriceMeasurement, combineApiPriceMeasurements } from '@ai-usage/report-core/provenance';
 import {
   parseSessionDetailRequest,
   type SessionDetailAnchorResult,
@@ -27,6 +28,7 @@ import {
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
 import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
+import { usageRowApiPriceMeasurement } from '@ai-usage/report-core/usage-row';
 
 export type SessionQueryKind = 'campaign-children' | 'neighbors' | 'session-detail-anchor' | 'sessions';
 
@@ -42,9 +44,14 @@ export interface SessionQuerySqliteDatabase {
 
 export type SessionQuerySqliteTrace = (query: { params: readonly unknown[]; sql: string }) => void;
 
-const SESSION_QUERY_SCHEMA_VERSION = 8;
+const SESSION_QUERY_SCHEMA_VERSION = 12;
 const CURSOR_PATTERN = /^sq1\.([0-9a-f]{16})\.([0-9a-z]+)$/;
 const CAMPAIGN_EXACT_COST_SORT_FIELDS = new Set<SessionSortField>(['actual', 'cost', 'quota']);
+const EMPTY_API_PRICE_MEASUREMENT = {
+  knownCost: 0,
+  state: 'zero',
+  unpricedFreshTokens: 0,
+} as const satisfies ApiPriceMeasurement;
 const isUnknownRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 const withoutSource = (row: Record<string, unknown>): Record<string, unknown> => {
@@ -88,19 +95,22 @@ interface ItemRecord {
   ambiguous: number | null;
   calls: number | null;
   campaign_key: string | null;
+  classifier_count: number | null;
+  classifier_fresh_tokens: number | null;
   cost_actual: number | null;
   cost_approx: number | null;
   cost_known: number | null;
   cost_quota: number | null;
   duration_ms: number | null;
   fresh_tokens: number | null;
-  item_kind: 'campaign' | 'session';
+  item_kind: 'campaign';
   latest_active_date: string | null;
   latest_active_time: number | null;
   line_delta: number | null;
   lines_added: number | null;
   lines_deleted: number | null;
   partial: number | null;
+  price_measurement?: ApiPriceMeasurement;
   row_json: string;
   rtk_command_count: number | null;
   rtk_input_tokens: number | null;
@@ -135,6 +145,7 @@ interface CampaignCostRecord {
   cost_approx: number;
   cost_known: number;
   cost_quota: number | null;
+  row_json: string;
 }
 
 const executeAll = <RecordType>(
@@ -203,7 +214,13 @@ export const buildSessionQuerySqlFilter = (request: SessionQueryRequest, alias =
     add(`${alias}.harness IN (${request.filters.harness.map(() => '?').join(', ')})`, ...request.filters.harness);
   }
   if (request.filters.machine.length > 0) {
-    add(`${alias}.machine_label IN (${request.filters.machine.map(() => '?').join(', ')})`, ...request.filters.machine);
+    add(`${alias}.machine_id IN (${request.filters.machine.map(() => '?').join(', ')})`, ...request.filters.machine);
+  }
+  if (request.filters.origin?.length) {
+    add(`${alias}.origin IN (${request.filters.origin.map(() => '?').join(', ')})`, ...request.filters.origin);
+  }
+  if (request.filters.fields.campaign !== undefined) {
+    add(`${alias}.campaign_key = ?`, request.filters.fields.campaign);
   }
   if (request.filters.fields.provider !== undefined) {
     add(`${alias}.provider_display = ?`, request.filters.fields.provider);
@@ -246,6 +263,44 @@ export const buildSessionQuerySqlOrder = (
 
 const filteredCte = (where: string): string => `filtered AS (SELECT * FROM session_rows WHERE ${where})`;
 
+const campaignRollupCte = `campaign_rollup AS (
+  SELECT * FROM filtered
+  UNION ALL
+  SELECT classifier.*
+  FROM session_rows AS classifier
+  WHERE classifier.origin = 'classifier'
+    AND classifier.ordinal NOT IN (SELECT ordinal FROM filtered)
+    AND classifier.campaign_key IN (
+      SELECT campaign_key
+      FROM filtered
+      WHERE campaign_key IS NOT NULL
+    )
+)`;
+
+const campaignProjectionCtes = `campaign_visible_counts AS (
+  SELECT campaign_key, COUNT(*) AS visible_count
+  FROM filtered
+  WHERE campaign_key IS NOT NULL
+  GROUP BY campaign_key
+),
+campaign_latest_candidates AS (
+  SELECT
+    campaign_key,
+    active_date,
+    active_time,
+    ROW_NUMBER() OVER (
+      PARTITION BY campaign_key
+      ORDER BY sort_date DESC, ordinal ASC
+    ) AS latest_position
+  FROM campaign_rollup
+  WHERE campaign_key IS NOT NULL
+),
+campaign_latest_rows AS (
+  SELECT campaign_key, active_date, active_time
+  FROM campaign_latest_candidates
+  WHERE latest_position = 1
+)`;
+
 const campaignExactCostCtes = `campaign_cost_rows AS (
   SELECT
     campaign_key,
@@ -258,7 +313,7 @@ const campaignExactCostCtes = `campaign_cost_rows AS (
     cost_approx,
     cost_known,
     cost_quota
-  FROM filtered
+  FROM campaign_rollup
   WHERE campaign_key IS NOT NULL
 ),
 campaign_cost_totals(
@@ -299,74 +354,6 @@ campaign_cost_summary AS (
   WHERE cost_position = cost_count
 )`;
 
-const sessionItemProjection = `
-  'session' AS item_kind,
-  'session:' || row_id AS item_identity,
-  ordinal AS item_ordinal,
-  row_json,
-  NULL AS campaign_key,
-  NULL AS visible_count,
-  NULL AS total_count,
-  active_date AS latest_active_date,
-  active_time AS latest_active_time,
-  sort_date,
-  sort_session,
-  sort_harness,
-  sort_machine,
-  sort_provider,
-  sort_project,
-  sort_model,
-  sort_session_rank,
-  sort_harness_rank,
-  sort_machine_rank,
-  sort_provider_rank,
-  sort_project_rank,
-  sort_model_rank,
-  session_item_identity_rank AS item_identity_rank,
-  sort_tok_in,
-  sort_tok_out,
-  sort_cache,
-  sort_tok_cw,
-  sort_fresh,
-  sort_total,
-  sort_rtk_saved,
-  sort_cost,
-  sort_actual,
-  sort_quota,
-  sort_duration,
-  sort_calls,
-  sort_turns,
-  sort_tools,
-  sort_lines,
-  sort_subagent,
-  sort_partial,
-  sort_ambiguous,
-  cost_actual,
-  cost_approx,
-  cost_known,
-  cost_quota,
-  duration_ms,
-  fresh_tokens,
-  line_delta,
-  lines_added,
-  lines_deleted,
-  rtk_command_count,
-  rtk_input_tokens,
-  rtk_output_tokens,
-  rtk_saved_tokens,
-  tok_cr,
-  tok_cw,
-  tok_in,
-  tok_out,
-  token_total,
-  calls,
-  turns,
-  tools,
-  usage_unavailable,
-  sort_partial AS partial,
-  sort_ambiguous AS ambiguous
-`;
-
 const campaignItemCte = (useExactCostSort: boolean): string => `campaign_items AS (
   SELECT
     'campaign' AS item_kind,
@@ -374,22 +361,12 @@ const campaignItemCte = (useExactCostSort: boolean): string => `campaign_items A
     MIN(visible.ordinal) AS item_ordinal,
     root.row_json,
     visible.campaign_key,
-    COUNT(*) AS visible_count,
+    MAX(visible_counts.visible_count) AS visible_count,
     MAX(visible.campaign_total_count) AS total_count,
-    (
-      SELECT latest.active_date
-      FROM filtered AS latest
-      WHERE latest.campaign_key = visible.campaign_key
-      ORDER BY latest.sort_date DESC, latest.ordinal ASC
-      LIMIT 1
-    ) AS latest_active_date,
-    (
-      SELECT latest.active_time
-      FROM filtered AS latest
-      WHERE latest.campaign_key = visible.campaign_key
-      ORDER BY latest.sort_date DESC, latest.ordinal ASC
-      LIMIT 1
-    ) AS latest_active_time,
+    SUM(CASE WHEN visible.origin = 'classifier' THEN 1 ELSE 0 END) AS classifier_count,
+    SUM(CASE WHEN visible.origin = 'classifier' THEN visible.fresh_tokens ELSE 0 END) AS classifier_fresh_tokens,
+    MAX(latest.active_date) AS latest_active_date,
+    MAX(latest.active_time) AS latest_active_time,
     MAX(visible.sort_date) AS sort_date,
     root.sort_session,
     root.sort_harness,
@@ -451,9 +428,13 @@ const campaignItemCte = (useExactCostSort: boolean): string => `campaign_items A
     MIN(visible.usage_unavailable) AS usage_unavailable,
     MAX(visible.sort_partial) AS partial,
     MAX(visible.sort_ambiguous) AS ambiguous
-  FROM filtered AS visible
+  FROM campaign_rollup AS visible
   INNER JOIN session_rows AS root
     ON root.campaign_key = visible.campaign_key AND root.campaign_root = 1
+  INNER JOIN campaign_visible_counts AS visible_counts
+    ON visible_counts.campaign_key = visible.campaign_key
+  INNER JOIN campaign_latest_rows AS latest
+    ON latest.campaign_key = visible.campaign_key
   ${
     useExactCostSort
       ? `INNER JOIN campaign_cost_summary AS exact_cost
@@ -475,6 +456,8 @@ const campaignDisplayRow = (record: ItemRecord): SessionPresentationRow => {
     record.campaign_key === null ||
     record.visible_count === null ||
     record.total_count === null ||
+    record.classifier_count === null ||
+    record.classifier_fresh_tokens === null ||
     record.calls === null ||
     record.cost_actual === null ||
     record.cost_approx === null ||
@@ -494,6 +477,7 @@ const campaignDisplayRow = (record: ItemRecord): SessionPresentationRow => {
     record.turns === null ||
     record.usage_unavailable === null ||
     record.ambiguous === null ||
+    record.price_measurement === undefined ||
     record.partial === null
   ) {
     throw new Error('Session query database returned an incomplete campaign item');
@@ -504,6 +488,8 @@ const campaignDisplayRow = (record: ItemRecord): SessionPresentationRow => {
     activeTime: record.latest_active_time,
     ambiguous: record.ambiguous === 1,
     calls: record.calls,
+    campaignClassifierCount: record.classifier_count,
+    campaignClassifierFreshTokens: record.classifier_fresh_tokens,
     campaignKey: record.campaign_key,
     campaignTotalCount: record.total_count,
     campaignVisibleCount: record.visible_count,
@@ -517,6 +503,7 @@ const campaignDisplayRow = (record: ItemRecord): SessionPresentationRow => {
     linesAdded: record.lines_added,
     linesDeleted: record.lines_deleted,
     partial: record.partial === 1,
+    priceMeasurement: record.price_measurement,
     rtkCommandCount: record.rtk_command_count,
     rtkInputTokens: record.rtk_input_tokens,
     rtkOutputTokens: record.rtk_output_tokens,
@@ -542,26 +529,32 @@ const hydrateExactCampaignCosts = (
   trace?: SessionQuerySqliteTrace,
 ): void => {
   const campaignRecords = records.filter(
-    (record): record is ItemRecord & { campaign_key: string } =>
-      record.item_kind === 'campaign' && record.campaign_key !== null,
+    (record): record is ItemRecord & { campaign_key: string } => record.campaign_key !== null,
   );
   const campaignKeys = [...new Set(campaignRecords.map((record) => record.campaign_key))];
   if (campaignKeys.length === 0) {
     return;
   }
-  const sql = `SELECT campaign_key, cost_actual, cost_approx, cost_known, cost_quota
+  const sql = `SELECT campaign_key, cost_actual, cost_approx, cost_known, cost_quota, row_json
     FROM session_rows
-    WHERE ${filter.where} AND campaign_key IN (${campaignKeys.map(() => '?').join(', ')})
+    WHERE campaign_key IN (${campaignKeys.map(() => '?').join(', ')})
+      AND ((${filter.where}) OR origin = 'classifier')
     ORDER BY campaign_key, campaign_root DESC, ordinal`;
-  const params = [...filter.params, ...campaignKeys];
+  const params = [...campaignKeys, ...filter.params];
   trace?.({ params, sql });
-  const totals = new Map<string, { actual: number; approx: number; known: boolean; quota: number }>();
+  const totals = new Map<string, { actual: number; priceMeasurement: ApiPriceMeasurement; quota: number }>();
   for (const value of database.query(sql).iterate(...params)) {
     const row = value as CampaignCostRecord;
-    const total = totals.get(row.campaign_key) ?? { actual: 0, approx: 0, known: true, quota: 0 };
+    const total = totals.get(row.campaign_key) ?? {
+      actual: 0,
+      priceMeasurement: EMPTY_API_PRICE_MEASUREMENT,
+      quota: 0,
+    };
     total.actual += row.cost_actual ?? 0;
-    total.approx += row.cost_approx;
-    total.known = total.known && row.cost_known === 1;
+    total.priceMeasurement = combineApiPriceMeasurements([
+      total.priceMeasurement,
+      usageRowApiPriceMeasurement(parsePresentationRow(row.row_json)),
+    ]);
     total.quota += row.cost_quota ?? 0;
     totals.set(row.campaign_key, total);
   }
@@ -571,9 +564,10 @@ const hydrateExactCampaignCosts = (
       throw new Error('Session query database omitted a paged campaign aggregate');
     }
     record.cost_actual = total.actual;
-    record.cost_approx = total.approx;
-    record.cost_known = total.known ? 1 : 0;
+    record.cost_approx = total.priceMeasurement.knownCost;
+    record.cost_known = total.priceMeasurement.state === 'partially measured' ? 0 : 1;
     record.cost_quota = total.quota;
+    record.price_measurement = total.priceMeasurement;
   }
 };
 
@@ -586,12 +580,9 @@ const runSessionPage = (
   const requestFingerprint = sessionQueryFingerprint(request);
   const offset = offsetFromCursor(request.cursor, request.revision, requestFingerprint);
   const filter = buildSessionQuerySqlFilter(request);
-  const countSql = request.campaigns
-    ? `WITH ${filteredCte(filter.where)} SELECT
-        (SELECT COUNT(*) FROM filtered) AS session_count,
-        (SELECT COUNT(*) FROM filtered WHERE campaign_key IS NULL) +
-          (SELECT COUNT(DISTINCT campaign_key) FROM filtered WHERE campaign_key IS NOT NULL) AS item_count`
-    : `WITH ${filteredCte(filter.where)} SELECT COUNT(*) AS session_count, COUNT(*) AS item_count FROM filtered`;
+  const countSql = `WITH ${filteredCte(filter.where)} SELECT
+    (SELECT COUNT(*) FROM filtered) AS session_count,
+    (SELECT COUNT(DISTINCT campaign_key) FROM filtered WHERE campaign_key IS NOT NULL) AS item_count`;
   const counts = executeGet<CountRecord>(database, countSql, filter.params, trace) ?? {
     item_count: 0,
     session_count: 0,
@@ -600,17 +591,13 @@ const runSessionPage = (
   const useExactCostSort = request.sort.some(({ id }) => CAMPAIGN_EXACT_COST_SORT_FIELDS.has(id));
   const campaignCtes = [
     filteredCte(filter.where),
+    campaignRollupCte,
+    campaignProjectionCtes,
     ...(useExactCostSort ? [campaignExactCostCtes] : []),
     campaignItemCte(useExactCostSort),
   ].join(',\n');
-  const pageSql = request.campaigns
-    ? `WITH${useExactCostSort ? ' RECURSIVE' : ''} ${campaignCtes},
-        standalone_items AS (SELECT ${sessionItemProjection} FROM filtered WHERE campaign_key IS NULL),
-        items AS (SELECT * FROM standalone_items UNION ALL SELECT * FROM campaign_items)
-      SELECT * FROM items ORDER BY ${order} LIMIT ? OFFSET ?`
-    : `WITH ${filteredCte(filter.where)},
-        items AS (SELECT ${sessionItemProjection} FROM filtered)
-      SELECT * FROM items ORDER BY ${order} LIMIT ? OFFSET ?`;
+  const pageSql = `WITH${useExactCostSort ? ' RECURSIVE' : ''} ${campaignCtes}
+    SELECT * FROM campaign_items ORDER BY ${order} LIMIT ? OFFSET ?`;
   const pageWithSentinel = executeAll<ItemRecord>(
     database,
     pageSql,
@@ -620,11 +607,11 @@ const runSessionPage = (
   const hasMore = pageWithSentinel.length > request.pageSize;
   const pageRecords = pageWithSentinel.slice(0, request.pageSize);
   hydrateExactCampaignCosts(database, pageRecords, filter, trace);
-  const items: SessionPageItem[] = pageRecords.map((record) =>
-    record.item_kind === 'campaign'
-      ? { campaignKey: record.campaign_key!, kind: 'campaign', row: campaignDisplayRow(record) }
-      : { kind: 'session', row: parsePresentationRow(record.row_json) },
-  );
+  const items: SessionPageItem[] = pageRecords.map((record) => ({
+    campaignKey: record.campaign_key!,
+    kind: 'campaign',
+    row: campaignDisplayRow(record),
+  }));
   return {
     itemCount: counts.item_count,
     items,
@@ -644,33 +631,35 @@ const runCampaignChildren = (
   const requestFingerprint = sessionCampaignChildrenFingerprint(request);
   const offset = offsetFromCursor(request.query.cursor, request.query.revision, requestFingerprint);
   const filter = buildSessionQuerySqlFilter(request.query);
-  const campaignWhere = `${filter.where} AND session_rows.campaign_key = ? AND session_rows.campaign_root = 0`;
-  const params = [...filter.params, request.campaignKey];
-  const count =
-    executeGet<{ count: number }>(
-      database,
-      `SELECT COUNT(*) AS count FROM session_rows WHERE ${campaignWhere}`,
-      params,
-      trace,
-    )?.count ?? 0;
+  const matchedWhere = `(${filter.where}) AND session_rows.campaign_key = ? AND session_rows.campaign_root = 0`;
+  const rollupWhere = `session_rows.campaign_key = ? AND session_rows.campaign_root = 0
+    AND ((${filter.where}) OR session_rows.origin = 'classifier')`;
+  const count = executeGet<CountRecord>(
+    database,
+    `SELECT
+      (SELECT COUNT(*) FROM session_rows WHERE ${rollupWhere}) AS item_count,
+      (SELECT COUNT(*) FROM session_rows WHERE ${matchedWhere}) AS session_count`,
+    [request.campaignKey, ...filter.params, ...filter.params, request.campaignKey],
+    trace,
+  ) ?? { item_count: 0, session_count: 0 };
   const order = buildSessionQuerySqlOrder(request.query.sort, 'row_identity_rank', 'ordinal');
   const rows = executeAll<{ row_json: string }>(
     database,
-    `SELECT row_json FROM session_rows WHERE ${campaignWhere} ORDER BY ${order} LIMIT ? OFFSET ?`,
-    [...params, request.query.pageSize + 1, offset],
+    `SELECT row_json FROM session_rows WHERE ${rollupWhere} ORDER BY ${order} LIMIT ? OFFSET ?`,
+    [request.campaignKey, ...filter.params, request.query.pageSize + 1, offset],
     trace,
   );
   const hasMore = rows.length > request.query.pageSize;
   return {
     campaignKey: request.campaignKey,
-    itemCount: count,
+    itemCount: count.item_count,
     items: rows.slice(0, request.query.pageSize).map(({ row_json }) => parsePresentationRow(row_json)),
     nextCursor: hasMore
       ? createPageCursor(request.query.revision, requestFingerprint, offset + request.query.pageSize)
       : null,
     requestFingerprint,
     revision: request.query.revision,
-    sessionCount: count,
+    sessionCount: count.session_count,
   };
 };
 

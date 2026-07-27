@@ -105,9 +105,17 @@ function ReportLoadError(props: ErrorComponentProps) {
 
 const LoadedReport = (props: { data: ReportLoaderData }) =>
   props.data.kind === 'payload' ? (
-    <Dashboard initialPayload={props.data.payload} runtimeMode={props.data.mode} />
+    <Dashboard
+      initialPayload={props.data.payload}
+      machineFreshness={props.data.machineFreshness}
+      runtimeMode={props.data.mode}
+    />
   ) : (
-    <Dashboard runtimeMode={props.data.mode} servedBootstrap={props.data.bootstrap} />
+    <Dashboard
+      machineFreshness={props.data.machineFreshness}
+      runtimeMode={props.data.mode}
+      servedBootstrap={props.data.bootstrap}
+    />
   );
 
 function IndexRoute() {

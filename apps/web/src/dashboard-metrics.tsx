@@ -28,6 +28,17 @@ const metricLabelRow = css({
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: '8px',
+  minH: '24px',
+});
+
+export const dashboardMetricGrid = css({
+  display: 'grid',
+  gridTemplateColumns: {
+    base: 'repeat(2, minmax(0, 1fr))',
+    md: 'repeat(4, minmax(0, 1fr))',
+  },
+  gap: '10px',
+  my: '20px',
 });
 
 const metricInfoButton = css({
@@ -64,10 +75,12 @@ export const fmtDeltaPct = (pct: number) => {
   return fmtPct(Math.abs(pct));
 };
 
+export const metricDeltaFaceLabel = (pct: number): string => `${fmtDeltaPct(pct)} vs previous period`;
+
 // Period deltas read as context, not judgement: cost going up is not "bad",
 // so the arrow stays in the accent and the number in muted ink.
 export const MetricTile = (props: Metric) => (
-  <div class={metricTile}>
+  <div class={metricTile} data-metric-tile>
     <div class={metricLabelRow}>
       <div class={metricLabel}>{props.label}</div>
       <Show when={props.hint}>
@@ -77,6 +90,7 @@ export const MetricTile = (props: Metric) => (
             trigger={<span aria-hidden="true">i</span>}
             triggerAriaLabel={`About ${props.label}`}
             triggerClass={metricInfoButton}
+            triggerTitle={`About ${props.label}`}
           >
             <div class={metricHintContent}>
               <div>{hint()}</div>
@@ -87,14 +101,16 @@ export const MetricTile = (props: Metric) => (
       </Show>
     </div>
     <div>
-      <div class={metricValue}>{props.value}</div>
+      <div class={metricValue} data-metric-value>
+        {props.value}
+      </div>
       <Show when={props.delta}>
         {(delta) => (
-          <div class={metricDelta}>
+          <div class={metricDelta} data-metric-delta>
             <span aria-hidden="true" class={metricDeltaArrow}>
               {delta().pct >= 0 ? '▲' : '▼'}
             </span>{' '}
-            {fmtDeltaPct(delta().pct)}
+            {metricDeltaFaceLabel(delta().pct)}
           </div>
         )}
       </Show>

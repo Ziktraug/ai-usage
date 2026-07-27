@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { apiValuePresentation, PARTIAL_PRICE_HINT, UNKNOWN_PRICE_HINT } from './shared';
+import {
+  aggregateApiPriceProvenance,
+  aggregateApiValuePresentation,
+  apiValuePresentation,
+  PARTIAL_PRICE_HINT,
+  UNKNOWN_PRICE_HINT,
+} from './shared';
 
 describe('API value presentation', () => {
   test('distinguishes exact values, known lower bounds, and wholly unknown prices', () => {
@@ -22,6 +28,27 @@ describe('API value presentation', () => {
       label: '—',
       status: 'unknown',
       title: UNKNOWN_PRICE_HINT,
+    });
+  });
+
+  test('presents a partial aggregate as a lower bound with the locked provenance copy', () => {
+    const measurement = {
+      knownCost: 4.63,
+      state: 'partially measured' as const,
+      unpricedFreshTokens: 57_500_000,
+    };
+
+    expect(aggregateApiValuePresentation(measurement)).toEqual({
+      label: '≥ $4.63',
+      status: 'lower-bound',
+      title:
+        'Partially measured — 57.5M tokens in this slice come from models with no published price. Their work is counted, their value is not.',
+    });
+    expect(aggregateApiPriceProvenance(measurement)).toEqual({
+      description:
+        'Partially measured — 57.5M tokens in this slice come from models with no published price. Their work is counted, their value is not.',
+      label: 'Partially measured',
+      severity: 'warning',
     });
   });
 });

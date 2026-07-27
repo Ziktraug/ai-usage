@@ -1,8 +1,11 @@
 import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
+import type { FocusedFilterOption } from '@ai-usage/report-core/focused-report-query';
 import {
   buildSessionCampaignTotals,
   buildSortedSessionPresentationRows,
   type SessionCampaignTotals,
+  type SessionOrigin,
+  sessionCampaignIdentityForRow,
   sessionModelKeys,
 } from '@ai-usage/report-core/session-query';
 import type { SortingState } from '@tanstack/solid-table';
@@ -17,6 +20,8 @@ import type { FieldFilterKey, FieldFilters } from './dashboard-search';
 import { DAY_MS, type DateBounds, endOfDay, rowMatchesDateBounds } from './date-range';
 import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from './session-table-schema';
 import {
+  aggregateApiPriceProvenance,
+  aggregateApiValuePresentation,
   buildReportSummary,
   type DashboardRow,
   fmtCompact,
@@ -27,6 +32,9 @@ import {
 } from './shared';
 
 export const fieldValueForRow = (row: DashboardRow, key: FieldFilterKey) => {
+  if (key === 'campaign') {
+    return sessionCampaignIdentityForRow(row).campaignKey;
+  }
   if (key === 'provider') {
     return row.providerDisplay;
   }
@@ -43,6 +51,7 @@ export interface FilterSnapshot {
   fieldEntries: [FieldFilterKey, string][];
   harness: string[];
   machine: string[];
+  origin: SessionOrigin[];
   query: string;
 }
 
@@ -51,21 +60,40 @@ export const createFilterSnapshot = (
   harness: string[],
   machine: string[],
   filters: FieldFilters,
+  origin: SessionOrigin[] = [],
 ): FilterSnapshot => ({
   fieldEntries: Object.entries(filters) as [FieldFilterKey, string][],
   harness,
   machine,
+  origin,
   query: query.trim().toLowerCase(),
 });
 
 export const matchesFilterSnapshot = (row: DashboardRow, filters: FilterSnapshot) =>
   row.searchText.includes(filters.query) &&
   (filters.harness.length === 0 || filters.harness.includes(row.harness)) &&
-  (filters.machine.length === 0 || filters.machine.includes(row.source?.machineLabel ?? '')) &&
+  (filters.machine.length === 0 || filters.machine.includes(row.source?.machineId ?? '')) &&
+  (filters.origin.length === 0 || filters.origin.includes(row.origin)) &&
   filters.fieldEntries.every(([key, value]) => fieldValuesForRow(row, key).includes(value));
 
 export const filterTimelineRows = (rows: DashboardRow[], filters: FilterSnapshot) =>
   rows.filter((row) => matchesFilterSnapshot(row, filters));
+
+export const machineFilterOptionsForRows = (rows: readonly DashboardRow[]): FocusedFilterOption[] => {
+  const options = new Map<string, FocusedFilterOption>();
+  for (const row of rows) {
+    const value = row.source?.machineId ?? '';
+    if (value === '' || options.has(value)) {
+      continue;
+    }
+    const machineLabel = row.source?.machineLabel ?? '';
+    options.set(value, {
+      label: machineLabel || 'Unknown machine',
+      value,
+    });
+  }
+  return [...options.values()];
+};
 
 export const filterRowsByDateBounds = (rows: DashboardRow[], bounds: DateBounds) =>
   rows.filter((row) => rowMatchesDateBounds(row, bounds));
@@ -79,6 +107,7 @@ export type CampaignTotals = SessionCampaignTotals;
 
 export interface CampaignView {
   allChildren: DashboardRow[];
+  allClassifiers: DashboardRow[];
   allRows: DashboardRow[];
   allTotals: CampaignTotals;
   campaignKey: CampaignKey;
@@ -91,21 +120,14 @@ export interface CampaignView {
   visibleTotals: CampaignTotals;
 }
 
-export type CampaignTableItem =
-  | { kind: 'session'; row: DashboardRow }
-  | { kind: 'campaign'; row: DashboardRow; campaign: CampaignView; children: DashboardRow[] };
+export interface CampaignTableItem {
+  campaign: CampaignView;
+  children: DashboardRow[];
+  kind: 'campaign';
+  row: DashboardRow;
+}
 
-const campaignKeyFor = (row: DashboardRow, rootSourceSessionId: string): CampaignKey =>
-  [row.source?.machineId ?? 'local', row.source?.harnessKey ?? row.harness, rootSourceSessionId].join(':');
-
-const campaignIdentityForRow = (row: DashboardRow) => {
-  const sourceSessionId = row.source?.sourceSessionId ?? null;
-  const rootSourceSessionId = row.source?.rootSourceSessionId ?? null;
-  if (!(sourceSessionId && rootSourceSessionId)) {
-    return null;
-  }
-  return { campaignKey: campaignKeyFor(row, rootSourceSessionId), rootSourceSessionId, sourceSessionId };
-};
+const campaignIdentityForRow = sessionCampaignIdentityForRow;
 
 export const buildCampaignTotals = (rows: DashboardRow[], root?: DashboardRow): CampaignTotals =>
   buildSessionCampaignTotals(rows, root);
@@ -116,9 +138,6 @@ export const buildCampaignViews = (allRows: DashboardRow[], visibleRows: Dashboa
 
   for (const row of allRows) {
     const identity = campaignIdentityForRow(row);
-    if (!identity) {
-      continue;
-    }
     const rows = groups.get(identity.campaignKey) ?? [];
     rows.push(row);
     groups.set(identity.campaignKey, rows);
@@ -127,30 +146,31 @@ export const buildCampaignViews = (allRows: DashboardRow[], visibleRows: Dashboa
   const campaigns: CampaignView[] = [];
   for (const [campaignKey, rows] of groups) {
     const firstIdentity = campaignIdentityForRow(rows[0]!);
-    if (!firstIdentity) {
-      continue;
-    }
-    const root = rows.find((row) => row.source?.sourceSessionId === firstIdentity.rootSourceSessionId);
+    const root =
+      rows.find(
+        (row) =>
+          row.source?.sourceSessionId === firstIdentity.rootSourceSessionId ||
+          (!row.source?.sourceSessionId && row.rowId === firstIdentity.rootSourceSessionId),
+      ) ?? (rows.some((row) => row.origin === 'classifier') ? undefined : rows[0]);
     if (!root) {
-      continue;
+      throw new Error(`Classifier campaign ${campaignKey} has no resolvable parent session`);
     }
 
     const allChildren = rows.filter((row) => row !== root);
-    const hasDirectChildren = rows.some(
-      (row) => row.source?.parentSourceSessionId === firstIdentity.rootSourceSessionId,
-    );
-    if (rows.length < 2 && !hasDirectChildren) {
+    const allClassifiers = rows.filter((row) => row.origin === 'classifier');
+    const matchedRows = rows.filter((row) => visibleKeys.has(rowKeyForCampaignMembership(row)));
+    if (!matchedRows.length) {
       continue;
     }
-
-    const rootMatches = visibleKeys.has(rowKeyForCampaignMembership(root));
-    const visibleChildren = allChildren.filter((row) => visibleKeys.has(rowKeyForCampaignMembership(row)));
-    const visibleRowsForTotals = [rootMatches ? root : null, ...visibleChildren].filter((row): row is DashboardRow =>
-      Boolean(row),
+    const visibleKeysWithClassifierRollup = new Set(
+      [...matchedRows, ...allClassifiers].map(rowKeyForCampaignMembership),
     );
-    if (!visibleRowsForTotals.length) {
-      continue;
-    }
+    const visibleRowsForTotals = rows.filter((row) =>
+      visibleKeysWithClassifierRollup.has(rowKeyForCampaignMembership(row)),
+    );
+    const visibleChildren = allChildren.filter((row) =>
+      visibleKeysWithClassifierRollup.has(rowKeyForCampaignMembership(row)),
+    );
 
     campaigns.push({
       campaignKey,
@@ -160,9 +180,10 @@ export const buildCampaignViews = (allRows: DashboardRow[], visibleRows: Dashboa
       allRows: rows,
       visibleChildren,
       allChildren,
+      allClassifiers,
       visibleTotals: buildCampaignTotals(visibleRowsForTotals, root),
       allTotals: buildCampaignTotals(rows, root),
-      visibleCount: visibleRowsForTotals.length,
+      visibleCount: matchedRows.length,
       totalCount: rows.length,
     });
   }
@@ -263,32 +284,22 @@ export const buildCampaignTableItems = (
   allRows: DashboardRow[],
   visibleRows: DashboardRow[],
   sorting: SortingState,
-  groupCampaigns: boolean,
   preparedCampaigns?: CampaignView[],
 ): CampaignTableItem[] => {
-  if (!groupCampaigns) {
-    return buildSortedDashboardRows(visibleRows, sorting).map((row) => ({ kind: 'session', row }));
-  }
-
   const campaigns = preparedCampaigns ?? buildCampaignViews(allRows, visibleRows);
   const campaignByKey = new Map(campaigns.map((campaign) => [campaign.campaignKey, campaign]));
-  const childKeys = new Set(campaigns.flatMap((campaign) => campaign.allChildren.map(rowKeyForCampaignMembership)));
   const emittedCampaigns = new Set<CampaignKey>();
   const items: CampaignTableItem[] = [];
 
   for (const row of visibleRows) {
     const identity = campaignIdentityForRow(row);
-    const campaign = identity ? campaignByKey.get(identity.campaignKey) : undefined;
+    const campaign = campaignByKey.get(identity.campaignKey);
     if (campaign) {
       if (emittedCampaigns.has(campaign.campaignKey)) {
         continue;
       }
       emittedCampaigns.add(campaign.campaignKey);
       items.push({ kind: 'campaign', row: campaign.root, campaign, children: campaign.visibleChildren });
-      continue;
-    }
-    if (!childKeys.has(rowKeyForCampaignMembership(row))) {
-      items.push({ kind: 'session', row });
     }
   }
 
@@ -318,6 +329,8 @@ const campaignDisplayRow = (campaign: CampaignView, sorting: SortingState): Dash
     activeDate: latestVisibleRow.activeDate,
     activeTime: latestVisibleRow.activeTime,
     ambiguous,
+    campaignClassifierCount: campaign.allClassifiers.length,
+    campaignClassifierFreshTokens: campaign.allClassifiers.reduce((sum, row) => sum + row.freshTokens, 0),
     campaignKey: campaign.campaignKey,
     campaignTotalCount: campaign.totalCount,
     campaignVisibleCount: campaign.visibleCount,
@@ -327,6 +340,7 @@ const campaignDisplayRow = (campaign: CampaignView, sorting: SortingState): Dash
     costApprox: totals.totalCost,
     costKnown: totals.costKnown,
     costQuota: totals.costQuota,
+    priceMeasurement: totals.priceMeasurement,
     durationMs: totals.durationMs,
     freshTokens: totals.freshTokens,
     lineDelta: totals.lineDelta,
@@ -355,20 +369,17 @@ export const campaignBadgeLabelForRow = (row: DashboardRow) => {
   if (!row.campaignKey || row.campaignTotalCount == null || row.campaignVisibleCount == null) {
     return null;
   }
-  return row.campaignVisibleCount === row.campaignTotalCount
-    ? `Campaign · ${row.campaignTotalCount} sessions`
-    : `Campaign · ${row.campaignVisibleCount}/${row.campaignTotalCount} sessions`;
+  return `Campaign · ${row.campaignVisibleCount} ${row.campaignVisibleCount === 1 ? 'session' : 'sessions'}`;
 };
 
 export const buildCampaignTableRows = (
   allRows: DashboardRow[],
   visibleRows: DashboardRow[],
   sorting: SortingState,
-  groupCampaigns: boolean,
   preparedCampaigns?: CampaignView[],
 ): DashboardRow[] =>
-  buildCampaignTableItems(allRows, visibleRows, sorting, groupCampaigns, preparedCampaigns).map((item) =>
-    item.kind === 'campaign' ? campaignDisplayRow(item.campaign, sorting) : item.row,
+  buildCampaignTableItems(allRows, visibleRows, sorting, preparedCampaigns).map((item) =>
+    campaignDisplayRow(item.campaign, sorting),
   );
 
 export const buildVisibleSummary = (rows: DashboardRow[], bounds: DateBounds) =>
@@ -433,6 +444,8 @@ export const deltaVs = (
 
 export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportSummary | null): Metric[] => {
   const prev = previous ?? undefined;
+  const apiValue = aggregateApiValuePresentation(summary.priceMeasurement);
+  const apiValueProvenance = aggregateApiPriceProvenance(summary.priceMeasurement);
   const metrics: Metric[] = [
     {
       label: 'Sessions',
@@ -441,9 +454,14 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
       delta: deltaVs(summary.sessionCount, prev?.sessionCount, fmtNum),
     },
     {
-      label: 'API value',
-      value: fmtMoney(summary.totalCost),
-      hint: `Estimated cost at standard API prices for ${fmtNum(summary.pricedSessions)} of ${fmtNum(summary.sessionCount)} fully priced sessions, including usage covered by subscriptions`,
+      label: apiValueProvenance ? `API value · ${apiValueProvenance.label}` : 'API value',
+      value: apiValue.label,
+      hint: [
+        `Estimated cost at standard API prices for ${fmtNum(summary.pricedSessions)} of ${fmtNum(summary.sessionCount)} fully priced sessions, including usage covered by subscriptions`,
+        apiValueProvenance?.description,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join('\n'),
       delta: deltaVs(summary.totalCost, prev?.totalCost, fmtMoney),
     },
     {

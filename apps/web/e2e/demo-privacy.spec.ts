@@ -29,7 +29,7 @@ test('serves only the synthetic report and keeps every local boundary inert', as
   await expect(drawer).toBeVisible();
   await expect(drawer.getByText('Build report UI', { exact: true }).first()).toBeVisible();
   await expect(drawer.getByText('Total tokens', { exact: true })).toBeVisible();
-  await expect(drawer.getByText('203,500', { exact: true })).toBeVisible();
+  await expect(drawer.locator('[data-detail-item="Total tokens"]')).toContainText('204k');
   await expect(page.getByRole('link', { name: NON_REPORT_NAVIGATION_PATTERN })).toHaveCount(0);
 
   const guardedResponses = await Promise.all([

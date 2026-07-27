@@ -529,7 +529,7 @@ describe('shared reporting', () => {
       );
 
       expect(payload.rows).toHaveLength(3);
-      expect(payload.rows.map((row) => row.project).sort()).toContain('peer-project · Peer Machine');
+      expect(payload.rows.map((row) => row.project).sort()).toContain('peer-project — Peer Machine');
       expect(payload.rows.find((row) => row.rawProject === 'peer-project')?.source?.machineLabel).toBe('Peer Machine');
       expect(payload.rows.find((row) => row.name === 'peer-child')?.source?.rootSourceSessionId).toBe('peer-parent');
     } finally {
@@ -571,7 +571,7 @@ describe('shared reporting', () => {
       );
 
       expect(payload.rows).toHaveLength(2);
-      expect(payload.rows[0]?.project).toBe('peer-project · Peer Machine');
+      expect(payload.rows[0]?.project).toBe('peer-project — Peer Machine');
       expect(payload.rows[0]?.rawProject).toBe('peer-project');
       expect(payload.rows[0]?.source?.machineLabel).toBe('Peer Machine');
       expect(payload.rows.find((row) => row.name === 'peer-child')?.source?.rootSourceSessionId).toBe('peer-parent');
@@ -780,8 +780,8 @@ describe('shared reporting', () => {
 
       expect(merged.rows).toHaveLength(2);
       expect(merged.rows.map((row) => row.project).sort()).toEqual([
-        'agent-a15e8356ff54ade2a · Test Machine',
-        'agent-a2017811a25de4a7c · Test Machine',
+        'agent-a15e8356ff54ade2a — Test Machine',
+        'agent-a2017811a25de4a7c — Test Machine',
       ]);
       expect(merged.rows.map((row) => row.rawProject).sort()).toEqual([
         'agent-a15e8356ff54ade2a',

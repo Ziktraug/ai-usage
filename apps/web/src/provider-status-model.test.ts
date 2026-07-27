@@ -86,6 +86,16 @@ describe('provider status model', () => {
     expect(views[0]?.provider).toMatchObject({ key: 'cursor', state: 'partial', machineLabel: 'Laptop' });
   });
 
+  test('uses the canonical OpenCode capitalization for inferred status', () => {
+    const views = buildProviderStatusViews(
+      payload(),
+      [row({ harness: 'OpenCode', provider: 'opencode-go' })],
+      FIXTURE_NOW,
+    );
+
+    expect(views[0]?.provider).toMatchObject({ key: 'opencode', label: 'OpenCode' });
+  });
+
   test('falls back to legacy facets when canonical provider status is malformed', () => {
     const providerStatus = createProviderStatusDataset(
       [

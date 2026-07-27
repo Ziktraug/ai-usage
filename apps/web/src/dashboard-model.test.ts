@@ -14,6 +14,7 @@ import {
   createFilterSnapshot,
   filterRowsByDateBounds,
   filterTimelineRows,
+  machineFilterOptionsForRows,
 } from './dashboard-model';
 import type { DateBounds } from './date-range';
 import { enrichReportRow } from './shared';
@@ -81,6 +82,35 @@ describe('dashboard model', () => {
     expect(filtered.map((item) => item.sessionLabel)).toEqual(['Alpha build']);
   });
 
+  test('filters duplicate machine labels by stable machine ID', () => {
+    const rows = [
+      sourcedRow('machine-a', {
+        source: {
+          harnessKey: 'codex',
+          machineId: 'machine-a',
+          machineLabel: 'Shared machine',
+          rootSourceSessionId: 'machine-a',
+          sourceSessionId: 'machine-a',
+        },
+      }),
+      sourcedRow('machine-b', {
+        source: {
+          harnessKey: 'codex',
+          machineId: 'machine-b',
+          machineLabel: 'Shared machine',
+          rootSourceSessionId: 'machine-b',
+          sourceSessionId: 'machine-b',
+        },
+      }),
+    ];
+    const filtered = filterTimelineRows(rows, createFilterSnapshot('', [], ['machine-b'], {}));
+    expect(filtered.map((item) => item.sessionLabel)).toEqual(['machine-b']);
+    expect(machineFilterOptionsForRows(rows)).toEqual([
+      { label: 'Shared machine', value: 'machine-a' },
+      { label: 'Shared machine', value: 'machine-b' },
+    ]);
+  });
+
   test('builds visible and previous summaries from date bounds', () => {
     const rows = [
       row({
@@ -143,7 +173,9 @@ describe('dashboard model', () => {
     const bounds: DateBounds = { from: null, to: null };
     const rows = [
       row({
-        project: 'exalibur · Machine A',
+        project: 'exalibur — Machine A',
+        projectGroupId: 'source:machine-a|/work/exalibur',
+        projectSourceId: 'machine-a|/work/exalibur',
         rawProject: 'exalibur',
         source: {
           harnessKey: 'codex',
@@ -153,7 +185,9 @@ describe('dashboard model', () => {
         },
       }),
       row({
-        project: 'exalibur · Machine B',
+        project: 'exalibur — Machine B',
+        projectGroupId: 'source:machine-b|/work/exalibur',
+        projectSourceId: 'machine-b|/work/exalibur',
         rawProject: 'exalibur',
         source: {
           harnessKey: 'codex',
@@ -164,6 +198,8 @@ describe('dashboard model', () => {
       }),
       row({
         project: 'exalibur',
+        projectGroupId: 'group:exalibur',
+        projectSourceId: 'machine-c|/work/exalibur2',
         rawProject: 'exalibur2',
         source: {
           harnessKey: 'codex',
@@ -176,10 +212,12 @@ describe('dashboard model', () => {
 
     const groups = buildProjectGroupRows(rows, bounds);
 
-    expect(groups.map((group) => group.key).sort()).toEqual([
-      'exalibur',
-      'exalibur · Machine A',
-      'exalibur · Machine B',
+    expect(
+      groups.map(({ key, label }) => ({ key, label })).sort((left, right) => left.key.localeCompare(right.key)),
+    ).toEqual([
+      { key: 'group:exalibur', label: 'exalibur' },
+      { key: 'source:machine-a|/work/exalibur', label: 'exalibur — Machine A' },
+      { key: 'source:machine-b|/work/exalibur', label: 'exalibur — Machine B' },
     ]);
   });
 
@@ -203,6 +241,7 @@ describe('dashboard model', () => {
     const parent = sourcedRow('parent', { costApprox: 4, tokenTotal: 40, freshTokens: 30 });
     const child = sourcedRow('child', {
       costApprox: 2,
+      costKnown: false,
       tokenTotal: 20,
       freshTokens: 15,
       source: {
@@ -225,12 +264,66 @@ describe('dashboard model', () => {
 
     const campaigns = buildCampaignViews([parent, child, sameIdsOtherMachine], [parent, child, sameIdsOtherMachine]);
 
-    expect(campaigns).toHaveLength(1);
-    expect(campaigns[0]?.campaignKey).toBe('machine-a:codex:parent');
-    expect(campaigns[0]?.root).toBe(parent);
-    expect(campaigns[0]?.allRows).toEqual([parent, child]);
-    expect(campaigns[0]?.visibleTotals.totalCost).toBe(6);
-    expect(campaigns[0]?.visibleTotals.tokenTotal).toBe(60);
+    expect(campaigns).toHaveLength(2);
+    const primaryCampaign = campaigns.find((campaign) => campaign.campaignKey === 'machine-a:codex:parent');
+    const orphanCampaign = campaigns.find((campaign) => campaign.campaignKey === 'machine-b:codex:parent');
+    expect(primaryCampaign?.root).toBe(parent);
+    expect(primaryCampaign?.allRows).toEqual([parent, child]);
+    expect(primaryCampaign?.visibleTotals.totalCost).toBe(6);
+    expect(primaryCampaign?.visibleTotals.priceMeasurement).toEqual({
+      knownCost: 6,
+      state: 'partially measured',
+      unpricedFreshTokens: 17,
+    });
+    expect(primaryCampaign?.visibleTotals.tokenTotal).toBe(60);
+    expect(orphanCampaign?.root).toBe(sameIdsOtherMachine);
+    expect(orphanCampaign?.visibleCount).toBe(1);
+  });
+
+  test('filters campaign origins before rolling classifier usage into the parent and keeps singletons', () => {
+    const parent = sourcedRow('parent', { freshTokens: 30, origin: 'human' });
+    const child = sourcedRow('child', {
+      freshTokens: 15,
+      origin: 'subagent',
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        parentSourceSessionId: 'parent',
+        rootSourceSessionId: 'parent',
+        sourceSessionId: 'child',
+      },
+    });
+    const classifier = sourcedRow('classifier-review', {
+      freshTokens: 5,
+      origin: 'classifier',
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        parentSourceSessionId: 'parent',
+        rootSourceSessionId: 'parent',
+        sourceSessionId: 'classifier-review',
+      },
+    });
+    const singleton = row({ name: 'singleton', origin: 'unknown', sessionLabel: 'singleton' });
+    const campaignKey = 'machine-a:codex:parent';
+    const allRows = [parent, child, classifier, singleton];
+    const visible = filterTimelineRows(
+      allRows,
+      createFilterSnapshot('', [], [], { campaign: campaignKey }, ['human', 'subagent']),
+    );
+    const campaign = buildCampaignViews(allRows, visible)[0];
+
+    expect(visible).toEqual([parent, child]);
+    expect(campaign).toMatchObject({
+      allClassifiers: [classifier],
+      campaignKey,
+      totalCount: 3,
+      visibleCount: 2,
+      visibleTotals: { freshTokens: 50 },
+    });
+    expect(buildCampaignViews([singleton], [singleton])).toMatchObject([
+      { root: singleton, totalCount: 1, visibleCount: 1 },
+    ]);
   });
 
   test('keeps the root as context when only a child matches filters', () => {
@@ -259,7 +352,7 @@ describe('dashboard model', () => {
     expect(campaign?.allTotals.totalCost).toBe(13);
   });
 
-  test('builds grouped table items that remove visible children from the root level and sort by visible totals', () => {
+  test('builds only campaign table items, including a campaign of one, sorted by visible totals', () => {
     const parent = sourcedRow('campaign parent', { costApprox: 1, tokenTotal: 10, freshTokens: 10 });
     const child = sourcedRow('campaign child', {
       costApprox: 9,
@@ -281,25 +374,16 @@ describe('dashboard model', () => {
       freshTokens: 50,
     });
 
-    const grouped = buildCampaignTableItems(
+    const items = buildCampaignTableItems(
       [parent, child, standalone],
       [parent, child, standalone],
       [{ id: 'cost', desc: true }],
-      true,
-    );
-    const flat = buildCampaignTableItems(
-      [parent, child, standalone],
-      [parent, child, standalone],
-      [{ id: 'cost', desc: true }],
-      false,
     );
 
-    expect(
-      grouped.map((item) => (item.kind === 'campaign' ? item.campaign.root.sessionLabel : item.row.sessionLabel)),
-    ).toEqual(['campaign parent', 'standalone']);
-    expect(grouped[0]?.kind).toBe('campaign');
-    expect(grouped[0]?.kind === 'campaign' ? grouped[0].campaign.visibleTotals.totalCost : 0).toBe(10);
-    expect(flat.map((item) => item.row.sessionLabel)).toEqual(['campaign child', 'standalone', 'campaign parent']);
+    expect(items.map((item) => item.campaign.root.sessionLabel)).toEqual(['campaign parent', 'standalone']);
+    expect(items.every((item) => item.kind === 'campaign')).toBe(true);
+    expect(items[0]?.campaign.visibleTotals.totalCost).toBe(10);
+    expect(items[1]?.campaign.visibleCount).toBe(1);
   });
 
   test('sorts campaigns by latest visible activity for date sorting', () => {
@@ -344,7 +428,6 @@ describe('dashboard model', () => {
       [firstParent, firstChild, secondParent, secondChild],
       [firstParent, firstChild, secondParent, secondChild],
       [{ id: 'date', desc: true }],
-      true,
     );
 
     expect(items.map((item) => item.row.sessionLabel)).toEqual(['first parent', 'second parent']);
@@ -373,7 +456,7 @@ describe('dashboard model', () => {
       },
     });
 
-    const rows = buildCampaignTableRows([parent, child], [parent, child], [{ id: 'date', desc: true }], true);
+    const rows = buildCampaignTableRows([parent, child], [parent, child], [{ id: 'date', desc: true }]);
 
     expect(rows).toHaveLength(1);
     expect(rows[0]?.sessionLabel).toBe('parent');
@@ -404,11 +487,8 @@ describe('dashboard model', () => {
     const input = [parent, child, standalone];
     const sorting: { desc: boolean; id: 'cost' }[] = [{ desc: true, id: 'cost' }];
 
-    const legacyRows = buildCampaignTableRows(input, input, sorting, true).map(
-      ({ children: _children, ...item }) => item,
-    );
+    const legacyRows = buildCampaignTableRows(input, input, sorting).map(({ children: _children, ...item }) => item);
     const focusedPage = projectSessionPage(input, {
-      campaigns: true,
       cursor: null,
       filters: { fields: {}, harness: [], machine: [], query: '' },
       pageSize: 200,
@@ -436,7 +516,7 @@ describe('dashboard model', () => {
     });
     const campaigns = buildCampaignViews([parent, child], [parent, child]);
 
-    const rows = buildCampaignTableRows([], [parent, child], [{ id: 'cost', desc: true }], true, campaigns);
+    const rows = buildCampaignTableRows([], [parent, child], [{ id: 'cost', desc: true }], campaigns);
 
     expect(rows).toHaveLength(1);
     expect(rows[0]?.campaignTotalCount).toBe(2);

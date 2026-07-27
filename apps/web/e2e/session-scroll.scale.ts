@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import type { Locator, Page, Response, TestInfo } from '@playwright/test';
 import { expect, test } from './browser-test';
 import { afterAnimationFrame, type SessionSurfaceMode, sessionSurface } from './session-scroll-driver';
-import { SESSION_SCROLL_EXPECTED_COUNT } from './session-scroll-fixture';
+import { SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT } from './session-scroll-fixture';
 
-const SESSION_ROUTE = '/?campaigns=off&range=%7B%22mode%22%3A%22all%22%7D&tab=sessions';
+const SESSION_ROUTE = '/?origin=%5B%5D&range=%7B%22mode%22%3A%22all%22%7D&tab=sessions';
 const SERVER_FUNCTION_PATH_PREFIX = '/_serverFn/';
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
@@ -273,7 +273,7 @@ const inspectAllSessions = async (
     expect(liveIndices.size, 'A Session index must appear at most once in the live DOM').toBe(snapshot.rows.length);
     expect(liveRowIds.size, 'A Session row ID must appear at most once in the live DOM').toBe(snapshot.rows.length);
     for (const { index, rowId } of snapshot.rows) {
-      if (!(Number.isSafeInteger(index) && index >= 0 && index < SESSION_SCROLL_EXPECTED_COUNT)) {
+      if (!(Number.isSafeInteger(index) && index >= 0 && index < SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT)) {
         throw new Error(`Invalid Session data-index ${index}`);
       }
       if (rowId.length === 0) {
@@ -293,14 +293,14 @@ const inspectAllSessions = async (
   };
 
   let iteration = 0;
-  while (indexToRowId.size < SESSION_SCROLL_EXPECTED_COUNT) {
+  while (indexToRowId.size < SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT) {
     iteration += 1;
     if (iteration > MAXIMUM_SCROLL_ITERATIONS) {
       throw new Error(`Session traversal exceeded ${MAXIMUM_SCROLL_ITERATIONS} bounded scroll steps`);
     }
     const snapshot = await readSurfaceSnapshot(surface);
     recordSnapshot(snapshot);
-    if (indexToRowId.size === SESSION_SCROLL_EXPECTED_COUNT) {
+    if (indexToRowId.size === SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT) {
       break;
     }
     const maximumScrollTop = Math.max(0, snapshot.scrollHeight - snapshot.clientHeight);
@@ -322,16 +322,16 @@ const inspectAllSessions = async (
           return nextSnapshot.scrollHeight > previousHeight || indexToRowId.size > previousRowCount;
         },
         {
-          message: `Session scrolling stalled after reaching ${previousRowCount} of ${SESSION_SCROLL_EXPECTED_COUNT} rows`,
+          message: `Session scrolling stalled after reaching ${previousRowCount} of ${SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT} rows`,
           timeout: MAXIMUM_STALLED_SCROLL_MS,
         },
       )
       .toBe(true);
   }
 
-  const expectedIndices = Array.from({ length: SESSION_SCROLL_EXPECTED_COUNT }, (_, index) => index);
+  const expectedIndices = Array.from({ length: SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT }, (_, index) => index);
   expect([...indexToRowId.keys()].sort((left, right) => left - right)).toEqual(expectedIndices);
-  expect(rowIdToIndex.size).toBe(SESSION_SCROLL_EXPECTED_COUNT);
+  expect(rowIdToIndex.size).toBe(SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT);
   const orderedRowIds = expectedIndices.map((index) => {
     const rowId = indexToRowId.get(index);
     if (!rowId) {
@@ -340,7 +340,7 @@ const inspectAllSessions = async (
     return rowId;
   });
   const firstRowId = orderedRowIds[0];
-  const lastRowId = orderedRowIds[SESSION_SCROLL_EXPECTED_COUNT - 1];
+  const lastRowId = orderedRowIds[SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT - 1];
   if (!(firstRowId && lastRowId)) {
     throw new Error('Expected the session fixture to contain first and last row identifiers');
   }
@@ -348,7 +348,7 @@ const inspectAllSessions = async (
   await moveSurface(surface, 'start');
   await expect(surface.locator('[data-index="0"]')).toHaveAttribute('data-session-row-id', firstRowId);
   await moveSurface(surface, 'end');
-  await expect(surface.locator(`[data-index="${SESSION_SCROLL_EXPECTED_COUNT - 1}"]`)).toHaveAttribute(
+  await expect(surface.locator(`[data-index="${SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT - 1}"]`)).toHaveAttribute(
     'data-session-row-id',
     lastRowId,
   );
@@ -374,7 +374,7 @@ const inspectAllSessions = async (
         sequenceFingerprint,
         sessionPageCount: pageBudgets.pageCount,
         sessionResponseMaximumBytes: pageBudgets.maximumBytes,
-        sessionsReached: orderedRowIds.length,
+        topLevelCampaignsReached: orderedRowIds.length,
         viewport: { height: viewportCase.height, width: viewportCase.width },
       },
       null,
@@ -386,7 +386,9 @@ const inspectAllSessions = async (
 };
 
 for (const viewportCase of viewportCases) {
-  test(`reaches every production Session exactly once on ${viewportCase.mode}`, async ({ page }, testInfo) => {
+  test(`reaches every top-level production campaign exactly once on ${viewportCase.mode}`, async ({
+    page,
+  }, testInfo) => {
     const result = await inspectAllSessions(page, viewportCase, testInfo);
     if (viewportCase.mode === 'desktop') {
       desktopResult = result;
