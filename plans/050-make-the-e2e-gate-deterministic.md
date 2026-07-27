@@ -195,3 +195,11 @@ the environments were aligned. Root cause 2 independently accounts for the false
 order result: containment can add bits to the correct `FOLLOWING` relationship. The
 post-viewport polling change removes one-shot observation of intermediate overflow
 without weakening the zero-overflow requirement.
+
+A second, independent mechanism was identified after this measurement: the
+`Codex sessions` policy mutation in `sources.spec.ts` was restored only on the happy
+path. The 5/5 determinism result above measured runs that never failed, so it could not
+expose state leakage into a reused local server; this was outside plan 050's
+load-timing and bitmask scope. The follow-up closes the leak with unconditional
+`test.afterEach` restoration and a deliberately failing negative control that confirmed
+the server returned to an enabled, scheduled policy.

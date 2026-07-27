@@ -9,6 +9,7 @@ const COMPACT_REVISION_SUFFIX_LENGTH = 8;
 const FULL_REVISION_PATTERN = /^e2e-revision-(\d+)-[a-f\d]{32}$/;
 const RUNNING_ELAPSED_PATTERN = /Running: Codex sessions \(\d+s elapsed\)/;
 const NEXT_DUE_PATTERN = /Next due: .* at \d{4}-\d{2}-\d{2}T/;
+let shouldRestoreCodexSessions = false;
 
 const sourceCard = (page: Page, label: string) =>
   page.getByRole('article').filter({ has: page.getByRole('heading', { level: 3, name: label }) });
@@ -19,6 +20,25 @@ const publicationRevisionNumber = (revision: string | null): number => {
   }
   return Number.parseInt(match[1], 10);
 };
+
+test.afterEach(async ({ page }) => {
+  if (!shouldRestoreCodexSessions) {
+    return;
+  }
+
+  try {
+    await page.goto('/sources');
+    const sessions = sourceCard(page, 'Codex sessions');
+    const enabledCheckbox = sessions.getByRole('checkbox', { name: 'Enabled' });
+    if (!(await enabledCheckbox.isChecked())) {
+      await enabledCheckbox.check();
+    }
+    await expect(enabledCheckbox).toBeChecked();
+    await expect(sessions.getByText('scheduled', { exact: true })).toBeVisible();
+  } finally {
+    shouldRestoreCodexSessions = false;
+  }
+});
 
 test('states each source health once and keeps source metadata concise', async ({ context, page }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -103,6 +123,7 @@ test('keeps business sources independent through a picked disable and publishes 
 
   await summary.getByRole('link').focus();
   await expect(summaryCard).toBeVisible();
+  shouldRestoreCodexSessions = true;
   await sessions.getByRole('checkbox', { name: 'Enabled' }).uncheck();
   await expect(sessions.getByText('Pausing after current run', { exact: true })).toBeVisible();
   await expect(sessions.getByText('Disabled', { exact: true })).toBeVisible();
@@ -114,10 +135,7 @@ test('keeps business sources independent through a picked disable and publishes 
     .poll(() => reportPage.evaluate(() => Number(Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads') ?? 0)))
     .toBe(reportOwnerLoads + 1);
 
-  await sessions.getByRole('checkbox', { name: 'Enabled' }).check();
-  await expect(sessions.getByRole('checkbox', { name: 'Enabled' })).toBeChecked();
   await reportPage.close();
-  await expect(sessions.getByText('scheduled', { exact: true })).toBeVisible();
 });
 
 test('ignores a partial SSE snapshot after a complete catalogue', async ({ page }) => {

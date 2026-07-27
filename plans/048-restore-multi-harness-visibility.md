@@ -441,3 +441,31 @@ The category gate was also run as a cold negative control with `unknown` tempora
 removed from the default. It failed without a fixed category list: the live harness
 options still contained Cursor while the default breakdown did not. The required
 default was restored before the final verification gate.
+
+### After, on real local history
+
+The *Before* table above was measured against real local history, so the fixture table
+alone does not make the two rows comparable. Re-measured on 2026-07-27 at `a65906c`,
+same conditions as *Before* — range Jun 27 → Jul 27, all machines, headless Chrome over
+CDP at 1440x1000, default filter versus an all-origins URL:
+
+| Filter | Sessions | Harnesses | Codex total |
+| --- | ---: | --- | ---: |
+| `excluding automated reviews` (default) | 1,242 / 5,597 | Codex 1,165 · Claude Code 48 · OpenCode 29 | `$9186.70` measured |
+| `all` | 2,155 / 5,597 | Codex 2,078 · Claude Code 48 · OpenCode 29 | `≥ $9203.20` partially measured |
+
+The regression is closed: all three populated harnesses appear in the default, where
+previously only Codex did.
+
+The strongest confirmation is the shape of the delta rather than the totals. Claude Code
+and OpenCode are **identical** in both views, and only Codex changes — by 913 sessions,
+all of them classifiers. That is exactly the condition Step 2 required: after Steps 1 and
+2, the only remaining difference between the default and all-origins must be classifier
+sessions.
+
+A secondary effect worth recording: excluding classifiers makes the Codex total *fully*
+measured (`$9186.70`, no `≥`), because the unpriced sessions were the classifiers. Under
+`all` it correctly reverts to `≥ $9203.20` with `Partially measured (1,172/2,078)`.
+
+The session corpus grew from 5,581 to 5,597 between the two measurements; that is
+ordinary accumulation, not an effect of the change.

@@ -1,6 +1,6 @@
 # Plan 049: Make undeclared origin a gap, not a category
 
-> **Status: DRAFT.** The design was settled with the maintainer on 2026-07-27.
+> **Status: DONE.** Implemented and verified on 2026-07-27.
 > Nothing is open.
 >
 > **Baseline**: `2eb3b96`, on top of plan 048.
@@ -246,13 +246,13 @@ origin.
 
 ## Done criteria
 
-- [ ] `sessionOrigins` has three values and `origin` is optional.
-- [ ] No `?? 'unknown'` coercion remains on any origin path.
-- [ ] Three provenance kinds exist, each emitted by the collector that knows the cause.
-- [ ] Grouping by origin renders unclassified work outside the stack, with causes.
-- [ ] No origin selection can exclude an unclassified session.
-- [ ] `defaultDashboardOrigins` is neutral, and plan 048's transitional entry is gone.
-- [ ] `CONTEXT.md` records the vocabulary and the sentinel prohibition.
+- [x] `sessionOrigins` has three values and `origin` is optional.
+- [x] No `?? 'unknown'` coercion remains on any origin path.
+- [x] Three provenance kinds exist, each emitted by the collector that knows the cause.
+- [x] Grouping by origin renders unclassified work outside the stack, with causes.
+- [x] No origin selection can exclude an unclassified session.
+- [x] `defaultDashboardOrigins` is neutral, and plan 048's transitional entry is gone.
+- [x] `CONTEXT.md` records the vocabulary and the sentinel prohibition.
 
 ## STOP conditions
 
@@ -278,7 +278,23 @@ legends, and totals alike. `project`'s `(unknown)` is the remaining example in t
 repository; it is out of scope here and should be treated the same way when it is
 touched.
 
-## Post-change origin distribution
+## Execution log
+
+Verified at `6d97b95` on 2026-07-27 after stopping a stray development server
+that had been consuming 58% CPU:
+
+- three consecutive `bun run test:e2e` runs each reported **78 passed**
+  (43.9s, 43.9s, and 44.6s): 234 test executions and zero failures;
+- `bun run typecheck` passed 18/18 workspaces, `bun run test` reported 511 pass,
+  and `bun run lint` plus `bun run check` were clean across 542 files;
+- all seven Done criteria were verified in code. No `?? 'unknown'` origin
+  coercion remains across the seven normalization, projection, transport, snapshot,
+  query, and cache sites. Each collector-owned absence reason maps to exactly one
+  provenance kind: `cursor.ts:237,269` and `cursor-reconcile.ts:77` use
+  `origin-unsupported`; `opencode.ts:277` and `codex-history.ts:1854` use
+  `origin-absent`; and `claude.ts:379` uses `origin-degraded`.
+
+### Post-change origin distribution
 
 A direct fresh full-history collection on 2026-07-27 produced the following
 collector-owned absence provenance. Rows with a declared origin carry none of these

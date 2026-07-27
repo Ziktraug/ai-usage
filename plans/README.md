@@ -69,7 +69,7 @@ request unless the user explicitly asks.
 | 046 | Close the Verified Presentation Defects | P2 | M | - | DONE |
 | 047 | Make Grouping Portable User Data, for Projects and Campaigns | P2 | L | 045 wave 4 | TODO |
 | 048 | Restore Multi-Harness Visibility After the Origin Default | P0 | S | 045 | DONE |
-| 049 | Make Undeclared Origin a Gap, Not a Category | P1 | M | 048 | TODO |
+| 049 | Make Undeclared Origin a Gap, Not a Category | P1 | M | 048 | DONE |
 | 050 | Make the E2E Gate Deterministic | P0 | S | - | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
