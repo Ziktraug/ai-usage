@@ -426,4 +426,13 @@ Measured 2026-07-27 at `2eb3b96`, range Jun 27 → Jul 27, all machines:
 
 ### After
 
-Not yet run. Record the same table once Step 2 lands.
+Measured 2026-07-27 from the isolated `VITE_AI_USAGE_E2E` fixture on `:3000`,
+using the all-time range and all machines. Both variants were captured through
+headless Chrome over CDP at 1440x1000 with a forced light theme. No real local
+history was read. The fixture has no classifier session, so equality is the
+expected result: any remaining difference may only come from classifiers.
+
+| Filter | Sessions | Harnesses | Actual spend |
+| --- | ---: | --- | ---: |
+| `excluding automated reviews` (default) | 4 / 4 | Codex 1 · OpenCode 1 · Claude 1 · Cursor 1 | `$4.04` |
+| `all` | 4 / 4 | Codex 1 · OpenCode 1 · Claude 1 · Cursor 1 | `$4.04` |

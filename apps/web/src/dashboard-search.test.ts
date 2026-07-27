@@ -83,10 +83,10 @@ describe('dashboard search params', () => {
     ).toEqual(defaults);
   });
 
-  test('keeps the declared-origin default explicit while accepting all and uncommon origins', () => {
+  test('keeps the non-classifier default explicit while accepting all and uncommon origins', () => {
     const defaults = dashboardSearchDefaultsFor('date');
 
-    expect(defaults.origin).toEqual(['human', 'subagent']);
+    expect(defaults.origin).toEqual(['human', 'subagent', 'unknown']);
     expect(validateDashboardSearch({ origin: ['classifier', 'unknown'] }, defaults).origin).toEqual([
       'classifier',
       'unknown',

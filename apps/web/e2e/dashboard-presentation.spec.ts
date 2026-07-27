@@ -11,13 +11,11 @@ test('keeps metric deltas qualified, aligned, and in a balanced grid', async ({ 
   await page.setViewportSize({ height: 1000, width: 1440 });
   await page.goto('/');
 
-  // The fixture's only previous-period row has an undeclared origin, which the
-  // deliberately non-neutral default excludes. Include every origin so this
-  // presentation test exercises real, non-synthetic period comparisons.
+  // Include the one origin excluded by the non-neutral default so this
+  // presentation test exercises the synthetic fixture's period comparisons.
   const originFilter = page.getByRole('button', { name: 'Filter by origin' });
   await originFilter.click();
   await page.getByText('Automated review', { exact: true }).click();
-  await page.getByText('Undeclared', { exact: true }).click();
   await expect(originFilter).toContainText('Origin: all');
   await page.keyboard.press('Escape');
 

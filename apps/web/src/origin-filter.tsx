@@ -24,7 +24,7 @@ const normalizedSelection = (origins: readonly SessionOrigin[]): readonly Sessio
 
 export const originFilterLabel = (origins: readonly SessionOrigin[]): string => {
   if (isDefaultDashboardOriginSelection(origins)) {
-    return 'Origin: human + delegated';
+    return 'Origin: excluding automated reviews';
   }
   if (origins.length === 0) {
     return 'Origin: all';

@@ -2,13 +2,13 @@ import { expect, test } from './browser-test';
 
 const MAX_SESSION_ROW_TEXT_LENGTH = 600;
 
-test('makes the declared-origin default and singleton campaigns explicit', async ({ page }) => {
+test('makes the non-classifier default and singleton campaigns explicit', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1024 });
   await page.goto('/?tab=sessions');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
 
   const originFilter = page.getByRole('button', { name: 'Filter by origin' });
-  await expect(originFilter).toContainText('Origin: human + delegated');
+  await expect(originFilter).toContainText('Origin: excluding automated reviews');
   await originFilter.click();
   for (const origin of ['Human', 'Delegated', 'Automated review', 'Undeclared']) {
     await expect(page.getByText(origin, { exact: true })).toBeVisible();
