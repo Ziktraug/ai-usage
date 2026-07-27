@@ -427,14 +427,14 @@ test('prioritizes the editor on mobile and keeps the compact picker behavior', a
   const inspectorElement = await inspector.elementHandle();
   const editorPrecedesInspector = await editor.evaluate(
     (element, target) =>
-      target !== null && element.compareDocumentPosition(target) === Node.DOCUMENT_POSITION_FOLLOWING,
+      target !== null && (element.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
     inspectorElement,
   );
   expect(editorPrecedesInspector).toBe(true);
   const saveButtonElement = await saveButton.elementHandle();
   const editorPrecedesActions = await editor.evaluate(
     (element, target) =>
-      target !== null && element.compareDocumentPosition(target) === Node.DOCUMENT_POSITION_FOLLOWING,
+      target !== null && (element.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
     saveButtonElement,
   );
   expect(editorPrecedesActions).toBe(true);
