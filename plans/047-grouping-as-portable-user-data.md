@@ -1,6 +1,25 @@
 # Plan 047: Make grouping portable user data, for projects and campaigns
 
-> **Status: DRAFT — unblocked after two stops.** Execution stopped twice on 2026-07-27,
+> **Status: REJECTED — portable grouping is not required for either delivered
+> product outcome.** The multidimensional report is complete, and merge bundles
+> already transfer sessions between machines. Local project-group creation and
+> renaming also already exist. The only remaining low-cost opportunity is an
+> optional local campaign-label override, now isolated in plan 051.
+>
+> Execution stopped three times before production code, each time correctly:
+> wall-clock order was not causality; selector membership was pattern overlap
+> rather than element identity; and the proposed “fully qualified” portable
+> restriction still admitted two shapes plus optional `gitRemote`, so equality
+> still did not coincide with overlap. The third stop refuted this plan's Rule 0
+> and therefore the claimed merge domain.
+>
+> This file is retained as a historical record of those stops. **Do not execute
+> its steps.** Its claims to supersede `docs/project-grouping-plan.md`, and every
+> “settled” or “executable authority” statement below, are withdrawn.
+
+## Historical record (non-executable)
+
+> **Former status: DRAFT — unblocked after two stops.** Execution stopped twice on 2026-07-27,
 > both times correctly and both times before any production code was written. The first
 > stop refuted a wall-clock timestamp model; the second refuted the assumption that
 > membership is element-wise, because project selectors are patterns whose overlap is

@@ -67,10 +67,11 @@ request unless the user explicitly asks.
 | 044 | Unify the exact-revision query lifecycle | P2 | M | 043 | DONE |
 | 045 | Valorize the Report Dimensions and Make the Work Unit Honest | P1 | XL | - | DONE |
 | 046 | Close the Verified Presentation Defects | P2 | M | - | DONE |
-| 047 | Make Grouping Portable User Data, for Projects and Campaigns | P2 | L | 045 wave 4 | TODO |
+| 047 | Make Grouping Portable User Data, for Projects and Campaigns | P2 | L | 045 wave 4 | REJECTED (portable grouping is unnecessary and three STOPs refuted its merge domain) |
 | 048 | Restore Multi-Harness Visibility After the Origin Default | P0 | S | 045 | DONE |
 | 049 | Make Undeclared Origin a Gap, Not a Category | P1 | M | 048 | DONE |
 | 050 | Make the E2E Gate Deterministic | P0 | S | - | DONE |
+| 051 | Allow Local Campaign Label Overrides | P3 | M | 045 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -478,21 +479,20 @@ provenance files, and their code anchors were re-checked line by line.
   features under it.
 - Plan 046 owns presentation only: 26 verified defects in labels, layout, and
   vocabulary. It must not change aggregation or information architecture.
-- Plan 047 owns grouping as portable user data, for projects and campaigns. It
-  **supersedes two adopted clauses of `docs/project-grouping-plan.md`** and is
-  BLOCKED until its merge model is recorded in the plan itself. Plan 040's
-  confirmation-token idiom is its starting point, not its answer: that mechanism
-  detects whole-store staleness at import, not per-record divergence.
+- Plan 047 is rejected. Multidimensional reporting and session transfer are
+  already delivered without portable grouping; local project groups can already
+  be created and renamed. Three correct pre-production STOPs refuted successively
+  its timestamp model, per-selector membership model, and claimed portable domain.
+  It does not supersede `docs/project-grouping-plan.md`.
 - Ownership boundaries that prevent duplicated work: plan 046 defers its row 16
   (navigation divergence) to plan 045 wave 5, because the left rail replaces
   per-route headers entirely; it defers its row 25 to plan 045 wave 4; and it stops
   on its row 5 until plan 045 wave 1 lands the three-state result. Plan 046's mobile
   item is scoped to the filter stack only, since the rail removes the mobile
   navigation buttons.
-- Plans 045 and 046 may run in parallel with different executors. Plan 047 must not
-  start before plan 045 wave 4, and plan 045 must not introduce any storage for
-  campaign labels — its sequencing exists specifically to avoid migrating
-  hand-authored data.
+- Plans 045 and 046 may run in parallel with different executors. Plan 047 is
+  rejected and must not execute. Plan 045 introduced no storage for campaign
+  labels; any optional local presentation state belongs only to plan 051.
 - Plan 045 waves 0 and 3b are measurement-only and produce no production diff. Both
   gate later scope, so take them first. Their findings belong in plan 045's
   Execution log, which is currently empty by design.
@@ -505,7 +505,9 @@ provenance files, and their code anchors were re-checked line by line.
   compacted — it is the maintainer's primary indicator and it filters the Sessions
   view — but its internal order is reversed so that what you read sits above what
   you adjust.
-- Plan 047's merge model is recorded: per-field last-write-wins, with `members` as a
-  per-membership set carrying tombstones. Conflicts are scoped to one scalar field
-  or one membership, and `usage-store` owns the semantics — no caller decodes
-  version state, per plan 040's confirmed design amendment.
+- Plan 051 is the only retained grouping-adjacent follow-up. It allows an
+  occasional campaign name to override the now-readable derived label in local
+  presentation. It adds no campaign grouping, project-group change, portable
+  data, merge-bundle field, `usage-store` state, or conflict semantics. Execute it
+  separately after the current multidimensional-reporting PR; it is not a merge
+  gate for plans 045, 046, 048, 049, or 050.
