@@ -1,8 +1,8 @@
 # Plan 048: Restore multi-harness visibility after the origin default
 
-> **Status: DRAFT.** The arbitration was settled with the maintainer on 2026-07-27:
-> `unknown` joins the default. Nothing in this plan is open; all five steps are
-> executable.
+> **Status: DONE.** Implemented and verified on 2026-07-27. The settled
+> arbitration is preserved: `unknown` joins the default until plan 049 removes the
+> undeclared-origin category itself.
 >
 > **Baseline**: `2eb3b96`. All figures were measured against the running dev server
 > on `:3000` on 2026-07-27, comparing the default filter against an all-origins URL.
@@ -379,16 +379,16 @@ do not assert against real local history.
 ## Done criteria
 
 - [x] The arbitration is recorded (*The arbitration — settled*, 2026-07-27).
-- [ ] `unknown` is in the default origin selection.
-- [ ] The filter label describes the exclusion it makes, not an inclusion it does not.
-- [ ] Claude and OpenCode sessions carry a declared `origin` where their history
+- [x] `unknown` is in the default origin selection.
+- [x] The filter label describes the exclusion it makes, not an inclusion it does not.
+- [x] Claude and OpenCode sessions carry a declared `origin` where their history
       declares one.
-- [ ] Cursor sessions remain `unknown`, with no inference from interaction mode.
-- [ ] The default report shows every harness that has sessions in range.
-- [ ] The origin filter still states its own non-neutral state.
-- [ ] One control selects the primary view; Breakdown sub-views are unchanged.
-- [ ] The spend bar cannot be read as the spend amount.
-- [ ] A regression gate fails if any populated harness disappears from the default.
+- [x] Cursor sessions remain `unknown`, with no inference from interaction mode.
+- [x] The default report shows every harness that has sessions in range.
+- [x] The origin filter still states its own non-neutral state.
+- [x] One control selects the primary view; Breakdown sub-views are unchanged.
+- [x] The spend bar cannot be read as the spend amount.
+- [x] A regression gate fails if any populated harness disappears from the default.
 
 ## STOP conditions
 
@@ -436,3 +436,8 @@ expected result: any remaining difference may only come from classifiers.
 | --- | ---: | --- | ---: |
 | `excluding automated reviews` (default) | 4 / 4 | Codex 1 · OpenCode 1 · Claude 1 · Cursor 1 | `$4.04` |
 | `all` | 4 / 4 | Codex 1 · OpenCode 1 · Claude 1 · Cursor 1 | `$4.04` |
+
+The category gate was also run as a cold negative control with `unknown` temporarily
+removed from the default. It failed without a fixed category list: the live harness
+options still contained Cursor while the default breakdown did not. The required
+default was restored before the final verification gate.

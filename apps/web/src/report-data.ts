@@ -132,6 +132,12 @@ const demoRows: SerializedRow[] = [
     linesAdded: null,
     linesDeleted: null,
     lineDelta: null,
+    source: {
+      harnessKey: 'cursor',
+      machineId: 'fixture-machine-secondary',
+      machineLabel: 'Fixture Machine Secondary',
+      sourceSessionId: 'cursor-fixture',
+    },
     partial: true,
   },
 ];

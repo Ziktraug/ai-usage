@@ -1,14 +1,25 @@
 import { describe, expect, test } from 'bun:test';
+import { type SessionOrigin, sessionOrigins } from '@ai-usage/report-core/session-query';
 import {
   breakdownTabFor,
   dashboardSearchDefaultsFor,
   defaultDashboardDateRangeMode,
+  defaultDashboardOrigins,
   hasActiveDashboardFilters,
   primaryDashboardTabFor,
   sortingStateFromSearch,
   toggleExactFieldFilter,
   validateDashboardSearch,
 } from './dashboard-search';
+
+type OriginDataStatus = 'absent-data' | 'known';
+
+const originDataStatusByValue = {
+  classifier: 'known',
+  human: 'known',
+  subagent: 'known',
+  unknown: 'absent-data',
+} as const satisfies Record<SessionOrigin, OriginDataStatus>;
 
 describe('dashboard search params', () => {
   test('maps legacy analysis tabs into the Breakdown navigation without rewriting deep links', () => {
@@ -81,6 +92,15 @@ describe('dashboard search params', () => {
         defaults,
       ),
     ).toEqual(defaults);
+  });
+
+  test('includes every absent-data origin in the default selection', () => {
+    const defaultOrigins = new Set<SessionOrigin>(defaultDashboardOrigins);
+    const excludedAbsentDataOrigins = sessionOrigins.filter(
+      (origin) => originDataStatusByValue[origin] === 'absent-data' && !defaultOrigins.has(origin),
+    );
+
+    expect(excludedAbsentDataOrigins).toEqual([]);
   });
 
   test('keeps the non-classifier default explicit while accepting all and uncommon origins', () => {
