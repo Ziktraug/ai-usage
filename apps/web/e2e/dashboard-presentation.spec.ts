@@ -79,6 +79,29 @@ test('keeps metric provenance visibly interactive and operable by keyboard', asy
   await expect(hint).toBeVisible();
 });
 
+test('names spend coverage before drawing its bar', async ({ page }) => {
+  await page.goto('/');
+
+  const hero = page.getByRole('region', { name: 'API-equivalent value' });
+  const verticalOrder = await hero.evaluate((element) => {
+    const amount = element.querySelector('[data-reported-actual-spend]');
+    const coverage = element.querySelector('[data-spend-coverage-legend]');
+    const bar = element.querySelector('[aria-label="Actual-spend reporting coverage by session"]');
+    if (!(amount && coverage && bar)) {
+      throw new Error('Spend amount, coverage legend, or coverage bar is missing');
+    }
+    return {
+      amountBottom: amount.getBoundingClientRect().bottom,
+      barTop: bar.getBoundingClientRect().top,
+      coverageBottom: coverage.getBoundingClientRect().bottom,
+      coverageTop: coverage.getBoundingClientRect().top,
+    };
+  });
+
+  expect(verticalOrder.amountBottom).toBeLessThanOrEqual(verticalOrder.coverageTop);
+  expect(verticalOrder.coverageBottom).toBeLessThanOrEqual(verticalOrder.barTop);
+});
+
 test('pairs the dashboard Token anatomy legend in a two-by-two grid', async ({ page }) => {
   await page.goto('/');
 

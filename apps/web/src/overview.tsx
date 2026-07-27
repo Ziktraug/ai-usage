@@ -171,7 +171,23 @@ const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
             </div>
           </div>
           <div class={heroSide}>
-            <span class={heroMultiple}>Reported actual spend · {fmtMoney(hero().actualSpend)}</span>
+            <span class={heroMultiple} data-reported-actual-spend>
+              Reported actual spend · {fmtMoney(hero().actualSpend)}
+            </span>
+            <div class={heroLegend} data-spend-coverage-legend>
+              <span>
+                Spend coverage
+                <span class={heroLegendValue}>
+                  {fmtNum(hero().actualSpendKnownSessions)}/{fmtNum(hero().sessionCount)} sessions
+                </span>
+              </span>
+              <Show when={hero().subscriptionValue > 0}>
+                <span>
+                  Quota-covered value reported
+                  <span class={heroLegendValue}>{fmtMoney(hero().subscriptionValue)}</span>
+                </span>
+              </Show>
+            </div>
             <SegmentBar
               ariaLabel="Actual-spend reporting coverage by session"
               segments={[
@@ -189,20 +205,6 @@ const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
                 },
               ]}
             />
-            <div class={heroLegend}>
-              <span>
-                Spend coverage
-                <span class={heroLegendValue}>
-                  {fmtNum(hero().actualSpendKnownSessions)}/{fmtNum(hero().sessionCount)} sessions
-                </span>
-              </span>
-              <Show when={hero().subscriptionValue > 0}>
-                <span>
-                  Quota-covered value reported
-                  <span class={heroLegendValue}>{fmtMoney(hero().subscriptionValue)}</span>
-                </span>
-              </Show>
-            </div>
           </div>
         </section>
       )}
