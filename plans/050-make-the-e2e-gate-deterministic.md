@@ -1,6 +1,7 @@
 # Plan 050: Make the E2E gate deterministic
 
-> **Status: IN PROGRESS.**
+> **Status: DONE.** Implemented and verified on 2026-07-27. Five consecutive
+> unchanged-code full-suite runs passed with four workers and no retries.
 >
 > **Baseline**: `a65906c` on `feat/implement-plans-045-046`, measured on
 > 2026-07-27 with no code changes between runs.
@@ -131,15 +132,15 @@ Do not run `bun install`. Do not add Playwright retries.
 
 ## Done criteria
 
-- [ ] Local and CI both use exactly four Playwright workers.
-- [ ] Retries remain unset and the expectation timeout remains 5000 ms.
-- [ ] Every E2E `compareDocumentPosition` assertion tests the required bit.
-- [ ] Post-viewport overflow assertions retry the exact zero-overflow invariant.
-- [ ] The line-193 unsaved-draft probe passes 10/10 at four workers.
-- [ ] `bun run check`, `bun run lint`, `bun run typecheck`, `bun run test`, and
+- [x] Local and CI both use exactly four Playwright workers.
+- [x] Retries remain unset and the expectation timeout remains 5000 ms.
+- [x] Every E2E `compareDocumentPosition` assertion tests the required bit.
+- [x] Post-viewport overflow assertions retry the exact zero-overflow invariant.
+- [x] The line-193 unsaved-draft probe passes 10/10 at four workers.
+- [x] `bun run check`, `bun run lint`, `bun run typecheck`, `bun run test`, and
       `git diff --check` pass.
-- [ ] Five consecutive unchanged-code `bun run test:e2e` runs pass.
-- [ ] Before and after failure rates are recorded in the Execution log.
+- [x] Five consecutive unchanged-code `bun run test:e2e` runs pass.
+- [x] Before and after failure rates are recorded in the Execution log.
 
 ## STOP conditions
 
@@ -168,4 +169,29 @@ Failure artifacts from the plan-050 baseline run are preserved at
 
 ### After
 
-Pending implementation and the five-run unchanged-code gate.
+At `b022975`, five consecutive unchanged-code full-suite runs passed: 5/5 suites
+(100%) and 385/385 test executions, for a 0% suite failure rate and a 0% test
+failure rate. Every run reported four workers. Retries remained unset and
+`expect.timeout` remained 5000 ms.
+
+Focused verification also passed:
+
+| Probe | Result |
+| --- | ---: |
+| Unsaved-draft state at four workers | 10/10 |
+| Mobile editor DOM order | 10/10 |
+| Accessibility file repeated four times | 52/52 |
+| Desktop/mobile Skills layout repeated ten times each | 20/20 |
+
+`bun run check`, `bun run lint`, `bun run typecheck`, `bun run test`, and
+`git diff --check` passed before the final five-run sequence. The complete E2E
+suite contains two `compareDocumentPosition` uses; both were the known full-mask
+equality bug and both now test `DOCUMENT_POSITION_FOLLOWING` with `&`. No additional
+wrong assertion was found beyond those two instances of the reported bitmask bug.
+
+Root cause 1 accounts for the load-dependent failures: local execution was using ten
+workers while CI used four, and the newly observed line-193 timeout passed 10/10 after
+the environments were aligned. Root cause 2 independently accounts for the false DOM
+order result: containment can add bits to the correct `FOLLOWING` relationship. The
+post-viewport polling change removes one-shot observation of intermediate overflow
+without weakening the zero-overflow requirement.
