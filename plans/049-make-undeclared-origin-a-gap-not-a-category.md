@@ -277,3 +277,23 @@ indistinguishable from a real category to every consumer downstream — filters,
 legends, and totals alike. `project`'s `(unknown)` is the remaining example in this
 repository; it is out of scope here and should be treated the same way when it is
 touched.
+
+## Post-change origin distribution
+
+A direct fresh full-history collection on 2026-07-27 produced the following
+collector-owned absence provenance. Rows with a declared origin carry none of these
+kinds.
+
+| Harness | `origin-unsupported` | `origin-absent` | `origin-degraded` |
+| --- | ---: | ---: | ---: |
+| Claude Code | 0 | 0 | 37 |
+| Codex | 0 | 291 | 0 |
+| Cursor | 83 | 0 | 0 |
+| OpenCode | 0 | 382 | 0 |
+
+Cursor and OpenCode match plan 045 wave 3b exactly. Claude increased from 35 to 37,
+which is consistent with two additional history-only sessions collected since that
+measurement. The direct collector output had no absent origin without one of the three
+causes. A durable-store export also retained two older Claude rows that are no longer
+returned by the current collector and predate origin provenance; they remain
+unexplained rather than being assigned a guessed cause.

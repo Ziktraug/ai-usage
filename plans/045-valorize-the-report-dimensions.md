@@ -74,11 +74,11 @@ provenance popover — a synonym in one place breaks the reading of the others.
 | Surface | String |
 | --- | --- |
 | Origin filter | `Origin: human + delegated` |
-| Origin series (chart legend) | `Human` · `Delegated` · `Automated review` · `Undeclared` |
+| Origin series (chart legend) | `Human` · `Delegated` · `Automated review`; unclassified work renders outside the stack |
 | Classifier roll-up on a campaign row | `+ 492 automated reviews` |
 | Partially measured marker | `Partially measured` |
 | Partially measured popover | `Partially measured — 57.5M tokens in this slice come from models with no published price. Their work is counted, their value is not.` |
-| Undeclared origin popover | `Undeclared — this harness did not state how the session was started.` |
+| Unclassified origin popover | Provenance explains whether origin was unsupported, absent, or unavailable. |
 
 Two rules follow from the wording:
 
@@ -356,7 +356,7 @@ threads, 0 present). Coverage is 100% today but the mechanism is textual, unlike
 
 ### Steps
 
-1. Model `origin` with four values: `human`, `subagent`, `classifier`, `unknown`.
+1. Model `origin` with three declared values: `human`, `subagent`, and `classifier`; express absence through provenance.
    The 291 files declaring nothing land in `unknown` — never silently in `human`.
 2. Persist the classifier parent relation instead of formatting it into a name.
 3. Every top-level row is a campaign (decision 1), including a campaign of one.
@@ -737,7 +737,7 @@ snapshots for OpenCode and Cursor:
 | Harness | Declared nature | Field | Coverage in report sessions |
 | --- | --- | --- | ---: |
 | Claude | Human or delegated | `isSidechain` (`agentId` corroborates delegated files) | 113/148 (76.4%): 66 human, 47 delegated; 35 history-only fallbacks remain unknown |
-| OpenCode | Delegated only | `session.parent_id` | 252/634 (39.7%) delegated; root sessions do not declare human origin and remain unknown |
+| OpenCode | Delegated only | `session.parent_id` | 252/634 (39.7%) delegated; root sessions do not declare human origin and remain unclassified |
 | Cursor | None | `isAgentic` / `unifiedMode` describe interaction mode, not who started the session; observed `subagentComposerIds` sets were empty | 0/83 (0.0%); all remain unknown |
 
 OpenCode's `session.agent` names an agent profile and occurs on both root and child
