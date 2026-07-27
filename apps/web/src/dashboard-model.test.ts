@@ -304,7 +304,7 @@ describe('dashboard model', () => {
         sourceSessionId: 'classifier-review',
       },
     });
-    const singleton = row({ name: 'singleton', origin: 'unknown', sessionLabel: 'singleton' });
+    const singleton = row({ name: 'singleton', sessionLabel: 'singleton' });
     const campaignKey = 'machine-a:codex:parent';
     const allRows = [parent, child, classifier, singleton];
     const visible = filterTimelineRows(

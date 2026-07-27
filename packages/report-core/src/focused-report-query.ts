@@ -425,7 +425,7 @@ export const matchesFocusedReportQuery = (row: SessionPresentationRow, query: Fo
     (!query.filters.query || row.searchText.includes(query.filters.query)) &&
     (query.filters.harness.length === 0 || query.filters.harness.includes(row.harness)) &&
     (query.filters.machine.length === 0 || query.filters.machine.includes(row.source?.machineId ?? '')) &&
-    (!query.filters.origin?.length || query.filters.origin.includes(row.origin)) &&
+    (!query.filters.origin?.length || row.origin === undefined || query.filters.origin.includes(row.origin)) &&
     (fields.campaign === undefined || sessionCampaignIdentityForRow(row).campaignKey === fields.campaign) &&
     (fields.provider === undefined || row.providerDisplay === fields.provider) &&
     (fields.model === undefined || sessionModelKeys(row).includes(fields.model)) &&
@@ -517,7 +517,7 @@ const timelineIdentity = (
   row: SessionPresentationRow,
   dimension: FocusedTimelineDimension,
   campaignIdentity: FocusedTimelineIdentity | undefined,
-): FocusedTimelineIdentity => {
+): FocusedTimelineIdentity | undefined => {
   // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
   switch (dimension) {
     case 'campaign':
@@ -532,7 +532,7 @@ const timelineIdentity = (
     case 'model':
       return { key: row.modelKey, label: row.modelKey };
     case 'origin':
-      return { key: row.origin, label: sessionOriginLabel(row.origin) };
+      return row.origin === undefined ? undefined : { key: row.origin, label: sessionOriginLabel(row.origin) };
     case 'project':
       return { key: row.projectKey, label: row.projectLabel };
     case 'provider':
@@ -564,6 +564,9 @@ const timelineAggregatesForRow = (
   }
   const priceMeasurement = usageRowApiPriceMeasurement(row);
   const identity = timelineIdentity(row, dimension, campaignIdentity);
+  if (identity === undefined) {
+    return [];
+  }
   return [
     {
       cost: priceMeasurement.knownCost,

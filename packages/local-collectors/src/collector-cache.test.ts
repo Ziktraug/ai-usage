@@ -57,7 +57,7 @@ describe('shared collector row cache', () => {
     const valid = { ...row('2026-06-01T00:00:00.000Z'), source: { harnessKey: 'opencode', sourceSessionId: 'a', vcs } };
 
     expect(reviveCollectorRowsResult([valid]).rows[0]?.source?.vcs).toEqual(vcs);
-    expect(reviveCollectorRowsResult([valid]).rows[0]?.origin).toBe('unknown');
+    expect(reviveCollectorRowsResult([valid]).rows[0]?.origin).toBeUndefined();
     expect(reviveCollectorRowsResult([{ ...valid, origin: 'classifier' }]).rows[0]?.origin).toBe('classifier');
     expect(
       reviveCollectorRowsResult([

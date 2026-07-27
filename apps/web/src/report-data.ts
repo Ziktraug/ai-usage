@@ -114,7 +114,6 @@ const demoRows: SerializedRow[] = [
     name: 'Explore report sketch',
     sessionLabel: 'Explore report sketch',
     model: 'cursor-agent',
-    origin: 'unknown',
     project: 'ai-usage',
     tokIn: 19_000,
     tokOut: 2600,

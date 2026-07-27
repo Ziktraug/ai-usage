@@ -210,7 +210,7 @@ export const normalizeUsageRow = (input: UsageRowInput): Row => {
     harness: input.harness,
     provider: input.provider,
     name: input.name,
-    origin: input.origin ?? 'unknown',
+    ...(input.origin === undefined ? {} : { origin: input.origin }),
     model,
     ...(segments === undefined ? {} : { modelSegments: segments }),
     ...(models === undefined ? {} : { models }),

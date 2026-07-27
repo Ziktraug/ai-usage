@@ -41,10 +41,10 @@ describe('usage merge bundles', () => {
     expect(bundle.rows[0]?.source.machineLabel).toBe('Machine A');
     expect(bundle.rows[0]?.rowKey).toBe('v1:machine-a:codex:session-1');
     expect(bundle.rows[0]?.contentHash).toHaveLength(64);
-    expect(bundle.rows[0]?.origin).toBe('unknown');
+    expect(bundle.rows[0]?.origin).toBeUndefined();
   });
 
-  test('round-trips declared origin and defaults legacy rows without inference', () => {
+  test('round-trips declared origin and preserves legacy absence', () => {
     const classifierParentId = '11111111-2222-4333-8444-555555555555';
     const serialized = toSerializedMergeRow(
       {
@@ -62,7 +62,7 @@ describe('usage merge bundles', () => {
 
     expect(deserializeMergeRow(serialized).origin).toBe('classifier');
     expect(deserializeMergeRow(serialized).source.rootSourceSessionId).toBe(classifierParentId);
-    expect(deserializeMergeRow(legacySerialized).origin).toBe('unknown');
+    expect(deserializeMergeRow(legacySerialized).origin).toBeUndefined();
   });
 
   test('preserves import artifact provenance separately from project paths', () => {

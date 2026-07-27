@@ -252,7 +252,6 @@ export const reviveCollectorRowsResult = (
       ...record,
       date: reviveDate(record.date),
       endDate: reviveDate(record.endDate),
-      origin: record.origin ?? 'unknown',
     })),
     valid: true,
   };

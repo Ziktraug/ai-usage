@@ -141,7 +141,7 @@ export type SessionPresentationRow = SerializedRow & {
   children?: SessionPresentationRow[];
   modelLabel: string;
   modelKey: string;
-  origin: SessionOrigin;
+  origin?: SessionOrigin;
   priceMeasurement?: ApiPriceMeasurement;
   projectLabel: string;
   projectKey: string;
@@ -161,7 +161,6 @@ export const sessionOriginLabels = {
   classifier: 'Automated review',
   human: 'Human',
   subagent: 'Delegated',
-  unknown: 'Undeclared',
 } as const satisfies Record<SessionOrigin, string>;
 
 export const UNDECLARED_ORIGIN_DESCRIPTION = 'Undeclared — this harness did not state how the session was started.';
@@ -569,7 +568,7 @@ export const parseSessionPresentationRow = (value: unknown, label: string): Sess
       throw new SessionQueryValidationError(`${label}.${key} must be a string`);
     }
   }
-  if (!isSessionOrigin(record.origin)) {
+  if (record.origin !== undefined && !isSessionOrigin(record.origin)) {
     throw new SessionQueryValidationError(`${label}.origin is invalid`);
   }
   requireFiniteNumberOrNull(record.activeTime, `${label}.activeTime`);
@@ -872,7 +871,6 @@ export const enrichSessionPresentationRow = (row: SerializedRow): SessionPresent
     activeTime,
     modelLabel,
     modelKey,
-    origin: row.origin ?? 'unknown',
     projectLabel,
     projectKey,
     providerDisplay,
@@ -1319,7 +1317,7 @@ const matchesSessionQuery = (row: SessionPresentationRow, request: SessionQueryR
   if (request.filters.machine.length && !request.filters.machine.includes(row.source?.machineId ?? '')) {
     return false;
   }
-  if (request.filters.origin?.length && !request.filters.origin.includes(row.origin)) {
+  if (request.filters.origin?.length && row.origin !== undefined && !request.filters.origin.includes(row.origin)) {
     return false;
   }
   if (fields.campaign !== undefined && sessionCampaignIdentityForRow(row).campaignKey !== fields.campaign) {

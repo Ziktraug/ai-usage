@@ -28,7 +28,7 @@ describe('usage row', () => {
     expect(row.costApprox).toBeGreaterThan(0);
     expect(row.costActual).toBe(row.costApprox);
     expect(row.durationMs).toBe(120_000);
-    expect(row.origin).toBe('unknown');
+    expect(row.origin).toBeUndefined();
     expect(row.turns).toBe(0);
     expect(row.linesAdded).toBeNull();
   });

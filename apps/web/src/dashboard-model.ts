@@ -73,7 +73,7 @@ export const matchesFilterSnapshot = (row: DashboardRow, filters: FilterSnapshot
   row.searchText.includes(filters.query) &&
   (filters.harness.length === 0 || filters.harness.includes(row.harness)) &&
   (filters.machine.length === 0 || filters.machine.includes(row.source?.machineId ?? '')) &&
-  (filters.origin.length === 0 || filters.origin.includes(row.origin)) &&
+  (filters.origin.length === 0 || row.origin === undefined || filters.origin.includes(row.origin)) &&
   filters.fieldEntries.every(([key, value]) => fieldValuesForRow(row, key).includes(value));
 
 export const filterTimelineRows = (rows: DashboardRow[], filters: FilterSnapshot) =>

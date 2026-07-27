@@ -66,8 +66,8 @@ export interface DashboardDateRangeSearch {
 }
 
 export const defaultDashboardDateRangeMode = '30d' as const;
-// Transitional until plan 049 removes `unknown` from the origin model.
-export const defaultDashboardOrigins = ['human', 'subagent', 'unknown'] as const satisfies readonly SessionOrigin[];
+// Transitional until plan 049 returns the origin filter to a neutral default.
+export const defaultDashboardOrigins = ['human', 'subagent'] as const satisfies readonly SessionOrigin[];
 
 const sameOrigins = (left: readonly SessionOrigin[], right: readonly SessionOrigin[]): boolean =>
   left.length === right.length && left.every((origin, index) => origin === right[index]);

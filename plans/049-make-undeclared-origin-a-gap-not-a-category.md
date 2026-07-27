@@ -133,7 +133,8 @@ whatever kinds the user has actually deselected.
 3. Fix every typecheck failure. Do not reintroduce a sentinel under another name.
 
 **Files**: `packages/report-core/src/types.ts`, `usage-row.ts`, `report-data.ts`,
-`merge-bundle.ts`, `snapshot.ts`, and whatever else typecheck names.
+`merge-bundle.ts`, `snapshot.ts`, `session-query.ts`,
+`packages/local-collectors/src/collector-cache.ts`, and whatever else typecheck names.
 
 **Verify**:
 

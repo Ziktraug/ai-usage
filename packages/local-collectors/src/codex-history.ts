@@ -48,9 +48,7 @@ type CodexSubagentKind = CodexSubagent['kind'];
 const isCodexSubagentKind = (value: unknown): value is CodexSubagentKind =>
   value === 'guardian' || value === 'review' || value === 'thread-spawn';
 
-export interface CodexCollectedSession extends CollectedSession {
-  origin: SessionOrigin;
-}
+export type CodexCollectedSession = CollectedSession;
 
 interface CodexSession {
   activeDurationMs: number | null;
@@ -1510,14 +1508,14 @@ const codexSessionName = (session: CodexSession) => {
   return session.firstUser || (session.id ? `codex ${session.id}` : 'codex');
 };
 
-const codexOrigin = (session: CodexSession): SessionOrigin => {
+const codexOrigin = (session: CodexSession): SessionOrigin | undefined => {
   if (session.subagentKind === 'thread-spawn') {
     return 'subagent';
   }
   if (session.subagentKind === 'guardian' || session.subagentKind === 'review') {
     return 'classifier';
   }
-  return session.threadSource === 'user' ? 'human' : 'unknown';
+  return session.threadSource === 'user' ? 'human' : undefined;
 };
 
 const codexTitleSource = (session: CodexSession, isSubagent: boolean) => {
@@ -1853,7 +1851,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
         ...(usageOwnedByRoot ? {} : { modelSegments }),
         models: session.models,
         name: codexSessionName(session),
-        origin,
+        ...(origin === undefined ? {} : { origin }),
         titleSource: codexTitleSource(session, isSubagent),
         project: base(session.cwd),
         tokens: usageOwnedByRoot ? { cr: 0, cw: 0, in: 0, out: 0 } : tokens,

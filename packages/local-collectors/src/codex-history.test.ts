@@ -314,7 +314,7 @@ Preserve the existing aggregation semantics.`,
     const sessions = runWithStorage(readCodexUsageSessions, storage);
     expect(sessions).toHaveLength(2);
     expect(sessions[0]?.name).toBe('Build the report.');
-    expect(sessions[0]?.origin).toBe('unknown');
+    expect(sessions[0]?.origin).toBeUndefined();
     expect(sessions[0]?.provider).toBe('Codex sub');
     expect(sessions[0]?.project).toBe('fixture-project');
     expect(sessions[0]?.projectPath).toBe('/work/fixture-project');
@@ -368,7 +368,7 @@ Preserve the existing aggregation semantics.`,
     const rows = runWithStorage(collectCodex, storage);
     expect(rows).toHaveLength(2);
     expect(rows[0]?.name).toBe('Build the report.');
-    expect(rows[0]?.origin).toBe('unknown');
+    expect(rows[0]?.origin).toBeUndefined();
     expect(rows[0]?.provider).toBe('Codex sub');
     expect(rows[0]?.project).toBe('fixture-project');
     expect(rows[0]?.projectPath).toBe('/work/fixture-project');
@@ -475,7 +475,7 @@ Preserve the existing aggregation semantics.`,
     const sessionsById = new Map(sessions.map((session) => [session.source.sourceSessionId, session]));
 
     expect(sessionsById.get(classifierParentId)?.origin).toBe('human');
-    expect(sessionsById.get('undeclared-origin')?.origin).toBe('unknown');
+    expect(sessionsById.get('undeclared-origin')?.origin).toBeUndefined();
     expect(sessionsById.get('undeclared-origin')?.source.rootSourceSessionId).toBeUndefined();
     for (const sessionId of [
       'thread-spawn-unset',
@@ -878,7 +878,7 @@ Preserve the existing aggregation semantics.`,
       const firstRoot = firstSessions.find((session) => session.source.sourceSessionId === 'state-root');
       const firstChild = firstSessions.find((session) => session.source.sourceSessionId === 'state-child');
       expect(firstRoot?.name).toBe('Run the campaign');
-      expect(firstRoot?.origin).toBe('unknown');
+      expect(firstRoot?.origin).toBeUndefined();
       expect(firstRoot?.titleSource).toBe('first-prompt');
       expect(firstChild?.model).toBe('gpt-5.9-state');
       expect(firstChild?.origin).toBe('subagent');

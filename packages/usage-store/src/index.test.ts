@@ -1037,7 +1037,7 @@ describe('usage-store public boundary', () => {
     expect(queried.rows[0]?.source.machineId).toBe('machine-a');
   });
 
-  test('round-trips declared origin and revives legacy stored rows as unknown', async () => {
+  test('round-trips declared origin and preserves legacy stored absence', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-origin-'));
     const dbPath = usageStorePath(home);
     const classifierParentId = '11111111-2222-4333-8444-555555555555';
@@ -1063,7 +1063,7 @@ describe('usage-store public boundary', () => {
 
     expect(rowsById.get('classifier')?.origin).toBe('classifier');
     expect(rowsById.get('classifier')?.source.rootSourceSessionId).toBe(classifierParentId);
-    expect(rowsById.get('legacy')?.origin).toBe('unknown');
+    expect(rowsById.get('legacy')?.origin).toBeUndefined();
   });
 
   test('projects active rows into per-machine fleet freshness', async () => {

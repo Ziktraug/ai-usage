@@ -191,7 +191,7 @@ describe('focused report query contracts', () => {
     ).toThrow('fingerprint');
   });
 
-  test('groups focused timelines by campaign, machine, project identity, and explicit undeclared origin', () => {
+  test('groups focused timelines by campaign, machine, project identity, and declared origin', () => {
     const request = {
       ...overviewRequest,
       includeAdvanced: false,
@@ -241,9 +241,7 @@ describe('focused report query contracts', () => {
     expect(machine.timeline?.series).toEqual([
       expect.objectContaining({ key: 'machine-a', label: 'Machine A', sessions: 4, total: 10 }),
     ]);
-    expect(origin.timeline?.series).toEqual([
-      expect.objectContaining({ key: 'unknown', label: 'Undeclared', sessions: 4, total: 10 }),
-    ]);
+    expect(origin.timeline).toBeNull();
     expect(project.timeline?.series).toEqual([
       expect.objectContaining({ key: 'group:ai-usage', label: 'AI Usage — Machine A', sessions: 4, total: 10 }),
     ]);

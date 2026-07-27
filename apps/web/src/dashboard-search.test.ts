@@ -1,25 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import { type SessionOrigin, sessionOrigins } from '@ai-usage/report-core/session-query';
 import {
   breakdownTabFor,
   dashboardSearchDefaultsFor,
   defaultDashboardDateRangeMode,
-  defaultDashboardOrigins,
   hasActiveDashboardFilters,
   primaryDashboardTabFor,
   sortingStateFromSearch,
   toggleExactFieldFilter,
   validateDashboardSearch,
 } from './dashboard-search';
-
-type OriginDataStatus = 'absent-data' | 'known';
-
-const originDataStatusByValue = {
-  classifier: 'known',
-  human: 'known',
-  subagent: 'known',
-  unknown: 'absent-data',
-} as const satisfies Record<SessionOrigin, OriginDataStatus>;
 
 describe('dashboard search params', () => {
   test('maps legacy analysis tabs into the Breakdown navigation without rewriting deep links', () => {
@@ -70,7 +59,7 @@ describe('dashboard search params', () => {
       filters: { campaign: 'fixture:codex:root', model: 'gpt-5', provider: 'Codex API' },
       harness: ['Codex'],
       machine: ['work-laptop'],
-      origin: ['human', 'classifier', 'unknown'],
+      origin: ['human', 'classifier'],
       q: 'search text',
       range: { mode: '30d' },
       sort: { id: 'fresh', desc: false },
@@ -94,23 +83,11 @@ describe('dashboard search params', () => {
     ).toEqual(defaults);
   });
 
-  test('includes every absent-data origin in the default selection', () => {
-    const defaultOrigins = new Set<SessionOrigin>(defaultDashboardOrigins);
-    const excludedAbsentDataOrigins = sessionOrigins.filter(
-      (origin) => originDataStatusByValue[origin] === 'absent-data' && !defaultOrigins.has(origin),
-    );
-
-    expect(excludedAbsentDataOrigins).toEqual([]);
-  });
-
   test('keeps the non-classifier default explicit while accepting all and uncommon origins', () => {
     const defaults = dashboardSearchDefaultsFor('date');
 
-    expect(defaults.origin).toEqual(['human', 'subagent', 'unknown']);
-    expect(validateDashboardSearch({ origin: ['classifier', 'unknown'] }, defaults).origin).toEqual([
-      'classifier',
-      'unknown',
-    ]);
+    expect(defaults.origin).toEqual(['human', 'subagent']);
+    expect(validateDashboardSearch({ origin: ['classifier', 'unknown'] }, defaults).origin).toEqual(['classifier']);
     expect(
       validateDashboardSearch({ origin: ['human', 'subagent', 'classifier', 'unknown'] }, defaults).origin,
     ).toEqual([]);

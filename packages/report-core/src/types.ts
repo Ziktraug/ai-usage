@@ -9,7 +9,7 @@ export interface Rates {
 
 export type TitleSource = 'ai' | 'first-prompt' | 'agent-role' | 'id';
 
-export const sessionOrigins = ['human', 'subagent', 'classifier', 'unknown'] as const;
+export const sessionOrigins = ['human', 'subagent', 'classifier'] as const;
 export type SessionOrigin = (typeof sessionOrigins)[number];
 
 export const isSessionOrigin = (value: unknown): value is SessionOrigin =>

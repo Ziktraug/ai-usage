@@ -196,13 +196,12 @@ describe('session query contracts', () => {
         subagent: true,
       }),
     );
-    expect(presentation.origin).toBe('unknown');
+    expect(presentation.origin).toBeUndefined();
     expect(enrichSessionPresentationRow({ ...baseRow, origin: 'classifier' }).origin).toBe('classifier');
     expect(sessionOriginLabels).toEqual({
       classifier: 'Automated review',
       human: 'Human',
       subagent: 'Delegated',
-      unknown: 'Undeclared',
     });
     expect(UNDECLARED_ORIGIN_DESCRIPTION).toBe('Undeclared — this harness did not state how the session was started.');
     expect(sessionSortFields.map((field) => sortValueForSessionColumn(presentation, field))).toEqual([

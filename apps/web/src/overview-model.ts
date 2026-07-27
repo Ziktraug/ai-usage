@@ -261,7 +261,7 @@ const timelineIdentityForRow = (
   row: DashboardRow,
   dimension: TimelineDimension,
   campaignIdentity: SessionCampaignTimelineIdentity | undefined,
-): SessionCampaignTimelineIdentity => {
+): SessionCampaignTimelineIdentity | undefined => {
   // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
   switch (dimension) {
     case 'campaign':
@@ -276,7 +276,7 @@ const timelineIdentityForRow = (
     case 'model':
       return { key: row.modelKey, label: row.modelKey };
     case 'origin':
-      return { key: row.origin, label: sessionOriginLabel(row.origin) };
+      return row.origin === undefined ? undefined : { key: row.origin, label: sessionOriginLabel(row.origin) };
     case 'project':
       return { key: row.projectKey, label: row.projectLabel };
     case 'provider':
@@ -292,6 +292,9 @@ const timelineContributionsForRow = (
   if (dimension !== 'model') {
     const priceMeasurement = usageRowApiPriceMeasurement(row);
     const identity = timelineIdentityForRow(row, dimension, campaignIdentity);
+    if (identity === undefined) {
+      return [];
+    }
     return [
       {
         cost: priceMeasurement.knownCost,

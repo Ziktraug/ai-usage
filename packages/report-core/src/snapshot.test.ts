@@ -52,7 +52,7 @@ describe('usage snapshots', () => {
     const snapshot = createUsageSnapshot({ machine, rows: [row('a', 'session-1')] });
 
     expect(snapshot.schemaVersion).toBe(3);
-    expect(snapshot.rows[0]?.origin).toBe('unknown');
+    expect(snapshot.rows[0]?.origin).toBeUndefined();
     expect(snapshot.rows[0]?.source).toMatchObject({
       machineId: 'machine-1',
       machineLabel: 'Machine 1',
@@ -82,7 +82,7 @@ describe('usage snapshots', () => {
     expect(snapshot.rows[0]?.sessionLabel).toBe('a');
   });
 
-  test('preserves declared origin and defaults legacy rows without inference', () => {
+  test('preserves declared origin and preserves legacy absence', () => {
     const classifierParentId = '11111111-2222-4333-8444-555555555555';
     const snapshot = createUsageSnapshot({
       machine,
@@ -106,7 +106,7 @@ describe('usage snapshots', () => {
 
     expect(classifier.origin).toBe('classifier');
     expect(classifier.source.rootSourceSessionId).toBe(classifierParentId);
-    expect(deserializeSnapshotRow(legacyClassifier).origin).toBe('unknown');
+    expect(deserializeSnapshotRow(legacyClassifier).origin).toBeUndefined();
   });
 
   test('round-trips snapshots emitted without an application version', () => {
