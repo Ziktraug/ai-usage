@@ -223,6 +223,7 @@ describe('DB-backed Harness collectors', () => {
     expect(rows.some((row) => row.name === '/clear')).toBe(false);
     expect(unavailable?.harness).toBe('Claude Code');
     expect(unavailable?.origin).toBeUndefined();
+    expect(unavailable?.originProvenance).toBe('origin-degraded');
     expect(unavailable?.name).toBe('claude missing-');
     expect(unavailable?.titleSource).toBe('id');
     expect(unavailable?.project).toBe('ai-usage');
@@ -570,6 +571,7 @@ describe('DB-backed Harness collectors', () => {
     const [row] = runWithStorage(collectOpenCode, storage);
 
     expect(row?.origin).toBeUndefined();
+    expect(row?.originProvenance).toBe('origin-absent');
     expect(row?.model).toBe('openai/gpt-5');
     expect(row?.models).toEqual([
       'openai/gpt-5',
@@ -741,6 +743,7 @@ describe('DB-backed Harness collectors', () => {
     expect(rows[0]?.name).toBe('Fix UI');
     expect(rows[0]?.titleSource).toBe('ai');
     expect(rows[0]?.origin).toBeUndefined();
+    expect(rows[0]?.originProvenance).toBe('origin-unsupported');
     expect(rows[0]?.partial).toBe(true);
     expect(rows[0]?.tokIn).toBe(10);
     expect(rows[0]?.tokCr).toBe(2);

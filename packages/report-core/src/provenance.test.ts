@@ -112,4 +112,36 @@ describe('usage row provenance', () => {
     expect(provenance.map((item) => item.kind)).toContain('unknown-subscription-value');
     expect(provenanceForMetric(row(), 'subscription-value')).toEqual([]);
   });
+
+  test('explains each absent origin with the collector-owned cause', () => {
+    expect(provenanceForMetric(row({ originProvenance: 'origin-unsupported' }), 'origin')).toEqual([
+      {
+        appliesTo: ['origin'],
+        description: 'Origin unsupported — this harness does not record how a session was started.',
+        kind: 'origin-unsupported',
+        label: 'Origin unsupported',
+        severity: 'info',
+      },
+    ]);
+    expect(provenanceForMetric(row({ originProvenance: 'origin-absent' }), 'origin')).toEqual([
+      {
+        appliesTo: ['origin'],
+        description: 'Origin not declared — this session records no origin, and it has no parent to infer one from.',
+        kind: 'origin-absent',
+        label: 'Origin not declared',
+        severity: 'info',
+      },
+    ]);
+    expect(provenanceForMetric(row({ originProvenance: 'origin-degraded' }), 'origin')).toEqual([
+      {
+        appliesTo: ['origin'],
+        description:
+          'Origin unavailable — this row came from a reduced history read, so its origin could not be determined.',
+        kind: 'origin-degraded',
+        label: 'Origin unavailable',
+        severity: 'warning',
+      },
+    ]);
+    expect(provenanceForMetric(row({ origin: 'human' }), 'origin')).toEqual([]);
+  });
 });

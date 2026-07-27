@@ -475,7 +475,9 @@ Preserve the existing aggregation semantics.`,
     const sessionsById = new Map(sessions.map((session) => [session.source.sourceSessionId, session]));
 
     expect(sessionsById.get(classifierParentId)?.origin).toBe('human');
+    expect(sessionsById.get(classifierParentId)?.originProvenance).toBeUndefined();
     expect(sessionsById.get('undeclared-origin')?.origin).toBeUndefined();
+    expect(sessionsById.get('undeclared-origin')?.originProvenance).toBe('origin-absent');
     expect(sessionsById.get('undeclared-origin')?.source.rootSourceSessionId).toBeUndefined();
     for (const sessionId of [
       'thread-spawn-unset',

@@ -1851,7 +1851,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
         ...(usageOwnedByRoot ? {} : { modelSegments }),
         models: session.models,
         name: codexSessionName(session),
-        ...(origin === undefined ? {} : { origin }),
+        ...(origin === undefined ? { originProvenance: 'origin-absent' as const } : { origin }),
         titleSource: codexTitleSource(session, isSubagent),
         project: base(session.cwd),
         tokens: usageOwnedByRoot ? { cr: 0, cw: 0, in: 0, out: 0 } : tokens,

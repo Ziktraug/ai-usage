@@ -1037,7 +1037,7 @@ describe('usage-store public boundary', () => {
     expect(queried.rows[0]?.source.machineId).toBe('machine-a');
   });
 
-  test('round-trips declared origin and preserves legacy stored absence', async () => {
+  test('round-trips declared origin, absence provenance, and legacy stored absence', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-origin-'));
     const dbPath = usageStorePath(home);
     const classifierParentId = '11111111-2222-4333-8444-555555555555';
@@ -1050,7 +1050,12 @@ describe('usage-store public boundary', () => {
         sourceSessionId: 'classifier',
       },
     };
-    await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [classifier] }));
+    const unsupported = {
+      ...makeRow({ sourceSessionId: 'unsupported' }),
+      harness: 'Cursor',
+      originProvenance: 'origin-unsupported' as const,
+    };
+    await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [classifier, unsupported] }));
 
     const currentLegacy = toSerializedMergeRow(makeRow({ sourceSessionId: 'legacy' }), machineB);
     const { contentHash: _contentHash, origin: _origin, ...legacyContent } = currentLegacy;
@@ -1063,6 +1068,7 @@ describe('usage-store public boundary', () => {
 
     expect(rowsById.get('classifier')?.origin).toBe('classifier');
     expect(rowsById.get('classifier')?.source.rootSourceSessionId).toBe(classifierParentId);
+    expect(rowsById.get('unsupported')?.originProvenance).toBe('origin-unsupported');
     expect(rowsById.get('legacy')?.origin).toBeUndefined();
   });
 

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { isSessionVcsContext } from '@ai-usage/report-core/session-vcs';
-import { isSessionOrigin } from '@ai-usage/report-core/types';
+import { isOriginProvenanceKind, isSessionOrigin } from '@ai-usage/report-core/types';
 import { MAX_USAGE_MODEL_SEGMENTS } from '@ai-usage/report-core/usage-row';
 import { COLLECTOR_CACHE_MAX_BYTES } from './history-budgets';
 import type { LocalHistoryStorage } from './local-history';
@@ -215,6 +215,8 @@ const isCachedCollectorRow = (value: unknown): value is CollectorRow & { date: u
       (Array.isArray(value.models) && value.models.every((model) => typeof model === 'string'))) &&
     typeof value.name === 'string' &&
     (value.origin === undefined || isSessionOrigin(value.origin)) &&
+    (value.originProvenance === undefined ||
+      (value.origin === undefined && isOriginProvenanceKind(value.originProvenance))) &&
     typeof value.project === 'string' &&
     typeof value.provider === 'string' &&
     parseNonNegativeSafeInteger(value.tokCr).ok &&

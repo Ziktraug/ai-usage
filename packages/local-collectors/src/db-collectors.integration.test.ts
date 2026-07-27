@@ -68,19 +68,19 @@ describe('real SQLite harness collectors', () => {
     });
   });
 
-  test('invalidates OpenCode v9 row caches after adding origin mapping', async () => {
+  test('invalidates OpenCode v10 row caches after adding origin provenance', async () => {
     const home = await makeHome();
     const fixture = await seedHarnessHome(home, { harnesses: ['opencode'] });
     await runAtHome(home, collectOpenCodeResult);
     const cachePath = join(home, '.config', 'ai-usage', 'opencode-db-cache.json');
     const currentCache = await readFile(cachePath, 'utf8');
     const staleCache = currentCache
-      .replace('"name":"OpenCode fixture"', '"name":"stale-v9-cache"')
+      .replace('"name":"OpenCode fixture"', '"name":"stale-v10-cache"')
       .replace('"origin":"subagent"', '"origin":"unknown"')
-      .replace('"version":10', '"version":9');
-    expect(staleCache).toContain('"name":"stale-v9-cache"');
+      .replace('"version":11', '"version":10');
+    expect(staleCache).toContain('"name":"stale-v10-cache"');
     expect(staleCache).toContain('"origin":"unknown"');
-    expect(staleCache).toContain('"version":9');
+    expect(staleCache).toContain('"version":10');
     await writeFile(cachePath, staleCache);
 
     const result = await runAtHome(home, collectOpenCodeResult);
@@ -88,8 +88,9 @@ describe('real SQLite harness collectors', () => {
 
     expect(row?.name).toBe('OpenCode fixture');
     expect(row?.origin).toBe('subagent');
+    expect(row?.originProvenance).toBeUndefined();
     expect(row?.source?.vcs?.repository?.ownerPath).toBe('fixture/ai-usage');
-    expect(await readFile(cachePath, 'utf8')).toContain('"version":10');
+    expect(await readFile(cachePath, 'utf8')).toContain('"version":11');
   });
 
   test('keeps valid OpenCode sessions when joined message and part JSON are malformed', async () => {

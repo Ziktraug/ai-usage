@@ -1,7 +1,8 @@
-import type { UsageRow } from './types';
+import type { OriginProvenanceKind, UsageRow } from './types';
 
 export type UsageMetricKey =
   | 'title'
+  | 'origin'
   | 'tokens'
   | 'api-value'
   | 'actual-cost'
@@ -13,6 +14,7 @@ export type UsageMetricKey =
   | 'lines';
 
 export type UsageProvenanceKind =
+  | OriginProvenanceKind
   | 'title-derived'
   | 'usage-unavailable'
   | 'reconciliation-ambiguous'
@@ -94,6 +96,8 @@ export interface UsageProvenanceInput {
   costKnown: boolean;
   costQuota?: number | null;
   harness?: string;
+  origin?: UsageRow['origin'];
+  originProvenance?: OriginProvenanceKind;
   partial?: boolean;
   titleSource?: UsageRow['titleSource'];
   usageUnavailable?: boolean;
@@ -121,8 +125,42 @@ const USAGE_UNAVAILABLE_METRICS: UsageMetricKey[] = [
 
 const hasOwn = (row: UsageProvenanceInput, key: keyof UsageProvenanceInput) => Object.hasOwn(row, key);
 
+const originProvenanceFor = (kind: OriginProvenanceKind): UsageRowProvenance => {
+  switch (kind) {
+    case 'origin-unsupported':
+      return {
+        appliesTo: ['origin'],
+        description: 'Origin unsupported — this harness does not record how a session was started.',
+        kind,
+        label: 'Origin unsupported',
+        severity: 'info',
+      };
+    case 'origin-absent':
+      return {
+        appliesTo: ['origin'],
+        description: 'Origin not declared — this session records no origin, and it has no parent to infer one from.',
+        kind,
+        label: 'Origin not declared',
+        severity: 'info',
+      };
+    case 'origin-degraded':
+      return {
+        appliesTo: ['origin'],
+        description:
+          'Origin unavailable — this row came from a reduced history read, so its origin could not be determined.',
+        kind,
+        label: 'Origin unavailable',
+        severity: 'warning',
+      };
+  }
+};
+
 export const provenanceForUsageRow = (row: UsageProvenanceInput): UsageRowProvenance[] => {
   const provenance: UsageRowProvenance[] = [];
+
+  if (row.origin === undefined && row.originProvenance !== undefined) {
+    provenance.push(originProvenanceFor(row.originProvenance));
+  }
 
   if (row.titleSource !== 'ai') {
     provenance.push({

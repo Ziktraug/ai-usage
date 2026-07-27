@@ -1,7 +1,7 @@
 import { modelGroupKey } from './model-identity';
 import { approxCost, priceFor } from './pricing';
 import { type ApiPriceMeasurement, apiPriceMeasurement, combineApiPriceMeasurements } from './provenance';
-import type { Row, SessionOrigin, TitleSource, UsageModelSegment } from './types';
+import type { OriginProvenanceKind, Row, SessionOrigin, TitleSource, UsageModelSegment } from './types';
 
 export interface TokenCounts {
   cr: number;
@@ -37,6 +37,7 @@ export interface UsageRowInput {
   models?: string[];
   name: string;
   origin?: SessionOrigin;
+  originProvenance?: OriginProvenanceKind;
   partial?: boolean;
   pricingModel?: string;
   project?: string | null;
@@ -211,6 +212,7 @@ export const normalizeUsageRow = (input: UsageRowInput): Row => {
     provider: input.provider,
     name: input.name,
     ...(input.origin === undefined ? {} : { origin: input.origin }),
+    ...(input.originProvenance === undefined ? {} : { originProvenance: input.originProvenance }),
     model,
     ...(segments === undefined ? {} : { modelSegments: segments }),
     ...(models === undefined ? {} : { models }),

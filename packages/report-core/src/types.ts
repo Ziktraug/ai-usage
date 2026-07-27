@@ -9,6 +9,12 @@ export interface Rates {
 
 export type TitleSource = 'ai' | 'first-prompt' | 'agent-role' | 'id';
 
+export const originProvenanceKinds = ['origin-unsupported', 'origin-absent', 'origin-degraded'] as const;
+export type OriginProvenanceKind = (typeof originProvenanceKinds)[number];
+
+export const isOriginProvenanceKind = (value: unknown): value is OriginProvenanceKind =>
+  originProvenanceKinds.some((kind) => kind === value);
+
 export const sessionOrigins = ['human', 'subagent', 'classifier'] as const;
 export type SessionOrigin = (typeof sessionOrigins)[number];
 
@@ -60,6 +66,7 @@ export interface UsageRow {
   models?: string[];
   name: string;
   origin?: SessionOrigin;
+  originProvenance?: OriginProvenanceKind;
   partial?: boolean;
   project: string;
   provider: string;

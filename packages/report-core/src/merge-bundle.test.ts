@@ -44,7 +44,7 @@ describe('usage merge bundles', () => {
     expect(bundle.rows[0]?.origin).toBeUndefined();
   });
 
-  test('round-trips declared origin and preserves legacy absence', () => {
+  test('round-trips declared origin, absence provenance, and legacy absence', () => {
     const classifierParentId = '11111111-2222-4333-8444-555555555555';
     const serialized = toSerializedMergeRow(
       {
@@ -59,9 +59,18 @@ describe('usage merge bundles', () => {
       machine,
     );
     const { origin: _origin, ...legacySerialized } = serialized;
+    const unsupported = toSerializedMergeRow(
+      {
+        ...row,
+        originProvenance: 'origin-unsupported',
+        source: { harnessKey: 'cursor', sourceSessionId: 'unsupported-1' },
+      },
+      machine,
+    );
 
     expect(deserializeMergeRow(serialized).origin).toBe('classifier');
     expect(deserializeMergeRow(serialized).source.rootSourceSessionId).toBe(classifierParentId);
+    expect(deserializeMergeRow(unsupported).originProvenance).toBe('origin-unsupported');
     expect(deserializeMergeRow(legacySerialized).origin).toBeUndefined();
   });
 

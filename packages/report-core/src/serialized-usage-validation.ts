@@ -1,6 +1,6 @@
 import type { SerializedUsageRow, UsageReportWarning } from './report-data';
 import { isSessionVcsContext } from './session-vcs';
-import { isSessionOrigin, type UsageRowSource } from './types';
+import { isOriginProvenanceKind, isSessionOrigin, type UsageRowSource } from './types';
 import { MAX_USAGE_MODEL_SEGMENTS } from './usage-row';
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -35,6 +35,7 @@ export const SERIALIZED_USAGE_ROW_KEYS: ReadonlySet<string> = new Set([
   'models',
   'name',
   'origin',
+  'originProvenance',
   'partial',
   'project',
   'projectGroupId',
@@ -243,6 +244,8 @@ const hasValidSerializedUsageFields = (
   isOptionalStringArray(value.models) &&
   typeof value.name === 'string' &&
   (value.origin === undefined || isSessionOrigin(value.origin)) &&
+  (value.originProvenance === undefined ||
+    (value.origin === undefined && isOriginProvenanceKind(value.originProvenance))) &&
   isOptionalBoolean(value.partial) &&
   typeof value.project === 'string' &&
   isOptionalString(value.projectGroupId) &&
