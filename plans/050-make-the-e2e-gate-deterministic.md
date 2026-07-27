@@ -203,3 +203,22 @@ expose state leakage into a reused local server; this was outside plan 050's
 load-timing and bitmask scope. The follow-up closes the leak with unconditional
 `test.afterEach` restoration and a deliberately failing negative control that confirmed
 the server returned to an enabled, scheduled policy.
+
+### API restore hardening follow-up
+
+On 2026-07-27, the unconditional restore moved from page navigation and a
+checkbox interaction to an idempotent `set-enabled` command through Playwright's
+request fixture. Two deliberate failures ran against one explicitly owned synthetic
+server:
+
+| Negative control | Observed failure | Post-hook source state |
+| --- | --- | --- |
+| Broken assertion after the disable mutation | Failed only at the injected assertion; the hook added no error | `enabled`, `scheduled` |
+| `await page.close()` after the disable mutation | Failed on the next page locator; the hook added no error | `enabled`, `scheduled` |
+
+Each post-hook state came from a fresh source-control SSE snapshot, not from a
+subsequent passing suite. The temporary failures were then removed and the original
+assertions restored. An initial diagnostic also confirmed that Nitro maps
+`server/routes/api/source-control.post.ts` to `/api/source-control/command`; a POST
+to `/api/source-control` returned 404, so the live command route was used for both
+successful controls.

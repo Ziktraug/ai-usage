@@ -1,4 +1,4 @@
-import { collectionSourceDefinitions } from '@ai-usage/report-core/source-control';
+import { collectionSourceDefinitions, parseSourceControlCommandResponse } from '@ai-usage/report-core/source-control';
 import type { Page } from '@playwright/test';
 import { expect, test } from './browser-test';
 
@@ -21,20 +21,20 @@ const publicationRevisionNumber = (revision: string | null): number => {
   return Number.parseInt(match[1], 10);
 };
 
-test.afterEach(async ({ page }) => {
+test.afterEach(async ({ request }) => {
   if (!shouldRestoreCodexSessions) {
     return;
   }
 
   try {
-    await page.goto('/sources');
-    const sessions = sourceCard(page, 'Codex sessions');
-    const enabledCheckbox = sessions.getByRole('checkbox', { name: 'Enabled' });
-    if (!(await enabledCheckbox.isChecked())) {
-      await enabledCheckbox.check();
+    const response = await request.post('/api/source-control/command', {
+      data: { command: 'set-enabled', enabled: true, sourceId: 'codex.sessions' },
+    });
+    const result = parseSourceControlCommandResponse(await response.json());
+    if (!(response.ok() && result.ok)) {
+      throw new Error('Could not restore the Codex sessions source policy.');
     }
-    await expect(enabledCheckbox).toBeChecked();
-    await expect(sessions.getByText('scheduled', { exact: true })).toBeVisible();
+    expect(result.snapshot.sources.find(({ id }) => id === 'codex.sessions')).toMatchObject({ policy: 'enabled' });
   } finally {
     shouldRestoreCodexSessions = false;
   }
