@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Locator, Page } from '@playwright/test';
-import { expect, test } from './browser-test';
+import { expect, reportViewsFor, test } from './browser-test';
 
 const TOP_SESSION_PATTERN = /Top session/;
 const RGB_COMPONENT_PATTERN = /[\d.]+/g;
@@ -125,7 +125,7 @@ test('keeps the active report destination visible after deep scrolling', async (
 });
 
 for (const colorScheme of ['light', 'dark'] as const) {
-  test(`draws contrasting timeline and tab-panel focus indicators in ${colorScheme} mode`, async ({ page }) => {
+  test(`draws contrasting timeline and dashboard-panel focus indicators in ${colorScheme} mode`, async ({ page }) => {
     await page.emulateMedia({ colorScheme });
     await page.addInitScript(() => {
       localStorage.clear();
@@ -133,16 +133,15 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.goto('/');
 
     const timeline = page.getByRole('button', { name: 'Inspect activity timeline. Use arrow keys to inspect days.' });
-    const tabPanel = page.getByRole('tabpanel').first();
+    const dashboardPanel = page.locator('[data-dashboard-panel]');
     expect(await focusContrast(page, timeline)).toBeGreaterThanOrEqual(3);
-    await expect(tabPanel).toHaveAttribute('tabindex', '0');
-    expect(await focusContrast(page, tabPanel)).toBeGreaterThanOrEqual(3);
+    await expect(dashboardPanel).toHaveAttribute('tabindex', '0');
+    expect(await focusContrast(page, dashboardPanel)).toBeGreaterThanOrEqual(3);
 
-    await page.getByRole('tab', { exact: true, name: 'Sessions' }).click();
-    const mountedTabPanels = page.locator('[role="tabpanel"]');
-    await expect(mountedTabPanels).toHaveCount(1);
-    await expect(mountedTabPanels).toHaveAttribute('tabindex', '0');
-    expect(await focusContrast(page, mountedTabPanels)).toBeGreaterThanOrEqual(3);
+    await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
+    await expect(page.locator('[role="tabpanel"]')).toHaveCount(0);
+    await expect(dashboardPanel).toHaveAttribute('tabindex', '0');
+    expect(await focusContrast(page, dashboardPanel)).toBeGreaterThanOrEqual(3);
   });
 }
 
@@ -178,7 +177,10 @@ test('Overview has no detectable accessibility violations', async ({ page }) => 
   await page.goto('/');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
   await expect(page.getByText('3 / 4 sessions', { exact: true })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
 
   await expectNoAxeViolations(page);
 });

@@ -210,6 +210,14 @@ const dashboardView = css({
   order: 1,
 });
 
+const dashboardPanel = css({
+  minW: 0,
+  _focus: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '4px',
+  },
+});
+
 const dashboardStatus = css({
   order: 2,
 });
@@ -803,9 +811,6 @@ export const Dashboard = (props: {
     }
     updateSearch((current) => ({ ...current, tab }));
   };
-  const setPrimaryTab = (tab: string) => {
-    setTab(tab === 'breakdown' ? 'models' : tab);
-  };
   const metrics = createMemo(() =>
     measureClientPerf('aiUsage.web.client.compute.metrics', () =>
       buildDashboardMetrics(visibleSummary(), previousSummary()),
@@ -956,170 +961,150 @@ export const Dashboard = (props: {
 
           <div class={dashboardLayout}>
             <div class={dashboardView}>
-              <Tabs
-                ariaLabel="Dashboard sections"
-                items={[
-                  {
-                    content: () => (
-                      <section class={section}>
-                        <Overview
-                          advancedAnalysisError={reportLifecycle.advancedAnalysisError()}
-                          advancedAnalysisLoading={reportLifecycle.advancedAnalysisLoading()}
-                          campaigns={campaignViews()}
-                          focused={focusedOverviewForDisplay()}
-                          onSelectDay={focusDay}
-                          onSelectSession={sessionSelection.inspectOverview}
-                          rangeLabel={dateRange.label()}
-                          rows={tableRows()}
-                          summary={visibleSummary()}
-                          timelineRows={timelineRows()}
-                        />
-                      </section>
-                    ),
-                    label: 'Overview',
-                    value: 'overview',
-                  },
-                  {
-                    content: () => (
-                      <section class={section}>
-                        <Suspense fallback={<div class={unavailableText}>Loading sessions…</div>}>
-                          <SessionTable
-                            {...(servedSessionState()
-                              ? {
-                                  campaignChildren: servedSessionState()!.campaignChildren,
-                                  loadingMoreRows: servedSessionState()!.loadingMore,
-                                  totalRows: servedSessionState()!.itemCount,
-                                }
-                              : {})}
-                            {...(sessionQueryCoordinator
-                              ? {
-                                  onLoadCampaignChildren: (campaignKey: string) => {
-                                    sessionQueryCoordinator
-                                      .loadCampaignChildren(campaignKey)
-                                      .catch((error: unknown) => {
-                                        setOperationError(
-                                          error instanceof Error ? error.message : 'Failed to load campaign sessions',
-                                        );
-                                      });
-                                  },
-                                  onLoadMoreRows: () => {
-                                    sessionQueryCoordinator.loadMore().catch((error: unknown) => {
-                                      setOperationError(
-                                        error instanceof Error ? error.message : 'Failed to load sessions',
-                                      );
-                                    });
-                                  },
-                                }
-                              : {})}
-                            columnVisibility={columnVisibility()}
-                            hasMoreRows={Boolean(servedSessionState()?.nextCursor)}
-                            loading={reportLifecycle.sessionQueryLoading()}
-                            onClearFilters={clearFilters}
-                            onColumnVisibilityChange={handleColumnVisibilityChange}
-                            onFieldFilter={setFieldFilter}
-                            onHarnessFilter={toggleHarness}
-                            onSelect={sessionSelection.toggleTableRow}
-                            onSortingChange={handleSortingChange}
-                            queryResetKey={sessionTableQueryResetKey()}
-                            rows={visibleSessionTableRows()}
-                            searchQuery={query()}
-                            selectedKey={sessionSelection.selectedKey()}
-                            sorting={sorting()}
-                          />
-                        </Suspense>
-                      </section>
-                    ),
-                    label: 'Sessions',
-                    value: 'sessions',
-                  },
-                  {
-                    content: () => (
-                      <Tabs
-                        ariaLabel="Breakdown dimension"
-                        items={[
-                          {
-                            content: () => (
-                              <section class={section}>
-                                <GroupPanel
-                                  countLabel="models"
-                                  groups={modelGroups()}
-                                  harnessTones
-                                  onFilter={(value) => setFieldFilter('model', value)}
-                                  title="By model"
-                                />
-                              </section>
-                            ),
-                            label: 'Models',
-                            value: 'models',
-                          },
-                          {
-                            content: () => (
-                              <section class={section}>
-                                <GroupPanel
-                                  countLabel="providers"
-                                  groups={providerGroups()}
-                                  harnessTones
-                                  onFilter={(value) => setFieldFilter('provider', value)}
-                                  title="By provider"
-                                />
-                              </section>
-                            ),
-                            label: 'Providers',
-                            value: 'providers',
-                          },
-                          {
-                            content: () => (
-                              <section class={section}>
-                                <GroupPanel
-                                  countLabel="harnesses"
-                                  groups={harnessGroups()}
-                                  harnessTones
-                                  onFilter={toggleHarness}
-                                  title="By harness"
-                                />
-                              </section>
-                            ),
-                            label: 'Harnesses',
-                            value: 'harnesses',
-                          },
-                          {
-                            content: () => (
-                              <section class={section}>
-                                <ProjectGroupEditor
-                                  disabled={!reportLifecycle.available}
-                                  onSave={saveProjectGroupConfigs}
-                                  payload={projectGroupPayload()}
-                                />
-                                <ProjectSummary
-                                  groups={projectGroupRows()}
-                                  onProjectFilter={(value) => setFieldFilter('project', value)}
-                                />
-                              </section>
-                            ),
-                            label: 'Projects',
-                            value: 'projects',
-                          },
-                          {
-                            content: () => (
-                              <section class={section}>
-                                <CursorAttributionPanel rows={cursorCommitRows()} />
-                              </section>
-                            ),
-                            label: 'Cursor AI',
-                            value: 'cursor-ai',
-                          },
-                        ]}
-                        onValueChange={setTab}
-                        value={breakdownTabFor(search().tab)}
+              {/* biome-ignore lint/a11y/noNoninteractiveTabindex: The active report panel must remain keyboard-reachable after removing the primary tabs. */}
+              <div class={dashboardPanel} data-dashboard-panel tabIndex={0}>
+                <Show when={search().tab === 'overview'}>
+                  <section class={section}>
+                    <Overview
+                      advancedAnalysisError={reportLifecycle.advancedAnalysisError()}
+                      advancedAnalysisLoading={reportLifecycle.advancedAnalysisLoading()}
+                      campaigns={campaignViews()}
+                      focused={focusedOverviewForDisplay()}
+                      onSelectDay={focusDay}
+                      onSelectSession={sessionSelection.inspectOverview}
+                      rangeLabel={dateRange.label()}
+                      rows={tableRows()}
+                      summary={visibleSummary()}
+                      timelineRows={timelineRows()}
+                    />
+                  </section>
+                </Show>
+                <Show when={search().tab === 'sessions'}>
+                  <section class={section}>
+                    <Suspense fallback={<div class={unavailableText}>Loading sessions…</div>}>
+                      <SessionTable
+                        {...(servedSessionState()
+                          ? {
+                              campaignChildren: servedSessionState()!.campaignChildren,
+                              loadingMoreRows: servedSessionState()!.loadingMore,
+                              totalRows: servedSessionState()!.itemCount,
+                            }
+                          : {})}
+                        {...(sessionQueryCoordinator
+                          ? {
+                              onLoadCampaignChildren: (campaignKey: string) => {
+                                sessionQueryCoordinator.loadCampaignChildren(campaignKey).catch((error: unknown) => {
+                                  setOperationError(
+                                    error instanceof Error ? error.message : 'Failed to load campaign sessions',
+                                  );
+                                });
+                              },
+                              onLoadMoreRows: () => {
+                                sessionQueryCoordinator.loadMore().catch((error: unknown) => {
+                                  setOperationError(error instanceof Error ? error.message : 'Failed to load sessions');
+                                });
+                              },
+                            }
+                          : {})}
+                        columnVisibility={columnVisibility()}
+                        hasMoreRows={Boolean(servedSessionState()?.nextCursor)}
+                        loading={reportLifecycle.sessionQueryLoading()}
+                        onClearFilters={clearFilters}
+                        onColumnVisibilityChange={handleColumnVisibilityChange}
+                        onFieldFilter={setFieldFilter}
+                        onHarnessFilter={toggleHarness}
+                        onSelect={sessionSelection.toggleTableRow}
+                        onSortingChange={handleSortingChange}
+                        queryResetKey={sessionTableQueryResetKey()}
+                        rows={visibleSessionTableRows()}
+                        searchQuery={query()}
+                        selectedKey={sessionSelection.selectedKey()}
+                        sorting={sorting()}
                       />
-                    ),
-                    label: 'Breakdown',
-                    value: 'breakdown',
-                  },
-                ]}
-                onValueChange={setPrimaryTab}
-                value={primaryDashboardTabFor(search().tab)}
-              />
+                    </Suspense>
+                  </section>
+                </Show>
+                <Show when={primaryDashboardTabFor(search().tab) === 'breakdown'}>
+                  <Tabs
+                    ariaLabel="Breakdown dimension"
+                    items={[
+                      {
+                        content: () => (
+                          <section class={section}>
+                            <GroupPanel
+                              countLabel="models"
+                              groups={modelGroups()}
+                              harnessTones
+                              onFilter={(value) => setFieldFilter('model', value)}
+                              title="By model"
+                            />
+                          </section>
+                        ),
+                        label: 'Models',
+                        value: 'models',
+                      },
+                      {
+                        content: () => (
+                          <section class={section}>
+                            <GroupPanel
+                              countLabel="providers"
+                              groups={providerGroups()}
+                              harnessTones
+                              onFilter={(value) => setFieldFilter('provider', value)}
+                              title="By provider"
+                            />
+                          </section>
+                        ),
+                        label: 'Providers',
+                        value: 'providers',
+                      },
+                      {
+                        content: () => (
+                          <section class={section}>
+                            <GroupPanel
+                              countLabel="harnesses"
+                              groups={harnessGroups()}
+                              harnessTones
+                              onFilter={toggleHarness}
+                              title="By harness"
+                            />
+                          </section>
+                        ),
+                        label: 'Harnesses',
+                        value: 'harnesses',
+                      },
+                      {
+                        content: () => (
+                          <section class={section}>
+                            <ProjectGroupEditor
+                              disabled={!reportLifecycle.available}
+                              onSave={saveProjectGroupConfigs}
+                              payload={projectGroupPayload()}
+                            />
+                            <ProjectSummary
+                              groups={projectGroupRows()}
+                              onProjectFilter={(value) => setFieldFilter('project', value)}
+                            />
+                          </section>
+                        ),
+                        label: 'Projects',
+                        value: 'projects',
+                      },
+                      {
+                        content: () => (
+                          <section class={section}>
+                            <CursorAttributionPanel rows={cursorCommitRows()} />
+                          </section>
+                        ),
+                        label: 'Cursor AI',
+                        value: 'cursor-ai',
+                      },
+                    ]}
+                    onValueChange={setTab}
+                    value={breakdownTabFor(search().tab)}
+                  />
+                </Show>
+              </div>
             </div>
 
             <div class={dashboardStatus}>

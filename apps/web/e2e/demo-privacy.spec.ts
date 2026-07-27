@@ -1,4 +1,4 @@
-import { expect, test } from './browser-test';
+import { expect, reportViewsFor, test } from './browser-test';
 
 const BUSINESS_RESOURCE_TYPES = new Set(['eventsource', 'fetch', 'xhr']);
 const NON_REPORT_NAVIGATION_PATTERN = /Skills|Sources|Sync/;
@@ -15,7 +15,10 @@ test('serves only the synthetic report and keeps every local boundary inert', as
   await page.goto('/');
   await expect(page.getByText('Demo data', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
 
   const filter = page.getByRole('textbox', {
     name: 'Filter sessions by title, project, model, provider, or harness',

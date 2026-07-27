@@ -1,13 +1,13 @@
-import { expect, test } from './browser-test';
+import { expect, reportViewsFor, test } from './browser-test';
 
 const PARTIALLY_MEASURED_PATTERN = /Partially measured/;
 
 test('renders measured, partially measured, and zero Breakdown bars distinctly', async ({ page }) => {
   await page.goto('/?origin=%5B%5D');
   await page.getByRole('region', { name: 'Date range' }).getByRole('button', { exact: true, name: 'All' }).click();
-  await page.getByRole('tab', { name: 'Breakdown' }).click();
+  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Breakdown' }).click();
 
-  const breakdown = page.getByRole('tabpanel', { name: 'Breakdown' });
+  const breakdown = page.getByRole('tabpanel', { name: 'Models' });
   await expect(breakdown).toBeVisible();
 
   const measuredRows = breakdown.locator('[data-price-state="measured"]');

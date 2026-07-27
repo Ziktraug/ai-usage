@@ -1,4 +1,4 @@
-import { expect, test } from './browser-test';
+import { expect, reportViewsFor, test } from './browser-test';
 
 const TOP_SESSION_PATTERN = /Top session/;
 
@@ -33,7 +33,7 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
 
   await drawer.getByRole('button', { name: 'Close session details' }).click();
   await page.getByRole('region', { name: 'Date range' }).getByRole('button', { exact: true, name: 'All' }).click();
-  await page.getByRole('tab', { name: 'Sessions' }).click();
+  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
   await page.locator('tbody tr').filter({ hasText: 'Explore report sketch' }).locator('td').first().click();
 
   const partialHelp = drawer.getByRole('button', { name: 'About Partial' });

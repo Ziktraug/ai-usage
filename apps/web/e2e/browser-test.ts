@@ -1,6 +1,7 @@
 import {
   test as base,
   type ConsoleMessage,
+  type Locator,
   type Page,
   expect as playwrightExpect,
   type Request,
@@ -47,6 +48,8 @@ interface PageListeners {
   requestFailed: (request: Request) => void;
   response: (response: Response) => void;
 }
+
+export const reportViewsFor = (page: Page): Locator => page.getByRole('navigation', { name: 'Report views' });
 
 export const test = base.extend<{ browserFailureGate: undefined }>({
   browserFailureGate: [

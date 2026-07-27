@@ -1,6 +1,6 @@
 import { collectionSourceDefinitions, type SourceControlView } from '@ai-usage/report-core/source-control';
 import type { Page } from '@playwright/test';
-import { expect, test } from './browser-test';
+import { expect, reportViewsFor, test } from './browser-test';
 
 const DESKTOP_VIEWPORT = { height: 900, width: 1280 } as const;
 const NARROW_VIEWPORT = { height: 844, width: 390 } as const;
@@ -95,7 +95,10 @@ const openStableOverview = async (page: Page): Promise<void> => {
   await page.goto('/');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
   await expect(page.getByText('3 / 4 sessions', { exact: true })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
   await waitForFonts(page);
 };
 
