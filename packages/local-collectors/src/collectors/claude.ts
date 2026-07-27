@@ -34,7 +34,7 @@ interface ClaudeCache {
   rows: CollectorRow[];
   version: number;
 }
-const CLAUDE_CACHE_VERSION = 6;
+const CLAUDE_CACHE_VERSION = 7;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 
 const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
@@ -348,6 +348,7 @@ export const collectClaudeResult = Effect.gen(function* () {
           model: report.model,
           models: report.models,
           modelSegments: report.modelSegments,
+          origin: report.sidechain ? 'subagent' : 'human',
           project: base(source.sourcePath),
           tokens: report.tokens,
           cost: provider === 'Claude API' ? approximateApiCost : actualCost(0),

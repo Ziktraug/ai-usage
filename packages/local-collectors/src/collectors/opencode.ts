@@ -55,7 +55,7 @@ export interface OpenCodeCollectionResult {
   warnings: LocalHistoryWarning[];
 }
 
-const OPENCODE_DB_CACHE_VERSION = 9;
+const OPENCODE_DB_CACHE_VERSION = 10;
 const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 const SESSION_SQL = 'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
 const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE ${OPENCODE_TOOL_PART_PREDICATE} GROUP BY session_id`;
@@ -272,6 +272,7 @@ const collectFromDb = (
               projectPath: sessionMeta?.dir ?? null,
               date: summary.startMs === null ? null : new Date(summary.startMs),
               endDate: summary.endMs === null ? null : new Date(summary.endMs),
+              ...(sessionMeta?.parentId ? { origin: 'subagent' as const } : {}),
               provider: provLabel(
                 summary.dominantProviderId,
                 summary.providerCosts.get(summary.dominantProviderId) ?? 0,
