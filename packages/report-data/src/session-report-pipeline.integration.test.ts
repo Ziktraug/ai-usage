@@ -28,6 +28,7 @@ import type { CollectedUsageRow } from '@ai-usage/report-core/types';
 import { queryReportRows, usageStorePath } from '@ai-usage/usage-store';
 import { Effect } from 'effect';
 import { createMergedUsageReport, createStoredReportCapture, createStoredUsageSnapshot } from './index';
+import { assembleReport } from './report-assembly';
 import { materializeSessionQueryDatabase, SESSION_QUERY_DATABASE_NAME } from './session-query-materialization';
 import { assertSessionQueryDatabase, executeMaterializedSessionQuery } from './session-query-sqlite';
 import { createScheduledSourceRegistry, type SourceRunContext } from './source-adapters';
@@ -93,6 +94,43 @@ const compactRow = (row: CollectedUsageRow) => ({
 
 const reportOptions = { limit: null, minTokens: 0, project: null, since: null, sort: 'date' as const };
 
+const campaignRow = (
+  sourceSessionId: string,
+  origin: NonNullable<CollectedUsageRow['origin']>,
+  sourceOverrides: Partial<CollectedUsageRow['source']> = {},
+): CollectedUsageRow => ({
+  calls: 1,
+  costActual: 0,
+  costApprox: 0,
+  costKnown: true,
+  date: GENERATED_AT,
+  durationMs: 60_000,
+  endDate: new Date(GENERATED_AT.getTime() + 60_000),
+  harness: 'Codex',
+  linesAdded: 0,
+  linesDeleted: 0,
+  model: 'gpt-5.6-sol',
+  name: sourceSessionId,
+  origin,
+  project: 'ai-usage',
+  provider: 'Codex sub',
+  source: {
+    harnessKey: 'codex',
+    machineId: FIXED_MACHINE.id,
+    machineLabel: FIXED_MACHINE.label,
+    sourceSessionId,
+    ...sourceOverrides,
+  },
+  subagent: origin === 'subagent',
+  titleSource: 'id',
+  tokCr: 0,
+  tokCw: 0,
+  tokIn: 10,
+  tokOut: 5,
+  tools: 0,
+  turns: 1,
+});
+
 const readFilesUnder = async (directory: string): Promise<Buffer[]> => {
   const files: Buffer[] = [];
   const visit = async (current: string): Promise<void> => {
@@ -110,6 +148,47 @@ const readFilesUnder = async (directory: string): Promise<Buffer[]> => {
 };
 
 describe('session report pipeline', () => {
+  test('materializes a classifier campaign declared through a delegated parent', async () => {
+    const revisionDirectory = await makeTemporaryDirectory('ai-usage-classifier-campaign-revision-');
+    await fs.chmod(revisionDirectory, 0o700);
+    const assembly = assembleReport({
+      configuredProjectGroups: [],
+      generatedAt: GENERATED_AT,
+      options: reportOptions,
+      projectGroups: [],
+      rows: [
+        campaignRow('human-root', 'human'),
+        campaignRow('delegated-worker', 'subagent', { parentSourceSessionId: 'human-root' }),
+        campaignRow('classifier-review', 'classifier', { rootSourceSessionId: 'delegated-worker' }),
+      ],
+      warnings: [],
+    });
+    const classifier = assembly.payload.rows.find((row) => row.source?.sourceSessionId === 'classifier-review');
+
+    expect(classifier?.source?.parentSourceSessionId).toBeUndefined();
+    expect(classifier?.source?.rootSourceSessionId).toBe('human-root');
+
+    await materializeSessionQueryDatabase(revisionDirectory, assembly.payload.rows);
+    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), {
+      readonly: true,
+      strict: true,
+    });
+    try {
+      assertSessionQueryDatabase(database);
+      const page = executeMaterializedSessionQuery(database, 'sessions', request());
+      const campaign = page.items.find(
+        (item) => item.kind === 'campaign' && item.row.source?.sourceSessionId === 'human-root',
+      );
+      expect(campaign?.row).toMatchObject({
+        campaignClassifierCount: 1,
+        campaignTotalCount: 3,
+        source: { rootSourceSessionId: 'human-root' },
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   test('keeps literal multi-harness facts through source, store, payload, and materialized SQLite', async () => {
     const home = await makeTemporaryDirectory('ai-usage-session-pipeline-home-');
     const revisionDirectory = await makeTemporaryDirectory('ai-usage-session-pipeline-revision-');
