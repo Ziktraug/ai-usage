@@ -1,14 +1,16 @@
 # Plan 047: Make grouping portable user data, for projects and campaigns
 
-> **Status: DRAFT — unblocked.** Execution correctly stopped on 2026-07-27 because
-> the timestamp model recorded on 2026-07-26 could not distinguish causal succession
-> from concurrency, nor preserve the exclusive-membership invariant. The maintainer
-> **accepted the implementation audit's amendment on 2026-07-27**; *The merge model*
-> now records the causal design and is executable authority. No production code has
-> been written yet.
+> **Status: DRAFT — unblocked after two stops.** Execution stopped twice on 2026-07-27,
+> both times correctly and both times before any production code was written. The first
+> stop refuted a wall-clock timestamp model; the second refuted the assumption that
+> membership is element-wise, because project selectors are patterns whose overlap is
+> non-transitive. The maintainer accepted the causal amendment, then settled the
+> portability restriction that closes the second stop. **`## The merge model` is the
+> executable authority**, Rule 0 first. No production code has been written yet.
 >
-> **Baseline**: written at `96b3dff`, rebased onto `3406147` (PR #21). That merge
-> reworked the peer-confirmation protocol this plan builds on — see *Current state*.
+> **Baseline**: implementation starts from `498f478`, the tip of
+> `feat/implement-plans-045-046` after the E2E restore hardening. This includes plan
+> 045 wave 4 and plan 040's peer-confirmation protocol — see *Current state*.
 >
 > **This plan supersedes two adopted decisions** in
 > `docs/project-grouping-plan.md`. That is deliberate, and the rationale is below.
@@ -135,6 +137,65 @@ case — importing and then continuing to work is the normal flow:
 | Under timestamps | `A@10:00` vs `B@11:00` | `A@10:00` vs `B@11:00` — **identical** |
 | Under causal registers | neither includes the other → conflict | B includes A → B wins, silently |
 
+### Rule 0 — only fully-qualified selectors are portable
+
+**Amended 2026-07-27 after the second implementation stop.** Read this before Rule 2;
+it is what makes Rule 2 sound.
+
+A `ProjectSourceSelector` may legally omit fields — `isProjectSourceSelector`
+(`packages/report-core/src/project-group.ts:89-98`) requires only **one** of
+`gitRemote`, `machineId`, `project`, `sourcePath`. An omitted field is a **wildcard**,
+because `selectorValuesConflict` returns `false` whenever either side is `undefined`.
+
+That makes selector overlap **non-transitive**:
+
+```
+A = {machineId:'A'}   B = {project:'X'}   C = {machineId:'B'}
+A∩B ✓   B∩C ✓   A∩C ✗   (machineId 'A' vs 'B', both defined)
+```
+
+A non-transitive, pairwise constraint cannot be enforced by per-record merges, because
+**no single record owns it**. Two selectors with distinct keys merge independently with
+no conflict and can still overlap, producing the invalid state the config validator
+rejects. That is what the second stop correctly refuted.
+
+**The portable domain therefore excludes wildcards.** A selector is portable if and
+only if it carries `machineId` **and** one of `sourcePath` or `project`. Among such
+selectors, `selectorValuesConflict` makes **overlap equivalent to identity**, the
+relation becomes an equivalence, and Rule 2 holds unchanged with no cross-record
+semantics.
+
+Three facts make this a restriction on paper only:
+
+- **The UI cannot create a wildcard.** `project-group-editor.tsx` builds every selector
+  through `projectSourceSelectorFor(source)` (used at line 206), which always emits
+  `machineId` plus `sourcePath` or `project`. Wildcards are reachable only by
+  hand-editing `config.json`.
+- **The maintainer's real config has none.** One group, five selectors, all
+  `machineId + sourcePath`.
+- **A wildcard is semantically local anyway.** `{machineId:'A'}` means nothing on
+  machine B, so porting it would transfer something inapplicable.
+
+Enforce this with a **narrower type** at the boundary — a
+`PortableProjectSourceSelector` requiring `machineId` and one of `sourcePath` or
+`project` — not a runtime check. Narrowing a type turns the compiler into the inventory
+of affected sites, the mechanism plan 049 validated.
+
+**Portability is computed, never stored.** It is a property of the selector's shape.
+Do not add a flag.
+
+**Export omits, it does not refuse.** A group carrying both kinds exports its portable
+selectors and reports each omitted wildcard as a preview warning. That channel already
+exists end to end: `ImportResult.warnings` in the store, and `/sync` already renders the
+list at `apps/web/src/routes/sync.tsx:371-377`, including the case where the count
+exceeds the shown items. Refusing the whole group would let one hand-written line
+sabotage the transfer of valid selectors.
+
+**This deprecates hand-written wildcard selectors, deliberately.** Existing ones migrate
+and keep working locally; none can be created afterwards, because `config.json` is
+retired (Step 2) and the UI has never been able to produce one. Say so in the
+documentation rather than leaving it to be discovered.
+
 ### Rule 2 — membership is an exclusive assignment, not a per-group set
 
 Model membership as one record per member: `(kind, member) -> groupId | ungrouped`,
@@ -176,12 +237,34 @@ makes peer confirmation a single `BEGIN IMMEDIATE` transaction; a partially appl
 import would need a separate durable queue and lifecycle that this plan does not
 define and should not invent.
 
-### Rule 5 — `keep both` is conditional
+### Rule 5 — resolution options are derived from the conflict kind
 
-Offer `keep both` only when the resulting assignments are disjoint. When they are
-not — the same member claimed by two groups — the user must choose one, or
-explicitly repartition the conflicting membership. A resolution that produces an
-invalid state is not a resolution.
+**Amended 2026-07-27: `keep both` is removed from the model. Resolution options are
+derived from the conflict kind, and every kind offers exactly two.**
+
+```
+conflict on a scalar field   [ keep local ]  [ take incoming ]
+conflict on a membership     [ keep local ]  [ take incoming ]
+```
+
+`keep both` had no reachable case, which the second stop exposed. Under Rule 2 a
+membership conflict *is* one member record holding two `groupId` values, so the
+assignments are never disjoint — the earlier "only when disjoint" condition was never
+satisfiable. And for a scalar field, a field holds one value: "keep both" would mean
+creating a second group, which requires deciding new-ID ownership, causal-register
+provenance, and member repartitioning. All three were unspecified, and none of them is
+conflict resolution — splitting a group is a deliberate user action, taken afterwards.
+
+The rule that replaces it: **the UI never offers an operation the model cannot execute.**
+A model that describes an unreachable operation invites an implementer to build it.
+
+Verified exhaustively before removal. The three reachable shapes are:
+
+| Local | Incoming | Resolution |
+| --- | --- | --- |
+| member X → group 1 | member X → group 2 | choose one |
+| member X → group 1 | member X → `ungrouped` | choose one |
+| group G1 named "Alpha" | group G2 named "Alpha" | not a conflict — distinct IDs, both merge |
 
 ### Constraint — the store owns the semantics
 
@@ -287,7 +370,7 @@ The smallest coherent amendment recommended by the execution audit is:
 - add an `active | deleted` causal register to each group and retain deletions;
 - resolve every conflict in preview, then revalidate the opaque confirmation token,
   grouping state, and resolutions and write the whole import in one transaction;
-- offer `keep both` only when the resulting assignments are disjoint; otherwise the
+- (superseded 2026-07-27 — see Rule 5) offer `keep both` only when the resulting assignments are disjoint; otherwise the
   user must choose or explicitly repartition the conflicting membership.
 
 **Accepted by the maintainer on 2026-07-27.** The amendment is now part of *The merge
@@ -298,6 +381,31 @@ The stop was correct and the plan worked as intended: its STOP condition said to
 if a conflict case appeared that the recorded model could not express, and execution
 halted before Step 1 touched production code. A plan that cannot be refuted by its own
 executor is a worse plan.
+
+### Second stop, 2026-07-27 — non-transitive selector overlap
+
+Execution stopped again, still before any production code. Two findings, both verified:
+
+1. **Selector identity is not the unit of exclusivity.** Identity is the canonical tuple
+   (`projectSourceSelectorKey`, `project-group.ts:63`); exclusivity is *semantic overlap*
+   (`projectSourceSelectorsOverlap`, `:122`), and an omitted field acts as a wildcard.
+   Two selectors with distinct keys can therefore overlap, merge independently with no
+   conflict, and produce the invalid state the config validator rejects. Overlap is
+   **non-transitive**, so it cannot be repaired by canonicalising into equivalence
+   classes — no single record owns the constraint.
+2. **`keep both` was undefined for a scalar field.** Two names on one stable group ID
+   would require new-ID ownership, causal-register provenance, and member repartitioning,
+   none of which the plan specified.
+
+Both are corrected above: **Rule 0** restricts the portable domain to fully-qualified
+selectors, where overlap becomes equivalent to identity and Rule 2 holds unchanged;
+**Rule 5** removes `keep both` entirely because it had no reachable case.
+
+Note the shape shared by both stops. Each came from generalising a model beyond the
+structure that carried it — first from ordered events to causality, then from concrete
+campaign members (`campaignKeyFor` is a wildcard-free tuple) to project selectors, which
+are patterns. The fix in both cases was not a richer model but a **narrower domain**: the
+amended plan adds no conflict semantics and removes one option.
 
 ## Scope
 
@@ -387,9 +495,16 @@ Expected, as distinct cases:
    broad or currently-unmatched selector to the paths it happens to match today is
    **not** equivalent: it silently narrows the group and discards the invariant that
    made overlap detectable. Migrate the selector, not its current expansion.
-3. Decide and document whether `config.json` remains a read-only input or is
-   retired. If it remains, the precedence rule must be explicit.
-4. The migration is idempotent and never produces duplicate groups on repeated runs.
+3. **Migrate every selector, wildcards included, and retire `config.json` as a grouping
+   input.** Settled 2026-07-27. The store becomes the single source of truth, so there is
+   **no precedence rule to define** — that question is closed, not deferred.
+4. Portability is **computed** from the selector's shape at the export boundary (Rule 0),
+   never stored. A migrated wildcard lives in the store, groups locally, and does not
+   travel.
+5. If `config.json` still contains `projectGroups` after migration, **say so once**
+   rather than ignoring it. A user intent that has stopped being read must be reported,
+   not silently dropped.
+6. The migration is idempotent and never produces duplicate groups on repeated runs.
 
 **Verify**: `bun test packages/local-collectors/src && bun test packages/report-core/src`
 
@@ -427,9 +542,10 @@ boundary, not stored.
 1. Surface each unresolved conflict during **preview**, with both sides and their
    origin machine and wall-clock time shown as human context. The store describes the
    conflict; the browser does not decode registers.
-2. Resolution is explicit: keep local, take incoming, or keep both. Offer
-   `keep both` **only when the resulting assignments are disjoint** (Rule 5); when the
-   same member is claimed twice the user must choose one or explicitly repartition.
+2. Resolution is explicit and binary for every conflict kind: **keep local** or **take
+   incoming** (Rule 5). Do not offer `keep both`; it has no reachable case. Do not offer
+   group splitting or member repartitioning here — those are deliberate user actions
+   taken outside an import.
 3. **Every conflict must be resolved before confirmation.** There is no partial
    application and no pending-conflict queue.
 4. On confirmation, revalidate the opaque confirmation token, the grouping state, and
@@ -441,8 +557,8 @@ boundary, not stored.
 
 Expected: an import with one field conflict cannot be confirmed until it is resolved;
 the chosen side and every non-conflicting change land in the same transaction; a
-resolution confirmed after the store moved fails stale and writes nothing;
-`keep both` is unavailable on an overlapping membership conflict.
+resolution confirmed after the store moved fails stale and writes nothing; every
+conflict kind offers exactly two options and no third appears anywhere in the UI.
 
 ### Step 6: Supersede the documents
 
@@ -502,14 +618,23 @@ standing rule on real, local, and private data.
 ## Done criteria
 
 - [x] A causally complete merge model is decided and written down (*The merge model*,
-      accepted 2026-07-27).
+      accepted 2026-07-27, amended the same day after the second stop). Completeness is
+      claimed **over the portable domain only**; the non-portable domain does not merge.
+- [ ] Only fully-qualified selectors are portable, enforced by a narrower type at the
+      boundary rather than a runtime check (Rule 0).
+- [ ] Portability is computed from the selector's shape and stored nowhere.
+- [ ] A group mixing portable and wildcard selectors exports its portable part and
+      reports each omission as a preview warning.
 - [ ] Causal succession merges silently; genuine concurrency raises exactly one
       conflict. Both are tested separately.
 - [ ] Membership is an exclusive assignment; no merge can produce a double membership.
 - [ ] A group's existence is versioned, and deletions are not resurrected.
 - [ ] Conflicts are scoped to one field or one membership, never wider.
 - [ ] Anything the rules can settle is settled with no prompt.
-- [ ] `keep both` is offered only when the resulting assignments are disjoint.
+- [ ] Every conflict kind offers exactly two options, keep local and take incoming;
+      `keep both` appears nowhere in the model or the UI.
+- [ ] `config.json` is retired as a grouping input, and a leftover `projectGroups` there
+      is reported once rather than silently ignored.
 - [ ] Grouping is a user-owned contribution, separate from collector-owned rows.
 - [ ] Usage rows still carry no grouping field.
 - [ ] Existing project groups are migrated with identical report output.
@@ -535,10 +660,16 @@ Stop and report if:
 - making grouping portable would require a grouping field on a usage row. That is
   the one clause of `docs/project-grouping-plan.md` this plan explicitly preserves;
 - a conflict case appears that the recorded merge model cannot express — extend the
-  model deliberately rather than adding an ad-hoc branch to the UI. This condition
-  already fired once, on 2026-07-27, and it was right to: it caught a model that could
-  not distinguish causal succession from concurrency before any production code was
-  written. Treat a second firing the same way;
+  model deliberately rather than adding an ad-hoc branch to the UI. This condition has
+  now fired **twice**, both times before any production code was written, and both times
+  it was right: first it caught a model that could not distinguish causal succession from
+  concurrency, then one that assumed membership was element-wise when project selectors
+  are patterns whose overlap is non-transitive. Treat a third firing the same way;
+- a wildcard selector needs to become portable, or the overlap check needs to run across
+  records. Rule 0 exists precisely to make both unnecessary; if either becomes necessary,
+  the portable domain was drawn in the wrong place and that is a decision, not a fix;
+- `keep both`, group splitting, or member repartitioning appears to be needed during an
+  import. None is conflict resolution, and the model deliberately cannot express them;
 - a shortcut replaces a causal register with a wall-clock comparison "just for this
   field". That is the exact defect the amendment corrected, and it reappears silently
   because the wrong behaviour only shows up after an import-then-edit cycle;
