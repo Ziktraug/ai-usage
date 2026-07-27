@@ -24,12 +24,11 @@ const normalizedSelection = (origins: readonly SessionOrigin[]): readonly Sessio
 
 export const originFilterLabel = (origins: readonly SessionOrigin[]): string => {
   if (isDefaultDashboardOriginSelection(origins)) {
-    return 'Origin: excluding automated reviews';
-  }
-  if (origins.length === 0) {
     return 'Origin: all';
   }
-  return `Origin: ${origins.map((origin) => sessionOriginLabel(origin).toLowerCase()).join(' + ')}`;
+  const selected = new Set(origins);
+  const deselected = sessionOrigins.filter((origin) => !selected.has(origin));
+  return `Origin: excluding ${deselected.map((origin) => sessionOriginLabel(origin).toLowerCase()).join(' + ')}`;
 };
 
 export const OriginFilter = (props: { onValueChange: (origins: SessionOrigin[]) => void; value: SessionOrigin[] }) => {

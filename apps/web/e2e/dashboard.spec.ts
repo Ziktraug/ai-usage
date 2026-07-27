@@ -28,7 +28,7 @@ test('loads a deterministic report overview', async ({ page }) => {
 
   await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Date range' })).toBeVisible();
-  await expect(page.getByText('4 / 6 sessions', { exact: true })).toBeVisible();
+  await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
     'aria-current',
     'page',

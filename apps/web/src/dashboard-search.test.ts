@@ -83,10 +83,10 @@ describe('dashboard search params', () => {
     ).toEqual(defaults);
   });
 
-  test('keeps the non-classifier default explicit while accepting all and uncommon origins', () => {
+  test('uses a neutral default while accepting explicit and stale origin selections', () => {
     const defaults = dashboardSearchDefaultsFor('date');
 
-    expect(defaults.origin).toEqual(['human', 'subagent']);
+    expect(defaults.origin).toEqual([]);
     expect(validateDashboardSearch({ origin: ['classifier', 'unknown'] }, defaults).origin).toEqual(['classifier']);
     expect(
       validateDashboardSearch({ origin: ['human', 'subagent', 'classifier', 'unknown'] }, defaults).origin,
@@ -137,7 +137,8 @@ describe('dashboard search params', () => {
     const defaults = dashboardSearchDefaultsFor('cost');
 
     expect(hasActiveDashboardFilters(defaults)).toBe(false);
-    expect(hasActiveDashboardFilters({ ...defaults, origin: [] })).toBe(true);
+    expect(hasActiveDashboardFilters({ ...defaults, origin: [] })).toBe(false);
+    expect(hasActiveDashboardFilters({ ...defaults, origin: ['human', 'subagent'] })).toBe(true);
     expect(hasActiveDashboardFilters({ ...defaults, origin: ['classifier'] })).toBe(true);
     expect(hasActiveDashboardFilters({ ...defaults, q: 'collector' })).toBe(true);
     expect(hasActiveDashboardFilters({ ...defaults, range: { mode: 'all' } })).toBe(true);

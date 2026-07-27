@@ -82,6 +82,16 @@ describe('dashboard model', () => {
     expect(filtered.map((item) => item.sessionLabel)).toEqual(['Alpha build']);
   });
 
+  test('keeps a session with no origin in every origin selection', () => {
+    const unclassified = row({ name: 'Unclassified', originProvenance: 'origin-unsupported' });
+    const selections = [[], ['human'], ['subagent'], ['classifier'], ['human', 'subagent']] as const;
+
+    for (const selection of selections) {
+      const filtered = filterTimelineRows([unclassified], createFilterSnapshot('', [], [], {}, [...selection]));
+      expect(filtered).toEqual([unclassified]);
+    }
+  });
+
   test('filters duplicate machine labels by stable machine ID', () => {
     const rows = [
       sourcedRow('machine-a', {

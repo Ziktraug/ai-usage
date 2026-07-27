@@ -9,7 +9,7 @@ describe('report runtime loading', () => {
     if (result.kind === 'payload') {
       expect(result.mode).toBe('demo');
       expect(result.payload.generatedAt).toBe('2026-06-11T12:00:00.000Z');
-      expect(result.payload.rows).toHaveLength(4);
+      expect(result.payload.rows).toHaveLength(6);
     }
   });
 

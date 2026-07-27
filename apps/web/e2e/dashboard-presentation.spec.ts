@@ -11,14 +11,6 @@ test('keeps metric deltas qualified, aligned, and in a balanced grid', async ({ 
   await page.setViewportSize({ height: 1000, width: 1440 });
   await page.goto('/');
 
-  // Include the one origin excluded by the non-neutral default so this
-  // presentation test exercises the synthetic fixture's period comparisons.
-  const originFilter = page.getByRole('button', { name: 'Filter by origin' });
-  await originFilter.click();
-  await page.getByText('Automated review', { exact: true }).click();
-  await expect(originFilter).toContainText('Origin: all');
-  await page.keyboard.press('Escape');
-
   const region = page.getByRole('region', { name: 'More report metrics' });
   const grid = region.locator('[data-metric-grid]');
   const tiles = grid.locator('[data-metric-tile]');
