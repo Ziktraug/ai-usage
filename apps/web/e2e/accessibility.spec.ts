@@ -176,7 +176,7 @@ test('reduced motion keeps drawer feedback while making motion effectively immed
 test('Overview has no detectable accessibility violations', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
-  await expect(page.getByText('3 / 4 sessions', { exact: true })).toBeVisible();
+  await expect(page.getByText('4 / 6 sessions', { exact: true })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
     'aria-current',
     'page',
@@ -187,7 +187,7 @@ test('Overview has no detectable accessibility violations', async ({ page }) => 
 
 test('the open session drawer has no detectable accessibility violations', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByText('3 / 4 sessions', { exact: true })).toBeVisible();
+  await expect(page.getByText('4 / 6 sessions', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
   const drawer = page.getByRole('dialog', { name: 'Session details' });
   await expect(drawer).toBeVisible();

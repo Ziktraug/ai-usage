@@ -239,9 +239,8 @@ describe('focused report SQLite queries', () => {
       expect(results.get('machine')?.timeline?.series).toEqual([
         expect.objectContaining({ key: 'machine-a', label: 'Machine A', sessions: 4, total: 10 }),
       ]);
-      expect(results.get('origin')?.timeline?.series).toEqual([
-        expect.objectContaining({ key: 'unknown', label: 'Undeclared', sessions: 4, total: 10 }),
-      ]);
+      expect(results.get('origin')?.timeline?.series).toEqual([]);
+      expect(results.get('origin')?.timeline?.unclassified).toMatchObject({ causes: [], sessions: 4, total: 10 });
       expect(results.get('project')?.timeline?.series).toEqual([
         expect.objectContaining({ key: 'group:ai-usage', label: 'AI Usage — Machine A', sessions: 4, total: 10 }),
       ]);

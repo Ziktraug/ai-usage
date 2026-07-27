@@ -34,6 +34,7 @@ import type {
   SessionQuerySort,
 } from '@ai-usage/report-core/session-query';
 import { isSessionOrigin, sessionOriginLabel } from '@ai-usage/report-core/session-query';
+import { isOriginProvenanceKind } from '@ai-usage/report-core/types';
 import {
   buildSessionQuerySqlFilter,
   type SessionQuerySqliteDatabase,
@@ -110,12 +111,13 @@ interface SummaryRecord {
 }
 
 interface TimelineRecord {
+  cause: string | null;
   cost: number;
   day_key: string;
   first_ordinal: number;
   first_time: number;
-  key: string;
-  label: string;
+  key: string | null;
+  label: string | null;
   last_time: number;
   partial_price_rows: number;
   sessions: number;
@@ -127,6 +129,8 @@ interface ModelTimelineRecord extends TimelineRecord {
   day_partial_price_rows: number;
   day_sessions: number;
   day_unpriced_fresh_tokens: number;
+  key: string;
+  label: string;
 }
 
 interface DayRecord {
@@ -261,6 +265,7 @@ const readSummary = (
   );
 
 interface TimelineDimensionProjection {
+  cause: string;
   key: string;
   label: string;
 }
@@ -272,24 +277,30 @@ const timelineDimensionProjection = (
   switch (dimension) {
     case 'campaign':
       return {
+        cause: 'NULL',
         key: "CASE WHEN session_rows.campaign_key IS NULL THEN 'session:' || session_rows.row_id ELSE 'campaign:' || session_rows.campaign_key END",
         label: 'session_rows.campaign_label',
       };
     case 'harness':
-      return { key: 'session_rows.harness', label: 'session_rows.harness' };
+      return { cause: 'NULL', key: 'session_rows.harness', label: 'session_rows.harness' };
     case 'machine':
       return {
+        cause: 'NULL',
         key: 'session_rows.machine_id',
         label: "CASE WHEN session_rows.machine_label = '' THEN 'Unknown machine' ELSE session_rows.machine_label END",
       };
     case 'model':
-      return { key: 'session_rows.model_key', label: 'session_rows.model_key' };
+      return { cause: 'NULL', key: 'session_rows.model_key', label: 'session_rows.model_key' };
     case 'origin':
-      return { key: 'session_rows.origin', label: 'session_rows.origin' };
+      return {
+        cause: 'session_rows.origin_provenance',
+        key: 'session_rows.origin',
+        label: 'session_rows.origin',
+      };
     case 'project':
-      return { key: 'session_rows.project_key', label: 'session_rows.project_label' };
+      return { cause: 'NULL', key: 'session_rows.project_key', label: 'session_rows.project_label' };
     case 'provider':
-      return { key: 'session_rows.provider_display', label: 'session_rows.provider_display' };
+      return { cause: 'NULL', key: 'session_rows.provider_display', label: 'session_rows.provider_display' };
   }
 };
 
@@ -427,6 +438,7 @@ const readModelTimeline = (
       return {
         cost,
         key,
+        kind: 'series' as const,
         label,
         priceMeasurement: priceMeasurementFromSql(cost, partialPriceRows, unpricedFreshTokens),
         sessions,
@@ -467,6 +479,7 @@ const readTimeline = (
         session_rows.active_time,
         ${projection.key} AS timeline_key,
         ${projection.label} AS timeline_label,
+        ${projection.cause} AS origin_cause,
         session_rows.cost_approx,
         segment_coverage.partial_price_rows,
         segment_coverage.unpriced_fresh_tokens
@@ -478,6 +491,7 @@ const readTimeline = (
       strftime('%Y-%m-%d', active_time / 1000, 'unixepoch', 'localtime') AS day_key,
       timeline_key AS key,
       MIN(timeline_label) AS label,
+      MIN(origin_cause) AS cause,
       SUM(cost_approx) AS cost,
       MAX(partial_price_rows) AS partial_price_rows,
       SUM(unpriced_fresh_tokens) AS unpriced_fresh_tokens,
@@ -486,14 +500,23 @@ const readTimeline = (
       MAX(active_time) AS last_time,
       MIN(ordinal) AS first_ordinal
     FROM visible
-    GROUP BY day_key, timeline_key
+    GROUP BY day_key, timeline_key, origin_cause
     ORDER BY first_ordinal`,
     filter.params,
     trace,
   );
   const byDay = new Map<string, FocusedDayAggregate>();
   const timeline = records.map(
-    ({ cost, day_key: dayKey, key, label, partial_price_rows: partialPriceRows, sessions, unpriced_fresh_tokens }) => {
+    ({
+      cause,
+      cost,
+      day_key: dayKey,
+      key,
+      label,
+      partial_price_rows: partialPriceRows,
+      sessions,
+      unpriced_fresh_tokens,
+    }) => {
       const time = timeForLocalDay(dayKey);
       const priceMeasurement = priceMeasurementFromSql(cost, partialPriceRows, unpriced_fresh_tokens);
       const day = byDay.get(dayKey) ?? {
@@ -511,9 +534,26 @@ const readTimeline = (
       });
       day.sessions += sessions;
       byDay.set(dayKey, day);
+      if (dimension === 'origin' && key === null) {
+        if (cause !== null && !isOriginProvenanceKind(cause)) {
+          throw new Error('Report revision contains an invalid origin provenance kind');
+        }
+        return {
+          ...(cause === null ? {} : { cause }),
+          cost,
+          kind: 'unclassified' as const,
+          priceMeasurement,
+          sessions,
+          time,
+        };
+      }
+      if (key === null || label === null) {
+        throw new Error('Report revision contains an invalid timeline aggregate');
+      }
       return {
         cost,
         key,
+        kind: 'series' as const,
         label: timelineLabelFromRecord(dimension, key, label),
         priceMeasurement,
         sessions,

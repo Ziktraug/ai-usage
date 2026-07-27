@@ -10,13 +10,13 @@ test('makes the non-classifier default and singleton campaigns explicit', async 
   const originFilter = page.getByRole('button', { name: 'Filter by origin' });
   await expect(originFilter).toContainText('Origin: excluding automated reviews');
   await originFilter.click();
-  for (const origin of ['Human', 'Delegated', 'Automated review', 'Undeclared']) {
+  for (const origin of ['Human', 'Delegated', 'Automated review']) {
     await expect(page.getByText(origin, { exact: true })).toBeVisible();
   }
   await page.keyboard.press('Escape');
 
   await expect(page.getByText('Campaign · 2 sessions', { exact: true })).toBeVisible();
-  await expect(page.getByText('Campaign · 1 session', { exact: true })).toBeVisible();
+  await expect(page.getByText('Campaign · 1 session', { exact: true })).toHaveCount(2);
 });
 
 test('ignores legacy campaign opt-out URLs and keeps every top-level row bounded and campaign-shaped', async ({
@@ -29,7 +29,7 @@ test('ignores legacy campaign opt-out URLs and keeps every top-level row bounded
   await expect(page.getByRole('checkbox', { name: 'Group campaigns' })).toHaveCount(0);
   await expect(page.getByText('Group campaigns', { exact: true })).toHaveCount(0);
   await expect(page.getByText('Campaign · 2 sessions', { exact: true })).toBeVisible();
-  await expect(page.getByText('Campaign · 1 session', { exact: true })).toBeVisible();
+  await expect(page.getByText('Campaign · 1 session', { exact: true })).toHaveCount(2);
 
   const sessionRows = page.locator('[data-session-row-id]');
   await expect(sessionRows.first()).toBeVisible();

@@ -24,7 +24,7 @@ test('serves only the synthetic report and keeps every local boundary inert', as
     name: 'Filter sessions by title, project, model, provider, or harness',
   });
   await filter.fill('Build report UI');
-  await expect(page.getByText('1 / 4 sessions', { exact: true })).toBeVisible();
+  await expect(page.getByText('1 / 6 sessions', { exact: true })).toBeVisible();
   await filter.fill('');
 
   await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();

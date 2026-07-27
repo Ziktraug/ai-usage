@@ -22,8 +22,8 @@ import { usageRowModelApiPriceMeasurements, usageRowModelContributions } from '@
 
 export const SESSION_QUERY_DATABASE_NAME = 'sessions.sqlite';
 
-const SESSION_QUERY_SCHEMA_VERSION = 12;
-const SESSION_ROW_INSERT_VALUE_COUNT = 78;
+const SESSION_QUERY_SCHEMA_VERSION = 13;
+const SESSION_ROW_INSERT_VALUE_COUNT = 79;
 const createFileFlags =
   // biome-ignore lint/suspicious/noBitwiseOperators: Node file-open flags are a documented bitmask API.
   fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW;
@@ -104,7 +104,8 @@ const createSchema = (database: SqliteDatabase): void => {
       model_key TEXT NOT NULL,
       project_key TEXT NOT NULL,
       project_label TEXT NOT NULL,
-      origin TEXT NOT NULL CHECK (origin IN ('human', 'subagent', 'classifier', 'unknown')),
+      origin TEXT CHECK (origin IN ('human', 'subagent', 'classifier')),
+      origin_provenance TEXT CHECK (origin_provenance IN ('origin-unsupported', 'origin-absent', 'origin-degraded')),
       campaign_key TEXT,
       campaign_label TEXT NOT NULL,
       campaign_root INTEGER NOT NULL CHECK (campaign_root IN (0, 1)),
@@ -199,7 +200,7 @@ const insertSql = `
   INSERT INTO session_rows (
     ordinal, row_id, row_json, source_row_json, source_authority, active_date, active_time, search_text, harness,
     machine_id, machine_label,
-    provider_scope_key, provider, provider_display, model_key, project_key, project_label, origin,
+    provider_scope_key, provider, provider_display, model_key, project_key, project_label, origin, origin_provenance,
     campaign_key, campaign_label, campaign_root, campaign_total_count,
     ${sessionSortFields.map((field) => `sort_${field === 'cache' ? 'cache' : field.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`).join(', ')},
     ${sessionTextSortFields.map((field) => `sort_${field}_rank`).join(', ')},
@@ -311,7 +312,8 @@ const insertRow = (
     row.modelKey,
     row.projectKey,
     row.projectLabel,
-    row.origin,
+    row.origin ?? null,
+    row.originProvenance ?? null,
     campaign?.key ?? null,
     campaign?.label ?? row.sessionLabel,
     campaign?.root ? 1 : 0,

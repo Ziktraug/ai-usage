@@ -25,6 +25,7 @@ import {
   sessionModelKeys,
   sessionOriginLabel,
 } from './session-query';
+import { isOriginProvenanceKind, type OriginProvenanceKind } from './types';
 import {
   usageModelSegmentApiPriceMeasurement,
   usageRowApiPriceMeasurement,
@@ -96,12 +97,25 @@ export interface FocusedTimelineBucketEntry {
   sessions: number;
 }
 
+export interface FocusedTimelineGapCause {
+  kind: OriginProvenanceKind;
+  sessions: number;
+}
+
+export interface FocusedTimelineGap {
+  causes: FocusedTimelineGapCause[];
+  priceMeasurement: ApiPriceMeasurement;
+  sessions: number;
+  total: number;
+}
+
 export interface FocusedTimelineBucket {
   byKey: Record<string, FocusedTimelineBucketEntry>;
   date: string;
   priceMeasurement: ApiPriceMeasurement;
   sessions: number;
   total: number;
+  unclassified: FocusedTimelineGap | null;
 }
 
 export interface FocusedTimelineSeries {
@@ -125,17 +139,28 @@ export interface FocusedTimelineData {
   maxBucketTotal: number;
   priceMeasurement: ApiPriceMeasurement;
   series: FocusedTimelineSeries[];
+  unclassified: FocusedTimelineGap | null;
 }
 
 /** A storage-side timeline subtotal for one local calendar day and series key. */
-export interface FocusedTimelineAggregate {
-  cost: number;
-  key: string;
-  label: string;
-  priceMeasurement: ApiPriceMeasurement;
-  sessions: number;
-  time: number;
-}
+export type FocusedTimelineAggregate =
+  | {
+      cost: number;
+      kind: 'series';
+      key: string;
+      label: string;
+      priceMeasurement: ApiPriceMeasurement;
+      sessions: number;
+      time: number;
+    }
+  | {
+      cause?: OriginProvenanceKind;
+      cost: number;
+      kind: 'unclassified';
+      priceMeasurement: ApiPriceMeasurement;
+      sessions: number;
+      time: number;
+    };
 
 export interface FocusedOverviewResult {
   dateDomain: FocusedDateDomain | null;
@@ -556,6 +581,7 @@ const timelineAggregatesForRow = (
     return contributions.map((contribution) => ({
       cost: contribution.costApprox,
       key: contribution.key,
+      kind: 'series' as const,
       label: contribution.key,
       priceMeasurement: priceMeasurements.get(contribution.key) ?? usageModelSegmentApiPriceMeasurement(contribution),
       sessions: contribution.key === sessionKey ? 1 : 0,
@@ -563,6 +589,18 @@ const timelineAggregatesForRow = (
     }));
   }
   const priceMeasurement = usageRowApiPriceMeasurement(row);
+  if (dimension === 'origin' && row.origin === undefined) {
+    return [
+      {
+        ...(row.originProvenance === undefined ? {} : { cause: row.originProvenance }),
+        cost: priceMeasurement.knownCost,
+        kind: 'unclassified',
+        priceMeasurement,
+        sessions: 1,
+        time,
+      },
+    ];
+  }
   const identity = timelineIdentity(row, dimension, campaignIdentity);
   if (identity === undefined) {
     return [];
@@ -571,12 +609,37 @@ const timelineAggregatesForRow = (
     {
       cost: priceMeasurement.knownCost,
       key: identity.key,
+      kind: 'series',
       label: identity.label,
       priceMeasurement,
       sessions: 1,
       time,
     },
   ];
+};
+
+const addTimelineGap = (
+  current: FocusedTimelineGap | null,
+  aggregate: Extract<FocusedTimelineAggregate, { kind: 'unclassified' }>,
+): FocusedTimelineGap => {
+  const causes = current ? [...current.causes] : [];
+  if (aggregate.cause !== undefined) {
+    const existing = causes.find((cause) => cause.kind === aggregate.cause);
+    if (existing) {
+      existing.sessions += aggregate.sessions;
+    } else {
+      causes.push({ kind: aggregate.cause, sessions: aggregate.sessions });
+    }
+  }
+  return {
+    causes,
+    priceMeasurement: combineApiPriceMeasurements([
+      current?.priceMeasurement ?? apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
+      aggregate.priceMeasurement,
+    ]),
+    sessions: (current?.sessions ?? 0) + aggregate.sessions,
+    total: (current?.total ?? 0) + aggregate.cost,
+  };
 };
 
 export const buildFocusedTimelineFromAggregates = (
@@ -597,15 +660,25 @@ export const buildFocusedTimelineFromAggregates = (
       priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
       sessions: 0,
       total: 0,
+      unclassified: null,
     };
     buckets.push(bucket);
     bucketByKey.set(dateKey(cursor), bucket);
   }
   const totals = new Map<string, FocusedTimelineBucketEntry>();
   const labels = new Map<string, string>();
+  let unclassified: FocusedTimelineGap | null = null;
   for (const aggregate of aggregates) {
     const bucket = bucketByKey.get(dateKey(bucketStartFor(new Date(aggregate.time), options.granularity)));
     if (!bucket) {
+      continue;
+    }
+    if (aggregate.kind === 'unclassified') {
+      bucket.unclassified = addTimelineGap(bucket.unclassified, aggregate);
+      unclassified = addTimelineGap(unclassified, aggregate);
+      bucket.total += aggregate.cost;
+      bucket.priceMeasurement = combineApiPriceMeasurements([bucket.priceMeasurement, aggregate.priceMeasurement]);
+      bucket.sessions += aggregate.sessions;
       continue;
     }
     const { cost, key, label, priceMeasurement, sessions } = aggregate;
@@ -707,19 +780,23 @@ export const buildFocusedTimelineFromAggregates = (
       },
     ];
   }
-  const priceMeasurement = combineApiPriceMeasurements(ranked.map(([, value]) => value.priceMeasurement));
+  const priceMeasurement = combineApiPriceMeasurements([
+    ...ranked.map(([, value]) => value.priceMeasurement),
+    ...(unclassified ? [unclassified.priceMeasurement] : []),
+  ]);
   return {
     buckets,
     dimension: options.dimension,
     first: buckets[0]?.date ?? firstBucket.toISOString(),
-    grandSessions: ranked.reduce((sum, [, value]) => sum + value.sessions, 0),
-    grandTotal: ranked.reduce((sum, [, value]) => sum + value.cost, 0),
+    grandSessions: ranked.reduce((sum, [, value]) => sum + value.sessions, unclassified?.sessions ?? 0),
+    grandTotal: ranked.reduce((sum, [, value]) => sum + value.cost, unclassified?.total ?? 0),
     granularity: options.granularity,
     last: buckets.at(-1)?.date ?? lastBucket.toISOString(),
     maxBucketSessions: buckets.reduce((max, bucket) => Math.max(max, bucket.sessions), 0),
     maxBucketTotal: buckets.reduce((max, bucket) => Math.max(max, bucket.total), 0),
     priceMeasurement,
     series,
+    unclassified,
   };
 };
 
@@ -1537,17 +1614,47 @@ const assertTimelineSeries = (value: unknown): Set<string> => {
   return keys;
 };
 
+const assertTimelineGap = (value: unknown, label: string): void => {
+  if (value === null) {
+    return;
+  }
+  const gap = requireRecord(value, label);
+  assertExactKeys(gap, ['causes', 'priceMeasurement', 'sessions', 'total'], label);
+  requireNonNegativeSafeInteger(gap.sessions, `${label}.sessions`);
+  const total = requireFiniteNumber(gap.total, `${label}.total`);
+  assertApiPriceMeasurement(gap.priceMeasurement, `${label}.priceMeasurement`, total);
+  if (!Array.isArray(gap.causes) || gap.causes.length > 3) {
+    throw new Error(`${label}.causes is invalid`);
+  }
+  const kinds = new Set<OriginProvenanceKind>();
+  for (const causeValue of gap.causes) {
+    const causeLabel = `${label}.causes[]`;
+    const cause = requireRecord(causeValue, causeLabel);
+    assertExactKeys(cause, ['kind', 'sessions'], causeLabel);
+    if (!isOriginProvenanceKind(cause.kind) || kinds.has(cause.kind)) {
+      throw new Error(`${causeLabel}.kind is invalid`);
+    }
+    kinds.add(cause.kind);
+    requireNonNegativeSafeInteger(cause.sessions, `${causeLabel}.sessions`);
+  }
+};
+
 const assertTimelineBuckets = (value: unknown, seriesKeys: ReadonlySet<string>): void => {
   if (!Array.isArray(value)) {
     throw new Error('overview timeline.buckets must be an array');
   }
   for (const [index, entry] of value.entries()) {
     const bucket = requireRecord(entry, `overview timeline.buckets[${index}]`);
-    assertExactKeys(bucket, ['byKey', 'date', 'priceMeasurement', 'sessions', 'total'], 'overview timeline bucket');
+    assertExactKeys(
+      bucket,
+      ['byKey', 'date', 'priceMeasurement', 'sessions', 'total', 'unclassified'],
+      'overview timeline bucket',
+    );
     requireIsoTimestamp(bucket.date, 'overview timeline bucket.date');
     requireNonNegativeSafeInteger(bucket.sessions, 'overview timeline bucket.sessions');
     const bucketTotal = requireFiniteNumber(bucket.total, 'overview timeline bucket.total');
     assertApiPriceMeasurement(bucket.priceMeasurement, 'overview timeline bucket.priceMeasurement', bucketTotal);
+    assertTimelineGap(bucket.unclassified, 'overview timeline bucket.unclassified');
     const byKey = requireRecord(bucket.byKey, 'overview timeline bucket.byKey');
     if (Object.keys(byKey).length > MAX_TIMELINE_SERIES) {
       throw new Error('overview timeline bucket.byKey exceeds its presentation bound');
@@ -1584,6 +1691,7 @@ const assertFocusedTimeline = (value: unknown, expected: FocusedOverviewRequest[
       'maxBucketTotal',
       'priceMeasurement',
       'series',
+      'unclassified',
     ],
     'overview timeline',
   );
@@ -1598,6 +1706,7 @@ const assertFocusedTimeline = (value: unknown, expected: FocusedOverviewRequest[
   requireNonNegativeSafeInteger(timeline.maxBucketSessions, 'overview timeline.maxBucketSessions');
   requireFiniteNumber(timeline.maxBucketTotal, 'overview timeline.maxBucketTotal');
   assertTimelineBuckets(timeline.buckets, assertTimelineSeries(timeline.series));
+  assertTimelineGap(timeline.unclassified, 'overview timeline.unclassified');
 };
 
 const assertOverviewSessionItem = (value: unknown, label: string, requireAggregateCount = false): void => {

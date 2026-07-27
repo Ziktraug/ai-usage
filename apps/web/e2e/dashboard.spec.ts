@@ -28,7 +28,7 @@ test('loads a deterministic report overview', async ({ page }) => {
 
   await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Date range' })).toBeVisible();
-  await expect(page.getByText('3 / 4 sessions', { exact: true })).toBeVisible();
+  await expect(page.getByText('4 / 6 sessions', { exact: true })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
     'aria-current',
     'page',
@@ -117,7 +117,7 @@ test('shows analysis and report metrics without disclosure gates', async ({ page
     'API-equivalent value',
   ]);
   expect(await punchcardTable.getByRole('row').count()).toBeGreaterThan(1);
-  await expect(punchcardTable.getByRole('row', { name: 'Monday 14:00 1 $0.84' })).toBeAttached();
+  await expect(punchcardTable.getByRole('row', { name: 'Sunday 14:00 1 $0.84' })).toBeAttached();
   await expect(page.locator('[data-punchcard-visual]')).toHaveAttribute('aria-hidden', 'true');
   await expect(page.locator('[data-punchcard-visual]').getByRole('button')).toHaveCount(0);
 
@@ -415,7 +415,7 @@ test('mounts one Sessions surface across viewport changes without losing state',
   await page.setViewportSize({ height: 900, width: 1024 });
   await expect(page.locator('[data-session-surface="desktop"]')).toHaveCount(1);
   await expect(page.locator('[data-session-surface="mobile"]')).toHaveCount(0);
-  await expect(page.locator('tbody tr[data-depth="1"]')).toHaveCount(1);
+  await expect(page.locator('tbody tr[data-depth="1"]')).toHaveCount(2);
   await expect(page).toHaveURL(SORT_URL_PATTERN);
   await page.getByRole('button', { exact: true, name: 'Tokens' }).click();
   await expect(page).toHaveURL(COLUMN_URL_PATTERN);
@@ -429,7 +429,7 @@ test('mounts one Sessions surface across viewport changes without losing state',
   await expect(page).toHaveURL(COLUMN_URL_PATTERN);
   await page.setViewportSize({ height: 900, width: 1024 });
   await expect(page.getByRole('button', { exact: true, name: 'Tokens' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('tbody tr[data-depth="1"]')).toHaveCount(1);
+  await expect(page.locator('tbody tr[data-depth="1"]')).toHaveCount(2);
   await page.keyboard.press('Escape');
 
   await expect(page.locator('[data-session-surface="desktop"]')).toHaveCount(1);

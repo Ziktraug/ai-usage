@@ -218,7 +218,23 @@ describe('focused report query contracts', () => {
       ...request,
       timeline: { dimension: 'machine', granularity: 'day' },
     });
-    const origin = projectFocusedOverview(campaignRows, support, {
+    const originRows: SerializedRow[] = [
+      { ...campaignRows[0]!, origin: 'human' },
+      { ...campaignRows[1]!, origin: 'subagent' },
+      {
+        ...campaignRows[2]!,
+        origin: 'classifier',
+        source: {
+          ...campaignRows[2]!.source!,
+          parentSourceSessionId: 'one',
+          rootSourceSessionId: 'one',
+        },
+      },
+      { ...campaignRows[3]!, originProvenance: 'origin-unsupported' },
+      { ...row('absent', 5, 5), originProvenance: 'origin-absent' },
+      { ...row('degraded', 6, 6), originProvenance: 'origin-degraded' },
+    ];
+    const origin = projectFocusedOverview(originRows, support, {
       ...request,
       timeline: { dimension: 'origin', granularity: 'day' },
     });
@@ -241,7 +257,17 @@ describe('focused report query contracts', () => {
     expect(machine.timeline?.series).toEqual([
       expect.objectContaining({ key: 'machine-a', label: 'Machine A', sessions: 4, total: 10 }),
     ]);
-    expect(origin.timeline).toBeNull();
+    expect(origin.timeline?.series.map(({ key }) => key).sort()).toEqual(['classifier', 'human', 'subagent']);
+    expect(origin.timeline?.unclassified).toMatchObject({
+      causes: [
+        { kind: 'origin-unsupported', sessions: 1 },
+        { kind: 'origin-absent', sessions: 1 },
+        { kind: 'origin-degraded', sessions: 1 },
+      ],
+      sessions: 3,
+      total: 15,
+    });
+    expect(origin.timeline?.series.some(({ key }) => key.includes('unknown'))).toBe(false);
     expect(project.timeline?.series).toEqual([
       expect.objectContaining({ key: 'group:ai-usage', label: 'AI Usage — Machine A', sessions: 4, total: 10 }),
     ]);

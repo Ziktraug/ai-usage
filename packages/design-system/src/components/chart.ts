@@ -32,6 +32,16 @@ export const chartLegendSwatch = css({
   flexShrink: 0,
 });
 
+export const chartUnclassifiedSwatch = css({
+  w: '8px',
+  h: '8px',
+  border: '1px solid token(colors.lineStrong)',
+  borderRadius: '2px',
+  bg: 'surfaceMuted',
+  backgroundImage: 'repeating-linear-gradient(135deg, transparent 0 2px, token(colors.lineStrong) 2px 3px)',
+  flexShrink: 0,
+});
+
 export const chartLegendPct = css({
   textStyle: 'numeric',
   color: 'muted',

@@ -10,6 +10,7 @@ import {
   type SessionCampaignTimelineIdentity,
   sessionOriginLabel,
 } from '@ai-usage/report-core/session-query';
+import type { OriginProvenanceKind } from '@ai-usage/report-core/types';
 import {
   usageModelSegmentApiPriceMeasurement,
   usageRowApiPriceMeasurement,
@@ -173,12 +174,25 @@ export interface TimelineBucketEntry {
   sessions: number;
 }
 
+export interface TimelineGapCause {
+  kind: OriginProvenanceKind;
+  sessions: number;
+}
+
+export interface TimelineGap {
+  causes: TimelineGapCause[];
+  priceMeasurement: ApiPriceMeasurement;
+  sessions: number;
+  total: number;
+}
+
 export interface TimelineBucket {
   byKey: Map<string, TimelineBucketEntry>;
   date: Date;
   priceMeasurement: ApiPriceMeasurement;
   sessions: number;
   total: number;
+  unclassified: TimelineGap | null;
 }
 export type MigrationGranularity = 'day' | 'month' | 'week';
 export interface TimelineSeries {
@@ -202,6 +216,7 @@ export interface TimelineData {
   maxBucketTotal: number;
   priceMeasurement: ApiPriceMeasurement;
   series: TimelineSeries[];
+  unclassified: TimelineGap | null;
 }
 export interface MigrationBucket extends TimelineBucket {
   byModel: Map<string, number>;
@@ -398,6 +413,28 @@ const timelineSeriesFrom = (
   ];
 };
 
+const addTimelineGapForRow = (current: TimelineGap | null, row: DashboardRow): TimelineGap => {
+  const causes = current ? [...current.causes] : [];
+  if (row.originProvenance !== undefined) {
+    const existing = causes.find((cause) => cause.kind === row.originProvenance);
+    if (existing) {
+      existing.sessions++;
+    } else {
+      causes.push({ kind: row.originProvenance, sessions: 1 });
+    }
+  }
+  const measurement = usageRowApiPriceMeasurement(row);
+  return {
+    causes,
+    priceMeasurement: combineApiPriceMeasurements([
+      current?.priceMeasurement ?? apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
+      measurement,
+    ]),
+    sessions: (current?.sessions ?? 0) + 1,
+    total: (current?.total ?? 0) + measurement.knownCost,
+  };
+};
+
 export const buildTimelineData = (
   rows: DashboardRow[],
   options: {
@@ -432,6 +469,7 @@ export const buildTimelineData = (
       priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
       sessions: 0,
       total: 0,
+      unclassified: null,
     });
   }
   if (buckets.length === 0) {
@@ -441,6 +479,7 @@ export const buildTimelineData = (
   const totals = new Map<string, TimelineBucketEntry>();
   const labels = new Map<string, string>();
   const campaignIdentities = buildSessionCampaignTimelineIdentities(options.campaignRows ?? rows);
+  let unclassified: TimelineGap | null = null;
   for (const row of dated) {
     const index = bucketIndex.get(toDateInputValue(bucketStart(new Date(row.activeTime))));
     if (index === undefined) {
@@ -448,6 +487,15 @@ export const buildTimelineData = (
     }
     const bucket = buckets[index];
     if (!bucket) {
+      continue;
+    }
+    if (options.dimension === 'origin' && row.origin === undefined) {
+      const gapMeasurement = usageRowApiPriceMeasurement(row);
+      bucket.unclassified = addTimelineGapForRow(bucket.unclassified, row);
+      unclassified = addTimelineGapForRow(unclassified, row);
+      bucket.total += gapMeasurement.knownCost;
+      bucket.priceMeasurement = combineApiPriceMeasurements([bucket.priceMeasurement, gapMeasurement]);
+      bucket.sessions++;
       continue;
     }
     for (const { cost, key, label, priceMeasurement, sessions } of timelineContributionsForRow(
@@ -490,9 +538,12 @@ export const buildTimelineData = (
   const ranked = [...totals.entries()].sort(
     (a, b) => b[1].cost - a[1].cost || b[1].sessions - a[1].sessions || compareAnalyticsKeys(a[0], b[0]),
   );
-  const grandTotal = ranked.reduce((sum, [, value]) => sum + value.cost, 0);
-  const grandSessions = ranked.reduce((sum, [, value]) => sum + value.sessions, 0);
-  const priceMeasurement = combineApiPriceMeasurements(ranked.map(([, value]) => value.priceMeasurement));
+  const grandTotal = ranked.reduce((sum, [, value]) => sum + value.cost, unclassified?.total ?? 0);
+  const grandSessions = ranked.reduce((sum, [, value]) => sum + value.sessions, unclassified?.sessions ?? 0);
+  const priceMeasurement = combineApiPriceMeasurements([
+    ...ranked.map(([, value]) => value.priceMeasurement),
+    ...(unclassified ? [unclassified.priceMeasurement] : []),
+  ]);
   const series = timelineSeriesFrom(ranked, buckets, labels);
   const maxBucketTotal = buckets.reduce((max, bucket) => Math.max(max, bucket.total), 0);
   const maxBucketSessions = buckets.reduce((max, bucket) => Math.max(max, bucket.sessions), 0);
@@ -507,6 +558,7 @@ export const buildTimelineData = (
     maxBucketTotal,
     priceMeasurement,
     series,
+    unclassified,
     first: buckets[0]?.date ?? firstBucket,
     last: buckets.at(-1)?.date ?? lastBucket,
   };

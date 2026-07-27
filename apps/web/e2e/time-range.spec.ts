@@ -77,7 +77,7 @@ test('groups the timeline by campaign, machine, and origin with matching legends
   await chartOptions.getByRole('radio', { exact: true, name: 'Campaign' }).click();
   await expect(chartOptions.getByText('Campaign · Day · Estimated API value', { exact: true })).toBeVisible();
   await expect(dateRange.getByTitle('Build report UI')).toContainText('Build report UI');
-  await expect(dateRange.getByTitle('Tune collector fixtures')).toContainText('Tune collector fixtures');
+  await expect(dateRange.getByTitle('Inspect OpenCode root')).toContainText('Inspect OpenCode root');
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Machine' }).click();
   await expect(chartOptions.getByText('Machine · Day · Estimated API value', { exact: true })).toBeVisible();

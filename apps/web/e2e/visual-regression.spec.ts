@@ -94,7 +94,7 @@ const openStableOverview = async (page: Page): Promise<void> => {
   await installStableSourceControl(page);
   await page.goto('/');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
-  await expect(page.getByText('3 / 4 sessions', { exact: true })).toBeVisible();
+  await expect(page.getByText('4 / 6 sessions', { exact: true })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
     'aria-current',
     'page',

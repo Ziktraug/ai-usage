@@ -125,7 +125,8 @@ const USAGE_UNAVAILABLE_METRICS: UsageMetricKey[] = [
 
 const hasOwn = (row: UsageProvenanceInput, key: keyof UsageProvenanceInput) => Object.hasOwn(row, key);
 
-const originProvenanceFor = (kind: OriginProvenanceKind): UsageRowProvenance => {
+export const originProvenanceFor = (kind: OriginProvenanceKind): UsageRowProvenance => {
+  // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future kind fails compilation.
   switch (kind) {
     case 'origin-unsupported':
       return {

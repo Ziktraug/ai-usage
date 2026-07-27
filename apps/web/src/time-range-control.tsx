@@ -5,6 +5,7 @@ import {
   chartLegendList,
   chartLegendPct,
   chartLegendSwatch,
+  chartUnclassifiedSwatch,
   dimensionSwatch,
   migrationCrosshair,
   migrationLegendButton,
@@ -26,6 +27,8 @@ import {
   timeAxisTick,
   timeBucket,
   timeBucketSegment,
+  timeBucketUnclassifiedBand,
+  timeBucketUnclassifiedEmpty,
   timeChartOptions,
   timeChartOptionsCurrent,
   timeChartOptionsSummary,
@@ -59,6 +62,7 @@ import {
   timeSliderRoot,
   timeSliderThumb,
   timeSliderTrack,
+  timeSliderUnclassifiedBands,
 } from '@ai-usage/design-system/report';
 import type {
   FocusedTimelineData,
@@ -69,8 +73,8 @@ import {
   type ApiPriceMeasurement,
   apiPriceMeasurement,
   combineApiPriceMeasurements,
+  originProvenanceFor,
 } from '@ai-usage/report-core/provenance';
-import { UNDECLARED_ORIGIN_DESCRIPTION } from '@ai-usage/report-core/session-query';
 import { createEffect, createMemo, createSignal, For, Show, untrack } from 'solid-js';
 import type { FieldFilterKey } from './dashboard-search';
 import { clampNumber, dateFromIndex, dateRangePresets, parseLocalDate, type TimeRangePreset } from './date-range';
@@ -81,6 +85,7 @@ import {
   type TimelineBucket,
   type TimelineData,
   type TimelineDimension,
+  type TimelineGap,
   type TimelineSeries,
   type TimelineValue,
 } from './overview-model';
@@ -310,12 +315,51 @@ export const buildVisibleTimelineBars = (
       }
     }
     segments.sort((left, right) => left.rank - right.rank);
+    let unclassifiedValue = 0;
+    if (bucket.unclassified) {
+      unclassifiedValue = useSessions ? bucket.unclassified.sessions : bucket.unclassified.total;
+    }
     return {
       bucket,
       segments,
-      total: useSessions ? bucket.sessions : bucket.total,
+      total: (useSessions ? bucket.sessions : bucket.total) - unclassifiedValue,
     };
   });
+};
+
+const mergeTimelineGaps = (current: TimelineGap | null, gap: TimelineGap | null): TimelineGap | null => {
+  if (!gap) {
+    return current;
+  }
+  const causes = current ? current.causes.map((cause) => ({ ...cause })) : [];
+  for (const cause of gap.causes) {
+    const existing = causes.find((candidate) => candidate.kind === cause.kind);
+    if (existing) {
+      existing.sessions += cause.sessions;
+    } else {
+      causes.push({ ...cause });
+    }
+  }
+  return {
+    causes,
+    priceMeasurement: combineApiPriceMeasurements([
+      current?.priceMeasurement ?? apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
+      gap.priceMeasurement,
+    ]),
+    sessions: (current?.sessions ?? 0) + gap.sessions,
+    total: (current?.total ?? 0) + gap.total,
+  };
+};
+
+export const originGapDescription = (gap: TimelineGap): string => {
+  const breakdown = gap.causes
+    .map((cause) => {
+      const provenance = originProvenanceFor(cause.kind);
+      return `${provenance.label}: ${fmtNum(cause.sessions)}${cause.sessions === 1 ? ' session' : ' sessions'}`;
+    })
+    .join(' · ');
+  const total = `Not classified: ${fmtNum(gap.sessions)}${gap.sessions === 1 ? ' session' : ' sessions'}`;
+  return breakdown ? `${total} · ${breakdown}` : total;
 };
 
 const timelineSummaryFor = (chart: TimelineData, range: TimeRangeIndexRange, useSessions: boolean) => {
@@ -323,10 +367,12 @@ const timelineSummaryFor = (chart: TimelineData, range: TimeRangeIndexRange, use
   const totalsByKey = new Map<string, number>();
   let total = 0;
   let priceMeasurement = apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 });
+  let unclassified: TimelineGap | null = null;
   for (const bucket of chart.buckets.slice(range.from, range.to + 1)) {
     const bucketTotal = useSessions ? bucket.sessions : bucket.total;
     total += bucketTotal;
     priceMeasurement = combineApiPriceMeasurements([priceMeasurement, bucket.priceMeasurement]);
+    unclassified = mergeTimelineGaps(unclassified, bucket.unclassified);
     for (const [key, entry] of bucket.byKey) {
       const value = useSessions ? entry.sessions : entry.cost;
       totalsByKey.set(key, (totalsByKey.get(key) ?? 0) + value);
@@ -341,7 +387,7 @@ const timelineSummaryFor = (chart: TimelineData, range: TimeRangeIndexRange, use
   }
   const first = chart.buckets[range.from]?.date ?? chart.first;
   const last = chart.buckets[range.to]?.date ?? chart.last;
-  return { first, last, measurementsByKey, priceMeasurement, total, totalsByKey };
+  return { first, last, measurementsByKey, priceMeasurement, total, totalsByKey, unclassified };
 };
 
 const focusedTimelineData = (timeline: FocusedTimelineData): TimelineData => ({
@@ -549,6 +595,18 @@ export const TimeRangeControl = (props: {
   const bucketValue = (bucket: TimelineBucket, chart: NonNullable<ReturnType<typeof data>>) =>
     valueMode() === 'sessions' || usesSessionShare(chart) ? bucket.sessions : bucket.total;
 
+  const unclassifiedValue = (bucket: TimelineBucket, chart: NonNullable<ReturnType<typeof data>>) => {
+    if (!bucket.unclassified) {
+      return 0;
+    }
+    return valueMode() === 'sessions' || usesSessionShare(chart)
+      ? bucket.unclassified.sessions
+      : bucket.unclassified.total;
+  };
+
+  const classifiedBucketValue = (bucket: TimelineBucket, chart: NonNullable<ReturnType<typeof data>>) =>
+    Math.max(0, bucketValue(bucket, chart) - unclassifiedValue(bucket, chart));
+
   const entryValue = (
     entry: { cost: number; sessions: number } | undefined,
     chart: NonNullable<ReturnType<typeof data>>,
@@ -601,7 +659,7 @@ export const TimeRangeControl = (props: {
   const visibleBucketLayout = createMemo(() => timelineBucketLayout(visibleBucketCount()));
 
   const barHeight = (bucket: TimelineBucket, chart: NonNullable<ReturnType<typeof data>>) => {
-    const total = bucketValue(bucket, chart);
+    const total = classifiedBucketValue(bucket, chart);
     if (valueMode() === 'share') {
       return total > 0 ? 100 : 0;
     }
@@ -679,6 +737,7 @@ export const TimeRangeControl = (props: {
       priceMeasurement: bucket.priceMeasurement,
       rows: visible,
       total: bucketValue(bucket, chart),
+      unclassified: bucket.unclassified,
       useSessions: valueMode() === 'sessions' || usesSessionShare(chart),
     };
   });
@@ -699,7 +758,7 @@ export const TimeRangeControl = (props: {
       dispatchControl({ type: 'hoverChanged', bucketIndex: index, key: null });
       return;
     }
-    const total = bucketValue(bucket, chart);
+    const total = classifiedBucketValue(bucket, chart);
     const heightFraction = barHeight(bucket, chart) / 100;
     const fromBottom = (rect.bottom - event.clientY) / rect.height;
     if (total <= 0 || heightFraction <= 0 || fromBottom > heightFraction) {
@@ -806,9 +865,6 @@ export const TimeRangeControl = (props: {
     const aggregateCount = series.memberKeys?.length ?? 0;
     if (aggregateCount > 0) {
       return `Aggregates ${aggregateCount} smaller series`;
-    }
-    if (renderedDimension() === 'origin' && series.key === 'unknown') {
-      return UNDECLARED_ORIGIN_DESCRIPTION;
     }
     if (!isLegendFilterable(series.key)) {
       return series.label;
@@ -1065,6 +1121,25 @@ export const TimeRangeControl = (props: {
                         );
                       }}
                     </For>
+                    <Show when={summary().unclassified}>
+                      {(gap) => (
+                        <Tooltip content={originGapDescription(gap())}>
+                          <span
+                            class={migrationReadoutItem}
+                            data-origin-unclassified-legend
+                            title={originGapDescription(gap())}
+                          >
+                            <span class={chartUnclassifiedSwatch} />
+                            Not classified
+                            <span class={chartLegendPct}>
+                              {fmtPct(
+                                ((useSessions ? gap().sessions : gap().total) / Math.max(1e-9, summary().total)) * 100,
+                              )}
+                            </span>
+                          </span>
+                        </Tooltip>
+                      )}
+                    </Show>
                   </div>
                 );
               }}
@@ -1079,7 +1154,15 @@ export const TimeRangeControl = (props: {
                         <div aria-hidden="true" class={monthGridline} style={{ left: timelinePlotLeft(tick.pct) }} />
                       )}
                     </For>
-                    <div aria-hidden="true" class={timeSliderBars} style={{ gap: visibleBucketLayout().bucketGap }}>
+                    <div
+                      aria-hidden="true"
+                      class={timeSliderBars}
+                      data-origin-series-stack={chart().dimension === 'origin' ? '' : undefined}
+                      style={{
+                        bottom: chart().unclassified ? '16px' : undefined,
+                        gap: visibleBucketLayout().bucketGap,
+                      }}
+                    >
                       <For each={visibleBars()}>
                         {(bar) => (
                           <div
@@ -1108,6 +1191,24 @@ export const TimeRangeControl = (props: {
                         )}
                       </For>
                     </div>
+                    <Show when={chart().unclassified}>
+                      <div
+                        aria-hidden="true"
+                        class={timeSliderUnclassifiedBands}
+                        data-origin-unclassified-band
+                        style={{ gap: visibleBucketLayout().bucketGap }}
+                      >
+                        <For each={visibleBars()}>
+                          {(bar) => (
+                            <div
+                              class={bar.bucket.unclassified ? timeBucketUnclassifiedBand : timeBucketUnclassifiedEmpty}
+                              data-origin-gap-sessions={bar.bucket.unclassified?.sessions}
+                              style={{ 'min-width': visibleBucketLayout().bucketMinWidth }}
+                            />
+                          )}
+                        </For>
+                      </div>
+                    </Show>
                     <button
                       aria-label="Inspect activity timeline. Use arrow keys to inspect days."
                       class={timelineHoverLayer}
@@ -1191,6 +1292,27 @@ export const TimeRangeControl = (props: {
                           );
                         }}
                       </For>
+                      <Show when={tip().unclassified}>
+                        {(gap) => (
+                          <Tooltip content={originGapDescription(gap())}>
+                            <span
+                              class={migrationReadoutItem}
+                              data-origin-unclassified-readout
+                              title={originGapDescription(gap())}
+                            >
+                              <span class={chartUnclassifiedSwatch} />
+                              Not classified
+                              <span class={migrationReadoutValue}>
+                                {formatValue(
+                                  tip().useSessions ? gap().sessions : gap().total,
+                                  tip().useSessions,
+                                  gap().priceMeasurement,
+                                )}
+                              </span>
+                            </span>
+                          </Tooltip>
+                        )}
+                      </Show>
                       <Show when={tip().hidden > 0}>
                         <span class={migrationReadoutHint}>+{tip().hidden} more</span>
                       </Show>

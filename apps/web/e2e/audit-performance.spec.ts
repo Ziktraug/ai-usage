@@ -16,7 +16,7 @@ const measureSessionsAt = async (page: Page, viewportWidth: number): Promise<Ses
   if (new URL(page.url()).searchParams.get('tab') !== 'sessions') {
     await page.goto('/?tab=sessions');
   }
-  await expect(page.getByText('3 / 4 sessions', { exact: true })).toBeVisible();
+  await expect(page.getByText('4 / 6 sessions', { exact: true })).toBeVisible();
 
   const table = page.locator('table');
   const mobileSummaries = page.locator('ul[aria-label="Session summaries"]');
@@ -46,7 +46,7 @@ test('records deterministic bounded DOM measurements for the audit', async ({ pa
   const desktop = await measureSessionsAt(page, 1024);
 
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
-  await expect(page.getByText('3 / 4 sessions', { exact: true })).toBeVisible();
+  await expect(page.getByText('4 / 6 sessions', { exact: true })).toBeVisible();
   const advancedAnalysis = page.getByRole('region', { name: 'Advanced analysis' });
   await expect(advancedAnalysis).toHaveCount(1);
   await expect(page.locator('summary').filter({ hasText: 'Advanced analysis' })).toHaveCount(0);

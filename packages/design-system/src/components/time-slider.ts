@@ -290,6 +290,33 @@ export const timeBucketSegment = css({
   borderRadius: '1px',
 });
 
+export const timeSliderUnclassifiedBands = css({
+  position: 'absolute',
+  left: '8px',
+  right: '8px',
+  bottom: '8px',
+  h: '6px',
+  display: 'flex',
+  alignItems: 'stretch',
+  gap: '2px',
+  pointerEvents: 'none',
+  zIndex: 2,
+});
+
+export const timeBucketUnclassifiedBand = css({
+  flex: '1 1 0',
+  minW: '2px',
+  border: '1px solid token(colors.lineStrong)',
+  borderRadius: '1px',
+  bg: 'surfaceMuted',
+  backgroundImage: 'repeating-linear-gradient(135deg, transparent 0 2px, token(colors.lineStrong) 2px 3px)',
+});
+
+export const timeBucketUnclassifiedEmpty = css({
+  flex: '1 1 0',
+  minW: '2px',
+});
+
 export const timeSliderRange = css({
   position: 'absolute',
   top: '4px',
