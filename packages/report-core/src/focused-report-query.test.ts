@@ -636,6 +636,53 @@ describe('focused report query contracts', () => {
     ).toEqual(result);
   });
 
+  test('preserves complete, partial, absent, and measured-zero project line coverage', () => {
+    const lineRows: SerializedRow[] = [
+      { ...row('complete-a', 2, 1, 'complete'), linesAdded: 3, linesDeleted: 1 },
+      { ...row('complete-b', 3, 1, 'complete'), linesAdded: 0, linesDeleted: 2 },
+      { ...row('partial-a', 2, 1, 'partial'), linesAdded: 4, linesDeleted: 1 },
+      { ...row('partial-b', 3, 1, 'partial'), linesAdded: null, linesDeleted: 2 },
+      { ...row('unmeasured', 2, 1, 'unmeasured'), linesAdded: null, linesDeleted: null },
+      { ...row('measured-zero', 2, 1, 'measured-zero'), linesAdded: 0, linesDeleted: 0 },
+    ];
+
+    const result = projectFocusedBreakdown(lineRows, support, { query: overviewRequest.query });
+    const lineGroups = Object.fromEntries(
+      result.groups.projects.map(({ key, lineMeasurement, linesAdded, linesDeleted }) => [
+        key,
+        { lineMeasurement, linesAdded, linesDeleted },
+      ]),
+    );
+
+    expect(lineGroups).toEqual({
+      complete: {
+        lineMeasurement: { measuredSessions: 2, totalSessions: 2 },
+        linesAdded: 3,
+        linesDeleted: 3,
+      },
+      'measured zero': {
+        lineMeasurement: { measuredSessions: 1, totalSessions: 1 },
+        linesAdded: 0,
+        linesDeleted: 0,
+      },
+      partial: {
+        lineMeasurement: { measuredSessions: 1, totalSessions: 2 },
+        linesAdded: 4,
+        linesDeleted: 1,
+      },
+      unmeasured: {
+        lineMeasurement: { measuredSessions: 0, totalSessions: 1 },
+        linesAdded: 0,
+        linesDeleted: 0,
+      },
+    });
+    expect(
+      parseFocusedReportQueryResult('breakdown', JSON.parse(JSON.stringify(result)), {
+        query: overviewRequest.query,
+      }),
+    ).toEqual(result);
+  });
+
   test('uses source model segments for model filters, timelines, and breakdowns', () => {
     const mixedModelRow: SerializedRow = {
       ...row('mixed-model', 5, 3),

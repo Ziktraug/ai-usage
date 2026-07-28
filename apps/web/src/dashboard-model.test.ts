@@ -231,6 +231,48 @@ describe('dashboard model', () => {
     ]);
   });
 
+  test('preserves complete, partial, absent, and measured-zero project line coverage', () => {
+    const bounds: DateBounds = { from: null, to: null };
+    const rows = [
+      row({ project: 'complete', linesAdded: 3, linesDeleted: 1 }),
+      row({ project: 'complete', linesAdded: 0, linesDeleted: 2 }),
+      row({ project: 'partial', linesAdded: 4, linesDeleted: 1 }),
+      row({ project: 'partial', linesAdded: null, linesDeleted: 2 }),
+      row({ project: 'unmeasured', linesAdded: null, linesDeleted: null }),
+      row({ project: 'measured-zero', linesAdded: 0, linesDeleted: 0 }),
+    ];
+
+    const lineGroups = Object.fromEntries(
+      buildProjectGroupRows(rows, bounds).map(({ key, lineMeasurement, linesAdded, linesDeleted }) => [
+        key,
+        { lineMeasurement, linesAdded, linesDeleted },
+      ]),
+    );
+
+    expect(lineGroups).toEqual({
+      complete: {
+        lineMeasurement: { measuredSessions: 2, totalSessions: 2 },
+        linesAdded: 3,
+        linesDeleted: 3,
+      },
+      'measured zero': {
+        lineMeasurement: { measuredSessions: 1, totalSessions: 1 },
+        linesAdded: 0,
+        linesDeleted: 0,
+      },
+      partial: {
+        lineMeasurement: { measuredSessions: 1, totalSessions: 2 },
+        linesAdded: 4,
+        linesDeleted: 1,
+      },
+      unmeasured: {
+        lineMeasurement: { measuredSessions: 0, totalSessions: 1 },
+        linesAdded: 0,
+        linesDeleted: 0,
+      },
+    });
+  });
+
   test('groups model rows by shared base model identity', () => {
     const bounds: DateBounds = { from: null, to: null };
     const rows = [

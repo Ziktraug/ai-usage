@@ -46,6 +46,8 @@ are non-null. Sum measured rows only. Render `—` for zero coverage, the sum pl
 
 - `packages/report-core/src/focused-report-query.ts`
 - `packages/report-core/src/focused-report-query.test.ts`
+- `packages/report-data/src/focused-report-query-sqlite.ts`
+- `packages/report-data/src/focused-report-query-sqlite.test.ts`
 - `apps/web/src/cursor-attribution-panel.tsx`
 - `apps/web/src/cursor-attribution-panel.test.ts` (create)
 - `apps/web/src/dashboard-analytics.ts`
@@ -75,13 +77,13 @@ for zero coverage.
 
 ### Step 3: Preserve Project line coverage
 
-Extend both project aggregation paths and strict focused-result validation with
-the identical coverage shape. Add parity fixtures for complete, partial,
-unmeasured, and measured-zero groups.
+Extend the core, SQLite, and client project aggregation paths and strict
+focused-result validation with the identical coverage shape. Add parity fixtures
+for complete, partial, unmeasured, and measured-zero groups.
 
 **Verify**:
-`bun test packages/report-core/src/focused-report-query.test.ts apps/web/src/dashboard-model.test.ts`
-→ focused/client results agree.
+`bun test packages/report-core/src/focused-report-query.test.ts packages/report-data/src/focused-report-query-sqlite.test.ts apps/web/src/dashboard-model.test.ts`
+→ focused/SQLite/client results agree.
 
 ### Step 4: Render Project coverage once
 
@@ -101,7 +103,7 @@ measured `+0/-0`.
 - [ ] Cursor uses distinct-commit, line-weighted v2 percentages.
 - [ ] Conflicts lower coverage instead of being silently chosen.
 - [ ] Project missing, partial, and measured zero are distinct.
-- [ ] Focused/client aggregation parity is tested.
+- [ ] Focused/SQLite/client aggregation parity is tested.
 
 ## STOP conditions
 

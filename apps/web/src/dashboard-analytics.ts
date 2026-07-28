@@ -8,6 +8,7 @@ export interface ProjectGroup {
   fresh: number;
   key: string;
   label: string;
+  lineMeasurement: { measuredSessions: number; totalSessions: number };
   linesAdded: number;
   linesDeleted: number;
   priced: number;
@@ -43,6 +44,7 @@ const createProjectGroup = (key: string, label: string): ProjectGroup => ({
   priced: 0,
   turns: 0,
   tools: 0,
+  lineMeasurement: { measuredSessions: 0, totalSessions: 0 },
   linesAdded: 0,
   linesDeleted: 0,
 });
@@ -59,8 +61,12 @@ const addProjectRow = (groups: Map<string, ProjectGroup>, row: DashboardRow) => 
   group.cache += row.tokCr;
   group.turns += row.turns;
   group.tools += row.tools;
-  group.linesAdded += row.linesAdded ?? 0;
-  group.linesDeleted += row.linesDeleted ?? 0;
+  group.lineMeasurement.totalSessions++;
+  if (row.linesAdded !== null && row.linesDeleted !== null) {
+    group.lineMeasurement.measuredSessions++;
+    group.linesAdded += row.linesAdded;
+    group.linesDeleted += row.linesDeleted;
+  }
   if (row.costKnown) {
     group.cost += row.costApprox;
     group.priced++;

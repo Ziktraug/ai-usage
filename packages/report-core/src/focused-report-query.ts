@@ -286,6 +286,7 @@ export interface FocusedProjectGroup {
   fresh: number;
   key: string;
   label: string;
+  lineMeasurement: { measuredSessions: number; totalSessions: number };
   linesAdded: number;
   linesDeleted: number;
   priced: number;
@@ -877,6 +878,7 @@ const projectGroups = (rows: readonly SessionPresentationRow[]): FocusedProjectG
       fresh: 0,
       key: row.projectKey,
       label: row.projectLabel,
+      lineMeasurement: { measuredSessions: 0, totalSessions: 0 },
       linesAdded: 0,
       linesDeleted: 0,
       priced: 0,
@@ -889,8 +891,12 @@ const projectGroups = (rows: readonly SessionPresentationRow[]): FocusedProjectG
     group.cache += row.tokCr;
     group.turns += row.turns;
     group.tools += row.tools;
-    group.linesAdded += row.linesAdded ?? 0;
-    group.linesDeleted += row.linesDeleted ?? 0;
+    group.lineMeasurement.totalSessions++;
+    if (row.linesAdded !== null && row.linesDeleted !== null) {
+      group.lineMeasurement.measuredSessions++;
+      group.linesAdded += row.linesAdded;
+      group.linesDeleted += row.linesDeleted;
+    }
     if (row.costKnown) {
       group.cost += row.costApprox;
       group.priced++;
@@ -2160,6 +2166,7 @@ const PROJECT_GROUP_KEYS = [
   'fresh',
   'key',
   'label',
+  'lineMeasurement',
   'linesAdded',
   'linesDeleted',
   'priced',
@@ -2174,12 +2181,25 @@ const assertFocusedProjectGroup = (value: unknown, label: string): void => {
   requireString(group.key, `${label}.key`);
   requireString(group.label, `${label}.label`);
   for (const key of PROJECT_GROUP_KEYS) {
-    if (key !== 'key' && key !== 'label') {
+    if (key !== 'key' && key !== 'label' && key !== 'lineMeasurement') {
       requireFiniteNumber(group[key], `${label}.${key}`);
     }
   }
   for (const key of ['priced', 'sessions'] as const) {
     requireNonNegativeSafeInteger(group[key], `${label}.${key}`);
+  }
+  const lineMeasurement = requireRecord(group.lineMeasurement, `${label}.lineMeasurement`);
+  assertExactKeys(lineMeasurement, ['measuredSessions', 'totalSessions'], `${label}.lineMeasurement`);
+  const measuredSessions = requireNonNegativeSafeInteger(
+    lineMeasurement.measuredSessions,
+    `${label}.lineMeasurement.measuredSessions`,
+  );
+  const totalSessions = requireNonNegativeSafeInteger(
+    lineMeasurement.totalSessions,
+    `${label}.lineMeasurement.totalSessions`,
+  );
+  if (measuredSessions > totalSessions || totalSessions !== group.sessions) {
+    throw new Error(`${label}.lineMeasurement is inconsistent with sessions`);
   }
 };
 

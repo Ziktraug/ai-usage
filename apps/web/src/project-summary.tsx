@@ -23,6 +23,18 @@ import { For, Show } from 'solid-js';
 import type { ProjectGroup } from './dashboard-analytics';
 import { fmtCompact, fmtMoney, fmtNum, UNKNOWN_PRICE_HINT } from './shared';
 
+const formatProjectLineMeasurement = (project: ProjectGroup): string => {
+  const { measuredSessions, totalSessions } = project.lineMeasurement;
+  if (measuredSessions === 0) {
+    return '—';
+  }
+  const measuredLines = `+${fmtNum(project.linesAdded)}/-${fmtNum(project.linesDeleted)}`;
+  if (measuredSessions < totalSessions) {
+    return `${measuredLines} · ${fmtNum(measuredSessions)}/${fmtNum(totalSessions)} measured`;
+  }
+  return measuredLines;
+};
+
 export const ProjectSummary = (props: { groups: ProjectGroup[]; onProjectFilter: (value: string) => void }) => (
   <Show fallback={<div class={empty}>No projects</div>} when={props.groups.length}>
     <div class={cx(tableWrap, desktopTableSurface)}>
@@ -77,9 +89,7 @@ export const ProjectSummary = (props: { groups: ProjectGroup[]; onProjectFilter:
                     {fmtMoney(project.cost)}
                   </Show>
                 </td>
-                <td class={numCell}>
-                  +{fmtNum(project.linesAdded)}/-{fmtNum(project.linesDeleted)}
-                </td>
+                <td class={numCell}>{formatProjectLineMeasurement(project)}</td>
                 <td class={numCell}>{fmtNum(project.turns)}</td>
                 <td class={numCell}>{fmtNum(project.tools)}</td>
               </tr>
@@ -125,9 +135,7 @@ export const ProjectSummary = (props: { groups: ProjectGroup[]; onProjectFilter:
               </div>
               <div class={projectSummaryMetric}>
                 <dt>Lines</dt>
-                <dd>
-                  +{fmtNum(project.linesAdded)}/-{fmtNum(project.linesDeleted)}
-                </dd>
+                <dd>{formatProjectLineMeasurement(project)}</dd>
               </div>
               <div class={projectSummaryMetric}>
                 <dt>Turns</dt>

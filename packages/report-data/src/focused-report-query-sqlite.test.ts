@@ -209,6 +209,77 @@ describe('focused report SQLite queries', () => {
     }
   });
 
+  test('keeps complete, partial, absent, and measured-zero project line coverage in pure parity', async () => {
+    const projectRow = (
+      name: string,
+      day: number,
+      project: string,
+      linesAdded: number | null,
+      linesDeleted: number | null,
+    ): SerializedRow => ({
+      ...row(name, day, 1),
+      linesAdded,
+      linesDeleted,
+      project,
+      projectGroupId: `group:${project}`,
+      rawProject: project,
+    });
+    const lineRows: SerializedRow[] = [
+      projectRow('complete-a', 2, 'complete', 3, 1),
+      projectRow('complete-b', 3, 'complete', 0, 2),
+      projectRow('partial-a', 2, 'partial', 4, 1),
+      projectRow('partial-b', 3, 'partial', null, 2),
+      projectRow('unmeasured', 2, 'unmeasured', null, null),
+      projectRow('measured-zero', 2, 'measured-zero', 0, 0),
+    ];
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-line-coverage-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    await materializeSessionQueryDatabase(revisionDirectory, lineRows, support);
+    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), { readonly: true });
+    assertSessionQueryDatabase(database);
+    const request = { query: overviewRequest.query };
+
+    try {
+      const result = executeFocusedReportQuery(database, 'breakdown', request);
+      expect(result).toEqual(projectFocusedBreakdown(lineRows, support, request));
+      if (!('groups' in result)) {
+        throw new Error('The focused Breakdown query must return Breakdown groups');
+      }
+      expect(
+        Object.fromEntries(
+          result.groups.projects.map(({ key, lineMeasurement, linesAdded, linesDeleted }) => [
+            key,
+            { lineMeasurement, linesAdded, linesDeleted },
+          ]),
+        ),
+      ).toEqual({
+        'group:complete': {
+          lineMeasurement: { measuredSessions: 2, totalSessions: 2 },
+          linesAdded: 3,
+          linesDeleted: 3,
+        },
+        'group:measured-zero': {
+          lineMeasurement: { measuredSessions: 1, totalSessions: 1 },
+          linesAdded: 0,
+          linesDeleted: 0,
+        },
+        'group:partial': {
+          lineMeasurement: { measuredSessions: 1, totalSessions: 2 },
+          linesAdded: 4,
+          linesDeleted: 1,
+        },
+        'group:unmeasured': {
+          lineMeasurement: { measuredSessions: 0, totalSessions: 1 },
+          linesAdded: 0,
+          linesDeleted: 0,
+        },
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   test('keeps campaign, machine, origin, and project timelines in pure/SQLite parity', async () => {
     const { database } = await fixture();
     const baseRequest: FocusedOverviewRequest = {

@@ -142,16 +142,12 @@ interface DayRecord {
   unpriced_fresh_tokens: number;
 }
 
-interface RecordCandidates {
-  longest_json: string | null;
-  top_cost_json: string | null;
-}
-
-interface TopSessionRecord {
+interface OverviewSessionSelectionRecord {
   cost_approx: number;
   cost_known: number;
   duration_ms: number | null;
   item_kind: 'campaign' | 'session';
+  item_role: 'longest' | 'top-session';
   row_json: string;
   session_count: number;
 }
@@ -613,40 +609,26 @@ const readDays = (
     time: timeForLocalDay(dayKey),
   }));
 
-const readRecordCandidates = (
-  database: SessionQuerySqliteDatabase,
-  filter: SqlFilter,
-  trace?: SessionQuerySqliteTrace,
-): { longest: SessionPresentationRow | null; topCost: SessionPresentationRow | null } => {
-  const candidates = executeGet<RecordCandidates>(
-    database,
-    `WITH visible AS (
-      SELECT ordinal, row_json, cost_known, cost_approx, duration_ms
-      FROM session_rows
-      WHERE ${filter.where}
-    )
-    SELECT
-      (SELECT row_json FROM visible
-       WHERE cost_known = 1 AND cost_approx > 0
-       ORDER BY cost_approx DESC, ordinal ASC LIMIT 1) AS top_cost_json,
-      (SELECT row_json FROM visible
-       WHERE duration_ms > 0
-       ORDER BY duration_ms DESC, ordinal ASC LIMIT 1) AS longest_json`,
-    filter.params,
-    trace,
-  );
+const overviewSessionItemFromRecord = (record: OverviewSessionSelectionRecord): FocusedOverviewSessionItem => {
+  const row = parsePresentationRow(record.row_json);
   return {
-    longest: candidates?.longest_json ? parsePresentationRow(candidates.longest_json) : null,
-    topCost: candidates?.top_cost_json ? parsePresentationRow(candidates.top_cost_json) : null,
+    costApprox: record.cost_approx,
+    costKnown: record.cost_known === 1,
+    durationMs: record.duration_ms,
+    harness: row.harness,
+    kind: record.item_kind,
+    label: row.sessionLabel,
+    row,
+    sessionCount: record.session_count,
   };
 };
 
-const readTopSessions = (
+const readOverviewSessionSelections = (
   database: SessionQuerySqliteDatabase,
   filter: SqlFilter,
   trace?: SessionQuerySqliteTrace,
-): FocusedOverviewSessionItem[] =>
-  executeAll<TopSessionRecord>(
+): { longest: FocusedOverviewSessionItem | null; topSessions: FocusedOverviewSessionItem[] } => {
+  const records = executeAll<OverviewSessionSelectionRecord>(
     database,
     `WITH visible AS (
       SELECT ordinal, row_json, campaign_key, cost_known, cost_approx, duration_ms
@@ -697,27 +679,57 @@ const readTopSessions = (
         ordinal AS item_ordinal
       FROM visible
       WHERE campaign_key IS NULL
+    ),
+    top_sessions AS (
+      SELECT *
+      FROM items
+      WHERE cost_approx > 0
+      ORDER BY cost_approx DESC, kind_order ASC, item_ordinal ASC
+      LIMIT 5
+    ),
+    longest_item AS (
+      SELECT *
+      FROM items
+      WHERE duration_ms > 0
+      ORDER BY duration_ms DESC, kind_order ASC, item_ordinal ASC
+      LIMIT 1
     )
-    SELECT item_kind, row_json, cost_approx, cost_known, duration_ms, session_count
-    FROM items
-    WHERE cost_approx > 0
-    ORDER BY cost_approx DESC, kind_order ASC, item_ordinal ASC
-    LIMIT 5`,
+    SELECT
+      'top-session' AS item_role,
+      item_kind,
+      row_json,
+      cost_approx,
+      cost_known,
+      duration_ms,
+      session_count,
+      kind_order,
+      item_ordinal,
+      0 AS role_order
+    FROM top_sessions
+    UNION ALL
+    SELECT
+      'longest' AS item_role,
+      item_kind,
+      row_json,
+      cost_approx,
+      cost_known,
+      duration_ms,
+      session_count,
+      kind_order,
+      item_ordinal,
+      1 AS role_order
+    FROM longest_item
+    ORDER BY role_order ASC, cost_approx DESC, kind_order ASC, item_ordinal ASC`,
     filter.params,
     trace,
-  ).map((record) => {
-    const row = parsePresentationRow(record.row_json);
-    return {
-      costApprox: record.cost_approx,
-      costKnown: record.cost_known === 1,
-      durationMs: record.duration_ms,
-      harness: row.harness,
-      kind: record.item_kind,
-      label: row.sessionLabel,
-      row,
-      sessionCount: record.session_count,
-    };
-  });
+  );
+  const topSessions = records.filter((record) => record.item_role === 'top-session').map(overviewSessionItemFromRecord);
+  const longestRecord = records.find((record) => record.item_role === 'longest');
+  return {
+    longest: longestRecord ? overviewSessionItemFromRecord(longestRecord) : null,
+    topSessions,
+  };
+};
 
 const previousSummary = (
   database: SessionQuerySqliteDatabase,
@@ -778,7 +790,7 @@ const runOverview = (
   const summary = readSummary(database, visibleFilter, trace);
   const timelineAggregates = readTimeline(database, timelineFilter, request.timeline.dimension, trace);
   const visibleDays = readDays(database, visibleFilter, trace);
-  const candidates = readRecordCandidates(database, visibleFilter, trace);
+  const sessionSelections = readOverviewSessionSelections(database, visibleFilter, trace);
   return {
     dateDomain: timelineAggregates.dateDomain,
     metadata: { filters: support.filters, generatedAt: support.generatedAt, omittedRows: support.omittedRows },
@@ -792,13 +804,13 @@ const runOverview = (
       previousSummary: previousSummary(database, request, support.generatedAt, trace),
       punchcard: null,
       records: buildFocusedRecordsFromAggregates(
-        candidates.topCost,
-        candidates.longest,
+        sessionSelections.topSessions[0] ?? null,
+        sessionSelections.longest,
         visibleDays,
         timelineAggregates.days,
       ),
       sessionShape: null,
-      topSessions: readTopSessions(database, visibleFilter, trace),
+      topSessions: sessionSelections.topSessions,
     },
   };
 };
@@ -837,6 +849,7 @@ interface ProjectAggregateRecord {
   label: string;
   lines_added: number;
   lines_deleted: number;
+  measured_sessions: number;
   priced: number;
   sessions: number;
   tools: number;
@@ -1051,8 +1064,9 @@ const readProjectGroups = (
       SUM(tok_cr) AS cache,
       SUM(turns) AS turns,
       SUM(tools) AS tools,
-      SUM(COALESCE(lines_added, 0)) AS lines_added,
-      SUM(COALESCE(lines_deleted, 0)) AS lines_deleted,
+      SUM(CASE WHEN lines_added IS NOT NULL AND lines_deleted IS NOT NULL THEN lines_added ELSE 0 END) AS lines_added,
+      SUM(CASE WHEN lines_added IS NOT NULL AND lines_deleted IS NOT NULL THEN lines_deleted ELSE 0 END) AS lines_deleted,
+      SUM(CASE WHEN lines_added IS NOT NULL AND lines_deleted IS NOT NULL THEN 1 ELSE 0 END) AS measured_sessions,
       SUM(CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END) AS cost,
       SUM(cost_known) AS priced
     FROM session_rows
@@ -1067,6 +1081,10 @@ const readProjectGroups = (
     fresh: record.fresh,
     key: record.key,
     label: record.label,
+    lineMeasurement: {
+      measuredSessions: record.measured_sessions,
+      totalSessions: record.sessions,
+    },
     linesAdded: record.lines_added,
     linesDeleted: record.lines_deleted,
     priced: record.priced,

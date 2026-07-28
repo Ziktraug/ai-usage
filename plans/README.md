@@ -73,7 +73,7 @@ request unless the user explicitly asks.
 | 050 | Make the E2E Gate Deterministic | P0 | S | - | DONE |
 | 051 | Allow Local Campaign Label Overrides | P3 | M | 045 | DONE |
 | 052 | Align Overview Records With Campaign Aggregation | P1 | S | - | DONE |
-| 053 | Make Cursor and Project Line Measurements Honest | P1 | M | - | TODO |
+| 053 | Make Cursor and Project Line Measurements Honest | P1 | M | - | DONE |
 | 054 | Add Shareable Breakdown Sorting | P1 | S | - | TODO |
 | 055 | Make Focused Report Pending State Truthful | P1 | M | - | TODO |
 | 056 | Explain the Full-Range Comparison Boundary | P2 | S | - | TODO |
