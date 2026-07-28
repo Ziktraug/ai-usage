@@ -40,6 +40,9 @@ export type DashboardTab = (typeof dashboardTabs)[number];
 export const breakdownTabs = ['models', 'providers', 'harnesses', 'projects', 'cursor-ai'] as const;
 export type BreakdownTab = (typeof breakdownTabs)[number];
 
+export const breakdownSorts = ['value', 'tokens', 'sessions'] as const;
+export type BreakdownSort = (typeof breakdownSorts)[number];
+
 export const primaryDashboardTabs = ['overview', 'sessions', 'breakdown'] as const;
 export type PrimaryDashboardTab = (typeof primaryDashboardTabs)[number];
 
@@ -75,6 +78,7 @@ export const isDefaultDashboardOriginSelection = (origins: readonly SessionOrigi
   sameOrigins(origins, defaultDashboardOrigins);
 
 export interface DashboardSearch {
+  breakdownSort: BreakdownSort;
   cols: SearchableColumnDiffId[];
   colsBase: SessionColumnVisibilityBase;
   filters: FieldFilters;
@@ -95,6 +99,7 @@ export const hasActiveDashboardFilters = (search: DashboardSearch): boolean =>
   Object.keys(search.filters).length > 0 ||
   search.range.mode !== defaultDashboardDateRangeMode;
 
+const breakdownSortSet = new Set<string>(breakdownSorts);
 const dateRangeModes: DateRangeMode[] = ['all', 'today', '7d', '30d', 'custom'];
 const dateRangeModeSet = new Set<string>(dateRangeModes);
 const fieldFilterKeySet = new Set<string>(fieldFilterKeys);
@@ -125,11 +130,15 @@ const uniqueValidStrings = <T extends string>(values: unknown, isValid: (value: 
     next.push(value);
     seen.add(value);
   }
+
   return next;
 };
 
 export const isDashboardTab = (value: unknown): value is DashboardTab =>
   typeof value === 'string' && dashboardTabSet.has(value);
+
+export const isBreakdownSort = (value: unknown): value is BreakdownSort =>
+  typeof value === 'string' && breakdownSortSet.has(value);
 
 export const defaultDashboardSortFor = (sort: ReportSort): DashboardSort => ({
   id: sort === 'tokens' ? 'fresh' : sort,
@@ -137,6 +146,7 @@ export const defaultDashboardSortFor = (sort: ReportSort): DashboardSort => ({
 });
 
 export const dashboardSearchDefaultsFor = (sort: ReportSort): DashboardSearch => ({
+  breakdownSort: 'value',
   cols: [],
   colsBase: 'auto',
   filters: {},
@@ -251,6 +261,7 @@ export const validateDashboardSearch = (
   const colsBase = isSessionColumnVisibilityBase(search.colsBase) ? search.colsBase : defaults.colsBase;
 
   return {
+    breakdownSort: isBreakdownSort(search.breakdownSort) ? search.breakdownSort : defaults.breakdownSort,
     cols,
     colsBase,
     filters: parseFilters(search.filters),

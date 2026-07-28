@@ -1,3 +1,4 @@
+import { SegmentedControl } from '@ai-usage/design-system';
 import { css, cx } from '@ai-usage/design-system/css';
 import {
   barFill,
@@ -19,11 +20,13 @@ import {
 import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
 import { PARTIALLY_MEASURED_LABEL, partiallyMeasuredApiPriceDescription } from '@ai-usage/report-core/provenance';
 import { createMemo, For, Show } from 'solid-js';
+import { type BreakdownSort, isBreakdownSort } from './dashboard-search';
 import {
   breakdownBarPresentation,
   breakdownModelLabel,
   breakdownPriceState,
   breakdownPriceStateLabel,
+  sortBreakdownGroups,
 } from './group-panel-presentation';
 import {
   accentFill,
@@ -48,6 +51,11 @@ const groupPricingCoverage = (group: AnalyticsGroup) =>
     : '';
 const PRICED_SHARE_HINT =
   'Share of the known API-value subtotal in this breakdown; ≥ values include lower bounds from incomplete pricing';
+const BREAKDOWN_SORT_ITEMS = [
+  { label: 'Value', value: 'value' },
+  { label: 'Tokens', value: 'tokens' },
+  { label: 'Sessions', value: 'sessions' },
+] as const;
 const partiallyMeasuredBarTrack = css({
   border: '1px dashed token(colors.accent)',
   bg: 'surfaceMuted',
@@ -97,18 +105,31 @@ export const GroupPanel = (props: {
   countLabel: string;
   harnessTones?: boolean;
   onFilter?: (value: string) => void;
+  onSortChange: (value: BreakdownSort) => void;
+  sort: BreakdownSort;
 }) => {
   const maxCost = createMemo(() => Math.max(0, ...props.groups.map((group) => group.costSum)));
+  const sortedGroups = createMemo(() => sortBreakdownGroups(props.groups, props.sort));
   return (
     <div class={groupPanel}>
       <div class={groupHeader}>
         <div class={groupTitle}>{props.title}</div>
+        <SegmentedControl
+          ariaLabel="Sort breakdown"
+          items={BREAKDOWN_SORT_ITEMS}
+          onValueChange={(value) => {
+            if (isBreakdownSort(value)) {
+              props.onSortChange(value);
+            }
+          }}
+          value={props.sort}
+        />
         <div class={groupCount} title={`${props.groups.length} ${props.countLabel}`}>
           {props.groups.length} {props.countLabel}
         </div>
       </div>
       <div class={groupRows}>
-        <For each={props.groups}>
+        <For each={sortedGroups()}>
           {(group) => (
             <div class={groupRow} data-price-state={groupBarPresentation(group, maxCost()).state}>
               <div>

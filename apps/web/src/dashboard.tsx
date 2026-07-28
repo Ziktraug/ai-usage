@@ -86,6 +86,7 @@ import {
 import { DashboardProviderStatus } from './dashboard-provider-status';
 import { createDashboardReportLifecycle, type DashboardReportDestinationScope } from './dashboard-report-lifecycle';
 import {
+  type BreakdownSort,
   breakdownTabFor,
   type DashboardSearch,
   dashboardSearchDefaultsFor,
@@ -875,6 +876,7 @@ export const Dashboard = (props: {
     }
     updateSearch((current) => ({ ...current, tab }));
   };
+  const setBreakdownSort = (breakdownSort: BreakdownSort) => updateSearch((current) => ({ ...current, breakdownSort }));
   const metrics = createMemo(() =>
     measureClientPerf('aiUsage.web.client.compute.metrics', () =>
       buildDashboardMetrics(visibleSummary(), previousSummary()),
@@ -1109,6 +1111,8 @@ export const Dashboard = (props: {
                               groups={modelGroups()}
                               harnessTones
                               onFilter={(value) => setFieldFilter('model', value)}
+                              onSortChange={setBreakdownSort}
+                              sort={search().breakdownSort}
                               title="By model"
                             />
                           </section>
@@ -1124,6 +1128,8 @@ export const Dashboard = (props: {
                               groups={providerGroups()}
                               harnessTones
                               onFilter={(value) => setFieldFilter('provider', value)}
+                              onSortChange={setBreakdownSort}
+                              sort={search().breakdownSort}
                               title="By provider"
                             />
                           </section>
@@ -1139,6 +1145,8 @@ export const Dashboard = (props: {
                               groups={harnessGroups()}
                               harnessTones
                               onFilter={toggleHarness}
+                              onSortChange={setBreakdownSort}
+                              sort={search().breakdownSort}
                               title="By harness"
                             />
                           </section>

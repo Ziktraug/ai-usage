@@ -28,6 +28,16 @@ describe('dashboard search params', () => {
     expect(sortingStateFromSearch(defaults.sort)).toEqual([{ id: 'cost', desc: true }]);
   });
 
+  test('round trips strict breakdown sorts while keeping value as the default', () => {
+    const defaults = dashboardSearchDefaultsFor('date');
+
+    expect(defaults.breakdownSort).toBe('value');
+    expect(validateDashboardSearch({ breakdownSort: 'value' }, defaults).breakdownSort).toBe('value');
+    expect(validateDashboardSearch({ breakdownSort: 'tokens' }, defaults).breakdownSort).toBe('tokens');
+    expect(validateDashboardSearch({ breakdownSort: 'sessions' }, defaults).breakdownSort).toBe('sessions');
+    expect(validateDashboardSearch({ breakdownSort: 'activity' }, defaults).breakdownSort).toBe('value');
+  });
+
   test('normalizes supported dashboard state and drops invalid values', () => {
     const defaults = dashboardSearchDefaultsFor('date');
 
@@ -35,6 +45,7 @@ describe('dashboard search params', () => {
       validateDashboardSearch(
         {
           campaigns: 'off',
+          breakdownSort: 'sessions',
           cols: ['tokIn', 'session', 'tokIn', 'missing'],
           filters: {
             campaign: ' fixture:codex:root ',
@@ -54,6 +65,7 @@ describe('dashboard search params', () => {
         defaults,
       ),
     ).toEqual({
+      breakdownSort: 'sessions',
       cols: ['tokIn'],
       colsBase: 'auto',
       filters: { campaign: 'fixture:codex:root', model: 'gpt-5', provider: 'Codex API' },
@@ -73,6 +85,7 @@ describe('dashboard search params', () => {
     expect(
       validateDashboardSearch(
         {
+          breakdownSort: 'activity',
           range: { mode: 'wat' },
           sort: { id: 'missing', desc: false },
           tab: 'missing',

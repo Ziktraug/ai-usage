@@ -74,7 +74,7 @@ request unless the user explicitly asks.
 | 051 | Allow Local Campaign Label Overrides | P3 | M | 045 | DONE |
 | 052 | Align Overview Records With Campaign Aggregation | P1 | S | - | DONE |
 | 053 | Make Cursor and Project Line Measurements Honest | P1 | M | - | DONE |
-| 054 | Add Shareable Breakdown Sorting | P1 | S | - | TODO |
+| 054 | Add Shareable Breakdown Sorting | P1 | S | - | DONE |
 | 055 | Make Focused Report Pending State Truthful | P1 | M | - | TODO |
 | 056 | Explain the Full-Range Comparison Boundary | P2 | S | - | TODO |
 | 057 | Make Punchcard Cells Filter the Report | P2 | M | 055 | TODO |

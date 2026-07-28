@@ -1,4 +1,6 @@
+import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
 import type { ApiPriceMeasurementState } from '@ai-usage/report-core/provenance';
+import type { BreakdownSort } from './dashboard-search';
 
 export interface BreakdownBarPresentation {
   state: ApiPriceMeasurementState;
@@ -14,6 +16,16 @@ interface BreakdownBarInput extends BreakdownPriceInput {
   maxKnownCost: number;
 }
 
+type BreakdownGroupComparator = (left: AnalyticsGroup, right: AnalyticsGroup) => number;
+
+const breakdownSortComparators: Record<BreakdownSort, BreakdownGroupComparator> = {
+  sessions: (left, right) => right.sessions - left.sessions || right.fresh - left.fresh,
+  tokens: (left, right) => right.fresh - left.fresh || right.costSum - left.costSum,
+  value: (left, right) => right.costSum - left.costSum || right.fresh - left.fresh,
+};
+
+export const sortBreakdownGroups = (groups: readonly AnalyticsGroup[], sort: BreakdownSort): AnalyticsGroup[] =>
+  [...groups].sort((left, right) => breakdownSortComparators[sort](left, right) || left.key.localeCompare(right.key));
 const MAX_PERCENT = 100;
 
 export const breakdownPriceState = ({ knownCost, unpricedCount }: BreakdownPriceInput): ApiPriceMeasurementState => {
