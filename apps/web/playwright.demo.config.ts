@@ -19,7 +19,7 @@ export default defineConfig({
   webServer: {
     command: 'bun --no-env-file ../../tools/run-web-demo.ts',
     gracefulShutdown: { signal: 'SIGTERM', timeout: 5000 },
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 240_000,
     url: 'http://127.0.0.1:4176',
   },

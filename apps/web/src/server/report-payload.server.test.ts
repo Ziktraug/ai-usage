@@ -4,9 +4,18 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { StoredReportCapture } from '@ai-usage/report-data';
 import { demoReportPayload } from '../report-data';
-import { parseReportRevision, toWebReportPayload } from '../web-report-payload';
+import { parseReportRevision, reportSliceRequestFingerprint, toWebReportPayload } from '../web-report-payload';
 import { ensurePublishedRevision, getReportRevisionManifestForServer } from './report-payload.server';
 import { createReportRevisionRegistry, type ReportRevisionRegistry } from './report-revision.server';
+
+const machineFreshnessFor = (observedAt: string) =>
+  ({
+    kind: 'available',
+    machines: [{ id: 'fixture-machine', label: 'Fixture Machine', lastSeenAt: '2026-07-12T11:00:00.000Z' }],
+    observedAt,
+    omittedMachines: 0,
+    skippedRows: 0,
+  }) as const;
 
 test('waits briefly for an in-flight bootstrap publication before reporting it unavailable', async () => {
   const parent = await mkdtemp(path.join(tmpdir(), 'ai-usage-report-bootstrap-wait-test-'));
@@ -65,10 +74,18 @@ test('publishes a fresh exact capture when the matched revision expires before r
   try {
     const payload = structuredClone(demoReportPayload);
     const rowSourceAuthorities = payload.rows.map(() => 'local-observed' as const);
-    const capture: StoredReportCapture = { payload, rowSourceAuthorities };
-    const first = await registry.publish(toWebReportPayload(payload), { rowSourceAuthorities });
+    const capture: StoredReportCapture = {
+      machineFreshness: machineFreshnessFor(payload.generatedAt),
+      payload,
+      rowSourceAuthorities,
+    };
+    const first = await registry.publish(
+      { ...toWebReportPayload(payload), machineFreshness: capture.machineFreshness },
+      { rowSourceAuthorities },
+    );
     now += 60_000;
     let expiredAfterMatch = false;
+    let renewalAttempts = 0;
     const expiringRegistry: ReportRevisionRegistry = {
       ...registry,
       getCurrentManifestForCapture: async (privateCaptureFingerprint) => {
@@ -79,6 +96,10 @@ test('publishes a fresh exact capture when the matched revision expires before r
         }
         return result;
       },
+      renewCurrentForCapture: async (expectedRevision, privateCaptureFingerprint) => {
+        renewalAttempts++;
+        return await registry.renewCurrentForCapture(expectedRevision, privateCaptureFingerprint);
+      },
     };
 
     const ensured = await ensurePublishedRevision(capture, {
@@ -88,6 +109,12 @@ test('publishes a fresh exact capture when the matched revision expires before r
     });
 
     expect(ensured.revision).toBe(parseReportRevision('revision-b'));
+    expect(renewalAttempts).toBe(1);
+    const support = await registry.readSupport({
+      requestFingerprint: reportSliceRequestFingerprint('support'),
+      revision: ensured.revision,
+    });
+    expect(support.ok && support.slice.payloadWithoutRows.machineFreshness).toEqual(capture.machineFreshness);
     const current = await registry.getCurrentManifest();
     expect(current.ok && current.manifest.revision).toBe(ensured.revision);
   } finally {
@@ -110,11 +137,19 @@ test('does not reuse a cached payload object under a different source authority'
     const dependencies = { now: Date.now, publications, registry };
 
     const first = await ensurePublishedRevision(
-      { payload, rowSourceAuthorities: payload.rows.map(() => 'local-observed' as const) },
+      {
+        machineFreshness: machineFreshnessFor(payload.generatedAt),
+        payload,
+        rowSourceAuthorities: payload.rows.map(() => 'local-observed' as const),
+      },
       dependencies,
     );
     const second = await ensurePublishedRevision(
-      { payload, rowSourceAuthorities: payload.rows.map(() => 'portable-opaque' as const) },
+      {
+        machineFreshness: machineFreshnessFor(payload.generatedAt),
+        payload,
+        rowSourceAuthorities: payload.rows.map(() => 'portable-opaque' as const),
+      },
       dependencies,
     );
 
@@ -141,12 +176,16 @@ test('publishes the requested capture when another capture wins during renewal',
     const requestedPayload = structuredClone(demoReportPayload);
     const requestedAuthorities = requestedPayload.rows.map(() => 'local-observed' as const);
     const requestedCapture: StoredReportCapture = {
+      machineFreshness: machineFreshnessFor(requestedPayload.generatedAt),
       payload: requestedPayload,
       rowSourceAuthorities: requestedAuthorities,
     };
-    await registry.publish(toWebReportPayload(requestedPayload), {
-      rowSourceAuthorities: requestedAuthorities,
-    });
+    await registry.publish(
+      { ...toWebReportPayload(requestedPayload), machineFreshness: requestedCapture.machineFreshness },
+      {
+        rowSourceAuthorities: requestedAuthorities,
+      },
+    );
     now += 60_000;
 
     const competingPayload = structuredClone(demoReportPayload);

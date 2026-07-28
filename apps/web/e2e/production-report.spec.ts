@@ -127,7 +127,7 @@ test('renders the report timeline on the initial production Overview', async ({ 
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
   const dateRange = page.getByRole('region', { name: 'Date range' });
   try {
-    await expect(dateRange).toContainText('Jun 03, 2026');
+    await expect(dateRange).toContainText('Jun 3 → Jul 03, 2026');
     await expect(dateRange).toContainText('Jul 03, 2026');
     await expect(dateRange.getByText('Loading report range…', { exact: true })).toHaveCount(0);
   } finally {
@@ -222,7 +222,7 @@ test('keeps the last complete report visible while the report range changes', as
     overviewGate.resolve();
   }
 
-  await expect(dateRange.getByRole('textbox', { name: 'Start date' })).toHaveValue('2026-06-26');
+  await expect(dateRange.getByRole('textbox', { name: 'Start date' })).toHaveValue('Jun 26, 2026');
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
 });
 

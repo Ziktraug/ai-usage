@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { calculateAnalytics, groupAnalytics, rowToAnalyticsInput } from './analytics';
+import { createUsageReportPayload, parseUsageReportPayload } from './report-data';
 import type { Row } from './types';
 
 const row = (overrides: Partial<Row>): Row => ({
@@ -84,7 +85,68 @@ describe('analytics calculation', () => {
     expect(alpha?.costPercent).toBe(100);
     expect(alpha?.costPerSession).toBe(2);
     expect(beta?.unpriced).toBe(1);
+    expect(beta?.unpricedFreshTokens).toBe(150);
     expect(beta?.costPerSession).toBeNull();
+  });
+
+  test('counts only the unpriced segment volume in a partially measured group', () => {
+    const partial = row({
+      costApprox: 2,
+      costKnown: false,
+      model: 'priced-model',
+      modelSegments: [
+        {
+          costApprox: 2,
+          costKnown: true,
+          model: 'priced-model',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 100,
+          tokOut: 0,
+        },
+        {
+          costApprox: 0,
+          costKnown: false,
+          model: 'unpriced-model',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 7,
+          tokOut: 3,
+        },
+      ],
+      project: 'partial-project',
+      tokCw: 0,
+      tokIn: 107,
+      tokOut: 3,
+    });
+
+    const group = groupAnalytics([partial], rowToAnalyticsInput, (entry) => entry.project, 2)[0];
+
+    expect(group?.fresh).toBe(110);
+    expect(group?.unpricedFreshTokens).toBe(10);
+  });
+
+  test('rejects report analytics that hide unpriced volume behind an exact group', () => {
+    const unpricedRow = row({ costApprox: 0, costKnown: false });
+    const payload = createUsageReportPayload(
+      { omittedRows: 0, rows: [unpricedRow], tableRows: [unpricedRow] },
+      { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
+      new Date('2026-01-01T00:03:00.000Z'),
+    );
+    const group = payload.analytics.byModel[0];
+    if (!group) {
+      throw new Error('Expected an analytics group');
+    }
+
+    expect(() =>
+      parseUsageReportPayload({
+        ...payload,
+        analytics: {
+          ...payload.analytics,
+          byModel: [{ ...group, unpriced: 0, unpricedFreshTokens: 1 }],
+        },
+      }),
+    ).toThrow('invalid required fields');
   });
 
   test('groups model analytics by shared base model identity', () => {

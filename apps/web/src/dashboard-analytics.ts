@@ -1,4 +1,5 @@
 import { type AnalyticsRowInput, groupAnalytics, groupModelAnalytics } from '@ai-usage/report-core/analytics';
+import { usageRowApiPriceMeasurement } from '@ai-usage/report-core/usage-row';
 import type { DashboardRow } from './shared';
 
 export interface ProjectGroup {
@@ -28,6 +29,8 @@ const dashboardRowToAnalyticsInput = (row: DashboardRow): AnalyticsRowInput => (
   turns: row.turns,
   tools: row.tools,
   pricedCost: row.costKnown ? row.costApprox : null,
+  unpricedFreshTokens:
+    row.priceMeasurement?.unpricedFreshTokens ?? usageRowApiPriceMeasurement(row).unpricedFreshTokens,
 });
 
 const createProjectGroup = (key: string, label: string): ProjectGroup => ({

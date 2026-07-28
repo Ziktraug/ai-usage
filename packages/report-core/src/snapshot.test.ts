@@ -109,6 +109,22 @@ describe('usage snapshots', () => {
     expect(deserializeSnapshotRow(legacyClassifier).origin).toBeUndefined();
   });
 
+  test('preserves absent-origin provenance through a serialized snapshot merge', () => {
+    const snapshot = createUsageSnapshot({
+      machine,
+      rows: [
+        row('unsupported', 'unsupported-1', {
+          originProvenance: 'origin-unsupported',
+        }),
+      ],
+    });
+    const parsed = parseUsageSnapshot(serializeUsageSnapshot(snapshot));
+    const mergedRow = mergeUsageSnapshots([parsed]).rows[0];
+
+    expect(mergedRow?.origin).toBeUndefined();
+    expect(mergedRow?.originProvenance).toBe('origin-unsupported');
+  });
+
   test('round-trips snapshots emitted without an application version', () => {
     const snapshot = currentSnapshot();
 

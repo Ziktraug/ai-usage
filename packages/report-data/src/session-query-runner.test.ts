@@ -655,6 +655,34 @@ describe('session query SQLite materialization', () => {
     }
   });
 
+  test('keeps undeclared-origin sessions under a narrowed origin filter in pure and SQLite parity', async () => {
+    const fixtureRows = [
+      { ...row('human', 10), origin: 'human' as const },
+      { ...row('delegated', 20), origin: 'subagent' as const },
+      { ...row('undeclared', 30), originProvenance: 'origin-unsupported' as const },
+    ];
+    const { database } = await openRowsDatabase(fixtureRows);
+    const request = queryRequest({
+      filters: {
+        fields: {},
+        harness: [],
+        machine: [],
+        origin: ['human'],
+        query: '',
+      },
+      pageSize: 200,
+    });
+    try {
+      const expectedPage = projectSessionPage(fixtureRows, request);
+      const page = executeMaterializedSessionQuery(database, 'sessions', request);
+
+      expect(expectedPage.sessionCount).toBe(2);
+      expect(page).toEqual(expectedPage);
+    } finally {
+      database.close();
+    }
+  });
+
   test('keeps classifier rollups and active campaign counts in pure and SQLite parity', async () => {
     const fixtureRows = [
       { ...row('campaign-root', 10, { root: 'campaign-root' }), origin: 'human' as const },

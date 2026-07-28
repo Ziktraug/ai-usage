@@ -315,6 +315,7 @@ export const deserializeSnapshotRow = (row: SnapshotUsageRow): CollectedUsageRow
   provider: row.provider,
   name: row.name,
   ...(row.origin === undefined ? {} : { origin: row.origin }),
+  ...(row.originProvenance === undefined ? {} : { originProvenance: row.originProvenance }),
   model: row.model,
   ...(row.modelSegments === undefined ? {} : { modelSegments: row.modelSegments }),
   ...(row.models === undefined ? {} : { models: row.models }),

@@ -44,7 +44,7 @@ export interface SessionQuerySqliteDatabase {
 
 export type SessionQuerySqliteTrace = (query: { params: readonly unknown[]; sql: string }) => void;
 
-const SESSION_QUERY_SCHEMA_VERSION = 13;
+const SESSION_QUERY_SCHEMA_VERSION = 14;
 const CURSOR_PATTERN = /^sq1\.([0-9a-f]{16})\.([0-9a-z]+)$/;
 const CAMPAIGN_EXACT_COST_SORT_FIELDS = new Set<SessionSortField>(['actual', 'cost', 'quota']);
 const EMPTY_API_PRICE_MEASUREMENT = {
@@ -217,7 +217,10 @@ export const buildSessionQuerySqlFilter = (request: SessionQueryRequest, alias =
     add(`${alias}.machine_id IN (${request.filters.machine.map(() => '?').join(', ')})`, ...request.filters.machine);
   }
   if (request.filters.origin?.length) {
-    add(`${alias}.origin IN (${request.filters.origin.map(() => '?').join(', ')})`, ...request.filters.origin);
+    add(
+      `(${alias}.origin IS NULL OR ${alias}.origin IN (${request.filters.origin.map(() => '?').join(', ')}))`,
+      ...request.filters.origin,
+    );
   }
   if (request.filters.fields.campaign !== undefined) {
     add(`${alias}.campaign_key = ?`, request.filters.fields.campaign);
@@ -510,7 +513,6 @@ const campaignDisplayRow = (record: ItemRecord): SessionPresentationRow => {
     rtkSavedTokens: record.rtk_saved_tokens,
     sessionLabel: root.sessionLabel,
     sortDate: record.sort_date,
-    subagent: true,
     tokCr: record.tok_cr,
     tokCw: record.tok_cw,
     tokenTotal: record.token_total,

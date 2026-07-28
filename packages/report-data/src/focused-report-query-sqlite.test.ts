@@ -268,6 +268,41 @@ describe('focused report SQLite queries', () => {
     }
   });
 
+  test('keeps undeclared-origin sessions in filtered Overview and Breakdown projections', async () => {
+    const originRows: SerializedRow[] = [
+      { ...row('human', 1, 1), origin: 'human' },
+      { ...row('delegated', 2, 2), origin: 'subagent' },
+      { ...row('undeclared', 3, 3), originProvenance: 'origin-unsupported' },
+    ];
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-origin-filter-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    await materializeSessionQueryDatabase(revisionDirectory, originRows, support);
+    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), { readonly: true });
+    assertSessionQueryDatabase(database);
+    const request: FocusedOverviewRequest = {
+      includeAdvanced: false,
+      query: {
+        ...overviewRequest.query,
+        filters: { ...overviewRequest.query.filters, origin: ['human'] },
+        range: { from: null, to: null },
+      },
+      timeline: { dimension: 'origin', granularity: 'day' },
+    };
+    const breakdownRequest = { query: request.query };
+    try {
+      const overview = executeFocusedReportQuery(database, 'overview', request);
+      const breakdown = executeFocusedReportQuery(database, 'breakdown', breakdownRequest);
+
+      expect(overview).toEqual(projectFocusedOverview(originRows, support, request));
+      expect(breakdown).toEqual(projectFocusedBreakdown(originRows, support, breakdownRequest));
+      expect('summary' in overview ? overview.summary.sessionCount : null).toBe(2);
+      expect('groups' in breakdown ? breakdown.groups.harnesses[0]?.sessions : null).toBe(2);
+    } finally {
+      database.close();
+    }
+  });
+
   test('serves pruned bootstrap support with bounded metadata', async () => {
     const { database } = await fixture();
     try {
@@ -531,6 +566,7 @@ describe('focused report SQLite queries', () => {
         key: 'gpt-5.4',
         priced: 0,
         unpriced: 1,
+        unpricedFreshTokens: 1,
       });
     } finally {
       database.close();

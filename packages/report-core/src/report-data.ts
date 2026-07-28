@@ -168,6 +168,7 @@ const ANALYTICS_GROUP_KEYS = new Set([
   'tools',
   'turns',
   'unpriced',
+  'unpricedFreshTokens',
   'usageUnavailable',
 ]);
 const PROJECT_GROUP_KEYS = new Set([
@@ -220,10 +221,12 @@ const isAnalyticsGroup = (value: unknown): boolean =>
     value.tools,
     value.turns,
     value.unpriced,
+    value.unpricedFreshTokens,
     value.usageUnavailable,
   ].every(isNonNegativeSafeInteger) &&
   [value.cacheHitPct, value.costPercent, value.costSum].every(isNonNegativeFiniteNumber) &&
-  [value.costPer100Lines, value.costPerSession, value.medianCost].every(isNullableFiniteNumber);
+  [value.costPer100Lines, value.costPerSession, value.medianCost].every(isNullableFiniteNumber) &&
+  (value.unpriced !== 0 || value.unpricedFreshTokens === 0);
 
 const isUsageReportProjectSource = (value: unknown): boolean =>
   isRecord(value) &&

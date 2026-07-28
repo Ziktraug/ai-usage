@@ -224,6 +224,27 @@ describe('focused report bootstrap and store', () => {
     ).toEqual({ applied: false, reason: 'superseded-revision' });
   });
 
+  test('exposes machine freshness from the active exact revision', () => {
+    const store = createFocusedReportStore(supportResult());
+    const machineFreshness = {
+      kind: 'available',
+      machines: [{ id: 'peer', label: 'Peer', lastSeenAt: '2026-07-13T11:00:00.000Z' }],
+      observedAt: '2026-07-13T12:00:00.000Z',
+      omittedMachines: 0,
+      skippedRows: 0,
+    } as const;
+    const bootstrap = { ...supportResult('revision-b'), machineFreshness };
+
+    expect(
+      store.commitRevision(bootstrap, {
+        kind: 'overview',
+        request: overviewRequest('revision-b'),
+        result: overviewResult('revision-b'),
+      }),
+    ).toEqual({ applied: true });
+    expect(store.machineFreshness()).toBe(machineFreshness);
+  });
+
   test('restarts bootstrap from a fresh manifest after exact-revision expiry', async () => {
     let manifestReads = 0;
     const requested: string[] = [];

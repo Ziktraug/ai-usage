@@ -1272,7 +1272,6 @@ export const sessionCampaignDisplayRow = (
     sessionLabel: campaign.root.sessionLabel,
     sortDate: latestVisibleRow.sortDate,
     sortModel: campaign.root.sortModel,
-    subagent: true,
     tokCr: totals.cacheRead,
     tokCw: totals.cacheWrite,
     tokenTotal: totals.tokenTotal,

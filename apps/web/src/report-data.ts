@@ -16,6 +16,7 @@ const demoRows: SerializedRow[] = [
     model: 'gpt-5.3-codex',
     origin: 'human',
     project: 'ai-usage',
+    subagent: false,
     tokIn: 62_000,
     tokOut: 9400,
     tokCr: 130_000,

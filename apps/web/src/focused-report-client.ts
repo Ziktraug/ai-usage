@@ -211,6 +211,7 @@ export interface FocusedReportStore {
   dateDomain: Accessor<FocusedSupportResult['dateDomain']>;
   filterOptions: Accessor<FocusedSupportResult['filterOptions']>;
   hasAdvancedAnalysis: (query: FocusedReportQueryScope) => boolean;
+  machineFreshness: Accessor<FocusedSupportResult['machineFreshness']>;
   overview: Accessor<FocusedOverviewResult | undefined>;
   overviewForDisplay: Accessor<FocusedOverviewDisplayModel | undefined>;
   providerRows: Accessor<FocusedSupportResult['providerRows']>;
@@ -227,6 +228,7 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
   const breakdown = (): FocusedBreakdownResult | undefined => snapshot().breakdown;
   const dateDomain = (): FocusedSupportResult['dateDomain'] => snapshot().bootstrap.dateDomain;
   const filterOptions = (): FocusedSupportResult['filterOptions'] => snapshot().bootstrap.filterOptions;
+  const machineFreshness = (): FocusedSupportResult['machineFreshness'] => snapshot().bootstrap.machineFreshness;
   const overview = (): FocusedOverviewResult | undefined => snapshot().overview;
   const providerRows = (): FocusedSupportResult['providerRows'] => snapshot().bootstrap.providerRows;
   const revision = (): string => snapshot().bootstrap.revision;
@@ -386,6 +388,7 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
     dateDomain,
     filterOptions,
     hasAdvancedAnalysis,
+    machineFreshness,
     overview,
     overviewForDisplay,
     providerRows,

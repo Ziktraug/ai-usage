@@ -396,6 +396,14 @@ describe('dashboard model', () => {
     expect(items[1]?.campaign.visibleCount).toBe(1);
   });
 
+  test('preserves a human root on a singleton campaign display row', () => {
+    const humanRoot = sourcedRow('human singleton', { origin: 'human', subagent: false });
+
+    const rows = buildCampaignTableRows([humanRoot], [humanRoot], [{ id: 'date', desc: true }]);
+
+    expect(rows[0]?.subagent).toBe(false);
+  });
+
   test('sorts campaigns by latest visible activity for date sorting', () => {
     const firstParent = sourcedRow('first parent', {
       activeDate: '2026-06-10T12:00:00.000Z',

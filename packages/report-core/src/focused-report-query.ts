@@ -33,7 +33,31 @@ import {
   usageRowModelContributions,
 } from './usage-row';
 
-export type FocusedReportSupport = Omit<UsageReportPayload, 'rows' | 'tableRows'>;
+export interface FocusedMachineFreshnessEntry {
+  id: string;
+  label: string;
+  lastSeenAt: string;
+}
+
+export type FocusedMachineFreshness =
+  | {
+      kind: 'available';
+      machines: readonly FocusedMachineFreshnessEntry[];
+      observedAt: string;
+      omittedMachines: number;
+      skippedRows: number;
+    }
+  | {
+      kind: 'unavailable';
+      observedAt: string;
+      omittedMachines: number;
+      reason: 'bootstrap-budget' | 'not-captured';
+      skippedRows: number;
+    };
+
+export type FocusedReportSupport = Omit<UsageReportPayload, 'rows' | 'tableRows'> & {
+  machineFreshness?: FocusedMachineFreshness;
+};
 export type FocusedBootstrapSupport = Pick<
   FocusedReportSupport,
   'analytics' | 'filters' | 'generatedAt' | 'omittedRows' | 'warnings'
@@ -295,6 +319,7 @@ export interface FocusedFilterOption {
 export interface FocusedSupportResult {
   dateDomain: FocusedDateDomain | null;
   filterOptions: { harness: string[]; machine: FocusedFilterOption[]; truncated: boolean };
+  machineFreshness: FocusedMachineFreshness;
   providerRows: SessionPresentationRow[];
   requestFingerprint: string;
   revision: string;
@@ -838,6 +863,8 @@ const analyticsInput = (row: SessionPresentationRow): AnalyticsRowInput => ({
   provider: row.provider,
   tools: row.tools,
   turns: row.turns,
+  unpricedFreshTokens:
+    row.priceMeasurement?.unpricedFreshTokens ?? usageRowApiPriceMeasurement(row).unpricedFreshTokens,
   usageUnavailable: row.usageUnavailable ?? false,
 });
 
@@ -1330,6 +1357,40 @@ export const projectFocusedSupport = (
   const acceptedProviderRows: SessionPresentationRow[] = [];
   const acceptedProviderStatuses: NonNullable<typeof providerStatus>['providers'] = [];
   const acceptedWarnings: NonNullable<FocusedReportSupport['warnings']> = [];
+  const sourceMachineFreshness: FocusedMachineFreshness = support.machineFreshness ?? {
+    kind: 'unavailable',
+    observedAt: support.generatedAt,
+    omittedMachines: 0,
+    reason: 'not-captured',
+    skippedRows: 0,
+  };
+  const acceptedFreshnessMachines: FocusedMachineFreshnessEntry[] = [];
+  let availableFreshnessFitsBudget = true;
+  const projectedMachineFreshness = (): FocusedMachineFreshness => {
+    if (sourceMachineFreshness.kind === 'unavailable') {
+      return sourceMachineFreshness;
+    }
+    const omittedMachines =
+      sourceMachineFreshness.omittedMachines +
+      sourceMachineFreshness.machines.length -
+      acceptedFreshnessMachines.length;
+    if (!availableFreshnessFitsBudget) {
+      return {
+        kind: 'unavailable',
+        observedAt: sourceMachineFreshness.observedAt,
+        omittedMachines,
+        reason: 'bootstrap-budget',
+        skippedRows: sourceMachineFreshness.skippedRows,
+      };
+    }
+    return {
+      kind: 'available',
+      machines: acceptedFreshnessMachines,
+      observedAt: sourceMachineFreshness.observedAt,
+      omittedMachines,
+      skippedRows: sourceMachineFreshness.skippedRows,
+    };
+  };
   const truncation: FocusedSupportResult['truncation'] = {
     filterProjectOmitted: project === support.filters.project ? 0 : 1,
     filterSinceOmitted: since === support.filters.since ? 0 : 1,
@@ -1354,6 +1415,7 @@ export const projectFocusedSupport = (
         truncation.machineOptionsOmitted > 0 ||
         truncation.providerRowsOmitted > 0,
     },
+    machineFreshness: projectedMachineFreshness(),
     providerRows: acceptedProviderRows,
     requestFingerprint: focusedRevisionFingerprint('support', request),
     revision: request.revision,
@@ -1377,6 +1439,21 @@ export const projectFocusedSupport = (
   const resultFitsBudget = (): boolean =>
     textEncoder.encode(JSON.stringify(createResult())).byteLength <= MAX_SERVED_BOOTSTRAP_BYTES;
 
+  if (sourceMachineFreshness.kind === 'available') {
+    if (resultFitsBudget()) {
+      for (const machine of sourceMachineFreshness.machines.slice(0, maximumSupportItems)) {
+        acceptedFreshnessMachines.push(machine);
+        if (!resultFitsBudget()) {
+          acceptedFreshnessMachines.pop();
+        }
+      }
+      if (sourceMachineFreshness.machines.length > 0 && acceptedFreshnessMachines.length === 0) {
+        availableFreshnessFitsBudget = false;
+      }
+    } else {
+      availableFreshnessFitsBudget = false;
+    }
+  }
   for (const harness of filterOptions.harness.slice(0, maximumSupportItems)) {
     acceptedHarnesses.push(harness);
     if (!resultFitsBudget()) {
@@ -1496,14 +1573,16 @@ const assertApiPriceMeasurement = (value: unknown, label: string, expectedKnownC
   const measurement = requireRecord(value, label);
   assertExactKeys(measurement, ['knownCost', 'state', 'unpricedFreshTokens'], label);
   const knownCost = requireFiniteNumber(measurement.knownCost, `${label}.knownCost`);
-  requireFiniteNumber(measurement.unpricedFreshTokens, `${label}.unpricedFreshTokens`);
-  if (
-    !(measurement.state === 'measured' || measurement.state === 'partially measured' || measurement.state === 'zero')
-  ) {
+  const unpricedFreshTokens = requireFiniteNumber(measurement.unpricedFreshTokens, `${label}.unpricedFreshTokens`);
+  const state = measurement.state;
+  if (!(state === 'measured' || state === 'partially measured' || state === 'zero')) {
     throw new Error(`${label}.state is invalid`);
   }
-  if (measurement.state === 'zero' && knownCost !== 0) {
-    throw new Error(`${label}.state cannot be zero when knownCost is non-zero`);
+  if ((state === 'zero') !== (knownCost === 0 && state !== 'partially measured')) {
+    throw new Error(`${label} zero state is inconsistent`);
+  }
+  if (state !== 'partially measured' && unpricedFreshTokens !== 0) {
+    throw new Error(`${label} unpriced volume is inconsistent`);
   }
   if (expectedKnownCost !== undefined && knownCost !== expectedKnownCost) {
     throw new Error(`${label}.knownCost must match its aggregate cost`);
@@ -1957,6 +2036,7 @@ const ANALYTICS_GROUP_KEYS = [
   'tools',
   'turns',
   'unpriced',
+  'unpricedFreshTokens',
   'usageUnavailable',
 ] as const;
 
@@ -1980,8 +2060,18 @@ const assertAnalyticsGroup = (value: unknown, label: string): void => {
       maximum: key === 'cacheHitPct' || key === 'costPercent' ? 100 : Number.POSITIVE_INFINITY,
     });
   }
-  for (const key of ['ambiguous', 'priced', 'sessions', 'unpriced', 'usageUnavailable'] as const) {
+  for (const key of [
+    'ambiguous',
+    'priced',
+    'sessions',
+    'unpriced',
+    'unpricedFreshTokens',
+    'usageUnavailable',
+  ] as const) {
     requireNonNegativeSafeInteger(group[key], `${label}.${key}`);
+  }
+  if (group.unpriced === 0 && group.unpricedFreshTokens !== 0) {
+    throw new Error(`${label}.unpricedFreshTokens requires an unpriced session`);
   }
 };
 
@@ -2198,6 +2288,47 @@ const assertBreakdownContext = (value: unknown): void => {
   }
 };
 
+const assertFocusedMachineFreshness = (value: unknown): void => {
+  const freshness = requireRecord(value, 'support machine freshness');
+  requireIsoTimestamp(freshness.observedAt, 'support machine freshness.observedAt');
+  requireNonNegativeSafeInteger(freshness.omittedMachines, 'support machine freshness.omittedMachines');
+  requireNonNegativeSafeInteger(freshness.skippedRows, 'support machine freshness.skippedRows');
+  if (freshness.kind === 'unavailable') {
+    assertExactKeys(
+      freshness,
+      ['kind', 'observedAt', 'omittedMachines', 'reason', 'skippedRows'],
+      'support machine freshness',
+    );
+    if (!(freshness.reason === 'bootstrap-budget' || freshness.reason === 'not-captured')) {
+      throw new Error('support machine freshness.reason is invalid');
+    }
+    return;
+  }
+  if (freshness.kind !== 'available') {
+    throw new Error('support machine freshness.kind is invalid');
+  }
+  assertExactKeys(
+    freshness,
+    ['kind', 'machines', 'observedAt', 'omittedMachines', 'skippedRows'],
+    'support machine freshness',
+  );
+  if (!Array.isArray(freshness.machines) || freshness.machines.length > 100) {
+    throw new Error('support machine freshness.machines must be a bounded array');
+  }
+  const machineIds = new Set<string>();
+  for (const [index, value] of freshness.machines.entries()) {
+    const machine = requireRecord(value, `support machine freshness.machines[${index}]`);
+    assertExactKeys(machine, ['id', 'label', 'lastSeenAt'], `support machine freshness.machines[${index}]`);
+    const id = requireString(machine.id, `support machine freshness.machines[${index}].id`);
+    const label = requireString(machine.label, `support machine freshness.machines[${index}].label`);
+    requireIsoTimestamp(machine.lastSeenAt, `support machine freshness.machines[${index}].lastSeenAt`);
+    if (id.length === 0 || label.length === 0 || machineIds.has(id)) {
+      throw new Error('support machine freshness IDs and labels must be non-empty and IDs must be unique');
+    }
+    machineIds.add(id);
+  }
+};
+
 const assertBootstrapSupport = (value: unknown): void => {
   const support = requireRecord(value, 'bootstrap support');
   assertAllowedKeys(
@@ -2311,11 +2442,21 @@ export function parseFocusedReportQueryResult(
   const parsed = parseFocusedRevisionRequest(request);
   const record = assertResultEnvelope(
     value,
-    ['dateDomain', 'filterOptions', 'providerRows', 'requestFingerprint', 'revision', 'support', 'truncation'],
+    [
+      'dateDomain',
+      'filterOptions',
+      'machineFreshness',
+      'providerRows',
+      'requestFingerprint',
+      'revision',
+      'support',
+      'truncation',
+    ],
     parsed.revision,
     focusedRevisionFingerprint(kind, parsed),
   );
   assertFocusedDateDomain(record.dateDomain, 'support dateDomain');
+  assertFocusedMachineFreshness(record.machineFreshness);
   const options = requireRecord(record.filterOptions, 'support filter options');
   assertExactKeys(options, ['harness', 'machine', 'truncated'], 'support filter options');
   if (
@@ -2346,6 +2487,11 @@ export function parseFocusedReportQueryResult(
     parseSessionPresentationRow(row, `support providerRows[${index}]`),
   );
   assertBootstrapSupport(record.support);
+  const parsedMachineFreshness = requireRecord(record.machineFreshness, 'support machine freshness');
+  const parsedBootstrapSupport = requireRecord(record.support, 'bootstrap support');
+  if (parsedMachineFreshness.observedAt !== parsedBootstrapSupport.generatedAt) {
+    throw new Error('Support machine freshness must use the bootstrap generation timestamp');
+  }
   assertSupportTruncation(record.truncation);
   return { ...record, providerRows } as unknown as FocusedSupportResult;
 }

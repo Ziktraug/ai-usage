@@ -504,10 +504,11 @@ describe('session query contracts', () => {
   });
 
   test('keeps singleton campaigns visible and rolls classifier usage into the filtered parent campaign', () => {
-    const root = sourcedRow('campaign-root', { freshTokens: 20, origin: 'human' });
+    const root = sourcedRow('campaign-root', { freshTokens: 20, origin: 'human', subagent: false });
     const delegated = sourcedRow('campaign-child', {
       freshTokens: 7,
       origin: 'subagent',
+      subagent: true,
       source: {
         harnessKey: 'codex',
         machineId: 'machine-a',
@@ -555,6 +556,7 @@ describe('session query contracts', () => {
       campaignVisibleCount: 2,
       freshTokens: 30,
       sessionLabel: 'campaign-root',
+      subagent: false,
     });
     expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 2 sessions');
     expect(classifierRollupLabelForSessionRow(item.row)).toBe('+ 1 automated review');
@@ -566,6 +568,7 @@ describe('session query contracts', () => {
     expect(children.itemCount).toBe(2);
     expect(children.sessionCount).toBe(1);
     expect(children.items.map(({ origin }) => origin).sort()).toEqual(['classifier', 'subagent']);
+    expect(children.items.find(({ origin }) => origin === 'subagent')?.subagent).toBe(true);
 
     const classifierOnly = projectSessionPage(
       rows,
@@ -583,7 +586,7 @@ describe('session query contracts', () => {
 
   test('represents every singleton as a one-session campaign', () => {
     const page = projectSessionPage(
-      [sourcedRow('singleton', { origin: 'human' })],
+      [sourcedRow('singleton', { origin: 'human', subagent: false })],
       defaultRequest({
         filters: { fields: {}, harness: [], machine: [], origin: ['human', 'subagent'], query: '' },
         pageSize: 10,
@@ -593,7 +596,7 @@ describe('session query contracts', () => {
     if (item?.kind !== 'campaign') {
       throw new Error('Expected a singleton campaign fixture');
     }
-    expect(item.row).toMatchObject({ campaignTotalCount: 1, campaignVisibleCount: 1 });
+    expect(item.row).toMatchObject({ campaignTotalCount: 1, campaignVisibleCount: 1, subagent: false });
     expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 1 session');
   });
 

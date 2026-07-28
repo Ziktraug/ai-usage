@@ -1,9 +1,11 @@
 import type { Row } from './types';
 import {
+  usageRowApiPriceMeasurement,
   usageRowCacheReadTokens,
   usageRowFreshTokens,
   usageRowIsRecent,
   usageRowLineDelta,
+  usageRowModelApiPriceMeasurements,
   usageRowModelContributions,
   usageRowPricedCost,
 } from './usage-row';
@@ -30,6 +32,7 @@ export interface AnalyticsGroup {
   tools: number;
   turns: number;
   unpriced: number;
+  unpricedFreshTokens: number;
   usageUnavailable: number;
 }
 
@@ -52,6 +55,7 @@ export interface AnalyticsRowInput {
   provider: string;
   tools: number;
   turns: number;
+  unpricedFreshTokens: number;
   usageUnavailable?: boolean;
 }
 
@@ -128,6 +132,7 @@ const finishGroup = (group: GroupDraft, totalCost: number): AnalyticsGroup => {
     costPercent: totalCost > 0 ? (group.costSum / totalCost) * 100 : 0,
     turns: group.turns,
     tools: group.tools,
+    unpricedFreshTokens: group.unpricedFreshTokens,
   };
 };
 
@@ -155,6 +160,7 @@ export const groupAnalytics = <T>(
         sessions: 0,
         priced: 0,
         unpriced: 0,
+        unpricedFreshTokens: 0,
         usageUnavailable: 0,
         ambiguous: 0,
         fresh: 0,
@@ -193,6 +199,7 @@ export const groupAnalytics = <T>(
       group.costSum += input.pricedCost;
       group.pricedCostSum += input.pricedCost;
     }
+    group.unpricedFreshTokens += input.unpricedFreshTokens;
   }
 
   return [...groups.values()]
@@ -228,10 +235,20 @@ interface ModelAnalyticsItem {
     tokIn: number;
     tokOut: number;
   };
+  unpricedFreshTokens: number;
 }
 
-const modelAnalyticsItemsForRow = (row: ModelAnalyticsSourceRow): ModelAnalyticsItem[] =>
-  usageRowModelContributions(row).map(({ key, ...segment }) => ({ key, row, segment }));
+const modelAnalyticsItemsForRow = (row: ModelAnalyticsSourceRow): ModelAnalyticsItem[] => {
+  const priceMeasurements = usageRowModelApiPriceMeasurements(row);
+  return usageRowModelContributions(row).map(({ key, ...segment }) => ({
+    key,
+    row,
+    segment,
+    unpricedFreshTokens:
+      priceMeasurements.get(key)?.unpricedFreshTokens ??
+      (segment.costKnown ? 0 : segment.tokIn + segment.tokOut + segment.tokCw),
+  }));
+};
 
 /** Groups tokens and API value by the model segment that produced them. */
 export const groupModelAnalytics = <T extends ModelAnalyticsSourceRow>(rows: readonly T[]): AnalyticsGroup[] => {
@@ -239,7 +256,7 @@ export const groupModelAnalytics = <T extends ModelAnalyticsSourceRow>(rows: rea
   const totalCost = items.reduce((total, { segment }) => total + segment.costApprox, 0);
   return groupAnalytics(
     items,
-    ({ row, segment }) => ({
+    ({ row, segment, unpricedFreshTokens }) => ({
       ambiguous: row.ambiguous ?? false,
       cache: segment.tokCr,
       costLowerBound: segment.costApprox,
@@ -252,6 +269,7 @@ export const groupModelAnalytics = <T extends ModelAnalyticsSourceRow>(rows: rea
       provider: row.provider,
       tools: 0,
       turns: 0,
+      unpricedFreshTokens,
       usageUnavailable: row.usageUnavailable ?? false,
     }),
     ({ key }) => key,
@@ -261,6 +279,7 @@ export const groupModelAnalytics = <T extends ModelAnalyticsSourceRow>(rows: rea
 
 export const rowToAnalyticsInput = (row: Row): AnalyticsRowInput => {
   const lineDelta = usageRowLineDelta(row);
+  const priceMeasurement = usageRowApiPriceMeasurement(row);
   return {
     harness: row.harness,
     provider: row.provider,
@@ -274,6 +293,7 @@ export const rowToAnalyticsInput = (row: Row): AnalyticsRowInput => {
     turns: row.turns,
     tools: row.tools,
     pricedCost: usageRowPricedCost(row),
+    unpricedFreshTokens: priceMeasurement.unpricedFreshTokens,
   };
 };
 

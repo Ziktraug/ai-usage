@@ -226,7 +226,11 @@ const machineFreshnessLabel = (machine: { current: boolean; stale: boolean }): s
   return machine.current ? 'Needs collection' : 'Stale';
 };
 
-const MachineFleetPanel = (props: { machines: ReturnType<typeof buildSyncFleetMachineViews>; skipped: number }) => (
+const MachineFleetPanel = (props: {
+  machines: ReturnType<typeof buildSyncFleetMachineViews>;
+  omittedMachines: number;
+  skipped: number;
+}) => (
   <section aria-labelledby="machine-fleet-title">
     <div class={panelHeader}>
       <h2 class={panelTitle} id="machine-fleet-title">
@@ -244,7 +248,6 @@ const MachineFleetPanel = (props: { machines: ReturnType<typeof buildSyncFleetMa
             <div class={machineHeader}>
               <div>
                 <h3 class={machineTitle}>{machine.label}</h3>
-                <p class={panelSub}>{machine.id}</p>
               </div>
               <div class={actionRow}>
                 <Show when={machine.current}>
@@ -276,6 +279,11 @@ const MachineFleetPanel = (props: { machines: ReturnType<typeof buildSyncFleetMa
     <Show when={props.skipped > 0}>
       <p class={panelSub} role="status">
         {props.skipped.toLocaleString()} invalid stored rows were excluded from fleet metadata.
+      </p>
+    </Show>
+    <Show when={props.omittedMachines > 0}>
+      <p class={panelSub} role="status">
+        {props.omittedMachines.toLocaleString()} additional machines were omitted from this bounded fleet view.
       </p>
     </Show>
   </section>
@@ -650,6 +658,7 @@ function SyncRoute() {
             {(data) => (
               <MachineFleetPanel
                 machines={buildSyncFleetMachineViews(data().currentMachine, data().machines)}
+                omittedMachines={data().omittedMachines}
                 skipped={data().skipped}
               />
             )}

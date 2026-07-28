@@ -1,5 +1,6 @@
 import { expect, reportViewsFor, test } from './browser-test';
 
+const ADVANCED_COLUMNS_PATTERN = /Advanced columns/;
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const COLUMN_URL_PATTERN = /cols=/;
 const DATE_HEADER_PATTERN = /Date/;
@@ -13,11 +14,13 @@ const PROVIDER_CATEGORY_COUNT_PATTERN = /: (\d+) providers?$/;
 const PROVIDER_CATEGORY_TOTAL_PATTERN = /\((\d+) providers?\)$/;
 const PROVIDER_CATEGORIES_PATTERN = /^Provider categories/;
 const QUERY_URL_PATTERN = /q=ai-usage/;
+const NO_CELL_PATTERN = /^No$/;
 const RANGE_URL_PATTERN = /range=/;
 const RESET_COUNT_PATTERN = /1 reset/;
 const GAP_COUNT_PATTERN = /1 collection gap/;
 const SORT_URL_PATTERN = /sort=/;
 const TOP_SESSION_PATTERN = /Top session/;
+const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
 
 test('loads a deterministic report overview', async ({ page }) => {
   const response = await page.goto('/');
@@ -301,6 +304,18 @@ test('starts sessions with focused work columns and switches metric presets', as
   await expect(columnHeaders).toHaveText([DATE_HEADER_PATTERN, 'Session', 'Input', 'Output', 'Cache', 'Fresh']);
 });
 
+test('renders a human campaign root as not a subagent', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1024 });
+  await page.goto('/?tab=sessions');
+
+  await page.getByRole('button', { name: ADVANCED_COLUMNS_PATTERN }).click();
+  await page.getByText('Subagent', { exact: true }).click();
+  await expect(page.getByRole('checkbox', { name: 'Subagent' })).toBeChecked();
+
+  const humanCampaignRoot = page.getByRole('row').filter({ hasText: 'Build report UI' }).first();
+  await expect(humanCampaignRoot.getByRole('cell').filter({ hasText: NO_CELL_PATTERN })).toHaveCount(1);
+});
+
 test('uses the report range as the only graph viewport', async ({ page }) => {
   await page.goto('/');
 
@@ -446,4 +461,5 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Start LAN merge' })).toHaveCount(0);
   await expect(page.getByLabel('Scan host')).toHaveCount(0);
   await expect(page.getByText('Pair nearby machine')).toHaveCount(0);
+  expect(await page.locator('main').innerText()).not.toMatch(UUID_PATTERN);
 });

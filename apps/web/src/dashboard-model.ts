@@ -353,7 +353,6 @@ const campaignDisplayRow = (campaign: CampaignView, sorting: SortingState): Dash
     partial,
     sessionLabel: campaign.root.sessionLabel,
     sortDate: latestVisibleRow.sortDate,
-    subagent: true,
     tokenTotal: totals.tokenTotal,
     tokCr: totals.cacheRead,
     tokCw: totals.cacheWrite,

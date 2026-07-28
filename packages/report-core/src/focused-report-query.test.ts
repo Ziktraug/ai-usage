@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  type FocusedMachineFreshness,
   type FocusedOverviewRequest,
   type FocusedReportSupport,
   focusedAdvancedAnalysisFingerprint,
@@ -451,6 +452,44 @@ describe('focused report query contracts', () => {
     expect(() => parseFocusedReportQueryResult('overview', JSON.parse(JSON.stringify(result)), request)).not.toThrow();
   });
 
+  test('rejects incoherent API price measurements at the focused transport boundary', () => {
+    const partialResult = projectFocusedOverview(rows, support, overviewRequest);
+    const zeroResult = projectFocusedOverview([], support, overviewRequest);
+    const invalidResults = [
+      {
+        expectedMessage: 'unpriced volume is inconsistent',
+        result: {
+          ...partialResult,
+          summary: {
+            ...partialResult.summary,
+            priceMeasurement: {
+              ...partialResult.summary.priceMeasurement,
+              state: 'measured' as const,
+              unpricedFreshTokens: 1,
+            },
+          },
+        },
+      },
+      {
+        expectedMessage: 'zero state is inconsistent',
+        result: {
+          ...zeroResult,
+          summary: {
+            ...zeroResult.summary,
+            priceMeasurement: {
+              ...zeroResult.summary.priceMeasurement,
+              state: 'measured' as const,
+            },
+          },
+        },
+      },
+    ];
+
+    for (const { expectedMessage, result } of invalidResults) {
+      expect(() => parseFocusedReportQueryResult('overview', result, overviewRequest)).toThrow(expectedMessage);
+    }
+  });
+
   test('strictly validates Overview date domains and preserves an explicit empty domain', () => {
     const result = projectFocusedOverview(rows, support, overviewRequest);
     const invalidDateDomains = [
@@ -615,6 +654,10 @@ describe('focused report query contracts', () => {
   test('rejects malformed nested Breakdown groups and context at the transport boundary', () => {
     const request = { query: overviewRequest.query };
     const result = projectFocusedBreakdown(rows, support, request);
+    const modelGroup = result.groups.models[0];
+    if (!modelGroup) {
+      throw new Error('The Breakdown fixture must include a model group');
+    }
 
     expect(() =>
       parseFocusedReportQueryResult(
@@ -623,6 +666,19 @@ describe('focused report query contracts', () => {
         request,
       ),
     ).toThrow('unknown or missing');
+    expect(() =>
+      parseFocusedReportQueryResult(
+        'breakdown',
+        {
+          ...result,
+          groups: {
+            ...result.groups,
+            models: [{ ...modelGroup, unpriced: 0, unpricedFreshTokens: 1 }],
+          },
+        },
+        request,
+      ),
+    ).toThrow();
     expect(() =>
       parseFocusedReportQueryResult(
         'breakdown',
@@ -660,6 +716,171 @@ describe('focused report query contracts', () => {
     expect(result.support).not.toHaveProperty('projectGroupConfigs');
     expect(result.support).not.toHaveProperty('projectGroups');
     expect(result.support.warnings).toEqual(support.warnings);
+  });
+
+  test('carries bounded exact-revision machine freshness and accounts for entries omitted by the bootstrap budget', () => {
+    const machineFreshness: FocusedMachineFreshness = {
+      kind: 'available',
+      machines: [
+        { id: 'machine-a', label: 'Machine A', lastSeenAt: '2026-07-13T11:00:00.000Z' },
+        {
+          id: 'machine-too-large',
+          label: 'x'.repeat(MAX_SERVED_BOOTSTRAP_BYTES),
+          lastSeenAt: '2026-07-13T10:00:00.000Z',
+        },
+      ],
+      observedAt: '2026-07-13T12:00:00.000Z',
+      omittedMachines: 3,
+      skippedRows: 2,
+    };
+    const result = projectFocusedSupport(
+      { ...support, machineFreshness },
+      { harness: [], machine: [], truncated: false },
+      { revision: 'revision-a' },
+    );
+    const acceptedMachine = machineFreshness.machines[0];
+    if (!acceptedMachine) {
+      throw new Error('The freshness fixture must include its accepted machine');
+    }
+
+    expect(result.machineFreshness).toEqual({
+      kind: 'available',
+      machines: [acceptedMachine],
+      observedAt: machineFreshness.observedAt,
+      omittedMachines: 4,
+      skippedRows: 2,
+    });
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(MAX_SERVED_BOOTSTRAP_BYTES);
+  });
+
+  test('caps machine freshness at 100 entries with exact source omission accounting', () => {
+    const result = projectFocusedSupport(
+      {
+        ...support,
+        machineFreshness: {
+          kind: 'available',
+          machines: Array.from({ length: 101 }, (_, index) => ({
+            id: `machine-${index}`,
+            label: `Machine ${index}`,
+            lastSeenAt: '2026-07-13T11:00:00.000Z',
+          })),
+          observedAt: support.generatedAt,
+          omittedMachines: 3,
+          skippedRows: 0,
+        },
+      },
+      { harness: [], machine: [], truncated: false },
+      { revision: 'revision-a' },
+    );
+
+    expect(result.machineFreshness.kind).toBe('available');
+    if (result.machineFreshness.kind !== 'available') {
+      throw new Error('The bounded freshness fixture must remain available');
+    }
+    expect(result.machineFreshness.machines).toHaveLength(100);
+    expect(result.machineFreshness.omittedMachines).toBe(4);
+  });
+
+  test('marks freshness unavailable when the bootstrap budget cannot retain any captured machine', () => {
+    const result = projectFocusedSupport(
+      {
+        ...support,
+        machineFreshness: {
+          kind: 'available',
+          machines: [
+            {
+              id: 'machine-too-large',
+              label: 'x'.repeat(MAX_SERVED_BOOTSTRAP_BYTES),
+              lastSeenAt: '2026-07-13T11:00:00.000Z',
+            },
+          ],
+          observedAt: support.generatedAt,
+          omittedMachines: 2,
+          skippedRows: 1,
+        },
+      },
+      { harness: [], machine: [], truncated: false },
+      { revision: 'revision-a' },
+    );
+
+    expect(result.machineFreshness).toEqual({
+      kind: 'unavailable',
+      observedAt: support.generatedAt,
+      omittedMachines: 3,
+      reason: 'bootstrap-budget',
+      skippedRows: 1,
+    });
+  });
+
+  test('makes absent freshness explicit and strictly validates both freshness result variants', () => {
+    const request = { revision: 'revision-a' };
+    const notCaptured = projectFocusedSupport(support, { harness: [], machine: [], truncated: false }, request);
+
+    expect(notCaptured.machineFreshness).toEqual({
+      kind: 'unavailable',
+      observedAt: support.generatedAt,
+      omittedMachines: 0,
+      reason: 'not-captured',
+      skippedRows: 0,
+    });
+    expect(parseFocusedReportQueryResult('support', JSON.parse(JSON.stringify(notCaptured)), request)).toEqual(
+      notCaptured,
+    );
+
+    const available = projectFocusedSupport(
+      {
+        ...support,
+        machineFreshness: {
+          kind: 'available',
+          machines: [{ id: 'machine-a', label: 'Machine A', lastSeenAt: '2026-07-13T11:00:00.000Z' }],
+          observedAt: support.generatedAt,
+          omittedMachines: 1,
+          skippedRows: 2,
+        },
+      },
+      { harness: [], machine: [], truncated: false },
+      request,
+    );
+    if (available.machineFreshness.kind !== 'available') {
+      throw new Error('The freshness fixture must remain available');
+    }
+    expect(parseFocusedReportQueryResult('support', JSON.parse(JSON.stringify(available)), request)).toEqual(available);
+
+    const invalidFreshnessValues = [
+      { ...available.machineFreshness, unexpected: true },
+      { ...available.machineFreshness, observedAt: '2026-07-13T12:00:00Z' },
+      { ...available.machineFreshness, observedAt: '2026-07-14T12:00:00.000Z' },
+      { ...available.machineFreshness, omittedMachines: -1 },
+      { ...available.machineFreshness, skippedRows: 0.5 },
+      {
+        ...available.machineFreshness,
+        machines: [...available.machineFreshness.machines, ...available.machineFreshness.machines],
+      },
+      {
+        kind: 'available',
+        machines: [{ id: '', label: 'Machine A', lastSeenAt: support.generatedAt }],
+        observedAt: support.generatedAt,
+        omittedMachines: 0,
+        skippedRows: 0,
+      },
+      {
+        kind: 'available',
+        machines: [{ id: 'machine-a', label: '', lastSeenAt: support.generatedAt }],
+        observedAt: support.generatedAt,
+        omittedMachines: 0,
+        skippedRows: 0,
+      },
+      {
+        kind: 'unavailable',
+        observedAt: support.generatedAt,
+        omittedMachines: 0,
+        reason: 'network-error',
+        skippedRows: 0,
+      },
+    ];
+    for (const machineFreshness of invalidFreshnessValues) {
+      expect(() => parseFocusedReportQueryResult('support', { ...available, machineFreshness }, request)).toThrow();
+    }
   });
 
   test('rejects malformed nested bootstrap support at the transport boundary', () => {

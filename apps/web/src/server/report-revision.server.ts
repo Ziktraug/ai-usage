@@ -178,7 +178,12 @@ export const reportCaptureFingerprintForPayload = (
   payload: WebReportPayload,
   rowSourceAuthorities?: readonly SessionDetailSourceAuthority[],
 ): string => {
-  const { generatedAt: _generatedAt, ...semanticPayload } = payload;
+  const { generatedAt: _generatedAt, machineFreshness, ...payloadWithoutClocks } = payload;
+  const { observedAt: _observedAt, ...semanticMachineFreshness } = machineFreshness ?? {};
+  const semanticPayload =
+    machineFreshness === undefined
+      ? payloadWithoutClocks
+      : { ...payloadWithoutClocks, machineFreshness: semanticMachineFreshness };
   const fingerprintInput =
     rowSourceAuthorities === undefined ? semanticPayload : { payload: semanticPayload, rowSourceAuthorities };
   return createHash('sha256')

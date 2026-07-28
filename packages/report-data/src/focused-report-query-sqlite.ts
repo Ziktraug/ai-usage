@@ -824,6 +824,7 @@ interface AnalyticsAggregateRecord {
   total_cost: number;
   turns: number;
   unpriced: number;
+  unpriced_fresh_tokens: number;
   usage_unavailable: number;
 }
 
@@ -866,6 +867,7 @@ const analyticsGroupFromRecord = (record: AnalyticsAggregateRecord): AnalyticsGr
     tools: record.tools,
     turns: record.turns,
     unpriced: record.unpriced,
+    unpricedFreshTokens: record.unpriced_fresh_tokens,
     usageUnavailable: record.usage_unavailable,
   };
 };
@@ -889,6 +891,7 @@ const readAnalyticsGroups = (
         usage_unavailable,
         sort_ambiguous,
         fresh_tokens,
+        unpriced_fresh_tokens,
         tok_in,
         tok_cr,
         lines_added,
@@ -910,6 +913,7 @@ const readAnalyticsGroups = (
         usage_unavailable,
         sort_ambiguous,
         fresh_tokens,
+        unpriced_fresh_tokens,
         tok_in,
         tok_cr,
         lines_added,
@@ -929,6 +933,7 @@ const readAnalyticsGroups = (
         usage_unavailable,
         sort_ambiguous,
         fresh_tokens,
+        unpriced_fresh_tokens,
         tok_in,
         tok_cr,
         lines_added,
@@ -948,6 +953,7 @@ const readAnalyticsGroups = (
         filtered.usage_unavailable,
         filtered.sort_ambiguous,
         segments.tok_in + segments.tok_out + segments.tok_cw AS fresh_tokens,
+        segments.unpriced_fresh_tokens,
         segments.tok_in,
         segments.tok_cr,
         0 AS lines_added,
@@ -965,6 +971,7 @@ const readAnalyticsGroups = (
         COUNT(*) AS sessions,
         SUM(cost_known) AS priced,
         COUNT(*) - SUM(cost_known) AS unpriced,
+        SUM(unpriced_fresh_tokens) AS unpriced_fresh_tokens,
         SUM(usage_unavailable) AS usage_unavailable,
         SUM(sort_ambiguous) AS ambiguous,
         SUM(fresh_tokens) AS fresh,

@@ -53,6 +53,7 @@ import {
   sessionColumns,
   visibleSessionColumns,
 } from './session-columns';
+import { boundedSessionListLabel } from './session-list-label';
 import { calculateSessionRowWindow, calculateSessionViewportHeight } from './session-row-window';
 import {
   browserSessionSurfaceModeEnvironment,
@@ -199,6 +200,7 @@ const MobileSessionSummary = (props: {
   total: number;
 }) => {
   const row = () => props.tableRow.original;
+  const sessionListLabel = () => boundedSessionListLabel(row().sessionLabel, props.searchQuery);
   const apiValue = () => apiValuePresentation(row());
   const rootSessionOnly = () => row().campaignTotalCount !== undefined;
   const durationSemantics = () => sessionDurationSemantics(row().source?.harnessKey, rootSessionOnly());
@@ -217,13 +219,13 @@ const MobileSessionSummary = (props: {
           <HarnessBadge name={row().harness} onClick={() => props.onHarnessFilter(row().harness)} />
         </header>
         <button
-          aria-label={`Inspect session: ${row().sessionLabel}`}
+          aria-label={`Inspect session: ${sessionListLabel()}`}
           class={sessionSummaryOpen}
           onClick={() => props.onSelect(row())}
           type="button"
         >
           <span class={sessionSummaryTitle}>
-            <HighlightedText query={props.searchQuery} text={row().sessionLabel} />
+            <HighlightedText query={props.searchQuery} text={sessionListLabel()} />
           </span>
           <span class={sessionSummaryValue} title={row().usageUnavailable ? USAGE_UNAVAILABLE_HINT : apiValue().title}>
             {row().usageUnavailable ? '—' : apiValue().label}
@@ -593,7 +595,7 @@ export const SessionTable = (props: {
       }
       const state = props.campaignChildren?.get(campaignKey);
       return state?.loading || state?.nextCursor
-        ? [{ campaignKey, loading: state?.loading === true, sessionLabel: row.sessionLabel }]
+        ? [{ campaignKey, loading: state?.loading === true, sessionLabel: boundedSessionListLabel(row.sessionLabel) }]
         : [];
     });
   });

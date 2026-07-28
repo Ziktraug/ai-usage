@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
-import type { Locator, Page, Response, TestInfo } from '@playwright/test';
+import {
+  collectionSourceDefinitions,
+  parseSourceControlCommandResponse,
+  type SourceControlView,
+} from '@ai-usage/report-core/source-control';
+import type { APIRequestContext, Locator, Page, Response, TestInfo } from '@playwright/test';
 import { expect, test } from './browser-test';
 import { afterAnimationFrame, type SessionSurfaceMode, sessionSurface } from './session-scroll-driver';
 import { SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT } from './session-scroll-fixture';
@@ -15,7 +20,8 @@ const MAXIMUM_SESSION_PAGE_ITEMS = 200;
 const MAXIMUM_SESSION_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAXIMUM_SCROLL_ITERATIONS = 10_000;
 const MAXIMUM_STALLED_SCROLL_MS = 20_000;
-const SCROLL_STEP_RATIO = 0.75;
+const DESKTOP_SCROLL_STEP_RATIO = 0.75;
+const SOURCE_CONTROL_COMMAND_PATH = '/api/source-control/command';
 
 interface CapturedSessionPage {
   bytes: number;
@@ -32,6 +38,9 @@ interface RenderedSessionRow {
 
 interface SessionSurfaceSnapshot {
   clientHeight: number;
+  nextScrollTop: number;
+  reportRevision: string;
+  requestFingerprint: string;
   rows: RenderedSessionRow[];
   scrollHeight: number;
   scrollTop: number;
@@ -145,18 +154,92 @@ const captureSessionPages = (page: Page): { finish: () => Promise<CapturedSessio
   };
 };
 
+const disableCollectionSource = async (
+  request: APIRequestContext,
+  sourceId: (typeof collectionSourceDefinitions)[number]['id'],
+): Promise<SourceControlView> => {
+  const response = await request.post(SOURCE_CONTROL_COMMAND_PATH, {
+    data: { command: 'set-enabled', enabled: false, sourceId },
+  });
+  const result = parseSourceControlCommandResponse(await response.json());
+  if (!(response.ok() && result.ok)) {
+    throw new Error(`Could not disable the ${sourceId} collection source`);
+  }
+  return result.snapshot;
+};
+
+const freezeCollectionSources = async (request: APIRequestContext): Promise<string> => {
+  for (const { id } of collectionSourceDefinitions) {
+    await disableCollectionSource(request, id);
+  }
+
+  const probeSource = collectionSourceDefinitions[0];
+  if (!probeSource) {
+    throw new Error('The production fixture must declare at least one collection source');
+  }
+  await expect
+    .poll(
+      async () => {
+        const snapshot = await disableCollectionSource(request, probeSource.id);
+        const { publication } = snapshot;
+        return {
+          allSourcesDormant:
+            snapshot.sources.length === collectionSourceDefinitions.length &&
+            snapshot.sources.every(({ lifecycle, policy }) => lifecycle === 'dormant' && policy === 'disabled'),
+          publicationSettled:
+            !(publication.dirty || publication.pendingDemand || publication.queued || publication.running) &&
+            publication.publishedGeneration >= publication.dirtyGeneration &&
+            publication.acknowledgedRequestGeneration >= publication.requestedGeneration,
+          queueDepth: snapshot.queueDepth,
+          runningCount: snapshot.runningCount,
+        };
+      },
+      {
+        message: 'The scale fixture collection sources must become fully dormant before traversal',
+        timeout: 60_000,
+      },
+    )
+    .toEqual({
+      allSourcesDormant: true,
+      publicationSettled: true,
+      queueDepth: 0,
+      runningCount: 0,
+    });
+
+  const settledSnapshot = await disableCollectionSource(request, probeSource.id);
+  const revision = settledSnapshot.publication.revision;
+  if (!revision) {
+    throw new Error('The settled scale fixture must expose its publication revision');
+  }
+  return revision;
+};
+
 const readSurfaceSnapshot = (surface: Locator): Promise<SessionSurfaceSnapshot> =>
   surface.evaluate((element) => {
     if (!(element instanceof HTMLElement)) {
       throw new Error('The Session surface must be an HTML scroll container');
     }
-    const rows = Array.from(element.querySelectorAll<HTMLElement>('[data-session-row-id][data-index]')).map((row) => ({
-      index: Number(row.dataset.index),
-      rowId: row.dataset.sessionRowId ?? '',
-    }));
+    const rowElements = Array.from(element.querySelectorAll<HTMLElement>('[data-session-row-id][data-index]'));
+    const lastRow = rowElements.at(-1);
+    const maximumScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+    const lastObservedRowTop = lastRow
+      ? element.scrollTop + lastRow.getBoundingClientRect().top - element.getBoundingClientRect().top
+      : element.scrollTop + element.clientHeight;
+    const report = document.querySelector<HTMLElement>('main[data-hydrated="true"]');
+    const reportRevision = report?.dataset.reportRevision;
+    const requestFingerprint = report?.dataset.requestFingerprint;
+    if (!(reportRevision && requestFingerprint)) {
+      throw new Error('The Session surface must belong to one identified report query');
+    }
     return {
       clientHeight: element.clientHeight,
-      rows,
+      nextScrollTop: Math.min(maximumScrollTop, Math.max(element.scrollTop, lastObservedRowTop)),
+      reportRevision,
+      requestFingerprint,
+      rows: rowElements.map((row) => ({
+        index: Number(row.dataset.index),
+        rowId: row.dataset.sessionRowId ?? '',
+      })),
       scrollHeight: element.scrollHeight,
       scrollTop: element.scrollTop,
     };
@@ -185,10 +268,13 @@ const assertPageBudgets = (
   requestFingerprint: string,
   reportRevision: string,
 ): { maximumBytes: number; pageCount: number } => {
-  const revisionPages = capturedPages.filter(({ revisions }) => revisions.includes(reportRevision));
+  const revisionPages = capturedPages.filter(
+    ({ fingerprints, revisions, rowIds }) =>
+      rowIds.length > 0 && fingerprints.includes(requestFingerprint) && revisions.includes(reportRevision),
+  );
   expect(
     revisionPages.length,
-    'At least one focused Session page for the displayed revision must cross the production wire',
+    'At least one focused Session page for the completed report revision must cross the production wire',
   ).toBeGreaterThan(0);
   const wireRowIds = new Set<string>();
   let maximumBytes = 0;
@@ -198,6 +284,9 @@ const assertPageBudgets = (
       MAXIMUM_SESSION_RESPONSE_BYTES,
     );
     const uniquePageRowIds = new Set(capturedPage.rowIds);
+    expect(capturedPage.rowIds.length, `Session response repeated a row ID within one page: ${capturedPage.url}`).toBe(
+      uniquePageRowIds.size,
+    );
     expect(
       uniquePageRowIds.size,
       `Session response exceeded ${MAXIMUM_SESSION_PAGE_ITEMS} unique rows: ${capturedPage.url}`,
@@ -209,11 +298,21 @@ const assertPageBudgets = (
       capturedPage.fingerprints.length,
       `Session response did not expose a request fingerprint: ${capturedPage.url}`,
     ).toBeGreaterThan(0);
+    expect(
+      capturedPage.revisions.length,
+      `Session response did not expose a revision: ${capturedPage.url}`,
+    ).toBeGreaterThan(0);
+    for (const revision of capturedPage.revisions) {
+      expect(revision).toMatch(NON_EMPTY_ATTRIBUTE_PATTERN);
+    }
     for (const fingerprint of capturedPage.fingerprints) {
       expect(fingerprint).toMatch(SESSION_QUERY_FINGERPRINT_PATTERN);
       expect(fingerprint).toBe(requestFingerprint);
     }
     for (const rowId of uniquePageRowIds) {
+      if (wireRowIds.has(rowId)) {
+        throw new Error(`Session row ID ${rowId} crossed the production wire more than once`);
+      }
       wireRowIds.add(rowId);
     }
   }
@@ -223,16 +322,22 @@ const assertPageBudgets = (
 
 const inspectAllSessions = async (
   page: Page,
+  request: APIRequestContext,
   viewportCase: ViewportCase,
   testInfo: TestInfo,
 ): Promise<ScrollResult> => {
-  const capture = captureSessionPages(page);
   await page.setViewportSize({ height: viewportCase.height, width: viewportCase.width });
   await page.goto(SESSION_ROUTE);
   const report = page.locator('main[data-hydrated="true"]');
   await expect(report).toBeVisible();
   await expect(page.getByText('5,000 / 5,000 sessions', { exact: true })).toBeVisible();
-  await expect(report).toHaveAttribute('data-report-revision', NON_EMPTY_ATTRIBUTE_PATTERN);
+  const frozenReportRevision = await freezeCollectionSources(request);
+
+  const capture = captureSessionPages(page);
+  await page.goto(SESSION_ROUTE);
+  await expect(report).toBeVisible();
+  await expect(page.getByText('5,000 / 5,000 sessions', { exact: true })).toBeVisible();
+  await expect(report).toHaveAttribute('data-report-revision', frozenReportRevision);
   await expect(report).toHaveAttribute('data-request-fingerprint', SESSION_QUERY_FINGERPRINT_PATTERN);
   const reportRevision = await report.getAttribute('data-report-revision');
   const requestFingerprint = await report.getAttribute('data-request-fingerprint');
@@ -267,11 +372,19 @@ const inspectAllSessions = async (
   let maximumRenderedItems = 0;
   const recordSnapshot = (snapshot: SessionSurfaceSnapshot): void => {
     maximumRenderedItems = Math.max(maximumRenderedItems, snapshot.rows.length);
-    expect(snapshot.rows.length).toBeLessThanOrEqual(viewportCase.maximumRenderedItems);
+    if (snapshot.rows.length > viewportCase.maximumRenderedItems) {
+      throw new Error(
+        `Session surface rendered ${snapshot.rows.length} items, above its ${viewportCase.maximumRenderedItems} item budget`,
+      );
+    }
     const liveIndices = new Set(snapshot.rows.map(({ index }) => index));
     const liveRowIds = new Set(snapshot.rows.map(({ rowId }) => rowId));
-    expect(liveIndices.size, 'A Session index must appear at most once in the live DOM').toBe(snapshot.rows.length);
-    expect(liveRowIds.size, 'A Session row ID must appear at most once in the live DOM').toBe(snapshot.rows.length);
+    if (liveIndices.size !== snapshot.rows.length) {
+      throw new Error('A Session index must appear at most once in the live DOM');
+    }
+    if (liveRowIds.size !== snapshot.rows.length) {
+      throw new Error('A Session row ID must appear at most once in the live DOM');
+    }
     for (const { index, rowId } of snapshot.rows) {
       if (!(Number.isSafeInteger(index) && index >= 0 && index < SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT)) {
         throw new Error(`Invalid Session data-index ${index}`);
@@ -293,40 +406,51 @@ const inspectAllSessions = async (
   };
 
   let iteration = 0;
+  let stalledAt: number | undefined;
+  let stalledRowCount = 0;
   while (indexToRowId.size < SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT) {
     iteration += 1;
     if (iteration > MAXIMUM_SCROLL_ITERATIONS) {
       throw new Error(`Session traversal exceeded ${MAXIMUM_SCROLL_ITERATIONS} bounded scroll steps`);
     }
     const snapshot = await readSurfaceSnapshot(surface);
+    if (snapshot.requestFingerprint !== requestFingerprint) {
+      throw new Error(`Session query fingerprint changed from ${requestFingerprint} to ${snapshot.requestFingerprint}`);
+    }
+    if (snapshot.reportRevision !== reportRevision) {
+      throw new Error(`Session report revision changed from ${reportRevision} to ${snapshot.reportRevision}`);
+    }
     recordSnapshot(snapshot);
     if (indexToRowId.size === SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT) {
       break;
     }
+    // Mobile cards have a fixed row geometry. The last rendered card has
+    // already been recorded, so its top advances the window without skipping
+    // unseen rows. Keep the table's established viewport step on desktop.
     const maximumScrollTop = Math.max(0, snapshot.scrollHeight - snapshot.clientHeight);
-    const scrollStep = Math.max(1, Math.floor(snapshot.clientHeight * SCROLL_STEP_RATIO));
-    const nextScrollTop = Math.min(maximumScrollTop, snapshot.scrollTop + scrollStep);
+    const nextScrollTop =
+      viewportCase.mode === 'mobile'
+        ? snapshot.nextScrollTop
+        : Math.min(
+            maximumScrollTop,
+            snapshot.scrollTop + Math.max(1, Math.floor(snapshot.clientHeight * DESKTOP_SCROLL_STEP_RATIO)),
+          );
     if (nextScrollTop > snapshot.scrollTop) {
+      stalledAt = undefined;
       await moveSurface(surface, nextScrollTop);
       await afterAnimationFrame(page);
       continue;
     }
 
-    const previousHeight = snapshot.scrollHeight;
-    const previousRowCount = indexToRowId.size;
-    await expect
-      .poll(
-        async () => {
-          const nextSnapshot = await readSurfaceSnapshot(surface);
-          recordSnapshot(nextSnapshot);
-          return nextSnapshot.scrollHeight > previousHeight || indexToRowId.size > previousRowCount;
-        },
-        {
-          message: `Session scrolling stalled after reaching ${previousRowCount} of ${SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT} rows`,
-          timeout: MAXIMUM_STALLED_SCROLL_MS,
-        },
-      )
-      .toBe(true);
+    if (stalledAt === undefined) {
+      stalledAt = performance.now();
+      stalledRowCount = indexToRowId.size;
+    } else if (performance.now() - stalledAt > MAXIMUM_STALLED_SCROLL_MS) {
+      throw new Error(
+        `Session scrolling stalled after reaching ${stalledRowCount} of ${SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT} rows`,
+      );
+    }
+    await afterAnimationFrame(page);
   }
 
   const expectedIndices = Array.from({ length: SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT }, (_, index) => index);
@@ -388,8 +512,9 @@ const inspectAllSessions = async (
 for (const viewportCase of viewportCases) {
   test(`reaches every top-level production campaign exactly once on ${viewportCase.mode}`, async ({
     page,
+    request,
   }, testInfo) => {
-    const result = await inspectAllSessions(page, viewportCase, testInfo);
+    const result = await inspectAllSessions(page, request, viewportCase, testInfo);
     if (viewportCase.mode === 'desktop') {
       desktopResult = result;
       return;

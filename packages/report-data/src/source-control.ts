@@ -270,6 +270,7 @@ const createSourceControlScheduler = (runtime: SourceControlRuntime): SourceCont
 const sourceRunAnnotations = (
   completion: SourceExecutionCompletion,
   changed: boolean,
+  servedProjectionChanged: boolean,
 ): Readonly<Record<string, LogValue>> => {
   const result = completion._tag === 'success' ? completion.result : undefined;
   const domainOutcome = outcomeAfterRun(completion, result?.unavailable, result?.warnings.length ?? 0);
@@ -277,6 +278,7 @@ const sourceRunAnnotations = (
   return {
     changed,
     domainOutcome,
+    servedProjectionChanged,
     ...(completion._tag === 'success' && completion.result.unavailable
       ? { unavailableCode: completion.result.unavailable.code }
       : {}),
@@ -347,7 +349,7 @@ const runSourceJobBody = (
       finishSourceJobTransition(state, job, decision.startedAt, decision.rtkTargetGeneration, completion, finishedAt),
     );
     yield* annotateWideEvent({
-      ...sourceRunAnnotations(completion, completed.changed),
+      ...sourceRunAnnotations(completion, completed.changed, completed.servedProjectionChanged),
       ...(completed.publicationDataGeneration === undefined
         ? {}
         : { publicationDataGeneration: completed.publicationDataGeneration }),

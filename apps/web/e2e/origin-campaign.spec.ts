@@ -17,6 +17,10 @@ test('makes the neutral origin default and singleton campaigns explicit', async 
 
   await expect(page.getByText('Campaign · 3 sessions', { exact: true })).toBeVisible();
   await expect(page.getByText('Campaign · 1 session', { exact: true })).toHaveCount(2);
+
+  await page.locator('[data-session-row-id]').filter({ hasText: 'Build report UI' }).click();
+  const drawer = page.getByRole('dialog', { name: 'Session details' });
+  await expect(drawer.locator('[data-detail-item="Subagent"]')).toContainText('No');
 });
 
 test('ignores legacy campaign opt-out URLs and keeps every top-level row bounded and campaign-shaped', async ({

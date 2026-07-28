@@ -102,7 +102,9 @@ import { GroupPanel } from './group-panel';
 import {
   type MachineFreshnessSnapshot,
   type MachineLabelPresentation,
-  machineLabelPresentation,
+  machineFreshnessSnapshotFromFocused,
+  machineFreshnessStatusLabel,
+  machineLabelPresentationForSnapshot,
 } from './manual-transfer-model';
 import { OriginFilter } from './origin-filter';
 import { Overview } from './overview';
@@ -252,11 +254,15 @@ export const Dashboard = (props: {
   const focusedStore = props.servedBootstrap ? createFocusedReportStore(props.servedBootstrap) : undefined;
   const focusedSource = focusedStore ? createServedFocusedReportSource() : undefined;
   let restartServedDestination = (): Promise<void> => Promise.resolve();
+  const activeMachineFreshness = createMemo(() =>
+    focusedStore ? machineFreshnessSnapshotFromFocused(focusedStore.machineFreshness()) : props.machineFreshness,
+  );
   const reportSupport = createMemo(() =>
     focusedStore
       ? supportForFocusedBootstrap({
           dateDomain: focusedStore.dateDomain(),
           filterOptions: focusedStore.filterOptions(),
+          machineFreshness: focusedStore.machineFreshness(),
           providerRows: focusedStore.providerRows(),
           requestFingerprint: '',
           revision: focusedStore.revision(),
@@ -346,21 +352,17 @@ export const Dashboard = (props: {
   );
   const machinePresentations = createMemo(() => {
     const presentations = new Map<string, MachineLabelPresentation>();
-    for (const machineFreshness of props.machineFreshness.machines) {
-      const presentation = machineLabelPresentation(machineFreshness, props.machineFreshness.observedAt);
-      const current = presentations.get(presentation.value);
-      if (current?.stale === false && presentation.stale) {
-        continue;
-      }
-      presentations.set(presentation.value, presentation);
+    for (const { label, value } of machineOptions()) {
+      presentations.set(value, machineLabelPresentationForSnapshot({ id: value, label }, activeMachineFreshness()));
     }
     return presentations;
   });
+  const machineFreshnessStatus = createMemo(() => machineFreshnessStatusLabel(activeMachineFreshness()));
   const presentMachineLabel = (value: string): string =>
     machinePresentations().get(value)?.label ?? machineOptionLabels().get(value) ?? value;
   const machineOptionValues = createMemo(() => machineOptions().map(({ value }) => value));
-  const hasStaleMachineOption = createMemo(() =>
-    machineOptions().some(({ value }) => machinePresentations().get(value)?.stale === true),
+  const hasMachineFreshnessAttention = createMemo(() =>
+    machineOptions().some(({ value }) => machinePresentations().get(value)?.freshness !== 'fresh'),
   );
   const filterSnapshot = createMemo(() =>
     createFilterSnapshot(query(), harness(), machine(), fieldFilters(), origin()),
@@ -872,7 +874,14 @@ export const Dashboard = (props: {
                 value={harness()}
               />
               <OriginFilter onValueChange={setOrigin} value={origin()} />
-              <Show when={machineOptions().length > 1 || hasStaleMachineOption()}>
+              <Show when={machineFreshnessStatus()}>
+                {(label) => (
+                  <span aria-live="polite" class={summaryPill}>
+                    {label()}
+                  </span>
+                )}
+              </Show>
+              <Show when={machineOptions().length > 1 || hasMachineFreshnessAttention()}>
                 <MultiSelect
                   label="Filter by machine"
                   noun="machines"

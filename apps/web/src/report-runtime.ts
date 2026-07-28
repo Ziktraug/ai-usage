@@ -1,7 +1,7 @@
 import type { FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
 import { getBrowserRuntimeMode } from './browser-runtime-mode';
 import { createServedFocusedReportSource, fetchFocusedReportBootstrap } from './focused-report-client';
-import type { MachineFreshnessSnapshot } from './manual-transfer-model';
+import { type MachineFreshnessSnapshot, machineFreshnessSnapshotFromFocused } from './manual-transfer-model';
 import { demoReportPayload } from './report-data';
 import type { RuntimeMode } from './runtime-mode';
 import { toWebReportPayload, type WebReportPayload } from './web-report-payload';
@@ -9,24 +9,15 @@ import { toWebReportPayload, type WebReportPayload } from './web-report-payload'
 const demoWebReportPayload = toWebReportPayload(demoReportPayload);
 
 const syntheticMachineFreshness: MachineFreshnessSnapshot = {
+  kind: 'available',
   machines: [{ id: 'fixture-machine', label: 'Fixture Machine', lastSeenAt: demoWebReportPayload.generatedAt }],
   observedAt: Date.parse('2026-07-12T12:00:00.000Z'),
+  omittedMachines: 0,
+  skippedRows: 0,
 };
 
-const loadMachineFreshness = async (): Promise<MachineFreshnessSnapshot> => {
-  const { getSyncFleet } = await import('./server/sync');
-  const result = await getSyncFleet();
-  return {
-    machines: result.ok
-      ? result.data.machines.map((machine) => ({
-          id: machine.id,
-          label: machine.label,
-          lastSeenAt: machine.lastSeenAt,
-        }))
-      : [],
-    observedAt: Date.now(),
-  };
-};
+export const machineFreshnessSnapshotFromBootstrap = (bootstrap: FocusedSupportResult): MachineFreshnessSnapshot =>
+  machineFreshnessSnapshotFromFocused(bootstrap.machineFreshness);
 
 export type ReportLoaderData =
   | { kind: 'payload'; machineFreshness: MachineFreshnessSnapshot; mode: 'demo' | 'e2e'; payload: WebReportPayload }
@@ -46,14 +37,11 @@ export const loadReportRouteData = async (mode: RuntimeMode = getBrowserRuntimeM
     return { kind: 'payload', machineFreshness: syntheticMachineFreshness, mode, payload: demoWebReportPayload };
   }
 
-  const [bootstrap, machineFreshness] = await Promise.all([
-    fetchFocusedReportBootstrap(createServedFocusedReportSource()),
-    loadMachineFreshness(),
-  ]);
+  const bootstrap = await fetchFocusedReportBootstrap(createServedFocusedReportSource());
   return {
     bootstrap,
     kind: 'served',
-    machineFreshness,
+    machineFreshness: machineFreshnessSnapshotFromBootstrap(bootstrap),
     mode,
   };
 };

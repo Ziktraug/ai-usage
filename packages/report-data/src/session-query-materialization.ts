@@ -18,12 +18,16 @@ import {
   sessionTextSortFields,
   sortValueForSessionColumn,
 } from '@ai-usage/report-core/session-query';
-import { usageRowModelApiPriceMeasurements, usageRowModelContributions } from '@ai-usage/report-core/usage-row';
+import {
+  usageRowApiPriceMeasurement,
+  usageRowModelApiPriceMeasurements,
+  usageRowModelContributions,
+} from '@ai-usage/report-core/usage-row';
 
 export const SESSION_QUERY_DATABASE_NAME = 'sessions.sqlite';
 
-const SESSION_QUERY_SCHEMA_VERSION = 13;
-const SESSION_ROW_INSERT_VALUE_COUNT = 79;
+const SESSION_QUERY_SCHEMA_VERSION = 14;
+const SESSION_ROW_INSERT_VALUE_COUNT = 80;
 const createFileFlags =
   // biome-ignore lint/suspicious/noBitwiseOperators: Node file-open flags are a documented bitmask API.
   fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW;
@@ -150,6 +154,7 @@ const createSchema = (database: SqliteDatabase): void => {
       cost_quota REAL,
       duration_ms REAL,
       fresh_tokens REAL NOT NULL,
+      unpriced_fresh_tokens REAL NOT NULL,
       line_delta REAL,
       lines_added REAL,
       lines_deleted REAL,
@@ -205,7 +210,7 @@ const insertSql = `
     ${sessionSortFields.map((field) => `sort_${field === 'cache' ? 'cache' : field.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`).join(', ')},
     ${sessionTextSortFields.map((field) => `sort_${field}_rank`).join(', ')},
     row_identity_rank, session_item_identity_rank, campaign_item_identity_rank,
-    cost_actual, cost_approx, cost_known, cost_quota, duration_ms, fresh_tokens, line_delta,
+    cost_actual, cost_approx, cost_known, cost_quota, duration_ms, fresh_tokens, unpriced_fresh_tokens, line_delta,
     lines_added, lines_deleted, rtk_command_count, rtk_input_tokens, rtk_output_tokens,
     rtk_saved_tokens, tok_cr, tok_cw, tok_in, tok_out, token_total, calls, turns, tools,
     usage_unavailable
@@ -331,6 +336,7 @@ const insertRow = (
     row.costQuota ?? null,
     row.durationMs,
     row.freshTokens,
+    usageRowApiPriceMeasurement(sourceRow).unpricedFreshTokens,
     row.lineDelta,
     row.linesAdded,
     row.linesDeleted,

@@ -17,7 +17,7 @@ import {
   strongCell,
 } from '@ai-usage/design-system/report';
 import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
-import { PARTIALLY_MEASURED_LABEL } from '@ai-usage/report-core/provenance';
+import { PARTIALLY_MEASURED_LABEL, partiallyMeasuredApiPriceDescription } from '@ai-usage/report-core/provenance';
 import { createMemo, For, Show } from 'solid-js';
 import {
   breakdownBarPresentation,
@@ -27,7 +27,7 @@ import {
 } from './group-panel-presentation';
 import {
   accentFill,
-  apiValuePresentation,
+  aggregateApiValuePresentation,
   fmtCompact,
   fmtNum,
   fmtPct,
@@ -69,17 +69,16 @@ const GroupApiValue = (props: { group: AnalyticsGroup }) => {
     knownCost: props.group.costSum,
     unpricedCount: props.group.unpriced,
   });
-  const presentation = apiValuePresentation({
-    costApprox: props.group.costSum,
-    costKnown: state !== 'partially measured',
+  const presentation = aggregateApiValuePresentation({
+    knownCost: props.group.costSum,
+    state,
+    unpricedFreshTokens: props.group.unpricedFreshTokens,
   });
   const facts =
     state === 'partially measured'
       ? [
           {
-            description: `${fmtNum(props.group.unpriced)} of ${fmtNum(
-              props.group.sessions,
-            )} sessions in this slice include work from models with no published price. Their work is counted; its API value is not.`,
+            description: partiallyMeasuredApiPriceDescription(fmtCompact(props.group.unpricedFreshTokens)),
             label: PARTIALLY_MEASURED_LABEL,
             severity: 'warning' as const,
           },
