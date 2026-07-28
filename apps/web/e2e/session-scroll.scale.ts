@@ -245,22 +245,36 @@ const readSurfaceSnapshot = (surface: Locator): Promise<SessionSurfaceSnapshot> 
     };
   });
 
-const moveSurface = async (surface: Locator, target: 'end' | 'start' | number): Promise<void> => {
-  await surface.evaluate((element, destination) => {
+const moveSurface = (surface: Locator, target: 'end' | 'start' | number): Promise<boolean> =>
+  surface.evaluate((element, destination) => {
     if (!(element instanceof HTMLElement)) {
       throw new Error('The Session surface must be an HTML scroll container');
     }
+    const maximumScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+    let requestedScrollTop = typeof destination === 'number' ? destination : maximumScrollTop;
     if (destination === 'start') {
-      element.scrollTop = 0;
-      return;
+      requestedScrollTop = 0;
     }
-    if (destination === 'end') {
-      element.scrollTop = element.scrollHeight;
-      return;
+    const nextScrollTop = Math.min(maximumScrollTop, Math.max(0, requestedScrollTop));
+    if (nextScrollTop === element.scrollTop) {
+      return false;
     }
-    element.scrollTop = destination;
+    return new Promise<boolean>((resolve, reject) => {
+      let settled = false;
+      const handleScroll = (): void => {
+        settled = true;
+        resolve(true);
+      };
+      element.addEventListener('scroll', handleScroll, { once: true });
+      element.scrollTop = nextScrollTop;
+      requestAnimationFrame(() => {
+        element.removeEventListener('scroll', handleScroll);
+        if (!settled) {
+          reject(new Error(`The Session surface moved to ${nextScrollTop} without a native scroll event`));
+        }
+      });
+    });
   }, target);
-};
 
 const assertPageBudgets = (
   capturedPages: CapturedSessionPage[],
@@ -333,6 +347,9 @@ const inspectAllSessions = async (
   await expect(page.getByText('5,000 / 5,000 sessions', { exact: true })).toBeVisible();
   const frozenReportRevision = await freezeCollectionSources(request);
 
+  // Close the previous document before strict response capture so its
+  // navigation-cancelled requests cannot enter the new report's wire proof.
+  await page.goto('about:blank');
   const capture = captureSessionPages(page);
   await page.goto(SESSION_ROUTE);
   await expect(report).toBeVisible();
@@ -437,8 +454,27 @@ const inspectAllSessions = async (
             snapshot.scrollTop + Math.max(1, Math.floor(snapshot.clientHeight * DESKTOP_SCROLL_STEP_RATIO)),
           );
     if (nextScrollTop > snapshot.scrollTop) {
-      await moveSurface(surface, nextScrollTop);
+      const previousHeight = snapshot.scrollHeight;
+      const previousRowCount = indexToRowId.size;
+      expect(
+        await moveSurface(surface, nextScrollTop),
+        'The Session surface must advance to the next scroll step',
+      ).toBe(true);
       await afterAnimationFrame(page);
+      await expect
+        .poll(
+          async () => {
+            const nextSnapshot = await readSurfaceSnapshot(surface);
+            assertStableReportQuery(nextSnapshot);
+            recordSnapshot(nextSnapshot);
+            return nextSnapshot.scrollHeight > previousHeight || indexToRowId.size > previousRowCount;
+          },
+          {
+            message: `The Session virtual window did not acknowledge its scroll step after reaching ${previousRowCount} rows`,
+            timeout: MAXIMUM_STALLED_SCROLL_MS,
+          },
+        )
+        .toBe(true);
       continue;
     }
 
