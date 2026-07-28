@@ -618,8 +618,8 @@ describe('overview model', () => {
     const records = buildOverviewRecords(rows, rows);
     const top = buildTopSessions(rows, 2);
 
-    expect(records?.topCost?.sessionLabel).toBe('High');
-    expect(records?.longest?.sessionLabel).toBe('Long');
+    expect(records?.topCost?.label).toBe('High');
+    expect(records?.longest?.label).toBe('Long');
     expect(records?.streak).toBe(3);
     expect(top.map((item) => item.label)).toEqual(['High', 'Long']);
   });
@@ -661,10 +661,18 @@ describe('overview model', () => {
       campaignKey === 'machine-a:codex:root-1' ? 'Release train' : derivedLabel,
     );
 
+    const records = buildOverviewRecords(rows, rows, campaigns);
     const items = buildOverviewSessionItems(rows, campaigns);
     const top = buildTopSessions(rows, 2, campaigns);
     const shape = buildSessionShapeData(rows, campaigns);
 
+    expect(records?.topCost).toMatchObject({
+      costApprox: 13,
+      kind: 'campaign',
+      label: 'Release train',
+    });
+    expect(records?.topCost?.row).toBe(campaignRoot);
+    expect(records?.longest?.row).toBe(campaignRoot);
     expect(campaigns[0]?.root.sessionLabel).toBe('Campaign root');
     expect(items.map((item) => item.label).sort()).toEqual(['Release train', 'Solo A', 'Solo B', 'Solo C']);
     expect(top.map((item) => item.kind)).toEqual(['campaign', 'campaign']);

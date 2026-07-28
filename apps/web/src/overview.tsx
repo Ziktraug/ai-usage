@@ -736,15 +736,16 @@ const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: 
 // Records — small bragging rights, sober clothes.
 
 const Records = (props: {
+  campaigns: CampaignView[];
   focused: FocusedOverviewRecords | null | undefined;
   rows: DashboardRow[];
   timelineRows: DashboardRow[];
-  onSelectSession: (row: DashboardRow) => void;
+  onSelectSession: OverviewProps['onSelectSession'];
   onSelectDay: (day: Date) => void;
 }) => {
   const data = createMemo(() => {
     if (props.focused === undefined) {
-      return buildOverviewRecords(props.rows, props.timelineRows);
+      return buildOverviewRecords(props.rows, props.timelineRows, props.campaigns);
     }
     const focused = props.focused;
     if (!focused) {
@@ -762,20 +763,28 @@ const Records = (props: {
       {(records) => (
         <div class={recordsGrid}>
           <Show when={records().topCost}>
-            {(row) => (
-              <button class={recordCard} onClick={() => props.onSelectSession(row())} type="button">
+            {(item) => (
+              <button
+                class={recordCard}
+                onClick={() => props.onSelectSession(item().row, campaignLabelContextForOverviewItem(item()))}
+                type="button"
+              >
                 <span class={recordLabel}>Top session</span>
-                <span class={recordValue}>{fmtMoney(row().costApprox)}</span>
-                <span class={recordSub}>{row().sessionLabel}</span>
+                <span class={recordValue}>{fmtMoney(item().costApprox)}</span>
+                <span class={recordSub}>{item().label}</span>
               </button>
             )}
           </Show>
           <Show when={records().longest}>
-            {(row) => (
-              <button class={recordCard} onClick={() => props.onSelectSession(row())} type="button">
+            {(item) => (
+              <button
+                class={recordCard}
+                onClick={() => props.onSelectSession(item().row, campaignLabelContextForOverviewItem(item()))}
+                type="button"
+              >
                 <span class={recordLabel}>Longest session</span>
-                <span class={recordValue}>{fmtDuration(row().durationMs)}</span>
-                <span class={recordSub}>{row().sessionLabel}</span>
+                <span class={recordValue}>{fmtDuration(item().durationMs)}</span>
+                <span class={recordSub}>{item().label}</span>
               </button>
             )}
           </Show>
@@ -879,6 +888,7 @@ export const Overview = (props: OverviewProps) => {
         />
         <TokenAnatomy summary={summary()} />
         <Records
+          campaigns={props.campaigns}
           focused={props.focused?.view.records}
           onSelectDay={props.onSelectDay}
           onSelectSession={props.onSelectSession}

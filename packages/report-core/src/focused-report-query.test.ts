@@ -173,7 +173,7 @@ describe('focused report query contracts', () => {
     expect(result.summary.totalCost).toBe(9);
     expect(result.timeline?.grandSessions).toBe(rows.length);
     expect(result.view.heatmap?.weeks.length).toBeGreaterThan(0);
-    expect(result.view.records?.topCost?.name).toBe('four');
+    expect(result.view.records?.topCost?.row.name).toBe('four');
     expect(result.view.topSessions.map(({ label }) => label)).toEqual(['four', 'three', 'two']);
     expect(result.view.sessionShape?.totalPoints).toBe(3);
     expect(result.view.punchcard?.maxSessions).toBe(1);
@@ -329,6 +329,58 @@ describe('focused report query contracts', () => {
     });
     expect(filtered.summary.sessionCount).toBe(1);
     expect(filtered.timeline?.series.map(({ key }) => key)).toEqual(['machine-b']);
+  });
+
+  test('uses campaign aggregates for session records while preserving day records', () => {
+    const campaignRoot = {
+      ...row('record-campaign-root', 2, 5),
+      durationMs: 7_200_000,
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        machineLabel: 'Machine A',
+        rootSourceSessionId: 'record-campaign-root',
+        sourceSessionId: 'record-campaign-root',
+      },
+    };
+    const campaignChild = {
+      ...row('record-campaign-child', 3, 7),
+      durationMs: 15_000_000,
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        machineLabel: 'Machine A',
+        parentSourceSessionId: 'record-campaign-root',
+        rootSourceSessionId: 'record-campaign-root',
+        sourceSessionId: 'record-campaign-child',
+      },
+    };
+    const standalone = {
+      ...row('record-standalone', 4, 10),
+      durationMs: 3_600_000,
+    };
+
+    const result = projectFocusedOverview([campaignRoot, campaignChild, standalone], support, overviewRequest);
+
+    expect(result.view.records?.topCost).toMatchObject({
+      costApprox: 12,
+      kind: 'campaign',
+      label: 'record-campaign-root',
+      sessionCount: 2,
+    });
+    expect(result.view.records?.longest).toMatchObject({
+      durationMs: 7_200_000,
+      kind: 'campaign',
+      label: 'record-campaign-root',
+      row: { name: 'record-campaign-root' },
+    });
+    expect(result.view.records?.busiest).toEqual({
+      cost: 10,
+      date: '2026-07-04T00:00:00.000Z',
+      sessions: 1,
+    });
+    expect(result.view.records?.streak).toBe(3);
+    expect(result.view.records?.streakEnd).toBe('2026-07-04T00:00:00.000Z');
   });
 
   test('preserves known API-value subtotals and completeness for top sessions and campaigns', () => {

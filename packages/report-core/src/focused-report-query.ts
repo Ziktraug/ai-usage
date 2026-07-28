@@ -259,10 +259,10 @@ export interface FocusedSessionShape {
 
 export interface FocusedOverviewRecords {
   busiest: { cost: number; date: string; sessions: number } | null;
-  longest: SessionPresentationRow | null;
+  longest: FocusedOverviewSessionItem | null;
   streak: number;
   streakEnd: string | null;
-  topCost: SessionPresentationRow | null;
+  topCost: FocusedOverviewSessionItem | null;
 }
 
 export interface FocusedPunchcard {
@@ -1154,12 +1154,35 @@ const buildPunchcard = (rows: readonly SessionPresentationRow[]): FocusedPunchca
     }),
   );
 
+type FocusedRecordCandidate = FocusedOverviewSessionItem | SessionPresentationRow;
+
+const focusedOverviewRecordItem = (candidate: FocusedRecordCandidate | null): FocusedOverviewSessionItem | null => {
+  if (candidate === null) {
+    return null;
+  }
+  if ('kind' in candidate) {
+    return candidate;
+  }
+  return {
+    costApprox: candidate.costApprox,
+    costKnown: candidate.costKnown,
+    durationMs: candidate.durationMs,
+    harness: candidate.harness,
+    kind: 'session',
+    label: candidate.sessionLabel,
+    row: candidate,
+    sessionCount: 1,
+  };
+};
+
 export const buildFocusedRecordsFromAggregates = (
-  topCost: SessionPresentationRow | null,
-  longest: SessionPresentationRow | null,
+  topCostCandidate: FocusedRecordCandidate | null,
+  longestCandidate: FocusedRecordCandidate | null,
   visibleDays: readonly FocusedDayAggregate[],
   timelineDays: readonly FocusedDayAggregate[],
 ): FocusedOverviewRecords | null => {
+  const topCost = focusedOverviewRecordItem(topCostCandidate);
+  const longest = focusedOverviewRecordItem(longestCandidate);
   const days = visibleDays.map(({ cost, sessions, time }) => ({
     cost,
     date: startOfDay(new Date(time)).toISOString(),
@@ -1218,15 +1241,15 @@ const dayAggregatesForRows = (rows: readonly SessionPresentationRow[]): FocusedD
 const buildRecords = (
   rows: readonly SessionPresentationRow[],
   timelineRows: readonly SessionPresentationRow[],
+  sessionItems: readonly FocusedOverviewSessionItem[],
 ): FocusedOverviewRecords | null => {
-  const topCost = rows.reduce<SessionPresentationRow | null>(
-    (best, row) =>
-      row.costKnown && row.costApprox > 0 && (best === null || row.costApprox > best.costApprox) ? row : best,
+  const topCost = sessionItems.reduce<FocusedOverviewSessionItem | null>(
+    (best, item) => (item.costApprox > 0 && (best === null || item.costApprox > best.costApprox) ? item : best),
     null,
   );
-  const longest = rows.reduce<SessionPresentationRow | null>(
-    (best, row) =>
-      (row.durationMs ?? 0) > 0 && (best === null || (row.durationMs ?? 0) > (best.durationMs ?? 0)) ? row : best,
+  const longest = sessionItems.reduce<FocusedOverviewSessionItem | null>(
+    (best, item) =>
+      (item.durationMs ?? 0) > 0 && (best === null || (item.durationMs ?? 0) > (best.durationMs ?? 0)) ? item : best,
     null,
   );
   return buildFocusedRecordsFromAggregates(
@@ -1292,7 +1315,7 @@ export const projectFocusedOverviewFromPresentationRows = (
       heatmap: buildHeatmap(timelineRows),
       previousSummary: previousPeriodSummary(timelineRows, request.query, support.generatedAt),
       punchcard,
-      records: buildRecords(visible, timelineRows),
+      records: buildRecords(visible, timelineRows, sessionItems),
       sessionShape,
       topSessions: sessionItems
         .filter((item) => item.costApprox > 0)
@@ -1885,14 +1908,14 @@ const assertOverviewRecords = (value: unknown): void => {
     requirePositiveSafeInteger(busiest.sessions, 'overview records.busiest.sessions');
   }
   if (records.longest !== null) {
-    parseSessionPresentationRow(records.longest, 'overview records.longest');
+    assertOverviewSessionItem(records.longest, 'overview records.longest');
   }
   requireNonNegativeSafeInteger(records.streak, 'overview records.streak');
   if (records.streakEnd !== null) {
     requireIsoTimestamp(records.streakEnd, 'overview records.streakEnd');
   }
   if (records.topCost !== null) {
-    parseSessionPresentationRow(records.topCost, 'overview records.topCost');
+    assertOverviewSessionItem(records.topCost, 'overview records.topCost');
   }
 };
 

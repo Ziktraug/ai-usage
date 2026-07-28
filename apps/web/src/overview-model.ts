@@ -834,21 +834,26 @@ export const buildAdvancedAnalysisSummary = (
 
 export interface OverviewRecords {
   busiest: { cost: number; date: Date; sessions: number } | null;
-  longest: DashboardRow | null;
+  longest: OverviewSessionItem | null;
   streak: number;
   streakEnd: Date | null;
-  topCost: DashboardRow | null;
+  topCost: OverviewSessionItem | null;
 }
 
-export const buildOverviewRecords = (rows: DashboardRow[], timelineRows: DashboardRow[]): OverviewRecords | null => {
-  const priced = rows.filter((row) => row.costKnown && row.costApprox > 0);
-  const topCost = priced.reduce<DashboardRow | null>(
-    (best, row) => (best == null || row.costApprox > best.costApprox ? row : best),
+export const buildOverviewRecords = (
+  rows: DashboardRow[],
+  timelineRows: DashboardRow[],
+  campaigns: CampaignView[] = [],
+): OverviewRecords | null => {
+  const sessionItems = buildOverviewSessionItems(rows, campaigns);
+  const valued = sessionItems.filter((item) => item.costApprox > 0);
+  const topCost = valued.reduce<OverviewSessionItem | null>(
+    (best, item) => (best === null || item.costApprox > best.costApprox ? item : best),
     null,
   );
-  const longest = rows.reduce<DashboardRow | null>(
-    (best, row) =>
-      (row.durationMs ?? 0) > 0 && (best == null || (row.durationMs ?? 0) > (best.durationMs ?? 0)) ? row : best,
+  const longest = sessionItems.reduce<OverviewSessionItem | null>(
+    (best, item) =>
+      (item.durationMs ?? 0) > 0 && (best === null || (item.durationMs ?? 0) > (best.durationMs ?? 0)) ? item : best,
     null,
   );
 
