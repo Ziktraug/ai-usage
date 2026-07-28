@@ -404,22 +404,23 @@ const inspectAllSessions = async (
       rowIdToIndex.set(rowId, index);
     }
   };
-
-  let iteration = 0;
-  let stalledAt: number | undefined;
-  let stalledRowCount = 0;
-  while (indexToRowId.size < SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT) {
-    iteration += 1;
-    if (iteration > MAXIMUM_SCROLL_ITERATIONS) {
-      throw new Error(`Session traversal exceeded ${MAXIMUM_SCROLL_ITERATIONS} bounded scroll steps`);
-    }
-    const snapshot = await readSurfaceSnapshot(surface);
+  const assertStableReportQuery = (snapshot: SessionSurfaceSnapshot): void => {
     if (snapshot.requestFingerprint !== requestFingerprint) {
       throw new Error(`Session query fingerprint changed from ${requestFingerprint} to ${snapshot.requestFingerprint}`);
     }
     if (snapshot.reportRevision !== reportRevision) {
       throw new Error(`Session report revision changed from ${reportRevision} to ${snapshot.reportRevision}`);
     }
+  };
+
+  let iteration = 0;
+  while (indexToRowId.size < SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT) {
+    iteration += 1;
+    if (iteration > MAXIMUM_SCROLL_ITERATIONS) {
+      throw new Error(`Session traversal exceeded ${MAXIMUM_SCROLL_ITERATIONS} bounded scroll steps`);
+    }
+    const snapshot = await readSurfaceSnapshot(surface);
+    assertStableReportQuery(snapshot);
     recordSnapshot(snapshot);
     if (indexToRowId.size === SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT) {
       break;
@@ -436,21 +437,27 @@ const inspectAllSessions = async (
             snapshot.scrollTop + Math.max(1, Math.floor(snapshot.clientHeight * DESKTOP_SCROLL_STEP_RATIO)),
           );
     if (nextScrollTop > snapshot.scrollTop) {
-      stalledAt = undefined;
       await moveSurface(surface, nextScrollTop);
       await afterAnimationFrame(page);
       continue;
     }
 
-    if (stalledAt === undefined) {
-      stalledAt = performance.now();
-      stalledRowCount = indexToRowId.size;
-    } else if (performance.now() - stalledAt > MAXIMUM_STALLED_SCROLL_MS) {
-      throw new Error(
-        `Session scrolling stalled after reaching ${stalledRowCount} of ${SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT} rows`,
-      );
-    }
-    await afterAnimationFrame(page);
+    const previousHeight = snapshot.scrollHeight;
+    const previousRowCount = indexToRowId.size;
+    await expect
+      .poll(
+        async () => {
+          const nextSnapshot = await readSurfaceSnapshot(surface);
+          assertStableReportQuery(nextSnapshot);
+          recordSnapshot(nextSnapshot);
+          return nextSnapshot.scrollHeight > previousHeight || indexToRowId.size > previousRowCount;
+        },
+        {
+          message: `Session scrolling stalled after reaching ${previousRowCount} of ${SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT} rows`,
+          timeout: MAXIMUM_STALLED_SCROLL_MS,
+        },
+      )
+      .toBe(true);
   }
 
   const expectedIndices = Array.from({ length: SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT }, (_, index) => index);
