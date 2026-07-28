@@ -66,15 +66,64 @@ request unless the user explicitly asks.
 | 043 | Deepen the web process runtime seam | P2 | M | 038 | DONE |
 | 044 | Unify the exact-revision query lifecycle | P2 | M | 043 | DONE |
 | 045 | Valorize the Report Dimensions and Make the Work Unit Honest | P1 | XL | - | DONE |
-| 046 | Close the Verified Presentation Defects | P2 | M | - | DONE |
+| 046 | Close the Verified Presentation Defects | P2 | M | - | IN PROGRESS (rows 4, 11, 13, 24 reopened 2026-07-28: a fix was applied, the symptom was not resolved — see plan 061) |
 | 047 | Make Grouping Portable User Data, for Projects and Campaigns | P2 | L | 045 wave 4 | REJECTED (portable grouping is unnecessary and three STOPs refuted its merge domain) |
 | 048 | Restore Multi-Harness Visibility After the Origin Default | P0 | S | 045 | DONE |
 | 049 | Make Undeclared Origin a Gap, Not a Category | P1 | M | 048 | DONE |
 | 050 | Make the E2E Gate Deterministic | P0 | S | - | DONE |
 | 051 | Allow Local Campaign Label Overrides | P3 | M | 045 | TODO |
+| 052 | Align Overview Records With Campaign Aggregation | P1 | S | - | TODO |
+| 053 | Make Cursor and Project Line Measurements Honest | P1 | M | - | TODO |
+| 054 | Add Shareable Breakdown Sorting | P1 | S | - | TODO |
+| 055 | Make Focused Report Pending State Truthful | P1 | M | - | TODO |
+| 056 | Explain the Full-Range Comparison Boundary | P2 | S | - | TODO |
+| 057 | Make Punchcard Cells Filter the Report | P2 | M | 055 | TODO |
+| 058 | Add Report Sharing and Safe CSV Export | P3 | M | 053, 054 | TODO |
+| 059 | Compare Machine Contributions on Sync | P3 | M | - | TODO |
+| 060 | Add Local Search to Long Breakdown Lists | P3 | S | 054 | TODO |
+| 061 | Close the Four Reopened Presentation Regressions | P1 | S | 046 implementation | TODO |
+| 062 | Clarify Report Structure and Visual Encoding | P2 | L | 053, 054, 061 | TODO |
+| 063 | Normalize Report Signal and Language | P2 | L | 053, 062 | TODO |
+| 064 | Label Data Quality Without Dropping Data | P3 | M | 053, 059 | TODO |
+| 065 | Expose the Harness–Provider Joint Distribution | P3 | M | 054, 062 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
+
+## Presentation gate
+
+Adopted 2026-07-28, after plan 046 was found marked DONE with four rows still
+visibly broken. In each case a change *had* been made; the mechanism simply did not
+produce the intended reading, and each was verifiable by eye in seconds.
+
+**A presentation defect may not be marked DONE from a written diff alone.** Its
+plan must add a deterministic DOM, computed-geometry, render, or token assertion
+that fails on the symptom and passes on the fix. Existing settled Playwright
+snapshots are updated afterward as review artefacts; they are not a synchronous
+human approval gate.
+
+"Settled" is load-bearing. On a warm dev server the dashboard asserts a complete
+empty state — `0 / N sessions`, "hidden by filters", nine tiles at `$0.00` — at
++830 ms and resolves at +1 232 ms; on a cold module graph that false state persists
+5-10 s. A capture taken before the page settles is evidence of nothing. This is not
+hypothetical: it produced four false findings in the 2026-07-28 review, retained
+as measured retractions in the execution notes below.
+
+Plans 061-064 use deterministic synthetic fixtures in UTC and encode visual
+success as machine-checkable invariants. Test-verifiable trust changes remain
+separate in plans 052-056, so a snapshot cannot substitute for a domain assertion
+and a green unit test cannot close a visual symptom it does not assert.
+
+## AFK execution protocol (plans 051–065)
+
+Launch only `plans/AFK-RUNBOOK.md` for unattended execution. It owns the single
+branch, linear order, green-commit checkpoints, two-attempt correction limit,
+blocked recovery, full final gate, one final push, and one draft PR. Child-plan
+git workflow text is subordinate to the runbook for this program.
+
+The fixed branch is `feat/report-trust-and-interrogation`. Plans execute in order
+051, 052, 053, 054, 055, 056, 061, 057, 059, 060, 062, 063, 064, 065, 058. No
+plan is parallelized and nothing is pushed until every plan and final gate pass.
 
 ## Dependency notes
 
@@ -398,6 +447,14 @@ sequence overlapping files and rebase/re-read before execution.
   large: rejected until a concrete ordering defect or a second transition
   consumer proves a deeper package seam. Plan 043 narrows process capabilities
   without moving the state machine speculatively.
+- Build a generic mark-to-filter abstraction for Breakdown, Projects, timeline,
+  and Session Shape: rejected on 2026-07-28 because those interactions already
+  exist. `GroupPanel` and `ProjectSummary` already apply exact filters, timeline
+  entries call `onDimensionFilter`, and Session Shape already opens the drawer.
+  Plan 057 covers only the genuinely missing Punchcard predicate.
+- Build the Skills matrix and navigation: rejected as already implemented.
+  `SkillsWorkspace` renders `SkillsMatrix` at `/skills/matrix`, and
+  `SkillsContextPanel` exposes the `Exposure matrix` navigation action.
 - Create a semantic definition registry for every wide-event boundary now:
   rejected while each existing boundary still has one implementation owner.
   Plan 044 removes the current lifecycle duplication; add shared metadata only
@@ -511,3 +568,24 @@ provenance files, and their code anchors were re-checked line by line.
   data, merge-bundle field, `usage-store` state, or conflict semantics. Execute it
   separately after the current multidimensional-reporting PR; it is not a merge
   gate for plans 045, 046, 048, 049, or 050.
+- Plans 052-065 refine the 2026-07-28 review into seam-sized handoffs. Trust work
+  is split into campaign records (052), line-measurement authority and coverage
+  (053), breakdown ordering (054), pending state (055), and the full-range
+  comparison boundary (056). Each has its own type/test boundary and may execute
+  independently unless the status table says otherwise.
+- Direction work is limited to gaps confirmed in current source: Punchcard's
+  missing end-to-end time-cell predicate (057), safe breakdown export (058),
+  machine comparison (059), local breakdown search (060), and the actual
+  harness-provider joint distribution (065). Existing Breakdown/Project/timeline
+  filters, Session Shape drawer selection, and the Skills matrix are explicitly
+  rejected above so they are not rebuilt.
+- Presentation work is ordered as four reopened regressions first (061), then
+  structure and encoding (062), signal and language (063), and conservative data
+  quality labels (064). DOM, geometry, token, and render assertions are the
+  authority; settled snapshots remain review artefacts.
+- The review's measured retractions remain authoritative: the 30-day default does
+  not hide all data, bounded period deltas exist, the hero is above the fold, the
+  Report range card stays per plan 045 decision 8, and `By model` is not folded.
+- Plan 052 implements plan 045 decision 1 (every top-level row is a campaign).
+  Plan 059 completes decision 10's machine-fleet direction. Plan 063 removes the
+  stale Origin tint because plans 048/049 made the default neutral.
