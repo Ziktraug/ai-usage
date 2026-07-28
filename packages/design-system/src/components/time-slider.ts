@@ -11,6 +11,13 @@ export const timeRangePanel = css({
   boxShadow: 'card',
 });
 
+export const timeRangeAdjustments = css({
+  display: 'grid',
+  gap: '10px',
+  pt: '14px',
+  borderTop: '1px solid token(colors.line)',
+});
+
 export const timeRangeHeader = css({
   display: 'grid',
   gridTemplateColumns: { base: '1fr', md: 'max-content minmax(0, 1fr)' },
@@ -255,6 +262,10 @@ export const timelineHoverLayer = css({
   cursor: 'default',
   pointerEvents: 'auto',
   zIndex: 2,
+  _focus: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
   '&[data-zoomed="true"]': {
     cursor: 'grab',
   },
@@ -277,6 +288,33 @@ export const timeBucketSegment = css({
   w: '100%',
   minH: '1px',
   borderRadius: '1px',
+});
+
+export const timeSliderUnclassifiedBands = css({
+  position: 'absolute',
+  left: '8px',
+  right: '8px',
+  bottom: '8px',
+  h: '6px',
+  display: 'flex',
+  alignItems: 'stretch',
+  gap: '2px',
+  pointerEvents: 'none',
+  zIndex: 2,
+});
+
+export const timeBucketUnclassifiedBand = css({
+  flex: '1 1 0',
+  minW: '2px',
+  border: '1px solid token(colors.lineStrong)',
+  borderRadius: '1px',
+  bg: 'surfaceMuted',
+  backgroundImage: 'repeating-linear-gradient(135deg, transparent 0 2px, token(colors.lineStrong) 2px 3px)',
+});
+
+export const timeBucketUnclassifiedEmpty = css({
+  flex: '1 1 0',
+  minW: '2px',
 });
 
 export const timeSliderRange = css({

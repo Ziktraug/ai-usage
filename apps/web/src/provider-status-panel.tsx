@@ -253,11 +253,7 @@ const ProviderSummaryMetrics = (props: { class: string; view: ProviderStatusView
   </div>
 );
 
-const CompactProviderStatus = (props: {
-  historyAvailable?: boolean | undefined;
-  onViewHistory?: (() => void) | undefined;
-  view: ProviderStatusView;
-}) => (
+const CompactProviderStatus = (props: { view: ProviderStatusView }) => (
   <li class={compactProvider}>
     <div class={compactProviderTop}>
       <div class={compactProviderName}>
@@ -270,11 +266,6 @@ const CompactProviderStatus = (props: {
     </div>
     <ProviderSummaryMetrics class={compactProviderMetrics} view={props.view} />
     <Show when={props.view.provider.warnings?.[0]}>{(warning) => <div class={criticalNote}>{warning()}</div>}</Show>
-    <Show when={props.historyAvailable && props.view.provider.key.split(':')[0] === 'codex'}>
-      <button class={historyButton} onClick={() => props.onViewHistory?.()} type="button">
-        View history
-      </button>
-    </Show>
   </li>
 );
 
@@ -372,28 +363,14 @@ export const ProviderStatusPanel = (props: {
             when={summary().quotaProviders.length > 0}
           >
             <ul class={compactProviderList}>
-              <For each={summary().quotaProviders}>
-                {(view) => (
-                  <CompactProviderStatus
-                    historyAvailable={props.historyAvailable}
-                    onViewHistory={props.onViewHistory}
-                    view={view}
-                  />
-                )}
-              </For>
+              <For each={summary().quotaProviders}>{(view) => <CompactProviderStatus view={view} />}</For>
             </ul>
           </Show>
 
           <Show when={summary().criticalProvidersWithoutQuota.length > 0}>
             <ul aria-label="Critical providers" class={compactProviderList}>
               <For each={summary().criticalProvidersWithoutQuota}>
-                {(view) => (
-                  <CompactProviderStatus
-                    historyAvailable={props.historyAvailable}
-                    onViewHistory={props.onViewHistory}
-                    view={view}
-                  />
-                )}
+                {(view) => <CompactProviderStatus view={view} />}
               </For>
             </ul>
           </Show>
@@ -416,30 +393,21 @@ export const ProviderStatusPanel = (props: {
             </ul>
           </Show>
 
-          <Show
-            when={
-              summary().warningCount > 0 ||
-              summary().unsupportedProviderCount > 0 ||
-              summary().noWindowProviderCount > 0
-            }
-          >
-            <ul aria-label="Provider status issue counts" class={issueList}>
-              <Show when={summary().warningCount > 0}>
-                <li class={issuePill}>
-                  {summary().warningCount} provider warning{summary().warningCount === 1 ? '' : 's'}
-                </li>
-              </Show>
-              <Show when={summary().unsupportedProviderCount > 0}>
-                <li class={issuePill}>
-                  {summary().unsupportedProviderCount} unsupported provider
-                  {summary().unsupportedProviderCount === 1 ? '' : 's'}
-                </li>
-              </Show>
-              <Show when={summary().noWindowProviderCount > 0}>
-                <li class={issuePill}>{providerCountLabel(summary().noWindowProviderCount)} without quota windows</li>
-              </Show>
-            </ul>
-          </Show>
+          <ul aria-label={`Provider categories (${providerCountLabel(props.providers.length)})`} class={issueList}>
+            <li class={issuePill}>Quota windows: {providerCountLabel(summary().quotaProviders.length)}</li>
+            <li class={issuePill}>
+              Critical without quota windows: {providerCountLabel(summary().criticalProvidersWithoutQuota.length)}
+            </li>
+            <li class={issuePill}>
+              Attention without quota windows: {providerCountLabel(summary().attentionProvidersWithoutQuota.length)}
+            </li>
+            <li class={issuePill}>
+              Unsupported: {providerCountLabel(summary().unsupportedProvidersWithoutQuota.length)}
+            </li>
+            <li class={issuePill}>
+              No quota windows or issues: {providerCountLabel(summary().otherProvidersWithoutQuota.length)}
+            </li>
+          </ul>
         </div>
 
         <details class={detailDisclosure}>

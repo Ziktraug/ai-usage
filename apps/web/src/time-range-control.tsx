@@ -1,11 +1,11 @@
-import { SegmentedControl } from '@ai-usage/design-system';
+import { SegmentedControl, Tooltip } from '@ai-usage/design-system';
 import { cx } from '@ai-usage/design-system/css';
 import {
   accentFill,
   chartLegendList,
   chartLegendPct,
   chartLegendSwatch,
-  dateEditRow,
+  chartUnclassifiedSwatch,
   dimensionSwatch,
   migrationCrosshair,
   migrationLegendButton,
@@ -17,6 +17,7 @@ import {
   migrationReadoutSwatch,
   migrationReadoutTotal,
   migrationReadoutValue,
+  migrationTotal,
   migrationTrend,
   migrationTrendDown,
   migrationTrendUp,
@@ -26,13 +27,15 @@ import {
   timeAxisTick,
   timeBucket,
   timeBucketSegment,
+  timeBucketUnclassifiedBand,
+  timeBucketUnclassifiedEmpty,
   timeChartOptions,
   timeChartOptionsCurrent,
   timeChartOptionsSummary,
   timeChartOptionsTitle,
-  timeChartToolbar,
   timeChartZoomSummary,
   timelineHoverLayer,
+  timeRangeAdjustments,
   timeRangeArrow,
   timeRangeDuration,
   timeRangeHeader,
@@ -45,9 +48,11 @@ import {
   timeSliderBars,
   timeSliderBrushColumn,
   timeSliderBrushHeader,
+  timeSliderBrushRow,
   timeSliderBrushTrack,
   timeSliderControl,
   timeSliderDateChip,
+  timeSliderDateInputs,
   timeSliderDimLeft,
   timeSliderDimRight,
   timeSliderFrame,
@@ -57,21 +62,22 @@ import {
   timeSliderRoot,
   timeSliderThumb,
   timeSliderTrack,
+  timeSliderUnclassifiedBands,
 } from '@ai-usage/design-system/report';
 import type {
   FocusedTimelineData,
   FocusedTimelineDimension,
   FocusedTimelineGranularity,
 } from '@ai-usage/report-core/focused-report-query';
-import { createEffect, createMemo, createSignal, For, Show, untrack } from 'solid-js';
 import {
-  clampNumber,
-  dateFromIndex,
-  dateIndexFrom,
-  dateRangePresets,
-  type TimeRangePreset,
-  toDateInputValue,
-} from './date-range';
+  type ApiPriceMeasurement,
+  apiPriceMeasurement,
+  combineApiPriceMeasurements,
+  originProvenanceFor,
+} from '@ai-usage/report-core/provenance';
+import { createEffect, createMemo, createSignal, For, Show, untrack } from 'solid-js';
+import type { FieldFilterKey } from './dashboard-search';
+import { clampNumber, dateFromIndex, dateRangePresets, parseLocalDate, type TimeRangePreset } from './date-range';
 import type { DateRangeController } from './date-range-controller';
 import {
   buildTimelineData,
@@ -79,10 +85,19 @@ import {
   type TimelineBucket,
   type TimelineData,
   type TimelineDimension,
+  type TimelineGap,
   type TimelineSeries,
   type TimelineValue,
 } from './overview-model';
-import { type DashboardRow, fmtDateOnly, fmtMoney, fmtNum, fmtPct } from './shared';
+import {
+  aggregateApiPriceProvenance,
+  aggregateApiValuePresentation,
+  type DashboardRow,
+  fmtDateOnly,
+  fmtMoney,
+  fmtNum,
+  fmtPct,
+} from './shared';
 import {
   createTimeRangeControlState,
   type TimeRangeControlCommand,
@@ -101,15 +116,44 @@ type RangeDragPointerEvent = PointerEvent & { currentTarget: HTMLButtonElement }
 
 const monthTickFormatter = new Intl.DateTimeFormat('en', { month: 'short' });
 const monthYearFormatter = new Intl.DateTimeFormat('en', { month: 'short', year: 'numeric' });
+const monthDayFormatter = new Intl.DateTimeFormat('en', { day: 'numeric', month: 'short' });
 
 const dayCountLabel = (count: number) => `${fmtNum(count)} ${count === 1 ? 'day' : 'days'}`;
 
+export const humanDateInputValue = (value: string): string => {
+  const date = parseLocalDate(value);
+  return date ? fmtDateOnly(date) : value;
+};
+
+export const reportRangeSummary = (
+  from: Date,
+  to: Date,
+  elapsedDays: number,
+): { duration: string; fromLabel: string; toLabel: string } => ({
+  duration: dayCountLabel(Math.max(1, elapsedDays)),
+  fromLabel: from.getFullYear() === to.getFullYear() ? monthDayFormatter.format(from) : fmtDateOnly(from),
+  toLabel: fmtDateOnly(to),
+});
+
 const DIMENSION_ITEMS = [
+  { label: 'Campaign', value: 'campaign' },
   { label: 'Harness', value: 'harness' },
+  { label: 'Machine', value: 'machine' },
   { label: 'Model', value: 'model' },
+  { label: 'Origin', value: 'origin' },
   { label: 'Provider', value: 'provider' },
   { label: 'Project', value: 'project' },
 ] as const;
+
+const DIMENSION_LABELS = {
+  campaign: 'Campaign',
+  harness: 'Harness',
+  machine: 'Machine',
+  model: 'Model',
+  origin: 'Origin',
+  project: 'Project',
+  provider: 'Provider',
+} as const satisfies Record<TimelineDimension, string>;
 
 const GRANULARITY_ITEMS = [
   { label: 'Day', value: 'day' },
@@ -128,14 +172,26 @@ export const chartOptionsSummary = (
   granularity: MigrationGranularity,
   value: TimelineValue,
 ) => {
-  const dimensionLabel = DIMENSION_ITEMS.find((item) => item.value === dimension)?.label ?? 'Harness';
+  const dimensionLabel = DIMENSION_LABELS[dimension];
   const granularityLabel = GRANULARITY_ITEMS.find((item) => item.value === granularity)?.label ?? 'Day';
   const valueLabel = VALUE_ITEMS.find((item) => item.value === value)?.label ?? 'Estimated API value';
   return `${dimensionLabel} · ${granularityLabel} · ${valueLabel}`;
 };
 
-const toTimelineDimension = (value: string): TimelineDimension =>
-  value === 'model' || value === 'provider' || value === 'project' ? value : 'harness';
+const toTimelineDimension = (value: string): TimelineDimension => {
+  if (
+    value === 'campaign' ||
+    value === 'harness' ||
+    value === 'machine' ||
+    value === 'model' ||
+    value === 'origin' ||
+    value === 'project' ||
+    value === 'provider'
+  ) {
+    return value;
+  }
+  return 'harness';
+};
 
 const toGranularity = (value: string): MigrationGranularity => (value === 'week' || value === 'month' ? value : 'day');
 
@@ -154,31 +210,6 @@ const bucketLabel = (date: Date, granularity: MigrationGranularity) => {
     return `Week of ${fmtDateOnly(date)}`;
   }
   return fmtDateOnly(date);
-};
-
-// Month boundaries anchor the brush; the two endpoint labels only give the
-// extremes, which is not enough to aim a selection on a long domain.
-const monthTicksFor = (chart: { minDay: Date; maxDay: Date; maxIndex: number }) => {
-  if (chart.maxIndex < 28) {
-    return [];
-  }
-  const monthStep = chart.maxIndex > 430 ? 3 : 1;
-  const ticks: { pct: number; label: string }[] = [];
-  const cursor = new Date(chart.minDay.getFullYear(), chart.minDay.getMonth() + 1, 1);
-  while (cursor <= chart.maxDay) {
-    if (cursor.getMonth() % monthStep === 0) {
-      const pct = (dateIndexFrom(cursor, chart.minDay) / chart.maxIndex) * 100;
-      if (pct >= 2 && pct <= 98) {
-        const label =
-          cursor.getMonth() === 0
-            ? `${monthTickFormatter.format(cursor)} ’${String(cursor.getFullYear()).slice(-2)}`
-            : monthTickFormatter.format(cursor);
-        ticks.push({ pct, label });
-      }
-    }
-    cursor.setMonth(cursor.getMonth() + 1);
-  }
-  return ticks;
 };
 
 const visibleMonthTicksFor = (buckets: TimelineBucket[], range: TimeRangeIndexRange) => {
@@ -284,28 +315,79 @@ export const buildVisibleTimelineBars = (
       }
     }
     segments.sort((left, right) => left.rank - right.rank);
+    let unclassifiedValue = 0;
+    if (bucket.unclassified) {
+      unclassifiedValue = useSessions ? bucket.unclassified.sessions : bucket.unclassified.total;
+    }
     return {
       bucket,
       segments,
-      total: useSessions ? bucket.sessions : bucket.total,
+      total: (useSessions ? bucket.sessions : bucket.total) - unclassifiedValue,
     };
   });
 };
 
+const mergeTimelineGaps = (current: TimelineGap | null, gap: TimelineGap | null): TimelineGap | null => {
+  if (!gap) {
+    return current;
+  }
+  const causes = current ? current.causes.map((cause) => ({ ...cause })) : [];
+  for (const cause of gap.causes) {
+    const existing = causes.find((candidate) => candidate.kind === cause.kind);
+    if (existing) {
+      existing.sessions += cause.sessions;
+    } else {
+      causes.push({ ...cause });
+    }
+  }
+  return {
+    causes,
+    priceMeasurement: combineApiPriceMeasurements([
+      current?.priceMeasurement ?? apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
+      gap.priceMeasurement,
+    ]),
+    sessions: (current?.sessions ?? 0) + gap.sessions,
+    total: (current?.total ?? 0) + gap.total,
+  };
+};
+
+export const originGapDescription = (gap: TimelineGap): string => {
+  const breakdown = gap.causes
+    .map((cause) => {
+      const provenance = originProvenanceFor(cause.kind);
+      return `${provenance.label}: ${fmtNum(cause.sessions)}${cause.sessions === 1 ? ' session' : ' sessions'}`;
+    })
+    .join(' · ');
+  const total = `Not classified: ${fmtNum(gap.sessions)}${gap.sessions === 1 ? ' session' : ' sessions'}`;
+  return breakdown ? `${total} · ${breakdown}` : total;
+};
+
 const timelineSummaryFor = (chart: TimelineData, range: TimeRangeIndexRange, useSessions: boolean) => {
+  const measurementsByKey = new Map<string, ApiPriceMeasurement>();
   const totalsByKey = new Map<string, number>();
   let total = 0;
+  let priceMeasurement = apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 });
+  let unclassified: TimelineGap | null = null;
   for (const bucket of chart.buckets.slice(range.from, range.to + 1)) {
     const bucketTotal = useSessions ? bucket.sessions : bucket.total;
     total += bucketTotal;
+    priceMeasurement = combineApiPriceMeasurements([priceMeasurement, bucket.priceMeasurement]);
+    unclassified = mergeTimelineGaps(unclassified, bucket.unclassified);
     for (const [key, entry] of bucket.byKey) {
       const value = useSessions ? entry.sessions : entry.cost;
       totalsByKey.set(key, (totalsByKey.get(key) ?? 0) + value);
+      measurementsByKey.set(
+        key,
+        combineApiPriceMeasurements([
+          measurementsByKey.get(key) ?? apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
+          entry.priceMeasurement,
+        ]),
+      );
     }
   }
   const first = chart.buckets[range.from]?.date ?? chart.first;
   const last = chart.buckets[range.to]?.date ?? chart.last;
-  return { first, last, total, totalsByKey };
+  return { first, last, measurementsByKey, priceMeasurement, total, totalsByKey, unclassified };
 };
 
 const focusedTimelineData = (timeline: FocusedTimelineData): TimelineData => ({
@@ -320,8 +402,10 @@ const focusedTimelineData = (timeline: FocusedTimelineData): TimelineData => ({
 });
 
 export const TimeRangeControl = (props: {
-  activeFieldFilters: Partial<Record<Exclude<TimelineDimension, 'harness'>, string>>;
+  activeFieldFilters: Partial<Record<FieldFilterKey, string>>;
   activeHarness: string[];
+  activeMachine: string[];
+  campaignRows: DashboardRow[];
   dateRange: DateRangeController;
   focusedTimeline: FocusedTimelineData | null | undefined;
   focusedTimelineError: string | null;
@@ -332,10 +416,13 @@ export const TimeRangeControl = (props: {
     dimension: FocusedTimelineDimension;
     granularity: FocusedTimelineGranularity;
   }) => void;
+  presentMachineLabel: (value: string) => string;
   rows: DashboardRow[];
 }) => {
   const initialDomain = props.dateRange.domain();
   const [chartDomain, setChartDomain] = createSignal(initialDomain);
+  const [editingDateInput, setEditingDateInput] = createSignal<'from' | 'to' | null>(null);
+  const [dateInputDrafts, setDateInputDrafts] = createSignal(props.dateRange.inputValues());
   const [controlState, setControlState] = createSignal(
     createTimeRangeControlState({
       context: {
@@ -362,6 +449,7 @@ export const TimeRangeControl = (props: {
     let timeline: TimelineData | null;
     if (focused === undefined) {
       timeline = buildTimelineData(props.rows, {
+        campaignRows: props.campaignRows,
         dimension: dimension(),
         domain,
         granularity: granularity(),
@@ -372,8 +460,16 @@ export const TimeRangeControl = (props: {
     if (!timeline) {
       return null;
     }
+    const series =
+      timeline.dimension === 'machine'
+        ? timeline.series.map((timelineSeries) => ({
+            ...timelineSeries,
+            label: timelineSeries.key ? props.presentMachineLabel(timelineSeries.key) : timelineSeries.label,
+          }))
+        : timeline.series;
     return {
       ...timeline,
+      series,
       minDay: domain.minDay,
       maxDay: domain.maxDay,
       maxIndex: domain.maxIndex,
@@ -382,6 +478,15 @@ export const TimeRangeControl = (props: {
 
   createEffect(() => {
     props.onFocusedTimelineRequest?.({ dimension: dimension(), granularity: granularity() });
+  });
+
+  createEffect(() => {
+    const values = props.dateRange.inputValues();
+    const editing = editingDateInput();
+    setDateInputDrafts((current) => ({
+      from: editing === 'from' ? current.from : values.from,
+      to: editing === 'to' ? current.to : values.to,
+    }));
   });
 
   const controlContext = (): TimeRangeControlContext => ({
@@ -490,6 +595,18 @@ export const TimeRangeControl = (props: {
   const bucketValue = (bucket: TimelineBucket, chart: NonNullable<ReturnType<typeof data>>) =>
     valueMode() === 'sessions' || usesSessionShare(chart) ? bucket.sessions : bucket.total;
 
+  const unclassifiedValue = (bucket: TimelineBucket, chart: NonNullable<ReturnType<typeof data>>) => {
+    if (!bucket.unclassified) {
+      return 0;
+    }
+    return valueMode() === 'sessions' || usesSessionShare(chart)
+      ? bucket.unclassified.sessions
+      : bucket.unclassified.total;
+  };
+
+  const classifiedBucketValue = (bucket: TimelineBucket, chart: NonNullable<ReturnType<typeof data>>) =>
+    Math.max(0, bucketValue(bucket, chart) - unclassifiedValue(bucket, chart));
+
   const entryValue = (
     entry: { cost: number; sessions: number } | undefined,
     chart: NonNullable<ReturnType<typeof data>>,
@@ -498,8 +615,12 @@ export const TimeRangeControl = (props: {
   const maxBucketValue = (chart: NonNullable<ReturnType<typeof data>>) =>
     valueMode() === 'sessions' || usesSessionShare(chart) ? chart.maxBucketSessions : chart.maxBucketTotal;
 
-  const formatValue = (value: number, useSessions = false) =>
-    valueMode() === 'sessions' || useSessions ? `${fmtNum(value)} sessions` : fmtMoney(value);
+  const formatValue = (value: number, useSessions = false, priceMeasurement?: ApiPriceMeasurement) => {
+    if (valueMode() === 'sessions' || useSessions) {
+      return `${fmtNum(value)} sessions`;
+    }
+    return priceMeasurement ? aggregateApiValuePresentation(priceMeasurement).label : fmtMoney(value);
+  };
 
   const visibleBars = createMemo(() => {
     const chart = data();
@@ -538,7 +659,7 @@ export const TimeRangeControl = (props: {
   const visibleBucketLayout = createMemo(() => timelineBucketLayout(visibleBucketCount()));
 
   const barHeight = (bucket: TimelineBucket, chart: NonNullable<ReturnType<typeof data>>) => {
-    const total = bucketValue(bucket, chart);
+    const total = classifiedBucketValue(bucket, chart);
     if (valueMode() === 'share') {
       return total > 0 ? 100 : 0;
     }
@@ -576,19 +697,34 @@ export const TimeRangeControl = (props: {
     const previous = index > 0 ? chart.buckets[index - 1] : null;
     const range = visibleBucketRange();
     const visibleCount = visibleBucketCount();
-    const rows: { delta: number | null; key: string; label: string; rank: number; value: number }[] = [];
+    const rows: {
+      delta: number | null;
+      key: string;
+      label: string;
+      priceMeasurement: ApiPriceMeasurement;
+      rank: number;
+      value: number;
+    }[] = [];
     for (let rank = 0; rank < chart.series.length; rank++) {
       const series = chart.series[rank];
       if (!series) {
         continue;
       }
-      const value = entryValue(bucket.byKey.get(series.key), chart);
+      const entry = bucket.byKey.get(series.key);
+      const value = entryValue(entry, chart);
       if (value <= 0) {
         continue;
       }
       const prior = previous ? entryValue(previous.byKey.get(series.key), chart) : 0;
       const delta = prior > 1e-9 ? ((value - prior) / prior) * 100 : null;
-      rows.push({ delta, key: series.key, label: series.label, rank, value });
+      rows.push({
+        delta,
+        key: series.key,
+        label: series.label,
+        priceMeasurement: entry?.priceMeasurement ?? series.priceMeasurement,
+        rank,
+        value,
+      });
     }
     rows.sort((a, b) => b.value - a.value);
     const visible = rows.slice(0, READOUT_LIMIT);
@@ -598,40 +734,13 @@ export const TimeRangeControl = (props: {
       hidden: rows.length - visible.length,
       label: bucketLabel(bucket.date, renderedGranularity()),
       pct: ((index - range.from + 0.5) / visibleCount) * 100,
+      priceMeasurement: bucket.priceMeasurement,
       rows: visible,
       total: bucketValue(bucket, chart),
+      unclassified: bucket.unclassified,
       useSessions: valueMode() === 'sessions' || usesSessionShare(chart),
     };
   });
-
-  const globalReadout = createMemo(() => {
-    const chart = data();
-    const summary = reportSummary();
-    if (!(chart && summary)) {
-      return null;
-    }
-    const useSessions = valueMode() === 'sessions' || usesSessionShare(chart);
-    const rows = chart.series
-      .map((series, rank) => ({
-        delta: null,
-        key: series.key,
-        label: series.label,
-        rank,
-        value: summary.totalsByKey.get(series.key) ?? 0,
-      }))
-      .filter((row) => row.value > 0);
-    const visible = rows.slice(0, READOUT_LIMIT);
-    return {
-      hasPrevious: false,
-      hidden: rows.length - visible.length,
-      label: `${fmtDateOnly(summary.first)} – ${fmtDateOnly(summary.last)}`,
-      rows: visible,
-      total: summary.total,
-      useSessions,
-    };
-  });
-
-  const activeReadout = createMemo(() => readout() ?? globalReadout());
 
   const updateHover = (event: MouseEvent & { currentTarget: HTMLElement }) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -649,7 +758,7 @@ export const TimeRangeControl = (props: {
       dispatchControl({ type: 'hoverChanged', bucketIndex: index, key: null });
       return;
     }
-    const total = bucketValue(bucket, chart);
+    const total = classifiedBucketValue(bucket, chart);
     const heightFraction = barHeight(bucket, chart) / 100;
     const fromBottom = (rect.bottom - event.clientY) / rect.height;
     if (total <= 0 || heightFraction <= 0 || fromBottom > heightFraction) {
@@ -720,16 +829,45 @@ export const TimeRangeControl = (props: {
 
   const isLegendActive = (key: string) => {
     const currentDimension = renderedDimension();
-    if (currentDimension === 'harness') {
-      return props.activeHarness.includes(key);
+    // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
+    switch (currentDimension) {
+      case 'campaign':
+      case 'origin':
+        return false;
+      case 'harness':
+        return props.activeHarness.includes(key);
+      case 'machine':
+        return props.activeMachine.includes(key);
+      case 'model':
+      case 'project':
+      case 'provider':
+        return props.activeFieldFilters[currentDimension] === key;
     }
-    return props.activeFieldFilters[currentDimension] === key;
+  };
+
+  const isLegendFilterable = (key: string): boolean => {
+    // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
+    switch (renderedDimension()) {
+      case 'campaign':
+      case 'origin':
+        return false;
+      case 'machine':
+        return key.length > 0;
+      case 'harness':
+      case 'model':
+      case 'project':
+      case 'provider':
+        return true;
+    }
   };
 
   const legendTitle = (series: TimelineSeries): string => {
     const aggregateCount = series.memberKeys?.length ?? 0;
     if (aggregateCount > 0) {
       return `Aggregates ${aggregateCount} smaller series`;
+    }
+    if (!isLegendFilterable(series.key)) {
+      return series.label;
     }
     return isLegendActive(series.key) ? `Clear or replace ${series.label} filter` : `Filter by ${series.label}`;
   };
@@ -754,6 +892,39 @@ export const TimeRangeControl = (props: {
     const selectionIndexes = props.dateRange.selectedIndexes();
     dispatchControl({ type: 'selectionSynchronized', selectionIndexes, source: 'input' });
   };
+
+  const beginDateInputEdit = (field: 'from' | 'to') => {
+    const value = humanDateInputValue(props.dateRange.inputValues()[field]);
+    setDateInputDrafts((current) => ({ ...current, [field]: value }));
+    setEditingDateInput(field);
+  };
+
+  const applyDateInputDraft = (field: 'from' | 'to', value: string) => {
+    setDateInputDrafts((current) => ({ ...current, [field]: value }));
+    if (!parseLocalDate(value)) {
+      return;
+    }
+    if (field === 'from') {
+      applyFromInput(value);
+    } else {
+      applyToInput(value);
+    }
+  };
+
+  const finishDateInputEdit = (field: 'from' | 'to') => {
+    const value = dateInputDrafts()[field];
+    if (parseLocalDate(value) && props.dateRange.inputValues()[field] !== value) {
+      if (field === 'from') {
+        applyFromInput(value);
+      } else {
+        applyToInput(value);
+      }
+    }
+    setEditingDateInput(null);
+  };
+
+  const dateInputValue = (field: 'from' | 'to') =>
+    editingDateInput() === field ? dateInputDrafts()[field] : humanDateInputValue(props.dateRange.inputValues()[field]);
 
   const startSelectionDrag = (event: RangeDragPointerEvent) => {
     const trackRect = event.currentTarget.parentElement?.getBoundingClientRect();
@@ -846,18 +1017,7 @@ export const TimeRangeControl = (props: {
     const [from, to] = controlState().selectionIndexes;
     const startDate = dateFromIndex(chart.minDay, from);
     const endDate = dateFromIndex(chart.minDay, to);
-    const mode = props.dateRange.mode();
-    let duration = dayCountLabel(to - from + 1);
-    if (mode === '7d') {
-      duration = 'Rolling 7-day window';
-    } else if (mode === '30d') {
-      duration = 'Rolling 30-day window';
-    }
-    return {
-      duration,
-      fromLabel: fmtDateOnly(startDate),
-      toLabel: fmtDateOnly(endDate),
-    };
+    return reportRangeSummary(startDate, endDate, to - from);
   };
 
   return (
@@ -874,33 +1034,13 @@ export const TimeRangeControl = (props: {
         when={chartDomain()}
       >
         {(domain) => (
-          <div class={timeRangeHeader}>
-            <div>
-              <div class={timeRangeTitle}>Report range</div>
-              <div class={timeRangeSummary}>
-                <span class={timeRangeSummaryDates}>
-                  <span>{selectedRangeDetails(domain()).fromLabel}</span>
-                  <span class={timeRangeArrow}>→</span>
-                  <span>{selectedRangeDetails(domain()).toLabel}</span>
-                </span>
-                <span class={timeRangeDuration}>{selectedRangeDetails(domain()).duration}</span>
-              </div>
-            </div>
-            <div class={timeSliderQuickRanges}>
-              <For each={dateRangePresets}>
-                {(preset) => (
-                  <button
-                    aria-pressed={props.dateRange.mode() === preset.mode}
-                    class={presetButton}
-                    data-active={props.dateRange.mode() === preset.mode}
-                    onClick={() => applyPreset(preset.mode)}
-                    title={`Set report range to ${preset.label}`}
-                    type="button"
-                  >
-                    {preset.label}
-                  </button>
-                )}
-              </For>
+          <div class={timeRangeHeader} data-report-range-part="summary">
+            <div class={timeRangeSummary}>
+              <span class={timeRangeSummaryDates}>
+                {selectedRangeDetails(domain()).fromLabel} <span class={timeRangeArrow}>→</span>{' '}
+                {selectedRangeDetails(domain()).toLabel}
+              </span>{' '}
+              <span class={timeRangeDuration}>· {selectedRangeDetails(domain()).duration}</span>
             </div>
           </div>
         )}
@@ -916,38 +1056,425 @@ export const TimeRangeControl = (props: {
       >
         {(chart) => (
           <>
-            <div class={dateEditRow}>
-              <label style={{ display: 'grid', gap: '4px' }}>
-                <span class={timeChartZoomSummary}>From</span>
-                <input
-                  aria-label="Start date"
-                  class={timeSliderDateChip}
-                  max={toDateInputValue(chart().maxDay)}
-                  min={toDateInputValue(chart().minDay)}
-                  onInput={(event) => applyFromInput(event.currentTarget.value)}
-                  type="date"
-                  value={props.dateRange.inputValues().from}
-                />
-              </label>
-              <label style={{ display: 'grid', gap: '4px' }}>
-                <span class={timeChartZoomSummary}>To</span>
-                <input
-                  aria-label="End date"
-                  class={timeSliderDateChip}
-                  max={toDateInputValue(chart().maxDay)}
-                  min={toDateInputValue(chart().minDay)}
-                  onInput={(event) => applyToInput(event.currentTarget.value)}
-                  type="date"
-                  value={props.dateRange.inputValues().to}
-                />
-              </label>
-            </div>
             <Show when={!props.focusedTimelineLoading && props.focusedTimelineError}>
               <div aria-live="polite" class={timeRangeMeta}>
                 Unable to update activity: {props.focusedTimelineError}
               </div>
             </Show>
-            <details aria-label="Chart options" class={timeChartOptions}>
+
+            <Show when={reportSummary()}>
+              {(summary) => {
+                const useSessions = valueMode() === 'sessions' || usesSessionShare(chart());
+                return (
+                  <div class={chartLegendList} data-report-range-part="total-legend">
+                    <span class={migrationTotal} data-report-range-total>
+                      {formatValue(summary().total, useSessions, summary().priceMeasurement)}
+                    </span>
+                    <Show when={!useSessions && aggregateApiPriceProvenance(summary().priceMeasurement)}>
+                      {(fact) => (
+                        <Tooltip content={fact().description}>
+                          <span class={migrationReadoutHint}>{fact().label}</span>
+                        </Tooltip>
+                      )}
+                    </Show>
+                    <For
+                      each={chart().series.filter(
+                        (entry) => (summary().totalsByKey.get(entry.key) ?? 0) > 0 || isLegendActive(entry.key),
+                      )}
+                    >
+                      {(entry) => {
+                        const marker = swatch(entry.key);
+                        const entryValueTotal = summary().totalsByKey.get(entry.key) ?? 0;
+                        const aggregateCount = entry.memberKeys?.length ?? 0;
+                        const isAggregate = aggregateCount > 0;
+                        const filterable = isLegendFilterable(entry.key);
+                        return (
+                          <button
+                            aria-label={isAggregate ? `Other: ${aggregateCount} smaller series` : undefined}
+                            aria-pressed={isLegendActive(entry.key)}
+                            class={cx(
+                              migrationLegendButton,
+                              isLegendActive(entry.key) ? migrationReadoutItemActive : '',
+                            )}
+                            data-active={isLegendActive(entry.key)}
+                            disabled={isAggregate || !filterable}
+                            onClick={() => {
+                              if (!(isAggregate || !filterable)) {
+                                props.onDimensionFilter(renderedDimension(), entry.key);
+                              }
+                            }}
+                            onMouseEnter={() =>
+                              dispatchControl({ type: 'hoverChanged', bucketIndex: hoveredBucket(), key: entry.key })
+                            }
+                            onMouseLeave={() =>
+                              dispatchControl({ type: 'hoverChanged', bucketIndex: hoveredBucket(), key: null })
+                            }
+                            title={legendTitle(entry)}
+                            type="button"
+                          >
+                            <span class={cx(chartLegendSwatch, marker.className)} style={marker.style} />
+                            {entry.label}
+                            <span class={chartLegendPct}>
+                              {fmtPct((entryValueTotal / Math.max(1e-9, summary().total)) * 100)}
+                            </span>
+                          </button>
+                        );
+                      }}
+                    </For>
+                    <Show when={summary().unclassified}>
+                      {(gap) => (
+                        <Tooltip content={originGapDescription(gap())}>
+                          <span
+                            class={migrationReadoutItem}
+                            data-origin-unclassified-legend
+                            title={originGapDescription(gap())}
+                          >
+                            <span class={chartUnclassifiedSwatch} />
+                            Not classified
+                            <span class={chartLegendPct}>
+                              {fmtPct(
+                                ((useSessions ? gap().sessions : gap().total) / Math.max(1e-9, summary().total)) * 100,
+                              )}
+                            </span>
+                          </span>
+                        </Tooltip>
+                      )}
+                    </Show>
+                  </div>
+                );
+              }}
+            </Show>
+
+            <div class={timeSliderRoot} data-report-range-part="chart">
+              <div class={timeSliderFrame}>
+                <div class={timeSliderControl}>
+                  <div class={timeSliderTrack} style={rangeVars(chart())}>
+                    <For each={visibleMonthTicks()}>
+                      {(tick) => (
+                        <div aria-hidden="true" class={monthGridline} style={{ left: timelinePlotLeft(tick.pct) }} />
+                      )}
+                    </For>
+                    <div
+                      aria-hidden="true"
+                      class={timeSliderBars}
+                      data-origin-series-stack={chart().dimension === 'origin' ? '' : undefined}
+                      style={{
+                        bottom: chart().unclassified ? '16px' : undefined,
+                        gap: visibleBucketLayout().bucketGap,
+                      }}
+                    >
+                      <For each={visibleBars()}>
+                        {(bar) => (
+                          <div
+                            class={timeBucket}
+                            style={{
+                              height: `${barHeight(bar.bucket, chart())}%`,
+                              'min-width': visibleBucketLayout().bucketMinWidth,
+                            }}
+                          >
+                            <For each={renderedSegments(bar.segments)}>
+                              {(segment) => {
+                                const marker = swatch(segment.key);
+                                return (
+                                  <div
+                                    class={cx(timeBucketSegment, marker.className ?? accentFill)}
+                                    style={{
+                                      height: `${Math.max(1, segmentHeight(segment.value, bar.total))}%`,
+                                      opacity: segmentOpacity(segment.key),
+                                      ...marker.style,
+                                    }}
+                                  />
+                                );
+                              }}
+                            </For>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                    <Show when={chart().unclassified}>
+                      <div
+                        aria-hidden="true"
+                        class={timeSliderUnclassifiedBands}
+                        data-origin-unclassified-band
+                        style={{ gap: visibleBucketLayout().bucketGap }}
+                      >
+                        <For each={visibleBars()}>
+                          {(bar) => (
+                            <div
+                              class={bar.bucket.unclassified ? timeBucketUnclassifiedBand : timeBucketUnclassifiedEmpty}
+                              data-origin-gap-sessions={bar.bucket.unclassified?.sessions}
+                              style={{ 'min-width': visibleBucketLayout().bucketMinWidth }}
+                            />
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+                    <button
+                      aria-label="Inspect activity timeline. Use arrow keys to inspect days."
+                      class={timelineHoverLayer}
+                      onClick={updateHover}
+                      onKeyDown={inspectTimelineWithKeyboard}
+                      onMouseLeave={clearHover}
+                      onMouseMove={updateHover}
+                      title="Inspect activity in the selected report range"
+                      type="button"
+                    />
+                    <Show when={readout()}>
+                      {(tip) => (
+                        <div
+                          aria-hidden="true"
+                          class={migrationCrosshair}
+                          style={{ left: timelinePlotLeft(tip().pct) }}
+                        />
+                      )}
+                    </Show>
+                  </div>
+                </div>
+                <div class={timeAxis} data-report-range-part="chart-axis">
+                  <span>{fmtDateOnly(chart().buckets[visibleBucketRange().from]?.date ?? chart().first)}</span>
+                  <For each={visibleMonthTicks()}>
+                    {(tick) => (
+                      <span class={timeAxisTick} style={{ left: `${tick.pct}%` }}>
+                        {tick.label}
+                      </span>
+                    )}
+                  </For>
+                  <span>{fmtDateOnly(chart().buckets[visibleBucketRange().to]?.date ?? chart().last)}</span>
+                </div>
+                <Show when={readout()}>
+                  {(tip) => (
+                    <div aria-live="polite" class={migrationReadout} role="status">
+                      <span class={migrationReadoutDate}>{tip().label}</span>
+                      <span class={migrationReadoutTotal}>
+                        {formatValue(tip().total, tip().useSessions, tip().priceMeasurement)}
+                      </span>
+                      <Show when={!tip().useSessions && aggregateApiPriceProvenance(tip().priceMeasurement)}>
+                        {(fact) => (
+                          <Tooltip content={fact().description}>
+                            <span class={migrationReadoutHint}>{fact().label}</span>
+                          </Tooltip>
+                        )}
+                      </Show>
+                      <For each={tip().rows}>
+                        {(row) => {
+                          const marker = swatch(row.key);
+                          return (
+                            <span
+                              class={cx(
+                                migrationReadoutItem,
+                                row.key === hoveredKey() ? migrationReadoutItemActive : undefined,
+                              )}
+                            >
+                              <span class={cx(migrationReadoutSwatch, marker.className)} style={marker.style} />
+                              {row.label}
+                              <span class={migrationReadoutValue}>
+                                {formatValue(row.value, tip().useSessions, row.priceMeasurement)} ·{' '}
+                                {fmtPct((row.value / Math.max(1e-9, tip().total)) * 100)}
+                              </span>
+                              <Show
+                                when={
+                                  tip().hasPrevious &&
+                                  row.delta !== null &&
+                                  Math.abs(row.delta) >= 1 &&
+                                  Math.abs(row.delta) < MAX_DELTA_PCT
+                                }
+                              >
+                                <span
+                                  class={cx(
+                                    migrationTrend,
+                                    (row.delta ?? 0) >= 0 ? migrationTrendUp : migrationTrendDown,
+                                  )}
+                                >
+                                  {(row.delta ?? 0) >= 0 ? '▲' : '▼'} {fmtPct(Math.abs(row.delta ?? 0))}
+                                </span>
+                              </Show>
+                            </span>
+                          );
+                        }}
+                      </For>
+                      <Show when={tip().unclassified}>
+                        {(gap) => (
+                          <Tooltip content={originGapDescription(gap())}>
+                            <span
+                              class={migrationReadoutItem}
+                              data-origin-unclassified-readout
+                              title={originGapDescription(gap())}
+                            >
+                              <span class={chartUnclassifiedSwatch} />
+                              Not classified
+                              <span class={migrationReadoutValue}>
+                                {formatValue(
+                                  tip().useSessions ? gap().sessions : gap().total,
+                                  tip().useSessions,
+                                  gap().priceMeasurement,
+                                )}
+                              </span>
+                            </span>
+                          </Tooltip>
+                        )}
+                      </Show>
+                      <Show when={tip().hidden > 0}>
+                        <span class={migrationReadoutHint}>+{tip().hidden} more</span>
+                      </Show>
+                    </div>
+                  )}
+                </Show>
+              </div>
+            </div>
+
+            <div class={timeRangeAdjustments} data-report-range-part="adjustments">
+              <div class={timeSliderBrushRow}>
+                <div class={timeSliderQuickRanges}>
+                  <For each={dateRangePresets}>
+                    {(preset) => (
+                      <button
+                        aria-pressed={props.dateRange.mode() === preset.mode}
+                        class={presetButton}
+                        data-active={props.dateRange.mode() === preset.mode}
+                        onClick={() => applyPreset(preset.mode)}
+                        title={`Set report range to ${preset.label}`}
+                        type="button"
+                      >
+                        {preset.label}
+                      </button>
+                    )}
+                  </For>
+                </div>
+                <div class={timeSliderDateInputs}>
+                  <label style={{ display: 'grid', gap: '4px' }}>
+                    <span class={timeChartZoomSummary}>From</span>
+                    <input
+                      aria-label="Start date"
+                      autocomplete="off"
+                      class={timeSliderDateChip}
+                      inputmode="numeric"
+                      onBlur={() => finishDateInputEdit('from')}
+                      onFocus={(event) => {
+                        beginDateInputEdit('from');
+                        event.currentTarget.select();
+                      }}
+                      onInput={(event) => applyDateInputDraft('from', event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          finishDateInputEdit('from');
+                          event.currentTarget.blur();
+                        } else if (event.key === 'Escape') {
+                          event.preventDefault();
+                          setDateInputDrafts((current) => ({
+                            ...current,
+                            from: props.dateRange.inputValues().from,
+                          }));
+                          setEditingDateInput(null);
+                          event.currentTarget.blur();
+                        }
+                      }}
+                      placeholder="YYYY-MM-DD"
+                      title="Edit as YYYY-MM-DD"
+                      type="text"
+                      value={dateInputValue('from')}
+                    />
+                  </label>
+                  <label style={{ display: 'grid', gap: '4px' }}>
+                    <span class={timeChartZoomSummary}>To</span>
+                    <input
+                      aria-label="End date"
+                      autocomplete="off"
+                      class={timeSliderDateChip}
+                      inputmode="numeric"
+                      onBlur={() => finishDateInputEdit('to')}
+                      onFocus={(event) => {
+                        beginDateInputEdit('to');
+                        event.currentTarget.select();
+                      }}
+                      onInput={(event) => applyDateInputDraft('to', event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          finishDateInputEdit('to');
+                          event.currentTarget.blur();
+                        } else if (event.key === 'Escape') {
+                          event.preventDefault();
+                          setDateInputDrafts((current) => ({
+                            ...current,
+                            to: props.dateRange.inputValues().to,
+                          }));
+                          setEditingDateInput(null);
+                          event.currentTarget.blur();
+                        }
+                      }}
+                      placeholder="YYYY-MM-DD"
+                      title="Edit as YYYY-MM-DD"
+                      type="text"
+                      value={dateInputValue('to')}
+                    />
+                  </label>
+                </div>
+              </div>
+              <div class={timeSliderBrushColumn} data-report-range-part="brush">
+                <div class={timeSliderBrushHeader}>
+                  <span>Follows report range</span>
+                </div>
+                <div class={timeSliderBrushTrack} style={rangeVars(chart())}>
+                  <div
+                    aria-hidden="true"
+                    class={timeSliderRange}
+                    style={{ left: 'var(--slider-range-start)', right: 'var(--slider-range-end)' }}
+                  />
+                  <div aria-hidden="true" class={timeSliderDimLeft} />
+                  <div aria-hidden="true" class={timeSliderDimRight} />
+                  <button
+                    aria-label="Drag selected date range"
+                    class={timeSliderRangeDrag}
+                    data-dragging={String(draggingSelection())}
+                    onLostPointerCapture={endSelectionDrag}
+                    onPointerCancel={endSelectionDrag}
+                    onPointerDown={startSelectionDrag}
+                    onPointerMove={moveSelectionDrag}
+                    onPointerUp={endSelectionDrag}
+                    tabIndex={-1}
+                    title="Drag selected range"
+                    type="button"
+                  />
+                  <button
+                    aria-label="Start date"
+                    aria-valuemax={controlContext().selectionMaxIndex}
+                    aria-valuemin={0}
+                    aria-valuenow={controlState().selectionIndexes[0]}
+                    aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, controlState().selectionIndexes[0]))}
+                    class={timeSliderThumb}
+                    onKeyDown={(event) => handleSliderKeyDown(event, 'start')}
+                    onLostPointerCapture={endHandleDrag}
+                    onPointerCancel={endHandleDrag}
+                    onPointerDown={(event) => startHandleDrag(event, 'start')}
+                    onPointerMove={moveHandleDrag}
+                    onPointerUp={endHandleDrag}
+                    role="slider"
+                    style={{ left: 'var(--slider-range-start)' }}
+                    type="button"
+                  />
+                  <button
+                    aria-label="End date"
+                    aria-valuemax={controlContext().selectionMaxIndex}
+                    aria-valuemin={0}
+                    aria-valuenow={controlState().selectionIndexes[1]}
+                    aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, controlState().selectionIndexes[1]))}
+                    class={timeSliderThumb}
+                    onKeyDown={(event) => handleSliderKeyDown(event, 'end')}
+                    onLostPointerCapture={endHandleDrag}
+                    onPointerCancel={endHandleDrag}
+                    onPointerDown={(event) => startHandleDrag(event, 'end')}
+                    onPointerMove={moveHandleDrag}
+                    onPointerUp={endHandleDrag}
+                    role="slider"
+                    style={{ left: 'calc(100% - var(--slider-range-end))' }}
+                    type="button"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <details aria-label="Chart options" class={timeChartOptions} data-report-range-part="chart-options">
               <summary class={timeChartOptionsSummary}>
                 <span class={timeChartOptionsTitle}>Chart options</span>
                 <span class={timeChartOptionsCurrent}>
@@ -1003,259 +1530,10 @@ export const TimeRangeControl = (props: {
                   value={valueMode()}
                 />
               </div>
+              <Show when={dimension() === 'model' && (valueMode() === 'sessions' || usesSessionShare(chart()))}>
+                <div class={timeRangeMeta}>Multi-model sessions are counted once under their primary model.</div>
+              </Show>
             </details>
-            <Show when={dimension() === 'model' && (valueMode() === 'sessions' || usesSessionShare(chart()))}>
-              <div class={timeRangeMeta}>Multi-model sessions are counted once under their primary model.</div>
-            </Show>
-
-            <div class={chartLegendList}>
-              <For
-                each={chart().series.filter(
-                  (entry) => (reportSummary()?.totalsByKey.get(entry.key) ?? 0) > 0 || isLegendActive(entry.key),
-                )}
-              >
-                {(entry) => {
-                  const marker = swatch(entry.key);
-                  const summary = reportSummary();
-                  const value = summary?.totalsByKey.get(entry.key) ?? 0;
-                  const total = summary?.total ?? 0;
-                  const aggregateCount = entry.memberKeys?.length ?? 0;
-                  const isAggregate = aggregateCount > 0;
-                  return (
-                    <button
-                      aria-label={isAggregate ? `Other: ${aggregateCount} smaller series` : undefined}
-                      aria-pressed={isLegendActive(entry.key)}
-                      class={cx(migrationLegendButton, isLegendActive(entry.key) ? migrationReadoutItemActive : '')}
-                      data-active={isLegendActive(entry.key)}
-                      disabled={isAggregate}
-                      onClick={() => {
-                        if (!isAggregate) {
-                          props.onDimensionFilter(renderedDimension(), entry.key);
-                        }
-                      }}
-                      onMouseEnter={() =>
-                        dispatchControl({ type: 'hoverChanged', bucketIndex: hoveredBucket(), key: entry.key })
-                      }
-                      onMouseLeave={() =>
-                        dispatchControl({ type: 'hoverChanged', bucketIndex: hoveredBucket(), key: null })
-                      }
-                      title={legendTitle(entry)}
-                      type="button"
-                    >
-                      <span class={cx(chartLegendSwatch, marker.className)} style={marker.style} />
-                      {entry.label}
-                      <span class={chartLegendPct}>{fmtPct((value / Math.max(1e-9, total)) * 100)}</span>
-                    </button>
-                  );
-                }}
-              </For>
-            </div>
-
-            <div class={timeSliderRoot}>
-              <div class={timeChartToolbar}>
-                <div>
-                  <div class={timeRangeTitle}>Activity over time</div>
-                  <span class={timeChartZoomSummary}>
-                    Daily estimated API value by harness · <span>Follows report range</span>
-                    {' · Visible max '}
-                    {formatValue(visibleMaximum(), valueMode() === 'sessions' || usesSessionShare(chart()))}
-                  </span>
-                </div>
-              </div>
-              <div class={timeSliderFrame}>
-                <div class={timeSliderControl}>
-                  <div class={timeSliderTrack} style={rangeVars(chart())}>
-                    <For each={visibleMonthTicks()}>
-                      {(tick) => (
-                        <div aria-hidden="true" class={monthGridline} style={{ left: timelinePlotLeft(tick.pct) }} />
-                      )}
-                    </For>
-                    <div aria-hidden="true" class={timeSliderBars} style={{ gap: visibleBucketLayout().bucketGap }}>
-                      <For each={visibleBars()}>
-                        {(bar) => (
-                          <div
-                            class={timeBucket}
-                            style={{
-                              height: `${barHeight(bar.bucket, chart())}%`,
-                              'min-width': visibleBucketLayout().bucketMinWidth,
-                            }}
-                          >
-                            <For each={renderedSegments(bar.segments)}>
-                              {(segment) => {
-                                const marker = swatch(segment.key);
-                                return (
-                                  <div
-                                    class={cx(timeBucketSegment, marker.className ?? accentFill)}
-                                    style={{
-                                      height: `${Math.max(1, segmentHeight(segment.value, bar.total))}%`,
-                                      opacity: segmentOpacity(segment.key),
-                                      ...marker.style,
-                                    }}
-                                  />
-                                );
-                              }}
-                            </For>
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                    <button
-                      aria-label="Inspect activity timeline. Use arrow keys to inspect days."
-                      class={timelineHoverLayer}
-                      onClick={updateHover}
-                      onKeyDown={inspectTimelineWithKeyboard}
-                      onMouseLeave={clearHover}
-                      onMouseMove={updateHover}
-                      title="Inspect activity in the selected report range"
-                      type="button"
-                    />
-                    <Show when={readout()}>
-                      {(tip) => (
-                        <div
-                          aria-hidden="true"
-                          class={migrationCrosshair}
-                          style={{ left: timelinePlotLeft(tip().pct) }}
-                        />
-                      )}
-                    </Show>
-                  </div>
-                </div>
-                <div class={timeAxis}>
-                  <span>{fmtDateOnly(chart().buckets[visibleBucketRange().from]?.date ?? chart().first)}</span>
-                  <For each={visibleMonthTicks()}>
-                    {(tick) => (
-                      <span class={timeAxisTick} style={{ left: `${tick.pct}%` }}>
-                        {tick.label}
-                      </span>
-                    )}
-                  </For>
-                  <span>{fmtDateOnly(chart().buckets[visibleBucketRange().to]?.date ?? chart().last)}</span>
-                </div>
-                <div aria-live="polite" class={migrationReadout} role="status">
-                  <Show when={activeReadout()}>
-                    {(tip) => (
-                      <>
-                        <span class={migrationReadoutDate}>{tip().label}</span>
-                        <span class={migrationReadoutTotal}>{formatValue(tip().total, tip().useSessions)}</span>
-                        <For each={tip().rows}>
-                          {(row) => {
-                            const marker = swatch(row.key);
-                            return (
-                              <span
-                                class={cx(
-                                  migrationReadoutItem,
-                                  row.key === hoveredKey() ? migrationReadoutItemActive : undefined,
-                                )}
-                              >
-                                <span class={cx(migrationReadoutSwatch, marker.className)} style={marker.style} />
-                                {row.label}
-                                <span class={migrationReadoutValue}>
-                                  {formatValue(row.value, tip().useSessions)} ·{' '}
-                                  {fmtPct((row.value / Math.max(1e-9, tip().total)) * 100)}
-                                </span>
-                                <Show
-                                  when={
-                                    tip().hasPrevious &&
-                                    row.delta !== null &&
-                                    Math.abs(row.delta) >= 1 &&
-                                    Math.abs(row.delta) < MAX_DELTA_PCT
-                                  }
-                                >
-                                  <span
-                                    class={cx(
-                                      migrationTrend,
-                                      (row.delta ?? 0) >= 0 ? migrationTrendUp : migrationTrendDown,
-                                    )}
-                                  >
-                                    {(row.delta ?? 0) >= 0 ? '▲' : '▼'} {fmtPct(Math.abs(row.delta ?? 0))}
-                                  </span>
-                                </Show>
-                              </span>
-                            );
-                          }}
-                        </For>
-                        <Show when={tip().hidden > 0}>
-                          <span class={migrationReadoutHint}>+{tip().hidden} more</span>
-                        </Show>
-                      </>
-                    )}
-                  </Show>
-                </div>
-                <div class={timeSliderBrushColumn}>
-                  <div class={timeSliderBrushHeader}>
-                    <span>Adjust report range</span>
-                    <span>Filters the entire report</span>
-                  </div>
-                  <div class={timeAxis}>
-                    <span>{fmtDateOnly(chart().minDay)}</span>
-                    <For each={monthTicksFor(chart()).filter((tick) => tick.pct >= 7 && tick.pct <= 93)}>
-                      {(tick) => (
-                        <span class={timeAxisTick} style={{ left: `${tick.pct}%` }}>
-                          {tick.label}
-                        </span>
-                      )}
-                    </For>
-                    <span>{fmtDateOnly(chart().maxDay)}</span>
-                  </div>
-                  <div class={timeSliderBrushTrack} style={rangeVars(chart())}>
-                    <div
-                      aria-hidden="true"
-                      class={timeSliderRange}
-                      style={{ left: 'var(--slider-range-start)', right: 'var(--slider-range-end)' }}
-                    />
-                    <div aria-hidden="true" class={timeSliderDimLeft} />
-                    <div aria-hidden="true" class={timeSliderDimRight} />
-                    <button
-                      aria-label="Drag selected date range"
-                      class={timeSliderRangeDrag}
-                      data-dragging={String(draggingSelection())}
-                      onLostPointerCapture={endSelectionDrag}
-                      onPointerCancel={endSelectionDrag}
-                      onPointerDown={startSelectionDrag}
-                      onPointerMove={moveSelectionDrag}
-                      onPointerUp={endSelectionDrag}
-                      tabIndex={-1}
-                      title="Drag selected range"
-                      type="button"
-                    />
-                    <button
-                      aria-label="Start date"
-                      aria-valuemax={controlContext().selectionMaxIndex}
-                      aria-valuemin={0}
-                      aria-valuenow={controlState().selectionIndexes[0]}
-                      aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, controlState().selectionIndexes[0]))}
-                      class={timeSliderThumb}
-                      onKeyDown={(event) => handleSliderKeyDown(event, 'start')}
-                      onLostPointerCapture={endHandleDrag}
-                      onPointerCancel={endHandleDrag}
-                      onPointerDown={(event) => startHandleDrag(event, 'start')}
-                      onPointerMove={moveHandleDrag}
-                      onPointerUp={endHandleDrag}
-                      role="slider"
-                      style={{ left: 'var(--slider-range-start)' }}
-                      type="button"
-                    />
-                    <button
-                      aria-label="End date"
-                      aria-valuemax={controlContext().selectionMaxIndex}
-                      aria-valuemin={0}
-                      aria-valuenow={controlState().selectionIndexes[1]}
-                      aria-valuetext={fmtDateOnly(dateFromIndex(chart().minDay, controlState().selectionIndexes[1]))}
-                      class={timeSliderThumb}
-                      onKeyDown={(event) => handleSliderKeyDown(event, 'end')}
-                      onLostPointerCapture={endHandleDrag}
-                      onPointerCancel={endHandleDrag}
-                      onPointerDown={(event) => startHandleDrag(event, 'end')}
-                      onPointerMove={moveHandleDrag}
-                      onPointerUp={endHandleDrag}
-                      role="slider"
-                      style={{ left: 'calc(100% - var(--slider-range-end))' }}
-                      type="button"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
           </>
         )}
       </Show>

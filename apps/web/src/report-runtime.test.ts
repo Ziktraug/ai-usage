@@ -1,7 +1,47 @@
 import { describe, expect, test } from 'bun:test';
-import { loadReportRouteData } from './report-runtime';
+import { projectFocusedSupport } from '@ai-usage/report-core/focused-report-query';
+import { demoReportPayload } from './report-data';
+import { loadReportRouteData, machineFreshnessSnapshotFromBootstrap } from './report-runtime';
 
 describe('report runtime loading', () => {
+  test('derives available and unavailable freshness only from the immutable bootstrap', () => {
+    const { rows: _rows, tableRows: _tableRows, ...support } = demoReportPayload;
+    const available = projectFocusedSupport(
+      {
+        ...support,
+        machineFreshness: {
+          kind: 'available',
+          machines: [{ id: 'fixture-machine', label: 'Fixture Machine', lastSeenAt: '2026-06-11T11:00:00.000Z' }],
+          observedAt: '2026-06-11T12:00:00.000Z',
+          omittedMachines: 2,
+          skippedRows: 1,
+        },
+      },
+      { harness: [], machine: [], truncated: false },
+      { revision: 'revision-a' },
+    );
+    expect(machineFreshnessSnapshotFromBootstrap(available)).toEqual({
+      kind: 'available',
+      machines: [{ id: 'fixture-machine', label: 'Fixture Machine', lastSeenAt: '2026-06-11T11:00:00.000Z' }],
+      observedAt: Date.parse('2026-06-11T12:00:00.000Z'),
+      omittedMachines: 2,
+      skippedRows: 1,
+    });
+
+    const unavailable = projectFocusedSupport(
+      support,
+      { harness: [], machine: [], truncated: false },
+      { revision: 'revision-a' },
+    );
+    expect(machineFreshnessSnapshotFromBootstrap(unavailable)).toEqual({
+      kind: 'unavailable',
+      observedAt: Date.parse(support.generatedAt),
+      omittedMachines: 0,
+      reason: 'not-captured',
+      skippedRows: 0,
+    });
+  });
+
   test('loads the committed synthetic report without a served request in demo mode', async () => {
     const result = await loadReportRouteData('demo');
 
@@ -9,7 +49,7 @@ describe('report runtime loading', () => {
     if (result.kind === 'payload') {
       expect(result.mode).toBe('demo');
       expect(result.payload.generatedAt).toBe('2026-06-11T12:00:00.000Z');
-      expect(result.payload.rows).toHaveLength(4);
+      expect(result.payload.rows).toHaveLength(6);
     }
   });
 

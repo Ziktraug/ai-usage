@@ -1,5 +1,6 @@
-import { expect, test } from './browser-test';
+import { expect, reportViewsFor, test } from './browser-test';
 
+const ADVANCED_COLUMNS_PATTERN = /Advanced columns/;
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const COLUMN_URL_PATTERN = /cols=/;
 const DATE_HEADER_PATTERN = /Date/;
@@ -9,12 +10,17 @@ const HYDRATION_TIMEOUT_MS = 15_000;
 const INSPECT_SESSION_PATTERN = /Inspect session/;
 const LEGACY_PROJECT_TAB_URL_PATTERN = /tab=projects/;
 const PROVIDER_DETAILS_PATTERN = /^Provider details \(/;
+const PROVIDER_CATEGORY_COUNT_PATTERN = /: (\d+) providers?$/;
+const PROVIDER_CATEGORY_TOTAL_PATTERN = /\((\d+) providers?\)$/;
+const PROVIDER_CATEGORIES_PATTERN = /^Provider categories/;
 const QUERY_URL_PATTERN = /q=ai-usage/;
+const NO_CELL_PATTERN = /^No$/;
 const RANGE_URL_PATTERN = /range=/;
 const RESET_COUNT_PATTERN = /1 reset/;
 const GAP_COUNT_PATTERN = /1 collection gap/;
 const SORT_URL_PATTERN = /sort=/;
 const TOP_SESSION_PATTERN = /Top session/;
+const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
 
 test('loads a deterministic report overview', async ({ page }) => {
   const response = await page.goto('/');
@@ -25,8 +31,11 @@ test('loads a deterministic report overview', async ({ page }) => {
 
   await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Date range' })).toBeVisible();
-  await expect(page.getByText('3 / 4 sessions', { exact: true })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
+  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
 });
 
 test('retries a failed report through the Router loading lifecycle', async ({ page }) => {
@@ -53,17 +62,36 @@ test('retries a failed report through the Router loading lifecycle', async ({ pa
   await page.getByRole('button', { name: 'Retry' }).click();
 
   await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
   await expect.poll(() => page.evaluate(() => Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads'))).toBe(2);
 });
 
-test('opens legacy analysis deep links inside the compact Breakdown navigation', async ({ page }) => {
-  await page.goto('/?tab=projects');
+test('uses one primary navigation while preserving Breakdown deep links and sub-tabs', async ({ page }) => {
+  await page.goto('/?tab=sessions');
 
-  const primaryTabs = page.getByRole('tablist', { name: 'Dashboard sections' });
-  await expect(primaryTabs.getByRole('tab')).toHaveText(['Overview', 'Sessions', 'Breakdown']);
-  await expect(primaryTabs.getByRole('tab', { name: 'Breakdown' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('tab', { name: 'Projects' })).toHaveAttribute('aria-selected', 'true');
+  const reportViews = reportViewsFor(page);
+  await expect(reportViews).toHaveCount(1);
+  await expect(reportViews.getByRole('link')).toHaveText(['Overview', 'Sessions', 'Breakdown']);
+  await expect(page.getByRole('tablist', { name: 'Dashboard sections' })).toHaveCount(0);
+  await expect(reportViews.getByRole('link', { exact: true, name: 'Sessions' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expect(page.getByRole('table')).toBeVisible();
+
+  await page.goto('/?tab=models');
+  await expect(reportViews.getByRole('link', { exact: true, name: 'Breakdown' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  const breakdownTabs = page.getByRole('tablist', { name: 'Breakdown dimension' });
+  await expect(breakdownTabs.getByRole('tab', { name: 'Models' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('By model', { exact: true })).toBeVisible();
+
+  await breakdownTabs.getByRole('tab', { name: 'Projects' }).click();
   await expect(page.getByRole('heading', { level: 2, name: 'Project groups' })).toBeVisible();
   await expect(page).toHaveURL(LEGACY_PROJECT_TAB_URL_PATTERN);
 });
@@ -92,7 +120,7 @@ test('shows analysis and report metrics without disclosure gates', async ({ page
     'API-equivalent value',
   ]);
   expect(await punchcardTable.getByRole('row').count()).toBeGreaterThan(1);
-  await expect(punchcardTable.getByRole('row', { name: 'Monday 14:00 1 $0.84' })).toBeAttached();
+  await expect(punchcardTable.getByRole('row', { name: 'Sunday 14:00 1 $0.84' })).toBeAttached();
   await expect(page.locator('[data-punchcard-visual]')).toHaveAttribute('aria-hidden', 'true');
   await expect(page.locator('[data-punchcard-visual]').getByRole('button')).toHaveCount(0);
 
@@ -106,12 +134,9 @@ test('prioritizes the selected dashboard view before secondary status on mobile'
   await page.setViewportSize({ height: 800, width: 390 });
   await page.goto('/');
 
-  const dashboardSections = page.getByRole('tablist', { name: 'Dashboard sections' });
+  const dashboardPanel = page.locator('[data-dashboard-panel]');
   const providerStatus = page.getByRole('heading', { level: 2, name: 'Provider status' });
-  const [dashboardBox, providerBox] = await Promise.all([
-    dashboardSections.boundingBox(),
-    providerStatus.boundingBox(),
-  ]);
+  const [dashboardBox, providerBox] = await Promise.all([dashboardPanel.boundingBox(), providerStatus.boundingBox()]);
 
   expect(dashboardBox?.y).toBeLessThan(providerBox?.y ?? 0);
   const reportMetrics = page.getByRole('region', { name: 'More report metrics' });
@@ -124,12 +149,9 @@ test('keeps the selected dashboard view ahead of secondary provider status on de
   await page.setViewportSize({ height: 900, width: 1280 });
   await page.goto('/');
 
-  const dashboardSections = page.getByRole('tablist', { name: 'Dashboard sections' });
+  const dashboardPanel = page.locator('[data-dashboard-panel]');
   const providerStatus = page.getByRole('heading', { level: 2, name: 'Provider status' });
-  const [dashboardBox, providerBox] = await Promise.all([
-    dashboardSections.boundingBox(),
-    providerStatus.boundingBox(),
-  ]);
+  const [dashboardBox, providerBox] = await Promise.all([dashboardPanel.boundingBox(), providerStatus.boundingBox()]);
 
   await expect(page.getByRole('button', { name: 'About API value' })).toBeVisible();
   expect(dashboardBox?.y).toBeLessThan(providerBox?.y ?? 0);
@@ -143,6 +165,14 @@ test('keeps provider details collapsed until they are requested', async ({ page 
 
   await expect(providerDetails).toBeVisible();
   await expect(page.getByRole('list', { name: 'Providers requiring attention' })).toBeVisible();
+  const providerCategories = page.getByRole('list', { name: PROVIDER_CATEGORIES_PATTERN });
+  const categoryLabel = await providerCategories.getAttribute('aria-label');
+  const providerTotal = Number(categoryLabel?.match(PROVIDER_CATEGORY_TOTAL_PATTERN)?.[1]);
+  const categoryCounts = (await providerCategories.getByRole('listitem').allTextContents()).map((text) =>
+    Number(text.match(PROVIDER_CATEGORY_COUNT_PATTERN)?.[1]),
+  );
+  expect(categoryCounts.every(Number.isFinite)).toBe(true);
+  expect(categoryCounts.reduce((total, count) => total + count, 0)).toBe(providerTotal);
   await expect(noQuotaDetail).not.toBeVisible();
   await providerDetails.click();
   await expect(noQuotaDetail).toBeVisible();
@@ -151,7 +181,9 @@ test('keeps provider details collapsed until they are requested', async ({ page 
 test('Codex quota history shows reset and gap-aware ranges on desktop and mobile', async ({ page }) => {
   await page.goto('/');
 
-  await page.getByRole('button', { name: 'View Codex history' }).click();
+  const historyButton = page.getByRole('button', { name: 'View Codex history' });
+  await expect(historyButton).toHaveCount(1);
+  await historyButton.click();
   const history = page.getByRole('dialog', { name: 'Codex quota history' });
   await expect(history.getByRole('heading', { name: 'Codex quota history' })).toBeVisible();
   await expect(history.getByText('5h', { exact: true }).first()).toBeVisible();
@@ -164,7 +196,7 @@ test('Codex quota history shows reset and gap-aware ranges on desktop and mobile
   await expect(history).not.toBeVisible();
 
   await page.setViewportSize({ height: 800, width: 390 });
-  await page.getByRole('button', { name: 'View Codex history' }).click();
+  await historyButton.click();
   await expect(page.getByRole('dialog', { name: 'Codex quota history' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Codex quota history' })).not.toBeVisible();
@@ -204,14 +236,14 @@ test('shows the text query as a directly removable active filter', async ({ page
 });
 
 test('updates the date range and opens a session drawer', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?origin=%5B%5D');
   const range = page.getByRole('region', { name: 'Date range' });
 
   await range.getByRole('button', { exact: true, name: 'All' }).click();
   await expect(page).toHaveURL(RANGE_URL_PATTERN);
-  await expect(range.getByRole('textbox', { name: 'Start date' })).toHaveValue('2026-04-12');
+  await expect(range.getByRole('textbox', { name: 'Start date' })).toHaveValue('Apr 12, 2026');
 
-  await page.getByRole('tab', { name: 'Sessions' }).click();
+  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
   await page.locator('tbody tr').first().locator('td').first().click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('Escape');
@@ -224,7 +256,10 @@ test('opens a session from Overview without leaving the current analysis', async
   await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
 
   await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
 });
 
 test('navigates and closes the selected session with drawer keyboard commands', async ({ page }) => {
@@ -244,7 +279,7 @@ test('navigates and closes the selected session with drawer keyboard commands', 
 test('starts sessions with focused work columns and switches metric presets', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1024 });
   await page.goto('/');
-  await page.getByRole('tab', { name: 'Sessions' }).click();
+  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
 
   const columnHeaders = page.getByRole('columnheader');
   await expect(page.getByRole('button', { exact: true, name: 'Work' })).toHaveAttribute('aria-pressed', 'true');
@@ -267,6 +302,18 @@ test('starts sessions with focused work columns and switches metric presets', as
   await expect(page.getByRole('table')).toHaveAttribute('data-stability-marker', 'session-table');
   await expect(page.getByText('Preparing sessions…', { exact: true })).toHaveCount(0);
   await expect(columnHeaders).toHaveText([DATE_HEADER_PATTERN, 'Session', 'Input', 'Output', 'Cache', 'Fresh']);
+});
+
+test('renders a human campaign root as not a subagent', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1024 });
+  await page.goto('/?tab=sessions');
+
+  await page.getByRole('button', { name: ADVANCED_COLUMNS_PATTERN }).click();
+  await page.getByText('Subagent', { exact: true }).click();
+  await expect(page.getByRole('checkbox', { name: 'Subagent' })).toBeChecked();
+
+  const humanCampaignRoot = page.getByRole('row').filter({ hasText: 'Build report UI' }).first();
+  await expect(humanCampaignRoot.getByRole('cell').filter({ hasText: NO_CELL_PATTERN })).toHaveCount(1);
 });
 
 test('uses the report range as the only graph viewport', async ({ page }) => {
@@ -295,7 +342,7 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   await expect(dayControl).toHaveValue((await calendar.locator('button:focus').getAttribute('data-heatmap-day')) ?? '');
   await expect(calendar.locator('button[tabindex="0"]')).toHaveCount(1);
 
-  await page.getByRole('tab', { name: 'Sessions' }).click();
+  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
   const sessionSummaries = page.getByRole('list', { name: 'Session summaries' });
   await expect(sessionSummaries).toBeVisible();
   await expect(page.locator('[data-session-surface="mobile"]')).toHaveCount(1);
@@ -309,7 +356,7 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('Escape');
 
-  await page.getByRole('tab', { name: 'Breakdown' }).click();
+  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Breakdown' }).click();
   const breakdownTabs = page.getByRole('tablist', { name: 'Breakdown dimension' });
   await expect(breakdownTabs.getByRole('tab', { name: 'Models' })).toHaveAttribute('aria-selected', 'true');
   await breakdownTabs.getByRole('tab', { name: 'Projects' }).click();
@@ -343,11 +390,15 @@ test('keeps compact heatmap geometry beside an equivalent touch control', async 
 
 test('selects the same heatmap day with mouse, keyboard, and the equivalent control', async ({ page }) => {
   const selectedDay = '2026-05-25';
+  const selectedDayDisplay = 'May 25, 2026';
   const assertSelectedDay = async () => {
-    await expect(page.getByRole('tab', { name: 'Sessions' })).toHaveAttribute('aria-selected', 'true');
+    await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
     const range = page.getByRole('region', { name: 'Date range' });
-    await expect(range.getByRole('textbox', { name: 'Start date' })).toHaveValue(selectedDay);
-    await expect(range.getByRole('textbox', { name: 'End date' })).toHaveValue(selectedDay);
+    await expect(range.getByRole('textbox', { name: 'Start date' })).toHaveValue(selectedDayDisplay);
+    await expect(range.getByRole('textbox', { name: 'End date' })).toHaveValue(selectedDayDisplay);
   };
   const selectedCell = () =>
     page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN }).locator(`button[data-heatmap-day="${selectedDay}"]`);
@@ -369,7 +420,7 @@ test('selects the same heatmap day with mouse, keyboard, and the equivalent cont
 test('mounts one Sessions surface across viewport changes without losing state', async ({ page }) => {
   await page.setViewportSize({ height: 800, width: 361 });
   await page.goto('/');
-  await page.getByRole('tab', { name: 'Sessions' }).click();
+  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
   await page.getByRole('button', { name: 'Show children' }).click();
   const mobileSort = page.getByRole('combobox', { name: 'Sort mobile session summaries' });
   await mobileSort.selectOption('fresh');
@@ -379,7 +430,7 @@ test('mounts one Sessions surface across viewport changes without losing state',
   await page.setViewportSize({ height: 900, width: 1024 });
   await expect(page.locator('[data-session-surface="desktop"]')).toHaveCount(1);
   await expect(page.locator('[data-session-surface="mobile"]')).toHaveCount(0);
-  await expect(page.locator('tbody tr[data-depth="1"]')).toHaveCount(1);
+  await expect(page.locator('tbody tr[data-depth="1"]')).toHaveCount(2);
   await expect(page).toHaveURL(SORT_URL_PATTERN);
   await page.getByRole('button', { exact: true, name: 'Tokens' }).click();
   await expect(page).toHaveURL(COLUMN_URL_PATTERN);
@@ -393,7 +444,7 @@ test('mounts one Sessions surface across viewport changes without losing state',
   await expect(page).toHaveURL(COLUMN_URL_PATTERN);
   await page.setViewportSize({ height: 900, width: 1024 });
   await expect(page.getByRole('button', { exact: true, name: 'Tokens' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.locator('tbody tr[data-depth="1"]')).toHaveCount(1);
+  await expect(page.locator('tbody tr[data-depth="1"]')).toHaveCount(2);
   await page.keyboard.press('Escape');
 
   await expect(page.locator('[data-session-surface="desktop"]')).toHaveCount(1);
@@ -403,9 +454,12 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
   await page.goto('/sync');
 
   await expect(page.getByRole('heading', { level: 1, name: 'Sync' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Export file' })).toBeVisible();
-  await expect(page.getByLabel('Import file')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Export current machine' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Machine fleet' })).toBeVisible();
+  await expect(page.getByText('Current machine', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Drop a merge file here or choose a file' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start LAN merge' })).toHaveCount(0);
   await expect(page.getByLabel('Scan host')).toHaveCount(0);
   await expect(page.getByText('Pair nearby machine')).toHaveCount(0);
+  expect(await page.locator('main').innerText()).not.toMatch(UUID_PATTERN);
 });

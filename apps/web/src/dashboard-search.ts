@@ -1,3 +1,4 @@
+import { isSessionOrigin, type SessionOrigin, sessionOrigins } from '@ai-usage/report-core/session-query';
 import type { SortingState } from '@tanstack/solid-table';
 import { type DateRangeMode, parseLocalDate } from './date-range';
 import {
@@ -9,7 +10,7 @@ import {
   type SessionColumnVisibilityBase,
 } from './session-table-schema';
 
-export const fieldFilterKeys = ['provider', 'model', 'project'] as const;
+export const fieldFilterKeys = ['campaign', 'provider', 'model', 'project'] as const;
 export type FieldFilterKey = (typeof fieldFilterKeys)[number];
 export type FieldFilters = Partial<Record<FieldFilterKey, string>>;
 
@@ -64,16 +65,22 @@ export interface DashboardDateRangeSearch {
   to?: string;
 }
 
-export type DashboardCampaignMode = 'on' | 'off';
 export const defaultDashboardDateRangeMode = '30d' as const;
+export const defaultDashboardOrigins = [] as const satisfies readonly SessionOrigin[];
+
+const sameOrigins = (left: readonly SessionOrigin[], right: readonly SessionOrigin[]): boolean =>
+  left.length === right.length && left.every((origin, index) => origin === right[index]);
+
+export const isDefaultDashboardOriginSelection = (origins: readonly SessionOrigin[]): boolean =>
+  sameOrigins(origins, defaultDashboardOrigins);
 
 export interface DashboardSearch {
-  campaigns: DashboardCampaignMode;
   cols: SearchableColumnDiffId[];
   colsBase: SessionColumnVisibilityBase;
   filters: FieldFilters;
   harness: string[];
   machine: string[];
+  origin: SessionOrigin[];
   q: string;
   range: DashboardDateRangeSearch;
   sort: DashboardSort;
@@ -84,6 +91,7 @@ export const hasActiveDashboardFilters = (search: DashboardSearch): boolean =>
   search.q !== '' ||
   search.harness.length > 0 ||
   search.machine.length > 0 ||
+  !isDefaultDashboardOriginSelection(search.origin) ||
   Object.keys(search.filters).length > 0 ||
   search.range.mode !== defaultDashboardDateRangeMode;
 
@@ -129,12 +137,12 @@ export const defaultDashboardSortFor = (sort: ReportSort): DashboardSort => ({
 });
 
 export const dashboardSearchDefaultsFor = (sort: ReportSort): DashboardSearch => ({
-  campaigns: 'on',
   cols: [],
   colsBase: 'auto',
   filters: {},
   harness: [],
   machine: [],
+  origin: [...defaultDashboardOrigins],
   q: '',
   range: { mode: defaultDashboardDateRangeMode },
   sort: defaultDashboardSortFor(sort),
@@ -163,6 +171,20 @@ const parseStringArray = (value: unknown): string[] => {
     }
   }
   return result;
+};
+
+const parseOrigins = (value: unknown, fallback: SessionOrigin[]): SessionOrigin[] => {
+  if (value === undefined) {
+    return [...fallback];
+  }
+  const raw = Array.isArray(value) ? value : [value];
+  const parsed = sessionOrigins.filter((origin) =>
+    raw.some((candidate) => isSessionOrigin(candidate) && candidate === origin),
+  );
+  if (parsed.length === sessionOrigins.length) {
+    return [];
+  }
+  return parsed.length > 0 || raw.length === 0 ? parsed : [...fallback];
 };
 
 const parseFilters = (value: unknown): FieldFilters => {
@@ -229,12 +251,12 @@ export const validateDashboardSearch = (
   const colsBase = isSessionColumnVisibilityBase(search.colsBase) ? search.colsBase : defaults.colsBase;
 
   return {
-    campaigns: search.campaigns === 'off' ? 'off' : defaults.campaigns,
     cols,
     colsBase,
     filters: parseFilters(search.filters),
     harness: parseStringArray(search.harness),
     machine: parseStringArray(search.machine),
+    origin: parseOrigins(search.origin, defaults.origin),
     q,
     range: parseRange(search.range, defaults.range),
     sort: parseSort(search.sort, defaults.sort),

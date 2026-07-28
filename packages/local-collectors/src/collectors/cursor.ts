@@ -35,7 +35,7 @@ const COMPOSER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'compos
 const TOKEN_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"inputTokens\"%'";
 const USER_BUBBLE_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"type\":1%'";
 
-const CURSOR_DB_CACHE_VERSION = 4;
+const CURSOR_DB_CACHE_VERSION = 5;
 const CURSOR_DB_CACHE_FILE = 'cursor-db-cache.json';
 
 export type CursorCsvIngestionOptions = Partial<CursorCsvOptions> & {
@@ -233,6 +233,8 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
             provider: 'Cursor sub',
             name: composer?.name || name?.first || `cursor ${composerId.slice(0, 8)}`,
             titleSource: cursorTitleSource(composer?.name, name?.first),
+            // Cursor interaction-mode fields such as isAgentic and unifiedMode do not state who started the session.
+            originProvenance: 'origin-unsupported',
             model,
             project: '',
             tokens,
@@ -264,6 +266,7 @@ const collectCursorSessionsFromDb = (storage: LocalHistoryStorageService, dbPath
             provider: 'Cursor sub',
             name: composer.name || name.first || `cursor ${composerId.slice(0, 8)}`,
             titleSource: cursorTitleSource(composer.name, name.first),
+            originProvenance: 'origin-unsupported',
             model: 'usage unavailable',
             project: '',
             tokens: { in: 0, out: 0, cr: 0, cw: 0 },

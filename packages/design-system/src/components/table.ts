@@ -74,8 +74,8 @@ export const sessionsTable = css({
 
 export const tableWrap = css({
   overflow: 'auto',
-  maxH: 'calc(100dvh - 240px)',
-  minH: '320px',
+  maxH: 'var(--ai-usage-table-max-height, calc(100dvh - 240px))',
+  minH: 'var(--ai-usage-table-min-height, 320px)',
   border: '1px solid token(colors.line)',
   borderRadius: 'md',
   bg: 'surface',
@@ -89,6 +89,14 @@ export const tableWrap = css({
   backgroundSize: '100% 36px, 100% 36px, 100% 10px, 100% 10px',
   backgroundAttachment: 'local, local, scroll, scroll',
   _print: { maxH: 'none', overflow: 'visible', boxShadow: 'none' },
+});
+
+export const sessionViewportSurface = css({
+  '--ai-usage-table-max-height': 'none',
+  '--ai-usage-table-min-height': '0px',
+  h: 'var(--session-surface-height, 100dvh)',
+  minH: 0,
+  _print: { h: 'auto' },
 });
 
 export const desktopTableSurface = css({
@@ -257,8 +265,6 @@ export const sessionSummaryMobileSortSelect = css({
 
 export const sessionSummaryViewport = css({
   gap: 0,
-  maxH: 'calc(100dvh - 240px)',
-  minH: '320px',
   overflowAnchor: 'none',
   overflowY: 'auto',
   overscrollBehavior: 'contain',

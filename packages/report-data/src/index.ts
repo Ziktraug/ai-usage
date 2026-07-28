@@ -14,6 +14,7 @@ import { LocalHistoryError, type LocalHistoryWarning } from '@ai-usage/local-col
 import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-collectors/machine-config';
 import type { CursorCommitAttributionRow, ReportDatasets } from '@ai-usage/report-core/datasets';
+import type { FocusedMachineFreshness } from '@ai-usage/report-core/focused-report-query';
 import { type HarnessKey, harnessKeys } from '@ai-usage/report-core/harness-metadata';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import {
@@ -21,6 +22,7 @@ import {
   type ProjectGroupConfig,
   type ProjectGroupingWarning,
   type ProjectSourceSelector,
+  projectLabelWithMachine,
   projectSourceId,
   projectSourceSelectorLabel,
 } from '@ai-usage/report-core/project-group';
@@ -54,7 +56,8 @@ import {
   queryLatestProviderQuotaObservations,
   queryNormalizedDatasetItems,
   queryReportRows,
-  queryUsageStoreGeneration,
+  queryStoredReportCapture,
+  queryUsageStoreGenerations,
   type StoredSourceAuthority,
   usageStorePath,
 } from '@ai-usage/usage-store';
@@ -169,10 +172,12 @@ export interface StoredReportPayloadRequest extends LocalUsageSelection {
 
 export interface StoredReportSourceFingerprint {
   configFingerprint: string;
+  machineFleetGeneration: number;
   usageStoreGeneration: number;
 }
 
 export interface StoredReportCapture {
+  machineFreshness: FocusedMachineFreshness;
   payload: UsageReportPayload;
   rowSourceAuthorities: StoredSourceAuthority[];
 }
@@ -724,13 +729,14 @@ export const createStoredReportCapture = (
       const machine = yield* ensureMachineConfig;
       const dbPath = usageStorePath(storage.home);
       const harnessKeys = selectedStoredHarnessKeys(request);
-      const stored = yield* withPerfSpan(
-        'aiUsage.usageStore.queryStoredReportRows',
-        queryReportRows({ dbPath, ...(harnessKeys === undefined ? {} : { harnessKeys }) }).pipe(
-          Effect.mapError(usageStoreLocalHistoryError('usageStore.queryReportRows', dbPath)),
+      const storedCapture = yield* withPerfSpan(
+        'aiUsage.usageStore.queryStoredReportCapture',
+        queryStoredReportCapture({ dbPath, ...(harnessKeys === undefined ? {} : { harnessKeys }) }).pipe(
+          Effect.mapError(usageStoreLocalHistoryError('usageStore.queryStoredReportCapture', dbPath)),
         ),
-        (result) => ({ rows: result.rows.length }),
+        (result) => ({ machines: result.machineFleet.machines.length, rows: result.reportRows.rows.length }),
       );
+      const stored = storedCapture.reportRows;
       const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
       const projection = yield* withPerfSpan(
         'aiUsage.report.projectStoredGroups',
@@ -781,7 +787,18 @@ export const createStoredReportCapture = (
             }
             return authority;
           });
-          return { payload: assembly.payload, rowSourceAuthorities };
+          const machineFreshness: FocusedMachineFreshness = {
+            kind: 'available',
+            machines: storedCapture.machineFleet.machines.map(({ id, label, lastSeenAt }) => ({
+              id,
+              label,
+              lastSeenAt,
+            })),
+            observedAt: assembly.payload.generatedAt,
+            omittedMachines: storedCapture.machineFleet.omittedMachines,
+            skippedRows: storedCapture.machineFleet.skipped,
+          };
+          return { machineFreshness, payload: assembly.payload, rowSourceAuthorities };
         }),
         (capture) => ({
           rows: capture.payload.rows.length,
@@ -808,11 +825,11 @@ export const readStoredReportSourceFingerprint = (
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
     const dbPath = usageStorePath(storage.home);
-    const usageStoreGeneration = yield* queryUsageStoreGeneration({ dbPath }).pipe(
-      Effect.mapError(usageStoreLocalHistoryError('usageStore.queryUsageStoreGeneration', dbPath)),
+    const generations = yield* queryUsageStoreGenerations({ dbPath }).pipe(
+      Effect.mapError(usageStoreLocalHistoryError('usageStore.queryUsageStoreGenerations', dbPath)),
     );
     const config = yield* readMergedAiUsageConfigFrom(request.configCwd);
-    return { configFingerprint: fingerprintConfig(config), usageStoreGeneration };
+    return { configFingerprint: fingerprintConfig(config), ...generations };
   });
 
 export const createKnownLocalProjectSources = (
@@ -1193,8 +1210,7 @@ const legacyAliasMatchesSource = (source: ProjectSource, alias: ProjectAliasEntr
     return [source.sourcePath, source.project].some((candidate) => candidate && regex.test(candidate));
   });
 
-const sourceLabel = (source: ProjectSource) =>
-  source.machine ? `${source.project} · ${source.machine}` : source.project;
+const sourceLabel = (source: ProjectSource) => projectLabelWithMachine(source.project, source.machine);
 
 const lineDeltaForRows = (rows: SourcedRow[]) =>
   rows.reduce(
@@ -1461,6 +1477,7 @@ export const runConsistentStoredReportCapture = async (
     const after = await runStoredReportSourceFingerprint(request);
     if (
       before.configFingerprint === after.configFingerprint &&
+      before.machineFleetGeneration === after.machineFleetGeneration &&
       before.usageStoreGeneration === after.usageStoreGeneration
     ) {
       return capture;

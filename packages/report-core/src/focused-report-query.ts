@@ -7,11 +7,13 @@ import {
 } from './analytics';
 import { type CursorCommitAttributionRow, isCursorCommitAttributionRow } from './datasets';
 import { parseProjectGroupConfigs } from './project-group';
+import { type ApiPriceMeasurement, apiPriceMeasurement, combineApiPriceMeasurements } from './provenance';
 import { parseProviderStatusDataset } from './provider-status';
 import { MAX_SERVED_BOOTSTRAP_BYTES } from './report-budgets';
 import type { SerializedRow, UsageReportPayload } from './report-data';
 import { isStrictIsoTimestamp, isUsageReportWarnings } from './serialized-usage-validation';
 import {
+  buildSessionCampaignTimelineIdentities,
   buildSessionCampaignViews,
   enrichSessionPresentationRow,
   parseSessionPresentationRow,
@@ -19,11 +21,43 @@ import {
   type SessionPresentationRow,
   type SessionQueryFilters,
   type SessionQueryRange,
+  sessionCampaignIdentityForRow,
   sessionModelKeys,
+  sessionOriginLabel,
 } from './session-query';
-import { usageRowModelContributions } from './usage-row';
+import { isOriginProvenanceKind, type OriginProvenanceKind } from './types';
+import {
+  usageModelSegmentApiPriceMeasurement,
+  usageRowApiPriceMeasurement,
+  usageRowModelApiPriceMeasurements,
+  usageRowModelContributions,
+} from './usage-row';
 
-export type FocusedReportSupport = Omit<UsageReportPayload, 'rows' | 'tableRows'>;
+export interface FocusedMachineFreshnessEntry {
+  id: string;
+  label: string;
+  lastSeenAt: string;
+}
+
+export type FocusedMachineFreshness =
+  | {
+      kind: 'available';
+      machines: readonly FocusedMachineFreshnessEntry[];
+      observedAt: string;
+      omittedMachines: number;
+      skippedRows: number;
+    }
+  | {
+      kind: 'unavailable';
+      observedAt: string;
+      omittedMachines: number;
+      reason: 'bootstrap-budget' | 'not-captured';
+      skippedRows: number;
+    };
+
+export type FocusedReportSupport = Omit<UsageReportPayload, 'rows' | 'tableRows'> & {
+  machineFreshness?: FocusedMachineFreshness;
+};
 export type FocusedBootstrapSupport = Pick<
   FocusedReportSupport,
   'analytics' | 'filters' | 'generatedAt' | 'omittedRows' | 'warnings'
@@ -37,7 +71,7 @@ export interface FocusedReportQueryScope {
   revision: string;
 }
 
-export type FocusedTimelineDimension = 'harness' | 'model' | 'project' | 'provider';
+export type FocusedTimelineDimension = 'campaign' | 'harness' | 'machine' | 'model' | 'origin' | 'project' | 'provider';
 export type FocusedTimelineGranularity = 'day' | 'month' | 'week';
 
 export interface FocusedDateDomain {
@@ -67,6 +101,7 @@ export interface FocusedReportSummary {
   fresh: number;
   meanCost: number;
   pricedSessions: number;
+  priceMeasurement: ApiPriceMeasurement;
   rtkInput: number;
   rtkOutput: number;
   rtkSaved: number;
@@ -82,20 +117,36 @@ export interface FocusedReportSummary {
 
 export interface FocusedTimelineBucketEntry {
   cost: number;
+  priceMeasurement: ApiPriceMeasurement;
   sessions: number;
+}
+
+export interface FocusedTimelineGapCause {
+  kind: OriginProvenanceKind;
+  sessions: number;
+}
+
+export interface FocusedTimelineGap {
+  causes: FocusedTimelineGapCause[];
+  priceMeasurement: ApiPriceMeasurement;
+  sessions: number;
+  total: number;
 }
 
 export interface FocusedTimelineBucket {
   byKey: Record<string, FocusedTimelineBucketEntry>;
   date: string;
+  priceMeasurement: ApiPriceMeasurement;
   sessions: number;
   total: number;
+  unclassified: FocusedTimelineGap | null;
 }
 
 export interface FocusedTimelineSeries {
   key: string;
   label: string;
   memberKeys?: string[];
+  priceMeasurement: ApiPriceMeasurement;
   sessions: number;
   total: number;
 }
@@ -110,16 +161,30 @@ export interface FocusedTimelineData {
   last: string;
   maxBucketSessions: number;
   maxBucketTotal: number;
+  priceMeasurement: ApiPriceMeasurement;
   series: FocusedTimelineSeries[];
+  unclassified: FocusedTimelineGap | null;
 }
 
 /** A storage-side timeline subtotal for one local calendar day and series key. */
-export interface FocusedTimelineAggregate {
-  cost: number;
-  key: string;
-  sessions: number;
-  time: number;
-}
+export type FocusedTimelineAggregate =
+  | {
+      cost: number;
+      kind: 'series';
+      key: string;
+      label: string;
+      priceMeasurement: ApiPriceMeasurement;
+      sessions: number;
+      time: number;
+    }
+  | {
+      cause?: OriginProvenanceKind;
+      cost: number;
+      kind: 'unclassified';
+      priceMeasurement: ApiPriceMeasurement;
+      sessions: number;
+      time: number;
+    };
 
 export interface FocusedOverviewResult {
   dateDomain: FocusedDateDomain | null;
@@ -135,6 +200,7 @@ export interface FocusedHeatDay {
   cost: number;
   date: string;
   level: number;
+  priceMeasurement: ApiPriceMeasurement;
   sessions: number;
 }
 
@@ -147,6 +213,7 @@ export interface FocusedCalendarHeatmap {
 /** A storage-side subtotal for one local calendar day. */
 export interface FocusedDayAggregate {
   cost: number;
+  priceMeasurement: ApiPriceMeasurement;
   sessions: number;
   time: number;
 }
@@ -218,6 +285,7 @@ export interface FocusedProjectGroup {
   cost: number;
   fresh: number;
   key: string;
+  label: string;
   linesAdded: number;
   linesDeleted: number;
   priced: number;
@@ -243,9 +311,15 @@ export interface FocusedBreakdownResult {
   revision: string;
 }
 
+export interface FocusedFilterOption {
+  label: string;
+  value: string;
+}
+
 export interface FocusedSupportResult {
   dateDomain: FocusedDateDomain | null;
-  filterOptions: { harness: string[]; machine: string[]; truncated: boolean };
+  filterOptions: { harness: string[]; machine: FocusedFilterOption[]; truncated: boolean };
+  machineFreshness: FocusedMachineFreshness;
   providerRows: SessionPresentationRow[];
   requestFingerprint: string;
   revision: string;
@@ -279,7 +353,15 @@ export type FocusedReportQueryResult = FocusedBreakdownResult | FocusedOverviewR
 const MAX_REVISION_LENGTH = 512;
 const MAX_TIMELINE_SERIES = 12;
 const OTHER_TIMELINE_SERIES_KEY = '__ai_usage_other__';
-const timelineDimensions = new Set<FocusedTimelineDimension>(['harness', 'model', 'project', 'provider']);
+const timelineDimensions = new Set<FocusedTimelineDimension>([
+  'campaign',
+  'harness',
+  'machine',
+  'model',
+  'origin',
+  'project',
+  'provider',
+]);
 const timelineGranularities = new Set<FocusedTimelineGranularity>(['day', 'month', 'week']);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -310,7 +392,6 @@ export const parseFocusedReportQueryScope = (value: unknown): FocusedReportQuery
   const record = requireRecord(value, 'focused report query');
   assertExactKeys(record, ['filters', 'range', 'revision'], 'focused report query');
   const parsed = parseSessionQueryRequest({
-    campaigns: false,
     cursor: null,
     filters: record.filters,
     pageSize: 1,
@@ -393,7 +474,9 @@ export const matchesFocusedReportQuery = (row: SessionPresentationRow, query: Fo
   return (
     (!query.filters.query || row.searchText.includes(query.filters.query)) &&
     (query.filters.harness.length === 0 || query.filters.harness.includes(row.harness)) &&
-    (query.filters.machine.length === 0 || query.filters.machine.includes(row.source?.machineLabel ?? '')) &&
+    (query.filters.machine.length === 0 || query.filters.machine.includes(row.source?.machineId ?? '')) &&
+    (!query.filters.origin?.length || row.origin === undefined || query.filters.origin.includes(row.origin)) &&
+    (fields.campaign === undefined || sessionCampaignIdentityForRow(row).campaignKey === fields.campaign) &&
     (fields.provider === undefined || row.providerDisplay === fields.provider) &&
     (fields.model === undefined || sessionModelKeys(row).includes(fields.model)) &&
     (fields.project === undefined || row.projectKey === fields.project) &&
@@ -409,6 +492,7 @@ const emptySummary = (): FocusedReportSummary => ({
   costQuota: 0,
   fresh: 0,
   meanCost: 0,
+  priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
   pricedSessions: 0,
   rtkInput: 0,
   rtkOutput: 0,
@@ -425,10 +509,13 @@ const emptySummary = (): FocusedReportSummary => ({
 
 export const buildFocusedReportSummary = (rows: readonly SessionPresentationRow[]): FocusedReportSummary => {
   const summary = emptySummary();
+  const priceMeasurements: ApiPriceMeasurement[] = [];
+  let fullyPricedCost = 0;
   for (const row of rows) {
     summary.sessionCount++;
+    priceMeasurements.push(usageRowApiPriceMeasurement(row));
     if (row.costKnown) {
-      summary.totalCost += row.costApprox;
+      fullyPricedCost += row.costApprox;
       summary.pricedSessions++;
     }
     summary.actualCost += row.costActual ?? 0;
@@ -446,7 +533,9 @@ export const buildFocusedReportSummary = (rows: readonly SessionPresentationRow[
     summary.turns += row.turns;
     summary.tools += row.tools;
   }
-  summary.meanCost = summary.totalCost / (summary.pricedSessions || 1);
+  summary.priceMeasurement = combineApiPriceMeasurements(priceMeasurements);
+  summary.totalCost = summary.priceMeasurement.knownCost;
+  summary.meanCost = fullyPricedCost / (summary.pricedSessions || 1);
   return summary;
 };
 
@@ -469,19 +558,42 @@ const nextBucketStart = (date: Date, granularity: FocusedTimelineGranularity): D
 const dateKey = (date: Date): string =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
-const timelineKey = (row: SessionPresentationRow, dimension: FocusedTimelineDimension): string => {
-  if (dimension === 'harness') {
-    return row.harness;
+interface FocusedTimelineIdentity {
+  key: string;
+  label: string;
+}
+
+const timelineIdentity = (
+  row: SessionPresentationRow,
+  dimension: FocusedTimelineDimension,
+  campaignIdentity: FocusedTimelineIdentity | undefined,
+): FocusedTimelineIdentity | undefined => {
+  // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
+  switch (dimension) {
+    case 'campaign':
+      return campaignIdentity ?? { key: `session:${row.rowId}`, label: row.sessionLabel };
+    case 'harness':
+      return { key: row.harness, label: row.harness };
+    case 'machine': {
+      const key = row.source?.machineId ?? '';
+      const label = row.source?.machineLabel ?? '';
+      return { key, label: label || 'Unknown machine' };
+    }
+    case 'model':
+      return { key: row.modelKey, label: row.modelKey };
+    case 'origin':
+      return row.origin === undefined ? undefined : { key: row.origin, label: sessionOriginLabel(row.origin) };
+    case 'project':
+      return { key: row.projectKey, label: row.projectLabel };
+    case 'provider':
+      return { key: row.providerDisplay, label: row.providerDisplay };
   }
-  if (dimension === 'model') {
-    return row.modelKey;
-  }
-  return dimension === 'project' ? row.projectKey : row.providerDisplay;
 };
 
 const timelineAggregatesForRow = (
   row: SessionPresentationRow,
   dimension: FocusedTimelineDimension,
+  campaignIdentity: FocusedTimelineIdentity | undefined,
 ): FocusedTimelineAggregate[] => {
   const time = row.activeTime;
   if (time === null) {
@@ -489,22 +601,70 @@ const timelineAggregatesForRow = (
   }
   if (dimension === 'model') {
     const contributions = usageRowModelContributions(row);
+    const priceMeasurements = usageRowModelApiPriceMeasurements(row);
     const sessionKey = contributions.some(({ key }) => key === row.modelKey) ? row.modelKey : contributions[0]?.key;
-    return contributions.map(({ costApprox, key }) => ({
-      cost: row.costKnown ? costApprox : 0,
-      key,
-      sessions: key === sessionKey ? 1 : 0,
+    return contributions.map((contribution) => ({
+      cost: contribution.costApprox,
+      key: contribution.key,
+      kind: 'series' as const,
+      label: contribution.key,
+      priceMeasurement: priceMeasurements.get(contribution.key) ?? usageModelSegmentApiPriceMeasurement(contribution),
+      sessions: contribution.key === sessionKey ? 1 : 0,
       time,
     }));
   }
+  const priceMeasurement = usageRowApiPriceMeasurement(row);
+  if (dimension === 'origin' && row.origin === undefined) {
+    return [
+      {
+        ...(row.originProvenance === undefined ? {} : { cause: row.originProvenance }),
+        cost: priceMeasurement.knownCost,
+        kind: 'unclassified',
+        priceMeasurement,
+        sessions: 1,
+        time,
+      },
+    ];
+  }
+  const identity = timelineIdentity(row, dimension, campaignIdentity);
+  if (identity === undefined) {
+    return [];
+  }
   return [
     {
-      cost: row.costKnown ? row.costApprox : 0,
-      key: timelineKey(row, dimension),
+      cost: priceMeasurement.knownCost,
+      key: identity.key,
+      kind: 'series',
+      label: identity.label,
+      priceMeasurement,
       sessions: 1,
       time,
     },
   ];
+};
+
+const addTimelineGap = (
+  current: FocusedTimelineGap | null,
+  aggregate: Extract<FocusedTimelineAggregate, { kind: 'unclassified' }>,
+): FocusedTimelineGap => {
+  const causes = current ? [...current.causes] : [];
+  if (aggregate.cause !== undefined) {
+    const existing = causes.find((cause) => cause.kind === aggregate.cause);
+    if (existing) {
+      existing.sessions += aggregate.sessions;
+    } else {
+      causes.push({ kind: aggregate.cause, sessions: aggregate.sessions });
+    }
+  }
+  return {
+    causes,
+    priceMeasurement: combineApiPriceMeasurements([
+      current?.priceMeasurement ?? apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
+      aggregate.priceMeasurement,
+    ]),
+    sessions: (current?.sessions ?? 0) + aggregate.sessions,
+    total: (current?.total ?? 0) + aggregate.cost,
+  };
 };
 
 export const buildFocusedTimelineFromAggregates = (
@@ -519,25 +679,58 @@ export const buildFocusedTimelineFromAggregates = (
   const buckets: FocusedTimelineBucket[] = [];
   const bucketByKey = new Map<string, FocusedTimelineBucket>();
   for (let cursor = firstBucket; cursor <= lastBucket; cursor = nextBucketStart(cursor, options.granularity)) {
-    const bucket = { byKey: {}, date: cursor.toISOString(), sessions: 0, total: 0 };
+    const bucket: FocusedTimelineBucket = {
+      byKey: {},
+      date: cursor.toISOString(),
+      priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
+      sessions: 0,
+      total: 0,
+      unclassified: null,
+    };
     buckets.push(bucket);
     bucketByKey.set(dateKey(cursor), bucket);
   }
   const totals = new Map<string, FocusedTimelineBucketEntry>();
+  const labels = new Map<string, string>();
+  let unclassified: FocusedTimelineGap | null = null;
   for (const aggregate of aggregates) {
     const bucket = bucketByKey.get(dateKey(bucketStartFor(new Date(aggregate.time), options.granularity)));
     if (!bucket) {
       continue;
     }
-    const { cost, key, sessions } = aggregate;
-    const entry = bucket.byKey[key] ?? { cost: 0, sessions: 0 };
+    if (aggregate.kind === 'unclassified') {
+      bucket.unclassified = addTimelineGap(bucket.unclassified, aggregate);
+      unclassified = addTimelineGap(unclassified, aggregate);
+      bucket.total += aggregate.cost;
+      bucket.priceMeasurement = combineApiPriceMeasurements([bucket.priceMeasurement, aggregate.priceMeasurement]);
+      bucket.sessions += aggregate.sessions;
+      continue;
+    }
+    const { cost, key, label, priceMeasurement, sessions } = aggregate;
+    const knownLabel = labels.get(key);
+    if (knownLabel !== undefined && knownLabel !== label) {
+      throw new Error(`Timeline series ${key} has conflicting labels`);
+    }
+    labels.set(key, label);
+    const entry = bucket.byKey[key] ?? {
+      cost: 0,
+      priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
+      sessions: 0,
+    };
     entry.cost += cost;
+    entry.priceMeasurement = combineApiPriceMeasurements([entry.priceMeasurement, priceMeasurement]);
     entry.sessions += sessions;
     bucket.byKey[key] = entry;
     bucket.total += cost;
+    bucket.priceMeasurement = combineApiPriceMeasurements([bucket.priceMeasurement, priceMeasurement]);
     bucket.sessions += sessions;
-    const total = totals.get(key) ?? { cost: 0, sessions: 0 };
+    const total = totals.get(key) ?? {
+      cost: 0,
+      priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
+      sessions: 0,
+    };
     total.cost += cost;
+    total.priceMeasurement = combineApiPriceMeasurements([total.priceMeasurement, priceMeasurement]);
     total.sessions += sessions;
     totals.set(key, total);
   }
@@ -547,7 +740,8 @@ export const buildFocusedTimelineFromAggregates = (
   );
   let series: FocusedTimelineSeries[] = ranked.map(([key, value]) => ({
     key,
-    label: key,
+    label: labels.get(key) ?? key,
+    priceMeasurement: value.priceMeasurement,
     sessions: value.sessions,
     total: value.cost,
   }));
@@ -560,11 +754,19 @@ export const buildFocusedTimelineFromAggregates = (
     }
     const memberKeys = aggregated.map(([key]) => key);
     for (const bucket of buckets) {
-      const aggregate = { cost: 0, sessions: 0 };
+      const aggregate: FocusedTimelineBucketEntry = {
+        cost: 0,
+        priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
+        sessions: 0,
+      };
       for (const key of memberKeys) {
         const entry = bucket.byKey[key];
         if (entry) {
           aggregate.cost += entry.cost;
+          aggregate.priceMeasurement = combineApiPriceMeasurements([
+            aggregate.priceMeasurement,
+            entry.priceMeasurement,
+          ]);
           aggregate.sessions += entry.sessions;
           delete bucket.byKey[key];
         }
@@ -574,25 +776,52 @@ export const buildFocusedTimelineFromAggregates = (
       }
     }
     const aggregate = aggregated.reduce(
-      (total, [, value]) => ({ cost: total.cost + value.cost, sessions: total.sessions + value.sessions }),
-      { cost: 0, sessions: 0 },
+      (total, [, value]) => ({
+        cost: total.cost + value.cost,
+        priceMeasurement: combineApiPriceMeasurements([total.priceMeasurement, value.priceMeasurement]),
+        sessions: total.sessions + value.sessions,
+      }),
+      {
+        cost: 0,
+        priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
+        sessions: 0,
+      },
     );
     series = [
-      ...retained.map(([key, value]) => ({ key, label: key, sessions: value.sessions, total: value.cost })),
-      { key: aggregateKey, label: 'Other', memberKeys, sessions: aggregate.sessions, total: aggregate.cost },
+      ...retained.map(([key, value]) => ({
+        key,
+        label: labels.get(key) ?? key,
+        priceMeasurement: value.priceMeasurement,
+        sessions: value.sessions,
+        total: value.cost,
+      })),
+      {
+        key: aggregateKey,
+        label: 'Other',
+        memberKeys,
+        priceMeasurement: aggregate.priceMeasurement,
+        sessions: aggregate.sessions,
+        total: aggregate.cost,
+      },
     ];
   }
+  const priceMeasurement = combineApiPriceMeasurements([
+    ...ranked.map(([, value]) => value.priceMeasurement),
+    ...(unclassified ? [unclassified.priceMeasurement] : []),
+  ]);
   return {
     buckets,
     dimension: options.dimension,
     first: buckets[0]?.date ?? firstBucket.toISOString(),
-    grandSessions: ranked.reduce((sum, [, value]) => sum + value.sessions, 0),
-    grandTotal: ranked.reduce((sum, [, value]) => sum + value.cost, 0),
+    grandSessions: ranked.reduce((sum, [, value]) => sum + value.sessions, unclassified?.sessions ?? 0),
+    grandTotal: ranked.reduce((sum, [, value]) => sum + value.cost, unclassified?.total ?? 0),
     granularity: options.granularity,
     last: buckets.at(-1)?.date ?? lastBucket.toISOString(),
     maxBucketSessions: buckets.reduce((max, bucket) => Math.max(max, bucket.sessions), 0),
     maxBucketTotal: buckets.reduce((max, bucket) => Math.max(max, bucket.total), 0),
+    priceMeasurement,
     series,
+    unclassified,
   };
 };
 
@@ -612,11 +841,15 @@ export const buildFocusedDateDomain = (times: Iterable<number>): FocusedDateDoma
 export const buildFocusedTimeline = (
   rows: readonly SessionPresentationRow[],
   options: FocusedOverviewRequest['timeline'],
-): FocusedTimelineData | null =>
-  buildFocusedTimelineFromAggregates(
-    rows.flatMap((row) => timelineAggregatesForRow(row, options.dimension)),
+  campaignRows: readonly SessionPresentationRow[] = rows,
+): FocusedTimelineData | null => {
+  const timelineRows = [...rows];
+  const campaignIdentities = buildSessionCampaignTimelineIdentities([...campaignRows]);
+  return buildFocusedTimelineFromAggregates(
+    timelineRows.flatMap((row) => timelineAggregatesForRow(row, options.dimension, campaignIdentities.get(row.rowId))),
     options,
   );
+};
 
 const analyticsInput = (row: SessionPresentationRow): AnalyticsRowInput => ({
   ambiguous: row.ambiguous ?? false,
@@ -630,6 +863,8 @@ const analyticsInput = (row: SessionPresentationRow): AnalyticsRowInput => ({
   provider: row.provider,
   tools: row.tools,
   turns: row.turns,
+  unpricedFreshTokens:
+    row.priceMeasurement?.unpricedFreshTokens ?? usageRowApiPriceMeasurement(row).unpricedFreshTokens,
   usageUnavailable: row.usageUnavailable ?? false,
 });
 
@@ -641,6 +876,7 @@ const projectGroups = (rows: readonly SessionPresentationRow[]): FocusedProjectG
       cost: 0,
       fresh: 0,
       key: row.projectKey,
+      label: row.projectLabel,
       linesAdded: 0,
       linesDeleted: 0,
       priced: 0,
@@ -668,15 +904,20 @@ export const buildFocusedHeatmapFromAggregates = (
   aggregates: readonly FocusedDayAggregate[],
   now = new Date(),
 ): FocusedCalendarHeatmap | null => {
-  const byDay = new Map<string, { cost: number; sessions: number }>();
+  const byDay = new Map<string, Omit<FocusedDayAggregate, 'time'>>();
   let minTime = Number.POSITIVE_INFINITY;
   let maxTime = Number.NEGATIVE_INFINITY;
   for (const aggregate of aggregates) {
     minTime = Math.min(minTime, aggregate.time);
     maxTime = Math.max(maxTime, aggregate.time);
     const key = dateKey(startOfDay(new Date(aggregate.time)));
-    const entry = byDay.get(key) ?? { cost: 0, sessions: 0 };
+    const entry = byDay.get(key) ?? {
+      cost: 0,
+      priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
+      sessions: 0,
+    };
     entry.cost += aggregate.cost;
+    entry.priceMeasurement = combineApiPriceMeasurements([entry.priceMeasurement, aggregate.priceMeasurement]);
     entry.sessions += aggregate.sessions;
     byDay.set(key, entry);
   }
@@ -710,6 +951,8 @@ export const buildFocusedHeatmapFromAggregates = (
         cost: entry?.cost ?? 0,
         date: date.toISOString(),
         level: sessions <= 0 ? 0 : 1 + thresholds.filter((threshold) => sessions > threshold).length,
+        priceMeasurement:
+          entry?.priceMeasurement ?? apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
         sessions,
       });
     }
@@ -726,13 +969,17 @@ const buildHeatmap = (rows: readonly SessionPresentationRow[], now = new Date())
     rows.flatMap((row) =>
       row.activeTime === null
         ? []
-        : [
-            {
-              cost: row.costKnown ? row.costApprox : 0,
-              sessions: 1,
-              time: row.activeTime,
-            },
-          ],
+        : (() => {
+            const priceMeasurement = usageRowApiPriceMeasurement(row);
+            return [
+              {
+                cost: priceMeasurement.knownCost,
+                priceMeasurement,
+                sessions: 1,
+                time: row.activeTime,
+              },
+            ];
+          })(),
     ),
     now,
   );
@@ -953,8 +1200,15 @@ const dayAggregatesForRows = (rows: readonly SessionPresentationRow[]): FocusedD
     }
     const day = startOfDay(new Date(row.activeTime));
     const key = dateKey(day);
-    const aggregate = byDay.get(key) ?? { cost: 0, sessions: 0, time: day.getTime() };
-    aggregate.cost += row.costKnown ? row.costApprox : 0;
+    const aggregate = byDay.get(key) ?? {
+      cost: 0,
+      priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
+      sessions: 0,
+      time: day.getTime(),
+    };
+    const priceMeasurement = usageRowApiPriceMeasurement(row);
+    aggregate.cost += priceMeasurement.knownCost;
+    aggregate.priceMeasurement = combineApiPriceMeasurements([aggregate.priceMeasurement, priceMeasurement]);
     aggregate.sessions += 1;
     byDay.set(key, aggregate);
   }
@@ -1025,7 +1279,7 @@ export const projectFocusedOverviewFromPresentationRows = (
     requestFingerprint: focusedOverviewFingerprint(request),
     revision: request.query.revision,
     summary: buildFocusedReportSummary(visible),
-    timeline: buildFocusedTimeline(timelineRows, request.timeline),
+    timeline: buildFocusedTimeline(timelineRows, request.timeline, allRows),
     view: {
       advancedSummary:
         availableAnalyses.length === 0
@@ -1099,10 +1353,44 @@ export const projectFocusedSupport = (
   const project = fitsTextBudget(support.filters.project, 4096) ? support.filters.project : null;
   const since = fitsTextBudget(support.filters.since, 256) ? support.filters.since : null;
   const acceptedHarnesses: string[] = [];
-  const acceptedMachines: string[] = [];
+  const acceptedMachines: FocusedFilterOption[] = [];
   const acceptedProviderRows: SessionPresentationRow[] = [];
   const acceptedProviderStatuses: NonNullable<typeof providerStatus>['providers'] = [];
   const acceptedWarnings: NonNullable<FocusedReportSupport['warnings']> = [];
+  const sourceMachineFreshness: FocusedMachineFreshness = support.machineFreshness ?? {
+    kind: 'unavailable',
+    observedAt: support.generatedAt,
+    omittedMachines: 0,
+    reason: 'not-captured',
+    skippedRows: 0,
+  };
+  const acceptedFreshnessMachines: FocusedMachineFreshnessEntry[] = [];
+  let availableFreshnessFitsBudget = true;
+  const projectedMachineFreshness = (): FocusedMachineFreshness => {
+    if (sourceMachineFreshness.kind === 'unavailable') {
+      return sourceMachineFreshness;
+    }
+    const omittedMachines =
+      sourceMachineFreshness.omittedMachines +
+      sourceMachineFreshness.machines.length -
+      acceptedFreshnessMachines.length;
+    if (!availableFreshnessFitsBudget) {
+      return {
+        kind: 'unavailable',
+        observedAt: sourceMachineFreshness.observedAt,
+        omittedMachines,
+        reason: 'bootstrap-budget',
+        skippedRows: sourceMachineFreshness.skippedRows,
+      };
+    }
+    return {
+      kind: 'available',
+      machines: acceptedFreshnessMachines,
+      observedAt: sourceMachineFreshness.observedAt,
+      omittedMachines,
+      skippedRows: sourceMachineFreshness.skippedRows,
+    };
+  };
   const truncation: FocusedSupportResult['truncation'] = {
     filterProjectOmitted: project === support.filters.project ? 0 : 1,
     filterSinceOmitted: since === support.filters.since ? 0 : 1,
@@ -1127,6 +1415,7 @@ export const projectFocusedSupport = (
         truncation.machineOptionsOmitted > 0 ||
         truncation.providerRowsOmitted > 0,
     },
+    machineFreshness: projectedMachineFreshness(),
     providerRows: acceptedProviderRows,
     requestFingerprint: focusedRevisionFingerprint('support', request),
     revision: request.revision,
@@ -1150,6 +1439,21 @@ export const projectFocusedSupport = (
   const resultFitsBudget = (): boolean =>
     textEncoder.encode(JSON.stringify(createResult())).byteLength <= MAX_SERVED_BOOTSTRAP_BYTES;
 
+  if (sourceMachineFreshness.kind === 'available') {
+    if (resultFitsBudget()) {
+      for (const machine of sourceMachineFreshness.machines.slice(0, maximumSupportItems)) {
+        acceptedFreshnessMachines.push(machine);
+        if (!resultFitsBudget()) {
+          acceptedFreshnessMachines.pop();
+        }
+      }
+      if (sourceMachineFreshness.machines.length > 0 && acceptedFreshnessMachines.length === 0) {
+        availableFreshnessFitsBudget = false;
+      }
+    } else {
+      availableFreshnessFitsBudget = false;
+    }
+  }
   for (const harness of filterOptions.harness.slice(0, maximumSupportItems)) {
     acceptedHarnesses.push(harness);
     if (!resultFitsBudget()) {
@@ -1265,6 +1569,26 @@ const requireString = (value: unknown, label: string): string => {
   return value;
 };
 
+const assertApiPriceMeasurement = (value: unknown, label: string, expectedKnownCost?: number): void => {
+  const measurement = requireRecord(value, label);
+  assertExactKeys(measurement, ['knownCost', 'state', 'unpricedFreshTokens'], label);
+  const knownCost = requireFiniteNumber(measurement.knownCost, `${label}.knownCost`);
+  const unpricedFreshTokens = requireFiniteNumber(measurement.unpricedFreshTokens, `${label}.unpricedFreshTokens`);
+  const state = measurement.state;
+  if (!(state === 'measured' || state === 'partially measured' || state === 'zero')) {
+    throw new Error(`${label}.state is invalid`);
+  }
+  if ((state === 'zero') !== (knownCost === 0 && state !== 'partially measured')) {
+    throw new Error(`${label} zero state is inconsistent`);
+  }
+  if (state !== 'partially measured' && unpricedFreshTokens !== 0) {
+    throw new Error(`${label} unpriced volume is inconsistent`);
+  }
+  if (expectedKnownCost !== undefined && knownCost !== expectedKnownCost) {
+    throw new Error(`${label}.knownCost must match its aggregate cost`);
+  }
+};
+
 const requireIsoTimestamp = (value: unknown, label: string): string => {
   if (!isStrictIsoTimestamp(value)) {
     throw new Error(`${label} must be a strict ISO timestamp`);
@@ -1311,6 +1635,7 @@ const FOCUSED_REPORT_SUMMARY_KEYS = [
   'costQuota',
   'fresh',
   'meanCost',
+  'priceMeasurement',
   'pricedSessions',
   'rtkInput',
   'rtkOutput',
@@ -1329,8 +1654,11 @@ const assertFocusedSummary = (value: unknown, label: string): void => {
   const summary = requireRecord(value, label);
   assertExactKeys(summary, FOCUSED_REPORT_SUMMARY_KEYS, label);
   for (const key of FOCUSED_REPORT_SUMMARY_KEYS) {
-    requireFiniteNumber(summary[key], `${label}.${key}`);
+    if (key !== 'priceMeasurement') {
+      requireFiniteNumber(summary[key], `${label}.${key}`);
+    }
   }
+  assertApiPriceMeasurement(summary.priceMeasurement, `${label}.priceMeasurement`, Number(summary.totalCost));
   for (const key of ['pricedSessions', 'rtkSessions', 'sessionCount', 'unknownActual'] as const) {
     requireNonNegativeSafeInteger(summary[key], `${label}.${key}`);
   }
@@ -1343,11 +1671,17 @@ const assertTimelineSeries = (value: unknown): Set<string> => {
   const keys = new Set<string>();
   for (const [index, entry] of value.entries()) {
     const series = requireRecord(entry, `overview timeline.series[${index}]`);
-    assertAllowedKeys(series, ['key', 'label', 'sessions', 'total'], ['memberKeys'], 'overview timeline series');
+    assertAllowedKeys(
+      series,
+      ['key', 'label', 'priceMeasurement', 'sessions', 'total'],
+      ['memberKeys'],
+      'overview timeline series',
+    );
     const key = requireString(series.key, 'overview timeline series.key');
     requireString(series.label, 'overview timeline series.label');
     requireNonNegativeSafeInteger(series.sessions, 'overview timeline series.sessions');
-    requireFiniteNumber(series.total, 'overview timeline series.total');
+    const seriesTotal = requireFiniteNumber(series.total, 'overview timeline series.total');
+    assertApiPriceMeasurement(series.priceMeasurement, 'overview timeline series.priceMeasurement', seriesTotal);
     if (series.memberKeys !== undefined) {
       assertStringArray(series.memberKeys, 'overview timeline series.memberKeys');
     }
@@ -1359,16 +1693,47 @@ const assertTimelineSeries = (value: unknown): Set<string> => {
   return keys;
 };
 
+const assertTimelineGap = (value: unknown, label: string): void => {
+  if (value === null) {
+    return;
+  }
+  const gap = requireRecord(value, label);
+  assertExactKeys(gap, ['causes', 'priceMeasurement', 'sessions', 'total'], label);
+  requireNonNegativeSafeInteger(gap.sessions, `${label}.sessions`);
+  const total = requireFiniteNumber(gap.total, `${label}.total`);
+  assertApiPriceMeasurement(gap.priceMeasurement, `${label}.priceMeasurement`, total);
+  if (!Array.isArray(gap.causes) || gap.causes.length > 3) {
+    throw new Error(`${label}.causes is invalid`);
+  }
+  const kinds = new Set<OriginProvenanceKind>();
+  for (const causeValue of gap.causes) {
+    const causeLabel = `${label}.causes[]`;
+    const cause = requireRecord(causeValue, causeLabel);
+    assertExactKeys(cause, ['kind', 'sessions'], causeLabel);
+    if (!isOriginProvenanceKind(cause.kind) || kinds.has(cause.kind)) {
+      throw new Error(`${causeLabel}.kind is invalid`);
+    }
+    kinds.add(cause.kind);
+    requireNonNegativeSafeInteger(cause.sessions, `${causeLabel}.sessions`);
+  }
+};
+
 const assertTimelineBuckets = (value: unknown, seriesKeys: ReadonlySet<string>): void => {
   if (!Array.isArray(value)) {
     throw new Error('overview timeline.buckets must be an array');
   }
   for (const [index, entry] of value.entries()) {
     const bucket = requireRecord(entry, `overview timeline.buckets[${index}]`);
-    assertExactKeys(bucket, ['byKey', 'date', 'sessions', 'total'], 'overview timeline bucket');
+    assertExactKeys(
+      bucket,
+      ['byKey', 'date', 'priceMeasurement', 'sessions', 'total', 'unclassified'],
+      'overview timeline bucket',
+    );
     requireIsoTimestamp(bucket.date, 'overview timeline bucket.date');
     requireNonNegativeSafeInteger(bucket.sessions, 'overview timeline bucket.sessions');
-    requireFiniteNumber(bucket.total, 'overview timeline bucket.total');
+    const bucketTotal = requireFiniteNumber(bucket.total, 'overview timeline bucket.total');
+    assertApiPriceMeasurement(bucket.priceMeasurement, 'overview timeline bucket.priceMeasurement', bucketTotal);
+    assertTimelineGap(bucket.unclassified, 'overview timeline bucket.unclassified');
     const byKey = requireRecord(bucket.byKey, 'overview timeline bucket.byKey');
     if (Object.keys(byKey).length > MAX_TIMELINE_SERIES) {
       throw new Error('overview timeline bucket.byKey exceeds its presentation bound');
@@ -1378,8 +1743,9 @@ const assertTimelineBuckets = (value: unknown, seriesKeys: ReadonlySet<string>):
         throw new Error('overview timeline bucket contains an unknown series key');
       }
       const totals = requireRecord(rawTotals, `overview timeline bucket.byKey.${key}`);
-      assertExactKeys(totals, ['cost', 'sessions'], 'overview timeline bucket entry');
-      requireFiniteNumber(totals.cost, 'overview timeline bucket entry.cost');
+      assertExactKeys(totals, ['cost', 'priceMeasurement', 'sessions'], 'overview timeline bucket entry');
+      const entryCost = requireFiniteNumber(totals.cost, 'overview timeline bucket entry.cost');
+      assertApiPriceMeasurement(totals.priceMeasurement, 'overview timeline bucket entry.priceMeasurement', entryCost);
       requireNonNegativeSafeInteger(totals.sessions, 'overview timeline bucket entry.sessions');
     }
   }
@@ -1402,7 +1768,9 @@ const assertFocusedTimeline = (value: unknown, expected: FocusedOverviewRequest[
       'last',
       'maxBucketSessions',
       'maxBucketTotal',
+      'priceMeasurement',
       'series',
+      'unclassified',
     ],
     'overview timeline',
   );
@@ -1412,10 +1780,12 @@ const assertFocusedTimeline = (value: unknown, expected: FocusedOverviewRequest[
   requireIsoTimestamp(timeline.first, 'overview timeline.first');
   requireIsoTimestamp(timeline.last, 'overview timeline.last');
   requireNonNegativeSafeInteger(timeline.grandSessions, 'overview timeline.grandSessions');
-  requireFiniteNumber(timeline.grandTotal, 'overview timeline.grandTotal');
+  const grandTotal = requireFiniteNumber(timeline.grandTotal, 'overview timeline.grandTotal');
+  assertApiPriceMeasurement(timeline.priceMeasurement, 'overview timeline.priceMeasurement', grandTotal);
   requireNonNegativeSafeInteger(timeline.maxBucketSessions, 'overview timeline.maxBucketSessions');
   requireFiniteNumber(timeline.maxBucketTotal, 'overview timeline.maxBucketTotal');
   assertTimelineBuckets(timeline.buckets, assertTimelineSeries(timeline.series));
+  assertTimelineGap(timeline.unclassified, 'overview timeline.unclassified');
 };
 
 const assertOverviewSessionItem = (value: unknown, label: string, requireAggregateCount = false): void => {
@@ -1467,8 +1837,9 @@ const assertHeatmap = (value: unknown): void => {
         continue;
       }
       const day = requireRecord(valueDay, `overview heatmap.weeks[${weekIndex}].days[${dayIndex}]`);
-      assertExactKeys(day, ['cost', 'date', 'level', 'sessions'], 'overview heatmap day');
-      requireFiniteNumber(day.cost, 'overview heatmap day.cost');
+      assertExactKeys(day, ['cost', 'date', 'level', 'priceMeasurement', 'sessions'], 'overview heatmap day');
+      const dayCost = requireFiniteNumber(day.cost, 'overview heatmap day.cost');
+      assertApiPriceMeasurement(day.priceMeasurement, 'overview heatmap day.priceMeasurement', dayCost);
       requireIsoTimestamp(day.date, 'overview heatmap day.date');
       requireFiniteNumber(day.level, 'overview heatmap day.level', { maximum: 4 });
       requireNonNegativeSafeInteger(day.level, 'overview heatmap day.level');
@@ -1665,6 +2036,7 @@ const ANALYTICS_GROUP_KEYS = [
   'tools',
   'turns',
   'unpriced',
+  'unpricedFreshTokens',
   'usageUnavailable',
 ] as const;
 
@@ -1688,8 +2060,18 @@ const assertAnalyticsGroup = (value: unknown, label: string): void => {
       maximum: key === 'cacheHitPct' || key === 'costPercent' ? 100 : Number.POSITIVE_INFINITY,
     });
   }
-  for (const key of ['ambiguous', 'priced', 'sessions', 'unpriced', 'usageUnavailable'] as const) {
+  for (const key of [
+    'ambiguous',
+    'priced',
+    'sessions',
+    'unpriced',
+    'unpricedFreshTokens',
+    'usageUnavailable',
+  ] as const) {
     requireNonNegativeSafeInteger(group[key], `${label}.${key}`);
+  }
+  if (group.unpriced === 0 && group.unpricedFreshTokens !== 0) {
+    throw new Error(`${label}.unpricedFreshTokens requires an unpriced session`);
   }
 };
 
@@ -1754,6 +2136,7 @@ const PROJECT_GROUP_KEYS = [
   'cost',
   'fresh',
   'key',
+  'label',
   'linesAdded',
   'linesDeleted',
   'priced',
@@ -1766,8 +2149,9 @@ const assertFocusedProjectGroup = (value: unknown, label: string): void => {
   const group = requireRecord(value, label);
   assertExactKeys(group, PROJECT_GROUP_KEYS, label);
   requireString(group.key, `${label}.key`);
+  requireString(group.label, `${label}.label`);
   for (const key of PROJECT_GROUP_KEYS) {
-    if (key !== 'key') {
+    if (key !== 'key' && key !== 'label') {
       requireFiniteNumber(group[key], `${label}.${key}`);
     }
   }
@@ -1904,6 +2288,47 @@ const assertBreakdownContext = (value: unknown): void => {
   }
 };
 
+const assertFocusedMachineFreshness = (value: unknown): void => {
+  const freshness = requireRecord(value, 'support machine freshness');
+  requireIsoTimestamp(freshness.observedAt, 'support machine freshness.observedAt');
+  requireNonNegativeSafeInteger(freshness.omittedMachines, 'support machine freshness.omittedMachines');
+  requireNonNegativeSafeInteger(freshness.skippedRows, 'support machine freshness.skippedRows');
+  if (freshness.kind === 'unavailable') {
+    assertExactKeys(
+      freshness,
+      ['kind', 'observedAt', 'omittedMachines', 'reason', 'skippedRows'],
+      'support machine freshness',
+    );
+    if (!(freshness.reason === 'bootstrap-budget' || freshness.reason === 'not-captured')) {
+      throw new Error('support machine freshness.reason is invalid');
+    }
+    return;
+  }
+  if (freshness.kind !== 'available') {
+    throw new Error('support machine freshness.kind is invalid');
+  }
+  assertExactKeys(
+    freshness,
+    ['kind', 'machines', 'observedAt', 'omittedMachines', 'skippedRows'],
+    'support machine freshness',
+  );
+  if (!Array.isArray(freshness.machines) || freshness.machines.length > 100) {
+    throw new Error('support machine freshness.machines must be a bounded array');
+  }
+  const machineIds = new Set<string>();
+  for (const [index, value] of freshness.machines.entries()) {
+    const machine = requireRecord(value, `support machine freshness.machines[${index}]`);
+    assertExactKeys(machine, ['id', 'label', 'lastSeenAt'], `support machine freshness.machines[${index}]`);
+    const id = requireString(machine.id, `support machine freshness.machines[${index}].id`);
+    const label = requireString(machine.label, `support machine freshness.machines[${index}].label`);
+    requireIsoTimestamp(machine.lastSeenAt, `support machine freshness.machines[${index}].lastSeenAt`);
+    if (id.length === 0 || label.length === 0 || machineIds.has(id)) {
+      throw new Error('support machine freshness IDs and labels must be non-empty and IDs must be unique');
+    }
+    machineIds.add(id);
+  }
+};
+
 const assertBootstrapSupport = (value: unknown): void => {
   const support = requireRecord(value, 'bootstrap support');
   assertAllowedKeys(
@@ -2017,11 +2442,21 @@ export function parseFocusedReportQueryResult(
   const parsed = parseFocusedRevisionRequest(request);
   const record = assertResultEnvelope(
     value,
-    ['dateDomain', 'filterOptions', 'providerRows', 'requestFingerprint', 'revision', 'support', 'truncation'],
+    [
+      'dateDomain',
+      'filterOptions',
+      'machineFreshness',
+      'providerRows',
+      'requestFingerprint',
+      'revision',
+      'support',
+      'truncation',
+    ],
     parsed.revision,
     focusedRevisionFingerprint(kind, parsed),
   );
   assertFocusedDateDomain(record.dateDomain, 'support dateDomain');
+  assertFocusedMachineFreshness(record.machineFreshness);
   const options = requireRecord(record.filterOptions, 'support filter options');
   assertExactKeys(options, ['harness', 'machine', 'truncated'], 'support filter options');
   if (
@@ -2030,10 +2465,20 @@ export function parseFocusedReportQueryResult(
     !Array.isArray(options.machine) ||
     options.machine.length > 100 ||
     options.harness.some((entry) => typeof entry !== 'string') ||
-    typeof options.truncated !== 'boolean' ||
-    options.machine.some((entry) => typeof entry !== 'string')
+    typeof options.truncated !== 'boolean'
   ) {
     throw new Error('Support filter options are invalid');
+  }
+  const machineValues = new Set<string>();
+  for (const [index, entry] of options.machine.entries()) {
+    const option = requireRecord(entry, `support filter options.machine[${index}]`);
+    assertExactKeys(option, ['label', 'value'], `support filter options.machine[${index}]`);
+    const label = requireString(option.label, `support filter options.machine[${index}].label`);
+    const value = requireString(option.value, `support filter options.machine[${index}].value`);
+    if (label === '' || value === '' || machineValues.has(value)) {
+      throw new Error('Support machine filter options must have unique non-empty values and labels');
+    }
+    machineValues.add(value);
   }
   if (!Array.isArray(record.providerRows) || record.providerRows.length > 100) {
     throw new Error('Support provider rows are invalid');
@@ -2042,6 +2487,11 @@ export function parseFocusedReportQueryResult(
     parseSessionPresentationRow(row, `support providerRows[${index}]`),
   );
   assertBootstrapSupport(record.support);
+  const parsedMachineFreshness = requireRecord(record.machineFreshness, 'support machine freshness');
+  const parsedBootstrapSupport = requireRecord(record.support, 'bootstrap support');
+  if (parsedMachineFreshness.observedAt !== parsedBootstrapSupport.generatedAt) {
+    throw new Error('Support machine freshness must use the bootstrap generation timestamp');
+  }
   assertSupportTruncation(record.truncation);
   return { ...record, providerRows } as unknown as FocusedSupportResult;
 }

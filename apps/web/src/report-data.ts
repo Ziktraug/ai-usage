@@ -14,7 +14,9 @@ const demoRows: SerializedRow[] = [
     name: 'Build report UI',
     sessionLabel: 'Build report UI',
     model: 'gpt-5.3-codex',
+    origin: 'human',
     project: 'ai-usage',
+    subagent: false,
     tokIn: 62_000,
     tokOut: 9400,
     tokCr: 130_000,
@@ -48,6 +50,7 @@ const demoRows: SerializedRow[] = [
     name: 'Review analytics model',
     sessionLabel: 'Review analytics model',
     model: 'claude-sonnet-4.5',
+    origin: 'subagent',
     project: 'ai-usage',
     tokIn: 28_000,
     tokOut: 4600,
@@ -84,6 +87,7 @@ const demoRows: SerializedRow[] = [
     name: 'Tune collector fixtures',
     sessionLabel: 'Tune collector fixtures',
     model: 'qwen3-coder',
+    origin: 'classifier',
     project: 'ai-usage',
     tokIn: 41_000,
     tokOut: 7800,
@@ -101,6 +105,14 @@ const demoRows: SerializedRow[] = [
     linesAdded: 220,
     linesDeleted: 45,
     lineDelta: 265,
+    source: {
+      harnessKey: 'codex',
+      machineId: 'fixture-machine',
+      machineLabel: 'Fixture Machine',
+      parentSourceSessionId: 'campaign-root',
+      rootSourceSessionId: 'campaign-root',
+      sourceSessionId: 'opencode-classifier',
+    },
   },
   {
     date: '2026-04-12T09:20:00.000Z',
@@ -111,6 +123,7 @@ const demoRows: SerializedRow[] = [
     name: 'Explore report sketch',
     sessionLabel: 'Explore report sketch',
     model: 'cursor-agent',
+    originProvenance: 'origin-unsupported',
     project: 'ai-usage',
     tokIn: 19_000,
     tokOut: 2600,
@@ -128,9 +141,51 @@ const demoRows: SerializedRow[] = [
     linesAdded: null,
     linesDeleted: null,
     lineDelta: null,
+    source: {
+      harnessKey: 'cursor',
+      machineId: 'fixture-machine-secondary',
+      machineLabel: 'Fixture Machine Secondary',
+      sourceSessionId: 'cursor-fixture',
+    },
     partial: true,
   },
 ];
+
+const withoutOrigin = (
+  sourceRow: SerializedRow,
+  overrides: Pick<SerializedRow, 'activeDate' | 'date' | 'endDate' | 'name' | 'originProvenance' | 'sessionLabel'>,
+): SerializedRow => {
+  const { origin: _origin, source: _source, ...unclassifiedRow } = sourceRow;
+  return { ...unclassifiedRow, ...overrides };
+};
+
+demoRows.push(
+  withoutOrigin(demoRows[2]!, {
+    activeDate: '2026-05-24T14:18:00.000Z',
+    date: '2026-05-24T13:05:00.000Z',
+    endDate: '2026-05-24T14:18:00.000Z',
+    name: 'Inspect OpenCode root',
+    originProvenance: 'origin-absent',
+    sessionLabel: 'Inspect OpenCode root',
+  }),
+  {
+    ...withoutOrigin(demoRows[1]!, {
+      activeDate: '2026-06-09T18:44:00.000Z',
+      date: '2026-06-09T18:15:00.000Z',
+      endDate: '2026-06-09T18:44:00.000Z',
+      name: 'Recover Claude history',
+      originProvenance: 'origin-degraded',
+      sessionLabel: 'Recover Claude history',
+    }),
+    source: {
+      harnessKey: 'claude',
+      machineId: 'fixture-machine',
+      machineLabel: 'Fixture Machine',
+      rootSourceSessionId: 'claude-history-fallback',
+      sourceSessionId: 'claude-history-fallback',
+    },
+  },
+);
 
 const demoRowsForAnalytics = () =>
   demoRows.map((row) => ({

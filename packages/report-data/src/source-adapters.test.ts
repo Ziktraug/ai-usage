@@ -96,8 +96,8 @@ describe('scheduled source adapters', () => {
         }),
       );
 
-      expect(first).toMatchObject({ changed: true, inputCount: 1, outputCount: 1 });
-      expect(second).toMatchObject({ changed: false, inputCount: 1, outputCount: 1 });
+      expect(first).toMatchObject({ changed: true, inputCount: 1, outputCount: 1, servedProjectionChanged: true });
+      expect(second).toMatchObject({ changed: false, inputCount: 1, outputCount: 1, servedProjectionChanged: true });
       expect(progress).toEqual([
         { phase: 'reading' },
         { completed: 1, phase: 'normalizing', total: 1 },

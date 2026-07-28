@@ -222,6 +222,8 @@ describe('DB-backed Harness collectors', () => {
     expect(rows.some((row) => row.name === 'existing detailed session')).toBe(false);
     expect(rows.some((row) => row.name === '/clear')).toBe(false);
     expect(unavailable?.harness).toBe('Claude Code');
+    expect(unavailable?.origin).toBeUndefined();
+    expect(unavailable?.originProvenance).toBe('origin-degraded');
     expect(unavailable?.name).toBe('claude missing-');
     expect(unavailable?.titleSource).toBe('id');
     expect(unavailable?.project).toBe('ai-usage');
@@ -289,7 +291,9 @@ describe('DB-backed Harness collectors', () => {
     const child = rows.find((row) => row.source?.sourceSessionId === 'agent-child');
 
     expect(parent?.name).toBe('Refresh dashboard UX');
+    expect(parent?.origin).toBe('human');
     expect(parent?.titleSource).toBe('ai');
+    expect(child?.origin).toBe('subagent');
     expect(child?.source?.parentSourceSessionId).toBe('parent-session');
     expect(child?.titleSource).toBe('agent-role');
     expect(child?.subagent).toBe(true);
@@ -481,6 +485,7 @@ describe('DB-backed Harness collectors', () => {
     expect(rows[0]?.provider).toBe('OpenAI API');
     expect(rows[0]?.project).toBe('ai-usage');
     expect(rows[0]?.titleSource).toBe('ai');
+    expect(rows[0]?.origin).toBe('subagent');
     expect(rows[0]?.source?.parentSourceSessionId).toBe('parent-session');
     expect(rows[0]?.tokOut).toBe(25);
     expect(rows[0]?.costActual).toBe(0.12);
@@ -565,6 +570,8 @@ describe('DB-backed Harness collectors', () => {
 
     const [row] = runWithStorage(collectOpenCode, storage);
 
+    expect(row?.origin).toBeUndefined();
+    expect(row?.originProvenance).toBe('origin-absent');
     expect(row?.model).toBe('openai/gpt-5');
     expect(row?.models).toEqual([
       'openai/gpt-5',
@@ -710,6 +717,7 @@ describe('DB-backed Harness collectors', () => {
         key: 'composerData:composer-1',
         value: JSON.stringify({
           name: 'Fix UI',
+          isAgentic: true,
           modelConfig: { modelName: 'gpt-5.3' },
           createdAt: Date.parse('2026-01-01T00:00:00.000Z'),
           totalLinesAdded: 7,
@@ -734,6 +742,8 @@ describe('DB-backed Harness collectors', () => {
     expect(rows[0]?.provider).toBe('Cursor sub');
     expect(rows[0]?.name).toBe('Fix UI');
     expect(rows[0]?.titleSource).toBe('ai');
+    expect(rows[0]?.origin).toBeUndefined();
+    expect(rows[0]?.originProvenance).toBe('origin-unsupported');
     expect(rows[0]?.partial).toBe(true);
     expect(rows[0]?.tokIn).toBe(10);
     expect(rows[0]?.tokCr).toBe(2);

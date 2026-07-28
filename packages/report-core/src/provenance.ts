@@ -1,7 +1,8 @@
-import type { UsageRow } from './types';
+import type { OriginProvenanceKind, UsageRow } from './types';
 
 export type UsageMetricKey =
   | 'title'
+  | 'origin'
   | 'tokens'
   | 'api-value'
   | 'actual-cost'
@@ -13,6 +14,7 @@ export type UsageMetricKey =
   | 'lines';
 
 export type UsageProvenanceKind =
+  | OriginProvenanceKind
   | 'title-derived'
   | 'usage-unavailable'
   | 'reconciliation-ambiguous'
@@ -21,6 +23,63 @@ export type UsageProvenanceKind =
   | 'unknown-api-price'
   | 'unknown-actual-cost'
   | 'unknown-subscription-value';
+
+export type ApiPriceMeasurementState = 'measured' | 'partially measured' | 'zero';
+
+/**
+ * A priced aggregate always carries the known subtotal and the amount of fresh
+ * work that could not be priced. The state prevents an incomplete $0 subtotal
+ * from being presented as genuinely zero work.
+ */
+export interface ApiPriceMeasurement {
+  knownCost: number;
+  state: ApiPriceMeasurementState;
+  unpricedFreshTokens: number;
+}
+
+export interface ApiPriceMeasurementInput {
+  costKnown: boolean;
+  freshTokens: number;
+  knownCost: number;
+}
+
+const apiPriceMeasurementState = (costKnown: boolean, knownCost: number): ApiPriceMeasurementState => {
+  if (!costKnown) {
+    return 'partially measured';
+  }
+  return knownCost === 0 ? 'zero' : 'measured';
+};
+
+export const apiPriceMeasurement = ({
+  costKnown,
+  freshTokens,
+  knownCost,
+}: ApiPriceMeasurementInput): ApiPriceMeasurement => ({
+  knownCost,
+  state: apiPriceMeasurementState(costKnown, knownCost),
+  unpricedFreshTokens: costKnown ? 0 : freshTokens,
+});
+
+export const combineApiPriceMeasurements = (measurements: Iterable<ApiPriceMeasurement>): ApiPriceMeasurement => {
+  let knownCost = 0;
+  let partiallyMeasured = false;
+  let unpricedFreshTokens = 0;
+  for (const measurement of measurements) {
+    knownCost += measurement.knownCost;
+    partiallyMeasured ||= measurement.state === 'partially measured';
+    unpricedFreshTokens += measurement.unpricedFreshTokens;
+  }
+  return {
+    knownCost,
+    state: apiPriceMeasurementState(!partiallyMeasured, knownCost),
+    unpricedFreshTokens,
+  };
+};
+
+export const PARTIALLY_MEASURED_LABEL = 'Partially measured';
+
+export const partiallyMeasuredApiPriceDescription = (formattedTokenCount: string): string =>
+  `${PARTIALLY_MEASURED_LABEL} — ${formattedTokenCount} tokens in this slice come from models with no published price. Their work is counted, their value is not.`;
 
 export interface UsageRowProvenance {
   appliesTo: UsageMetricKey[];
@@ -37,6 +96,8 @@ export interface UsageProvenanceInput {
   costKnown: boolean;
   costQuota?: number | null;
   harness?: string;
+  origin?: UsageRow['origin'];
+  originProvenance?: OriginProvenanceKind;
   partial?: boolean;
   titleSource?: UsageRow['titleSource'];
   usageUnavailable?: boolean;
@@ -64,8 +125,43 @@ const USAGE_UNAVAILABLE_METRICS: UsageMetricKey[] = [
 
 const hasOwn = (row: UsageProvenanceInput, key: keyof UsageProvenanceInput) => Object.hasOwn(row, key);
 
+export const originProvenanceFor = (kind: OriginProvenanceKind): UsageRowProvenance => {
+  // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future kind fails compilation.
+  switch (kind) {
+    case 'origin-unsupported':
+      return {
+        appliesTo: ['origin'],
+        description: 'Origin unsupported — this harness does not record how a session was started.',
+        kind,
+        label: 'Origin unsupported',
+        severity: 'info',
+      };
+    case 'origin-absent':
+      return {
+        appliesTo: ['origin'],
+        description: 'Origin not declared — this session records no origin, and it has no parent to infer one from.',
+        kind,
+        label: 'Origin not declared',
+        severity: 'info',
+      };
+    case 'origin-degraded':
+      return {
+        appliesTo: ['origin'],
+        description:
+          'Origin unavailable — this row came from a reduced history read, so its origin could not be determined.',
+        kind,
+        label: 'Origin unavailable',
+        severity: 'warning',
+      };
+  }
+};
+
 export const provenanceForUsageRow = (row: UsageProvenanceInput): UsageRowProvenance[] => {
   const provenance: UsageRowProvenance[] = [];
+
+  if (row.origin === undefined && row.originProvenance !== undefined) {
+    provenance.push(originProvenanceFor(row.originProvenance));
+  }
 
   if (row.titleSource !== 'ai') {
     provenance.push({

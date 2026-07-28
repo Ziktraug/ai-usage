@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { enrichSessionPresentationRow, type SessionPageItem } from '@ai-usage/report-core/session-query';
+import { enrichSessionPresentationRow } from '@ai-usage/report-core/session-query';
 import { buildCampaignViews } from './dashboard-model';
 import { demoReportPayload } from './report-data';
 import {
@@ -39,9 +39,8 @@ const campaignRows = Array.from({ length: 15 }, (_, index) => {
 });
 
 describe('session analysis target', () => {
-  test('keeps a simple served session atomic', () => {
-    const item = { kind: 'session', row: simpleRow } satisfies SessionPageItem;
-    expect(sessionAnalysisTargetForPageItem(item)).toEqual({
+  test('keeps atomic rows available through the explicit session target', () => {
+    expect(sessionAnalysisTargetForSession(simpleRow)).toEqual({
       kind: 'session',
       reportRowId: simpleRow.rowId,
       summaryRow: simpleRow,
@@ -86,12 +85,18 @@ describe('session analysis target', () => {
     });
   });
 
-  test('keeps a loaded campaign child and neighbor navigation atomic', () => {
+  test('keeps campaign children and neighbor navigation atomic outside the top-level projection', () => {
     const child = requireValue(campaignRows[3], 'loaded campaign child');
     const campaign = requireValue(buildCampaignViews(campaignRows, campaignRows)[0], 'navigation campaign');
-    expect(sessionAnalysisTargetForTopLevelRow({ campaigns: [campaign], pageItems: [], row: child })).toMatchObject({
+    expect(sessionAnalysisTargetForSession(child)).toMatchObject({
       kind: 'session',
       reportRowId: child.rowId,
+    });
+    expect(
+      sessionAnalysisTargetForTopLevelRow({ campaigns: [campaign], pageItems: [], row: campaign.root }),
+    ).toMatchObject({
+      kind: 'campaign-root',
+      reportRowId: campaign.root.rowId,
     });
 
     const neighborWithCampaignFields = {

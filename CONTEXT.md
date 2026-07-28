@@ -32,6 +32,10 @@ _Avoid_: remote usage, cloud billing data
 A single conversation or agent run found in local history. A session can include child sessions, such as Codex subagent threads.
 _Avoid_: chat, transcript, thread
 
+**Session origin**:
+The declared way a session was started, with three values: human, delegated, or automated review. It is absent when the harness did not declare one. An absent attribute is expressed by provenance, never by a sentinel value in its own domain.
+_Avoid_: unknown origin, origin unknown, undeclared as a category
+
 **Collected session**:
 An intermediate collector result that preserves harness-specific local history details before normalization into a usage row. It is the seam used by collectors that need shared row conversion.
 _Avoid_: raw event, source row

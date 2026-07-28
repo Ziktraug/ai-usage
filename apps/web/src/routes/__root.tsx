@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/solid-query';
 import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/solid-router';
 import type { JSX } from 'solid-js';
 import { HydrationScript } from 'solid-js/web';
+import { AppNavigation, appNavigationContent } from '../app-navigation';
 import { SourceControlProvider } from '../source-control-context';
 import '../index.css';
 
@@ -54,7 +55,10 @@ function RootRoute() {
   return (
     <QueryClientProvider client={queryClient}>
       <SourceControlProvider>
-        <Outlet />
+        <AppNavigation />
+        <div class={appNavigationContent}>
+          <Outlet />
+        </div>
       </SourceControlProvider>
     </QueryClientProvider>
   );

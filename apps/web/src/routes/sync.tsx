@@ -1,16 +1,10 @@
-import { css } from '@ai-usage/design-system/css';
+import { css, cx } from '@ai-usage/design-system/css';
 import {
   actionRow,
-  field,
-  formField,
   ghostButton,
   header,
-  headerActions,
-  headerNavigation,
   headerTop,
-  inlineFieldLabel,
   meta,
-  navButton,
   page,
   pageStack,
   panel,
@@ -18,22 +12,30 @@ import {
   panelSub,
   panelTitle,
   shell,
+  statusPill,
+  statusPillInfo,
+  statusPillOk,
+  statusPillWarn,
   strongCell,
   title,
   titleBlock,
 } from '@ai-usage/design-system/report';
 import type { ManualMergeImportResult, ManualMergePreviewResult } from '@ai-usage/usage-merge';
-import { createFileRoute, Link } from '@tanstack/solid-router';
-import { createEffect, createSignal, onCleanup, Show } from 'solid-js';
-import { dashboardSearchDefaultsFor } from '../dashboard-search';
-import { ThemeToggle } from '../dashboard-theme';
+import { createFileRoute, useRouter } from '@tanstack/solid-router';
+import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js';
 import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
 import type { ManualOperationError, ManualOperationResult } from '../manual-transfer-contract';
-import { formatManualImportSummary, formatTransferBytes } from '../manual-transfer-model';
-import { exportManualMergeBundle } from '../server/sync';
+import {
+  buildSyncFleetMachineViews,
+  formatFleetAge,
+  formatManualImportSummary,
+  formatTransferBytes,
+} from '../manual-transfer-model';
+import { exportManualMergeBundle, getSyncFleet } from '../server/sync';
 
 export const Route = createFileRoute('/sync')({
   beforeLoad: enforceReportOnlyDemoNavigation,
+  loader: async () => await getSyncFleet(),
   server: {
     handlers: {
       POST: async ({ request }) => {
@@ -44,8 +46,6 @@ export const Route = createFileRoute('/sync')({
   },
   component: SyncRoute,
 });
-
-const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
 
 const operationPanel = css({
   display: 'grid',
@@ -98,6 +98,45 @@ const progressHint = css({
   fontSize: '11px',
   lineHeight: 1.5,
 });
+
+const fleetGrid = css({
+  display: 'grid',
+  gridTemplateColumns: { base: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
+  gap: '12px',
+});
+const machineCard = css({
+  display: 'grid',
+  gap: '14px',
+  minW: 0,
+  transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+});
+const machineCardCurrent = css({ borderColor: 'accent', boxShadow: '0 0 0 1px token(colors.accent)' });
+const machineHeader = css({
+  display: 'flex',
+  alignItems: 'start',
+  justifyContent: 'space-between',
+  flexWrap: 'wrap',
+  gap: '10px',
+});
+const machineTitle = css({ fontSize: '15px', fontWeight: 750, overflowWrap: 'anywhere' });
+const machineFacts = css({ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px' });
+const machineFact = css({ display: 'grid', gap: '3px', minW: 0 });
+const machineFactLabel = css({ color: 'muted', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase' });
+const dropZone = css({
+  display: 'grid',
+  placeItems: 'center',
+  gap: '6px',
+  minH: '112px',
+  p: '18px',
+  border: '1px dashed token(colors.lineStrong)',
+  borderRadius: 'md',
+  bg: 'surfaceMuted',
+  cursor: 'pointer',
+  textAlign: 'center',
+  _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+});
+const dropZoneActive = css({ borderColor: 'accent', bg: 'surfaceElevated' });
+const warningList = css({ display: 'grid', gap: '4px', m: 0, pl: '18px', color: 'muted', fontSize: '12px' });
 
 type ManualImportResult = ManualOperationResult<ManualMergeImportResult>;
 type ManualPreviewResult = ManualOperationResult<ManualMergePreviewResult>;
@@ -180,6 +219,121 @@ const ManualImportProgressView = (props: { progress: ManualImportProgress }) => 
   );
 };
 
+const machineFreshnessLabel = (machine: { current: boolean; stale: boolean }): string => {
+  if (!machine.stale) {
+    return 'Fresh';
+  }
+  return machine.current ? 'Needs collection' : 'Stale';
+};
+
+const MachineFleetPanel = (props: {
+  machines: ReturnType<typeof buildSyncFleetMachineViews>;
+  omittedMachines: number;
+  skipped: number;
+}) => (
+  <section aria-labelledby="machine-fleet-title">
+    <div class={panelHeader}>
+      <h2 class={panelTitle} id="machine-fleet-title">
+        Machine fleet
+      </h2>
+      <div class={panelSub}>Freshness is evaluated against the report's default 30-day window.</div>
+    </div>
+    <div class={fleetGrid}>
+      <For each={props.machines}>
+        {(machine) => (
+          <article
+            class={cx(panel, machineCard, machine.current && machineCardCurrent)}
+            data-machine-stale={machine.stale ? 'true' : 'false'}
+          >
+            <div class={machineHeader}>
+              <div>
+                <h3 class={machineTitle}>{machine.label}</h3>
+              </div>
+              <div class={actionRow}>
+                <Show when={machine.current}>
+                  <span class={cx(statusPill, statusPillInfo)}>Current machine</span>
+                </Show>
+                <span class={cx(statusPill, machine.stale ? statusPillWarn : statusPillOk)}>
+                  {machineFreshnessLabel(machine)}
+                </span>
+              </div>
+            </div>
+            <div class={machineFacts}>
+              <div class={machineFact}>
+                <span class={machineFactLabel}>Sessions</span>
+                <span>{machine.sessionCount.toLocaleString()}</span>
+              </div>
+              <div class={machineFact}>
+                <span class={machineFactLabel}>Newest session</span>
+                <span>{formatFleetAge(machine.newestSessionAt)}</span>
+              </div>
+              <div class={machineFact}>
+                <span class={machineFactLabel}>{machine.current ? 'Last observed' : 'Last import'}</span>
+                <span>{formatFleetAge(machine.lastSeenAt)}</span>
+              </div>
+            </div>
+          </article>
+        )}
+      </For>
+    </div>
+    <Show when={props.skipped > 0}>
+      <p class={panelSub} role="status">
+        {props.skipped.toLocaleString()} invalid stored rows were excluded from fleet metadata.
+      </p>
+    </Show>
+    <Show when={props.omittedMachines > 0}>
+      <p class={panelSub} role="status">
+        {props.omittedMachines.toLocaleString()} additional machines were omitted from this bounded fleet view.
+      </p>
+    </Show>
+  </section>
+);
+
+const ImportDropTarget = (props: { disabled: boolean; onImport: (file: File | undefined) => void }) => {
+  const [dragActive, setDragActive] = createSignal(false);
+  let fileInput: HTMLInputElement | undefined;
+  const chooseFile = () => fileInput?.click();
+  return (
+    <>
+      <input
+        accept=".json,application/json"
+        disabled={props.disabled}
+        hidden
+        onChange={(event) => {
+          props.onImport(event.currentTarget.files?.[0]);
+          event.currentTarget.value = '';
+        }}
+        ref={(element) => {
+          fileInput = element;
+        }}
+        type="file"
+      />
+      <button
+        class={cx(dropZone, dragActive() && dropZoneActive)}
+        disabled={props.disabled}
+        onClick={chooseFile}
+        onDragEnter={() => setDragActive(true)}
+        onDragLeave={() => setDragActive(false)}
+        onDragOver={(event) => {
+          event.preventDefault();
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragActive(false);
+          if (!props.disabled) {
+            props.onImport(event.dataTransfer?.files?.[0]);
+          }
+        }}
+        type="button"
+      >
+        <span class={strongCell}>Drop a merge file here or choose a file</span>
+
+        <span class={panelSub}>JSON only. The file is previewed before any local usage changes.</span>
+      </button>
+    </>
+  );
+};
+
 const ManualTransferPanel = (props: {
   pendingOperation: PendingOperation | null;
   importProgress: ManualImportProgress | null;
@@ -196,22 +350,11 @@ const ManualTransferPanel = (props: {
     </div>
     <div class={actionRow}>
       <button class={ghostButton} disabled={!!props.pendingOperation} onClick={props.onExport} type="button">
-        {props.pendingOperation === 'manual-export' ? 'Exporting' : 'Export file'}
+        {props.pendingOperation === 'manual-export' ? 'Exporting' : 'Export current machine'}
       </button>
-      <label class={formField}>
-        <span class={inlineFieldLabel}>Import file</span>
-        <input
-          accept=".json,application/json"
-          class={field}
-          disabled={!!props.pendingOperation}
-          onChange={(event) => {
-            props.onImport(event.currentTarget.files?.[0]);
-            event.currentTarget.value = '';
-          }}
-          type="file"
-        />
-      </label>
     </div>
+    <ImportDropTarget disabled={!!props.pendingOperation} onImport={props.onImport} />
+
     <Show when={props.preview}>
       {(preview) => (
         <div class={operationPanel} role="status">
@@ -233,6 +376,19 @@ const ManualTransferPanel = (props: {
               Cancel
             </button>
           </div>
+          <Show when={preview().data.warningItems.length > 0}>
+            <div>
+              <div class={strongCell}>Warnings ({preview().data.warningCount.toLocaleString()})</div>
+              <ul class={warningList}>
+                <For each={preview().data.warningItems}>{(warning) => <li>{warning}</li>}</For>
+              </ul>
+              <Show when={preview().data.warningCount > preview().data.warningItems.length}>
+                <div class={panelSub}>
+                  Showing the first {preview().data.warningItems.length.toLocaleString()} warnings.
+                </div>
+              </Show>
+            </div>
+          </Show>
         </div>
       )}
     </Show>
@@ -372,6 +528,17 @@ const uploadManualMergeFile = <Value,>(
   });
 
 function SyncRoute() {
+  const fleetResult = Route.useLoaderData();
+  const router = useRouter();
+  const fleetData = () => {
+    const result = fleetResult();
+    return result.ok ? result.data : null;
+  };
+  const fleetError = (): ManualOperationError | null => {
+    const result = fleetResult();
+    return result.ok ? null : result.error;
+  };
+
   const [pendingOperation, setPendingOperation] = createSignal<PendingOperation | null>(null);
   const [operationError, setOperationError] = createSignal<ManualOperationError | null>(null);
   const [operationMessage, setOperationMessage] = createSignal<string | null>(null);
@@ -389,7 +556,9 @@ function SyncRoute() {
       const next = await exportManualMergeBundle({ data: {} });
       if (next.ok) {
         downloadJsonFile(next.data.filename, next.data.text);
-        setOperationMessage(`Exported ${next.data.rows.toLocaleString()} rows from ${next.data.machine.label}.`);
+        setOperationMessage(
+          `Exported ${next.data.filename}: ${next.data.rows.toLocaleString()} rows, ${formatTransferBytes(next.data.bytes)}.`,
+        );
         return;
       }
       setOperationError(next.error);
@@ -455,6 +624,7 @@ function SyncRoute() {
         preview.data,
       );
       if (next.ok) {
+        await router.invalidate({ filter: (match) => match.routeId === '/sync' });
         setManualPreview(null);
         setOperationMessage(formatManualImportSummary(next.data));
         return;
@@ -477,23 +647,22 @@ function SyncRoute() {
             <p class={meta}>File transfer</p>
             <h1 class={title}>Sync</h1>
           </div>
-          <div class={headerActions}>
-            <nav aria-label="Primary navigation" class={headerNavigation}>
-              <Link class={navButton} search={dashboardSearchDefaults} to="/">
-                Dashboard
-              </Link>
-              <Link class={navButton} to="/sources">
-                Sources
-              </Link>
-            </nav>
-            <ThemeToggle />
-          </div>
         </div>
       </header>
 
       <main class={page}>
         <div class={pageStack}>
           <OperationNotice error={operationError()} message={operationMessage()} />
+          <OperationNotice error={fleetError()} message={null} />
+          <Show when={fleetData()}>
+            {(data) => (
+              <MachineFleetPanel
+                machines={buildSyncFleetMachineViews(data().currentMachine, data().machines)}
+                omittedMachines={data().omittedMachines}
+                skipped={data().skipped}
+              />
+            )}
+          </Show>
           <ManualTransferPanel
             importProgress={manualImportProgress()}
             onCancel={() => setManualPreview(null)}

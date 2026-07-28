@@ -115,7 +115,7 @@ export const heroLegendValue = css({
 
 export const anatomyLegend = css({
   display: 'grid',
-  gridTemplateColumns: { base: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(4, minmax(0, 1fr))' },
+  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
   gap: '6px 12px',
   color: 'muted',
   fontSize: '11px',

@@ -38,6 +38,7 @@ export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
 
 export interface ImportResult {
   deleted: number;
+  fleetChanged: boolean;
   inserted: number;
   superseded: number;
   unchanged: number;
@@ -90,6 +91,38 @@ export interface QueryRowsResult {
   sourceAuthorities: StoredSourceAuthority[];
 }
 
+export interface UsageMachineFleetItem extends UsageMachine {
+  hasLocalObservedRows: boolean;
+  hasPortableRows: boolean;
+  lastSeenAt: string;
+  newestSessionAt: string | null;
+  sessionCount: number;
+}
+
+export const MAX_USAGE_MACHINE_FLEET_MACHINES = 100;
+
+export interface QueryUsageMachineFleetInput {
+  dbPath: string;
+  maximumMachines?: number;
+}
+
+export interface QueryUsageMachineFleetResult {
+  machines: UsageMachineFleetItem[];
+  omittedMachines: number;
+  /** Stored rows that failed validation and were skipped from fleet metadata. */
+  skipped: number;
+}
+
+export interface QueryStoredReportCaptureInput extends QueryReportRowsInput {
+  maximumMachines?: number;
+}
+
+export interface QueryStoredReportCaptureResult {
+  generations: UsageStoreGenerations;
+  machineFleet: QueryUsageMachineFleetResult;
+  reportRows: QueryRowsResult;
+}
+
 export interface EnrichableUsageRow {
   readonly row: CollectedUsageRow;
   readonly rowKey: string;
@@ -132,6 +165,11 @@ export interface EnrichmentImportResult {
 
 export interface QueryUsageStoreGenerationInput {
   dbPath: string;
+}
+
+export interface UsageStoreGenerations {
+  machineFleetGeneration: number;
+  usageStoreGeneration: number;
 }
 
 export interface ImportNormalizedDatasetItemsInput {
@@ -274,7 +312,16 @@ export interface UsageStore {
     input?: QueryNormalizedDatasetItemsInput,
   ): Effect.Effect<QueryNormalizedDatasetItemsResult, UsageStoreError>;
   queryReportRows(input?: QueryReportRowsInput): Effect.Effect<QueryRowsResult, UsageStoreError>;
+  queryStoredReportCapture(
+    input?: QueryStoredReportCaptureInput,
+  ): Effect.Effect<QueryStoredReportCaptureResult, UsageStoreError>;
+  queryUsageMachineFleet(
+    input?: QueryUsageMachineFleetInput,
+  ): Effect.Effect<QueryUsageMachineFleetResult, UsageStoreError>;
   queryUsageStoreGeneration(input?: QueryUsageStoreGenerationInput): Effect.Effect<number, UsageStoreError>;
+  queryUsageStoreGenerations(
+    input?: QueryUsageStoreGenerationInput,
+  ): Effect.Effect<UsageStoreGenerations, UsageStoreError>;
   upsertRtkSavingsContributions(
     input: UpsertRtkSavingsContributionsInput,
   ): Effect.Effect<EnrichmentImportResult, UsageStoreError>;
@@ -283,6 +330,7 @@ export interface UsageStore {
 interface SqliteStatement {
   all(...params: unknown[]): unknown[];
   get(...params: unknown[]): unknown;
+  iterate(...params: unknown[]): IterableIterator<unknown>;
   run(...params: unknown[]): unknown;
 }
 
@@ -293,7 +341,12 @@ interface SqliteDatabase {
 }
 
 interface ExistingRow {
+  active_date: string | null;
   content_hash: string;
+  fleet_metadata_valid: number;
+  last_seen_at: string;
+  machine_label: string;
+  origin_machine_id: string;
   row_key: string;
   source_authority: StoredSourceAuthority;
   status: StoredUsageRowStatus;
@@ -303,6 +356,33 @@ interface StoredRowRecord {
   row_json: string;
   row_key: string;
   source_authority: StoredSourceAuthority;
+}
+
+interface StoredMachineFleetRow {
+  active_date: string | null;
+  last_seen_at: string;
+  origin_machine_id: string;
+  row_json: string;
+  row_key: string;
+  source_authority: StoredSourceAuthority;
+  status: StoredUsageRowStatus;
+}
+
+interface StoredMachineFleetAggregateRecord {
+  has_local_observed_rows: number | null;
+  has_portable_rows: number | null;
+  label: string | null;
+  last_seen_at: string | null;
+  machine_count: number;
+  newest_session_at: string | null;
+  origin_machine_id: string | null;
+  session_count: number | null;
+  skipped: number;
+}
+
+interface StoredMachineFleetOrderRecord {
+  label: string;
+  origin_machine_id: string;
 }
 
 interface StoredEnrichmentRecord {
@@ -330,6 +410,8 @@ type MergeRowClassification = 'inserted' | 'updated' | 'unchanged' | 'superseded
 
 interface ClassifiedMergeRow {
   classification: MergeRowClassification;
+  fleetProjectionChanged: boolean;
+  repairFleetMetadata: boolean;
   reportProjectionChanged: boolean;
   row: SerializedMergeRow;
 }
@@ -397,6 +479,113 @@ const usageStoreError = (operation: string, dbPath: string, cause: unknown, reas
   });
 
 export const usageStorePath = (home: string) => path.join(home, '.config', 'ai-usage', 'usage-store.sqlite');
+
+const fleetMetadataForStoredRow = (record: StoredMachineFleetRow): { machineLabel: string } | undefined => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(record.row_json) as unknown;
+  } catch {
+    return;
+  }
+  const parsedLastSeenAt = new Date(record.last_seen_at);
+  if (
+    !isSerializedMergeRow(parsed) ||
+    parsed.source.machineId !== record.origin_machine_id ||
+    parsed.status !== record.status ||
+    (parsed.activeDate ?? null) !== record.active_date ||
+    !Number.isFinite(parsedLastSeenAt.getTime()) ||
+    parsedLastSeenAt.toISOString() !== record.last_seen_at
+  ) {
+    return;
+  }
+  return { machineLabel: parsed.source.machineLabel || record.origin_machine_id };
+};
+
+/**
+ * Rebuilds the durable locale order only after machine membership or the
+ * currently presented label changes. This is intentionally O(machines),
+ * so the served query can apply the historical localeCompare order before LIMIT
+ * without parsing JSON or depending on SQLite's ASCII-only NOCASE collation.
+ */
+const rebuildUsageMachineFleetOrder = (db: SqliteDatabase): void => {
+  const records = [
+    ...(db
+      .query(`
+      WITH ranked_labels AS (
+        SELECT
+          machine_label,
+          origin_machine_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY origin_machine_id
+            ORDER BY last_seen_at DESC, row_key ASC
+          ) AS freshness_rank
+        FROM usage_rows
+        WHERE fleet_metadata_valid = 1
+      )
+      SELECT
+        COALESCE(NULLIF(machine_label, ''), origin_machine_id) AS label,
+        origin_machine_id
+      FROM ranked_labels
+      WHERE freshness_rank = 1
+      ORDER BY origin_machine_id
+    `)
+      .iterate() as IterableIterator<StoredMachineFleetOrderRecord>),
+  ];
+  records.sort(
+    (left, right) =>
+      left.label.localeCompare(right.label) || left.origin_machine_id.localeCompare(right.origin_machine_id),
+  );
+  db.query('DELETE FROM usage_machine_fleet_order').run();
+  const insert = db.query(`
+    INSERT INTO usage_machine_fleet_order (origin_machine_id, machine_label, sort_rank)
+    VALUES (?, ?, ?)
+  `);
+  for (const [sortRank, record] of records.entries()) {
+    insert.run(record.origin_machine_id, record.label, sortRank);
+  }
+};
+
+const usageMachineFleetOrderChanged = (db: SqliteDatabase, machineIds: readonly string[]): boolean => {
+  const uniqueMachineIds = [...new Set(machineIds)];
+  for (let offset = 0; offset < uniqueMachineIds.length; offset += IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE) {
+    const batch = uniqueMachineIds.slice(offset, offset + IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE);
+    const placeholders = batch.map(() => '?').join(', ');
+    const currentLabels = db
+      .query(`
+        WITH ranked_labels AS (
+          SELECT
+            machine_label,
+            origin_machine_id,
+            ROW_NUMBER() OVER (
+              PARTITION BY origin_machine_id
+              ORDER BY last_seen_at DESC, row_key ASC
+            ) AS freshness_rank
+          FROM usage_rows
+          WHERE fleet_metadata_valid = 1
+            AND origin_machine_id IN (${placeholders})
+        )
+        SELECT
+          COALESCE(NULLIF(machine_label, ''), origin_machine_id) AS label,
+          origin_machine_id
+        FROM ranked_labels
+        WHERE freshness_rank = 1
+      `)
+      .all(...batch) as StoredMachineFleetOrderRecord[];
+    const storedLabels = db
+      .query(`
+        SELECT machine_label AS label, origin_machine_id
+        FROM usage_machine_fleet_order
+        WHERE origin_machine_id IN (${placeholders})
+      `)
+      .all(...batch) as StoredMachineFleetOrderRecord[];
+    const currentByMachine = new Map(currentLabels.map(({ label, origin_machine_id }) => [origin_machine_id, label]));
+    const storedByMachine = new Map(storedLabels.map(({ label, origin_machine_id }) => [origin_machine_id, label]));
+    if (batch.some((machineId) => currentByMachine.get(machineId) !== storedByMachine.get(machineId))) {
+      return true;
+    }
+  }
+  return false;
+};
 
 const RTK_SAVINGS_SOURCE_ID = 'rtk.savings';
 const RTK_SAVINGS_SCHEMA_VERSION = 1;
@@ -522,7 +711,9 @@ const upsertRtkContribution = (
   return 'updated';
 };
 
-const migrate = (db: SqliteDatabase) => {
+const migrate = (db: SqliteDatabase): boolean => {
+  let schemaChanged =
+    db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'usage_store_metadata'").get() === null;
   db.exec(`
     CREATE TABLE IF NOT EXISTS usage_rows (
       origin_machine_id TEXT NOT NULL,
@@ -533,6 +724,8 @@ const migrate = (db: SqliteDatabase) => {
       row_key TEXT PRIMARY KEY,
       content_hash TEXT NOT NULL,
       row_json TEXT NOT NULL,
+      machine_label TEXT NOT NULL DEFAULT '',
+      fleet_metadata_valid INTEGER NOT NULL DEFAULT 0 CHECK (fleet_metadata_valid IN (0, 1)),
       status TEXT NOT NULL CHECK (status IN ('active', 'superseded', 'deleted')),
       active_date TEXT,
       project TEXT NOT NULL,
@@ -556,7 +749,16 @@ const migrate = (db: SqliteDatabase) => {
       value INTEGER NOT NULL CHECK (value >= 0)
     );
 
+    CREATE TABLE IF NOT EXISTS usage_machine_fleet_order (
+      origin_machine_id TEXT PRIMARY KEY,
+      machine_label TEXT NOT NULL,
+      sort_rank INTEGER NOT NULL UNIQUE CHECK (sort_rank >= 0)
+    );
+
     INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('generation', 0);
+    INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('machine_fleet_generation', 0);
+    INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('migration.machine-fleet-metadata-v1', 0);
+    INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('migration.machine-fleet-order-v1', 0);
     INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('migration.rtk-contributions-v1', 0);
     INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('migration.merge-row-v3-vcs', 0);
 
@@ -654,18 +856,50 @@ const migrate = (db: SqliteDatabase) => {
       ON provider_quota_observations(provider_key, machine_id, source_key, source_event_key)
       WHERE source_event_key IS NOT NULL;
   `);
-  const columns = db.query('PRAGMA table_info(usage_rows)').all() as Array<{ name?: unknown }>;
-  if (!columns.some((column) => column.name === 'source_authority')) {
-    db.exec(
-      "ALTER TABLE usage_rows ADD COLUMN source_authority TEXT NOT NULL DEFAULT 'portable-opaque' CHECK (source_authority IN ('local-observed', 'portable-opaque'))",
-    );
-  }
   db.exec('BEGIN IMMEDIATE');
   try {
+    const columns = db.query('PRAGMA table_info(usage_rows)').all() as Array<{ name?: unknown }>;
+    if (!columns.some((column) => column.name === 'source_authority')) {
+      schemaChanged = true;
+      db.exec(
+        "ALTER TABLE usage_rows ADD COLUMN source_authority TEXT NOT NULL DEFAULT 'portable-opaque' CHECK (source_authority IN ('local-observed', 'portable-opaque'))",
+      );
+    }
+    if (!columns.some((column) => column.name === 'machine_label')) {
+      schemaChanged = true;
+      db.exec("ALTER TABLE usage_rows ADD COLUMN machine_label TEXT NOT NULL DEFAULT ''");
+    }
+    if (!columns.some((column) => column.name === 'fleet_metadata_valid')) {
+      schemaChanged = true;
+      db.exec(
+        'ALTER TABLE usage_rows ADD COLUMN fleet_metadata_valid INTEGER NOT NULL DEFAULT 0 CHECK (fleet_metadata_valid IN (0, 1))',
+      );
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_usage_rows_fleet
+        ON usage_rows(fleet_metadata_valid, origin_machine_id, last_seen_at DESC, row_key ASC);
+
+      CREATE TRIGGER IF NOT EXISTS usage_rows_invalidate_fleet_metadata_after_insert
+      AFTER INSERT ON usage_rows
+      BEGIN
+        UPDATE usage_rows
+        SET machine_label = '', fleet_metadata_valid = 0
+        WHERE row_key = NEW.row_key;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS usage_rows_invalidate_fleet_metadata_after_update
+      AFTER UPDATE OF origin_machine_id, row_json, status, active_date, last_seen_at, source_authority ON usage_rows
+      BEGIN
+        UPDATE usage_rows
+        SET machine_label = '', fleet_metadata_valid = 0
+        WHERE row_key = NEW.row_key;
+      END;
+    `);
     const mergeRowMigration = db
       .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.merge-row-v3-vcs'")
       .get() as UsageStoreGenerationRecord | null;
     if (mergeRowMigration?.value === 0) {
+      schemaChanged = true;
       const migratedAt = new Date().toISOString();
       const legacyRows = db
         .query('SELECT row_key, source_fingerprint, content_hash, row_json, status FROM usage_rows')
@@ -718,6 +952,7 @@ const migrate = (db: SqliteDatabase) => {
       .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.rtk-contributions-v1'")
       .get() as UsageStoreGenerationRecord | null;
     if (migration?.value === 0) {
+      schemaChanged = true;
       const migratedAt = new Date().toISOString();
       const legacyRows = db.query('SELECT row_key, row_json FROM usage_rows').all() as Array<{
         row_json: string;
@@ -756,7 +991,39 @@ const migrate = (db: SqliteDatabase) => {
       }
       db.query("UPDATE usage_store_metadata SET value = 1 WHERE key = 'migration.rtk-contributions-v1'").run();
     }
+    const fleetMetadataMigration = db
+      .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.machine-fleet-metadata-v1'")
+      .get() as UsageStoreGenerationRecord | null;
+    if (fleetMetadataMigration?.value === 0) {
+      schemaChanged = true;
+      const legacyRows = db
+        .query(`
+          SELECT active_date, last_seen_at, origin_machine_id, row_json, row_key, source_authority, status
+          FROM usage_rows
+          ORDER BY origin_machine_id, row_key
+        `)
+        .iterate() as IterableIterator<StoredMachineFleetRow>;
+      const updateFleetMetadata = db.query(`
+        UPDATE usage_rows
+        SET machine_label = ?, fleet_metadata_valid = ?
+        WHERE row_key = ?
+      `);
+      for (const row of legacyRows) {
+        const metadata = fleetMetadataForStoredRow(row);
+        updateFleetMetadata.run(metadata?.machineLabel ?? '', metadata ? 1 : 0, row.row_key);
+      }
+      db.query("UPDATE usage_store_metadata SET value = 1 WHERE key = 'migration.machine-fleet-metadata-v1'").run();
+    }
+    const fleetOrderMigration = db
+      .query("SELECT value FROM usage_store_metadata WHERE key = 'migration.machine-fleet-order-v1'")
+      .get() as UsageStoreGenerationRecord | null;
+    if (fleetOrderMigration?.value === 0) {
+      schemaChanged = true;
+      rebuildUsageMachineFleetOrder(db);
+      db.query("UPDATE usage_store_metadata SET value = 1 WHERE key = 'migration.machine-fleet-order-v1'").run();
+    }
     db.exec('COMMIT');
+    return schemaChanged;
   } catch (error) {
     db.exec('ROLLBACK');
     throw error;
@@ -772,7 +1039,10 @@ const openUsageStoreDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, U
       db.exec('PRAGMA busy_timeout = 5000');
       db.exec('PRAGMA journal_mode = WAL');
       db.exec('PRAGMA foreign_keys = ON');
-      migrate(db);
+      const schemaChanged = migrate(db);
+      if (schemaChanged) {
+        db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      }
       preparePrivateStoreFile(dbPath);
       return db;
     },
@@ -831,6 +1101,7 @@ const withConfirmationUsageStore = <A>(
 
 const emptyImportResult = (): ImportResult => ({
   deleted: 0,
+  fleetChanged: false,
   inserted: 0,
   superseded: 0,
   unchanged: 0,
@@ -850,6 +1121,7 @@ interface ImportStatements {
   insert: SqliteStatement;
   touch: SqliteStatement;
   update: SqliteStatement;
+  validateFleetMetadata: SqliteStatement;
 }
 
 const prepareImportStatements = (db: SqliteDatabase): ImportStatements => ({
@@ -878,6 +1150,9 @@ const prepareImportStatements = (db: SqliteDatabase): ImportStatements => ({
   update: db.query(`
     UPDATE usage_rows
     SET
+      origin_machine_id = ?,
+      harness_key = ?,
+      source_session_id = ?,
       source_fingerprint = ?,
       source_authority = ?,
       content_hash = ?,
@@ -888,7 +1163,14 @@ const prepareImportStatements = (db: SqliteDatabase): ImportStatements => ({
       model = ?,
       token_total = ?,
       last_seen_at = ?,
-      updated_at = ?
+      updated_at = ?,
+      machine_label = '',
+      fleet_metadata_valid = 0
+    WHERE row_key = ?
+  `),
+  validateFleetMetadata: db.query(`
+    UPDATE usage_rows
+    SET machine_label = ?, fleet_metadata_valid = 1
     WHERE row_key = ?
   `),
 });
@@ -927,6 +1209,9 @@ const updateMergeRow = (
   authority: StoredSourceAuthority,
 ) => {
   statement.run(
+    row.source.machineId,
+    row.source.harnessKey,
+    row.source.sourceSessionId,
     row.sourceFingerprint,
     authority,
     row.contentHash,
@@ -953,7 +1238,12 @@ const loadExistingRows = (db: SqliteDatabase, rows: SerializedMergeRow[]): Map<s
   }
   const placeholders = rowKeys.map(() => '?').join(', ');
   const existingRows = db
-    .query(`SELECT row_key, content_hash, status, source_authority FROM usage_rows WHERE row_key IN (${placeholders})`)
+    .query(`
+      SELECT row_key, content_hash, status, source_authority, fleet_metadata_valid
+        , active_date, last_seen_at, machine_label, origin_machine_id
+      FROM usage_rows
+      WHERE row_key IN (${placeholders})
+    `)
     .all(...rowKeys) as ExistingRow[];
   return new Map(existingRows.map((row) => [row.row_key, row]));
 };
@@ -962,6 +1252,7 @@ const classifyMergeRows = (
   db: SqliteDatabase,
   rows: SerializedMergeRow[],
   incomingAuthority: StoredSourceAuthority,
+  observedAt?: string,
 ): ClassifiedMergeRow[] => {
   const existingRows = new Map<string, ExistingRow>();
   for (const batch of chunkRows(rows, IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE)) {
@@ -990,6 +1281,18 @@ const classifyMergeRows = (
     } else {
       classification = 'updated';
     }
+    const machineLabel = row.source.machineLabel || row.source.machineId;
+    const repairFleetMetadata = existing?.fleet_metadata_valid === 0;
+    const fleetProjectionChanged =
+      !existing ||
+      observedAt === undefined ||
+      repairFleetMetadata ||
+      existing.active_date !== row.activeDate ||
+      existing.last_seen_at !== observedAt ||
+      existing.machine_label !== machineLabel ||
+      existing.origin_machine_id !== row.source.machineId ||
+      existing.source_authority !== incomingAuthority ||
+      existing.status !== row.status;
     const reportProjectionChanged =
       existing?.status === 'active'
         ? row.status !== 'active' ||
@@ -997,20 +1300,28 @@ const classifyMergeRows = (
           existing.source_authority !== incomingAuthority
         : row.status === 'active';
     existingRows.set(row.rowKey, {
+      active_date: row.activeDate,
       content_hash: row.contentHash,
+      fleet_metadata_valid: 1,
+      last_seen_at: observedAt ?? existing?.last_seen_at ?? '',
+      machine_label: machineLabel,
+      origin_machine_id: row.source.machineId,
       row_key: row.rowKey,
       source_authority: incomingAuthority,
       status: row.status,
     });
-    return { classification, reportProjectionChanged, row };
+    return { classification, fleetProjectionChanged, repairFleetMetadata, reportProjectionChanged, row };
   });
 };
 
-const summarizeClassifications = (classifiedRows: Pick<ClassifiedMergeRow, 'classification'>[]): ImportResult => {
+const summarizeClassifications = (
+  classifiedRows: Pick<ClassifiedMergeRow, 'classification' | 'fleetProjectionChanged'>[],
+): ImportResult => {
   const result = emptyImportResult();
   for (const { classification } of classifiedRows) {
     result[classification]++;
   }
+  result.fleetChanged = classifiedRows.some(({ fleetProjectionChanged }) => fleetProjectionChanged);
   return result;
 };
 
@@ -1025,13 +1336,20 @@ const writeClassifiedMergeRows = (
   const statements = prepareImportStatements(db);
   const enrichmentStatements = prepareEnrichmentStatements(db);
   let enrichmentProjectionChanged = false;
-  for (const [index, { classification, row }] of classifiedRows.entries()) {
+  for (const [index, { classification, repairFleetMetadata, row }] of classifiedRows.entries()) {
     if (classification === 'inserted') {
       insertMergeRow(statements.insert, row, now, authority);
+      statements.validateFleetMetadata.run(row.source.machineLabel || row.source.machineId, row.rowKey);
     } else if (classification === 'unchanged') {
-      touchMergeRow(statements.touch, row.rowKey, now);
+      if (repairFleetMetadata) {
+        updateMergeRow(statements.update, row, now, authority);
+      } else {
+        touchMergeRow(statements.touch, row.rowKey, now);
+      }
+      statements.validateFleetMetadata.run(row.source.machineLabel || row.source.machineId, row.rowKey);
     } else {
       updateMergeRow(statements.update, row, now, authority);
+      statements.validateFleetMetadata.run(row.source.machineLabel || row.source.machineId, row.rowKey);
     }
     const contribution = preparedRows[index]?.contribution;
     if (contribution) {
@@ -1041,6 +1359,17 @@ const writeClassifiedMergeRows = (
   }
   if (enrichmentProjectionChanged || classifiedRows.some(({ reportProjectionChanged }) => reportProjectionChanged)) {
     db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
+  }
+  if (result.fleetChanged) {
+    if (
+      usageMachineFleetOrderChanged(
+        db,
+        classifiedRows.map(({ row }) => row.source.machineId),
+      )
+    ) {
+      rebuildUsageMachineFleetOrder(db);
+    }
+    db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'machine_fleet_generation'").run();
   }
   return result;
 };
@@ -1063,6 +1392,7 @@ const importMergeRows = (
             db,
             preparedRows.map(({ row }) => row),
             authority,
+            now,
           );
           const result = writeClassifiedMergeRows(db, preparedRows, classifiedRows, now, authority);
           db.exec('COMMIT');
@@ -1229,6 +1559,8 @@ const readCurrentUsageStoreGeneration = (db: SqliteDatabase): number => {
         FROM usage_store_metadata
         WHERE key IN (
           'generation',
+          'migration.machine-fleet-metadata-v1',
+          'migration.machine-fleet-order-v1',
           'migration.rtk-contributions-v1',
           'migration.merge-row-v3-vcs'
         )
@@ -1237,7 +1569,10 @@ const readCurrentUsageStoreGeneration = (db: SqliteDatabase): number => {
     const metadata = new Map(records.map(({ key, value }) => [key, value]));
     const generation = metadata.get('generation');
     const hasCurrentSchema =
-      metadata.get('migration.rtk-contributions-v1') === 1 && metadata.get('migration.merge-row-v3-vcs') === 1;
+      metadata.get('migration.machine-fleet-metadata-v1') === 1 &&
+      metadata.get('migration.machine-fleet-order-v1') === 1 &&
+      metadata.get('migration.rtk-contributions-v1') === 1 &&
+      metadata.get('migration.merge-row-v3-vcs') === 1;
     if (!(hasCurrentSchema && typeof generation === 'number' && Number.isSafeInteger(generation) && generation >= 0)) {
       throw new Error('Usage store schema or generation metadata changed after preview.');
     }
@@ -1250,14 +1585,18 @@ const readCurrentUsageStoreGeneration = (db: SqliteDatabase): number => {
   }
 };
 
-const readStorePreview = (db: SqliteDatabase, bundle: UsageMergeBundle): PreviewPeerMergeBundleResult => {
+const readStorePreview = (
+  db: SqliteDatabase,
+  bundle: UsageMergeBundle,
+  observedAt: string,
+): PreviewPeerMergeBundleResult => {
   const preparedRows = bundle.rows.map(prepareMergeRow);
   const rows = preparedRows.map(({ row }) => row);
   const bundleDigest = canonicalBundleDigest(bundle, preparedRows);
   db.exec('BEGIN');
   try {
     const generation = readUsageStoreGeneration(db);
-    const result = summarizeClassifications(classifyMergeRows(db, rows, 'portable-opaque'));
+    const result = summarizeClassifications(classifyMergeRows(db, rows, 'portable-opaque', observedAt));
     const storeFingerprint = storeStateFingerprint(db, rows);
     const confirmationToken = confirmationTokenFor(bundleDigest, generation, storeFingerprint);
     db.exec('ROLLBACK');
@@ -1279,7 +1618,7 @@ export const previewPeerMergeBundle = (
     Effect.flatMap((bundle) =>
       withUsageStore(input.dbPath, (db) =>
         Effect.try({
-          try: () => readStorePreview(db, bundle),
+          try: () => readStorePreview(db, bundle, (input.importedAt ?? new Date()).toISOString()),
           catch: (cause) => usageStoreError('previewPeerMergeBundle', input.dbPath, cause, 'storage-failure'),
         }),
       ),
@@ -1319,14 +1658,9 @@ export const confirmPeerMergeBundle = (
               if (confirmationToken !== input.confirmationToken) {
                 throw previewStaleError();
               }
-              const classifiedRows = classifyMergeRows(db, rows, 'portable-opaque');
-              const result = writeClassifiedMergeRows(
-                db,
-                preparedRows,
-                classifiedRows,
-                (input.importedAt ?? new Date()).toISOString(),
-                'portable-opaque',
-              );
+              const now = (input.importedAt ?? new Date()).toISOString();
+              const classifiedRows = classifyMergeRows(db, rows, 'portable-opaque', now);
+              const result = writeClassifiedMergeRows(db, preparedRows, classifiedRows, now, 'portable-opaque');
               db.exec('COMMIT');
               return result;
             } catch (error) {
@@ -1348,84 +1682,225 @@ export const confirmPeerMergeBundle = (
   );
 };
 
-export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<QueryRowsResult, UsageStoreError> =>
-  withUsageStore(input.dbPath, (db) =>
-    Effect.try({
-      try: () => {
-        const statuses = input.statuses?.length ? input.statuses : (['active'] satisfies StoredUsageRowStatus[]);
-        const params: unknown[] = [...statuses];
-        let sql = `SELECT row_key, row_json, source_authority FROM usage_rows WHERE status IN (${statuses.map(() => '?').join(', ')})`;
+const readReportRows = (db: SqliteDatabase, input: QueryReportRowsInput): QueryRowsResult => {
+  const statuses = input.statuses?.length ? input.statuses : (['active'] satisfies StoredUsageRowStatus[]);
+  const params: unknown[] = [...statuses];
+  let sql = `SELECT row_key, row_json, source_authority FROM usage_rows WHERE status IN (${statuses.map(() => '?').join(', ')})`;
 
-        if (input.originMachineIds?.length) {
-          sql += ` AND origin_machine_id IN (${input.originMachineIds.map(() => '?').join(', ')})`;
-          params.push(...input.originMachineIds);
-        }
+  if (input.originMachineIds?.length) {
+    sql += ` AND origin_machine_id IN (${input.originMachineIds.map(() => '?').join(', ')})`;
+    params.push(...input.originMachineIds);
+  }
 
-        if (input.harnessKeys?.length) {
-          sql += ` AND harness_key IN (${input.harnessKeys.map(() => '?').join(', ')})`;
-          params.push(...input.harnessKeys);
-        }
+  if (input.harnessKeys?.length) {
+    sql += ` AND harness_key IN (${input.harnessKeys.map(() => '?').join(', ')})`;
+    params.push(...input.harnessKeys);
+  }
 
-        if (input.sourceAuthorities?.length) {
-          sql += ` AND source_authority IN (${input.sourceAuthorities.map(() => '?').join(', ')})`;
-          params.push(...input.sourceAuthorities);
-        }
+  if (input.sourceAuthorities?.length) {
+    sql += ` AND source_authority IN (${input.sourceAuthorities.map(() => '?').join(', ')})`;
+    params.push(...input.sourceAuthorities);
+  }
 
-        sql += " ORDER BY COALESCE(active_date, '') DESC, row_key ASC";
-        const records = db.query(sql).all(...params) as StoredRowRecord[];
-        const rowKeys = records.map(({ row_key }) => row_key);
-        const rowKeySet = new Set(rowKeys);
-        const enrichments =
-          rowKeys.length === 0
-            ? []
-            : (
-                db
-                  .query(`
+  sql += " ORDER BY COALESCE(active_date, '') DESC, row_key ASC";
+  const records = db.query(sql).all(...params) as StoredRowRecord[];
+  const rowKeys = records.map(({ row_key }) => row_key);
+  const rowKeySet = new Set(rowKeys);
+  const enrichments =
+    rowKeys.length === 0
+      ? []
+      : (
+          db
+            .query(`
                   SELECT row_key, source_id, schema_version, content_hash, payload_json
                   FROM usage_row_enrichments
                   WHERE source_id = ?
                 `)
-                  .all(RTK_SAVINGS_SOURCE_ID) as StoredEnrichmentRecord[]
-              ).filter(({ row_key }) => rowKeySet.has(row_key));
-        const rtkByRowKey = new Map<string, RtkSavingsContribution>();
-        let skipped = 0;
-        for (const enrichment of enrichments) {
-          let payload: unknown;
-          try {
-            payload = JSON.parse(enrichment.payload_json) as unknown;
-          } catch {
-            skipped += 1;
-            continue;
-          }
-          if (
-            enrichment.schema_version !== RTK_SAVINGS_SCHEMA_VERSION ||
-            enrichment.source_id !== RTK_SAVINGS_SOURCE_ID ||
-            !isRtkSavingsContribution(payload) ||
-            enrichment.content_hash !== enrichmentContentHash(payload)
-          ) {
-            skipped += 1;
-            continue;
-          }
-          rtkByRowKey.set(enrichment.row_key, payload);
-        }
-        const rows: CollectedUsageRow[] = [];
-        const sourceAuthorities: StoredSourceAuthority[] = [];
-        for (const record of records) {
-          const parsed = JSON.parse(record.row_json) as unknown;
-          if (isSerializedMergeRow(parsed)) {
-            const base = stripRtkSavings(deserializeMergeRow(parsed));
-            const contribution = rtkByRowKey.get(record.row_key);
-            rows.push(contribution ? { ...base, ...contribution } : base);
-            sourceAuthorities.push(record.source_authority);
-          } else {
-            skipped += 1;
-          }
-        }
-        return { rows, skipped, sourceAuthorities };
-      },
+            .all(RTK_SAVINGS_SOURCE_ID) as StoredEnrichmentRecord[]
+        ).filter(({ row_key }) => rowKeySet.has(row_key));
+  const rtkByRowKey = new Map<string, RtkSavingsContribution>();
+  let skipped = 0;
+  for (const enrichment of enrichments) {
+    let payload: unknown;
+    try {
+      payload = JSON.parse(enrichment.payload_json) as unknown;
+    } catch {
+      skipped += 1;
+      continue;
+    }
+    if (
+      enrichment.schema_version !== RTK_SAVINGS_SCHEMA_VERSION ||
+      enrichment.source_id !== RTK_SAVINGS_SOURCE_ID ||
+      !isRtkSavingsContribution(payload) ||
+      enrichment.content_hash !== enrichmentContentHash(payload)
+    ) {
+      skipped += 1;
+      continue;
+    }
+    rtkByRowKey.set(enrichment.row_key, payload);
+  }
+  const rows: CollectedUsageRow[] = [];
+  const sourceAuthorities: StoredSourceAuthority[] = [];
+  for (const record of records) {
+    const parsed = JSON.parse(record.row_json) as unknown;
+    if (isSerializedMergeRow(parsed)) {
+      const base = stripRtkSavings(deserializeMergeRow(parsed));
+      const contribution = rtkByRowKey.get(record.row_key);
+      rows.push(contribution ? { ...base, ...contribution } : base);
+      sourceAuthorities.push(record.source_authority);
+    } else {
+      skipped += 1;
+    }
+  }
+  return { rows, skipped, sourceAuthorities };
+};
+
+export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<QueryRowsResult, UsageStoreError> =>
+  withUsageStore(input.dbPath, (db) =>
+    Effect.try({
+      try: () => readReportRows(db, input),
       catch: (cause) => usageStoreError('queryReportRows', input.dbPath, cause, 'storage-failure'),
     }),
   );
+
+const queryUsageMachineFleetWithDatabase = (
+  db: SqliteDatabase,
+  input: QueryUsageMachineFleetInput,
+): Effect.Effect<QueryUsageMachineFleetResult, UsageStoreError> => {
+  const maximumMachines = input.maximumMachines ?? MAX_USAGE_MACHINE_FLEET_MACHINES;
+  if (
+    !(
+      Number.isSafeInteger(maximumMachines) &&
+      maximumMachines > 0 &&
+      maximumMachines <= MAX_USAGE_MACHINE_FLEET_MACHINES
+    )
+  ) {
+    return Effect.fail(
+      usageStoreError(
+        'queryUsageMachineFleet',
+        input.dbPath,
+        `maximumMachines must be an integer from 1 through ${MAX_USAGE_MACHINE_FLEET_MACHINES}.`,
+        'invalid-input',
+      ),
+    );
+  }
+
+  return Effect.try({
+    try: () => {
+      const records = db
+        .query(`
+            /* queryUsageMachineFleet */
+            WITH ranked_rows AS (
+              SELECT
+                active_date,
+                last_seen_at,
+                machine_label,
+                origin_machine_id,
+                row_key,
+                source_authority,
+                status,
+                ROW_NUMBER() OVER (
+                  PARTITION BY origin_machine_id
+                  ORDER BY last_seen_at DESC, row_key ASC
+                ) AS freshness_rank
+              FROM usage_rows
+              WHERE fleet_metadata_valid = 1
+            ),
+            machine_rows AS (
+              SELECT
+                MAX(CASE WHEN source_authority = 'local-observed' THEN 1 ELSE 0 END) AS has_local_observed_rows,
+                MAX(CASE WHEN source_authority = 'portable-opaque' THEN 1 ELSE 0 END) AS has_portable_rows,
+                COALESCE(
+                  MAX(CASE WHEN freshness_rank = 1 THEN NULLIF(machine_label, '') END),
+                  origin_machine_id
+                ) AS label,
+                MAX(last_seen_at) AS last_seen_at,
+                MAX(CASE WHEN status = 'active' THEN active_date END) AS newest_session_at,
+                origin_machine_id,
+                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS session_count
+              FROM ranked_rows
+              GROUP BY origin_machine_id
+            ),
+            ordered_machine_rows AS (
+              SELECT machine_rows.*, usage_machine_fleet_order.sort_rank
+              FROM machine_rows
+              INNER JOIN usage_machine_fleet_order
+                ON usage_machine_fleet_order.origin_machine_id = machine_rows.origin_machine_id
+                AND usage_machine_fleet_order.machine_label = machine_rows.label
+            ),
+            bounded_machines AS (
+              SELECT *
+              FROM ordered_machine_rows
+              ORDER BY
+                COALESCE(newest_session_at, '') DESC,
+                sort_rank ASC,
+                origin_machine_id ASC
+              LIMIT ?
+            ),
+            counts AS (
+              SELECT
+                (SELECT COUNT(*) FROM machine_rows) AS machine_count,
+                (SELECT COUNT(*) FROM usage_rows WHERE fleet_metadata_valid = 0) AS skipped
+            )
+            SELECT
+              bounded_machines.has_local_observed_rows,
+              bounded_machines.has_portable_rows,
+              bounded_machines.label,
+              bounded_machines.last_seen_at,
+              counts.machine_count,
+              bounded_machines.newest_session_at,
+              bounded_machines.origin_machine_id,
+              bounded_machines.session_count,
+              counts.skipped
+            FROM counts
+            LEFT JOIN bounded_machines ON 1 = 1
+            ORDER BY
+              COALESCE(bounded_machines.newest_session_at, '') DESC,
+              bounded_machines.sort_rank ASC,
+              bounded_machines.origin_machine_id ASC
+          `)
+        .all(maximumMachines) as StoredMachineFleetAggregateRecord[];
+      const summary = records[0];
+      if (!summary) {
+        throw new Error('Machine fleet aggregate returned no summary row');
+      }
+      const machines: UsageMachineFleetItem[] = [];
+      for (const record of records) {
+        if (
+          record.has_local_observed_rows === null ||
+          record.has_portable_rows === null ||
+          record.label === null ||
+          record.last_seen_at === null ||
+          record.origin_machine_id === null ||
+          record.session_count === null
+        ) {
+          continue;
+        }
+        machines.push({
+          hasLocalObservedRows: record.has_local_observed_rows === 1,
+          hasPortableRows: record.has_portable_rows === 1,
+          id: record.origin_machine_id,
+          label: record.label,
+          lastSeenAt: record.last_seen_at,
+          newestSessionAt: record.newest_session_at,
+          sessionCount: record.session_count,
+        });
+      }
+
+      return {
+        machines,
+        omittedMachines: summary.machine_count - machines.length,
+        skipped: summary.skipped,
+      };
+    },
+    catch: (cause) => usageStoreError('queryUsageMachineFleet', input.dbPath, cause, 'storage-failure'),
+  });
+};
+
+export const queryUsageMachineFleet = (
+  input: QueryUsageMachineFleetInput,
+): Effect.Effect<QueryUsageMachineFleetResult, UsageStoreError> =>
+  withUsageStore(input.dbPath, (db) => queryUsageMachineFleetWithDatabase(db, input));
 
 export const queryEnrichableUsageRows = (
   input: QueryEnrichableUsageRowsInput,
@@ -1509,21 +1984,86 @@ export const upsertRtkSavingsContributions = (
     }),
   );
 
+const readUsageStoreGenerations = (db: SqliteDatabase): UsageStoreGenerations => {
+  const records = db
+    .query(`
+      SELECT key, value
+      FROM usage_store_metadata
+      WHERE key IN ('generation', 'machine_fleet_generation')
+    `)
+    .all() as Array<{ key: string; value: number }>;
+  const metadata = new Map(records.map(({ key, value }) => [key, value]));
+  const machineFleetGeneration = metadata.get('machine_fleet_generation');
+  const usageStoreGeneration = metadata.get('generation');
+  if (
+    !(
+      Number.isSafeInteger(machineFleetGeneration) &&
+      Number(machineFleetGeneration) >= 0 &&
+      Number.isSafeInteger(usageStoreGeneration) &&
+      Number(usageStoreGeneration) >= 0
+    )
+  ) {
+    throw new Error('Usage store generation metadata is missing or invalid');
+  }
+  return {
+    machineFleetGeneration: Number(machineFleetGeneration),
+    usageStoreGeneration: Number(usageStoreGeneration),
+  };
+};
+
+export const queryUsageStoreGenerations = (
+  input: QueryUsageStoreGenerationInput,
+): Effect.Effect<UsageStoreGenerations, UsageStoreError> =>
+  withUsageStore(input.dbPath, (db) =>
+    Effect.try({
+      try: () => readUsageStoreGenerations(db),
+      catch: (cause) => usageStoreError('queryUsageStoreGenerations', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
 export const queryUsageStoreGeneration = (
   input: QueryUsageStoreGenerationInput,
 ): Effect.Effect<number, UsageStoreError> =>
+  queryUsageStoreGenerations(input).pipe(Effect.map(({ usageStoreGeneration }) => usageStoreGeneration));
+
+export const queryStoredReportCapture = (
+  input: QueryStoredReportCaptureInput,
+): Effect.Effect<QueryStoredReportCaptureResult, UsageStoreError> =>
   withUsageStore(input.dbPath, (db) =>
-    Effect.try({
-      try: () => {
-        const record = db
-          .query("SELECT value FROM usage_store_metadata WHERE key = 'generation'")
-          .get() as UsageStoreGenerationRecord | null;
-        if (!(record && Number.isSafeInteger(record.value) && record.value >= 0)) {
-          throw new Error('Usage store generation metadata is missing or invalid');
-        }
-        return record.value;
-      },
-      catch: (cause) => usageStoreError('queryUsageStoreGeneration', input.dbPath, cause, 'storage-failure'),
+    Effect.gen(function* () {
+      yield* Effect.try({
+        try: () => db.exec('BEGIN'),
+        catch: (cause) => usageStoreError('queryStoredReportCapture', input.dbPath, cause, 'storage-failure'),
+      });
+      return yield* Effect.gen(function* () {
+        const generations = yield* Effect.try({
+          try: () => readUsageStoreGenerations(db),
+          catch: (cause) => usageStoreError('queryStoredReportCapture', input.dbPath, cause, 'storage-failure'),
+        });
+        const reportRows = yield* Effect.try({
+          try: () => readReportRows(db, input),
+          catch: (cause) => usageStoreError('queryStoredReportCapture', input.dbPath, cause, 'storage-failure'),
+        });
+        const machineFleet = yield* queryUsageMachineFleetWithDatabase(db, {
+          dbPath: input.dbPath,
+          ...(input.maximumMachines === undefined ? {} : { maximumMachines: input.maximumMachines }),
+        });
+        yield* Effect.try({
+          try: () => db.exec('COMMIT'),
+          catch: (cause) => usageStoreError('queryStoredReportCapture', input.dbPath, cause, 'storage-failure'),
+        });
+        return { generations, machineFleet, reportRows };
+      }).pipe(
+        Effect.catchAll((error) =>
+          Effect.sync(() => {
+            try {
+              db.exec('ROLLBACK');
+            } catch {
+              // The capture failure remains authoritative.
+            }
+          }).pipe(Effect.zipRight(Effect.fail(error))),
+        ),
+      );
     }),
   );
 
@@ -2193,9 +2733,13 @@ export const createUsageStore = (dbPath: string): UsageStore => ({
   previewPeerMergeBundle: (input) => previewPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
   confirmPeerMergeBundle: (input) => confirmPeerMergeBundle({ ...input, dbPath: input.dbPath ?? dbPath }),
   queryReportRows: (input) => queryReportRows({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
+  queryStoredReportCapture: (input) => queryStoredReportCapture({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryEnrichableUsageRows: (input) => queryEnrichableUsageRows({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryNormalizedDatasetItems: (input) =>
     queryNormalizedDatasetItems({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
+  queryUsageMachineFleet: (input) => queryUsageMachineFleet({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
+  queryUsageStoreGenerations: (input) =>
+    queryUsageStoreGenerations({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryUsageStoreGeneration: (input) =>
     queryUsageStoreGeneration({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   upsertRtkSavingsContributions: (input) => upsertRtkSavingsContributions({ ...input, dbPath: input.dbPath ?? dbPath }),

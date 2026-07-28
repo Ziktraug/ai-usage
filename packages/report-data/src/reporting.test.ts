@@ -140,6 +140,7 @@ describe('shared reporting', () => {
       await Effect.runPromise(
         importLocalRows({
           dbPath: usageStorePath(home),
+          importedAt: new Date('2026-01-01T10:00:00.000Z'),
           machine: testMachine,
           rows: [makeSourcedRow({ project: 'local-project', sourcePath: '/work/local', sessionId: 'local-session' })],
         }),
@@ -147,6 +148,7 @@ describe('shared reporting', () => {
       await Effect.runPromise(
         importPeerMergeBundle({
           dbPath: usageStorePath(home),
+          importedAt: new Date('2026-01-01T11:00:00.000Z'),
           localMachineId: testMachine.id,
           bundle: createUsageMergeBundle({
             machine: { id: 'peer-machine', label: 'Peer Machine' },
@@ -173,6 +175,21 @@ describe('shared reporting', () => {
         'peer-session': 'portable-opaque',
       });
       expect(Object.hasOwn(capture.payload, 'rowSourceAuthorities')).toBe(false);
+      expect(capture.machineFreshness.kind).toBe('available');
+      if (capture.machineFreshness.kind !== 'available') {
+        throw new Error('Stored report capture must include available machine freshness');
+      }
+      expect(capture.machineFreshness.observedAt).toBe(capture.payload.generatedAt);
+      expect(capture.machineFreshness.omittedMachines).toBe(0);
+      expect(capture.machineFreshness.skippedRows).toBe(0);
+      expect(
+        Object.fromEntries(
+          capture.machineFreshness.machines.map(({ id, label, lastSeenAt }) => [id, { label, lastSeenAt }]),
+        ),
+      ).toEqual({
+        'peer-machine': { label: 'Peer Machine', lastSeenAt: '2026-01-01T11:00:00.000Z' },
+        [testMachine.id]: { label: testMachine.label, lastSeenAt: '2026-01-01T10:00:00.000Z' },
+      });
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -529,7 +546,7 @@ describe('shared reporting', () => {
       );
 
       expect(payload.rows).toHaveLength(3);
-      expect(payload.rows.map((row) => row.project).sort()).toContain('peer-project · Peer Machine');
+      expect(payload.rows.map((row) => row.project).sort()).toContain('peer-project — Peer Machine');
       expect(payload.rows.find((row) => row.rawProject === 'peer-project')?.source?.machineLabel).toBe('Peer Machine');
       expect(payload.rows.find((row) => row.name === 'peer-child')?.source?.rootSourceSessionId).toBe('peer-parent');
     } finally {
@@ -571,7 +588,7 @@ describe('shared reporting', () => {
       );
 
       expect(payload.rows).toHaveLength(2);
-      expect(payload.rows[0]?.project).toBe('peer-project · Peer Machine');
+      expect(payload.rows[0]?.project).toBe('peer-project — Peer Machine');
       expect(payload.rows[0]?.rawProject).toBe('peer-project');
       expect(payload.rows[0]?.source?.machineLabel).toBe('Peer Machine');
       expect(payload.rows.find((row) => row.name === 'peer-child')?.source?.rootSourceSessionId).toBe('peer-parent');
@@ -606,21 +623,31 @@ describe('shared reporting', () => {
       });
       const configChanged = await readFingerprint();
       expect(configChanged.configFingerprint).not.toBe(initial.configFingerprint);
+      expect(configChanged.machineFleetGeneration).toBe(initial.machineFleetGeneration);
       expect(configChanged.usageStoreGeneration).toBe(initial.usageStoreGeneration);
 
+      const peerBundle = createUsageMergeBundle({
+        machine: { id: 'peer-machine', label: 'Peer Machine' },
+        rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-session' })],
+      });
       await Effect.runPromise(
         importPeerMergeBundle({
-          bundle: createUsageMergeBundle({
-            machine: { id: 'peer-machine', label: 'Peer Machine' },
-            rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-session' })],
-          }),
+          bundle: peerBundle,
           dbPath: usageStorePath(home),
           localMachineId: testMachine.id,
         }),
       );
       const storeChanged = await readFingerprint();
       expect(storeChanged.configFingerprint).toBe(configChanged.configFingerprint);
+      expect(storeChanged.machineFleetGeneration).toBe(configChanged.machineFleetGeneration + 1);
       expect(storeChanged.usageStoreGeneration).toBe(configChanged.usageStoreGeneration + 1);
+
+      await Effect.runPromise(
+        importPeerMergeBundle({ bundle: peerBundle, dbPath: usageStorePath(home), localMachineId: testMachine.id }),
+      );
+      const fleetOnlyChanged = await readFingerprint();
+      expect(fleetOnlyChanged.machineFleetGeneration).toBe(storeChanged.machineFleetGeneration + 1);
+      expect(fleetOnlyChanged.usageStoreGeneration).toBe(storeChanged.usageStoreGeneration);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -780,8 +807,8 @@ describe('shared reporting', () => {
 
       expect(merged.rows).toHaveLength(2);
       expect(merged.rows.map((row) => row.project).sort()).toEqual([
-        'agent-a15e8356ff54ade2a · Test Machine',
-        'agent-a2017811a25de4a7c · Test Machine',
+        'agent-a15e8356ff54ade2a — Test Machine',
+        'agent-a2017811a25de4a7c — Test Machine',
       ]);
       expect(merged.rows.map((row) => row.rawProject).sort()).toEqual([
         'agent-a15e8356ff54ade2a',

@@ -1,6 +1,6 @@
 import { collectionSourceDefinitions, type SourceControlView } from '@ai-usage/report-core/source-control';
 import type { Page } from '@playwright/test';
-import { expect, test } from './browser-test';
+import { test as browserTest, expect, reportViewsFor } from './browser-test';
 
 const DESKTOP_VIEWPORT = { height: 900, width: 1280 } as const;
 const NARROW_VIEWPORT = { height: 844, width: 390 } as const;
@@ -8,6 +8,7 @@ const DESKTOP_MAX_DIFF_PIXELS = 28;
 const DRAWER_MAX_DIFF_PIXELS = 24;
 const NARROW_MAX_DIFF_PIXELS = 22;
 const SKILLS_MAX_DIFF_PIXELS = 12;
+const DISABLE_LCD_TEXT_ARGUMENT = '--disable-lcd-text';
 const TOP_SESSION_PATTERN = /Top session/;
 const STABLE_SOURCE_CONTROL_SNAPSHOT = {
   generatedAt: '2026-06-11T12:00:00.000Z',
@@ -41,6 +42,15 @@ const STABLE_SOURCE_CONTROL_SNAPSHOT = {
     warnings: [],
   })),
 } satisfies SourceControlView;
+
+const test = browserTest.extend({
+  launchOptions: async ({ launchOptions }, use): Promise<void> => {
+    await use({
+      ...launchOptions,
+      args: [...(launchOptions.args ?? []), DISABLE_LCD_TEXT_ARGUMENT],
+    });
+  },
+});
 
 test.use({
   colorScheme: 'light',
@@ -94,8 +104,11 @@ const openStableOverview = async (page: Page): Promise<void> => {
   await installStableSourceControl(page);
   await page.goto('/');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
-  await expect(page.getByText('3 / 4 sessions', { exact: true })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
+  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
   await waitForFonts(page);
 };
 

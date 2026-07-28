@@ -2,6 +2,7 @@ import { activeFilterButton } from '@ai-usage/design-system/report';
 import type { FieldFilterKey } from './dashboard-search';
 
 export const fieldFilterLabels: Record<FieldFilterKey, string> = {
+  campaign: 'Campaign',
   provider: 'Provider',
   model: 'Model',
   project: 'Project',

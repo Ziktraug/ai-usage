@@ -9,15 +9,26 @@ export interface PopoverProps {
   trigger: JSX.Element;
   triggerAriaLabel?: string;
   triggerClass?: string;
+  triggerTitle?: string;
 }
 
 const popoverPositioner = css({ zIndex: 50 });
 
 export const Popover = (props: PopoverProps) => (
   <ArkPopover.Root lazyMount positioning={{ gutter: 4 }} unmountOnExit>
-    <ArkPopover.Trigger aria-label={props.triggerAriaLabel} class={props.triggerClass}>
-      {props.trigger}
-    </ArkPopover.Trigger>
+    <ArkPopover.Trigger
+      asChild={(triggerProps) => (
+        <button
+          {...triggerProps()}
+          aria-label={props.triggerAriaLabel}
+          class={props.triggerClass}
+          title={props.triggerTitle}
+          type="button"
+        >
+          {props.trigger}
+        </button>
+      )}
+    />
     <Portal>
       <ArkPopover.Positioner class={popoverPositioner}>
         <ArkPopover.Content class={props.contentClass ?? popoverContent}>{props.children}</ArkPopover.Content>

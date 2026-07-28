@@ -1,4 +1,4 @@
-import { expect, test } from './browser-test';
+import { expect, reportViewsFor, test } from './browser-test';
 
 const BUSINESS_RESOURCE_TYPES = new Set(['eventsource', 'fetch', 'xhr']);
 const NON_REPORT_NAVIGATION_PATTERN = /Skills|Sources|Sync/;
@@ -15,13 +15,16 @@ test('serves only the synthetic report and keeps every local boundary inert', as
   await page.goto('/');
   await expect(page.getByText('Demo data', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
 
   const filter = page.getByRole('textbox', {
     name: 'Filter sessions by title, project, model, provider, or harness',
   });
   await filter.fill('Build report UI');
-  await expect(page.getByText('1 / 4 sessions', { exact: true })).toBeVisible();
+  await expect(page.getByText('1 / 6 sessions', { exact: true })).toBeVisible();
   await filter.fill('');
 
   await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
@@ -29,7 +32,7 @@ test('serves only the synthetic report and keeps every local boundary inert', as
   await expect(drawer).toBeVisible();
   await expect(drawer.getByText('Build report UI', { exact: true }).first()).toBeVisible();
   await expect(drawer.getByText('Total tokens', { exact: true })).toBeVisible();
-  await expect(drawer.getByText('203,500', { exact: true })).toBeVisible();
+  await expect(drawer.locator('[data-detail-item="Total tokens"]')).toContainText('204k');
   await expect(page.getByRole('link', { name: NON_REPORT_NAVIGATION_PATTERN })).toHaveCount(0);
 
   const guardedResponses = await Promise.all([

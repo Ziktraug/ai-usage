@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { spawn } from 'node:child_process';
-import { chmodSync, copyFileSync, lstatSync, mkdtempSync, renameSync } from 'node:fs';
+import { chmodSync, copyFileSync, lstatSync, mkdirSync, mkdtempSync, renameSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { CursorCommitAttributionDatasetItem } from '@ai-usage/report-core/datasets';
 import {
   createUsageMergeBundle,
@@ -30,7 +31,9 @@ import {
   queryProviderQuotaObservations,
   queryProviderQuotaSourceState,
   queryReportRows,
+  queryUsageMachineFleet,
   queryUsageStoreGeneration,
+  queryUsageStoreGenerations,
   UsageStoreError,
   upsertRtkSavingsContributions,
   usageStorePath,
@@ -39,6 +42,7 @@ import {
 const machineA: UsageMachine = { id: 'machine-a', label: 'Machine A' };
 const machineB: UsageMachine = { id: 'machine-b', label: 'Machine B' };
 const CONFIRMATION_TOKEN_PATTERN = /^v1\.[0-9a-f]{64}$/;
+const ROW_JSON_QUERY_PATTERN = /row_json|json_/i;
 
 const makeRow = (input: {
   sourceSessionId: string;
@@ -350,6 +354,7 @@ describe('usage-store public boundary', () => {
     );
     expect(confirmed).toEqual({
       deleted: preview.deleted,
+      fleetChanged: preview.fleetChanged,
       inserted: preview.inserted,
       superseded: preview.superseded,
       unchanged: preview.unchanged,
@@ -550,6 +555,31 @@ describe('usage-store public boundary', () => {
     expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(1);
   });
 
+  test('keeps preview and confirmation fleet effects exact at one observation time', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-preview-fleet-parity-'));
+    const dbPath = usageStorePath(home);
+    const importedAt = new Date('2026-07-20T10:00:00.000Z');
+    const bundle = makeBundle(machineB, [makeRow({ sourceSessionId: 'preview-fleet-parity' })]);
+    await Effect.runPromise(importPeerMergeBundle({ bundle, dbPath, importedAt, localMachineId: machineA.id }));
+
+    const preview = await Effect.runPromise(
+      previewPeerMergeBundle({ bundle, dbPath, importedAt, localMachineId: machineA.id }),
+    );
+    const confirmed = await Effect.runPromise(
+      confirmPeerMergeBundle({
+        bundle,
+        confirmationToken: preview.confirmationToken,
+        dbPath,
+        importedAt,
+        localMachineId: machineA.id,
+      }),
+    );
+    const { confirmationToken: _confirmationToken, ...previewResult } = preview;
+
+    expect(previewResult).toMatchObject({ fleetChanged: false, unchanged: 1 });
+    expect(confirmed).toEqual(previewResult);
+  });
+
   test('keeps opaque tokens stable for unchanged state and binds them to the canonical bundle', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-token-binding-'));
     const dbPath = usageStorePath(home);
@@ -616,18 +646,34 @@ describe('usage-store public boundary', () => {
     const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
     const { Database } = await import('bun:sqlite');
     const drift = new Database(dbPath);
-    drift.query("UPDATE usage_store_metadata SET value = 0 WHERE key LIKE 'migration.%'").run();
+    drift.query("UPDATE usage_store_metadata SET value = 0 WHERE key = 'migration.machine-fleet-metadata-v1'").run();
     drift.close();
 
-    const error = await Effect.runPromise(
-      confirmPeerMergeBundle({
-        bundle,
-        confirmationToken: preview.confirmationToken,
-        dbPath,
-        localMachineId: machineA.id,
-      }).pipe(Effect.flip),
-    );
+    const originalQuery = Database.prototype.query;
+    const schemaGateStatements: string[] = [];
+    const traceSchemaGateQuery = function (this: InstanceType<typeof Database>, sql: string) {
+      if (sql.includes('WHERE key IN')) {
+        schemaGateStatements.push(sql);
+      }
+      return originalQuery.call(this, sql);
+    };
+    Database.prototype.query = traceSchemaGateQuery as typeof Database.prototype.query;
+    let error: UsageStoreError;
+    try {
+      error = await Effect.runPromise(
+        confirmPeerMergeBundle({
+          bundle,
+          confirmationToken: preview.confirmationToken,
+          dbPath,
+          localMachineId: machineA.id,
+        }).pipe(Effect.flip),
+      );
+    } finally {
+      Database.prototype.query = originalQuery;
+    }
     expect(error.reason).toBe('preview-stale');
+    expect(schemaGateStatements).toHaveLength(1);
+    expect(schemaGateStatements[0]).toContain('migration.machine-fleet-metadata-v1');
 
     const inspection = new Database(dbPath, { readonly: true });
     const migrationValues = inspection
@@ -642,7 +688,7 @@ describe('usage-store public boundary', () => {
       count: number;
     };
     inspection.close();
-    expect(migrationValues.map(({ value }) => value)).toEqual([0, 0]);
+    expect(migrationValues.map(({ value }) => value)).toEqual([0, 1, 1, 1]);
     expect(generation.value).toBe(generationBefore);
     expect(peerCount.count).toBe(0);
   });
@@ -701,7 +747,7 @@ describe('usage-store public boundary', () => {
         .query('SELECT COUNT(*) AS count FROM usage_row_enrichments WHERE row_key = ?')
         .get(peerRowKey) as { count: number };
       inspection.close();
-      expect(migrationValues.map(({ value }) => value)).toEqual([1, 1]);
+      expect(migrationValues.map(({ value }) => value)).toEqual([1, 1, 1, 1]);
       expect(generation.value).toBe(0);
       expect(peerCount.count).toBe(0);
       expect(enrichmentCount.count).toBe(0);
@@ -976,6 +1022,7 @@ describe('usage-store public boundary', () => {
   test('keeps import results count based for UI state', () => {
     const result: ImportResult = {
       deleted: 0,
+      fleetChanged: false,
       inserted: 1,
       superseded: 0,
       unchanged: 2,
@@ -1036,29 +1083,551 @@ describe('usage-store public boundary', () => {
     expect(queried.rows[0]?.source.machineId).toBe('machine-a');
   });
 
-  test('advances generation only when the active report projection changes', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-generation-'));
+  test('round-trips declared origin, absence provenance, and legacy stored absence', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-origin-'));
     const dbPath = usageStorePath(home);
+    const classifierParentId = '11111111-2222-4333-8444-555555555555';
+    const classifier = {
+      ...makeRow({ sourceSessionId: 'classifier' }),
+      origin: 'classifier' as const,
+      source: {
+        harnessKey: 'codex',
+        rootSourceSessionId: classifierParentId,
+        sourceSessionId: 'classifier',
+      },
+    };
+    const unsupported = {
+      ...makeRow({ sourceSessionId: 'unsupported' }),
+      harness: 'Cursor',
+      originProvenance: 'origin-unsupported' as const,
+    };
+    await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [classifier, unsupported] }));
 
-    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(0);
+    const currentLegacy = toSerializedMergeRow(makeRow({ sourceSessionId: 'legacy' }), machineB);
+    const { contentHash: _contentHash, origin: _origin, ...legacyContent } = currentLegacy;
+    const legacyRow = { ...legacyContent, contentHash: usageContentHash(legacyContent) };
+    const legacyBundle: UsageMergeBundle = { ...makeBundle(machineB, []), rows: [legacyRow] };
+    await Effect.runPromise(importPeerMergeBundle({ bundle: legacyBundle, dbPath, localMachineId: machineA.id }));
+
+    const queried = await Effect.runPromise(queryReportRows({ dbPath }));
+    const rowsById = new Map(queried.rows.map((row) => [row.source.sourceSessionId, row]));
+
+    expect(rowsById.get('classifier')?.origin).toBe('classifier');
+    expect(rowsById.get('classifier')?.source.rootSourceSessionId).toBe(classifierParentId);
+    expect(rowsById.get('unsupported')?.originProvenance).toBe('origin-unsupported');
+    expect(rowsById.get('legacy')?.origin).toBeUndefined();
+  });
+
+  test('projects active rows into per-machine fleet freshness', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-fleet-'));
+    const dbPath = usageStorePath(home);
     await Effect.runPromise(
-      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'generation-row' })] }),
+      importLocalRows({
+        dbPath,
+        importedAt: new Date('2026-06-12T12:00:00.000Z'),
+        machine: machineA,
+        rows: [makeRow({ sourceSessionId: 'fleet-local' })],
+      }),
     );
-    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(1);
+    const latestPeerRow = {
+      ...makeRow({ sourceSessionId: 'fleet-peer-latest' }),
+      date: new Date('2026-06-11T10:00:00.000Z'),
+      endDate: new Date('2026-06-11T10:01:00.000Z'),
+    };
     await Effect.runPromise(
-      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'generation-row' })] }),
+      importPeerMergeBundle({
+        bundle: makeBundle(machineB, [makeRow({ sourceSessionId: 'fleet-peer-oldest' }), latestPeerRow]),
+        dbPath,
+        importedAt: new Date('2026-06-15T12:00:00.000Z'),
+        localMachineId: machineA.id,
+      }),
     );
-    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(1);
+
+    const fleet = await Effect.runPromise(queryUsageMachineFleet({ dbPath }));
+
+    expect(fleet).toEqual({
+      machines: [
+        {
+          id: machineB.id,
+          label: machineB.label,
+          hasLocalObservedRows: false,
+          hasPortableRows: true,
+          lastSeenAt: '2026-06-15T12:00:00.000Z',
+          newestSessionAt: '2026-06-11T10:01:00.000Z',
+          sessionCount: 2,
+        },
+        {
+          id: machineA.id,
+          label: machineA.label,
+          hasLocalObservedRows: true,
+          hasPortableRows: false,
+          lastSeenAt: '2026-06-12T12:00:00.000Z',
+          newestSessionAt: '2026-06-01T10:01:00.000Z',
+          sessionCount: 1,
+        },
+      ],
+      omittedMachines: 0,
+      skipped: 0,
+    });
+  });
+
+  test('bounds machine fleet metadata with exact omissions while accounting for corrupt rows', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-fleet-bounded-'));
+    const dbPath = usageStorePath(home);
+    const machineC: UsageMachine = { id: 'machine-c', label: 'Machine C' };
     await Effect.runPromise(
       importLocalRows({
         dbPath,
         machine: machineA,
+        rows: [makeRow({ sourceSessionId: 'fleet-bounded-local' })],
+      }),
+    );
+    await Effect.runPromise(
+      importPeerMergeBundle({
+        bundle: makeBundle(machineB, [
+          makeRow({ sourceSessionId: 'fleet-bounded-peer' }),
+          makeRow({ sourceSessionId: 'fleet-bounded-corrupt' }),
+        ]),
+        dbPath,
+        localMachineId: machineA.id,
+      }),
+    );
+    await Effect.runPromise(
+      importPeerMergeBundle({
+        bundle: makeBundle(machineC, [makeRow({ sourceSessionId: 'fleet-bounded-omitted' })]),
+        dbPath,
+        localMachineId: machineA.id,
+      }),
+    );
+    const { Database } = await import('bun:sqlite');
+    const db = new Database(dbPath);
+    const corruptRecord = db
+      .query("SELECT row_json FROM usage_rows WHERE source_session_id = 'fleet-bounded-corrupt'")
+      .get() as { row_json: string };
+    const corruptRow = JSON.parse(corruptRecord.row_json) as Record<string, unknown>;
+    corruptRow.durationMs = -1;
+    db.query("UPDATE usage_rows SET row_json = ? WHERE source_session_id = 'fleet-bounded-corrupt'").run(
+      JSON.stringify(corruptRow),
+    );
+    db.close();
+
+    const fleet = await Effect.runPromise(queryUsageMachineFleet({ dbPath, maximumMachines: 2 }));
+
+    expect(fleet).toMatchObject({
+      machines: [
+        { id: machineA.id, sessionCount: 1 },
+        { id: machineB.id, sessionCount: 1 },
+      ],
+      omittedMachines: 1,
+      skipped: 1,
+    });
+  });
+
+  test('bounds machine labels with locale-aware Unicode ordering and an identity tie-break before LIMIT', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-fleet-order-'));
+    const dbPath = usageStorePath(home);
+    const machines = [
+      { id: 'machine-zebra', label: 'Zebra' },
+      { id: 'machine-apple-z', label: 'apple' },
+      { id: 'machine-eclair', label: 'éclair' },
+      { id: 'machine-apple-a', label: 'apple' },
+    ];
+    for (const machine of machines) {
+      await Effect.runPromise(
+        importLocalRows({
+          dbPath,
+          importedAt: new Date('2026-07-20T10:00:00.000Z'),
+          machine,
+          rows: [makeRow({ sourceSessionId: `fleet-order-${machine.id}` })],
+        }),
+      );
+    }
+
+    const fleet = await Effect.runPromise(queryUsageMachineFleet({ dbPath, maximumMachines: 3 }));
+    const expected = [...machines]
+      .sort((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id))
+      .slice(0, 3)
+      .map(({ id }) => id);
+
+    expect(fleet.machines.map(({ id }) => id)).toEqual(expected);
+    expect(fleet.omittedMachines).toBe(1);
+  });
+
+  test('uses only normalized columns for the bounded machine fleet read', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-fleet-sql-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        machine: machineA,
+        rows: [makeRow({ sourceSessionId: 'fleet-column-only' })],
+      }),
+    );
+    const { Database } = await import('bun:sqlite');
+    const originalQuery = Database.prototype.query;
+    const fleetStatements: string[] = [];
+    const traceFleetQuery = function (this: InstanceType<typeof Database>, sql: string) {
+      if (sql.includes('queryUsageMachineFleet')) {
+        fleetStatements.push(sql);
+      }
+      return originalQuery.call(this, sql);
+    };
+    Database.prototype.query = traceFleetQuery as typeof Database.prototype.query;
+
+    try {
+      await Effect.runPromise(queryUsageMachineFleet({ dbPath, maximumMachines: 1 }));
+    } finally {
+      Database.prototype.query = originalQuery;
+    }
+
+    expect(fleetStatements).toHaveLength(1);
+    expect(fleetStatements.join('\n')).not.toMatch(ROW_JSON_QUERY_PATTERN);
+  });
+
+  test('migrates valid and corrupt legacy rows into normalized fleet metadata', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-fleet-migration-'));
+    const dbPath = usageStorePath(home);
+    mkdirSync(path.dirname(dbPath), { recursive: true });
+    const valid = toSerializedMergeRow(makeRow({ sourceSessionId: 'fleet-legacy-valid' }), machineA);
+    const corruptBase = toSerializedMergeRow(makeRow({ sourceSessionId: 'fleet-legacy-corrupt' }), machineB);
+    const corrupt = { ...corruptBase, durationMs: -1 };
+    const importedAt = '2026-06-20T12:00:00.000Z';
+    const { Database } = await import('bun:sqlite');
+    const legacyDb = new Database(dbPath);
+    legacyDb.exec(`
+      CREATE TABLE usage_rows (
+        origin_machine_id TEXT NOT NULL,
+        harness_key TEXT NOT NULL,
+        source_session_id TEXT,
+        source_fingerprint TEXT NOT NULL,
+        source_authority TEXT NOT NULL DEFAULT 'portable-opaque',
+        row_key TEXT PRIMARY KEY,
+        content_hash TEXT NOT NULL,
+        row_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        active_date TEXT,
+        project TEXT NOT NULL,
+        model TEXT NOT NULL,
+        token_total INTEGER NOT NULL,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        superseded_by TEXT
+      )
+    `);
+    const insertLegacy = legacyDb.query(`
+      INSERT INTO usage_rows (
+        origin_machine_id, harness_key, source_session_id, source_fingerprint, source_authority,
+        row_key, content_hash, row_json, status, active_date, project, model, token_total,
+        first_seen_at, last_seen_at, updated_at, superseded_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const row of [valid, corrupt]) {
+      insertLegacy.run(
+        row.source.machineId,
+        row.source.harnessKey,
+        row.source.sourceSessionId,
+        row.sourceFingerprint,
+        'portable-opaque',
+        row.rowKey,
+        row.contentHash,
+        JSON.stringify(row),
+        row.status,
+        row.activeDate,
+        row.project,
+        row.model,
+        row.tokenTotal,
+        importedAt,
+        importedAt,
+        importedAt,
+        null,
+      );
+    }
+    legacyDb.close();
+
+    const fleet = await Effect.runPromise(queryUsageMachineFleet({ dbPath }));
+    const migratedDb = new Database(dbPath, { readonly: true });
+    const columns = migratedDb.query('PRAGMA table_info(usage_rows)').all() as Array<{ name: string }>;
+    migratedDb.close();
+
+    expect(fleet).toMatchObject({
+      machines: [{ id: machineA.id, label: machineA.label, sessionCount: 1 }],
+      omittedMachines: 0,
+      skipped: 1,
+    });
+    expect(columns.map(({ name }) => name)).toEqual(expect.arrayContaining(['fleet_metadata_valid', 'machine_label']));
+  });
+
+  test('serializes concurrent legacy fleet metadata upgrades before inspecting columns', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-fleet-concurrent-migration-'));
+    const dbPath = usageStorePath(home);
+    mkdirSync(path.dirname(dbPath), { recursive: true });
+    const { Database } = await import('bun:sqlite');
+    const legacyDb = new Database(dbPath);
+    legacyDb.exec(`
+      CREATE TABLE usage_rows (
+        origin_machine_id TEXT NOT NULL,
+        harness_key TEXT NOT NULL,
+        source_session_id TEXT,
+        source_fingerprint TEXT NOT NULL,
+        source_authority TEXT NOT NULL DEFAULT 'portable-opaque',
+        row_key TEXT PRIMARY KEY,
+        content_hash TEXT NOT NULL,
+        row_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        active_date TEXT,
+        project TEXT NOT NULL,
+        model TEXT NOT NULL,
+        token_total INTEGER NOT NULL,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        superseded_by TEXT
+      )
+    `);
+    legacyDb.close();
+    const program = `
+      const { Database } = await import('bun:sqlite');
+      const fs = await import('node:fs');
+      const originalQuery = Database.prototype.query;
+      let barrierReached = false;
+      Database.prototype.query = function (sql, ...params) {
+        const statement = originalQuery.call(this, sql, ...params);
+        if (barrierReached || !sql.includes('PRAGMA table_info(usage_rows)')) {
+          return statement;
+        }
+        return {
+          all(...allParams) {
+            const result = statement.all(...allParams);
+            barrierReached = true;
+            fs.writeSync(1, 'ready\\n');
+            fs.readFileSync(0, 'utf8');
+            return result;
+          },
+        };
+      };
+      const { Effect } = await import('effect');
+      const { queryUsageMachineFleet } = await import(${JSON.stringify(USAGE_STORE_MODULE_URL)});
+      await Effect.runPromise(queryUsageMachineFleet({ dbPath: ${JSON.stringify(dbPath)} }));
+    `;
+    const first = await startBarrierChild(program);
+    const secondPromise = startBarrierChild(program);
+    const secondBeforeFirstRelease = await Promise.race([
+      secondPromise.then((child) => ({ child })),
+      delay(500).then(() => null),
+    ]);
+
+    first.release();
+    await first.complete();
+    const second = secondBeforeFirstRelease?.child ?? (await secondPromise);
+    second.release();
+    await second.complete();
+  });
+
+  test('restores a tampered machine identity before validating repaired fleet metadata', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-fleet-identity-repair-'));
+    const dbPath = usageStorePath(home);
+    const row = makeRow({ sourceSessionId: 'fleet-identity-repair' });
+    await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [row] }));
+    const { Database } = await import('bun:sqlite');
+    const tamperedDb = new Database(dbPath);
+    tamperedDb.query("UPDATE usage_rows SET origin_machine_id = 'forged-machine'").run();
+    tamperedDb.close();
+
+    await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [row] }));
+    const fleet = await Effect.runPromise(queryUsageMachineFleet({ dbPath }));
+
+    expect(fleet).toMatchObject({
+      machines: [{ id: machineA.id, label: machineA.label }],
+      omittedMachines: 0,
+      skipped: 0,
+    });
+  });
+
+  test('excludes fleet rows whose observation timestamp is mutated outside the store boundary', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-fleet-timestamp-tamper-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        machine: machineA,
+        rows: [makeRow({ sourceSessionId: 'fleet-timestamp-tamper' })],
+      }),
+    );
+    const { Database } = await import('bun:sqlite');
+    const db = new Database(dbPath);
+    db.query("UPDATE usage_rows SET last_seen_at = 'not-a-timestamp'").run();
+    db.close();
+
+    const fleet = await Effect.runPromise(queryUsageMachineFleet({ dbPath }));
+
+    expect(fleet).toMatchObject({ machines: [], omittedMachines: 0, skipped: 1 });
+  });
+
+  test('does not rebuild locale ranks for a freshness-only heartbeat', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-fleet-heartbeat-order-'));
+    const dbPath = usageStorePath(home);
+    const row = makeRow({ sourceSessionId: 'fleet-heartbeat-order' });
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: new Date('2026-07-20T10:00:00.000Z'),
+        machine: machineA,
+        rows: [row],
+      }),
+    );
+    const { Database } = await import('bun:sqlite');
+    const db = new Database(dbPath);
+    db.exec(`
+      CREATE TRIGGER reject_fleet_order_rebuild_on_heartbeat
+      BEFORE DELETE ON usage_machine_fleet_order
+      BEGIN
+        SELECT RAISE(ABORT, 'fleet order rebuilt');
+      END
+    `);
+    db.close();
+
+    const heartbeat = await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: new Date('2026-07-20T10:01:00.000Z'),
+        machine: machineA,
+        rows: [row],
+      }),
+    );
+
+    expect(heartbeat).toMatchObject({ fleetChanged: true, unchanged: 1 });
+    expect(await Effect.runPromise(queryUsageMachineFleet({ dbPath }))).toMatchObject({
+      machines: [{ id: machineA.id, lastSeenAt: '2026-07-20T10:01:00.000Z' }],
+    });
+  });
+
+  test('tracks semantic report and machine fleet generations independently', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-generation-'));
+    const dbPath = usageStorePath(home);
+    const firstObservedAt = new Date('2026-07-20T10:00:00.000Z');
+    const secondObservedAt = new Date('2026-07-20T10:01:00.000Z');
+    const thirdObservedAt = new Date('2026-07-20T10:02:00.000Z');
+
+    expect(await Effect.runPromise(queryUsageStoreGenerations({ dbPath }))).toEqual({
+      machineFleetGeneration: 0,
+      usageStoreGeneration: 0,
+    });
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: firstObservedAt,
+        machine: machineA,
+        rows: [makeRow({ sourceSessionId: 'generation-row' })],
+      }),
+    );
+    expect(await Effect.runPromise(queryUsageStoreGenerations({ dbPath }))).toEqual({
+      machineFleetGeneration: 1,
+      usageStoreGeneration: 1,
+    });
+    const sameObservation = await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: firstObservedAt,
+        machine: machineA,
+        rows: [makeRow({ sourceSessionId: 'generation-row' })],
+      }),
+    );
+    expect(sameObservation).toMatchObject({ fleetChanged: false, unchanged: 1 });
+    expect(await Effect.runPromise(queryUsageStoreGenerations({ dbPath }))).toEqual({
+      machineFleetGeneration: 1,
+      usageStoreGeneration: 1,
+    });
+    const unchanged = await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: secondObservedAt,
+        machine: machineA,
+        rows: [makeRow({ sourceSessionId: 'generation-row' })],
+      }),
+    );
+    expect(unchanged).toMatchObject({ fleetChanged: true, unchanged: 1 });
+    expect(await Effect.runPromise(queryUsageStoreGenerations({ dbPath }))).toEqual({
+      machineFleetGeneration: 2,
+      usageStoreGeneration: 1,
+    });
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: thirdObservedAt,
+        machine: machineA,
         rows: [makeRow({ sourceSessionId: 'generation-row', tokOut: 21 })],
       }),
     );
-    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(2);
+    expect(await Effect.runPromise(queryUsageStoreGenerations({ dbPath }))).toEqual({
+      machineFleetGeneration: 3,
+      usageStoreGeneration: 2,
+    });
     await Effect.runPromise(importLocalRows({ dbPath, machine: machineA, rows: [] }));
-    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(2);
+    expect(await Effect.runPromise(queryUsageStoreGenerations({ dbPath }))).toEqual({
+      machineFleetGeneration: 3,
+      usageStoreGeneration: 2,
+    });
+  });
+
+  test('captures generations, report rows, and bounded fleet from one SQLite snapshot', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-report-capture-snapshot-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(
+      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'capture-machine-a' })] }),
+    );
+    const child = await startBarrierChild(`
+      const { Database } = await import('bun:sqlite');
+      const fs = await import('node:fs');
+      const originalQuery = Database.prototype.query;
+      let barrierReached = false;
+      Database.prototype.query = function (sql, ...params) {
+        const statement = originalQuery.call(this, sql, ...params);
+        if (barrierReached || !sql.includes('SELECT row_key, row_json, source_authority FROM usage_rows')) {
+          return statement;
+        }
+        return {
+          all(...allParams) {
+            const result = statement.all(...allParams);
+            barrierReached = true;
+            fs.writeSync(1, 'ready\\n');
+            fs.readFileSync(0, 'utf8');
+            return result;
+          },
+        };
+      };
+      const { Effect } = await import('effect');
+      const { queryStoredReportCapture } = await import(${JSON.stringify(USAGE_STORE_MODULE_URL)});
+      const capture = await Effect.runPromise(queryStoredReportCapture({
+        dbPath: ${JSON.stringify(dbPath)},
+        maximumMachines: 1,
+      }));
+      process.stdout.write('result:capture:' + JSON.stringify(capture) + '\\n');
+    `);
+
+    await Effect.runPromise(
+      importLocalRows({ dbPath, machine: machineB, rows: [makeRow({ sourceSessionId: 'capture-machine-b' })] }),
+    );
+    child.release();
+    const output = await child.complete();
+    const resultLine = output.split('\n').find((line) => line.startsWith('result:capture:'));
+    if (!resultLine) {
+      throw new Error(`Capture child returned no result: ${output}`);
+    }
+    const capture = JSON.parse(resultLine.slice('result:capture:'.length)) as {
+      generations: { machineFleetGeneration: number; usageStoreGeneration: number };
+      machineFleet: { machines: Array<{ id: string }>; omittedMachines: number };
+      reportRows: { rows: Array<{ source?: { machineId?: string } }> };
+    };
+
+    expect(capture.generations).toEqual({ machineFleetGeneration: 1, usageStoreGeneration: 1 });
+    expect(capture.reportRows.rows.map((row) => row.source?.machineId)).toEqual([machineA.id]);
+    expect(capture.machineFleet.machines.map(({ id }) => id)).toEqual([machineA.id]);
+    expect(capture.machineFleet.omittedMachines).toBe(0);
+    expect(await Effect.runPromise(queryUsageStoreGenerations({ dbPath }))).toEqual({
+      machineFleetGeneration: 2,
+      usageStoreGeneration: 2,
+    });
   });
 
   test('round-trips VCS in source JSON and treats its change as semantic without changing the row key', async () => {
@@ -1503,6 +2072,7 @@ describe('usage-store public boundary', () => {
 
     expect(result).toEqual({
       deleted: serializedRows.filter((row) => row.status === 'deleted').length,
+      fleetChanged: true,
       inserted: 0,
       superseded: serializedRows.filter((row) => row.status === 'superseded').length,
       unchanged: serializedRows.filter((row, index) => row.status === 'active' && index % 4 === 3).length,

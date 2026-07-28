@@ -25,7 +25,12 @@ const resolveRootSourceSessionId = (
     }
     seen.add(currentSourceId);
 
-    const parentSourceId = current.source?.parentSourceSessionId ?? null;
+    const declaredRootSourceId = current.source?.rootSourceSessionId ?? null;
+    // Classifiers declare their campaign through rootSourceSessionId because they
+    // are not execution children. Resolve that declaration through any observed
+    // parent chain instead of replacing it with the classifier's own identity.
+    const parentSourceId =
+      current.source?.parentSourceSessionId ?? (declaredRootSourceId === currentSourceId ? null : declaredRootSourceId);
     if (!parentSourceId || parentSourceId === currentSourceId) {
       return currentSourceId;
     }

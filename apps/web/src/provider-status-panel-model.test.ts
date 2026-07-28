@@ -49,7 +49,7 @@ const providerView = (
 });
 
 describe('provider status panel summary', () => {
-  test('keeps quota and critical provider information visible while aggregating secondary issues', () => {
+  test('partitions every provider into one reconcilable summary category', () => {
     const codex = providerView({
       key: 'codex',
       label: 'Codex',
@@ -79,14 +79,30 @@ describe('provider status panel summary', () => {
       tone: 'critical',
       warnings: ['Collector failed'],
     });
+    const gemini = providerView({
+      key: 'gemini',
+      label: 'Gemini',
+      state: 'ok',
+      tone: 'ok',
+    });
 
-    const summary = buildProviderStatusPanelSummary([codex, claude, cursor, opencode]);
+    const providers = [codex, claude, cursor, opencode, gemini];
+    const summary = buildProviderStatusPanelSummary(providers);
 
     expect(summary.quotaProviders).toEqual([codex]);
     expect(summary.criticalProvidersWithoutQuota).toEqual([opencode]);
     expect(summary.attentionProvidersWithoutQuota).toEqual([cursor]);
-    expect(summary.warningCount).toBe(3);
-    expect(summary.unsupportedProviderCount).toBe(1);
-    expect(summary.noWindowProviderCount).toBe(3);
+    expect(summary.unsupportedProvidersWithoutQuota).toEqual([claude]);
+    expect(summary.otherProvidersWithoutQuota).toEqual([gemini]);
+
+    const categorizedProviders = [
+      ...summary.quotaProviders,
+      ...summary.criticalProvidersWithoutQuota,
+      ...summary.attentionProvidersWithoutQuota,
+      ...summary.unsupportedProvidersWithoutQuota,
+      ...summary.otherProvidersWithoutQuota,
+    ];
+    expect(categorizedProviders).toHaveLength(providers.length);
+    expect(new Set(categorizedProviders).size).toBe(providers.length);
   });
 });

@@ -14,9 +14,9 @@ export const sortValueForRow = (row: DashboardRow, columnId: SessionColumnId): n
 
 export const compareRows = (sorting: SortingState) => compareSessionPresentationRows(sorting);
 
-export const lineDeltaLabel = (row: SerializedRow) => {
-  if (row.lineDelta == null || row.lineDelta === 0) {
-    return '-';
+export const lineDeltaLabel = (row: Pick<SerializedRow, 'lineDelta' | 'linesAdded' | 'linesDeleted'>) => {
+  if (row.lineDelta == null) {
+    return '—';
   }
   return `+${fmtMaybeNum(row.linesAdded)}/-${fmtMaybeNum(row.linesDeleted)}`;
 };

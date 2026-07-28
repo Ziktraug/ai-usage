@@ -101,6 +101,11 @@ describe('overview model', () => {
       actualSpendKnownSessions: 1,
       apiEquivalentValue: 20,
       apiPricedSessions: 2,
+      priceMeasurement: {
+        knownCost: 20,
+        state: 'partially measured',
+        unpricedFreshTokens: 17,
+      },
       sessionCount: 3,
       subscriptionValue: 0,
     });
@@ -171,6 +176,11 @@ describe('overview model', () => {
     const unpricedDay = data ? heatDay(data, '2026-06-11') : null;
 
     expect(unpricedDay?.level).toBeGreaterThan(0);
+    expect(unpricedDay?.priceMeasurement).toEqual({
+      knownCost: 0,
+      state: 'partially measured',
+      unpricedFreshTokens: 17,
+    });
   });
 
   test('keeps distinct model migration series below the density limit', () => {
@@ -245,9 +255,14 @@ describe('overview model', () => {
     const providerData = buildTimelineData([mixed], { dimension: 'provider', granularity: 'day' });
 
     expect(data?.series.map(({ key, sessions, total }) => ({ key, sessions, total }))).toEqual([
-      { key: 'gpt-5', sessions: 1, total: 0 },
+      { key: 'gpt-5', sessions: 1, total: 2 },
       { key: 'claude-sonnet', sessions: 0, total: 0 },
     ]);
+    expect(data?.priceMeasurement).toEqual({
+      knownCost: 2,
+      state: 'partially measured',
+      unpricedFreshTokens: 20,
+    });
     expect(data?.series[1]?.sessions).toBe(0);
     expect(data?.grandTotal).toBe(providerData?.grandTotal);
     expect(data?.grandSessions).toBe(1);
@@ -262,59 +277,113 @@ describe('overview model', () => {
     expect(data?.series.map(({ key }) => key)).toEqual(['a-model', 'z-model', 'ä-model']);
   });
 
+  test('uses stable machine IDs as timeline keys when display labels collide', () => {
+    const rows = ['machine-b', 'machine-a'].map((machineId) =>
+      row({
+        sessionLabel: machineId,
+        source: {
+          harnessKey: 'codex',
+          machineId,
+          machineLabel: 'Shared machine',
+          rootSourceSessionId: machineId,
+          sourceSessionId: machineId,
+        },
+      }),
+    );
+    const data = buildTimelineData(rows, { dimension: 'machine', granularity: 'day' });
+    expect(data?.series.map(({ key, label }) => ({ key, label }))).toEqual([
+      { key: 'machine-a', label: 'Shared machine' },
+      { key: 'machine-b', label: 'Shared machine' },
+    ]);
+  });
+
   test('builds timeline series for every supported dimension with cost and sessions', () => {
     const rows = [
-      row({
-        sessionLabel: 'Codex alpha',
-        activeDate: '2026-06-01T12:00:00.000Z',
-        date: '2026-06-01T12:00:00.000Z',
-        harness: 'Codex',
-        model: 'gpt-5',
-        provider: 'Codex API',
-        project: 'alpha',
-        costApprox: 5,
-      }),
-      row({
-        sessionLabel: 'Claude beta',
-        activeDate: '2026-06-02T12:00:00.000Z',
-        date: '2026-06-02T12:00:00.000Z',
-        harness: 'Claude',
-        model: 'claude-sonnet',
-        provider: 'Anthropic',
-        project: 'beta',
-        costApprox: 2,
-      }),
-      row({
-        sessionLabel: 'Codex alpha unpriced',
-        activeDate: '2026-06-03T12:00:00.000Z',
-        date: '2026-06-03T12:00:00.000Z',
-        harness: 'Codex',
-        model: 'gpt-5',
-        provider: 'Codex API',
-        project: 'alpha',
-        costApprox: 0,
-        costKnown: false,
-      }),
+      {
+        ...row({
+          sessionLabel: 'Codex alpha',
+          activeDate: '2026-06-01T12:00:00.000Z',
+          date: '2026-06-01T12:00:00.000Z',
+          harness: 'Codex',
+          model: 'gpt-5',
+          provider: 'Codex API',
+          project: 'alpha',
+          costApprox: 5,
+          source: {
+            harnessKey: 'codex',
+            machineId: 'machine-a',
+            machineLabel: 'Machine A',
+            rootSourceSessionId: 'campaign-a',
+            sourceSessionId: 'campaign-a',
+          },
+        }),
+        origin: 'human' as const,
+      },
+      {
+        ...row({
+          sessionLabel: 'Claude beta',
+          activeDate: '2026-06-02T12:00:00.000Z',
+          date: '2026-06-02T12:00:00.000Z',
+          harness: 'Claude',
+          model: 'claude-sonnet',
+          provider: 'Anthropic',
+          project: 'beta',
+          costApprox: 2,
+          source: {
+            harnessKey: 'claude',
+            machineId: 'machine-b',
+            machineLabel: 'Machine B',
+            rootSourceSessionId: 'campaign-b',
+            sourceSessionId: 'campaign-b',
+          },
+        }),
+        origin: 'subagent' as const,
+      },
+      {
+        ...row({
+          sessionLabel: 'Codex alpha unpriced',
+          activeDate: '2026-06-03T12:00:00.000Z',
+          date: '2026-06-03T12:00:00.000Z',
+          harness: 'Codex',
+          model: 'gpt-5',
+          provider: 'Codex API',
+          project: 'alpha',
+          costApprox: 0,
+          costKnown: false,
+          source: {
+            harnessKey: 'codex',
+            machineId: 'machine-a',
+            machineLabel: 'Machine A',
+            parentSourceSessionId: 'campaign-a',
+            rootSourceSessionId: 'campaign-a',
+            sourceSessionId: 'campaign-a-child',
+          },
+        }),
+        origin: 'classifier' as const,
+      },
     ];
 
-    const expectations: Record<TimelineDimension, string[]> = {
-      harness: ['Codex', 'Claude'],
-      model: ['gpt-5', 'claude-sonnet'],
-      project: ['alpha', 'beta'],
-      provider: ['Codex API', 'Anthropic'],
+    const expectations: Record<TimelineDimension, { firstSessions: number; labels: string[] }> = {
+      campaign: { firstSessions: 2, labels: ['Codex alpha', 'Claude beta'] },
+      harness: { firstSessions: 2, labels: ['Codex', 'Claude'] },
+      machine: { firstSessions: 2, labels: ['Machine A', 'Machine B'] },
+      model: { firstSessions: 2, labels: ['gpt-5', 'claude-sonnet'] },
+      origin: { firstSessions: 1, labels: ['Human', 'Delegated', 'Automated review'] },
+      project: { firstSessions: 2, labels: ['alpha', 'beta'] },
+      provider: { firstSessions: 2, labels: ['Codex API', 'Anthropic'] },
     };
 
-    for (const [dimension, keys] of Object.entries(expectations) as [TimelineDimension, string[]][]) {
+    for (const [dimension, expectation] of Object.entries(expectations) as [
+      TimelineDimension,
+      { firstSessions: number; labels: string[] },
+    ][]) {
       const data = buildTimelineData(rows, { dimension, granularity: 'day' });
-      const firstKey = keys[0] ?? '';
 
       expect(data?.dimension).toBe(dimension);
-      expect(data?.series.map((series) => series.key)).toEqual(keys);
+      expect(data?.series.map((series) => series.label)).toEqual(expectation.labels);
       expect(data?.grandTotal).toBe(7);
       expect(data?.grandSessions).toBe(3);
-      expect(data?.series.find((series) => series.key === firstKey)?.sessions).toBe(2);
-      expect(data?.buckets[2]?.byKey.get(firstKey)?.sessions).toBe(1);
-      expect(data?.buckets[2]?.byKey.get(firstKey)?.cost).toBe(0);
+      expect(data?.series[0]?.sessions).toBe(expectation.firstSessions);
     }
   });
 
@@ -344,6 +413,42 @@ describe('overview model', () => {
     expect(data?.maxBucketSessions).toBe(1);
   });
 
+  test('keeps a dated campaign child under its undated root label', () => {
+    const root = row({
+      activeDate: null,
+      date: null,
+      sessionLabel: 'Undated campaign root',
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        machineLabel: 'Machine A',
+        rootSourceSessionId: 'root-a',
+        sourceSessionId: 'root-a',
+      },
+    });
+    const child = row({
+      sessionLabel: 'Dated child',
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        machineLabel: 'Machine A',
+        parentSourceSessionId: 'root-a',
+        rootSourceSessionId: 'root-a',
+        sourceSessionId: 'child-a',
+      },
+    });
+
+    const data = buildTimelineData([child], {
+      campaignRows: [root, child],
+      dimension: 'campaign',
+      granularity: 'day',
+    });
+
+    expect(data?.series).toEqual([
+      expect.objectContaining({ label: 'Undated campaign root', sessions: 1, total: child.costApprox }),
+    ]);
+  });
+
   test('aggregates the smallest additive timeline series without changing totals', () => {
     const rows = Array.from({ length: 15 }, (_, index) =>
       row({
@@ -361,7 +466,11 @@ describe('overview model', () => {
     expect(aggregate?.memberKeys).toEqual(['model-4', 'model-3', 'model-2', 'model-1']);
     expect(aggregate?.sessions).toBe(4);
     expect(aggregate?.total).toBe(10);
-    expect(data?.buckets[0]?.byKey.get(aggregate?.key ?? '')).toEqual({ cost: 10, sessions: 4 });
+    expect(data?.buckets[0]?.byKey.get(aggregate?.key ?? '')).toEqual({
+      cost: 10,
+      priceMeasurement: { knownCost: 10, state: 'measured', unpricedFreshTokens: 0 },
+      sessions: 4,
+    });
     expect(data?.series.reduce((sum, series) => sum + series.total, 0)).toBe(data?.grandTotal);
     expect(data?.series.reduce((sum, series) => sum + series.sessions, 0)).toBe(data?.grandSessions);
   });
@@ -555,7 +664,7 @@ describe('overview model', () => {
     const shape = buildSessionShapeData(rows, campaigns);
 
     expect(items.map((item) => item.label).sort()).toEqual(['Campaign root', 'Solo A', 'Solo B', 'Solo C']);
-    expect(top.map((item) => item.kind)).toEqual(['campaign', 'session']);
+    expect(top.map((item) => item.kind)).toEqual(['campaign', 'campaign']);
     expect(top.map((item) => item.costApprox)).toEqual([13, 12]);
     expect(top.map((item) => item.costKnown)).toEqual([false, true]);
     expect(shape?.points.map((item) => item.label).sort()).toEqual(['Solo A', 'Solo B', 'Solo C']);

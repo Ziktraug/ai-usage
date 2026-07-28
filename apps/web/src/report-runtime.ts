@@ -1,15 +1,27 @@
 import type { FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
 import { getBrowserRuntimeMode } from './browser-runtime-mode';
 import { createServedFocusedReportSource, fetchFocusedReportBootstrap } from './focused-report-client';
+import { type MachineFreshnessSnapshot, machineFreshnessSnapshotFromFocused } from './manual-transfer-model';
 import { demoReportPayload } from './report-data';
 import type { RuntimeMode } from './runtime-mode';
 import { toWebReportPayload, type WebReportPayload } from './web-report-payload';
 
 const demoWebReportPayload = toWebReportPayload(demoReportPayload);
 
+const syntheticMachineFreshness: MachineFreshnessSnapshot = {
+  kind: 'available',
+  machines: [{ id: 'fixture-machine', label: 'Fixture Machine', lastSeenAt: demoWebReportPayload.generatedAt }],
+  observedAt: Date.parse('2026-07-12T12:00:00.000Z'),
+  omittedMachines: 0,
+  skippedRows: 0,
+};
+
+export const machineFreshnessSnapshotFromBootstrap = (bootstrap: FocusedSupportResult): MachineFreshnessSnapshot =>
+  machineFreshnessSnapshotFromFocused(bootstrap.machineFreshness);
+
 export type ReportLoaderData =
-  | { kind: 'payload'; mode: 'demo' | 'e2e'; payload: WebReportPayload }
-  | { bootstrap: FocusedSupportResult; kind: 'served'; mode: 'live' };
+  | { kind: 'payload'; machineFreshness: MachineFreshnessSnapshot; mode: 'demo' | 'e2e'; payload: WebReportPayload }
+  | { bootstrap: FocusedSupportResult; kind: 'served'; machineFreshness: MachineFreshnessSnapshot; mode: 'live' };
 
 export const loadReportRouteData = async (mode: RuntimeMode = getBrowserRuntimeMode()): Promise<ReportLoaderData> => {
   if (mode === 'demo' || mode === 'e2e') {
@@ -22,12 +34,14 @@ export const loadReportRouteData = async (mode: RuntimeMode = getBrowserRuntimeM
         throw new Error('Synthetic report load failed for retry coverage.');
       }
     }
-    return { kind: 'payload', mode, payload: demoWebReportPayload };
+    return { kind: 'payload', machineFreshness: syntheticMachineFreshness, mode, payload: demoWebReportPayload };
   }
 
+  const bootstrap = await fetchFocusedReportBootstrap(createServedFocusedReportSource());
   return {
-    bootstrap: await fetchFocusedReportBootstrap(createServedFocusedReportSource()),
+    bootstrap,
     kind: 'served',
+    machineFreshness: machineFreshnessSnapshotFromBootstrap(bootstrap),
     mode,
   };
 };

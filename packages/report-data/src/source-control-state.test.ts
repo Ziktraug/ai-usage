@@ -195,6 +195,32 @@ describe('source control state transitions', () => {
     expect(rtkFinish.decision.needsPublicationWake).toBe(true);
   });
 
+  test('publishes fleet-only observations without scheduling RTK', () => {
+    const initial = detectedState('claude.sessions', 'rtk.savings');
+    const producer = admitSourceJob(initial, 'claude.sessions', true, 10, 'detection');
+    const started = startSourceJobTransition(producer.state, producer.decision!, 11);
+    const finished = finishSourceJobTransition(
+      started.state,
+      producer.decision!,
+      11,
+      started.decision.rtkTargetGeneration,
+      {
+        _tag: 'success',
+        result: { changed: false, inputCount: 1, outputCount: 1, servedProjectionChanged: true, warnings: [] },
+      },
+      12,
+    );
+
+    expect(finished.decision).toMatchObject({
+      changed: false,
+      needsPublicationRequest: true,
+      needsRtk: false,
+      servedProjectionChanged: true,
+    });
+    expect(finished.state.publication.dirtyGeneration).toBe(1);
+    expect(finished.state.rtkRequiredGeneration).toBe(0);
+  });
+
   test('captures and acknowledges publication targets without losing demand arriving during a run', () => {
     const requested = requestPublicationTransition(initialSourceControlState('instance-a', [], {}, 0), 1);
     const admitted = admitPublicationJob(requested.state, 2);

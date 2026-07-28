@@ -48,6 +48,34 @@ describe('normalizeSessionLineage', () => {
     expect(child.source.rootSourceSessionId).toBeUndefined();
   });
 
+  test("resolves a classifier's declared campaign through its subagent parent", () => {
+    const normalized = normalizeSessionLineage([
+      row('human-root', { origin: 'human' }),
+      row('delegated-worker', {
+        origin: 'subagent',
+        source: {
+          harnessKey: 'codex',
+          parentSourceSessionId: 'human-root',
+          sourceSessionId: 'delegated-worker',
+        },
+      }),
+      row('classifier-review', {
+        origin: 'classifier',
+        source: {
+          harnessKey: 'codex',
+          rootSourceSessionId: 'delegated-worker',
+          sourceSessionId: 'classifier-review',
+        },
+      }),
+    ]);
+
+    expect(normalized.map((item) => item.source.rootSourceSessionId)).toEqual([
+      'human-root',
+      'human-root',
+      'human-root',
+    ]);
+  });
+
   test('uses the row id as root when the parent is absent', () => {
     const normalized = normalizeSessionLineage([
       row('child', { source: { harnessKey: 'codex', sourceSessionId: 'child', parentSourceSessionId: 'missing' } }),

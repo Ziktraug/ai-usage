@@ -109,6 +109,7 @@ export interface SourceFinishDecision {
   readonly needsRtk: boolean;
   readonly needsRtkRerun: boolean;
   readonly publicationDataGeneration?: number;
+  readonly servedProjectionChanged: boolean;
 }
 
 export interface StateTransition<Decision> {
@@ -550,13 +551,14 @@ export const finishSourceJobTransition = (
   const availability = unavailable ? 'not-detected' : source.availability;
   const lastOutcome = outcomeAfterRun(completion, unavailable, warnings.length);
   const changed = result?.changed === true && !unavailable;
+  const servedProjectionChanged = (changed || result?.servedProjectionChanged === true) && !unavailable;
   let dirtyGeneration = state.publication.dirtyGeneration;
   let rtkRequiredGeneration = state.rtkRequiredGeneration;
   let rtkCompletedGeneration = state.rtkCompletedGeneration;
   const rtkAvailable = state.sources['rtk.savings'];
   const needsRtk =
     changed && sourceNeedsRtk(job.sourceId) && rtkAvailable.enabled && rtkAvailable.availability === 'detected';
-  if (changed) {
+  if (servedProjectionChanged) {
     dirtyGeneration++;
     if (needsRtk) {
       rtkRequiredGeneration = dirtyGeneration;
@@ -602,11 +604,12 @@ export const finishSourceJobTransition = (
       changed,
       detected: availability === 'detected',
       enabled: source.enabled,
-      needsPublicationRequest: changed,
+      needsPublicationRequest: servedProjectionChanged,
       needsPublicationWake: releasedRtkDependency,
       needsRtk,
       needsRtkRerun: job.sourceId === 'rtk.savings' && rtkRequiredGeneration > rtkCompletedGeneration,
-      ...(changed ? { publicationDataGeneration: dirtyGeneration } : {}),
+      servedProjectionChanged,
+      ...(servedProjectionChanged ? { publicationDataGeneration: dirtyGeneration } : {}),
     },
     finishedAt,
   );

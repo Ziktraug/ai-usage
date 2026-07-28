@@ -40,16 +40,18 @@ export interface ProviderStatusView {
 export const providerHistoryAvailable = (fixturePointCount: number | undefined, sourceAvailable: boolean): boolean =>
   fixturePointCount === undefined ? sourceAvailable : fixturePointCount > 0;
 
-const KNOWN_PROVIDER_KEYS = new Set(['claude', 'codex', 'cursor', 'gemini', 'opencode', 'rtk']);
+const KNOWN_PROVIDER_LABELS: Readonly<Record<string, string>> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  cursor: 'Cursor',
+  gemini: 'Gemini',
+  opencode: 'OpenCode',
+  rtk: 'RTK',
+};
 
 const providerKeyFromRow = (row: DashboardRow) => providerStatusKeyForUsage(row.harness, row.provider);
 
-const providerLabelFromKey = (key: string, fallback: string) => {
-  if (!KNOWN_PROVIDER_KEYS.has(key)) {
-    return fallback;
-  }
-  return key === 'rtk' ? 'RTK' : `${key.charAt(0).toUpperCase()}${key.slice(1)}`;
-};
+const providerLabelFromKey = (key: string, fallback: string) => KNOWN_PROVIDER_LABELS[key] ?? fallback;
 
 const providerFamily = (key: string) => key.split(':')[0] ?? key;
 

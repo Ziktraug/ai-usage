@@ -243,6 +243,7 @@ describe('skills page model', () => {
   });
 
   test('aggregates project skill inventories under grouped project scopes', () => {
+    const projectKey = 'group:019f9e7d-1111-4111-8111-111111111111';
     const snapshot = makeSnapshot({
       skills: [skill('global-skill')],
       targets: [target('codex', 'Codex')],
@@ -254,8 +255,8 @@ describe('skills page model', () => {
     const knownProjects = [
       {
         label: 'exalibur',
-        path: 'group:exalibur',
-        routeKey: 'exalibur',
+        path: projectKey,
+        routeKey: projectKey,
         sourcePaths: ['/work/exalibur', '/work/exalibur2'],
       },
     ];
@@ -263,20 +264,46 @@ describe('skills page model', () => {
     const tree = buildSkillTree(snapshot, inventories, knownProjects);
 
     expect(tree.scopes.map((scope) => scope.label)).toEqual(['Global', 'exalibur']);
-    expect(tree.scopes[1]?.path).toBe('group:exalibur');
+    expect(tree.scopes[1]?.path).toBe(projectKey);
     expect(tree.scopes[1]?.sourcePaths).toEqual(['/work/exalibur', '/work/exalibur2']);
     expect(tree.scopes[1]?.skills.map((node) => node.name)).toEqual(['other-skill', 'shared-skill']);
-    expect(projectRouteKey('group:exalibur', knownProjects)).toBe('exalibur');
-    expect(skillSelectionFromPath('/skills/projects/exalibur/shared-skill', knownProjects)).toEqual({
-      projectPath: 'group:exalibur',
+    expect(projectRouteKey(projectKey, knownProjects)).toBe(projectKey);
+    expect(
+      skillSelectionFromPath(`/skills/projects/${encodeURIComponent(projectKey)}/shared-skill`, knownProjects),
+    ).toEqual({
+      projectPath: projectKey,
       skillName: 'shared-skill',
       type: 'project-skill',
     });
-    expect(
-      findProjectSkillRow(inventories, 'group:exalibur', 'shared-skill', knownProjects)?.observations[0],
-    ).toMatchObject({
+    expect(findProjectSkillRow(inventories, projectKey, 'shared-skill', knownProjects)?.observations[0]).toMatchObject({
       projectLabel: 'exalibur',
       projectPath: '/work/exalibur',
+    });
+  });
+
+  test('keeps opaque grouped and source route keys stable when labels change', () => {
+    const groupProjectKey = 'group:019f9e7d-2222-4222-8222-222222222222';
+    const sourceProjectKey = 'source:019f9e7d-3333-4333-8333-333333333333';
+    const beforeRename = [
+      { label: 'Old group name', path: groupProjectKey, routeKey: groupProjectKey },
+      { label: 'Repository', path: sourceProjectKey, routeKey: sourceProjectKey },
+    ];
+    const afterRename = [
+      { label: 'New group name', path: groupProjectKey, routeKey: groupProjectKey },
+      { label: 'Renamed repository', path: sourceProjectKey, routeKey: sourceProjectKey },
+    ];
+
+    expect(projectRouteKey(groupProjectKey, beforeRename)).toBe(groupProjectKey);
+    expect(projectRouteKey(groupProjectKey, afterRename)).toBe(groupProjectKey);
+    expect(projectRouteKey(sourceProjectKey, beforeRename)).toBe(sourceProjectKey);
+    expect(projectRouteKey(sourceProjectKey, afterRename)).toBe(sourceProjectKey);
+    expect(skillSelectionFromPath(`/skills/projects/${encodeURIComponent(groupProjectKey)}`, afterRename)).toEqual({
+      projectPath: groupProjectKey,
+      type: 'project-scope',
+    });
+    expect(skillSelectionFromPath(`/skills/projects/${encodeURIComponent(sourceProjectKey)}`, afterRename)).toEqual({
+      projectPath: sourceProjectKey,
+      type: 'project-scope',
     });
   });
 

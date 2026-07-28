@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { calculateSessionRowWindow } from './session-row-window';
+import { calculateSessionRowWindow, calculateSessionViewportHeight } from './session-row-window';
 
 const windowFor = (overrides: Partial<Parameters<typeof calculateSessionRowWindow>[0]> = {}) =>
   calculateSessionRowWindow({
@@ -13,6 +13,44 @@ const windowFor = (overrides: Partial<Parameters<typeof calculateSessionRowWindo
   });
 
 describe('session row window', () => {
+  test('sizes the internal viewport from its real on-screen position', () => {
+    expect(
+      calculateSessionViewportHeight({
+        bottomInset: 24,
+        minimumHeight: 129,
+        surfaceTop: 64,
+        viewportHeight: 900,
+      }),
+    ).toBe(812);
+    expect(
+      calculateSessionViewportHeight({
+        bottomInset: 24,
+        minimumHeight: 188,
+        surfaceTop: 112,
+        viewportHeight: 844,
+      }),
+    ).toBe(708);
+  });
+
+  test('reserves enough height to anchor a surface that starts below the viewport', () => {
+    expect(
+      calculateSessionViewportHeight({
+        bottomInset: 24,
+        minimumHeight: 129,
+        surfaceTop: 1200,
+        viewportHeight: 900,
+      }),
+    ).toBe(876);
+    expect(
+      calculateSessionViewportHeight({
+        bottomInset: 24,
+        minimumHeight: 320,
+        surfaceTop: Number.NaN,
+        viewportHeight: 280,
+      }),
+    ).toBe(256);
+  });
+
   test('returns an empty window for an empty collection', () => {
     expect(windowFor({ rowCount: 0 })).toEqual({
       bottomHeight: 0,

@@ -59,6 +59,46 @@ describe('report revision registry', () => {
     ).toBe(reportCaptureFingerprintForPayload(payload, localAuthorities));
   });
 
+  test('ignores capture clocks but fingerprints machine freshness semantics', () => {
+    const payload = {
+      ...payloadFor('2026-07-13T12:00:00.000Z', 2),
+      machineFreshness: {
+        kind: 'available',
+        machines: [{ id: 'machine-a', label: 'Machine A', lastSeenAt: '2026-07-13T11:00:00.000Z' }],
+        observedAt: '2026-07-13T12:00:00.000Z',
+        omittedMachines: 0,
+        skippedRows: 0,
+      },
+    } satisfies WebReportPayload;
+    const refreshedClock = {
+      ...payload,
+      generatedAt: '2026-07-14T12:00:00.000Z',
+      machineFreshness: {
+        ...payload.machineFreshness,
+        observedAt: '2026-07-14T12:00:00.000Z',
+      },
+    };
+    const [firstMachine] = refreshedClock.machineFreshness.machines;
+    if (!firstMachine) {
+      throw new Error('Expected a captured machine');
+    }
+    const fresherMachine = {
+      ...refreshedClock,
+      machineFreshness: {
+        ...refreshedClock.machineFreshness,
+        machines: [
+          {
+            ...firstMachine,
+            lastSeenAt: '2026-07-14T11:00:00.000Z',
+          },
+        ],
+      },
+    };
+
+    expect(reportCaptureFingerprintForPayload(refreshedClock)).toBe(reportCaptureFingerprintForPayload(payload));
+    expect(reportCaptureFingerprintForPayload(fresherMachine)).not.toBe(reportCaptureFingerprintForPayload(payload));
+  });
+
   test('publishes owner-only immutable slices atomically from one payload capture', async () => {
     let materializedAuthorities: unknown;
     await withRegistry(

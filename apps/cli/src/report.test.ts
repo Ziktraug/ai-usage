@@ -131,7 +131,7 @@ describe('Usage row report lifecycle', () => {
     expect(output).not.toContain('2026-04-23 23:55');
   });
 
-  test('terminal table labels unavailable usage rows', () => {
+  test('terminal table keeps unavailable usage out of the session label', () => {
     const output = renderUsageReport(
       [
         row('history-only', {
@@ -148,7 +148,9 @@ describe('Usage row report lifecycle', () => {
     );
 
     expect(output).toContain('n/a');
-    expect(output).toContain('history-only (usage unavailable)');
+    expect(output).toContain('history-only');
+    expect(output).not.toContain('history-only (usage unavailable)');
+    expect(output).toContain('usage unavailable = session found in prompt history');
   });
 
   test('terminal report includes local history warnings', () => {

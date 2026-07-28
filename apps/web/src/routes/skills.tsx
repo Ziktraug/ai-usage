@@ -8,7 +8,6 @@ import {
   ghostButton,
   header,
   headerActions,
-  headerNavigation,
   headerTop,
   meta,
   navButton,
@@ -28,11 +27,9 @@ import {
 } from '@ai-usage/design-system/report';
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import { createQuery } from '@tanstack/solid-query';
-import { ClientOnly, createFileRoute, Link, useLocation } from '@tanstack/solid-router';
-import { createMemo, createSignal, For, onMount, Show } from 'solid-js';
+import { ClientOnly, createFileRoute, useLocation } from '@tanstack/solid-router';
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { isServer } from 'solid-js/web';
-import { dashboardSearchDefaultsFor } from '../dashboard-search';
-import { ThemeToggle } from '../dashboard-theme';
 import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
 import { DiscardConfirmationDialog } from '../discard-confirmation-dialog';
 import type { getKnownSkillProjectPaths, getSkillManagementSnapshot, KnownSkillProjectPath } from '../server/skills';
@@ -53,11 +50,25 @@ export const Route = createFileRoute('/skills')({
   component: SkillsRoute,
 });
 
-const dashboardSearchDefaults = dashboardSearchDefaultsFor('date');
+const SUCCESS_NOTICE_DURATION_MS = 5000;
 
 const stack = css({
   display: 'grid',
   gap: '12px',
+});
+
+const operationBanner = css({
+  position: 'fixed',
+  zIndex: 50,
+  bottom: { base: '80px', lg: '16px' },
+  right: { base: '12px', sm: '16px' },
+  w: { base: 'calc(100vw - 24px)', sm: 'auto' },
+  maxW: '420px',
+  boxShadow: 'overlay',
+});
+
+const passiveOperationBanner = css({
+  pointerEvents: 'none',
 });
 
 const foldBody = css({
@@ -156,18 +167,7 @@ const disabledRow = css({
   borderTop: '1px solid token(colors.line)',
 });
 
-const projectGroupRoutePrefixPattern = /^group:/;
-const legacyAliasRoutePrefixPattern = /^legacy-alias:/;
-
-const groupRouteKey = (project: KnownSkillProjectPath): string | undefined => {
-  if (project.groupId === undefined) {
-    return;
-  }
-  const withoutPrefix = project.groupId
-    .replace(projectGroupRoutePrefixPattern, '')
-    .replace(legacyAliasRoutePrefixPattern, '');
-  return withoutPrefix || project.groupLabel || project.label;
-};
+const groupRouteKey = (project: KnownSkillProjectPath): string | undefined => project.groupId;
 
 const knownProjectScopesFromPaths = (projects: readonly KnownSkillProjectPath[]): readonly KnownProjectScope[] => {
   const scopes = new Map<string, KnownProjectScope>();
@@ -337,18 +337,6 @@ function SkillsClientRoute() {
               >
                 Refresh skills
               </button>
-              <nav aria-label="Primary navigation" class={headerNavigation}>
-                <Link class={navButton} search={dashboardSearchDefaults} to="/">
-                  Report
-                </Link>
-                <Link class={navButton} to="/sync">
-                  Sync
-                </Link>
-                <Link class={navButton} to="/sources">
-                  Sources
-                </Link>
-              </nav>
-              <ThemeToggle />
             </div>
           </div>
         </header>
@@ -857,17 +845,46 @@ function ErrorPanel(props: { message: string; onRetry?: () => void }) {
 }
 
 function OperationBanner(props: { notice: OperationNotice | null; onDismiss: () => void }) {
+  let dismissTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const clearDismissTimer = (): void => {
+    if (dismissTimer === undefined) {
+      return;
+    }
+    clearTimeout(dismissTimer);
+    dismissTimer = undefined;
+  };
+
+  createEffect(() => {
+    clearDismissTimer();
+    const notice = props.notice;
+    if (notice?.tone !== 'ok') {
+      return;
+    }
+    dismissTimer = setTimeout(() => {
+      dismissTimer = undefined;
+      props.onDismiss();
+    }, SUCCESS_NOTICE_DURATION_MS);
+  });
+  onCleanup(clearDismissTimer);
+
   return (
     <Show when={props.notice}>
       {(notice) => (
         <div
-          class={cx(banner, notice().tone === 'error' ? bannerError : bannerOk)}
+          class={cx(
+            banner,
+            operationBanner,
+            notice().tone === 'error' ? bannerError : cx(bannerOk, passiveOperationBanner),
+          )}
           role={notice().tone === 'error' ? 'alert' : 'status'}
         >
           <span>{notice().message}</span>
-          <button class={ghostButton} onClick={props.onDismiss} type="button">
-            Dismiss
-          </button>
+          <Show when={notice().tone === 'error'}>
+            <button class={ghostButton} onClick={props.onDismiss} type="button">
+              Dismiss
+            </button>
+          </Show>
         </div>
       )}
     </Show>

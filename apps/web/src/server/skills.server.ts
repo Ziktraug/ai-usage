@@ -225,7 +225,9 @@ export const knownSkillProjectPathsFromReportPayload = (
         addKnownProjectPath(
           entries,
           {
-            ...(group.grouped ? { groupId: group.id, groupLabel: group.name, label: group.name } : {}),
+            groupId: group.id,
+            groupLabel: group.name,
+            label: group.name,
             machineId: source.machineId,
             machineLabel: source.machineLabel,
             path: source.sourcePath,

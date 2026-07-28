@@ -145,9 +145,9 @@ export const ensurePublishedRevision = async (
     registry: reportRevisionRegistry,
   },
 ): Promise<WebReportRevisionManifest> => {
-  const { payload, rowSourceAuthorities } = capture;
+  const { machineFreshness, payload, rowSourceAuthorities } = capture;
   const { now, publications, registry } = dependencies;
-  const webPayload = toWebReportPayload(payload);
+  const webPayload = { ...toWebReportPayload(payload), machineFreshness };
   const privateCaptureFingerprint = reportCaptureFingerprintForPayload(webPayload, rowSourceAuthorities);
   const existingPublication = publications.get(payload);
   if (existingPublication) {

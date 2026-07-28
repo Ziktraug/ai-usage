@@ -59,10 +59,10 @@ export const ProjectSummary = (props: { groups: ProjectGroup[]; onProjectFilter:
               <tr>
                 <td
                   class={strongCell}
-                  title={project.key === '(unknown)' ? 'Sessions without a detected project directory' : undefined}
+                  title={project.label === '(unknown)' ? 'Sessions without a detected project directory' : undefined}
                 >
                   <button class={groupKeyButton} onClick={() => props.onProjectFilter(project.key)} type="button">
-                    {project.key}
+                    {project.label}
                   </button>
                 </td>
                 <td class={numCell}>{fmtNum(project.sessions)}</td>
@@ -97,13 +97,13 @@ export const ProjectSummary = (props: { groups: ProjectGroup[]; onProjectFilter:
                 class={groupKeyButton}
                 onClick={() => props.onProjectFilter(project.key)}
                 title={
-                  project.key === '(unknown)'
+                  project.label === '(unknown)'
                     ? 'Filter sessions without a detected project directory'
-                    : `Filter sessions by ${project.key}`
+                    : `Filter sessions by ${project.label}`
                 }
                 type="button"
               >
-                {project.key}
+                {project.label}
               </button>
               <div class={projectSummaryHeadline}>
                 <span class={projectSummaryCost}>

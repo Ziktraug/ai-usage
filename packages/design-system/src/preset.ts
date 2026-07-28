@@ -22,7 +22,7 @@ export const aiUsagePreset = definePreset({
       bg: 'canvas',
       accentColor: 'accent',
       // Keep scrolled-to elements clear of the sticky filter toolbar.
-      scrollPaddingTop: '72px',
+      scrollPaddingTop: { base: '72px', md: '180px', lg: '132px' },
       '&[data-theme=light]': { colorScheme: 'light' },
       '&[data-theme=dark]': { colorScheme: 'dark' },
     },

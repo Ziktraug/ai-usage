@@ -21,6 +21,26 @@ export interface ProjectSourceMatchInput extends ProjectSourceIdentityInput {
   gitRemote?: string | null;
 }
 
+const PROJECT_IDENTITY_SEPARATOR_PATTERN = /[\p{P}\p{S}\s]+/gu;
+
+export const normalizeProjectIdentity = (value: string): string =>
+  value.normalize('NFKC').toLowerCase().replace(PROJECT_IDENTITY_SEPARATOR_PATTERN, ' ').trim();
+
+export const projectLabelWithMachine = (project: string, machine: string): string => {
+  const projectLabel = project.trim() || '(unknown)';
+  const machineLabel = machine.trim();
+  if (!machineLabel) {
+    return projectLabel;
+  }
+
+  const projectIdentity = normalizeProjectIdentity(projectLabel);
+  const machineIdentity = normalizeProjectIdentity(machineLabel);
+  const hasRedundantTerminalMachine =
+    machineIdentity.length > 0 &&
+    (projectIdentity === machineIdentity || projectIdentity.endsWith(` ${machineIdentity}`));
+  return hasRedundantTerminalMachine ? projectLabel : `${projectLabel} — ${machineLabel}`;
+};
+
 export type ProjectGroupingWarningReason = 'unmatched-group' | 'partial-group' | 'broad-selector' | 'legacy-alias';
 
 export interface ProjectGroupingWarning {

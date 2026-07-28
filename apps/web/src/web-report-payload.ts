@@ -1,3 +1,4 @@
+import type { FocusedMachineFreshness } from '@ai-usage/report-core/focused-report-query';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 
 export type JsonValue = boolean | number | string | null | JsonValue[] | { [key: string]: JsonValue };
@@ -5,6 +6,7 @@ export type JsonValue = boolean | number | string | null | JsonValue[] | { [key:
 export type WebReportPayload = Omit<UsageReportPayload, 'datasets' | 'facets' | 'tableRows'> & {
   datasets?: Record<string, JsonValue>;
   facets?: Record<string, JsonValue>;
+  machineFreshness?: FocusedMachineFreshness;
 };
 
 declare const reportRevisionBrand: unique symbol;

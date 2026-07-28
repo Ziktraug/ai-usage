@@ -10,12 +10,8 @@ import {
   filterSummary,
   ghostButton,
   header,
-  headerActions,
-  headerNavigation,
   headerTop,
   meta,
-  metricGrid,
-  navButton,
   page,
   searchInput,
   section,
@@ -23,7 +19,6 @@ import {
   summaryPill,
   title,
   titleBlock,
-  toolbar,
   unavailablePanel,
   unavailableText,
   unavailableTitle,
@@ -35,8 +30,8 @@ import {
   projectSourceSelectorKey,
 } from '@ai-usage/report-core/project-group';
 import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
-import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
-import { Link, useNavigate, useSearch } from '@tanstack/solid-router';
+import { isSessionOrigin, type SessionOrigin, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+import { useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import {
   createEffect,
@@ -60,7 +55,7 @@ import {
 import { SourceControlSummary } from './components/source-control-summary';
 import { CursorAttributionPanel } from './cursor-attribution-panel';
 import { FilterPill, fieldFilterLabels } from './dashboard-filters';
-import { MetricTile } from './dashboard-metrics';
+import { dashboardMetricGrid, MetricTile } from './dashboard-metrics';
 import {
   buildCampaignTableRows,
   buildCampaignViews,
@@ -76,6 +71,7 @@ import {
   filterRowsByDateBounds,
   filterTimelineRows,
   hiddenSessionCount,
+  machineFilterOptionsForRows,
 } from './dashboard-model';
 import { DashboardProviderStatus } from './dashboard-provider-status';
 import { createDashboardReportLifecycle, type DashboardReportDestinationScope } from './dashboard-report-lifecycle';
@@ -84,6 +80,7 @@ import {
   type DashboardSearch,
   dashboardSearchDefaultsFor,
   defaultDashboardDateRangeMode,
+  defaultDashboardOrigins,
   type FieldFilterKey,
   type FieldFilters,
   hasActiveDashboardFilters,
@@ -94,7 +91,6 @@ import {
 } from './dashboard-search';
 import { createDashboardServedReportSession } from './dashboard-served-report-session';
 import { createDashboardSessionSelection } from './dashboard-session-selection';
-import { ThemeToggle } from './dashboard-theme';
 import { type DateBounds, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
 import { createDateRangeController } from './date-range-controller';
 import {
@@ -103,6 +99,14 @@ import {
   fetchFocusedBreakdown,
 } from './focused-report-client';
 import { GroupPanel } from './group-panel';
+import {
+  type MachineFreshnessSnapshot,
+  type MachineLabelPresentation,
+  machineFreshnessSnapshotFromFocused,
+  machineFreshnessStatusLabel,
+  machineLabelPresentationForSnapshot,
+} from './manual-transfer-model';
+import { OriginFilter } from './origin-filter';
 import { Overview } from './overview';
 import type { TimelineDimension } from './overview-model';
 import { ProjectGroupEditor } from './project-group-editor';
@@ -169,6 +173,36 @@ const secondaryMetricsGrid = css({
   '& > div': { my: '14px' },
 });
 
+const dashboardFilterToolbar = css({
+  position: { base: 'static', md: 'sticky' },
+  top: '0',
+  zIndex: 20,
+  display: 'flex',
+  flexDirection: { base: 'column', sm: 'row' },
+  flexWrap: { base: 'nowrap', sm: 'wrap' },
+  gap: { base: '8px', sm: '10px' },
+  alignItems: 'center',
+  py: { base: '8px', sm: '12px' },
+  bg: 'canvas',
+  borderBottom: '1px solid token(colors.line)',
+  _print: { display: 'none' },
+  '& > input': {
+    flex: { base: 'none', sm: '1 1 240px' },
+    minW: { base: 0, sm: '180px' },
+    w: { base: 'full', sm: 'auto' },
+  },
+});
+
+const dashboardFilterControls = css({
+  display: { base: 'grid', sm: 'contents' },
+  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+  w: { base: 'full', sm: 'auto' },
+  gap: { base: '8px', sm: '0' },
+  alignItems: 'center',
+  '& > *': { minW: 0, w: { base: 'full', sm: 'auto' } },
+  '& > :last-child:nth-child(odd)': { gridColumn: { base: '1 / -1', sm: 'auto' } },
+});
+
 const dashboardLayout = css({
   display: 'flex',
   flexDirection: 'column',
@@ -176,6 +210,14 @@ const dashboardLayout = css({
 
 const dashboardView = css({
   order: 1,
+});
+
+const dashboardPanel = css({
+  minW: 0,
+  _focus: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '4px',
+  },
 });
 
 const dashboardStatus = css({
@@ -197,6 +239,7 @@ const supportForFocusedBootstrap = (bootstrap: FocusedSupportResult): WebReportP
 
 export const Dashboard = (props: {
   initialPayload?: WebReportPayload;
+  machineFreshness: MachineFreshnessSnapshot;
   quotaHistoryFixture?: ProviderQuotaHistoryResult;
   quotaSource?: ProviderQuotaSource;
   runtimeMode?: RuntimeMode;
@@ -211,11 +254,15 @@ export const Dashboard = (props: {
   const focusedStore = props.servedBootstrap ? createFocusedReportStore(props.servedBootstrap) : undefined;
   const focusedSource = focusedStore ? createServedFocusedReportSource() : undefined;
   let restartServedDestination = (): Promise<void> => Promise.resolve();
+  const activeMachineFreshness = createMemo(() =>
+    focusedStore ? machineFreshnessSnapshotFromFocused(focusedStore.machineFreshness()) : props.machineFreshness,
+  );
   const reportSupport = createMemo(() =>
     focusedStore
       ? supportForFocusedBootstrap({
           dateDomain: focusedStore.dateDomain(),
           filterOptions: focusedStore.filterOptions(),
+          machineFreshness: focusedStore.machineFreshness(),
           providerRows: focusedStore.providerRows(),
           requestFingerprint: '',
           revision: focusedStore.revision(),
@@ -268,6 +315,7 @@ export const Dashboard = (props: {
   };
   const query = () => search().q;
   const harness = () => search().harness;
+  const origin = () => search().origin;
   const machine = () => search().machine;
   const fieldFilters = () => search().filters;
   const sorting = createMemo(() => sortingStateFromSearch(search().sort));
@@ -297,18 +345,28 @@ export const Dashboard = (props: {
     focusedStore ? focusedStore.filterOptions().harness : [...new Set(reportRows().map((row) => row.harness))],
   );
   const machineOptions = createMemo(() =>
-    focusedStore
-      ? focusedStore.filterOptions().machine
-      : [
-          ...new Set(
-            reportRows()
-              .map((row) => row.source?.machineLabel ?? '')
-              .filter((label) => label !== ''),
-          ),
-        ],
+    focusedStore ? focusedStore.filterOptions().machine : machineFilterOptionsForRows(reportRows()),
   );
-  const groupCampaigns = () => search().campaigns !== 'off';
-  const filterSnapshot = createMemo(() => createFilterSnapshot(query(), harness(), machine(), fieldFilters()));
+  const machineOptionLabels = createMemo(
+    () => new Map(machineOptions().map(({ label, value }) => [value, label] as const)),
+  );
+  const machinePresentations = createMemo(() => {
+    const presentations = new Map<string, MachineLabelPresentation>();
+    for (const { label, value } of machineOptions()) {
+      presentations.set(value, machineLabelPresentationForSnapshot({ id: value, label }, activeMachineFreshness()));
+    }
+    return presentations;
+  });
+  const machineFreshnessStatus = createMemo(() => machineFreshnessStatusLabel(activeMachineFreshness()));
+  const presentMachineLabel = (value: string): string =>
+    machinePresentations().get(value)?.label ?? machineOptionLabels().get(value) ?? value;
+  const machineOptionValues = createMemo(() => machineOptions().map(({ value }) => value));
+  const hasMachineFreshnessAttention = createMemo(() =>
+    machineOptions().some(({ value }) => machinePresentations().get(value)?.freshness !== 'fresh'),
+  );
+  const filterSnapshot = createMemo(() =>
+    createFilterSnapshot(query(), harness(), machine(), fieldFilters(), origin()),
+  );
   const timelineRows = createMemo(() =>
     measureClientPerf(
       'aiUsage.web.client.compute.timelineRows',
@@ -342,9 +400,9 @@ export const Dashboard = (props: {
       throw new Error('Focused report queries require a served report store');
     }
     const sessionScope = buildDashboardSessionQueryScope({
-      campaigns: groupCampaigns(),
       fields: fieldFilters(),
       harness: harness(),
+      origin: origin(),
       machine: machine(),
       query: query(),
       range: tableDateBounds(),
@@ -365,9 +423,9 @@ export const Dashboard = (props: {
   const focusedOverviewForDisplay = createMemo(() => focusedStore?.overviewForDisplay());
   const activeSessionQueryScope = () =>
     buildDashboardSessionQueryScope({
-      campaigns: groupCampaigns(),
       fields: fieldFilters(),
       harness: harness(),
+      origin: origin(),
       machine: machine(),
       query: query(),
       range: tableDateBounds(),
@@ -436,7 +494,7 @@ export const Dashboard = (props: {
   const sessionTableRows = createMemo(() =>
     measureClientPerf(
       'aiUsage.web.client.compute.sessionTableRows',
-      () => buildCampaignTableRows(reportRows(), tableFilteredRows(), sorting(), groupCampaigns(), campaignViews()),
+      () => buildCampaignTableRows(reportRows(), tableFilteredRows(), sorting(), campaignViews()),
       (rows) => ({ rows: rows.length }),
     ),
   );
@@ -444,7 +502,7 @@ export const Dashboard = (props: {
     servedSessionQueries ? sessionRowsForState(servedSessionState()) : sessionTableRows(),
   );
   const sessionSelection = createDashboardSessionSelection({
-    local: { campaigns: campaignViews, groupCampaigns, reportRows, sortedRows },
+    local: { campaigns: campaignViews, reportRows, sortedRows },
     onError: setOperationError,
     overviewRevision: () => focusedStore?.revision() ?? null,
     ...(sessionQueryCoordinator
@@ -663,7 +721,18 @@ export const Dashboard = (props: {
   const toggleHarness = (name: string) =>
     setHarness(harness().includes(name) ? harness().filter((value) => value !== name) : [...harness(), name]);
   const removeHarness = (name: string) => setHarness(harness().filter((value) => value !== name));
+  const setOrigin = (next: SessionOrigin[]) => updateSearch((current) => ({ ...current, origin: next }));
+  const toggleOrigin = (value: SessionOrigin) => {
+    const current = origin();
+    setOrigin(
+      current.length === 0 || !current.includes(value)
+        ? [value]
+        : current.filter((originValue) => originValue !== value),
+    );
+  };
   const setMachine = (next: string[]) => updateSearch((current) => ({ ...current, machine: next }));
+  const toggleMachine = (name: string) =>
+    setMachine(machine().includes(name) ? machine().filter((value) => value !== name) : [...machine(), name]);
   const removeMachine = (name: string) => setMachine(machine().filter((value) => value !== name));
   const focusDay = (day: Date) => {
     const value = toDateInputValue(day);
@@ -680,11 +749,29 @@ export const Dashboard = (props: {
   const setFieldFilter = (key: FieldFilterKey, value: string) =>
     setFieldFilters((current) => toggleExactFieldFilter(current, key, value));
   const setTimelineDimensionFilter = (dimension: TimelineDimension, value: string) => {
-    if (dimension === 'harness') {
-      toggleHarness(value);
-      return;
+    // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
+    switch (dimension) {
+      case 'campaign': {
+        const campaignKey = value.startsWith('campaign:') ? value.slice('campaign:'.length) : value;
+        setFieldFilter('campaign', campaignKey);
+        return;
+      }
+      case 'origin':
+        if (isSessionOrigin(value)) {
+          toggleOrigin(value);
+        }
+        return;
+      case 'harness':
+        toggleHarness(value);
+        return;
+      case 'machine':
+        toggleMachine(value);
+        return;
+      case 'model':
+      case 'project':
+      case 'provider':
+        setFieldFilter(dimension, value);
     }
-    setFieldFilter(dimension, value);
   };
   const clearFieldFilter = (key: FieldFilterKey) =>
     setFieldFilters((current) => {
@@ -699,6 +786,7 @@ export const Dashboard = (props: {
       ...current,
       filters: {},
       harness: [],
+      origin: [...defaultDashboardOrigins],
       machine: [],
       q: '',
       range: { mode: defaultDashboardDateRangeMode },
@@ -719,16 +807,11 @@ export const Dashboard = (props: {
       replace: true,
     });
   };
-  const setCampaignGrouping = (enabled: boolean) =>
-    updateSearch((current) => ({ ...current, campaigns: enabled ? 'on' : 'off' }));
   const setTab = (tab: string) => {
     if (!isDashboardTab(tab)) {
       return;
     }
     updateSearch((current) => ({ ...current, tab }));
-  };
-  const setPrimaryTab = (tab: string) => {
-    setTab(tab === 'breakdown' ? 'models' : tab);
   };
   const metrics = createMemo(() =>
     measureClientPerf('aiUsage.web.client.compute.metrics', () =>
@@ -760,27 +843,11 @@ export const Dashboard = (props: {
                 </Show>
               </div>
             </div>
-            <div class={headerActions}>
-              <Show when={!isDemo}>
-                <nav aria-label="Primary navigation" class={headerNavigation}>
-                  <Link class={navButton} to="/skills">
-                    Skills
-                  </Link>
-                  <Link class={navButton} to="/sync">
-                    Sync
-                  </Link>
-                  <Link class={navButton} to="/sources">
-                    Sources
-                  </Link>
-                </nav>
-              </Show>
-              <ThemeToggle />
-            </div>
           </div>
         </header>
 
         <Show when={hasReportData}>
-          <div class={toolbar}>
+          <div class={dashboardFilterToolbar} data-dashboard-filter-stack>
             <input
               aria-label="Filter sessions by title, project, model, provider, or harness"
               class={searchInput}
@@ -797,27 +864,38 @@ export const Dashboard = (props: {
               }}
               value={query()}
             />
-            <MultiSelect
-              label="Filter by harness"
-              noun="harnesses"
-              onValueChange={setHarness}
-              options={harnessOptions()}
-              placeholder="All harnesses"
-              value={harness()}
-            />
-            <Show when={machineOptions().length > 1}>
+            <div class={dashboardFilterControls}>
               <MultiSelect
-                label="Filter by machine"
-                noun="machines"
-                onValueChange={setMachine}
-                options={machineOptions()}
-                placeholder="All machines"
-                value={machine()}
+                label="Filter by harness"
+                noun="harnesses"
+                onValueChange={setHarness}
+                options={harnessOptions()}
+                placeholder="All harnesses"
+                value={harness()}
               />
-            </Show>
-            <Show when={!isDemo}>
-              <SourceControlSummary />
-            </Show>
+              <OriginFilter onValueChange={setOrigin} value={origin()} />
+              <Show when={machineFreshnessStatus()}>
+                {(label) => (
+                  <span aria-live="polite" class={summaryPill}>
+                    {label()}
+                  </span>
+                )}
+              </Show>
+              <Show when={machineOptions().length > 1 || hasMachineFreshnessAttention()}>
+                <MultiSelect
+                  label="Filter by machine"
+                  noun="machines"
+                  onValueChange={setMachine}
+                  optionLabel={presentMachineLabel}
+                  options={machineOptionValues()}
+                  placeholder="All machines"
+                  value={machine()}
+                />
+              </Show>
+              <Show when={!isDemo}>
+                <SourceControlSummary />
+              </Show>
+            </div>
           </div>
         </Show>
 
@@ -839,12 +917,15 @@ export const Dashboard = (props: {
             {...(reportLifecycle.available ? { onFocusedTimelineRequest: reportLifecycle.requestTimeline } : {})}
             activeFieldFilters={fieldFilters()}
             activeHarness={harness()}
+            activeMachine={machine()}
+            campaignRows={reportRows()}
             dateRange={dateRange}
             focusedTimeline={focusedStore ? (focusedStore.overview()?.timeline ?? null) : undefined}
             focusedTimelineError={reportLifecycle.focusedTimelineError()}
             focusedTimelineLoading={reportLifecycle.focusedTimelineLoading()}
             onDateRangeCommit={commitTableDateRange}
             onDimensionFilter={setTimelineDimensionFilter}
+            presentMachineLabel={presentMachineLabel}
             rows={timelineRows()}
           />
 
@@ -863,7 +944,9 @@ export const Dashboard = (props: {
                 {(value) => <FilterPill label="Harness" onClear={() => removeHarness(value)} value={value} />}
               </For>
               <For each={machine()}>
-                {(value) => <FilterPill label="Machine" onClear={() => removeMachine(value)} value={value} />}
+                {(value) => (
+                  <FilterPill label="Machine" onClear={() => removeMachine(value)} value={presentMachineLabel(value)} />
+                )}
               </For>
               <For each={Object.entries(fieldFilters()) as [FieldFilterKey, string][]}>
                 {([key, value]) => (
@@ -887,172 +970,150 @@ export const Dashboard = (props: {
 
           <div class={dashboardLayout}>
             <div class={dashboardView}>
-              <Tabs
-                ariaLabel="Dashboard sections"
-                items={[
-                  {
-                    content: () => (
-                      <section class={section}>
-                        <Overview
-                          advancedAnalysisError={reportLifecycle.advancedAnalysisError()}
-                          advancedAnalysisLoading={reportLifecycle.advancedAnalysisLoading()}
-                          campaigns={campaignViews()}
-                          focused={focusedOverviewForDisplay()}
-                          onSelectDay={focusDay}
-                          onSelectSession={sessionSelection.inspectOverview}
-                          rangeLabel={dateRange.label()}
-                          rows={tableRows()}
-                          summary={visibleSummary()}
-                          timelineRows={timelineRows()}
-                        />
-                      </section>
-                    ),
-                    label: 'Overview',
-                    value: 'overview',
-                  },
-                  {
-                    content: () => (
-                      <section class={section}>
-                        <Suspense fallback={<div class={unavailableText}>Loading sessions…</div>}>
-                          <SessionTable
-                            {...(servedSessionState()
-                              ? {
-                                  campaignChildren: servedSessionState()!.campaignChildren,
-                                  loadingMoreRows: servedSessionState()!.loadingMore,
-                                  totalRows: servedSessionState()!.itemCount,
-                                }
-                              : {})}
-                            {...(sessionQueryCoordinator
-                              ? {
-                                  onLoadCampaignChildren: (campaignKey: string) => {
-                                    sessionQueryCoordinator
-                                      .loadCampaignChildren(campaignKey)
-                                      .catch((error: unknown) => {
-                                        setOperationError(
-                                          error instanceof Error ? error.message : 'Failed to load campaign sessions',
-                                        );
-                                      });
-                                  },
-                                  onLoadMoreRows: () => {
-                                    sessionQueryCoordinator.loadMore().catch((error: unknown) => {
-                                      setOperationError(
-                                        error instanceof Error ? error.message : 'Failed to load sessions',
-                                      );
-                                    });
-                                  },
-                                }
-                              : {})}
-                            columnVisibility={columnVisibility()}
-                            groupCampaigns={groupCampaigns()}
-                            hasMoreRows={Boolean(servedSessionState()?.nextCursor)}
-                            loading={reportLifecycle.sessionQueryLoading()}
-                            onClearFilters={clearFilters}
-                            onColumnVisibilityChange={handleColumnVisibilityChange}
-                            onFieldFilter={setFieldFilter}
-                            onGroupCampaignsChange={setCampaignGrouping}
-                            onHarnessFilter={toggleHarness}
-                            onSelect={sessionSelection.toggleTableRow}
-                            onSortingChange={handleSortingChange}
-                            queryResetKey={sessionTableQueryResetKey()}
-                            rows={visibleSessionTableRows()}
-                            searchQuery={query()}
-                            selectedKey={sessionSelection.selectedKey()}
-                            sorting={sorting()}
-                          />
-                        </Suspense>
-                      </section>
-                    ),
-                    label: 'Sessions',
-                    value: 'sessions',
-                  },
-                  {
-                    content: () => (
-                      <Tabs
-                        ariaLabel="Breakdown dimension"
-                        items={[
-                          {
-                            content: () => (
-                              <section class={section}>
-                                <GroupPanel
-                                  countLabel="models"
-                                  groups={modelGroups()}
-                                  harnessTones
-                                  onFilter={(value) => setFieldFilter('model', value)}
-                                  title="By model"
-                                />
-                              </section>
-                            ),
-                            label: 'Models',
-                            value: 'models',
-                          },
-                          {
-                            content: () => (
-                              <section class={section}>
-                                <GroupPanel
-                                  countLabel="providers"
-                                  groups={providerGroups()}
-                                  harnessTones
-                                  onFilter={(value) => setFieldFilter('provider', value)}
-                                  title="By provider"
-                                />
-                              </section>
-                            ),
-                            label: 'Providers',
-                            value: 'providers',
-                          },
-                          {
-                            content: () => (
-                              <section class={section}>
-                                <GroupPanel
-                                  countLabel="harnesses"
-                                  groups={harnessGroups()}
-                                  harnessTones
-                                  onFilter={toggleHarness}
-                                  title="By harness"
-                                />
-                              </section>
-                            ),
-                            label: 'Harnesses',
-                            value: 'harnesses',
-                          },
-                          {
-                            content: () => (
-                              <section class={section}>
-                                <ProjectGroupEditor
-                                  disabled={!reportLifecycle.available}
-                                  onSave={saveProjectGroupConfigs}
-                                  payload={projectGroupPayload()}
-                                />
-                                <ProjectSummary
-                                  groups={projectGroupRows()}
-                                  onProjectFilter={(value) => setFieldFilter('project', value)}
-                                />
-                              </section>
-                            ),
-                            label: 'Projects',
-                            value: 'projects',
-                          },
-                          {
-                            content: () => (
-                              <section class={section}>
-                                <CursorAttributionPanel rows={cursorCommitRows()} />
-                              </section>
-                            ),
-                            label: 'Cursor AI',
-                            value: 'cursor-ai',
-                          },
-                        ]}
-                        onValueChange={setTab}
-                        value={breakdownTabFor(search().tab)}
+              {/* biome-ignore lint/a11y/noNoninteractiveTabindex: The active report panel must remain keyboard-reachable after removing the primary tabs. */}
+              <div class={dashboardPanel} data-dashboard-panel tabIndex={0}>
+                <Show when={search().tab === 'overview'}>
+                  <section class={section}>
+                    <Overview
+                      advancedAnalysisError={reportLifecycle.advancedAnalysisError()}
+                      advancedAnalysisLoading={reportLifecycle.advancedAnalysisLoading()}
+                      campaigns={campaignViews()}
+                      focused={focusedOverviewForDisplay()}
+                      onSelectDay={focusDay}
+                      onSelectSession={sessionSelection.inspectOverview}
+                      rangeLabel={dateRange.label()}
+                      rows={tableRows()}
+                      summary={visibleSummary()}
+                      timelineRows={timelineRows()}
+                    />
+                  </section>
+                </Show>
+                <Show when={search().tab === 'sessions'}>
+                  <section class={section}>
+                    <Suspense fallback={<div class={unavailableText}>Loading sessions…</div>}>
+                      <SessionTable
+                        {...(servedSessionState()
+                          ? {
+                              campaignChildren: servedSessionState()!.campaignChildren,
+                              loadingMoreRows: servedSessionState()!.loadingMore,
+                              totalRows: servedSessionState()!.itemCount,
+                            }
+                          : {})}
+                        {...(sessionQueryCoordinator
+                          ? {
+                              onLoadCampaignChildren: (campaignKey: string) => {
+                                sessionQueryCoordinator.loadCampaignChildren(campaignKey).catch((error: unknown) => {
+                                  setOperationError(
+                                    error instanceof Error ? error.message : 'Failed to load campaign sessions',
+                                  );
+                                });
+                              },
+                              onLoadMoreRows: () => {
+                                sessionQueryCoordinator.loadMore().catch((error: unknown) => {
+                                  setOperationError(error instanceof Error ? error.message : 'Failed to load sessions');
+                                });
+                              },
+                            }
+                          : {})}
+                        columnVisibility={columnVisibility()}
+                        hasMoreRows={Boolean(servedSessionState()?.nextCursor)}
+                        loading={reportLifecycle.sessionQueryLoading()}
+                        onClearFilters={clearFilters}
+                        onColumnVisibilityChange={handleColumnVisibilityChange}
+                        onFieldFilter={setFieldFilter}
+                        onHarnessFilter={toggleHarness}
+                        onSelect={sessionSelection.toggleTableRow}
+                        onSortingChange={handleSortingChange}
+                        queryResetKey={sessionTableQueryResetKey()}
+                        rows={visibleSessionTableRows()}
+                        searchQuery={query()}
+                        selectedKey={sessionSelection.selectedKey()}
+                        sorting={sorting()}
                       />
-                    ),
-                    label: 'Breakdown',
-                    value: 'breakdown',
-                  },
-                ]}
-                onValueChange={setPrimaryTab}
-                value={primaryDashboardTabFor(search().tab)}
-              />
+                    </Suspense>
+                  </section>
+                </Show>
+                <Show when={primaryDashboardTabFor(search().tab) === 'breakdown'}>
+                  <Tabs
+                    ariaLabel="Breakdown dimension"
+                    items={[
+                      {
+                        content: () => (
+                          <section class={section}>
+                            <GroupPanel
+                              countLabel="models"
+                              groups={modelGroups()}
+                              harnessTones
+                              onFilter={(value) => setFieldFilter('model', value)}
+                              title="By model"
+                            />
+                          </section>
+                        ),
+                        label: 'Models',
+                        value: 'models',
+                      },
+                      {
+                        content: () => (
+                          <section class={section}>
+                            <GroupPanel
+                              countLabel="providers"
+                              groups={providerGroups()}
+                              harnessTones
+                              onFilter={(value) => setFieldFilter('provider', value)}
+                              title="By provider"
+                            />
+                          </section>
+                        ),
+                        label: 'Providers',
+                        value: 'providers',
+                      },
+                      {
+                        content: () => (
+                          <section class={section}>
+                            <GroupPanel
+                              countLabel="harnesses"
+                              groups={harnessGroups()}
+                              harnessTones
+                              onFilter={toggleHarness}
+                              title="By harness"
+                            />
+                          </section>
+                        ),
+                        label: 'Harnesses',
+                        value: 'harnesses',
+                      },
+                      {
+                        content: () => (
+                          <section class={section}>
+                            <ProjectGroupEditor
+                              disabled={!reportLifecycle.available}
+                              onSave={saveProjectGroupConfigs}
+                              payload={projectGroupPayload()}
+                            />
+                            <ProjectSummary
+                              groups={projectGroupRows()}
+                              onProjectFilter={(value) => setFieldFilter('project', value)}
+                            />
+                          </section>
+                        ),
+                        label: 'Projects',
+                        value: 'projects',
+                      },
+                      {
+                        content: () => (
+                          <section class={section}>
+                            <CursorAttributionPanel rows={cursorCommitRows()} />
+                          </section>
+                        ),
+                        label: 'Cursor AI',
+                        value: 'cursor-ai',
+                      },
+                    ]}
+                    onValueChange={setTab}
+                    value={breakdownTabFor(search().tab)}
+                  />
+                </Show>
+              </div>
             </div>
 
             <div class={dashboardStatus}>
@@ -1064,7 +1125,7 @@ export const Dashboard = (props: {
                   <span class={meta}>{metrics().length}</span>
                 </header>
                 <div class={secondaryMetricsGrid} id="additional-report-metrics">
-                  <div class={metricGrid}>
+                  <div class={dashboardMetricGrid} data-metric-grid>
                     <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>
                   </div>
                 </div>

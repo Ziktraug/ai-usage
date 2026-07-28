@@ -3,48 +3,47 @@ import type { ProviderStatusView } from './provider-status-model';
 export interface ProviderStatusPanelSummary {
   attentionProvidersWithoutQuota: ProviderStatusView[];
   criticalProvidersWithoutQuota: ProviderStatusView[];
-  noWindowProviderCount: number;
+  otherProvidersWithoutQuota: ProviderStatusView[];
   quotaProviders: ProviderStatusView[];
-  unsupportedProviderCount: number;
-  warningCount: number;
+  unsupportedProvidersWithoutQuota: ProviderStatusView[];
 }
 
 export const buildProviderStatusPanelSummary = (providers: ProviderStatusView[]): ProviderStatusPanelSummary => {
   const quotaProviders: ProviderStatusView[] = [];
   const criticalProvidersWithoutQuota: ProviderStatusView[] = [];
   const attentionProvidersWithoutQuota: ProviderStatusView[] = [];
-  let noWindowProviderCount = 0;
-  let unsupportedProviderCount = 0;
-  let warningCount = 0;
+  const unsupportedProvidersWithoutQuota: ProviderStatusView[] = [];
+  const otherProvidersWithoutQuota: ProviderStatusView[] = [];
 
   for (const provider of providers) {
-    const hasQuotaWindow = provider.windowGroups.length > 0;
-    if (hasQuotaWindow) {
+    if (provider.windowGroups.length > 0) {
       quotaProviders.push(provider);
-    } else {
-      noWindowProviderCount += 1;
-      if (provider.tone === 'critical') {
-        criticalProvidersWithoutQuota.push(provider);
-      } else if (
-        provider.tone === 'warning' ||
-        (provider.provider.warnings?.length ?? 0) > 0 ||
-        provider.creditsSummary !== null
-      ) {
-        attentionProvidersWithoutQuota.push(provider);
-      }
+      continue;
+    }
+    if (provider.tone === 'critical') {
+      criticalProvidersWithoutQuota.push(provider);
+      continue;
     }
     if (provider.provider.state === 'unsupported') {
-      unsupportedProviderCount += 1;
+      unsupportedProvidersWithoutQuota.push(provider);
+      continue;
     }
-    warningCount += provider.provider.warnings?.length ?? 0;
+    if (
+      provider.tone === 'warning' ||
+      (provider.provider.warnings?.length ?? 0) > 0 ||
+      provider.creditsSummary !== null
+    ) {
+      attentionProvidersWithoutQuota.push(provider);
+      continue;
+    }
+    otherProvidersWithoutQuota.push(provider);
   }
 
   return {
     attentionProvidersWithoutQuota,
     criticalProvidersWithoutQuota,
-    noWindowProviderCount,
+    otherProvidersWithoutQuota,
     quotaProviders,
-    unsupportedProviderCount,
-    warningCount,
+    unsupportedProvidersWithoutQuota,
   };
 };

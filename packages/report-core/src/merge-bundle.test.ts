@@ -41,6 +41,37 @@ describe('usage merge bundles', () => {
     expect(bundle.rows[0]?.source.machineLabel).toBe('Machine A');
     expect(bundle.rows[0]?.rowKey).toBe('v1:machine-a:codex:session-1');
     expect(bundle.rows[0]?.contentHash).toHaveLength(64);
+    expect(bundle.rows[0]?.origin).toBeUndefined();
+  });
+
+  test('round-trips declared origin, absence provenance, and legacy absence', () => {
+    const classifierParentId = '11111111-2222-4333-8444-555555555555';
+    const serialized = toSerializedMergeRow(
+      {
+        ...row,
+        origin: 'classifier',
+        source: {
+          harnessKey: 'codex',
+          rootSourceSessionId: classifierParentId,
+          sourceSessionId: 'classifier-1',
+        },
+      },
+      machine,
+    );
+    const { origin: _origin, ...legacySerialized } = serialized;
+    const unsupported = toSerializedMergeRow(
+      {
+        ...row,
+        originProvenance: 'origin-unsupported',
+        source: { harnessKey: 'cursor', sourceSessionId: 'unsupported-1' },
+      },
+      machine,
+    );
+
+    expect(deserializeMergeRow(serialized).origin).toBe('classifier');
+    expect(deserializeMergeRow(serialized).source.rootSourceSessionId).toBe(classifierParentId);
+    expect(deserializeMergeRow(unsupported).originProvenance).toBe('origin-unsupported');
+    expect(deserializeMergeRow(legacySerialized).origin).toBeUndefined();
   });
 
   test('preserves import artifact provenance separately from project paths', () => {
@@ -154,6 +185,7 @@ describe('usage merge bundles', () => {
       { ...serialized, tokIn: Number.POSITIVE_INFINITY },
       { ...serialized, models: ['gpt-5', 1] },
       { ...serialized, costQuota: -1 },
+      { ...serialized, origin: 'automated' },
       { ...serialized, subagent: 'yes' },
       { ...serialized, tokenTotal: serialized.tokenTotal + 1 },
       { ...serialized, unexpected: 'field' },

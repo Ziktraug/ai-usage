@@ -1,15 +1,85 @@
-import { collectionSourceDefinitions } from '@ai-usage/report-core/source-control';
+import { collectionSourceDefinitions, parseSourceControlCommandResponse } from '@ai-usage/report-core/source-control';
 import type { Page } from '@playwright/test';
 import { expect, test } from './browser-test';
 
 test.describe.configure({ mode: 'serial' });
 
-const REVISION_PATTERN = /^e2e-revision-\d+$/;
+const COMPACT_REVISION_PREFIX_LENGTH = 12;
+const COMPACT_REVISION_SUFFIX_LENGTH = 8;
+const FULL_REVISION_PATTERN = /^e2e-revision-(\d+)-[a-f\d]{32}$/;
 const RUNNING_ELAPSED_PATTERN = /Running: Codex sessions \(\d+s elapsed\)/;
 const NEXT_DUE_PATTERN = /Next due: .* at \d{4}-\d{2}-\d{2}T/;
+let shouldRestoreCodexSessions = false;
 
 const sourceCard = (page: Page, label: string) =>
   page.getByRole('article').filter({ has: page.getByRole('heading', { level: 3, name: label }) });
+const publicationRevisionNumber = (revision: string | null): number => {
+  const match = revision?.match(FULL_REVISION_PATTERN);
+  if (!match?.[1]) {
+    throw new Error(`Unexpected publication revision: ${revision ?? 'missing'}`);
+  }
+  return Number.parseInt(match[1], 10);
+};
+
+test.afterEach(async ({ request }) => {
+  if (!shouldRestoreCodexSessions) {
+    return;
+  }
+
+  try {
+    const response = await request.post('/api/source-control/command', {
+      data: { command: 'set-enabled', enabled: true, sourceId: 'codex.sessions' },
+    });
+    const result = parseSourceControlCommandResponse(await response.json());
+    if (!(response.ok() && result.ok)) {
+      throw new Error('Could not restore the Codex sessions source policy.');
+    }
+    expect(result.snapshot.sources.find(({ id }) => id === 'codex.sessions')).toMatchObject({ policy: 'enabled' });
+  } finally {
+    shouldRestoreCodexSessions = false;
+  }
+});
+
+test('states each source health once and keeps source metadata concise', async ({ context, page }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.goto('/sources');
+  await expect(page.getByRole('heading', { level: 1, name: 'Sources' })).toBeVisible();
+
+  const sourceCards = page.locator('[data-source-card]');
+  await expect(sourceCards).toHaveCount(collectionSourceDefinitions.length);
+  for (const card of await sourceCards.all()) {
+    await expect(card.locator('[data-source-health]')).toHaveCount(1);
+    await expect(card.getByText('Last outcome', { exact: true })).toBeVisible();
+  }
+  await expect(page.getByText('The last run completed successfully.', { exact: true })).toHaveCount(0);
+
+  const providerUsageGroup = page.getByRole('heading', { level: 2, name: 'Provider usage' }).locator('..');
+  await expect(providerUsageGroup.getByText('1 source', { exact: true })).toBeVisible();
+  await expect(providerUsageGroup.getByText('1 sources', { exact: true })).toHaveCount(0);
+
+  const revisionCode = page.locator('code[title]').first();
+  await expect(revisionCode).toBeVisible();
+  const fullRevision = await revisionCode.getAttribute('title');
+  if (!(fullRevision && FULL_REVISION_PATTERN.test(fullRevision))) {
+    throw new Error(`The full source publication revision is invalid: ${fullRevision ?? 'missing'}`);
+  }
+  const expectedCompactRevision = [
+    fullRevision.slice(0, COMPACT_REVISION_PREFIX_LENGTH),
+    '…',
+    fullRevision.slice(-COMPACT_REVISION_SUFFIX_LENGTH),
+  ].join('');
+  await expect(revisionCode).toHaveText(expectedCompactRevision);
+  await expect(revisionCode).not.toHaveText(fullRevision);
+  const fullRevisionOccurrences = await page
+    .locator('body')
+    .evaluate((body, value) => (body.textContent ?? '').split(value).length - 1, fullRevision);
+  expect(fullRevisionOccurrences).toBe(0);
+
+  const copyRevision = page.getByRole('button', { name: 'Copy publication revision' });
+  await copyRevision.click();
+  await expect(copyRevision).toHaveText('Copied');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(fullRevision);
+});
 
 test('keeps business sources independent through a picked disable and publishes once', async ({ context, page }) => {
   await page.goto('/sources');
@@ -24,8 +94,8 @@ test('keeps business sources independent through a picked disable and publishes 
   await expect(sessions.getByRole('checkbox', { name: 'Enabled' })).toBeChecked();
   await expect(quota.getByRole('checkbox', { name: 'Enabled' })).toBeChecked();
 
-  const revisionText = page.getByText(REVISION_PATTERN).first();
-  const initialRevision = Number((await revisionText.textContent())?.split('-').at(-1));
+  const revisionCode = page.locator('code[title]').first();
+  const initialRevision = publicationRevisionNumber(await revisionCode.getAttribute('title'));
   await sessions.getByRole('button', { name: 'Run now' }).click();
   await expect(sessions.getByText('Running', { exact: true })).toBeVisible();
 
@@ -53,19 +123,18 @@ test('keeps business sources independent through a picked disable and publishes 
 
   await summary.getByRole('link').focus();
   await expect(summaryCard).toBeVisible();
+  shouldRestoreCodexSessions = true;
   await sessions.getByRole('checkbox', { name: 'Enabled' }).uncheck();
   await expect(sessions.getByText('Pausing after current run', { exact: true })).toBeVisible();
   await expect(sessions.getByText('Disabled', { exact: true })).toBeVisible();
   await expect(quota.getByRole('checkbox', { name: 'Enabled' })).toBeChecked();
   await expect
-    .poll(async () => Number((await revisionText.textContent())?.split('-').at(-1)))
+    .poll(async () => publicationRevisionNumber(await revisionCode.getAttribute('title')))
     .toBe(initialRevision + 1);
   await expect
     .poll(() => reportPage.evaluate(() => Number(Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads') ?? 0)))
     .toBe(reportOwnerLoads + 1);
 
-  await sessions.getByRole('checkbox', { name: 'Enabled' }).check();
-  await expect(sessions.getByRole('checkbox', { name: 'Enabled' })).toBeChecked();
   await reportPage.close();
 });
 

@@ -245,6 +245,7 @@ export interface SourceRunResult {
   readonly changed: boolean;
   readonly inputCount: number;
   readonly outputCount: number;
+  readonly servedProjectionChanged?: boolean;
   readonly unavailable?: SourceReason;
   readonly warnings: readonly SourceWarning[];
 }

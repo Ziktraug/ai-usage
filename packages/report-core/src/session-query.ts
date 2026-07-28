@@ -1,5 +1,7 @@
 import { rtkSavingsPct } from './csv';
 import { modelGroupKey } from './model-identity';
+import { normalizeProjectIdentity } from './project-group';
+import { type ApiPriceMeasurement, combineApiPriceMeasurements } from './provenance';
 import { MAX_SESSION_QUERY_PAGE_SIZE, MAX_SESSION_QUERY_RESULT_BYTES } from './report-budgets';
 import type { SerializedRow } from './report-data';
 import {
@@ -8,9 +10,12 @@ import {
   isSerializedUsageRowShape,
   SERIALIZED_USAGE_ROW_KEYS,
 } from './serialized-usage-validation';
-import { usageRowModelContributions } from './usage-row';
+import { isSessionOrigin, type SessionOrigin } from './types';
+import { usageRowApiPriceMeasurement, usageRowModelContributions } from './usage-row';
 
 export { MAX_SESSION_QUERY_PAGE_SIZE } from './report-budgets';
+export type { SessionOrigin } from './types';
+export { isSessionOrigin, sessionOrigins } from './types';
 
 const MAX_CURSOR_LENGTH = 4096;
 const MAX_FILTER_LIST_LENGTH = 100;
@@ -59,7 +64,7 @@ export const sessionTextSortFields = [
 ] as const satisfies readonly SessionSortField[];
 export type SessionTextSortField = (typeof sessionTextSortFields)[number];
 
-export const sessionFieldFilterKeys = ['provider', 'model', 'project'] as const;
+export const sessionFieldFilterKeys = ['campaign', 'provider', 'model', 'project'] as const;
 export type SessionFieldFilterKey = (typeof sessionFieldFilterKeys)[number];
 export type SessionFieldFilters = Partial<Record<SessionFieldFilterKey, string>>;
 
@@ -67,6 +72,7 @@ export interface SessionQueryFilters {
   fields: SessionFieldFilters;
   harness: string[];
   machine: string[];
+  origin?: SessionOrigin[];
   query: string;
 }
 
@@ -81,7 +87,6 @@ export interface SessionQuerySort {
 }
 
 export interface SessionQueryRequest {
-  campaigns: boolean;
   cursor: string | null;
   filters: SessionQueryFilters;
   pageSize: number;
@@ -128,12 +133,16 @@ const assertSessionQueryResultSize = (value: unknown, label: string): void => {
 
 export type SessionPresentationRow = SerializedRow & {
   activeTime: number | null;
+  campaignClassifierCount?: number;
+  campaignClassifierFreshTokens?: number;
   campaignKey?: string;
   campaignTotalCount?: number;
   campaignVisibleCount?: number;
   children?: SessionPresentationRow[];
   modelLabel: string;
   modelKey: string;
+  origin?: SessionOrigin;
+  priceMeasurement?: ApiPriceMeasurement;
   projectLabel: string;
   projectKey: string;
   providerDisplay: string;
@@ -148,6 +157,16 @@ export type SessionPresentationRow = SerializedRow & {
   sortSession: string;
 };
 
+export const sessionOriginLabels = {
+  classifier: 'Automated review',
+  human: 'Human',
+  subagent: 'Delegated',
+} as const satisfies Record<SessionOrigin, string>;
+
+export const UNDECLARED_ORIGIN_DESCRIPTION = 'Undeclared — this harness did not state how the session was started.';
+
+export const sessionOriginLabel = (origin: SessionOrigin): string => sessionOriginLabels[origin];
+
 export interface SessionCampaignTotals {
   actualCost: number;
   cacheRead: number;
@@ -160,6 +179,7 @@ export interface SessionCampaignTotals {
   lineDelta: number | null;
   linesAdded: number | null;
   linesDeleted: number | null;
+  priceMeasurement: ApiPriceMeasurement;
   rtkCommandCount: number;
   rtkInputTokens: number;
   rtkOutputTokens: number;
@@ -174,6 +194,7 @@ export interface SessionCampaignTotals {
 
 export interface SessionCampaignView {
   allChildren: SessionPresentationRow[];
+  allClassifiers: SessionPresentationRow[];
   allRows: SessionPresentationRow[];
   allTotals: SessionCampaignTotals;
   campaignKey: string;
@@ -186,18 +207,18 @@ export interface SessionCampaignView {
   visibleTotals: SessionCampaignTotals;
 }
 
-export type SessionCampaignTableItem =
-  | { kind: 'session'; row: SessionPresentationRow }
-  | {
-      campaign: SessionCampaignView;
-      children: SessionPresentationRow[];
-      kind: 'campaign';
-      row: SessionPresentationRow;
-    };
+export interface SessionCampaignTableItem {
+  campaign: SessionCampaignView;
+  children: SessionPresentationRow[];
+  kind: 'campaign';
+  row: SessionPresentationRow;
+}
 
-export type SessionPageItem =
-  | { kind: 'session'; row: SessionPresentationRow }
-  | { campaignKey: string; kind: 'campaign'; row: SessionPresentationRow };
+export interface SessionPageItem {
+  campaignKey: string;
+  kind: 'campaign';
+  row: SessionPresentationRow;
+}
 
 export interface SessionPageResult {
   itemCount: number;
@@ -248,11 +269,15 @@ const sessionFieldFilterKeySet = new Set<string>(sessionFieldFilterKeys);
 const SESSION_PRESENTATION_ROW_KEYS = new Set([
   ...SERIALIZED_USAGE_ROW_KEYS,
   'activeTime',
+  'campaignClassifierCount',
+  'campaignClassifierFreshTokens',
   'campaignKey',
   'campaignTotalCount',
   'campaignVisibleCount',
   'modelLabel',
   'modelKey',
+  'origin',
+  'priceMeasurement',
   'projectLabel',
   'projectKey',
   'providerDisplay',
@@ -338,14 +363,25 @@ const parseFieldFilters = (value: unknown): SessionFieldFilters => {
 
 const parseFilters = (value: unknown): SessionQueryFilters => {
   const record = requireRecord(value, 'filters');
-  assertExactKeys(record, ['fields', 'harness', 'machine', 'query'], 'filters');
+  assertExactKeys(
+    record,
+    record.origin === undefined
+      ? ['fields', 'harness', 'machine', 'query']
+      : ['fields', 'harness', 'machine', 'origin', 'query'],
+    'filters',
+  );
   if (typeof record.query !== 'string' || record.query.length > MAX_STRING_LENGTH) {
     throw new SessionQueryValidationError('filters.query must be a bounded string');
+  }
+  const origin = record.origin === undefined ? [] : normalizeStringList(record.origin, 'filters.origin');
+  if (origin.some((value) => !isSessionOrigin(value))) {
+    throw new SessionQueryValidationError('filters.origin contains an invalid origin');
   }
   return {
     fields: parseFieldFilters(record.fields),
     harness: normalizeStringList(record.harness, 'filters.harness'),
     machine: normalizeStringList(record.machine, 'filters.machine'),
+    origin: origin as SessionOrigin[],
     query: record.query.trim().toLowerCase(),
   };
 };
@@ -406,10 +442,7 @@ const parseCursor = (value: unknown): string | null => {
 
 export const parseSessionQueryRequest = (value: unknown): SessionQueryRequest => {
   const record = requireRecord(value, 'session query request');
-  assertExactKeys(record, ['campaigns', 'cursor', 'filters', 'pageSize', 'range', 'revision', 'sort'], 'request');
-  if (typeof record.campaigns !== 'boolean') {
-    throw new SessionQueryValidationError('campaigns must be a boolean');
-  }
+  assertExactKeys(record, ['cursor', 'filters', 'pageSize', 'range', 'revision', 'sort'], 'request');
   if (
     typeof record.pageSize !== 'number' ||
     !Number.isSafeInteger(record.pageSize) ||
@@ -419,7 +452,6 @@ export const parseSessionQueryRequest = (value: unknown): SessionQueryRequest =>
     throw new SessionQueryValidationError(`pageSize must be between 1 and ${MAX_SESSION_QUERY_PAGE_SIZE}`);
   }
   return {
-    campaigns: record.campaigns,
     cursor: parseCursor(record.cursor),
     filters: parseFilters(record.filters),
     pageSize: record.pageSize,
@@ -460,7 +492,6 @@ const fnv1a64 = (value: string): string => {
 
 const canonicalQueryScope = (request: SessionQueryRequest): string =>
   JSON.stringify({
-    campaigns: request.campaigns,
     filters: {
       fields: Object.fromEntries(
         sessionFieldFilterKeys.flatMap((key) =>
@@ -469,6 +500,7 @@ const canonicalQueryScope = (request: SessionQueryRequest): string =>
       ),
       harness: request.filters.harness,
       machine: request.filters.machine,
+      origin: request.filters.origin ?? [],
       query: request.filters.query,
     },
     pageSize: request.pageSize,
@@ -536,6 +568,9 @@ export const parseSessionPresentationRow = (value: unknown, label: string): Sess
       throw new SessionQueryValidationError(`${label}.${key} must be a string`);
     }
   }
+  if (record.origin !== undefined && !isSessionOrigin(record.origin)) {
+    throw new SessionQueryValidationError(`${label}.origin is invalid`);
+  }
   requireFiniteNumberOrNull(record.activeTime, `${label}.activeTime`);
   if (typeof record.sortDate !== 'number' || !Number.isFinite(record.sortDate)) {
     throw new SessionQueryValidationError(`${label}.sortDate must be a finite number`);
@@ -543,11 +578,45 @@ export const parseSessionPresentationRow = (value: unknown, label: string): Sess
   if (record.campaignKey !== undefined) {
     requireTrimmedString(record.campaignKey, `${label}.campaignKey`, MAX_CURSOR_LENGTH);
   }
+  if (record.campaignClassifierCount !== undefined) {
+    requireNonNegativeSafeInteger(record.campaignClassifierCount, `${label}.campaignClassifierCount`);
+  }
+  if (record.campaignClassifierFreshTokens !== undefined) {
+    requireNonNegativeSafeInteger(record.campaignClassifierFreshTokens, `${label}.campaignClassifierFreshTokens`);
+  }
   if (record.campaignTotalCount !== undefined) {
     requireNonNegativeSafeInteger(record.campaignTotalCount, `${label}.campaignTotalCount`);
   }
   if (record.campaignVisibleCount !== undefined) {
     requireNonNegativeSafeInteger(record.campaignVisibleCount, `${label}.campaignVisibleCount`);
+  }
+  if (record.priceMeasurement !== undefined) {
+    const priceMeasurement = requireRecord(record.priceMeasurement, `${label}.priceMeasurement`);
+    assertExactKeys(priceMeasurement, ['knownCost', 'state', 'unpricedFreshTokens'], `${label}.priceMeasurement`);
+    const knownCost = requireFiniteNumberOrNull(priceMeasurement.knownCost, `${label}.priceMeasurement.knownCost`);
+    const unpricedFreshTokens = requireFiniteNumberOrNull(
+      priceMeasurement.unpricedFreshTokens,
+      `${label}.priceMeasurement.unpricedFreshTokens`,
+    );
+    const state = priceMeasurement.state;
+    if (knownCost === null || knownCost < 0 || unpricedFreshTokens === null || unpricedFreshTokens < 0) {
+      throw new SessionQueryValidationError(`${label}.priceMeasurement must contain non-negative finite values`);
+    }
+    if (!(state === 'measured' || state === 'partially measured' || state === 'zero')) {
+      throw new SessionQueryValidationError(`${label}.priceMeasurement.state is invalid`);
+    }
+    if (knownCost !== record.costApprox || record.costKnown !== (state !== 'partially measured')) {
+      throw new SessionQueryValidationError(`${label}.priceMeasurement must match the campaign API value`);
+    }
+    if ((state === 'zero') !== (knownCost === 0 && state !== 'partially measured')) {
+      throw new SessionQueryValidationError(`${label}.priceMeasurement zero state is inconsistent`);
+    }
+    if (state !== 'partially measured' && unpricedFreshTokens !== 0) {
+      throw new SessionQueryValidationError(`${label}.priceMeasurement unpriced volume is inconsistent`);
+    }
+  }
+  if (record.campaignVisibleCount !== undefined && record.priceMeasurement === undefined) {
+    throw new SessionQueryValidationError(`${label}.priceMeasurement is required for campaign rows`);
   }
   return value as SessionPresentationRow;
 };
@@ -564,10 +633,6 @@ const parseResultCursor = (value: unknown, label: string): string | null => {
 
 const parseSessionPageItem = (value: unknown, label: string): SessionPageItem => {
   const record = requireRecord(value, label);
-  if (record.kind === 'session') {
-    assertExactKeys(record, ['kind', 'row'], label);
-    return { kind: 'session', row: parseSessionPresentationRow(record.row, `${label}.row`) };
-  }
   if (record.kind === 'campaign') {
     assertExactKeys(record, ['campaignKey', 'kind', 'row'], label);
     return {
@@ -795,6 +860,10 @@ export const enrichSessionPresentationRow = (row: SerializedRow): SessionPresent
   const modelLabel = sessionModelLabel(row);
   const modelKey = modelGroupKey(row.model);
   const projectLabel = row.project || '(unknown)';
+  const projectKey =
+    row.projectGroupId ??
+    row.projectSourceId ??
+    (normalizeProjectIdentity(row.rawProject ?? projectLabel) || '(unknown)');
   const providerDisplay = providerPresentationLabel(row.provider);
   const machineLabel = row.source?.machineLabel ?? '';
   return {
@@ -803,7 +872,7 @@ export const enrichSessionPresentationRow = (row: SerializedRow): SessionPresent
     modelLabel,
     modelKey,
     projectLabel,
-    projectKey: projectLabel,
+    projectKey,
     providerDisplay,
     rowId: sessionRowIdentity(row),
     searchText:
@@ -911,12 +980,18 @@ export const buildSortedSessionPresentationRows = (
 export const sessionCampaignKeyFor = (row: SessionPresentationRow, rootSourceSessionId: string): string =>
   [row.source?.machineId ?? 'local', row.source?.harnessKey ?? row.harness, rootSourceSessionId].join(':');
 
-const campaignIdentityForRow = (row: SessionPresentationRow) => {
-  const sourceSessionId = row.source?.sourceSessionId ?? null;
-  const rootSourceSessionId = row.source?.rootSourceSessionId ?? null;
-  if (!(sourceSessionId && rootSourceSessionId)) {
-    return null;
+export const sessionCampaignIdentityForRow = (row: SessionPresentationRow) => {
+  const declaredSourceSessionId = row.source?.sourceSessionId ?? null;
+  const declaredRootSourceSessionId = row.source?.rootSourceSessionId ?? null;
+  if (
+    row.origin === 'classifier' &&
+    (!(declaredSourceSessionId && declaredRootSourceSessionId) ||
+      declaredSourceSessionId === declaredRootSourceSessionId)
+  ) {
+    throw new Error(`Classifier session ${declaredSourceSessionId ?? row.rowId} has no declared parent campaign`);
   }
+  const sourceSessionId = declaredSourceSessionId ?? row.rowId;
+  const rootSourceSessionId = declaredRootSourceSessionId ?? declaredSourceSessionId ?? row.rowId;
   return {
     campaignKey: sessionCampaignKeyFor(row, rootSourceSessionId),
     rootSourceSessionId,
@@ -955,29 +1030,33 @@ const campaignRootFromRows = (rows: SessionPresentationRow[]): SessionPresentati
 export const buildSessionCampaignTotals = (
   rows: SessionPresentationRow[],
   campaignRoot = campaignRootFromRows(rows),
-): SessionCampaignTotals => ({
-  actualCost: rows.reduce((sum, row) => sum + (row.costActual ?? 0), 0),
-  cacheRead: rows.reduce((sum, row) => sum + row.tokCr, 0),
-  cacheWrite: rows.reduce((sum, row) => sum + row.tokCw, 0),
-  calls: rows.reduce((sum, row) => sum + row.calls, 0),
-  costKnown: rows.every((row) => row.costKnown),
-  costQuota: rows.reduce((sum, row) => sum + (row.costQuota ?? 0), 0),
-  durationMs: campaignRoot?.durationMs ?? null,
-  freshTokens: rows.reduce((sum, row) => sum + row.freshTokens, 0),
-  lineDelta: sumNullable(rows, (row) => row.lineDelta),
-  linesAdded: sumNullable(rows, (row) => row.linesAdded),
-  linesDeleted: sumNullable(rows, (row) => row.linesDeleted),
-  rtkCommandCount: rows.reduce((sum, row) => sum + (row.rtkCommandCount ?? 0), 0),
-  rtkInputTokens: rows.reduce((sum, row) => sum + (row.rtkInputTokens ?? 0), 0),
-  rtkOutputTokens: rows.reduce((sum, row) => sum + (row.rtkOutputTokens ?? 0), 0),
-  rtkSavedTokens: rows.reduce((sum, row) => sum + (row.rtkSavedTokens ?? 0), 0),
-  tokenTotal: rows.reduce((sum, row) => sum + row.tokenTotal, 0),
-  tokIn: rows.reduce((sum, row) => sum + row.tokIn, 0),
-  tokOut: rows.reduce((sum, row) => sum + row.tokOut, 0),
-  tools: rows.reduce((sum, row) => sum + row.tools, 0),
-  totalCost: rows.reduce((sum, row) => sum + row.costApprox, 0),
-  turns: rows.reduce((sum, row) => sum + row.turns, 0),
-});
+): SessionCampaignTotals => {
+  const priceMeasurement = combineApiPriceMeasurements(rows.map(usageRowApiPriceMeasurement));
+  return {
+    actualCost: rows.reduce((sum, row) => sum + (row.costActual ?? 0), 0),
+    cacheRead: rows.reduce((sum, row) => sum + row.tokCr, 0),
+    cacheWrite: rows.reduce((sum, row) => sum + row.tokCw, 0),
+    calls: rows.reduce((sum, row) => sum + row.calls, 0),
+    costKnown: priceMeasurement.state !== 'partially measured',
+    costQuota: rows.reduce((sum, row) => sum + (row.costQuota ?? 0), 0),
+    durationMs: campaignRoot?.durationMs ?? null,
+    freshTokens: rows.reduce((sum, row) => sum + row.freshTokens, 0),
+    lineDelta: sumNullable(rows, (row) => row.lineDelta),
+    linesAdded: sumNullable(rows, (row) => row.linesAdded),
+    linesDeleted: sumNullable(rows, (row) => row.linesDeleted),
+    priceMeasurement,
+    rtkCommandCount: rows.reduce((sum, row) => sum + (row.rtkCommandCount ?? 0), 0),
+    rtkInputTokens: rows.reduce((sum, row) => sum + (row.rtkInputTokens ?? 0), 0),
+    rtkOutputTokens: rows.reduce((sum, row) => sum + (row.rtkOutputTokens ?? 0), 0),
+    rtkSavedTokens: rows.reduce((sum, row) => sum + (row.rtkSavedTokens ?? 0), 0),
+    tokenTotal: rows.reduce((sum, row) => sum + row.tokenTotal, 0),
+    tokIn: rows.reduce((sum, row) => sum + row.tokIn, 0),
+    tokOut: rows.reduce((sum, row) => sum + row.tokOut, 0),
+    tools: rows.reduce((sum, row) => sum + row.tools, 0),
+    totalCost: priceMeasurement.knownCost,
+    turns: rows.reduce((sum, row) => sum + row.turns, 0),
+  };
+};
 
 export const buildSessionCampaignViews = (
   allRows: SessionPresentationRow[],
@@ -986,10 +1065,7 @@ export const buildSessionCampaignViews = (
   const visibleIds = new Set(visibleRows.map((row) => row.rowId));
   const groups = new Map<string, SessionPresentationRow[]>();
   for (const row of allRows) {
-    const identity = campaignIdentityForRow(row);
-    if (!identity) {
-      continue;
-    }
+    const identity = sessionCampaignIdentityForRow(row);
     const group = groups.get(identity.campaignKey) ?? [];
     group.push(row);
     groups.set(identity.campaignKey, group);
@@ -997,30 +1073,28 @@ export const buildSessionCampaignViews = (
 
   const campaigns: SessionCampaignView[] = [];
   for (const [campaignKey, rows] of groups) {
-    const firstIdentity = campaignIdentityForRow(rows[0]!);
-    if (!firstIdentity) {
-      continue;
-    }
-    const root = rows.find((row) => row.source?.sourceSessionId === firstIdentity.rootSourceSessionId);
+    const firstIdentity = sessionCampaignIdentityForRow(rows[0]!);
+    const root =
+      rows.find(
+        (row) =>
+          row.source?.sourceSessionId === firstIdentity.rootSourceSessionId ||
+          (!row.source?.sourceSessionId && row.rowId === firstIdentity.rootSourceSessionId),
+      ) ?? (rows.some((row) => row.origin === 'classifier') ? undefined : rows[0]);
     if (!root) {
-      continue;
+      throw new Error(`Classifier campaign ${campaignKey} has no resolvable parent session`);
     }
     const allChildren = rows.filter((row) => row !== root);
-    const hasDirectChildren = rows.some(
-      (row) => row.source?.parentSourceSessionId === firstIdentity.rootSourceSessionId,
-    );
-    if (rows.length < 2 && !hasDirectChildren) {
+    const allClassifiers = rows.filter((row) => row.origin === 'classifier');
+    const matchedRows = rows.filter((row) => visibleIds.has(row.rowId));
+    if (matchedRows.length === 0) {
       continue;
     }
-    const visibleChildren = allChildren.filter((row) => visibleIds.has(row.rowId));
-    const visibleRowsForTotals = [visibleIds.has(root.rowId) ? root : null, ...visibleChildren].filter(
-      (row): row is SessionPresentationRow => Boolean(row),
-    );
-    if (visibleRowsForTotals.length === 0) {
-      continue;
-    }
+    const visibleIdsWithClassifierRollup = new Set([...matchedRows, ...allClassifiers].map((row) => row.rowId));
+    const visibleRowsForTotals = rows.filter((row) => visibleIdsWithClassifierRollup.has(row.rowId));
+    const visibleChildren = allChildren.filter((row) => visibleIdsWithClassifierRollup.has(row.rowId));
     campaigns.push({
       allChildren,
+      allClassifiers,
       allRows: rows,
       allTotals: buildSessionCampaignTotals(rows, root),
       campaignKey,
@@ -1028,12 +1102,33 @@ export const buildSessionCampaignViews = (
       rootSourceSessionId: firstIdentity.rootSourceSessionId,
       totalCount: rows.length,
       visibleChildren,
-      visibleCount: visibleRowsForTotals.length,
+      visibleCount: matchedRows.length,
       visibleRows: visibleRowsForTotals,
       visibleTotals: buildSessionCampaignTotals(visibleRowsForTotals, root),
     });
   }
   return campaigns;
+};
+
+export interface SessionCampaignTimelineIdentity {
+  key: string;
+  label: string;
+}
+
+export const buildSessionCampaignTimelineIdentities = (
+  rows: SessionPresentationRow[],
+): ReadonlyMap<string, SessionCampaignTimelineIdentity> => {
+  const identities = new Map<string, SessionCampaignTimelineIdentity>();
+  for (const row of rows) {
+    identities.set(row.rowId, { key: `session:${row.rowId}`, label: row.sessionLabel });
+  }
+  for (const campaign of buildSessionCampaignViews(rows, rows)) {
+    const identity = { key: `campaign:${campaign.campaignKey}`, label: campaign.root.sessionLabel };
+    for (const row of campaign.allRows) {
+      identities.set(row.rowId, identity);
+    }
+  }
+  return identities;
 };
 
 const campaignSortValue = (campaign: SessionCampaignView, columnId: SessionSortField): number | string => {
@@ -1082,11 +1177,10 @@ const campaignSortValue = (campaign: SessionCampaignView, columnId: SessionSortF
   }
 };
 
-const campaignItemIdentity = (item: SessionCampaignTableItem): string =>
-  item.kind === 'campaign' ? `campaign:${item.campaign.campaignKey}` : `session:${item.row.rowId}`;
+const campaignItemIdentity = (item: SessionCampaignTableItem): string => `campaign:${item.campaign.campaignKey}`;
 
 const campaignItemSortValue = (item: SessionCampaignTableItem, columnId: SessionSortField): number | string =>
-  item.kind === 'campaign' ? campaignSortValue(item.campaign, columnId) : sortValueForSessionColumn(item.row, columnId);
+  campaignSortValue(item.campaign, columnId);
 
 const compareCampaignItems =
   (sorting: readonly { desc: boolean; id: string }[]) =>
@@ -1107,30 +1201,19 @@ export const buildSessionCampaignTableItems = (
   allRows: SessionPresentationRow[],
   visibleRows: SessionPresentationRow[],
   sorting: readonly { desc: boolean; id: string }[],
-  groupCampaigns: boolean,
   preparedCampaigns?: SessionCampaignView[],
 ): SessionCampaignTableItem[] => {
-  if (!groupCampaigns) {
-    return buildSortedSessionPresentationRows(visibleRows, sorting).map((row) => ({ kind: 'session', row }));
-  }
   const campaigns = preparedCampaigns ?? buildSessionCampaignViews(allRows, visibleRows);
   const campaignByKey = new Map(campaigns.map((campaign) => [campaign.campaignKey, campaign]));
-  const childIds = new Set(campaigns.flatMap((campaign) => campaign.allChildren.map((row) => row.rowId)));
   const emittedCampaigns = new Set<string>();
   const items: SessionCampaignTableItem[] = [];
 
   for (const row of visibleRows) {
-    const identity = campaignIdentityForRow(row);
-    const campaign = identity ? campaignByKey.get(identity.campaignKey) : undefined;
-    if (campaign) {
-      if (!emittedCampaigns.has(campaign.campaignKey)) {
-        emittedCampaigns.add(campaign.campaignKey);
-        items.push({ campaign, children: campaign.visibleChildren, kind: 'campaign', row: campaign.root });
-      }
-      continue;
-    }
-    if (!childIds.has(row.rowId)) {
-      items.push({ kind: 'session', row });
+    const identity = sessionCampaignIdentityForRow(row);
+    const campaign = campaignByKey.get(identity.campaignKey);
+    if (campaign && !emittedCampaigns.has(campaign.campaignKey)) {
+      emittedCampaigns.add(campaign.campaignKey);
+      items.push({ campaign, children: campaign.visibleChildren, kind: 'campaign', row: campaign.root });
     }
   }
   for (const campaign of campaigns) {
@@ -1159,6 +1242,8 @@ export const sessionCampaignDisplayRow = (
     activeDate: latestVisibleRow.activeDate,
     activeTime: latestVisibleRow.activeTime,
     ambiguous: campaign.visibleRows.some((row) => row.ambiguous),
+    campaignClassifierCount: campaign.allClassifiers.length,
+    campaignClassifierFreshTokens: campaign.allClassifiers.reduce((sum, row) => sum + row.freshTokens, 0),
     campaignKey: campaign.campaignKey,
     campaignTotalCount: campaign.totalCount,
     campaignVisibleCount: campaign.visibleCount,
@@ -1179,6 +1264,7 @@ export const sessionCampaignDisplayRow = (
     modelKey: campaign.root.modelKey,
     modelLabel: campaign.root.modelLabel,
     partial: campaign.visibleRows.some((row) => row.partial),
+    priceMeasurement: totals.priceMeasurement,
     rtkCommandCount: totals.rtkCommandCount,
     rtkInputTokens: totals.rtkInputTokens,
     rtkOutputTokens: totals.rtkOutputTokens,
@@ -1186,7 +1272,6 @@ export const sessionCampaignDisplayRow = (
     sessionLabel: campaign.root.sessionLabel,
     sortDate: latestVisibleRow.sortDate,
     sortModel: campaign.root.sortModel,
-    subagent: true,
     tokCr: totals.cacheRead,
     tokCw: totals.cacheWrite,
     tokenTotal: totals.tokenTotal,
@@ -1202,20 +1287,22 @@ export const buildSessionCampaignTableRows = (
   allRows: SessionPresentationRow[],
   visibleRows: SessionPresentationRow[],
   sorting: readonly { desc: boolean; id: string }[],
-  groupCampaigns: boolean,
   preparedCampaigns?: SessionCampaignView[],
 ): SessionPresentationRow[] =>
-  buildSessionCampaignTableItems(allRows, visibleRows, sorting, groupCampaigns, preparedCampaigns).map((item) =>
-    item.kind === 'campaign' ? sessionCampaignDisplayRow(item.campaign, sorting) : item.row,
+  buildSessionCampaignTableItems(allRows, visibleRows, sorting, preparedCampaigns).map((item) =>
+    sessionCampaignDisplayRow(item.campaign, sorting),
   );
 
 export const campaignBadgeLabelForSessionRow = (row: SessionPresentationRow): string | null => {
   if (!row.campaignKey || row.campaignTotalCount == null || row.campaignVisibleCount == null) {
     return null;
   }
-  return row.campaignVisibleCount === row.campaignTotalCount
-    ? `Campaign · ${row.campaignTotalCount} sessions`
-    : `Campaign · ${row.campaignVisibleCount}/${row.campaignTotalCount} sessions`;
+  return `Campaign · ${row.campaignVisibleCount} ${row.campaignVisibleCount === 1 ? 'session' : 'sessions'}`;
+};
+
+export const classifierRollupLabelForSessionRow = (row: SessionPresentationRow): string | null => {
+  const count = row.campaignClassifierCount ?? 0;
+  return count > 0 ? `+ ${count} automated ${count === 1 ? 'review' : 'reviews'}` : null;
 };
 
 const matchesSessionQuery = (row: SessionPresentationRow, request: SessionQueryRequest): boolean => {
@@ -1226,7 +1313,13 @@ const matchesSessionQuery = (row: SessionPresentationRow, request: SessionQueryR
   if (request.filters.harness.length && !request.filters.harness.includes(row.harness)) {
     return false;
   }
-  if (request.filters.machine.length && !request.filters.machine.includes(row.source?.machineLabel ?? '')) {
+  if (request.filters.machine.length && !request.filters.machine.includes(row.source?.machineId ?? '')) {
+    return false;
+  }
+  if (request.filters.origin?.length && row.origin !== undefined && !request.filters.origin.includes(row.origin)) {
+    return false;
+  }
+  if (fields.campaign !== undefined && sessionCampaignIdentityForRow(row).campaignKey !== fields.campaign) {
     return false;
   }
   if (fields.provider !== undefined && row.providerDisplay !== fields.provider) {
@@ -1321,17 +1414,13 @@ export const projectSessionPage = (rows: SerializedRow[], input: SessionQueryReq
   const offset = sessionQueryPageOffset(request, requestFingerprint);
   const allRows = rows.map(enrichSessionPresentationRow);
   const visibleRows = allRows.filter((row) => matchesSessionQuery(row, request));
-  const campaignItems = buildSessionCampaignTableItems(allRows, visibleRows, request.sort, request.campaigns);
+  const campaignItems = buildSessionCampaignTableItems(allRows, visibleRows, request.sort);
   const page = boundedPage(campaignItems, request.pageSize, offset);
-  const items: SessionPageItem[] = page.items.map((item) =>
-    item.kind === 'campaign'
-      ? {
-          campaignKey: item.campaign.campaignKey,
-          kind: 'campaign',
-          row: sessionCampaignDisplayRow(item.campaign, request.sort, false),
-        }
-      : { kind: 'session', row: item.row },
-  );
+  const items: SessionPageItem[] = page.items.map((item) => ({
+    campaignKey: item.campaign.campaignKey,
+    kind: 'campaign',
+    row: sessionCampaignDisplayRow(item.campaign, request.sort, false),
+  }));
   return {
     itemCount: campaignItems.length,
     items,
@@ -1355,6 +1444,8 @@ export const projectSessionCampaignChildren = (
     (candidate) => candidate.campaignKey === request.campaignKey,
   );
   const children = campaign ? buildSortedSessionPresentationRows(campaign.visibleChildren, request.query.sort) : [];
+  const visibleIds = new Set(visibleRows.map((row) => row.rowId));
+  const visibleSessionCount = campaign?.allChildren.filter((row) => visibleIds.has(row.rowId)).length ?? 0;
   const page = boundedPage(children, request.query.pageSize, offset);
   return {
     campaignKey: request.campaignKey,
@@ -1363,7 +1454,7 @@ export const projectSessionCampaignChildren = (
     nextCursor: page.hasMore ? sessionQueryNextCursor(request.query, requestFingerprint, page.nextOffset) : null,
     requestFingerprint,
     revision: request.query.revision,
-    sessionCount: children.length,
+    sessionCount: visibleSessionCount,
   };
 };
 

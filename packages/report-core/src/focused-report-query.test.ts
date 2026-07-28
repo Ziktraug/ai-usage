@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  type FocusedMachineFreshness,
   type FocusedOverviewRequest,
   type FocusedReportSupport,
   focusedAdvancedAnalysisFingerprint,
@@ -112,7 +113,7 @@ const support: FocusedReportSupport = {
 const overviewRequest: FocusedOverviewRequest = {
   includeAdvanced: true,
   query: {
-    filters: { fields: {}, harness: [], machine: [], query: '' },
+    filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
     range: { from: '2026-07-02T00:00:00.000Z', to: '2026-07-04T23:59:59.999Z' },
     revision: 'revision-a',
   },
@@ -126,6 +127,22 @@ describe('focused report query contracts', () => {
     expect(focusedOverviewFingerprint({ ...overviewRequest, includeAdvanced: false })).not.toBe(
       focusedOverviewFingerprint(overviewRequest),
     );
+    const dimensions: FocusedOverviewRequest['timeline']['dimension'][] = ['campaign', 'machine', 'origin'];
+    const dimensionFingerprints = dimensions.map((dimension) =>
+      focusedOverviewFingerprint({
+        ...overviewRequest,
+        timeline: { ...overviewRequest.timeline, dimension },
+      }),
+    );
+    expect(new Set(dimensionFingerprints).size).toBe(3);
+    for (const dimension of ['campaign', 'machine', 'origin'] as const) {
+      expect(
+        parseFocusedOverviewRequest({
+          ...overviewRequest,
+          timeline: { ...overviewRequest.timeline, dimension },
+        }).timeline.dimension,
+      ).toBe(dimension);
+    }
     expect(focusedAdvancedAnalysisFingerprint(overviewRequest.query)).toStartWith('focused-advanced-analysis-v1:');
     expect(focusedAdvancedAnalysisFingerprint(overviewRequest.query)).not.toBe(
       focusedAdvancedAnalysisFingerprint({ ...overviewRequest.query, revision: 'revision-b' }),
@@ -175,6 +192,145 @@ describe('focused report query contracts', () => {
     ).toThrow('fingerprint');
   });
 
+  test('groups focused timelines by campaign, machine, project identity, and declared origin', () => {
+    const request = {
+      ...overviewRequest,
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    };
+
+    const campaignRows = rows.map((sourceRow) =>
+      sourceRow.name === 'two'
+        ? {
+            ...sourceRow,
+            source: {
+              ...sourceRow.source!,
+              parentSourceSessionId: 'one',
+              rootSourceSessionId: 'one',
+            },
+          }
+        : sourceRow,
+    );
+    const campaign = projectFocusedOverview(campaignRows, support, {
+      ...request,
+      timeline: { dimension: 'campaign', granularity: 'day' },
+    });
+    const machine = projectFocusedOverview(campaignRows, support, {
+      ...request,
+      timeline: { dimension: 'machine', granularity: 'day' },
+    });
+    const originRows: SerializedRow[] = [
+      { ...campaignRows[0]!, origin: 'human' },
+      { ...campaignRows[1]!, origin: 'subagent' },
+      {
+        ...campaignRows[2]!,
+        origin: 'classifier',
+        source: {
+          ...campaignRows[2]!.source!,
+          parentSourceSessionId: 'one',
+          rootSourceSessionId: 'one',
+        },
+      },
+      { ...campaignRows[3]!, originProvenance: 'origin-unsupported' },
+      { ...row('absent', 5, 5), originProvenance: 'origin-absent' },
+      { ...row('degraded', 6, 6), originProvenance: 'origin-degraded' },
+    ];
+    const origin = projectFocusedOverview(originRows, support, {
+      ...request,
+      timeline: { dimension: 'origin', granularity: 'day' },
+    });
+    const project = projectFocusedOverview(
+      campaignRows.map((sourceRow) => ({
+        ...sourceRow,
+        project: 'AI Usage — Machine A',
+        projectGroupId: 'group:ai-usage',
+        rawProject: 'ai-usage',
+      })),
+      support,
+      { ...request, timeline: { dimension: 'project', granularity: 'day' } },
+    );
+
+    expect(campaign.timeline?.series.find(({ label }) => label === 'one')).toMatchObject({
+      label: 'one',
+      sessions: 2,
+      total: 3,
+    });
+    expect(machine.timeline?.series).toEqual([
+      expect.objectContaining({ key: 'machine-a', label: 'Machine A', sessions: 4, total: 10 }),
+    ]);
+    expect(origin.timeline?.series.map(({ key }) => key).sort()).toEqual(['classifier', 'human', 'subagent']);
+    expect(origin.timeline?.unclassified).toMatchObject({
+      causes: [
+        { kind: 'origin-unsupported', sessions: 1 },
+        { kind: 'origin-absent', sessions: 1 },
+        { kind: 'origin-degraded', sessions: 1 },
+      ],
+      sessions: 3,
+      total: 15,
+    });
+    expect(origin.timeline?.series.some(({ key }) => key.includes('unknown'))).toBe(false);
+    expect(project.timeline?.series).toEqual([
+      expect.objectContaining({ key: 'group:ai-usage', label: 'AI Usage — Machine A', sessions: 4, total: 10 }),
+    ]);
+
+    const filteredCampaign = projectFocusedOverview(campaignRows, support, {
+      ...request,
+      query: {
+        ...request.query,
+        filters: { ...request.query.filters, harness: ['Claude Code'] },
+      },
+      timeline: { dimension: 'campaign', granularity: 'day' },
+    });
+    expect(filteredCampaign.timeline?.series.find(({ label }) => label === 'one')).toMatchObject({
+      label: 'one',
+      sessions: 1,
+      total: 2,
+    });
+  });
+
+  test('uses stable machine IDs for filters and timeline keys when labels collide', () => {
+    const machineRows = [
+      {
+        ...rows[0]!,
+        source: {
+          ...rows[0]!.source!,
+          machineId: 'machine-a',
+          machineLabel: 'Shared machine',
+        },
+      },
+      {
+        ...rows[1]!,
+        source: {
+          ...rows[1]!.source!,
+          machineId: 'machine-b',
+          machineLabel: 'Shared machine',
+        },
+      },
+    ];
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+      timeline: { dimension: 'machine', granularity: 'day' },
+    };
+
+    const unfiltered = projectFocusedOverview(machineRows, support, request);
+    expect(unfiltered.timeline?.series.map(({ key, label, sessions }) => ({ key, label, sessions }))).toEqual([
+      { key: 'machine-b', label: 'Shared machine', sessions: 1 },
+      { key: 'machine-a', label: 'Shared machine', sessions: 1 },
+    ]);
+
+    const filtered = projectFocusedOverview(machineRows, support, {
+      ...request,
+      query: {
+        ...request.query,
+        filters: { ...request.query.filters, machine: ['machine-b'] },
+      },
+    });
+    expect(filtered.summary.sessionCount).toBe(1);
+    expect(filtered.timeline?.series.map(({ key }) => key)).toEqual(['machine-b']);
+  });
+
   test('preserves known API-value subtotals and completeness for top sessions and campaigns', () => {
     const campaignRoot = {
       ...row('campaign-root', 2, 5),
@@ -211,10 +367,58 @@ describe('focused report query contracts', () => {
       })),
     ).toEqual([
       { costApprox: 12, costKnown: false, kind: 'campaign', label: 'campaign-root' },
-      { costApprox: 10, costKnown: false, kind: 'session', label: 'partial-session' },
+      { costApprox: 10, costKnown: false, kind: 'campaign', label: 'partial-session' },
     ]);
     expect(result.view.sessionShape).toBeNull();
     expect(result.view.advancedSummary?.hasSessionShape).toBe(false);
+  });
+
+  test('keeps partial known subtotals aligned between an identical summary and timeline range', () => {
+    const partialSegmentedRow: SerializedRow = {
+      ...row('partial-segmented', 3, 2),
+      costKnown: false,
+      freshTokens: 18,
+      modelSegments: [
+        {
+          costApprox: 2,
+          costKnown: true,
+          model: 'gpt-5.4',
+          tokCr: 1,
+          tokCw: 2,
+          tokIn: 3,
+          tokOut: 4,
+        },
+        {
+          costApprox: 0,
+          costKnown: false,
+          model: 'unpriced-model',
+          tokCr: 5,
+          tokCw: 5,
+          tokIn: 6,
+          tokOut: 7,
+        },
+      ],
+    };
+    const exactRangeRequest: FocusedOverviewRequest = {
+      ...overviewRequest,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    };
+
+    const result = projectFocusedOverview([row('measured', 2, 4), partialSegmentedRow], support, exactRangeRequest);
+
+    expect(result.summary.totalCost).toBe(6);
+    expect(result.summary.priceMeasurement).toEqual({
+      knownCost: 6,
+      state: 'partially measured',
+      unpricedFreshTokens: 18,
+    });
+    expect(result.timeline?.grandTotal).toBe(result.summary.totalCost);
+    expect(result.timeline?.priceMeasurement).toEqual(result.summary.priceMeasurement);
+    expect(result.timeline?.series.find(({ key }) => key === 'unpriced-model')?.priceMeasurement).toEqual({
+      knownCost: 0,
+      state: 'partially measured',
+      unpricedFreshTokens: 18,
+    });
   });
 
   test('excludes partial API-value lower bounds from exact session-shape analysis', () => {
@@ -246,6 +450,44 @@ describe('focused report query contracts', () => {
 
     expect(result.view.sessionShape?.outliers.length).toBeLessThanOrEqual(6);
     expect(() => parseFocusedReportQueryResult('overview', JSON.parse(JSON.stringify(result)), request)).not.toThrow();
+  });
+
+  test('rejects incoherent API price measurements at the focused transport boundary', () => {
+    const partialResult = projectFocusedOverview(rows, support, overviewRequest);
+    const zeroResult = projectFocusedOverview([], support, overviewRequest);
+    const invalidResults = [
+      {
+        expectedMessage: 'unpriced volume is inconsistent',
+        result: {
+          ...partialResult,
+          summary: {
+            ...partialResult.summary,
+            priceMeasurement: {
+              ...partialResult.summary.priceMeasurement,
+              state: 'measured' as const,
+              unpricedFreshTokens: 1,
+            },
+          },
+        },
+      },
+      {
+        expectedMessage: 'zero state is inconsistent',
+        result: {
+          ...zeroResult,
+          summary: {
+            ...zeroResult.summary,
+            priceMeasurement: {
+              ...zeroResult.summary.priceMeasurement,
+              state: 'measured' as const,
+            },
+          },
+        },
+      },
+    ];
+
+    for (const { expectedMessage, result } of invalidResults) {
+      expect(() => parseFocusedReportQueryResult('overview', result, overviewRequest)).toThrow(expectedMessage);
+    }
   });
 
   test('strictly validates Overview date domains and preserves an explicit empty domain', () => {
@@ -331,7 +573,8 @@ describe('focused report query contracts', () => {
   test('projects breakdown groups with Cursor and project-editor context', () => {
     const result = projectFocusedBreakdown(rows, support, { query: overviewRequest.query });
 
-    expect(result.groups.projects.map(({ key }) => key)).toEqual(['ai-usage', 'side']);
+    expect(result.groups.projects.map(({ key }) => key)).toEqual(['ai usage', 'side']);
+    expect(result.groups.projects.map(({ label }) => label)).toEqual(['ai-usage', 'side']);
     expect(result.groups.models.reduce((sum, group) => sum + group.sessions, 0)).toBe(3);
     expect(result.context.cursorCommitAttribution).toEqual(support.datasets?.cursorCommitAttribution ?? []);
     expect(result.context.projectGroupConfigs).toEqual(support.projectGroupConfigs);
@@ -411,6 +654,10 @@ describe('focused report query contracts', () => {
   test('rejects malformed nested Breakdown groups and context at the transport boundary', () => {
     const request = { query: overviewRequest.query };
     const result = projectFocusedBreakdown(rows, support, request);
+    const modelGroup = result.groups.models[0];
+    if (!modelGroup) {
+      throw new Error('The Breakdown fixture must include a model group');
+    }
 
     expect(() =>
       parseFocusedReportQueryResult(
@@ -419,6 +666,19 @@ describe('focused report query contracts', () => {
         request,
       ),
     ).toThrow('unknown or missing');
+    expect(() =>
+      parseFocusedReportQueryResult(
+        'breakdown',
+        {
+          ...result,
+          groups: {
+            ...result.groups,
+            models: [{ ...modelGroup, unpriced: 0, unpricedFreshTokens: 1 }],
+          },
+        },
+        request,
+      ),
+    ).toThrow();
     expect(() =>
       parseFocusedReportQueryResult(
         'breakdown',
@@ -441,7 +701,11 @@ describe('focused report query contracts', () => {
     };
     const result = projectFocusedSupport(
       bloatedSupport,
-      { harness: ['Claude Code', 'Codex'], machine: ['Machine A'], truncated: false },
+      {
+        harness: ['Claude Code', 'Codex'],
+        machine: [{ label: 'Machine A', value: 'machine-a' }],
+        truncated: false,
+      },
       { revision: 'revision-a' },
     );
 
@@ -454,12 +718,181 @@ describe('focused report query contracts', () => {
     expect(result.support.warnings).toEqual(support.warnings);
   });
 
+  test('carries bounded exact-revision machine freshness and accounts for entries omitted by the bootstrap budget', () => {
+    const machineFreshness: FocusedMachineFreshness = {
+      kind: 'available',
+      machines: [
+        { id: 'machine-a', label: 'Machine A', lastSeenAt: '2026-07-13T11:00:00.000Z' },
+        {
+          id: 'machine-too-large',
+          label: 'x'.repeat(MAX_SERVED_BOOTSTRAP_BYTES),
+          lastSeenAt: '2026-07-13T10:00:00.000Z',
+        },
+      ],
+      observedAt: '2026-07-13T12:00:00.000Z',
+      omittedMachines: 3,
+      skippedRows: 2,
+    };
+    const result = projectFocusedSupport(
+      { ...support, machineFreshness },
+      { harness: [], machine: [], truncated: false },
+      { revision: 'revision-a' },
+    );
+    const acceptedMachine = machineFreshness.machines[0];
+    if (!acceptedMachine) {
+      throw new Error('The freshness fixture must include its accepted machine');
+    }
+
+    expect(result.machineFreshness).toEqual({
+      kind: 'available',
+      machines: [acceptedMachine],
+      observedAt: machineFreshness.observedAt,
+      omittedMachines: 4,
+      skippedRows: 2,
+    });
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(MAX_SERVED_BOOTSTRAP_BYTES);
+  });
+
+  test('caps machine freshness at 100 entries with exact source omission accounting', () => {
+    const result = projectFocusedSupport(
+      {
+        ...support,
+        machineFreshness: {
+          kind: 'available',
+          machines: Array.from({ length: 101 }, (_, index) => ({
+            id: `machine-${index}`,
+            label: `Machine ${index}`,
+            lastSeenAt: '2026-07-13T11:00:00.000Z',
+          })),
+          observedAt: support.generatedAt,
+          omittedMachines: 3,
+          skippedRows: 0,
+        },
+      },
+      { harness: [], machine: [], truncated: false },
+      { revision: 'revision-a' },
+    );
+
+    expect(result.machineFreshness.kind).toBe('available');
+    if (result.machineFreshness.kind !== 'available') {
+      throw new Error('The bounded freshness fixture must remain available');
+    }
+    expect(result.machineFreshness.machines).toHaveLength(100);
+    expect(result.machineFreshness.omittedMachines).toBe(4);
+  });
+
+  test('marks freshness unavailable when the bootstrap budget cannot retain any captured machine', () => {
+    const result = projectFocusedSupport(
+      {
+        ...support,
+        machineFreshness: {
+          kind: 'available',
+          machines: [
+            {
+              id: 'machine-too-large',
+              label: 'x'.repeat(MAX_SERVED_BOOTSTRAP_BYTES),
+              lastSeenAt: '2026-07-13T11:00:00.000Z',
+            },
+          ],
+          observedAt: support.generatedAt,
+          omittedMachines: 2,
+          skippedRows: 1,
+        },
+      },
+      { harness: [], machine: [], truncated: false },
+      { revision: 'revision-a' },
+    );
+
+    expect(result.machineFreshness).toEqual({
+      kind: 'unavailable',
+      observedAt: support.generatedAt,
+      omittedMachines: 3,
+      reason: 'bootstrap-budget',
+      skippedRows: 1,
+    });
+  });
+
+  test('makes absent freshness explicit and strictly validates both freshness result variants', () => {
+    const request = { revision: 'revision-a' };
+    const notCaptured = projectFocusedSupport(support, { harness: [], machine: [], truncated: false }, request);
+
+    expect(notCaptured.machineFreshness).toEqual({
+      kind: 'unavailable',
+      observedAt: support.generatedAt,
+      omittedMachines: 0,
+      reason: 'not-captured',
+      skippedRows: 0,
+    });
+    expect(parseFocusedReportQueryResult('support', JSON.parse(JSON.stringify(notCaptured)), request)).toEqual(
+      notCaptured,
+    );
+
+    const available = projectFocusedSupport(
+      {
+        ...support,
+        machineFreshness: {
+          kind: 'available',
+          machines: [{ id: 'machine-a', label: 'Machine A', lastSeenAt: '2026-07-13T11:00:00.000Z' }],
+          observedAt: support.generatedAt,
+          omittedMachines: 1,
+          skippedRows: 2,
+        },
+      },
+      { harness: [], machine: [], truncated: false },
+      request,
+    );
+    if (available.machineFreshness.kind !== 'available') {
+      throw new Error('The freshness fixture must remain available');
+    }
+    expect(parseFocusedReportQueryResult('support', JSON.parse(JSON.stringify(available)), request)).toEqual(available);
+
+    const invalidFreshnessValues = [
+      { ...available.machineFreshness, unexpected: true },
+      { ...available.machineFreshness, observedAt: '2026-07-13T12:00:00Z' },
+      { ...available.machineFreshness, observedAt: '2026-07-14T12:00:00.000Z' },
+      { ...available.machineFreshness, omittedMachines: -1 },
+      { ...available.machineFreshness, skippedRows: 0.5 },
+      {
+        ...available.machineFreshness,
+        machines: [...available.machineFreshness.machines, ...available.machineFreshness.machines],
+      },
+      {
+        kind: 'available',
+        machines: [{ id: '', label: 'Machine A', lastSeenAt: support.generatedAt }],
+        observedAt: support.generatedAt,
+        omittedMachines: 0,
+        skippedRows: 0,
+      },
+      {
+        kind: 'available',
+        machines: [{ id: 'machine-a', label: '', lastSeenAt: support.generatedAt }],
+        observedAt: support.generatedAt,
+        omittedMachines: 0,
+        skippedRows: 0,
+      },
+      {
+        kind: 'unavailable',
+        observedAt: support.generatedAt,
+        omittedMachines: 0,
+        reason: 'network-error',
+        skippedRows: 0,
+      },
+    ];
+    for (const machineFreshness of invalidFreshnessValues) {
+      expect(() => parseFocusedReportQueryResult('support', { ...available, machineFreshness }, request)).toThrow();
+    }
+  });
+
   test('rejects malformed nested bootstrap support at the transport boundary', () => {
     const request = { revision: 'revision-a' };
     const dateDomain = { first: '2026-07-01T10:00:00.000Z', last: '2026-07-04T10:00:00.000Z' };
     const result = projectFocusedSupport(
       support,
-      { harness: ['Claude Code', 'Codex'], machine: ['Machine A'], truncated: false },
+      {
+        harness: ['Claude Code', 'Codex'],
+        machine: [{ label: 'Machine A', value: 'machine-a' }],
+        truncated: false,
+      },
       request,
       { dateDomain },
     );
@@ -558,7 +991,11 @@ describe('focused report query contracts', () => {
     };
     const bootstrap = projectFocusedSupport(
       maximumSupport,
-      { harness: ['Claude Code', 'Codex'], machine: ['Machine A'], truncated: false },
+      {
+        harness: ['Claude Code', 'Codex'],
+        machine: [{ label: 'Machine A', value: 'machine-a' }],
+        truncated: false,
+      },
       { revision: request.query.revision },
     );
     const overview = projectFocusedOverview(maximumRows, maximumSupport, request);

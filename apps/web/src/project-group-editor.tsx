@@ -12,6 +12,7 @@ import {
 import {
   type ProjectGroupConfig,
   type ProjectSourceSelector,
+  projectLabelWithMachine,
   projectSourceSelectorFor,
   projectSourceSelectorsEqual,
 } from '@ai-usage/report-core/project-group';
@@ -163,7 +164,7 @@ const statusText = css({
 });
 
 const projectSourceLabel = (source: UsageReportProjectSource) =>
-  source.machineLabel ? `${source.project} · ${source.machineLabel}` : source.project;
+  projectLabelWithMachine(source.project, source.machineLabel);
 
 const projectSourceMeta = (source: UsageReportProjectSource) =>
   [source.sourcePath, `${source.sessions} sessions`].filter(Boolean).join(' · ');

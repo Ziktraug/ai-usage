@@ -16,7 +16,6 @@ export type DashboardSessionSelectionCoordinator = Pick<SessionQueryCoordinator,
 
 export interface DashboardSessionSelectionLocalData {
   campaigns: Accessor<CampaignView[]>;
-  groupCampaigns: Accessor<boolean>;
   reportRows: Accessor<DashboardRow[]>;
   sortedRows: Accessor<DashboardRow[]>;
 }
@@ -213,7 +212,7 @@ export const createDashboardSessionSelection = (
     const servedActive = options.served?.active() ?? false;
     const target = next
       ? sessionAnalysisTargetForTopLevelRow({
-          campaigns: servedActive || !options.local.groupCampaigns() ? [] : options.local.campaigns(),
+          campaigns: servedActive ? [] : options.local.campaigns(),
           pageItems: servedActive ? (options.served?.state()?.items ?? []) : [],
           row,
         })

@@ -10,6 +10,7 @@ import { Duration, Effect } from 'effect';
 const policyChangePollInterval = Duration.millis(10);
 const pausingStateObservationWindow = Duration.millis(250);
 const sourceCadenceOutsideTestRun = Duration.hours(24);
+const fixtureRevisionSuffix = '3142669549a734c6e527c1a0522e89d2';
 
 export interface SourceControlE2EFixture {
   policyStore: SourcePolicyStore;
@@ -19,10 +20,14 @@ export interface SourceControlE2EFixture {
 
 export const createSourceControlE2EFixture = (): SourceControlE2EFixture => {
   const policies: SourcePolicyOverrides = {};
+  const resumeRuns = new Set<CollectionSourceId>();
   const policyStore: SourcePolicyStore = {
     load: Effect.sync(() => ({ ...policies })),
     setEnabled: (sourceId, enabled) =>
       Effect.sync(() => {
+        if (enabled) {
+          resumeRuns.add(sourceId);
+        }
         policies[sourceId] = { enabled };
       }),
   };
@@ -30,7 +35,7 @@ export const createSourceControlE2EFixture = (): SourceControlE2EFixture => {
   const publication: ReportPublicationPort = {
     publish: Effect.sync(() => {
       publicationRevision++;
-      return { changed: true, revision: `e2e-revision-${publicationRevision}` };
+      return { changed: true, revision: `e2e-revision-${publicationRevision}-${fixtureRevisionSuffix}` };
     }),
   };
   const sources = new Map<CollectionSourceId, ScheduledSource>();
@@ -43,7 +48,8 @@ export const createSourceControlE2EFixture = (): SourceControlE2EFixture => {
       run: () =>
         Effect.gen(function* () {
           runCount++;
-          if (definition.id === 'codex.sessions' && runCount > 1) {
+          const resumedAfterPause = resumeRuns.delete(definition.id);
+          if (definition.id === 'codex.sessions' && runCount > 1 && !resumedAfterPause) {
             while (policies[definition.id]?.enabled !== false) {
               yield* Effect.sleep(policyChangePollInterval);
             }

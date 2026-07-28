@@ -1,6 +1,6 @@
 import type { SerializedUsageRow, UsageReportWarning } from './report-data';
 import { isSessionVcsContext } from './session-vcs';
-import type { UsageRowSource } from './types';
+import { isOriginProvenanceKind, isSessionOrigin, type UsageRowSource } from './types';
 import { MAX_USAGE_MODEL_SEGMENTS } from './usage-row';
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -34,6 +34,8 @@ export const SERIALIZED_USAGE_ROW_KEYS: ReadonlySet<string> = new Set([
   'modelSegments',
   'models',
   'name',
+  'origin',
+  'originProvenance',
   'partial',
   'project',
   'projectGroupId',
@@ -241,6 +243,9 @@ const hasValidSerializedUsageFields = (
   value.model.length > 0 &&
   isOptionalStringArray(value.models) &&
   typeof value.name === 'string' &&
+  (value.origin === undefined || isSessionOrigin(value.origin)) &&
+  (value.originProvenance === undefined ||
+    (value.origin === undefined && isOriginProvenanceKind(value.originProvenance))) &&
   isOptionalBoolean(value.partial) &&
   typeof value.project === 'string' &&
   isOptionalString(value.projectGroupId) &&
@@ -264,10 +269,13 @@ const hasValidSerializedUsageFields = (
   isOptionalBoolean(value.usageUnavailable) &&
   (value.source === undefined ? !requireSource : isSerializedUsageRowSource(value.source));
 
-const expectedSessionLabel = (value: Record<string, unknown>): string =>
+const legacySessionLabel = (value: Record<string, unknown>): string =>
   `${String(value.name)}${value.partial === true ? ' ~' : ''}${value.subagent === true ? ' ↳' : ''}${
     value.ambiguous === true ? ' ?' : ''
   }${value.usageUnavailable === true ? ' (usage unavailable)' : ''}`;
+
+const hasExpectedSessionLabel = (value: Record<string, unknown>): boolean =>
+  value.sessionLabel === String(value.name) || value.sessionLabel === legacySessionLabel(value);
 
 const numbersEqual = (left: number, right: number): boolean =>
   Math.abs(left - right) <= Number.EPSILON * Math.max(1, Math.abs(left), Math.abs(right)) * 16;
@@ -363,7 +371,7 @@ export const hasValidSerializedUsageDerivedFields = (value: Record<string, unkno
     value.lineDelta === expectedLineDelta &&
     hasCoherentModelIdentity(value) &&
     hasValidModelSegmentTotals(value) &&
-    value.sessionLabel === expectedSessionLabel(value) &&
+    hasExpectedSessionLabel(value) &&
     value.tokenTotal === Number(value.tokIn) + Number(value.tokOut) + Number(value.tokCr) + Number(value.tokCw)
   );
 };

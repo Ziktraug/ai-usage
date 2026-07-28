@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { provenanceForMetric, provenanceForUsageRow } from './provenance';
+import {
+  apiPriceMeasurement,
+  combineApiPriceMeasurements,
+  partiallyMeasuredApiPriceDescription,
+  provenanceForMetric,
+  provenanceForUsageRow,
+} from './provenance';
 import type { Row } from './types';
 
 const row = (overrides: Partial<Row> = {}): Row => ({
@@ -28,6 +34,31 @@ const row = (overrides: Partial<Row> = {}): Row => ({
 });
 
 describe('usage row provenance', () => {
+  test('distinguishes measured, partially measured, and genuine zero aggregates', () => {
+    const measured = apiPriceMeasurement({ costKnown: true, freshTokens: 10, knownCost: 2 });
+    const unpriced = apiPriceMeasurement({ costKnown: false, freshTokens: 57_500_000, knownCost: 0 });
+
+    expect(measured).toEqual({ knownCost: 2, state: 'measured', unpricedFreshTokens: 0 });
+    expect(unpriced).toEqual({
+      knownCost: 0,
+      state: 'partially measured',
+      unpricedFreshTokens: 57_500_000,
+    });
+    expect(combineApiPriceMeasurements([measured, unpriced])).toEqual({
+      knownCost: 2,
+      state: 'partially measured',
+      unpricedFreshTokens: 57_500_000,
+    });
+    expect(combineApiPriceMeasurements([])).toEqual({
+      knownCost: 0,
+      state: 'zero',
+      unpricedFreshTokens: 0,
+    });
+    expect(partiallyMeasuredApiPriceDescription('57.5M')).toBe(
+      'Partially measured — 57.5M tokens in this slice come from models with no published price. Their work is counted, their value is not.',
+    );
+  });
+
   test('marks non-ai titles as derived title provenance', () => {
     expect(provenanceForMetric(row({ titleSource: 'first-prompt' }), 'title').map((item) => item.kind)).toEqual([
       'title-derived',
@@ -80,5 +111,37 @@ describe('usage row provenance', () => {
     expect(provenance.map((item) => item.kind)).toContain('unknown-actual-cost');
     expect(provenance.map((item) => item.kind)).toContain('unknown-subscription-value');
     expect(provenanceForMetric(row(), 'subscription-value')).toEqual([]);
+  });
+
+  test('explains each absent origin with the collector-owned cause', () => {
+    expect(provenanceForMetric(row({ originProvenance: 'origin-unsupported' }), 'origin')).toEqual([
+      {
+        appliesTo: ['origin'],
+        description: 'Origin unsupported — this harness does not record how a session was started.',
+        kind: 'origin-unsupported',
+        label: 'Origin unsupported',
+        severity: 'info',
+      },
+    ]);
+    expect(provenanceForMetric(row({ originProvenance: 'origin-absent' }), 'origin')).toEqual([
+      {
+        appliesTo: ['origin'],
+        description: 'Origin not declared — this session records no origin, and it has no parent to infer one from.',
+        kind: 'origin-absent',
+        label: 'Origin not declared',
+        severity: 'info',
+      },
+    ]);
+    expect(provenanceForMetric(row({ originProvenance: 'origin-degraded' }), 'origin')).toEqual([
+      {
+        appliesTo: ['origin'],
+        description:
+          'Origin unavailable — this row came from a reduced history read, so its origin could not be determined.',
+        kind: 'origin-degraded',
+        label: 'Origin unavailable',
+        severity: 'warning',
+      },
+    ]);
+    expect(provenanceForMetric(row({ origin: 'human' }), 'origin')).toEqual([]);
   });
 });

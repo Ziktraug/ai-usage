@@ -1,10 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import { MAX_PORTABLE_USAGE_ROWS } from './portable-usage';
 import { createProviderStatusDataset } from './provider-status';
-import { createUsageSnapshot, mergeUsageSnapshots, parseUsageSnapshot, serializeUsageSnapshot } from './snapshot';
-import type { Row, SourcedRow } from './types';
+import {
+  createUsageSnapshot,
+  deserializeSnapshotRow,
+  mergeUsageSnapshots,
+  parseUsageSnapshot,
+  serializeUsageSnapshot,
+} from './snapshot';
+import type { SourcedRow } from './types';
 
-const row = (name: string, sourceSessionId: string, overrides: Partial<Row> = {}): SourcedRow => ({
+const row = (name: string, sourceSessionId: string, overrides: Partial<SourcedRow> = {}): SourcedRow => ({
   date: new Date('2026-01-01T00:00:00.000Z'),
   endDate: new Date('2026-01-01T00:01:00.000Z'),
   harness: 'Codex',
@@ -46,12 +52,77 @@ describe('usage snapshots', () => {
     const snapshot = createUsageSnapshot({ machine, rows: [row('a', 'session-1')] });
 
     expect(snapshot.schemaVersion).toBe(3);
+    expect(snapshot.rows[0]?.origin).toBeUndefined();
     expect(snapshot.rows[0]?.source).toMatchObject({
       machineId: 'machine-1',
       machineLabel: 'Machine 1',
       harnessKey: 'codex',
       sourceSessionId: 'session-1',
     });
+  });
+
+  test('accepts exact legacy marker labels while emitting undecorated labels', () => {
+    const snapshot = currentSnapshot();
+    const currentRow = snapshot.rows[0];
+    if (!currentRow) {
+      throw new Error('Expected a current snapshot row');
+    }
+    const legacyRow = {
+      ...currentRow,
+      ambiguous: true,
+      partial: true,
+      sessionLabel: 'a ~ ↳ ? (usage unavailable)',
+      subagent: true,
+      usageUnavailable: true,
+    };
+
+    expect(parseUsageSnapshot(JSON.stringify({ ...snapshot, rows: [legacyRow] })).rows[0]?.sessionLabel).toBe(
+      'a ~ ↳ ? (usage unavailable)',
+    );
+    expect(snapshot.rows[0]?.sessionLabel).toBe('a');
+  });
+
+  test('preserves declared origin and preserves legacy absence', () => {
+    const classifierParentId = '11111111-2222-4333-8444-555555555555';
+    const snapshot = createUsageSnapshot({
+      machine,
+      rows: [
+        row('classifier', 'classifier-1', {
+          origin: 'classifier',
+          source: {
+            harnessKey: 'codex',
+            rootSourceSessionId: classifierParentId,
+            sourceSessionId: 'classifier-1',
+          },
+        }),
+      ],
+    });
+    const parsed = parseUsageSnapshot(JSON.stringify(snapshot));
+    const classifier = parsed.rows[0];
+    if (!classifier) {
+      throw new Error('Expected classifier snapshot row');
+    }
+    const { origin: _origin, ...legacyClassifier } = classifier;
+
+    expect(classifier.origin).toBe('classifier');
+    expect(classifier.source.rootSourceSessionId).toBe(classifierParentId);
+    expect(deserializeSnapshotRow(legacyClassifier).origin).toBeUndefined();
+  });
+
+  test('preserves absent-origin provenance through a serialized snapshot merge', () => {
+    const snapshot = createUsageSnapshot({
+      machine,
+      rows: [
+        row('unsupported', 'unsupported-1', {
+          originProvenance: 'origin-unsupported',
+        }),
+      ],
+    });
+    const parsed = parseUsageSnapshot(serializeUsageSnapshot(snapshot));
+    const mergedRow = mergeUsageSnapshots([parsed]).rows[0];
+
+    expect(mergedRow?.origin).toBeUndefined();
+    expect(mergedRow?.originProvenance).toBe('origin-unsupported');
   });
 
   test('round-trips snapshots emitted without an application version', () => {

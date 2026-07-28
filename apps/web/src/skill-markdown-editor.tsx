@@ -73,7 +73,8 @@ const editorArea = css({
   minH: { base: '60vh', md: 'clamp(480px, 65vh, 900px)' },
   maxW: '100%',
   w: '100%',
-  overflowX: 'auto',
+  overflowX: 'hidden',
+  overflowWrap: 'anywhere',
   p: '14px',
   border: '1px solid token(colors.lineStrong)',
   borderRadius: 'sm',
@@ -84,6 +85,7 @@ const editorArea = css({
   lineHeight: 1.6,
   resize: 'vertical',
   tabSize: 2,
+  whiteSpace: 'pre-wrap',
   _focusVisible: {
     outline: '2px solid token(colors.accent)',
     outlineOffset: '2px',
@@ -260,7 +262,7 @@ export const SkillMarkdownEditor = (props: {
             editorElement = element;
           }}
           value={editorState().draft}
-          wrap="off"
+          wrap="soft"
         />
       </Show>
       <div class={documentActions}>

@@ -239,7 +239,16 @@ describe('Codex local history', () => {
           payload: {
             type: 'message',
             role: 'user',
-            content: [{ input_text: 'Build the report' }],
+            content: [
+              {
+                input_text: `Tu travailles dans le repository suivant : /work/fixture-project.
+Lis les instructions du dépôt avant toute modification.
+
+# Mission
+Build the report.
+Preserve the existing aggregation semantics.`,
+              },
+            ],
           },
         },
         {
@@ -304,7 +313,8 @@ describe('Codex local history', () => {
 
     const sessions = runWithStorage(readCodexUsageSessions, storage);
     expect(sessions).toHaveLength(2);
-    expect(sessions[0]?.name).toBe('Fixture thread');
+    expect(sessions[0]?.name).toBe('Build the report.');
+    expect(sessions[0]?.origin).toBeUndefined();
     expect(sessions[0]?.provider).toBe('Codex sub');
     expect(sessions[0]?.project).toBe('fixture-project');
     expect(sessions[0]?.projectPath).toBe('/work/fixture-project');
@@ -322,6 +332,7 @@ describe('Codex local history', () => {
     expect(sessions[0]?.subagent).toBe(true);
     expect(sessions[0]?.usageUnavailable).toBe(false);
     expect(sessions[1]?.name).toBe('builder-agent');
+    expect(sessions[1]?.origin).toBe('subagent');
     expect(sessions[1]?.titleSource).toBe('agent-role');
     expect(sessions[1]?.provider).toBe('Codex sub');
     expect(sessions[1]?.projectPath).toBe('/work/fixture-project');
@@ -356,7 +367,8 @@ describe('Codex local history', () => {
 
     const rows = runWithStorage(collectCodex, storage);
     expect(rows).toHaveLength(2);
-    expect(rows[0]?.name).toBe('Fixture thread');
+    expect(rows[0]?.name).toBe('Build the report.');
+    expect(rows[0]?.origin).toBeUndefined();
     expect(rows[0]?.provider).toBe('Codex sub');
     expect(rows[0]?.project).toBe('fixture-project');
     expect(rows[0]?.projectPath).toBe('/work/fixture-project');
@@ -374,6 +386,7 @@ describe('Codex local history', () => {
     expect(rows[0]?.subagent).toBe(true);
     expect(rows[0]?.usageUnavailable).toBe(false);
     expect(rows[1]?.name).toBe('builder-agent');
+    expect(rows[1]?.origin).toBe('subagent');
     expect(rows[1]?.titleSource).toBe('agent-role');
     expect(rows[1]?.provider).toBe('Codex sub');
     expect(rows[1]?.source?.parentSourceSessionId).toBe('parent-thread');
@@ -382,6 +395,175 @@ describe('Codex local history', () => {
     expect(rows[1]?.tokOut).toBe(4);
     expect(rows[1]?.subagent).toBe(true);
     expect(rows[1]?.usageUnavailable).toBe(false);
+  });
+
+  test('classifies every declared Codex origin shape and resolves classifier parents', () => {
+    const storage = new TestMemoryStorage();
+    const classifierParentId = '11111111-2222-4333-8444-555555555555';
+    const guardianPrompt = `The following is the Codex agent history.\nReviewed Codex session id: ${classifierParentId}`;
+    const writeFixture = (id: string, metadata: Record<string, unknown>, ...events: unknown[]): void => {
+      storage.writeText(
+        `.codex/sessions/2026/${id}.jsonl`,
+        jsonl(
+          {
+            timestamp: '2026-02-01T00:00:00.000Z',
+            type: 'session_meta',
+            payload: { id, cwd: '/work/origin-fixture', ...metadata },
+          },
+          ...events,
+        ),
+      );
+    };
+
+    writeFixture(classifierParentId, { thread_source: 'user' });
+    writeFixture('thread-spawn-unset', {
+      source: { subagent: { thread_spawn: { parent_thread_id: classifierParentId } } },
+      thread_source: 'subagent',
+    });
+    writeFixture('thread-spawn-explorer', {
+      source: {
+        subagent: { thread_spawn: { agent_role: 'explorer', parent_thread_id: classifierParentId } },
+      },
+      thread_source: 'subagent',
+    });
+    writeFixture('thread-spawn-worker', {
+      source: {
+        subagent: { thread_spawn: { agent_role: 'worker', parent_thread_id: classifierParentId } },
+      },
+      thread_source: 'subagent',
+    });
+    writeFixture('thread-spawn-precedence', {
+      source: {
+        subagent: {
+          other: 'guardian',
+          thread_spawn: { agent_role: 'review', parent_thread_id: classifierParentId },
+        },
+      },
+      thread_source: 'subagent',
+    });
+    writeFixture(
+      'guardian-classifier',
+      { source: { subagent: { other: 'guardian' } }, thread_source: 'subagent' },
+      {
+        timestamp: '2026-02-01T00:00:01.000Z',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{ input_text: guardianPrompt }],
+        },
+      },
+    );
+    writeFixture('review-classifier', {
+      parent_thread_id: classifierParentId,
+      source: { subagent: 'review' },
+      thread_source: 'subagent',
+    });
+    writeFixture(
+      'undeclared-origin',
+      {},
+      {
+        timestamp: '2026-02-01T00:00:01.000Z',
+        payload: {
+          type: 'message',
+          role: 'user',
+          content: [{ input_text: guardianPrompt }],
+        },
+      },
+    );
+
+    const sessions = runWithStorage(readCodexUsageSessions, storage);
+    const sessionsById = new Map(sessions.map((session) => [session.source.sourceSessionId, session]));
+
+    expect(sessionsById.get(classifierParentId)?.origin).toBe('human');
+    expect(sessionsById.get(classifierParentId)?.originProvenance).toBeUndefined();
+    expect(sessionsById.get('undeclared-origin')?.origin).toBeUndefined();
+    expect(sessionsById.get('undeclared-origin')?.originProvenance).toBe('origin-absent');
+    expect(sessionsById.get('undeclared-origin')?.source.rootSourceSessionId).toBeUndefined();
+    for (const sessionId of [
+      'thread-spawn-unset',
+      'thread-spawn-explorer',
+      'thread-spawn-worker',
+      'thread-spawn-precedence',
+    ]) {
+      expect(sessionsById.get(sessionId)?.origin).toBe('subagent');
+    }
+    for (const sessionId of ['guardian-classifier', 'review-classifier']) {
+      const classifier = sessionsById.get(sessionId);
+      expect(classifier?.origin).toBe('classifier');
+      expect(classifier?.source.rootSourceSessionId).toBe(classifierParentId);
+      expect(classifier?.name).not.toContain('Codex guardian approval');
+      expect(sessionsById.has(classifier?.source.rootSourceSessionId ?? null)).toBe(true);
+    }
+
+    const collectedById = new Map(
+      runWithStorage(collectCodex, storage).map((row) => [row.source?.sourceSessionId, row]),
+    );
+    expect(collectedById.get('guardian-classifier')?.origin).toBe('classifier');
+    expect(collectedById.get('guardian-classifier')?.source?.rootSourceSessionId).toBe(classifierParentId);
+    expect(collectedById.get('review-classifier')?.origin).toBe('classifier');
+    expect(collectedById.get('review-classifier')?.source?.rootSourceSessionId).toBe(classifierParentId);
+  });
+
+  test('preserves full classifier parent identities when their eight-character prefixes collide', () => {
+    const storage = new TestMemoryStorage();
+    const parentIds = ['019f9e7d-1111-4111-8111-111111111111', '019f9e7d-2222-4222-8222-222222222222'] as const;
+    const classifierIds = ['guardian-first', 'guardian-second'] as const;
+
+    for (const parentId of parentIds) {
+      storage.writeText(
+        `.codex/sessions/2026/${parentId}.jsonl`,
+        jsonl({
+          timestamp: '2026-02-01T00:00:00.000Z',
+          type: 'session_meta',
+          payload: { cwd: '/work/colliding-parents', id: parentId, thread_source: 'user' },
+        }),
+      );
+    }
+    for (const [index, classifierId] of classifierIds.entries()) {
+      const parentId = parentIds[index]!;
+      storage.writeText(
+        `.codex/sessions/2026/${classifierId}.jsonl`,
+        jsonl(
+          {
+            timestamp: '2026-02-01T00:00:00.000Z',
+            type: 'session_meta',
+            payload: {
+              cwd: '/work/colliding-parents',
+              id: classifierId,
+              source: { subagent: { other: 'guardian' } },
+              thread_source: 'subagent',
+            },
+          },
+          {
+            timestamp: '2026-02-01T00:00:01.000Z',
+            payload: {
+              content: [
+                {
+                  input_text: `The following is the Codex agent history.\nReviewed Codex session id: ${parentId}`,
+                },
+              ],
+              role: 'user',
+              type: 'message',
+            },
+          },
+        ),
+      );
+    }
+
+    const sessions = runWithStorage(readCodexUsageSessions, storage);
+    const sessionsById = new Map(sessions.map((session) => [session.source.sourceSessionId, session]));
+    expect(parentIds.map((parentId) => sessionsById.get(parentId)?.name)).toEqual(
+      parentIds.map((parentId) => `codex ${parentId}`),
+    );
+    expect(classifierIds.map((classifierId) => sessionsById.get(classifierId)?.source.rootSourceSessionId)).toEqual([
+      ...parentIds,
+    ]);
+    expect(
+      new Set(classifierIds.map((classifierId) => sessionsById.get(classifierId)?.source.rootSourceSessionId)).size,
+    ).toBe(2);
+    for (const classifierId of classifierIds) {
+      expect(sessionsById.get(classifierId)?.name).not.toContain('019f9e7d');
+    }
   });
 
   test('attributes a shared cumulative token stream only to the campaign root', () => {
@@ -695,8 +877,13 @@ describe('Codex local history', () => {
 
       const storage = createLocalHistoryStorage(home);
       const firstSessions = await runWithRealStorage(readCodexUsageSessions, home);
+      const firstRoot = firstSessions.find((session) => session.source.sourceSessionId === 'state-root');
       const firstChild = firstSessions.find((session) => session.source.sourceSessionId === 'state-child');
+      expect(firstRoot?.name).toBe('Run the campaign');
+      expect(firstRoot?.origin).toBeUndefined();
+      expect(firstRoot?.titleSource).toBe('first-prompt');
       expect(firstChild?.model).toBe('gpt-5.9-state');
+      expect(firstChild?.origin).toBe('subagent');
 
       const updatedStateDatabase = new Database(path.join(stateDirectory, 'state_5.sqlite'));
       try {
@@ -2374,7 +2561,7 @@ describe('Codex local history', () => {
       const second = await runWithRealStorage(collectCodexResult, home);
 
       expect(second).toEqual(first);
-      expect(second.rows[0]?.name).toBe('codex cached-t');
+      expect(second.rows[0]?.name).toBe('codex cached-thread');
       expect(second.rows[0]?.tokIn).toBe(20);
       expect(second.rows[0]?.tokCr).toBe(10);
       expect(second.rows[0]?.tokOut).toBe(12);

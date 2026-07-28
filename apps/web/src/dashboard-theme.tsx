@@ -1,5 +1,6 @@
 import { Toggle } from '@ai-usage/design-system';
 import { themeToggleButton } from '@ai-usage/design-system/report';
+import { ClientOnly } from '@tanstack/solid-router';
 import { createSignal, onCleanup, onMount, Show } from 'solid-js';
 
 const THEME_STORAGE_KEY = 'ai-usage-theme';
@@ -43,7 +44,7 @@ const MoonIcon = () => (
 // Two-state toggle: follow the OS by default, pin the opposite scheme on
 // click. A pin that lands back on the OS value clears to auto, so the report
 // keeps tracking system changes unless the user actually diverges from them.
-export const ThemeToggle = () => {
+const ResolvedThemeToggle = () => {
   const [theme, setTheme] = createSignal<'light' | 'dark'>(storedTheme() ?? systemTheme());
   onMount(() => {
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
@@ -92,3 +93,9 @@ export const ThemeToggle = () => {
     </Toggle>
   );
 };
+
+export const ThemeToggle = () => (
+  <ClientOnly fallback={<span aria-hidden="true" class={themeToggleButton} style={{ visibility: 'hidden' }} />}>
+    <ResolvedThemeToggle />
+  </ClientOnly>
+);

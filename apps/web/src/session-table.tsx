@@ -30,6 +30,7 @@ import {
   sessionSummaryValue,
   sessionSummaryViewport,
   sessionsTable,
+  sessionViewportSurface,
   sortArrow,
   sortButton,
   table,
@@ -52,7 +53,8 @@ import {
   sessionColumns,
   visibleSessionColumns,
 } from './session-columns';
-import { calculateSessionRowWindow } from './session-row-window';
+import { boundedSessionListLabel } from './session-list-label';
+import { calculateSessionRowWindow, calculateSessionViewportHeight } from './session-row-window';
 import {
   browserSessionSurfaceModeEnvironment,
   createSessionSurfaceModeController,
@@ -85,6 +87,7 @@ const MOBILE_MAX_WINDOW_ROWS = 600;
 const MOBILE_PAGE_PREFETCH_PX = MOBILE_ROW_HEIGHT * 3;
 const MIN_SESSION_TABLE_WIDTH = 720;
 const SESSION_VIEWPORT_FALLBACK_HEIGHT = 520;
+const SESSION_VIEWPORT_BOTTOM_INSET = 24;
 
 interface SessionVirtualRow<RowValue> {
   index: number;
@@ -102,6 +105,7 @@ const createSessionVirtualSurface = <Element extends HTMLElement, RowValue>(opti
   active: Accessor<boolean>;
   maxRows: number;
   metricName: string;
+  minimumHeight: number;
   overscanRows: number;
   rowHeight: number;
   rows: Accessor<RowValue[]>;
@@ -110,6 +114,18 @@ const createSessionVirtualSurface = <Element extends HTMLElement, RowValue>(opti
   const [viewport, setViewport] = createSignal({ height: SESSION_VIEWPORT_FALLBACK_HEIGHT, scrollTop: 0 });
   const updateViewport = (): void => {
     const currentElement = element();
+    if (currentElement && typeof window !== 'undefined') {
+      const viewportHeight = calculateSessionViewportHeight({
+        bottomInset: SESSION_VIEWPORT_BOTTOM_INSET,
+        minimumHeight: options.minimumHeight,
+        surfaceTop: currentElement.getBoundingClientRect().top,
+        viewportHeight: window.innerHeight,
+      });
+      const cssHeight = `${viewportHeight}px`;
+      if (currentElement.style.getPropertyValue('--session-surface-height') !== cssHeight) {
+        currentElement.style.setProperty('--session-surface-height', cssHeight);
+      }
+    }
     const next = {
       height: currentElement?.clientHeight || SESSION_VIEWPORT_FALLBACK_HEIGHT,
       scrollTop: currentElement?.scrollTop ?? 0,
@@ -152,7 +168,13 @@ const createSessionVirtualSurface = <Element extends HTMLElement, RowValue>(opti
     updateViewport();
     const observer = new ResizeObserver(updateViewport);
     observer.observe(currentElement);
-    onCleanup(() => observer.disconnect());
+    window.addEventListener('resize', updateViewport);
+    window.addEventListener('scroll', updateViewport, { passive: true });
+    onCleanup(() => {
+      observer.disconnect();
+      window.removeEventListener('resize', updateViewport);
+      window.removeEventListener('scroll', updateViewport);
+    });
   });
 
   return {
@@ -178,6 +200,7 @@ const MobileSessionSummary = (props: {
   total: number;
 }) => {
   const row = () => props.tableRow.original;
+  const sessionListLabel = () => boundedSessionListLabel(row().sessionLabel, props.searchQuery);
   const apiValue = () => apiValuePresentation(row());
   const rootSessionOnly = () => row().campaignTotalCount !== undefined;
   const durationSemantics = () => sessionDurationSemantics(row().source?.harnessKey, rootSessionOnly());
@@ -196,13 +219,13 @@ const MobileSessionSummary = (props: {
           <HarnessBadge name={row().harness} onClick={() => props.onHarnessFilter(row().harness)} />
         </header>
         <button
-          aria-label={`Inspect session: ${row().sessionLabel}`}
+          aria-label={`Inspect session: ${sessionListLabel()}`}
           class={sessionSummaryOpen}
           onClick={() => props.onSelect(row())}
           type="button"
         >
           <span class={sessionSummaryTitle}>
-            <HighlightedText query={props.searchQuery} text={row().sessionLabel} />
+            <HighlightedText query={props.searchQuery} text={sessionListLabel()} />
           </span>
           <span class={sessionSummaryValue} title={row().usageUnavailable ? USAGE_UNAVAILABLE_HINT : apiValue().title}>
             {row().usageUnavailable ? '—' : apiValue().label}
@@ -213,7 +236,7 @@ const MobileSessionSummary = (props: {
             <button
               class={sessionSummaryFilter}
               onClick={() => props.onFieldFilter('project', row().projectKey)}
-              title={`Filter by project ${row().projectKey}`}
+              title={`Filter by project ${row().projectLabel}`}
               type="button"
             >
               {row().projectLabel === '(unknown)' ? 'No project' : row().projectLabel}
@@ -361,14 +384,12 @@ const SessionColumnControls = (props: {
 export const SessionTable = (props: {
   campaignChildren?: ReadonlyMap<string, { loading: boolean; nextCursor: string | null }>;
   columnVisibility: VisibilityState;
-  groupCampaigns: boolean;
   hasMoreRows?: boolean;
   loading?: boolean;
   loadingMoreRows?: boolean;
   onColumnVisibilityChange: OnChangeFn<VisibilityState>;
   onClearFilters: () => void;
   onFieldFilter: (key: FieldFilterKey, value: string) => void;
-  onGroupCampaignsChange: (enabled: boolean) => void;
   onHarnessFilter: (value: string) => void;
   onLoadCampaignChildren?: (campaignKey: string) => void;
   onLoadMoreRows?: () => void;
@@ -410,10 +431,7 @@ export const SessionTable = (props: {
     getExpandedRowModel: getExpandedRowModel(),
     getSubRows: (row) => row.children ?? [],
     getRowCanExpand: (row) =>
-      Boolean(
-        row.original.children?.length ||
-          (props.groupCampaigns && row.original.campaignKey && props.onLoadCampaignChildren),
-      ),
+      Boolean(row.original.children?.length || (row.original.campaignKey && props.onLoadCampaignChildren)),
     getRowId: (row) => rowKey(row),
     meta: {
       onFieldFilter: props.onFieldFilter,
@@ -450,11 +468,16 @@ export const SessionTable = (props: {
         Boolean(column.tableColumn),
       ),
   );
+  const visibleColumnWidthTotal = createMemo(() =>
+    visibleColumns().reduce((sum, { columnDef }) => sum + (columnDef.meta?.widthPx ?? 140), 0),
+  );
+  const activeColumnPreset = () => sessionColumnPresetForVisibility(props.columnVisibility);
   const tableMinWidth = () =>
-    Math.max(
-      MIN_SESSION_TABLE_WIDTH,
-      visibleColumns().reduce((sum, { columnDef }) => sum + (columnDef.meta?.widthPx ?? 140), 0),
-    );
+    activeColumnPreset() ? MIN_SESSION_TABLE_WIDTH : Math.max(MIN_SESSION_TABLE_WIDTH, visibleColumnWidthTotal());
+  const tableColumnWidth = (columnDef: SessionColumnDef): string => {
+    const widthPx = columnDef.meta?.widthPx ?? 140;
+    return activeColumnPreset() ? `${(widthPx / visibleColumnWidthTotal()) * 100}%` : `${widthPx}px`;
+  };
   const rowModelRows = createMemo(() => {
     track(tableData(), props.sorting);
     return measureClientPerf(
@@ -468,6 +491,7 @@ export const SessionTable = (props: {
     active: () => surfaceMode() === 'desktop',
     maxRows: DESKTOP_MAX_WINDOW_ROWS,
     metricName: 'aiUsage.web.client.compute.sessionTableVirtualRows',
+    minimumHeight: DESKTOP_ROW_HEIGHT * 3,
     overscanRows: DESKTOP_OVERSCAN_ROWS,
     rowHeight: DESKTOP_ROW_HEIGHT,
     rows: rowModelRows,
@@ -485,6 +509,7 @@ export const SessionTable = (props: {
     active: () => surfaceMode() === 'mobile',
     maxRows: MOBILE_MAX_WINDOW_ROWS,
     metricName: 'aiUsage.web.client.compute.sessionSummaryVirtualRows',
+    minimumHeight: MOBILE_ROW_HEIGHT,
     overscanRows: MOBILE_OVERSCAN_ROWS,
     rowHeight: MOBILE_ROW_HEIGHT,
     rows: rowModelRows,
@@ -494,6 +519,25 @@ export const SessionTable = (props: {
   onMount(() => {
     const controller = createSessionSurfaceModeController(browserSessionSurfaceModeEnvironment());
     onCleanup(controller.start(setSurfaceMode));
+  });
+
+  let sessionRegionStartElement: HTMLDivElement | undefined;
+  let hasAnchoredSessionRegion = false;
+  createEffect(() => {
+    const mode = surfaceMode();
+    const activeSurface = mode === 'desktop' ? desktopVirtualSurface : mobileVirtualSurface;
+    const activeElement = mode === 'pending' ? undefined : activeSurface.element();
+    const regionStart = sessionRegionStartElement;
+    if (hasAnchoredSessionRegion || !activeElement || !regionStart) {
+      return;
+    }
+
+    const frame = requestAnimationFrame(() => {
+      hasAnchoredSessionRegion = true;
+      regionStart.scrollIntoView({ block: 'start' });
+      activeSurface.updateViewport();
+    });
+    onCleanup(() => cancelAnimationFrame(frame));
   });
 
   createEffect(() => {
@@ -551,16 +595,12 @@ export const SessionTable = (props: {
       }
       const state = props.campaignChildren?.get(campaignKey);
       return state?.loading || state?.nextCursor
-        ? [{ campaignKey, loading: state?.loading === true, sessionLabel: row.sessionLabel }]
+        ? [{ campaignKey, loading: state?.loading === true, sessionLabel: boundedSessionListLabel(row.sessionLabel) }]
         : [];
     });
   });
 
   createEffect(() => {
-    if (!props.groupCampaigns) {
-      setExpanded({});
-      return;
-    }
     const selectedKey = props.selectedKey;
     if (!selectedKey) {
       return;
@@ -600,16 +640,13 @@ export const SessionTable = (props: {
       }
       when={props.rows.length}
     >
-      <div class={tableControls}>
-        <Checkbox
-          checked={props.groupCampaigns}
-          onCheckedChange={(checked) => {
-            props.onGroupCampaignsChange(checked);
-            setExpanded({});
-          }}
-        >
-          Group campaigns
-        </Checkbox>
+      <div
+        class={tableControls}
+        data-session-region-start
+        ref={(element) => {
+          sessionRegionStartElement = element;
+        }}
+      >
         <Show when={surfaceMode() === 'desktop'}>
           <div class={sessionDesktopControl}>
             <SessionColumnControls
@@ -654,7 +691,7 @@ export const SessionTable = (props: {
       </Show>
       <Show when={surfaceMode() === 'desktop'}>
         <div
-          class={cx(tableWrap, surfaceMode() === 'desktop' ? desktopTableSurface : undefined)}
+          class={cx(tableWrap, sessionViewportSurface, surfaceMode() === 'desktop' ? desktopTableSurface : undefined)}
           data-session-surface={surfaceMode()}
           onScroll={desktopVirtualSurface.updateViewport}
           ref={desktopVirtualSurface.setElement}
@@ -666,7 +703,7 @@ export const SessionTable = (props: {
                   {({ columnDef, tableColumn }) => (
                     <th
                       class={columnDef.meta?.headerClass}
-                      style={{ width: `${columnDef.meta?.widthPx ?? 140}px` }}
+                      style={{ width: tableColumnWidth(columnDef) }}
                       title={columnDef.meta?.title}
                     >
                       <SortHeader column={tableColumn} label={sessionColumnHeader(columnDef)} />
@@ -732,7 +769,7 @@ export const SessionTable = (props: {
       <Show when={surfaceMode() === 'mobile'}>
         <ul
           aria-label="Session summaries"
-          class={cx(mobileSummarySurface, sessionSummaryViewport)}
+          class={cx(mobileSummarySurface, sessionSummaryViewport, sessionViewportSurface)}
           data-session-surface="mobile"
           onScroll={mobileVirtualSurface.updateViewport}
           ref={mobileVirtualSurface.setElement}

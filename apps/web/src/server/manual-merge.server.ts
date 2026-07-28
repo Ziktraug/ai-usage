@@ -7,7 +7,7 @@ import {
   type ManualMergeImportInput,
   type UsageFileMergeService,
 } from '@ai-usage/usage-merge';
-import { usageStorePath } from '@ai-usage/usage-store';
+import { queryUsageMachineFleet, usageStorePath } from '@ai-usage/usage-store';
 import { Cause, Effect, Option, Runtime } from 'effect';
 import type { ManualOperationResult } from '../manual-transfer-contract';
 import { invalidateReportPayloadForMutation } from './report-payload.server';
@@ -66,6 +66,22 @@ const runService = async <A>(
   try {
     const service = await getService();
     return { ok: true, data: await Effect.runPromise(operation(service)) };
+  } catch (error) {
+    return errorResult(error);
+  }
+};
+
+export const queryManualSyncFleetForServer = async () => {
+  try {
+    const data = await Effect.runPromise(
+      Effect.gen(function* () {
+        const storage = yield* LocalHistoryStorage;
+        const currentMachine = yield* ensureMachineConfig;
+        const fleet = yield* queryUsageMachineFleet({ dbPath: usageStorePath(storage.home) });
+        return { currentMachine, ...fleet };
+      }).pipe(Effect.provide(LocalHistoryStorageLive)),
+    );
+    return { data, ok: true } as const;
   } catch (error) {
     return errorResult(error);
   }

@@ -263,6 +263,7 @@ const createSessionSource = (input: {
         changed: imported.inserted > 0 || imported.updated > 0,
         inputCount: collection.rows.length,
         outputCount: rows.length,
+        servedProjectionChanged: imported.fleetChanged,
         warnings,
       };
     }),

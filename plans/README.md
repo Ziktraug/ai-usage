@@ -65,6 +65,13 @@ request unless the user explicitly asks.
 | 042 | Document the quota app-server boundary | P1 | S | - | DONE |
 | 043 | Deepen the web process runtime seam | P2 | M | 038 | DONE |
 | 044 | Unify the exact-revision query lifecycle | P2 | M | 043 | DONE |
+| 045 | Valorize the Report Dimensions and Make the Work Unit Honest | P1 | XL | - | DONE |
+| 046 | Close the Verified Presentation Defects | P2 | M | - | DONE |
+| 047 | Make Grouping Portable User Data, for Projects and Campaigns | P2 | L | 045 wave 4 | REJECTED (portable grouping is unnecessary and three STOPs refuted its merge domain) |
+| 048 | Restore Multi-Harness Visibility After the Origin Default | P0 | S | 045 | DONE |
+| 049 | Make Undeclared Origin a Gap, Not a Category | P1 | M | 048 | DONE |
+| 050 | Make the E2E Gate Deterministic | P0 | S | - | DONE |
+| 051 | Allow Local Campaign Label Overrides | P3 | M | 045 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -456,3 +463,51 @@ sequence overlapping files and rebase/re-read before execution.
 Plans 036-037 are outside this sequence. Plan 036 remains historical design
 context; plan 037 may supersede only the clauses named in its ADR 0008 step and
 must preserve all other accepted plan-036 guarantees.
+
+Plans 045-047 are outside this sequence too. All three were sourced from the
+2026-07-26 UI/UX/product review of the running app, conducted against the live dev
+server rather than by reading source, then refined through a decision interview
+with the maintainer the same day. They were written at `96b3dff` and re-verified
+against `3406147`: that merge touches none of their report, dimension, collector, or
+provenance files, and their code anchors were re-checked line by line.
+
+- Plan 045 owns product direction: the work-volume unit, which dimensions carry
+  reading weight, origin and campaign modelling, and the navigation of the three
+  principal views. Its framing section and its *Decisions locked* table are
+  authoritative — "Estimated API-equivalent value" is a proxy for quantity of work,
+  not a spend or value claim, so no executor may add ROI, break-even, or budget
+  features under it.
+- Plan 046 owns presentation only: 26 verified defects in labels, layout, and
+  vocabulary. It must not change aggregation or information architecture.
+- Plan 047 is rejected. Multidimensional reporting and session transfer are
+  already delivered without portable grouping; local project groups can already
+  be created and renamed. Three correct pre-production STOPs refuted successively
+  its timestamp model, per-selector membership model, and claimed portable domain.
+  It does not supersede `docs/project-grouping-plan.md`.
+- Ownership boundaries that prevent duplicated work: plan 046 defers its row 16
+  (navigation divergence) to plan 045 wave 5, because the left rail replaces
+  per-route headers entirely; it defers its row 25 to plan 045 wave 4; and it stops
+  on its row 5 until plan 045 wave 1 lands the three-state result. Plan 046's mobile
+  item is scoped to the filter stack only, since the rail removes the mobile
+  navigation buttons.
+- Plans 045 and 046 may run in parallel with different executors. Plan 047 is
+  rejected and must not execute. Plan 045 introduced no storage for campaign
+  labels; any optional local presentation state belongs only to plan 051.
+- Plan 045 waves 0 and 3b are measurement-only and produce no production diff. Both
+  gate later scope, so take them first. Their findings belong in plan 045's
+  Execution log, which is currently empty by design.
+- Plan 045 deliberately leaves one dimension unpromoted: git awareness is recent and
+  its cross-harness reliability is unmeasured, so branch and commit stay a drawer
+  detail until wave 0 reports. Promotion is a separate decision, and wave 0 carries
+  a STOP forbidding it inside that plan.
+- Nothing in plan 045 is open: its *Decisions locked* table and its *Copy* section
+  are both authoritative. The Report range card is explicitly **not** to be
+  compacted — it is the maintainer's primary indicator and it filters the Sessions
+  view — but its internal order is reversed so that what you read sits above what
+  you adjust.
+- Plan 051 is the only retained grouping-adjacent follow-up. It allows an
+  occasional campaign name to override the now-readable derived label in local
+  presentation. It adds no campaign grouping, project-group change, portable
+  data, merge-bundle field, `usage-store` state, or conflict semantics. Execute it
+  separately after the current multidimensional-reporting PR; it is not a merge
+  gate for plans 045, 046, 048, 049, or 050.
