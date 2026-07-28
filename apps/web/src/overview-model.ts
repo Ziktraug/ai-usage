@@ -616,7 +616,7 @@ export const buildOverviewSessionItems = (
     kind: 'campaign',
     row: campaign.root,
     campaign,
-    label: campaign.root.sessionLabel,
+    label: campaign.label,
     harness: campaign.root.harness,
     costApprox: campaign.visibleTotals.totalCost,
     costKnown: campaign.visibleTotals.costKnown,

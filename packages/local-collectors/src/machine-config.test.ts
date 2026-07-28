@@ -6,6 +6,7 @@ import path from 'node:path';
 import { Effect } from 'effect';
 import { formatLocalHistoryError } from './errors';
 import { createLocalHistoryStorage, LocalHistoryStorage } from './local-history';
+import './machine-config.campaign-label.test';
 import {
   aiUsageConfigPath,
   machineConfigPath,

@@ -123,6 +123,10 @@ describe('dashboard session selection', () => {
       selection.toggleTableRow(campaignRoot);
       expect(selection.selectedRow()).toBe(campaignRoot);
       expect(selection.selectedCampaign()).toBe(campaign);
+      expect(selection.selectedCampaignLabelContext()).toEqual({
+        campaignKey: campaign.campaignKey,
+        derivedLabel: campaign.root.sessionLabel,
+      });
       expect(selection.analysisTarget()).toMatchObject({
         campaignKey: campaign.campaignKey,
         kind: 'campaign-root',
@@ -132,8 +136,10 @@ describe('dashboard session selection', () => {
       selection.toggleTableRow(campaignRoot);
       expect(selection.selectedRow()).toBeNull();
       expect(selection.analysisTarget()).toBeNull();
+      expect(selection.selectedCampaignLabelContext()).toBeNull();
 
       selection.inspectOverview(firstStandalone);
+      expect(selection.selectedCampaignLabelContext()).toBeNull();
       selection.navigate(1);
       expect(selection.selectedRow()).toBe(secondStandalone);
       expect(selection.analysisTarget()).toMatchObject({
@@ -179,6 +185,10 @@ describe('dashboard session selection', () => {
       selection.toggleTableRow(firstStandalone);
       await flushPromises();
       expect(selection.analysisRevision()).toBe(query.revision);
+      expect(selection.selectedCampaignLabelContext()).toEqual({
+        campaignKey: `campaign:${firstStandalone.rowId}`,
+        derivedLabel: firstStandalone.sessionLabel,
+      });
       expect(selection.drawerNavigation()).toMatchObject({
         loading: false,
         next: secondStandalone,
@@ -198,12 +208,14 @@ describe('dashboard session selection', () => {
         kind: 'session',
         reportRowId: secondStandalone.rowId,
       });
+      expect(selection.selectedCampaignLabelContext()).toBeNull();
       expect(selectedIds).toEqual([firstStandalone.rowId, secondStandalone.rowId]);
 
       selection.close();
       expect(selection.selectedRow()).toBeNull();
       expect(selection.analysisRevision()).toBeNull();
       expect(selection.drawerNavigation()).toMatchObject({ loading: false, next: null, previous: null });
+      expect(selection.selectedCampaignLabelContext()).toBeNull();
       expect(selectedIds).toEqual([firstStandalone.rowId, secondStandalone.rowId, null]);
     } finally {
       dispose();

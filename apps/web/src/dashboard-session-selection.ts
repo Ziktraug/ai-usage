@@ -1,5 +1,6 @@
 import { type SessionNeighborResult, sessionNeighborFingerprint } from '@ai-usage/report-core/session-query';
 import { type Accessor, batch, createEffect, createSignal, onCleanup, untrack } from 'solid-js';
+import type { CampaignLabelContext } from './campaign-label-overrides';
 import type { CampaignView } from './dashboard-model';
 import {
   type SessionAnalysisTarget,
@@ -48,16 +49,18 @@ export interface DashboardSessionSelection {
   drawerNavigation: Accessor<DashboardSessionDrawerNavigation | undefined>;
   drawerRows: Accessor<DashboardRow[]>;
   handleKeyDown: (event: Pick<KeyboardEvent, 'key' | 'preventDefault' | 'target'>) => void;
-  inspectOverview: (row: DashboardRow) => void;
+  inspectOverview: (row: DashboardRow, campaignLabelContext?: CampaignLabelContext | null) => void;
   navigate: (delta: number) => void;
   selectDrawerSession: (row: DashboardRow) => void;
   selectedCampaign: Accessor<CampaignView | null>;
+  selectedCampaignLabelContext: Accessor<CampaignLabelContext | null>;
   selectedKey: Accessor<string | null>;
   selectedRow: Accessor<DashboardRow | null>;
   toggleTableRow: (row: DashboardRow) => void;
 }
 
 interface SessionSelectionValue {
+  campaignLabelContext: CampaignLabelContext | null;
   key: string | null;
   navigationRow: DashboardRow | null;
   revision: string | null;
@@ -80,6 +83,9 @@ export const createDashboardSessionSelection = (
   const [selectedNavigationRow, setSelectedNavigationRow] = createSignal<DashboardRow | null>(null);
   const [analysisTarget, setAnalysisTarget] = createSignal<SessionAnalysisTarget | null>(null);
   const [analysisRevision, setAnalysisRevision] = createSignal<string | null>(null);
+  const [selectedCampaignLabelContext, setSelectedCampaignLabelContext] = createSignal<CampaignLabelContext | null>(
+    null,
+  );
   const [neighbors, setNeighbors] = createSignal<SessionNeighborResult>();
   const [neighborsLoading, setNeighborsLoading] = createSignal(false);
 
@@ -124,6 +130,20 @@ export const createDashboardSessionSelection = (
     );
   };
 
+  const campaignLabelContextForTableRow = (row: DashboardRow, servedActive: boolean): CampaignLabelContext | null => {
+    if (servedActive) {
+      const pageItem = options.served?.state()?.items.find((item) => item.row.rowId === row.rowId);
+      return pageItem
+        ? {
+            campaignKey: pageItem.campaignKey,
+            derivedLabel: pageItem.row.sessionLabel,
+          }
+        : null;
+    }
+    const campaign = options.local.campaigns().find((candidate) => candidate.root.rowId === row.rowId);
+    return campaign ? { campaignKey: campaign.campaignKey, derivedLabel: campaign.root.sessionLabel } : null;
+  };
+
   const neighborRequests = options.served
     ? createSessionNeighborRequestController({
         loadNeighbors: (rowId) => options.served?.coordinator.loadNeighbors(rowId) ?? Promise.resolve(undefined),
@@ -157,6 +177,7 @@ export const createDashboardSessionSelection = (
 
   const setSelection = (selection: SessionSelectionValue): void => {
     batch(() => {
+      setSelectedCampaignLabelContext(selection.campaignLabelContext);
       setSelectedNavigationRow(selection.navigationRow);
       setAnalysisTarget(selection.target);
       setAnalysisRevision(selection.revision);
@@ -167,7 +188,7 @@ export const createDashboardSessionSelection = (
   };
 
   const close = (): void => {
-    setSelection({ key: null, navigationRow: null, revision: null, target: null });
+    setSelection({ campaignLabelContext: null, key: null, navigationRow: null, revision: null, target: null });
   };
 
   const navigate = (delta: number): void => {
@@ -176,6 +197,7 @@ export const createDashboardSessionSelection = (
       const next = delta > 0 ? neighbors()?.next : neighbors()?.previous;
       if (next) {
         setSelection({
+          campaignLabelContext: null,
           key: rowKey(next),
           navigationRow: next,
           revision: servedState.query.revision,
@@ -192,6 +214,7 @@ export const createDashboardSessionSelection = (
     const next = rows[index + delta];
     if (next) {
       setSelection({
+        campaignLabelContext: null,
         key: rowKey(next),
         navigationRow: next,
         revision: null,
@@ -218,6 +241,7 @@ export const createDashboardSessionSelection = (
         })
       : null;
     setSelection({
+      campaignLabelContext: next ? campaignLabelContextForTableRow(row, servedActive) : null,
       key: next,
       navigationRow: next ? row : null,
       revision: next ? (options.served?.state()?.query.revision ?? null) : null,
@@ -225,8 +249,9 @@ export const createDashboardSessionSelection = (
     });
   };
 
-  const inspectOverview = (row: DashboardRow): void => {
+  const inspectOverview = (row: DashboardRow, campaignLabelContext?: CampaignLabelContext | null): void => {
     setSelection({
+      campaignLabelContext: campaignLabelContext ?? null,
       key: rowKey(row),
       navigationRow: row,
       revision: options.overviewRevision(),
@@ -236,6 +261,7 @@ export const createDashboardSessionSelection = (
 
   const selectDrawerSession = (row: DashboardRow): void => {
     setSelection({
+      campaignLabelContext: null,
       key: rowKey(row),
       navigationRow: row,
       revision: options.served?.state()?.query.revision ?? null,
@@ -289,6 +315,7 @@ export const createDashboardSessionSelection = (
     navigate,
     selectDrawerSession,
     selectedCampaign,
+    selectedCampaignLabelContext,
     selectedKey,
     selectedRow,
     toggleTableRow,

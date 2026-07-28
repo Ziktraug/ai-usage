@@ -46,6 +46,16 @@ import {
   untrack,
 } from 'solid-js';
 import {
+  type CampaignLabelApi,
+  createCampaignLabelController,
+  createLiveCampaignLabelApi,
+} from './campaign-label-controller';
+import {
+  indexCampaignLabelOverrides,
+  presentCampaignTimelineSeries,
+  presentServedCampaignDisplayRow,
+} from './campaign-label-overrides';
+import {
   logClientPerf,
   logNavigationPerf,
   measureClientPerf,
@@ -236,8 +246,21 @@ const supportForFocusedBootstrap = (bootstrap: FocusedSupportResult): WebReportP
   const { rows: _rows, ...support } = payloadForFocusedBootstrap(bootstrap);
   return support;
 };
+const campaignLabelApiForRuntime = (
+  runtimeMode: RuntimeMode,
+  injectedApi: CampaignLabelApi | undefined,
+): CampaignLabelApi | undefined => {
+  if (runtimeMode === 'live') {
+    return injectedApi ?? createLiveCampaignLabelApi();
+  }
+  if (runtimeMode === 'e2e') {
+    return injectedApi;
+  }
+  return;
+};
 
 export const Dashboard = (props: {
+  campaignLabelApi?: CampaignLabelApi;
   initialPayload?: WebReportPayload;
   machineFreshness: MachineFreshnessSnapshot;
   quotaHistoryFixture?: ProviderQuotaHistoryResult;
@@ -277,6 +300,16 @@ export const Dashboard = (props: {
   });
   const runtimeMode = props.runtimeMode ?? 'live';
   const isDemo = runtimeMode === 'demo';
+  const campaignLabelApi = campaignLabelApiForRuntime(runtimeMode, props.campaignLabelApi);
+  const campaignLabels = createCampaignLabelController(campaignLabelApi);
+  const campaignLabelIndex = createMemo(() => indexCampaignLabelOverrides(campaignLabels.overrides()));
+  onMount(async () => {
+    if (isDemo) {
+      campaignLabels.skipLoad();
+      return;
+    }
+    await campaignLabels.load();
+  });
   const hasReportData = Boolean(props.initialPayload || props.servedBootstrap || runtimeMode !== 'live');
   const servedSessionQueries = Boolean(focusedStore);
   const [servedSessionState, setServedSessionState] = createSignal<SessionQueryState>();
@@ -487,7 +520,7 @@ export const Dashboard = (props: {
   const campaignViews = createMemo(() =>
     measureClientPerf(
       'aiUsage.web.client.compute.campaignViews',
-      () => buildCampaignViews(reportRows(), tableFilteredRows()),
+      () => buildCampaignViews(reportRows(), tableFilteredRows(), campaignLabels.labelFor),
       (campaigns) => ({ campaigns: campaigns.length }),
     ),
   );
@@ -499,7 +532,11 @@ export const Dashboard = (props: {
     ),
   );
   const visibleSessionTableRows = createMemo(() =>
-    servedSessionQueries ? sessionRowsForState(servedSessionState()) : sessionTableRows(),
+    servedSessionQueries
+      ? sessionRowsForState(servedSessionState()).map((row) =>
+          presentServedCampaignDisplayRow(row, campaignLabelIndex()),
+        )
+      : sessionTableRows(),
   );
   const sessionSelection = createDashboardSessionSelection({
     local: { campaigns: campaignViews, reportRows, sortedRows },
@@ -520,6 +557,31 @@ export const Dashboard = (props: {
     const navigation = sessionSelection.drawerNavigation();
     return navigation ? { navigation } : {};
   });
+  const selectedCampaignLabelEditor = createMemo(() => {
+    if (isDemo) {
+      return;
+    }
+    const context = sessionSelection.selectedCampaignLabelContext();
+    if (!context) {
+      return;
+    }
+    return {
+      campaignKey: context.campaignKey,
+      effectiveLabel: campaignLabels.labelFor(context.campaignKey, context.derivedLabel),
+      hasOverride: campaignLabels.overrideFor(context.campaignKey) !== undefined,
+      loadError: campaignLabels.loadError(),
+      loadStatus: campaignLabels.loadStatus(),
+      mutationError: campaignLabels.mutationError(),
+      mutationStatus: campaignLabels.mutationStatus(),
+      onRename: (label: string) => campaignLabels.rename(context.campaignKey, label),
+      onReset: () => campaignLabels.reset(context.campaignKey, context.derivedLabel),
+      onRetry: campaignLabels.retryLoad,
+    };
+  });
+  const selectedCampaignLabelEditorProps = () => {
+    const editor = selectedCampaignLabelEditor();
+    return editor ? { campaignLabelEditor: editor } : {};
+  };
   const servedReportSession =
     focusedSource && focusedStore && sessionQueryCoordinator
       ? createDashboardServedReportSession({ focusedSource, focusedStore, sessionCoordinator: sessionQueryCoordinator })
@@ -925,6 +987,7 @@ export const Dashboard = (props: {
             focusedTimelineLoading={reportLifecycle.focusedTimelineLoading()}
             onDateRangeCommit={commitTableDateRange}
             onDimensionFilter={setTimelineDimensionFilter}
+            presentCampaignSeries={(series) => presentCampaignTimelineSeries(series, campaignLabelIndex())}
             presentMachineLabel={presentMachineLabel}
             rows={timelineRows()}
           />
@@ -979,6 +1042,7 @@ export const Dashboard = (props: {
                       advancedAnalysisLoading={reportLifecycle.advancedAnalysisLoading()}
                       campaigns={campaignViews()}
                       focused={focusedOverviewForDisplay()}
+                      labelFor={campaignLabels.labelFor}
                       onSelectDay={focusDay}
                       onSelectSession={sessionSelection.inspectOverview}
                       rangeLabel={dateRange.label()}
@@ -1146,6 +1210,7 @@ export const Dashboard = (props: {
             {(row) => (
               <SessionDrawer
                 {...drawerNavigationProps()}
+                {...selectedCampaignLabelEditorProps()}
                 onClearFilters={clearFilters}
                 onClose={sessionSelection.close}
                 onFieldFilter={setFieldFilter}

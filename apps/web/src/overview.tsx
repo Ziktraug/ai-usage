@@ -85,6 +85,11 @@ import type {
   FocusedSessionShape,
 } from '@ai-usage/report-core/focused-report-query';
 import { createEffect, createMemo, createSignal, For, type JSX, Show } from 'solid-js';
+import {
+  type CampaignLabelContext,
+  focusedCampaignLabelContext,
+  presentFocusedOverviewSessionItem,
+} from './campaign-label-overrides';
 import type { CampaignView } from './dashboard-model';
 import { toDateInputValue } from './date-range';
 import type { FocusedOverviewDisplayModel } from './focused-report-client';
@@ -98,6 +103,7 @@ import {
   buildTopSessions,
   type HeatDay,
   nextHeatmapFocusIndex,
+  type OverviewSessionItem,
   PUNCH_DAYS,
 } from './overview-model';
 import {
@@ -120,13 +126,29 @@ export interface OverviewProps {
   advancedAnalysisLoading?: boolean;
   campaigns: CampaignView[];
   focused?: FocusedOverviewDisplayModel | undefined;
+  labelFor: (campaignKey: string, derivedLabel: string) => string;
   onSelectDay: (day: Date) => void;
-  onSelectSession: (row: DashboardRow) => void;
+  onSelectSession: (row: DashboardRow, campaignLabelContext?: CampaignLabelContext | null) => void;
   rangeLabel: string;
   rows: DashboardRow[];
   summary: ReportSummary;
   timelineRows: DashboardRow[];
 }
+
+const campaignLabelContextForOverviewItem = (
+  item: FocusedOverviewSessionItem | OverviewSessionItem,
+): CampaignLabelContext | null => {
+  if (item.kind !== 'campaign') {
+    return null;
+  }
+  if ('campaign' in item) {
+    return {
+      campaignKey: item.campaign.campaignKey,
+      derivedLabel: item.campaign.root.sessionLabel,
+    };
+  }
+  return focusedCampaignLabelContext(item);
+};
 
 const visuallyHidden = css({ srOnly: true });
 const Panel = (props: { title: string; sub?: string; children: JSX.Element; headingId?: string }) => (
@@ -485,8 +507,9 @@ const TokenAnatomy = (props: { summary: ReportSummary }) => {
 const SessionShape = (props: {
   campaigns: CampaignView[];
   focused: FocusedSessionShape | null | undefined;
+  labelFor: (campaignKey: string, derivedLabel: string) => string;
   rows: DashboardRow[];
-  onSelectSession: (row: DashboardRow) => void;
+  onSelectSession: (row: DashboardRow, campaignLabelContext?: CampaignLabelContext | null) => void;
 }) => {
   const data = createMemo(() => {
     const focused = props.focused;
@@ -500,6 +523,8 @@ const SessionShape = (props: {
       (Math.log10(Math.max(value, Number.EPSILON)) - domain.min) / Math.max(Number.EPSILON, domain.max - domain.min);
     return {
       ...focused,
+      outliers: focused.outliers.map((item) => presentFocusedOverviewSessionItem(item, props.labelFor)),
+      points: focused.points.map((item) => presentFocusedOverviewSessionItem(item, props.labelFor)),
       xPct: (value: number) => 4 + logRatio(value, focused.xDomain) * 92,
       yPct: (value: number) => 92 - logRatio(value, focused.yDomain) * 84,
     };
@@ -597,7 +622,7 @@ const SessionShape = (props: {
                   <button
                     aria-label={`Inspect ${item.kind === 'campaign' ? 'campaign' : 'session'}: ${item.label}`}
                     class={scatterOutlierButton}
-                    onClick={() => props.onSelectSession(item.row)}
+                    onClick={() => props.onSelectSession(item.row, campaignLabelContextForOverviewItem(item))}
                     type="button"
                   >
                     <span>{item.label}</span>
@@ -789,10 +814,15 @@ const Records = (props: {
 const TopSessions = (props: {
   campaigns: CampaignView[];
   focused: FocusedOverviewSessionItem[] | undefined;
+  labelFor: (campaignKey: string, derivedLabel: string) => string;
   rows: DashboardRow[];
-  onSelectSession: (row: DashboardRow) => void;
+  onSelectSession: (row: DashboardRow, campaignLabelContext?: CampaignLabelContext | null) => void;
 }) => {
-  const top = createMemo(() => props.focused ?? buildTopSessions(props.rows, 5, props.campaigns));
+  const top = createMemo(() =>
+    props.focused
+      ? props.focused.map((item) => presentFocusedOverviewSessionItem(item, props.labelFor))
+      : buildTopSessions(props.rows, 5, props.campaigns),
+  );
 
   return (
     <Show when={top().length}>
@@ -803,7 +833,11 @@ const TopSessions = (props: {
         <div class={topList}>
           <For each={top()}>
             {(item, index) => (
-              <button class={topRow} onClick={() => props.onSelectSession(item.row)} type="button">
+              <button
+                class={topRow}
+                onClick={() => props.onSelectSession(item.row, campaignLabelContextForOverviewItem(item))}
+                type="button"
+              >
                 <span class={topRank}>{index() + 1}</span>
                 <span class={topTitle}>
                   {item.label}
@@ -854,6 +888,7 @@ export const Overview = (props: OverviewProps) => {
         <TopSessions
           campaigns={props.campaigns}
           focused={props.focused?.view.topSessions}
+          labelFor={props.labelFor}
           onSelectSession={props.onSelectSession}
           rows={props.rows}
         />
@@ -877,6 +912,7 @@ export const Overview = (props: OverviewProps) => {
                             <SessionShape
                               campaigns={props.campaigns}
                               focused={props.focused?.view.sessionShape}
+                              labelFor={props.labelFor}
                               onSelectSession={props.onSelectSession}
                               rows={props.rows}
                             />

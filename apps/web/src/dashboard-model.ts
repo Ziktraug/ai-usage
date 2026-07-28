@@ -111,6 +111,7 @@ export interface CampaignView {
   allRows: DashboardRow[];
   allTotals: CampaignTotals;
   campaignKey: CampaignKey;
+  label: string;
   root: DashboardRow;
   rootSourceSessionId: string;
   totalCount: number;
@@ -132,7 +133,11 @@ const campaignIdentityForRow = sessionCampaignIdentityForRow;
 export const buildCampaignTotals = (rows: DashboardRow[], root?: DashboardRow): CampaignTotals =>
   buildSessionCampaignTotals(rows, root);
 
-export const buildCampaignViews = (allRows: DashboardRow[], visibleRows: DashboardRow[]): CampaignView[] => {
+export const buildCampaignViews = (
+  allRows: DashboardRow[],
+  visibleRows: DashboardRow[],
+  labelFor: (campaignKey: string, derivedLabel: string) => string = (_campaignKey, derivedLabel) => derivedLabel,
+): CampaignView[] => {
   const visibleKeys = new Set(visibleRows.map(rowKeyForCampaignMembership));
   const groups = new Map<CampaignKey, DashboardRow[]>();
 
@@ -174,6 +179,7 @@ export const buildCampaignViews = (allRows: DashboardRow[], visibleRows: Dashboa
 
     campaigns.push({
       campaignKey,
+      label: labelFor(campaignKey, root.sessionLabel),
       rootSourceSessionId: firstIdentity.rootSourceSessionId,
       root,
       visibleRows: visibleRowsForTotals,
@@ -351,7 +357,7 @@ const campaignDisplayRow = (campaign: CampaignView, sorting: SortingState): Dash
     rtkOutputTokens: totals.rtkOutputTokens,
     rtkSavedTokens: totals.rtkSavedTokens,
     partial,
-    sessionLabel: campaign.root.sessionLabel,
+    sessionLabel: campaign.label,
     sortDate: latestVisibleRow.sortDate,
     tokenTotal: totals.tokenTotal,
     tokCr: totals.cacheRead,

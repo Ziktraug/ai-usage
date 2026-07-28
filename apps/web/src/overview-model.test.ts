@@ -657,13 +657,16 @@ describe('overview model', () => {
     const soloB = row({ sessionLabel: 'Solo B', costApprox: 3, durationMs: 240_000 });
     const soloC = row({ sessionLabel: 'Solo C', costApprox: 1, durationMs: 360_000 });
     const rows = [campaignRoot, campaignChild, soloA, soloB, soloC];
-    const campaigns = buildCampaignViews(rows, rows);
+    const campaigns = buildCampaignViews(rows, rows, (campaignKey, derivedLabel) =>
+      campaignKey === 'machine-a:codex:root-1' ? 'Release train' : derivedLabel,
+    );
 
     const items = buildOverviewSessionItems(rows, campaigns);
     const top = buildTopSessions(rows, 2, campaigns);
     const shape = buildSessionShapeData(rows, campaigns);
 
-    expect(items.map((item) => item.label).sort()).toEqual(['Campaign root', 'Solo A', 'Solo B', 'Solo C']);
+    expect(campaigns[0]?.root.sessionLabel).toBe('Campaign root');
+    expect(items.map((item) => item.label).sort()).toEqual(['Release train', 'Solo A', 'Solo B', 'Solo C']);
     expect(top.map((item) => item.kind)).toEqual(['campaign', 'campaign']);
     expect(top.map((item) => item.costApprox)).toEqual([13, 12]);
     expect(top.map((item) => item.costKnown)).toEqual([false, true]);

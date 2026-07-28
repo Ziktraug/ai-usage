@@ -290,6 +290,40 @@ describe('dashboard model', () => {
     expect(orphanCampaign?.visibleCount).toBe(1);
   });
 
+  test('applies a campaign label without changing identity or aggregate values', () => {
+    const parent = sourcedRow('parent', { costApprox: 4, tokenTotal: 40 });
+    const child = sourcedRow('child', {
+      costApprox: 2,
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        parentSourceSessionId: 'parent',
+        rootSourceSessionId: 'parent',
+        sourceSessionId: 'child',
+      },
+    });
+    const rows = [parent, child];
+    const baselineCampaigns = buildCampaignViews(rows, rows);
+    const renamedCampaigns = buildCampaignViews(rows, rows, (campaignKey, derivedLabel) =>
+      campaignKey === 'machine-a:codex:parent' ? 'Release train' : derivedLabel,
+    );
+
+    const baselineCampaign = baselineCampaigns[0];
+    const renamedCampaign = renamedCampaigns[0];
+    const baselineRow = buildCampaignTableRows(rows, rows, [], baselineCampaigns)[0];
+    const renamedRow = buildCampaignTableRows(rows, rows, [], renamedCampaigns)[0];
+
+    expect(renamedCampaign?.label).toBe('Release train');
+    expect(renamedCampaign?.campaignKey).toBe(baselineCampaign?.campaignKey);
+    expect(renamedCampaign?.root).toBe(baselineCampaign?.root);
+    expect(renamedCampaign?.allTotals).toEqual(baselineCampaign?.allTotals);
+    expect(renamedCampaign?.visibleTotals).toEqual(baselineCampaign?.visibleTotals);
+    expect(baselineRow?.sessionLabel).toBe('parent');
+    expect(renamedRow?.sessionLabel).toBe('Release train');
+    expect(renamedRow?.campaignKey).toBe(baselineRow?.campaignKey);
+    expect(renamedRow?.costApprox).toBe(baselineRow?.costApprox);
+  });
+
   test('filters campaign origins before rolling classifier usage into the parent and keeps singletons', () => {
     const parent = sourcedRow('parent', { freshTokens: 30, origin: 'human' });
     const child = sourcedRow('child', {

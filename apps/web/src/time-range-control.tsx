@@ -416,6 +416,7 @@ export const TimeRangeControl = (props: {
     dimension: FocusedTimelineDimension;
     granularity: FocusedTimelineGranularity;
   }) => void;
+  presentCampaignSeries: (series: TimelineSeries) => TimelineSeries;
   presentMachineLabel: (value: string) => string;
   rows: DashboardRow[];
 }) => {
@@ -460,13 +461,15 @@ export const TimeRangeControl = (props: {
     if (!timeline) {
       return null;
     }
-    const series =
-      timeline.dimension === 'machine'
-        ? timeline.series.map((timelineSeries) => ({
-            ...timelineSeries,
-            label: timelineSeries.key ? props.presentMachineLabel(timelineSeries.key) : timelineSeries.label,
-          }))
-        : timeline.series;
+    let series = timeline.series;
+    if (timeline.dimension === 'machine') {
+      series = timeline.series.map((timelineSeries) => ({
+        ...timelineSeries,
+        label: timelineSeries.key ? props.presentMachineLabel(timelineSeries.key) : timelineSeries.label,
+      }));
+    } else if (timeline.dimension === 'campaign') {
+      series = timeline.series.map(props.presentCampaignSeries);
+    }
     return {
       ...timeline,
       series,

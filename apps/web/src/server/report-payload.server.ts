@@ -1,7 +1,17 @@
 import fs from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
-import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
-import { updateAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
+import {
+  createLocalHistoryStorage,
+  LocalHistoryStorage,
+  type LocalHistoryStorage as LocalHistoryStorageService,
+} from '@ai-usage/local-collectors/local-history';
+import { readAiUsageConfig, updateAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
+import {
+  type CampaignLabelOverride,
+  type CampaignLabelOverrideMutation,
+  parseCampaignLabelOverrideMutation,
+  parseCampaignLabelOverrides,
+} from '@ai-usage/report-core/campaign-label';
 import { type ProjectGroupConfig, parseProjectGroupConfigs } from '@ai-usage/report-core/project-group';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 import {
@@ -89,6 +99,43 @@ const perfEnvValue = () => process.env.AI_USAGE_PERF ?? readRootEnvValue('AI_USA
 const perfEnabled = () => perfEnvValue() === '1' || perfEnvValue() === 'true';
 
 export const reportPerfEnabled = () => perfEnabled();
+
+export const getCampaignLabelOverridesForServer = async (
+  storage: LocalHistoryStorageService = createLocalHistoryStorage(),
+): Promise<{ campaignLabelOverrides: CampaignLabelOverride[] }> => {
+  const config = await Effect.runPromise(readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)));
+  return { campaignLabelOverrides: parseCampaignLabelOverrides(config.campaignLabelOverrides ?? []) };
+};
+
+export const setCampaignLabelOverrideForServer = async (
+  input: CampaignLabelOverrideMutation,
+  storage: LocalHistoryStorageService = createLocalHistoryStorage(),
+): Promise<{ campaignLabelOverrides: CampaignLabelOverride[] }> => {
+  const mutation = parseCampaignLabelOverrideMutation(input);
+  const config = await Effect.runPromise(
+    updateAiUsageConfig((currentConfig) => {
+      const currentOverrides = parseCampaignLabelOverrides(currentConfig.campaignLabelOverrides ?? []);
+      const existingIndex = currentOverrides.findIndex(({ campaignKey }) => campaignKey === mutation.campaignKey);
+      let nextOverrides: CampaignLabelOverride[];
+      if (mutation.label === null) {
+        nextOverrides = currentOverrides.filter(({ campaignKey }) => campaignKey !== mutation.campaignKey);
+      } else if (existingIndex >= 0) {
+        nextOverrides = [...currentOverrides];
+        nextOverrides[existingIndex] = { campaignKey: mutation.campaignKey, label: mutation.label };
+      } else {
+        nextOverrides = [...currentOverrides, { campaignKey: mutation.campaignKey, label: mutation.label }];
+      }
+
+      const validatedOverrides = parseCampaignLabelOverrides(nextOverrides);
+      if (validatedOverrides.length === 0) {
+        const { campaignLabelOverrides: _campaignLabelOverrides, ...rest } = currentConfig;
+        return rest;
+      }
+      return { ...currentConfig, campaignLabelOverrides: validatedOverrides };
+    }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+  );
+  return { campaignLabelOverrides: parseCampaignLabelOverrides(config.campaignLabelOverrides ?? []) };
+};
 
 export const saveProjectGroupsForServer = async (projectGroups: ProjectGroupConfig[]) => {
   const validatedProjectGroups = parseProjectGroupConfigs(projectGroups);

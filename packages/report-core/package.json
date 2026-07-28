@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./analytics": "./src/analytics.ts",
     "./auth": "./src/auth.ts",
+    "./campaign-label": "./src/campaign-label.ts",
     "./csv": "./src/csv.ts",
     "./datasets": "./src/datasets.ts",
     "./focused-report-query": "./src/focused-report-query.ts",
