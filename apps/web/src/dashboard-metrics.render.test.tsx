@@ -10,6 +10,10 @@ interface MetricTileProps {
   label: string;
   value: string;
 }
+type MetricComparisonState = 'available' | 'full-range' | 'no-prior-data';
+interface MetricComparisonNoticeProps {
+  state: MetricComparisonState;
+}
 
 const viteServer = await createServer({
   appType: 'custom',
@@ -20,10 +24,20 @@ const viteServer = await createServer({
   server: { hmr: false, middlewareMode: true, ws: false },
 });
 const loaded: unknown = await viteServer.ssrLoadModule('/src/dashboard-metrics.tsx');
-if (!(loaded && typeof loaded === 'object' && 'MetricTile' in loaded && typeof loaded.MetricTile === 'function')) {
-  throw new Error('Vite did not load MetricTile');
+if (
+  !(
+    loaded &&
+    typeof loaded === 'object' &&
+    'MetricTile' in loaded &&
+    typeof loaded.MetricTile === 'function' &&
+    'MetricComparisonNotice' in loaded &&
+    typeof loaded.MetricComparisonNotice === 'function'
+  )
+) {
+  throw new Error('Vite did not load dashboard metric components');
 }
 const MetricTile = loaded.MetricTile as Component<MetricTileProps>;
+const MetricComparisonNotice = loaded.MetricComparisonNotice as Component<MetricComparisonNoticeProps>;
 const pendingSurfaceLoaded: unknown = await viteServer.ssrLoadModule('/src/dashboard-pending-surface.tsx');
 if (
   !(
@@ -40,6 +54,8 @@ afterAll(async () => viteServer.close());
 
 const render = (props: MetricTileProps): string => renderToString(() => createComponent(MetricTile, props));
 const renderPending = (): string => renderToString(() => createComponent(DashboardPendingSurface, {}));
+const renderComparison = (state: MetricComparisonState): string =>
+  renderToString(() => createComponent(MetricComparisonNotice, { state }));
 
 describe('MetricTile', () => {
   test('renders an on-face comparison basis and discoverable provenance control', () => {
@@ -60,6 +76,22 @@ describe('MetricTile', () => {
     expect(html).toContain('aria-label="About API value"');
     expect(html).toContain('aria-haspopup="dialog"');
     expect(html).toContain('title="About API value"');
+  });
+});
+
+describe('MetricComparisonNotice', () => {
+  test('renders one distinct explanation only when previous data is unavailable', () => {
+    const available = renderComparison('available');
+    const fullRange = renderComparison('full-range');
+    const noPriorData = renderComparison('no-prior-data');
+
+    expect(available).not.toContain('data-metric-comparison-state');
+    expect(fullRange).toContain('data-metric-comparison-state="full-range"');
+    expect(fullRange).toContain('No previous period exists before the full recorded range.');
+    expect(fullRange).not.toContain('No sessions exist in the previous period.');
+    expect(noPriorData).toContain('data-metric-comparison-state="no-prior-data"');
+    expect(noPriorData).toContain('No sessions exist in the previous period.');
+    expect(noPriorData).not.toContain('No previous period exists before the full recorded range.');
   });
 });
 

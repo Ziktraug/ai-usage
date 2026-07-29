@@ -9,6 +9,7 @@ import {
   popoverContent,
 } from '@ai-usage/design-system/report';
 import { Show } from 'solid-js';
+import type { DateRangeMode } from './date-range';
 import { fmtPct } from './shared';
 
 export interface MetricDelta {
@@ -22,6 +23,26 @@ export interface Metric {
   label: string;
   value: string;
 }
+
+export type MetricComparisonState = 'available' | 'full-range' | 'no-prior-data';
+
+const metricComparisonMessages: Record<Exclude<MetricComparisonState, 'available'>, string> = {
+  'full-range': 'No previous period exists before the full recorded range.',
+  'no-prior-data': 'No sessions exist in the previous period.',
+};
+
+export const metricComparisonStateFor = (
+  rangeMode: DateRangeMode,
+  previousSummary: object | null | undefined,
+): MetricComparisonState => {
+  if (previousSummary) {
+    return 'available';
+  }
+  return rangeMode === 'all' ? 'full-range' : 'no-prior-data';
+};
+
+export const metricComparisonMessage = (state: MetricComparisonState): string | null =>
+  state === 'available' ? null : metricComparisonMessages[state];
 
 const metricLabelRow = css({
   display: 'flex',
@@ -39,6 +60,14 @@ export const dashboardMetricGrid = css({
   },
   gap: '10px',
   my: '20px',
+});
+
+const metricComparisonNotice = css({
+  gridColumn: '1 / -1',
+  m: 0,
+  color: 'muted',
+  fontSize: '13px',
+  lineHeight: 1.5,
 });
 
 const metricInfoButton = css({
@@ -76,6 +105,19 @@ export const fmtDeltaPct = (pct: number) => {
 };
 
 export const metricDeltaFaceLabel = (pct: number): string => `${fmtDeltaPct(pct)} vs previous period`;
+
+export const MetricComparisonNotice = (props: { state: MetricComparisonState }) => {
+  const message = () => metricComparisonMessage(props.state);
+  return (
+    <Show when={message()}>
+      {(copy) => (
+        <p class={metricComparisonNotice} data-metric-comparison-state={props.state}>
+          {copy()}
+        </p>
+      )}
+    </Show>
+  );
+};
 
 // Period deltas read as context, not judgement: cost going up is not "bad",
 // so the arrow stays in the accent and the number in muted ink.

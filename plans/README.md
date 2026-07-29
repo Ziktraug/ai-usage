@@ -76,7 +76,7 @@ request unless the user explicitly asks.
 | 053 | Make Cursor and Project Line Measurements Honest | P1 | M | - | DONE |
 | 054 | Add Shareable Breakdown Sorting | P1 | S | - | DONE |
 | 055 | Make Focused Report Pending State Truthful | P1 | M | - | DONE |
-| 056 | Explain the Full-Range Comparison Boundary | P2 | S | - | TODO |
+| 056 | Explain the Full-Range Comparison Boundary | P2 | S | - | DONE |
 | 057 | Make Punchcard Cells Filter the Report | P2 | M | 055 | TODO |
 | 058 | Add Report Sharing and Safe CSV Export | P3 | M | 053, 054 | TODO |
 | 059 | Compare Machine Contributions on Sync | P3 | M | - | TODO |

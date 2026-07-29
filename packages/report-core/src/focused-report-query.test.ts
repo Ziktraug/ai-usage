@@ -192,6 +192,25 @@ describe('focused report query contracts', () => {
     ).toThrow('fingerprint');
   });
 
+  test('keeps full-range and bounded empty previous periods distinct from available prior data', () => {
+    const withPrior = projectFocusedOverview(rows, support, overviewRequest);
+    const withoutPrior = projectFocusedOverview(rows, support, {
+      ...overviewRequest,
+      query: {
+        ...overviewRequest.query,
+        range: { from: '2026-07-01T00:00:00.000Z', to: overviewRequest.query.range.to },
+      },
+    });
+    const fullRange = projectFocusedOverview(rows, support, {
+      ...overviewRequest,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    });
+
+    expect(withPrior.view.previousSummary?.sessionCount).toBe(1);
+    expect(withoutPrior.view.previousSummary).toBeNull();
+    expect(fullRange.view.previousSummary).toBeNull();
+  });
+
   test('groups focused timelines by campaign, machine, project identity, and declared origin', () => {
     const request = {
       ...overviewRequest,

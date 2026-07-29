@@ -65,7 +65,7 @@ import {
 import { SourceControlSummary } from './components/source-control-summary';
 import { CursorAttributionPanel } from './cursor-attribution-panel';
 import { FilterPill, fieldFilterLabels } from './dashboard-filters';
-import { dashboardMetricGrid, MetricTile } from './dashboard-metrics';
+import { dashboardMetricGrid, MetricComparisonNotice, MetricTile, metricComparisonStateFor } from './dashboard-metrics';
 import {
   buildCampaignTableRows,
   buildCampaignViews,
@@ -716,11 +716,13 @@ export const Dashboard = (props: {
   const visibleSessionCount = () =>
     servedSessionViewActive() ? (servedSessionState()?.sessionCount ?? 0) : visibleSummary().sessionCount;
   const hiddenCount = createMemo(() => hiddenSessionCount(totalSessionCount(), visibleSessionCount()));
-  const previousSummary = createMemo(
-    () =>
-      focusedStore?.overview()?.view.previousSummary ??
-      buildPreviousPeriodSummary(timelineRows(), dateRange.bounds(), generatedAt()),
-  );
+  const previousSummary = createMemo(() => {
+    if (focusedStore) {
+      return focusedStore.overview()?.view.previousSummary ?? null;
+    }
+    return buildPreviousPeriodSummary(timelineRows(), dateRange.bounds(), generatedAt());
+  });
+  const metricComparisonState = createMemo(() => metricComparisonStateFor(dateRange.mode(), previousSummary()));
   const saveProjectGroupConfigs = async (projectGroups: ProjectGroupConfig[]) => {
     const { saveProjectGroups } = await import('./server/report-payload');
     await saveProjectGroups({ data: { projectGroups } });
@@ -1209,6 +1211,7 @@ export const Dashboard = (props: {
                   </header>
                   <div class={secondaryMetricsGrid} id="additional-report-metrics">
                     <div class={dashboardMetricGrid} data-metric-grid>
+                      <MetricComparisonNotice state={metricComparisonState()} />
                       <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>
                     </div>
                   </div>
