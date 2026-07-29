@@ -3,7 +3,16 @@ import path from 'node:path';
 
 const workspacePackageParents = ['apps', 'packages'];
 const dependencyFields = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'] as const;
-const ignoredDirectories = new Set(['.git', '.turbo', '.output', 'dist', 'node_modules', 'styled-system']);
+const ignoredDirectories = new Set([
+  '.git',
+  '.output',
+  '.output-build',
+  '.output-dev',
+  '.turbo',
+  'dist',
+  'node_modules',
+  'styled-system',
+]);
 const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.ts', '.tsx']);
 const workspaceImportPattern =
   /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"](@ai-usage\/[^'"]+)['"]|\bimport\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)|\brequire\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)/g;

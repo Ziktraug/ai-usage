@@ -6,6 +6,8 @@
       "**/*.tsx",
       "**/*.json",
       "!**/.output",
+      "!**/.output-build",
+      "!**/.output-dev",
       "!**/.turbo",
       "!**/.worktrees",
       "!**/dist",

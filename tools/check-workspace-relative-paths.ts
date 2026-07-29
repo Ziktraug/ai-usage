@@ -1,7 +1,16 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const ignoredDirectories = new Set(['.git', '.turbo', '.output', 'dist', 'node_modules', 'styled-system']);
+const ignoredDirectories = new Set([
+  '.git',
+  '.output',
+  '.output-build',
+  '.output-dev',
+  '.turbo',
+  'dist',
+  'node_modules',
+  'styled-system',
+]);
 const ignoredFiles = new Set(['biome.json']);
 const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.json', '.mjs', '.ts', '.tsx', '.yaml', '.yml']);
 const relativeWorkspacePath = /\.\.\/(?:\.\.\/)*(?:apps|packages)\//g;

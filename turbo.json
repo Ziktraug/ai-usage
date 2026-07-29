@@ -18,8 +18,9 @@
       "outputs": ["styled-system/**"]
     },
     "@ai-usage/web#build": {
+      "cache": false,
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".output/**", "styled-system/**"]
+      "outputs": [".output-build/nitro/**", "styled-system/**"]
     },
     "@ai-usage/web#check": {
       "dependsOn": ["^build"],

@@ -6,6 +6,7 @@ import solid from 'vite-plugin-solid';
 import { PERSISTENT_SOURCE_RUNTIME_PACKAGES } from './src/server/persistent-source-runtime';
 import { getServerRuntimeMode } from './src/server/runtime-mode.server';
 import { manualSyncImportDevPlugin } from './vite-manual-sync-import';
+import { resolveViteRuntimePaths } from './vite-output-paths';
 import { createRetryableWarmup } from './vite-warmup';
 
 const serverFunctionEntrypoints = [
@@ -105,54 +106,63 @@ const tanStackServerFunctionWarmupPlugin = (): Plugin => ({
   },
 });
 
-export default defineConfig({
-  ...(getServerRuntimeMode() === 'demo' ? { envDir: false } : {}),
-  optimizeDeps: {
-    entries: ['src/routes/**/*.tsx'],
-    include: [...clientOptimizeDeps],
-  },
-  plugins: [
-    manualSyncImportDevPlugin(),
-    tanStackServerFunctionWarmupPlugin(),
-    tanstackStart({
-      router: {
-        codeSplittingOptions: {
-          defaultBehavior: [['component']],
-          // Splitting the root route leaves the served app SSR-only: navigation
-          // never hydrates. Keep this one route eager; nested routes still split.
-          splitBehavior: ({ routeId }) => (routeId === '/' ? [] : undefined),
-        },
-      },
-    }),
-    solid({ ssr: true }),
-    nitro({
-      handlers: [
-        {
-          handler: './server/routes/api/source-control.get.ts',
-          method: 'GET',
-          route: '/api/source-control',
-        },
-        {
-          handler: './server/routes/api/source-control.post.ts',
-          method: 'POST',
-          route: '/api/source-control/command',
-        },
-      ],
-      noExternals: [...PERSISTENT_SOURCE_RUNTIME_PACKAGES],
-      plugins: ['./server/plugins/source-control.ts'],
-      preset: 'bun',
-    }),
-    solidDepScanPlugin(),
-  ],
-  server: {
-    watch: {
-      // The design-system package writes Panda helpers in-place during check/build.
-      // If a dev server watches those generated files, HMR can import them mid-write
-      // and leave the client bundle unhydrated until a full restart.
-      ignored: ['**/packages/design-system/styled-system/**'],
+export default defineConfig((configEnvironment) => {
+  const { nitroBuildDirectory, nitroOutputDirectory, viteCacheDirectory } = resolveViteRuntimePaths(configEnvironment);
+
+  return {
+    ...(getServerRuntimeMode() === 'demo' ? { envDir: false } : {}),
+    cacheDir: viteCacheDirectory,
+    optimizeDeps: {
+      entries: ['src/routes/**/*.tsx'],
+      include: [...clientOptimizeDeps],
     },
-  },
-  resolve: {
-    dedupe: ['solid-js', 'solid-js/web'],
-  },
+    plugins: [
+      manualSyncImportDevPlugin(),
+      tanStackServerFunctionWarmupPlugin(),
+      tanstackStart({
+        router: {
+          codeSplittingOptions: {
+            defaultBehavior: [['component']],
+            // Splitting the root route leaves the served app SSR-only: navigation
+            // never hydrates. Keep this one route eager; nested routes still split.
+            splitBehavior: ({ routeId }) => (routeId === '/' ? [] : undefined),
+          },
+        },
+      }),
+      solid({ ssr: true }),
+      nitro({
+        buildDir: nitroBuildDirectory,
+        handlers: [
+          {
+            handler: './server/routes/api/source-control.get.ts',
+            method: 'GET',
+            route: '/api/source-control',
+          },
+          {
+            handler: './server/routes/api/source-control.post.ts',
+            method: 'POST',
+            route: '/api/source-control/command',
+          },
+        ],
+        noExternals: [...PERSISTENT_SOURCE_RUNTIME_PACKAGES],
+        output: {
+          dir: nitroOutputDirectory,
+        },
+        plugins: ['./server/plugins/source-control.ts'],
+        preset: 'bun',
+      }),
+      solidDepScanPlugin(),
+    ],
+    server: {
+      watch: {
+        // Panda and Nitro write these generated trees during check/build/dev.
+        // Watching them can import partial output or turn a production build
+        // into a development HMR/reload loop.
+        ignored: ['**/styled-system/**', '**/.output-build/**', '**/.output-dev/**', '**/dist/**'],
+      },
+    },
+    resolve: {
+      dedupe: ['solid-js', 'solid-js/web'],
+    },
+  };
 });

@@ -26,6 +26,7 @@
     "test:packages": "turbo run test",
     "test:setup-loopback": "bun tools/check-setup-loopback.ts",
     "test:tools": "bun test tools",
+    "test:web-dev-build-isolation": "bun tools/check-web-dev-build-isolation.ts",
     "test:web-production": "bun tools/check-web-production-start.ts",
     "typecheck": "bun tools/check-typescript-coverage.ts && tsc -p tsconfig.tools.json --noEmit && turbo run check",
     "update": "bun update --interactive --recursive",

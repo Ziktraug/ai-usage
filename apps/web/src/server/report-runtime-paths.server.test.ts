@@ -112,10 +112,14 @@ describe('report runtime path resolution', () => {
     }
   });
 
-  test('ignores bundle-like paths and only walks from the supplied cwd', () => {
-    const bundleLikePath = path.join(repositoryRoot, 'apps/web/.output/server/_ssr');
-    const resolved = resolveReportRuntimePaths({ cwd: bundleLikePath });
+  test('ignores development and production bundle-like paths and only walks from the supplied cwd', () => {
+    const bundleLikePaths = [
+      path.join(repositoryRoot, 'apps/web/.output-dev/nitro/server/_ssr'),
+      path.join(repositoryRoot, 'apps/web/.output-build/nitro/server/_ssr'),
+    ];
 
-    expect(resolved.rootDir).toBe(repositoryRoot);
+    for (const bundleLikePath of bundleLikePaths) {
+      expect(resolveReportRuntimePaths({ cwd: bundleLikePath }).rootDir).toBe(repositoryRoot);
+    }
   });
 });
