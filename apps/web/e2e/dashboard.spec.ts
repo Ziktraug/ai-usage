@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
 import { FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
 import { expect, reportViewsFor, test } from './browser-test';
@@ -231,6 +232,44 @@ test('uses one primary navigation while preserving Breakdown deep links and sub-
   await expect(page.getByRole('columnheader', { name: 'Project' })).toBeVisible();
   await expect(page.getByText('Manage project groups', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(LEGACY_PROJECT_TAB_URL_PATTERN);
+});
+
+test('copies the exact breakdown URL and exports only visible sorted model rows', async ({ page }) => {
+  await page.goto('/?tab=models&breakdownSort=sessions');
+  await expect(page.getByText('By model', { exact: true })).toBeVisible();
+
+  const localSearch = page.getByRole('searchbox', { name: 'Search this breakdown' });
+  await localSearch.fill('cod');
+  const visibleRows = page.locator('[data-price-state]');
+  await expect(visibleRows).toHaveCount(2);
+  await expect(visibleRows.getByRole('button')).toHaveText(['qwen3-coder', 'gpt-5.3-codex']);
+
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], {
+    origin: new URL(page.url()).origin,
+  });
+  const expectedUrl = page.url();
+  await page.getByRole('button', { name: 'Copy link' }).click();
+  await expect(page.getByText('Link copied', { exact: true })).toBeVisible();
+  expect(await page.evaluate(async () => await navigator.clipboard.readText())).toBe(expectedUrl);
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Export CSV' }).click(),
+  ]);
+  expect(download.suggestedFilename()).toBe('ai-usage-models-2026-06-11.csv');
+  const downloadPath = await download.path();
+  if (!downloadPath) {
+    throw new Error('The model CSV download has no local path');
+  }
+  const csv = await readFile(downloadPath, 'utf8');
+  expect(csv).toBe(
+    [
+      'label,sessions,fresh_tokens,cache_read_tokens,cache_hit_percent,api_value_known,api_value_display,api_value_measurement,fully_priced_sessions,total_sessions,unpriced_fresh_tokens,turns,tools',
+      'qwen3-coder,2,97600,144000,63.716814159292035,1.68,$1.68,complete,2,2,0,0,0',
+      'gpt-5.3-codex,1,73500,130000,67.70833333333334,3.2,$3.20,complete,1,1,0,0,0',
+      '',
+    ].join('\r\n'),
+  );
 });
 
 test('shows analysis and report metrics without disclosure gates', async ({ page }) => {

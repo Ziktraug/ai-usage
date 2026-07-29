@@ -129,6 +129,7 @@ import {
 } from './focused-report-client';
 import { createFocusedReportE2EFixture } from './focused-report-e2e-fixture';
 import { GroupPanel, HarnessProviderPanel } from './group-panel';
+import { breakdownModelLabel } from './group-panel-presentation';
 import {
   type MachineFreshnessSnapshot,
   type MachineLabelPresentation,
@@ -254,6 +255,25 @@ const dashboardStatus = css({
   order: 2,
 });
 
+const reportSharingActions = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '8px',
+  alignItems: 'center',
+  minW: 0,
+  ml: { base: '0', md: 'auto' },
+  _print: { display: 'none' },
+});
+
+const reportSharingNotice = css({
+  color: 'muted',
+  fontSize: '12px',
+});
+
+const reportSharingErrorNotice = css({
+  color: 'status.danger',
+});
+
 const projectGroupDisclosure = css({
   mt: '14px',
   '& > summary': {
@@ -294,6 +314,59 @@ const campaignLabelApiForRuntime = (
     return injectedApi;
   }
   return;
+};
+
+interface ReportSharingNotice {
+  message: string;
+  tone: 'error' | 'success';
+}
+
+interface ReportSharingActionsProps {
+  createExport: () => Promise<{ csv: string; filename: string }>;
+}
+
+const ReportSharingActions = (props: ReportSharingActionsProps) => {
+  const [notice, setNotice] = createSignal<ReportSharingNotice>();
+  const copyCurrentLink = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setNotice({ message: 'Link copied', tone: 'success' });
+    } catch {
+      setNotice({ message: 'Could not copy link', tone: 'error' });
+    }
+  };
+  const exportCurrentBreakdown = async (): Promise<void> => {
+    try {
+      const exportFile = await props.createExport();
+      const { downloadReportCsv } = await import('./report-export');
+      downloadReportCsv(exportFile.filename, exportFile.csv);
+      setNotice({ message: 'CSV download started', tone: 'success' });
+    } catch {
+      setNotice({ message: 'Could not export CSV', tone: 'error' });
+    }
+  };
+
+  return (
+    <div class={reportSharingActions}>
+      <button class={ghostButton} onClick={copyCurrentLink} type="button">
+        Copy link
+      </button>
+      <button class={ghostButton} onClick={exportCurrentBreakdown} type="button">
+        Export CSV
+      </button>
+      <Show when={notice()}>
+        {(currentNotice) => (
+          <span
+            aria-live="polite"
+            class={cx(reportSharingNotice, currentNotice().tone === 'error' ? reportSharingErrorNotice : undefined)}
+            role={currentNotice().tone === 'error' ? 'alert' : 'status'}
+          >
+            {currentNotice().message}
+          </span>
+        )}
+      </Show>
+    </div>
+  );
 };
 
 export const Dashboard = (props: {
@@ -1194,6 +1267,24 @@ export const Dashboard = (props: {
                                 harnessTones
                                 onFilter={(value) => setFieldFilter('model', value)}
                                 onSortChange={setBreakdownSort}
+                                renderActions={(groups) => (
+                                  <ReportSharingActions
+                                    createExport={async () => {
+                                      const { analyticsBreakdownCsv, reportCsvFilename } = await import(
+                                        './report-export'
+                                      );
+                                      return {
+                                        csv: analyticsBreakdownCsv(
+                                          groups.map((group) => ({
+                                            group,
+                                            label: breakdownModelLabel(group.key),
+                                          })),
+                                        ),
+                                        filename: reportCsvFilename('models', reportSupport().generatedAt),
+                                      };
+                                    }}
+                                  />
+                                )}
                                 sort={search().breakdownSort}
                                 title="By model"
                               />
@@ -1210,6 +1301,21 @@ export const Dashboard = (props: {
                                 harnessProviderGroups={harnessProviderGroups()}
                                 onHarnessFilter={toggleHarness}
                                 onProviderFilter={(value) => setFieldFilter('provider', value)}
+                                renderActions={(groups) => (
+                                  <ReportSharingActions
+                                    createExport={async () => {
+                                      const { analyticsBreakdownCsv, reportCsvFilename } = await import(
+                                        './report-export'
+                                      );
+                                      return {
+                                        csv: analyticsBreakdownCsv(
+                                          groups.map((group) => ({ group, label: group.key })),
+                                        ),
+                                        filename: reportCsvFilename('harnesses', reportSupport().generatedAt),
+                                      };
+                                    }}
+                                  />
+                                )}
                               />
                             </section>
                           ),
@@ -1220,6 +1326,19 @@ export const Dashboard = (props: {
                           content: () => (
                             <section class={section} data-projects-panel>
                               <ProjectSummary
+                                actions={
+                                  <ReportSharingActions
+                                    createExport={async () => {
+                                      const { projectBreakdownCsv, reportCsvFilename } = await import(
+                                        './report-export'
+                                      );
+                                      return {
+                                        csv: projectBreakdownCsv(projectGroupRows()),
+                                        filename: reportCsvFilename('projects', reportSupport().generatedAt),
+                                      };
+                                    }}
+                                  />
+                                }
                                 groups={projectGroupRows()}
                                 onProjectFilter={(value) => setFieldFilter('project', value)}
                               />

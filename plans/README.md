@@ -78,7 +78,7 @@ request unless the user explicitly asks.
 | 055 | Make Focused Report Pending State Truthful | P1 | M | - | DONE |
 | 056 | Explain the Full-Range Comparison Boundary | P2 | S | - | DONE |
 | 057 | Make Punchcard Cells Filter the Report | P2 | M | 055 | DONE |
-| 058 | Add Report Sharing and Safe CSV Export | P3 | M | 053, 054 | TODO |
+| 058 | Add Report Sharing and Safe CSV Export | P3 | M | 053, 054 | DONE |
 | 059 | Compare Machine Contributions on Sync | P3 | M | - | DONE |
 | 060 | Add Local Search to Long Breakdown Lists | P3 | S | 054 | DONE |
 | 061 | Close the Four Reopened Presentation Regressions | P1 | S | 046 implementation | DONE |

@@ -21,7 +21,7 @@ import {
 } from '@ai-usage/design-system/report';
 import { type AnalyticsGroup, compareAnalyticsKeys } from '@ai-usage/report-core/analytics';
 import { PARTIALLY_MEASURED_LABEL } from '@ai-usage/report-core/provenance';
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import { createMemo, createSignal, For, type JSX, Show } from 'solid-js';
 import { type BreakdownSort, isBreakdownSort } from './dashboard-search';
 import {
   breakdownBarPresentation,
@@ -235,6 +235,7 @@ interface GroupPanelProps {
   harnessTones?: boolean;
   onFilter?: (value: string) => void;
   onSortChange: (value: BreakdownSort) => void;
+  renderActions?: (groups: readonly AnalyticsGroup[]) => JSX.Element;
   sort: BreakdownSort;
   title: string;
 }
@@ -279,6 +280,7 @@ export const GroupPanelView = (props: GroupPanelViewProps) => {
             }}
             value={props.sort}
           />
+          {props.renderActions?.(visibleGroups())}
         </div>
       </div>
       <div class={groupRows}>
@@ -357,6 +359,7 @@ export const GroupPanel = (props: GroupPanelProps) => {
       {...(props.onFilter ? { onFilter: props.onFilter } : {})}
       onSearchQueryChange={setSearchQuery}
       onSortChange={props.onSortChange}
+      {...(props.renderActions ? { renderActions: props.renderActions } : {})}
       searchQuery={searchQuery()}
       sort={props.sort}
       title={props.title}
@@ -369,6 +372,7 @@ interface HarnessProviderPanelProps {
   harnessProviderGroups: AnalyticsGroup[];
   onHarnessFilter: (value: string) => void;
   onProviderFilter: (value: string) => void;
+  renderActions?: (groups: readonly AnalyticsGroup[]) => JSX.Element;
 }
 
 interface HarnessProviderPanelViewProps extends HarnessProviderPanelProps {
@@ -425,6 +429,7 @@ export const HarnessProviderPanelView = (props: HarnessProviderPanelViewProps) =
             type="search"
             value={props.searchQuery}
           />
+          {props.renderActions?.(visibleGroups())}
         </div>
       </div>
       <div class={groupRows}>
@@ -498,6 +503,7 @@ export const HarnessProviderPanel = (props: HarnessProviderPanelProps) => {
       onHarnessFilter={props.onHarnessFilter}
       onProviderFilter={props.onProviderFilter}
       onSearchQueryChange={setSearchQuery}
+      {...(props.renderActions ? { renderActions: props.renderActions } : {})}
       onToggleHarness={toggleHarness}
       searchQuery={searchQuery()}
     />
