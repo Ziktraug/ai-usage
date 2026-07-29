@@ -45,8 +45,22 @@ const PROJECT_COLUMNS = [
   'tools',
 ] as const;
 
-const FORMULA_PREFIX = /^[=+@-]/;
+const ASCII_SPACE_CODE_POINT = 32;
+const SPREADSHEET_FORMULA_MARKERS = new Set(['=', '+', '-', '@']);
 const RFC_4180_SPECIAL_CHARACTER = /[",\r\n]/;
+
+const startsSpreadsheetFormula = (value: string): boolean => {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    const isLeadingControlOrWhitespace =
+      (codePoint !== undefined && codePoint <= ASCII_SPACE_CODE_POINT) || character.trim() === '';
+    if (isLeadingControlOrWhitespace) {
+      continue;
+    }
+    return SPREADSHEET_FORMULA_MARKERS.has(character);
+  }
+  return false;
+};
 
 const apiValueDisplay = (knownValue: number, measurement: ApiValueMeasurement): string => {
   if (measurement === 'unavailable' || (measurement === 'partial' && knownValue === 0)) {
@@ -74,7 +88,7 @@ const serializeCsvValue = (value: CsvValue): string => {
   if (typeof value === 'number') {
     return String(value);
   }
-  const neutralizedValue = FORMULA_PREFIX.test(value) ? `'${value}` : value;
+  const neutralizedValue = startsSpreadsheetFormula(value) ? `'${value}` : value;
   return RFC_4180_SPECIAL_CHARACTER.test(neutralizedValue)
     ? `"${neutralizedValue.replaceAll('"', '""')}"`
     : neutralizedValue;

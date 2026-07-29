@@ -83,6 +83,16 @@ describe('Cursor AI percentage summary', () => {
     expect(summary).toEqual({ measuredCommits: 1, percentage: 40, totalCommits: 4 });
   });
 
+  test('excludes duplicate commits whose line totals disagree', () => {
+    const summary = summarizeCursorAiPercentage([
+      cursorRow('inconsistent-weight', 40, 100),
+      { ...cursorRow('inconsistent-weight', 40, 200), branchName: 'release' },
+      cursorRow('measured', 60, 300),
+    ]);
+
+    expect(summary).toEqual({ measuredCommits: 1, percentage: 60, totalCommits: 2 });
+  });
+
   test('returns an absent percentage when no distinct commit is measurable', () => {
     const summary = summarizeCursorAiPercentage([cursorRow('null-only', null, 100), cursorRow('zero-weight', 80, 0)]);
 

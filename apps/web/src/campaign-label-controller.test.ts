@@ -89,6 +89,30 @@ describe('campaign label controller', () => {
     expect(controller.labelFor('campaign:a', 'Derived')).toBe('Release');
   });
 
+  test('does not let an older load overwrite a completed mutation', async () => {
+    let resolveLoad: ((response: CampaignLabelApiResponse) => void) | undefined;
+    const controller = createCampaignLabelController({
+      load: () =>
+        new Promise((resolve) => {
+          resolveLoad = resolve;
+        }),
+      mutate: () =>
+        Promise.resolve({
+          campaignLabelOverrides: [{ campaignKey: 'campaign:a', label: 'Renamed' }],
+        }),
+    });
+
+    const pendingLoad = controller.load();
+    expect(await controller.rename('campaign:a', 'Renamed')).toBe('Renamed');
+    resolveLoad?.({
+      campaignLabelOverrides: [{ campaignKey: 'campaign:a', label: 'Old label' }],
+    });
+
+    expect(await pendingLoad).toBe(false);
+    expect(controller.loadStatus()).toBe('ready');
+    expect(controller.labelFor('campaign:a', 'Derived')).toBe('Renamed');
+  });
+
   test('isolates each E2E page behind a fresh closure-owned list', async () => {
     const firstPageApi = createCampaignLabelE2EApi();
     const secondPageApi = createCampaignLabelE2EApi();

@@ -66,7 +66,10 @@ export const buildSyncFleetComparisonRows = (
   machines: readonly UsageMachineFleetItem[],
   now = Date.now(),
 ): SyncFleetComparisonRow[] => {
-  const orderedMachines = buildSyncFleetMachineViews(currentMachine, machines, now).sort(compareSyncFleetContributions);
+  const inputMachineIds = new Set(machines.map(({ id }) => id));
+  const orderedMachines = buildSyncFleetMachineViews(currentMachine, machines, now)
+    .filter(({ id }) => inputMachineIds.has(id))
+    .sort(compareSyncFleetContributions);
   const sessionSharePercents = apportionSessionSharePercents(orderedMachines);
   return orderedMachines.map((machine, index) => {
     const sessionSharePercent = sessionSharePercents[index] ?? 0;

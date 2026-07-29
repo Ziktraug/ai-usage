@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from 'bun:test';
 import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
-import { type Component, createComponent } from 'solid-js';
+import { type Component, createComponent, type JSX } from 'solid-js';
 import { renderToString } from 'solid-js/web';
 import { createServer } from 'vite';
 import solidPlugin from 'vite-plugin-solid';
@@ -27,6 +27,12 @@ interface HarnessProviderPanelProps {
   harnessProviderGroups: AnalyticsGroup[];
   onHarnessFilter: (value: string) => void;
   onProviderFilter: (value: string) => void;
+  renderActions?: (
+    rows: readonly {
+      group: AnalyticsGroup;
+      label: string;
+    }[],
+  ) => JSX.Element;
 }
 
 interface HarnessProviderPanelViewProps extends HarnessProviderPanelProps {
@@ -240,6 +246,7 @@ test('uses locale-formatted canonical session and ambiguity language without rep
 });
 
 test('renders value-sorted harness totals with expandable session-sorted provider children', () => {
+  let exportedLabels: string[] = [];
   const html = renderToString(() =>
     createComponent(HarnessProviderPanelView, {
       expandedHarnesses: ['Harness A'],
@@ -253,6 +260,10 @@ test('renders value-sorted harness totals with expandable session-sorted provide
       onProviderFilter: () => undefined,
       onSearchQueryChange: () => undefined,
       onToggleHarness: () => undefined,
+      renderActions: (rows) => {
+        exportedLabels = rows.map(({ label }) => label);
+        return null;
+      },
       searchQuery: '',
     }),
   );
@@ -270,6 +281,7 @@ test('renders value-sorted harness totals with expandable session-sorted provide
   expect(alphaIndex).toBeGreaterThan(-1);
   expect(alphaIndex).toBeLessThan(zetaIndex);
   expect(html).not.toContain('data-provider-child="Hidden Provider"');
+  expect(exportedLabels).toEqual(['Harness B', 'Harness A', 'Alpha Provider', 'Zeta Provider']);
 });
 
 test('binds parent and child buttons to their exact filter values', () => {

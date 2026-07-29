@@ -191,8 +191,8 @@ test('apportions whole percentages to 100 and keeps a zero-session fleet at zero
     [fleetItem('peer', 'Peer', 0, 'invalid', null)],
     now,
   );
-  expect(zero.map((row) => row.id)).toEqual(['current', 'peer']);
-  expect(zero.map((row) => row.sessionSharePercent)).toEqual([0, 0]);
+  expect(zero.map((row) => row.id)).toEqual(['peer']);
+  expect(zero.map((row) => row.sessionSharePercent)).toEqual([0]);
   expect(zero[0]).toMatchObject({
     freshness: 'unavailable',
     freshnessLabel: 'Freshness unavailable',

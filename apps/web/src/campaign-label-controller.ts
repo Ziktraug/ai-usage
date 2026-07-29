@@ -53,12 +53,20 @@ export const createCampaignLabelController = (api?: CampaignLabelApi): CampaignL
   const [mutationStatus, setMutationStatus] = createSignal<CampaignLabelMutationStatus>('idle');
   const [loadError, setLoadError] = createSignal<string | null>(null);
   const [mutationError, setMutationError] = createSignal<string | null>(null);
+  let overrideIndex = indexCampaignLabelOverrides([]);
   let loadSequence = 0;
 
-  const overrideFor = (campaignKey: string): string | undefined =>
-    indexCampaignLabelOverrides(overrides()).get(campaignKey);
+  const replaceOverrides = (nextOverrides: CampaignLabelOverride[]): void => {
+    overrideIndex = indexCampaignLabelOverrides(nextOverrides);
+    setOverrides(nextOverrides);
+  };
+  const currentOverrideIndex = (): ReadonlyMap<string, string> => {
+    overrides();
+    return overrideIndex;
+  };
+  const overrideFor = (campaignKey: string): string | undefined => currentOverrideIndex().get(campaignKey);
   const labelFor = (campaignKey: string, derivedLabel: string): string =>
-    campaignLabelFor(indexCampaignLabelOverrides(overrides()), campaignKey, derivedLabel);
+    campaignLabelFor(currentOverrideIndex(), campaignKey, derivedLabel);
 
   const load = async (): Promise<boolean> => {
     const sequence = ++loadSequence;
@@ -73,7 +81,7 @@ export const createCampaignLabelController = (api?: CampaignLabelApi): CampaignL
       if (sequence !== loadSequence) {
         return false;
       }
-      setOverrides(validated);
+      replaceOverrides(validated);
       setLoadStatus('ready');
       return true;
     } catch (error) {
@@ -99,7 +107,10 @@ export const createCampaignLabelController = (api?: CampaignLabelApi): CampaignL
       const mutation = parseCampaignLabelOverrideMutation(input);
       const response = await api.mutate(mutation);
       const validated = parseCampaignLabelOverrides(response.campaignLabelOverrides);
-      setOverrides(validated);
+      loadSequence += 1;
+      replaceOverrides(validated);
+      setLoadError(null);
+      setLoadStatus('ready');
       setMutationStatus('idle');
       return campaignLabelFor(indexCampaignLabelOverrides(validated), mutation.campaignKey, derivedLabel);
     } catch (error) {
@@ -111,7 +122,7 @@ export const createCampaignLabelController = (api?: CampaignLabelApi): CampaignL
 
   const skipLoad = (): void => {
     loadSequence += 1;
-    setOverrides([]);
+    replaceOverrides([]);
     setLoadError(null);
     setLoadStatus('ready');
   };

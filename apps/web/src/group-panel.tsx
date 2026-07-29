@@ -125,6 +125,52 @@ const groupDisplayKey = (group: AnalyticsGroup, countLabel: string) =>
 const groupBarAriaLabel = (group: AnalyticsGroup, maxKnownCost: number) =>
   `${breakdownPriceStateLabel(groupBarPresentation(group, maxKnownCost).state)} API-value bar`;
 
+interface AnalyticsGroupContentProps {
+  children: JSX.Element;
+  group: AnalyticsGroup;
+  harnessTones: boolean;
+  maxCost: number;
+}
+
+const AnalyticsGroupContent = (props: AnalyticsGroupContentProps) => (
+  <>
+    <div>
+      {props.children}
+      <div class={groupSub} title={groupFreshTitle(props.group)}>
+        {groupSessionSummary(props.group)} · {groupFreshLabel(props.group)} · {groupCacheLabel(props.group)}
+        {groupPricingCoverage(props.group)}
+      </div>
+      <Show when={!analyticsGroupUnavailableOnly(props.group)}>
+        <div
+          aria-label={groupBarAriaLabel(props.group, props.maxCost)}
+          class={cx(
+            barTrack,
+            groupBarPresentation(props.group, props.maxCost).state === 'partially measured'
+              ? partiallyMeasuredBarTrack
+              : undefined,
+          )}
+          data-price-bar={groupBarPresentation(props.group, props.maxCost).state}
+          data-width-percent={String(groupBarPresentation(props.group, props.maxCost).widthPercent ?? 0)}
+          role="img"
+        >
+          <div
+            class={cx(barFill, (props.harnessTones ? harnessFillFor(props.group.harness) : undefined) ?? accentFill)}
+            style={{ width: `${groupBarPresentation(props.group, props.maxCost).widthPercent ?? 0}%` }}
+          />
+        </div>
+      </Show>
+    </div>
+    <div class={right}>
+      <div class={groupValue}>
+        <GroupApiValue group={props.group} />
+      </div>
+      <div class={groupPct} title={PRICED_SHARE_HINT}>
+        {fmtPct(props.group.costPercent)}
+      </div>
+    </div>
+  </>
+);
+
 const GroupApiValue = (props: { group: AnalyticsGroup }) => {
   const state = breakdownPriceState({
     knownCost: props.group.costSum,
@@ -170,7 +216,7 @@ const HarnessProviderGroupRow = (props: HarnessProviderGroupRowProps) => (
     data-price-state={groupBarPresentation(props.group, props.maxCost).state}
     data-provider-child={props.child ? props.group.provider : undefined}
   >
-    <div>
+    <AnalyticsGroupContent group={props.group} harnessTones maxCost={props.maxCost}>
       <div class={hierarchyKey}>
         <Show when={props.disclosure}>
           {(disclosure) => (
@@ -194,38 +240,7 @@ const HarnessProviderGroupRow = (props: HarnessProviderGroupRowProps) => (
           {props.label}
         </button>
       </div>
-      <div class={groupSub} title={groupFreshTitle(props.group)}>
-        {groupSessionSummary(props.group)} · {groupFreshLabel(props.group)} · {groupCacheLabel(props.group)}
-        {groupPricingCoverage(props.group)}
-      </div>
-      <Show when={!analyticsGroupUnavailableOnly(props.group)}>
-        <div
-          aria-label={groupBarAriaLabel(props.group, props.maxCost)}
-          class={cx(
-            barTrack,
-            groupBarPresentation(props.group, props.maxCost).state === 'partially measured'
-              ? partiallyMeasuredBarTrack
-              : undefined,
-          )}
-          data-price-bar={groupBarPresentation(props.group, props.maxCost).state}
-          data-width-percent={String(groupBarPresentation(props.group, props.maxCost).widthPercent ?? 0)}
-          role="img"
-        >
-          <div
-            class={cx(barFill, harnessFillFor(props.group.harness) ?? accentFill)}
-            style={{ width: `${groupBarPresentation(props.group, props.maxCost).widthPercent ?? 0}%` }}
-          />
-        </div>
-      </Show>
-    </div>
-    <div class={right}>
-      <div class={groupValue}>
-        <GroupApiValue group={props.group} />
-      </div>
-      <div class={groupPct} title={PRICED_SHARE_HINT}>
-        {fmtPct(props.group.costPercent)}
-      </div>
-    </div>
+    </AnalyticsGroupContent>
   </div>
 );
 
@@ -295,7 +310,7 @@ export const GroupPanelView = (props: GroupPanelViewProps) => {
           <For each={visibleGroups()}>
             {(group) => (
               <div class={groupRow} data-price-state={groupBarPresentation(group, maxCost()).state}>
-                <div>
+                <AnalyticsGroupContent group={group} harnessTones={props.harnessTones ?? false} maxCost={maxCost()}>
                   <Show
                     fallback={<div class={strongCell}>{groupDisplayKey(group, props.countLabel)}</div>}
                     when={props.onFilter}
@@ -304,41 +319,7 @@ export const GroupPanelView = (props: GroupPanelViewProps) => {
                       {groupDisplayKey(group, props.countLabel)}
                     </button>
                   </Show>
-                  <div class={groupSub} title={groupFreshTitle(group)}>
-                    {groupSessionSummary(group)} · {groupFreshLabel(group)} · {groupCacheLabel(group)}
-                    {groupPricingCoverage(group)}
-                  </div>
-                  <Show when={!analyticsGroupUnavailableOnly(group)}>
-                    <div
-                      aria-label={groupBarAriaLabel(group, maxCost())}
-                      class={cx(
-                        barTrack,
-                        groupBarPresentation(group, maxCost()).state === 'partially measured'
-                          ? partiallyMeasuredBarTrack
-                          : undefined,
-                      )}
-                      data-price-bar={groupBarPresentation(group, maxCost()).state}
-                      data-width-percent={String(groupBarPresentation(group, maxCost()).widthPercent ?? 0)}
-                      role="img"
-                    >
-                      <div
-                        class={cx(
-                          barFill,
-                          (props.harnessTones ? harnessFillFor(group.harness) : undefined) ?? accentFill,
-                        )}
-                        style={{ width: `${groupBarPresentation(group, maxCost()).widthPercent ?? 0}%` }}
-                      />
-                    </div>
-                  </Show>
-                </div>
-                <div class={right}>
-                  <div class={groupValue}>
-                    <GroupApiValue group={group} />
-                  </div>
-                  <div class={groupPct} title={PRICED_SHARE_HINT}>
-                    {fmtPct(group.costPercent)}
-                  </div>
-                </div>
+                </AnalyticsGroupContent>
               </div>
             )}
           </For>
@@ -372,7 +353,12 @@ interface HarnessProviderPanelProps {
   harnessProviderGroups: AnalyticsGroup[];
   onHarnessFilter: (value: string) => void;
   onProviderFilter: (value: string) => void;
-  renderActions?: (groups: readonly AnalyticsGroup[]) => JSX.Element;
+  renderActions?: (rows: readonly VisibleBreakdownGroup[]) => JSX.Element;
+}
+
+export interface VisibleBreakdownGroup {
+  group: AnalyticsGroup;
+  label: string;
 }
 
 interface HarnessProviderPanelViewProps extends HarnessProviderPanelProps {
@@ -412,6 +398,19 @@ export const HarnessProviderPanelView = (props: HarnessProviderPanelViewProps) =
   const visiblePairCount = createMemo(() =>
     visibleGroups().reduce((count, group) => count + (childrenByHarness().get(group.key)?.length ?? 0), 0),
   );
+  const visibleExportRows = createMemo(() => {
+    const rows: VisibleBreakdownGroup[] = [];
+    for (const group of visibleGroups()) {
+      rows.push({ group, label: group.key });
+      if (!props.expandedHarnesses.includes(group.key)) {
+        continue;
+      }
+      for (const child of childrenByHarness().get(group.key) ?? []) {
+        rows.push({ group: child, label: child.provider });
+      }
+    }
+    return rows;
+  });
 
   return (
     <div class={groupPanel}>
@@ -429,7 +428,7 @@ export const HarnessProviderPanelView = (props: HarnessProviderPanelViewProps) =
             type="search"
             value={props.searchQuery}
           />
-          {props.renderActions?.(visibleGroups())}
+          {props.renderActions?.(visibleExportRows())}
         </div>
       </div>
       <div class={groupRows}>

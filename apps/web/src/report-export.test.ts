@@ -97,6 +97,14 @@ describe('report CSV export', () => {
     }
   });
 
+  test('neutralizes formulas hidden behind leading whitespace or control characters', () => {
+    for (const label of ['\t=formula', '  +formula', '\r\n@formula']) {
+      const csv = analyticsBreakdownCsv([{ group: analyticsGroup({ key: label }), label }]);
+
+      expect(csv).toContain(`'${label}`);
+    }
+  });
+
   test('projects project coverage and complete, partial, and unavailable API value states', () => {
     const csv = projectBreakdownCsv([
       projectGroup({ label: 'Complet, "quoted"' }),

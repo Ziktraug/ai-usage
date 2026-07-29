@@ -19,13 +19,16 @@ const formatCursorAiPercentage = (percentage: number | null): string =>
 export const summarizeCursorAiPercentage = (
   rows: readonly CursorCommitAttributionFacet[],
 ): CursorAiPercentageSummary => {
-  const commits = new Map<string, { percentages: Set<number>; weight: number }>();
+  const commits = new Map<string, { percentages: Set<number>; weights: Set<number> }>();
   for (const row of rows) {
-    const commit = commits.get(row.commitHash) ?? { percentages: new Set<number>(), weight: 0 };
+    const commit = commits.get(row.commitHash) ?? {
+      percentages: new Set<number>(),
+      weights: new Set<number>(),
+    };
     if (row.v2AiPercentage !== null) {
       commit.percentages.add(row.v2AiPercentage);
     }
-    commit.weight = Math.max(commit.weight, row.linesAdded + row.linesDeleted);
+    commit.weights.add(row.linesAdded + row.linesDeleted);
     commits.set(row.commitHash, commit);
   }
 
@@ -33,16 +36,17 @@ export const summarizeCursorAiPercentage = (
   let totalWeight = 0;
   let weightedPercentage = 0;
   for (const commit of commits.values()) {
-    if (commit.percentages.size !== 1 || commit.weight <= 0) {
+    if (commit.percentages.size !== 1 || commit.weights.size !== 1) {
       continue;
     }
     const percentage = commit.percentages.values().next().value;
-    if (percentage === undefined) {
+    const weight = commit.weights.values().next().value;
+    if (percentage === undefined || weight === undefined || weight <= 0) {
       continue;
     }
     measuredCommits++;
-    totalWeight += commit.weight;
-    weightedPercentage += percentage * commit.weight;
+    totalWeight += weight;
+    weightedPercentage += percentage * weight;
   }
 
   return {

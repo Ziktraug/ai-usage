@@ -1308,9 +1308,7 @@ export const Dashboard = (props: {
                                         './report-export'
                                       );
                                       return {
-                                        csv: analyticsBreakdownCsv(
-                                          groups.map((group) => ({ group, label: group.key })),
-                                        ),
+                                        csv: analyticsBreakdownCsv(groups),
                                         filename: reportCsvFilename('harnesses', reportSupport().generatedAt),
                                       };
                                     }}
