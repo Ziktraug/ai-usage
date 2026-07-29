@@ -152,6 +152,51 @@ describe('focused report query contracts', () => {
     expect(() => parseFocusedOverviewRequest({ ...overviewRequest, extra: true })).toThrow('unknown or missing');
   });
 
+  test('applies a local punchcard cell before every focused aggregation', () => {
+    const localIso = (day: number, hour: number, minute: number): string =>
+      new Date(2026, 6, day, hour, minute).toISOString();
+    const timedRow = (name: string, day: number, hour: number, minute: number, cost: number): SerializedRow => {
+      const timestamp = localIso(day, hour, minute);
+      return {
+        ...row(name, 1, cost),
+        activeDate: timestamp,
+        date: timestamp,
+        endDate: timestamp,
+      };
+    };
+    const fixtures = [
+      timedRow('monday-13:59', 27, 13, 59, 1),
+      timedRow('monday-14:00', 27, 14, 0, 2),
+      timedRow('monday-14:59', 27, 14, 59, 3),
+      timedRow('monday-15:00', 27, 15, 0, 4),
+      timedRow('sunday-14:00', 26, 14, 0, 5),
+      { ...row('missing-time', 1, 6), activeDate: null, date: null, endDate: null },
+    ];
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      query: {
+        ...overviewRequest.query,
+        filters: { ...overviewRequest.query.filters, localTimeCell: { hour: 14, weekday: 0 } },
+        range: { from: null, to: null },
+      },
+    };
+
+    const monday = projectFocusedOverview(fixtures, support, request);
+    expect(monday.summary.sessionCount).toBe(2);
+    expect(monday.timeline?.grandSessions).toBe(2);
+    expect(monday.view.topSessions.map(({ label }) => label)).toEqual(['monday-14:59', 'monday-14:00']);
+    expect(monday.view.punchcard?.cells[0]?.[14]?.sessions).toBe(2);
+
+    const sunday = projectFocusedOverview(fixtures, support, {
+      ...request,
+      query: {
+        ...request.query,
+        filters: { ...request.query.filters, localTimeCell: { hour: 14, weekday: 6 } },
+      },
+    });
+    expect(sunday.view.topSessions.map(({ label }) => label)).toEqual(['sunday-14:00']);
+  });
+
   test('omits advanced analysis work and results from timeline-only requests', () => {
     const result = projectFocusedOverview(rows, support, { ...overviewRequest, includeAdvanced: false });
 

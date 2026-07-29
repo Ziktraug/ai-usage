@@ -129,6 +129,7 @@ describe('dashboard session query mapping', () => {
     const scope = buildDashboardSessionQueryScope({
       fields: { model: 'gpt-5', project: 'ai-usage' },
       harness: ['codex', 'claude'],
+      localTimeCell: { hour: 14, weekday: 0 },
       machine: ['workstation'],
       origin: ['human', 'subagent'],
       pageSize: 200,
@@ -144,6 +145,7 @@ describe('dashboard session query mapping', () => {
       filters: {
         fields: { model: 'gpt-5', project: 'ai-usage' },
         harness: ['claude', 'codex'],
+        localTimeCell: { hour: 14, weekday: 0 },
         machine: ['workstation'],
         origin: ['human', 'subagent'],
         query: 'expensive',

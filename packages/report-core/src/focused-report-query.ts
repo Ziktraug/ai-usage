@@ -13,9 +13,11 @@ import { MAX_SERVED_BOOTSTRAP_BYTES } from './report-budgets';
 import type { SerializedRow, UsageReportPayload } from './report-data';
 import { isStrictIsoTimestamp, isUsageReportWarnings } from './serialized-usage-validation';
 import {
+  activeTimeMatchesLocalTimeCell,
   buildSessionCampaignTimelineIdentities,
   buildSessionCampaignViews,
   enrichSessionPresentationRow,
+  localTimeCellForTimestamp,
   parseSessionPresentationRow,
   parseSessionQueryRequest,
   type SessionPresentationRow,
@@ -476,6 +478,7 @@ export const matchesFocusedReportQuery = (row: SessionPresentationRow, query: Fo
     (!query.filters.query || row.searchText.includes(query.filters.query)) &&
     (query.filters.harness.length === 0 || query.filters.harness.includes(row.harness)) &&
     (query.filters.machine.length === 0 || query.filters.machine.includes(row.source?.machineId ?? '')) &&
+    activeTimeMatchesLocalTimeCell(row.activeTime, query.filters.localTimeCell) &&
     (!query.filters.origin?.length || row.origin === undefined || query.filters.origin.includes(row.origin)) &&
     (fields.campaign === undefined || sessionCampaignIdentityForRow(row).campaignKey === fields.campaign) &&
     (fields.provider === undefined || row.providerDisplay === fields.provider) &&
@@ -1148,12 +1151,12 @@ const buildPunchcard = (rows: readonly SessionPresentationRow[]): FocusedPunchca
       if (row.activeTime === null) {
         return [];
       }
-      const date = new Date(row.activeTime);
+      const localTimeCell = localTimeCellForTimestamp(row.activeTime);
       return [
         {
           cost: row.costKnown ? row.costApprox : 0,
-          day: (date.getDay() + 6) % 7,
-          hour: date.getHours(),
+          day: localTimeCell.weekday,
+          hour: localTimeCell.hour,
           sessions: 1,
         },
       ];

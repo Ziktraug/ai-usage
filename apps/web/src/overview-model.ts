@@ -7,6 +7,7 @@ import {
 } from '@ai-usage/report-core/provenance';
 import {
   buildSessionCampaignTimelineIdentities,
+  localTimeCellForTimestamp,
   type SessionCampaignTimelineIdentity,
   sessionOriginLabel,
 } from '@ai-usage/report-core/session-query';
@@ -786,8 +787,8 @@ export const buildPunchcardData = (rows: DashboardRow[]): PunchcardData | null =
     if (row.activeTime == null) {
       continue;
     }
-    const date = new Date(row.activeTime);
-    const cell = cells[(date.getDay() + 6) % 7]?.[date.getHours()];
+    const localTimeCell = localTimeCellForTimestamp(row.activeTime);
+    const cell = cells[localTimeCell.weekday]?.[localTimeCell.hour];
     if (!cell) {
       continue;
     }

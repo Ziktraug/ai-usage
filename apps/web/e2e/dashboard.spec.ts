@@ -12,6 +12,7 @@ const HYDRATION_TIMEOUT_MS = 15_000;
 const INSPECT_SESSION_PATTERN = /Inspect session/;
 const LEGACY_PROJECT_TAB_URL_PATTERN = /tab=projects/;
 const PROVIDER_DETAILS_PATTERN = /^Provider details \(/;
+const PUNCHCARD_FILTER_PATTERN = /^Filter report to /;
 const PROVIDER_CATEGORY_COUNT_PATTERN = /: (\d+) providers?$/;
 const PROVIDER_CATEGORY_TOTAL_PATTERN = /\((\d+) providers?\)$/;
 const PROVIDER_CATEGORIES_PATTERN = /^Provider categories/;
@@ -256,8 +257,9 @@ test('shows analysis and report metrics without disclosure gates', async ({ page
   ]);
   expect(await punchcardTable.getByRole('row').count()).toBeGreaterThan(1);
   await expect(punchcardTable.getByRole('row', { name: 'Sunday 14:00 1 $0.84' })).toBeAttached();
-  await expect(page.locator('[data-punchcard-visual]')).toHaveAttribute('aria-hidden', 'true');
-  await expect(page.locator('[data-punchcard-visual]').getByRole('button')).toHaveCount(0);
+  const punchcardVisual = page.locator('[data-punchcard-visual]');
+  await expect(punchcardVisual).not.toHaveAttribute('aria-hidden', 'true');
+  expect(await punchcardVisual.getByRole('button', { name: PUNCHCARD_FILTER_PATTERN }).count()).toBeGreaterThan(0);
 
   const reportMetrics = page.getByRole('region', { name: 'More report metrics' });
   await expect(reportMetrics.getByRole('heading', { level: 2, name: 'More report metrics' })).toBeVisible();

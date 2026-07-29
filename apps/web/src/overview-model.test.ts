@@ -567,18 +567,26 @@ describe('overview model', () => {
   });
 
   test('builds punchcard density', () => {
+    const localIso = (day: number, hour: number, minute: number): string =>
+      new Date(2026, 6, day, hour, minute).toISOString();
     const rows = [
       row({
         sessionLabel: 'A',
-        activeDate: '2026-06-10T12:00:00.000Z',
-        date: '2026-06-10T12:00:00.000Z',
+        activeDate: localIso(27, 14, 0),
+        date: localIso(27, 14, 0),
         costApprox: 2,
       }),
       row({
         sessionLabel: 'B',
-        activeDate: '2026-06-10T12:30:00.000Z',
-        date: '2026-06-10T12:30:00.000Z',
+        activeDate: localIso(27, 14, 30),
+        date: localIso(27, 14, 30),
         costApprox: 3,
+      }),
+      row({
+        sessionLabel: 'C',
+        activeDate: localIso(26, 14, 0),
+        date: localIso(26, 14, 0),
+        costApprox: 1,
       }),
     ];
 
@@ -586,8 +594,10 @@ describe('overview model', () => {
     const cells = data?.cells.flat() ?? [];
 
     expect(data?.maxSessions).toBe(2);
-    expect(cells.reduce((sum, cell) => sum + cell.sessions, 0)).toBe(2);
-    expect(cells.reduce((sum, cell) => sum + cell.cost, 0)).toBe(5);
+    expect(cells.reduce((sum, cell) => sum + cell.sessions, 0)).toBe(3);
+    expect(cells.reduce((sum, cell) => sum + cell.cost, 0)).toBe(6);
+    expect(data?.cells[0]?.[14]?.sessions).toBe(2);
+    expect(data?.cells[6]?.[14]?.sessions).toBe(1);
   });
 
   test('builds records and top sessions', () => {

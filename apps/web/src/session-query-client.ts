@@ -1,5 +1,6 @@
 import {
   isSessionSortField,
+  type LocalTimeCell,
   MAX_SESSION_QUERY_PAGE_SIZE,
   parseSessionCampaignChildrenServerResult,
   parseSessionNeighborServerResult,
@@ -34,6 +35,7 @@ export type SessionQueryScope = Omit<SessionQueryRequest, 'cursor' | 'revision'>
 export interface DashboardSessionQueryInput {
   fields: FieldFilters;
   harness: string[];
+  localTimeCell?: LocalTimeCell;
   machine: string[];
   origin: SessionOrigin[];
   pageSize?: number;
@@ -101,6 +103,7 @@ export const buildDashboardSessionQueryScope = (input: DashboardSessionQueryInpu
     filters: {
       fields: input.fields,
       harness: input.harness,
+      ...(input.localTimeCell === undefined ? {} : { localTimeCell: input.localTimeCell }),
       machine: input.machine,
       origin: input.origin,
       query: input.query,

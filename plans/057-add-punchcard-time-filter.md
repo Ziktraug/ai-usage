@@ -34,10 +34,19 @@ Rows without `activeTime` do not match an explicit cell. Serialize as
 - `packages/report-core/src/session-query.ts` and tests
 - `packages/report-core/src/focused-report-query.ts` and tests
 - `packages/usage-store/src/index.ts` and focused query tests
+- `packages/report-data/src/session-query-materialization.ts`, `session-query-sqlite.ts`, and parity tests
 - `apps/web/src/dashboard-search.ts` and tests
+- `apps/web/src/dashboard-filters.tsx`
+- `apps/web/src/session-query-client.ts` and tests
+- `apps/web/src/overview-model.ts` and tests
+- `packages/design-system/src/components/overview.ts`
 - `apps/web/src/overview.tsx`
 - `apps/web/src/dashboard.tsx`
-- `apps/web/e2e/time-range.spec.ts`
+- `apps/web/src/css-bundle.test.ts`
+- `apps/web/e2e/time-range.spec.ts` and `dashboard.spec.ts`
+
+The historical initial-bundle baseline stays frozen. The gate adds only the
+measured 625-byte gzip cost of this interaction.
 
 No timezone selector, recurring schedule, campaign, or visualization changes.
 

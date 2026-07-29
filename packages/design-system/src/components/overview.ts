@@ -298,6 +298,26 @@ export const punchCell = css({
   placeItems: 'center',
 });
 
+export const punchCellButton = css({
+  appearance: 'none',
+  bg: 'transparent',
+  border: '0',
+  borderRadius: 'sm',
+  cursor: 'pointer',
+  display: 'grid',
+  h: 'full',
+  p: 0,
+  placeItems: 'center',
+  w: 'full',
+  _hover: {
+    bg: 'surfaceMuted',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+});
+
 export const punchDot = css({
   borderRadius: 'full',
 });

@@ -339,6 +339,59 @@ describe('focused report SQLite queries', () => {
     }
   });
 
+  test('filters local punchcard cells with pure and SQLite focused row identity parity', async () => {
+    const localIso = (day: number, hour: number, minute: number): string =>
+      new Date(2026, 6, day, hour, minute).toISOString();
+    const timedRow = (name: string, day: number, hour: number, minute: number): SerializedRow => {
+      const timestamp = localIso(day, hour, minute);
+      return {
+        ...row(name, 1, 1),
+        activeDate: timestamp,
+        date: timestamp,
+        endDate: timestamp,
+      };
+    };
+    const fixtureRows = [
+      timedRow('monday-13:59', 27, 13, 59),
+      timedRow('monday-14:00', 27, 14, 0),
+      timedRow('monday-14:59', 27, 14, 59),
+      timedRow('monday-15:00', 27, 15, 0),
+      timedRow('sunday-14:00', 26, 14, 0),
+      { ...row('missing-time', 1, 1), activeDate: null, date: null, endDate: null },
+    ];
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-time-cell-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    await materializeSessionQueryDatabase(revisionDirectory, fixtureRows, support);
+    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), { readonly: true });
+    assertSessionQueryDatabase(database);
+    try {
+      for (const weekday of [0, 6] as const) {
+        const request: FocusedOverviewRequest = {
+          includeAdvanced: false,
+          query: {
+            ...overviewRequest.query,
+            filters: { ...overviewRequest.query.filters, localTimeCell: { hour: 14, weekday } },
+            range: { from: null, to: null },
+          },
+          timeline: { dimension: 'model', granularity: 'day' },
+        };
+        const expected = projectFocusedOverview(fixtureRows, support, request);
+        const actual = executeFocusedReportQuery(database, 'overview', request);
+        expect(actual).toEqual(expected);
+        if (!('view' in actual)) {
+          throw new Error('The local time cell query must return an Overview result');
+        }
+        expect(actual.summary.sessionCount).toBe(weekday === 0 ? 2 : 1);
+        expect(actual.view.topSessions.map(({ row: itemRow }) => itemRow.rowId)).toEqual(
+          expected.view.topSessions.map(({ row: itemRow }) => itemRow.rowId),
+        );
+      }
+    } finally {
+      database.close();
+    }
+  });
+
   test('keeps undeclared-origin sessions in filtered Overview and Breakdown projections', async () => {
     const originRows: SerializedRow[] = [
       { ...row('human', 1, 1), origin: 'human' },

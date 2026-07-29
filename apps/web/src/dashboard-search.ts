@@ -1,4 +1,11 @@
-import { isSessionOrigin, type SessionOrigin, sessionOrigins } from '@ai-usage/report-core/session-query';
+import {
+  isLocalTimeHour,
+  isLocalTimeWeekday,
+  isSessionOrigin,
+  type LocalTimeCell,
+  type SessionOrigin,
+  sessionOrigins,
+} from '@ai-usage/report-core/session-query';
 import type { SortingState } from '@tanstack/solid-table';
 import { type DateRangeMode, parseLocalDate } from './date-range';
 import {
@@ -71,6 +78,27 @@ export interface DashboardDateRangeSearch {
 export const defaultDashboardDateRangeMode = '30d' as const;
 export const defaultDashboardOrigins = [] as const satisfies readonly SessionOrigin[];
 
+const DASHBOARD_TIME_CELL_PATTERN = /^(MON|TUE|WED|THU|FRI|SAT|SUN)-(0[0-9]|1[0-9]|2[0-3])$/;
+const dashboardTimeCellWeekdayCodes: readonly string[] = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+
+export const parseDashboardTimeCell = (value: unknown): LocalTimeCell | undefined => {
+  if (typeof value !== 'string') {
+    return;
+  }
+  const match = DASHBOARD_TIME_CELL_PATTERN.exec(value);
+  const weekday = dashboardTimeCellWeekdayCodes.indexOf(match?.[1] ?? '');
+  const hour = Number.parseInt(match?.[2] ?? '', 10);
+  if (!(isLocalTimeWeekday(weekday) && isLocalTimeHour(hour))) {
+    return;
+  }
+  return { hour, weekday };
+};
+
+export const serializeDashboardTimeCell = (cell: LocalTimeCell): string =>
+  `${dashboardTimeCellWeekdayCodes[cell.weekday]}-${String(cell.hour).padStart(2, '0')}`;
+
+export { localTimeCellLabel as dashboardTimeCellLabel } from '@ai-usage/report-core/session-query';
+
 const sameOrigins = (left: readonly SessionOrigin[], right: readonly SessionOrigin[]): boolean =>
   left.length === right.length && left.every((origin, index) => origin === right[index]);
 
@@ -89,7 +117,13 @@ export interface DashboardSearch {
   range: DashboardDateRangeSearch;
   sort: DashboardSort;
   tab: DashboardTab;
+  timeCell?: string;
 }
+
+export const withoutDashboardTimeCell = (search: DashboardSearch): DashboardSearch => {
+  const { timeCell: _timeCell, ...rest } = search;
+  return rest;
+};
 
 export const hasActiveDashboardFilters = (search: DashboardSearch): boolean =>
   search.q !== '' ||
@@ -97,7 +131,8 @@ export const hasActiveDashboardFilters = (search: DashboardSearch): boolean =>
   search.machine.length > 0 ||
   !isDefaultDashboardOriginSelection(search.origin) ||
   Object.keys(search.filters).length > 0 ||
-  search.range.mode !== defaultDashboardDateRangeMode;
+  search.range.mode !== defaultDashboardDateRangeMode ||
+  search.timeCell !== undefined;
 
 const breakdownSortSet = new Set<string>(breakdownSorts);
 const dateRangeModes: DateRangeMode[] = ['all', 'today', '7d', '30d', 'custom'];
@@ -259,6 +294,7 @@ export const validateDashboardSearch = (
   const q = cleanString(search.q);
   const cols = uniqueValidStrings(search.cols, isSearchableColumnDiffId);
   const colsBase = isSessionColumnVisibilityBase(search.colsBase) ? search.colsBase : defaults.colsBase;
+  const timeCell = parseDashboardTimeCell(search.timeCell);
 
   return {
     breakdownSort: isBreakdownSort(search.breakdownSort) ? search.breakdownSort : defaults.breakdownSort,
@@ -271,6 +307,7 @@ export const validateDashboardSearch = (
     q,
     range: parseRange(search.range, defaults.range),
     sort: parseSort(search.sort, defaults.sort),
+    ...(timeCell === undefined ? {} : { timeCell: serializeDashboardTimeCell(timeCell) }),
     tab: isDashboardTab(search.tab) ? search.tab : defaults.tab,
   };
 };

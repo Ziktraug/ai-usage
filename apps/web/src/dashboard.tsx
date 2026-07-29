@@ -30,7 +30,13 @@ import {
   projectSourceSelectorKey,
 } from '@ai-usage/report-core/project-group';
 import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
-import { isSessionOrigin, type SessionOrigin, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+import {
+  activeTimeMatchesLocalTimeCell,
+  isSessionOrigin,
+  type LocalTimeCell,
+  type SessionOrigin,
+  sessionQueryFingerprint,
+} from '@ai-usage/report-core/session-query';
 import { useNavigate, useSearch } from '@tanstack/solid-router';
 import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import {
@@ -91,15 +97,19 @@ import {
   breakdownTabFor,
   type DashboardSearch,
   dashboardSearchDefaultsFor,
+  dashboardTimeCellLabel,
   defaultDashboardDateRangeMode,
   defaultDashboardOrigins,
   type FieldFilterKey,
   type FieldFilters,
   hasActiveDashboardFilters,
   isDashboardTab,
+  parseDashboardTimeCell,
   primaryDashboardTabFor,
+  serializeDashboardTimeCell,
   sortingStateFromSearch,
   toggleExactFieldFilter,
+  withoutDashboardTimeCell,
 } from './dashboard-search';
 import { createDashboardServedReportSession } from './dashboard-served-report-session';
 import { createDashboardSessionSelection } from './dashboard-session-selection';
@@ -356,6 +366,11 @@ export const Dashboard = (props: {
   const origin = () => search().origin;
   const machine = () => search().machine;
   const fieldFilters = () => search().filters;
+  const localTimeCell = createMemo(() => parseDashboardTimeCell(search().timeCell));
+  const localTimeCellQueryInput = createMemo(() => {
+    const cell = localTimeCell();
+    return cell === undefined ? {} : { localTimeCell: cell };
+  });
   const sorting = createMemo(() => sortingStateFromSearch(search().sort));
   const [columnVisibility, setColumnVisibility] = createSignal(
     columnVisibilityFromDiff(search().cols, search().colsBase),
@@ -408,7 +423,10 @@ export const Dashboard = (props: {
   const timelineRows = createMemo(() =>
     measureClientPerf(
       'aiUsage.web.client.compute.timelineRows',
-      () => filterTimelineRows(reportRows(), filterSnapshot()),
+      () =>
+        filterTimelineRows(reportRows(), filterSnapshot()).filter((row) =>
+          activeTimeMatchesLocalTimeCell(row.activeTime, localTimeCell()),
+        ),
       (rows) => ({ rows: rows.length }),
     ),
   );
@@ -440,8 +458,9 @@ export const Dashboard = (props: {
     const sessionScope = buildDashboardSessionQueryScope({
       fields: fieldFilters(),
       harness: harness(),
-      origin: origin(),
+      ...localTimeCellQueryInput(),
       machine: machine(),
+      origin: origin(),
       query: query(),
       range: tableDateBounds(),
       sorting: sorting(),
@@ -463,8 +482,9 @@ export const Dashboard = (props: {
     buildDashboardSessionQueryScope({
       fields: fieldFilters(),
       harness: harness(),
-      origin: origin(),
+      ...localTimeCellQueryInput(),
       machine: machine(),
+      origin: origin(),
       query: query(),
       range: tableDateBounds(),
       sorting: sorting(),
@@ -813,6 +833,10 @@ export const Dashboard = (props: {
       tab: 'sessions',
     }));
   };
+  const setLocalTimeCell = (cell: LocalTimeCell) =>
+    updateSearch((current) => ({ ...current, timeCell: serializeDashboardTimeCell(cell) }));
+  const clearLocalTimeCell = () => updateSearch((current) => withoutDashboardTimeCell(current));
+
   const setFieldFilters = (updater: Updater<FieldFilters>) =>
     updateSearch((current) => ({ ...current, filters: applyTableUpdate(updater, current.filters) }));
   const setFieldFilter = (key: FieldFilterKey, value: string) =>
@@ -852,7 +876,7 @@ export const Dashboard = (props: {
     dateRange.setRange(defaultDashboardDateRangeMode);
     setTableDateBounds(dateRange.bounds());
     updateSearch((current) => ({
-      ...current,
+      ...withoutDashboardTimeCell(current),
       filters: {},
       harness: [],
       origin: [...defaultDashboardOrigins],
@@ -1013,6 +1037,16 @@ export const Dashboard = (props: {
               <Show when={query()}>
                 <FilterPill label="Query" onClear={() => setQuery('')} value={query()} />
               </Show>
+              <Show when={localTimeCell()}>
+                {(cell) => (
+                  <FilterPill
+                    label="Time"
+                    onClear={clearLocalTimeCell}
+                    separator=" · "
+                    value={dashboardTimeCellLabel(cell())}
+                  />
+                )}
+              </Show>
               <For each={harness()}>
                 {(value) => <FilterPill label="Harness" onClear={() => removeHarness(value)} value={value} />}
               </For>
@@ -1056,6 +1090,7 @@ export const Dashboard = (props: {
                         labelFor={campaignLabels.labelFor}
                         onSelectDay={focusDay}
                         onSelectSession={sessionSelection.inspectOverview}
+                        onSelectTimeCell={setLocalTimeCell}
                         rangeLabel={dateRange.label()}
                         rows={tableRows()}
                         summary={visibleSummary()}

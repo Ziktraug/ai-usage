@@ -10,6 +10,7 @@ import {
   compareSessionIdentityValues,
   compareSessionTextValues,
   enrichSessionPresentationRow,
+  localTimeCellForTimestamp,
   type SessionCampaignView,
   type SessionPresentationRow,
   type SessionTextSortField,
@@ -26,8 +27,8 @@ import {
 
 export const SESSION_QUERY_DATABASE_NAME = 'sessions.sqlite';
 
-const SESSION_QUERY_SCHEMA_VERSION = 14;
-const SESSION_ROW_INSERT_VALUE_COUNT = 80;
+const SESSION_QUERY_SCHEMA_VERSION = 15;
+const SESSION_ROW_INSERT_VALUE_COUNT = 82;
 const createFileFlags =
   // biome-ignore lint/suspicious/noBitwiseOperators: Node file-open flags are a documented bitmask API.
   fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW;
@@ -98,6 +99,8 @@ const createSchema = (database: SqliteDatabase): void => {
       source_authority TEXT NOT NULL CHECK (source_authority IN ('local-observed', 'portable-opaque')),
       active_date TEXT,
       active_time INTEGER,
+      local_time_weekday INTEGER CHECK (local_time_weekday BETWEEN 0 AND 6),
+      local_time_hour INTEGER CHECK (local_time_hour BETWEEN 0 AND 23),
       search_text TEXT NOT NULL,
       harness TEXT NOT NULL,
       machine_id TEXT NOT NULL,
@@ -194,6 +197,7 @@ const createSchema = (database: SqliteDatabase): void => {
     );
     CREATE INDEX session_rows_campaign ON session_rows(campaign_key, campaign_root, ordinal);
     CREATE INDEX session_rows_active_time ON session_rows(active_time);
+    CREATE INDEX session_rows_local_time_cell ON session_rows(local_time_weekday, local_time_hour);
     CREATE INDEX session_rows_facets ON session_rows(harness, machine_id, provider_display, model_key, project_key);
     CREATE INDEX session_rows_provider_scope ON session_rows(provider_scope_key, ordinal);
     CREATE INDEX session_model_segments_model ON session_model_segments(model_key, ordinal);
@@ -203,7 +207,7 @@ const createSchema = (database: SqliteDatabase): void => {
 
 const insertSql = `
   INSERT INTO session_rows (
-    ordinal, row_id, row_json, source_row_json, source_authority, active_date, active_time, search_text, harness,
+    ordinal, row_id, row_json, source_row_json, source_authority, active_date, active_time, local_time_weekday, local_time_hour, search_text, harness,
     machine_id, machine_label,
     provider_scope_key, provider, provider_display, model_key, project_key, project_label, origin, origin_provenance,
     campaign_key, campaign_label, campaign_root, campaign_total_count,
@@ -297,6 +301,7 @@ const insertRow = (
     const value = String(sortValueForSessionColumn(row, field));
     return requireRank(ranks.text.get(field), value, `${field} sort`);
   });
+  const localTimeCell = row.activeTime === null ? null : localTimeCellForTimestamp(row.activeTime);
   const machineId = row.source?.machineId ?? '';
   const providerKey = providerStatusKeyForUsage(row.harness, row.provider);
   insert.run(
@@ -307,6 +312,8 @@ const insertRow = (
     sourceAuthority,
     row.activeDate,
     row.activeTime,
+    localTimeCell?.weekday ?? null,
+    localTimeCell?.hour ?? null,
     row.searchText,
     row.harness,
     machineId,

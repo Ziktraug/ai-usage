@@ -5,6 +5,10 @@ const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const CHART_VIEW_PATTERN = /Chart view:/;
 const DELEGATED_LEGEND_PATTERN = /^Delegated\b/;
 const HUMAN_LEGEND_PATTERN = /^Human\b/;
+const PUNCHCARD_CELL_BUTTON_PATTERN = /^Filter report to /;
+const PUNCHCARD_CELL_LABEL_PATTERN =
+  /^Filter report to (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) ([0-9]{2}):00–[0-9]{2}:59, ([0-9,]+) sessions?$/;
+const SESSION_SUMMARY_PATTERN = / sessions$/;
 
 const reportRangeValue = (page: Page): string | null => new URL(page.url()).searchParams.get('range');
 
@@ -60,6 +64,64 @@ test('uses clickable heatmap days as Rhythm activity-day controls without a nati
     'aria-current',
     'page',
   );
+});
+
+test('filters the report from non-empty Punchcard cells with click and keyboard', async ({ page }) => {
+  await page.goto('/');
+
+  const heading = page.getByRole('heading', { exact: true, name: 'Punchcard' });
+  const punchcard = heading.locator('xpath=ancestor::section[1]');
+  const timeCellButtons = punchcard.getByRole('button', { name: PUNCHCARD_CELL_BUTTON_PATTERN });
+  await expect(heading).toBeVisible();
+  expect(await timeCellButtons.count()).toBeGreaterThan(0);
+  expect(await punchcard.locator('[title*="0 sessions"]').count()).toBeGreaterThan(0);
+  await expect(punchcard.locator('button[title*="0 sessions"]')).toHaveCount(0);
+
+  const ariaLabel = await timeCellButtons.first().getAttribute('aria-label');
+  if (ariaLabel === null) {
+    throw new Error('Expected a Punchcard cell label');
+  }
+  const match = ariaLabel.match(PUNCHCARD_CELL_LABEL_PATTERN);
+  if (!match) {
+    throw new Error('Expected a canonical Punchcard cell label');
+  }
+  const weekday = match[1] ?? '';
+  const hour = match[2] ?? '';
+  const formattedCount = match[3] ?? '';
+  const weekdayCodes = new Map<string, string>([
+    ['Monday', 'MON'],
+    ['Tuesday', 'TUE'],
+    ['Wednesday', 'WED'],
+    ['Thursday', 'THU'],
+    ['Friday', 'FRI'],
+    ['Saturday', 'SAT'],
+    ['Sunday', 'SUN'],
+  ]);
+  const weekdayCode = weekdayCodes.get(weekday);
+  if (!(weekdayCode && hour && formattedCount)) {
+    throw new Error('Expected a complete Punchcard cell label');
+  }
+  const timeCellValue = `${weekdayCode}-${hour}`;
+  const period = `${weekday} ${hour}:00–${hour}:59`;
+  const timePill = page.getByTitle('Clear Time filter');
+  const summary = page.locator('span[aria-live="polite"]').filter({ hasText: SESSION_SUMMARY_PATTERN }).first();
+  const firstTimeCell = punchcard.getByRole('button', { exact: true, name: ariaLabel });
+
+  await firstTimeCell.focus();
+  await firstTimeCell.press('Enter');
+  await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBe(timeCellValue);
+  await expect(timePill).toHaveText(`Time · ${period} ×`);
+  await expect(summary).toContainText(`${formattedCount} / `);
+
+  await timePill.click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBeNull();
+  await expect(timePill).toHaveCount(0);
+
+  await punchcard.getByRole('button', { exact: true, name: ariaLabel }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBe(timeCellValue);
+  await expect(timePill).toHaveText(`Time · ${period} ×`);
+  await timePill.click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBeNull();
 });
 
 test('changes every chart option from its segmented controls', async ({ page }) => {

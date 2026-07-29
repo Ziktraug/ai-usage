@@ -43,6 +43,7 @@ import {
   panelSub,
   panelTitle,
   punchCell,
+  punchCellButton,
   punchDayLabel,
   punchDot,
   punchGrid,
@@ -81,6 +82,13 @@ import type {
   FocusedPunchcard,
   FocusedSessionShape,
 } from '@ai-usage/report-core/focused-report-query';
+import {
+  isLocalTimeHour,
+  isLocalTimeWeekday,
+  type LocalTimeCell,
+  localTimeCellLabel,
+  localTimeWeekdayNames,
+} from '@ai-usage/report-core/session-query';
 import { createEffect, createMemo, createSignal, For, type JSX, Show } from 'solid-js';
 import {
   type CampaignLabelContext,
@@ -126,6 +134,7 @@ export interface OverviewProps {
   labelFor: (campaignKey: string, derivedLabel: string) => string;
   onSelectDay: (day: Date) => void;
   onSelectSession: (row: DashboardRow, campaignLabelContext?: CampaignLabelContext | null) => void;
+  onSelectTimeCell: (cell: LocalTimeCell) => void;
   rangeLabel: string;
   rows: DashboardRow[];
   summary: ReportSummary;
@@ -632,15 +641,28 @@ const SessionShape = (props: {
 // streaks show up immediately.
 
 const PUNCHCARD_HEADING_ID = 'overview-punchcard-title';
-const PUNCH_DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
 
-const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: DashboardRow[] }) => {
+const punchcardTimeCellFor = (weekday: number, hour: number): LocalTimeCell | null => {
+  if (!(isLocalTimeWeekday(weekday) && isLocalTimeHour(hour))) {
+    return null;
+  }
+  return { hour, weekday };
+};
+
+const punchcardTimeCellAriaLabel = (cell: LocalTimeCell, sessionCount: number): string =>
+  `Filter report to ${localTimeCellLabel(cell)}, ${fmtNum(sessionCount)} ${sessionCount === 1 ? 'session' : 'sessions'}`;
+
+const Punchcard = (props: {
+  focused: FocusedPunchcard | null | undefined;
+  onSelectTimeCell: OverviewProps['onSelectTimeCell'];
+  rows: DashboardRow[];
+}) => {
   const data = createMemo(() => (props.focused === undefined ? buildPunchcardData(props.rows) : props.focused));
   const accessibleCells = createMemo(
     () =>
       data()?.cells.flatMap((dayCells, dayIndex) =>
         dayCells.flatMap((cell, hour) =>
-          cell.sessions > 0 ? [{ ...cell, day: PUNCH_DAY_NAMES[dayIndex] ?? '', hour }] : [],
+          cell.sessions > 0 ? [{ ...cell, day: localTimeWeekdayNames[dayIndex] ?? '', hour }] : [],
         ),
       ) ?? [],
   );
@@ -650,7 +672,7 @@ const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: 
       <Show fallback={<div class={emptyPanel}>No dated sessions in range</div>} when={data()}>
         {(punch) => (
           <>
-            <div aria-hidden="true" class={punchGrid} data-punchcard-visual>
+            <div class={punchGrid} data-punchcard-visual>
               <For each={punch().cells}>
                 {(dayCells, dayIndex) => (
                   <>
@@ -663,15 +685,24 @@ const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: 
                           class={punchCell}
                           title={`${PUNCH_DAYS[dayIndex()]} ${String(hour()).padStart(2, '0')}:00 — ${fmtNum(cell.sessions)} sessions · ${fmtMoney(cell.cost)}`}
                         >
-                          <Show when={cell.sessions > 0}>
-                            <span
-                              class={cx(punchDot, accentFill)}
-                              style={{
-                                width: `${4 + 9 * Math.sqrt(cell.sessions / punch().maxSessions)}px`,
-                                height: `${4 + 9 * Math.sqrt(cell.sessions / punch().maxSessions)}px`,
-                                opacity: 0.35 + 0.65 * (cell.sessions / punch().maxSessions),
-                              }}
-                            />
+                          <Show when={cell.sessions > 0 ? punchcardTimeCellFor(dayIndex(), hour()) : null}>
+                            {(timeCell) => (
+                              <button
+                                aria-label={punchcardTimeCellAriaLabel(timeCell(), cell.sessions)}
+                                class={punchCellButton}
+                                onClick={() => props.onSelectTimeCell(timeCell())}
+                                type="button"
+                              >
+                                <span
+                                  class={cx(punchDot, accentFill)}
+                                  style={{
+                                    width: `${4 + 9 * Math.sqrt(cell.sessions / punch().maxSessions)}px`,
+                                    height: `${4 + 9 * Math.sqrt(cell.sessions / punch().maxSessions)}px`,
+                                    opacity: 0.35 + 0.65 * (cell.sessions / punch().maxSessions),
+                                  }}
+                                />
+                              </button>
+                            )}
                           </Show>
                         </span>
                       )}
@@ -681,7 +712,11 @@ const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: 
               </For>
               <span />
               <For each={Array.from({ length: 24 }, (_, hour) => hour)}>
-                {(hour) => <span class={punchHourLabel}>{hour % 3 === 0 ? hour : ''}</span>}
+                {(hour) => (
+                  <span aria-hidden="true" class={punchHourLabel}>
+                    {hour % 3 === 0 ? hour : ''}
+                  </span>
+                )}
               </For>
             </div>
             <div class={visuallyHidden}>
@@ -912,7 +947,11 @@ export const Overview = (props: OverviewProps) => {
                             />
                           </Show>
                           <Show when={loadedSummary().hasPunchcard}>
-                            <Punchcard focused={props.focused?.view.punchcard} rows={props.rows} />
+                            <Punchcard
+                              focused={props.focused?.view.punchcard}
+                              onSelectTimeCell={props.onSelectTimeCell}
+                              rows={props.rows}
+                            />
                           </Show>
                         </div>
                       )}
