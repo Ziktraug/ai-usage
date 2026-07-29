@@ -79,4 +79,24 @@ describe('ProjectSummary line measurements', () => {
     expect(countOccurrences(visibleHtml, '>—</')).toBe(2);
     expect(countOccurrences(visibleHtml, '+0/-0')).toBe(2);
   });
+  test('labels only locked data-quality shapes and retains every desktop and mobile row', () => {
+    const projectLabels = ['usage.csv', 'agent-a1', '(unknown)', 'regular-project', 'report.csv.json'];
+    const html = renderToString(() =>
+      createComponent(ProjectSummary, {
+        groups: projectLabels.map((label) => projectGroup(label, 0, 0, 1, 1)),
+        onProjectFilter: () => undefined,
+      }),
+    );
+    const visibleHtml = withoutSsrMarkers(html);
+
+    expect(countOccurrences(visibleHtml, '<tr')).toBe(projectLabels.length + 1);
+    expect(countOccurrences(visibleHtml, '<li')).toBe(projectLabels.length);
+    for (const projectLabel of projectLabels) {
+      expect(countOccurrences(visibleHtml, `>${projectLabel}</button>`)).toBe(2);
+    }
+    expect(countOccurrences(visibleHtml, '>Filename-like</button>')).toBe(2);
+    expect(countOccurrences(visibleHtml, '>Worktree-like</button>')).toBe(2);
+    expect(countOccurrences(visibleHtml, '>No detected project</button>')).toBe(2);
+    expect(countOccurrences(visibleHtml, 'title="Open Manage project groups"')).toBe(6);
+  });
 });

@@ -154,6 +154,7 @@ test('renders secondary status only on Overview and puts Projects before closed 
       return summary !== null && details !== null && orderedElements[0] === summary && orderedElements[1] === details;
     }),
   ).toBe(true);
+  await expect(projectsPanel.locator('[data-project-quality-label]')).toHaveCount(0);
 });
 
 test('uses one fixed-size Punchcard intensity channel with a low/high key', async ({ page }) => {

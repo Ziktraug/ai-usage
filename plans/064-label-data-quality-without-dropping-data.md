@@ -36,9 +36,13 @@
 ## Scope
 
 - `apps/web/src/project-summary.tsx` and render tests
-- `apps/web/src/project-presentation.ts` (create if pure classification is needed)
+- `apps/web/src/project-presentation.ts` and tests (pure classification)
 - `apps/web/src/group-panel.tsx`
 - `apps/web/src/routes/sync.tsx` and render tests
+- `apps/web/src/sync-machine-fleet.tsx` (presentation-only extraction for
+  deterministic DOM assertions)
+- `apps/web/src/css-bundle.test.ts` (exact 619-byte gzip allowance for this
+  plan's data-quality presentation)
 - `apps/web/src/manual-transfer-model.ts` and tests
 - `apps/web/e2e/dashboard-presentation.spec.ts`
 - `apps/web/e2e/machine-staleness.spec.ts`

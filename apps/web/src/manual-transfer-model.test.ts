@@ -6,9 +6,12 @@ import {
   formatFleetAge,
   formatManualImportSummary,
   formatTransferBytes,
+  INVALID_STORED_ROWS_EXPLANATION,
+  invalidStoredRowsSummary,
   machineFreshnessStatusLabel,
   machineLabelPresentation,
   machineLabelPresentationForSnapshot,
+  STALE_MACHINE_COLLECTION_GUIDANCE,
 } from './manual-transfer-model';
 import { buildSyncFleetComparisonRows } from './sync-machine-comparison-model';
 
@@ -33,6 +36,15 @@ test('formats manual transfer sizes for upload progress', () => {
   expect(formatTransferBytes(1023)).toBe('1023 B');
   expect(formatTransferBytes(1024)).toBe('1.0 KB');
   expect(formatTransferBytes(1_572_864)).toBe('1.5 MB');
+});
+
+test('owns conservative invalid-row and stale-machine guidance without local paths', () => {
+  expect(invalidStoredRowsSummary(1)).toBe('1 invalid stored row was excluded from fleet metadata.');
+  expect(invalidStoredRowsSummary(2)).toBe('2 invalid stored rows were excluded from fleet metadata.');
+  expect(INVALID_STORED_ROWS_EXPLANATION).toBe('Rows failed stored-row validation; details were not retained.');
+  expect(STALE_MACHINE_COLLECTION_GUIDANCE.command).toBe('bun run cli -- snapshot --out <path>');
+  expect(STALE_MACHINE_COLLECTION_GUIDANCE.description).toContain('30-day freshness window');
+  expect(STALE_MACHINE_COLLECTION_GUIDANCE.command).not.toContain('/home/');
 });
 
 test('summarizes changed and unchanged usage rows after a manual import', () => {
