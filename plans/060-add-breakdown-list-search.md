@@ -29,6 +29,7 @@ the local query because each mounted panel owns its own state.
 - `apps/web/src/group-panel-presentation.ts`
 - `apps/web/src/group-panel-presentation.test.ts`
 - `apps/web/src/group-panel.render.test.tsx`
+- `apps/web/src/css-bundle.test.ts` (exact 334-byte breakdown-search allowance only)
 
 No global `q`, URL, server, Projects, Cursor, fuzzy matching, or pagination.
 

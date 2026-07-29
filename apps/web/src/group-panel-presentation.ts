@@ -29,6 +29,25 @@ const breakdownSortComparators: Record<BreakdownSort, BreakdownGroupComparator> 
 
 export const sortBreakdownGroups = (groups: readonly AnalyticsGroup[], sort: BreakdownSort): AnalyticsGroup[] =>
   [...groups].sort((left, right) => breakdownSortComparators[sort](left, right) || left.key.localeCompare(right.key));
+
+type BreakdownGroupLabel = (group: AnalyticsGroup) => string;
+
+const defaultBreakdownGroupLabel: BreakdownGroupLabel = (group) => group.key;
+const normalizeBreakdownSearchText = (value: string): string => value.normalize('NFKC').trim().toLocaleLowerCase();
+
+export const filterAndSortBreakdownGroups = (
+  groups: readonly AnalyticsGroup[],
+  query: string,
+  sort: BreakdownSort,
+  labelFor: BreakdownGroupLabel = defaultBreakdownGroupLabel,
+): AnalyticsGroup[] => {
+  const normalizedQuery = normalizeBreakdownSearchText(query);
+  const matchingGroups =
+    normalizedQuery.length === 0
+      ? groups
+      : groups.filter((group) => normalizeBreakdownSearchText(labelFor(group)).includes(normalizedQuery));
+  return sortBreakdownGroups(matchingGroups, sort);
+};
 const MAX_PERCENT = 100;
 
 export const breakdownPriceState = ({

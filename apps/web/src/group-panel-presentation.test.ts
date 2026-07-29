@@ -4,6 +4,7 @@ import {
   breakdownBarPresentation,
   breakdownModelLabel,
   breakdownPriceStateLabel,
+  filterAndSortBreakdownGroups,
   sortBreakdownGroups,
 } from './group-panel-presentation';
 
@@ -114,5 +115,28 @@ describe('Breakdown sorting', () => {
     const second = { ...analyticsGroup('same', 1, 1, 1), provider: 'second' };
 
     expect(sortBreakdownGroups([first, second], 'sessions')).toEqual([first, second]);
+  });
+});
+
+describe('Breakdown search', () => {
+  test('trims and normalizes a case-insensitive Unicode query before sorting matches', () => {
+    const zebra = analyticsGroup('Équipe Zèbre', 1, 10, 1);
+    const alpha = analyticsGroup('Équipe Alpha', 1, 20, 2);
+    const other = analyticsGroup('Other', 1, 30, 3);
+    const input = [zebra, other, alpha];
+
+    expect(groupKeys(filterAndSortBreakdownGroups(input, '  E\u0301QUIPE  ', 'tokens'))).toEqual([
+      'Équipe Alpha',
+      'Équipe Zèbre',
+    ]);
+    expect(input).toEqual([zebra, other, alpha]);
+  });
+
+  test('shows every sorted row for whitespace and no rows for an unmatched query', () => {
+    const alpha = analyticsGroup('Alpha', 1, 10, 2);
+    const beta = analyticsGroup('Beta', 1, 20, 1);
+
+    expect(groupKeys(filterAndSortBreakdownGroups([alpha, beta], '   ', 'tokens'))).toEqual(['Beta', 'Alpha']);
+    expect(filterAndSortBreakdownGroups([alpha, beta], 'missing', 'sessions')).toEqual([]);
   });
 });

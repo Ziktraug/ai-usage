@@ -80,7 +80,7 @@ request unless the user explicitly asks.
 | 057 | Make Punchcard Cells Filter the Report | P2 | M | 055 | DONE |
 | 058 | Add Report Sharing and Safe CSV Export | P3 | M | 053, 054 | TODO |
 | 059 | Compare Machine Contributions on Sync | P3 | M | - | DONE |
-| 060 | Add Local Search to Long Breakdown Lists | P3 | S | 054 | TODO |
+| 060 | Add Local Search to Long Breakdown Lists | P3 | S | 054 | DONE |
 | 061 | Close the Four Reopened Presentation Regressions | P1 | S | 046 implementation | DONE |
 | 062 | Clarify Report Structure and Visual Encoding | P2 | L | 053, 054, 061 | TODO |
 | 063 | Normalize Report Signal and Language | P2 | L | 053, 062 | TODO |

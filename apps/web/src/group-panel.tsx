@@ -1,6 +1,7 @@
 import { SegmentedControl } from '@ai-usage/design-system';
 import { css, cx } from '@ai-usage/design-system/css';
 import {
+  actionRow,
   barFill,
   barTrack,
   CellWithProvenance,
@@ -15,18 +16,20 @@ import {
   groupTitle,
   groupValue,
   right,
+  searchInput,
   strongCell,
+  unavailableText,
 } from '@ai-usage/design-system/report';
 import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
 import { PARTIALLY_MEASURED_LABEL, partiallyMeasuredApiPriceDescription } from '@ai-usage/report-core/provenance';
-import { createMemo, For, Show } from 'solid-js';
+import { createMemo, createSignal, For, Show } from 'solid-js';
 import { type BreakdownSort, isBreakdownSort } from './dashboard-search';
 import {
   breakdownBarPresentation,
   breakdownModelLabel,
   breakdownPriceState,
   breakdownPriceStateLabel,
-  sortBreakdownGroups,
+  filterAndSortBreakdownGroups,
 } from './group-panel-presentation';
 import {
   accentFill,
@@ -104,88 +107,137 @@ const GroupApiValue = (props: { group: AnalyticsGroup }) => {
   );
 };
 
-export const GroupPanel = (props: {
-  title: string;
-  groups: AnalyticsGroup[];
+interface GroupPanelProps {
   countLabel: string;
+  groups: AnalyticsGroup[];
   harnessTones?: boolean;
   onFilter?: (value: string) => void;
   onSortChange: (value: BreakdownSort) => void;
   sort: BreakdownSort;
-}) => {
-  const maxCost = createMemo(() => Math.max(0, ...props.groups.map((group) => group.costSum)));
-  const sortedGroups = createMemo(() => sortBreakdownGroups(props.groups, props.sort));
+  title: string;
+}
+
+interface GroupPanelViewProps extends GroupPanelProps {
+  onSearchQueryChange: (value: string) => void;
+  searchQuery: string;
+}
+
+export const GroupPanelView = (props: GroupPanelViewProps) => {
+  const visibleGroups = createMemo(() =>
+    filterAndSortBreakdownGroups(props.groups, props.searchQuery, props.sort, (group) =>
+      groupDisplayKey(group, props.countLabel),
+    ),
+  );
+  const maxCost = createMemo(() => Math.max(0, ...visibleGroups().map((group) => group.costSum)));
+
   return (
     <div class={groupPanel}>
       <div class={groupHeader}>
         <div class={groupTitle}>{props.title}</div>
-        <SegmentedControl
-          ariaLabel="Sort breakdown"
-          items={BREAKDOWN_SORT_ITEMS}
-          onValueChange={(value) => {
-            if (isBreakdownSort(value)) {
-              props.onSortChange(value);
-            }
-          }}
-          value={props.sort}
-        />
-        <div class={groupCount} title={`${props.groups.length} ${props.countLabel}`}>
-          {props.groups.length} {props.countLabel}
+        <div class={groupCount} title={`${visibleGroups().length} ${props.countLabel}`}>
+          {visibleGroups().length} {props.countLabel}
+        </div>
+        <div class={actionRow} style={{ 'grid-column': '1 / -1' }}>
+          <input
+            aria-label="Search this breakdown"
+            class={searchInput}
+            onInput={(event) => props.onSearchQueryChange(event.currentTarget.value)}
+            placeholder="Search this breakdown"
+            type="search"
+            value={props.searchQuery}
+          />
+          <SegmentedControl
+            ariaLabel="Sort breakdown"
+            items={BREAKDOWN_SORT_ITEMS}
+            onValueChange={(value) => {
+              if (isBreakdownSort(value)) {
+                props.onSortChange(value);
+              }
+            }}
+            value={props.sort}
+          />
         </div>
       </div>
       <div class={groupRows}>
-        <For each={sortedGroups()}>
-          {(group) => (
-            <div class={groupRow} data-price-state={groupBarPresentation(group, maxCost()).state}>
-              <div>
-                <Show
-                  fallback={<div class={strongCell}>{groupDisplayKey(group, props.countLabel)}</div>}
-                  when={props.onFilter}
-                >
-                  <button class={groupKeyButton} onClick={() => props.onFilter?.(group.key)} type="button">
-                    {groupDisplayKey(group, props.countLabel)}
-                  </button>
-                </Show>
-                <div class={groupSub} title={groupFreshTitle(group)}>
-                  {group.sessions} sess{group.ambiguous ? ` · ${group.ambiguous} ambig` : ''} · {groupFreshLabel(group)}{' '}
-                  · {groupCacheLabel(group)}
-                  {groupPricingCoverage(group)}
-                </div>
-                <Show when={!analyticsGroupUnavailableOnly(group)}>
-                  <div
-                    aria-label={groupBarAriaLabel(group, maxCost())}
-                    class={cx(
-                      barTrack,
-                      groupBarPresentation(group, maxCost()).state === 'partially measured'
-                        ? partiallyMeasuredBarTrack
-                        : undefined,
-                    )}
-                    data-price-bar={groupBarPresentation(group, maxCost()).state}
-                    data-width-percent={String(groupBarPresentation(group, maxCost()).widthPercent ?? 0)}
-                    role="img"
-                  >
-                    <div
-                      class={cx(
-                        barFill,
-                        (props.harnessTones ? harnessFillFor(group.harness) : undefined) ?? accentFill,
-                      )}
-                      style={{ width: `${groupBarPresentation(group, maxCost()).widthPercent ?? 0}%` }}
-                    />
-                  </div>
-                </Show>
-              </div>
-              <div class={right}>
-                <div class={groupValue}>
-                  <GroupApiValue group={group} />
-                </div>
-                <div class={groupPct} title={PRICED_SHARE_HINT}>
-                  {fmtPct(group.costPercent)}
-                </div>
-              </div>
+        <Show
+          fallback={
+            <div class={groupRow} role="status">
+              <div class={unavailableText}>No breakdown rows match this search</div>
             </div>
-          )}
-        </For>
+          }
+          when={visibleGroups().length > 0}
+        >
+          <For each={visibleGroups()}>
+            {(group) => (
+              <div class={groupRow} data-price-state={groupBarPresentation(group, maxCost()).state}>
+                <div>
+                  <Show
+                    fallback={<div class={strongCell}>{groupDisplayKey(group, props.countLabel)}</div>}
+                    when={props.onFilter}
+                  >
+                    <button class={groupKeyButton} onClick={() => props.onFilter?.(group.key)} type="button">
+                      {groupDisplayKey(group, props.countLabel)}
+                    </button>
+                  </Show>
+                  <div class={groupSub} title={groupFreshTitle(group)}>
+                    {group.sessions} sess{group.ambiguous ? ` · ${group.ambiguous} ambig` : ''} ·{' '}
+                    {groupFreshLabel(group)} · {groupCacheLabel(group)}
+                    {groupPricingCoverage(group)}
+                  </div>
+                  <Show when={!analyticsGroupUnavailableOnly(group)}>
+                    <div
+                      aria-label={groupBarAriaLabel(group, maxCost())}
+                      class={cx(
+                        barTrack,
+                        groupBarPresentation(group, maxCost()).state === 'partially measured'
+                          ? partiallyMeasuredBarTrack
+                          : undefined,
+                      )}
+                      data-price-bar={groupBarPresentation(group, maxCost()).state}
+                      data-width-percent={String(groupBarPresentation(group, maxCost()).widthPercent ?? 0)}
+                      role="img"
+                    >
+                      <div
+                        class={cx(
+                          barFill,
+                          (props.harnessTones ? harnessFillFor(group.harness) : undefined) ?? accentFill,
+                        )}
+                        style={{ width: `${groupBarPresentation(group, maxCost()).widthPercent ?? 0}%` }}
+                      />
+                    </div>
+                  </Show>
+                </div>
+                <div class={right}>
+                  <div class={groupValue}>
+                    <GroupApiValue group={group} />
+                  </div>
+                  <div class={groupPct} title={PRICED_SHARE_HINT}>
+                    {fmtPct(group.costPercent)}
+                  </div>
+                </div>
+              </div>
+            )}
+          </For>
+        </Show>
       </div>
     </div>
+  );
+};
+
+export const GroupPanel = (props: GroupPanelProps) => {
+  const [searchQuery, setSearchQuery] = createSignal('');
+
+  return (
+    <GroupPanelView
+      countLabel={props.countLabel}
+      groups={props.groups}
+      {...(props.harnessTones === undefined ? {} : { harnessTones: props.harnessTones })}
+      {...(props.onFilter ? { onFilter: props.onFilter } : {})}
+      onSearchQueryChange={setSearchQuery}
+      onSortChange={props.onSortChange}
+      searchQuery={searchQuery()}
+      sort={props.sort}
+      title={props.title}
+    />
   );
 };

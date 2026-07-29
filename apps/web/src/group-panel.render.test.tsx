@@ -14,6 +14,11 @@ interface GroupPanelProps {
   title: string;
 }
 
+interface GroupPanelViewProps extends GroupPanelProps {
+  onSearchQueryChange: (value: string) => void;
+  searchQuery: string;
+}
+
 const viteServer = await createServer({
   appType: 'custom',
   configFile: false,
@@ -23,10 +28,20 @@ const viteServer = await createServer({
   server: { hmr: false, middlewareMode: true, ws: false },
 });
 const loaded: unknown = await viteServer.ssrLoadModule('/src/group-panel.tsx');
-if (!(loaded && typeof loaded === 'object' && 'GroupPanel' in loaded && typeof loaded.GroupPanel === 'function')) {
-  throw new Error('Vite did not load GroupPanel');
+if (
+  !(
+    loaded &&
+    typeof loaded === 'object' &&
+    'GroupPanel' in loaded &&
+    typeof loaded.GroupPanel === 'function' &&
+    'GroupPanelView' in loaded &&
+    typeof loaded.GroupPanelView === 'function'
+  )
+) {
+  throw new Error('Vite did not load GroupPanel components');
 }
 const GroupPanel = loaded.GroupPanel as Component<GroupPanelProps>;
+const GroupPanelView = loaded.GroupPanelView as Component<GroupPanelViewProps>;
 afterAll(async () => viteServer.close());
 
 const partiallyMeasuredGroup: AnalyticsGroup = {
@@ -130,4 +145,37 @@ test('renders one keyboard-accessible sort control with active state and sorted 
   expect(gammaIndex).toBeGreaterThan(-1);
   expect(gammaIndex).toBeLessThan(betaIndex);
   expect(betaIndex).toBeLessThan(alphaIndex);
+});
+
+test('renders a labelled local search and the explicit no-match state', () => {
+  const group = sortableGroup('Alpha', 7, 10, 1);
+  const panelHtml = renderToString(() =>
+    createComponent(GroupPanel, {
+      countLabel: 'models',
+      groups: [group],
+      onSortChange: () => undefined,
+      sort: 'value',
+      title: 'Models',
+    }),
+  );
+
+  expect(panelHtml).toContain('aria-label="Search this breakdown"');
+  expect(panelHtml).toContain('placeholder="Search this breakdown"');
+  expect(panelHtml).toContain('type="search"');
+  expect(panelHtml).not.toContain('aria-keyshortcuts="/"');
+
+  const noMatchHtml = renderToString(() =>
+    createComponent(GroupPanelView, {
+      countLabel: 'models',
+      groups: [group],
+      onSearchQueryChange: () => undefined,
+      onSortChange: () => undefined,
+      searchQuery: 'missing',
+      sort: 'value',
+      title: 'Models',
+    }),
+  );
+
+  expect(noMatchHtml).toContain('No breakdown rows match this search');
+  expect(noMatchHtml).not.toContain('data-price-state');
 });
