@@ -8,7 +8,7 @@ import { createUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
-import { importPeerMergeBundle, usageStorePath } from '@ai-usage/usage-store';
+import { importPeerMergeBundle, usageStorePath } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import {
   createSkillsServerAdapter,

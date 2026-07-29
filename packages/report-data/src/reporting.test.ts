@@ -10,7 +10,7 @@ import { createProviderStatusDataset } from '@ai-usage/report-core/provider-stat
 import { createUsageSnapshot, type UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
-import { importLocalRows, importPeerMergeBundle, usageStorePath } from '@ai-usage/usage-store';
+import { importLocalRows, importPeerMergeBundle, usageStorePath } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import {
   collectProjectedLocalReportRowsWithWarnings,

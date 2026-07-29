@@ -6,7 +6,7 @@ import { createUsageMergeBundle, parseUsageMergeBundle } from '@ai-usage/report-
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
-import { importLocalRows, queryReportRows } from '@ai-usage/usage-store';
+import { importLocalRows, queryReportRows } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import { createUsageFileMergeService, UsageMergeError } from './index';
 

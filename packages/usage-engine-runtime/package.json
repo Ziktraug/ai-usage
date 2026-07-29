@@ -1,16 +1,13 @@
 {
-  "name": "@ai-usage/usage-store",
+  "name": "@ai-usage/usage-engine-runtime",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
-    "./reader": "./src/reader.ts",
-    "./testing": "./src/testing.ts",
-    "./writer": "./src/writer.ts"
+    ".": "./src/runtime.ts"
   },
   "dependencies": {
-    "@ai-usage/report-core": "workspace:*",
-    "effect": "^3.21.4"
+    "@ai-usage/usage-engine-control": "workspace:*"
   },
   "scripts": {
     "build": "tsc --noEmit",

@@ -97,9 +97,9 @@ const boundaryPolicies: BoundaryPolicy[] = [
   },
   {
     packageName: '@ai-usage/cli',
-    forbiddenDependencies: ['@ai-usage/usage-store'],
-    forbiddenImports: ['@ai-usage/usage-store'],
-    reason: 'CLI application workflows must reach durable usage data through report-data.',
+    forbiddenDependencies: [],
+    forbiddenImports: [],
+    reason: 'CLI durable usage reads must use the explicit read-only store facade.',
   },
   {
     packageName: '@ai-usage/usage-merge',
@@ -127,6 +127,152 @@ const boundaryPolicies: BoundaryPolicy[] = [
     reason: 'web must not import CLI or retired network adapter packages.',
   },
 ];
+
+const usageStorePackage = '@ai-usage/usage-store';
+const usageStoreReader = `${usageStorePackage}/reader`;
+const usageStoreWriter = `${usageStorePackage}/writer`;
+const usageStoreTesting = `${usageStorePackage}/testing`;
+const engineControlPackage = '@ai-usage/usage-engine-control';
+const engineControlTesting = `${engineControlPackage}/testing`;
+const engineRuntimePackage = '@ai-usage/usage-engine-runtime';
+const engineAppPackage = '@ai-usage/usage-engine';
+const reportDataSourceAdapters = '@ai-usage/report-data/source-adapters';
+const reportDataOneShotSources = '@ai-usage/report-data/one-shot-sources';
+
+// These exact imports are the pre-cutover writer/scheduler owners named by plan 052.
+// The ledger prevents any new exception and is deleted file-by-file in Waves 3-5.
+const legacyTargetGraphExceptions = new Set([
+  `@ai-usage/report-data|packages/report-data/src/index.ts|${usageStoreWriter}`,
+  `@ai-usage/report-data|packages/report-data/src/provider-quota-refresh.ts|${usageStoreWriter}`,
+  `@ai-usage/report-data|packages/report-data/src/provider-quota.ts|${usageStoreWriter}`,
+  `@ai-usage/report-data|packages/report-data/src/source-adapters.ts|${usageStoreWriter}`,
+  `@ai-usage/usage-merge|packages/usage-merge/src/index.ts|${usageStoreWriter}`,
+  `@ai-usage/web|apps/web/src/server/source-control-e2e-fixture.server.ts|${reportDataSourceAdapters}`,
+  `@ai-usage/web|apps/web/src/server/source-control.server.test.ts|${reportDataSourceAdapters}`,
+  `@ai-usage/web|apps/web/src/server/source-control.server.ts|${reportDataSourceAdapters}`,
+  `@ai-usage/cli|apps/cli/src/main.ts|${reportDataOneShotSources}`,
+  `@ai-usage/cli|apps/cli/src/setup.ts|${reportDataOneShotSources}`,
+]);
+
+const engineRuntimeAllowedWorkspaceDependencies = new Set([
+  '@ai-usage/effect-runtime',
+  '@ai-usage/local-collectors',
+  '@ai-usage/report-core',
+  '@ai-usage/report-data',
+  '@ai-usage/usage-engine-control',
+  '@ai-usage/usage-merge',
+  usageStorePackage,
+]);
+const testOnlySourcePattern =
+  /(?:^|\/)(?:__tests__|e2e|fixture|fixtures|test|tests)(?:\/|$)|(?:^|[.-])(?:e2e|spec|test)\.[^/]+$/u;
+
+const isWorkspaceSpecifier = (specifier: string): boolean => specifier.startsWith(workspacePackageScope);
+
+const isTestOnlySource = (relativeFile: string): boolean => testOnlySourcePattern.test(relativeFile);
+
+const isPackageOrSubpath = (specifier: string, packageName: string): boolean =>
+  specifier === packageName || specifier.startsWith(`${packageName}/`);
+
+const workspacePackageNameFor = (specifier: string): string => specifier.split('/').slice(0, 2).join('/');
+
+const isLegacyTargetGraphException = (packageName: string, relativeFile: string, specifier: string): boolean =>
+  legacyTargetGraphExceptions.has(`${packageName}|${relativeFile}|${specifier}`);
+
+const targetDependencyReason = (
+  packageName: string,
+  specifier: string,
+  applicationPackages: ReadonlySet<string>,
+): string | undefined => {
+  if (!isWorkspaceSpecifier(specifier)) {
+    return;
+  }
+  const dependencyPackage = workspacePackageNameFor(specifier);
+  if (packageName === engineControlPackage && dependencyPackage !== '@ai-usage/report-core') {
+    return 'usage-engine-control may depend only on pure report-core contracts.';
+  }
+  if (packageName === engineRuntimePackage && !engineRuntimeAllowedWorkspaceDependencies.has(dependencyPackage)) {
+    return 'usage-engine-runtime may depend only on its explicit write-side domain packages.';
+  }
+  if (dependencyPackage === engineRuntimePackage && packageName !== engineAppPackage) {
+    return 'Only apps/usage-engine may depend on usage-engine-runtime.';
+  }
+  if (
+    packageName === usageStorePackage &&
+    (dependencyPackage === engineControlPackage ||
+      dependencyPackage === engineRuntimePackage ||
+      applicationPackages.has(dependencyPackage))
+  ) {
+    return 'usage-store must remain independent from engine contracts, runtime, and applications.';
+  }
+  return;
+};
+
+const targetImportReason = (
+  packageName: string,
+  relativeFile: string,
+  specifier: string,
+  applicationPackages: ReadonlySet<string>,
+): string | undefined => {
+  if (isLegacyTargetGraphException(packageName, relativeFile, specifier)) {
+    return;
+  }
+  if (
+    (isPackageOrSubpath(specifier, usageStoreTesting) || isPackageOrSubpath(specifier, engineControlTesting)) &&
+    isTestOnlySource(relativeFile)
+  ) {
+    return;
+  }
+  if (specifier === usageStorePackage) {
+    return 'The mixed usage-store root is retired; import reader, writer, or testing explicitly.';
+  }
+  if (isPackageOrSubpath(specifier, usageStoreWriter) && packageName !== engineRuntimePackage) {
+    return 'Only usage-engine-runtime may import the usage-store writer facade.';
+  }
+  if (isPackageOrSubpath(specifier, engineRuntimePackage) && packageName !== engineAppPackage) {
+    return 'Only apps/usage-engine may compose usage-engine-runtime.';
+  }
+  if (isPackageOrSubpath(specifier, usageStoreTesting) || isPackageOrSubpath(specifier, engineControlTesting)) {
+    return 'Testing adapters may be imported only by test or fixture source.';
+  }
+  if (
+    (packageName === '@ai-usage/web' || packageName === '@ai-usage/cli') &&
+    (isPackageOrSubpath(specifier, reportDataSourceAdapters) || isPackageOrSubpath(specifier, reportDataOneShotSources))
+  ) {
+    return 'Web and CLI must not import write-side source adapters or one-shot writers.';
+  }
+  if (
+    packageName === engineControlPackage &&
+    isWorkspaceSpecifier(specifier) &&
+    !isPackageOrSubpath(specifier, '@ai-usage/report-core')
+  ) {
+    return 'usage-engine-control may import only pure report-core contracts.';
+  }
+  if (packageName === engineRuntimePackage && isWorkspaceSpecifier(specifier)) {
+    const dependencyName = workspacePackageNameFor(specifier);
+    if (!engineRuntimeAllowedWorkspaceDependencies.has(dependencyName)) {
+      return 'usage-engine-runtime may import only its explicit write-side domain packages.';
+    }
+    if (dependencyName === usageStorePackage && specifier !== usageStoreWriter) {
+      return 'usage-engine-runtime must use the explicit usage-store writer facade.';
+    }
+  }
+  if (
+    packageName === usageStorePackage &&
+    (isPackageOrSubpath(specifier, engineControlPackage) ||
+      isPackageOrSubpath(specifier, engineRuntimePackage) ||
+      applicationPackages.has(workspacePackageNameFor(specifier)))
+  ) {
+    return 'usage-store must remain independent from engine contracts, runtime, and applications.';
+  }
+  if (
+    packageName === '@ai-usage/report-data' &&
+    specifier.startsWith(`${usageStorePackage}/`) &&
+    specifier !== usageStoreReader
+  ) {
+    return 'report-data may import only the usage-store reader facade.';
+  }
+  return;
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -268,6 +414,63 @@ async function collectImportViolations(
   return violations;
 }
 
+const collectTargetDependencyViolations = (
+  root: string,
+  packageInfo: PackageInfo,
+  applicationPackages: ReadonlySet<string>,
+): PackageBoundaryViolation[] => {
+  const violations: PackageBoundaryViolation[] = [];
+  for (const [specifier, field] of packageInfo.dependencies) {
+    const reason = targetDependencyReason(packageInfo.packageName, specifier, applicationPackages);
+    if (reason === undefined) {
+      continue;
+    }
+    violations.push({
+      file: path.relative(root, path.join(packageInfo.directory, 'package.json')),
+      message: `${reason} Forbidden ${field} entry.`,
+      packageName: packageInfo.packageName,
+      specifier,
+    });
+  }
+  return violations;
+};
+
+const collectTargetImportViolations = async (
+  root: string,
+  packageInfo: PackageInfo,
+  applicationPackages: ReadonlySet<string>,
+  observedLegacyExceptions: Set<string>,
+): Promise<PackageBoundaryViolation[]> => {
+  const violations: PackageBoundaryViolation[] = [];
+  const files = await collectSourceFiles(packageInfo.directory);
+  for (const file of files) {
+    const text = await readFile(file, 'utf8');
+    const relativeFile = path.relative(root, file).split(path.sep).join('/');
+    for (const match of text.matchAll(workspaceImportPattern)) {
+      const specifier = match[1] ?? match[2] ?? match[3];
+      if (specifier === undefined) {
+        continue;
+      }
+      const legacyKey = `${packageInfo.packageName}|${relativeFile}|${specifier}`;
+      if (legacyTargetGraphExceptions.has(legacyKey)) {
+        observedLegacyExceptions.add(legacyKey);
+      }
+      const reason = targetImportReason(packageInfo.packageName, relativeFile, specifier, applicationPackages);
+      if (reason === undefined) {
+        continue;
+      }
+      violations.push({
+        file: relativeFile,
+        line: lineNumberFor(text, match.index),
+        message: reason,
+        packageName: packageInfo.packageName,
+        specifier,
+      });
+    }
+  }
+  return violations;
+};
+
 const retiredPackagePolicyFor = (packageName: string): BoundaryPolicy => ({
   packageName,
   forbiddenDependencies: [...retiredPackages],
@@ -278,12 +481,44 @@ const retiredPackagePolicyFor = (packageName: string): BoundaryPolicy => ({
 export async function collectViolations(root: string): Promise<PackageBoundaryViolation[]> {
   const packages = await discoverWorkspacePackages(root);
   const violations: PackageBoundaryViolation[] = [];
+  const applicationPackages = new Set(
+    [...packages.values()]
+      .filter((packageInfo) => path.relative(root, packageInfo.directory).split(path.sep)[0] === 'apps')
+      .map(({ packageName }) => packageName),
+  );
+  const observedLegacyExceptions = new Set<string>();
 
   for (const policy of boundaryPolicies) {
     const packageInfo = packages.get(policy.packageName);
     violations.push(...collectDependencyViolations(root, packages, policy));
     if (packageInfo) {
       violations.push(...(await collectImportViolations(root, packageInfo, policy)));
+    }
+  }
+
+  for (const packageInfo of packages.values()) {
+    violations.push(...collectTargetDependencyViolations(root, packageInfo, applicationPackages));
+    violations.push(
+      ...(await collectTargetImportViolations(root, packageInfo, applicationPackages, observedLegacyExceptions)),
+    );
+  }
+
+  const plan052Exists = await readFile(path.join(root, 'plans/052-split-usage-engine-runtime.md'), 'utf8').then(
+    () => true,
+    () => false,
+  );
+  if (plan052Exists) {
+    for (const ledgerEntry of legacyTargetGraphExceptions) {
+      if (observedLegacyExceptions.has(ledgerEntry)) {
+        continue;
+      }
+      const [packageName = '', relativeFile = '', specifier = ''] = ledgerEntry.split('|');
+      violations.push({
+        file: relativeFile,
+        message: 'The plan-052 transition ledger entry is stale and must be removed.',
+        packageName,
+        specifier,
+      });
     }
   }
 

@@ -10,7 +10,7 @@ import {
   queryNormalizedDatasetItems,
   queryReportRows,
   usageStorePath,
-} from '@ai-usage/usage-store';
+} from '@ai-usage/usage-store/testing';
 import { Duration, Effect } from 'effect';
 import { createScheduledSourceRegistry, type SourceRunContext } from './source-adapters';
 

@@ -1,0 +1,985 @@
+import { MAX_PORTABLE_USAGE_BYTES, MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
+import {
+  type ProjectGroupConfig,
+  type ProjectSourceSelector,
+  parseProjectGroupConfigs,
+} from '@ai-usage/report-core/project-group';
+import {
+  type CollectionSourceId,
+  isCollectionSourceId,
+  parseReportPublishedEvent,
+  parseSourceControlSnapshot,
+  type ReportPublishedEvent,
+  type SourceControlView,
+  sourceControlBounds,
+} from '@ai-usage/report-core/source-control';
+
+declare const usageEngineBrand: unique symbol;
+
+type Branded<Value, Name extends string> = Value & {
+  readonly [usageEngineBrand]: Name;
+};
+
+export type UsageEngineProtocolVersion = Branded<number, 'UsageEngineProtocolVersion'>;
+export type UsageEngineInstanceId = Branded<string, 'UsageEngineInstanceId'>;
+export type UsageEngineCommandId = Branded<string, 'UsageEngineCommandId'>;
+export type UsageEngineEventId = Branded<string, 'UsageEngineEventId'>;
+export type UsageEngineEventSequence = Branded<number, 'UsageEngineEventSequence'>;
+export type UsageEngineHandoffId = Branded<string, 'UsageEngineHandoffId'>;
+export type UsageEnginePublicationRevision = Branded<string, 'UsageEnginePublicationRevision'>;
+
+export const USAGE_ENGINE_PROTOCOL_VERSION = 1 as UsageEngineProtocolVersion;
+
+const kibibyte = 1024;
+const maxOpaqueIdBytes = 160;
+const maxConfirmationBytes = 128;
+const maxDigestBytes = 128;
+
+export const usageEngineControlBounds = {
+  maxCommandBytes: 64 * kibibyte,
+  maxCommandCompletionEventBytes: 12 * kibibyte,
+  maxCommandResultBytes: 8 * kibibyte,
+  maxErrorResponseBytes: 4 * kibibyte,
+  maxEventBytes: sourceControlBounds.maxEventBytes,
+  maxFilePathBytes: 4 * kibibyte,
+  maxMessageBytes: sourceControlBounds.maxMessageLength,
+  maxOpaqueIdBytes,
+  maxProjectGroups: 256,
+  maxRendezvousBytes: 4 * kibibyte,
+  maxSnapshotEventBytes: sourceControlBounds.maxSnapshotBytes + 2 * kibibyte,
+  maxStatusEventBytes: sourceControlBounds.maxSnapshotBytes + 34 * kibibyte,
+  maxStatusBytes: sourceControlBounds.maxSnapshotBytes + 32 * kibibyte,
+  maxTokenBytes: 256,
+  minTokenBytes: 32,
+} as const;
+
+const isoTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const opaqueIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,159}$/;
+const revisionPattern = /^[a-zA-Z0-9._-]{1,160}$/;
+const boundedCodePattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+const sha256DigestPattern = /^[a-f0-9]{64}$/;
+const encoder = new TextEncoder();
+
+export type UsageEngineContractErrorReason = 'invalid-contract' | 'protocol-mismatch';
+
+export class UsageEngineContractError extends Error {
+  override readonly name = 'UsageEngineContractError';
+  readonly reason: UsageEngineContractErrorReason;
+
+  constructor(reason: UsageEngineContractErrorReason, message: string) {
+    super(message);
+    this.reason = reason;
+  }
+}
+
+const fail = (message: string): never => {
+  throw new UsageEngineContractError('invalid-contract', message);
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const hasExactKeys = (record: Record<string, unknown>, expected: readonly string[]): boolean => {
+  const actual = Object.keys(record).sort();
+  const sortedExpected = [...expected].sort();
+  return actual.length === sortedExpected.length && actual.every((key, index) => key === sortedExpected[index]);
+};
+
+const hasOnlyKeys = (record: Record<string, unknown>, allowed: readonly string[]): boolean => {
+  const allowedKeys = new Set(allowed);
+  return Object.keys(record).every((key) => allowedKeys.has(key));
+};
+
+const serializedByteLength = (value: unknown, label: string): number => {
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) {
+      return fail(`${label} is not serializable.`);
+    }
+    return encoder.encode(serialized).byteLength;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith(label)) {
+      throw error;
+    }
+    return fail(`${label} is not serializable.`);
+  }
+};
+
+const assertSerializedBound = (value: unknown, maximum: number, label: string): void => {
+  if (serializedByteLength(value, label) > maximum) {
+    fail(`${label} exceeds its byte limit.`);
+  }
+};
+
+const isBoundedString = (value: unknown, maximumBytes: number, allowEmpty = false): value is string =>
+  typeof value === 'string' && (allowEmpty || value.length > 0) && encoder.encode(value).byteLength <= maximumBytes;
+
+const parseBoundedString = (value: unknown, maximumBytes: number, label: string, allowEmpty = false): string => {
+  if (!isBoundedString(value, maximumBytes, allowEmpty)) {
+    return fail(`${label} is invalid or exceeds its byte limit.`);
+  }
+  return value;
+};
+
+const parseOpaqueId = <Name extends string>(value: unknown, label: string): Branded<string, Name> => {
+  if (!(isBoundedString(value, maxOpaqueIdBytes) && opaqueIdPattern.test(value))) {
+    return fail(`${label} is invalid.`);
+  }
+  return value as Branded<string, Name>;
+};
+
+const parseNonNegativeSafeInteger = (value: unknown, maximum: number, label: string): number => {
+  if (!(typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= maximum)) {
+    return fail(`${label} is invalid.`);
+  }
+  return value;
+};
+
+const parseIsoTimestamp = (value: unknown, label: string): string => {
+  if (!(typeof value === 'string' && isoTimestampPattern.test(value) && !Number.isNaN(Date.parse(value)))) {
+    return fail(`${label} is invalid.`);
+  }
+  return value;
+};
+
+export const parseUsageEngineProtocolVersion = (value: unknown): UsageEngineProtocolVersion => {
+  if (value !== USAGE_ENGINE_PROTOCOL_VERSION) {
+    throw new UsageEngineContractError('protocol-mismatch', 'Usage engine protocol version mismatch.');
+  }
+  return USAGE_ENGINE_PROTOCOL_VERSION;
+};
+
+export const parseUsageEngineInstanceId = (value: unknown): UsageEngineInstanceId =>
+  parseOpaqueId<UsageEngineInstanceId extends Branded<string, infer Name> ? Name : never>(
+    value,
+    'Usage engine instance ID',
+  );
+
+export const parseUsageEngineCommandId = (value: unknown): UsageEngineCommandId =>
+  parseOpaqueId<UsageEngineCommandId extends Branded<string, infer Name> ? Name : never>(
+    value,
+    'Usage engine command ID',
+  );
+
+export const parseUsageEngineEventId = (value: unknown): UsageEngineEventId =>
+  parseOpaqueId<UsageEngineEventId extends Branded<string, infer Name> ? Name : never>(value, 'Usage engine event ID');
+
+export const parseUsageEngineEventSequence = (value: unknown): UsageEngineEventSequence =>
+  parseNonNegativeSafeInteger(
+    value,
+    sourceControlBounds.maxGeneration,
+    'Usage engine event sequence',
+  ) as UsageEngineEventSequence;
+
+export const parseUsageEngineHandoffId = (value: unknown): UsageEngineHandoffId =>
+  parseOpaqueId<UsageEngineHandoffId extends Branded<string, infer Name> ? Name : never>(
+    value,
+    'Usage engine handoff ID',
+  );
+
+export const parseUsageEnginePublicationRevision = (value: unknown): UsageEnginePublicationRevision => {
+  if (!(typeof value === 'string' && revisionPattern.test(value))) {
+    return fail('Usage engine publication revision is invalid.');
+  }
+  return value as UsageEnginePublicationRevision;
+};
+
+export type UsageEngineFileInput =
+  | {
+      readonly handoffId: UsageEngineHandoffId;
+      readonly kind: 'inbox-handoff';
+    }
+  | {
+      readonly filePath: string;
+      readonly kind: 'operator-file';
+    };
+
+export type UsageEngineCommand =
+  | { readonly command: 'detect-all' }
+  | { readonly command: 'run-all-enabled' }
+  | { readonly command: 'run-source'; readonly sourceId: CollectionSourceId }
+  | { readonly command: 'publish' }
+  | {
+      readonly command: 'set-source-enabled';
+      readonly enabled: boolean;
+      readonly sourceId: CollectionSourceId;
+    }
+  | {
+      readonly command: 'replace-project-groups';
+      readonly projectGroups: readonly ProjectGroupConfig[];
+    }
+  | { readonly command: 'set-machine-label'; readonly label: string }
+  | { readonly command: 'collect-fresh-quota' }
+  | { readonly command: 'import-cursor'; readonly input: UsageEngineFileInput }
+  | { readonly command: 'preview-merge'; readonly input: UsageEngineFileInput }
+  | {
+      readonly command: 'confirm-merge';
+      readonly confirmationToken: string;
+      readonly documentDigest: string;
+      readonly input: UsageEngineFileInput;
+    };
+
+type UsageEngineFileCommand = Extract<UsageEngineCommand, { readonly input: UsageEngineFileInput }>;
+type UsageEngineProjectGroupCommand = Extract<UsageEngineCommand, { readonly command: 'replace-project-groups' }>;
+type UsageEngineCommandWithoutWebPaths = Exclude<
+  UsageEngineCommand,
+  UsageEngineFileCommand | UsageEngineProjectGroupCommand
+>;
+type UsageEngineInboxFileInput = Extract<UsageEngineFileInput, { readonly kind: 'inbox-handoff' }>;
+
+export interface WebProjectGroupConfig {
+  readonly id: string;
+  readonly name: string;
+  readonly sources: readonly Omit<ProjectSourceSelector, 'sourcePath'>[];
+}
+
+export type WebUsageEngineCommand =
+  | UsageEngineCommandWithoutWebPaths
+  | {
+      readonly command: 'replace-project-groups';
+      readonly projectGroups: readonly WebProjectGroupConfig[];
+    }
+  | {
+      readonly command: 'import-cursor' | 'preview-merge';
+      readonly input: UsageEngineInboxFileInput;
+    }
+  | {
+      readonly command: 'confirm-merge';
+      readonly confirmationToken: string;
+      readonly documentDigest: string;
+      readonly input: UsageEngineInboxFileInput;
+    };
+
+const parseProjectGroups = (value: unknown): readonly ProjectGroupConfig[] => {
+  if (!(Array.isArray(value) && value.length <= usageEngineControlBounds.maxProjectGroups)) {
+    return fail('Usage engine project groups are invalid or exceed their limit.');
+  }
+  const groups: ProjectGroupConfig[] = [];
+  for (const groupValue of value) {
+    if (!(isRecord(groupValue) && hasExactKeys(groupValue, ['id', 'name', 'sources']))) {
+      return fail('Usage engine project group contains unknown or missing fields.');
+    }
+    if (!Array.isArray(groupValue.sources)) {
+      return fail('Usage engine project group sources are invalid.');
+    }
+    const sources: ProjectGroupConfig['sources'] = [];
+    for (const sourceValue of groupValue.sources) {
+      if (
+        !(
+          isRecord(sourceValue) &&
+          hasOnlyKeys(sourceValue, ['gitRemote', 'machineId', 'project', 'sourcePath']) &&
+          Object.keys(sourceValue).length > 0
+        )
+      ) {
+        return fail('Usage engine project source contains unknown or missing fields.');
+      }
+      const source: ProjectGroupConfig['sources'][number] = {};
+      for (const key of ['gitRemote', 'machineId', 'project', 'sourcePath'] as const) {
+        const field = sourceValue[key];
+        if (field !== undefined) {
+          source[key] = parseBoundedString(field, usageEngineControlBounds.maxFilePathBytes, `Project source ${key}`);
+        }
+      }
+      sources.push(source);
+    }
+    groups.push({
+      id: parseBoundedString(groupValue.id, usageEngineControlBounds.maxMessageBytes, 'Project group ID'),
+      name: parseBoundedString(groupValue.name, usageEngineControlBounds.maxMessageBytes, 'Project group name'),
+      sources,
+    });
+  }
+  try {
+    return parseProjectGroupConfigs(groups).map((group) => ({
+      id: group.id,
+      name: group.name,
+      sources: group.sources.map((source) => ({ ...source })),
+    }));
+  } catch {
+    return fail('Usage engine project groups are invalid.');
+  }
+};
+
+const parseFileInput = (value: unknown): UsageEngineFileInput => {
+  if (!(isRecord(value) && typeof value.kind === 'string')) {
+    return fail('Usage engine file input is invalid.');
+  }
+  if (value.kind === 'inbox-handoff') {
+    if (!hasExactKeys(value, ['handoffId', 'kind'])) {
+      return fail('Usage engine inbox handoff contains unknown or missing fields.');
+    }
+    return { handoffId: parseUsageEngineHandoffId(value.handoffId), kind: 'inbox-handoff' };
+  }
+  if (value.kind === 'operator-file') {
+    if (!hasExactKeys(value, ['filePath', 'kind'])) {
+      return fail('Usage engine operator file contains unknown or missing fields.');
+    }
+    const filePath = parseBoundedString(
+      value.filePath,
+      usageEngineControlBounds.maxFilePathBytes,
+      'Usage engine operator file path',
+    );
+    if (filePath.includes('\0')) {
+      return fail('Usage engine operator file path is invalid.');
+    }
+    return { filePath, kind: 'operator-file' };
+  }
+  return fail('Usage engine file input kind is unknown.');
+};
+
+const requireCommandRecord = (value: unknown): Record<string, unknown> => {
+  assertSerializedBound(value, usageEngineControlBounds.maxCommandBytes, 'Usage engine command');
+  if (!(isRecord(value) && typeof value.command === 'string')) {
+    return fail('Usage engine command must be an object.');
+  }
+  return value;
+};
+
+export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
+  const command = requireCommandRecord(value);
+  switch (command.command) {
+    case 'detect-all':
+    case 'run-all-enabled':
+    case 'publish':
+    case 'collect-fresh-quota':
+      if (!hasExactKeys(command, ['command'])) {
+        return fail('Usage engine command contains unknown fields.');
+      }
+      return { command: command.command };
+    case 'run-source':
+      if (!hasExactKeys(command, ['command', 'sourceId'])) {
+        return fail('Usage engine run-source command contains unknown fields.');
+      }
+      if (!isCollectionSourceId(command.sourceId)) {
+        return fail('Usage engine run-source command requires a known source ID.');
+      }
+      return { command: 'run-source', sourceId: command.sourceId };
+    case 'set-source-enabled':
+      if (!hasExactKeys(command, ['command', 'enabled', 'sourceId'])) {
+        return fail('Usage engine set-source-enabled command contains unknown fields.');
+      }
+      if (!(isCollectionSourceId(command.sourceId) && typeof command.enabled === 'boolean')) {
+        return fail('Usage engine set-source-enabled command is invalid.');
+      }
+      return { command: 'set-source-enabled', enabled: command.enabled, sourceId: command.sourceId };
+    case 'replace-project-groups':
+      if (!hasExactKeys(command, ['command', 'projectGroups'])) {
+        return fail('Usage engine replace-project-groups command contains unknown fields.');
+      }
+      return { command: 'replace-project-groups', projectGroups: parseProjectGroups(command.projectGroups) };
+    case 'set-machine-label':
+      if (!hasExactKeys(command, ['command', 'label'])) {
+        return fail('Usage engine set-machine-label command contains unknown fields.');
+      }
+      return {
+        command: 'set-machine-label',
+        label: parseBoundedString(
+          command.label,
+          usageEngineControlBounds.maxMessageBytes,
+          'Usage engine machine label',
+        ),
+      };
+    case 'import-cursor':
+    case 'preview-merge':
+      if (!hasExactKeys(command, ['command', 'input'])) {
+        return fail(`Usage engine ${command.command} command contains unknown fields.`);
+      }
+      return { command: command.command, input: parseFileInput(command.input) };
+    case 'confirm-merge':
+      if (!hasExactKeys(command, ['command', 'confirmationToken', 'documentDigest', 'input'])) {
+        return fail('Usage engine confirm-merge command contains unknown fields.');
+      }
+      return {
+        command: 'confirm-merge',
+        confirmationToken: parseBoundedString(
+          command.confirmationToken,
+          maxConfirmationBytes,
+          'Usage engine confirmation token',
+        ),
+        documentDigest: parseBoundedString(command.documentDigest, maxDigestBytes, 'Usage engine document digest'),
+        input: parseFileInput(command.input),
+      };
+    default:
+      return fail('Usage engine command kind is unknown.');
+  }
+};
+
+export const parseWebUsageEngineCommand = (value: unknown): WebUsageEngineCommand => {
+  const command = parseUsageEngineCommand(value);
+  if ('input' in command) {
+    if (command.input.kind === 'operator-file') {
+      return fail('Web usage engine commands cannot name operator file paths.');
+    }
+    if (command.command === 'confirm-merge') {
+      return {
+        command: 'confirm-merge',
+        confirmationToken: command.confirmationToken,
+        documentDigest: command.documentDigest,
+        input: command.input,
+      };
+    }
+    return { command: command.command, input: command.input };
+  }
+  if (command.command === 'replace-project-groups') {
+    return {
+      command: 'replace-project-groups',
+      projectGroups: command.projectGroups.map((group) => ({
+        id: group.id,
+        name: group.name,
+        sources: group.sources.map((source) => {
+          if (source.sourcePath !== undefined) {
+            return fail('Web usage engine project groups cannot name source paths.');
+          }
+          return {
+            ...(source.gitRemote === undefined ? {} : { gitRemote: source.gitRemote }),
+            ...(source.machineId === undefined ? {} : { machineId: source.machineId }),
+            ...(source.project === undefined ? {} : { project: source.project }),
+          };
+        }),
+      })),
+    };
+  }
+  return command;
+};
+
+export interface UsageEngineCommandRequest {
+  readonly command: UsageEngineCommand;
+  readonly commandId: UsageEngineCommandId;
+  readonly protocolVersion: UsageEngineProtocolVersion;
+}
+
+export const parseUsageEngineCommandRequest = (value: unknown): UsageEngineCommandRequest => {
+  assertSerializedBound(value, usageEngineControlBounds.maxCommandBytes, 'Usage engine command request');
+  if (!(isRecord(value) && hasExactKeys(value, ['command', 'commandId', 'protocolVersion']))) {
+    return fail('Usage engine command request contains unknown or missing fields.');
+  }
+  return {
+    command: parseUsageEngineCommand(value.command),
+    commandId: parseUsageEngineCommandId(value.commandId),
+    protocolVersion: parseUsageEngineProtocolVersion(value.protocolVersion),
+  };
+};
+
+export type UsageEngineErrorCode =
+  | 'aborted'
+  | 'authentication-failed'
+  | 'command-rejected'
+  | 'engine-busy'
+  | 'engine-unavailable'
+  | 'invalid-response'
+  | 'protocol-mismatch'
+  | 'request-too-large'
+  | 'response-too-large'
+  | 'timeout'
+  | 'transport-failed';
+
+const usageEngineErrorCodes = new Set<UsageEngineErrorCode>([
+  'aborted',
+  'authentication-failed',
+  'command-rejected',
+  'engine-busy',
+  'engine-unavailable',
+  'invalid-response',
+  'protocol-mismatch',
+  'request-too-large',
+  'response-too-large',
+  'timeout',
+  'transport-failed',
+]);
+
+export interface UsageEngineErrorPayload {
+  readonly code: UsageEngineErrorCode;
+  readonly message: string;
+}
+
+const parseErrorPayload = (value: unknown): UsageEngineErrorPayload => {
+  if (!(isRecord(value) && hasExactKeys(value, ['code', 'message']))) {
+    return fail('Usage engine error payload contains unknown or missing fields.');
+  }
+  if (!usageEngineErrorCodes.has(value.code as UsageEngineErrorCode)) {
+    return fail('Usage engine error code is unknown.');
+  }
+  return {
+    code: value.code as UsageEngineErrorCode,
+    message: parseBoundedString(value.message, usageEngineControlBounds.maxMessageBytes, 'Usage engine error message'),
+  };
+};
+
+export type UsageEngineCommandResult =
+  | {
+      readonly admission: 'accepted' | 'coalesced';
+      readonly commandId: UsageEngineCommandId;
+      readonly instanceId: UsageEngineInstanceId;
+      readonly ok: true;
+      readonly protocolVersion: UsageEngineProtocolVersion;
+    }
+  | {
+      readonly commandId: UsageEngineCommandId;
+      readonly error: UsageEngineErrorPayload;
+      readonly instanceId: UsageEngineInstanceId;
+      readonly ok: false;
+      readonly protocolVersion: UsageEngineProtocolVersion;
+    };
+
+export const parseUsageEngineCommandResult = (value: unknown): UsageEngineCommandResult => {
+  assertSerializedBound(value, usageEngineControlBounds.maxCommandResultBytes, 'Usage engine command result');
+  if (!(isRecord(value) && typeof value.ok === 'boolean')) {
+    return fail('Usage engine command result is invalid.');
+  }
+  if (value.ok) {
+    if (!hasExactKeys(value, ['admission', 'commandId', 'instanceId', 'ok', 'protocolVersion'])) {
+      return fail('Usage engine command result contains unknown or missing fields.');
+    }
+    if (value.admission !== 'accepted' && value.admission !== 'coalesced') {
+      return fail('Usage engine command admission is invalid.');
+    }
+    return {
+      admission: value.admission,
+      commandId: parseUsageEngineCommandId(value.commandId),
+      instanceId: parseUsageEngineInstanceId(value.instanceId),
+      ok: true,
+      protocolVersion: parseUsageEngineProtocolVersion(value.protocolVersion),
+    };
+  }
+  if (!hasExactKeys(value, ['commandId', 'error', 'instanceId', 'ok', 'protocolVersion'])) {
+    return fail('Usage engine command result contains unknown or missing fields.');
+  }
+  return {
+    commandId: parseUsageEngineCommandId(value.commandId),
+    error: parseErrorPayload(value.error),
+    instanceId: parseUsageEngineInstanceId(value.instanceId),
+    ok: false,
+    protocolVersion: parseUsageEngineProtocolVersion(value.protocolVersion),
+  };
+};
+
+export type UsageEngineCommandName = UsageEngineCommand['command'];
+
+export interface UsageEngineMergeImportResult {
+  readonly deleted: number;
+  readonly fleetChanged: boolean;
+  readonly inserted: number;
+  readonly superseded: number;
+  readonly unchanged: number;
+  readonly updated: number;
+  readonly warnings: number;
+}
+
+export interface UsageEngineMergePreviewOutput {
+  readonly bytes: number;
+  readonly confirmationToken: string;
+  readonly documentDigest: string;
+  readonly kind: 'merge-preview';
+  readonly result: UsageEngineMergeImportResult;
+  readonly rows: number;
+  readonly warningCount: number;
+}
+
+interface UsageEngineCommandCompletionBase {
+  readonly commandId: UsageEngineCommandId;
+  readonly completedAt: string;
+}
+
+export type UsageEngineCommandCompletion =
+  | (UsageEngineCommandCompletionBase & {
+      readonly command: 'preview-merge';
+      readonly output: UsageEngineMergePreviewOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
+      readonly command: Exclude<UsageEngineCommandName, 'preview-merge'>;
+      readonly output: { readonly kind: 'none' };
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
+      readonly command: UsageEngineCommandName;
+      readonly error: UsageEngineErrorPayload;
+      readonly state: 'failed';
+    });
+
+const usageEngineCommandNames = new Set<UsageEngineCommandName>([
+  'collect-fresh-quota',
+  'confirm-merge',
+  'detect-all',
+  'import-cursor',
+  'preview-merge',
+  'publish',
+  'replace-project-groups',
+  'run-all-enabled',
+  'run-source',
+  'set-machine-label',
+  'set-source-enabled',
+]);
+
+const parseUsageEngineCommandName = (value: unknown): UsageEngineCommandName => {
+  if (!(typeof value === 'string' && usageEngineCommandNames.has(value as UsageEngineCommandName))) {
+    return fail('Usage engine completion command kind is unknown.');
+  }
+  return value as UsageEngineCommandName;
+};
+
+const parseMergeCount = (value: unknown, label: string): number =>
+  parseNonNegativeSafeInteger(value, MAX_PORTABLE_USAGE_ROWS, label);
+
+const parseMergeImportResult = (value: unknown): UsageEngineMergeImportResult => {
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, ['deleted', 'fleetChanged', 'inserted', 'superseded', 'unchanged', 'updated', 'warnings']) &&
+      typeof value.fleetChanged === 'boolean'
+    )
+  ) {
+    return fail('Usage engine merge result contains unknown or missing fields.');
+  }
+  return {
+    deleted: parseMergeCount(value.deleted, 'Usage engine merge deleted count'),
+    fleetChanged: value.fleetChanged,
+    inserted: parseMergeCount(value.inserted, 'Usage engine merge inserted count'),
+    superseded: parseMergeCount(value.superseded, 'Usage engine merge superseded count'),
+    unchanged: parseMergeCount(value.unchanged, 'Usage engine merge unchanged count'),
+    updated: parseMergeCount(value.updated, 'Usage engine merge updated count'),
+    warnings: parseMergeCount(value.warnings, 'Usage engine merge warning count'),
+  };
+};
+
+const parseMergePreviewOutput = (value: unknown): UsageEngineMergePreviewOutput => {
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, ['bytes', 'confirmationToken', 'documentDigest', 'kind', 'result', 'rows', 'warningCount']) &&
+      value.kind === 'merge-preview'
+    )
+  ) {
+    return fail('Usage engine merge preview output contains unknown or missing fields.');
+  }
+  const documentDigest = parseBoundedString(value.documentDigest, maxDigestBytes, 'Usage engine merge document digest');
+  if (!sha256DigestPattern.test(documentDigest)) {
+    return fail('Usage engine merge document digest is invalid.');
+  }
+  return {
+    bytes: parseNonNegativeSafeInteger(value.bytes, MAX_PORTABLE_USAGE_BYTES, 'Usage engine merge byte count'),
+    confirmationToken: parseBoundedString(
+      value.confirmationToken,
+      maxConfirmationBytes,
+      'Usage engine confirmation token',
+    ),
+    documentDigest,
+    kind: 'merge-preview',
+    result: parseMergeImportResult(value.result),
+    rows: parseMergeCount(value.rows, 'Usage engine merge row count'),
+    warningCount: parseMergeCount(value.warningCount, 'Usage engine merge preview warning count'),
+  };
+};
+
+export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCommandCompletion => {
+  if (!(isRecord(value) && typeof value.state === 'string')) {
+    return fail('Usage engine command completion is invalid.');
+  }
+  const command = parseUsageEngineCommandName(value.command);
+  const base = {
+    commandId: parseUsageEngineCommandId(value.commandId),
+    completedAt: parseIsoTimestamp(value.completedAt, 'Usage engine command completion timestamp'),
+  };
+  if (value.state === 'failed') {
+    if (!hasExactKeys(value, ['command', 'commandId', 'completedAt', 'error', 'state'])) {
+      return fail('Usage engine failed command completion contains unknown or missing fields.');
+    }
+    return { ...base, command, error: parseErrorPayload(value.error), state: 'failed' };
+  }
+  if (value.state !== 'succeeded') {
+    return fail('Usage engine command completion state is invalid.');
+  }
+  if (!hasExactKeys(value, ['command', 'commandId', 'completedAt', 'output', 'state'])) {
+    return fail('Usage engine successful command completion contains unknown or missing fields.');
+  }
+  if (command === 'preview-merge') {
+    return { ...base, command, output: parseMergePreviewOutput(value.output), state: 'succeeded' };
+  }
+  if (!(isRecord(value.output) && hasExactKeys(value.output, ['kind']) && value.output.kind === 'none')) {
+    return fail('Only a preview command may carry merge preview output.');
+  }
+  return { ...base, command, output: { kind: 'none' }, state: 'succeeded' };
+};
+
+export type UsageEngineReadiness = 'starting' | 'ready' | 'degraded' | 'stopping';
+
+export interface UsageEngineDegradedReason {
+  readonly code: string;
+  readonly message?: string;
+}
+
+export interface UsageEngineCurrentPublication {
+  readonly publishedAt: string;
+  readonly revision: UsageEnginePublicationRevision;
+}
+
+export interface UsageEngineStatus {
+  readonly currentPublication: UsageEngineCurrentPublication | null;
+  readonly degradedReason: UsageEngineDegradedReason | null;
+  readonly generatedAt: string;
+  readonly generation: number;
+  readonly instanceId: UsageEngineInstanceId;
+  readonly protocolVersion: UsageEngineProtocolVersion;
+  readonly readiness: UsageEngineReadiness;
+  readonly sourceControl: SourceControlView;
+  readonly storeSchemaVersion: number | null;
+}
+
+const readinessValues = new Set<UsageEngineReadiness>(['starting', 'ready', 'degraded', 'stopping']);
+
+const parseDegradedReason = (value: unknown): UsageEngineDegradedReason | null => {
+  if (value === null) {
+    return null;
+  }
+  if (!(isRecord(value) && hasOnlyKeys(value, ['code', 'message']) && Object.hasOwn(value, 'code'))) {
+    return fail('Usage engine degraded reason contains unknown or missing fields.');
+  }
+  if (!(typeof value.code === 'string' && boundedCodePattern.test(value.code))) {
+    return fail('Usage engine degraded reason code is invalid.');
+  }
+  return {
+    code: value.code,
+    ...(value.message === undefined
+      ? {}
+      : {
+          message: parseBoundedString(
+            value.message,
+            usageEngineControlBounds.maxMessageBytes,
+            'Usage engine degraded reason message',
+          ),
+        }),
+  };
+};
+
+const parseCurrentPublication = (value: unknown): UsageEngineCurrentPublication | null => {
+  if (value === null) {
+    return null;
+  }
+  if (!(isRecord(value) && hasExactKeys(value, ['publishedAt', 'revision']))) {
+    return fail('Usage engine current publication contains unknown or missing fields.');
+  }
+  return {
+    publishedAt: parseIsoTimestamp(value.publishedAt, 'Usage engine publication timestamp'),
+    revision: parseUsageEnginePublicationRevision(value.revision),
+  };
+};
+
+export const parseUsageEngineStatus = (value: unknown): UsageEngineStatus => {
+  assertSerializedBound(value, usageEngineControlBounds.maxStatusBytes, 'Usage engine status');
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, [
+        'currentPublication',
+        'degradedReason',
+        'generatedAt',
+        'generation',
+        'instanceId',
+        'protocolVersion',
+        'readiness',
+        'sourceControl',
+        'storeSchemaVersion',
+      ])
+    )
+  ) {
+    return fail('Usage engine status contains unknown or missing fields.');
+  }
+  if (!readinessValues.has(value.readiness as UsageEngineReadiness)) {
+    return fail('Usage engine readiness is invalid.');
+  }
+  const instanceId = parseUsageEngineInstanceId(value.instanceId);
+  const sourceControl = parseSourceControlSnapshot(value.sourceControl);
+  if (sourceControl.instanceId !== instanceId) {
+    return fail('Usage engine status has inconsistent instance identities.');
+  }
+  const readiness = value.readiness as UsageEngineReadiness;
+  const degradedReason = parseDegradedReason(value.degradedReason);
+  if ((readiness === 'degraded') !== (degradedReason !== null)) {
+    return fail('Usage engine degraded readiness and reason are inconsistent.');
+  }
+  const storeSchemaVersion =
+    value.storeSchemaVersion === null
+      ? null
+      : parseNonNegativeSafeInteger(
+          value.storeSchemaVersion,
+          Number.MAX_SAFE_INTEGER,
+          'Usage engine store schema version',
+        );
+  if (readiness === 'ready' && (storeSchemaVersion === null || storeSchemaVersion === 0)) {
+    return fail('A ready usage engine requires a compatible store schema.');
+  }
+  const currentPublication = parseCurrentPublication(value.currentPublication);
+  const sourceRevision = sourceControl.publication.revision;
+  if ((currentPublication?.revision ?? undefined) !== sourceRevision) {
+    return fail('Usage engine status has inconsistent publication revisions.');
+  }
+  if (currentPublication !== null && currentPublication.publishedAt !== sourceControl.publication.lastPublishedAt) {
+    return fail('Usage engine status has inconsistent publication timestamps.');
+  }
+  return {
+    currentPublication,
+    degradedReason,
+    generatedAt: parseIsoTimestamp(value.generatedAt, 'Usage engine status timestamp'),
+    generation: parseNonNegativeSafeInteger(
+      value.generation,
+      sourceControlBounds.maxGeneration,
+      'Usage engine status generation',
+    ),
+    instanceId,
+    protocolVersion: parseUsageEngineProtocolVersion(value.protocolVersion),
+    readiness,
+    sourceControl,
+    storeSchemaVersion,
+  };
+};
+
+export type UsageEngineEvent =
+  | {
+      readonly completion: UsageEngineCommandCompletion;
+      readonly event: 'command-completed';
+      readonly eventId: UsageEngineEventId;
+      readonly instanceId: UsageEngineInstanceId;
+      readonly sequence: UsageEngineEventSequence;
+    }
+  | {
+      readonly event: 'status';
+      readonly eventId: UsageEngineEventId;
+      readonly instanceId: UsageEngineInstanceId;
+      readonly sequence: UsageEngineEventSequence;
+      readonly status: UsageEngineStatus;
+    }
+  | {
+      readonly event: 'source-control';
+      readonly eventId: UsageEngineEventId;
+      readonly instanceId: UsageEngineInstanceId;
+      readonly sequence: UsageEngineEventSequence;
+      readonly snapshot: SourceControlView;
+    }
+  | {
+      readonly event: 'report-published';
+      readonly eventId: UsageEngineEventId;
+      readonly instanceId: UsageEngineInstanceId;
+      readonly publication: ReportPublishedEvent;
+      readonly sequence: UsageEngineEventSequence;
+    };
+
+const maximumEventBytes = (event: string): number => {
+  if (event === 'command-completed') {
+    return usageEngineControlBounds.maxCommandCompletionEventBytes;
+  }
+  if (event === 'report-published') {
+    return usageEngineControlBounds.maxEventBytes;
+  }
+  if (event === 'status') {
+    return usageEngineControlBounds.maxStatusEventBytes;
+  }
+  return usageEngineControlBounds.maxSnapshotEventBytes;
+};
+
+export const parseUsageEngineEvent = (value: unknown): UsageEngineEvent => {
+  if (!(isRecord(value) && typeof value.event === 'string')) {
+    return fail('Usage engine event is invalid.');
+  }
+  assertSerializedBound(value, maximumEventBytes(value.event), 'Usage engine event');
+  const instanceId = parseUsageEngineInstanceId(value.instanceId);
+  const eventId = parseUsageEngineEventId(value.eventId);
+  const sequence = parseUsageEngineEventSequence(value.sequence);
+  if (value.event === 'command-completed') {
+    if (!hasExactKeys(value, ['completion', 'event', 'eventId', 'instanceId', 'sequence'])) {
+      return fail('Usage engine command completion event contains unknown or missing fields.');
+    }
+    return {
+      completion: parseUsageEngineCommandCompletion(value.completion),
+      event: 'command-completed',
+      eventId,
+      instanceId,
+      sequence,
+    };
+  }
+  if (value.event === 'status') {
+    if (!hasExactKeys(value, ['event', 'eventId', 'instanceId', 'sequence', 'status'])) {
+      return fail('Usage engine status event contains unknown or missing fields.');
+    }
+    const status = parseUsageEngineStatus(value.status);
+    if (status.instanceId !== instanceId) {
+      return fail('Usage engine status event has inconsistent instance identities.');
+    }
+    return { event: 'status', eventId, instanceId, sequence, status };
+  }
+  if (value.event === 'source-control') {
+    if (!hasExactKeys(value, ['event', 'eventId', 'instanceId', 'sequence', 'snapshot'])) {
+      return fail('Usage engine source-control event contains unknown or missing fields.');
+    }
+    const snapshot = parseSourceControlSnapshot(value.snapshot);
+    if (snapshot.instanceId !== instanceId) {
+      return fail('Usage engine source-control event has inconsistent instance identities.');
+    }
+    return { event: 'source-control', eventId, instanceId, sequence, snapshot };
+  }
+  if (value.event === 'report-published') {
+    if (!hasExactKeys(value, ['event', 'eventId', 'instanceId', 'publication', 'sequence'])) {
+      return fail('Usage engine publication event contains unknown or missing fields.');
+    }
+    const publication = parseReportPublishedEvent(value.publication);
+    if (publication.instanceId !== instanceId) {
+      return fail('Usage engine publication event has inconsistent instance identities.');
+    }
+    return { event: 'report-published', eventId, instanceId, publication, sequence };
+  }
+  return fail('Usage engine event kind is unknown.');
+};
+
+export interface UsageEngineErrorResponse {
+  readonly error: UsageEngineErrorPayload;
+  readonly instanceId?: UsageEngineInstanceId;
+  readonly ok: false;
+  readonly protocolVersion: UsageEngineProtocolVersion;
+}
+
+export const parseUsageEngineErrorResponse = (value: unknown): UsageEngineErrorResponse => {
+  assertSerializedBound(value, usageEngineControlBounds.maxErrorResponseBytes, 'Usage engine error response');
+  if (
+    !(
+      isRecord(value) &&
+      hasOnlyKeys(value, ['error', 'instanceId', 'ok', 'protocolVersion']) &&
+      hasExactKeys(
+        value,
+        value.instanceId === undefined
+          ? ['error', 'ok', 'protocolVersion']
+          : ['error', 'instanceId', 'ok', 'protocolVersion'],
+      ) &&
+      value.ok === false
+    )
+  ) {
+    return fail('Usage engine error response contains unknown or missing fields.');
+  }
+  return {
+    error: parseErrorPayload(value.error),
+    ...(value.instanceId === undefined ? {} : { instanceId: parseUsageEngineInstanceId(value.instanceId) }),
+    ok: false,
+    protocolVersion: parseUsageEngineProtocolVersion(value.protocolVersion),
+  };
+};
+
+export type UsageEngineRetryOperation = 'command' | 'events' | 'status';
+export type UsageEngineRetryDisposition = 'never' | 'reconnect' | 'safe-request' | 'same-command-id';
+
+export const classifyUsageEngineRetry = (
+  code: UsageEngineErrorCode,
+  operation: UsageEngineRetryOperation,
+): UsageEngineRetryDisposition => {
+  if (
+    code === 'aborted' ||
+    code === 'authentication-failed' ||
+    code === 'command-rejected' ||
+    code === 'invalid-response' ||
+    code === 'protocol-mismatch' ||
+    code === 'request-too-large' ||
+    code === 'response-too-large'
+  ) {
+    return 'never';
+  }
+  if (operation === 'command') {
+    return 'same-command-id';
+  }
+  return operation === 'events' ? 'reconnect' : 'safe-request';
+};

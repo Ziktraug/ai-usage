@@ -3,16 +3,18 @@ import type { ProviderQuotaBatch, ProviderQuotaBatchSource } from '@ai-usage/loc
 import { projectProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type {
-  ImportProviderQuotaBatchInput,
-  ProviderQuotaImportItem,
-  ProviderQuotaImportResult,
   ProviderQuotaSourceState,
   QueryLatestProviderQuotaObservationsInput,
   QueryProviderQuotaObservationsResult,
   QueryProviderQuotaSourceStateInput,
   QueryProviderQuotaSourceStatesInput,
+} from '@ai-usage/usage-store/reader';
+import type {
+  ImportProviderQuotaBatchInput,
+  ProviderQuotaImportItem,
+  ProviderQuotaImportResult,
   RecordProviderQuotaSourceAttemptInput,
-} from '@ai-usage/usage-store';
+} from '@ai-usage/usage-store/writer';
 import { Cause, Data, Deferred, Effect, Exit, Option } from 'effect';
 
 const LIVE_SOURCE_KEY = 'codex-app-server';

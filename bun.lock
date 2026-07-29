@@ -28,6 +28,13 @@
         "effect": "^3.21.4",
       },
     },
+    "apps/usage-engine": {
+      "name": "@ai-usage/usage-engine",
+      "version": "0.1.0",
+      "dependencies": {
+        "@ai-usage/usage-engine-runtime": "workspace:*",
+      },
+    },
     "apps/web": {
       "name": "@ai-usage/web",
       "version": "0.1.0",
@@ -106,6 +113,20 @@
       "name": "@ai-usage/skills",
       "version": "0.1.0",
     },
+    "packages/usage-engine-control": {
+      "name": "@ai-usage/usage-engine-control",
+      "version": "0.1.0",
+      "dependencies": {
+        "@ai-usage/report-core": "workspace:*",
+      },
+    },
+    "packages/usage-engine-runtime": {
+      "name": "@ai-usage/usage-engine-runtime",
+      "version": "0.1.0",
+      "dependencies": {
+        "@ai-usage/usage-engine-control": "workspace:*",
+      },
+    },
     "packages/usage-merge": {
       "name": "@ai-usage/usage-merge",
       "version": "0.1.0",
@@ -138,6 +159,12 @@
     "@ai-usage/report-data": ["@ai-usage/report-data@workspace:packages/report-data"],
 
     "@ai-usage/skills": ["@ai-usage/skills@workspace:packages/skills"],
+
+    "@ai-usage/usage-engine": ["@ai-usage/usage-engine@workspace:apps/usage-engine"],
+
+    "@ai-usage/usage-engine-control": ["@ai-usage/usage-engine-control@workspace:packages/usage-engine-control"],
+
+    "@ai-usage/usage-engine-runtime": ["@ai-usage/usage-engine-runtime@workspace:packages/usage-engine-runtime"],
 
     "@ai-usage/usage-merge": ["@ai-usage/usage-merge@workspace:packages/usage-merge"],
 

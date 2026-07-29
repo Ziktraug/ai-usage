@@ -30,14 +30,13 @@ import {
   getCollectionSourceDefinition,
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
+import { queryUsageStoreGeneration, usageStorePath } from '@ai-usage/usage-store/reader';
 import {
   importLocalRows,
   queryEnrichableUsageRows,
-  queryUsageStoreGeneration,
   type RtkSavingsContribution,
   upsertRtkSavingsContributions,
-  usageStorePath,
-} from '@ai-usage/usage-store';
+} from '@ai-usage/usage-store/writer';
 import { Data, Duration, Effect } from 'effect';
 import { persistCursorCommitAttribution } from './index';
 import type { ProviderQuotaRuntimeOptions } from './provider-quota';

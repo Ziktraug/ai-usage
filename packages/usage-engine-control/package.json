@@ -1,16 +1,16 @@
 {
-  "name": "@ai-usage/usage-store",
+  "name": "@ai-usage/usage-engine-control",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
-    "./reader": "./src/reader.ts",
-    "./testing": "./src/testing.ts",
-    "./writer": "./src/writer.ts"
+    ".": "./src/contracts.ts",
+    "./client": "./src/client.ts",
+    "./node": "./src/rendezvous.ts",
+    "./testing": "./src/testing.ts"
   },
   "dependencies": {
-    "@ai-usage/report-core": "workspace:*",
-    "effect": "^3.21.4"
+    "@ai-usage/report-core": "workspace:*"
   },
   "scripts": {
     "build": "tsc --noEmit",

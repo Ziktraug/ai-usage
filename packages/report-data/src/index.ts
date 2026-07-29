@@ -51,8 +51,6 @@ import {
 import type { Row, SourcedRow } from '@ai-usage/report-core/types';
 import { usageRowLineDelta, usageRowPricedCost, usageRowTokenTotal } from '@ai-usage/report-core/usage-row';
 import {
-  importLocalRows,
-  importNormalizedDatasetItems,
   queryLatestProviderQuotaObservations,
   queryNormalizedDatasetItems,
   queryReportRows,
@@ -60,7 +58,8 @@ import {
   queryUsageStoreGenerations,
   type StoredSourceAuthority,
   usageStorePath,
-} from '@ai-usage/usage-store';
+} from '@ai-usage/usage-store/reader';
+import { importLocalRows, importNormalizedDatasetItems } from '@ai-usage/usage-store/writer';
 import { Effect } from 'effect';
 import { withPerfSpan } from './perf';
 import { assembleReport, captureReport, type ReportAssemblyInput } from './report-assembly';

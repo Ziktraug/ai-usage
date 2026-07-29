@@ -25,7 +25,7 @@ import { compareSessionProjectionFacts } from '@ai-usage/report-core/session-det
 import { projectSessionPage, type SessionQueryRequest, sessionRowIdentity } from '@ai-usage/report-core/session-query';
 import { parseUsageSnapshot, serializeUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow } from '@ai-usage/report-core/types';
-import { queryReportRows, usageStorePath } from '@ai-usage/usage-store';
+import { queryReportRows, usageStorePath } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import { createMergedUsageReport, createStoredReportCapture, createStoredUsageSnapshot } from './index';
 import { assembleReport } from './report-assembly';

@@ -15,7 +15,7 @@ import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { CollectionSourceId, SourceControlView } from '@ai-usage/report-core/source-control';
 import type { ScheduledSource } from '@ai-usage/report-data/source-adapters';
 import type { SourcePolicyStore } from '@ai-usage/report-data/source-control';
-import { queryReportRows } from '@ai-usage/usage-store';
+import { queryReportRows } from '@ai-usage/usage-store/testing';
 import { Duration, Effect, ManagedRuntime, Ref } from 'effect';
 import { createWebProcessRuntime, requestSourceControlPublicationForServer } from './source-control.server';
 import { installWebProcessRuntime, type WebProcessRuntime } from './web-process-runtime.server';

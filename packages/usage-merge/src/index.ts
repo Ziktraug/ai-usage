@@ -7,7 +7,7 @@ import {
   type ImportResult,
   importPeerMergeBundle,
   previewPeerMergeBundle,
-} from '@ai-usage/usage-store';
+} from '@ai-usage/usage-store/writer';
 import { Data, Effect } from 'effect';
 
 export interface ManualMergeExportResult {

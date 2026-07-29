@@ -122,6 +122,213 @@ describe('package boundary guard', () => {
     );
   });
 
+  test('keeps usage-engine-control transport-only', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'usage-engine-control',
+      {
+        dependencies: { '@ai-usage/report-data': 'workspace:*' },
+        name: '@ai-usage/usage-engine-control',
+      },
+      "import '@ai-usage/report-data';\n",
+    );
+
+    expect(await collectViolations(root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          packageName: '@ai-usage/usage-engine-control',
+          specifier: '@ai-usage/report-data',
+        }),
+      ]),
+    );
+  });
+
+  test('matches allowed control dependencies by package boundary, not prefix', async () => {
+    const root = await createFixture();
+    const reportCoreSibling = ['@ai-usage', 'report-core-runtime'].join('/');
+    await writePackage(
+      root,
+      'packages',
+      'usage-engine-control',
+      {
+        dependencies: { '@ai-usage/report-core-runtime': 'workspace:*' },
+        name: '@ai-usage/usage-engine-control',
+      },
+      `import '${reportCoreSibling}/client';\n`,
+    );
+
+    expect(await collectViolations(root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          packageName: '@ai-usage/usage-engine-control',
+          specifier: '@ai-usage/report-core-runtime/client',
+        }),
+      ]),
+    );
+  });
+
+  test('allows usage-store writer only from usage-engine-runtime', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' }, "import '@ai-usage/usage-store/writer';\n");
+    await writePackage(
+      root,
+      'packages',
+      'usage-engine-runtime',
+      { name: '@ai-usage/usage-engine-runtime' },
+      "import '@ai-usage/usage-store/writer';\n",
+    );
+
+    const violations = await collectViolations(root);
+    expect(violations).toContainEqual(
+      expect.objectContaining({ packageName: '@ai-usage/web', specifier: '@ai-usage/usage-store/writer' }),
+    );
+    expect(violations).not.toContainEqual(
+      expect.objectContaining({
+        packageName: '@ai-usage/usage-engine-runtime',
+        specifier: '@ai-usage/usage-store/writer',
+      }),
+    );
+  });
+
+  test('forbids mixed usage-store roots and production testing adapters', async () => {
+    const root = await createFixture();
+    const mixedStoreSpecifier = ['@ai-usage', 'usage-store'].join('/');
+    await writePackage(
+      root,
+      'apps',
+      'web',
+      { name: '@ai-usage/web' },
+      `import '${mixedStoreSpecifier}';\nimport '@ai-usage/usage-engine-control/testing';\n`,
+    );
+
+    const violations = await collectViolations(root);
+    expect(violations.map(({ specifier }) => specifier)).toEqual([
+      '@ai-usage/usage-store',
+      '@ai-usage/usage-engine-control/testing',
+    ]);
+  });
+
+  test('allows only the usage-engine app to compose engine-runtime', async () => {
+    const root = await createFixture();
+    const runtimeInternal = `${['@ai-usage', 'usage-engine-runtime'].join('/')}/internal`;
+    await writePackage(
+      root,
+      'apps',
+      'web',
+      {
+        dependencies: { '@ai-usage/usage-engine-runtime': 'workspace:*' },
+        name: '@ai-usage/web',
+      },
+      `import '${runtimeInternal}';\n`,
+    );
+    await writePackage(
+      root,
+      'apps',
+      'usage-engine',
+      { name: '@ai-usage/usage-engine' },
+      "import '@ai-usage/usage-engine-runtime';\n",
+    );
+
+    const violations = await collectViolations(root);
+    expect(violations).toContainEqual(
+      expect.objectContaining({
+        file: 'apps/web/package.json',
+        packageName: '@ai-usage/web',
+        specifier: '@ai-usage/usage-engine-runtime',
+      }),
+    );
+    expect(violations).toContainEqual(
+      expect.objectContaining({ packageName: '@ai-usage/web', specifier: '@ai-usage/usage-engine-runtime/internal' }),
+    );
+    expect(violations).not.toContainEqual(
+      expect.objectContaining({ packageName: '@ai-usage/usage-engine', specifier: '@ai-usage/usage-engine-runtime' }),
+    );
+  });
+
+  test('keeps usage-store independent from engine subpaths and every app package', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'dashboard', { name: '@ai-usage/dashboard' });
+    await writePackage(
+      root,
+      'packages',
+      'usage-store',
+      {
+        dependencies: { '@ai-usage/usage-engine-control': 'workspace:*' },
+        name: '@ai-usage/usage-store',
+      },
+      "import '@ai-usage/usage-engine-control/client';\nimport '@ai-usage/dashboard/server';\n",
+    );
+
+    const violations = await collectViolations(root);
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          packageName: '@ai-usage/usage-store',
+          specifier: '@ai-usage/usage-engine-control/client',
+        }),
+        expect.objectContaining({ packageName: '@ai-usage/usage-store', specifier: '@ai-usage/dashboard/server' }),
+      ]),
+    );
+  });
+
+  test('does not treat production testing directories as test-only', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    const productionTestingDirectory = path.join(root, 'apps/web/src/testing');
+    await mkdir(productionTestingDirectory, { recursive: true });
+    await writeFile(
+      path.join(productionTestingDirectory, 'client.ts'),
+      "import '@ai-usage/usage-engine-control/testing';\n",
+    );
+
+    expect(await collectViolations(root)).toContainEqual(
+      expect.objectContaining({
+        file: 'apps/web/src/testing/client.ts',
+        packageName: '@ai-usage/web',
+        specifier: '@ai-usage/usage-engine-control/testing',
+      }),
+    );
+  });
+
+  test('reports stale transition-ledger entries when plan 052 is present', async () => {
+    const root = await createFixture();
+    await mkdir(path.join(root, 'plans'), { recursive: true });
+    await writeFile(path.join(root, 'plans/052-split-usage-engine-runtime.md'), '# fixture\n');
+
+    expect(await collectViolations(root)).toContainEqual(
+      expect.objectContaining({
+        file: 'packages/report-data/src/index.ts',
+        packageName: '@ai-usage/report-data',
+        specifier: '@ai-usage/usage-store/writer',
+      }),
+    );
+  });
+
+  test('forbids web and CLI from source adapters and one-shot writers', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'apps',
+      'web',
+      { name: '@ai-usage/web' },
+      "import '@ai-usage/report-data/source-adapters';\n",
+    );
+    await writePackage(
+      root,
+      'apps',
+      'cli',
+      { name: '@ai-usage/cli' },
+      "import '@ai-usage/report-data/one-shot-sources';\n",
+    );
+
+    expect((await collectViolations(root)).map(({ specifier }) => specifier)).toEqual([
+      '@ai-usage/report-data/one-shot-sources',
+      '@ai-usage/report-data/source-adapters',
+    ]);
+  });
+
   test('accepts the current workspace graph', async () => {
     expect(await collectViolations(repositoryRoot)).toEqual([]);
   });

@@ -73,7 +73,7 @@ const run = async () => {
       import('@ai-usage/local-collectors/local-history'),
       import('@ai-usage/local-collectors/machine-config'),
       import('@ai-usage/report-core/report-data'),
-      import('@ai-usage/usage-store'),
+      import('@ai-usage/usage-store/testing'),
       import('@ai-usage/report-core/usage-row'),
     ]);
     const machine = { id: 'audit-fixture-machine', label: 'Audit Fixture Machine' };

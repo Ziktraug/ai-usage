@@ -11,7 +11,7 @@ import {
 import type { ProviderQuotaBatch, ProviderQuotaBatchSource } from '@ai-usage/local-collectors';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
-import { queryLatestProviderQuotaObservations, usageStorePath } from '@ai-usage/usage-store';
+import { queryLatestProviderQuotaObservations, usageStorePath } from '@ai-usage/usage-store/testing';
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref } from 'effect';
 import { queryLocalProviderQuotaHistory, refreshLocalProviderQuotas } from './provider-quota';
 import {

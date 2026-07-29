@@ -22,15 +22,14 @@ import type { ProviderStatus } from '@ai-usage/report-core/provider-status';
 import { createProviderStatusDataset, parseProviderStatusDataset } from '@ai-usage/report-core/provider-status';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import {
-  importProviderQuotaBatch,
   queryLatestProviderQuotaObservations,
   queryProviderQuotaObservations,
   queryProviderQuotaSourceState,
   queryProviderQuotaSourceStates,
-  recordProviderQuotaSourceAttempt,
   type UsageStoreError,
   usageStorePath,
-} from '@ai-usage/usage-store';
+} from '@ai-usage/usage-store/reader';
+import { importProviderQuotaBatch, recordProviderQuotaSourceAttempt } from '@ai-usage/usage-store/writer';
 import { Effect } from 'effect';
 import {
   createProviderQuotaRefresh,

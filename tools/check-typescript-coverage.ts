@@ -3,6 +3,7 @@ import ts from 'typescript';
 
 export const TYPECHECK_PROJECTS = [
   'apps/cli/tsconfig.json',
+  'apps/usage-engine/tsconfig.json',
   'apps/web/tsconfig.json',
   'apps/web/tsconfig.e2e.json',
   'apps/web/tsconfig.server.json',
@@ -13,6 +14,8 @@ export const TYPECHECK_PROJECTS = [
   'packages/report-data/tsconfig.json',
   'packages/skills/tsconfig.json',
   'packages/usage-merge/tsconfig.json',
+  'packages/usage-engine-control/tsconfig.json',
+  'packages/usage-engine-runtime/tsconfig.json',
   'packages/usage-store/tsconfig.json',
   'tsconfig.tools.json',
 ] as const;

@@ -85,9 +85,59 @@ The workspace packages expose only these public seams. Cross-package imports mus
 - `./source-adapters`: autonomous detected source adapters that persist normalized contributions.
 - `./source-control`: deep scoped bounded Effect scheduler facade, server policy/publication ports, commands, snapshot stream, and optional host-owned initial collection gate/bootstrap ordering; its pure transition model remains internal. Runnable source and publication jobs emit one wide event each (`source.run`, `publication`) with stable trigger/reason codes and publication-generation correlation through `@ai-usage/effect-runtime` when sink and resource layers are provided.
 
+The write-side `./one-shot-sources` and `./source-adapters` exports are exact
+plan-052 transition owners, not new application seams. They move into
+`@ai-usage/usage-engine-runtime` and are retired at the web/CLI cutover.
+
 ## `@ai-usage/usage-store`
 
-- `.`: SQLite-backed producer-owned base usage rows, versioned source-owned enrichment contributions, composed report queries, provider-quota import/query operations, atomic source checkpoints, and validated merge bundle import/export.
+- `./reader`: compatible-schema inspection and bounded SQLite reads. The final
+  plan-052 implementation opens only existing stores read-only and query-only;
+  it never creates, migrates, checkpoints, or mutates a store.
+- `./writer`: migrations, imports, enrichment, publication, retention,
+  checkpoints, and merge writes. The target boundary permits this export only
+  from `@ai-usage/usage-engine-runtime`.
+- `./testing`: mixed temporary-store construction and fixture helpers for test
+  and E2E sources only.
+
+There is deliberately no mixed root export. During the unshipped plan-052
+waves, an exact boundary-tool ledger identifies the pre-cutover report-data and
+merge writer imports; the ledger rejects additions and is removed as ownership
+moves into the engine.
+
+## `@ai-usage/usage-engine-control`
+
+- `.`: protocol-v1 branded command, command-result, status, event, and error
+  contracts with strict runtime parsers, frozen byte budgets, retry
+  classification, and a path-free web command subset. The contracts reuse the
+  canonical seven-source identifiers and bounded source snapshots. HTTP command
+  results carry admission and identity only; terminal `command-completed` events
+  carry success/failure and, only for merge preview, bounded counts, document
+  digest, and the opaque confirmation token needed for confirmation.
+- `./client`: injected numeric-loopback HTTP client with bearer
+  authentication, exact protocol headers, bounded JSON, timeout/abort mapping,
+  stable secret-free errors, hard deadlines for non-cooperative transports, and
+  status-first SSE reconnect with idle expiry, replay cursors, stale-event
+  suppression, and instance-rotation reset.
+- `./node`: owner-only, no-follow rendezvous loading and the fixed
+  `http://127.0.0.1:<port>` origin constructor.
+- `./testing`: parser-backed deterministic in-memory control client for test
+  and fixture sources only.
+
+This package carries operational commands and process state only. It must not
+expose report rows, Session/focused results, quota history, file bytes, or a
+general data-query transport. Web parsing rejects both operator file inputs and
+project selectors containing `sourcePath`; web uploads cross the boundary only
+through opaque inbox handoff IDs.
+
+## `@ai-usage/usage-engine-runtime`
+
+- `.`: the scoped `UsageEngineRuntime` lifecycle and factory contract. This is
+  the deep write-side orchestration package and may be composed only by
+  `apps/usage-engine`. Its explicit write-side dependencies include
+  `@ai-usage/usage-merge`, because that package retains ownership of bounded
+  file-transfer workflows while the engine owns their execution and store
+  mutations.
 
 ## `@ai-usage/usage-merge`
 

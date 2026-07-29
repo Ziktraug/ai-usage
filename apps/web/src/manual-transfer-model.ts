@@ -1,7 +1,7 @@
 import type { FocusedMachineFreshness } from '@ai-usage/report-core/focused-report-query';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { ManualMergeImportResult } from '@ai-usage/usage-merge';
-import type { UsageMachineFleetItem } from '@ai-usage/usage-store';
+import type { UsageMachineFleetItem } from '@ai-usage/usage-store/reader';
 
 const BYTES_PER_UNIT = 1024;
 const SIZE_UNITS = ['KB', 'MB', 'GB', 'TB'] as const;
