@@ -35,6 +35,7 @@ export const dashboardTabs = [
   'overview',
   'sessions',
   'models',
+  'harness-providers',
   'providers',
   'harnesses',
   'projects',
@@ -42,10 +43,13 @@ export const dashboardTabs = [
 ] as const;
 export type DashboardTab = (typeof dashboardTabs)[number];
 
-// Keep the established URL values while projecting them into a smaller visual navigation.
-// This lets shared links such as `?tab=projects` select Breakdown > Projects without a migration.
-export const breakdownTabs = ['models', 'providers', 'harnesses', 'projects', 'cursor-ai'] as const;
+// Keep legacy URL values valid while projecting them onto canonical visual destinations.
+// A parsed legacy value remains untouched until the user explicitly selects another tab.
+export const breakdownTabs = ['models', 'harness-providers', 'projects', 'cursor-ai'] as const;
 export type BreakdownTab = (typeof breakdownTabs)[number];
+const legacyBreakdownTabs = ['providers', 'harnesses'] as const;
+type LegacyBreakdownTab = (typeof legacyBreakdownTabs)[number];
+type DashboardBreakdownTab = BreakdownTab | LegacyBreakdownTab;
 
 export const breakdownSorts = ['value', 'tokens', 'sessions'] as const;
 export type BreakdownSort = (typeof breakdownSorts)[number];
@@ -53,14 +57,21 @@ export type BreakdownSort = (typeof breakdownSorts)[number];
 export const primaryDashboardTabs = ['overview', 'sessions', 'breakdown'] as const;
 export type PrimaryDashboardTab = (typeof primaryDashboardTabs)[number];
 
-const breakdownTabSet = new Set<DashboardTab>(breakdownTabs);
+const canonicalBreakdownTabSet = new Set<DashboardTab>(breakdownTabs);
+const breakdownTabSet = new Set<DashboardTab>([...breakdownTabs, ...legacyBreakdownTabs]);
 
-export const isBreakdownTab = (tab: DashboardTab): tab is BreakdownTab => breakdownTabSet.has(tab);
+const isCanonicalBreakdownTab = (tab: DashboardTab): tab is BreakdownTab => canonicalBreakdownTabSet.has(tab);
+export const isBreakdownTab = (tab: DashboardTab): tab is DashboardBreakdownTab => breakdownTabSet.has(tab);
 
 export const primaryDashboardTabFor = (tab: DashboardTab): PrimaryDashboardTab =>
   isBreakdownTab(tab) ? 'breakdown' : tab;
 
-export const breakdownTabFor = (tab: DashboardTab): BreakdownTab => (isBreakdownTab(tab) ? tab : 'models');
+export const breakdownTabFor = (tab: DashboardTab): BreakdownTab => {
+  if (tab === 'harnesses' || tab === 'providers') {
+    return 'harness-providers';
+  }
+  return isCanonicalBreakdownTab(tab) ? tab : 'models';
+};
 
 type ReportSort = 'date' | 'tokens' | 'cost';
 

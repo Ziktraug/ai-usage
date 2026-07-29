@@ -1,4 +1,9 @@
-import { type AnalyticsRowInput, groupAnalytics, groupModelAnalytics } from '@ai-usage/report-core/analytics';
+import {
+  type AnalyticsRowInput,
+  groupAnalytics,
+  groupModelAnalytics,
+  harnessProviderAnalyticsKey,
+} from '@ai-usage/report-core/analytics';
 import { usageRowApiPriceMeasurement } from '@ai-usage/report-core/usage-row';
 import type { DashboardRow } from './shared';
 
@@ -79,6 +84,18 @@ export const buildAnalyticsGroups = (
   keyForRow: (row: DashboardRow) => string,
   totalCost: number,
 ) => groupAnalytics(rows.filter(acceptsRow), dashboardRowToAnalyticsInput, keyForRow, totalCost);
+
+export const buildHarnessProviderAnalyticsGroups = (
+  rows: DashboardRow[],
+  acceptsRow: (row: DashboardRow) => boolean,
+  totalCost: number,
+) =>
+  groupAnalytics(
+    rows.filter(acceptsRow),
+    (row) => ({ ...dashboardRowToAnalyticsInput(row), provider: row.providerDisplay }),
+    (row) => harnessProviderAnalyticsKey(row.harness, row.providerDisplay),
+    totalCost,
+  );
 
 export const buildModelAnalyticsGroups = (rows: DashboardRow[], acceptsRow: (row: DashboardRow) => boolean) =>
   groupModelAnalytics(rows.filter(acceptsRow));

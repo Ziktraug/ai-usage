@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { calculateAnalytics, groupAnalytics, rowToAnalyticsInput } from './analytics';
+import { calculateAnalytics, groupAnalytics, harnessProviderAnalyticsKey, rowToAnalyticsInput } from './analytics';
 import { createUsageReportPayload, parseUsageReportPayload } from './report-data';
 import type { Row } from './types';
 
@@ -28,6 +28,11 @@ const row = (overrides: Partial<Row>): Row => ({
 });
 
 describe('analytics calculation', () => {
+  test('encodes harness-provider tuples without separator collisions', () => {
+    expect(harnessProviderAnalyticsKey('Codex', 'Codex API')).toBe('["Codex","Codex API"]');
+    expect(harnessProviderAnalyticsKey('a:b', 'c')).not.toBe(harnessProviderAnalyticsKey('a', 'b:c'));
+  });
+
   test('calculates reusable report metrics without rendering strings', () => {
     const analytics = calculateAnalytics(
       [

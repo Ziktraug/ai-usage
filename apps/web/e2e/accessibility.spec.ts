@@ -207,7 +207,7 @@ test('Skills has no detectable accessibility violations', async ({ page }) => {
 test('Sources has no detectable accessibility violations', async ({ page }) => {
   await page.goto('/sources');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
-  await expect(page.getByRole('heading', { level: 3, name: 'Codex sessions' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Healthy sources' })).toBeVisible();
 
   await expectNoAxeViolations(page);
 });

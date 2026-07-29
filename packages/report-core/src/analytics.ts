@@ -97,6 +97,9 @@ export const compareAnalyticsKeys = (left: string, right: string): number => {
   return left < right ? -1 : 1;
 };
 
+export const harnessProviderAnalyticsKey = (harness: string, provider: string): string =>
+  JSON.stringify([harness, provider]);
+
 const median = (values: number[]) => {
   if (!values.length) {
     return 0;

@@ -19,7 +19,7 @@ import {
   strongCell,
   unavailableText,
 } from '@ai-usage/design-system/report';
-import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
+import { type AnalyticsGroup, compareAnalyticsKeys } from '@ai-usage/report-core/analytics';
 import { PARTIALLY_MEASURED_LABEL } from '@ai-usage/report-core/provenance';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { type BreakdownSort, isBreakdownSort } from './dashboard-search';
@@ -67,6 +67,52 @@ const partiallyMeasuredBarTrack = css({
   bg: 'surfaceMuted',
   boxSizing: 'border-box',
 });
+const hierarchyBlock = css({
+  borderBottom: '1px solid token(colors.line)',
+  _last: {
+    borderBottom: '0',
+  },
+});
+const hierarchyRow = css({
+  borderBottom: '0',
+});
+const hierarchyChildren = css({
+  minW: 0,
+  border: '0',
+  m: '0',
+  p: '0',
+});
+const hierarchyChildRow = css({
+  borderTop: '1px solid token(colors.line)',
+  bg: 'surfaceMuted',
+  pl: { base: '48px', md: '56px' },
+});
+const hierarchyKey = css({
+  display: 'flex',
+  gap: '8px',
+  alignItems: 'center',
+});
+const hierarchyToggle = css({
+  appearance: 'none',
+  display: 'inline-grid',
+  placeItems: 'center',
+  minH: '32px',
+  minW: '32px',
+  border: '1px solid token(colors.line)',
+  borderRadius: 'sm',
+  p: '0',
+  bg: 'transparent',
+  color: 'muted',
+  cursor: 'pointer',
+  _hover: {
+    borderColor: 'accent',
+    color: 'accent',
+  },
+  _focusVisible: {
+    outline: '2px solid token(colors.accent)',
+    outlineOffset: '2px',
+  },
+});
 const groupBarPresentation = (group: AnalyticsGroup, maxKnownCost: number) =>
   breakdownBarPresentation({
     knownCost: group.costSum,
@@ -95,6 +141,93 @@ const GroupApiValue = (props: { group: AnalyticsGroup }) => {
   });
   return <span title={presentation.title}>{presentation.label}</span>;
 };
+
+export const exactGroupFilterHandler =
+  (filter: (value: string) => void, value: string): (() => void) =>
+  () =>
+    filter(value);
+
+interface HarnessProviderDisclosure {
+  controlsId: string;
+  expanded: boolean;
+  onToggle: () => void;
+}
+
+interface HarnessProviderGroupRowProps {
+  child: boolean;
+  disclosure?: HarnessProviderDisclosure;
+  filterValue: string;
+  group: AnalyticsGroup;
+  label: string;
+  maxCost: number;
+  onFilter: (value: string) => void;
+}
+
+const HarnessProviderGroupRow = (props: HarnessProviderGroupRowProps) => (
+  <div
+    class={cx(groupRow, hierarchyRow, props.child ? hierarchyChildRow : undefined)}
+    data-harness-total={props.child ? undefined : props.group.harness}
+    data-price-state={groupBarPresentation(props.group, props.maxCost).state}
+    data-provider-child={props.child ? props.group.provider : undefined}
+  >
+    <div>
+      <div class={hierarchyKey}>
+        <Show when={props.disclosure}>
+          {(disclosure) => (
+            <button
+              aria-controls={disclosure().controlsId}
+              aria-expanded={disclosure().expanded}
+              aria-label={`${disclosure().expanded ? 'Collapse' : 'Expand'} providers for ${props.group.harness}`}
+              class={hierarchyToggle}
+              onClick={disclosure().onToggle}
+              type="button"
+            >
+              <span aria-hidden="true">{disclosure().expanded ? '−' : '+'}</span>
+            </button>
+          )}
+        </Show>
+        <button
+          class={groupKeyButton}
+          onClick={exactGroupFilterHandler(props.onFilter, props.filterValue)}
+          type="button"
+        >
+          {props.label}
+        </button>
+      </div>
+      <div class={groupSub} title={groupFreshTitle(props.group)}>
+        {groupSessionSummary(props.group)} · {groupFreshLabel(props.group)} · {groupCacheLabel(props.group)}
+        {groupPricingCoverage(props.group)}
+      </div>
+      <Show when={!analyticsGroupUnavailableOnly(props.group)}>
+        <div
+          aria-label={groupBarAriaLabel(props.group, props.maxCost)}
+          class={cx(
+            barTrack,
+            groupBarPresentation(props.group, props.maxCost).state === 'partially measured'
+              ? partiallyMeasuredBarTrack
+              : undefined,
+          )}
+          data-price-bar={groupBarPresentation(props.group, props.maxCost).state}
+          data-width-percent={String(groupBarPresentation(props.group, props.maxCost).widthPercent ?? 0)}
+          role="img"
+        >
+          <div
+            class={cx(barFill, harnessFillFor(props.group.harness) ?? accentFill)}
+            style={{ width: `${groupBarPresentation(props.group, props.maxCost).widthPercent ?? 0}%` }}
+          />
+        </div>
+      </Show>
+    </div>
+    <div class={right}>
+      <div class={groupValue}>
+        <GroupApiValue group={props.group} />
+      </div>
+      <div class={groupPct} title={PRICED_SHARE_HINT}>
+        {fmtPct(props.group.costPercent)}
+      </div>
+    </div>
+  </div>
+);
 
 interface GroupPanelProps {
   countLabel: string;
@@ -227,6 +360,146 @@ export const GroupPanel = (props: GroupPanelProps) => {
       searchQuery={searchQuery()}
       sort={props.sort}
       title={props.title}
+    />
+  );
+};
+
+interface HarnessProviderPanelProps {
+  groups: AnalyticsGroup[];
+  harnessProviderGroups: AnalyticsGroup[];
+  onHarnessFilter: (value: string) => void;
+  onProviderFilter: (value: string) => void;
+}
+
+interface HarnessProviderPanelViewProps extends HarnessProviderPanelProps {
+  expandedHarnesses: readonly string[];
+  onSearchQueryChange: (value: string) => void;
+  onToggleHarness: (value: string) => void;
+  searchQuery: string;
+}
+
+const providerChildrenByHarness = (groups: readonly AnalyticsGroup[]): Map<string, AnalyticsGroup[]> => {
+  const childrenByHarness = new Map<string, AnalyticsGroup[]>();
+  for (const group of groups) {
+    const children = childrenByHarness.get(group.harness) ?? [];
+    children.push(group);
+    childrenByHarness.set(group.harness, children);
+  }
+  for (const children of childrenByHarness.values()) {
+    children.sort(
+      (left, right) => right.sessions - left.sessions || compareAnalyticsKeys(left.provider, right.provider),
+    );
+  }
+  return childrenByHarness;
+};
+
+const providerDisclosureId = (harness: string): string => `harness-provider-children-${encodeURIComponent(harness)}`;
+
+const pairCountLabel = (count: number): string => `${count} provider ${count === 1 ? 'pair' : 'pairs'}`;
+
+export const HarnessProviderPanelView = (props: HarnessProviderPanelViewProps) => {
+  const childrenByHarness = createMemo(() => providerChildrenByHarness(props.harnessProviderGroups));
+  const visibleGroups = createMemo(() =>
+    filterAndSortBreakdownGroups(props.groups, props.searchQuery, 'value', (group) =>
+      [group.key, ...(childrenByHarness().get(group.key) ?? []).map(({ provider }) => provider)].join(' '),
+    ),
+  );
+  const maxCost = createMemo(() => Math.max(0, ...visibleGroups().map(({ costSum }) => costSum)));
+  const visiblePairCount = createMemo(() =>
+    visibleGroups().reduce((count, group) => count + (childrenByHarness().get(group.key)?.length ?? 0), 0),
+  );
+
+  return (
+    <div class={groupPanel}>
+      <div class={groupHeader}>
+        <div class={groupTitle}>Harnesses & providers</div>
+        <div class={groupCount} title={`${visibleGroups().length} harnesses · ${pairCountLabel(visiblePairCount())}`}>
+          {visibleGroups().length} harnesses · {pairCountLabel(visiblePairCount())}
+        </div>
+        <div class={actionRow} style={{ 'grid-column': '1 / -1' }}>
+          <input
+            aria-label="Search this breakdown"
+            class={searchInput}
+            onInput={(event) => props.onSearchQueryChange(event.currentTarget.value)}
+            placeholder="Search this breakdown"
+            type="search"
+            value={props.searchQuery}
+          />
+        </div>
+      </div>
+      <div class={groupRows}>
+        <Show
+          fallback={
+            <div class={groupRow} role="status">
+              <div class={unavailableText}>No breakdown rows match this search</div>
+            </div>
+          }
+          when={visibleGroups().length > 0}
+        >
+          <For each={visibleGroups()}>
+            {(group) => {
+              const children = () => childrenByHarness().get(group.key) ?? [];
+              const expanded = () => props.expandedHarnesses.includes(group.key);
+              const controlsId = providerDisclosureId(group.key);
+              return (
+                <div class={hierarchyBlock}>
+                  <HarnessProviderGroupRow
+                    child={false}
+                    disclosure={{
+                      controlsId,
+                      expanded: expanded(),
+                      onToggle: exactGroupFilterHandler(props.onToggleHarness, group.key),
+                    }}
+                    filterValue={group.key}
+                    group={group}
+                    label={group.key}
+                    maxCost={maxCost()}
+                    onFilter={props.onHarnessFilter}
+                  />
+                  <Show when={expanded() && children().length > 0}>
+                    <fieldset aria-label={`Providers for ${group.key}`} class={hierarchyChildren} id={controlsId}>
+                      <For each={children()}>
+                        {(child) => (
+                          <HarnessProviderGroupRow
+                            child
+                            filterValue={child.provider}
+                            group={child}
+                            label={child.provider}
+                            maxCost={maxCost()}
+                            onFilter={props.onProviderFilter}
+                          />
+                        )}
+                      </For>
+                    </fieldset>
+                  </Show>
+                </div>
+              );
+            }}
+          </For>
+        </Show>
+      </div>
+    </div>
+  );
+};
+
+export const HarnessProviderPanel = (props: HarnessProviderPanelProps) => {
+  const [expandedHarnesses, setExpandedHarnesses] = createSignal<readonly string[]>([]);
+  const [searchQuery, setSearchQuery] = createSignal('');
+  const toggleHarness = (harness: string) =>
+    setExpandedHarnesses((current) =>
+      current.includes(harness) ? current.filter((value) => value !== harness) : [...current, harness],
+    );
+
+  return (
+    <HarnessProviderPanelView
+      expandedHarnesses={expandedHarnesses()}
+      groups={props.groups}
+      harnessProviderGroups={props.harnessProviderGroups}
+      onHarnessFilter={props.onHarnessFilter}
+      onProviderFilter={props.onProviderFilter}
+      onSearchQueryChange={setSearchQuery}
+      onToggleHarness={toggleHarness}
+      searchQuery={searchQuery()}
     />
   );
 };

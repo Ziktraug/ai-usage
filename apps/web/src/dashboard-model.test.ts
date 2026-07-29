@@ -6,6 +6,7 @@ import {
   buildCampaignTableRows,
   buildCampaignViews,
   buildDashboardMetrics,
+  buildHarnessProviderGroups,
   buildModelGroups,
   buildPreviousPeriodSummary,
   buildProjectGroupRows,
@@ -288,6 +289,27 @@ describe('dashboard model', () => {
     expect(gpt54?.sessions).toBe(2);
     expect(gpt54?.costSum).toBe(5);
     expect(groups.find((group) => group.key === 'gpt-5-codex')?.sessions).toBe(1);
+  });
+
+  test('builds exact harness-provider groups for the local dashboard fallback', () => {
+    const bounds: DateBounds = { from: null, to: null };
+    const rows = [
+      row({ costApprox: 1, harness: 'Codex', provider: 'Codex API' }),
+      row({ costApprox: 2, harness: 'Codex', provider: 'Anthropic' }),
+      row({ costApprox: 3, harness: 'Claude Code', provider: 'Anthropic' }),
+    ];
+
+    expect(
+      buildHarnessProviderGroups(rows, bounds, 6).map(({ harness, provider, sessions }) => ({
+        harness,
+        provider,
+        sessions,
+      })),
+    ).toEqual([
+      { harness: 'Claude Code', provider: 'Anthropic', sessions: 1 },
+      { harness: 'Codex', provider: 'Anthropic', sessions: 1 },
+      { harness: 'Codex', provider: 'Codex API', sessions: 1 },
+    ]);
   });
 
   test('builds campaign views by machine and root source id without merging rows', () => {

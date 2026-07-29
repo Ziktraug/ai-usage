@@ -15,12 +15,26 @@ import {
 } from './dashboard-search';
 
 describe('dashboard search params', () => {
-  test('maps legacy analysis tabs into the Breakdown navigation without rewriting deep links', () => {
+  test('maps legacy analysis tabs, new selection, and history snapshots without rewriting deep links', () => {
     expect(primaryDashboardTabFor('overview')).toBe('overview');
     expect(primaryDashboardTabFor('sessions')).toBe('sessions');
     expect(primaryDashboardTabFor('projects')).toBe('breakdown');
     expect(breakdownTabFor('projects')).toBe('projects');
     expect(breakdownTabFor('overview')).toBe('models');
+    expect(breakdownTabFor('harnesses')).toBe('harness-providers');
+    expect(breakdownTabFor('providers')).toBe('harness-providers');
+    expect(breakdownTabFor('harness-providers')).toBe('harness-providers');
+
+    const defaults = dashboardSearchDefaultsFor('date');
+    const historyTabs = ['harnesses', 'harness-providers', 'providers'] as const;
+    const parsedTabs = historyTabs.map((tab) => validateDashboardSearch({ tab }, defaults).tab);
+
+    expect(parsedTabs).toEqual([...historyTabs]);
+    expect(parsedTabs.map((tab) => breakdownTabFor(tab))).toEqual([
+      'harness-providers',
+      'harness-providers',
+      'harness-providers',
+    ]);
   });
 
   test('fills defaults when params are absent', () => {

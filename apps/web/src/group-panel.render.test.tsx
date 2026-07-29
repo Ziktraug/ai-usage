@@ -22,6 +22,22 @@ interface GroupPanelViewProps extends GroupPanelProps {
   searchQuery: string;
 }
 
+interface HarnessProviderPanelProps {
+  groups: AnalyticsGroup[];
+  harnessProviderGroups: AnalyticsGroup[];
+  onHarnessFilter: (value: string) => void;
+  onProviderFilter: (value: string) => void;
+}
+
+interface HarnessProviderPanelViewProps extends HarnessProviderPanelProps {
+  expandedHarnesses: readonly string[];
+  onSearchQueryChange: (value: string) => void;
+  onToggleHarness: (value: string) => void;
+  searchQuery: string;
+}
+
+type ExactGroupFilterHandler = (filter: (value: string) => void, value: string) => () => void;
+
 const viteServer = await createServer({
   appType: 'custom',
   configFile: false,
@@ -38,13 +54,19 @@ if (
     'GroupPanel' in loaded &&
     typeof loaded.GroupPanel === 'function' &&
     'GroupPanelView' in loaded &&
-    typeof loaded.GroupPanelView === 'function'
+    typeof loaded.GroupPanelView === 'function' &&
+    'HarnessProviderPanelView' in loaded &&
+    typeof loaded.HarnessProviderPanelView === 'function' &&
+    'exactGroupFilterHandler' in loaded &&
+    typeof loaded.exactGroupFilterHandler === 'function'
   )
 ) {
   throw new Error('Vite did not load GroupPanel components');
 }
 const GroupPanel = loaded.GroupPanel as Component<GroupPanelProps>;
 const GroupPanelView = loaded.GroupPanelView as Component<GroupPanelViewProps>;
+const HarnessProviderPanelView = loaded.HarnessProviderPanelView as Component<HarnessProviderPanelViewProps>;
+const exactGroupFilterHandler = loaded.exactGroupFilterHandler as ExactGroupFilterHandler;
 afterAll(async () => viteServer.close());
 
 const partiallyMeasuredGroup: AnalyticsGroup = {
@@ -91,6 +113,23 @@ const unavailableGroup: AnalyticsGroup = {
   ...sortableGroup('usage unavailable', 0, 0, 1),
   usageUnavailable: 1,
 };
+
+const harnessGroup = (harness: string, costSum: number, fresh: number, sessions: number): AnalyticsGroup => ({
+  ...sortableGroup(harness, costSum, fresh, sessions),
+  harness,
+});
+
+const harnessProviderGroup = (
+  harness: string,
+  provider: string,
+  costSum: number,
+  fresh: number,
+  sessions: number,
+): AnalyticsGroup => ({
+  ...sortableGroup(JSON.stringify([harness, provider]), costSum, fresh, sessions),
+  harness,
+  provider,
+});
 
 const ACTIVE_TOKENS_PATTERN = /aria-checked="true"[^>]*>Tokens<\/button>/;
 
@@ -198,4 +237,46 @@ test('uses locale-formatted canonical session and ambiguity language without rep
   expect(html).not.toMatch(SESSION_ABBREVIATION_PATTERN);
   expect(html).not.toMatch(AMBIGUITY_ABBREVIATION_PATTERN);
   expect(html).not.toContain('aria-label="Partially measured:');
+});
+
+test('renders value-sorted harness totals with expandable session-sorted provider children', () => {
+  const html = renderToString(() =>
+    createComponent(HarnessProviderPanelView, {
+      expandedHarnesses: ['Harness A'],
+      groups: [harnessGroup('Harness A', 10, 30, 3), harnessGroup('Harness B', 20, 20, 2)],
+      harnessProviderGroups: [
+        harnessProviderGroup('Harness A', 'Zeta Provider', 4, 10, 1),
+        harnessProviderGroup('Harness B', 'Hidden Provider', 20, 20, 2),
+        harnessProviderGroup('Harness A', 'Alpha Provider', 6, 20, 2),
+      ],
+      onHarnessFilter: () => undefined,
+      onProviderFilter: () => undefined,
+      onSearchQueryChange: () => undefined,
+      onToggleHarness: () => undefined,
+      searchQuery: '',
+    }),
+  );
+  const harnessBIndex = html.indexOf('data-harness-total="Harness B"');
+  const harnessAIndex = html.indexOf('data-harness-total="Harness A"');
+  const alphaIndex = html.indexOf('data-provider-child="Alpha Provider"');
+  const zetaIndex = html.indexOf('data-provider-child="Zeta Provider"');
+
+  expect(html).toContain('Harnesses & providers');
+  expect(html).toContain('2 harnesses · 3 provider pairs');
+  expect(html).toContain('aria-expanded="true"');
+  expect(html).toContain('aria-expanded="false"');
+  expect(harnessBIndex).toBeGreaterThan(-1);
+  expect(harnessBIndex).toBeLessThan(harnessAIndex);
+  expect(alphaIndex).toBeGreaterThan(-1);
+  expect(alphaIndex).toBeLessThan(zetaIndex);
+  expect(html).not.toContain('data-provider-child="Hidden Provider"');
+});
+
+test('binds parent and child buttons to their exact filter values', () => {
+  const selections: string[] = [];
+
+  exactGroupFilterHandler((value) => selections.push(`harness:${value}`), 'Codex')();
+  exactGroupFilterHandler((value) => selections.push(`provider:${value}`), 'Codex API')();
+
+  expect(selections).toEqual(['harness:Codex', 'provider:Codex API']);
 });

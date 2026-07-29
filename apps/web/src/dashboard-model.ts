@@ -11,6 +11,7 @@ import {
 import type { SortingState } from '@tanstack/solid-table';
 import {
   buildAnalyticsGroups,
+  buildHarnessProviderAnalyticsGroups,
   buildModelAnalyticsGroups,
   buildProjectGroups,
   type ProjectGroup,
@@ -421,6 +422,12 @@ export const buildProviderGroups = (rows: DashboardRow[], bounds: DateBounds, to
     (row) => row.providerDisplay,
     totalCost,
   );
+
+export const buildHarnessProviderGroups = (
+  rows: DashboardRow[],
+  bounds: DateBounds,
+  totalCost: number,
+): AnalyticsGroup[] => buildHarnessProviderAnalyticsGroups(rows, (row) => rowMatchesDateBounds(row, bounds), totalCost);
 
 export const buildHarnessGroups = (rows: DashboardRow[], bounds: DateBounds, totalCost: number): AnalyticsGroup[] =>
   buildAnalyticsGroups(

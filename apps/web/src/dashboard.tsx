@@ -84,10 +84,10 @@ import {
   buildCampaignViews,
   buildDashboardMetrics,
   buildHarnessGroups,
+  buildHarnessProviderGroups,
   buildModelGroups,
   buildPreviousPeriodSummary,
   buildProjectGroupRows,
-  buildProviderGroups,
   buildSortedDashboardRows,
   buildVisibleSummary,
   createFilterSnapshot,
@@ -128,7 +128,7 @@ import {
   fetchFocusedBreakdown,
 } from './focused-report-client';
 import { createFocusedReportE2EFixture } from './focused-report-e2e-fixture';
-import { GroupPanel } from './group-panel';
+import { GroupPanel, HarnessProviderPanel } from './group-panel';
 import {
   type MachineFreshnessSnapshot,
   type MachineLabelPresentation,
@@ -722,22 +722,22 @@ export const Dashboard = (props: {
       buildModelGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost)
     );
   });
-  const providerGroups = createMemo(() => {
-    if (search().tab !== 'providers') {
-      return [];
-    }
-    return (
-      focusedStore?.breakdown()?.groups.providers ??
-      buildProviderGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost)
-    );
-  });
   const harnessGroups = createMemo(() => {
-    if (search().tab !== 'harnesses') {
+    if (breakdownTabFor(search().tab) !== 'harness-providers') {
       return [];
     }
     return (
       focusedStore?.breakdown()?.groups.harnesses ??
       buildHarnessGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost)
+    );
+  });
+  const harnessProviderGroups = createMemo(() => {
+    if (breakdownTabFor(search().tab) !== 'harness-providers') {
+      return [];
+    }
+    return (
+      focusedStore?.breakdown()?.groups.harnessProviders ??
+      buildHarnessProviderGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost)
     );
   });
   const projectGroupRows = createMemo(() => {
@@ -1205,36 +1205,16 @@ export const Dashboard = (props: {
                         {
                           content: () => (
                             <section class={section}>
-                              <GroupPanel
-                                countLabel="providers"
-                                groups={providerGroups()}
-                                harnessTones
-                                onFilter={(value) => setFieldFilter('provider', value)}
-                                onSortChange={setBreakdownSort}
-                                sort={search().breakdownSort}
-                                title="By provider"
-                              />
-                            </section>
-                          ),
-                          label: 'Providers',
-                          value: 'providers',
-                        },
-                        {
-                          content: () => (
-                            <section class={section}>
-                              <GroupPanel
-                                countLabel="harnesses"
+                              <HarnessProviderPanel
                                 groups={harnessGroups()}
-                                harnessTones
-                                onFilter={toggleHarness}
-                                onSortChange={setBreakdownSort}
-                                sort={search().breakdownSort}
-                                title="By harness"
+                                harnessProviderGroups={harnessProviderGroups()}
+                                onHarnessFilter={toggleHarness}
+                                onProviderFilter={(value) => setFieldFilter('provider', value)}
                               />
                             </section>
                           ),
-                          label: 'Harnesses',
-                          value: 'harnesses',
+                          label: 'Harnesses & providers',
+                          value: 'harness-providers',
                         },
                         {
                           content: () => (

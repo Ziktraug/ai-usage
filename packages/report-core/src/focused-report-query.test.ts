@@ -700,6 +700,50 @@ describe('focused report query contracts', () => {
     ).toEqual(result);
   });
 
+  test('projects each exact harness-provider pair without losing or duplicating totals', () => {
+    const jointRows: SerializedRow[] = [
+      { ...row('codex-codex', 1, 1), harness: 'Codex', provider: 'Codex API' },
+      { ...row('codex-anthropic', 2, 2), harness: 'Codex', provider: 'Anthropic' },
+      { ...row('claude-anthropic', 3, 3), harness: 'Claude Code', provider: 'Anthropic' },
+    ];
+    const result = projectFocusedBreakdown(jointRows, support, {
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    });
+    const pairs = result.groups.harnessProviders;
+
+    expect(pairs.map(({ harness, provider, sessions }) => ({ harness, provider, sessions }))).toEqual([
+      { harness: 'Claude Code', provider: 'Anthropic', sessions: 1 },
+      { harness: 'Codex', provider: 'Anthropic', sessions: 1 },
+      { harness: 'Codex', provider: 'Codex API', sessions: 1 },
+    ]);
+    expect(
+      pairs
+        .filter(({ harness }) => harness === 'Codex')
+        .map(({ provider }) => provider)
+        .sort(),
+    ).toEqual(['Anthropic', 'Codex API']);
+    expect(
+      pairs
+        .filter(({ provider }) => provider === 'Anthropic')
+        .map(({ harness }) => harness)
+        .sort(),
+    ).toEqual(['Claude Code', 'Codex']);
+    expect(
+      pairs.reduce(
+        (totals, group) => ({
+          cache: totals.cache + group.cache,
+          costSum: totals.costSum + group.costSum,
+          fresh: totals.fresh + group.fresh,
+          inp: totals.inp + group.inp,
+          sessions: totals.sessions + group.sessions,
+          tools: totals.tools + group.tools,
+          turns: totals.turns + group.turns,
+        }),
+        { cache: 0, costSum: 0, fresh: 0, inp: 0, sessions: 0, tools: 0, turns: 0 },
+      ),
+    ).toEqual({ cache: 6, costSum: 6, fresh: 18, inp: 6, sessions: 3, tools: 6, turns: 6 });
+  });
+
   test('preserves complete, partial, absent, and measured-zero project line coverage', () => {
     const lineRows: SerializedRow[] = [
       { ...row('complete-a', 2, 1, 'complete'), linesAdded: 3, linesDeleted: 1 },

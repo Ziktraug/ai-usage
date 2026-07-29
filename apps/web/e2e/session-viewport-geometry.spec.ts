@@ -5,7 +5,7 @@ const SESSION_VIEWPORT_BOTTOM_INSET = 24;
 const viewportCases = [
   {
     height: 900,
-    maximumRowHeight: 64,
+    maximumRowHeight: 96,
     minimumRowHeight: 43,
     mode: 'desktop',
     rowSelector: 'tr[data-index]',

@@ -824,7 +824,7 @@ interface AnalyticsAggregateRecord {
   harness: string;
   inp: number;
   key: string;
-  kind: 'harness' | 'model' | 'provider';
+  kind: 'harness' | 'harness-provider' | 'model' | 'provider';
   lines_a: number;
   lines_d: number;
   median_cost: number | null;
@@ -889,7 +889,12 @@ const readAnalyticsGroups = (
   database: SessionQuerySqliteDatabase,
   filter: SqlFilter,
   trace?: SessionQuerySqliteTrace,
-): { harnesses: AnalyticsGroup[]; models: AnalyticsGroup[]; providers: AnalyticsGroup[] } => {
+): {
+  harnesses: AnalyticsGroup[];
+  harnessProviders: AnalyticsGroup[];
+  models: AnalyticsGroup[];
+  providers: AnalyticsGroup[];
+} => {
   const records = executeAll<AnalyticsAggregateRecord>(
     database,
     `WITH filtered AS (
@@ -941,6 +946,26 @@ const readAnalyticsGroups = (
         ordinal,
         harness,
         provider,
+        cost_known,
+        cost_approx,
+        usage_unavailable,
+        sort_ambiguous,
+        fresh_tokens,
+        unpriced_fresh_tokens,
+        tok_in,
+        tok_cr,
+        lines_added,
+        lines_deleted,
+        turns,
+        tools
+      FROM filtered
+      UNION ALL
+      SELECT
+        'harness-provider' AS kind,
+        json_array(harness, provider_display) AS key,
+        ordinal,
+        harness,
+        provider_display AS provider,
         cost_known,
         cost_approx,
         usage_unavailable,
@@ -1043,6 +1068,7 @@ const readAnalyticsGroups = (
       .sort((left, right) => right.costSum - left.costSum || compareAnalyticsKeys(left.key, right.key));
   return {
     harnesses: groupsForKind('harness'),
+    harnessProviders: groupsForKind('harness-provider'),
     models: groupsForKind('model'),
     providers: groupsForKind('provider'),
   };

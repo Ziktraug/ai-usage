@@ -4,6 +4,7 @@ import {
   compareAnalyticsKeys,
   groupAnalytics,
   groupModelAnalytics,
+  harnessProviderAnalyticsKey,
 } from './analytics';
 import { type CursorCommitAttributionRow, isCursorCommitAttributionRow } from './datasets';
 import { parseProjectGroupConfigs } from './project-group';
@@ -306,6 +307,7 @@ export interface FocusedBreakdownResult {
   };
   groups: {
     harnesses: AnalyticsGroup[];
+    harnessProviders: AnalyticsGroup[];
     models: AnalyticsGroup[];
     projects: FocusedProjectGroup[];
     providers: AnalyticsGroup[];
@@ -872,6 +874,13 @@ const analyticsInput = (row: SessionPresentationRow): AnalyticsRowInput => ({
   usageUnavailable: row.usageUnavailable ?? false,
 });
 
+const harnessProviderAnalyticsInput = (row: SessionPresentationRow): AnalyticsRowInput => ({
+  ...analyticsInput(row),
+  provider: row.providerDisplay,
+});
+const harnessProviderKey = (row: SessionPresentationRow): string =>
+  harnessProviderAnalyticsKey(row.harness, row.providerDisplay);
+
 const projectGroups = (rows: readonly SessionPresentationRow[]): FocusedProjectGroup[] => {
   const groups = new Map<string, FocusedProjectGroup>();
   for (const row of rows) {
@@ -1358,6 +1367,7 @@ export const projectFocusedBreakdown = (
     },
     groups: {
       harnesses: groupAnalytics(visible, analyticsInput, (row) => row.harness, totalCost),
+      harnessProviders: groupAnalytics(visible, harnessProviderAnalyticsInput, harnessProviderKey, totalCost),
       models: groupModelAnalytics(visible),
       projects: projectGroups(visible),
       providers: groupAnalytics(visible, analyticsInput, (row) => row.providerDisplay, totalCost),
@@ -2208,8 +2218,8 @@ const assertFocusedProjectGroup = (value: unknown, label: string): void => {
 
 const assertBreakdownGroups = (value: unknown): void => {
   const groups = requireRecord(value, 'breakdown groups');
-  assertExactKeys(groups, ['harnesses', 'models', 'projects', 'providers'], 'breakdown groups');
-  for (const key of ['harnesses', 'models', 'providers'] as const) {
+  assertExactKeys(groups, ['harnesses', 'harnessProviders', 'models', 'projects', 'providers'], 'breakdown groups');
+  for (const key of ['harnesses', 'harnessProviders', 'models', 'providers'] as const) {
     if (!Array.isArray(groups[key])) {
       throw new Error(`breakdown groups.${key} must be an array`);
     }

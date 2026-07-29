@@ -85,7 +85,7 @@ request unless the user explicitly asks.
 | 062 | Clarify Report Structure and Visual Encoding | P2 | L | 053, 054, 061 | DONE |
 | 063 | Normalize Report Signal and Language | P2 | L | 053, 062 | DONE |
 | 064 | Label Data Quality Without Dropping Data | P3 | M | 053, 059 | DONE |
-| 065 | Expose the Harness–Provider Joint Distribution | P3 | M | 054, 062 | TODO |
+| 065 | Expose the Harness–Provider Joint Distribution | P3 | M | 054, 062 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).

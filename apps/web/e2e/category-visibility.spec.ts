@@ -17,8 +17,11 @@ test('keeps every populated harness and machine visible with default dimension f
   await dateRange.getByRole('button', { exact: true, name: 'All' }).click();
 
   const breakdownTabs = page.getByRole('tablist', { name: 'Breakdown dimension' });
-  await expect(breakdownTabs.getByRole('tab', { name: 'Harnesses' })).toHaveAttribute('aria-selected', 'true');
-  const harnessPanel = page.getByRole('tabpanel', { name: 'Harnesses' });
+  await expect(breakdownTabs.getByRole('tab', { name: 'Harnesses & providers' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  const harnessPanel = page.getByRole('tabpanel', { name: 'Harnesses & providers' });
   await expect(harnessPanel).toBeVisible();
 
   const harnessFilter = page.getByRole('combobox', { name: 'Filter by harness' });
@@ -40,7 +43,7 @@ test('keeps every populated harness and machine visible with default dimension f
     }
     const categories: string[] = [];
     for (const row of panel.querySelectorAll('[data-price-state]')) {
-      const label = row.querySelector('button')?.textContent?.trim();
+      const label = row.querySelector('button:not([aria-expanded])')?.textContent?.trim();
       if (label) {
         categories.push(label);
       }
