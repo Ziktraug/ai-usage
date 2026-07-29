@@ -19,6 +19,11 @@ executor: read the plan fully before starting, honor its STOP conditions, and
 update the row only when its done criteria actually pass. These plans authorize
 local implementation and verification only; do not push a branch or open a pull
 request unless the user explicitly asks.
+Plan 052 records the 2026-07-29 decision at `f4f9650` to replace that web-owned
+runtime with a sole-writer Bun usage engine. Web and CLI read revision-keyed
+projections directly from SQLite; a minimal authenticated loopback API carries
+commands and status only. It is an intentional big-bang cutover and also owns
+the measured revision-lease and concurrent dev/build I/O regressions.
 
 ## Execution order & status
 
@@ -72,6 +77,7 @@ request unless the user explicitly asks.
 | 049 | Make Undeclared Origin a Gap, Not a Category | P1 | M | 048 | DONE |
 | 050 | Make the E2E Gate Deterministic | P0 | S | - | DONE |
 | 051 | Allow Local Campaign Label Overrides | P3 | M | 045 | TODO |
+| 052 | Split the Usage Engine From the Web and CLI Runtimes | P0 | XL | 022-024, 043-044 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -210,6 +216,15 @@ REJECTED (with one-line rationale).
 - Plan 032 runs last so its architecture notes describe the stabilized code. It
   performs scoped Dashboard/TimeRange/Router/style cleanup, records durable
   decisions, and adds concise legal, contribution, and security documentation.
+- Plan 052 supersedes plans 022 and 043 only on process placement: their
+  scheduler/source invariants and narrow capability seams remain requirements,
+  but the owner moves from Nitro to `apps/usage-engine`. It supersedes plans
+  016, 018, and 044 only on filesystem artifact transport: exact-revision
+  consistency, browser retry/supersession, and one execute/validate lifecycle
+  remain requirements on revision-keyed read-only SQLite. It permits no data
+  API, dual writer, or compatibility scheduler. Its wave 0 output isolation is
+  independent and must land in the same cutover because the measured `.output`
+  deletion loop is not fixed merely by moving collection.
 - Plan 036 adds Effect-native wide-event observability without an OTLP exporter
   so operators can see what Effect boundaries do, especially collectors:
   business outcome, duration, measured hops, and allowlisted local context. The
