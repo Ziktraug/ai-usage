@@ -2,14 +2,17 @@ import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
 import type { ApiPriceMeasurementState } from '@ai-usage/report-core/provenance';
 import type { BreakdownSort } from './dashboard-search';
 
+export type BreakdownPriceState = ApiPriceMeasurementState | 'unavailable';
+
 export interface BreakdownBarPresentation {
-  state: ApiPriceMeasurementState;
-  widthPercent: number;
+  state: BreakdownPriceState;
+  widthPercent: number | null;
 }
 
 interface BreakdownPriceInput {
   knownCost: number;
   unpricedCount: number;
+  usageUnavailable: boolean;
 }
 
 interface BreakdownBarInput extends BreakdownPriceInput {
@@ -28,7 +31,14 @@ export const sortBreakdownGroups = (groups: readonly AnalyticsGroup[], sort: Bre
   [...groups].sort((left, right) => breakdownSortComparators[sort](left, right) || left.key.localeCompare(right.key));
 const MAX_PERCENT = 100;
 
-export const breakdownPriceState = ({ knownCost, unpricedCount }: BreakdownPriceInput): ApiPriceMeasurementState => {
+export const breakdownPriceState = ({
+  knownCost,
+  unpricedCount,
+  usageUnavailable,
+}: BreakdownPriceInput): BreakdownPriceState => {
+  if (usageUnavailable) {
+    return 'unavailable';
+  }
   if (unpricedCount > 0) {
     return 'partially measured';
   }
@@ -39,17 +49,25 @@ export const breakdownBarPresentation = ({
   knownCost,
   maxKnownCost,
   unpricedCount,
+  usageUnavailable,
 }: BreakdownBarInput): BreakdownBarPresentation => {
-  const state = breakdownPriceState({ knownCost, unpricedCount });
+  const state = breakdownPriceState({ knownCost, unpricedCount, usageUnavailable });
+  if (state === 'unavailable') {
+    return { state, widthPercent: null };
+  }
   const widthPercent =
     maxKnownCost > 0 ? Math.min(MAX_PERCENT, Math.max(0, (knownCost / maxKnownCost) * MAX_PERCENT)) : 0;
   return { state, widthPercent };
 };
 
-export const breakdownPriceStateLabel = (state: ApiPriceMeasurementState): string => {
+export const breakdownPriceStateLabel = (state: BreakdownPriceState): string => {
+  if (state === 'unavailable') {
+    return 'Unavailable';
+  }
   if (state === 'partially measured') {
     return 'Partially measured';
   }
+
   return state === 'zero' ? 'Zero' : 'Measured';
 };
 

@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
-import { expect, test } from './browser-test';
+import { expect, reportViewsFor, test } from './browser-test';
 
+const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const CHART_VIEW_PATTERN = /Chart view:/;
 const DELEGATED_LEGEND_PATTERN = /^Delegated\b/;
 const HUMAN_LEGEND_PATTERN = /^Human\b/;
@@ -42,6 +43,23 @@ test('uses one report range for the dashboard and activity chart', async ({ page
   await expect(chartOptions.getByText('Group by', { exact: true })).toBeVisible();
   await expect(chartOptions.getByText('Interval', { exact: true })).toBeVisible();
   await expect(chartOptions.getByText('Metric', { exact: true })).toBeVisible();
+});
+
+test('uses clickable heatmap days as Rhythm activity-day controls without a native date input', async ({ page }) => {
+  await page.goto('/');
+
+  const calendar = page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN });
+  const rhythm = page.locator('section').filter({ has: calendar });
+  const heatmapDays = calendar.locator('button[data-heatmap-day]');
+  await expect(rhythm.getByRole('heading', { exact: true, name: 'Rhythm' })).toBeVisible();
+  await expect(rhythm.locator('input[type="date"]')).toHaveCount(0);
+  expect(await heatmapDays.count()).toBeGreaterThan(0);
+
+  await heatmapDays.first().click();
+  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
 });
 
 test('changes every chart option from its segmented controls', async ({ page }) => {

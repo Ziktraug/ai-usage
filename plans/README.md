@@ -66,7 +66,7 @@ request unless the user explicitly asks.
 | 043 | Deepen the web process runtime seam | P2 | M | 038 | DONE |
 | 044 | Unify the exact-revision query lifecycle | P2 | M | 043 | DONE |
 | 045 | Valorize the Report Dimensions and Make the Work Unit Honest | P1 | XL | - | DONE |
-| 046 | Close the Verified Presentation Defects | P2 | M | - | IN PROGRESS (rows 4, 11, 13, 24 reopened 2026-07-28: a fix was applied, the symptom was not resolved — see plan 061) |
+| 046 | Close the Verified Presentation Defects | P2 | M | - | DONE |
 | 047 | Make Grouping Portable User Data, for Projects and Campaigns | P2 | L | 045 wave 4 | REJECTED (portable grouping is unnecessary and three STOPs refuted its merge domain) |
 | 048 | Restore Multi-Harness Visibility After the Origin Default | P0 | S | 045 | DONE |
 | 049 | Make Undeclared Origin a Gap, Not a Category | P1 | M | 048 | DONE |
@@ -81,7 +81,7 @@ request unless the user explicitly asks.
 | 058 | Add Report Sharing and Safe CSV Export | P3 | M | 053, 054 | TODO |
 | 059 | Compare Machine Contributions on Sync | P3 | M | - | TODO |
 | 060 | Add Local Search to Long Breakdown Lists | P3 | S | 054 | TODO |
-| 061 | Close the Four Reopened Presentation Regressions | P1 | S | 046 implementation | TODO |
+| 061 | Close the Four Reopened Presentation Regressions | P1 | S | 046 implementation | DONE |
 | 062 | Clarify Report Structure and Visual Encoding | P2 | L | 053, 054, 061 | TODO |
 | 063 | Normalize Report Signal and Language | P2 | L | 053, 062 | TODO |
 | 064 | Label Data Quality Without Dropping Data | P3 | M | 053, 059 | TODO |

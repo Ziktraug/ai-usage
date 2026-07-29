@@ -31,6 +31,7 @@ import {
   type ReconcilePlanSummary,
   type SkillCellStateFilter,
   type SkillSelection,
+  skillDiagnosticLabel,
   skillInvocation,
 } from './skills-page-model';
 import { SKILLS_DESKTOP_MEDIA_QUERY } from './skills-responsive';
@@ -471,7 +472,7 @@ const GlobalSkillInspector = (props: {
                 <div class={diagnosticHeading}>
                   <span class={meta}>Finding {index() + 1}</span>
                   <div class={diagnosticIdentity}>
-                    <code class={cx(strongCell, diagnosticCode)}>{diagnostic.code}</code>
+                    <code class={cx(strongCell, diagnosticCode)}>{skillDiagnosticLabel(diagnostic.code)}</code>
                     <Show when={diagnostic.count > 1}>
                       <span class={meta}>{diagnostic.count} occurrences</span>
                     </Show>

@@ -41,6 +41,7 @@ describe('Breakdown price presentation', () => {
       knownCost: 0.12,
       maxKnownCost: 20.41,
       unpricedCount: 0,
+      usageUnavailable: false,
     });
 
     expect(presentation.state).toBe('measured');
@@ -54,11 +55,19 @@ describe('Breakdown price presentation', () => {
       knownCost: 0,
       maxKnownCost: 20.41,
       unpricedCount: 0,
+      usageUnavailable: false,
     });
     const partiallyMeasured = breakdownBarPresentation({
       knownCost: 0,
       maxKnownCost: 20.41,
       unpricedCount: 1,
+      usageUnavailable: false,
+    });
+    const unavailable = breakdownBarPresentation({
+      knownCost: 0,
+      maxKnownCost: 20.41,
+      unpricedCount: 0,
+      usageUnavailable: true,
     });
 
     expect(zero).toEqual({ state: 'zero', widthPercent: 0 });
@@ -66,8 +75,10 @@ describe('Breakdown price presentation', () => {
       state: 'partially measured',
       widthPercent: 0,
     });
+    expect(unavailable).toEqual({ state: 'unavailable', widthPercent: null });
     expect(breakdownPriceStateLabel(zero.state)).toBe('Zero');
     expect(breakdownPriceStateLabel(partiallyMeasured.state)).toBe('Partially measured');
+    expect(breakdownPriceStateLabel(unavailable.state)).toBe('Unavailable');
   });
 });
 

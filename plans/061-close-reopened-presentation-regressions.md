@@ -29,14 +29,16 @@
 ## Scope
 
 - `apps/web/src/group-panel-presentation.ts` and tests
+- `apps/web/src/group-panel.tsx` and render tests
 - `packages/design-system/src/components/overview.ts`
 - `packages/design-system/src/components/skills.ts`
 - `apps/web/src/skills-context-panel.tsx`
-- `apps/web/src/skills-page-model.test.ts`
+- `apps/web/src/skills-page-model.ts` and tests
 - `apps/web/e2e/skills.spec.ts`
 - `apps/web/src/overview.tsx`
 - `apps/web/src/time-range-control.tsx` and tests
 - `apps/web/e2e/time-range.spec.ts`
+- `apps/web/e2e/dashboard.spec.ts`
 - `apps/web/e2e/dashboard-presentation.spec.ts`
 - `apps/web/e2e/visual-regression.spec.ts` and affected snapshots
 

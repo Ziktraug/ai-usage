@@ -69,6 +69,11 @@ const sortableGroup = (key: string, costSum: number, fresh: number, sessions: nu
   unpricedFreshTokens: 0,
 });
 
+const unavailableGroup: AnalyticsGroup = {
+  ...sortableGroup('usage unavailable', 0, 0, 1),
+  usageUnavailable: 1,
+};
+
 const ACTIVE_TOKENS_PATTERN = /aria-checked="true"[^>]*>Tokens<\/button>/;
 
 test('describes partially measured breakdown value with the unpriced fresh-token volume', () => {
@@ -84,6 +89,23 @@ test('describes partially measured breakdown value with the unpriced fresh-token
 
   expect(html).toContain('57.5M tokens in this slice come from models with no published price');
   expect(html).not.toContain('1 of 2 sessions in this slice');
+});
+
+test('renders unavailable API value without a price track or zero-value label', () => {
+  const html = renderToString(() =>
+    createComponent(GroupPanel, {
+      countLabel: 'models',
+      groups: [unavailableGroup],
+      onSortChange: () => undefined,
+      sort: 'value',
+      title: 'Models',
+    }),
+  );
+
+  expect(html).toContain('data-price-state="unavailable"');
+  expect(html).not.toContain('data-price-bar');
+  expect(html).toContain('>—</span>');
+  expect(html).not.toContain('$0.00');
 });
 
 test('renders one keyboard-accessible sort control with active state and sorted rows', () => {

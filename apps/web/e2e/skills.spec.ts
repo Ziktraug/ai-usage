@@ -389,7 +389,8 @@ test('bounds long scope labels and makes validation findings individually identi
   await expect(findings).toHaveCount(2);
   await expect(findings.nth(0)).toHaveAccessibleName('Finding 1: warning');
   await expect(findings.nth(0)).toContainText('Finding 1');
-  await expect(findings.nth(0)).toContainText('SkillMarkdownTokenWarning');
+  await expect(findings.nth(0)).toContainText('Skill document token warning');
+  await expect(page.getByText('SkillMarkdownTokenWarning', { exact: true })).toHaveCount(0);
   await expect(findings.nth(0)).toContainText('SKILL.md is approaching the recommended token limit.');
   await expect(findings.nth(1)).toHaveAccessibleName('Finding 2: warning');
   await expect(findings.nth(1)).toContainText('Finding 2');
@@ -397,7 +398,7 @@ test('bounds long scope labels and makes validation findings individually identi
   await expect(findings.nth(1)).toContainText('Reference files are approaching the recommended token limit.');
   await expect(page.getByText('warning', { exact: true })).toHaveCount(1);
 
-  const diagnosticCode = findings.nth(0).getByText('SkillMarkdownTokenWarning', { exact: true });
+  const diagnosticCode = findings.nth(0).getByText('Skill document token warning', { exact: true });
   const diagnosticDimensions = await diagnosticCode.evaluate((element) => ({
     clientWidth: element.clientWidth,
     scrollWidth: element.scrollWidth,

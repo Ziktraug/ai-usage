@@ -113,6 +113,35 @@ test('pairs the dashboard Token anatomy legend in a two-by-two grid', async ({ p
   expect(boxes[2]?.top ?? 0).toBeGreaterThan(boxes[0]?.top ?? 0);
 });
 
+test('keeps each Token anatomy value closer to its label than to the next item', async ({ page }) => {
+  await page.goto('/');
+
+  const items = page.locator('[data-overview-token-legend] [data-token-legend-item]');
+  await expect(items).toHaveCount(4);
+  const geometry = await items.evaluateAll((elements) => {
+    const firstItem = elements[0];
+    const nextItem = elements[1];
+    const firstValue = firstItem?.querySelector('span:last-child');
+    const labelNode = firstItem
+      ? [...firstItem.childNodes].find((node) => node.nodeType === Node.TEXT_NODE)
+      : undefined;
+    if (!(firstItem && nextItem && firstValue && labelNode)) {
+      throw new Error('Token anatomy label geometry is unavailable');
+    }
+    const labelRange = document.createRange();
+    labelRange.selectNode(labelNode);
+    const labelBox = labelRange.getBoundingClientRect();
+    const valueBox = firstValue.getBoundingClientRect();
+    const nextBox = nextItem.getBoundingClientRect();
+    return {
+      labelToValueGap: valueBox.left - labelBox.right,
+      valueToNextItemGap: nextBox.left - valueBox.right,
+    };
+  });
+
+  expect(geometry.labelToValueGap).toBeLessThan(geometry.valueToNextItemGap);
+});
+
 test('keeps the mobile filter stack coherent with content above the fold', async ({ page }) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto('/');

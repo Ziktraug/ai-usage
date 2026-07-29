@@ -66,6 +66,7 @@ const groupBarPresentation = (group: AnalyticsGroup, maxKnownCost: number) =>
     knownCost: group.costSum,
     maxKnownCost,
     unpricedCount: group.unpriced,
+    usageUnavailable: analyticsGroupUnavailableOnly(group),
   });
 const groupDisplayKey = (group: AnalyticsGroup, countLabel: string) =>
   countLabel === 'models' ? breakdownModelLabel(group.key) : group.key;
@@ -76,7 +77,11 @@ const GroupApiValue = (props: { group: AnalyticsGroup }) => {
   const state = breakdownPriceState({
     knownCost: props.group.costSum,
     unpricedCount: props.group.unpriced,
+    usageUnavailable: analyticsGroupUnavailableOnly(props.group),
   });
+  if (state === 'unavailable') {
+    return <span title={USAGE_UNAVAILABLE_HINT}>—</span>;
+  }
   const presentation = aggregateApiValuePresentation({
     knownCost: props.group.costSum,
     state,
@@ -146,23 +151,28 @@ export const GroupPanel = (props: {
                   · {groupCacheLabel(group)}
                   {groupPricingCoverage(group)}
                 </div>
-                <div
-                  aria-label={groupBarAriaLabel(group, maxCost())}
-                  class={cx(
-                    barTrack,
-                    groupBarPresentation(group, maxCost()).state === 'partially measured'
-                      ? partiallyMeasuredBarTrack
-                      : undefined,
-                  )}
-                  data-price-bar={groupBarPresentation(group, maxCost()).state}
-                  data-width-percent={String(groupBarPresentation(group, maxCost()).widthPercent)}
-                  role="img"
-                >
+                <Show when={!analyticsGroupUnavailableOnly(group)}>
                   <div
-                    class={cx(barFill, (props.harnessTones ? harnessFillFor(group.harness) : undefined) ?? accentFill)}
-                    style={{ width: `${groupBarPresentation(group, maxCost()).widthPercent}%` }}
-                  />
-                </div>
+                    aria-label={groupBarAriaLabel(group, maxCost())}
+                    class={cx(
+                      barTrack,
+                      groupBarPresentation(group, maxCost()).state === 'partially measured'
+                        ? partiallyMeasuredBarTrack
+                        : undefined,
+                    )}
+                    data-price-bar={groupBarPresentation(group, maxCost()).state}
+                    data-width-percent={String(groupBarPresentation(group, maxCost()).widthPercent ?? 0)}
+                    role="img"
+                  >
+                    <div
+                      class={cx(
+                        barFill,
+                        (props.harnessTones ? harnessFillFor(group.harness) : undefined) ?? accentFill,
+                      )}
+                      style={{ width: `${groupBarPresentation(group, maxCost()).widthPercent ?? 0}%` }}
+                    />
+                  </div>
+                </Show>
               </div>
               <div class={right}>
                 <div class={groupValue}>

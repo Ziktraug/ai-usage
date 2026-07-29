@@ -138,7 +138,6 @@ export const anatomyLegendSwatch = css({
 export const anatomyLegendValue = css({
   textStyle: 'numeric',
   color: 'ink',
-  ml: 'auto',
 });
 
 export const anatomyHeadline = css({

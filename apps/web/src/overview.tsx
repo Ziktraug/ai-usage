@@ -11,8 +11,6 @@ import {
   anatomyLegendItem,
   anatomyLegendSwatch,
   anatomyLegendValue,
-  dateFieldGroup,
-  dateInput,
   emptyPanel,
   HarnessBadge,
   harnessSvgFillFor,
@@ -38,7 +36,6 @@ import {
   heroText,
   heroValue,
   inkFill,
-  inlineFieldLabel,
   muted,
   overviewGrid,
   panel,
@@ -415,19 +412,6 @@ const CalendarHeatmap = (props: {
               </div>
             </div>
             <div class={heatDayControl}>
-              <label class={dateFieldGroup}>
-                <span class={inlineFieldLabel}>Select activity day</span>
-                <input
-                  aria-describedby={HEAT_DAY_DETAIL_ID}
-                  class={dateInput}
-                  max={toDateInputValue(heatDays().at(-1)?.date ?? new Date())}
-                  min={toDateInputValue(heatDays()[0]?.date ?? new Date())}
-                  onChange={(event) => selectHeatDay(event.currentTarget.value)}
-                  onInput={(event) => focusHeatDay(event.currentTarget.value)}
-                  type="date"
-                  value={focusedDayKey() ?? ''}
-                />
-              </label>
               <span class={heatDayDetail} id={HEAT_DAY_DETAIL_ID}>
                 {focusedHeatDayDescription()}
               </span>
