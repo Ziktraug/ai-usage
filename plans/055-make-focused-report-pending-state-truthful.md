@@ -40,8 +40,11 @@ Render no numeric placeholder or empty-result copy.
 - `apps/web/src/dashboard-report-lifecycle.test.ts`
 - `apps/web/src/dashboard.tsx`
 - `apps/web/src/dashboard-metrics.render.test.tsx`
+- `apps/web/src/dashboard-pending-surface.tsx`
 - `apps/web/e2e/dashboard.spec.ts`
-- the synthetic focused-response fixture imported by that spec
+- `apps/web/src/focused-report-e2e-fixture.ts`
+- `apps/web/e2e/visual-regression.spec.ts-snapshots/overview-desktop-linux.png`
+- `apps/web/e2e/visual-regression.spec.ts-snapshots/overview-session-drawer-linux.png`
 
 No transport retry, fingerprint, store invalidation, or real-history changes.
 

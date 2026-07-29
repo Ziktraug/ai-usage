@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+import { FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
 import { expect, reportViewsFor, test } from './browser-test';
 
 const ADVANCED_COLUMNS_PATTERN = /Advanced columns/;
@@ -21,6 +23,96 @@ const GAP_COUNT_PATTERN = /1 collection gap/;
 const SORT_URL_PATTERN = /sort=/;
 const TOP_SESSION_PATTERN = /Top session/;
 const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
+const HIDDEN_FILTERS_PATTERN = /hidden by filters/;
+const NO_SESSIONS_PATTERN = /No sessions/;
+const SESSION_COUNTER_PATTERN = /^\d+ \/ \d+ sessions$/;
+type FocusedResponseControlAction = 'arm' | 'release' | 'waitUntilBlocked';
+
+const controlFocusedResponse = async (page: Page, action: FocusedResponseControlAction): Promise<void> => {
+  await page.evaluate(
+    async ({ action: requestedAction, controlKey }) => {
+      const control = Reflect.get(globalThis, controlKey);
+      if (!(control && typeof control === 'object')) {
+        throw new Error('Focused E2E response control is unavailable');
+      }
+      const command = Reflect.get(control, requestedAction);
+      if (typeof command !== 'function') {
+        throw new Error(`Focused E2E response control cannot ${requestedAction}`);
+      }
+      await Promise.resolve(Reflect.apply(command, control, []));
+    },
+    { action, controlKey: FOCUSED_REPORT_E2E_CONTROL_KEY },
+  );
+};
+
+const PENDING_CLAIM_AUDIT_KEY = '__aiUsageE2EPendingClaimViolations';
+const PENDING_CLAIM_OBSERVER_KEY = '__aiUsageE2EPendingClaimObserver';
+
+const startPendingClaimAudit = async (page: Page, query: string): Promise<void> => {
+  await page.evaluate(
+    ({ auditKey, observerKey, requestedQuery }) => {
+      const violations = new Set<string>();
+      Reflect.set(globalThis, auditKey, violations);
+      const record = (): void => {
+        if (new URLSearchParams(window.location.search).get('q') !== requestedQuery) {
+          return;
+        }
+        const main = document.querySelector('main');
+        if (!main) {
+          return;
+        }
+        const text = main.textContent ?? '';
+        const hasSessionCounter = [...main.querySelectorAll('span')].some((element) => {
+          const value = element.textContent?.trim() ?? '';
+          return value.includes(' / ') && value.endsWith(' sessions');
+        });
+        if (hasSessionCounter) {
+          violations.add('session counter');
+        }
+        if (text.includes('hidden by filters')) {
+          violations.add('hidden by filters');
+        }
+        if (text.includes('No sessions')) {
+          violations.add('No sessions');
+        }
+        if (text.includes('$0.00')) {
+          violations.add('$0.00');
+        }
+        if (main.querySelector('[data-metric-grid]')) {
+          violations.add('metric tiles');
+        }
+      };
+      const observer = new MutationObserver(record);
+      observer.observe(document.body, {
+        characterData: true,
+        childList: true,
+        subtree: true,
+      });
+      Reflect.set(globalThis, observerKey, observer);
+      record();
+    },
+    { auditKey: PENDING_CLAIM_AUDIT_KEY, observerKey: PENDING_CLAIM_OBSERVER_KEY, requestedQuery: query },
+  );
+};
+
+const finishPendingClaimAudit = async (page: Page): Promise<string[]> =>
+  await page.evaluate(
+    ({ auditKey, observerKey }) => {
+      const observer = Reflect.get(globalThis, observerKey);
+      if (observer instanceof MutationObserver) {
+        observer.disconnect();
+      }
+      const violations = Reflect.get(globalThis, auditKey);
+      if (!(violations instanceof Set)) {
+        return ['Pending claim audit unavailable'];
+      }
+      return [...violations].filter((value): value is string => typeof value === 'string');
+    },
+    {
+      auditKey: PENDING_CLAIM_AUDIT_KEY,
+      observerKey: PENDING_CLAIM_OBSERVER_KEY,
+    },
+  );
 
 test('loads a deterministic report overview', async ({ page }) => {
   const response = await page.goto('/');
@@ -36,6 +128,49 @@ test('loads a deterministic report overview', async ({ page }) => {
     'aria-current',
     'page',
   );
+});
+
+test('locks definitive output while a focused filter response is pending', async ({ page }) => {
+  await page.goto('/skills');
+  await page.evaluate((enabledKey) => {
+    Reflect.set(globalThis, enabledKey, true);
+  }, FOCUSED_REPORT_E2E_ENABLED_KEY);
+  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
+
+  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible({
+    timeout: HYDRATION_TIMEOUT_MS,
+  });
+  await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
+  const pendingSurface = page.locator('[data-report-pending]');
+  await expect(pendingSurface).toHaveCount(0);
+
+  const query = 'pending-filter';
+  const search = page.getByRole('textbox', {
+    name: 'Filter sessions by title, project, model, provider, or harness',
+  });
+  await startPendingClaimAudit(page, query);
+  await controlFocusedResponse(page, 'arm');
+  let violations: string[] = [];
+  try {
+    await search.fill(query);
+    await controlFocusedResponse(page, 'waitUntilBlocked');
+
+    await expect(pendingSurface).toHaveCount(1);
+    await expect(pendingSurface).toHaveText('Loading report…');
+    await expect(page.getByRole('button', { name: `Query: ${query} ×` })).toBeVisible();
+    await expect(page.getByText(SESSION_COUNTER_PATTERN)).toHaveCount(0);
+    await expect(page.getByText(HIDDEN_FILTERS_PATTERN)).toHaveCount(0);
+    await expect(page.getByText(NO_SESSIONS_PATTERN)).toHaveCount(0);
+    await expect(page.getByText('$0.00', { exact: true })).toHaveCount(0);
+    await expect(page.locator('[data-metric-grid]')).toHaveCount(0);
+  } finally {
+    violations = await finishPendingClaimAudit(page);
+    await controlFocusedResponse(page, 'release');
+  }
+
+  expect(violations).toEqual([]);
+  await expect(pendingSurface).toHaveCount(0);
+  await expect(page.getByText('0 / 6 sessions', { exact: true })).toBeVisible();
 });
 
 test('retries a failed report through the Router loading lifecycle', async ({ page }) => {

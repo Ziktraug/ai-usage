@@ -11,6 +11,22 @@ import type { ServedReportRefreshOutcome, ServedReportSession } from './served-r
 
 type RefreshOutcome = ServedReportRefreshOutcome;
 
+interface DeferredRefresh {
+  promise: Promise<RefreshOutcome>;
+  resolve: (outcome: RefreshOutcome) => void;
+}
+
+const createDeferredRefresh = (): DeferredRefresh => {
+  let resolveRefresh: ((outcome: RefreshOutcome) => void) | undefined;
+  const promise = new Promise<RefreshOutcome>((resolve) => {
+    resolveRefresh = resolve;
+  });
+  if (!resolveRefresh) {
+    throw new Error('Deferred refresh resolver was not initialized');
+  }
+  return { promise, resolve: resolveRefresh };
+};
+
 const committedOutcome = (): RefreshOutcome => ({
   descriptor: { captureFingerprint: 'capture-a', revision: 'revision-a' },
   status: 'committed',
@@ -120,6 +136,46 @@ describe('dashboard report lifecycle', () => {
     harness.dispose();
   });
 
+  test('owns pending state from the initial destination until that operation succeeds', async () => {
+    const initialRefresh = createDeferredRefresh();
+    const harness = createLifecycleHarness(() => initialRefresh.promise);
+
+    expect(harness.lifecycle.destinationPending()).toBe(false);
+    harness.setReady(true);
+    const pendingRefresh = harness.lifecycle.refresh();
+
+    expect(harness.lifecycle.destinationPending()).toBe(true);
+    initialRefresh.resolve(committedOutcome());
+    await pendingRefresh;
+    expect(harness.lifecycle.destinationPending()).toBe(false);
+
+    harness.dispose();
+  });
+
+  test('keeps a changed destination pending while the previous snapshot is preserved', async () => {
+    const refreshes: DeferredRefresh[] = [];
+    const harness = createLifecycleHarness(() => {
+      const refresh = createDeferredRefresh();
+      refreshes.push(refresh);
+      return refresh.promise;
+    });
+
+    harness.setReady(true);
+    const initialRefresh = harness.lifecycle.refresh();
+    refreshes[0]?.resolve(committedOutcome());
+    await initialRefresh;
+
+    harness.setDestinationScope(overviewScope('new scope'));
+    const changedRefresh = harness.lifecycle.refresh();
+    expect(harness.lifecycle.destinationPending()).toBe(true);
+
+    refreshes.at(-1)?.resolve(committedOutcome());
+    await changedRefresh;
+    expect(harness.lifecycle.destinationPending()).toBe(false);
+
+    harness.dispose();
+  });
+
   test('refreshes a mismatched first publication and deduplicates every observed revision', () => {
     expect(transitionDashboardPublication(undefined, 'revision-a', true, 'revision-bootstrap')).toEqual({
       observedRevision: 'revision-a',
@@ -190,6 +246,7 @@ describe('dashboard report lifecycle', () => {
     expect(harness.lifecycle.focusedTimelineLoading()).toBe(false);
     expect(harness.lifecycle.advancedAnalysisLoading()).toBe(false);
     expect(harness.lifecycle.sessionQueryLoading()).toBe(false);
+    expect(harness.lifecycle.destinationPending()).toBe(false);
     expect(harness.lifecycle.focusedTimelineError()).toBe('Overview transport failed');
     expect(harness.lifecycle.advancedAnalysisError()).toBe('Overview transport failed');
     expect(harness.errors).toContain('Overview transport failed');
@@ -212,6 +269,7 @@ describe('dashboard report lifecycle', () => {
     expect(harness.lifecycle.focusedTimelineLoading()).toBe(false);
     expect(harness.lifecycle.advancedAnalysisLoading()).toBe(false);
     expect(harness.lifecycle.sessionQueryLoading()).toBe(false);
+    expect(harness.lifecycle.destinationPending()).toBe(false);
     expect(harness.lifecycle.focusedTimelineError()).toBe('Session destination failed');
     expect(harness.errors).toContain('Session destination failed');
 
@@ -226,9 +284,34 @@ describe('dashboard report lifecycle', () => {
     await harness.lifecycle.refresh();
 
     expect(harness.lifecycle.focusedTimelineLoading()).toBe(true);
-    expect(harness.lifecycle.advancedAnalysisLoading()).toBe(false);
+    expect(harness.lifecycle.destinationPending()).toBe(true);
+    expect(harness.lifecycle.advancedAnalysisLoading()).toBe(true);
     expect(harness.lifecycle.focusedTimelineError()).toBeNull();
     expect(harness.errors).toEqual([]);
+
+    harness.dispose();
+  });
+  test('does not let a superseded operation clear the newer destination pending state', async () => {
+    const firstRefresh = createDeferredRefresh();
+    const secondRefresh = createDeferredRefresh();
+    let refreshCount = 0;
+    const harness = createLifecycleHarness(() => {
+      refreshCount += 1;
+      return refreshCount === 1 ? firstRefresh.promise : secondRefresh.promise;
+    });
+
+    harness.setReady(true);
+    const firstOperation = harness.lifecycle.refresh();
+    harness.setDestinationScope(overviewScope('new scope'));
+    const secondOperation = harness.lifecycle.refresh();
+
+    firstRefresh.resolve({ status: 'superseded' });
+    await firstOperation;
+    expect(harness.lifecycle.destinationPending()).toBe(true);
+
+    secondRefresh.resolve(committedOutcome());
+    await secondOperation;
+    expect(harness.lifecycle.destinationPending()).toBe(false);
 
     harness.dispose();
   });
@@ -258,14 +341,16 @@ describe('dashboard report lifecycle', () => {
     harness.setReady(true);
     const pendingRefresh = harness.lifecycle.refresh();
     expect(harness.calls).toHaveLength(1);
+    expect(harness.lifecycle.destinationPending()).toBe(true);
 
     harness.dispose();
+    expect(harness.lifecycle.destinationPending()).toBe(false);
     expect(harness.abortCount()).toBe(1);
     expect(harness.closeCount()).toBe(1);
     resolveRefresh?.(committedOutcome());
     await pendingRefresh;
 
     expect(harness.lifecycle.focusedTimelineLoading()).toBe(true);
-    expect(harness.lifecycle.advancedAnalysisLoading()).toBe(false);
+    expect(harness.lifecycle.advancedAnalysisLoading()).toBe(true);
   });
 });

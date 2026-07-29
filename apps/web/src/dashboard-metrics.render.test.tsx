@@ -24,9 +24,22 @@ if (!(loaded && typeof loaded === 'object' && 'MetricTile' in loaded && typeof l
   throw new Error('Vite did not load MetricTile');
 }
 const MetricTile = loaded.MetricTile as Component<MetricTileProps>;
+const pendingSurfaceLoaded: unknown = await viteServer.ssrLoadModule('/src/dashboard-pending-surface.tsx');
+if (
+  !(
+    pendingSurfaceLoaded &&
+    typeof pendingSurfaceLoaded === 'object' &&
+    'DashboardPendingSurface' in pendingSurfaceLoaded &&
+    typeof pendingSurfaceLoaded.DashboardPendingSurface === 'function'
+  )
+) {
+  throw new Error('Vite did not load DashboardPendingSurface');
+}
+const DashboardPendingSurface = pendingSurfaceLoaded.DashboardPendingSurface as Component;
 afterAll(async () => viteServer.close());
 
 const render = (props: MetricTileProps): string => renderToString(() => createComponent(MetricTile, props));
+const renderPending = (): string => renderToString(() => createComponent(DashboardPendingSurface, {}));
 
 describe('MetricTile', () => {
   test('renders an on-face comparison basis and discoverable provenance control', () => {
@@ -47,5 +60,18 @@ describe('MetricTile', () => {
     expect(html).toContain('aria-label="About API value"');
     expect(html).toContain('aria-haspopup="dialog"');
     expect(html).toContain('title="About API value"');
+  });
+});
+
+describe('DashboardPendingSurface', () => {
+  test('announces loading without definitive zero or empty-result claims', () => {
+    const html = renderPending();
+
+    expect(html).toContain('aria-live="polite"');
+    expect(html).toContain('data-report-pending');
+    expect(html).toContain('Loading report…');
+    expect(html).not.toContain('$0.00');
+    expect(html).not.toContain('hidden by filters');
+    expect(html).not.toContain('No sessions');
   });
 });
