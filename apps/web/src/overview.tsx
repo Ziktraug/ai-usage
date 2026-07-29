@@ -9,8 +9,11 @@ import {
   anatomyHeadline,
   anatomyLegend,
   anatomyLegendItem,
+  anatomyLegendLabel,
+  anatomyLegendPercentage,
   anatomyLegendSwatch,
   anatomyLegendValue,
+  anatomyLegendValues,
   emptyPanel,
   HarnessBadge,
   harnessSvgFillFor,
@@ -35,7 +38,6 @@ import {
   heroSide,
   heroText,
   heroValue,
-  inkFill,
   muted,
   overviewGrid,
   panel,
@@ -48,6 +50,8 @@ import {
   punchDot,
   punchGrid,
   punchHourLabel,
+  punchIntensityKey,
+  punchIntensityKeyCell,
   recordCard,
   recordLabel,
   recordSub,
@@ -110,6 +114,9 @@ import {
   nextHeatmapFocusIndex,
   type OverviewSessionItem,
   PUNCH_DAYS,
+  PUNCHCARD_MIN_SESSION_OPACITY,
+  punchcardSessionOpacity,
+  SESSION_SHAPE_POINT_RADIUS,
 } from './overview-model';
 import {
   aggregateApiPriceProvenance,
@@ -123,7 +130,6 @@ import {
   fmtNum,
   fmtPct,
   type ReportSummary,
-  SegmentBar,
 } from './shared';
 
 export interface OverviewProps {
@@ -216,23 +222,6 @@ const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
                 </span>
               </Show>
             </div>
-            <SegmentBar
-              ariaLabel="Actual-spend reporting coverage by session"
-              segments={[
-                {
-                  label: 'Actual spend reported',
-                  value: hero().actualSpendKnownSessions,
-                  class: accentFill,
-                  title: `Actual spend reported for ${fmtNum(hero().actualSpendKnownSessions)} sessions`,
-                },
-                {
-                  label: 'Actual spend unavailable',
-                  value: hero().sessionCount - hero().actualSpendKnownSessions,
-                  class: inkFill,
-                  title: `Actual spend unavailable for ${fmtNum(hero().sessionCount - hero().actualSpendKnownSessions)} sessions`,
-                },
-              ]}
-            />
           </div>
         </section>
       )}
@@ -463,22 +452,30 @@ const TokenAnatomy = (props: { summary: ReportSummary }) => {
           <strong>{fmtPct(cachePct())}</strong> of all token volume was read from cache — context reuse is what makes
           agentic sessions affordable.
         </div>
-        <SegmentBar ariaLabel="Token anatomy" segments={segments()} />
-        <div class={anatomyLegend} data-overview-token-legend>
+        <dl class={anatomyLegend} data-overview-token-legend>
           <For each={segments()}>
             {(segment) => (
-              <span
+              <div
                 class={anatomyLegendItem}
-                data-token-legend-item
+                data-token-anatomy-row
                 title={`${segment.label}: ${fmtNum(segment.value)} tokens`}
               >
-                <span class={cx(anatomyLegendSwatch, segment.class)} />
-                {segment.label}
-                <span class={anatomyLegendValue}>{fmtCompact(segment.value)}</span>
-              </span>
+                <dt class={anatomyLegendLabel}>
+                  <span class={cx(anatomyLegendSwatch, segment.class)} />
+                  <span>{segment.label}</span>
+                </dt>
+                <dd class={anatomyLegendValues}>
+                  <span class={anatomyLegendValue} data-token-exact-value>
+                    {fmtNum(segment.value)}
+                  </span>
+                  <span class={anatomyLegendPercentage} data-token-percentage>
+                    {fmtPct((segment.value / total()) * 100)}
+                  </span>
+                </dd>
+              </div>
             )}
           </For>
-        </div>
+        </dl>
         <Show when={props.summary.rtkSaved > 0}>
           <div class={rtkNote}>
             <span>
@@ -497,7 +494,7 @@ const TokenAnatomy = (props: { summary: ReportSummary }) => {
 // Session shape — duration × cost scatter on log scales. Micro-questions,
 // working sessions and marathons separate into visible clusters.
 
-const SessionShape = (props: {
+export const SessionShape = (props: {
   campaigns: CampaignView[];
   focused: FocusedSessionShape | null | undefined;
   labelFor: (campaignKey: string, derivedLabel: string) => string;
@@ -525,7 +522,7 @@ const SessionShape = (props: {
 
   return (
     <Panel
-      sub="Duration × API value (log scales) — density is aggregated; inspect standout work below"
+      sub="Duration × API value (log scales) — fixed-size marks show plotted sessions or campaigns"
       title="Session shape"
     >
       <Show fallback={<div class={emptyPanel}>Not enough timed, fully priced sessions in range</div>} when={data()}>
@@ -571,7 +568,8 @@ const SessionShape = (props: {
                       class={cx(harnessSvgFillFor(item.harness), scatterPoint)}
                       cx={`${chart().xPct(item.durationMs ?? 0)}%`}
                       cy={`${chart().yPct(item.costApprox)}%`}
-                      r={String(Math.min(8, (item.kind === 'campaign' ? 4 : 3) + Math.log2(item.aggregateCount + 1)))}
+                      data-session-shape-point
+                      r={String(SESSION_SHAPE_POINT_RADIUS)}
                     >
                       <title>
                         {[
@@ -587,8 +585,9 @@ const SessionShape = (props: {
                 </For>
               </svg>
             </div>
-            <div class={scatterSummary}>
-              {fmtNum(chart().totalPoints)} timed, fully priced sessions · {fmtNum(chart().points.length)} density marks
+            <div class={scatterSummary} data-session-shape-summary>
+              {fmtNum(chart().totalPoints)} timed, fully priced sessions · {fmtNum(chart().points.length)} plotted
+              session/campaign groups
             </div>
             <details class={scatterDistribution}>
               <summary>Distribution by harness</summary>
@@ -626,9 +625,20 @@ const SessionShape = (props: {
                 )}
               </For>
             </section>
-            <div class={scatterLegend}>
-              <For each={chart().harnesses}>{(name) => <HarnessBadge name={name} />}</For>
-            </div>
+            <ul
+              aria-label="Session Shape harness key"
+              class={scatterLegend}
+              data-session-shape-harness-key
+              style={{ 'list-style': 'none', margin: 0, padding: 0 }}
+            >
+              <For each={chart().harnesses}>
+                {(name) => (
+                  <li>
+                    <HarnessBadge name={name} />
+                  </li>
+                )}
+              </For>
+            </ul>
           </>
         )}
       </Show>
@@ -695,11 +705,8 @@ const Punchcard = (props: {
                               >
                                 <span
                                   class={cx(punchDot, accentFill)}
-                                  style={{
-                                    width: `${4 + 9 * Math.sqrt(cell.sessions / punch().maxSessions)}px`,
-                                    height: `${4 + 9 * Math.sqrt(cell.sessions / punch().maxSessions)}px`,
-                                    opacity: 0.35 + 0.65 * (cell.sessions / punch().maxSessions),
-                                  }}
+                                  data-punchcard-cell-fill
+                                  style={{ opacity: punchcardSessionOpacity(cell.sessions, punch().maxSessions) }}
                                 />
                               </button>
                             )}
@@ -718,6 +725,18 @@ const Punchcard = (props: {
                   </span>
                 )}
               </For>
+            </div>
+            <div
+              aria-label="Punchcard session-count intensity"
+              class={punchIntensityKey}
+              data-punchcard-intensity-key
+              role="img"
+            >
+              <span>Low</span>
+              <span class={cx(punchIntensityKeyCell, accentFill)} style={{ opacity: PUNCHCARD_MIN_SESSION_OPACITY }} />
+              <span class={cx(punchIntensityKeyCell, accentFill)} />
+              <span>High</span>
+              <span>session count</span>
             </div>
             <div class={visuallyHidden}>
               <table aria-labelledby={PUNCHCARD_HEADING_ID}>

@@ -534,6 +534,7 @@ export const SessionTable = (props: {
 
     const frame = requestAnimationFrame(() => {
       hasAnchoredSessionRegion = true;
+      activeElement.style.removeProperty('--session-surface-height');
       regionStart.scrollIntoView({ block: 'start' });
       activeSurface.updateViewport();
     });

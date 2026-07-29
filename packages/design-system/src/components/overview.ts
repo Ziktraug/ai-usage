@@ -115,17 +115,36 @@ export const heroLegendValue = css({
 
 export const anatomyLegend = css({
   display: 'grid',
-  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-  gap: '6px 12px',
   color: 'muted',
   fontSize: '11px',
+  m: 0,
 });
 
 export const anatomyLegendItem = css({
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  alignItems: 'center',
+  gap: '8px 16px',
+  minW: 0,
+  py: '6px',
+  '& + &': {
+    borderTop: '1px solid token(colors.line)',
+  },
+});
+
+export const anatomyLegendLabel = css({
   display: 'flex',
   alignItems: 'center',
   gap: '6px',
   minW: 0,
+});
+
+export const anatomyLegendValues = css({
+  display: 'grid',
+  gridTemplateColumns: 'minmax(72px, auto) 52px',
+  gap: '12px',
+  justifyItems: 'end',
+  m: 0,
 });
 
 export const anatomyLegendSwatch = css({
@@ -138,6 +157,11 @@ export const anatomyLegendSwatch = css({
 export const anatomyLegendValue = css({
   textStyle: 'numeric',
   color: 'ink',
+});
+
+export const anatomyLegendPercentage = css({
+  textStyle: 'numeric',
+  color: 'muted',
 });
 
 export const anatomyHeadline = css({
@@ -278,9 +302,10 @@ export const scatterWrap = css({
 
 export const punchGrid = css({
   display: 'grid',
-  gridTemplateColumns: '34px repeat(24, minmax(10px, 1fr))',
+  gridTemplateColumns: '34px repeat(24, 10px)',
   gap: '2px',
   alignItems: 'center',
+  overflowX: 'auto',
 });
 
 export const punchDayLabel = css({
@@ -293,8 +318,11 @@ export const punchDayLabel = css({
 
 export const punchCell = css({
   position: 'relative',
-  h: '18px',
   display: 'grid',
+  w: '10px',
+  h: '10px',
+  borderRadius: '2px',
+  bg: 'track',
   placeItems: 'center',
 });
 
@@ -310,7 +338,8 @@ export const punchCellButton = css({
   placeItems: 'center',
   w: 'full',
   _hover: {
-    bg: 'surfaceMuted',
+    outline: '1px solid token(colors.ink)',
+    outlineOffset: '1px',
   },
   _focusVisible: {
     outline: '2px solid token(colors.accent)',
@@ -319,7 +348,24 @@ export const punchCellButton = css({
 });
 
 export const punchDot = css({
-  borderRadius: 'full',
+  w: 'full',
+  h: 'full',
+  borderRadius: '2px',
+});
+
+export const punchIntensityKey = css({
+  display: 'flex',
+  alignItems: 'center',
+  gap: '5px',
+  pt: '10px',
+  color: 'muted',
+  fontSize: '10px',
+});
+
+export const punchIntensityKeyCell = css({
+  w: '10px',
+  h: '10px',
+  borderRadius: '2px',
 });
 
 export const punchHourLabel = css({

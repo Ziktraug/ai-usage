@@ -14,6 +14,8 @@ import {
   buildTimelineData,
   buildTopSessions,
   nextHeatmapFocusIndex,
+  punchcardSessionOpacity,
+  SESSION_SHAPE_POINT_RADIUS,
   type TimelineDimension,
 } from './overview-model';
 import { buildReportSummary, enrichReportRow } from './shared';
@@ -598,6 +600,14 @@ describe('overview model', () => {
     expect(cells.reduce((sum, cell) => sum + cell.cost, 0)).toBe(6);
     expect(data?.cells[0]?.[14]?.sessions).toBe(2);
     expect(data?.cells[6]?.[14]?.sessions).toBe(1);
+  });
+
+  test('uses one intensity channel for Punchcard sessions and a fixed Session Shape point size', () => {
+    expect(punchcardSessionOpacity(0, 4)).toBe(0);
+    expect(punchcardSessionOpacity(1, 4)).toBeGreaterThan(0);
+    expect(punchcardSessionOpacity(1, 4)).toBeLessThan(punchcardSessionOpacity(4, 4));
+    expect(punchcardSessionOpacity(4, 4)).toBe(1);
+    expect(SESSION_SHAPE_POINT_RADIUS).toBe(4);
   });
 
   test('builds records and top sessions', () => {

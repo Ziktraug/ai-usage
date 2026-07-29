@@ -479,14 +479,12 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
     },
   ];
 
-  if (summary.costQuota) {
-    metrics.push({
-      label: 'Sub value',
-      value: fmtMoney(summary.costQuota),
-      hint: 'Cursor export value covered by the subscription quota',
-      delta: deltaVs(summary.costQuota, prev?.costQuota, fmtMoney),
-    });
-  }
+  metrics.push({
+    label: 'Sub value',
+    value: fmtMoney(summary.costQuota),
+    hint: 'Cursor export value covered by the subscription quota',
+    delta: deltaVs(summary.costQuota, prev?.costQuota, fmtMoney),
+  });
 
   metrics.push(
     { label: 'Mean / sess', value: fmtMoney(summary.meanCost), hint: 'Mean API value per priced session' },

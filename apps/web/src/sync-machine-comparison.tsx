@@ -1,8 +1,7 @@
-import { cx } from '@ai-usage/design-system/css';
+import { css, cx } from '@ai-usage/design-system/css';
 import {
   desktopTableSurface,
   mobileSummarySurface,
-  modelCell,
   numCell,
   panelHeader,
   panelSub,
@@ -24,6 +23,8 @@ import {
 import { For, Show } from 'solid-js';
 import type { SyncFleetComparisonRow } from './sync-machine-comparison-model';
 
+const machineComparisonSection = css({ minW: 0 });
+
 const freshnessStyles: Record<SyncFleetComparisonRow['freshness'], string> = {
   fresh: statusPillOk,
   stale: statusPillWarn,
@@ -31,14 +32,15 @@ const freshnessStyles: Record<SyncFleetComparisonRow['freshness'], string> = {
 };
 
 export const MachineFleetComparison = (props: { rows: readonly SyncFleetComparisonRow[] }) => (
-  <section aria-labelledby="machine-contribution-title">
+  <section aria-labelledby="machine-contribution-title" class={machineComparisonSection}>
     <div class={panelHeader}>
       <h2 class={panelTitle} id="machine-contribution-title">
         Machine contributions
       </h2>
       <div class={panelSub}>Session share across the loaded fleet.</div>
     </div>
-    <div class={cx(tableWrap, desktopTableSurface)}>
+    {/* biome-ignore lint/a11y/noNoninteractiveTabindex: The horizontally scrollable table must be keyboard-reachable. */}
+    <div class={cx(tableWrap, desktopTableSurface)} tabIndex={0}>
       <table aria-labelledby="machine-contribution-title" class={table}>
         <thead>
           <tr>
@@ -62,7 +64,6 @@ export const MachineFleetComparison = (props: { rows: readonly SyncFleetComparis
               <tr data-machine-id={row.id}>
                 <td>
                   <div class={row.current ? strongCell : undefined}>{row.label}</div>
-                  <div class={modelCell}>{row.id}</div>
                 </td>
                 <td class={numCell}>{row.sessionCount.toLocaleString()}</td>
                 <td class={numCell}>{row.sessionShareLabel}</td>
@@ -84,7 +85,6 @@ export const MachineFleetComparison = (props: { rows: readonly SyncFleetComparis
             <header class={projectSummaryHeader}>
               <div>
                 <div class={strongCell}>{row.label}</div>
-                <div class={modelCell}>{row.id}</div>
               </div>
               <Show when={row.current}>
                 <span class={cx(statusPill, statusPillInfo)}>Current machine</span>

@@ -7,32 +7,27 @@ const MAX_ALIGNMENT_DRIFT_PX = 1;
 const MIN_CONTENT_ABOVE_FOLD_PX = 10;
 const MOBILE_VIEWPORT = { height: 844, width: 390 };
 
-test('keeps metric deltas qualified, aligned, and in a balanced grid', async ({ page }) => {
+test('groups value bases while keeping the remaining metric deltas qualified and aligned', async ({ page }) => {
   await page.setViewportSize({ height: 1000, width: 1440 });
   await page.goto('/');
 
   const region = page.getByRole('region', { name: 'More report metrics' });
   const grid = region.locator('[data-metric-grid]');
+  const valueBases = grid.locator('[data-value-bases-panel]');
+  const valueRows = valueBases.locator('[data-value-bases-row]');
   const tiles = grid.locator('[data-metric-tile]');
   await expect(grid).toBeVisible();
-  expect(await tiles.count()).toBeGreaterThan(4);
+  await expect(valueBases).toContainText('Value bases');
+  await expect(valueRows).toHaveCount(3);
+  await expect(valueRows).toContainText(['API-equivalent value', 'Actual recorded cost', 'Subscription value']);
+  expect(await tiles.count()).toBeGreaterThan(3);
 
   const columnCount = await grid.evaluate(
     (element) => getComputedStyle(element).gridTemplateColumns.trim().split(' ').filter(Boolean).length,
   );
   expect(columnCount).toBeLessThanOrEqual(MAX_DASHBOARD_METRIC_COLUMNS);
 
-  const rowCounts = await tiles.evaluateAll((elements) => {
-    const counts = new Map<number, number>();
-    for (const element of elements) {
-      const rowTop = Math.round(element.getBoundingClientRect().top);
-      counts.set(rowTop, (counts.get(rowTop) ?? 0) + 1);
-    }
-    return [...counts.entries()].sort(([left], [right]) => left - right).map(([, count]) => count);
-  });
-  expect(rowCounts.at(-1)).toBeGreaterThan(1);
-
-  const deltas = tiles.locator('[data-metric-delta]');
+  const deltas = grid.locator('[data-metric-delta]');
   await expect(deltas.first()).toBeVisible();
   expect(await deltas.count()).toBeGreaterThan(0);
   for (const delta of await deltas.all()) {
@@ -71,75 +66,129 @@ test('keeps metric provenance visibly interactive and operable by keyboard', asy
   await expect(hint).toBeVisible();
 });
 
-test('names spend coverage before drawing its bar', async ({ page }) => {
+test('keeps spend coverage textual without an Overview segmented bar', async ({ page }) => {
   await page.goto('/');
 
   const hero = page.getByRole('region', { name: 'API-equivalent value' });
   const verticalOrder = await hero.evaluate((element) => {
     const amount = element.querySelector('[data-reported-actual-spend]');
     const coverage = element.querySelector('[data-spend-coverage-legend]');
-    const bar = element.querySelector('[aria-label="Actual-spend reporting coverage by session"]');
-    if (!(amount && coverage && bar)) {
-      throw new Error('Spend amount, coverage legend, or coverage bar is missing');
+    if (!(amount && coverage)) {
+      throw new Error('Spend amount or coverage legend is missing');
     }
     return {
       amountBottom: amount.getBoundingClientRect().bottom,
-      barTop: bar.getBoundingClientRect().top,
-      coverageBottom: coverage.getBoundingClientRect().bottom,
       coverageTop: coverage.getBoundingClientRect().top,
     };
   });
 
   expect(verticalOrder.amountBottom).toBeLessThanOrEqual(verticalOrder.coverageTop);
-  expect(verticalOrder.coverageBottom).toBeLessThanOrEqual(verticalOrder.barTop);
+  await expect(hero.getByRole('img', { name: 'Actual-spend reporting coverage by session' })).toHaveCount(0);
 });
 
-test('pairs the dashboard Token anatomy legend in a two-by-two grid', async ({ page }) => {
+test('renders Token anatomy as four exact definition rows without a segmented bar', async ({ page }) => {
   await page.goto('/');
 
-  const items = page.locator('[data-overview-token-legend] [data-token-legend-item]');
-  await expect(items).toHaveCount(4);
-  const boxes = await items.evaluateAll((elements) =>
+  const anatomy = page.getByRole('heading', { level: 2, name: 'Token anatomy' }).locator('xpath=../..');
+  const rows = anatomy.locator('[data-token-anatomy-row]');
+  await expect(rows).toHaveCount(4);
+  await expect(anatomy.getByRole('img', { name: 'Token anatomy' })).toHaveCount(0);
+  await expect(rows.locator('[data-token-exact-value]')).toHaveCount(4);
+  await expect(rows.locator('[data-token-percentage]')).toHaveCount(4);
+
+  const boxes = await rows.evaluateAll((elements) =>
     elements.map((element) => {
       const box = element.getBoundingClientRect();
       return { left: Math.round(box.left), top: Math.round(box.top) };
     }),
   );
-
-  expect(boxes[0]?.top).toBe(boxes[1]?.top);
-  expect(boxes[2]?.top).toBe(boxes[3]?.top);
-  expect(boxes[0]?.left).toBe(boxes[2]?.left);
-  expect(boxes[1]?.left).toBe(boxes[3]?.left);
-  expect(boxes[2]?.top ?? 0).toBeGreaterThan(boxes[0]?.top ?? 0);
+  expect(new Set(boxes.map((box) => box.left)).size).toBe(1);
+  expect(boxes.map((box) => box.top)).toEqual([...boxes.map((box) => box.top)].sort((left, right) => left - right));
 });
 
-test('keeps each Token anatomy value closer to its label than to the next item', async ({ page }) => {
+test('renders secondary status only on Overview and puts Projects before closed group management', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('region', { name: 'More report metrics' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Provider status' })).toBeVisible();
+
+  for (const tab of ['sessions', 'models']) {
+    await page.goto(`/?tab=${tab}`);
+    await expect(page.getByRole('region', { name: 'More report metrics' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { level: 2, name: 'Provider status' })).toHaveCount(0);
+  }
+
+  await page.goto('/');
+  await page.getByRole('link', { exact: true, name: 'Breakdown' }).click();
+  await page.getByRole('tablist', { name: 'Breakdown dimension' }).getByRole('tab', { name: 'Projects' }).click();
+  const projectsPanel = page.locator('[data-projects-panel]');
+  const projectSummary = projectsPanel.getByRole('table');
+  const management = projectsPanel.locator('details');
+  await expect(projectSummary).toBeVisible();
+  await expect(management.locator('summary')).toHaveText('Manage project groups');
+  await expect(management).not.toHaveAttribute('open', '');
+  expect(
+    await projectsPanel.evaluate((element) => {
+      const summary = element.querySelector('table');
+      const details = element.querySelector('details');
+      const orderedElements = [...element.querySelectorAll('table, details')];
+      return summary !== null && details !== null && orderedElements[0] === summary && orderedElements[1] === details;
+    }),
+  ).toBe(true);
+});
+
+test('uses one fixed-size Punchcard intensity channel with a low/high key', async ({ page }) => {
   await page.goto('/');
 
-  const items = page.locator('[data-overview-token-legend] [data-token-legend-item]');
-  await expect(items).toHaveCount(4);
-  const geometry = await items.evaluateAll((elements) => {
-    const firstItem = elements[0];
-    const nextItem = elements[1];
-    const firstValue = firstItem?.querySelector('span:last-child');
-    const labelNode = firstItem
-      ? [...firstItem.childNodes].find((node) => node.nodeType === Node.TEXT_NODE)
-      : undefined;
-    if (!(firstItem && nextItem && firstValue && labelNode)) {
-      throw new Error('Token anatomy label geometry is unavailable');
-    }
-    const labelRange = document.createRange();
-    labelRange.selectNode(labelNode);
-    const labelBox = labelRange.getBoundingClientRect();
-    const valueBox = firstValue.getBoundingClientRect();
-    const nextBox = nextItem.getBoundingClientRect();
-    return {
-      labelToValueGap: valueBox.left - labelBox.right,
-      valueToNextItemGap: nextBox.left - valueBox.right,
-    };
-  });
+  const punchcardKey = page.locator('[data-punchcard-intensity-key]');
+  const punchcardCells = page.locator('[data-punchcard-cell-fill]');
+  await expect(punchcardKey).toContainText('Low');
+  await expect(punchcardKey).toContainText('High');
+  expect(await punchcardCells.count()).toBeGreaterThan(0);
+  const cellGeometry = await punchcardCells.evaluateAll((elements) =>
+    elements.map((element) => {
+      const box = element.getBoundingClientRect();
+      return { height: Math.round(box.height), width: Math.round(box.width) };
+    }),
+  );
+  expect(new Set(cellGeometry.map((box) => box.width)).size).toBe(1);
+  expect(new Set(cellGeometry.map((box) => box.height)).size).toBe(1);
+});
 
-  expect(geometry.labelToValueGap).toBeLessThan(geometry.valueToNextItemGap);
+test('separates timeline boundary dates and retains no horizontally intersecting tick', async ({ page }) => {
+  for (const width of [1440, 900]) {
+    await page.setViewportSize({ height: 1000, width });
+    await page.goto('/');
+
+    const tickRow = page.locator('[data-timeline-tick-row]');
+    const boundaryRow = page.locator('[data-timeline-boundary-row]');
+    const ticks = tickRow.locator('[data-timeline-tick]:visible');
+    const boundaries = boundaryRow.locator('[data-timeline-boundary]');
+    await expect(tickRow).toBeVisible();
+    await expect(boundaryRow).toBeVisible();
+    await expect(boundaries).toHaveCount(2);
+
+    const tickBoxes = await ticks.evaluateAll((elements) =>
+      elements.map((element) => {
+        const box = element.getBoundingClientRect();
+        return { bottom: box.bottom, left: box.left, right: box.right };
+      }),
+    );
+    const boundaryBoxes = await boundaries.evaluateAll((elements) =>
+      elements.map((element) => {
+        const box = element.getBoundingClientRect();
+        return { left: box.left, right: box.right, top: box.top };
+      }),
+    );
+
+    expect(Math.max(...tickBoxes.map((box) => box.bottom))).toBeLessThanOrEqual(
+      Math.min(...boundaryBoxes.map((box) => box.top)),
+    );
+    for (const tick of tickBoxes) {
+      for (const boundary of boundaryBoxes) {
+        expect(tick.right <= boundary.left || tick.left >= boundary.right).toBe(true);
+      }
+    }
+  }
 });
 
 test('keeps the mobile filter stack coherent with content above the fold', async ({ page }) => {

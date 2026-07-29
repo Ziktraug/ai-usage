@@ -6,6 +6,7 @@ import {
   defaultTimelineGranularity,
   humanDateInputValue,
   reportRangeSummary,
+  retainTimelineTickLabels,
   timelineBucketLayout,
   timelinePlotLeft,
 } from './time-range-control';
@@ -24,6 +25,30 @@ describe('time range control labels', () => {
     expect(chartOptionsSummary('machine', 'day', 'sessions')).toBe('Machine · Day · Sessions');
     expect(chartOptionsSummary('origin', 'month', 'cost')).toBe('Origin · Month · Estimated API value');
     expect(chartOptionsSummary('project', 'month', 'sessions')).toBe('Project · Month · Sessions');
+  });
+
+  test('suppresses measured ticks that intersect boundary labels at 1440px and 900px', () => {
+    const desktopTicks = [
+      { id: 'jun', left: 72, right: 108 },
+      { id: 'jul', left: 700, right: 736 },
+      { id: 'aug', left: 1332, right: 1372 },
+    ];
+    const desktopBoundaries = [
+      { id: 'from', left: 0, right: 96 },
+      { id: 'to', left: 1320, right: 1440 },
+    ];
+    const compactTicks = [
+      { id: 'jun', left: 58, right: 94 },
+      { id: 'jul', left: 430, right: 466 },
+      { id: 'aug', left: 812, right: 852 },
+    ];
+    const compactBoundaries = [
+      { id: 'from', left: 0, right: 82 },
+      { id: 'to', left: 794, right: 900 },
+    ];
+
+    expect(retainTimelineTickLabels(desktopTicks, desktopBoundaries).map((box) => box.id)).toEqual(['jul']);
+    expect(retainTimelineTickLabels(compactTicks, compactBoundaries).map((box) => box.id)).toEqual(['jul']);
   });
 
   test('presents one compact range summary and human date-input values', () => {

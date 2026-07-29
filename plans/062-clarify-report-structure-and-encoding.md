@@ -40,12 +40,17 @@ not UI inference.
 
 - `apps/web/src/dashboard.tsx`
 - `apps/web/src/dashboard-metrics.tsx` and render tests
-- `apps/web/src/overview.tsx`
+- `apps/web/src/dashboard-model.ts` and tests (always-present zero subscription basis only)
+- `apps/web/src/css-bundle.test.ts` (exact 1,440-byte report structure/encoding allowance only)
+- `apps/web/src/overview.tsx` and render tests
 - `apps/web/src/overview-model.ts` and tests
 - `apps/web/src/project-group-editor.tsx`
 - `apps/web/src/time-range-control.tsx` and tests
+- `apps/web/src/session-table.tsx` (preserve first-load anchoring after the taller timeline only)
+- `apps/web/src/sync-machine-comparison.tsx` (contain the plan-059 table and keep raw identity non-visible only)
 - `packages/design-system/src/components/overview.ts`
 - `packages/design-system/src/report.ts`
+- `apps/web/e2e/dashboard.spec.ts` (full-suite assertions affected by the locked DOM changes only)
 - `apps/web/e2e/dashboard-presentation.spec.ts`
 - `apps/web/e2e/visual-regression.spec.ts` and affected snapshots
 

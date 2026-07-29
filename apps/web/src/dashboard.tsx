@@ -71,7 +71,14 @@ import {
 import { SourceControlSummary } from './components/source-control-summary';
 import { CursorAttributionPanel } from './cursor-attribution-panel';
 import { FilterPill, fieldFilterLabels } from './dashboard-filters';
-import { dashboardMetricGrid, MetricComparisonNotice, MetricTile, metricComparisonStateFor } from './dashboard-metrics';
+import {
+  dashboardMetricGrid,
+  MetricComparisonNotice,
+  MetricTile,
+  metricComparisonStateFor,
+  splitDashboardMetrics,
+  ValueBasesPanel,
+} from './dashboard-metrics';
 import {
   buildCampaignTableRows,
   buildCampaignViews,
@@ -245,6 +252,23 @@ const dashboardPanel = css({
 
 const dashboardStatus = css({
   order: 2,
+});
+
+const projectGroupDisclosure = css({
+  mt: '14px',
+  '& > summary': {
+    p: '12px 14px',
+    border: '1px solid token(colors.line)',
+    borderRadius: 'md',
+    bg: 'surface',
+    color: 'ink',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: 650,
+  },
+  '&[open] > summary': {
+    mb: '10px',
+  },
 });
 
 const removeSelectors = (sources: ProjectSourceSelector[], selectors: ProjectSourceSelector[]) => {
@@ -912,6 +936,7 @@ export const Dashboard = (props: {
       buildDashboardMetrics(visibleSummary(), previousSummary()),
     ),
   );
+  const metricSections = createMemo(() => splitDashboardMetrics(metrics()));
 
   return (
     <main
@@ -1202,16 +1227,19 @@ export const Dashboard = (props: {
                         },
                         {
                           content: () => (
-                            <section class={section}>
-                              <ProjectGroupEditor
-                                disabled={!reportLifecycle.available}
-                                onSave={saveProjectGroupConfigs}
-                                payload={projectGroupPayload()}
-                              />
+                            <section class={section} data-projects-panel>
                               <ProjectSummary
                                 groups={projectGroupRows()}
                                 onProjectFilter={(value) => setFieldFilter('project', value)}
                               />
+                              <details class={projectGroupDisclosure}>
+                                <summary>Manage project groups</summary>
+                                <ProjectGroupEditor
+                                  disabled={!reportLifecycle.available}
+                                  onSave={saveProjectGroupConfigs}
+                                  payload={projectGroupPayload()}
+                                />
+                              </details>
                             </section>
                           ),
                           label: 'Projects',
@@ -1235,8 +1263,8 @@ export const Dashboard = (props: {
               </div>
             </div>
 
-            <div class={dashboardStatus}>
-              <Show when={!reportLifecycle.destinationPending()}>
+            <Show when={!reportLifecycle.destinationPending() && search().tab === 'overview'}>
+              <div class={dashboardStatus}>
                 <section aria-labelledby="additional-report-metrics-title" class={secondaryMetrics}>
                   <header class={secondaryMetricsHeader}>
                     <h2 class={secondaryMetricsTitle} id="additional-report-metrics-title">
@@ -1247,21 +1275,24 @@ export const Dashboard = (props: {
                   <div class={secondaryMetricsGrid} id="additional-report-metrics">
                     <div class={dashboardMetricGrid} data-metric-grid>
                       <MetricComparisonNotice state={metricComparisonState()} />
-                      <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>
+                      <ValueBasesPanel metrics={metricSections().valueBases} />
+                      <For each={metricSections().remainingMetrics}>{(metric) => <MetricTile {...metric} />}</For>
                     </div>
                   </div>
                 </section>
-              </Show>
 
-              <DashboardProviderStatus
-                {...(props.quotaHistoryFixture === undefined ? {} : { quotaHistoryFixture: props.quotaHistoryFixture })}
-                {...(props.quotaSource === undefined ? {} : { quotaSource: props.quotaSource })}
-                report={reportSupport()}
-                rows={focusedStore ? focusedStore.providerRows() : reportRows()}
-                runtimeMode={runtimeMode}
-                served={Boolean(focusedStore)}
-              />
-            </div>
+                <DashboardProviderStatus
+                  {...(props.quotaHistoryFixture === undefined
+                    ? {}
+                    : { quotaHistoryFixture: props.quotaHistoryFixture })}
+                  {...(props.quotaSource === undefined ? {} : { quotaSource: props.quotaSource })}
+                  report={reportSupport()}
+                  rows={focusedStore ? focusedStore.providerRows() : reportRows()}
+                  runtimeMode={runtimeMode}
+                  served={Boolean(focusedStore)}
+                />
+              </div>
+            </Show>
           </div>
 
           <Show when={sessionSelection.selectedRow()}>

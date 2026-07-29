@@ -14,6 +14,9 @@ type MetricComparisonState = 'available' | 'full-range' | 'no-prior-data';
 interface MetricComparisonNoticeProps {
   state: MetricComparisonState;
 }
+interface ValueBasesPanelProps {
+  metrics: MetricTileProps[];
+}
 
 const viteServer = await createServer({
   appType: 'custom',
@@ -31,13 +34,16 @@ if (
     'MetricTile' in loaded &&
     typeof loaded.MetricTile === 'function' &&
     'MetricComparisonNotice' in loaded &&
-    typeof loaded.MetricComparisonNotice === 'function'
+    typeof loaded.MetricComparisonNotice === 'function' &&
+    'ValueBasesPanel' in loaded &&
+    typeof loaded.ValueBasesPanel === 'function'
   )
 ) {
   throw new Error('Vite did not load dashboard metric components');
 }
 const MetricTile = loaded.MetricTile as Component<MetricTileProps>;
 const MetricComparisonNotice = loaded.MetricComparisonNotice as Component<MetricComparisonNoticeProps>;
+const ValueBasesPanel = loaded.ValueBasesPanel as Component<ValueBasesPanelProps>;
 const pendingSurfaceLoaded: unknown = await viteServer.ssrLoadModule('/src/dashboard-pending-surface.tsx');
 if (
   !(
@@ -76,6 +82,28 @@ describe('MetricTile', () => {
     expect(html).toContain('aria-label="About API value"');
     expect(html).toContain('aria-haspopup="dialog"');
     expect(html).toContain('title="About API value"');
+  });
+
+  test('groups the three monetary definitions into labelled Value bases rows', () => {
+    const html = renderToString(() =>
+      createComponent(ValueBasesPanel, {
+        metrics: [
+          { hint: 'Standard API prices', label: 'API value · measured', value: '$12.00' },
+          { hint: 'Out-of-pocket spend', label: 'Actual cost', value: '$3.00' },
+          { hint: 'Covered by subscription quota', label: 'Sub value', value: '$9.00' },
+        ],
+      }),
+    );
+
+    expect(html).toContain('data-value-bases-panel');
+    expect(html).toContain('Value bases');
+    expect(html.match(/data-value-bases-row/g)).toHaveLength(3);
+    expect(html).toContain('API-equivalent value');
+    expect(html).toContain('Actual recorded cost');
+    expect(html).toContain('Subscription value');
+    expect(html).toContain('aria-label="About API value · measured"');
+    expect(html).toContain('aria-label="About Actual cost"');
+    expect(html).toContain('aria-label="About Sub value"');
   });
 });
 

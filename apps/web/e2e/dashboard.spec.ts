@@ -228,7 +228,8 @@ test('uses one primary navigation while preserving Breakdown deep links and sub-
   await expect(page.getByText('By model', { exact: true })).toBeVisible();
 
   await breakdownTabs.getByRole('tab', { name: 'Projects' }).click();
-  await expect(page.getByRole('heading', { level: 2, name: 'Project groups' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Project' })).toBeVisible();
+  await expect(page.getByText('Manage project groups', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(LEGACY_PROJECT_TAB_URL_PATTERN);
 });
 
@@ -581,7 +582,7 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1, name: 'Sync' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export current machine' })).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Machine fleet' })).toBeVisible();
-  await expect(page.getByText('Current machine', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Machine fleet').getByText('Current machine', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Drop a merge file here or choose a file' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start LAN merge' })).toHaveCount(0);
   await expect(page.getByLabel('Scan host')).toHaveCount(0);

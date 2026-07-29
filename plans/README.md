@@ -82,7 +82,7 @@ request unless the user explicitly asks.
 | 059 | Compare Machine Contributions on Sync | P3 | M | - | DONE |
 | 060 | Add Local Search to Long Breakdown Lists | P3 | S | 054 | DONE |
 | 061 | Close the Four Reopened Presentation Regressions | P1 | S | 046 implementation | DONE |
-| 062 | Clarify Report Structure and Visual Encoding | P2 | L | 053, 054, 061 | TODO |
+| 062 | Clarify Report Structure and Visual Encoding | P2 | L | 053, 054, 061 | DONE |
 | 063 | Normalize Report Signal and Language | P2 | L | 053, 062 | TODO |
 | 064 | Label Data Quality Without Dropping Data | P3 | M | 053, 059 | TODO |
 | 065 | Expose the Harness–Provider Joint Distribution | P3 | M | 054, 062 | TODO |

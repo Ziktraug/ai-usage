@@ -640,6 +640,8 @@ export const buildOverviewSessionItems = (
   return [...campaignItems, ...sessionItems];
 };
 
+export const SESSION_SHAPE_POINT_RADIUS = 4;
+
 export interface SessionShapeData {
   harnesses: string[];
   harnessSummaries: SessionShapeHarnessSummary[];
@@ -768,6 +770,16 @@ export const buildSessionShapeData = (
     yTicks: COST_TICKS.filter((tick) => tick.value >= yMin && tick.value <= yMax),
     harnesses,
   };
+};
+
+export const PUNCHCARD_MIN_SESSION_OPACITY = 0.3;
+
+export const punchcardSessionOpacity = (sessions: number, maxSessions: number): number => {
+  if (sessions <= 0 || maxSessions <= 0) {
+    return 0;
+  }
+  const normalizedSessions = Math.min(1, sessions / maxSessions);
+  return PUNCHCARD_MIN_SESSION_OPACITY + (1 - PUNCHCARD_MIN_SESSION_OPACITY) * normalizedSessions;
 };
 
 export const PUNCH_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;

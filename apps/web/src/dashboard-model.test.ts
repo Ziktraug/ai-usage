@@ -165,6 +165,7 @@ describe('dashboard model', () => {
     expect(previous?.sessionCount).toBe(1);
     expect(previous?.totalCost).toBe(1);
     expect(metrics.find((metric) => metric.label === 'API value')?.delta?.pct).toBe(100);
+    expect(metrics.find((metric) => metric.label === 'Sub value')?.value).toBe('$0.00');
   });
 
   test('sorts export rows without mutating the filtered row order', () => {

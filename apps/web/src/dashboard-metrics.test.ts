@@ -4,6 +4,7 @@ import {
   metricComparisonMessage,
   metricComparisonStateFor,
   metricDeltaFaceLabel,
+  splitDashboardMetrics,
 } from './dashboard-metrics';
 
 describe('dashboard metric delta presentation', () => {
@@ -14,6 +15,20 @@ describe('dashboard metric delta presentation', () => {
 
   test('retains the existing compact percentage formatter', () => {
     expect(fmtDeltaPct(-12.34)).toBe('12%');
+  });
+});
+
+describe('dashboard metric sections', () => {
+  test('groups value bases in semantic order without changing their definitions', () => {
+    const sessions = { label: 'Sessions', value: '3' };
+    const subscription = { hint: 'Covered by quota', label: 'Sub value', value: '$9.00' };
+    const api = { hint: 'Standard API prices', label: 'API value · measured', value: '$12.00' };
+    const actual = { hint: 'Out-of-pocket spend', label: 'Actual cost', value: '$3.00' };
+
+    expect(splitDashboardMetrics([sessions, subscription, api, actual])).toEqual({
+      remainingMetrics: [sessions],
+      valueBases: [api, actual, subscription],
+    });
   });
 });
 
