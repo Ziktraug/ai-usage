@@ -32,6 +32,8 @@ import {
   formatTransferBytes,
 } from '../manual-transfer-model';
 import { exportManualMergeBundle, getSyncFleet } from '../server/sync';
+import { MachineFleetComparison } from '../sync-machine-comparison';
+import { buildSyncFleetComparisonRows } from '../sync-machine-comparison-model';
 
 export const Route = createFileRoute('/sync')({
   beforeLoad: enforceReportOnlyDemoNavigation,
@@ -656,11 +658,14 @@ function SyncRoute() {
           <OperationNotice error={fleetError()} message={null} />
           <Show when={fleetData()}>
             {(data) => (
-              <MachineFleetPanel
-                machines={buildSyncFleetMachineViews(data().currentMachine, data().machines)}
-                omittedMachines={data().omittedMachines}
-                skipped={data().skipped}
-              />
+              <>
+                <MachineFleetPanel
+                  machines={buildSyncFleetMachineViews(data().currentMachine, data().machines)}
+                  omittedMachines={data().omittedMachines}
+                  skipped={data().skipped}
+                />
+                <MachineFleetComparison rows={buildSyncFleetComparisonRows(data().currentMachine, data().machines)} />
+              </>
             )}
           </Show>
           <ManualTransferPanel

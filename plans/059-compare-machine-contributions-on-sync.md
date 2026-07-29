@@ -27,6 +27,9 @@ freshness renders `Freshness unavailable`, never `Fresh`.
 
 - `apps/web/src/manual-transfer-model.ts` and tests
 - `apps/web/src/routes/sync.tsx`
+- `apps/web/src/sync-machine-comparison-model.ts`
+- `apps/web/src/sync-machine-comparison.tsx`
+- `apps/web/src/css-bundle.test.ts` (exact two-byte Sync route-hash allowance only)
 - a new/existing sync render test
 
 No store schema, import/export protocol, collectors, machine identity, or report

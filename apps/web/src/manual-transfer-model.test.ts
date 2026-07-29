@@ -1,5 +1,6 @@
 import { expect, test } from 'bun:test';
 import type { ManualMergeImportResult } from '@ai-usage/usage-merge';
+import type { UsageMachineFleetItem } from '@ai-usage/usage-store';
 import {
   buildSyncFleetMachineViews,
   formatFleetAge,
@@ -9,6 +10,23 @@ import {
   machineLabelPresentation,
   machineLabelPresentationForSnapshot,
 } from './manual-transfer-model';
+import { buildSyncFleetComparisonRows } from './sync-machine-comparison-model';
+
+const fleetItem = (
+  id: string,
+  label: string,
+  sessionCount: number,
+  lastSeenAt: string,
+  newestSessionAt: string | null = lastSeenAt,
+): UsageMachineFleetItem => ({
+  hasLocalObservedRows: false,
+  hasPortableRows: true,
+  id,
+  label,
+  lastSeenAt,
+  newestSessionAt,
+  sessionCount,
+});
 
 test('formats manual transfer sizes for upload progress', () => {
   expect(formatTransferBytes(0)).toBe('0 B');
@@ -107,4 +125,64 @@ test('formats machine freshness as a compact relative age', () => {
   expect(formatFleetAge(null, now)).toBe('No activity recorded');
   expect(formatFleetAge('2026-07-05T11:30:00.000Z', now)).toBe('30m ago');
   expect(formatFleetAge('2026-07-03T12:00:00.000Z', now)).toBe('2d ago');
+});
+
+test('builds stable current-first machine comparison rows with explicit freshness states', () => {
+  const now = Date.parse('2026-07-05T12:00:00.000Z');
+  const rows = buildSyncFleetComparisonRows(
+    { id: 'current', label: 'Current' },
+    [
+      fleetItem('peer-b', 'Peer', 3, '2026-06-01T12:00:00.000Z', '2026-05-31T12:00:00.000Z'),
+      fleetItem('current', 'Current', 4, '2026-07-05T11:00:00.000Z'),
+      fleetItem('peer-a', 'Peer', 3, 'invalid', null),
+    ],
+    now,
+  );
+
+  expect(rows.map(({ current, id, sessionSharePercent }) => ({ current, id, sessionSharePercent }))).toEqual([
+    { current: true, id: 'current', sessionSharePercent: 40 },
+    { current: false, id: 'peer-a', sessionSharePercent: 30 },
+    { current: false, id: 'peer-b', sessionSharePercent: 30 },
+  ]);
+  expect(rows.reduce((total, row) => total + row.sessionSharePercent, 0)).toBe(100);
+  expect(rows[0]).toMatchObject({
+    freshness: 'fresh',
+    freshnessLabel: 'Fresh · 1h ago',
+    newestSessionLabel: '1h ago',
+  });
+  expect(rows[1]).toMatchObject({
+    freshness: 'unavailable',
+    freshnessLabel: 'Freshness unavailable',
+  });
+  expect(rows[2]).toMatchObject({
+    freshness: 'stale',
+    freshnessLabel: 'Stale · 34d ago',
+  });
+});
+
+test('apportions whole percentages to 100 and keeps a zero-session fleet at zero', () => {
+  const now = Date.parse('2026-07-05T12:00:00.000Z');
+  const rounded = buildSyncFleetComparisonRows(
+    { id: 'current', label: 'Current' },
+    [
+      fleetItem('current', 'Current', 1, '2026-07-05T11:00:00.000Z'),
+      fleetItem('peer-b', 'B', 1, '2026-07-05T11:00:00.000Z'),
+      fleetItem('peer-a', 'A', 1, '2026-07-05T11:00:00.000Z'),
+    ],
+    now,
+  );
+  expect(rounded.map((row) => row.sessionSharePercent)).toEqual([34, 33, 33]);
+  expect(rounded.reduce((total, row) => total + row.sessionSharePercent, 0)).toBe(100);
+
+  const zero = buildSyncFleetComparisonRows(
+    { id: 'current', label: 'Current' },
+    [fleetItem('peer', 'Peer', 0, 'invalid', null)],
+    now,
+  );
+  expect(zero.map((row) => row.id)).toEqual(['current', 'peer']);
+  expect(zero.map((row) => row.sessionSharePercent)).toEqual([0, 0]);
+  expect(zero[0]).toMatchObject({
+    freshness: 'unavailable',
+    freshnessLabel: 'Freshness unavailable',
+  });
 });
