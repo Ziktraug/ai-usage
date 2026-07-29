@@ -189,6 +189,12 @@ export const presetButton = css({
     borderColor: 'accent',
     color: 'accent',
   },
+  '&[data-default="true"][data-active="true"], &[data-default="true"][data-state=checked], &[data-default="true"][data-state=on]':
+    {
+      bg: 'controlDefault',
+      borderColor: 'lineStrong',
+      color: 'ink',
+    },
   _focusVisible: {
     outline: '2px solid token(colors.accent)',
     outlineOffset: '2px',

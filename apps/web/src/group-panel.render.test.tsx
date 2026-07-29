@@ -6,6 +6,9 @@ import { createServer } from 'vite';
 import solidPlugin from 'vite-plugin-solid';
 import type { BreakdownSort } from './dashboard-search';
 
+const AMBIGUITY_ABBREVIATION_PATTERN = /\bambig\b/;
+const SESSION_ABBREVIATION_PATTERN = /\bsess\b/;
+
 interface GroupPanelProps {
   countLabel: string;
   groups: AnalyticsGroup[];
@@ -178,4 +181,21 @@ test('renders a labelled local search and the explicit no-match state', () => {
 
   expect(noMatchHtml).toContain('No breakdown rows match this search');
   expect(noMatchHtml).not.toContain('data-price-state');
+});
+
+test('uses locale-formatted canonical session and ambiguity language without repeated price glyphs', () => {
+  const html = renderToString(() =>
+    createComponent(GroupPanel, {
+      countLabel: 'models',
+      groups: [{ ...partiallyMeasuredGroup, ambiguous: 1, sessions: 1 }],
+      onSortChange: () => undefined,
+      sort: 'value',
+      title: 'Models',
+    }),
+  );
+
+  expect(html).toContain('1 session · 1 ambiguous');
+  expect(html).not.toMatch(SESSION_ABBREVIATION_PATTERN);
+  expect(html).not.toMatch(AMBIGUITY_ABBREVIATION_PATTERN);
+  expect(html).not.toContain('aria-label="Partially measured:');
 });

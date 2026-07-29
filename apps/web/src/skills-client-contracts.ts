@@ -146,6 +146,15 @@ const parseJsonValue = (value: unknown): JsonValue => {
   return Object.fromEntries(Object.entries(record).map(([key, entry]) => [key, parseJsonValue(entry)]));
 };
 
+const parseTokenMeasurement = (value: unknown): NonNullable<SkillDiagnostic['tokenMeasurement']> => {
+  const measurement = recordValue(value, 'skill diagnostic token measurement');
+  return {
+    observed: nonNegativeInteger(measurement.observed, 'skill diagnostic token measurement'),
+    threshold: nonNegativeInteger(measurement.threshold, 'skill diagnostic token measurement'),
+    unit: literalValue(measurement.unit, 'skill diagnostic token measurement', ['tokens'] as const),
+  };
+};
+
 const parseDiagnostic = (value: unknown): SkillDiagnostic => {
   const diagnostic = recordValue(value, 'skill diagnostic');
   return {
@@ -155,6 +164,9 @@ const parseDiagnostic = (value: unknown): SkillDiagnostic => {
     ...(diagnostic.path === undefined ? {} : { path: stringValue(diagnostic.path, 'skill diagnostic') }),
     ...(diagnostic.skillName === undefined ? {} : { skillName: stringValue(diagnostic.skillName, 'skill diagnostic') }),
     ...(diagnostic.targetId === undefined ? {} : { targetId: stringValue(diagnostic.targetId, 'skill diagnostic') }),
+    ...(diagnostic.tokenMeasurement === undefined
+      ? {}
+      : { tokenMeasurement: parseTokenMeasurement(diagnostic.tokenMeasurement) }),
   };
 };
 

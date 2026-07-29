@@ -462,7 +462,7 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
       label: apiValueProvenance ? `API value · ${apiValueProvenance.label}` : 'API value',
       value: apiValue.label,
       hint: [
-        `Estimated cost at standard API prices for ${fmtNum(summary.pricedSessions)} of ${fmtNum(summary.sessionCount)} fully priced sessions, including usage covered by subscriptions`,
+        `Estimated API-equivalent value at standard prices for ${fmtNum(summary.pricedSessions)} of ${fmtNum(summary.sessionCount)} fully priced sessions, including usage covered by subscriptions`,
         apiValueProvenance?.description,
       ]
         .filter((line): line is string => Boolean(line))

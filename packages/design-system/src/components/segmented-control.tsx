@@ -10,6 +10,7 @@ export interface SegmentedControlItem {
 
 export interface SegmentedControlProps {
   ariaLabel: string;
+  defaultValue?: string;
   items: readonly SegmentedControlItem[];
   label?: string;
   onValueChange: (value: string) => void;
@@ -33,7 +34,11 @@ export const SegmentedControl = (props: SegmentedControlProps) => (
     >
       <For each={props.items}>
         {(item) => (
-          <ToggleGroup.Item class={presetButton} value={item.value}>
+          <ToggleGroup.Item
+            class={presetButton}
+            data-default={String(item.value === props.defaultValue)}
+            value={item.value}
+          >
             {item.label}
           </ToggleGroup.Item>
         )}

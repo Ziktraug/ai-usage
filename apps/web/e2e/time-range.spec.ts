@@ -24,7 +24,7 @@ test('uses one report range for the dashboard and activity chart', async ({ page
   await expect(dateRange.getByRole('textbox', { name: 'Start date' })).toHaveValue('May 12, 2026');
   await expect(dateRange.getByRole('textbox', { name: 'End date' })).toHaveValue('Jun 11, 2026');
   await expect(dateRange.getByText('May 12 → Jun 11, 2026 · 30 days', { exact: true })).toBeVisible();
-  await expect(dateRange.getByText('Follows report range', { exact: true })).toBeVisible();
+  await expect(dateRange.getByText('Activity range follows report range', { exact: true })).toBeVisible();
   await expect(dateRange.getByText('Filters the entire report', { exact: true })).toHaveCount(0);
   await expect(dateRange.getByTitle('Filter by Codex')).toHaveCount(1);
   expect(
@@ -38,7 +38,7 @@ test('uses one report range for the dashboard and activity chart', async ({ page
 
   const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
   await expect(chartOptions).not.toHaveAttribute('open', '');
-  await expect(chartOptions.getByText('Harness · Day · Estimated API value', { exact: true })).toBeVisible();
+  await expect(chartOptions.getByText('Harness · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
   await expect(chartOptions.getByText('Group by', { exact: true })).not.toBeVisible();
 
   await chartOptions.locator('summary').click();
@@ -140,11 +140,11 @@ test('changes every chart option from its segmented controls', async ({ page }) 
     await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
   }
 
-  for (const option of ['Share', 'Sessions', 'Estimated API value']) {
+  for (const option of ['Share', 'Sessions', 'Estimated API-equivalent value']) {
     await chartOptions.getByRole('radio', { exact: true, name: option }).click();
     await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
   }
-  await expect(chartOptions.getByText('Harness · Day · Estimated API value', { exact: true })).toBeVisible();
+  await expect(chartOptions.getByText('Harness · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
 });
 
 test('groups the timeline by campaign, machine, and origin with matching legends', async ({ page }) => {
@@ -155,12 +155,14 @@ test('groups the timeline by campaign, machine, and origin with matching legends
   await chartOptions.locator('summary').click();
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Campaign' }).click();
-  await expect(chartOptions.getByText('Campaign · Day · Estimated API value', { exact: true })).toBeVisible();
+  await expect(
+    chartOptions.getByText('Campaign · Day · Estimated API-equivalent value', { exact: true }),
+  ).toBeVisible();
   await expect(dateRange.getByTitle('Build report UI')).toContainText('Build report UI');
   await expect(dateRange.getByTitle('Inspect OpenCode root')).toContainText('Inspect OpenCode root');
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Machine' }).click();
-  await expect(chartOptions.getByText('Machine · Day · Estimated API value', { exact: true })).toBeVisible();
+  await expect(chartOptions.getByText('Machine · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
   await expect(dateRange.getByTitle('Filter by Fixture Machine · Stale')).toContainText('Fixture Machine · Stale');
   await expect(dateRange.getByTitle('Unknown machine')).toContainText('Unknown machine');
 
@@ -178,7 +180,7 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   const startInput = dateRange.getByRole('textbox', { name: 'Start date' });
   const endInput = dateRange.getByRole('textbox', { name: 'End date' });
   const startHandle = dateRange.getByRole('slider', { name: 'Start date' });
-  const selectedRange = dateRange.getByRole('button', { name: 'Drag selected date range' });
+  const selectedRange = dateRange.getByRole('button', { name: 'Selected report window' });
 
   await dateRange.getByRole('button', { exact: true, name: 'All' }).click();
   await expect.poll(() => reportRangeValue(page)).not.toBeNull();
@@ -189,7 +191,7 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
 
   await dateRange.getByRole('button', { exact: true, name: '7d' }).click();
   await expect(startInput).toHaveValue('Jun 04, 2026');
-  await expect(dateRange.getByText('Follows report range', { exact: true })).toBeVisible();
+  await expect(dateRange.getByText('Activity range follows report range', { exact: true })).toBeVisible();
 
   const presetUrl = page.url();
   await startInput.fill('2026-05-25');

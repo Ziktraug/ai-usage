@@ -12,6 +12,7 @@ import {
   skillsReconcilePlanList,
   statusPill,
   statusPillDanger,
+  statusPillInfo,
   statusPillOk,
   statusPillWarn,
   strongCell,
@@ -19,6 +20,7 @@ import {
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import { useNavigate } from '@tanstack/solid-router';
 import { createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
+import { fmtNum } from './shared';
 import { deriveInstallationAction, groupSkillDiagnostics } from './skill-document-inspector-model';
 import {
   buildGlobalSkillExposure,
@@ -424,7 +426,7 @@ const exposureTones = {
   missing: statusPillWarn,
   'missing-target': statusPillDanger,
   'not-applicable': statusPillDanger,
-  'unmanaged-copy': statusPillDanger,
+  'unmanaged-copy': statusPillInfo,
   'unmanaged-symlink': statusPillDanger,
   'wrong-target': statusPillDanger,
 } satisfies Record<GlobalSkillExposure['state'], string>;
@@ -479,6 +481,13 @@ const GlobalSkillInspector = (props: {
                   </div>
                 </div>
                 <p class={meta}>{diagnostic.message}</p>
+                <Show when={diagnostic.tokenMeasurement}>
+                  {(measurement) => (
+                    <p class={meta} data-token-measurement>
+                      {fmtNum(measurement().observed)} / {fmtNum(measurement().threshold)} tokens
+                    </p>
+                  )}
+                </Show>
                 <Show when={diagnostic.paths.length > 0}>
                   <details>
                     <summary class={meta}>Related paths</summary>
@@ -504,13 +513,13 @@ const GlobalSkillInspector = (props: {
         <div class={metricList}>
           <div class={metricStaticRow}>
             <span class={meta}>Total tokens</span>
-            <strong>{props.skill.tokenCount?.total ?? 'Unknown'}</strong>
+            <strong>{props.skill.tokenCount ? fmtNum(props.skill.tokenCount.total) : 'Unknown'}</strong>
           </div>
           <Show when={props.skill.tokenCount}>
             {(tokens) => (
               <div class={metricStaticRow}>
                 <span class={meta}>SKILL.md tokens</span>
-                <strong>{tokens().skillMd}</strong>
+                <strong>{fmtNum(tokens().skillMd)}</strong>
               </div>
             )}
           </Show>
@@ -567,6 +576,16 @@ const GlobalSkillInspector = (props: {
                     <div>Expected: {entry.expectedPath}</div>
                     <Show when={entry.actualPath}>{(actualPath) => <div>Actual: {actualPath()}</div>}</Show>
                   </div>
+                  <Show when={entry.state === 'unmanaged-copy'}>
+                    <button
+                      class={ghostButton}
+                      disabled={props.pendingOperation !== null}
+                      onClick={props.onReviewInstallation}
+                      type="button"
+                    >
+                      Review consolidation
+                    </button>
+                  </Show>
                 </details>
               );
             }}

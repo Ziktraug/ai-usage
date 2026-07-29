@@ -7,7 +7,7 @@ const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const COLUMN_URL_PATTERN = /cols=/;
 const DATE_HEADER_PATTERN = /Date/;
 const ESTIMATED_API_VALUE_HELP_PATTERN =
-  /Estimated cost at standard API prices for \d+ of \d+ fully priced sessions, including usage covered by subscriptions/;
+  /Estimated API-equivalent value at standard prices for \d+ of \d+ fully priced sessions, including usage covered by subscriptions/;
 const HYDRATION_TIMEOUT_MS = 15_000;
 const INSPECT_SESSION_PATTERN = /Inspect session/;
 const LEGACY_PROJECT_TAB_URL_PATTERN = /tab=projects/;
@@ -254,7 +254,7 @@ test('shows analysis and report metrics without disclosure gates', async ({ page
     'Weekday',
     'Hour',
     'Sessions',
-    'API-equivalent value',
+    'Estimated API-equivalent value',
   ]);
   expect(await punchcardTable.getByRole('row').count()).toBeGreaterThan(1);
   await expect(punchcardTable.getByRole('row', { name: 'Sunday 14:00 1 $0.84' })).toBeAttached();
@@ -461,7 +461,7 @@ test('uses the report range as the only graph viewport', async ({ page }) => {
   await expect(dateRange.getByRole('button', { name: 'Zoom chart' })).toHaveCount(0);
   await expect(dateRange.getByRole('slider', { name: 'Graph view start' })).toHaveCount(0);
   await expect(dateRange.getByText('Custom chart view', { exact: true })).toHaveCount(0);
-  await expect(dateRange.getByText('Follows report range', { exact: true })).toBeVisible();
+  await expect(dateRange.getByText('Activity range follows report range', { exact: true })).toBeVisible();
 });
 
 test('offers keyboard-safe charts and mobile summaries at a narrow viewport', async ({ page }) => {

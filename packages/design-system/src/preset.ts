@@ -103,6 +103,7 @@ export const aiUsagePreset = definePreset({
           canvas: dual('#F6F4EF', '#111113'),
           surface: dual('#FFFFFF', '#18191C'),
           surfaceMuted: dual('#EFECE5', '#212327'),
+          controlDefault: dual('#EFECE5', '#212327'),
           track: dual('#ECE8E0', '#2C2E33'),
 
           // Ink.
@@ -125,10 +126,9 @@ export const aiUsagePreset = definePreset({
           focusRing: dual('rgba(177, 78, 18, 0.28)', 'rgba(224, 131, 60, 0.35)'),
 
           // Categorical series palette for charts (model migration, etc.).
-          // c1 echoes the copper accent; the rest stay muted enough to sit on
-          // paper/graphite surfaces in both schemes.
+          // Series colors remain distinct from the interaction-only accent.
           chart: {
-            c1: dual('#B14E12', '#E0833C'),
+            c1: dual('#9B4210', '#F19A57'),
             c2: dual('#0E7569', '#46C3AC'),
             c3: dual('#6A47C8', '#AC92F2'),
             c4: dual('#2061B4', '#7FA9E8'),
@@ -138,7 +138,7 @@ export const aiUsagePreset = definePreset({
 
           // Harness badge pairs, recalibrated per scheme.
           harness: {
-            claude: { fg: dual('#A8512C', '#E5915F'), bg: dual('#F7E9E0', '#3B2415') },
+            claude: { fg: dual('#8C3E74', '#D98ABC'), bg: dual('#F5E5EF', '#351E2F') },
             codex: { fg: dual('#0E7569', '#46C3AC'), bg: dual('#E0F0EB', '#11302A') },
             cursor: { fg: dual('#6A47C8', '#AC92F2'), bg: dual('#EDE8FB', '#271F40') },
             opencode: { fg: dual('#2061B4', '#7FA9E8'), bg: dual('#E3EDF9', '#15263C') },

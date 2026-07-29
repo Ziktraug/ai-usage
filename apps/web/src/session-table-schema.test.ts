@@ -21,6 +21,16 @@ describe('session table schema', () => {
     expect(sessionColumnIds).toEqual([...sessionSortFields]);
   });
 
+  test('uses canonical compact headers and explains partial API pricing once in the API column header', () => {
+    const apiValueColumn = sessionColumns.find((column) => column.id === 'cost');
+    const ambiguousColumn = sessionColumns.find((column) => column.id === 'ambiguous');
+
+    expect(apiValueColumn?.header).toBe('API value');
+    expect(apiValueColumn?.meta?.title).toContain('Estimated API-equivalent value');
+    expect(apiValueColumn?.meta?.title).toContain('≥');
+    expect(ambiguousColumn?.header).toBe('Ambiguous');
+  });
+
   test('starts with the focused Work columns in identity-first order', () => {
     expect(
       sessionColumnSchema

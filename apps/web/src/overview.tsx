@@ -188,7 +188,7 @@ const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
   return (
     <Show when={data()}>
       {(hero) => (
-        <section aria-label="API-equivalent value" class={heroPanel}>
+        <section aria-label="Estimated API-equivalent value" class={heroPanel}>
           <div>
             <div class={heroLabel}>Estimated API-equivalent value</div>
             <div class={heroValue}>{aggregateApiValuePresentation(hero().priceMeasurement).label}</div>
@@ -746,7 +746,7 @@ const Punchcard = (props: {
                     <th scope="col">Weekday</th>
                     <th scope="col">Hour</th>
                     <th scope="col">Sessions</th>
-                    <th scope="col">API-equivalent value</th>
+                    <th scope="col">Estimated API-equivalent value</th>
                   </tr>
                 </thead>
                 <tbody>

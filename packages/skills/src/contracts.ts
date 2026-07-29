@@ -1,5 +1,11 @@
 export type SkillDiagnosticSeverity = 'info' | 'warning' | 'error';
 
+export interface SkillTokenMeasurement {
+  observed: number;
+  threshold: number;
+  unit: 'tokens';
+}
+
 export interface SkillDiagnostic {
   code: string;
   message: string;
@@ -7,6 +13,7 @@ export interface SkillDiagnostic {
   severity: SkillDiagnosticSeverity;
   skillName?: string;
   targetId?: string;
+  tokenMeasurement?: SkillTokenMeasurement;
 }
 
 export type SkillTargetScope = 'system' | 'project';

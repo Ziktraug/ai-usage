@@ -98,3 +98,20 @@ describe('semantic color contrast', () => {
     });
   }
 });
+
+describe('semantic palette roles', () => {
+  for (const scheme of ['_light', '_dark'] as const) {
+    test(`${scheme.slice(1)} separates interaction, categorical, and default-control colors`, () => {
+      const accent = colorFor('accent', scheme);
+      const chartPrimary = colorFor('chart.c1', scheme);
+      const claude = colorFor('harness.claude.fg', scheme);
+      const controlDefault = colorFor('controlDefault', scheme);
+
+      expect(chartPrimary).not.toBe(accent);
+      expect(claude).not.toBe(accent);
+      expect(claude).not.toBe(chartPrimary);
+      expect(controlDefault).toBe(colorFor('surfaceMuted', scheme));
+      expect(controlDefault).not.toBe(accent);
+    });
+  }
+});

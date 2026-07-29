@@ -65,6 +65,30 @@ describe('browser-safe Skills contracts', () => {
     ).toThrow('Invalid skills reconcile response');
   });
 
+  test('preserves strict structured token measurements and rejects malformed measurements', () => {
+    const diagnostic = {
+      code: 'SkillMarkdownTokenWarning',
+      message: 'SKILL.md token warning',
+      severity: 'warning' as const,
+      tokenMeasurement: { observed: 1240, threshold: 1000, unit: 'tokens' as const },
+    };
+    const parsed = parseSkillSnapshotResult({
+      data: { ...snapshot(), diagnostics: [diagnostic] },
+      ok: true,
+    });
+    expect(parsed).toMatchObject({ data: { diagnostics: [diagnostic] }, ok: true });
+
+    expect(() =>
+      parseSkillSnapshotResult({
+        data: {
+          ...snapshot(),
+          diagnostics: [{ ...diagnostic, tokenMeasurement: { observed: 1240, threshold: 1000, unit: 'bytes' } }],
+        },
+        ok: true,
+      }),
+    ).toThrow('Invalid skills snapshot response');
+  });
+
   test('rejects incomplete project inventory observations before they reach UI state', () => {
     const valid = inventory();
     expect(parseProjectInventoriesResult({ data: [valid], ok: true })).toEqual({ data: [valid], ok: true });

@@ -9,6 +9,7 @@ const MIN_DESKTOP_EDITOR_WIDTH_PX = 320;
 const MIN_DESKTOP_INSPECTOR_WIDTH_PX = 260;
 const MIN_DESKTOP_TREE_WIDTH_PX = 190;
 const BETA_SKILL_URL = /\/skills\/global\/beta-skill$/;
+const SKILLS_MATRIX_URL = /\/skills\/matrix$/;
 const CREATED_TARGET_PATTERN = /Created target directory/;
 const LONG_PROJECT_LABEL = 'customer-analytics-platform-with-an-exceptionally-long-scope-name';
 const MOBILE_VIEWPORT = { height: 844, width: 390 } as const;
@@ -392,10 +393,12 @@ test('bounds long scope labels and makes validation findings individually identi
   await expect(findings.nth(0)).toContainText('Skill document token warning');
   await expect(page.getByText('SkillMarkdownTokenWarning', { exact: true })).toHaveCount(0);
   await expect(findings.nth(0)).toContainText('SKILL.md is approaching the recommended token limit.');
+  await expect(findings.nth(0)).toContainText('1,240 / 1,000 tokens');
   await expect(findings.nth(1)).toHaveAccessibleName('Finding 2: warning');
   await expect(findings.nth(1)).toContainText('Finding 2');
   await expect(findings.nth(1)).toContainText('SkillReferenceTokenWarning');
   await expect(findings.nth(1)).toContainText('Reference files are approaching the recommended token limit.');
+  await expect(findings.nth(1)).toContainText('2,400 / 2,000 tokens');
   await expect(page.getByText('warning', { exact: true })).toHaveCount(1);
 
   const diagnosticCode = findings.nth(0).getByText('Skill document token warning', { exact: true });
@@ -404,6 +407,21 @@ test('bounds long scope labels and makes validation findings individually identi
     scrollWidth: element.scrollWidth,
   }));
   expect(diagnosticDimensions.scrollWidth).toBeLessThanOrEqual(diagnosticDimensions.clientWidth);
+});
+
+test('presents unmanaged copies as neutral backlog rows with their reconciliation action', async ({ page }) => {
+  await page.goto('/skills/global');
+
+  const consolidation = page.locator('[data-consolidation-panel]');
+  await consolidation.locator(':scope > summary').click();
+  await consolidation.locator('details > summary').click();
+  const unmanagedRow = consolidation.locator('[data-unmanaged-entry]');
+  await expect(unmanagedRow).toHaveCount(1);
+  await expect(unmanagedRow).toHaveAttribute('data-backlog-tone', 'neutral');
+  await expect(unmanagedRow).toContainText('legacy-local-copy');
+  await unmanagedRow.getByRole('button', { name: 'Review consolidation' }).click();
+  await expect(page).toHaveURL(SKILLS_MATRIX_URL);
+  await expect(page.getByRole('heading', { level: 2, name: 'Managed skills — exposure per runtime' })).toBeVisible();
 });
 
 test('prioritizes the editor on mobile and keeps the compact picker behavior', async ({ page }) => {

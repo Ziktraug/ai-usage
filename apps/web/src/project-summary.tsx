@@ -52,7 +52,7 @@ export const ProjectSummary = (props: { groups: ProjectGroup[]; onProjectFilter:
               Cache
             </th>
             <th class={right} style={{ width: '96px' }}>
-              $API
+              API value
             </th>
             <th class={right} style={{ width: '110px' }}>
               Lines

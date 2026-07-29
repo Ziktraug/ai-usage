@@ -20,10 +20,10 @@ const measurement = (knownCost: number) => ({
 describe('time range control labels', () => {
   test('summarizes the selected chart options in plain language', () => {
     expect(defaultTimelineGranularity).toBe('day');
-    expect(chartOptionsSummary('harness', 'day', 'cost')).toBe('Harness · Day · Estimated API value');
+    expect(chartOptionsSummary('harness', 'day', 'cost')).toBe('Harness · Day · Estimated API-equivalent value');
     expect(chartOptionsSummary('campaign', 'week', 'share')).toBe('Campaign · Week · Share');
     expect(chartOptionsSummary('machine', 'day', 'sessions')).toBe('Machine · Day · Sessions');
-    expect(chartOptionsSummary('origin', 'month', 'cost')).toBe('Origin · Month · Estimated API value');
+    expect(chartOptionsSummary('origin', 'month', 'cost')).toBe('Origin · Month · Estimated API-equivalent value');
     expect(chartOptionsSummary('project', 'month', 'sessions')).toBe('Project · Month · Sessions');
   });
 

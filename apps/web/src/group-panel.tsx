@@ -4,7 +4,6 @@ import {
   actionRow,
   barFill,
   barTrack,
-  CellWithProvenance,
   groupCount,
   groupHeader,
   groupKeyButton,
@@ -21,7 +20,7 @@ import {
   unavailableText,
 } from '@ai-usage/design-system/report';
 import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
-import { PARTIALLY_MEASURED_LABEL, partiallyMeasuredApiPriceDescription } from '@ai-usage/report-core/provenance';
+import { PARTIALLY_MEASURED_LABEL } from '@ai-usage/report-core/provenance';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { type BreakdownSort, isBreakdownSort } from './dashboard-search';
 import {
@@ -48,6 +47,10 @@ const groupFreshTitle = (group: AnalyticsGroup) =>
   analyticsGroupUnavailableOnly(group) ? USAGE_UNAVAILABLE_HINT : `${fmtNum(group.fresh)} fresh tokens`;
 const groupCacheLabel = (group: AnalyticsGroup) =>
   analyticsGroupUnavailableOnly(group) ? '— cache' : `${fmtPct(group.cacheHitPct)} cache`;
+const groupSessionSummary = (group: AnalyticsGroup): string =>
+  `${fmtNum(group.sessions)} ${group.sessions === 1 ? 'session' : 'sessions'}${
+    group.ambiguous ? ` · ${fmtNum(group.ambiguous)} ambiguous` : ''
+  }`;
 const groupPricingCoverage = (group: AnalyticsGroup) =>
   group.unpriced > 0
     ? ` · ${PARTIALLY_MEASURED_LABEL} (${fmtNum(group.priced)}/${fmtNum(group.sessions)} fully priced)`
@@ -90,21 +93,7 @@ const GroupApiValue = (props: { group: AnalyticsGroup }) => {
     state,
     unpricedFreshTokens: props.group.unpricedFreshTokens,
   });
-  const facts =
-    state === 'partially measured'
-      ? [
-          {
-            description: partiallyMeasuredApiPriceDescription(fmtCompact(props.group.unpricedFreshTokens)),
-            label: PARTIALLY_MEASURED_LABEL,
-            severity: 'warning' as const,
-          },
-        ]
-      : [];
-  return (
-    <CellWithProvenance facts={facts}>
-      <span title={presentation.title}>{presentation.label}</span>
-    </CellWithProvenance>
-  );
+  return <span title={presentation.title}>{presentation.label}</span>;
 };
 
 interface GroupPanelProps {
@@ -148,6 +137,7 @@ export const GroupPanelView = (props: GroupPanelViewProps) => {
           />
           <SegmentedControl
             ariaLabel="Sort breakdown"
+            defaultValue="value"
             items={BREAKDOWN_SORT_ITEMS}
             onValueChange={(value) => {
               if (isBreakdownSort(value)) {
@@ -180,8 +170,7 @@ export const GroupPanelView = (props: GroupPanelViewProps) => {
                     </button>
                   </Show>
                   <div class={groupSub} title={groupFreshTitle(group)}>
-                    {group.sessions} sess{group.ambiguous ? ` · ${group.ambiguous} ambig` : ''} ·{' '}
-                    {groupFreshLabel(group)} · {groupCacheLabel(group)}
+                    {groupSessionSummary(group)} · {groupFreshLabel(group)} · {groupCacheLabel(group)}
                     {groupPricingCoverage(group)}
                   </div>
                   <Show when={!analyticsGroupUnavailableOnly(group)}>

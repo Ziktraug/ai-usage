@@ -10,7 +10,7 @@ import {
   sessionCell,
   sessionTitleClamp,
 } from '@ai-usage/design-system/report';
-import { provenanceForMetric, type UsageMetricKey, type UsageRowProvenance } from '@ai-usage/report-core/provenance';
+import { provenanceForMetric, type UsageMetricKey } from '@ai-usage/report-core/provenance';
 import { classifierRollupLabelForSessionRow, sessionOriginLabel } from '@ai-usage/report-core/session-query';
 import type { ColumnDef, RowData, VisibilityState } from '@tanstack/solid-table';
 import { type JSX, Show } from 'solid-js';
@@ -22,7 +22,6 @@ import { sessionDurationSemantics } from './session-analysis-model';
 import type { SessionColumnId } from './session-table-schema';
 import { isSessionColumnVisible as isSessionColumnVisibleForSchema } from './session-table-schema';
 import {
-  aggregateApiPriceProvenance,
   aggregateApiValuePresentation,
   apiValuePresentation,
   type DashboardRow,
@@ -59,17 +58,8 @@ const withProvenance = (row: DashboardRow, metric: UsageMetricKey, value: string
 );
 const tokenCell = (row: DashboardRow, value: number) =>
   withProvenance(row, 'tokens', row.usageUnavailable ? <UsageUnavailableCell /> : fmtCompact(value));
-const apiValueProvenanceFacts = (row: DashboardRow): UsageRowProvenance[] => {
-  const facts = provenanceFacts(row, 'api-value');
-  const aggregateFact = row.priceMeasurement ? aggregateApiPriceProvenance(row.priceMeasurement) : null;
-  if (!aggregateFact) {
-    return facts;
-  }
-  return [
-    ...facts.filter(({ kind }) => kind !== 'partial-api-price' && kind !== 'unknown-api-price'),
-    { ...aggregateFact, appliesTo: ['api-value'], kind: 'partial-api-price' },
-  ];
-};
+const apiValueProvenanceFacts = (row: DashboardRow) =>
+  provenanceFacts(row, 'api-value').filter(({ kind }) => kind !== 'partial-api-price' && kind !== 'unknown-api-price');
 
 const countCell = (row: DashboardRow, value: number, metric: UsageMetricKey) =>
   withProvenance(row, metric, row.usageUnavailable ? <UsageUnavailableCell /> : fmtNum(value));
@@ -107,7 +97,10 @@ export const sessionColumns: SessionColumnDef[] = [
             </button>
           </Show>
           <HighlightedText query={info.table.options.meta?.searchQuery ?? ''} text={info.row.original.sessionLabel} />
-          <ProvenanceMarker facts={titleFacts()} />
+          <Show when={titleFacts().length > 0}>
+            {' '}
+            <ProvenanceMarker facts={titleFacts()} />
+          </Show>
           <Show when={info.row.depth > 0 && info.row.original.origin === 'classifier'}>
             <span class={muted} data-session-origin="classifier">
               {' '}
@@ -323,7 +316,8 @@ export const sessionColumns: SessionColumnDef[] = [
     sortDescFirst: true,
     meta: {
       label: 'API value',
-      title: 'Estimated cost at standard API prices',
+      title:
+        'Estimated API-equivalent value at standard prices. Values prefixed with ≥ are lower bounds because some model prices are unavailable.',
       widthPx: 92,
       cellClass: numCell,
       headerClass: right,
@@ -384,7 +378,7 @@ export const sessionColumns: SessionColumnDef[] = [
         'duration',
         <span title={semantics.metricHint}>
           {fmtDuration(row.durationMs)}
-          {rootSessionOnly ? ' root' : ''}
+          {rootSessionOnly ? ' root-session time' : ''}
         </span>,
       );
     },
@@ -447,7 +441,7 @@ export const sessionColumns: SessionColumnDef[] = [
   },
   {
     id: 'ambiguous',
-    header: 'Ambig',
+    header: 'Ambiguous',
     accessorFn: (row) => (row.ambiguous ? 1 : 0),
     cell: (info) => (info.row.original.ambiguous ? 'Yes' : 'No'),
     sortDescFirst: true,

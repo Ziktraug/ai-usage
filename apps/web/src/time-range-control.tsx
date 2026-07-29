@@ -162,7 +162,7 @@ const GRANULARITY_ITEMS = [
 ] as const;
 
 const VALUE_ITEMS = [
-  { label: 'Estimated API value', value: 'cost' },
+  { label: 'Estimated API-equivalent value', value: 'cost' },
   { label: 'Share', value: 'share' },
   { label: 'Sessions', value: 'sessions' },
 ] as const;
@@ -174,7 +174,7 @@ export const chartOptionsSummary = (
 ) => {
   const dimensionLabel = DIMENSION_LABELS[dimension];
   const granularityLabel = GRANULARITY_ITEMS.find((item) => item.value === granularity)?.label ?? 'Day';
-  const valueLabel = VALUE_ITEMS.find((item) => item.value === value)?.label ?? 'Estimated API value';
+  const valueLabel = VALUE_ITEMS.find((item) => item.value === value)?.label ?? 'Estimated API-equivalent value';
   return `${dimensionLabel} · ${granularityLabel} · ${valueLabel}`;
 };
 
@@ -1425,6 +1425,7 @@ export const TimeRangeControl = (props: {
                         aria-pressed={props.dateRange.mode() === preset.mode}
                         class={presetButton}
                         data-active={props.dateRange.mode() === preset.mode}
+                        data-default={String(preset.mode === '30d')}
                         onClick={() => applyPreset(preset.mode)}
                         title={`Set report range to ${preset.label}`}
                         type="button"
@@ -1507,7 +1508,7 @@ export const TimeRangeControl = (props: {
               </div>
               <div class={timeSliderBrushColumn} data-report-range-part="brush">
                 <div class={timeSliderBrushHeader}>
-                  <span>Follows report range</span>
+                  <span>Activity range follows report range</span>
                 </div>
                 <div class={timeSliderBrushTrack} style={rangeVars(chart())}>
                   <div
@@ -1518,7 +1519,7 @@ export const TimeRangeControl = (props: {
                   <div aria-hidden="true" class={timeSliderDimLeft} />
                   <div aria-hidden="true" class={timeSliderDimRight} />
                   <button
-                    aria-label="Drag selected date range"
+                    aria-label="Selected report window"
                     class={timeSliderRangeDrag}
                     data-dragging={String(draggingSelection())}
                     onLostPointerCapture={endSelectionDrag}
@@ -1578,6 +1579,7 @@ export const TimeRangeControl = (props: {
               <div class={timeRangeViewControls}>
                 <SegmentedControl
                   ariaLabel="Timeline dimension"
+                  defaultValue="harness"
                   items={DIMENSION_ITEMS}
                   label="Group by"
                   onValueChange={(value) => {
@@ -1591,6 +1593,7 @@ export const TimeRangeControl = (props: {
                 />
                 <SegmentedControl
                   ariaLabel="Timeline granularity"
+                  defaultValue="day"
                   items={GRANULARITY_ITEMS}
                   label="Interval"
                   onValueChange={(value) => {
@@ -1612,6 +1615,7 @@ export const TimeRangeControl = (props: {
                 />
                 <SegmentedControl
                   ariaLabel="Timeline value"
+                  defaultValue="cost"
                   items={VALUE_ITEMS}
                   label="Metric"
                   onValueChange={(value) => {

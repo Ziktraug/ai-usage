@@ -70,7 +70,7 @@ describe('MetricTile', () => {
         hint: 'Previous period of equal length: $1.00',
         pct: 200,
       },
-      hint: 'Estimated cost at standard API prices',
+      hint: 'Estimated API-equivalent value at standard prices',
       label: 'API value',
       value: '$3.00',
     });
@@ -98,7 +98,7 @@ describe('MetricTile', () => {
     expect(html).toContain('data-value-bases-panel');
     expect(html).toContain('Value bases');
     expect(html.match(/data-value-bases-row/g)).toHaveLength(3);
-    expect(html).toContain('API-equivalent value');
+    expect(html).toContain('Estimated API-equivalent value');
     expect(html).toContain('Actual recorded cost');
     expect(html).toContain('Subscription value');
     expect(html).toContain('aria-label="About API value · measured"');

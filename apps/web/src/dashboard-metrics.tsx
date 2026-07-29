@@ -145,7 +145,7 @@ type ValueBasisKey = 'actual' | 'api' | 'subscription';
 const VALUE_BASIS_ORDER = ['api', 'actual', 'subscription'] as const satisfies readonly ValueBasisKey[];
 const VALUE_BASIS_LABELS = {
   actual: 'Actual recorded cost',
-  api: 'API-equivalent value',
+  api: 'Estimated API-equivalent value',
   subscription: 'Subscription value',
 } as const satisfies Record<ValueBasisKey, string>;
 

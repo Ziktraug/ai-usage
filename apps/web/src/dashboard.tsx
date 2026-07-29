@@ -1,4 +1,4 @@
-import { MultiSelect, Tabs } from '@ai-usage/design-system';
+import { MultiSelect, Tabs, Tooltip } from '@ai-usage/design-system';
 import { css, cx } from '@ai-usage/design-system/css';
 import {
   activeFilters,
@@ -995,9 +995,20 @@ export const Dashboard = (props: {
               <OriginFilter onValueChange={setOrigin} value={origin()} />
               <Show when={machineFreshnessStatus()}>
                 {(label) => (
-                  <span aria-live="polite" class={summaryPill}>
-                    {label()}
-                  </span>
+                  <Show
+                    fallback={
+                      <span aria-live="polite" class={summaryPill}>
+                        {label()}
+                      </span>
+                    }
+                    when={activeMachineFreshness().kind === 'unavailable'}
+                  >
+                    <Tooltip content="No source freshness observation is available for this report revision.">
+                      <span aria-live="polite" class={summaryPill}>
+                        {label()}
+                      </span>
+                    </Tooltip>
+                  </Show>
                 )}
               </Show>
               <Show when={machineOptions().length > 1 || hasMachineFreshnessAttention()}>

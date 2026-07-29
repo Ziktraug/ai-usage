@@ -54,6 +54,18 @@ The drift-check files and focused tests, plus:
 - `apps/web/e2e/sources.spec.ts`
 - `apps/web/e2e/skills.spec.ts`
 - `apps/web/e2e/visual-regression.spec.ts` and affected snapshots
+- `apps/web/src/css-bundle.test.ts` (exact 370-byte gzip allowance for this
+  plan's signal/language UI)
+- canonical report-language surfaces: `dashboard-metrics.tsx`, `dashboard-model.ts`,
+  `group-panel.tsx`, `overview.tsx`, `project-summary.tsx`, `shared.tsx`,
+  `session-table.tsx`, and `time-range-control.tsx`
+- neutral default controls: design-system `button.ts` and
+  `segmented-control.tsx`
+- existing Skills presentation/action flow: `skill-document-inspector-model.ts`,
+  `skills-consolidate.tsx`, `skills-context-panel.tsx`, and
+  `skills-workspace.tsx`
+- affected full-suite assertions in `dashboard.spec.ts` and
+  `time-range.spec.ts`, plus the synthetic Skills E2E fixture
 
 No collectors, pricing arithmetic, source lifecycle, or new Skills mutations.
 

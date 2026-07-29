@@ -1,7 +1,8 @@
-import { expect, test } from './browser-test';
+import { FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
+import { expect, reportViewsFor, test } from './browser-test';
 
 const PREVIOUS_PERIOD_PATTERN = /vs previous period/i;
-const API_VALUE_HINT_PATTERN = /Estimated cost at standard API prices for \d+ of \d+ fully priced sessions/;
+const API_VALUE_HINT_PATTERN = /Estimated API-equivalent value at standard prices for \d+ of \d+ fully priced sessions/;
 const MAX_DASHBOARD_METRIC_COLUMNS = 4;
 const MAX_ALIGNMENT_DRIFT_PX = 1;
 const MIN_CONTENT_ABOVE_FOLD_PX = 10;
@@ -19,7 +20,11 @@ test('groups value bases while keeping the remaining metric deltas qualified and
   await expect(grid).toBeVisible();
   await expect(valueBases).toContainText('Value bases');
   await expect(valueRows).toHaveCount(3);
-  await expect(valueRows).toContainText(['API-equivalent value', 'Actual recorded cost', 'Subscription value']);
+  await expect(valueRows).toContainText([
+    'Estimated API-equivalent value',
+    'Actual recorded cost',
+    'Subscription value',
+  ]);
   expect(await tiles.count()).toBeGreaterThan(3);
 
   const columnCount = await grid.evaluate(
@@ -66,10 +71,25 @@ test('keeps metric provenance visibly interactive and operable by keyboard', asy
   await expect(hint).toBeVisible();
 });
 
+test('explains unavailable source freshness without replacing its compact pill', async ({ page }) => {
+  await page.goto('/skills');
+  await page.evaluate((enabledKey) => {
+    Reflect.set(globalThis, enabledKey, true);
+  }, FOCUSED_REPORT_E2E_ENABLED_KEY);
+  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
+
+  const freshnessPill = page.getByText('Freshness unavailable', { exact: true });
+  await expect(freshnessPill).toBeVisible();
+  await freshnessPill.hover();
+  await expect(
+    page.getByText('No source freshness observation is available for this report revision.', { exact: true }),
+  ).toBeVisible();
+});
+
 test('keeps spend coverage textual without an Overview segmented bar', async ({ page }) => {
   await page.goto('/');
 
-  const hero = page.getByRole('region', { name: 'API-equivalent value' });
+  const hero = page.getByRole('region', { name: 'Estimated API-equivalent value' });
   const verticalOrder = await hero.evaluate((element) => {
     const amount = element.querySelector('[data-reported-actual-spend]');
     const coverage = element.querySelector('[data-spend-coverage-legend]');
