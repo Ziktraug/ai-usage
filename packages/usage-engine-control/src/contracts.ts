@@ -1,4 +1,5 @@
 import { MAX_PORTABLE_USAGE_BYTES, MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
+import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import {
   type ProjectGroupConfig,
   type ProjectSourceSelector,
@@ -42,8 +43,11 @@ export const usageEngineControlBounds = {
   maxErrorResponseBytes: 4 * kibibyte,
   maxEventBytes: sourceControlBounds.maxEventBytes,
   maxFilePathBytes: 4 * kibibyte,
+  maxForegroundOutcomeBytes: 16 * kibibyte,
   maxMessageBytes: sourceControlBounds.maxMessageLength,
   maxOpaqueIdBytes,
+  maxProjectAliases: 500,
+  maxProjectAliasMatches: 500,
   maxProjectGroups: 256,
   maxRendezvousBytes: 4 * kibibyte,
   maxSnapshotEventBytes: sourceControlBounds.maxSnapshotBytes + 2 * kibibyte,
@@ -208,6 +212,10 @@ export type UsageEngineCommand =
       readonly command: 'replace-project-groups';
       readonly projectGroups: readonly ProjectGroupConfig[];
     }
+  | {
+      readonly command: 'replace-project-aliases';
+      readonly projectAliases: readonly ProjectAliasEntry[];
+    }
   | { readonly command: 'set-machine-label'; readonly label: string }
   | { readonly command: 'collect-fresh-quota' }
   | { readonly command: 'import-cursor'; readonly input: UsageEngineFileInput }
@@ -221,9 +229,10 @@ export type UsageEngineCommand =
 
 type UsageEngineFileCommand = Extract<UsageEngineCommand, { readonly input: UsageEngineFileInput }>;
 type UsageEngineProjectGroupCommand = Extract<UsageEngineCommand, { readonly command: 'replace-project-groups' }>;
+type UsageEngineProjectAliasCommand = Extract<UsageEngineCommand, { readonly command: 'replace-project-aliases' }>;
 type UsageEngineCommandWithoutWebPaths = Exclude<
   UsageEngineCommand,
-  UsageEngineFileCommand | UsageEngineProjectGroupCommand
+  UsageEngineFileCommand | UsageEngineProjectAliasCommand | UsageEngineProjectGroupCommand
 >;
 type UsageEngineInboxFileInput = Extract<UsageEngineFileInput, { readonly kind: 'inbox-handoff' }>;
 
@@ -299,6 +308,26 @@ const parseProjectGroups = (value: unknown): readonly ProjectGroupConfig[] => {
   }
 };
 
+const parseProjectAliases = (value: unknown): readonly ProjectAliasEntry[] => {
+  if (!(Array.isArray(value) && value.length <= usageEngineControlBounds.maxProjectAliases)) {
+    return fail('Usage engine project aliases are invalid or exceed their limit.');
+  }
+  return value.map((aliasValue) => {
+    if (!(isRecord(aliasValue) && hasExactKeys(aliasValue, ['match', 'name']) && Array.isArray(aliasValue.match))) {
+      return fail('Usage engine project alias contains unknown or missing fields.');
+    }
+    if (aliasValue.match.length > usageEngineControlBounds.maxProjectAliasMatches) {
+      return fail('Usage engine project alias match patterns exceed their limit.');
+    }
+    return {
+      match: aliasValue.match.map((pattern) =>
+        parseBoundedString(pattern, usageEngineControlBounds.maxFilePathBytes, 'Project alias match pattern'),
+      ),
+      name: parseBoundedString(aliasValue.name, usageEngineControlBounds.maxMessageBytes, 'Project alias name'),
+    };
+  });
+};
+
 const parseFileInput = (value: unknown): UsageEngineFileInput => {
   if (!(isRecord(value) && typeof value.kind === 'string')) {
     return fail('Usage engine file input is invalid.');
@@ -366,6 +395,11 @@ export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
         return fail('Usage engine replace-project-groups command contains unknown fields.');
       }
       return { command: 'replace-project-groups', projectGroups: parseProjectGroups(command.projectGroups) };
+    case 'replace-project-aliases':
+      if (!hasExactKeys(command, ['command', 'projectAliases'])) {
+        return fail('Usage engine replace-project-aliases command contains unknown fields.');
+      }
+      return { command: 'replace-project-aliases', projectAliases: parseProjectAliases(command.projectAliases) };
     case 'set-machine-label':
       if (!hasExactKeys(command, ['command', 'label'])) {
         return fail('Usage engine set-machine-label command contains unknown fields.');
@@ -438,6 +472,9 @@ export const parseWebUsageEngineCommand = (value: unknown): WebUsageEngineComman
       })),
     };
   }
+  if (command.command === 'replace-project-aliases') {
+    return fail('Web usage engine commands cannot replace path-bearing project aliases.');
+  }
   return command;
 };
 
@@ -466,6 +503,7 @@ export type UsageEngineErrorCode =
   | 'engine-busy'
   | 'engine-unavailable'
   | 'invalid-response'
+  | 'preview-stale'
   | 'protocol-mismatch'
   | 'request-too-large'
   | 'response-too-large'
@@ -479,6 +517,7 @@ const usageEngineErrorCodes = new Set<UsageEngineErrorCode>([
   'engine-busy',
   'engine-unavailable',
   'invalid-response',
+  'preview-stale',
   'protocol-mismatch',
   'request-too-large',
   'response-too-large',
@@ -603,6 +642,7 @@ const usageEngineCommandNames = new Set<UsageEngineCommandName>([
   'import-cursor',
   'preview-merge',
   'publish',
+  'replace-project-aliases',
   'replace-project-groups',
   'run-all-enabled',
   'run-source',
@@ -698,6 +738,47 @@ export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCo
     return fail('Only a preview command may carry merge preview output.');
   }
   return { ...base, command, output: { kind: 'none' }, state: 'succeeded' };
+};
+
+export type UsageEngineForegroundOutcome =
+  | {
+      readonly completion: UsageEngineCommandCompletion;
+      readonly instanceId: UsageEngineInstanceId;
+      readonly kind: 'command-completed';
+      readonly protocolVersion: UsageEngineProtocolVersion;
+    }
+  | {
+      readonly kind: 'admission-rejected';
+      readonly result: Extract<UsageEngineCommandResult, { readonly ok: false }>;
+    };
+
+export const parseUsageEngineForegroundOutcome = (value: unknown): UsageEngineForegroundOutcome => {
+  assertSerializedBound(value, usageEngineControlBounds.maxForegroundOutcomeBytes, 'Usage engine foreground outcome');
+  if (!(isRecord(value) && typeof value.kind === 'string')) {
+    return fail('Usage engine foreground outcome is invalid.');
+  }
+  if (value.kind === 'command-completed') {
+    if (!hasExactKeys(value, ['completion', 'instanceId', 'kind', 'protocolVersion'])) {
+      return fail('Usage engine completed foreground outcome contains unknown or missing fields.');
+    }
+    return {
+      completion: parseUsageEngineCommandCompletion(value.completion),
+      instanceId: parseUsageEngineInstanceId(value.instanceId),
+      kind: 'command-completed',
+      protocolVersion: parseUsageEngineProtocolVersion(value.protocolVersion),
+    };
+  }
+  if (value.kind === 'admission-rejected') {
+    if (!hasExactKeys(value, ['kind', 'result'])) {
+      return fail('Usage engine rejected foreground outcome contains unknown or missing fields.');
+    }
+    const result = parseUsageEngineCommandResult(value.result);
+    if (result.ok) {
+      return fail('Usage engine rejected foreground outcome must contain a rejected admission.');
+    }
+    return { kind: 'admission-rejected', result };
+  }
+  return fail('Usage engine foreground outcome kind is unknown.');
 };
 
 export type UsageEngineReadiness = 'starting' | 'ready' | 'degraded' | 'stopping';
@@ -972,6 +1053,7 @@ export const classifyUsageEngineRetry = (
     code === 'authentication-failed' ||
     code === 'command-rejected' ||
     code === 'invalid-response' ||
+    code === 'preview-stale' ||
     code === 'protocol-mismatch' ||
     code === 'request-too-large' ||
     code === 'response-too-large'

@@ -1,6 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import { spawn } from 'node:child_process';
-import { chmodSync, copyFileSync, lstatSync, mkdirSync, mkdtempSync, renameSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  chmodSync,
+  copyFileSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -35,7 +46,9 @@ import {
   queryUsageMachineFleet,
   queryUsageStoreGeneration,
   queryUsageStoreGenerations,
+  USAGE_STORE_SCHEMA_VERSION,
   UsageStoreError,
+  updateUsageMachineLabel,
   upsertRtkSavingsContributions,
   usageStorePath,
 } from './index';
@@ -44,6 +57,24 @@ const machineA: UsageMachine = { id: 'machine-a', label: 'Machine A' };
 const machineB: UsageMachine = { id: 'machine-b', label: 'Machine B' };
 const CONFIRMATION_TOKEN_PATTERN = /^v1\.[0-9a-f]{64}$/;
 const ROW_JSON_QUERY_PATTERN = /row_json|json_/i;
+const MUTATING_PREVIEW_SQL_PATTERN = /BEGIN IMMEDIATE|CREATE TABLE|journal_mode|wal_checkpoint/i;
+
+interface StoredFileSnapshot {
+  readonly hash: string;
+  readonly mode: number;
+  readonly modifiedAtMilliseconds: number;
+  readonly size: number;
+}
+
+const snapshotStoredFile = (filePath: string): StoredFileSnapshot => {
+  const stat = lstatSync(filePath);
+  return {
+    hash: createHash('sha256').update(readFileSync(filePath)).digest('hex'),
+    mode: stat.mode,
+    modifiedAtMilliseconds: stat.mtimeMs,
+    size: stat.size,
+  };
+};
 
 const makeRow = (input: {
   sourceSessionId: string;
@@ -557,6 +588,187 @@ describe('usage-store public boundary', () => {
     );
     expect(confirmed.inserted).toBe(1);
     expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(1);
+  });
+
+  test('previews an existing store without a mutating opener or file changes', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-preview-readonly-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(
+      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'preview-readonly-seed' })] }),
+    );
+    const bundle = makeBundle(machineB, [makeRow({ sourceSessionId: 'preview-readonly-peer' })]);
+    const storeDirectory = path.dirname(dbPath);
+    const entriesBefore = readdirSync(storeDirectory).sort();
+    const persistedPaths = [dbPath, `${dbPath}-wal`].filter((candidatePath) =>
+      readdirSync(storeDirectory).includes(path.basename(candidatePath)),
+    );
+    const snapshotsBefore = new Map(
+      persistedPaths.map((persistedPath) => [persistedPath, snapshotStoredFile(persistedPath)]),
+    );
+    const { Database } = await import('bun:sqlite');
+    const originalExec = Database.prototype.exec;
+    const executedStatements: string[] = [];
+    Database.prototype.exec = function (sql, ...bindings) {
+      executedStatements.push(sql);
+      return originalExec.call(this, sql, ...bindings);
+    };
+
+    try {
+      const preview = await Effect.runPromise(previewPeerMergeBundle({ bundle, dbPath, localMachineId: machineA.id }));
+      expect(preview.inserted).toBe(1);
+    } finally {
+      Database.prototype.exec = originalExec;
+    }
+
+    expect(readdirSync(storeDirectory).sort()).toEqual(entriesBefore);
+    for (const persistedPath of persistedPaths) {
+      const snapshotBefore = snapshotsBefore.get(persistedPath);
+      if (!snapshotBefore) {
+        throw new Error(`Missing pre-preview snapshot for ${path.basename(persistedPath)}`);
+      }
+      expect(snapshotStoredFile(persistedPath)).toEqual(snapshotBefore);
+    }
+    expect(executedStatements.some((statement) => MUTATING_PREVIEW_SQL_PATTERN.test(statement))).toBe(false);
+  });
+
+  test('preserves an existing WAL while allowing only SHM read coordination', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-preview-wal-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(
+      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'preview-wal-seed' })] }),
+    );
+    const { Database } = await import('bun:sqlite');
+    const writer = new Database(dbPath);
+    try {
+      writer.exec('PRAGMA journal_mode = WAL');
+      writer.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
+      const storeDirectory = path.dirname(dbPath);
+      const entriesBefore = readdirSync(storeDirectory).sort();
+      expect(entriesBefore).toContain(path.basename(`${dbPath}-wal`));
+      expect(entriesBefore).toContain(path.basename(`${dbPath}-shm`));
+      const mainBefore = snapshotStoredFile(dbPath);
+      const walBefore = snapshotStoredFile(`${dbPath}-wal`);
+
+      const preview = await Effect.runPromise(
+        previewPeerMergeBundle({
+          bundle: makeBundle(machineB, [makeRow({ sourceSessionId: 'preview-wal-peer' })]),
+          dbPath,
+          localMachineId: machineA.id,
+        }),
+      );
+
+      expect(preview.inserted).toBe(1);
+      expect(readdirSync(storeDirectory).sort()).toEqual(entriesBefore);
+      expect(snapshotStoredFile(dbPath)).toEqual(mainBefore);
+      expect(snapshotStoredFile(`${dbPath}-wal`)).toEqual(walBefore);
+    } finally {
+      writer.close();
+    }
+  });
+
+  test('refuses a WAL preview when SQLite would need to create SHM', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-preview-missing-shm-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(
+      importLocalRows({ dbPath, machine: machineA, rows: [makeRow({ sourceSessionId: 'preview-shm-seed' })] }),
+    );
+    const { Database } = await import('bun:sqlite');
+    const writer = new Database(dbPath);
+    try {
+      writer.exec('PRAGMA journal_mode = WAL');
+      writer.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
+      const sharedMemoryPath = `${dbPath}-shm`;
+      const heldSharedMemoryPath = `${sharedMemoryPath}.held`;
+      renameSync(sharedMemoryPath, heldSharedMemoryPath);
+      const entriesBefore = readdirSync(path.dirname(dbPath)).sort();
+
+      const error = await Effect.runPromise(
+        previewPeerMergeBundle({
+          bundle: makeBundle(machineB, [makeRow({ sourceSessionId: 'preview-shm-peer' })]),
+          dbPath,
+          localMachineId: machineA.id,
+        }).pipe(Effect.flip),
+      );
+
+      expect(error).toMatchObject({ operation: 'openUsageStorePreview', reason: 'preview-unavailable' });
+      expect(readdirSync(path.dirname(dbPath)).sort()).toEqual(entriesBefore);
+      expect(lstatSync(sharedMemoryPath, { throwIfNoEntry: false })).toBeUndefined();
+    } finally {
+      writer.close();
+    }
+  });
+
+  test('returns preview-unavailable without changing incompatible schemas', async () => {
+    for (const schemaVersion of [USAGE_STORE_SCHEMA_VERSION - 1, USAGE_STORE_SCHEMA_VERSION + 1]) {
+      const home = mkdtempSync(path.join(tmpdir(), `ai-usage-store-preview-schema-${schemaVersion}-`));
+      const dbPath = usageStorePath(home);
+      await Effect.runPromise(initializeUsageStore({ dbPath }));
+      const { Database } = await import('bun:sqlite');
+      const database = new Database(dbPath);
+      database.exec(`PRAGMA user_version = ${schemaVersion}`);
+      database.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      database.close();
+      const directoryEntries = readdirSync(path.dirname(dbPath)).sort();
+      const snapshot = snapshotStoredFile(dbPath);
+
+      const error = await Effect.runPromise(
+        previewPeerMergeBundle({
+          bundle: makeBundle(machineB, [makeRow({ sourceSessionId: `preview-schema-${schemaVersion}` })]),
+          dbPath,
+          localMachineId: machineA.id,
+        }).pipe(Effect.flip),
+      );
+
+      expect(error).toMatchObject({ operation: 'openUsageStorePreview', reason: 'preview-unavailable' });
+      expect(readdirSync(path.dirname(dbPath)).sort()).toEqual(directoryEntries);
+      expect(snapshotStoredFile(dbPath)).toEqual(snapshot);
+    }
+  });
+
+  test('returns preview-unavailable without changing a corrupt store', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-preview-corrupt-'));
+    const dbPath = usageStorePath(home);
+    mkdirSync(path.dirname(dbPath), { mode: 0o700, recursive: true });
+    writeFileSync(dbPath, 'not a sqlite database', { mode: 0o600 });
+    const directoryEntries = readdirSync(path.dirname(dbPath)).sort();
+    const snapshot = snapshotStoredFile(dbPath);
+
+    const error = await Effect.runPromise(
+      previewPeerMergeBundle({
+        bundle: makeBundle(machineB, [makeRow({ sourceSessionId: 'preview-corrupt' })]),
+        dbPath,
+        localMachineId: machineA.id,
+      }).pipe(Effect.flip),
+    );
+
+    expect(error).toMatchObject({ operation: 'openUsageStorePreview', reason: 'preview-unavailable' });
+    expect(readdirSync(path.dirname(dbPath)).sort()).toEqual(directoryEntries);
+    expect(snapshotStoredFile(dbPath)).toEqual(snapshot);
+  });
+
+  test('returns preview-unavailable without changing corrupt current-schema metadata', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-preview-corrupt-metadata-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const { Database } = await import('bun:sqlite');
+    const database = new Database(dbPath);
+    database.query("DELETE FROM usage_store_metadata WHERE key = 'generation'").run();
+    database.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    database.close();
+    const directoryEntries = readdirSync(path.dirname(dbPath)).sort();
+    const snapshot = snapshotStoredFile(dbPath);
+
+    const error = await Effect.runPromise(
+      previewPeerMergeBundle({
+        bundle: makeBundle(machineB, [makeRow({ sourceSessionId: 'preview-corrupt-metadata' })]),
+        dbPath,
+        localMachineId: machineA.id,
+      }).pipe(Effect.flip),
+    );
+
+    expect(error).toMatchObject({ operation: 'previewPeerMergeBundle', reason: 'preview-unavailable' });
+    expect(readdirSync(path.dirname(dbPath)).sort()).toEqual(directoryEntries);
+    expect(snapshotStoredFile(dbPath)).toEqual(snapshot);
   });
 
   test('keeps preview and confirmation fleet effects exact at one observation time', async () => {
@@ -1172,6 +1384,45 @@ describe('usage-store public boundary', () => {
       ],
       omittedMachines: 0,
       skipped: 0,
+    });
+  });
+
+  test('relabels every local stored row and advances report and fleet generations once', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-store-relabel-'));
+    const dbPath = usageStorePath(home);
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: new Date('2026-06-12T12:00:00.000Z'),
+        machine: machineA,
+        rows: [makeRow({ sourceSessionId: 'relabel-local' })],
+      }),
+    );
+
+    const relabeled = await Effect.runPromise(
+      updateUsageMachineLabel({
+        dbPath,
+        machine: { ...machineA, label: 'Renamed Machine' },
+        updatedAt: new Date('2026-06-12T12:01:00.000Z'),
+      }),
+    );
+    const repeated = await Effect.runPromise(
+      updateUsageMachineLabel({
+        dbPath,
+        machine: { ...machineA, label: 'Renamed Machine' },
+        updatedAt: new Date('2026-06-12T12:02:00.000Z'),
+      }),
+    );
+    const stored = await Effect.runPromise(queryReportRows({ dbPath }));
+    const fleet = await Effect.runPromise(queryUsageMachineFleet({ dbPath }));
+
+    expect(relabeled).toEqual({ changed: true, skippedRows: 0, updatedRows: 1 });
+    expect(repeated).toEqual({ changed: false, skippedRows: 0, updatedRows: 0 });
+    expect(stored.rows[0]?.source.machineLabel).toBe('Renamed Machine');
+    expect(fleet.machines[0]?.label).toBe('Renamed Machine');
+    expect(await Effect.runPromise(queryUsageStoreGenerations({ dbPath }))).toEqual({
+      machineFleetGeneration: 2,
+      usageStoreGeneration: 2,
     });
   });
 

@@ -5,6 +5,7 @@ import {
   parseUsageEngineCommandResult,
   parseUsageEngineErrorResponse,
   parseUsageEngineEvent,
+  parseUsageEngineForegroundOutcome,
   parseUsageEngineProtocolVersion,
   parseUsageEngineStatus,
   parseWebUsageEngineCommand,
@@ -20,6 +21,7 @@ describe('usage engine control contracts', () => {
       { command: 'run-source', sourceId: 'codex.sessions' },
       { command: 'publish' },
       { command: 'set-source-enabled', enabled: false, sourceId: 'rtk.savings' },
+      { command: 'replace-project-aliases', projectAliases: [{ match: ['fixture/*'], name: 'Fixture' }] },
       { command: 'replace-project-groups', projectGroups: [] },
       { command: 'set-machine-label', label: 'Workstation' },
       { command: 'collect-fresh-quota' },
@@ -85,6 +87,12 @@ describe('usage engine control contracts', () => {
             sources: [{ sourcePath: '/private/history' }],
           },
         ],
+      }),
+    ).toThrow('path');
+    expect(() =>
+      parseWebUsageEngineCommand({
+        command: 'replace-project-aliases',
+        projectAliases: [{ match: ['/private/*'], name: 'Private' }],
       }),
     ).toThrow('path');
     expect(
@@ -192,7 +200,42 @@ describe('usage engine control contracts', () => {
       protocolVersion: 1,
     };
     expect(parseUsageEngineErrorResponse(error) as unknown).toEqual(error);
+    const stalePreview = {
+      error: { code: 'preview-stale', message: 'Preview the merge file again.' },
+      ok: false,
+      protocolVersion: 1,
+    };
+    expect(parseUsageEngineErrorResponse(stalePreview) as unknown).toEqual(stalePreview);
     expect(() => parseUsageEngineErrorResponse({ ...error, detail: '/private/token' })).toThrow('unknown');
+  });
+
+  test('parses bounded foreground completion and rejection outcomes without report data', () => {
+    const completed = {
+      completion: {
+        command: 'publish',
+        commandId: 'command-1',
+        completedAt: fixtureGeneratedAt,
+        output: { kind: 'none' },
+        state: 'succeeded',
+      },
+      instanceId: fixtureInstanceId,
+      kind: 'command-completed',
+      protocolVersion: 1,
+    };
+    expect(parseUsageEngineForegroundOutcome(completed) as unknown).toEqual(completed);
+
+    const rejected = {
+      kind: 'admission-rejected',
+      result: {
+        commandId: 'command-1',
+        error: { code: 'engine-busy', message: 'The writer lock is held.' },
+        instanceId: fixtureInstanceId,
+        ok: false,
+        protocolVersion: 1,
+      },
+    };
+    expect(parseUsageEngineForegroundOutcome(rejected) as unknown).toEqual(rejected);
+    expect(() => parseUsageEngineForegroundOutcome({ ...completed, rows: [{ private: true }] })).toThrow('unknown');
   });
 
   test('enforces serialized limits before parsing result, status, event, and error payloads', () => {
@@ -232,5 +275,6 @@ describe('usage engine control contracts', () => {
     expect(classifyUsageEngineRetry('transport-failed', 'events')).toBe('reconnect');
     expect(classifyUsageEngineRetry('authentication-failed', 'events')).toBe('never');
     expect(classifyUsageEngineRetry('protocol-mismatch', 'status')).toBe('never');
+    expect(classifyUsageEngineRetry('preview-stale', 'command')).toBe('never');
   });
 });

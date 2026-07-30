@@ -14,7 +14,11 @@ import { LocalHistoryError, type LocalHistoryWarning } from '@ai-usage/local-col
 import { LocalHistoryStorage, LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-collectors/machine-config';
 import type { CursorCommitAttributionRow, ReportDatasets } from '@ai-usage/report-core/datasets';
-import type { FocusedMachineFreshness } from '@ai-usage/report-core/focused-report-query';
+import {
+  type FocusedMachineFreshness,
+  type FocusedReportSupport,
+  parseFocusedReportSupport,
+} from '@ai-usage/report-core/focused-report-query';
 import { type HarnessKey, harnessKeys } from '@ai-usage/report-core/harness-metadata';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import {
@@ -35,6 +39,7 @@ import {
 import type {
   PreparedUsageReport,
   ReportOptions,
+  SerializedRow,
   UsageReportPayload,
   UsageReportProjectGroup,
   UsageReportWarning,
@@ -164,8 +169,10 @@ export interface LocalReportPayloadRequest extends LocalReportRowsRequest {
 
 export interface StoredReportPayloadRequest extends LocalUsageSelection {
   datasets?: ReportDatasetSelection;
+  dbPath?: string;
   generatedAt?: Date;
   includeFacets?: boolean;
+  machine?: UsageMachine;
   options: ReportOptions;
 }
 
@@ -180,6 +187,90 @@ export interface StoredReportCapture {
   payload: UsageReportPayload;
   rowSourceAuthorities: StoredSourceAuthority[];
 }
+
+export interface StoredReportPublicationCapture {
+  readonly configFingerprint: string;
+  readonly generatedAt: string;
+  readonly rows: readonly SerializedRow[];
+  readonly sourceAuthorities: readonly StoredSourceAuthority[];
+  readonly support: FocusedReportSupport;
+}
+
+type StoredReportJsonValue =
+  | boolean
+  | number
+  | string
+  | null
+  | StoredReportJsonValue[]
+  | { [key: string]: StoredReportJsonValue };
+
+const isStoredReportJsonValue = (value: unknown): value is StoredReportJsonValue => {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+    return true;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value);
+  }
+  if (Array.isArray(value)) {
+    return value.every(isStoredReportJsonValue);
+  }
+  if (typeof value !== 'object') {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return (prototype === Object.prototype || prototype === null) && Object.values(value).every(isStoredReportJsonValue);
+};
+
+const isStoredReportJsonRecord = (value: unknown): value is Record<string, StoredReportJsonValue> =>
+  typeof value === 'object' &&
+  value !== null &&
+  !Array.isArray(value) &&
+  Object.values(value).every(isStoredReportJsonValue);
+
+const withoutLegacyCursorAttribution = (
+  datasets: Record<string, StoredReportJsonValue> | undefined,
+  facets: Record<string, StoredReportJsonValue> | undefined,
+): Record<string, StoredReportJsonValue> | undefined => {
+  if (!(Array.isArray(datasets?.cursorCommitAttribution) && facets)) {
+    return facets;
+  }
+  const cursor = facets.cursor;
+  if (!(isStoredReportJsonRecord(cursor) && Object.hasOwn(cursor, 'commitAttribution'))) {
+    return facets;
+  }
+  const { commitAttribution: _legacyCommitAttribution, ...cursorWithoutAttribution } = cursor;
+  if (Object.keys(cursorWithoutAttribution).length > 0) {
+    return { ...facets, cursor: cursorWithoutAttribution };
+  }
+  const { cursor: _legacyCursorFacet, ...facetsWithoutCursor } = facets;
+  return Object.keys(facetsWithoutCursor).length > 0 ? facetsWithoutCursor : undefined;
+};
+
+export const toStoredReportPublicationCapture = (
+  capture: StoredReportCapture,
+  configFingerprint: string,
+): StoredReportPublicationCapture => {
+  const { datasets, facets, rows, tableRows: _tableRows, ...support } = capture.payload;
+  if (datasets !== undefined && !isStoredReportJsonRecord(datasets)) {
+    throw new Error('Stored report datasets must contain only JSON-serializable values.');
+  }
+  if (facets !== undefined && !isStoredReportJsonRecord(facets)) {
+    throw new Error('Stored report facets must contain only JSON-serializable values.');
+  }
+  const servedFacets = withoutLegacyCursorAttribution(datasets, facets);
+  return {
+    configFingerprint,
+    generatedAt: capture.payload.generatedAt,
+    rows,
+    sourceAuthorities: capture.rowSourceAuthorities,
+    support: parseFocusedReportSupport({
+      ...support,
+      machineFreshness: capture.machineFreshness,
+      ...(datasets === undefined ? {} : { datasets }),
+      ...(servedFacets === undefined ? {} : { facets: servedFacets }),
+    }),
+  };
+};
 
 export interface LocalReportRowsResult {
   authorizedRows: AuthorizedSourceRow[];
@@ -725,8 +816,8 @@ export const createStoredReportCapture = (
     'aiUsage.report.createStoredPayload',
     Effect.gen(function* () {
       const storage = yield* LocalHistoryStorage;
-      const machine = yield* ensureMachineConfig;
-      const dbPath = usageStorePath(storage.home);
+      const machine = request.machine ?? (yield* ensureMachineConfig);
+      const dbPath = request.dbPath ?? usageStorePath(storage.home);
       const harnessKeys = selectedStoredHarnessKeys(request);
       const storedCapture = yield* withPerfSpan(
         'aiUsage.usageStore.queryStoredReportCapture',
@@ -815,7 +906,7 @@ export const createStoredReportPayload = (request: StoredReportPayloadRequest) =
   createStoredReportCapture(request).pipe(Effect.map((capture) => capture.payload));
 
 export const readStoredReportSourceFingerprint = (
-  request: Pick<StoredReportPayloadRequest, 'configCwd'>,
+  request: Pick<StoredReportPayloadRequest, 'configCwd' | 'dbPath'>,
 ): Effect.Effect<
   StoredReportSourceFingerprint,
   LocalHistoryError,
@@ -823,7 +914,7 @@ export const readStoredReportSourceFingerprint = (
 > =>
   Effect.gen(function* () {
     const storage = yield* LocalHistoryStorage;
-    const dbPath = usageStorePath(storage.home);
+    const dbPath = request.dbPath ?? usageStorePath(storage.home);
     const generations = yield* queryUsageStoreGenerations({ dbPath }).pipe(
       Effect.mapError(usageStoreLocalHistoryError('usageStore.queryUsageStoreGenerations', dbPath)),
     );

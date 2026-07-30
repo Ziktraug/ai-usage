@@ -10,7 +10,12 @@ import { createProviderStatusDataset } from '@ai-usage/report-core/provider-stat
 import { createUsageSnapshot, type UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { SourcedRow } from '@ai-usage/report-core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
-import { importLocalRows, importPeerMergeBundle, usageStorePath } from '@ai-usage/usage-store/testing';
+import {
+  importLocalRows,
+  importPeerMergeBundle,
+  initializeUsageStore,
+  usageStorePath,
+} from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import {
   collectProjectedLocalReportRowsWithWarnings,
@@ -25,6 +30,7 @@ import {
   persistCursorCommitAttribution,
   readStoredCursorCommitAttribution,
   readStoredReportSourceFingerprint,
+  toStoredReportPublicationCapture,
 } from './index';
 import {
   createMergedUsageReportWithFreshLocal,
@@ -175,6 +181,12 @@ describe('shared reporting', () => {
         'peer-session': 'portable-opaque',
       });
       expect(Object.hasOwn(capture.payload, 'rowSourceAuthorities')).toBe(false);
+      const publication = toStoredReportPublicationCapture(capture, 'c'.repeat(64));
+      expect(publication.rows).toEqual(capture.payload.rows);
+      expect(publication.sourceAuthorities).toEqual(capture.rowSourceAuthorities);
+      expect(publication.support.machineFreshness).toEqual(capture.machineFreshness);
+      expect(Object.hasOwn(publication.support, 'rows')).toBe(false);
+      expect(Object.hasOwn(publication.support, 'tableRows')).toBe(false);
       expect(capture.machineFreshness.kind).toBe('available');
       if (capture.machineFreshness.kind !== 'available') {
         throw new Error('Stored report capture must include available machine freshness');
@@ -190,6 +202,35 @@ describe('shared reporting', () => {
         'peer-machine': { label: 'Peer Machine', lastSeenAt: '2026-01-01T11:00:00.000Z' },
         [testMachine.id]: { label: testMachine.label, lastSeenAt: '2026-01-01T10:00:00.000Z' },
       });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('reads an explicit engine database with an injected machine without creating machine config', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-explicit-store-'));
+    try {
+      const storage = createLocalHistoryStorage(home);
+      const dbPath = path.join(home, 'engine-state', 'usage.sqlite');
+      await Effect.runPromise(importLocalRows({ dbPath, machine: testMachine, rows: [] }));
+
+      const capture = await Effect.runPromise(
+        createStoredReportCapture({
+          dbPath,
+          generatedAt: new Date('2026-01-01T00:00:00.000Z'),
+          harness: null,
+          includeCursor: false,
+          machine: testMachine,
+          options: defaultOptions,
+        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      const fingerprint = await Effect.runPromise(
+        readStoredReportSourceFingerprint({ dbPath }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      expect(capture.payload.rows).toEqual([]);
+      expect(fingerprint).toMatchObject({ machineFleetGeneration: 0, usageStoreGeneration: 0 });
+      expect(Bun.file(path.join(home, '.config', 'ai-usage', 'machine.json')).size).toBe(0);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -598,9 +639,10 @@ describe('shared reporting', () => {
   });
 
   test('fingerprints the exact stored generation and semantic merged config', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-report-source-fingerprint-'));
+    const home = mkdtempSync(path.join(tmpdir(), 'plan052-report-source-fingerprint-'));
     try {
       const storage = createLocalHistoryStorage(home);
+      await Effect.runPromise(initializeUsageStore({ dbPath: usageStorePath(home) }));
       const readFingerprint = () =>
         Effect.runPromise(
           readStoredReportSourceFingerprint({}).pipe(Effect.provideService(LocalHistoryStorage, storage)),
@@ -980,11 +1022,12 @@ describe('shared reporting', () => {
   });
 
   test('fresh local merge and project discovery honor disabled source policy', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-policy-home-'));
+    const home = mkdtempSync(path.join(tmpdir(), 'plan052-reporting-policy-home-'));
     try {
       writeClaudeSession(home);
       writeAiUsageConfig(home, { sourcePolicies: { 'claude.sessions': { enabled: false } } });
       const storage = createLocalHistoryStorage(home);
+      await Effect.runPromise(initializeUsageStore({ dbPath: usageStorePath(home) }));
       const merged = await Effect.runPromise(
         createMergedUsageReportWithFreshLocal({
           harness: 'claude',

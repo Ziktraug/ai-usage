@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -11,7 +11,11 @@ import {
 import type { ProviderQuotaBatch, ProviderQuotaBatchSource } from '@ai-usage/local-collectors';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
-import { queryLatestProviderQuotaObservations, usageStorePath } from '@ai-usage/usage-store/testing';
+import {
+  initializeUsageStore,
+  queryLatestProviderQuotaObservations,
+  usageStorePath,
+} from '@ai-usage/usage-store/testing';
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref } from 'effect';
 import { queryLocalProviderQuotaHistory, refreshLocalProviderQuotas } from './provider-quota';
 import {
@@ -24,6 +28,14 @@ const providerQuotaTestErrorPolicy = {
   allowedTags: new Set(['ProviderQuotaRefreshAborted']),
   interruptedTags: new Set(['ProviderQuotaRefreshAborted']),
 };
+
+const quotaRoots: string[] = [];
+
+afterEach(() => {
+  for (const root of quotaRoots.splice(0)) {
+    rmSync(root, { force: true, recursive: true });
+  }
+});
 
 const observation = (observedAt: string): ProviderQuotaObservation => ({
   accountScope: null,
@@ -252,8 +264,10 @@ describe('provider quota orchestration', () => {
   });
 
   test('aborts an owner without post-abort writes and allows a clean retry', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-report-quota-abort-'));
+    const home = mkdtempSync(path.join(tmpdir(), 'plan052-report-quota-abort-'));
+    quotaRoots.push(home);
     const dbPath = usageStorePath(home);
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
     const run = <A, E>(effect: Effect.Effect<A, E, typeof LocalHistoryStorage.Service>) =>
       Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))));
     const runExit = <A, E>(effect: Effect.Effect<A, E, typeof LocalHistoryStorage.Service>) =>
@@ -320,8 +334,10 @@ describe('provider quota orchestration', () => {
   });
 
   test('polls once per cadence and exposes independently bounded history', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-report-quota-'));
+    const home = mkdtempSync(path.join(tmpdir(), 'plan052-report-quota-'));
+    quotaRoots.push(home);
     const dbPath = usageStorePath(home);
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
     const run = <A, E>(effect: Effect.Effect<A, E, typeof LocalHistoryStorage.Service>) =>
       Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))));
     let calls = 0;

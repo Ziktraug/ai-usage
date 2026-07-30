@@ -4,10 +4,14 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@ai-usage/usage-engine-runtime": "workspace:*"
+    "@ai-usage/effect-runtime": "workspace:*",
+    "@ai-usage/usage-engine-control": "workspace:*",
+    "@ai-usage/usage-engine-runtime": "workspace:*",
+    "@ai-usage/usage-store": "workspace:*",
+    "effect": "^3.21.4"
   },
   "scripts": {
-    "start": "bun --no-env-file src/main.ts",
+    "start": "bun --no-env-file src/main.ts serve",
     "build": "tsc --noEmit",
     "check": "tsc --noEmit",
     "test": "bun test",

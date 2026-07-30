@@ -6,6 +6,7 @@ import type { ProviderQuotaBatchSource } from '@ai-usage/local-collectors';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import { collectionSourceIds } from '@ai-usage/report-core/source-control';
 import {
+  initializeUsageStore,
   queryLatestProviderQuotaObservations,
   queryNormalizedDatasetItems,
   queryReportRows,
@@ -234,8 +235,9 @@ describe('scheduled source adapters', () => {
   });
 
   test('owns live and backfill quota substeps behind one source', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-source-quota-'));
+    const home = mkdtempSync(path.join(tmpdir(), 'plan052-source-quota-'));
     try {
+      await Effect.runPromise(initializeUsageStore({ dbPath: usageStorePath(home) }));
       const liveSource: ProviderQuotaBatchSource = {
         collect: (request) =>
           Effect.succeed({

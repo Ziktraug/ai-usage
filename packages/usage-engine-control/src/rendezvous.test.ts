@@ -36,6 +36,19 @@ describe('usage engine rendezvous', () => {
     expect(JSON.stringify(rendezvous)).not.toContain(rendezvousValue.token);
   });
 
+  test('waits through the exact transient hard-link publication window', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-engine-rendezvous-'));
+    roots.push(root);
+    const filePath = path.join(root, 'engine.json');
+    const temporaryPath = path.join(root, '.rendezvous-123-11111111-1111-4111-8111-111111111111.tmp');
+    await writeFile(filePath, `${JSON.stringify(rendezvousValue)}\n`, { mode: 0o600 });
+    await link(filePath, temporaryPath);
+    const finishPublication = Bun.sleep(20).then(async () => await rm(temporaryPath));
+
+    await expect(loadUsageEngineRendezvous(filePath)).resolves.toMatchObject({ port: 41_321 });
+    await finishPublication;
+  });
+
   test('rejects symlinks, permissive files, unknown fields, and oversized documents', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'usage-engine-rendezvous-'));
     roots.push(root);

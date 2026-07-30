@@ -73,7 +73,7 @@ export interface ReportPublicationPort {
 
 export interface SourceControlOptions {
   readonly beforeInitialCollection?: Effect.Effect<void>;
-  readonly initialPublicationOrder?: 'after-collection' | 'before-collection';
+  readonly initialPublicationOrder?: 'after-collection' | 'before-collection' | 'externally-published';
   readonly instanceId?: string;
   readonly policyStore: SourcePolicyStore;
   readonly publication: ReportPublicationPort;
@@ -602,7 +602,10 @@ export const createSourceControl = (
       yield* scheduler.requestPublication;
     }
     yield* scheduler.detectAll;
-    if (options.initialPublicationOrder !== 'before-collection') {
+    if (
+      options.initialPublicationOrder !== 'before-collection' &&
+      options.initialPublicationOrder !== 'externally-published'
+    ) {
       yield* scheduler.requestPublication;
     }
     yield* startSourceControlWorkers(runtime, scheduler, validatedOptions.workerCount);

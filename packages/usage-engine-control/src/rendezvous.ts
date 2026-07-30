@@ -8,9 +8,14 @@ import {
   type UsageEngineProtocolVersion,
   usageEngineControlBounds,
 } from './contracts';
+import { readOpenedFileBounded } from './read-opened-file';
 import { createUsageEngineBearerToken, type UsageEngineBearerToken } from './secret';
 
-export type { UsageEngineBearerToken } from './secret';
+export {
+  createUsageEngineBearerToken,
+  revealUsageEngineBearerToken,
+  type UsageEngineBearerToken,
+} from './secret';
 
 declare const loopbackOriginBrand: unique symbol;
 
@@ -26,6 +31,8 @@ export interface UsageEngineRendezvous {
 }
 
 const loopbackOriginPattern = /^http:\/\/127\.0\.0\.1:([1-9]\d{0,4})$/;
+const RENDEZVOUS_PUBLICATION_DEADLINE_MS = 250;
+const RENDEZVOUS_PUBLICATION_POLL_MS = 10;
 
 export type UsageEngineRendezvousErrorReason = 'invalid-rendezvous' | 'protocol-mismatch';
 
@@ -109,15 +116,29 @@ export const loadUsageEngineRendezvous = async (filePath: string): Promise<Usage
   ) {
     throw new Error('Usage engine rendezvous directory must be owner-only.');
   }
+  const publicationDeadline = Date.now() + RENDEZVOUS_PUBLICATION_DEADLINE_MS;
   let file: Awaited<ReturnType<typeof open>>;
-  try {
-    file = await open(absolutePath, fs.constants.O_RDONLY + fs.constants.O_NOFOLLOW + fs.constants.O_NONBLOCK);
-  } catch {
-    throw new Error('Usage engine rendezvous must be an owner-only regular file.');
+  let opened: Awaited<ReturnType<Awaited<ReturnType<typeof open>>['stat']>>;
+  while (true) {
+    try {
+      file = await open(absolutePath, fs.constants.O_RDONLY + fs.constants.O_NOFOLLOW + fs.constants.O_NONBLOCK);
+    } catch {
+      throw new Error('Usage engine rendezvous must be an owner-only regular file.');
+    }
+    opened = await file.stat();
+    const transientPublicationLink =
+      opened.isFile() &&
+      opened.nlink === 2 &&
+      (currentUid === undefined || opened.uid === currentUid) &&
+      opened.mode % 0o100 === 0;
+    if (!(transientPublicationLink && Date.now() < publicationDeadline)) {
+      break;
+    }
+    await file.close().catch(() => undefined);
+    await Bun.sleep(RENDEZVOUS_PUBLICATION_POLL_MS);
   }
 
   try {
-    const opened = await file.stat();
     if (
       !opened.isFile() ||
       opened.nlink !== 1 ||
@@ -130,12 +151,30 @@ export const loadUsageEngineRendezvous = async (filePath: string): Promise<Usage
       throw new Error('Usage engine rendezvous exceeds its byte limit.');
     }
 
-    const bytes = await file.readFile();
-    if (bytes.byteLength !== opened.size) {
+    const bytes = await readOpenedFileBounded(file, opened.size);
+    const afterOpen = await file.stat();
+    if (
+      bytes.byteLength !== opened.size ||
+      !sameFileIdentity(opened, afterOpen) ||
+      afterOpen.size !== opened.size ||
+      afterOpen.nlink !== 1 ||
+      (currentUid !== undefined && afterOpen.uid !== currentUid) ||
+      afterOpen.mode % 0o100 !== 0
+    ) {
       throw new Error('Usage engine rendezvous changed while it was read.');
     }
     const current = await lstat(absolutePath).catch(() => undefined);
-    if (!(current?.isFile() && !current.isSymbolicLink() && sameFileIdentity(opened, current))) {
+    if (
+      !(
+        current?.isFile() &&
+        !current.isSymbolicLink() &&
+        sameFileIdentity(opened, current) &&
+        current.size === opened.size &&
+        current.nlink === 1 &&
+        (currentUid === undefined || current.uid === currentUid) &&
+        current.mode % 0o100 === 0
+      )
+    ) {
       throw new Error('Usage engine rendezvous changed while it was read.');
     }
 

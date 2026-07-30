@@ -12,6 +12,7 @@ export const stableUsageEngineErrorMessages: Readonly<Record<UsageEngineErrorCod
   'engine-busy': 'Usage engine is busy.',
   'engine-unavailable': 'Usage engine is unavailable.',
   'invalid-response': 'Usage engine returned an invalid response.',
+  'preview-stale': 'The merge file changed after it was previewed.',
   'protocol-mismatch': 'Usage engine protocol version mismatch.',
   'request-too-large': 'Usage engine request exceeds its byte limit.',
   'response-too-large': 'Usage engine response exceeds its byte limit.',

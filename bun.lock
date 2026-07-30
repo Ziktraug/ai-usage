@@ -32,7 +32,11 @@
       "name": "@ai-usage/usage-engine",
       "version": "0.1.0",
       "dependencies": {
+        "@ai-usage/effect-runtime": "workspace:*",
+        "@ai-usage/usage-engine-control": "workspace:*",
         "@ai-usage/usage-engine-runtime": "workspace:*",
+        "@ai-usage/usage-store": "workspace:*",
+        "effect": "^3.21.4",
       },
     },
     "apps/web": {
@@ -124,7 +128,13 @@
       "name": "@ai-usage/usage-engine-runtime",
       "version": "0.1.0",
       "dependencies": {
+        "@ai-usage/effect-runtime": "workspace:*",
+        "@ai-usage/local-collectors": "workspace:*",
+        "@ai-usage/report-core": "workspace:*",
+        "@ai-usage/report-data": "workspace:*",
         "@ai-usage/usage-engine-control": "workspace:*",
+        "@ai-usage/usage-store": "workspace:*",
+        "effect": "^3.21.4",
       },
     },
     "packages/usage-merge": {

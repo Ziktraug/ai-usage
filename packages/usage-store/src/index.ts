@@ -90,6 +90,18 @@ export interface ImportLocalRowsInput {
   rows: UsageRowWithOptionalSource[];
 }
 
+export interface UpdateUsageMachineLabelInput {
+  readonly dbPath: string;
+  readonly machine: UsageMachine;
+  readonly updatedAt?: Date;
+}
+
+export interface UpdateUsageMachineLabelResult {
+  readonly changed: boolean;
+  readonly skippedRows: number;
+  readonly updatedRows: number;
+}
+
 export interface InitializeUsageStoreInput {
   readonly dbPath: string;
 }
@@ -459,6 +471,7 @@ export type UsageStoreErrorReason =
   | 'store-missing'
   | 'storage-failure'
   | 'migration-failure'
+  | 'preview-unavailable'
   | 'preview-stale';
 
 export class UsageStoreError extends Data.TaggedError('UsageStoreError')<{
@@ -496,6 +509,9 @@ export interface UsageStore {
   queryUsageStoreGenerations(
     input?: QueryUsageStoreGenerationInput,
   ): Effect.Effect<UsageStoreGenerations, UsageStoreError>;
+  updateUsageMachineLabel(
+    input: UpdateUsageMachineLabelInput,
+  ): Effect.Effect<UpdateUsageMachineLabelResult, UsageStoreError>;
   upsertRtkSavingsContributions(
     input: UpsertRtkSavingsContributionsInput,
   ): Effect.Effect<EnrichmentImportResult, UsageStoreError>;
@@ -736,6 +752,22 @@ const readFailureReason = (cause: unknown): UsageStoreErrorReason => {
 
 const usageStoreReadError = (operation: string, dbPath: string, cause: unknown): UsageStoreError =>
   cause instanceof UsageStoreError ? cause : usageStoreError(operation, dbPath, cause, readFailureReason(cause));
+
+const usageStorePreviewReadError = (operation: string, dbPath: string, cause: unknown): UsageStoreError => {
+  const reason = cause instanceof UsageStoreError ? cause.reason : readFailureReason(cause);
+  if (reason === 'corrupt' || reason === 'schema-too-new' || reason === 'schema-too-old') {
+    return usageStoreError(operation, dbPath, cause, 'preview-unavailable');
+  }
+  return cause instanceof UsageStoreError ? cause : usageStoreError(operation, dbPath, cause, reason);
+};
+
+const usageStorePreviewStateError = (operation: string, dbPath: string, cause: unknown): UsageStoreError => {
+  const reason = cause instanceof UsageStoreError ? cause.reason : readFailureReason(cause);
+  if (reason === 'busy') {
+    return cause instanceof UsageStoreError ? cause : usageStoreError(operation, dbPath, cause, reason);
+  }
+  return usageStoreError(operation, dbPath, cause, 'preview-unavailable');
+};
 
 const usageStoreServedReadError = (operation: string, dbPath: string, cause: unknown): UsageStoreError => {
   if (cause instanceof UsageStoreError) {
@@ -1499,6 +1531,68 @@ const openUsageStoreReaderDatabase = (dbPath: string): Effect.Effect<SqliteDatab
     catch: (cause) => usageStoreReadError('openUsageStoreReader', dbPath, cause),
   });
 
+const openUsageStorePreviewDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const identity = inspectPrivateStoreForConfirmation(dbPath);
+      const walExists = fs.lstatSync(`${dbPath}-wal`, { throwIfNoEntry: false }) !== undefined;
+      const sharedMemoryExists = fs.lstatSync(`${dbPath}-shm`, { throwIfNoEntry: false }) !== undefined;
+      if (walExists && !sharedMemoryExists) {
+        throw usageStoreError(
+          'openUsageStorePreview',
+          dbPath,
+          'Cannot preview a WAL-backed usage store without a pre-existing shared-memory sidecar.',
+          'preview-unavailable',
+        );
+      }
+      const { constants, Database } = await import('bun:sqlite');
+      // biome-ignore lint/suspicious/noBitwiseOperators: SQLite open flags are a documented bitmask API.
+      const flags = constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI | constants.SQLITE_OPEN_NOFOLLOW;
+      const fileUrl = pathToFileURL(dbPath);
+      fileUrl.searchParams.set('mode', 'ro');
+      if (!walExists) {
+        // No committed frames exist outside the main file at this instant. Immutable mode prevents SQLite from
+        // creating WAL/SHM sidecars for a preview. A concurrent writer is detected later by the confirmation token.
+        fileUrl.searchParams.set('immutable', '1');
+      }
+      const db = createTrackedSqliteDatabase(new Database(fileUrl.href, flags) as unknown as RawSqliteDatabase);
+      try {
+        db.exec(`PRAGMA busy_timeout = ${USAGE_STORE_READER_BUSY_TIMEOUT_MS}`);
+        db.exec('PRAGMA query_only = ON');
+        db.exec('PRAGMA foreign_keys = ON');
+        revalidatePrivateStoreForConfirmation(dbPath, identity);
+        const schemaVersion = db.query('PRAGMA user_version').get() as { user_version: number };
+        if (schemaVersion.user_version < USAGE_STORE_SCHEMA_VERSION) {
+          throw usageStoreError(
+            'openUsageStorePreview',
+            dbPath,
+            `Usage store schema ${schemaVersion.user_version} is older than required schema ${USAGE_STORE_SCHEMA_VERSION}`,
+            'schema-too-old',
+          );
+        }
+        if (schemaVersion.user_version > USAGE_STORE_SCHEMA_VERSION) {
+          throw usageStoreError(
+            'openUsageStorePreview',
+            dbPath,
+            `Usage store schema ${schemaVersion.user_version} is newer than supported schema ${USAGE_STORE_SCHEMA_VERSION}`,
+            'schema-too-new',
+          );
+        }
+        assertServedReportSchema(db);
+        db.clearStatements();
+        return db;
+      } catch (cause) {
+        try {
+          db.close(true);
+        } catch {
+          // The setup or validation failure remains authoritative.
+        }
+        throw cause;
+      }
+    },
+    catch: (cause) => usageStorePreviewReadError('openUsageStorePreview', dbPath, cause),
+  });
+
 interface ConfirmationUsageStoreResource {
   readonly db: SqliteDatabase;
   readonly identity: PrivateStoreConfirmationIdentity;
@@ -1556,6 +1650,25 @@ const withUsageStoreReader = <A>(
   use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
 ): Effect.Effect<A, UsageStoreError> =>
   Effect.acquireUseRelease(openUsageStoreReaderDatabase(dbPath), use, (db) => closeUsageStoreDatabase(dbPath, db));
+
+const withUsageStorePreviewReader = <A>(
+  dbPath: string,
+  use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
+): Effect.Effect<A, UsageStoreError> =>
+  Effect.acquireUseRelease(openUsageStorePreviewDatabase(dbPath), use, (db) => closeUsageStoreDatabase(dbPath, db));
+
+const withUsageStorePreview = <A>(
+  dbPath: string,
+  use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
+): Effect.Effect<A, UsageStoreError> =>
+  Effect.try({
+    try: () => fs.lstatSync(dbPath, { throwIfNoEntry: false }),
+    catch: (cause) => usageStoreError('previewPeerMergeBundle', dbPath, cause, 'storage-failure'),
+  }).pipe(
+    Effect.flatMap((databaseStat) =>
+      databaseStat ? withUsageStorePreviewReader(dbPath, use) : withUsageStoreWriter(dbPath, use),
+    ),
+  );
 
 const withConfirmationUsageStore = <A>(
   dbPath: string,
@@ -1938,6 +2051,102 @@ export const importLocalRows = (input: ImportLocalRowsInput): Effect.Effect<Impo
     'local-observed',
   );
 
+export const updateUsageMachineLabel = (
+  input: UpdateUsageMachineLabelInput,
+): Effect.Effect<UpdateUsageMachineLabelResult, UsageStoreError> => {
+  if (!(input.machine.id.length > 0 && input.machine.label.length > 0)) {
+    return Effect.fail(
+      usageStoreError(
+        'updateUsageMachineLabel',
+        input.dbPath,
+        'Machine identity and label must be non-empty.',
+        'invalid-input',
+      ),
+    );
+  }
+  return withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const updatedAt = (input.updatedAt ?? new Date()).toISOString();
+        const update = db.query(`
+          UPDATE usage_rows
+          SET content_hash = ?, row_json = ?, updated_at = ?
+          WHERE row_key = ? AND origin_machine_id = ? AND source_authority = 'local-observed'
+        `);
+        const validateFleetMetadata = db.query(`
+          UPDATE usage_rows
+          SET machine_label = ?, fleet_metadata_valid = 1
+          WHERE row_key = ?
+        `);
+        let skippedRows = 0;
+        let updatedRows = 0;
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          const records = db
+            .query(`
+              SELECT fleet_metadata_valid, machine_label, row_json, row_key
+              FROM usage_rows
+              WHERE origin_machine_id = ? AND source_authority = 'local-observed'
+              ORDER BY row_key
+            `)
+            .all(input.machine.id) as Array<{
+            fleet_metadata_valid: number;
+            machine_label: string;
+            row_json: string;
+            row_key: string;
+          }>;
+          for (const record of records) {
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(record.row_json) as unknown;
+            } catch {
+              skippedRows++;
+              continue;
+            }
+            if (!(isSerializedMergeRow(parsed) && parsed.source.machineId === input.machine.id)) {
+              skippedRows++;
+              continue;
+            }
+            if (
+              parsed.source.machineLabel === input.machine.label &&
+              record.machine_label === input.machine.label &&
+              Number(record.fleet_metadata_valid) === 1
+            ) {
+              continue;
+            }
+            const { contentHash: _contentHash, ...storedContent } = parsed;
+            const content = {
+              ...storedContent,
+              source: { ...parsed.source, machineLabel: input.machine.label },
+            };
+            const relabeled = { ...content, contentHash: usageContentHash(content) };
+            if (!isSerializedMergeRow(relabeled)) {
+              throw new Error('Relabeled usage row failed strict validation.');
+            }
+            update.run(relabeled.contentHash, JSON.stringify(relabeled), updatedAt, record.row_key, input.machine.id);
+            validateFleetMetadata.run(input.machine.label, record.row_key);
+            updatedRows++;
+          }
+          if (updatedRows > 0) {
+            rebuildUsageMachineFleetOrder(db);
+            db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
+            db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'machine_fleet_generation'").run();
+          }
+          db.exec('COMMIT');
+        } catch (cause) {
+          db.exec('ROLLBACK');
+          throw cause;
+        }
+        return { changed: updatedRows > 0, skippedRows, updatedRows };
+      },
+      catch: (cause) =>
+        cause instanceof UsageStoreError
+          ? cause
+          : usageStoreError('updateUsageMachineLabel', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+};
+
 export const importPeerMergeBundle = (
   input: ImportPeerMergeBundleInput,
 ): Effect.Effect<ImportResult, UsageStoreError> => {
@@ -2140,10 +2349,10 @@ export const previewPeerMergeBundle = (
 ): Effect.Effect<PreviewPeerMergeBundleResult, UsageStoreError> =>
   validatePeerBundle(input.bundle, input.localMachineId, 'previewPeerMergeBundle').pipe(
     Effect.flatMap((bundle) =>
-      withUsageStoreWriter(input.dbPath, (db) =>
+      withUsageStorePreview(input.dbPath, (db) =>
         Effect.try({
           try: () => readStorePreview(db, bundle, (input.importedAt ?? new Date()).toISOString()),
-          catch: (cause) => usageStoreError('previewPeerMergeBundle', input.dbPath, cause, 'storage-failure'),
+          catch: (cause) => usageStorePreviewStateError('previewPeerMergeBundle', input.dbPath, cause),
         }),
       ),
     ),
@@ -4376,5 +4585,6 @@ export const createUsageStore = (dbPath: string): UsageStore => ({
     queryUsageStoreGenerations({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryUsageStoreGeneration: (input) =>
     queryUsageStoreGeneration({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
+  updateUsageMachineLabel: (input) => updateUsageMachineLabel({ ...input, dbPath: input.dbPath ?? dbPath }),
   upsertRtkSavingsContributions: (input) => upsertRtkSavingsContributions({ ...input, dbPath: input.dbPath ?? dbPath }),
 });

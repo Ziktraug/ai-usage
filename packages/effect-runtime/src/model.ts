@@ -25,7 +25,7 @@ export interface WideEventResource {
   readonly runtimeMode: 'development' | 'production' | 'test' | 'unknown';
   readonly serviceName: 'ai-usage';
   readonly serviceVersion: string;
-  readonly surface: 'cli' | 'web';
+  readonly surface: 'cli' | 'engine' | 'web';
 }
 
 export interface WideEventSnapshot {

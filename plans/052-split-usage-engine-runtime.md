@@ -66,7 +66,7 @@ outputs, and make one process the only durable-data writer.
 | Exact-revision semantics | Every report manifest and focused query names one opaque revision. A query either reads that complete revision or returns the existing typed unavailable/expired result. It never falls through to current data. |
 | Control plane | Use a minimal authenticated loopback HTTP control plane: bounded JSON commands/status plus bounded SSE events. It carries no report rows, pages, details, quota history, or other read-model payloads. |
 | Discovery and trust | The engine binds only numeric `127.0.0.1` on an ephemeral or explicitly configured port. It atomically publishes an owner-only rendezvous file containing protocol version, instance identity, port, and a random bearer token. |
-| Writer exclusion | A separate owner-only engine lock permits one durable writer. Stale-lock recovery revalidates PID/process identity and rendezvous ownership; it never blindly deletes a live lock. |
+| Writer exclusion | A separate owner-only engine lock at `<canonical-database-path>.engine.lock` permits one durable writer for that SQLite store. The canonical identity is the real existing database path, or the real parent plus basename before first creation; the independently configurable state/rendezvous directory never scopes writer exclusion. Lock metadata binds the database identity and publishing state directory so stale recovery can revalidate PID/process identity and rendezvous ownership; it never blindly deletes a live lock. |
 | CLI without daemon | Read-only CLI commands can read the last published revision without an engine. Commands requiring fresh collection or mutation connect to the daemon or start the same engine runtime in bounded foreground one-shot mode, acquire the writer lock, complete, and exit. CLI code never writes SQLite directly. |
 | Web without engine | Web may serve the last compatible published revision read-only and show control status as unavailable. The standard dev/production supervisor starts both processes, but data reads do not depend on engine uptime. |
 | Demo | Demo remains synthetic and isolated. It starts neither a real engine nor a durable reader, sends no control request, and cannot inspect local histories/config/database. |
@@ -403,9 +403,13 @@ revision A never observes B.
 3. Implement app modes `serve` (persistent scheduler/control), `once <command>`
    (same runtime/lock, no duplicate collector), and `check` (paths, lock,
    rendezvous, store compatibility without collection).
-4. Implement atomic private lock/rendezvous files. Cover two-engine rejection,
-   stale PID reuse, crash between files, token rotation, permission failure,
-   non-loopback config, signals, forced cleanup, and idempotent disposal.
+4. Implement atomic private lock/rendezvous files. Key the writer lock to the
+   canonical durable database path, not the state/rendezvous directory, so two
+   engines targeting one database always contend even when their state
+   directories differ. Cover same-database/different-state and ordinary
+   two-engine rejection, stale PID reuse, crash between files, token rotation,
+   permission failure, non-loopback config, signals, forced cleanup, and
+   idempotent disposal.
 5. Route source policy, project group, machine, Cursor import, manual merge, and
    other usage-store/config mutations through engine commands. Preserve stale
    confirmation, file bounds, atomic config writes, and publication.
