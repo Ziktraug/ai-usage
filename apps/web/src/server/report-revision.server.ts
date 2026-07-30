@@ -8,6 +8,10 @@ import {
   MAX_SESSION_QUERY_DATABASE_BYTES,
 } from '@ai-usage/report-core/report-budgets';
 import {
+  canonicalReportJson,
+  reportCaptureFingerprintForPayload,
+} from '@ai-usage/report-core/report-capture-fingerprint';
+import {
   type SessionDetailSourceAuthority,
   sessionDetailSourceAuthorities,
 } from '@ai-usage/report-core/session-detail';
@@ -159,37 +163,7 @@ const isMissingFileError = (error: unknown): boolean =>
 
 const sha256 = (serialized: string): string => createHash('sha256').update(serialized).digest('hex');
 
-const canonicalJson = (value: unknown): unknown => {
-  if (Array.isArray(value)) {
-    return value.map(canonicalJson);
-  }
-  if (value === null || typeof value !== 'object') {
-    return value;
-  }
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .filter(([, child]) => child !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, child]) => [key, canonicalJson(child)]),
-  );
-};
-
-export const reportCaptureFingerprintForPayload = (
-  payload: WebReportPayload,
-  rowSourceAuthorities?: readonly SessionDetailSourceAuthority[],
-): string => {
-  const { generatedAt: _generatedAt, machineFreshness, ...payloadWithoutClocks } = payload;
-  const { observedAt: _observedAt, ...semanticMachineFreshness } = machineFreshness ?? {};
-  const semanticPayload =
-    machineFreshness === undefined
-      ? payloadWithoutClocks
-      : { ...payloadWithoutClocks, machineFreshness: semanticMachineFreshness };
-  const fingerprintInput =
-    rowSourceAuthorities === undefined ? semanticPayload : { payload: semanticPayload, rowSourceAuthorities };
-  return createHash('sha256')
-    .update(JSON.stringify(canonicalJson(fingerprintInput)))
-    .digest('hex');
-};
+export { reportCaptureFingerprintForPayload } from '@ai-usage/report-core/report-capture-fingerprint';
 
 const hasExactKeys = (record: Record<string, unknown>, keys: readonly string[]): boolean =>
   Object.keys(record).length === keys.length && keys.every((key) => Object.hasOwn(record, key));
@@ -881,7 +855,9 @@ export const createReportRevisionRegistry = (options: ReportRevisionRegistryOpti
         await readPrivateArtifact(path.join(sourceEntry.directory, MANIFEST_ARTIFACT_NAME), 64 * 1024),
         sourceEntry.manifest.revision,
       );
-      if (JSON.stringify(canonicalJson(diskManifest)) !== JSON.stringify(canonicalJson(sourceEntry.manifest))) {
+      if (
+        JSON.stringify(canonicalReportJson(diskManifest)) !== JSON.stringify(canonicalReportJson(sourceEntry.manifest))
+      ) {
         throw new Error('Report revision disk manifest does not match its in-memory manifest');
       }
       const sourceManifest = sourceEntry.manifest;

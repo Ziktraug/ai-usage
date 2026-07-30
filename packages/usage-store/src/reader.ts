@@ -1,3 +1,5 @@
+export type { FocusedReportQueryResult } from './focused-report-query-sqlite';
+export { executeFocusedReportQuery } from './focused-report-query-sqlite';
 export type {
   ProviderQuotaSourceState,
   QueryLatestProviderQuotaObservationsInput,
@@ -9,11 +11,17 @@ export type {
   QueryProviderQuotaSourceStatesInput,
   QueryReportRowsInput,
   QueryRowsResult,
+  QueryServedReportRevisionInput,
+  QueryServedRevisionDataInput,
   QueryStoredReportCaptureInput,
   QueryStoredReportCaptureResult,
   QueryUsageMachineFleetInput,
   QueryUsageMachineFleetResult,
   QueryUsageStoreGenerationInput,
+  ServedReportRevisionManifest,
+  ServedReportRevisionRows,
+  ServedReportRevisionSlices,
+  ServedReportRevisionSupport,
   StoredProviderQuotaObservation,
   StoredSourceAuthority,
   StoredUsageRowStatus,
@@ -23,16 +31,37 @@ export type {
 } from './index';
 export {
   MAX_USAGE_MACHINE_FLEET_MACHINES,
+  queryCurrentServedReportRevision,
   queryLatestProviderQuotaObservations,
   queryNormalizedDatasetItems,
   queryProviderQuotaObservations,
   queryProviderQuotaSourceState,
   queryProviderQuotaSourceStates,
   queryReportRows,
+  queryServedReportRevisionRows,
+  queryServedReportRevisionSlices,
+  queryServedReportRevisionSupport,
+  queryServedRevisionData,
   queryStoredReportCapture,
   queryUsageMachineFleet,
   queryUsageStoreGeneration,
   queryUsageStoreGenerations,
+  USAGE_STORE_SCHEMA_VERSION,
   UsageStoreError,
   usageStorePath,
 } from './index';
+export type { ServedRevisionQueryKind, ServedRevisionQueryResult } from './served-query-catalog';
+export type { ServedRevisionQueryTrace } from './served-revision';
+export type {
+  SessionQueryKind,
+  SessionQuerySqliteDatabase,
+  SessionQuerySqliteStatement,
+  SessionQuerySqliteTrace,
+} from './session-query-sqlite';
+export {
+  assertSessionQueryCursorScope,
+  assertSessionQueryDatabase,
+  buildSessionQuerySqlFilter,
+  buildSessionQuerySqlOrder,
+  executeMaterializedSessionQuery,
+} from './session-query-sqlite';

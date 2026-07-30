@@ -10,7 +10,7 @@ import { parseProjectGroupConfigs } from './project-group';
 import { type ApiPriceMeasurement, apiPriceMeasurement, combineApiPriceMeasurements } from './provenance';
 import { parseProviderStatusDataset } from './provider-status';
 import { MAX_SERVED_BOOTSTRAP_BYTES } from './report-budgets';
-import type { SerializedRow, UsageReportPayload } from './report-data';
+import { parseUsageReportPayload, type SerializedRow, type UsageReportPayload } from './report-data';
 import { isStrictIsoTimestamp, isUsageReportWarnings } from './serialized-usage-validation';
 import {
   buildSessionCampaignTimelineIdentities,
@@ -2327,6 +2327,19 @@ const assertFocusedMachineFreshness = (value: unknown): void => {
     }
     machineIds.add(id);
   }
+};
+
+export const parseFocusedReportSupport = (value: unknown): FocusedReportSupport => {
+  const support = requireRecord(value, 'focused report support');
+  if (Object.hasOwn(support, 'rows') || Object.hasOwn(support, 'tableRows')) {
+    throw new Error('Focused report support must not contain report rows');
+  }
+  const { machineFreshness, ...usageReportSupport } = support;
+  parseUsageReportPayload({ ...usageReportSupport, rows: [], tableRows: [] });
+  if (machineFreshness !== undefined) {
+    assertFocusedMachineFreshness(machineFreshness);
+  }
+  return support as unknown as FocusedReportSupport;
 };
 
 const assertBootstrapSupport = (value: unknown): void => {

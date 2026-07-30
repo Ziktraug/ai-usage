@@ -24,6 +24,7 @@ import {
   importNormalizedDatasetItems,
   importPeerMergeBundle,
   importProviderQuotaBatch,
+  initializeUsageStore,
   type PreviewPeerMergeBundleResult,
   previewPeerMergeBundle,
   queryEnrichableUsageRows,
@@ -340,6 +341,7 @@ describe('usage-store public boundary', () => {
     );
     const bundle = await Effect.runPromise(exportLocalMergeBundle({ dbPath: machineADbPath, machine: machineA }));
 
+    await Effect.runPromise(initializeUsageStore({ dbPath: machineBDbPath }));
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath: machineBDbPath }))).toBe(0);
     const preview = await Effect.runPromise(
       previewPeerMergeBundle({ bundle, dbPath: machineBDbPath, localMachineId: machineB.id }),
@@ -420,6 +422,7 @@ describe('usage-store public boundary', () => {
     db.query("UPDATE usage_store_metadata SET value = 0 WHERE key = 'migration.rtk-contributions-v1'").run();
     db.close();
     const generationBeforeMigration = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
 
     const first = await Effect.runPromise(queryReportRows({ dbPath }));
     const second = await Effect.runPromise(queryReportRows({ dbPath }));
@@ -477,6 +480,7 @@ describe('usage-store public boundary', () => {
       payload: { ...makeDatasetItem('invalid').payload, linesAdded: -1 },
     } as CursorCommitAttributionDatasetItem;
 
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
     await expect(
       Effect.runPromise(importNormalizedDatasetItems({ dbPath, items: [makeDatasetItem('valid'), invalid] })),
     ).rejects.toThrow('failed strict validation');
@@ -1345,6 +1349,7 @@ describe('usage-store public boundary', () => {
     }
     legacyDb.close();
 
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
     const fleet = await Effect.runPromise(queryUsageMachineFleet({ dbPath }));
     const migratedDb = new Database(dbPath, { readonly: true });
     const columns = migratedDb.query('PRAGMA table_info(usage_rows)').all() as Array<{ name: string }>;
@@ -1404,11 +1409,14 @@ describe('usage-store public boundary', () => {
             fs.readFileSync(0, 'utf8');
             return result;
           },
+          finalize() {
+            statement.finalize();
+          },
         };
       };
       const { Effect } = await import('effect');
-      const { queryUsageMachineFleet } = await import(${JSON.stringify(USAGE_STORE_MODULE_URL)});
-      await Effect.runPromise(queryUsageMachineFleet({ dbPath: ${JSON.stringify(dbPath)} }));
+      const { initializeUsageStore } = await import(${JSON.stringify(USAGE_STORE_MODULE_URL)});
+      await Effect.runPromise(initializeUsageStore({ dbPath: ${JSON.stringify(dbPath)} }));
     `;
     const first = await startBarrierChild(program);
     const secondPromise = startBarrierChild(program);
@@ -1422,6 +1430,11 @@ describe('usage-store public boundary', () => {
     const second = secondBeforeFirstRelease?.child ?? (await secondPromise);
     second.release();
     await second.complete();
+    expect(await Effect.runPromise(queryUsageMachineFleet({ dbPath }))).toMatchObject({
+      machines: [],
+      omittedMachines: 0,
+      skipped: 0,
+    });
   });
 
   test('restores a tampered machine identity before validating repaired fleet metadata', async () => {
@@ -1509,6 +1522,7 @@ describe('usage-store public boundary', () => {
     const secondObservedAt = new Date('2026-07-20T10:01:00.000Z');
     const thirdObservedAt = new Date('2026-07-20T10:02:00.000Z');
 
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
     expect(await Effect.runPromise(queryUsageStoreGenerations({ dbPath }))).toEqual({
       machineFleetGeneration: 0,
       usageStoreGeneration: 0,
@@ -1708,8 +1722,10 @@ describe('usage-store public boundary', () => {
     db.query("UPDATE usage_store_metadata SET value = 0 WHERE key = 'migration.merge-row-v3-vcs'").run();
     db.close();
 
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
     const first = await Effect.runPromise(queryReportRows({ dbPath }));
     const generationAfterMigration = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
     const second = await Effect.runPromise(queryReportRows({ dbPath }));
 
     expect(first).toMatchObject({ rows: [{ project: 'Exalibur' }], skipped: 0 });

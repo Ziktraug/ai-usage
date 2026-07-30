@@ -8,6 +8,7 @@
     "./one-shot-sources": "./src/one-shot-sources.ts",
     "./provider-quota": "./src/provider-quota.ts",
     "./report-payload-artifact": "./src/report-payload-artifact.ts",
+    "./served-revision-query": "./src/served-revision-query.ts",
     "./source-adapters": "./src/source-adapters.ts",
     "./source-control": "./src/source-control.ts"
   },
