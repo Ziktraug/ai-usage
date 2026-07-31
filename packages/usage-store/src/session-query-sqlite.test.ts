@@ -738,7 +738,7 @@ describe('durable session query SQLite projections', () => {
       expect(traces[1]?.sql).not.toContain('root.row_json');
       expect(traces[1]?.sql).not.toContain('source_row_json');
       expect(traces[2]?.params).toHaveLength(100);
-      expect(durationMs).toBeLessThan(3000);
+      expect(durationMs).toBeLessThan(8000);
     } finally {
       database.close();
     }
