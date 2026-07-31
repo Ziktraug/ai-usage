@@ -1768,17 +1768,54 @@ const SESSION_QUERY_SCRIPT = `
     process.stderr.write('sessions-query stage=page-created\\n');
     const serverFunctionStatuses = [];
     const clientErrors = [];
+    const failedResponses = [];
+    const pendingRequests = new Set();
+    const requestFailures = [];
     const responseReads = [];
     let exactSessionResponse = false;
+    const diagnosticEntryLimit = 20;
+    const diagnosticValueLimit = 500;
+    const appendDiagnostic = (entries, value) => {
+      if (entries.length >= diagnosticEntryLimit) {
+        entries.shift();
+      }
+      entries.push(String(value).slice(0, diagnosticValueLimit));
+    };
+    const boundedUrl = (value) => {
+      try {
+        const parsed = new URL(value);
+        return (parsed.pathname + parsed.search).slice(0, diagnosticValueLimit);
+      } catch {
+        return String(value).slice(0, diagnosticValueLimit);
+      }
+    };
     page.on('console', (message) => {
       if (message.type() === 'error') {
-        clientErrors.push('console:' + message.text().slice(0, 500));
+        appendDiagnostic(clientErrors, 'console:' + message.text());
       }
     });
-    page.on('pageerror', (error) => clientErrors.push('page:' + error.message.slice(0, 500)));
+    page.on('pageerror', (error) => appendDiagnostic(clientErrors, 'page:' + error.message));
+    page.on('request', (request) => {
+      if (pendingRequests.size >= diagnosticEntryLimit) {
+        const oldest = pendingRequests.values().next().value;
+        if (oldest !== undefined) {
+          pendingRequests.delete(oldest);
+        }
+      }
+      pendingRequests.add(boundedUrl(request.url()));
+    });
+    page.on('requestfinished', (request) => pendingRequests.delete(boundedUrl(request.url())));
+    page.on('requestfailed', (request) => {
+      const url = boundedUrl(request.url());
+      pendingRequests.delete(url);
+      appendDiagnostic(requestFailures, url + ':' + String(request.failure()?.errorText ?? 'unknown'));
+    });
     page.on('response', (response) => {
+      if (response.status() >= 400) {
+        appendDiagnostic(failedResponses, boundedUrl(response.url()) + ':' + String(response.status()));
+      }
       if (response.url().includes('/_serverFn/')) {
-        serverFunctionStatuses.push(new URL(response.url()).pathname + ':' + String(response.status()));
+        appendDiagnostic(serverFunctionStatuses, new URL(response.url()).pathname + ':' + String(response.status()));
         responseReads.push(
           response.text().then((body) => {
             if (body.includes(expectedRevision) && /session-query-v1:[0-9a-f]{16}/.test(body)) {
@@ -1794,7 +1831,40 @@ const SESSION_QUERY_SCRIPT = `
     });
     process.stderr.write('sessions-query stage=dom-content-loaded\\n');
     const report = page.locator('main[data-hydrated="true"]');
-    await report.waitFor({ state: 'visible', timeout: ${SESSION_QUERY_HYDRATION_DEADLINE_MS} });
+    try {
+      await report.waitFor({ state: 'visible', timeout: ${SESSION_QUERY_HYDRATION_DEADLINE_MS} });
+    } catch (error) {
+      const main = page.locator('main').first();
+      const mainCount = await main.count();
+      const mainState =
+        mainCount === 0
+          ? { count: 0 }
+          : {
+              count: mainCount,
+              hydrated: await main.getAttribute('data-hydrated'),
+              text: (await main.innerText()).slice(0, 1000),
+            };
+      throw new AggregateError(
+        [
+          error,
+          new Error(
+            'Sessions hydration diagnostics: main=' +
+              JSON.stringify(mainState) +
+              '; serverFnStatuses=' +
+              JSON.stringify(serverFunctionStatuses.slice(-20)) +
+              '; failedResponses=' +
+              JSON.stringify(failedResponses.slice(-20)) +
+              '; pendingRequests=' +
+              JSON.stringify([...pendingRequests].slice(-20)) +
+              '; requestFailures=' +
+              JSON.stringify(requestFailures.slice(-20)) +
+              '; clientErrors=' +
+              JSON.stringify(clientErrors.slice(-20)),
+          ),
+        ],
+        'Sessions hydration failed.',
+      );
+    }
     process.stderr.write('sessions-query stage=hydrated\\n');
     const proofDeadline = Date.now() + ${SESSION_QUERY_PROOF_DEADLINE_MS};
     while (!exactSessionResponse && Date.now() < proofDeadline) {
