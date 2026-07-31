@@ -680,14 +680,27 @@ describe('durable served report revisions', () => {
     );
   });
 
-  test('classifies expired current and exact revision reads without deleting the pointer', async () => {
+  test('keeps the current revision readable past its TTL and expires it only after supersession', async () => {
     const dbPath = await createStore();
     await Effect.runPromise(
       publishServedReportRevision(publication(dbPath, 'revision-a', [row('a', 1)], { expiresAt: 2000 })),
     );
 
-    expect(await failureReason(queryCurrentServedReportRevision({ dbPath, now: 2000 }))).toBe('revision-unavailable');
-    expect(await failureReason(queryServedReportRevisionSlices({ dbPath, now: 2000, revision: 'revision-a' }))).toBe(
+    expect((await Effect.runPromise(queryCurrentServedReportRevision({ dbPath, now: 2000 }))).revision).toBe(
+      'revision-a',
+    );
+    expect(
+      (await Effect.runPromise(queryServedReportRevisionSlices({ dbPath, now: 2500, revision: 'revision-a' }))).rows,
+    ).toEqual([row('a', 1)]);
+    expect(await Effect.runPromise(retainServedReportRevisions({ dbPath, now: 2500 }))).toMatchObject({
+      deletedRevisions: 0,
+    });
+
+    await Effect.runPromise(
+      publishServedReportRevision(publication(dbPath, 'revision-b', [row('b', 2)], { expiresAt: 4000, now: 3000 })),
+    );
+
+    expect(await failureReason(queryServedReportRevisionSlices({ dbPath, now: 3000, revision: 'revision-a' }))).toBe(
       'revision-expired',
     );
     expect(await failureReason(queryServedReportRevisionSlices({ dbPath, now: Number.NaN }))).toBe('invalid-input');

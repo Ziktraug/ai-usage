@@ -158,6 +158,28 @@ describe('SQLite usage read model', () => {
     });
   });
 
+  test('keeps the current revision readable at and beyond its TTL without an engine', async () => {
+    const dbPath = await fixture();
+    const readModel = createSqliteUsageReadModel({ dbPath, now: () => 102_000 });
+
+    const bootstrap = await readModel.readCurrentBootstrap();
+    const currentSupport = await readModel.queryRevision({
+      kind: 'support',
+      request: { revision: 'revision-b' },
+      revision: 'revision-b',
+    });
+
+    expect(bootstrap).toMatchObject({ manifest: { expiresAt: 102_000, revision: 'revision-b' } });
+    expect(currentSupport).toMatchObject({ revision: 'revision-b' });
+    await expect(
+      readModel.queryRevision({
+        kind: 'support',
+        request: { revision: 'revision-a' },
+        revision: 'revision-a',
+      }),
+    ).rejects.toMatchObject({ reason: 'revision-expired' });
+  });
+
   test('does not create a missing store while reporting the typed reader failure', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'wave4-web-read-model-missing-'));
     roots.push(root);

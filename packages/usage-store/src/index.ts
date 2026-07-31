@@ -3509,10 +3509,7 @@ const readServedReportRevision = <Result>(
               'invalid-input',
             );
           }
-          if (record.expires_at <= now) {
-            if (input.revision === undefined) {
-              throw revisionUnavailableError(input.dbPath);
-            }
+          if (record.is_current !== 1 && record.expires_at <= now) {
             throw usageStoreError(
               'readServedReportRevision',
               input.dbPath,
