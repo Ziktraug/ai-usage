@@ -140,6 +140,7 @@ const publicationStatus = (publication: SourcePublicationView): string => {
 };
 
 const SourceCard = (props: {
+  available: boolean;
   pending: boolean;
   source: SourceControlEntryView;
   execute: ReturnType<typeof useSourceControl>['execute'];
@@ -153,7 +154,19 @@ const SourceCard = (props: {
     return progress.kind === 'determinate' ? progress : null;
   };
   const presentation = () => presentSourceState(props.source);
+  const toggleDisabledReason = () => {
+    if (!props.available) {
+      return 'The usage engine is not available for source commands.';
+    }
+    if (props.pending) {
+      return 'Another source command is pending.';
+    }
+    return;
+  };
   const runDisabledReason = () => {
+    if (!props.available) {
+      return 'The usage engine is not available for source commands.';
+    }
     if (props.pending) {
       return 'Another source command is pending.';
     }
@@ -251,7 +264,7 @@ const SourceCard = (props: {
         <label class={switchLabel}>
           <input
             checked={props.source.policy === 'enabled'}
-            disabled={props.pending}
+            disabled={!props.available || props.pending}
             onChange={(event) => {
               props
                 .execute({
@@ -261,7 +274,7 @@ const SourceCard = (props: {
                 })
                 .catch(() => undefined);
             }}
-            title={props.pending ? 'Another source command is pending.' : undefined}
+            title={toggleDisabledReason()}
             type="checkbox"
           />
           Enabled
@@ -269,7 +282,7 @@ const SourceCard = (props: {
         <button
           aria-busy={props.pending ? 'true' : undefined}
           class={ghostButton}
-          disabled={props.pending || !canRun()}
+          disabled={!props.available || props.pending || !canRun()}
           onClick={() => {
             props.execute({ command: 'run-now', sourceId: props.source.id }).catch(() => undefined);
           }}
@@ -287,6 +300,7 @@ function SourcesRoute() {
   const sourceControl = useSourceControl();
   const snapshot = () => sourceControl.state().snapshot;
   const pending = () => sourceControl.state().pendingCommand !== null;
+  const controlsAvailable = () => sourceControl.state().connection === 'live';
   const sourceById = createMemo(() => new Map(snapshot()?.sources.map((source) => [source.id, source] as const) ?? []));
   const groups = [
     { id: 'sessions', sources: collectionSourceDefinitions.filter((source) => source.group === 'sessions') },
@@ -301,7 +315,10 @@ function SourcesRoute() {
     if (state.commandError) {
       return state.commandError;
     }
-    if (state.connection === 'stale') {
+    if (state.connection === 'protocol-mismatch') {
+      return 'The usage engine is incompatible; stored report reads remain available.';
+    }
+    if (state.connection === 'disconnected') {
       return 'Connection interrupted; reconnecting.';
     }
     return state.publication ? 'Report published.' : '';
@@ -320,7 +337,7 @@ function SourcesRoute() {
             <div class={headerActions}>
               <button
                 class={ghostButton}
-                disabled={!snapshot() || pending()}
+                disabled={!(snapshot() && controlsAvailable()) || pending()}
                 onClick={() => {
                   sourceControl.execute({ command: 'detect-all' }).catch(() => undefined);
                 }}
@@ -330,7 +347,7 @@ function SourcesRoute() {
               </button>
               <button
                 class={commandButton}
-                disabled={!snapshot() || pending()}
+                disabled={!(snapshot() && controlsAvailable()) || pending()}
                 onClick={() => {
                   sourceControl.execute({ command: 'run-all' }).catch(() => undefined);
                 }}
@@ -345,8 +362,14 @@ function SourcesRoute() {
           {conciseStatus()}
         </div>
         <div class={pageStack}>
-          <Show when={sourceControl.state().connection === 'stale'}>
+          <Show when={sourceControl.state().connection === 'disconnected'}>
             <div class={banner}>Connection interrupted. Showing the last server snapshot while reconnecting.</div>
+          </Show>
+          <Show when={sourceControl.state().connection === 'protocol-mismatch'}>
+            <div class={banner}>
+              This usage engine version is incompatible. Source mutations are disabled; stored report reads remain
+              available.
+            </div>
           </Show>
           <Show when={sourceControl.state().commandError}>
             {(message) => <div class={cx(banner, bannerError)}>{message()}</div>}
@@ -401,7 +424,12 @@ function SourcesRoute() {
                           {(definition) => (
                             <Show when={sourceById().get(definition.id)}>
                               {(source) => (
-                                <SourceCard execute={sourceControl.execute} pending={pending()} source={source()} />
+                                <SourceCard
+                                  available={controlsAvailable()}
+                                  execute={sourceControl.execute}
+                                  pending={pending()}
+                                  source={source()}
+                                />
                               )}
                             </Show>
                           )}

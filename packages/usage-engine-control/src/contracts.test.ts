@@ -23,6 +23,17 @@ describe('usage engine control contracts', () => {
       { command: 'set-source-enabled', enabled: false, sourceId: 'rtk.savings' },
       { command: 'replace-project-aliases', projectAliases: [{ match: ['fixture/*'], name: 'Fixture' }] },
       { command: 'replace-project-groups', projectGroups: [] },
+      {
+        command: 'replace-project-groups-by-reference',
+        projectGroups: [
+          {
+            id: 'group-1',
+            name: 'Group 1',
+            sources: [`project-source:${'a'.repeat(64)}`],
+          },
+        ],
+        revision: 'revision-a',
+      },
       { command: 'set-machine-label', label: 'Workstation' },
       { command: 'collect-fresh-quota' },
       { command: 'import-cursor', input: { handoffId: 'handoff-1', kind: 'inbox-handoff' } },
@@ -95,6 +106,36 @@ describe('usage engine control contracts', () => {
         projectAliases: [{ match: ['/private/*'], name: 'Private' }],
       }),
     ).toThrow('path');
+    expect(
+      parseWebUsageEngineCommand({
+        command: 'replace-project-groups-by-reference',
+        projectGroups: [
+          {
+            id: 'group-1',
+            name: 'Group 1',
+            sources: [`project-source:${'a'.repeat(64)}`],
+          },
+        ],
+        revision: 'revision-a',
+      }) as unknown,
+    ).toEqual({
+      command: 'replace-project-groups-by-reference',
+      projectGroups: [
+        {
+          id: 'group-1',
+          name: 'Group 1',
+          sources: [`project-source:${'a'.repeat(64)}`],
+        },
+      ],
+      revision: 'revision-a',
+    });
+    expect(() =>
+      parseWebUsageEngineCommand({
+        command: 'replace-project-groups-by-reference',
+        projectGroups: [{ id: 'group-1', name: 'Group 1', sources: ['/private/history'] }],
+        revision: 'revision-a',
+      }),
+    ).toThrow('reference');
     expect(
       parseWebUsageEngineCommand({
         command: 'replace-project-groups',
@@ -193,6 +234,51 @@ describe('usage engine control contracts', () => {
         completion: { ...completionEvent.completion, output: { kind: 'none' } },
       }),
     ).toThrow('preview');
+    expect(() =>
+      parseUsageEngineEvent({
+        ...completionEvent,
+        completion: {
+          ...completionEvent.completion,
+          output: {
+            ...completionEvent.completion.output,
+            result: { ...completionEvent.completion.output.result, inserted: 1 },
+          },
+        },
+      }),
+    ).toThrow('row count');
+    expect(
+      parseUsageEngineEvent({
+        ...completionEvent,
+        completion: {
+          ...completionEvent.completion,
+          output: {
+            ...completionEvent.completion.output,
+            result: { ...completionEvent.completion.output.result, warnings: 100_000 },
+            warningCount: 100_000,
+          },
+        },
+      }),
+    ).toBeDefined();
+
+    const confirmedEvent = {
+      ...completionEvent,
+      completion: {
+        command: 'confirm-merge',
+        commandId: 'command-2',
+        completedAt: fixtureGeneratedAt,
+        output: { kind: 'none' },
+        state: 'succeeded',
+      },
+      eventId: 'event-3',
+      sequence: 3,
+    };
+    expect(parseUsageEngineEvent(confirmedEvent) as unknown).toEqual(confirmedEvent);
+    expect(() =>
+      parseUsageEngineEvent({
+        ...confirmedEvent,
+        completion: { ...confirmedEvent.completion, output: { kind: 'merge-confirmed' } },
+      }),
+    ).toThrow('preview');
 
     const error = {
       error: { code: 'engine-unavailable', message: 'The engine is not running.' },
@@ -276,5 +362,9 @@ describe('usage engine control contracts', () => {
     expect(classifyUsageEngineRetry('authentication-failed', 'events')).toBe('never');
     expect(classifyUsageEngineRetry('protocol-mismatch', 'status')).toBe('never');
     expect(classifyUsageEngineRetry('preview-stale', 'command')).toBe('never');
+    expect(classifyUsageEngineRetry('merge-invalid-json', 'command')).toBe('never');
+    expect(classifyUsageEngineRetry('merge-invalid-input', 'command')).toBe('never');
+    expect(classifyUsageEngineRetry('merge-self-merge', 'command')).toBe('never');
+    expect(classifyUsageEngineRetry('merge-store-failed', 'command')).toBe('never');
   });
 });

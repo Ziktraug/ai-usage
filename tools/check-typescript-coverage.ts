@@ -34,6 +34,12 @@ export const findUncoveredTypeScriptFiles = (
   projectFiles: ReadonlySet<string>,
 ): string[] => repositoryFiles.filter((fileName) => !projectFiles.has(fileName)).sort();
 
+export const filterExistingRepositoryFiles = (
+  root: string,
+  repositoryFiles: readonly string[],
+  fileExists: (fileName: string) => boolean = ts.sys.fileExists,
+): string[] => repositoryFiles.filter((fileName) => fileExists(path.resolve(root, fileName)));
+
 export const listRepositoryTypeScriptFiles = (root: string): string[] => {
   const result = Bun.spawnSync({
     cmd: ['git', 'ls-files', '--cached', '--others', '--exclude-standard', '--', '*.ts', '*.tsx'],
@@ -42,7 +48,8 @@ export const listRepositoryTypeScriptFiles = (root: string): string[] => {
   if (result.exitCode !== 0) {
     throw new Error(new TextDecoder().decode(result.stderr).trim() || 'Unable to list repository TypeScript files.');
   }
-  return new TextDecoder().decode(result.stdout).trim().split('\n').filter(Boolean).sort();
+  const repositoryFiles = new TextDecoder().decode(result.stdout).trim().split('\n').filter(Boolean).sort();
+  return filterExistingRepositoryFiles(root, repositoryFiles);
 };
 
 export const listTypeScriptProjectFiles = (root: string, projectConfigs: readonly string[]): Set<string> => {

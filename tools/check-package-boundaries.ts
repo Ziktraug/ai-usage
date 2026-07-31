@@ -147,9 +147,6 @@ const legacyTargetGraphExceptions = new Set([
   `@ai-usage/report-data|packages/report-data/src/provider-quota.ts|${usageStoreWriter}`,
   `@ai-usage/report-data|packages/report-data/src/source-adapters.ts|${usageStoreWriter}`,
   `@ai-usage/usage-merge|packages/usage-merge/src/index.ts|${usageStoreWriter}`,
-  `@ai-usage/web|apps/web/src/server/source-control-e2e-fixture.server.ts|${reportDataSourceAdapters}`,
-  `@ai-usage/web|apps/web/src/server/source-control.server.test.ts|${reportDataSourceAdapters}`,
-  `@ai-usage/web|apps/web/src/server/source-control.server.ts|${reportDataSourceAdapters}`,
   `@ai-usage/cli|apps/cli/src/main.ts|${reportDataOneShotSources}`,
   `@ai-usage/cli|apps/cli/src/setup.ts|${reportDataOneShotSources}`,
 ]);

@@ -1,221 +1,280 @@
 import { expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-import type { StoredReportCapture } from '@ai-usage/report-data';
+import {
+  type FocusedReportSupport,
+  focusedRevisionFingerprint,
+  projectFocusedSupport,
+} from '@ai-usage/report-core/focused-report-query';
+import {
+  parseUsageEngineCommandCompletion,
+  parseUsageEngineCommandResult,
+  parseWebUsageEngineCommand,
+} from '@ai-usage/usage-engine-control';
+import type { UsageEngineControlClient } from '@ai-usage/usage-engine-control/client';
+import type { ServedReportRevisionManifest } from '@ai-usage/usage-store/reader';
 import { demoReportPayload } from '../report-data';
-import { parseReportRevision, reportSliceRequestFingerprint, toWebReportPayload } from '../web-report-payload';
-import { ensurePublishedRevision, getReportRevisionManifestForServer } from './report-payload.server';
-import { createReportRevisionRegistry, type ReportRevisionRegistry } from './report-revision.server';
+import { reportManifestRequestFingerprint } from '../web-report-payload';
+import {
+  getReportRevisionBootstrapForServer,
+  getReportRevisionManifestForServer,
+  saveProjectGroupsForServer,
+  saveProjectGroupsFromRequestForServer,
+} from './report-payload.server';
+import type { UsageReadModel } from './usage-read-model.server';
 
-const machineFreshnessFor = (observedAt: string) =>
-  ({
-    kind: 'available',
-    machines: [{ id: 'fixture-machine', label: 'Fixture Machine', lastSeenAt: '2026-07-12T11:00:00.000Z' }],
-    observedAt,
-    omittedMachines: 0,
-    skippedRows: 0,
-  }) as const;
+const revision = 'revision-a';
 
-test('waits briefly for an in-flight bootstrap publication before reporting it unavailable', async () => {
-  const parent = await mkdtemp(path.join(tmpdir(), 'ai-usage-report-bootstrap-wait-test-'));
-  const registry = createReportRevisionRegistry({
-    revisionId: () => 'revision-bootstrap',
-    rootDirectory: path.join(parent, 'revisions'),
-  });
-  try {
-    const unavailable = await registry.getCurrentManifest();
-    const payload = structuredClone(demoReportPayload);
-    await registry.publish(toWebReportPayload(payload), {
-      rowSourceAuthorities: payload.rows.map(() => 'local-observed' as const),
-    });
-    let currentTime = 0;
-    let reads = 0;
-    let publicationRequests = 0;
-    let waits = 0;
+const storeManifest: ServedReportRevisionManifest = {
+  captureFingerprint: 'a'.repeat(64),
+  expiresAt: 4000,
+  generatedAt: demoReportPayload.generatedAt,
+  machineFleetGeneration: 2,
+  projectionBytes: 12_000,
+  publishedAt: 2000,
+  revision,
+  rowCount: demoReportPayload.rows.length,
+  rowsBytes: 10_000,
+  supportBytes: 2000,
+  usageStoreGeneration: 3,
+};
 
-    const result = await getReportRevisionManifestForServer({
-      now: () => currentTime,
-      readCurrent: async () => {
-        reads += 1;
-        return reads < 3 ? unavailable : await registry.getCurrentManifest();
-      },
-      requestPublication: () => {
-        publicationRequests += 1;
-        return Promise.resolve(true);
-      },
-      wait: (milliseconds) => {
-        currentTime += milliseconds;
-        waits += 1;
-        return Promise.resolve();
-      },
-    });
+const focusedSupport = () => {
+  const { rows: _rows, tableRows: _tableRows, ...support } = demoReportPayload;
+  return projectFocusedSupport(
+    support as FocusedReportSupport,
+    { harness: ['codex'], machine: [], truncated: false },
+    { revision },
+  );
+};
 
-    expect(result.ok && result.manifest.revision).toBe(parseReportRevision('revision-bootstrap'));
-    expect(publicationRequests).toBe(1);
-    expect(waits).toBe(2);
-  } finally {
-    await registry.dispose();
-    await rm(parent, { force: true, recursive: true });
-  }
+const readModelWith = (overrides: Partial<UsageReadModel> = {}): UsageReadModel => ({
+  queryRevision: () => Promise.reject(new Error('Unexpected exact revision query')),
+  readCurrentBootstrap: () => Promise.resolve({ manifest: storeManifest, support: focusedSupport() }),
+  readCurrentLocalProjectSources: () => Promise.resolve({ revision, sources: [] }),
+  readCurrentManifest: () => Promise.resolve(storeManifest),
+  readLocalMergeBundle: () => Promise.reject(new Error('Unexpected merge export read')),
+  readLocalMachine: () => Promise.reject(new Error('Unexpected local machine read')),
+  readSyncFleet: () => Promise.reject(new Error('Unexpected Sync fleet read')),
+  ...overrides,
 });
 
-test('publishes a fresh exact capture when the matched revision expires before renewal', async () => {
-  const parent = await mkdtemp(path.join(tmpdir(), 'ai-usage-report-publication-test-'));
-  const rootDirectory = path.join(parent, 'revisions');
-  let now = 1000;
-  const revisionIds = ['revision-a', 'revision-b'];
-  const registry = createReportRevisionRegistry({
-    now: () => now,
-    revisionId: () => revisionIds.shift() ?? 'unexpected',
-    rootDirectory,
-    ttlMs: 120_000,
+test('returns the current manifest and support bootstrap from one read-model call', async () => {
+  let bootstrapReads = 0;
+  let manifestReads = 0;
+  const result = await getReportRevisionBootstrapForServer(
+    readModelWith({
+      readCurrentBootstrap: () => {
+        bootstrapReads += 1;
+        return Promise.resolve({ manifest: storeManifest, support: focusedSupport() });
+      },
+      readCurrentManifest: () => {
+        manifestReads += 1;
+        return Promise.resolve(storeManifest);
+      },
+    }),
+  );
+
+  expect({ bootstrapReads, manifestReads }).toEqual({ bootstrapReads: 1, manifestReads: 0 });
+  expect(result).toMatchObject({
+    bootstrap: {
+      requestFingerprint: focusedRevisionFingerprint('support', { revision }),
+      revision,
+    },
+    manifest: {
+      captureFingerprint: storeManifest.captureFingerprint,
+      expiresAt: storeManifest.expiresAt,
+      generatedAt: storeManifest.generatedAt,
+      publishedAt: storeManifest.publishedAt,
+      revision,
+      rowsBytes: storeManifest.rowsBytes,
+      supportBytes: storeManifest.supportBytes,
+    },
+    ok: true,
+    requestFingerprint: reportManifestRequestFingerprint,
   });
-  try {
-    const payload = structuredClone(demoReportPayload);
-    const rowSourceAuthorities = payload.rows.map(() => 'local-observed' as const);
-    const capture: StoredReportCapture = {
-      machineFreshness: machineFreshnessFor(payload.generatedAt),
-      payload,
-      rowSourceAuthorities,
-    };
-    const first = await registry.publish(
-      { ...toWebReportPayload(payload), machineFreshness: capture.machineFreshness },
-      { rowSourceAuthorities },
-    );
-    now += 60_000;
-    let expiredAfterMatch = false;
-    let renewalAttempts = 0;
-    const expiringRegistry: ReportRevisionRegistry = {
-      ...registry,
-      getCurrentManifestForCapture: async (privateCaptureFingerprint) => {
-        const result = await registry.getCurrentManifestForCapture(privateCaptureFingerprint);
-        if (!expiredAfterMatch) {
-          expiredAfterMatch = true;
-          now = first.expiresAt;
-        }
-        return result;
-      },
-      renewCurrentForCapture: async (expectedRevision, privateCaptureFingerprint) => {
-        renewalAttempts++;
-        return await registry.renewCurrentForCapture(expectedRevision, privateCaptureFingerprint);
-      },
-    };
-
-    const ensured = await ensurePublishedRevision(capture, {
-      now: () => now,
-      publications: new WeakMap(),
-      registry: expiringRegistry,
-    });
-
-    expect(ensured.revision).toBe(parseReportRevision('revision-b'));
-    expect(renewalAttempts).toBe(1);
-    const support = await registry.readSupport({
-      requestFingerprint: reportSliceRequestFingerprint('support'),
-      revision: ensured.revision,
-    });
-    expect(support.ok && support.slice.payloadWithoutRows.machineFreshness).toEqual(capture.machineFreshness);
-    const current = await registry.getCurrentManifest();
-    expect(current.ok && current.manifest.revision).toBe(ensured.revision);
-  } finally {
-    await registry.dispose();
-    await rm(parent, { force: true, recursive: true });
-  }
 });
 
-test('does not reuse a cached payload object under a different source authority', async () => {
-  const parent = await mkdtemp(path.join(tmpdir(), 'ai-usage-report-publication-test-'));
-  const rootDirectory = path.join(parent, 'revisions');
-  const revisionIds = ['revision-a', 'revision-b'];
-  const registry = createReportRevisionRegistry({
-    revisionId: () => revisionIds.shift() ?? 'unexpected',
-    rootDirectory,
-  });
-  try {
-    const payload = structuredClone(demoReportPayload);
-    const publications = new WeakMap();
-    const dependencies = { now: Date.now, publications, registry };
-
-    const first = await ensurePublishedRevision(
-      {
-        machineFreshness: machineFreshnessFor(payload.generatedAt),
-        payload,
-        rowSourceAuthorities: payload.rows.map(() => 'local-observed' as const),
+test('reads a manifest without contacting the engine or requesting publication', async () => {
+  let manifestReads = 0;
+  const result = await getReportRevisionManifestForServer(
+    readModelWith({
+      readCurrentManifest: () => {
+        manifestReads += 1;
+        return Promise.resolve(storeManifest);
       },
-      dependencies,
-    );
-    const second = await ensurePublishedRevision(
-      {
-        machineFreshness: machineFreshnessFor(payload.generatedAt),
-        payload,
-        rowSourceAuthorities: payload.rows.map(() => 'portable-opaque' as const),
-      },
-      dependencies,
-    );
+    }),
+  );
 
-    expect(second.revision).not.toBe(first.revision);
-    expect(second.revision).toBe(parseReportRevision('revision-b'));
-  } finally {
-    await registry.dispose();
-    await rm(parent, { force: true, recursive: true });
+  expect(manifestReads).toBe(1);
+  expect(result.ok).toBe(true);
+  if (!result.ok) {
+    throw new Error('Expected the current revision manifest.');
   }
+  expect(String(result.manifest.revision)).toBe(revision);
 });
 
-test('publishes the requested capture when another capture wins during renewal', async () => {
-  const parent = await mkdtemp(path.join(tmpdir(), 'ai-usage-report-publication-test-'));
-  const rootDirectory = path.join(parent, 'revisions');
-  let now = 1000;
-  const revisionIds = ['revision-a', 'revision-b', 'revision-c'];
-  const registry = createReportRevisionRegistry({
-    now: () => now,
-    revisionId: () => revisionIds.shift() ?? 'unexpected',
-    rootDirectory,
-    ttlMs: 120_000,
+test('uses the mode-aware read-model resolver when no direct model is injected', async () => {
+  let resolutions = 0;
+
+  const result = await getReportRevisionManifestForServer(undefined, () => {
+    resolutions += 1;
+    return Promise.resolve(readModelWith());
   });
-  try {
-    const requestedPayload = structuredClone(demoReportPayload);
-    const requestedAuthorities = requestedPayload.rows.map(() => 'local-observed' as const);
-    const requestedCapture: StoredReportCapture = {
-      machineFreshness: machineFreshnessFor(requestedPayload.generatedAt),
-      payload: requestedPayload,
-      rowSourceAuthorities: requestedAuthorities,
-    };
-    await registry.publish(
-      { ...toWebReportPayload(requestedPayload), machineFreshness: requestedCapture.machineFreshness },
+
+  expect(resolutions).toBe(1);
+  expect(result).toMatchObject({ manifest: { revision }, ok: true });
+});
+
+test('returns a stable unavailable result when the read-only store cannot be opened', async () => {
+  const unavailable = readModelWith({
+    readCurrentBootstrap: () => Promise.reject({ reason: 'store-missing' }),
+    readCurrentManifest: () => Promise.reject({ reason: 'store-missing' }),
+  });
+
+  expect(await getReportRevisionBootstrapForServer(unavailable)).toEqual({
+    error: { message: 'Report data is unavailable.', tag: 'RevisionUnavailable' },
+    ok: false,
+    requestFingerprint: reportManifestRequestFingerprint,
+  });
+  expect(await getReportRevisionManifestForServer(unavailable)).toEqual({
+    error: { message: 'Report data is unavailable.', tag: 'RevisionUnavailable' },
+    ok: false,
+    requestFingerprint: reportManifestRequestFingerprint,
+  });
+});
+
+test('forwards only an opaque revision-keyed project group command to the engine', async () => {
+  const command = parseWebUsageEngineCommand({
+    command: 'replace-project-groups-by-reference',
+    projectGroups: [
       {
-        rowSourceAuthorities: requestedAuthorities,
+        id: 'group-a',
+        name: 'Group A',
+        sources: [`project-source:${'a'.repeat(64)}`],
       },
-    );
-    now += 60_000;
-
-    const competingPayload = structuredClone(demoReportPayload);
-    competingPayload.rows = competingPayload.rows.slice(0, 1);
-    const competingAuthorities = competingPayload.rows.map(() => 'portable-opaque' as const);
-    let superseded = false;
-    const racingRegistry: ReportRevisionRegistry = {
-      ...registry,
-      renewCurrentForCapture: async (expectedRevision, privateCaptureFingerprint) => {
-        if (!superseded) {
-          superseded = true;
-          await registry.publish(toWebReportPayload(competingPayload), {
-            rowSourceAuthorities: competingAuthorities,
-          });
-        }
-        return await registry.renewCurrentForCapture(expectedRevision, privateCaptureFingerprint);
-      },
-    };
-
-    const ensured = await ensurePublishedRevision(requestedCapture, {
-      now: () => now,
-      publications: new WeakMap(),
-      registry: racingRegistry,
-    });
-
-    expect(ensured.revision).toBe(parseReportRevision('revision-c'));
-    const current = await registry.getCurrentManifest();
-    expect(current.ok && current.manifest.revision).toBe(ensured.revision);
-  } finally {
-    await registry.dispose();
-    await rm(parent, { force: true, recursive: true });
+    ],
+    revision,
+  });
+  if (command.command !== 'replace-project-groups-by-reference') {
+    throw new Error('Expected a project group reference command fixture.');
   }
+  let received: unknown;
+  const control: UsageEngineControlClient = {
+    changes: () => ({
+      [Symbol.asyncIterator]: () => ({
+        next: () => Promise.reject(new Error('Unexpected event subscription')),
+      }),
+    }),
+    execute: (value) => {
+      received = value;
+      return Promise.resolve(
+        parseUsageEngineCommandResult({
+          admission: 'accepted',
+          commandId: 'command-a',
+          instanceId: 'instance-a',
+          ok: true,
+          protocolVersion: 1,
+        }),
+      );
+    },
+    getStatus: () => Promise.reject(new Error('Unexpected status read')),
+  };
+
+  expect(
+    await saveProjectGroupsForServer(command, control, (_control, value) => {
+      received = value;
+      return Promise.resolve(
+        parseUsageEngineCommandCompletion({
+          command: 'replace-project-groups-by-reference',
+          commandId: 'command-a',
+          completedAt: '2026-07-30T10:00:00.000Z',
+          output: { kind: 'none' },
+          state: 'succeeded',
+        }),
+      );
+    }),
+  ).toEqual({ accepted: true });
+  expect(received).toEqual(command);
+  expect(JSON.stringify(received)).not.toContain('/');
+});
+
+test('rejects project group mutations from an untrusted Host before engine admission', async () => {
+  const command = parseWebUsageEngineCommand({
+    command: 'replace-project-groups-by-reference',
+    projectGroups: [],
+    revision,
+  });
+  if (command.command !== 'replace-project-groups-by-reference') {
+    throw new Error('Expected a project group reference command fixture.');
+  }
+  let admissions = 0;
+  const control: UsageEngineControlClient = {
+    changes: () => ({
+      [Symbol.asyncIterator]: () => ({
+        next: () => Promise.reject(new Error('Unexpected event subscription')),
+      }),
+    }),
+    execute: () => {
+      admissions += 1;
+      return Promise.reject(new Error('Unexpected command admission'));
+    },
+    getStatus: () => Promise.reject(new Error('Unexpected status read')),
+  };
+
+  try {
+    await saveProjectGroupsFromRequestForServer(
+      new Request('http://attacker.example/_serverFn/saveProjectGroups', {
+        headers: { host: 'attacker.example' },
+        method: 'POST',
+      }),
+      command,
+      control,
+    );
+    throw new Error('Expected an untrusted Host rejection.');
+  } catch (error) {
+    expect(error).toBeInstanceOf(Response);
+    expect(error instanceof Response ? error.status : 0).toBe(403);
+  }
+  expect(admissions).toBe(0);
+});
+
+test('propagates an aborted project group request before engine admission', async () => {
+  const command = parseWebUsageEngineCommand({
+    command: 'replace-project-groups-by-reference',
+    projectGroups: [],
+    revision,
+  });
+  if (command.command !== 'replace-project-groups-by-reference') {
+    throw new Error('Expected a project group reference command fixture.');
+  }
+  let controlCalls = 0;
+  const control: UsageEngineControlClient = {
+    changes: () => {
+      controlCalls += 1;
+      return {
+        [Symbol.asyncIterator]: () => ({
+          next: () => Promise.reject(new Error('Unexpected event subscription')),
+        }),
+      };
+    },
+    execute: () => {
+      controlCalls += 1;
+      return Promise.reject(new Error('Unexpected command admission'));
+    },
+    getStatus: () => {
+      controlCalls += 1;
+      return Promise.reject(new Error('Unexpected status read'));
+    },
+  };
+  const abort = new AbortController();
+  abort.abort();
+  const request = new Request('http://localhost:3000/_serverFn/saveProjectGroups', {
+    headers: { host: 'localhost:3000', origin: 'http://localhost:3000' },
+    method: 'POST',
+    signal: abort.signal,
+  });
+
+  await expect(saveProjectGroupsFromRequestForServer(request, command, control)).rejects.toMatchObject({
+    code: 'aborted',
+  });
+  expect(controlCalls).toBe(0);
 });

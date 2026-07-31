@@ -631,15 +631,6 @@ const openEventStream = async function* (
   }
 };
 
-const createStatusEvent = (status: UsageEngineStatus): UsageEngineEvent =>
-  parseUsageEngineEvent({
-    event: 'status',
-    eventId: `status:${status.generation}`,
-    instanceId: status.instanceId,
-    sequence: 0,
-    status,
-  });
-
 export const createUsageEngineControlClient = (options: UsageEngineControlClientOptions): UsageEngineControlClient => {
   const reconnectDelayMs = options.reconnectDelayMs ?? defaultReconnectDelayMs;
   const eventIdleTimeoutMs = options.eventIdleTimeoutMs ?? defaultEventIdleTimeoutMs;
@@ -739,7 +730,6 @@ export const createUsageEngineControlClient = (options: UsageEngineControlClient
         lastSequence = -1;
         lastEventId = undefined;
       }
-      yield createStatusEvent(status);
 
       try {
         for await (const event of openEventStream(
@@ -752,6 +742,10 @@ export const createUsageEngineControlClient = (options: UsageEngineControlClient
         )) {
           if (event.instanceId !== instanceId) {
             throw controlError('invalid-response', 'events', 'Usage engine event has an unexpected instance identity.');
+          }
+          if (event.event === 'status') {
+            yield event;
+            continue;
           }
           if (event.sequence <= lastSequence) {
             continue;

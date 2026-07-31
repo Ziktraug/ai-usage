@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import path from 'node:path';
 import {
   collectUncoveredTypeScriptFiles,
+  filterExistingRepositoryFiles,
   findUncoveredTypeScriptFiles,
   TYPECHECK_PROJECTS,
 } from './check-typescript-coverage';
@@ -25,6 +26,19 @@ describe('TypeScript project coverage guard', () => {
     const projectFiles = new Set(repositoryFiles);
 
     expect(findUncoveredTypeScriptFiles(repositoryFiles, projectFiles)).toEqual([]);
+  });
+
+  test('ignores tracked TypeScript files deleted in the working tree', () => {
+    const root = path.resolve('/repository');
+    const existingFile = path.join(root, 'apps/web/src/index.ts');
+
+    expect(
+      filterExistingRepositoryFiles(
+        root,
+        ['apps/web/src/index.ts', 'apps/web/src/deleted.ts'],
+        (fileName) => fileName === existingFile,
+      ),
+    ).toEqual(['apps/web/src/index.ts']);
   });
 
   test(

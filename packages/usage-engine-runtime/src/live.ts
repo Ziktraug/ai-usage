@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { scheduler as hostScheduler } from 'node:timers/promises';
 import { runBoundaryEffect, WideEventResourceService, WideEventSink } from '@ai-usage/effect-runtime';
 import {
@@ -15,6 +15,12 @@ import {
   writeMachineConfig,
 } from '@ai-usage/local-collectors/machine-config';
 import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
+import {
+  type ProjectSourceSelector,
+  parseProjectGroupConfigs,
+  projectSourceSelectorFor,
+  projectSourceSelectorKey,
+} from '@ai-usage/report-core/project-group';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import {
   type CollectionSourceId,
@@ -26,10 +32,14 @@ import {
   readStoredReportSourceFingerprint,
   toStoredReportPublicationCapture,
 } from '@ai-usage/report-data';
-import { parseUsageEnginePublicationRevision } from '@ai-usage/usage-engine-control';
+import {
+  parseUsageEnginePublicationRevision,
+  type UsageEngineProjectSourceReference,
+} from '@ai-usage/usage-engine-control';
 import {
   initializeUsageStore,
   publishServedReportRevision,
+  queryServedReportRevisionSupport,
   quiesceUsageStoreForShutdown,
   retainServedReportRevisions,
   type UpdateUsageMachineLabelInput,
@@ -617,6 +627,59 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
       // Diagnostic callbacks cannot invalidate a durable mutation.
     }
   };
+  const mergeCommandError = (error: unknown): unknown => {
+    if (!(error instanceof EngineMergeError)) {
+      return error;
+    }
+    switch (error.reason) {
+      case 'invalid-input':
+        return new UsageEngineCommandError('merge-invalid-input', 'The merge file is invalid.', { cause: error });
+      case 'invalid-json':
+        return new UsageEngineCommandError('merge-invalid-json', 'The merge file does not contain valid JSON.', {
+          cause: error,
+        });
+      case 'preview-stale':
+        return new UsageEngineCommandError('preview-stale', 'The merge file changed after it was previewed.', {
+          cause: error,
+        });
+      case 'self-merge':
+        return new UsageEngineCommandError('merge-self-merge', 'The merge file belongs to this machine.', {
+          cause: error,
+        });
+      case 'store-failed':
+        return new UsageEngineCommandError('merge-store-failed', 'The usage store could not apply the merge file.', {
+          cause: error,
+        });
+      default: {
+        const unsupportedReason: never = error.reason;
+        return unsupportedReason;
+      }
+    }
+  };
+  const runMergeEffect = async <Value>(effect: Effect.Effect<Value, EngineMergeError>): Promise<Value> => {
+    const outcome = await Effect.runPromise(
+      effect.pipe(
+        Effect.match({
+          onFailure: (error) => ({ error, ok: false as const }),
+          onSuccess: (value) => ({ ok: true as const, value }),
+        }),
+      ),
+    );
+    if (!outcome.ok) {
+      throw mergeCommandError(outcome.error);
+    }
+    return outcome.value;
+  };
+  const removeMergeInput = async (
+    input: Awaited<ReturnType<typeof readUsageEngineInput>>,
+    operation: 'confirm-merge' | 'preview-merge',
+  ): Promise<void> => {
+    try {
+      await input.remove?.();
+    } catch {
+      reportCleanupFailure(operation);
+    }
+  };
   const discardFileInput = async (
     command: Parameters<UsageEngineMutationPort['discardFileInput']>[0],
   ): Promise<void> => {
@@ -631,18 +694,58 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
     operation: () => Promise<Value>,
     signal?: AbortSignal,
   ): Promise<Value> => {
-    let admitted = false;
     try {
-      return await runWithWriter(async () => {
-        admitted = true;
-        return await operation();
-      }, signal);
+      return await runWithWriter(operation, signal);
     } catch (error) {
-      if (!admitted) {
-        await discardFileInput(command);
-      }
+      await discardFileInput(command);
       throw error;
     }
+  };
+  const projectSourceReferenceFor = (selector: ProjectSourceSelector): UsageEngineProjectSourceReference =>
+    `project-source:${createHash('sha256').update(projectSourceSelectorKey(selector)).digest('hex')}` as UsageEngineProjectSourceReference;
+  const resolveReferencedProjectGroups = async (
+    command: Parameters<UsageEngineMutationPort['replaceProjectGroupsByReference']>[0],
+  ) => {
+    const [config, served] = await Promise.all([
+      runWithStorage(readAiUsageConfig),
+      Effect.runPromise(
+        queryServedReportRevisionSupport({
+          dbPath: options.dbPath,
+          ...(options.now === undefined ? {} : { now: options.now().getTime() }),
+          revision: command.revision,
+        }),
+      ),
+    ]);
+    const selectorsByReference = new Map<UsageEngineProjectSourceReference, ProjectSourceSelector>();
+    const remember = (selector: ProjectSourceSelector): void => {
+      selectorsByReference.set(projectSourceReferenceFor(selector), { ...selector });
+    };
+    for (const group of config.projectGroups ?? []) {
+      for (const selector of group.sources) {
+        remember(selector);
+      }
+    }
+    for (const group of served.support.projectGroups ?? []) {
+      for (const source of group.sources) {
+        remember(projectSourceSelectorFor(source));
+      }
+    }
+    return parseProjectGroupConfigs(
+      command.projectGroups.map((group) => ({
+        id: group.id,
+        name: group.name,
+        sources: group.sources.map((reference) => {
+          const selector = selectorsByReference.get(reference);
+          if (!selector) {
+            throw new UsageEngineCommandError(
+              'command-rejected',
+              'The project source selection is stale; reload the report before saving.',
+            );
+          }
+          return { ...selector };
+        }),
+      })),
+    );
   };
 
   return {
@@ -652,54 +755,18 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
         async () => {
           throwIfAborted(signal);
           const input = await readMergeInput(command.input);
-          throwIfAborted(signal);
-          const confirmation = await Effect.runPromise(
-            mergeService
-              .confirm({
+          try {
+            throwIfAborted(signal);
+            await runMergeEffect(
+              mergeService.confirm({
                 bytes: input.bytes,
                 confirmationToken: command.confirmationToken,
                 expectedDigest: command.documentDigest,
                 text: input.text,
-              })
-              .pipe(
-                Effect.match({
-                  onFailure: (error) => ({ error, ok: false as const }),
-                  onSuccess: () => ({ ok: true as const }),
-                }),
-              ),
-          );
-          let confirmationFailure: unknown;
-          if (!confirmation.ok) {
-            confirmationFailure =
-              confirmation.error instanceof EngineMergeError && confirmation.error.reason === 'preview-stale'
-                ? new UsageEngineCommandError('preview-stale', 'The merge file changed after it was previewed.', {
-                    cause: confirmation.error,
-                  })
-                : confirmation.error;
-          }
-          try {
-            await input.remove?.();
-          } catch (cleanupError) {
-            if (confirmationFailure instanceof UsageEngineCommandError) {
-              reportCleanupFailure('confirm-merge');
-              throw new UsageEngineCommandError(confirmationFailure.code, confirmationFailure.message, {
-                cause: new AggregateError(
-                  [confirmationFailure, cleanupError],
-                  'Merge confirmation and private handoff cleanup both failed.',
-                ),
-              });
-            }
-            if (confirmationFailure !== undefined) {
-              throw new AggregateError(
-                [confirmationFailure, cleanupError],
-                'Merge confirmation and private handoff cleanup both failed.',
-              );
-            }
-            reportCleanupFailure('confirm-merge');
-            return;
-          }
-          if (confirmationFailure !== undefined) {
-            throw confirmationFailure;
+              }),
+            );
+          } finally {
+            await removeMergeInput(input, 'confirm-merge');
           }
         },
         signal,
@@ -730,12 +797,10 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
         async () => {
           throwIfAborted(signal);
           const input = await readMergeInput(command.input);
-          let succeeded = false;
           try {
             throwIfAborted(signal);
-            const preview = await Effect.runPromise(mergeService.preview({ bytes: input.bytes, text: input.text }));
+            const preview = await runMergeEffect(mergeService.preview({ bytes: input.bytes, text: input.text }));
             throwIfAborted(signal);
-            succeeded = true;
             return {
               bytes: preview.bytes,
               confirmationToken: preview.confirmationToken,
@@ -754,9 +819,7 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
               warningCount: preview.warningCount,
             };
           } finally {
-            if (!succeeded) {
-              await input.remove?.();
-            }
+            await removeMergeInput(input, 'preview-merge');
           }
         },
         signal,
@@ -774,6 +837,13 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
         await runWithStorage(
           updateAiUsageConfig((config) => ({ ...config, projectGroups: [...command.projectGroups] })),
         );
+      }, signal),
+    replaceProjectGroupsByReference: async (command, signal) =>
+      await runWithWriter(async () => {
+        throwIfAborted(signal);
+        const projectGroups = await resolveReferencedProjectGroups(command);
+        throwIfAborted(signal);
+        await runWithStorage(updateAiUsageConfig((config) => ({ ...config, projectGroups })));
       }, signal),
     setMachineLabel: async (label, signal) =>
       await runWithWriter(async () => {
@@ -973,6 +1043,8 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
     previewMerge: async (command, signal) => await requireMutation().previewMerge(command, signal),
     replaceProjectAliases: async (command, signal) => await requireMutation().replaceProjectAliases(command, signal),
     replaceProjectGroups: async (command, signal) => await requireMutation().replaceProjectGroups(command, signal),
+    replaceProjectGroupsByReference: async (command, signal) =>
+      await requireMutation().replaceProjectGroupsByReference(command, signal),
     setMachineLabel: async (label, signal) => await requireMutation().setMachineLabel(label, signal),
   };
 

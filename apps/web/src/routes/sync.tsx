@@ -20,7 +20,7 @@ import {
   title,
   titleBlock,
 } from '@ai-usage/design-system/report';
-import type { ManualMergeImportResult, ManualMergePreviewResult } from '@ai-usage/usage-merge';
+import { parseUsageEngineMergePreviewOutput, type UsageEngineMergePreviewOutput } from '@ai-usage/usage-engine-control';
 import { createFileRoute, useRouter } from '@tanstack/solid-router';
 import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js';
 import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
@@ -30,8 +30,10 @@ import {
   formatFleetAge,
   formatManualImportSummary,
   formatTransferBytes,
+  manualTransferMutationAvailability,
 } from '../manual-transfer-model';
 import { exportManualMergeBundle, getSyncFleet } from '../server/sync';
+import { useSourceControl } from '../source-control-context';
 
 export const Route = createFileRoute('/sync')({
   beforeLoad: enforceReportOnlyDemoNavigation,
@@ -136,10 +138,9 @@ const dropZone = css({
   _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
 });
 const dropZoneActive = css({ borderColor: 'accent', bg: 'surfaceElevated' });
-const warningList = css({ display: 'grid', gap: '4px', m: 0, pl: '18px', color: 'muted', fontSize: '12px' });
 
-type ManualImportResult = ManualOperationResult<ManualMergeImportResult>;
-type ManualPreviewResult = ManualOperationResult<ManualMergePreviewResult>;
+type ManualImportResult = ManualOperationResult<{ readonly kind: 'none' }>;
+type ManualPreviewResult = ManualOperationResult<UsageEngineMergePreviewOutput>;
 type PendingOperation = 'manual-export' | 'manual-preview' | 'manual-confirm';
 
 type ManualImportProgress =
@@ -335,13 +336,14 @@ const ImportDropTarget = (props: { disabled: boolean; onImport: (file: File | un
 };
 
 const ManualTransferPanel = (props: {
-  pendingOperation: PendingOperation | null;
   importProgress: ManualImportProgress | null;
+  mutationsDisabled: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
   onExport: () => void;
   onImport: (file: File | undefined) => void;
-  onConfirm: () => void;
-  onCancel: () => void;
-  preview: { data: ManualMergePreviewResult; file: File } | null;
+  pendingOperation: PendingOperation | null;
+  preview: { data: UsageEngineMergePreviewOutput; file: File } | null;
 }) => (
   <div class={panel}>
     <div class={panelHeader}>
@@ -353,42 +355,35 @@ const ManualTransferPanel = (props: {
         {props.pendingOperation === 'manual-export' ? 'Exporting' : 'Export current machine'}
       </button>
     </div>
-    <ImportDropTarget disabled={!!props.pendingOperation} onImport={props.onImport} />
+    <ImportDropTarget disabled={props.mutationsDisabled || !!props.pendingOperation} onImport={props.onImport} />
 
     <Show when={props.preview}>
       {(preview) => (
         <div class={operationPanel} role="status">
-          <div class={strongCell}>Review import from {preview().data.machine.label}</div>
+          <div class={strongCell}>Review merge import</div>
           <div>
             {preview().file.name} · {preview().data.rows.toLocaleString()} rows ·{' '}
             {formatTransferBytes(preview().data.bytes)}
           </div>
           <div>
-            {preview().data.inserted} inserted, {preview().data.updated} updated, {preview().data.unchanged} unchanged,{' '}
-            {preview().data.superseded} superseded, {preview().data.deleted} deleted
+            {preview().data.result.inserted} inserted, {preview().data.result.updated} updated,{' '}
+            {preview().data.result.unchanged} unchanged, {preview().data.result.superseded} superseded,{' '}
+            {preview().data.result.deleted} deleted, {preview().data.warningCount} warnings
           </div>
           <div class={panelSub}>Peer provenance is preserved; local history is not replaced wholesale.</div>
           <div class={actionRow}>
-            <button class={ghostButton} disabled={!!props.pendingOperation} onClick={props.onConfirm} type="button">
+            <button
+              class={ghostButton}
+              disabled={props.mutationsDisabled || !!props.pendingOperation}
+              onClick={props.onConfirm}
+              type="button"
+            >
               {props.pendingOperation === 'manual-confirm' ? 'Confirming' : 'Confirm import'}
             </button>
             <button class={ghostButton} disabled={!!props.pendingOperation} onClick={props.onCancel} type="button">
               Cancel
             </button>
           </div>
-          <Show when={preview().data.warningItems.length > 0}>
-            <div>
-              <div class={strongCell}>Warnings ({preview().data.warningCount.toLocaleString()})</div>
-              <ul class={warningList}>
-                <For each={preview().data.warningItems}>{(warning) => <li>{warning}</li>}</For>
-              </ul>
-              <Show when={preview().data.warningCount > preview().data.warningItems.length}>
-                <div class={panelSub}>
-                  Showing the first {preview().data.warningItems.length.toLocaleString()} warnings.
-                </div>
-              </Show>
-            </div>
-          </Show>
         </div>
       )}
     </Show>
@@ -408,44 +403,20 @@ const downloadJsonFile = (filename: string, text: string) => {
 
 const HTTP_OK_MIN = 200;
 const HTTP_OK_MAX = 300;
-const MAX_CONFIRMATION_TOKEN_CHARACTERS = 128;
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const isNonNegativeSafeInteger = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0;
+const isManualPreviewData = (value: unknown): value is UsageEngineMergePreviewOutput => {
+  try {
+    parseUsageEngineMergePreviewOutput(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
-const isImportResult = (value: unknown): boolean =>
-  isRecord(value) &&
-  ['deleted', 'inserted', 'superseded', 'unchanged', 'updated', 'warnings'].every((key) =>
-    isNonNegativeSafeInteger(value[key]),
-  );
-
-const isMachine = (value: unknown): boolean =>
-  isRecord(value) && typeof value.id === 'string' && value.id.length > 0 && typeof value.label === 'string';
-
-const isManualPreviewData = (value: unknown): value is ManualMergePreviewResult =>
-  isImportResult(value) &&
-  isRecord(value) &&
-  isNonNegativeSafeInteger(value.bytes) &&
-  typeof value.digest === 'string' &&
-  typeof value.generatedAt === 'string' &&
-  isMachine(value.machine) &&
-  isNonNegativeSafeInteger(value.rows) &&
-  typeof value.confirmationToken === 'string' &&
-  value.confirmationToken.length > 0 &&
-  value.confirmationToken.length <= MAX_CONFIRMATION_TOKEN_CHARACTERS &&
-  isNonNegativeSafeInteger(value.warningCount) &&
-  Array.isArray(value.warningItems) &&
-  value.warningItems.every((item) => typeof item === 'string');
-
-const isManualImportData = (value: unknown): value is ManualMergeImportResult =>
-  isRecord(value) &&
-  typeof value.generatedAt === 'string' &&
-  isMachine(value.machine) &&
-  isImportResult(value.result) &&
-  isNonNegativeSafeInteger(value.rows) &&
-  isNonNegativeSafeInteger(value.warnings);
+const isManualImportData = (value: unknown): value is { readonly kind: 'none' } =>
+  isRecord(value) && Object.keys(value).length === 1 && value.kind === 'none';
 
 const isManualImportFailure = (value: unknown): value is Extract<ManualImportResult, { ok: false }> => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -495,7 +466,7 @@ const uploadManualMergeFile = <Value,>(
   action: 'preview' | 'confirm',
   onProgress: (progress: ManualImportProgress) => void,
   isValue: (value: unknown) => value is Value,
-  expected?: ManualMergePreviewResult,
+  expected?: UsageEngineMergePreviewOutput,
 ): Promise<ManualOperationResult<Value>> =>
   new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
@@ -503,7 +474,7 @@ const uploadManualMergeFile = <Value,>(
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.setRequestHeader('X-Ai-Usage-Merge-Action', action);
     if (expected) {
-      xhr.setRequestHeader('X-Ai-Usage-Merge-Digest', expected.digest);
+      xhr.setRequestHeader('X-Ai-Usage-Merge-Digest', expected.documentDigest);
       xhr.setRequestHeader('X-Ai-Usage-Merge-Confirmation', expected.confirmationToken);
     }
     xhr.upload.addEventListener('progress', (event) => {
@@ -530,6 +501,8 @@ const uploadManualMergeFile = <Value,>(
 function SyncRoute() {
   const fleetResult = Route.useLoaderData();
   const router = useRouter();
+  const sourceControl = useSourceControl();
+  const mutationAvailability = () => manualTransferMutationAvailability(sourceControl.state().connection);
   const fleetData = () => {
     const result = fleetResult();
     return result.ok ? result.data : null;
@@ -543,7 +516,9 @@ function SyncRoute() {
   const [operationError, setOperationError] = createSignal<ManualOperationError | null>(null);
   const [operationMessage, setOperationMessage] = createSignal<string | null>(null);
   const [manualImportProgress, setManualImportProgress] = createSignal<ManualImportProgress | null>(null);
-  const [manualPreview, setManualPreview] = createSignal<{ data: ManualMergePreviewResult; file: File } | null>(null);
+  const [manualPreview, setManualPreview] = createSignal<{ data: UsageEngineMergePreviewOutput; file: File } | null>(
+    null,
+  );
 
   const manualExport = async () => {
     if (pendingOperation()) {
@@ -568,7 +543,7 @@ function SyncRoute() {
   };
 
   const manualImport = async (file: File | undefined) => {
-    if (!file || pendingOperation()) {
+    if (!(file && mutationAvailability().available) || pendingOperation()) {
       return;
     }
     setPendingOperation('manual-preview');
@@ -602,7 +577,7 @@ function SyncRoute() {
 
   const confirmManualImport = async () => {
     const preview = manualPreview();
-    if (!preview || pendingOperation()) {
+    if (!(preview && mutationAvailability().available) || pendingOperation()) {
       return;
     }
     setPendingOperation('manual-confirm');
@@ -624,9 +599,10 @@ function SyncRoute() {
         preview.data,
       );
       if (next.ok) {
+        const successMessage = formatManualImportSummary(preview.data);
         await router.invalidate({ filter: (match) => match.routeId === '/sync' });
         setManualPreview(null);
-        setOperationMessage(formatManualImportSummary(next.data));
+        setOperationMessage(successMessage);
         return;
       }
       if (next.error.reason === 'preview-stale') {
@@ -654,6 +630,7 @@ function SyncRoute() {
         <div class={pageStack}>
           <OperationNotice error={operationError()} message={operationMessage()} />
           <OperationNotice error={fleetError()} message={null} />
+          <OperationNotice error={null} message={mutationAvailability().message} />
           <Show when={fleetData()}>
             {(data) => (
               <MachineFleetPanel
@@ -665,6 +642,7 @@ function SyncRoute() {
           </Show>
           <ManualTransferPanel
             importProgress={manualImportProgress()}
+            mutationsDisabled={!mutationAvailability().available}
             onCancel={() => setManualPreview(null)}
             onConfirm={confirmManualImport}
             onExport={manualExport}

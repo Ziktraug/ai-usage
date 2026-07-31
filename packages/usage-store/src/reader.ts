@@ -1,8 +1,10 @@
 export type { FocusedReportQueryResult } from './focused-report-query-sqlite';
 export { executeFocusedReportQuery } from './focused-report-query-sqlite';
 export type {
+  CurrentServedLocalProjectSources,
   ProviderQuotaSourceState,
   QueryLatestProviderQuotaObservationsInput,
+  QueryLocalMergeBundleInput,
   QueryNormalizedDatasetItemsInput,
   QueryNormalizedDatasetItemsResult,
   QueryProviderQuotaObservationsInput,
@@ -15,9 +17,13 @@ export type {
   QueryServedRevisionDataInput,
   QueryStoredReportCaptureInput,
   QueryStoredReportCaptureResult,
+  QueryUsageLocalMachineInput,
   QueryUsageMachineFleetInput,
   QueryUsageMachineFleetResult,
   QueryUsageStoreGenerationInput,
+  QueryUsageSyncFleetResult,
+  ServedLocalProjectSource,
+  ServedReportRevisionBootstrap,
   ServedReportRevisionManifest,
   ServedReportRevisionRows,
   ServedReportRevisionSlices,
@@ -31,8 +37,11 @@ export type {
 } from './index';
 export {
   MAX_USAGE_MACHINE_FLEET_MACHINES,
+  queryCurrentServedLocalProjectSources,
   queryCurrentServedReportRevision,
+  queryCurrentServedReportRevisionBootstrap,
   queryLatestProviderQuotaObservations,
+  queryLocalMergeBundle,
   queryNormalizedDatasetItems,
   queryProviderQuotaObservations,
   queryProviderQuotaSourceState,
@@ -43,9 +52,11 @@ export {
   queryServedReportRevisionSupport,
   queryServedRevisionData,
   queryStoredReportCapture,
+  queryUsageLocalMachine,
   queryUsageMachineFleet,
   queryUsageStoreGeneration,
   queryUsageStoreGenerations,
+  queryUsageSyncFleet,
   USAGE_STORE_SCHEMA_VERSION,
   UsageStoreError,
   usageStorePath,

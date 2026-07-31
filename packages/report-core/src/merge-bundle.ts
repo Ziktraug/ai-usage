@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
-import { assertPortableUsageByteLength, assertPortableUsageRowCount, MAX_PORTABLE_USAGE_BYTES } from './portable-usage';
+import {
+  assertPortableUsageByteLength,
+  assertPortableUsageRowCount,
+  assertPortableUsageTopLevelRowsPreflight,
+  MAX_PORTABLE_USAGE_BYTES,
+} from './portable-usage';
 import { type SerializedUsageRow, serializeUsageRow, type UsageReportWarning } from './report-data';
 import {
   hasOnlyKeys,
@@ -310,6 +315,7 @@ export const parseUsageMergeBundleValue = (value: unknown): UsageMergeBundle => 
 
 export const parseUsageMergeBundle = (text: string): UsageMergeBundle => {
   assertPortableUsageByteLength(text, 'Usage merge bundle');
+  assertPortableUsageTopLevelRowsPreflight(text, 'Usage merge bundle');
   return parseUsageMergeBundleValue(JSON.parse(text) as unknown);
 };
 

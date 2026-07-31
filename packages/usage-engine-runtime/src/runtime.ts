@@ -55,7 +55,15 @@ export class UsageEngineFatalConsistencyError extends AggregateError {
   override readonly name = 'UsageEngineFatalConsistencyError';
 }
 
-export type UsageEngineCommandErrorCode = Extract<UsageEngineErrorCode, 'preview-stale'>;
+export type UsageEngineCommandErrorCode = Extract<
+  UsageEngineErrorCode,
+  | 'command-rejected'
+  | 'merge-invalid-input'
+  | 'merge-invalid-json'
+  | 'merge-self-merge'
+  | 'merge-store-failed'
+  | 'preview-stale'
+>;
 
 export class UsageEngineCommandError extends Error {
   readonly code: UsageEngineCommandErrorCode;
@@ -88,6 +96,10 @@ type RunSourceCommand = Extract<UsageEngineCommand, { readonly command: 'run-sou
 type SetSourceEnabledCommand = Extract<UsageEngineCommand, { readonly command: 'set-source-enabled' }>;
 type ReplaceProjectAliasesCommand = Extract<UsageEngineCommand, { readonly command: 'replace-project-aliases' }>;
 type ReplaceProjectGroupsCommand = Extract<UsageEngineCommand, { readonly command: 'replace-project-groups' }>;
+type ReplaceProjectGroupsByReferenceCommand = Extract<
+  UsageEngineCommand,
+  { readonly command: 'replace-project-groups-by-reference' }
+>;
 type ImportCursorCommand = Extract<UsageEngineCommand, { readonly command: 'import-cursor' }>;
 type PreviewMergeCommand = Extract<UsageEngineCommand, { readonly command: 'preview-merge' }>;
 type ConfirmMergeCommand = Extract<UsageEngineCommand, { readonly command: 'confirm-merge' }>;
@@ -100,6 +112,10 @@ export interface UsageEngineMutationPort {
   readonly previewMerge: (command: PreviewMergeCommand, signal?: AbortSignal) => Promise<UsageEngineMergePreviewOutput>;
   readonly replaceProjectAliases: (command: ReplaceProjectAliasesCommand, signal?: AbortSignal) => Promise<void>;
   readonly replaceProjectGroups: (command: ReplaceProjectGroupsCommand, signal?: AbortSignal) => Promise<void>;
+  readonly replaceProjectGroupsByReference: (
+    command: ReplaceProjectGroupsByReferenceCommand,
+    signal?: AbortSignal,
+  ) => Promise<void>;
   readonly setMachineLabel: (label: string, signal?: AbortSignal) => Promise<void>;
 }
 
@@ -177,6 +193,7 @@ const commandIsInterruptibleDuringShutdown = (command: UsageEngineCommand): bool
     case 'publish':
     case 'replace-project-aliases':
     case 'replace-project-groups':
+    case 'replace-project-groups-by-reference':
     case 'set-machine-label':
     case 'set-source-enabled':
       return false;
@@ -287,16 +304,19 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
   let disposalPromise: Promise<void> | undefined;
   let sourceChangesTask: Promise<void> | undefined;
   let drainPromise: Promise<void> | undefined;
+  let policyDrainPromise: Promise<void> | undefined;
   let sourceAdmissionClosePromise: Promise<void> | undefined;
   let sourceAdmissionCloseFailure: unknown;
   let ownedCleanupPromise: Promise<void> | undefined;
   let activeCommand: ActiveCommand | undefined;
+  let activePolicyCommand: ActiveCommand | undefined;
   let releaseWriterLeaseDuringCleanup = true;
   let shutdownBegun = false;
   let sourceStartAttempted = false;
   let storeInitializationAttempted = false;
   const lifecycleAbort = new AbortController();
   const commandQueue: QueuedCommand[] = [];
+  const policyCommandQueue: QueuedCommand[] = [];
   const commandIdentities = new Map<string, CommandIdentity>();
   const subscribers = new Set<EventSubscriber>();
   const idleWaiters = new Set<() => void>();
@@ -450,6 +470,10 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
         await dependencies.mutation.replaceProjectGroups(command, signal);
         await dependencies.sourceControl.publish(signal);
         return;
+      case 'replace-project-groups-by-reference':
+        await dependencies.mutation.replaceProjectGroupsByReference(command, signal);
+        await dependencies.sourceControl.publish(signal);
+        return;
       case 'replace-project-aliases':
         await dependencies.mutation.replaceProjectAliases(command, signal);
         await dependencies.sourceControl.publish(signal);
@@ -467,10 +491,15 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
         return;
       case 'preview-merge':
         return await dependencies.mutation.previewMerge(command, signal);
-      case 'confirm-merge':
+      case 'confirm-merge': {
         await dependencies.mutation.confirmMerge(command, signal);
-        await dependencies.sourceControl.publish(signal);
+        try {
+          await dependencies.sourceControl.publish(signal);
+        } catch {
+          // The durable merge succeeded. Publication demand remains durable and retries independently.
+        }
         return;
+      }
       default: {
         const unsupportedCommand: never = command;
         throw new Error(`Unsupported usage engine command: ${JSON.stringify(unsupportedCommand)}`);
@@ -494,7 +523,7 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
   ): UsageEngineCommandCompletion => {
     const completedAt = now().toISOString();
     if (job.command.command === 'preview-merge') {
-      if (!result) {
+      if (result?.kind !== 'merge-preview') {
         throw new Error('A successful merge preview must return its bounded preview output.');
       }
       return {
@@ -515,7 +544,12 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
   };
 
   const resolveIdle = (): void => {
-    if (commandQueue.length !== 0 || drainPromise !== undefined) {
+    if (
+      commandQueue.length !== 0 ||
+      policyCommandQueue.length !== 0 ||
+      drainPromise !== undefined ||
+      policyDrainPromise !== undefined
+    ) {
       return;
     }
     for (const resolve of idleWaiters) {
@@ -570,6 +604,19 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
     closeAutonomousSourceAdmission();
   };
 
+  const rejectQueuedCommandsAfterFatalConsistency = (): void => {
+    for (const queuedJob of [...commandQueue.splice(0), ...policyCommandQueue.splice(0)]) {
+      scheduleFileInputCleanup(queuedJob.command);
+      publishCompletion(
+        failedCompletionFor(
+          queuedJob,
+          'engine-busy',
+          'The usage engine requires restart recovery before another command can run.',
+        ),
+      );
+    }
+  };
+
   const drainCommands = (): void => {
     if (drainPromise !== undefined) {
       return;
@@ -605,16 +652,7 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
           );
           if (error instanceof UsageEngineFatalConsistencyError) {
             enterFatalConsistencyState();
-            for (const queuedJob of commandQueue.splice(0)) {
-              scheduleFileInputCleanup(queuedJob.command);
-              publishCompletion(
-                failedCompletionFor(
-                  queuedJob,
-                  'engine-busy',
-                  'The usage engine requires restart recovery before another command can run.',
-                ),
-              );
-            }
+            rejectQueuedCommandsAfterFatalConsistency();
             break;
           }
         } finally {
@@ -630,6 +668,75 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
         drainCommands();
       }
     });
+  };
+
+  const drainPolicyCommands = (): void => {
+    if (policyDrainPromise !== undefined) {
+      return;
+    }
+    policyDrainPromise = (async () => {
+      while (policyCommandQueue.length > 0) {
+        const job = policyCommandQueue.shift();
+        if (!job) {
+          continue;
+        }
+        const controller = new AbortController();
+        const currentCommand = { controller, job };
+        activePolicyCommand = currentCommand;
+        try {
+          const result = await runCommand(job.command, controller.signal);
+          if (controller.signal.aborted) {
+            throw new Error('Usage engine command was aborted.');
+          }
+          publishCompletion(completionFor(job, result));
+        } catch (error) {
+          const typedCommandError = error instanceof UsageEngineCommandError ? error : undefined;
+          publishCompletion(
+            failedCompletionFor(
+              job,
+              controller.signal.aborted || lifecycleAbort.signal.aborted
+                ? 'aborted'
+                : (typedCommandError?.code ?? 'command-rejected'),
+              typedCommandError?.message ?? commandFailureMessage,
+            ),
+          );
+          if (error instanceof UsageEngineFatalConsistencyError) {
+            enterFatalConsistencyState();
+            rejectQueuedCommandsAfterFatalConsistency();
+            break;
+          }
+        } finally {
+          if (activePolicyCommand === currentCommand) {
+            activePolicyCommand = undefined;
+          }
+        }
+      }
+    })().finally(() => {
+      policyDrainPromise = undefined;
+      resolveIdle();
+      if (policyCommandQueue.length > 0) {
+        drainPolicyCommands();
+      }
+    });
+  };
+
+  const sourcePolicyMustPreemptActiveCollection = (command: SetSourceEnabledCommand): boolean => {
+    if (command.enabled || !activeCommand) {
+      return false;
+    }
+    const active = activeCommand.job.command;
+    switch (active.command) {
+      case 'run-source':
+        return active.sourceId === command.sourceId;
+      case 'run-all-enabled':
+        return true;
+      case 'collect-fresh-quota':
+        return command.sourceId === 'codex.usage-limits';
+      case 'import-cursor':
+        return command.sourceId === 'cursor.sessions';
+      default:
+        return false;
+    }
   };
 
   const executeCommand = (
@@ -657,7 +764,10 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
         }
         return Promise.resolve(acceptedResult(instanceId, commandId, 'coalesced'));
       }
-      if (readiness !== 'ready' || commandQueue.length >= sourceControlBounds.maxQueueDepth) {
+      if (
+        readiness !== 'ready' ||
+        commandQueue.length + policyCommandQueue.length >= sourceControlBounds.maxQueueDepth
+      ) {
         scheduleFileInputCleanup(command);
         return Promise.resolve(
           failedResult(instanceId, commandId, 'engine-busy', 'The usage engine is not accepting commands.'),
@@ -683,8 +793,13 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
         fingerprint,
         waiters: new Set(),
       });
-      commandQueue.push({ command, commandId });
-      drainCommands();
+      if (command.command === 'set-source-enabled' && sourcePolicyMustPreemptActiveCollection(command)) {
+        policyCommandQueue.push({ command, commandId });
+        drainPolicyCommands();
+      } else {
+        commandQueue.push({ command, commandId });
+        drainCommands();
+      }
       return Promise.resolve(acceptedResult(instanceId, commandId, 'accepted'));
     } catch (error) {
       return Promise.reject(error);
@@ -707,7 +822,12 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
   };
 
   const waitForIdle = async (): Promise<void> => {
-    if (commandQueue.length === 0 && drainPromise === undefined) {
+    if (
+      commandQueue.length === 0 &&
+      policyCommandQueue.length === 0 &&
+      drainPromise === undefined &&
+      policyDrainPromise === undefined
+    ) {
       return;
     }
     await new Promise<void>((resolve) => idleWaiters.add(resolve));
@@ -753,8 +873,15 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
       scheduleFileInputCleanup(job.command);
       publishCompletion(failedCompletionFor(job, 'aborted'));
     }
+    for (const job of policyCommandQueue.splice(0)) {
+      scheduleFileInputCleanup(job.command);
+      publishCompletion(failedCompletionFor(job, 'aborted'));
+    }
     if (activeCommand && commandIsInterruptibleDuringShutdown(activeCommand.job.command)) {
       activeCommand.controller.abort();
+    }
+    if (activePolicyCommand && commandIsInterruptibleDuringShutdown(activePolicyCommand.job.command)) {
+      activePolicyCommand.controller.abort();
     }
     closeAutonomousSourceAdmission();
   };
@@ -775,6 +902,11 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
       }
       try {
         await drainPromise;
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        await policyDrainPromise;
       } catch (error) {
         failures.push(error);
       }

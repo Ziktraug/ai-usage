@@ -12,7 +12,7 @@ import type { RuntimeMode } from './runtime-mode';
 
 export type { SourceControlCommandResponse } from '@ai-usage/report-core/source-control';
 
-export type SourceControlConnectionState = 'connecting' | 'live' | 'stale' | 'stopped';
+export type SourceControlConnectionState = 'connecting' | 'disconnected' | 'live' | 'protocol-mismatch' | 'stopped';
 
 export interface SourceControlClientState {
   readonly commandError: string | null;
@@ -27,7 +27,10 @@ interface EventSourceMessage {
 }
 
 export interface SourceControlEventSource {
-  addEventListener(type: 'report-published' | 'snapshot', listener: (event: EventSourceMessage) => void): void;
+  addEventListener(
+    type: 'control-state' | 'report-published' | 'snapshot',
+    listener: (event: EventSourceMessage) => void,
+  ): void;
   close(): void;
   onerror: ((event: Event) => void) | null;
   onopen: ((event: Event) => void) | null;
@@ -67,6 +70,20 @@ const defaultSendCommand = async (command: SourceControlCommand): Promise<Source
     throw new Error(result.ok ? 'The source control command failed.' : result.error.message);
   }
   return result;
+};
+
+const parseControlState = (value: unknown): Exclude<SourceControlConnectionState, 'connecting' | 'stopped'> => {
+  if (!(typeof value === 'object' && value !== null && !Array.isArray(value))) {
+    throw new Error('Source control connection state is invalid.');
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).length !== 1 || !Object.hasOwn(record, 'state')) {
+    throw new Error('Source control connection state is invalid.');
+  }
+  if (record.state !== 'disconnected' && record.state !== 'live' && record.state !== 'protocol-mismatch') {
+    throw new Error('Source control connection state is invalid.');
+  }
+  return record.state;
 };
 
 export const createSourceControlClient = (options: SourceControlClientOptions = {}): SourceControlClient => {
@@ -124,23 +141,34 @@ export const createSourceControlClient = (options: SourceControlClientOptions = 
     const source = createEventSource();
     eventSource = source;
     source.onopen = () => {
-      update({ connection: state.snapshot ? 'stale' : 'connecting' });
+      update({ connection: state.snapshot ? 'disconnected' : 'connecting' });
     };
     source.onerror = () => {
-      update({ connection: state.snapshot ? 'stale' : 'connecting' });
+      update({ connection: 'disconnected' });
     };
     source.addEventListener('snapshot', (event) => {
       try {
         acceptSnapshot(parseSourceControlSnapshot(JSON.parse(event.data) as unknown));
       } catch {
-        update({ connection: state.snapshot ? 'stale' : 'connecting' });
+        update({ connection: 'disconnected' });
       }
     });
     source.addEventListener('report-published', (event) => {
       try {
         acceptPublication(parseReportPublishedEvent(JSON.parse(event.data) as unknown));
       } catch {
-        update({ connection: state.snapshot ? 'stale' : 'connecting' });
+        update({ connection: 'disconnected' });
+      }
+    });
+    source.addEventListener('control-state', (event) => {
+      try {
+        const connection = parseControlState(JSON.parse(event.data) as unknown);
+        update({ connection });
+        if (connection === 'protocol-mismatch') {
+          source.close();
+        }
+      } catch {
+        update({ connection: 'disconnected' });
       }
     });
   };
@@ -152,7 +180,7 @@ export const createSourceControlClient = (options: SourceControlClientOptions = 
   };
 
   const execute = async (command: SourceControlCommand): Promise<boolean> => {
-    if (state.pendingCommand) {
+    if (state.connection !== 'live' || state.pendingCommand) {
       return false;
     }
     update({ commandError: null, pendingCommand: command });

@@ -104,7 +104,10 @@ export const SourceControlSummary = () => {
     if (!state.snapshot) {
       return state.connection === 'connecting' ? 'Connecting' : 'Unavailable';
     }
-    if (state.connection === 'stale') {
+    if (state.connection === 'protocol-mismatch') {
+      return 'Incompatible';
+    }
+    if (state.connection === 'disconnected') {
       return 'Reconnecting';
     }
     if (warningCount() > 0) {
@@ -117,7 +120,7 @@ export const SourceControlSummary = () => {
   });
   const statusTone = createMemo(() => {
     const state = sourceControl.state();
-    if (!state.snapshot || state.connection === 'stale') {
+    if (!state.snapshot || state.connection === 'disconnected' || state.connection === 'protocol-mismatch') {
       return 'warning';
     }
     return warningCount() > 0 ? 'danger' : 'ok';
@@ -230,7 +233,7 @@ export const SourceControlSummary = () => {
       <button
         aria-busy={runPending() ? 'true' : undefined}
         class={ghostButton}
-        disabled={!snapshot() || runPending()}
+        disabled={!snapshot() || sourceControl.state().connection !== 'live' || runPending()}
         onClick={() => {
           sourceControl.execute({ command: 'run-all' }).catch(() => undefined);
         }}

@@ -33,12 +33,13 @@ import {
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
 import {
+  assertSessionQueryCursorScope,
   queryServedRevisionData as queryStoredServedRevisionData,
   type ServedRevisionQueryTrace,
+  type SessionQueryKind,
   type UsageStoreError,
 } from '@ai-usage/usage-store/reader';
 import { Data, Effect } from 'effect';
-import { assertSessionQueryCursorScope, type SessionQueryKind } from './session-query-sqlite';
 
 export type ServedRevisionQueryKind = FocusedReportQueryKind | SessionQueryKind;
 export type ServedRevisionQueryResult =

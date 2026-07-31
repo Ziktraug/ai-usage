@@ -8,7 +8,11 @@ import {
   type NormalizedDatasetItem,
   type NormalizedDatasetKey,
 } from '@ai-usage/report-core/datasets';
-import { type FocusedReportSupport, parseFocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
+import {
+  type FocusedReportSupport,
+  type FocusedSupportResult,
+  parseFocusedReportSupport,
+} from '@ai-usage/report-core/focused-report-query';
 import {
   createUsageMergeBundle,
   deserializeMergeRow,
@@ -66,7 +70,7 @@ import {
 export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
 
-export const USAGE_STORE_SCHEMA_VERSION = 1;
+export const USAGE_STORE_SCHEMA_VERSION = 2;
 const USAGE_STORE_READER_BUSY_TIMEOUT_MS = 1000;
 const MAX_PROVIDER_QUOTA_OBSERVATIONS = 10_000;
 const MAX_PROVIDER_QUOTA_SOURCE_STATES = 1000;
@@ -127,6 +131,11 @@ export interface ExportLocalMergeBundleInput {
   machine: UsageMachine;
 }
 
+export interface QueryLocalMergeBundleInput {
+  readonly dbPath: string;
+  readonly generatedAt?: Date;
+}
+
 export interface ImportPeerMergeBundleInput {
   bundle: UsageMergeBundle;
   dbPath: string;
@@ -179,6 +188,14 @@ export interface QueryUsageMachineFleetResult {
   omittedMachines: number;
   /** Stored rows that failed validation and were skipped from fleet metadata. */
   skipped: number;
+}
+
+export interface QueryUsageLocalMachineInput {
+  readonly dbPath: string;
+}
+
+export interface QueryUsageSyncFleetResult extends QueryUsageMachineFleetResult {
+  readonly currentMachine: UsageMachine;
 }
 
 export interface QueryStoredReportCaptureInput extends QueryReportRowsInput {
@@ -413,6 +430,25 @@ export interface ServedReportRevisionSupport {
   readonly support: FocusedReportSupport;
 }
 
+export interface ServedReportRevisionBootstrap {
+  readonly manifest: ServedReportRevisionManifest;
+  readonly support: FocusedSupportResult;
+}
+
+export interface ServedLocalProjectSource {
+  readonly label: string;
+  readonly machineId: string;
+  readonly machineLabel: string;
+  readonly project: string;
+  readonly sessions: number;
+  readonly sourcePath: string;
+}
+
+export interface CurrentServedLocalProjectSources {
+  readonly revision: string;
+  readonly sources: readonly ServedLocalProjectSource[];
+}
+
 interface ServedReportRevisionReadContext {
   readonly database: ServedRevisionReadDatabase;
   readonly manifest: ServedReportRevisionManifest;
@@ -463,6 +499,7 @@ export type UsageStoreErrorReason =
   | 'busy'
   | 'corrupt'
   | 'invalid-input'
+  | 'machine-unavailable'
   | 'revision-expired'
   | 'revision-unavailable'
   | 'schema-too-new'
@@ -619,6 +656,12 @@ interface StoredMachineFleetAggregateRecord {
 interface StoredMachineFleetOrderRecord {
   label: string;
   origin_machine_id: string;
+}
+
+interface StoredUsageLocalMachineRecord {
+  machine_id: string;
+  machine_label: string;
+  updated_at: string;
 }
 
 interface StoredEnrichmentRecord {
@@ -1010,6 +1053,27 @@ const upsertRtkContribution = (
   return 'updated';
 };
 
+const usageLocalMachineSchemaSql = `
+  CREATE TABLE usage_local_machine (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    machine_id TEXT NOT NULL CHECK (length(machine_id) > 0),
+    machine_label TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`;
+
+const normalizedSchemaSql = (sql: string): string => sql.replace(/\s+/g, ' ').trim().toLowerCase();
+
+const hasExactUsageLocalMachineSchema = (db: SqliteDatabase): boolean => {
+  const record = db
+    .query("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'usage_local_machine'")
+    .get() as { sql: string | null } | null;
+  return (
+    typeof record?.sql === 'string' &&
+    normalizedSchemaSql(record.sql) === normalizedSchemaSql(usageLocalMachineSchemaSql)
+  );
+};
+
 const migrate = (db: SqliteDatabase): boolean => {
   const schemaVersion = db.query('PRAGMA user_version').get() as { user_version: number };
   if (schemaVersion.user_version > USAGE_STORE_SCHEMA_VERSION) {
@@ -1066,6 +1130,13 @@ const migrate = (db: SqliteDatabase): boolean => {
       origin_machine_id TEXT PRIMARY KEY,
       machine_label TEXT NOT NULL,
       sort_rank INTEGER NOT NULL UNIQUE CHECK (sort_rank >= 0)
+    );
+
+    CREATE TABLE IF NOT EXISTS usage_local_machine (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      machine_id TEXT NOT NULL CHECK (length(machine_id) > 0),
+      machine_label TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
 
     INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('generation', 0);
@@ -1228,6 +1299,9 @@ const migrate = (db: SqliteDatabase): boolean => {
         WHERE source_event_key IS NOT NULL;
     `);
     db.exec(servedReportSchemaSql);
+    if (!hasExactUsageLocalMachineSchema(db)) {
+      throw new Error('The local machine projection schema is incompatible.');
+    }
     if (quotaReadProjectionMissing) {
       db.exec(`
         INSERT OR IGNORE INTO provider_quota_streams (
@@ -1476,6 +1550,36 @@ const openUsageStoreWriterDatabase = (dbPath: string): Effect.Effect<SqliteDatab
     catch: (cause) => usageStoreError('openUsageStoreWriter', dbPath, cause, 'storage-failure'),
   });
 
+const assertUsageLocalMachineSchema = (db: SqliteDatabase, dbPath: string, operation: string): void => {
+  const columns = db.query('PRAGMA table_info(usage_local_machine)').all() as Array<{
+    name: string;
+    notnull: number;
+    pk: number;
+    type: string;
+  }>;
+  const expected = [
+    { name: 'singleton', notnull: 0, pk: 1, type: 'INTEGER' },
+    { name: 'machine_id', notnull: 1, pk: 0, type: 'TEXT' },
+    { name: 'machine_label', notnull: 1, pk: 0, type: 'TEXT' },
+    { name: 'updated_at', notnull: 1, pk: 0, type: 'TEXT' },
+  ];
+  const compatible =
+    columns.length === expected.length &&
+    columns.every((column, index) => {
+      const expectedColumn = expected[index];
+      return (
+        expectedColumn !== undefined &&
+        column.name === expectedColumn.name &&
+        column.notnull === expectedColumn.notnull &&
+        column.pk === expectedColumn.pk &&
+        column.type.toUpperCase() === expectedColumn.type
+      );
+    });
+  if (!(compatible && hasExactUsageLocalMachineSchema(db))) {
+    throw usageStoreError(operation, dbPath, 'The local machine projection schema is invalid.', 'corrupt');
+  }
+};
+
 const openUsageStoreReaderDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
   Effect.tryPromise({
     try: async () => {
@@ -1516,6 +1620,7 @@ const openUsageStoreReaderDatabase = (dbPath: string): Effect.Effect<SqliteDatab
             'schema-too-new',
           );
         }
+        assertUsageLocalMachineSchema(db, dbPath, 'openUsageStoreReader');
         assertServedReportSchema(db);
         db.clearStatements();
         return db;
@@ -1578,6 +1683,7 @@ const openUsageStorePreviewDatabase = (dbPath: string): Effect.Effect<SqliteData
             'schema-too-new',
           );
         }
+        assertUsageLocalMachineSchema(db, dbPath, 'openUsageStorePreview');
         assertServedReportSchema(db);
         db.clearStatements();
         return db;
@@ -2054,14 +2160,9 @@ export const importLocalRows = (input: ImportLocalRowsInput): Effect.Effect<Impo
 export const updateUsageMachineLabel = (
   input: UpdateUsageMachineLabelInput,
 ): Effect.Effect<UpdateUsageMachineLabelResult, UsageStoreError> => {
-  if (!(input.machine.id.length > 0 && input.machine.label.length > 0)) {
+  if (input.machine.id.length === 0) {
     return Effect.fail(
-      usageStoreError(
-        'updateUsageMachineLabel',
-        input.dbPath,
-        'Machine identity and label must be non-empty.',
-        'invalid-input',
-      ),
+      usageStoreError('updateUsageMachineLabel', input.dbPath, 'Machine identity must be non-empty.', 'invalid-input'),
     );
   }
   return withUsageStoreWriter(input.dbPath, (db) =>
@@ -2078,10 +2179,28 @@ export const updateUsageMachineLabel = (
           SET machine_label = ?, fleet_metadata_valid = 1
           WHERE row_key = ?
         `);
+        const upsertLocalMachine = db.query(`
+          INSERT INTO usage_local_machine (singleton, machine_id, machine_label, updated_at)
+          VALUES (1, ?, ?, ?)
+          ON CONFLICT(singleton) DO UPDATE SET
+            machine_id = excluded.machine_id,
+            machine_label = excluded.machine_label,
+            updated_at = excluded.updated_at
+        `);
+        let localMachineChanged = false;
         let skippedRows = 0;
         let updatedRows = 0;
         db.exec('BEGIN IMMEDIATE');
         try {
+          const previousLocalMachine = db
+            .query('SELECT machine_id, machine_label, updated_at FROM usage_local_machine WHERE singleton = 1')
+            .get() as StoredUsageLocalMachineRecord | null;
+          localMachineChanged =
+            previousLocalMachine?.machine_id !== input.machine.id ||
+            previousLocalMachine?.machine_label !== input.machine.label;
+          if (localMachineChanged) {
+            upsertLocalMachine.run(input.machine.id, input.machine.label, updatedAt);
+          }
           const records = db
             .query(`
               SELECT fleet_metadata_valid, machine_label, row_json, row_key
@@ -2129,6 +2248,8 @@ export const updateUsageMachineLabel = (
           }
           if (updatedRows > 0) {
             rebuildUsageMachineFleetOrder(db);
+          }
+          if (updatedRows > 0 || localMachineChanged) {
             db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
             db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'machine_fleet_generation'").run();
           }
@@ -2137,7 +2258,7 @@ export const updateUsageMachineLabel = (
           db.exec('ROLLBACK');
           throw cause;
         }
-        return { changed: updatedRows > 0, skippedRows, updatedRows };
+        return { changed: updatedRows > 0 || localMachineChanged, skippedRows, updatedRows };
       },
       catch: (cause) =>
         cause instanceof UsageStoreError
@@ -2475,7 +2596,13 @@ const readReportRows = (db: SqliteDatabase, input: QueryReportRowsInput): QueryR
   const rows: CollectedUsageRow[] = [];
   const sourceAuthorities: StoredSourceAuthority[] = [];
   for (const record of records) {
-    const parsed = JSON.parse(record.row_json) as unknown;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(record.row_json) as unknown;
+    } catch {
+      skipped += 1;
+      continue;
+    }
     if (isSerializedMergeRow(parsed)) {
       const base = stripRtkSavings(deserializeMergeRow(parsed));
       const contribution = rtkByRowKey.get(record.row_key);
@@ -2634,6 +2761,193 @@ export const queryUsageMachineFleet = (
   input: QueryUsageMachineFleetInput,
 ): Effect.Effect<QueryUsageMachineFleetResult, UsageStoreError> =>
   withUsageStoreReader(input.dbPath, (db) => queryUsageMachineFleetWithDatabase(db, input));
+
+const readUsageLocalMachineWithDatabase = (db: SqliteDatabase, dbPath: string): UsageMachine => {
+  const record = db
+    .query('SELECT machine_id, machine_label, updated_at FROM usage_local_machine WHERE singleton = 1')
+    .get() as StoredUsageLocalMachineRecord | null;
+  if (!record) {
+    throw usageStoreError(
+      'queryUsageLocalMachine',
+      dbPath,
+      'The usage engine has not published its local machine identity.',
+      'machine-unavailable',
+    );
+  }
+  if (
+    typeof record.machine_id !== 'string' ||
+    typeof record.machine_label !== 'string' ||
+    typeof record.updated_at !== 'string' ||
+    record.machine_id.length === 0 ||
+    record.updated_at.length === 0
+  ) {
+    throw usageStoreError('queryUsageLocalMachine', dbPath, 'The local machine projection is invalid.', 'corrupt');
+  }
+  const updatedAt = new Date(record.updated_at);
+  if (!Number.isFinite(updatedAt.getTime()) || updatedAt.toISOString() !== record.updated_at) {
+    throw usageStoreError('queryUsageLocalMachine', dbPath, 'The local machine projection is invalid.', 'corrupt');
+  }
+  return { id: record.machine_id, label: record.machine_label };
+};
+
+export const queryUsageLocalMachine = (
+  input: QueryUsageLocalMachineInput,
+): Effect.Effect<UsageMachine, UsageStoreError> =>
+  withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: () => readUsageLocalMachineWithDatabase(db, input.dbPath),
+      catch: (cause) => usageStoreReadError('queryUsageLocalMachine', input.dbPath, cause),
+    }),
+  );
+
+export type LocalProjectionReadPhase = 'local-bundle-after-machine' | 'sync-fleet-after-machine';
+
+let localProjectionReadFaultInjector: ((phase: LocalProjectionReadPhase) => Promise<void> | void) | undefined;
+
+export const setLocalProjectionReadFaultInjectorForTesting = (
+  injector: (phase: LocalProjectionReadPhase) => Promise<void> | void,
+): (() => void) => {
+  if (localProjectionReadFaultInjector) {
+    throw new Error('A local projection read fault injector is already installed.');
+  }
+  localProjectionReadFaultInjector = injector;
+  return () => {
+    if (localProjectionReadFaultInjector === injector) {
+      localProjectionReadFaultInjector = undefined;
+    }
+  };
+};
+
+const injectLocalProjectionReadPhase = (phase: LocalProjectionReadPhase): Promise<void> =>
+  Promise.resolve(localProjectionReadFaultInjector?.(phase));
+
+export const queryUsageSyncFleet = (
+  input: QueryUsageMachineFleetInput,
+): Effect.Effect<QueryUsageSyncFleetResult, UsageStoreError> =>
+  withUsageStoreReader(input.dbPath, (db) =>
+    Effect.gen(function* () {
+      yield* Effect.try({
+        try: () => db.exec('BEGIN'),
+        catch: (cause) => usageStoreReadError('queryUsageSyncFleet', input.dbPath, cause),
+      });
+      return yield* Effect.gen(function* () {
+        const currentMachine = yield* Effect.try({
+          try: () => readUsageLocalMachineWithDatabase(db, input.dbPath),
+          catch: (cause) => usageStoreReadError('queryUsageSyncFleet', input.dbPath, cause),
+        });
+        yield* Effect.tryPromise({
+          try: () => injectLocalProjectionReadPhase('sync-fleet-after-machine'),
+          catch: (cause) => usageStoreReadError('queryUsageSyncFleet', input.dbPath, cause),
+        });
+        const fleet = yield* queryUsageMachineFleetWithDatabase(db, input);
+        yield* Effect.try({
+          try: () => db.exec('COMMIT'),
+          catch: (cause) => usageStoreReadError('queryUsageSyncFleet', input.dbPath, cause),
+        });
+        return { currentMachine, ...fleet };
+      }).pipe(
+        Effect.catchAll((error) =>
+          Effect.sync(() => {
+            try {
+              db.exec('ROLLBACK');
+            } catch {
+              // The read failure remains authoritative.
+            }
+          }).pipe(Effect.zipRight(Effect.fail(error))),
+        ),
+      );
+    }),
+  );
+
+const assertLocalMergeBundleRowBudget = (db: SqliteDatabase, dbPath: string, machineId: string): void => {
+  const boundedRows = db
+    .query(`
+      SELECT row_key
+      FROM usage_rows
+      WHERE origin_machine_id = ? AND source_authority = 'local-observed' AND status = 'active'
+      LIMIT ?
+    `)
+    .all(machineId, MAX_PORTABLE_USAGE_ROWS + 1);
+  if (boundedRows.length <= MAX_PORTABLE_USAGE_ROWS) {
+    return;
+  }
+  const record = db
+    .query(`
+      SELECT COUNT(*) AS row_count
+      FROM usage_rows
+      WHERE origin_machine_id = ? AND source_authority = 'local-observed' AND status = 'active'
+    `)
+    .get(machineId) as { row_count: number } | null;
+  const rowCount = record?.row_count;
+  if (!(Number.isSafeInteger(rowCount) && Number(rowCount) > MAX_PORTABLE_USAGE_ROWS)) {
+    throw usageStoreError('queryLocalMergeBundle', dbPath, 'The local export row count is invalid.', 'corrupt');
+  }
+  throw usageStoreError(
+    'queryLocalMergeBundle',
+    dbPath,
+    `Usage merge bundle contains ${rowCount} rows; maximum is ${MAX_PORTABLE_USAGE_ROWS}`,
+    'invalid-input',
+  );
+};
+
+export const queryLocalMergeBundle = (
+  input: QueryLocalMergeBundleInput,
+): Effect.Effect<UsageMergeBundle, UsageStoreError> =>
+  withUsageStoreReader(input.dbPath, (db) =>
+    Effect.gen(function* () {
+      yield* Effect.try({
+        try: () => db.exec('BEGIN'),
+        catch: (cause) => usageStoreReadError('queryLocalMergeBundle', input.dbPath, cause),
+      });
+      return yield* Effect.gen(function* () {
+        const machine = yield* Effect.try({
+          try: () => readUsageLocalMachineWithDatabase(db, input.dbPath),
+          catch: (cause) => usageStoreReadError('queryLocalMergeBundle', input.dbPath, cause),
+        });
+        yield* Effect.tryPromise({
+          try: () => injectLocalProjectionReadPhase('local-bundle-after-machine'),
+          catch: (cause) => usageStoreReadError('queryLocalMergeBundle', input.dbPath, cause),
+        });
+        yield* Effect.try({
+          try: () => assertLocalMergeBundleRowBudget(db, input.dbPath, machine.id),
+          catch: (cause) => usageStoreReadError('queryLocalMergeBundle', input.dbPath, cause),
+        });
+        const result = yield* Effect.try({
+          try: () =>
+            readReportRows(db, {
+              dbPath: input.dbPath,
+              originMachineIds: [machine.id],
+              sourceAuthorities: ['local-observed'],
+            }),
+          catch: (cause) => usageStoreReadError('queryLocalMergeBundle', input.dbPath, cause),
+        });
+        const bundle = yield* Effect.try({
+          try: () =>
+            createUsageMergeBundle({
+              machine,
+              rows: result.rows,
+              ...(input.generatedAt === undefined ? {} : { generatedAt: input.generatedAt }),
+            }),
+          catch: (cause) => usageStoreReadError('queryLocalMergeBundle', input.dbPath, cause),
+        });
+        yield* Effect.try({
+          try: () => db.exec('COMMIT'),
+          catch: (cause) => usageStoreReadError('queryLocalMergeBundle', input.dbPath, cause),
+        });
+        return bundle;
+      }).pipe(
+        Effect.catchAll((error) =>
+          Effect.sync(() => {
+            try {
+              db.exec('ROLLBACK');
+            } catch {
+              // The read failure remains authoritative.
+            }
+          }).pipe(Effect.zipRight(Effect.fail(error))),
+        ),
+      );
+    }),
+  );
 
 export const queryEnrichableUsageRows = (
   input: QueryEnrichableUsageRowsInput,
@@ -2836,6 +3150,7 @@ const DEFAULT_MAXIMUM_SERVED_REPORT_ROWS = MAX_PORTABLE_USAGE_ROWS * DEFAULT_MAX
 const DEFAULT_MAXIMUM_SERVED_REPORT_BYTES =
   (MAX_REPORT_RUNNER_ARTIFACT_BYTES + MAX_SESSION_QUERY_DATABASE_BYTES) * DEFAULT_MAXIMUM_SERVED_REPORT_REVISIONS;
 const DEFAULT_ABANDONED_SERVED_REPORT_REVISION_MS = 5 * 60 * 1000;
+const MAX_SERVED_LOCAL_PROJECT_SOURCES_BYTES = 512 * 1024;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 let servedReportPublicationFaultInjector: ((phase: ServedReportPublicationPhase) => void) | undefined;
@@ -3138,6 +3453,94 @@ export const queryCurrentServedReportRevision = (
 ): Effect.Effect<ServedReportRevisionManifest, UsageStoreError> =>
   readServedReportRevision(input, ({ manifest }) => manifest);
 
+export const queryCurrentServedReportRevisionBootstrap = (
+  input: Omit<QueryServedReportRevisionInput, 'revision'>,
+): Effect.Effect<ServedReportRevisionBootstrap, UsageStoreError> =>
+  readServedReportRevision(input, ({ database, manifest, revision }) => ({
+    manifest,
+    support: executeServedRevisionQuery(
+      database,
+      parseServedRevisionQuery('support', {
+        revision,
+      }),
+    ) as FocusedSupportResult,
+  }));
+
+export const queryCurrentServedLocalProjectSources = (
+  input: Omit<QueryServedReportRevisionInput, 'revision'>,
+): Effect.Effect<CurrentServedLocalProjectSources, UsageStoreError> =>
+  readServedReportRevision(input, ({ database, revision }) => {
+    const records = database.query(`
+        SELECT source_row_json
+        FROM session_rows
+        WHERE source_authority = 'local-observed'
+        ORDER BY ordinal
+        LIMIT ${MAX_PORTABLE_USAGE_ROWS + 1}
+      `);
+    const sources = new Map<string, ServedLocalProjectSource>();
+    let projectedBytes = Buffer.byteLength(JSON.stringify({ revision, sources: [] }));
+    let scannedRows = 0;
+    for (const value of records.iterate()) {
+      scannedRows += 1;
+      if (scannedRows > MAX_PORTABLE_USAGE_ROWS) {
+        throw usageStoreError(
+          'queryCurrentServedLocalProjectSources',
+          input.dbPath,
+          `Served local project sources exceed ${MAX_PORTABLE_USAGE_ROWS} input rows`,
+          'invalid-input',
+        );
+      }
+      const record = value as { source_row_json?: unknown };
+      if (typeof record.source_row_json !== 'string') {
+        throw new Error('Served local project source row is invalid');
+      }
+      const rowValue: unknown = JSON.parse(record.source_row_json);
+      if (!isSerializedUsageRow(rowValue)) {
+        throw new Error('Served local project source row is invalid');
+      }
+      const machineId = rowValue.source?.machineId?.trim();
+      const sourcePath = rowValue.source?.sourcePath?.trim();
+      if (!(machineId && sourcePath)) {
+        continue;
+      }
+      const project = rowValue.rawProject?.trim() || rowValue.project;
+      const key = JSON.stringify([machineId, sourcePath, project]);
+      const existing = sources.get(key);
+      const source =
+        existing === undefined
+          ? {
+              label: rowValue.project,
+              machineId,
+              machineLabel: rowValue.source?.machineLabel?.trim() ?? '',
+              project,
+              sessions: 1,
+              sourcePath,
+            }
+          : { ...existing, sessions: existing.sessions + 1 };
+      const previousBytes = existing === undefined ? 0 : Buffer.byteLength(JSON.stringify(existing));
+      const separatorBytes = existing === undefined && sources.size > 0 ? 1 : 0;
+      projectedBytes += Buffer.byteLength(JSON.stringify(source)) - previousBytes + separatorBytes;
+      if (projectedBytes > MAX_SERVED_LOCAL_PROJECT_SOURCES_BYTES) {
+        throw usageStoreError(
+          'queryCurrentServedLocalProjectSources',
+          input.dbPath,
+          `Served local project sources exceed ${MAX_SERVED_LOCAL_PROJECT_SOURCES_BYTES} bytes`,
+          'invalid-input',
+        );
+      }
+      sources.set(key, source);
+    }
+    return {
+      revision,
+      sources: [...sources.values()].sort(
+        (left, right) =>
+          right.sessions - left.sessions ||
+          left.label.localeCompare(right.label) ||
+          left.sourcePath.localeCompare(right.sourcePath),
+      ),
+    };
+  });
+
 const readServedReportSupport = (
   database: ServedRevisionReadDatabase,
   manifest: ServedReportRevisionManifest,
@@ -3327,7 +3730,10 @@ const publicationOutcomeCommitted = (
     validateServedRevisionCounts(database, current);
     validateServedRevisionOrphans(database, current.revision);
     validateServedRevisionPayload(database, current);
-    validateServedRevisionQueryCatalog(createServedRevisionQueryDatabase(database, current.revision), current.revision);
+    validateServedRevisionQueryCatalog(
+      () => createServedRevisionQueryDatabase(database, current.revision),
+      current.revision,
+    );
     return servedRevisionManifestsMatch(manifestFromServedRevisionRecord(current), expected.manifest);
   } catch {
     return false;
@@ -3363,7 +3769,7 @@ export const publishServedReportRevision = (
                   validateServedRevisionOrphans(database, current.revision);
                   validateServedRevisionPayload(database, current);
                   validateServedRevisionQueryCatalog(
-                    createServedRevisionQueryDatabase(database, current.revision),
+                    () => createServedRevisionQueryDatabase(database, current.revision),
                     current.revision,
                   );
                   renewableManifest = manifestFromServedRevisionRecord(current);
@@ -3454,7 +3860,7 @@ export const publishServedReportRevision = (
               validateServedRevisionCounts(database, stagedRecord);
               validateServedRevisionOrphans(database, input.revision);
               validateServedRevisionQueryCatalog(
-                createServedRevisionQueryDatabase(database, input.revision),
+                () => createServedRevisionQueryDatabase(database, input.revision),
                 input.revision,
               );
               visitPublicationPhase('after-validation');

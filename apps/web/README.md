@@ -14,7 +14,7 @@ The public interface is the app route tree, server functions under `src/server`,
 
 ## Depends On
 
-`apps/web` may depend on `@ai-usage/effect-runtime`, `@ai-usage/report-data`, `@ai-usage/report-core`, `@ai-usage/design-system`, `@ai-usage/local-collectors`, `@ai-usage/skills`, `@ai-usage/usage-merge`, and `@ai-usage/usage-store` through public package exports.
+`apps/web` may depend on `@ai-usage/effect-runtime`, `@ai-usage/report-data`, `@ai-usage/report-core`, `@ai-usage/design-system`, `@ai-usage/local-collectors`, `@ai-usage/skills`, `@ai-usage/usage-engine-control`, and the read-only `@ai-usage/usage-store/reader` export.
 
 ## Must Not Import
 

@@ -33,7 +33,7 @@ export interface EngineMergeConfirmResult {
   readonly warnings: number;
 }
 
-export type EngineMergeErrorReason = 'invalid-input' | 'preview-stale' | 'self-merge' | 'store-failed';
+export type EngineMergeErrorReason = 'invalid-input' | 'invalid-json' | 'preview-stale' | 'self-merge' | 'store-failed';
 
 export class EngineMergeError extends Data.TaggedError('EngineMergeError')<{
   readonly cause?: unknown;
@@ -85,6 +85,19 @@ const engineMergeError = (
     ...(cause === undefined ? {} : { cause }),
   });
 
+const parseMergeDocument = (text: string, operation: string) => {
+  try {
+    return parseUsageMergeBundle(text);
+  } catch (cause) {
+    throw engineMergeError(
+      operation,
+      'Could not parse usage merge document.',
+      cause instanceof SyntaxError ? 'invalid-json' : 'invalid-input',
+      cause,
+    );
+  }
+};
+
 export const createEngineUsageMergeService = (options: EngineUsageMergeServiceOptions): EngineUsageMergeService => ({
   confirm: (input) =>
     Effect.gen(function* () {
@@ -95,9 +108,11 @@ export const createEngineUsageMergeService = (options: EngineUsageMergeServiceOp
         );
       }
       const bundle = yield* Effect.try({
-        try: () => parseUsageMergeBundle(input.text),
+        try: () => parseMergeDocument(input.text, 'confirmMerge'),
         catch: (cause) =>
-          engineMergeError('confirmMerge', 'Could not parse usage merge confirmation.', 'invalid-input', cause),
+          cause instanceof EngineMergeError
+            ? cause
+            : engineMergeError('confirmMerge', 'Could not parse usage merge confirmation.', 'invalid-input', cause),
       });
       const result = yield* confirmPeerMergeBundle({
         bundle,
@@ -126,9 +141,11 @@ export const createEngineUsageMergeService = (options: EngineUsageMergeServiceOp
   preview: (input) =>
     Effect.gen(function* () {
       const bundle = yield* Effect.try({
-        try: () => parseUsageMergeBundle(input.text),
+        try: () => parseMergeDocument(input.text, 'previewMerge'),
         catch: (cause) =>
-          engineMergeError('previewMerge', 'Could not parse usage merge preview.', 'invalid-input', cause),
+          cause instanceof EngineMergeError
+            ? cause
+            : engineMergeError('previewMerge', 'Could not parse usage merge preview.', 'invalid-input', cause),
       });
       const preview = yield* previewPeerMergeBundle({
         bundle,
@@ -139,7 +156,7 @@ export const createEngineUsageMergeService = (options: EngineUsageMergeServiceOp
           engineMergeError(
             'previewMerge',
             `Could not preview usage merge file from ${bundle.machine.label}.`,
-            cause.reason === 'self-import' ? 'self-merge' : 'store-failed',
+            mergeReasonFromStore(cause.reason),
             cause,
           ),
         ),

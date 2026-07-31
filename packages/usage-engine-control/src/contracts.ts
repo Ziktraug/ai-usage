@@ -28,6 +28,7 @@ export type UsageEngineEventId = Branded<string, 'UsageEngineEventId'>;
 export type UsageEngineEventSequence = Branded<number, 'UsageEngineEventSequence'>;
 export type UsageEngineHandoffId = Branded<string, 'UsageEngineHandoffId'>;
 export type UsageEnginePublicationRevision = Branded<string, 'UsageEnginePublicationRevision'>;
+export type UsageEngineProjectSourceReference = Branded<string, 'UsageEngineProjectSourceReference'>;
 
 export const USAGE_ENGINE_PROTOCOL_VERSION = 1 as UsageEngineProtocolVersion;
 
@@ -62,6 +63,7 @@ const opaqueIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,159}$/;
 const revisionPattern = /^[a-zA-Z0-9._-]{1,160}$/;
 const boundedCodePattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 const sha256DigestPattern = /^[a-f0-9]{64}$/;
+const projectSourceReferencePattern = /^project-source:[a-f0-9]{64}$/;
 const encoder = new TextEncoder();
 
 export type UsageEngineContractErrorReason = 'invalid-contract' | 'protocol-mismatch';
@@ -188,6 +190,19 @@ export const parseUsageEnginePublicationRevision = (value: unknown): UsageEngine
   return value as UsageEnginePublicationRevision;
 };
 
+export const parseUsageEngineProjectSourceReference = (value: unknown): UsageEngineProjectSourceReference => {
+  if (!(typeof value === 'string' && projectSourceReferencePattern.test(value))) {
+    return fail('Usage engine project source reference is invalid.');
+  }
+  return value as UsageEngineProjectSourceReference;
+};
+
+export interface UsageEngineProjectGroupReferenceConfig {
+  readonly id: string;
+  readonly name: string;
+  readonly sources: readonly UsageEngineProjectSourceReference[];
+}
+
 export type UsageEngineFileInput =
   | {
       readonly handoffId: UsageEngineHandoffId;
@@ -211,6 +226,11 @@ export type UsageEngineCommand =
   | {
       readonly command: 'replace-project-groups';
       readonly projectGroups: readonly ProjectGroupConfig[];
+    }
+  | {
+      readonly command: 'replace-project-groups-by-reference';
+      readonly projectGroups: readonly UsageEngineProjectGroupReferenceConfig[];
+      readonly revision: UsageEnginePublicationRevision;
     }
   | {
       readonly command: 'replace-project-aliases';
@@ -308,6 +328,37 @@ const parseProjectGroups = (value: unknown): readonly ProjectGroupConfig[] => {
   }
 };
 
+const parseProjectGroupReferences = (value: unknown): readonly UsageEngineProjectGroupReferenceConfig[] => {
+  if (!(Array.isArray(value) && value.length <= usageEngineControlBounds.maxProjectGroups)) {
+    return fail('Usage engine project group references are invalid or exceed their limit.');
+  }
+  const groups: UsageEngineProjectGroupReferenceConfig[] = [];
+  const groupIds = new Set<string>();
+  for (const groupValue of value) {
+    if (!(isRecord(groupValue) && hasExactKeys(groupValue, ['id', 'name', 'sources']))) {
+      return fail('Usage engine project group reference contains unknown or missing fields.');
+    }
+    if (!(Array.isArray(groupValue.sources) && groupValue.sources.length > 0)) {
+      return fail('Usage engine project group source references are invalid.');
+    }
+    const id = parseBoundedString(groupValue.id, usageEngineControlBounds.maxMessageBytes, 'Project group ID');
+    if (groupIds.has(id)) {
+      return fail('Usage engine project group reference IDs must be unique.');
+    }
+    groupIds.add(id);
+    const sources = groupValue.sources.map(parseUsageEngineProjectSourceReference);
+    if (new Set(sources).size !== sources.length) {
+      return fail('Usage engine project group source references must be unique.');
+    }
+    groups.push({
+      id,
+      name: parseBoundedString(groupValue.name, usageEngineControlBounds.maxMessageBytes, 'Project group name'),
+      sources,
+    });
+  }
+  return groups;
+};
+
 const parseProjectAliases = (value: unknown): readonly ProjectAliasEntry[] => {
   if (!(Array.isArray(value) && value.length <= usageEngineControlBounds.maxProjectAliases)) {
     return fail('Usage engine project aliases are invalid or exceed their limit.');
@@ -395,6 +446,15 @@ export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
         return fail('Usage engine replace-project-groups command contains unknown fields.');
       }
       return { command: 'replace-project-groups', projectGroups: parseProjectGroups(command.projectGroups) };
+    case 'replace-project-groups-by-reference':
+      if (!hasExactKeys(command, ['command', 'projectGroups', 'revision'])) {
+        return fail('Usage engine replace-project-groups-by-reference command contains unknown fields.');
+      }
+      return {
+        command: 'replace-project-groups-by-reference',
+        projectGroups: parseProjectGroupReferences(command.projectGroups),
+        revision: parseUsageEnginePublicationRevision(command.revision),
+      };
     case 'replace-project-aliases':
       if (!hasExactKeys(command, ['command', 'projectAliases'])) {
         return fail('Usage engine replace-project-aliases command contains unknown fields.');
@@ -503,6 +563,10 @@ export type UsageEngineErrorCode =
   | 'engine-busy'
   | 'engine-unavailable'
   | 'invalid-response'
+  | 'merge-invalid-input'
+  | 'merge-invalid-json'
+  | 'merge-self-merge'
+  | 'merge-store-failed'
   | 'preview-stale'
   | 'protocol-mismatch'
   | 'request-too-large'
@@ -517,6 +581,10 @@ const usageEngineErrorCodes = new Set<UsageEngineErrorCode>([
   'engine-busy',
   'engine-unavailable',
   'invalid-response',
+  'merge-invalid-input',
+  'merge-invalid-json',
+  'merge-self-merge',
+  'merge-store-failed',
   'preview-stale',
   'protocol-mismatch',
   'request-too-large',
@@ -644,6 +712,7 @@ const usageEngineCommandNames = new Set<UsageEngineCommandName>([
   'publish',
   'replace-project-aliases',
   'replace-project-groups',
+  'replace-project-groups-by-reference',
   'run-all-enabled',
   'run-source',
   'set-machine-label',
@@ -659,6 +728,9 @@ const parseUsageEngineCommandName = (value: unknown): UsageEngineCommandName => 
 
 const parseMergeCount = (value: unknown, label: string): number =>
   parseNonNegativeSafeInteger(value, MAX_PORTABLE_USAGE_ROWS, label);
+
+const parseMergeWarningCount = (value: unknown, label: string): number =>
+  parseNonNegativeSafeInteger(value, Number.MAX_SAFE_INTEGER, label);
 
 const parseMergeImportResult = (value: unknown): UsageEngineMergeImportResult => {
   if (
@@ -677,11 +749,18 @@ const parseMergeImportResult = (value: unknown): UsageEngineMergeImportResult =>
     superseded: parseMergeCount(value.superseded, 'Usage engine merge superseded count'),
     unchanged: parseMergeCount(value.unchanged, 'Usage engine merge unchanged count'),
     updated: parseMergeCount(value.updated, 'Usage engine merge updated count'),
-    warnings: parseMergeCount(value.warnings, 'Usage engine merge warning count'),
+    warnings: parseMergeWarningCount(value.warnings, 'Usage engine merge warning count'),
   };
 };
 
-const parseMergePreviewOutput = (value: unknown): UsageEngineMergePreviewOutput => {
+const assertMergeResultRows = (result: UsageEngineMergeImportResult, rows: number): void => {
+  const classifiedRows = result.deleted + result.inserted + result.superseded + result.unchanged + result.updated;
+  if (classifiedRows !== rows) {
+    fail('Usage engine merge result counts do not match its row count.');
+  }
+};
+
+export const parseUsageEngineMergePreviewOutput = (value: unknown): UsageEngineMergePreviewOutput => {
   if (
     !(
       isRecord(value) &&
@@ -695,6 +774,9 @@ const parseMergePreviewOutput = (value: unknown): UsageEngineMergePreviewOutput 
   if (!sha256DigestPattern.test(documentDigest)) {
     return fail('Usage engine merge document digest is invalid.');
   }
+  const result = parseMergeImportResult(value.result);
+  const rows = parseMergeCount(value.rows, 'Usage engine merge row count');
+  assertMergeResultRows(result, rows);
   return {
     bytes: parseNonNegativeSafeInteger(value.bytes, MAX_PORTABLE_USAGE_BYTES, 'Usage engine merge byte count'),
     confirmationToken: parseBoundedString(
@@ -704,13 +786,18 @@ const parseMergePreviewOutput = (value: unknown): UsageEngineMergePreviewOutput 
     ),
     documentDigest,
     kind: 'merge-preview',
-    result: parseMergeImportResult(value.result),
-    rows: parseMergeCount(value.rows, 'Usage engine merge row count'),
-    warningCount: parseMergeCount(value.warningCount, 'Usage engine merge preview warning count'),
+    result,
+    rows,
+    warningCount: parseMergeWarningCount(value.warningCount, 'Usage engine merge preview warning count'),
   };
 };
 
 export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCommandCompletion => {
+  assertSerializedBound(
+    value,
+    usageEngineControlBounds.maxCommandCompletionEventBytes,
+    'Usage engine command completion',
+  );
   if (!(isRecord(value) && typeof value.state === 'string')) {
     return fail('Usage engine command completion is invalid.');
   }
@@ -732,7 +819,7 @@ export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCo
     return fail('Usage engine successful command completion contains unknown or missing fields.');
   }
   if (command === 'preview-merge') {
-    return { ...base, command, output: parseMergePreviewOutput(value.output), state: 'succeeded' };
+    return { ...base, command, output: parseUsageEngineMergePreviewOutput(value.output), state: 'succeeded' };
   }
   if (!(isRecord(value.output) && hasExactKeys(value.output, ['kind']) && value.output.kind === 'none')) {
     return fail('Only a preview command may carry merge preview output.');
@@ -1053,6 +1140,10 @@ export const classifyUsageEngineRetry = (
     code === 'authentication-failed' ||
     code === 'command-rejected' ||
     code === 'invalid-response' ||
+    code === 'merge-invalid-input' ||
+    code === 'merge-invalid-json' ||
+    code === 'merge-self-merge' ||
+    code === 'merge-store-failed' ||
     code === 'preview-stale' ||
     code === 'protocol-mismatch' ||
     code === 'request-too-large' ||

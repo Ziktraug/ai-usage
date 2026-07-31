@@ -3,9 +3,7 @@ import { tanstackStart } from '@tanstack/solid-start/plugin/vite';
 import { nitro } from 'nitro/vite';
 import { defineConfig, type Plugin } from 'vite';
 import solid from 'vite-plugin-solid';
-import { PERSISTENT_SOURCE_RUNTIME_PACKAGES } from './src/server/persistent-source-runtime';
 import { getServerRuntimeMode } from './src/server/runtime-mode.server';
-import { manualSyncImportDevPlugin } from './vite-manual-sync-import';
 import { resolveViteRuntimePaths } from './vite-output-paths';
 import { createRetryableWarmup } from './vite-warmup';
 
@@ -117,7 +115,6 @@ export default defineConfig((configEnvironment) => {
       include: [...clientOptimizeDeps],
     },
     plugins: [
-      manualSyncImportDevPlugin(),
       tanStackServerFunctionWarmupPlugin(),
       tanstackStart({
         router: {
@@ -144,11 +141,9 @@ export default defineConfig((configEnvironment) => {
             route: '/api/source-control/command',
           },
         ],
-        noExternals: [...PERSISTENT_SOURCE_RUNTIME_PACKAGES],
         output: {
           dir: nitroOutputDirectory,
         },
-        plugins: ['./server/plugins/source-control.ts'],
         preset: 'bun',
       }),
       solidDepScanPlugin(),

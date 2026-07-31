@@ -1,180 +1,260 @@
 import { describe, expect, test } from 'bun:test';
+import {
+  parseUsageEngineCommandCompletion,
+  parseUsageEngineHandoffId,
+  type UsageEngineCommand,
+  type UsageEngineCommandCompletion,
+} from '@ai-usage/usage-engine-control';
+import type { StagedUsageEngineHandoff } from '@ai-usage/usage-engine-control/handoff';
 import { handleManualMergeUpload } from './manual-merge-upload.server';
+import { UsageEngineCommandCompletionError } from './usage-engine-command.server';
 
-const jsonRequest = (body: string, headers: Record<string, string> = {}) =>
+const DIGEST = 'a'.repeat(64);
+
+const jsonRequest = (body: BodyInit, headers: Record<string, string> = {}, signal?: AbortSignal) =>
   new Request('http://localhost/sync', {
-    method: 'POST',
+    body,
     headers: {
       'content-type': 'application/json',
       host: 'localhost',
       origin: 'http://localhost',
+      'x-ai-usage-merge-action': 'preview',
       ...headers,
     },
-    body,
+    method: 'POST',
+    ...(signal === undefined ? {} : { signal }),
   });
 
+const previewCompletion = (): UsageEngineCommandCompletion =>
+  parseUsageEngineCommandCompletion({
+    command: 'preview-merge',
+    commandId: 'preview-command',
+    completedAt: '2026-07-30T12:00:00.000Z',
+    output: {
+      bytes: 11,
+      confirmationToken: 'confirmation-token',
+      documentDigest: DIGEST,
+      kind: 'merge-preview',
+      result: {
+        deleted: 0,
+        fleetChanged: false,
+        inserted: 0,
+        superseded: 0,
+        unchanged: 0,
+        updated: 0,
+        warnings: 0,
+      },
+      rows: 0,
+      warningCount: 0,
+    },
+    state: 'succeeded',
+  });
+
+const confirmedCompletion = (): UsageEngineCommandCompletion =>
+  parseUsageEngineCommandCompletion({
+    command: 'confirm-merge',
+    commandId: 'confirm-command',
+    completedAt: '2026-07-30T12:00:00.000Z',
+    output: { kind: 'none' },
+    state: 'succeeded',
+  });
+
+const stagedFixture = (handoffId: string, onCleanup: () => void): StagedUsageEngineHandoff => ({
+  cleanup: () => {
+    onCleanup();
+    return Promise.resolve();
+  },
+  input: { handoffId: parseUsageEngineHandoffId(handoffId), kind: 'inbox-handoff' },
+});
+
 describe('manual merge upload boundary', () => {
-  test('accepts a bounded same-origin JSON upload', async () => {
-    let importedText = '';
+  test('stages exact preview bytes, awaits the exact engine command, and cleans up', async () => {
+    const stagedBytes: Uint8Array[] = [];
+    const commands: UsageEngineCommand[] = [];
+    let cleanups = 0;
     const response = await handleManualMergeUpload(jsonRequest('{"rows":[]}'), {
-      importBundle: (text) => {
-        importedText = text;
-        return Promise.resolve({ ok: true as const, data: { rows: 0 } });
+      executeCommand: (command) => {
+        commands.push(command);
+        return Promise.resolve(previewCompletion());
+      },
+      stageHandoff: (bytes) => {
+        stagedBytes.push(bytes);
+        return Promise.resolve(stagedFixture('preview-handoff', () => (cleanups += 1)));
       },
     });
 
     expect(response.status).toBe(200);
-    expect(importedText).toBe('{"rows":[]}');
-    expect(await response.json()).toEqual({ ok: true, data: { rows: 0 } });
+    expect(new TextDecoder().decode(stagedBytes[0])).toBe('{"rows":[]}');
+    expect(commands).toEqual([
+      {
+        command: 'preview-merge',
+        input: { handoffId: parseUsageEngineHandoffId('preview-handoff'), kind: 'inbox-handoff' },
+      },
+    ]);
+    expect(cleanups).toBe(1);
+    expect(await response.json()).toMatchObject({ data: { kind: 'merge-preview' }, ok: true });
   });
 
-  test('rejects cross-origin and non-JSON requests before import', async () => {
-    let imports = 0;
-    const importBundle = () => {
-      imports += 1;
-      return Promise.resolve({ ok: true as const, data: {} });
+  test('transports bounded confirmation preconditions with a newly staged handoff', async () => {
+    const commands: UsageEngineCommand[] = [];
+    const response = await handleManualMergeUpload(
+      jsonRequest('{"rows":[]}', {
+        'x-ai-usage-merge-action': 'confirm',
+        'x-ai-usage-merge-confirmation': 'opaque-token',
+        'x-ai-usage-merge-digest': DIGEST,
+      }),
+      {
+        executeCommand: (command) => {
+          commands.push(command);
+          return Promise.resolve(confirmedCompletion());
+        },
+        stageHandoff: () => Promise.resolve(stagedFixture('confirm-handoff', () => undefined)),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(commands).toEqual([
+      {
+        command: 'confirm-merge',
+        confirmationToken: 'opaque-token',
+        documentDigest: DIGEST,
+        input: { handoffId: parseUsageEngineHandoffId('confirm-handoff'), kind: 'inbox-handoff' },
+      },
+    ]);
+    expect(await response.json()).toEqual({ data: { kind: 'none' }, ok: true });
+  });
+
+  test('rejects trust and media-type failures before staging bytes', async () => {
+    let stages = 0;
+    const options = {
+      executeCommand: () => Promise.resolve(previewCompletion()),
+      stageHandoff: () => {
+        stages += 1;
+        return Promise.resolve(stagedFixture('unused-handoff', () => undefined));
+      },
     };
     const crossOrigin = await handleManualMergeUpload(
       jsonRequest('{"rows":[]}', { origin: 'http://attacker.example' }),
-      { importBundle },
+      options,
     );
     const wrongContentType = await handleManualMergeUpload(
       jsonRequest('{"rows":[]}', { 'content-type': 'text/plain' }),
-      { importBundle },
+      options,
+    );
+    const rebound = await handleManualMergeUpload(
+      jsonRequest('{"rows":[]}', { host: 'attacker.example', origin: 'http://attacker.example' }),
+      options,
     );
 
     expect(crossOrigin.status).toBe(403);
     expect(wrongContentType.status).toBe(415);
-    expect(imports).toBe(0);
+    expect(rebound.status).toBe(403);
+    expect(stages).toBe(0);
   });
 
-  test('rejects DNS-rebinding requests even when Host and Origin agree', async () => {
-    let imports = 0;
-    const response = await handleManualMergeUpload(
-      jsonRequest('{"rows":[]}', {
-        host: 'attacker.example',
-        origin: 'http://attacker.example',
-        'sec-fetch-site': 'same-origin',
-      }),
-      {
-        importBundle: () => {
-          imports += 1;
-          return Promise.resolve({ ok: true as const, data: {} });
-        },
-      },
+  test('requires an explicit action, strict UTF-8, bounded bytes, and valid confirmation headers', async () => {
+    const options = {
+      executeCommand: () => Promise.resolve(previewCompletion()),
+      maxBytes: 4,
+      stageHandoff: () => Promise.resolve(stagedFixture('unused-handoff', () => undefined)),
+    };
+    const implicitImport = await handleManualMergeUpload(
+      jsonRequest('{}', { 'x-ai-usage-merge-action': 'import' }),
+      options,
     );
-
-    expect(response.status).toBe(403);
-    expect(await response.json()).toMatchObject({ error: { tag: 'UntrustedHost' }, ok: false });
-    expect(imports).toBe(0);
-  });
-
-  test('enforces streamed byte and parsed row limits', async () => {
-    const importBundle = () => Promise.resolve({ ok: true as const, data: {} });
-    const tooManyBytes = await handleManualMergeUpload(jsonRequest('{"rows":[]}'), {
-      importBundle,
+    const tooLarge = await handleManualMergeUpload(jsonRequest('{"rows":[]}'), options);
+    const invalidUtf8 = await handleManualMergeUpload(jsonRequest(new Uint8Array([0xc3, 0x28])), {
+      ...options,
       maxBytes: 4,
     });
-    const tooManyRows = await handleManualMergeUpload(jsonRequest('{"rows":[{},{},{}]}'), {
-      importBundle,
-      maxRows: 2,
-    });
+    const invalidConfirmation = await handleManualMergeUpload(
+      jsonRequest('{}', {
+        'x-ai-usage-merge-action': 'confirm',
+        'x-ai-usage-merge-confirmation': 'token',
+        'x-ai-usage-merge-digest': 'not-a-digest',
+      }),
+      { ...options, maxBytes: 4 },
+    );
 
-    expect(tooManyBytes.status).toBe(413);
-    expect(await tooManyBytes.json()).toMatchObject({ error: { tag: 'UploadTooLarge' }, ok: false });
-    expect(tooManyRows.status).toBe(413);
-    expect(await tooManyRows.json()).toMatchObject({ error: { tag: 'TooManyRows' }, ok: false });
+    expect(implicitImport.status).toBe(400);
+    expect(tooLarge.status).toBe(413);
+    expect(invalidUtf8.status).toBe(400);
+    expect(invalidConfirmation.status).toBe(400);
   });
 
-  test('returns explicit 4xx responses for malformed and invalid bundles', async () => {
-    const malformed = await handleManualMergeUpload(jsonRequest('{nope'), {
-      importBundle: () => Promise.resolve({ ok: true as const, data: {} }),
+  test('cancels a blocked upload body on request abort before staging', async () => {
+    const abort = new AbortController();
+    let bodyCancels = 0;
+    let stages = 0;
+    const body = new ReadableStream<Uint8Array>({
+      cancel: () => {
+        bodyCancels += 1;
+      },
+      pull: () => new Promise<void>(() => undefined),
     });
-    const invalidBundle = await handleManualMergeUpload(jsonRequest('{"rows":[]}'), {
-      importBundle: () =>
+    const responsePromise = handleManualMergeUpload(jsonRequest(body, {}, abort.signal), {
+      executeCommand: () => Promise.resolve(previewCompletion()),
+      stageHandoff: () => {
+        stages += 1;
+        return Promise.resolve(stagedFixture('unused-handoff', () => undefined));
+      },
+    });
+    await Promise.resolve();
+
+    abort.abort();
+    const response = await responsePromise;
+
+    expect(response.status).toBe(499);
+    expect(bodyCancels).toBe(1);
+    expect(stages).toBe(0);
+  });
+
+  test('maps stable engine failures and cleans the handoff after rejection', async () => {
+    const cases = [
+      ['merge-invalid-json', 400],
+      ['merge-invalid-input', 422],
+      ['preview-stale', 409],
+      ['merge-self-merge', 409],
+      ['protocol-mismatch', 409],
+      ['request-too-large', 413],
+      ['invalid-response', 502],
+      ['engine-unavailable', 503],
+      ['timeout', 503],
+      ['merge-store-failed', 500],
+    ] as const;
+
+    for (const [code, expectedStatus] of cases) {
+      let cleanups = 0;
+      const response = await handleManualMergeUpload(jsonRequest('{"rows":[]}'), {
+        executeCommand: () => Promise.reject(new UsageEngineCommandCompletionError(code, `private ${code}`)),
+        stageHandoff: () => Promise.resolve(stagedFixture(`${code}-handoff`, () => (cleanups += 1))),
+      });
+      expect(response.status).toBe(expectedStatus);
+      expect(cleanups).toBe(1);
+      expect(await response.json()).toMatchObject({
+        error: { reason: code, tag: 'UsageEngineCommandError' },
+        ok: false,
+      });
+    }
+  });
+
+  test('rejects mismatched completion output and reports cleanup failure without leaking paths', async () => {
+    const mismatch = await handleManualMergeUpload(jsonRequest('{"rows":[]}'), {
+      executeCommand: () => Promise.resolve(confirmedCompletion()),
+      stageHandoff: () => Promise.resolve(stagedFixture('mismatch-handoff', () => undefined)),
+    });
+    const cleanupFailure = await handleManualMergeUpload(jsonRequest('{"rows":[]}'), {
+      executeCommand: () => Promise.resolve(previewCompletion()),
+      stageHandoff: () =>
         Promise.resolve({
-          ok: false as const,
-          error: { tag: 'UsageMergeError', message: 'Invalid bundle schema.', reason: 'invalid-input' },
+          cleanup: () => Promise.reject(new Error('/private/inbox/handoff.upload')),
+          input: { handoffId: parseUsageEngineHandoffId('cleanup-handoff'), kind: 'inbox-handoff' },
         }),
     });
 
-    expect(malformed.status).toBe(400);
-    expect(await malformed.json()).toMatchObject({ error: { tag: 'MalformedJson' }, ok: false });
-    expect(invalidBundle.status).toBe(422);
-    expect(await invalidBundle.json()).toEqual({
-      ok: false,
-      error: { tag: 'UsageMergeError', message: 'Invalid bundle schema.', reason: 'invalid-input' },
-    });
-  });
-
-  test('transports one bounded opaque confirmation token with the separate digest', async () => {
-    const confirmations: Array<{ confirmationToken: string; digest: string }> = [];
-    const response = await handleManualMergeUpload(
-      jsonRequest('{"rows":[]}', {
-        'x-ai-usage-merge-action': 'confirm',
-        'x-ai-usage-merge-confirmation': 'opaque-token',
-        'x-ai-usage-merge-digest': 'document-digest',
-      }),
-      {
-        confirmBundle: (_document, expected) => {
-          confirmations.push(expected);
-          return Promise.resolve({ ok: true as const, data: { rows: 0 } });
-        },
-      },
-    );
-
-    expect(response.status).toBe(200);
-    expect(confirmations).toEqual([{ confirmationToken: 'opaque-token', digest: 'document-digest' }]);
-  });
-
-  test('rejects missing or oversized confirmation tokens and preserves preview-stale as HTTP 409', async () => {
-    let confirmations = 0;
-    const confirmBundle = () => {
-      confirmations += 1;
-      return Promise.resolve({
-        ok: false as const,
-        error: {
-          tag: 'UsageMergeError',
-          message: 'Create a new preview before confirming.',
-          reason: 'preview-stale',
-        },
-      });
-    };
-    const missingToken = await handleManualMergeUpload(
-      jsonRequest('{"rows":[]}', {
-        'x-ai-usage-merge-action': 'confirm',
-        'x-ai-usage-merge-digest': 'document-digest',
-      }),
-      { confirmBundle },
-    );
-    const oversized = await handleManualMergeUpload(
-      jsonRequest('{"rows":[]}', {
-        'x-ai-usage-merge-action': 'confirm',
-        'x-ai-usage-merge-confirmation': 'x'.repeat(129),
-        'x-ai-usage-merge-digest': 'document-digest',
-      }),
-      { confirmBundle },
-    );
-    const stale = await handleManualMergeUpload(
-      jsonRequest('{"rows":[]}', {
-        'x-ai-usage-merge-action': 'confirm',
-        'x-ai-usage-merge-confirmation': 'opaque-token',
-        'x-ai-usage-merge-digest': 'document-digest',
-      }),
-      { confirmBundle },
-    );
-
-    expect(missingToken.status).toBe(400);
-    expect(oversized.status).toBe(400);
-    expect(confirmations).toBe(1);
-    expect(stale.status).toBe(409);
-    expect(await stale.json()).toEqual({
-      ok: false,
-      error: {
-        tag: 'UsageMergeError',
-        message: 'Create a new preview before confirming.',
-        reason: 'preview-stale',
-      },
-    });
+    expect(mismatch.status).toBe(502);
+    expect(await mismatch.json()).toMatchObject({ error: { reason: 'invalid-response' }, ok: false });
+    expect(cleanupFailure.status).toBe(500);
+    expect(JSON.stringify(await cleanupFailure.json())).not.toContain('/private/inbox');
   });
 });

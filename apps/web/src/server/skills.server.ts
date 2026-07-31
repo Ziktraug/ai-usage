@@ -7,11 +7,7 @@ import {
 } from '@ai-usage/local-collectors/local-history';
 import { readMergedAiUsageConfigFrom, updateAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
 import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
-import {
-  createKnownLocalProjectSources,
-  type KnownLocalProjectSourcesRequest,
-  type KnownLocalProjectSourcesResult,
-} from '@ai-usage/report-data';
+import type { KnownLocalProjectSourcesRequest, KnownLocalProjectSourcesResult } from '@ai-usage/report-data';
 import type {
   SkillManagementConfig,
   SkillManagementConfigDocument,
@@ -29,8 +25,8 @@ import {
   projectSkillDirectories,
 } from '@ai-usage/skills';
 import { createSkillsApplication } from '@ai-usage/skills/application';
+import { type UsageStoreErrorReason, usageStorePath } from '@ai-usage/usage-store/reader';
 import { Cause, Effect, Option, Runtime } from 'effect';
-import { runKnownProjectSourcesRunner } from './known-project-sources-runner.server';
 import type {
   KnownSkillProjectPath,
   ProjectSkillMarkdownDocument,
@@ -38,6 +34,7 @@ import type {
   SkillsServerAdapter,
   SkillsServerResult,
 } from './skills-contracts';
+import { createLiveUsageReadModel, createSqliteUsageReadModel, type UsageReadModel } from './usage-read-model.server';
 
 const toJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -61,6 +58,7 @@ const errorResult = (error: unknown): SkillsServerResult<never> => {
 };
 
 interface ProjectPathSource {
+  label?: string;
   machineId?: string;
   machineLabel?: string;
   project: string;
@@ -243,6 +241,7 @@ export const knownSkillProjectPathsFromReportPayload = (
       addKnownProjectPath(
         entries,
         {
+          label: source.label,
           machineId: source.machineId,
           machineLabel: source.machineLabel,
           path: source.sourcePath,
@@ -315,6 +314,8 @@ interface KnownProjectSourcesReadInput {
   request: KnownLocalProjectSourcesRequest;
   storage: LocalHistoryStorageService;
 }
+
+const MAX_KNOWN_PROJECT_SOURCES_RESULT_BYTES = 512 * 1024;
 
 export interface SkillsServerAdapterDependencies {
   configCwd: string;
@@ -406,15 +407,62 @@ export const createSkillsServerAdapter = (dependencies: SkillsServerAdapterDepen
 };
 
 export const createSkillsServerDependencies = (
-  options: { configCwd?: string; storage?: LocalHistoryStorageService } = {},
+  options: {
+    configCwd?: string;
+    readModel?: Pick<UsageReadModel, 'readCurrentLocalProjectSources'>;
+    storage?: LocalHistoryStorageService;
+  } = {},
 ): SkillsServerAdapterDependencies => {
-  const readKnownProjectSources: SkillsServerAdapterDependencies['readKnownProjectSources'] =
-    options.storage === undefined
-      ? ({ request }) => runKnownProjectSourcesRunner(request)
-      : ({ request, storage }) =>
-          Effect.runPromise(
-            createKnownLocalProjectSources(request).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-          );
+  const storage = options.storage ?? createLocalHistoryStorage();
+  const readModel =
+    options.readModel ??
+    (options.storage === undefined
+      ? createLiveUsageReadModel()
+      : createSqliteUsageReadModel({ dbPath: usageStorePath(storage.home) }));
+  const usageStoreReason = (error: unknown): UsageStoreErrorReason | undefined => {
+    if (!(typeof error === 'object' && error !== null && 'reason' in error)) {
+      return;
+    }
+    const reason = error.reason;
+    return typeof reason === 'string' ? (reason as UsageStoreErrorReason) : undefined;
+  };
+  const readKnownProjectSources: SkillsServerAdapterDependencies['readKnownProjectSources'] = async () => {
+    try {
+      const result = await readModel.readCurrentLocalProjectSources();
+      const projectSources: KnownLocalProjectSourcesResult = {
+        projectGroups: [],
+        sources: result.sources.map((source) => ({
+          gitRemote: '',
+          harness: '',
+          harnesses: [],
+          harnessKey: '',
+          harnessKeys: [],
+          id: JSON.stringify([source.machineId, source.sourcePath, source.project]),
+          label: source.label,
+          machine: source.machineLabel,
+          machineId: source.machineId,
+          project: source.project,
+          sessions: source.sessions,
+          sourcePath: source.sourcePath,
+          tokens: 0,
+        })),
+        warnings: [],
+      };
+      if (Buffer.byteLength(JSON.stringify(projectSources)) > MAX_KNOWN_PROJECT_SOURCES_RESULT_BYTES) {
+        throw new Error('Project discovery exceeds its response budget.');
+      }
+      return projectSources;
+    } catch (error) {
+      const reason = usageStoreReason(error);
+      if (reason === 'store-missing' || reason === 'revision-unavailable' || reason === 'revision-expired') {
+        return { projectGroups: [], sources: [], warnings: [] };
+      }
+      if (reason !== undefined) {
+        throw new Error('Project discovery is unavailable.');
+      }
+      throw error;
+    }
+  };
 
   return {
     configCwd: options.configCwd ?? process.cwd(),
@@ -423,7 +471,7 @@ export const createSkillsServerDependencies = (
         readMergedAiUsageConfigFrom(configCwd).pipe(Effect.provideService(LocalHistoryStorage, storage)),
       ),
     readKnownProjectSources,
-    storage: options.storage ?? createLocalHistoryStorage(),
+    storage,
     updateConfig: ({ storage, update }) =>
       Effect.runPromise(updateAiUsageConfig(update).pipe(Effect.provideService(LocalHistoryStorage, storage))),
   };

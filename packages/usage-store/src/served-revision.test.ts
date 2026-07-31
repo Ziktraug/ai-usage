@@ -3,11 +3,14 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
+import { type FocusedReportSupport, focusedRevisionFingerprint } from '@ai-usage/report-core/focused-report-query';
+import { MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { Effect } from 'effect';
 import {
+  queryCurrentServedLocalProjectSources,
   queryCurrentServedReportRevision,
+  queryCurrentServedReportRevisionBootstrap,
   queryServedReportRevisionRows,
   queryServedReportRevisionSlices,
   queryServedReportRevisionSupport,
@@ -60,7 +63,11 @@ const createStore = async (): Promise<string> => {
   return dbPath;
 };
 
-const row = (name: string, tokenTotal: number): SerializedRow => ({
+const row = (
+  name: string,
+  tokenTotal: number,
+  options: { readonly project?: string; readonly sourcePath?: string } = {},
+): SerializedRow => ({
   activeDate: '2026-07-01T10:01:00.000Z',
   calls: 1,
   costActual: tokenTotal / 100,
@@ -77,7 +84,7 @@ const row = (name: string, tokenTotal: number): SerializedRow => ({
   linesDeleted: 0,
   model: 'gpt-5',
   name,
-  project: 'ai-usage',
+  project: options.project ?? 'ai-usage',
   provider: 'OpenAI',
   sessionLabel: name,
   source: {
@@ -86,6 +93,7 @@ const row = (name: string, tokenTotal: number): SerializedRow => ({
     machineLabel: 'Served Machine',
     rootSourceSessionId: name,
     sourceSessionId: name,
+    ...(options.sourcePath === undefined ? {} : { sourcePath: options.sourcePath }),
   },
   tokCr: 0,
   tokCw: 0,
@@ -158,6 +166,96 @@ const failureReason = async (effect: Effect.Effect<unknown, UsageStoreError>): P
   const result = await Effect.runPromise(Effect.either(effect));
   return result._tag === 'Left' ? result.left.reason : undefined;
 };
+
+test('projects only local observed project paths from the current durable revision', async () => {
+  const dbPath = await createStore();
+  const rows = [
+    row('local-a', 1, { project: 'Local Project', sourcePath: '/private/local-project' }),
+    row('local-b', 2, { project: 'Local Project', sourcePath: '/private/local-project' }),
+    row('portable', 3, { project: 'Imported Project', sourcePath: '/private/imported-project' }),
+  ];
+  await Effect.runPromise(
+    publishServedReportRevision(
+      publication(dbPath, 'revision-a', rows, {
+        capture: { sourceAuthorities: ['local-observed', 'local-observed', 'portable-opaque'] },
+      }),
+    ),
+  );
+
+  expect(await Effect.runPromise(queryCurrentServedLocalProjectSources({ dbPath, now: 1500 }))).toEqual({
+    revision: 'revision-a',
+    sources: [
+      {
+        label: 'Local Project',
+        machineId: 'served-machine',
+        machineLabel: 'Served Machine',
+        project: 'Local Project',
+        sessions: 2,
+        sourcePath: '/private/local-project',
+      },
+    ],
+  });
+});
+
+test('rejects an oversized local project-source projection without accumulating every row', async () => {
+  const dbPath = await createStore();
+  const rows = Array.from({ length: 600 }, (_, index) =>
+    row(`local-${index}`, index + 1, {
+      project: `Local Project ${index}`,
+      sourcePath: `/private/${'x'.repeat(850)}/${index}`,
+    }),
+  );
+  await Effect.runPromise(publishServedReportRevision(publication(dbPath, 'revision-large-sources', rows)));
+
+  const error = await Effect.runPromise(Effect.flip(queryCurrentServedLocalProjectSources({ dbPath, now: 1500 })));
+
+  expect(error).toMatchObject({ reason: 'invalid-input' });
+  expect(error.message).toContain('exceed 524288 bytes');
+});
+
+test('bounds the local project-source input scan to the maximum valid served revision', async () => {
+  const dbPath = await createStore();
+  await Effect.runPromise(
+    publishServedReportRevision(
+      publication(dbPath, 'revision-bounded-sources', [
+        row('local', 1, { project: 'Local Project', sourcePath: '/private/local-project' }),
+      ]),
+    ),
+  );
+  const traces: Array<{ readonly params: readonly unknown[]; readonly sql: string }> = [];
+
+  const result = await Effect.runPromise(
+    queryCurrentServedLocalProjectSources({
+      dbPath,
+      now: 1500,
+      trace: (query) => traces.push(query),
+    }),
+  );
+
+  expect(result.sources).toHaveLength(1);
+  expect(traces).toHaveLength(1);
+  expect(traces[0]?.sql).toContain(`LIMIT ${MAX_PORTABLE_USAGE_ROWS + 1}`);
+  expect(traces[0]?.params).toEqual(Array.from({ length: 4 }, () => 'revision-bounded-sources'));
+});
+
+test('rejects publication above the local project-source input ceiling before projection', async () => {
+  const dbPath = await createStore();
+  const repeatedRow = row('same-project', 1, {
+    project: 'Local Project',
+    sourcePath: '/private/local-project',
+  });
+  const oversizedRows = Array.from({ length: MAX_PORTABLE_USAGE_ROWS + 1 }, () => repeatedRow);
+
+  const result = await Effect.runPromise(
+    Effect.either(publishServedReportRevision(publication(dbPath, 'revision-too-many-sources', oversizedRows))),
+  );
+
+  expect(result._tag).toBe('Left');
+  if (result._tag === 'Left') {
+    expect(result.left.message).toContain('row budget');
+  }
+  expect(await failureReason(queryCurrentServedReportRevision({ dbPath, now: 1500 }))).toBe('revision-unavailable');
+});
 
 const CONCURRENT_GENERATION_WRITER_SCRIPT = `
   import { Database } from 'bun:sqlite';
@@ -254,6 +352,22 @@ describe('durable served report revisions', () => {
     expect(slices.rows).toEqual(rows);
     expect(slices.support).toEqual(support(2));
     expect(JSON.stringify(slices)).not.toContain('local-observed');
+  });
+
+  test('resolves the current manifest and support bootstrap inside one read snapshot', async () => {
+    const dbPath = await createStore();
+    await Effect.runPromise(publishServedReportRevision(publication(dbPath, 'revision-a', [row('a', 1)])));
+
+    const bootstrap = await Effect.runPromise(queryCurrentServedReportRevisionBootstrap({ dbPath, now: 2000 }));
+
+    expect(bootstrap.manifest.revision).toBe('revision-a');
+    expect(bootstrap.support).toMatchObject({
+      requestFingerprint: focusedRevisionFingerprint('support', { revision: 'revision-a' }),
+      revision: 'revision-a',
+      support: {
+        analytics: { sessionCount: 1 },
+      },
+    });
   });
 
   test('exposes only the closed query catalog and rejects unknown query kinds', async () => {

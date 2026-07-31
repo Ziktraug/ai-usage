@@ -10,7 +10,7 @@
     "@ai-usage/report-core": "workspace:*",
     "@ai-usage/report-data": "workspace:*",
     "@ai-usage/skills": "workspace:*",
-    "@ai-usage/usage-merge": "workspace:*",
+    "@ai-usage/usage-engine-control": "workspace:*",
     "@ai-usage/usage-store": "workspace:*",
     "@tanstack/solid-query": "^5.101.2",
     "@tanstack/solid-router": "1.170.16",

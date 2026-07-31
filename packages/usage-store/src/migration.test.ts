@@ -4,13 +4,15 @@ import { chmod, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
+import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import {
   queryLatestProviderQuotaObservations,
   queryProviderQuotaObservations,
+  queryUsageLocalMachine,
   USAGE_STORE_SCHEMA_VERSION,
 } from './reader';
-import { importProviderQuotaBatch, initializeUsageStore } from './writer';
+import { importLocalRows, importProviderQuotaBatch, initializeUsageStore, updateUsageMachineLabel } from './writer';
 
 const temporaryRoots: string[] = [];
 
@@ -67,6 +69,109 @@ describe('usage-store forward migration', () => {
     ]);
     expect((migrated.query('SELECT value FROM legacy_marker').get() as { value: string }).value).toBe('preserved');
     migrated.close(true);
+  });
+
+  test('migrates a populated v1 store to the empty machine projection without changing durable data', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-machine-v2-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    const machine = { id: 'migration-machine', label: 'Migration machine' };
+    const row = normalizeUsageRow({
+      calls: 1,
+      cost: actualCost(null),
+      date: new Date('2026-07-30T10:00:00.000Z'),
+      durationMs: 1000,
+      endDate: new Date('2026-07-30T10:01:00.000Z'),
+      harness: 'Codex',
+      model: 'gpt-5',
+      name: 'Migrated session',
+      project: 'ai-usage',
+      provider: 'OpenAI',
+      tokens: { cr: 0, cw: 0, in: 10, out: 20 },
+    });
+    await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine }));
+    await Effect.runPromise(importLocalRows({ dbPath, machine, rows: [row] }));
+
+    const legacy = new Database(dbPath, { create: false, readwrite: true });
+    const generationsBefore = legacy
+      .query(
+        "SELECT key, value FROM usage_store_metadata WHERE key IN ('generation', 'machine_fleet_generation') ORDER BY key",
+      )
+      .all();
+    legacy.exec(`
+      INSERT INTO served_report_revisions (
+        revision, capture_fingerprint, private_capture_fingerprint, config_fingerprint,
+        usage_store_generation, machine_fleet_generation, projection_schema_version,
+        generated_at, published_at, expires_at, complete, row_count, segment_count,
+        filter_key_count, rows_bytes, support_bytes, projection_bytes
+      ) VALUES (
+        'migration-revision', '${'a'.repeat(64)}', '${'b'.repeat(64)}', '${'c'.repeat(64)}',
+        1, 1, 14, '2026-07-30T10:00:00.000Z', 1000, 2000, 1, 0, 0, 0, 0, 0, 0
+      );
+      INSERT INTO served_report_current (singleton, revision, required_complete)
+      VALUES (1, 'migration-revision', 1);
+      DROP TABLE usage_local_machine;
+      PRAGMA user_version = 1;
+    `);
+    legacy.close(true);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    expect((migrated.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(
+      USAGE_STORE_SCHEMA_VERSION,
+    );
+    expect((migrated.query('SELECT COUNT(*) AS count FROM usage_rows').get() as { count: number }).count).toBe(1);
+    expect(
+      migrated
+        .query(
+          "SELECT key, value FROM usage_store_metadata WHERE key IN ('generation', 'machine_fleet_generation') ORDER BY key",
+        )
+        .all(),
+    ).toEqual(generationsBefore);
+    expect(migrated.query('SELECT revision FROM served_report_current WHERE singleton = 1').get()).toEqual({
+      revision: 'migration-revision',
+    });
+    expect((migrated.query('SELECT COUNT(*) AS count FROM usage_local_machine').get() as { count: number }).count).toBe(
+      0,
+    );
+    migrated.close();
+
+    await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine }));
+    expect(await Effect.runPromise(queryUsageLocalMachine({ dbPath }))).toEqual(machine);
+  });
+
+  test('rolls back v2 migration when a same-name machine table omits required constraints', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-machine-v2-conflict-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const conflict = new Database(dbPath, { create: false, readwrite: true });
+    conflict.exec(`
+      DROP TABLE usage_local_machine;
+      CREATE TABLE usage_local_machine (
+        singleton INTEGER PRIMARY KEY,
+        machine_id TEXT NOT NULL,
+        machine_label TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      PRAGMA user_version = 1;
+    `);
+    conflict.close(true);
+
+    const failed = await Effect.runPromise(Effect.either(initializeUsageStore({ dbPath })));
+    expect(failed._tag).toBe('Left');
+    const afterFailure = new Database(dbPath, { create: false, readwrite: true });
+    expect((afterFailure.query('PRAGMA user_version').get() as { user_version: number }).user_version).toBe(1);
+    const sql = afterFailure
+      .query("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'usage_local_machine'")
+      .get() as { sql: string };
+    expect(sql.sql).not.toContain('CHECK (singleton = 1)');
+    afterFailure.exec('DROP TABLE usage_local_machine');
+    afterFailure.close(true);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
   });
 
   test('backfills bounded quota read projections once for populated same-version stores', async () => {

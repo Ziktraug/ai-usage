@@ -308,7 +308,6 @@ describe('usage engine HTTP client', () => {
       wait: () => Promise.resolve(),
     });
     const changes = malformedClient.changes()[Symbol.asyncIterator]();
-    expect((await changes.next()).value?.event).toBe('status');
     await expect(changes.next()).rejects.toMatchObject({ code: 'invalid-response', retry: 'never' });
     expect(fetches).toBe(2);
   });
@@ -329,7 +328,6 @@ describe('usage engine HTTP client', () => {
     });
 
     const changes = client.changes()[Symbol.asyncIterator]();
-    expect((await changes.next()).value?.event).toBe('status');
     await expect(changes.next()).rejects.toMatchObject({ code: 'invalid-response' });
     expect(fetches).toBe(2);
   });
@@ -344,7 +342,6 @@ describe('usage engine HTTP client', () => {
     });
 
     const changes = client.changes()[Symbol.asyncIterator]();
-    expect((await changes.next()).value?.event).toBe('status');
     await expect(changes.next()).rejects.toMatchObject({ code: 'invalid-response' });
   });
 
@@ -372,8 +369,6 @@ describe('usage engine HTTP client', () => {
     });
 
     const changes = client.changes()[Symbol.asyncIterator]();
-    expect((await changes.next()).value?.event).toBe('status');
-    expect((await changes.next()).value?.event).toBe('status');
     expect((await changes.next()).value?.eventId).toBe('status-stream-1');
     expect(paths).toEqual(['/v1/status', '/v1/events', '/v1/status', '/v1/events']);
     await changes.return?.();
@@ -383,7 +378,12 @@ describe('usage engine HTTP client', () => {
     const abort = new AbortController();
     const guard = setTimeout(() => abort.abort(), 100);
     const paths: string[] = [];
-    const responses = [Response.json(fixtureStatus()), heartbeatOnlyResponse(), Response.json(fixtureStatus())];
+    const responses = [
+      Response.json(fixtureStatus()),
+      heartbeatOnlyResponse(),
+      Response.json(fixtureStatus()),
+      eventStreamResponse(statusEvent('status-stream-1', 1)),
+    ];
     const client = createUsageEngineControlClient({
       eventIdleTimeoutMs: 10,
       fetch: (input) => {
@@ -398,9 +398,8 @@ describe('usage engine HTTP client', () => {
 
     try {
       const changes = client.changes({ signal: abort.signal })[Symbol.asyncIterator]();
-      expect((await changes.next()).value?.event).toBe('status');
-      expect((await changes.next()).value?.event).toBe('status');
-      expect(paths).toEqual(['/v1/status', '/v1/events', '/v1/status']);
+      expect((await changes.next()).value?.eventId).toBe('status-stream-1');
+      expect(paths).toEqual(['/v1/status', '/v1/events', '/v1/status', '/v1/events']);
       await changes.return?.();
     } finally {
       clearTimeout(guard);
@@ -417,7 +416,6 @@ describe('usage engine HTTP client', () => {
     });
 
     const changes = client.changes({ signal: abort.signal })[Symbol.asyncIterator]();
-    expect((await changes.next()).value?.event).toBe('status');
     const pending = changes.next();
     abort.abort();
     await expect(pending).rejects.toMatchObject({ code: 'aborted', retry: 'never' });
@@ -434,7 +432,6 @@ describe('usage engine HTTP client', () => {
     });
 
     const changes = client.changes({ signal: abort.signal })[Symbol.asyncIterator]();
-    expect((await changes.next()).value?.event).toBe('status');
     expect((await changes.next()).value?.event).toBe('status');
     const pending = changes.next();
     abort.abort();
@@ -454,7 +451,7 @@ describe('usage engine HTTP client', () => {
         if (attempt === 2) {
           return Promise.resolve(Response.json(fixtureStatus()));
         }
-        return Promise.resolve(new Response(': heartbeat\n\n', { headers: { 'content-type': 'text/event-stream' } }));
+        return Promise.resolve(eventStreamResponse(statusEvent('status-stream-1', 1)));
       },
       reconnectDelayMs: 0,
       resolveRendezvous: () => Promise.resolve(rendezvous),
@@ -462,8 +459,8 @@ describe('usage engine HTTP client', () => {
     });
 
     const changes = client.changes()[Symbol.asyncIterator]();
-    expect((await changes.next()).value?.event).toBe('status');
-    expect(paths).toEqual(['/v1/status', '/v1/status']);
+    expect((await changes.next()).value?.eventId).toBe('status-stream-1');
+    expect(paths).toEqual(['/v1/status', '/v1/status', '/v1/events']);
     await changes.return?.();
   });
 
@@ -497,10 +494,9 @@ describe('usage engine HTTP client', () => {
     });
 
     const changes = client.changes()[Symbol.asyncIterator]();
-    expect((await changes.next()).value?.event).toBe('status');
     expect((await changes.next()).value?.eventId).toBe('status-stream-1');
     expect((await changes.next()).value).toEqual(firstPublished);
-    expect((await changes.next()).value?.event).toBe('status');
+    expect((await changes.next()).value?.eventId).toBe('status-stream-2');
     expect((await changes.next()).value).toEqual(freshPublished);
     expect(paths).toEqual(['/v1/status', '/v1/events', '/v1/status', '/v1/events']);
     expect(lastEventIds).toEqual([null, 'event-2']);
@@ -548,10 +544,8 @@ describe('usage engine HTTP client', () => {
     });
 
     const changes = client.changes()[Symbol.asyncIterator]();
-    expect((await changes.next()).value?.instanceId).toBe(fixtureInstanceId);
     expect((await changes.next()).value?.eventId).toBe('status-old');
     expect((await changes.next()).value?.eventId).toBe('event-old');
-    expect((await changes.next()).value?.instanceId).toBe(nextInstanceId);
     expect((await changes.next()).value?.eventId).toBe('status-new');
     expect(lastEventIds).toEqual([null, null]);
     await changes.return?.();
@@ -571,7 +565,6 @@ describe('usage engine HTTP client', () => {
     });
 
     const changes = client.changes()[Symbol.asyncIterator]();
-    expect((await changes.next()).value?.event).toBe('status');
     expect((await changes.next()).value?.event).toBe('status');
     await expect(changes.next()).rejects.toMatchObject({ code: 'response-too-large', retry: 'never' });
   });

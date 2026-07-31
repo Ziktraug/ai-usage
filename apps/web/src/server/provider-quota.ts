@@ -4,8 +4,6 @@ import { createServerFn } from '@tanstack/solid-start';
 export const getProviderQuotaHistory = createServerFn({ method: 'POST' })
   .validator(parseProviderQuotaHistoryRequest)
   .handler(async ({ data }) => {
-    const { assertOutsideDemo } = await import('./demo-boundary.server');
-    assertOutsideDemo();
-    const { getProviderQuotaHistoryForServer } = await import('./provider-quota.server');
-    return await getProviderQuotaHistoryForServer(data);
+    const { resolveProviderQuotaHistoryForServer } = await import('./provider-quota-resolver.server');
+    return await resolveProviderQuotaHistoryForServer(data);
   });

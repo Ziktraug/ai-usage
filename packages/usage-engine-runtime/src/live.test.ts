@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -14,10 +15,15 @@ import {
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import { ensureMachineConfig, readAiUsageConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import { createUsageMergeBundle, serializeUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
+import { projectSourceSelectorKey } from '@ai-usage/report-core/project-group';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { CollectionSourceId } from '@ai-usage/report-core/source-control';
 import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
-import { parseUsageEngineHandoffId, parseUsageEnginePublicationRevision } from '@ai-usage/usage-engine-control';
+import {
+  parseUsageEngineHandoffId,
+  parseUsageEngineProjectSourceReference,
+  parseUsageEnginePublicationRevision,
+} from '@ai-usage/usage-engine-control';
 import {
   importLocalRows,
   initializeUsageStore,
@@ -753,6 +759,7 @@ describe('live usage engine publication', () => {
             generatedAt: now.toISOString(),
             inserted: 0,
             machine: { id: 'preview-peer', label: 'Preview Peer' },
+            omittedWarningCount: 0,
             rows: 0,
             superseded: 0,
             unchanged: 0,
@@ -1070,21 +1077,26 @@ describe('live usage engine publication', () => {
     expect(aliasConfig.projectAliases).toEqual([{ match: ['/work/raw-project'], name: 'Aliased Project' }]);
     expect(afterAliases.revision).not.toBe(initial.revision);
 
+    const exactSelector = { machineId: configuredMachine.id, sourcePath: '/work/raw-project' };
+    const sourceReference = parseUsageEngineProjectSourceReference(
+      `project-source:${createHash('sha256').update(projectSourceSelectorKey(exactSelector)).digest('hex')}`,
+    );
     await runtime.executeCommand(
       {
-        command: 'replace-project-groups',
+        command: 'replace-project-groups-by-reference',
         projectGroups: [
           {
             id: 'project-group',
             name: 'Project Group',
-            sources: [{ machineId: configuredMachine.id, sourcePath: '/work/raw-project' }],
+            sources: [sourceReference],
           },
         ],
+        revision: parseUsageEnginePublicationRevision(afterAliases.revision),
       },
       'project-groups',
     );
     await expect(runtime.waitForCommand('project-groups')).resolves.toMatchObject({
-      command: 'replace-project-groups',
+      command: 'replace-project-groups-by-reference',
       state: 'succeeded',
     });
     const afterGroups = await Effect.runPromise(queryCurrentServedReportRevision({ dbPath, now: now.getTime() }));
@@ -1097,7 +1109,7 @@ describe('live usage engine publication', () => {
       {
         id: 'project-group',
         name: 'Project Group',
-        sources: [{ machineId: configuredMachine.id, sourcePath: '/work/raw-project' }],
+        sources: [exactSelector],
       },
     ]);
     expect(afterGroups.revision).not.toBe(afterAliases.revision);
@@ -1147,24 +1159,26 @@ describe('live usage engine publication', () => {
     await expect(Bun.file(invalidPath).exists()).resolves.toBe(false);
 
     const peerMachine = { id: 'cleanup-peer', label: 'Cleanup Peer' };
-    const validPath = path.join(inboxDirectory, 'stale-merge.upload');
+    const previewPath = path.join(inboxDirectory, 'stale-preview.upload');
     const validBundle = serializeUsageMergeBundle(createUsageMergeBundle({ machine: peerMachine, rows: [] }));
-    await writeFile(validPath, validBundle, { mode: 0o600 });
+    await writeFile(previewPath, validBundle, { mode: 0o600 });
     const preview = await port.previewMerge({
       command: 'preview-merge',
-      input: { handoffId: parseUsageEngineHandoffId('stale-merge'), kind: 'inbox-handoff' },
+      input: { handoffId: parseUsageEngineHandoffId('stale-preview'), kind: 'inbox-handoff' },
     });
-    await writeFile(validPath, `${validBundle}\n`, { mode: 0o600 });
+    await expect(Bun.file(previewPath).exists()).resolves.toBe(false);
+    const confirmPath = path.join(inboxDirectory, 'stale-confirm.upload');
+    await writeFile(confirmPath, `${validBundle}\n`, { mode: 0o600 });
     failCleanup = true;
     await expect(
       port.confirmMerge({
         command: 'confirm-merge',
         confirmationToken: preview.confirmationToken,
         documentDigest: preview.documentDigest,
-        input: { handoffId: parseUsageEngineHandoffId('stale-merge'), kind: 'inbox-handoff' },
+        input: { handoffId: parseUsageEngineHandoffId('stale-confirm'), kind: 'inbox-handoff' },
       }),
     ).rejects.toMatchObject({ code: 'preview-stale', name: 'UsageEngineCommandError' });
-    await expect(Bun.file(validPath).exists()).resolves.toBe(true);
+    await expect(Bun.file(confirmPath).exists()).resolves.toBe(false);
     expect(cleanupFailures).toEqual(['confirm-merge']);
   });
 
@@ -1207,30 +1221,28 @@ describe('live usage engine publication', () => {
       provider: 'OpenAI',
       tokens: { cr: 0, cw: 0, in: 10, out: 5 },
     });
-    const handoffPath = path.join(inboxDirectory, 'merge-cleanup-failure.upload');
-    await writeFile(
-      handoffPath,
-      serializeUsageMergeBundle(createUsageMergeBundle({ machine: peerMachine, rows: [row] })),
-      { mode: 0o600 },
-    );
-    const input = {
-      handoffId: parseUsageEngineHandoffId('merge-cleanup-failure'),
+    const bundleText = serializeUsageMergeBundle(createUsageMergeBundle({ machine: peerMachine, rows: [row] }));
+    const previewPath = path.join(inboxDirectory, 'merge-cleanup-preview.upload');
+    await writeFile(previewPath, bundleText, { mode: 0o600 });
+    const previewInput = {
+      handoffId: parseUsageEngineHandoffId('merge-cleanup-preview'),
       kind: 'inbox-handoff' as const,
     };
-    const preview = await port.previewMerge({ command: 'preview-merge', input });
+    const preview = await port.previewMerge({ command: 'preview-merge', input: previewInput });
+    await expect(Bun.file(previewPath).exists()).resolves.toBe(false);
+    const confirmPath = path.join(inboxDirectory, 'merge-cleanup-confirm.upload');
+    await writeFile(confirmPath, bundleText, { mode: 0o600 });
     injectCleanupFailure = true;
 
-    await expect(
-      port.confirmMerge({
-        command: 'confirm-merge',
-        confirmationToken: preview.confirmationToken,
-        documentDigest: preview.documentDigest,
-        input,
-      }),
-    ).resolves.toBeUndefined();
+    await port.confirmMerge({
+      command: 'confirm-merge',
+      confirmationToken: preview.confirmationToken,
+      documentDigest: preview.documentDigest,
+      input: { handoffId: parseUsageEngineHandoffId('merge-cleanup-confirm'), kind: 'inbox-handoff' },
+    });
 
     expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(1);
-    expect(await Bun.file(handoffPath).exists()).toBe(true);
+    expect(await Bun.file(confirmPath).exists()).toBe(true);
     expect(cleanupFailures).toEqual(['confirm-merge']);
   });
 
@@ -1275,29 +1287,28 @@ describe('live usage engine publication', () => {
       ),
     });
     await runtime.start();
-    const handoffId = parseUsageEngineHandoffId('cleanup-event-merge');
-    await writeFile(
-      path.join(inboxDirectory, `${handoffId}.upload`),
-      serializeUsageMergeBundle(
-        createUsageMergeBundle({ machine: { id: 'cleanup-event-peer', label: 'Cleanup Event Peer' }, rows: [] }),
-      ),
-      { mode: 0o600 },
+    const previewHandoffId = parseUsageEngineHandoffId('cleanup-event-preview');
+    const bundleText = serializeUsageMergeBundle(
+      createUsageMergeBundle({ machine: { id: 'cleanup-event-peer', label: 'Cleanup Event Peer' }, rows: [] }),
     );
+    await writeFile(path.join(inboxDirectory, `${previewHandoffId}.upload`), bundleText, { mode: 0o600 });
     await runtime.executeCommand(
-      { command: 'preview-merge', input: { handoffId, kind: 'inbox-handoff' } },
+      { command: 'preview-merge', input: { handoffId: previewHandoffId, kind: 'inbox-handoff' } },
       'cleanup-event-preview',
     );
     const previewCompletion = await runtime.waitForCommand('cleanup-event-preview');
     if (!(previewCompletion.state === 'succeeded' && previewCompletion.command === 'preview-merge')) {
       throw new Error('Cleanup event fixture did not produce a merge preview.');
     }
+    const confirmHandoffId = parseUsageEngineHandoffId('cleanup-event-confirm');
+    await writeFile(path.join(inboxDirectory, `${confirmHandoffId}.upload`), bundleText, { mode: 0o600 });
     failCleanup = true;
     await runtime.executeCommand(
       {
         command: 'confirm-merge',
         confirmationToken: previewCompletion.output.confirmationToken,
         documentDigest: previewCompletion.output.documentDigest,
-        input: { handoffId, kind: 'inbox-handoff' },
+        input: { handoffId: confirmHandoffId, kind: 'inbox-handoff' },
       },
       'cleanup-event-confirm',
     );

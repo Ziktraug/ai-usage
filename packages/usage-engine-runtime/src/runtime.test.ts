@@ -1,11 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { collectionSourceDefinitions, type SourceControlView } from '@ai-usage/report-core/source-control';
-import type {
-  UsageEngineCommand,
-  UsageEngineCommandCompletion,
-  UsageEngineEvent,
-  UsageEngineInstanceId,
-  UsageEngineMergePreviewOutput,
+import {
+  parseUsageEnginePublicationRevision,
+  type UsageEngineCommand,
+  type UsageEngineCommandCompletion,
+  type UsageEngineEvent,
+  type UsageEngineInstanceId,
+  type UsageEngineMergePreviewOutput,
 } from '@ai-usage/usage-engine-control';
 import {
   createInitialUsageEngineSourceControlView,
@@ -182,6 +183,10 @@ const createMutationPort = (calls: string[]): UsageEngineMutationPort => ({
     calls.push('replace-project-groups');
     return Promise.resolve();
   },
+  replaceProjectGroupsByReference: () => {
+    calls.push('replace-project-groups-by-reference');
+    return Promise.resolve();
+  },
   setMachineLabel: () => {
     calls.push('set-machine-label');
     return Promise.resolve();
@@ -287,6 +292,45 @@ describe('usage engine runtime', () => {
     expect(await runtime.waitForCommand(COMMAND_ID)).toEqual(completion);
 
     await events.return?.();
+    await runtime.dispose();
+  });
+
+  test('applies source policy while a manual source command is still running', async () => {
+    let releaseRun: (() => void) | undefined;
+    let signalRunStarted: (() => void) | undefined;
+    const runStarted = new Promise<void>((resolve) => {
+      signalRunStarted = resolve;
+    });
+    const runBlocked = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    const baseSourceControl = createTestSourceControl();
+    const sourceControl: TestSourceControl = {
+      ...baseSourceControl,
+      runSource: async (sourceId) => {
+        baseSourceControl.calls.push(`run-source:${sourceId}`);
+        signalRunStarted?.();
+        await runBlocked;
+      },
+    };
+    const runtime = createUsageEngineRuntime(createDependencies({ sourceControl }));
+    await runtime.start();
+    await runtime.executeCommand({ command: 'run-source', sourceId: 'codex.sessions' }, 'manual-run');
+    await runStarted;
+    await runtime.executeCommand(
+      { command: 'set-source-enabled', enabled: false, sourceId: 'codex.sessions' },
+      'disable-running-source',
+    );
+
+    const policyOutcome = await Promise.race([
+      runtime.waitForCommand('disable-running-source'),
+      Bun.sleep(50).then(() => 'timed-out' as const),
+    ]);
+    releaseRun?.();
+
+    expect(policyOutcome).toMatchObject({ command: 'set-source-enabled', state: 'succeeded' });
+    expect(sourceControl.calls).toContain('set-source:codex.sessions:false');
+    await runtime.waitForCommand('manual-run');
     await runtime.dispose();
   });
 
@@ -584,6 +628,38 @@ describe('usage engine runtime', () => {
     await runtime.dispose();
   });
 
+  test('returns identity-only durable merge success when its independent publication refresh fails', async () => {
+    const baseSourceControl = createTestSourceControl();
+    const sourceControl: TestSourceControl = {
+      ...baseSourceControl,
+      publish: () => {
+        baseSourceControl.calls.push('publish-failed');
+        return Promise.reject(new Error('synthetic publication failure'));
+      },
+    };
+    const runtime = createUsageEngineRuntime(createDependencies({ sourceControl }));
+    await runtime.start();
+    await runtime.executeCommand(
+      {
+        command: 'confirm-merge',
+        confirmationToken: 'confirmation-token',
+        documentDigest: 'a'.repeat(64),
+        input: { filePath: '/synthetic/merge.json', kind: 'operator-file' },
+      },
+      'retrying-confirmation',
+    );
+
+    const completion = await runtime.waitForCommand('retrying-confirmation');
+
+    expect(completion).toMatchObject({
+      command: 'confirm-merge',
+      output: { kind: 'none' },
+      state: 'succeeded',
+    });
+    expect(sourceControl.calls).toContain('publish-failed');
+    await runtime.dispose();
+  });
+
   test('routes every command family without returning report data through command admission', async () => {
     const trace: string[] = [];
     const sourceControl = createTestSourceControl();
@@ -597,6 +673,11 @@ describe('usage engine runtime', () => {
       { command: 'set-source-enabled', enabled: false, sourceId: 'claude.sessions' },
       { command: 'replace-project-aliases', projectAliases: [] },
       { command: 'replace-project-groups', projectGroups: [] },
+      {
+        command: 'replace-project-groups-by-reference',
+        projectGroups: [],
+        revision: parseUsageEnginePublicationRevision('revision-a'),
+      },
       { command: 'collect-fresh-quota' },
       { command: 'import-cursor', input: { filePath: '/synthetic/cursor.csv', kind: 'operator-file' } },
       { command: 'preview-merge', input: { filePath: '/synthetic/merge.json', kind: 'operator-file' } },
@@ -618,9 +699,10 @@ describe('usage engine runtime', () => {
       'source-start',
       'detect-all',
       'run-all-enabled',
+      'set-source:claude.sessions:false',
       'run-source:codex.sessions',
       'publish',
-      'set-source:claude.sessions:false',
+      'publish',
       'publish',
       'publish',
       'run-source:codex.usage-limits',
@@ -628,6 +710,7 @@ describe('usage engine runtime', () => {
       'publish',
     ]);
     expect(trace).toContain('replace-project-groups');
+    expect(trace).toContain('replace-project-groups-by-reference');
     expect(trace).toContain('replace-project-aliases');
     expect(trace).toContain('import-cursor');
     expect(trace).toContain('preview-merge');

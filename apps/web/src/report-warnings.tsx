@@ -43,6 +43,7 @@ const warningCanCleanup = (warning: UsageReportWarning) =>
 
 export const ReportWarnings = (props: {
   cleaningProjectWarningGroupId?: string | undefined;
+  cleanupDisabled?: boolean;
   omittedSupportItemCount?: number;
   onCleanupProjectWarning?: (warning: UsageReportWarning) => void;
   warnings: UsageReportWarning[] | undefined;
@@ -74,7 +75,7 @@ export const ReportWarnings = (props: {
                   <Show when={props.onCleanupProjectWarning && warningCanCleanup(warning)}>
                     <button
                       class={ghostButton}
-                      disabled={props.cleaningProjectWarningGroupId === warning.groupId}
+                      disabled={props.cleanupDisabled || props.cleaningProjectWarningGroupId === warning.groupId}
                       onClick={() => props.onCleanupProjectWarning?.(warning)}
                       type="button"
                     >

@@ -35,4 +35,28 @@ describe('sync upload demo boundary', () => {
     expect(handlerLoads).toBe(0);
     expect(bodyPulls).toBe(0);
   });
+
+  test('rejects an untrusted live request before loading the engine boundary', async () => {
+    let handlerLoads = 0;
+    const request = new Request('http://127.0.0.1/sync', {
+      body: '{"rows":[]}',
+      headers: {
+        'content-type': 'application/json',
+        host: 'attacker.example',
+        origin: 'http://attacker.example',
+      },
+      method: 'POST',
+    });
+
+    const response = await handleSyncUploadRequest(request, {
+      loadHandler: () => {
+        handlerLoads += 1;
+        return Promise.resolve(() => Promise.resolve(new Response('live')));
+      },
+      mode: 'live',
+    });
+
+    expect(response.status).toBe(403);
+    expect(handlerLoads).toBe(0);
+  });
 });

@@ -49,7 +49,10 @@ class FakeEventSource implements SourceControlEventSource {
   onopen: ((event: Event) => void) | null = null;
   private readonly listeners = new Map<string, (event: { data: string }) => void>();
 
-  addEventListener(type: 'report-published' | 'snapshot', listener: (event: { data: string }) => void): void {
+  addEventListener(
+    type: 'control-state' | 'report-published' | 'snapshot',
+    listener: (event: { data: string }) => void,
+  ): void {
     this.listeners.set(type, listener);
   }
 
@@ -70,6 +73,10 @@ class FakeEventSource implements SourceControlEventSource {
         sourceControlGeneration: 4,
       }),
     });
+  }
+
+  emitControlState(state: 'disconnected' | 'live' | 'protocol-mismatch'): void {
+    this.listeners.get('control-state')?.({ data: JSON.stringify({ state }) });
   }
 }
 
@@ -116,7 +123,7 @@ describe('source control client', () => {
     );
 
     eventSource.onerror?.(new Event('error'));
-    expect(client.getState().connection).toBe('stale');
+    expect(client.getState().connection).toBe('disconnected');
     eventSource.emit(snapshot(0, 'process-b'));
     expect(client.getState().snapshot?.instanceId).toBe('process-b');
     expect(client.getState().snapshot?.generation).toBe(0);
@@ -127,9 +134,11 @@ describe('source control client', () => {
   });
 
   test('keeps lifecycle server-confirmed and blocks conflicting commands', async () => {
+    const eventSource = new FakeEventSource();
     let resolveCommand: ((value: SourceControlCommandResponse) => void) | undefined;
     const commands: SourceControlCommand[] = [];
     const client = createSourceControlClient({
+      createEventSource: () => eventSource,
       sendCommand: (command) => {
         commands.push(command);
         return new Promise((resolve) => {
@@ -137,10 +146,12 @@ describe('source control client', () => {
         });
       },
     });
+    client.start();
+    eventSource.emit(snapshot(0));
 
     const first = client.execute({ command: 'run-now', sourceId: 'codex.sessions' });
     expect(client.getState().pendingCommand).toEqual({ command: 'run-now', sourceId: 'codex.sessions' });
-    expect(client.getState().snapshot).toBeNull();
+    expect(client.getState().snapshot?.generation).toBe(0);
     expect(await client.execute({ command: 'run-all' })).toBe(false);
     expect(commands).toHaveLength(1);
 
@@ -179,5 +190,32 @@ describe('source control client', () => {
     eventSource.emitPublication('revision-4');
     expect(client.getState().publication?.revision).toBe('revision-4');
     expect(publicationUpdates).toBe(1);
+  });
+
+  test('retains the last snapshot and disables mutations for disconnected and incompatible engines', async () => {
+    const eventSource = new FakeEventSource();
+    let commandCount = 0;
+    const client = createSourceControlClient({
+      createEventSource: () => eventSource,
+      sendCommand: () => {
+        commandCount += 1;
+        return Promise.resolve({ accepted: true, ok: true, snapshot: snapshot(2) });
+      },
+    });
+    client.start();
+    eventSource.emit(snapshot(1));
+    eventSource.emitControlState('disconnected');
+
+    expect(client.getState()).toMatchObject({ connection: 'disconnected', snapshot: { generation: 1 } });
+    expect(await client.execute({ command: 'run-all' })).toBe(false);
+
+    eventSource.emitControlState('live');
+    expect(await client.execute({ command: 'run-all' })).toBe(true);
+    eventSource.emitControlState('protocol-mismatch');
+
+    expect(eventSource.closed).toBe(true);
+    expect(client.getState()).toMatchObject({ connection: 'protocol-mismatch', snapshot: { generation: 2 } });
+    expect(await client.execute({ command: 'run-all' })).toBe(false);
+    expect(commandCount).toBe(1);
   });
 });

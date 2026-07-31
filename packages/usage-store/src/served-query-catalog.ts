@@ -154,7 +154,10 @@ const catalogSessionRequest = (revision: string): SessionQueryRequest => ({
   sort: [{ desc: true, id: 'date' }],
 });
 
-export const validateServedRevisionQueryCatalog = (database: SessionQuerySqliteDatabase, revision: string): void => {
+export const validateServedRevisionQueryCatalog = (
+  createDatabase: () => SessionQuerySqliteDatabase,
+  revision: string,
+): void => {
   const query = catalogSessionRequest(revision);
   const requests: readonly ParsedServedRevisionQuery[] = [
     { kind: 'sessions', request: query, revision },
@@ -178,6 +181,6 @@ export const validateServedRevisionQueryCatalog = (database: SessionQuerySqliteD
     { kind: 'support', request: { revision }, revision },
   ];
   for (const request of requests) {
-    executeServedRevisionQuery(database, request);
+    executeServedRevisionQuery(createDatabase(), request);
   }
 };

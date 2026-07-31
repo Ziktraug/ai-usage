@@ -1,4 +1,3 @@
-import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -16,26 +15,39 @@ import {
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
   seedHarnessHome,
 } from '@ai-usage/local-collectors/test-fixtures/harness-home';
+import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import {
   createUsageMergeBundle,
   parseUsageMergeBundle,
   serializeUsageMergeBundle,
 } from '@ai-usage/report-core/merge-bundle';
-import { compareSessionProjectionFacts } from '@ai-usage/report-core/session-detail';
-import { projectSessionPage, type SessionQueryRequest, sessionRowIdentity } from '@ai-usage/report-core/session-query';
+import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
+import {
+  compareSessionProjectionFacts,
+  parseSessionDetailAnchorResult,
+  type SessionDetailSourceAuthority,
+} from '@ai-usage/report-core/session-detail';
+import {
+  parseSessionPageResult,
+  projectSessionPage,
+  type SessionQueryRequest,
+  sessionRowIdentity,
+} from '@ai-usage/report-core/session-query';
 import { parseUsageSnapshot, serializeUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow } from '@ai-usage/report-core/types';
-import { queryReportRows, usageStorePath } from '@ai-usage/usage-store/testing';
+import { publishServedReportRevision, queryReportRows, usageStorePath } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import { createMergedUsageReport, createStoredReportCapture, createStoredUsageSnapshot } from './index';
 import { assembleReport } from './report-assembly';
-import { materializeSessionQueryDatabase, SESSION_QUERY_DATABASE_NAME } from './session-query-materialization';
-import { assertSessionQueryDatabase, executeMaterializedSessionQuery } from './session-query-sqlite';
+import { queryServedRevisionData } from './served-revision-query';
 import { createScheduledSourceRegistry, type SourceRunContext } from './source-adapters';
 
 const FIXED_MACHINE = { id: 'machine-fixture-025', label: 'Fixture machine' } as const;
 const GENERATED_AT = new Date('2026-07-10T12:00:00.000Z');
 const EPHEMERAL_GH_RESULT_SENTINEL = 'https://github.com/fixture/ai-usage/pull/270027';
+const FIRST_PUBLICATION_TIME = 1000;
+const SECOND_PUBLICATION_TIME = 2000;
+const QUERY_TIME = 3000;
 const temporaryDirectories: string[] = [];
 
 const makeTemporaryDirectory = async (prefix: string): Promise<string> => {
@@ -94,6 +106,61 @@ const compactRow = (row: CollectedUsageRow) => ({
 
 const reportOptions = { limit: null, minTokens: 0, project: null, since: null, sort: 'date' as const };
 
+const publishPayload = async (input: {
+  readonly dbPath: string;
+  readonly now: number;
+  readonly payload: UsageReportPayload;
+  readonly revision: string;
+  readonly sourceAuthorities: readonly SessionDetailSourceAuthority[];
+}): Promise<void> => {
+  const { rows, tableRows: _tableRows, ...support } = input.payload;
+  await Effect.runPromise(
+    publishServedReportRevision({
+      assemble: () => ({
+        configFingerprint: 'c'.repeat(64),
+        generatedAt: input.payload.generatedAt,
+        rows,
+        sourceAuthorities: input.sourceAuthorities,
+        support: support as FocusedReportSupport,
+      }),
+      dbPath: input.dbPath,
+      now: input.now,
+      revision: input.revision,
+      ttlMs: 100_000,
+    }),
+  );
+};
+
+const readSessionPage = async (dbPath: string, sessionRequest: SessionQueryRequest) =>
+  parseSessionPageResult(
+    await Effect.runPromise(
+      queryServedRevisionData({
+        dbPath,
+        kind: 'sessions',
+        now: QUERY_TIME,
+        request: sessionRequest,
+        revision: sessionRequest.revision,
+      }),
+    ),
+    sessionRequest,
+  );
+
+const readSessionAnchor = async (dbPath: string, revision: string, rowId: string) => {
+  const anchorRequest = { revision, rowId };
+  return parseSessionDetailAnchorResult(
+    await Effect.runPromise(
+      queryServedRevisionData({
+        dbPath,
+        kind: 'session-detail-anchor',
+        now: QUERY_TIME,
+        request: anchorRequest,
+        revision,
+      }),
+    ),
+    anchorRequest,
+  );
+};
+
 const campaignRow = (
   sourceSessionId: string,
   origin: NonNullable<CollectedUsageRow['origin']>,
@@ -148,9 +215,9 @@ const readFilesUnder = async (directory: string): Promise<Buffer[]> => {
 };
 
 describe('session report pipeline', () => {
-  test('materializes a classifier campaign declared through a delegated parent', async () => {
-    const revisionDirectory = await makeTemporaryDirectory('ai-usage-classifier-campaign-revision-');
-    await fs.chmod(revisionDirectory, 0o700);
+  test('publishes a classifier campaign declared through a delegated parent', async () => {
+    const storeDirectory = await makeTemporaryDirectory('ai-usage-classifier-campaign-store-');
+    const dbPath = path.join(storeDirectory, 'usage.sqlite');
     const assembly = assembleReport({
       configuredProjectGroups: [],
       generatedAt: GENERATED_AT,
@@ -168,33 +235,27 @@ describe('session report pipeline', () => {
     expect(classifier?.source?.parentSourceSessionId).toBeUndefined();
     expect(classifier?.source?.rootSourceSessionId).toBe('human-root');
 
-    await materializeSessionQueryDatabase(revisionDirectory, assembly.payload.rows);
-    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), {
-      readonly: true,
-      strict: true,
+    const sessionRequest = request();
+    await publishPayload({
+      dbPath,
+      now: FIRST_PUBLICATION_TIME,
+      payload: assembly.payload,
+      revision: sessionRequest.revision,
+      sourceAuthorities: assembly.payload.rows.map(() => 'local-observed'),
     });
-    try {
-      assertSessionQueryDatabase(database);
-      const page = executeMaterializedSessionQuery(database, 'sessions', request());
-      const campaign = page.items.find(
-        (item) => item.kind === 'campaign' && item.row.source?.sourceSessionId === 'human-root',
-      );
-      expect(campaign?.row).toMatchObject({
-        campaignClassifierCount: 1,
-        campaignTotalCount: 3,
-        source: { rootSourceSessionId: 'human-root' },
-      });
-    } finally {
-      database.close();
-    }
+    const page = await readSessionPage(dbPath, sessionRequest);
+    const campaign = page.items.find(
+      (item) => item.kind === 'campaign' && item.row.source?.sourceSessionId === 'human-root',
+    );
+    expect(campaign?.row).toMatchObject({
+      campaignClassifierCount: 1,
+      campaignTotalCount: 3,
+      source: { rootSourceSessionId: 'human-root' },
+    });
   });
 
-  test('keeps literal multi-harness facts through source, store, payload, and materialized SQLite', async () => {
+  test('keeps literal multi-harness facts through source, store, payload, and durable SQLite', async () => {
     const home = await makeTemporaryDirectory('ai-usage-session-pipeline-home-');
-    const revisionDirectory = await makeTemporaryDirectory('ai-usage-session-pipeline-revision-');
-    const portableRevisionDirectory = await makeTemporaryDirectory('ai-usage-session-pipeline-portable-');
-    await fs.chmod(revisionDirectory, 0o700);
-    await fs.chmod(portableRevisionDirectory, 0o700);
     const storage = createLocalHistoryStorage(home);
     await Effect.runPromise(
       writeMachineConfig(FIXED_MACHINE).pipe(Effect.provideService(LocalHistoryStorage, storage)),
@@ -223,438 +284,417 @@ describe('session report pipeline', () => {
       }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
     );
     const { payload } = capture;
-    await materializeSessionQueryDatabase(revisionDirectory, payload.rows, undefined, capture.rowSourceAuthorities);
-    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), {
-      readonly: true,
-      strict: true,
+    const dbPath = usageStorePath(home);
+    const localRequest = request();
+    await publishPayload({
+      dbPath,
+      now: FIRST_PUBLICATION_TIME,
+      payload,
+      revision: localRequest.revision,
+      sourceAuthorities: capture.rowSourceAuthorities,
     });
-    try {
-      assertSessionQueryDatabase(database);
-      const materializedPage = executeMaterializedSessionQuery(database, 'sessions', request());
-      expect(materializedPage).toEqual(projectSessionPage(payload.rows, request()));
-      const openCodeSourceRow = payload.rows.find(
-        (payloadRow) => payloadRow.source?.sourceSessionId === fixture.ids.opencode,
+    const materializedPage = await readSessionPage(dbPath, localRequest);
+    expect(materializedPage).toEqual(projectSessionPage(payload.rows, localRequest));
+    const openCodeSourceRow = payload.rows.find(
+      (payloadRow) => payloadRow.source?.sourceSessionId === fixture.ids.opencode,
+    );
+    if (!openCodeSourceRow) {
+      throw new Error('Missing source OpenCode fixture row');
+    }
+    const openCodeAnchor = (
+      await readSessionAnchor(dbPath, localRequest.revision, sessionRowIdentity(openCodeSourceRow))
+    ).anchor;
+    const openCodeAnalysis = await Effect.runPromise(
+      readOpenCodeSessionAnalysis(fixture.ids.opencode).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+    );
+    if (!(openCodeAnchor && openCodeAnalysis)) {
+      throw new Error('Missing OpenCode report anchor or local analysis');
+    }
+    expect(openCodeAnchor.sourceAuthority).toBe('local-observed');
+    expect(openCodeAnchor.projection).toEqual({
+      calls: 3,
+      durationMs: 90_000,
+      modelSegments: [
+        {
+          model: 'anthropic/claude-sonnet-4-6',
+          tokens: { cacheRead: 6, cacheWrite: 1, input: 30, output: 10, total: 47 },
+        },
+        {
+          model: 'openai/gpt-5',
+          tokens: { cacheRead: 23, cacheWrite: 4, input: 60, output: 18, total: 105 },
+        },
+      ],
+      partial: true,
+      tokens: { cacheRead: 29, cacheWrite: 5, input: 90, output: 28, total: 152 },
+      tools: 1,
+      turns: 1,
+    });
+    expect(compareSessionProjectionFacts(openCodeAnchor.projection, openCodeAnalysis.projection)).toEqual({
+      checkedFields: ['calls', 'duration', 'model-attribution', 'coverage', 'tokens', 'tools', 'turns'],
+      status: 'matches-report',
+    });
+
+    const materializedClaude = materializedPage.items.find(
+      ({ row: materializedRow }) => materializedRow.source?.sourceSessionId === fixture.ids.claude,
+    )?.row;
+    const materializedCodex = materializedPage.items.find(
+      ({ row: materializedRow }) => materializedRow.source?.sourceSessionId === fixture.ids.codexRoot,
+    )?.row;
+    if (!(materializedClaude && materializedCodex)) {
+      throw new Error('Missing materialized Claude or Codex fixture row');
+    }
+    expect(materializedClaude.source?.vcs).toMatchObject({
+      branches: [{ name: 'fixture/main' }, { name: 'fixture/topic' }],
+      headCommit: null,
+      pullRequests: [{ number: 27, url: 'https://github.com/fixture/ai-usage/pull/27' }],
+      repository: { ownerPath: 'fixture/ai-usage', provenance: 'local-derived' },
+    });
+    expect(materializedCodex.source?.vcs).toMatchObject({
+      branches: [{ name: 'fixture/main', provenance: 'harness-recorded' }],
+      headCommit: { hash: '0123456789abcdef0123456789abcdef01234567' },
+      pullRequests: [],
+      repository: { ownerPath: 'fixture/ai-usage', provenance: 'harness-recorded' },
+    });
+    expect(openCodeAnchor.vcs).toMatchObject({
+      branches: [],
+      headCommit: null,
+      pullRequests: [],
+      repository: { ownerPath: 'fixture/ai-usage', provenance: 'local-derived' },
+    });
+
+    const claudeAnchor = (await readSessionAnchor(dbPath, localRequest.revision, materializedClaude.rowId)).anchor;
+    const claudeAnalysis = await Effect.runPromise(
+      readClaudeSessionAnalysis(fixture.ids.claude).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+    );
+    if (!(claudeAnchor && claudeAnalysis)) {
+      throw new Error('Missing Claude report anchor or local analysis');
+    }
+    expect(claudeAnchor.sourceAuthority).toBe('local-observed');
+    expect(compareSessionProjectionFacts(claudeAnchor.projection, claudeAnalysis.projection)).toEqual({
+      checkedFields: ['calls', 'duration', 'model-attribution', 'coverage', 'tokens', 'tools', 'turns'],
+      status: 'matches-report',
+    });
+    expect(claudeAnalysis.detail.prompts.map(({ text }) => text)).toContain(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL);
+
+    const byHarness = new Map<string, CollectedUsageRow[]>();
+    for (const row of stored.rows) {
+      const harness = row.source?.harnessKey ?? 'missing';
+      const rows = byHarness.get(harness) ?? [];
+      rows.push(row);
+      byHarness.set(harness, rows);
+    }
+    const compactByHarness = Object.fromEntries(
+      [...byHarness].map(([harness, rows]) => [
+        harness,
+        rows
+          .map(compactRow)
+          .sort((left, right) => (left.sourceSessionId ?? '').localeCompare(right.sourceSessionId ?? '')),
+      ]),
+    );
+    expect(compactByHarness).toEqual({
+      claude: [
+        {
+          calls: 1,
+          costActual: 0,
+          costKnown: true,
+          date: '2026-07-01T08:00:30.000Z',
+          durationMs: null,
+          endDate: '2026-07-01T08:00:40.000Z',
+          modelSegments: [{ costKnown: true, model: 'claude-sonnet-4-6', tokCr: 0, tokCw: 0, tokIn: 5, tokOut: 3 }],
+          models: ['claude-sonnet-4-6'],
+          parentSourceSessionId: 'claude-fixture-025',
+          partial: false,
+          rootSourceSessionId: null,
+          sourceSessionId: 'agent-claude-fixture-027',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 5,
+          tokOut: 3,
+          tokenTotal: 8,
+          tools: 0,
+          turns: 1,
+          usageUnavailable: false,
+        },
+        {
+          calls: 2,
+          costActual: 0,
+          costKnown: true,
+          date: '2026-07-01T08:00:00.000Z',
+          durationMs: 60_000,
+          endDate: '2026-07-01T08:04:30.000Z',
+          modelSegments: [
+            { costKnown: true, model: 'claude-sonnet-4-6', tokCr: 30, tokCw: 10, tokIn: 100, tokOut: 20 },
+            { costKnown: true, model: 'claude-opus-4-1', tokCr: 5, tokCw: 2, tokIn: 40, tokOut: 15 },
+          ],
+          models: ['claude-sonnet-4-6', 'claude-opus-4-1'],
+          parentSourceSessionId: null,
+          partial: true,
+          rootSourceSessionId: null,
+          sourceSessionId: 'claude-fixture-025',
+          tokCr: 35,
+          tokCw: 12,
+          tokIn: 140,
+          tokOut: 35,
+          tokenTotal: 222,
+          tools: 1,
+          turns: 2,
+          usageUnavailable: false,
+        },
+      ],
+      codex: [
+        {
+          calls: 1,
+          costActual: 0.000_66,
+          costKnown: true,
+          date: '2026-07-02T09:10:10.000Z',
+          durationMs: 120_000,
+          endDate: '2026-07-02T09:13:00.000Z',
+          modelSegments: [{ costKnown: true, model: 'gpt-5.6-terra', tokCr: 40, tokCw: 0, tokIn: 80, tokOut: 30 }],
+          models: ['gpt-5.6-terra'],
+          parentSourceSessionId: 'codex-root-025',
+          partial: false,
+          rootSourceSessionId: null,
+          sourceSessionId: 'codex-child-025',
+          tokCr: 40,
+          tokCw: 0,
+          tokIn: 80,
+          tokOut: 30,
+          tokenTotal: 150,
+          tools: 1,
+          turns: 2,
+          usageUnavailable: false,
+        },
+        {
+          calls: 1,
+          costActual: 0.001_092_5,
+          costKnown: true,
+          date: '2026-07-02T09:00:10.000Z',
+          durationMs: 120_010,
+          endDate: '2026-07-02T09:03:00.000Z',
+          modelSegments: [
+            { costKnown: true, model: 'gpt-5.6-sol', tokCr: 30, tokCw: 0, tokIn: 50, tokOut: 20 },
+            { costKnown: true, model: 'gpt-5.6-terra', tokCr: 10, tokCw: 0, tokIn: 30, tokOut: 10 },
+          ],
+          models: ['gpt-5.6-sol', 'gpt-5.6-terra'],
+          parentSourceSessionId: null,
+          partial: true,
+          rootSourceSessionId: null,
+          sourceSessionId: 'codex-root-025',
+          tokCr: 40,
+          tokCw: 0,
+          tokIn: 80,
+          tokOut: 30,
+          tokenTotal: 150,
+          tools: 1,
+          turns: 3,
+          usageUnavailable: false,
+        },
+      ],
+      cursor: [
+        {
+          calls: 1,
+          costActual: 0,
+          costKnown: false,
+          date: '2026-07-05T11:00:00.000Z',
+          durationMs: null,
+          endDate: null,
+          modelSegments: [],
+          models: [],
+          parentSourceSessionId: null,
+          partial: true,
+          rootSourceSessionId: null,
+          sourceSessionId: 'cursor-fixture-025',
+          tokCr: 5,
+          tokCw: 0,
+          tokIn: 25,
+          tokOut: 7,
+          tokenTotal: 37,
+          tools: 0,
+          turns: 1,
+          usageUnavailable: false,
+        },
+      ],
+      opencode: [
+        {
+          calls: 3,
+          costActual: 0.85,
+          costKnown: true,
+          date: '2026-07-04T10:00:10.000Z',
+          durationMs: 90_000,
+          endDate: '2026-07-04T10:02:00.000Z',
+          modelSegments: [
+            { costKnown: true, model: 'openai/gpt-5', tokCr: 23, tokCw: 4, tokIn: 60, tokOut: 18 },
+            { costKnown: true, model: 'anthropic/claude-sonnet-4-6', tokCr: 6, tokCw: 1, tokIn: 30, tokOut: 10 },
+          ],
+          models: ['openai/gpt-5', 'anthropic/claude-sonnet-4-6'],
+          parentSourceSessionId: 'opencode-human-parent-025',
+          partial: true,
+          rootSourceSessionId: null,
+          sourceSessionId: 'opencode-fixture-025',
+          tokCr: 29,
+          tokCw: 5,
+          tokIn: 90,
+          tokOut: 28,
+          tokenTotal: 152,
+          tools: 1,
+          turns: 1,
+          usageUnavailable: false,
+        },
+      ],
+    });
+
+    const expectedCosts = new Map([
+      ['agent-claude-fixture-027', 0.000_06],
+      ['claude-fixture-025', 0.002_416_5],
+      ['codex-child-025', 0.000_66],
+      ['codex-root-025', 0.001_092_5],
+      ['cursor-fixture-025', 0],
+      ['opencode-fixture-025', 0.000_508_425],
+    ]);
+    for (const row of stored.rows) {
+      expect(row.costApprox).toBeCloseTo(expectedCosts.get(row.source?.sourceSessionId ?? '') ?? -1, 12);
+    }
+    const expectedSegmentCosts = new Map<string, readonly number[]>([
+      ['agent-claude-fixture-027', [0.000_06]],
+      ['claude-fixture-025', [0.000_646_5, 0.001_77]],
+      ['codex-child-025', [0.000_66]],
+      ['codex-root-025', [0.000_865, 0.000_227_5]],
+      ['cursor-fixture-025', []],
+      ['opencode-fixture-025', [0.000_262_875, 0.000_245_55]],
+    ]);
+    for (const row of stored.rows) {
+      const expected = expectedSegmentCosts.get(row.source?.sourceSessionId ?? '') ?? [];
+      expect(row.modelSegments ?? []).toHaveLength(expected.length);
+      for (const [index, expectedCost] of expected.entries()) {
+        expect(row.modelSegments?.[index]?.costApprox).toBeCloseTo(expectedCost, 12);
+      }
+    }
+
+    for (const row of stored.rows) {
+      if (!row.modelSegments?.length) {
+        continue;
+      }
+      const segmentTotals = (row.modelSegments ?? []).reduce(
+        (totals, segment) => ({
+          cr: totals.cr + segment.tokCr,
+          cw: totals.cw + segment.tokCw,
+          in: totals.in + segment.tokIn,
+          out: totals.out + segment.tokOut,
+        }),
+        { cr: 0, cw: 0, in: 0, out: 0 },
       );
-      if (!openCodeSourceRow) {
-        throw new Error('Missing source OpenCode fixture row');
-      }
-      const openCodeAnchor = executeMaterializedSessionQuery(database, 'session-detail-anchor', {
-        revision: request().revision,
-        rowId: sessionRowIdentity(openCodeSourceRow),
-      }).anchor;
-      const openCodeAnalysis = await Effect.runPromise(
-        readOpenCodeSessionAnalysis(fixture.ids.opencode).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-      if (!(openCodeAnchor && openCodeAnalysis)) {
-        throw new Error('Missing OpenCode report anchor or local analysis');
-      }
-      expect(openCodeAnchor.sourceAuthority).toBe('local-observed');
-      expect(openCodeAnchor.projection).toEqual({
-        calls: 3,
-        durationMs: 90_000,
-        modelSegments: [
-          {
-            model: 'anthropic/claude-sonnet-4-6',
-            tokens: { cacheRead: 6, cacheWrite: 1, input: 30, output: 10, total: 47 },
-          },
-          {
-            model: 'openai/gpt-5',
-            tokens: { cacheRead: 23, cacheWrite: 4, input: 60, output: 18, total: 105 },
-          },
-        ],
-        partial: true,
-        tokens: { cacheRead: 29, cacheWrite: 5, input: 90, output: 28, total: 152 },
-        tools: 1,
-        turns: 1,
-      });
-      expect(compareSessionProjectionFacts(openCodeAnchor.projection, openCodeAnalysis.projection)).toEqual({
-        checkedFields: ['calls', 'duration', 'model-attribution', 'coverage', 'tokens', 'tools', 'turns'],
-        status: 'matches-report',
-      });
+      expect(segmentTotals).toEqual({ cr: row.tokCr, cw: row.tokCw, in: row.tokIn, out: row.tokOut });
+    }
 
-      const materializedClaude = materializedPage.items.find(
-        ({ row: materializedRow }) => materializedRow.source?.sourceSessionId === fixture.ids.claude,
-      )?.row;
-      const materializedCodex = materializedPage.items.find(
-        ({ row: materializedRow }) => materializedRow.source?.sourceSessionId === fixture.ids.codexRoot,
-      )?.row;
-      if (!(materializedClaude && materializedCodex)) {
-        throw new Error('Missing materialized Claude or Codex fixture row');
+    const secondaryModelPage = projectSessionPage(
+      payload.rows,
+      request({ filters: { fields: { model: 'gpt-5.6-terra' }, harness: [], machine: [], query: '' } }),
+    );
+    expect(JSON.stringify(secondaryModelPage)).toContain(fixture.ids.codexRoot);
+
+    const campaign = projectSessionPage(payload.rows, request()).items.find(
+      (item) => item.kind === 'campaign' && item.row.source?.sourceSessionId === fixture.ids.codexRoot,
+    );
+    expect(campaign?.row).toMatchObject({
+      calls: 2,
+      campaignTotalCount: 2,
+      campaignVisibleCount: 2,
+      durationMs: 120_010,
+      source: { rootSourceSessionId: fixture.ids.codexRoot },
+      tokCr: 80,
+      tokCw: 0,
+      tokIn: 160,
+      tokOut: 60,
+      tokenTotal: 300,
+      tools: 2,
+      partial: true,
+      turns: 5,
+    });
+
+    const snapshot = await Effect.runPromise(
+      createStoredUsageSnapshot({
+        generatedAt: GENERATED_AT,
+        harness: null,
+        includeCursor: true,
+        machine: FIXED_MACHINE,
+      }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+    );
+    const snapshotText = serializeUsageSnapshot(snapshot);
+    const parsedSnapshot = parseUsageSnapshot(snapshotText);
+    expect(parsedSnapshot.schemaVersion).toBe(3);
+    expect(parsedSnapshot.rows.find(({ source }) => source.sourceSessionId === fixture.ids.claude)?.source.vcs).toEqual(
+      materializedClaude.source?.vcs,
+    );
+
+    const mergeBundleText = serializeUsageMergeBundle(
+      createUsageMergeBundle({ generatedAt: GENERATED_AT, machine: FIXED_MACHINE, rows: stored.rows }),
+    );
+    const parsedBundle = parseUsageMergeBundle(mergeBundleText);
+    expect(parsedBundle.version).toBe(3);
+    expect(
+      parsedBundle.rows.find(({ source }) => source.sourceSessionId === fixture.ids.codexRoot)?.source.vcs,
+    ).toEqual(materializedCodex.source?.vcs);
+
+    const mergedPortable = await Effect.runPromise(
+      createMergedUsageReport({
+        configCwd: home,
+        generatedAt: GENERATED_AT,
+        harness: null,
+        includeCursor: true,
+        options: reportOptions,
+        snapshots: [parsedSnapshot],
+      }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+    );
+    const portableRevision = 'fixture-portable-revision-025';
+    const portableRequest = request({ revision: portableRevision });
+    await publishPayload({
+      dbPath,
+      now: SECOND_PUBLICATION_TIME,
+      payload: mergedPortable.payload,
+      revision: portableRevision,
+      sourceAuthorities: mergedPortable.payload.rows.map(() => 'portable-opaque'),
+    });
+    const portablePage = await readSessionPage(dbPath, portableRequest);
+    const portableClaude = portablePage.items.find(
+      ({ row: portableRow }) => portableRow.source?.sourceSessionId === fixture.ids.claude,
+    )?.row;
+    if (!portableClaude) {
+      throw new Error('Missing portable Claude fixture row');
+    }
+    expect(portableClaude.source?.vcs).toEqual(materializedClaude.source?.vcs);
+    const portableAnchor = (await readSessionAnchor(dbPath, portableRevision, portableClaude.rowId)).anchor;
+    expect(portableAnchor).toMatchObject({
+      sourceAuthority: 'portable-opaque',
+      vcs: materializedClaude.source?.vcs,
+    });
+
+    const serializedPayload = JSON.stringify(payload);
+    const serializedQueryResults = JSON.stringify([materializedPage, portablePage]);
+    const serializedArtifacts = [serializedPayload, serializedQueryResults, snapshotText, mergeBundleText];
+    const privateSentinels = [
+      HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
+      HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL,
+      HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL,
+      HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
+      EPHEMERAL_GH_RESULT_SENTINEL,
+    ];
+    for (const sentinel of privateSentinels) {
+      for (const artifact of serializedArtifacts) {
+        expect(artifact).not.toContain(sentinel);
       }
-      expect(materializedClaude.source?.vcs).toMatchObject({
-        branches: [{ name: 'fixture/main' }, { name: 'fixture/topic' }],
-        headCommit: null,
-        pullRequests: [{ number: 27, url: 'https://github.com/fixture/ai-usage/pull/27' }],
-        repository: { ownerPath: 'fixture/ai-usage', provenance: 'local-derived' },
-      });
-      expect(materializedCodex.source?.vcs).toMatchObject({
-        branches: [{ name: 'fixture/main', provenance: 'harness-recorded' }],
-        headCommit: { hash: '0123456789abcdef0123456789abcdef01234567' },
-        pullRequests: [],
-        repository: { ownerPath: 'fixture/ai-usage', provenance: 'harness-recorded' },
-      });
-      expect(openCodeAnchor.vcs).toMatchObject({
-        branches: [],
-        headCommit: null,
-        pullRequests: [],
-        repository: { ownerPath: 'fixture/ai-usage', provenance: 'local-derived' },
-      });
-
-      const claudeAnchor = executeMaterializedSessionQuery(database, 'session-detail-anchor', {
-        revision: request().revision,
-        rowId: materializedClaude.rowId,
-      }).anchor;
-      const claudeAnalysis = await Effect.runPromise(
-        readClaudeSessionAnalysis(fixture.ids.claude).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-      if (!(claudeAnchor && claudeAnalysis)) {
-        throw new Error('Missing Claude report anchor or local analysis');
-      }
-      expect(claudeAnchor.sourceAuthority).toBe('local-observed');
-      expect(compareSessionProjectionFacts(claudeAnchor.projection, claudeAnalysis.projection)).toEqual({
-        checkedFields: ['calls', 'duration', 'model-attribution', 'coverage', 'tokens', 'tools', 'turns'],
-        status: 'matches-report',
-      });
-      expect(claudeAnalysis.detail.prompts.map(({ text }) => text)).toContain(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL);
-
-      const byHarness = new Map<string, CollectedUsageRow[]>();
-      for (const row of stored.rows) {
-        const harness = row.source?.harnessKey ?? 'missing';
-        const rows = byHarness.get(harness) ?? [];
-        rows.push(row);
-        byHarness.set(harness, rows);
-      }
-      const compactByHarness = Object.fromEntries(
-        [...byHarness].map(([harness, rows]) => [
-          harness,
-          rows
-            .map(compactRow)
-            .sort((left, right) => (left.sourceSessionId ?? '').localeCompare(right.sourceSessionId ?? '')),
-        ]),
-      );
-      expect(compactByHarness).toEqual({
-        claude: [
-          {
-            calls: 1,
-            costActual: 0,
-            costKnown: true,
-            date: '2026-07-01T08:00:30.000Z',
-            durationMs: null,
-            endDate: '2026-07-01T08:00:40.000Z',
-            modelSegments: [{ costKnown: true, model: 'claude-sonnet-4-6', tokCr: 0, tokCw: 0, tokIn: 5, tokOut: 3 }],
-            models: ['claude-sonnet-4-6'],
-            parentSourceSessionId: 'claude-fixture-025',
-            partial: false,
-            rootSourceSessionId: null,
-            sourceSessionId: 'agent-claude-fixture-027',
-            tokCr: 0,
-            tokCw: 0,
-            tokIn: 5,
-            tokOut: 3,
-            tokenTotal: 8,
-            tools: 0,
-            turns: 1,
-            usageUnavailable: false,
-          },
-          {
-            calls: 2,
-            costActual: 0,
-            costKnown: true,
-            date: '2026-07-01T08:00:00.000Z',
-            durationMs: 60_000,
-            endDate: '2026-07-01T08:04:30.000Z',
-            modelSegments: [
-              { costKnown: true, model: 'claude-sonnet-4-6', tokCr: 30, tokCw: 10, tokIn: 100, tokOut: 20 },
-              { costKnown: true, model: 'claude-opus-4-1', tokCr: 5, tokCw: 2, tokIn: 40, tokOut: 15 },
-            ],
-            models: ['claude-sonnet-4-6', 'claude-opus-4-1'],
-            parentSourceSessionId: null,
-            partial: true,
-            rootSourceSessionId: null,
-            sourceSessionId: 'claude-fixture-025',
-            tokCr: 35,
-            tokCw: 12,
-            tokIn: 140,
-            tokOut: 35,
-            tokenTotal: 222,
-            tools: 1,
-            turns: 2,
-            usageUnavailable: false,
-          },
-        ],
-        codex: [
-          {
-            calls: 1,
-            costActual: 0.000_66,
-            costKnown: true,
-            date: '2026-07-02T09:10:10.000Z',
-            durationMs: 120_000,
-            endDate: '2026-07-02T09:13:00.000Z',
-            modelSegments: [{ costKnown: true, model: 'gpt-5.6-terra', tokCr: 40, tokCw: 0, tokIn: 80, tokOut: 30 }],
-            models: ['gpt-5.6-terra'],
-            parentSourceSessionId: 'codex-root-025',
-            partial: false,
-            rootSourceSessionId: null,
-            sourceSessionId: 'codex-child-025',
-            tokCr: 40,
-            tokCw: 0,
-            tokIn: 80,
-            tokOut: 30,
-            tokenTotal: 150,
-            tools: 1,
-            turns: 2,
-            usageUnavailable: false,
-          },
-          {
-            calls: 1,
-            costActual: 0.001_092_5,
-            costKnown: true,
-            date: '2026-07-02T09:00:10.000Z',
-            durationMs: 120_010,
-            endDate: '2026-07-02T09:03:00.000Z',
-            modelSegments: [
-              { costKnown: true, model: 'gpt-5.6-sol', tokCr: 30, tokCw: 0, tokIn: 50, tokOut: 20 },
-              { costKnown: true, model: 'gpt-5.6-terra', tokCr: 10, tokCw: 0, tokIn: 30, tokOut: 10 },
-            ],
-            models: ['gpt-5.6-sol', 'gpt-5.6-terra'],
-            parentSourceSessionId: null,
-            partial: true,
-            rootSourceSessionId: null,
-            sourceSessionId: 'codex-root-025',
-            tokCr: 40,
-            tokCw: 0,
-            tokIn: 80,
-            tokOut: 30,
-            tokenTotal: 150,
-            tools: 1,
-            turns: 3,
-            usageUnavailable: false,
-          },
-        ],
-        cursor: [
-          {
-            calls: 1,
-            costActual: 0,
-            costKnown: false,
-            date: '2026-07-05T11:00:00.000Z',
-            durationMs: null,
-            endDate: null,
-            modelSegments: [],
-            models: [],
-            parentSourceSessionId: null,
-            partial: true,
-            rootSourceSessionId: null,
-            sourceSessionId: 'cursor-fixture-025',
-            tokCr: 5,
-            tokCw: 0,
-            tokIn: 25,
-            tokOut: 7,
-            tokenTotal: 37,
-            tools: 0,
-            turns: 1,
-            usageUnavailable: false,
-          },
-        ],
-        opencode: [
-          {
-            calls: 3,
-            costActual: 0.85,
-            costKnown: true,
-            date: '2026-07-04T10:00:10.000Z',
-            durationMs: 90_000,
-            endDate: '2026-07-04T10:02:00.000Z',
-            modelSegments: [
-              { costKnown: true, model: 'openai/gpt-5', tokCr: 23, tokCw: 4, tokIn: 60, tokOut: 18 },
-              { costKnown: true, model: 'anthropic/claude-sonnet-4-6', tokCr: 6, tokCw: 1, tokIn: 30, tokOut: 10 },
-            ],
-            models: ['openai/gpt-5', 'anthropic/claude-sonnet-4-6'],
-            parentSourceSessionId: 'opencode-human-parent-025',
-            partial: true,
-            rootSourceSessionId: null,
-            sourceSessionId: 'opencode-fixture-025',
-            tokCr: 29,
-            tokCw: 5,
-            tokIn: 90,
-            tokOut: 28,
-            tokenTotal: 152,
-            tools: 1,
-            turns: 1,
-            usageUnavailable: false,
-          },
-        ],
-      });
-
-      const expectedCosts = new Map([
-        ['agent-claude-fixture-027', 0.000_06],
-        ['claude-fixture-025', 0.002_416_5],
-        ['codex-child-025', 0.000_66],
-        ['codex-root-025', 0.001_092_5],
-        ['cursor-fixture-025', 0],
-        ['opencode-fixture-025', 0.000_508_425],
-      ]);
-      for (const row of stored.rows) {
-        expect(row.costApprox).toBeCloseTo(expectedCosts.get(row.source?.sourceSessionId ?? '') ?? -1, 12);
-      }
-      const expectedSegmentCosts = new Map<string, readonly number[]>([
-        ['agent-claude-fixture-027', [0.000_06]],
-        ['claude-fixture-025', [0.000_646_5, 0.001_77]],
-        ['codex-child-025', [0.000_66]],
-        ['codex-root-025', [0.000_865, 0.000_227_5]],
-        ['cursor-fixture-025', []],
-        ['opencode-fixture-025', [0.000_262_875, 0.000_245_55]],
-      ]);
-      for (const row of stored.rows) {
-        const expected = expectedSegmentCosts.get(row.source?.sourceSessionId ?? '') ?? [];
-        expect(row.modelSegments ?? []).toHaveLength(expected.length);
-        for (const [index, expectedCost] of expected.entries()) {
-          expect(row.modelSegments?.[index]?.costApprox).toBeCloseTo(expectedCost, 12);
-        }
-      }
-
-      for (const row of stored.rows) {
-        if (!row.modelSegments?.length) {
-          continue;
-        }
-        const segmentTotals = (row.modelSegments ?? []).reduce(
-          (totals, segment) => ({
-            cr: totals.cr + segment.tokCr,
-            cw: totals.cw + segment.tokCw,
-            in: totals.in + segment.tokIn,
-            out: totals.out + segment.tokOut,
-          }),
-          { cr: 0, cw: 0, in: 0, out: 0 },
-        );
-        expect(segmentTotals).toEqual({ cr: row.tokCr, cw: row.tokCw, in: row.tokIn, out: row.tokOut });
-      }
-
-      const secondaryModelPage = projectSessionPage(
-        payload.rows,
-        request({ filters: { fields: { model: 'gpt-5.6-terra' }, harness: [], machine: [], query: '' } }),
-      );
-      expect(JSON.stringify(secondaryModelPage)).toContain(fixture.ids.codexRoot);
-
-      const campaign = projectSessionPage(payload.rows, request()).items.find(
-        (item) => item.kind === 'campaign' && item.row.source?.sourceSessionId === fixture.ids.codexRoot,
-      );
-      expect(campaign?.row).toMatchObject({
-        calls: 2,
-        campaignTotalCount: 2,
-        campaignVisibleCount: 2,
-        durationMs: 120_010,
-        source: { rootSourceSessionId: fixture.ids.codexRoot },
-        tokCr: 80,
-        tokCw: 0,
-        tokIn: 160,
-        tokOut: 60,
-        tokenTotal: 300,
-        tools: 2,
-        partial: true,
-        turns: 5,
-      });
-
-      const snapshot = await Effect.runPromise(
-        createStoredUsageSnapshot({
-          generatedAt: GENERATED_AT,
-          harness: null,
-          includeCursor: true,
-          machine: FIXED_MACHINE,
-        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-      const snapshotText = serializeUsageSnapshot(snapshot);
-      const parsedSnapshot = parseUsageSnapshot(snapshotText);
-      expect(parsedSnapshot.schemaVersion).toBe(3);
-      expect(
-        parsedSnapshot.rows.find(({ source }) => source.sourceSessionId === fixture.ids.claude)?.source.vcs,
-      ).toEqual(materializedClaude.source?.vcs);
-
-      const mergeBundleText = serializeUsageMergeBundle(
-        createUsageMergeBundle({ generatedAt: GENERATED_AT, machine: FIXED_MACHINE, rows: stored.rows }),
-      );
-      const parsedBundle = parseUsageMergeBundle(mergeBundleText);
-      expect(parsedBundle.version).toBe(3);
-      expect(
-        parsedBundle.rows.find(({ source }) => source.sourceSessionId === fixture.ids.codexRoot)?.source.vcs,
-      ).toEqual(materializedCodex.source?.vcs);
-
-      const mergedPortable = await Effect.runPromise(
-        createMergedUsageReport({
-          configCwd: home,
-          generatedAt: GENERATED_AT,
-          harness: null,
-          includeCursor: true,
-          options: reportOptions,
-          snapshots: [parsedSnapshot],
-        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-      await materializeSessionQueryDatabase(
-        portableRevisionDirectory,
-        mergedPortable.payload.rows,
-        undefined,
-        mergedPortable.payload.rows.map(() => 'portable-opaque' as const),
-      );
-      const portableDatabase = new Database(path.join(portableRevisionDirectory, SESSION_QUERY_DATABASE_NAME), {
-        readonly: true,
-        strict: true,
-      });
-      try {
-        const portablePage = executeMaterializedSessionQuery(portableDatabase, 'sessions', request());
-        const portableClaude = portablePage.items.find(
-          ({ row: portableRow }) => portableRow.source?.sourceSessionId === fixture.ids.claude,
-        )?.row;
-        if (!portableClaude) {
-          throw new Error('Missing portable Claude fixture row');
-        }
-        expect(portableClaude.source?.vcs).toEqual(materializedClaude.source?.vcs);
-        const portableAnchor = executeMaterializedSessionQuery(portableDatabase, 'session-detail-anchor', {
-          revision: request().revision,
-          rowId: portableClaude.rowId,
-        }).anchor;
-        expect(portableAnchor).toMatchObject({
-          sourceAuthority: 'portable-opaque',
-          vcs: materializedClaude.source?.vcs,
-        });
-      } finally {
-        portableDatabase.close();
-      }
-
-      const serializedPayload = JSON.stringify(payload);
-      const sourceRows = database
-        .query<{ source_row_json: string }, []>('SELECT source_row_json FROM session_rows')
-        .all();
-      const serializedSourceRows = JSON.stringify(sourceRows);
-      const serializedArtifacts = [serializedPayload, serializedSourceRows, snapshotText, mergeBundleText];
-      const privateSentinels = [
-        HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
-        HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL,
-        HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL,
-        HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
-        EPHEMERAL_GH_RESULT_SENTINEL,
-      ];
-      for (const sentinel of privateSentinels) {
-        for (const artifact of serializedArtifacts) {
-          expect(artifact).not.toContain(sentinel);
-        }
-      }
-      const privateFiles = [
-        ...(await readFilesUnder(path.join(home, '.config', 'ai-usage'))),
-        await fs.readFile(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME)),
-        await fs.readFile(path.join(portableRevisionDirectory, SESSION_QUERY_DATABASE_NAME)),
-      ];
-      for (const sentinel of privateSentinels) {
-        const bytes = Buffer.from(sentinel);
-        expect(privateFiles.every((file) => !file.includes(bytes))).toBe(true);
-      }
-    } finally {
-      database.close();
+    }
+    const privateFiles = await readFilesUnder(path.join(home, '.config', 'ai-usage'));
+    for (const sentinel of privateSentinels) {
+      const bytes = Buffer.from(sentinel);
+      expect(privateFiles.every((file) => !file.includes(bytes))).toBe(true);
     }
   });
 
   test('compares a published Codex projection before and after local source mutation and recollection', async () => {
     const home = await makeTemporaryDirectory('ai-usage-session-freshness-home-');
-    const firstRevisionDirectory = await makeTemporaryDirectory('ai-usage-session-freshness-first-');
-    const secondRevisionDirectory = await makeTemporaryDirectory('ai-usage-session-freshness-second-');
-    await fs.chmod(firstRevisionDirectory, 0o700);
-    await fs.chmod(secondRevisionDirectory, 0o700);
+    const dbPath = usageStorePath(home);
+    const firstRevision = 'fixture-codex-before-025';
+    const secondRevision = 'fixture-codex-after-025';
     const storage = createLocalHistoryStorage(home);
     await Effect.runPromise(
       writeMachineConfig(FIXED_MACHINE).pipe(Effect.provideService(LocalHistoryStorage, storage)),
@@ -680,26 +720,20 @@ describe('session report pipeline', () => {
       }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
     );
     const firstPayload = firstCapture.payload;
-    const firstPage = projectSessionPage(firstPayload.rows, request());
+    const firstRequest = request({ revision: firstRevision });
+    const firstPage = projectSessionPage(firstPayload.rows, firstRequest);
     const rootItem = firstPage.items.find((item) => item.row.source?.sourceSessionId === fixture.ids.codexRoot);
     if (!rootItem) {
       throw new Error('Missing Codex root row in the first published projection');
     }
-    await materializeSessionQueryDatabase(
-      firstRevisionDirectory,
-      firstPayload.rows,
-      undefined,
-      firstCapture.rowSourceAuthorities,
-    );
-    const firstDatabase = new Database(path.join(firstRevisionDirectory, SESSION_QUERY_DATABASE_NAME), {
-      readonly: true,
-      strict: true,
+    await publishPayload({
+      dbPath,
+      now: FIRST_PUBLICATION_TIME,
+      payload: firstPayload,
+      revision: firstRevision,
+      sourceAuthorities: firstCapture.rowSourceAuthorities,
     });
-    const firstAnchorResult = executeMaterializedSessionQuery(firstDatabase, 'session-detail-anchor', {
-      revision: request().revision,
-      rowId: rootItem.row.rowId,
-    });
-    firstDatabase.close();
+    const firstAnchorResult = await readSessionAnchor(dbPath, firstRevision, rootItem.row.rowId);
     if (!firstAnchorResult.anchor) {
       throw new Error('Missing Codex root anchor in the first report revision');
     }
@@ -739,28 +773,22 @@ describe('session report pipeline', () => {
       }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
     );
     const secondPayload = secondCapture.payload;
-    const secondPage = projectSessionPage(secondPayload.rows, request());
+    const secondRequest = request({ revision: secondRevision });
+    const secondPage = projectSessionPage(secondPayload.rows, secondRequest);
     const republishedRootItem = secondPage.items.find(
       (item) => item.row.source?.sourceSessionId === fixture.ids.codexRoot,
     );
     if (!republishedRootItem) {
       throw new Error('Missing Codex root row in the republished projection');
     }
-    await materializeSessionQueryDatabase(
-      secondRevisionDirectory,
-      secondPayload.rows,
-      undefined,
-      secondCapture.rowSourceAuthorities,
-    );
-    const secondDatabase = new Database(path.join(secondRevisionDirectory, SESSION_QUERY_DATABASE_NAME), {
-      readonly: true,
-      strict: true,
+    await publishPayload({
+      dbPath,
+      now: SECOND_PUBLICATION_TIME,
+      payload: secondPayload,
+      revision: secondRevision,
+      sourceAuthorities: secondCapture.rowSourceAuthorities,
     });
-    const secondAnchorResult = executeMaterializedSessionQuery(secondDatabase, 'session-detail-anchor', {
-      revision: request().revision,
-      rowId: republishedRootItem.row.rowId,
-    });
-    secondDatabase.close();
+    const secondAnchorResult = await readSessionAnchor(dbPath, secondRevision, republishedRootItem.row.rowId);
     if (!secondAnchorResult.anchor) {
       throw new Error('Missing Codex root anchor in the republished revision');
     }
@@ -769,14 +797,12 @@ describe('session report pipeline', () => {
       checkedFields: ['calls', 'duration', 'model-attribution', 'coverage', 'tokens', 'tools', 'turns'],
       status: 'matches-report',
     });
+    expect(await readSessionAnchor(dbPath, firstRevision, rootItem.row.rowId)).toEqual(firstAnchorResult);
   });
 
   test('keeps Claude match, exact divergence, and match tied to immutable report revisions', async () => {
     const home = await makeTemporaryDirectory('ai-usage-claude-vertical-home-');
-    const firstRevisionDirectory = await makeTemporaryDirectory('ai-usage-claude-vertical-first-');
-    const secondRevisionDirectory = await makeTemporaryDirectory('ai-usage-claude-vertical-second-');
-    await fs.chmod(firstRevisionDirectory, 0o700);
-    await fs.chmod(secondRevisionDirectory, 0o700);
+    const dbPath = usageStorePath(home);
     const storage = createLocalHistoryStorage(home);
     await Effect.runPromise(
       writeMachineConfig(FIXED_MACHINE).pipe(Effect.provideService(LocalHistoryStorage, storage)),
@@ -792,7 +818,7 @@ describe('session report pipeline', () => {
       throw new Error('Missing fixture source claude.sessions');
     }
 
-    const captureAnchor = async (revisionDirectory: string) => {
+    const captureAnchor = async (revision: string, now: number) => {
       const capture = await Effect.runPromise(
         createStoredReportCapture({
           generatedAt: GENERATED_AT,
@@ -801,34 +827,25 @@ describe('session report pipeline', () => {
           options: reportOptions,
         }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
       );
-      const row = projectSessionPage(capture.payload.rows, request()).items.find(
+      const sessionRequest = request({ revision });
+      const row = projectSessionPage(capture.payload.rows, sessionRequest).items.find(
         (item) => item.row.source?.sourceSessionId === fixture.ids.claude,
       )?.row;
       if (!row) {
         throw new Error('Missing Claude row in the published projection');
       }
-      await materializeSessionQueryDatabase(
-        revisionDirectory,
-        capture.payload.rows,
-        undefined,
-        capture.rowSourceAuthorities,
-      );
-      const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), {
-        readonly: true,
-        strict: true,
+      await publishPayload({
+        dbPath,
+        now,
+        payload: capture.payload,
+        revision,
+        sourceAuthorities: capture.rowSourceAuthorities,
       });
-      try {
-        const anchor = executeMaterializedSessionQuery(database, 'session-detail-anchor', {
-          revision: request().revision,
-          rowId: row.rowId,
-        }).anchor;
-        if (!anchor) {
-          throw new Error('Missing Claude anchor in the published revision');
-        }
-        return anchor;
-      } finally {
-        database.close();
+      const anchor = (await readSessionAnchor(dbPath, revision, row.rowId)).anchor;
+      if (!anchor) {
+        throw new Error('Missing Claude anchor in the published revision');
       }
+      return { anchor, rowId: row.rowId };
     };
     const analyze = () =>
       Effect.runPromise(
@@ -836,7 +853,10 @@ describe('session report pipeline', () => {
       );
 
     await Effect.runPromise(claudeSource.run(sourceContext));
-    const firstAnchor = await captureAnchor(firstRevisionDirectory);
+    const firstRevision = 'fixture-claude-before-025';
+    const secondRevision = 'fixture-claude-after-025';
+    const firstPublished = await captureAnchor(firstRevision, FIRST_PUBLICATION_TIME);
+    const firstAnchor = firstPublished.anchor;
     const initialAnalysis = await analyze();
     if (!initialAnalysis) {
       throw new Error('Missing initial Claude analysis');
@@ -873,10 +893,11 @@ describe('session report pipeline', () => {
     });
 
     await Effect.runPromise(claudeSource.run(sourceContext));
-    const secondAnchor = await captureAnchor(secondRevisionDirectory);
+    const secondAnchor = (await captureAnchor(secondRevision, SECOND_PUBLICATION_TIME)).anchor;
     expect(compareSessionProjectionFacts(secondAnchor.projection, changedAnalysis.projection)).toEqual({
       checkedFields: ['calls', 'duration', 'model-attribution', 'coverage', 'tokens', 'tools', 'turns'],
       status: 'matches-report',
     });
+    expect((await readSessionAnchor(dbPath, firstRevision, firstPublished.rowId)).anchor).toEqual(firstAnchor);
   });
 });
