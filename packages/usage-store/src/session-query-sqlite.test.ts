@@ -527,11 +527,12 @@ describe('durable session query SQLite projections', () => {
       const request = queryRequest();
       const first = executeMaterializedSessionQuery(database, 'sessions', request, trace);
       expect(first).toEqual(projectSessionPage(rows, request));
-      expect(traces).toHaveLength(3);
+      expect(traces).toHaveLength(4);
       expect(traces[1]?.sql).toContain('LIMIT ? OFFSET ?');
       expect(traces[1]?.sql).not.toContain('FROM session_rows AS classifier');
       expect(traces[1]?.params.slice(-2)).toEqual([request.pageSize + 1, 0]);
-      expect(traces[2]?.sql).toContain('campaign_root DESC, ordinal');
+      expect(traces[2]?.sql).toContain('SELECT ordinal, row_json');
+      expect(traces[3]?.sql).toContain('campaign_root DESC, ordinal');
 
       const campaign = first.items.find((item) => item.kind === 'campaign');
       expect(campaign?.kind).toBe('campaign');
@@ -715,22 +716,33 @@ describe('durable session query SQLite projections', () => {
     }
   });
 
-  test('pages 5,000 singleton campaigns within the production query budget', async () => {
-    const fixtureRows = Array.from({ length: 5000 }, (_, index) => row(`scale-session-${index}`, (index % 1000) + 1));
+  test('pages 5,000 date-filtered campaigns with large serialized rows within the production query budget', async () => {
+    const payloadPadding = 'x'.repeat(4096);
+    const fixtureRows = Array.from({ length: 5000 }, (_, index) => ({
+      ...row(`scale-session-${index}`, (index % 1000) + 1),
+      rawProject: payloadPadding,
+    }));
+    const traces: { params: readonly unknown[]; sql: string }[] = [];
+    const trace: SessionQuerySqliteTrace = (query) => traces.push(query);
     const { database } = await openRowsDatabase(fixtureRows);
     const request = queryRequest({
       pageSize: 100,
+      range: { from: '2026-06-30T00:00:00.000Z', to: null },
       sort: [{ desc: true, id: 'date' }],
     });
     try {
       const startedAt = performance.now();
-      const actual = executeMaterializedSessionQuery(database, 'sessions', request);
+      const actual = executeMaterializedSessionQuery(database, 'sessions', request, trace);
       const durationMs = performance.now() - startedAt;
 
       expect(actual).toEqual(projectSessionPage(fixtureRows, request));
       expect(actual.itemCount).toBe(5000);
       expect(actual.sessionCount).toBe(5000);
-      expect(durationMs).toBeLessThan(5000);
+      expect(traces).toHaveLength(4);
+      expect(traces[1]?.sql).not.toContain('root.row_json');
+      expect(traces[1]?.sql).not.toContain('source_row_json');
+      expect(traces[2]?.params).toHaveLength(100);
+      expect(durationMs).toBeLessThan(3000);
     } finally {
       database.close();
     }

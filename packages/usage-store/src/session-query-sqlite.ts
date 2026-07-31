@@ -111,7 +111,8 @@ interface ItemRecord {
   lines_deleted: number | null;
   partial: number | null;
   price_measurement?: ApiPriceMeasurement;
-  row_json: string;
+  root_ordinal: number;
+  row_json?: string;
   rtk_command_count: number | null;
   rtk_input_tokens: number | null;
   rtk_output_tokens: number | null;
@@ -145,6 +146,11 @@ interface CampaignCostRecord {
   cost_approx: number;
   cost_known: number;
   cost_quota: number | null;
+  row_json: string;
+}
+
+interface CampaignRootRecord {
+  ordinal: number;
   row_json: string;
 }
 
@@ -272,7 +278,48 @@ export const buildSessionQuerySqlOrder = (
   return clauses.join(', ');
 };
 
+const CAMPAIGN_ROLLUP_COLUMNS = [
+  'active_date',
+  'active_time',
+  'calls',
+  'campaign_key',
+  'campaign_root',
+  'campaign_total_count',
+  'cost_actual',
+  'cost_approx',
+  'cost_known',
+  'cost_quota',
+  'fresh_tokens',
+  'line_delta',
+  'lines_added',
+  'lines_deleted',
+  'ordinal',
+  'origin',
+  'rtk_command_count',
+  'rtk_input_tokens',
+  'rtk_output_tokens',
+  'rtk_saved_tokens',
+  'sort_ambiguous',
+  'sort_date',
+  'sort_partial',
+  'sort_subagent',
+  'tok_cr',
+  'tok_cw',
+  'tok_in',
+  'tok_out',
+  'token_total',
+  'tools',
+  'turns',
+  'usage_unavailable',
+] as const;
+
+const campaignRollupProjection = (alias: string): string =>
+  CAMPAIGN_ROLLUP_COLUMNS.map((column) => [alias, column].join('.')).join(', ');
+
 const filteredCte = (where: string): string => `filtered AS (SELECT * FROM session_rows WHERE ${where})`;
+
+const campaignFilteredCte = (where: string): string =>
+  `filtered AS (SELECT ${campaignRollupProjection('session_rows')} FROM session_rows WHERE ${where})`;
 
 const campaignRollupCte = (includeMissingClassifiers: boolean): string => {
   if (!includeMissingClassifiers) {
@@ -281,7 +328,7 @@ const campaignRollupCte = (includeMissingClassifiers: boolean): string => {
   return `campaign_rollup AS (
   SELECT * FROM filtered
   UNION ALL
-  SELECT classifier.*
+  SELECT ${campaignRollupProjection('classifier')}
   FROM session_rows AS classifier
   WHERE classifier.origin = 'classifier'
     AND classifier.ordinal NOT IN (SELECT ordinal FROM filtered)
@@ -375,7 +422,7 @@ const campaignItemCte = (useExactCostSort: boolean): string => `campaign_items A
     'campaign' AS item_kind,
     'campaign:' || visible.campaign_key AS item_identity,
     MIN(visible.ordinal) AS item_ordinal,
-    root.row_json,
+    MIN(root.ordinal) AS root_ordinal,
     visible.campaign_key,
     MAX(visible_counts.visible_count) AS visible_count,
     MAX(visible.campaign_total_count) AS total_count,
@@ -465,6 +512,9 @@ const parsePresentationRow = (serialized: string): SessionPresentationRow =>
   JSON.parse(serialized) as SessionPresentationRow;
 
 const campaignDisplayRow = (record: ItemRecord): SessionPresentationRow => {
+  if (record.row_json === undefined) {
+    throw new Error('Session query database omitted a paged campaign root');
+  }
   const root = parsePresentationRow(record.row_json);
   const rootWithoutModelAttribution = { ...root };
   Reflect.deleteProperty(rootWithoutModelAttribution, 'modelSegments');
@@ -537,6 +587,31 @@ const campaignDisplayRow = (record: ItemRecord): SessionPresentationRow => {
   };
 };
 
+const hydrateCampaignRoots = (
+  database: SessionQuerySqliteDatabase,
+  records: ItemRecord[],
+  trace?: SessionQuerySqliteTrace,
+): void => {
+  const rootOrdinals = [...new Set(records.map((record) => record.root_ordinal))];
+  if (rootOrdinals.length === 0) {
+    return;
+  }
+  const roots = executeAll<CampaignRootRecord>(
+    database,
+    `SELECT ordinal, row_json FROM session_rows WHERE ordinal IN (${rootOrdinals.map(() => '?').join(', ')})`,
+    rootOrdinals,
+    trace,
+  );
+  const rootJsonByOrdinal = new Map(roots.map((root) => [root.ordinal, root.row_json]));
+  for (const record of records) {
+    const rowJson = rootJsonByOrdinal.get(record.root_ordinal);
+    if (rowJson === undefined) {
+      throw new Error('Session query database omitted a paged campaign root');
+    }
+    record.row_json = rowJson;
+  }
+};
+
 const hydrateExactCampaignCosts = (
   database: SessionQuerySqliteDatabase,
   records: ItemRecord[],
@@ -595,9 +670,11 @@ const runSessionPage = (
   const requestFingerprint = sessionQueryFingerprint(request);
   const offset = offsetFromCursor(request.cursor, request.revision, requestFingerprint);
   const filter = buildSessionQuerySqlFilter(request);
-  const countSql = `WITH ${filteredCte(filter.where)} SELECT
-    (SELECT COUNT(*) FROM filtered) AS session_count,
-    (SELECT COUNT(DISTINCT campaign_key) FROM filtered WHERE campaign_key IS NOT NULL) AS item_count`;
+  const countSql = `SELECT
+    COUNT(*) AS session_count,
+    COUNT(DISTINCT campaign_key) AS item_count
+    FROM session_rows
+    WHERE ${filter.where}`;
   const counts = executeGet<CountRecord>(database, countSql, filter.params, trace) ?? {
     item_count: 0,
     session_count: 0,
@@ -605,7 +682,7 @@ const runSessionPage = (
   const order = buildSessionQuerySqlOrder(request.sort, 'item_identity_rank', 'item_ordinal');
   const useExactCostSort = request.sort.some(({ id }) => CAMPAIGN_EXACT_COST_SORT_FIELDS.has(id));
   const campaignCtes = [
-    filteredCte(filter.where),
+    campaignFilteredCte(filter.where),
     campaignRollupCte(filter.where !== '1 = 1'),
     campaignProjectionCtes,
     ...(useExactCostSort ? [campaignExactCostCtes] : []),
@@ -621,6 +698,7 @@ const runSessionPage = (
   );
   const hasMore = pageWithSentinel.length > request.pageSize;
   const pageRecords = pageWithSentinel.slice(0, request.pageSize);
+  hydrateCampaignRoots(database, pageRecords, trace);
   hydrateExactCampaignCosts(database, pageRecords, filter, trace);
   const items: SessionPageItem[] = pageRecords.map((record) => ({
     campaignKey: record.campaign_key!,

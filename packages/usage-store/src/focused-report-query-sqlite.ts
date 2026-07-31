@@ -152,8 +152,13 @@ interface TopSessionRecord {
   cost_known: number;
   duration_ms: number | null;
   item_kind: 'campaign' | 'session';
-  row_json: string;
+  root_ordinal: number;
   session_count: number;
+}
+
+interface TopSessionRootRecord {
+  ordinal: number;
+  row_json: string;
 }
 
 type SqlFilter = ReturnType<typeof buildSessionQuerySqlFilter>;
@@ -645,18 +650,24 @@ const readTopSessions = (
   database: SessionQuerySqliteDatabase,
   filter: SqlFilter,
   trace?: SessionQuerySqliteTrace,
-): FocusedOverviewSessionItem[] =>
-  executeAll<TopSessionRecord>(
+): FocusedOverviewSessionItem[] => {
+  const records = executeAll<TopSessionRecord>(
     database,
     `WITH visible AS (
-      SELECT ordinal, row_json, campaign_key, cost_known, cost_approx, duration_ms
+      SELECT ordinal, campaign_key, cost_known, cost_approx, duration_ms
       FROM session_rows
       WHERE ${filter.where}
+    ),
+    visible_campaign_counts AS (
+      SELECT campaign_key, COUNT(*) AS session_count
+      FROM visible
+      WHERE campaign_key IS NOT NULL
+      GROUP BY campaign_key
     ),
     campaign_rollup AS (
       SELECT * FROM visible
       UNION ALL
-      SELECT ordinal, row_json, campaign_key, cost_known, cost_approx, duration_ms
+      SELECT ordinal, campaign_key, cost_known, cost_approx, duration_ms
       FROM session_rows AS classifier
       WHERE classifier.origin = 'classifier'
         AND classifier.ordinal NOT IN (SELECT ordinal FROM visible)
@@ -669,26 +680,24 @@ const readTopSessions = (
     items AS (
       SELECT
         'campaign' AS item_kind,
-        root.row_json AS row_json,
+        MIN(root.ordinal) AS root_ordinal,
         SUM(rollup.cost_approx) AS cost_approx,
         MIN(rollup.cost_known) AS cost_known,
         MAX(root.duration_ms) AS duration_ms,
-        (
-          SELECT COUNT(*)
-          FROM visible AS matched
-          WHERE matched.campaign_key = rollup.campaign_key
-        ) AS session_count,
+        MAX(visible_count.session_count) AS session_count,
         0 AS kind_order,
         MIN(rollup.ordinal) AS item_ordinal
       FROM campaign_rollup AS rollup
       INNER JOIN session_rows AS root
         ON root.campaign_key = rollup.campaign_key AND root.campaign_root = 1
+      INNER JOIN visible_campaign_counts AS visible_count
+        ON visible_count.campaign_key = rollup.campaign_key
       WHERE rollup.campaign_key IS NOT NULL
       GROUP BY rollup.campaign_key
       UNION ALL
       SELECT
         'session' AS item_kind,
-        row_json,
+        ordinal AS root_ordinal,
         cost_approx,
         cost_known,
         duration_ms,
@@ -698,15 +707,34 @@ const readTopSessions = (
       FROM visible
       WHERE campaign_key IS NULL
     )
-    SELECT item_kind, row_json, cost_approx, cost_known, duration_ms, session_count
+    SELECT item_kind, root_ordinal, cost_approx, cost_known, duration_ms, session_count
     FROM items
     WHERE cost_approx > 0
     ORDER BY cost_approx DESC, kind_order ASC, item_ordinal ASC
     LIMIT 5`,
     filter.params,
     trace,
-  ).map((record) => {
-    const row = parsePresentationRow(record.row_json);
+  );
+  if (records.length === 0) {
+    return [];
+  }
+  const rootOrdinals = [...new Set(records.map((record) => record.root_ordinal))];
+  const roots = executeAll<TopSessionRootRecord>(
+    database,
+    `SELECT ordinal, row_json
+    FROM session_rows
+    WHERE ordinal IN (${rootOrdinals.map(() => '?').join(', ')})
+    LIMIT 5`,
+    rootOrdinals,
+    trace,
+  );
+  const rootJsonByOrdinal = new Map(roots.map((root) => [root.ordinal, root.row_json]));
+  return records.map((record) => {
+    const rootJson = rootJsonByOrdinal.get(record.root_ordinal);
+    if (rootJson === undefined) {
+      throw new Error('Focused report query database omitted a top-session root');
+    }
+    const row = parsePresentationRow(rootJson);
     return {
       costApprox: record.cost_approx,
       costKnown: record.cost_known === 1,
@@ -718,6 +746,7 @@ const readTopSessions = (
       sessionCount: record.session_count,
     };
   });
+};
 
 const previousSummary = (
   database: SessionQuerySqliteDatabase,

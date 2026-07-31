@@ -231,6 +231,10 @@ describe('focused report SQLite queries', () => {
       expect(basicOverviewTrace.some((sql) => sql.includes('source_row_json'))).toBe(false);
       expect(basicOverviewTrace.some((sql) => UNBOUNDED_PRESENTATION_SCAN_PATTERN.test(sql))).toBe(false);
       expect(basicOverviewTrace.every((sql) => !sql.includes('SELECT * FROM session_rows'))).toBe(true);
+      const topSessionsSql = basicOverviewTrace.find((sql) => sql.includes('campaign_rollup AS'));
+      expect(topSessionsSql).toBeDefined();
+      expect(topSessionsSql).not.toContain('FROM visible AS matched');
+      expect(topSessionsSql).not.toContain('root.row_json AS row_json');
       if (!('view' in basicOverview)) {
         throw new Error('The focused Overview query must return an Overview result');
       }
@@ -745,7 +749,7 @@ describe('focused report SQLite queries', () => {
     }
   });
 
-  test('keeps 50,000-row focused reads column-driven and inside frozen result budgets', async () => {
+  test('keeps 50,000-row date-filtered focused reads column-driven and inside frozen result budgets', async () => {
     const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-maximum-'));
     temporaryDirectories.add(revisionDirectory);
     const maximumRows = Array.from({ length: 50_000 }, (_, index) => ({
@@ -766,7 +770,7 @@ describe('focused report SQLite queries', () => {
         includeAdvanced: false,
         query: {
           filters: { fields: {}, harness: [], machine: [], query: '' },
-          range: { from: null, to: null },
+          range: { from: '2026-07-01T00:00:00.000Z', to: '2026-07-04T23:59:59.999Z' },
           revision: 'audit-revision',
         },
         timeline: { dimension: 'harness', granularity: 'day' },
