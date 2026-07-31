@@ -267,7 +267,7 @@ const waitForApplicationPage = async (
 };
 
 const waitForApplicationListener = async (port: number, child: Bun.Subprocess): Promise<void> => {
-  const deadline = Date.now() + START_DEADLINE_MS;
+  const deadline = Date.now() + DEVELOPMENT_START_DEADLINE_MS;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) {
       throw new Error(`Web process exited before its listener was ready (code ${child.exitCode}).`);
