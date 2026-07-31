@@ -274,7 +274,11 @@ export const buildSessionQuerySqlOrder = (
 
 const filteredCte = (where: string): string => `filtered AS (SELECT * FROM session_rows WHERE ${where})`;
 
-const campaignRollupCte = `campaign_rollup AS (
+const campaignRollupCte = (includeMissingClassifiers: boolean): string => {
+  if (!includeMissingClassifiers) {
+    return 'campaign_rollup AS (SELECT * FROM filtered)';
+  }
+  return `campaign_rollup AS (
   SELECT * FROM filtered
   UNION ALL
   SELECT classifier.*
@@ -287,6 +291,7 @@ const campaignRollupCte = `campaign_rollup AS (
       WHERE campaign_key IS NOT NULL
     )
 )`;
+};
 
 const campaignProjectionCtes = `campaign_visible_counts AS (
   SELECT campaign_key, COUNT(*) AS visible_count
@@ -601,7 +606,7 @@ const runSessionPage = (
   const useExactCostSort = request.sort.some(({ id }) => CAMPAIGN_EXACT_COST_SORT_FIELDS.has(id));
   const campaignCtes = [
     filteredCte(filter.where),
-    campaignRollupCte,
+    campaignRollupCte(filter.where !== '1 = 1'),
     campaignProjectionCtes,
     ...(useExactCostSort ? [campaignExactCostCtes] : []),
     campaignItemCte(useExactCostSort),

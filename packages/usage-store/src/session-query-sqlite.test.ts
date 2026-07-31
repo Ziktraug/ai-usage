@@ -529,6 +529,7 @@ describe('durable session query SQLite projections', () => {
       expect(first).toEqual(projectSessionPage(rows, request));
       expect(traces).toHaveLength(3);
       expect(traces[1]?.sql).toContain('LIMIT ? OFFSET ?');
+      expect(traces[1]?.sql).not.toContain('FROM session_rows AS classifier');
       expect(traces[1]?.params.slice(-2)).toEqual([request.pageSize + 1, 0]);
       expect(traces[2]?.sql).toContain('campaign_root DESC, ordinal');
 
