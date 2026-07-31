@@ -1,13 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {
-  createLocalHistoryStorage,
-  LocalHistoryStorage,
-  type LocalHistoryStorage as LocalHistoryStorageService,
-} from '@ai-usage/local-collectors/local-history';
-import { readMergedAiUsageConfigFrom, updateAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
-import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
-import type { KnownLocalProjectSourcesRequest, KnownLocalProjectSourcesResult } from '@ai-usage/report-data';
+import { createSkillsConfigStore } from '@ai-usage/local-machine/skills-config';
 import type {
   SkillManagementConfig,
   SkillManagementConfigDocument,
@@ -26,7 +19,7 @@ import {
 } from '@ai-usage/skills';
 import { createSkillsApplication } from '@ai-usage/skills/application';
 import { type UsageStoreErrorReason, usageStorePath } from '@ai-usage/usage-store/reader';
-import { Cause, Effect, Option, Runtime } from 'effect';
+import { Cause, Option, Runtime } from 'effect';
 import type {
   KnownSkillProjectPath,
   ProjectSkillMarkdownDocument,
@@ -296,33 +289,18 @@ export const localProjectRootExists = (projectPath: string) => {
 };
 
 interface ReadProjectSkillMarkdownOptions {
-  loadConfig?: () => Promise<AiUsageConfig>;
+  loadConfig?: () => Promise<SkillManagementConfigDocument>;
   readKnownProjectPaths?: () => Promise<SkillsServerResult<readonly KnownSkillProjectPath[]>>;
-}
-
-interface SkillsConfigReadInput {
-  configCwd: string;
-  storage: LocalHistoryStorageService;
-}
-
-interface SkillsConfigUpdateInput {
-  storage: LocalHistoryStorageService;
-  update: (config: AiUsageConfig) => AiUsageConfig | Promise<AiUsageConfig>;
-}
-
-interface KnownProjectSourcesReadInput {
-  request: KnownLocalProjectSourcesRequest;
-  storage: LocalHistoryStorageService;
 }
 
 const MAX_KNOWN_PROJECT_SOURCES_RESULT_BYTES = 512 * 1024;
 
 export interface SkillsServerAdapterDependencies {
   configCwd: string;
-  readConfig: (input: SkillsConfigReadInput) => Promise<AiUsageConfig>;
-  readKnownProjectSources: (input: KnownProjectSourcesReadInput) => Promise<KnownLocalProjectSourcesResult>;
-  storage: LocalHistoryStorageService;
-  updateConfig: (input: SkillsConfigUpdateInput) => Promise<AiUsageConfig>;
+  homePath: string;
+  readConfig: () => Promise<SkillManagementConfigDocument>;
+  readKnownProjectSources: () => Promise<ProjectPathSourcePayload>;
+  updateSkills: (skills: unknown) => Promise<void>;
 }
 
 const runAdapterOperation = async <T>(operation: () => Promise<T>): Promise<SkillsServerResult<T>> => {
@@ -334,19 +312,11 @@ const runAdapterOperation = async <T>(operation: () => Promise<T>): Promise<Skil
 };
 
 export const createSkillsServerAdapter = (dependencies: SkillsServerAdapterDependencies): SkillsServerAdapter => {
-  const loadConfig = () =>
-    dependencies.readConfig({ configCwd: dependencies.configCwd, storage: dependencies.storage });
+  const loadConfig = dependencies.readConfig;
 
   const readKnownProjectPaths = async (): Promise<readonly KnownSkillProjectPath[]> => {
-    const projectSources = await dependencies.readKnownProjectSources({
-      request: {
-        configCwd: dependencies.configCwd,
-        harness: null,
-        includeCursor: true,
-      },
-      storage: dependencies.storage,
-    });
-    const homePath = dependencies.storage.home;
+    const projectSources = await dependencies.readKnownProjectSources();
+    const homePath = dependencies.homePath;
     return knownSkillProjectPathsFromReportPayload(projectSources, {
       directoryExists: localDirectoryExists,
       excludedPathPrefixes: [path.join(homePath, '.local', 'share'), path.join(homePath, '.cache')],
@@ -356,14 +326,11 @@ export const createSkillsServerAdapter = (dependencies: SkillsServerAdapterDepen
   };
 
   const application = createSkillsApplication({
-    homePath: dependencies.storage.home,
+    homePath: dependencies.homePath,
     projectPaths: async () => (await readKnownProjectPaths()).map((project) => project.path),
     readConfig: async (): Promise<SkillManagementConfigDocument> => ({ ...(await loadConfig()) }),
     writeConfig: async (nextConfig: SkillManagementConfigDocument) => {
-      await dependencies.updateConfig({
-        storage: dependencies.storage,
-        update: (currentConfig) => ({ ...currentConfig, skills: nextConfig.skills }),
-      });
+      await dependencies.updateSkills(nextConfig.skills);
     },
   });
 
@@ -409,16 +376,20 @@ export const createSkillsServerAdapter = (dependencies: SkillsServerAdapterDepen
 export const createSkillsServerDependencies = (
   options: {
     configCwd?: string;
+    homePath?: string;
     readModel?: Pick<UsageReadModel, 'readCurrentLocalProjectSources'>;
-    storage?: LocalHistoryStorageService;
   } = {},
 ): SkillsServerAdapterDependencies => {
-  const storage = options.storage ?? createLocalHistoryStorage();
+  const configCwd = options.configCwd ?? process.cwd();
+  const configStore = createSkillsConfigStore({
+    configCwd,
+    ...(options.homePath === undefined ? {} : { homePath: options.homePath }),
+  });
   const readModel =
     options.readModel ??
-    (options.storage === undefined
+    (options.homePath === undefined
       ? createLiveUsageReadModel()
-      : createSqliteUsageReadModel({ dbPath: usageStorePath(storage.home) }));
+      : createSqliteUsageReadModel({ dbPath: usageStorePath(configStore.homePath) }));
   const usageStoreReason = (error: unknown): UsageStoreErrorReason | undefined => {
     if (!(typeof error === 'object' && error !== null && 'reason' in error)) {
       return;
@@ -429,24 +400,16 @@ export const createSkillsServerDependencies = (
   const readKnownProjectSources: SkillsServerAdapterDependencies['readKnownProjectSources'] = async () => {
     try {
       const result = await readModel.readCurrentLocalProjectSources();
-      const projectSources: KnownLocalProjectSourcesResult = {
+      const projectSources: ProjectPathSourcePayload = {
         projectGroups: [],
         sources: result.sources.map((source) => ({
-          gitRemote: '',
-          harness: '',
-          harnesses: [],
-          harnessKey: '',
-          harnessKeys: [],
-          id: JSON.stringify([source.machineId, source.sourcePath, source.project]),
           label: source.label,
-          machine: source.machineLabel,
           machineId: source.machineId,
+          machineLabel: source.machineLabel,
           project: source.project,
           sessions: source.sessions,
           sourcePath: source.sourcePath,
-          tokens: 0,
         })),
-        warnings: [],
       };
       if (Buffer.byteLength(JSON.stringify(projectSources)) > MAX_KNOWN_PROJECT_SOURCES_RESULT_BYTES) {
         throw new Error('Project discovery exceeds its response budget.');
@@ -455,7 +418,7 @@ export const createSkillsServerDependencies = (
     } catch (error) {
       const reason = usageStoreReason(error);
       if (reason === 'store-missing' || reason === 'revision-unavailable' || reason === 'revision-expired') {
-        return { projectGroups: [], sources: [], warnings: [] };
+        return { projectGroups: [], sources: [] };
       }
       if (reason !== undefined) {
         throw new Error('Project discovery is unavailable.');
@@ -465,15 +428,11 @@ export const createSkillsServerDependencies = (
   };
 
   return {
-    configCwd: options.configCwd ?? process.cwd(),
-    readConfig: ({ configCwd, storage }) =>
-      Effect.runPromise(
-        readMergedAiUsageConfigFrom(configCwd).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      ),
+    configCwd,
+    homePath: configStore.homePath,
+    readConfig: configStore.read,
     readKnownProjectSources,
-    storage,
-    updateConfig: ({ storage, update }) =>
-      Effect.runPromise(updateAiUsageConfig(update).pipe(Effect.provideService(LocalHistoryStorage, storage))),
+    updateSkills: configStore.updateSkills,
   };
 };
 
@@ -504,11 +463,11 @@ export const readProjectSkillMarkdownForServer = (
   }
   const dependencies = createSkillsServerDependencies({
     configCwd: path.dirname(path.resolve(input.projectPath)),
-    storage: createLocalHistoryStorage(path.dirname(path.resolve(input.projectPath))),
+    homePath: path.dirname(path.resolve(input.projectPath)),
   });
   return createSkillsServerAdapter({
     ...dependencies,
-    ...(options.loadConfig === undefined ? {} : { readConfig: () => options.loadConfig!() }),
+    ...(options.loadConfig === undefined ? {} : { readConfig: options.loadConfig }),
     ...(options.readKnownProjectPaths === undefined
       ? {}
       : {
@@ -520,20 +479,11 @@ export const readProjectSkillMarkdownForServer = (
             return {
               projectGroups: [],
               sources: result.data.map((entry) => ({
-                harness: '',
-                harnesses: [],
-                harnessKey: '',
-                harnessKeys: [],
-                id: entry.path,
-                machine: entry.machineLabel ?? '',
-                machineId: '',
+                ...(entry.machineLabel === undefined ? {} : { machineLabel: entry.machineLabel }),
                 project: entry.project,
                 sessions: entry.sessions,
                 sourcePath: entry.path,
-                tokens: 0,
-                gitRemote: '',
               })),
-              warnings: [],
             };
           },
         }),

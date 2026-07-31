@@ -6,15 +6,14 @@ import {
   createLocalHistoryStorage,
   LocalHistoryStorage,
   type LocalHistoryStorage as LocalHistoryStorageService,
-} from '@ai-usage/local-collectors/local-history';
+} from '@ai-usage/local-machine/local-history';
 import {
   ensureMachineConfig,
   readAiUsageConfig,
   readMergedAiUsageConfigFrom,
-  setSourcePolicyOverride,
   updateAiUsageConfig,
   writeMachineConfig,
-} from '@ai-usage/local-collectors/machine-config';
+} from '@ai-usage/local-machine/machine-config';
 import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
 import {
   type ProjectSourceSelector,
@@ -27,6 +26,7 @@ import {
   type CollectionSourceId,
   collectionSourceIds,
   type SourceControlView,
+  updateSourcePolicyOverrides,
 } from '@ai-usage/report-core/source-control';
 import {
   createStoredReportCapture,
@@ -1030,10 +1030,14 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
         Effect.provideService(LocalHistoryStorage, storage),
       ),
       setEnabled: (sourceId, enabled) =>
-        setSourcePolicyOverride(sourceId, enabled).pipe(
-          Effect.asVoid,
-          Effect.provideService(LocalHistoryStorage, storage),
-        ),
+        updateAiUsageConfig((config) => {
+          const sourcePolicies = updateSourcePolicyOverrides(config.sourcePolicies, sourceId, enabled);
+          if (sourcePolicies === undefined) {
+            const { sourcePolicies: _, ...rest } = config;
+            return rest;
+          }
+          return { ...config, sourcePolicies };
+        }).pipe(Effect.asVoid, Effect.provideService(LocalHistoryStorage, storage)),
     };
     sourceControl = createTerminalSourceControlPort({
       initialDetection: options.initialSourceDetection ?? 'automatic',
@@ -1179,7 +1183,6 @@ export const createDurableReportPublisher = (options: DurableReportPublisherOpti
     (async (input: { readonly dbPath: string; readonly now: number }): Promise<void> => {
       await Effect.runPromise(retainServedReportRevisions(input));
     });
-  const fingerprintRequest = { configCwd: options.configCwd, dbPath: options.dbPath };
   const runWithStorage = <Value, Error>(effect: Effect.Effect<Value, Error, LocalHistoryStorage>) =>
     Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, options.storage)));
 
@@ -1188,13 +1191,16 @@ export const createDurableReportPublisher = (options: DurableReportPublisherOpti
     const result = await Effect.runPromise(
       publishServedReportRevision({
         assemble: async ({ generations }) => {
-          const before = await runWithStorage(readStoredReportSourceFingerprint(fingerprintRequest));
+          const beforeConfig = await runWithStorage(readMergedAiUsageConfigFrom(options.configCwd));
+          const before = await Effect.runPromise(
+            readStoredReportSourceFingerprint({ config: beforeConfig, dbPath: options.dbPath }),
+          );
           if (!sameGenerations(before, generations)) {
             throw new Error('Stored report generations changed before publication assembly.');
           }
-          const capture = await runWithStorage(
+          const capture = await Effect.runPromise(
             createStoredReportCapture({
-              configCwd: options.configCwd,
+              config: beforeConfig,
               dbPath: options.dbPath,
               generatedAt: publicationTime,
               harness: null,
@@ -1210,7 +1216,10 @@ export const createDurableReportPublisher = (options: DurableReportPublisherOpti
               },
             }),
           );
-          const after = await runWithStorage(readStoredReportSourceFingerprint(fingerprintRequest));
+          const afterConfig = await runWithStorage(readMergedAiUsageConfigFrom(options.configCwd));
+          const after = await Effect.runPromise(
+            readStoredReportSourceFingerprint({ config: afterConfig, dbPath: options.dbPath }),
+          );
           if (!(sameGenerations(after, generations) && before.configFingerprint === after.configFingerprint)) {
             throw new Error('Stored report sources changed during publication assembly.');
           }

@@ -8,11 +8,7 @@ import { pathToFileURL } from 'node:url';
 import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
 import { isProjectGroupConfigArray } from '@ai-usage/report-core/project-group';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
-import {
-  type CollectionSourceId,
-  isSourcePolicyOverrides,
-  updateSourcePolicyOverrides,
-} from '@ai-usage/report-core/source-control';
+import { isSourcePolicyOverrides } from '@ai-usage/report-core/source-control';
 import { parseSkillConfigInput, type SkillManagementConfig } from '@ai-usage/skills';
 import { Effect } from 'effect';
 import { LocalHistoryError } from './errors';
@@ -498,19 +494,6 @@ export const updateAiUsageConfig = (
         }),
       catch: machineConfigError('updateAiUsageConfig', filePath),
     });
-  });
-
-export const setSourcePolicyOverride = (
-  sourceId: CollectionSourceId,
-  enabled: boolean | undefined,
-): Effect.Effect<AiUsageConfig, LocalHistoryError, LocalHistoryStorageService> =>
-  updateAiUsageConfig((config) => {
-    const sourcePolicies = updateSourcePolicyOverrides(config.sourcePolicies, sourceId, enabled);
-    if (sourcePolicies === undefined) {
-      const { sourcePolicies: _, ...rest } = config;
-      return rest;
-    }
-    return { ...config, sourcePolicies };
   });
 
 export const writeAiUsageConfig = (

@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { DERIVED_SESSION_LABEL_MAX_CHARACTERS, deriveSessionLabelFromPrompt } from './session-label';
+import {
+  DERIVED_SESSION_LABEL_MAX_CHARACTERS,
+  deriveSessionLabelFromPrompt,
+} from '@ai-usage/local-machine/session-label';
 
 describe('derived session labels', () => {
   test('strips context before taking the first sentence', () => {

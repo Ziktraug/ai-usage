@@ -3,7 +3,7 @@ import {
   HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL,
   HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
-} from '@ai-usage/local-collectors/test-fixtures/harness-home';
+} from '@ai-usage/local-machine/testing/harness-home';
 import { expect, reportViewsFor, test } from './browser-test';
 
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;

@@ -1,4 +1,10 @@
 import { createHash } from 'node:crypto';
+import {
+  type LocalHistoryError,
+  type LocalHistoryWarning,
+  localHistoryWarningFromError,
+} from '@ai-usage/local-machine/errors';
+import type { LocalHistoryStorage as LocalHistoryStorageService } from '@ai-usage/local-machine/local-history';
 import type { CursorCommitAttributionRow, NormalizedDatasetItem, ReportDatasets } from '@ai-usage/report-core/datasets';
 import {
   createProviderStatusDataset,
@@ -7,9 +13,7 @@ import {
 } from '@ai-usage/report-core/provider-status';
 import { Effect } from 'effect';
 import { findLatestCodexProviderStatus } from './codex-history';
-import { type LocalHistoryError, type LocalHistoryWarning, localHistoryWarningFromError } from './errors';
 import { collectCursorCommitAttributionResult, type HarnessFacets } from './facets';
-import type { LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
 
 export interface HarnessDatasetSelection {
   includeCursor: boolean;

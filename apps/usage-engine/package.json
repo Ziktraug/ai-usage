@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@ai-usage/effect-runtime": "workspace:*",
+    "@ai-usage/local-machine": "workspace:*",
     "@ai-usage/usage-engine-control": "workspace:*",
     "@ai-usage/usage-engine-runtime": "workspace:*",
     "@ai-usage/usage-store": "workspace:*",

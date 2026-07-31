@@ -1,8 +1,8 @@
 import { access, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { updateAiUsageConfig } from '@ai-usage/local-machine/machine-config';
 import { Effect } from 'effect';
-import { createLocalHistoryStorage, LocalHistoryStorage } from '../local-history';
-import { updateAiUsageConfig } from '../machine-config';
 
 const [home, groupId, readyDirectory, barrierPath] = Bun.argv.slice(2);
 if (!(home && groupId && readyDirectory && barrierPath)) {

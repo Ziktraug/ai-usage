@@ -9,7 +9,7 @@ import {
   runBoundaryEffect,
 } from '@ai-usage/effect-runtime';
 import type { ProviderQuotaBatch, ProviderQuotaBatchSource } from '@ai-usage/local-collectors';
-import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import {
   initializeUsageStore,

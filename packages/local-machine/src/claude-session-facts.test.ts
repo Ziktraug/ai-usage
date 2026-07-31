@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { parseClaudeSessionFacts } from '@ai-usage/local-machine/claude-session-facts';
 import { normalizeSessionVcsRepository } from '@ai-usage/report-core/session-vcs';
-import { parseClaudeSessionFacts } from './claude-session-facts';
 
 const event = (value: Record<string, unknown>): Record<string, unknown> => value;
 

@@ -1,11 +1,18 @@
 import path from 'node:path';
+import {
+  type LocalHistoryError,
+  type LocalHistoryWarning,
+  localHistoryWarningFromError,
+} from '@ai-usage/local-machine/errors';
+import {
+  LocalHistoryStorage,
+  type LocalHistoryStorage as LocalHistoryStorageService,
+} from '@ai-usage/local-machine/local-history';
+import { firstExisting, resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
 import type { UsageRow, UsageRowSource, UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
-import { type LocalHistoryError, type LocalHistoryWarning, localHistoryWarningFromError } from './errors';
-import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from './local-history';
 import { addNonNegativeSafeIntegers, parseNonNegativeSafeInteger } from './metric-validation';
 import { withPerfSpan } from './perf';
-import { firstExisting, resolvePathCandidates } from './platform-paths';
 
 export type CollectorRow = UsageRowWithOptionalSource & {
   readonly projectPath?: string | null;

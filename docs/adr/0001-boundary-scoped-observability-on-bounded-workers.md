@@ -2,6 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-07-21
+- **Amended by**: [ADR 0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md)
 
 ## Context
 
@@ -21,6 +22,10 @@ worker context afterward.
 
 Keep the existing bounded `Effect.forever(queue.take -> processJob)` workers.
 The worker loop is infrastructure and is never a wide-event boundary.
+
+ADR 0009 moves this unchanged worker/scheduler host from the Web-owned runtime
+to `UsageEngineRuntime`. Worker count, queue/backpressure, transition, and
+per-execution observability decisions in this ADR remain accepted.
 
 For source and publication jobs, start a boundary only after the pure start
 transition confirms that the job will actually run. Stale, superseded, or

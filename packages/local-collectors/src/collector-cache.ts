@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import type { LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { isSessionVcsContext } from '@ai-usage/report-core/session-vcs';
 import { isOriginProvenanceKind, isSessionOrigin } from '@ai-usage/report-core/types';
 import { MAX_USAGE_MODEL_SEGMENTS } from '@ai-usage/report-core/usage-row';
 import { COLLECTOR_CACHE_MAX_BYTES } from './history-budgets';
-import type { LocalHistoryStorage } from './local-history';
 import {
   addNonNegativeSafeIntegers,
   parseNonNegativeFiniteNumber,

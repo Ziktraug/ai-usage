@@ -1,19 +1,22 @@
+import { type LocalHistoryWarning, localHistoryWarningFromError } from '@ai-usage/local-machine/errors';
+import {
+  LocalHistoryStorage,
+  type LocalHistoryStorage as LocalHistoryStorageService,
+} from '@ai-usage/local-machine/local-history';
+import { firstExisting, resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
+import { isJsonObject, safeJSON, usablePrompt } from '@ai-usage/local-machine/text';
 import type { TitleSource } from '@ai-usage/report-core/types';
 import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import { cachedDbCollection, dbStat, readDbRowCache, storeDbRows, writeDbRowCache } from '../collector-cache';
-import { type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
-import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from '../local-history';
 import {
   addNonNegativeSafeIntegers,
   metricValidationWarning,
   parseOptionalNonNegativeSafeInteger,
 } from '../metric-validation';
 import { withPerfSpan } from '../perf';
-import { firstExisting, resolvePathCandidates } from '../platform-paths';
 import type { CollectorRow } from '../rtk-enrichment';
-import { isJsonObject, safeJSON, usablePrompt } from '../text';
 import { type CursorCsvOptions, collectCursorCsvTurnsResult } from './cursor-csv';
 import { reconcileCursorSessions } from './cursor-reconcile';
 
@@ -291,7 +294,7 @@ const collectCursorRowsFromDb = (
   dbPath: string,
 ): Effect.Effect<
   { rejectedMetricRecords: number; rows: CollectorRow[] },
-  import('../errors').LocalHistoryError,
+  import('@ai-usage/local-machine/errors').LocalHistoryError,
   never
 > =>
   Effect.gen(function* () {
@@ -341,7 +344,11 @@ export const collectCursor = withPerfSpan(
 
 export const collectCursorResult = (
   cursorCsv?: CursorCsvIngestionOptions,
-): Effect.Effect<CursorCollectionResult, import('../errors').LocalHistoryError, LocalHistoryStorageService> =>
+): Effect.Effect<
+  CursorCollectionResult,
+  import('@ai-usage/local-machine/errors').LocalHistoryError,
+  LocalHistoryStorageService
+> =>
   withPerfSpan(
     'aiUsage.collect.cursor.ingestion',
     Effect.gen(function* () {

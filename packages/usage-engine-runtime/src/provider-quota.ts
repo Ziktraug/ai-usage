@@ -1,14 +1,14 @@
 import {
   collectCodexRolloutQuotaBatch,
   createCodexAppServerBatchSource,
-  ensureMachineConfig,
   type ProviderQuotaBatchSource,
 } from '@ai-usage/local-collectors';
-import type { LocalHistoryError } from '@ai-usage/local-collectors/errors';
+import type { LocalHistoryError } from '@ai-usage/local-machine/errors';
 import {
   LocalHistoryStorage,
   type LocalHistoryStorage as LocalHistoryStorageService,
-} from '@ai-usage/local-collectors/local-history';
+} from '@ai-usage/local-machine/local-history';
+import { ensureMachineConfig } from '@ai-usage/local-machine/machine-config';
 import {
   downsampleProviderQuotaHistoryPoints,
   type ProviderQuotaCoverage,

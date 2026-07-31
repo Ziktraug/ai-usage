@@ -13,6 +13,7 @@
   "dependencies": {
     "@ai-usage/effect-runtime": "workspace:*",
     "@ai-usage/local-collectors": "workspace:*",
+    "@ai-usage/local-machine": "workspace:*",
     "@ai-usage/report-core": "workspace:*",
     "@ai-usage/report-data": "workspace:*",
     "@ai-usage/usage-engine-control": "workspace:*",

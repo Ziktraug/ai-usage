@@ -1,8 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
-import { parseSessionDetail } from '@ai-usage/report-core/session-detail';
-import { Effect } from 'effect';
-import { LocalHistoryStorage } from './local-history';
+import { LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import {
   OPENCODE_DETAIL_MESSAGE_SQL,
   OPENCODE_DETAIL_PARENT_SQL,
@@ -10,8 +8,10 @@ import {
   OPENCODE_DETAIL_SESSION_SQL,
   OPENCODE_DETAIL_TOOL_SQL,
   readOpenCodeSessionAnalysis,
-} from './opencode-history';
-import { TestMemoryStorage } from './test-memory-storage';
+} from '@ai-usage/local-machine/opencode-session-analysis';
+import { TestMemoryStorage } from '@ai-usage/local-machine/testing/memory-storage';
+import { parseSessionDetail } from '@ai-usage/report-core/session-detail';
+import { Effect } from 'effect';
 
 const OPENCODE_DB = '.local/share/opencode/opencode.db';
 const SESSION_ID = 'session-detail';

@@ -18,7 +18,8 @@ The package exports the root barrel plus declared subpath exports in `package.js
 
 ## Must Not Import
 
-It must not import `@ai-usage/local-collectors`, `@ai-usage/report-data`, `@ai-usage/usage-store`, `@ai-usage/usage-merge`, app packages, Node filesystem APIs, or browser-only APIs.
+It must not import workspace packages, app packages, Node filesystem APIs, or
+browser-only APIs.
 
 ## Data Boundary
 

@@ -3,23 +3,33 @@ import { linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writ
 import { mkdir, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
-import { Effect } from 'effect';
-import { formatLocalHistoryError } from './errors';
-import { createLocalHistoryStorage, LocalHistoryStorage } from './local-history';
+import { formatLocalHistoryError } from '@ai-usage/local-machine/errors';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import {
   aiUsageConfigPath,
   machineConfigPath,
   readAiUsageConfig,
   readMergedAiUsageConfigFrom,
-  setSourcePolicyOverride,
   updateAiUsageConfig,
-} from './machine-config';
+} from '@ai-usage/local-machine/machine-config';
+import { type CollectionSourceId, updateSourcePolicyOverrides } from '@ai-usage/report-core/source-control';
+import { Effect } from 'effect';
+
+const setSourcePolicyOverride = (sourceId: CollectionSourceId, enabled: boolean | undefined) =>
+  updateAiUsageConfig((config) => {
+    const sourcePolicies = updateSourcePolicyOverrides(config.sourcePolicies, sourceId, enabled);
+    if (sourcePolicies === undefined) {
+      const { sourcePolicies: _, ...rest } = config;
+      return rest;
+    }
+    return { ...config, sourcePolicies };
+  });
 
 describe('machine config', () => {
   test('creates one machine identity across concurrent first-start processes', async () => {
     const home = await mkdtemp('ai-usage-machine-identity-process-');
     try {
-      const workerPath = path.join(import.meta.dir, 'test-fixtures', 'machine-identity-subprocess.ts');
+      const workerPath = path.join(import.meta.dir, 'testing', 'machine-identity-subprocess.ts');
       const barrierPath = path.join(home, 'go');
       const workerIndexes = Array.from({ length: 8 }, (_, index) => index);
       const workers = workerIndexes.map((index) =>
@@ -103,7 +113,7 @@ describe('machine config', () => {
       const readyDirectory = path.join(home, 'ready');
       const barrierPath = path.join(home, 'go');
       await mkdir(readyDirectory);
-      const workerPath = path.join(import.meta.dir, 'test-fixtures', 'machine-config-subprocess.ts');
+      const workerPath = path.join(import.meta.dir, 'testing', 'machine-config-subprocess.ts');
       const groupIds = Array.from({ length: 6 }, (_, index) => `process-group-${index}`);
       const workers = groupIds.map((groupId) =>
         Bun.spawn([process.execPath, workerPath, home, groupId, readyDirectory, barrierPath], {

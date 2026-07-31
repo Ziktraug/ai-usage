@@ -5,19 +5,19 @@ import {
   type HarnessAdapter,
   selectedHarnessAdapters,
 } from '@ai-usage/local-collectors/collectors';
-import type { LocalHistoryError } from '@ai-usage/local-collectors/errors';
 import { collectCursorCommitAttributionResult } from '@ai-usage/local-collectors/facets';
-import {
-  LocalHistoryStorage,
-  type LocalHistoryStorage as LocalHistoryStorageService,
-} from '@ai-usage/local-collectors/local-history';
-import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-collectors/machine-config';
-import { firstExisting, resolvePathCandidates } from '@ai-usage/local-collectors/platform-paths';
 import {
   type CollectorRow,
   enrichCollectorRowsWithRtkSavingsResult,
   stripProjectPath,
 } from '@ai-usage/local-collectors/rtk-enrichment';
+import type { LocalHistoryError } from '@ai-usage/local-machine/errors';
+import {
+  LocalHistoryStorage,
+  type LocalHistoryStorage as LocalHistoryStorageService,
+} from '@ai-usage/local-machine/local-history';
+import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-machine/machine-config';
+import { firstExisting, resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type {
   CollectionSourceId,

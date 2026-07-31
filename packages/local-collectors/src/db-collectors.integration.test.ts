@@ -3,11 +3,11 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
 import { Effect } from 'effect';
 import { collectCursorResult } from './collectors/cursor';
 import { collectOpenCodeResult } from './collectors/opencode';
-import { createLocalHistoryStorage, LocalHistoryStorage } from './local-history';
-import { seedHarnessHome } from './test-fixtures/harness-home';
 
 const temporaryHomes: string[] = [];
 

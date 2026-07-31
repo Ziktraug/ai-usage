@@ -2,28 +2,41 @@
 
 ## Owns
 
-Application-facing report orchestration: autonomous durable source adapters, the scoped Effect source control plane and its application-owned wide-event annotations, applying aliases, composing warnings, reading stored-only known local project sources without collecting, creating compatibility payloads for CLI consumers, and executing strict focused/Session queries over web-supplied immutable revision artifacts.
+Stored-only and pure report assembly: compatibility payloads, publication
+captures, project projection, portable snapshot merge/project discovery,
+provider-quota history, and bounded exact-revision report/Session queries.
 
-## Does Not Own
+## Does not own
 
-It does not own row normalization/query primitives, immutable web revision storage, UI rendering, CLI output formatting, merge bundle file transfer, network transport, or raw collector implementation details.
+It does not collect local history, schedule sources, mutate config, import
+usage, migrate/checkpoint SQLite, publish revisions, create revision artifacts,
+lease files, spawn per-query subprocesses, or expose network transport.
 
-## Public Interface
+## Public interface
 
-The root package export exposes report request/result helpers and compatibility snapshot/report payload assembly used by apps. One pure internal assembler owns final payload construction. `./one-shot-sources` exposes explicit timer-free CLI application workflows, including fresh local merge and project discovery that honor source policy before reading durable results. `./provider-quota` owns refresh, latest durable projection, and bounded history reads; its query, collection, persistence, and projection phases remain in one owner Effect fiber with Deferred-based joiners, and owner cancellation is exposed as `ProviderQuotaRefreshAborted` in the typed Effect error channel. The provider-quota workflow may ask its `@ai-usage/local-collectors` adapter to launch and speak stdio to the installed `codex app-server`; that adapter owns the subprocess boundary rather than the CLI or web renderer, while app-server owns provider communication and authentication refresh. `./source-adapters` exposes the seven Bun runtime adapters used by the collection composition root. `./served-revision-query` validates bounded exact-revision requests and delegates them to the read-only durable SQLite projection API; it does not create copied databases or subprocesses.
+- `.`: explicit-config stored report assembly and publication captures.
+- `./portable-report`: pure portable snapshot assembly.
+- `./provider-quota-history`: bounded read-only quota history.
+- `./served-revision-query`: strict bounded revision-keyed query validation and
+  execution.
 
-## Depends On
+## Dependency rules
 
-`@ai-usage/report-data` may depend on `@ai-usage/effect-runtime`, `@ai-usage/report-core`, `@ai-usage/local-collectors`, and `@ai-usage/usage-store`.
+It may depend on report-core, Effect values, and
+`@ai-usage/usage-store/reader`. It must not import local-machine,
+local-collectors, usage-engine-runtime, apps, or `usage-store/writer`.
 
-## Must Not Import
+## Data boundary
 
-It must not import app packages, private package paths, relative workspace paths, or network transport modules directly.
+Root stored capture/payload/fingerprint workflows require explicit `dbPath`,
+config, and machine inputs. Quota-history and served-revision query seams need
+their bounded request plus `dbPath`. Queries open the durable database
+read-only/query-only and name an immutable served revision. Portable inputs
+retain `portable-opaque` authority; only stored locally observed authority may
+later permit local detail resolution.
 
-## Data Boundary
+## Test strategy
 
-This package provides focused stored-row/project-source reads and produces compatibility report payloads from local and stored usage rows. The source control plane holds only bounded operational state: normalized rows, datasets, paths, and raw errors remain outside its snapshot. Its queue is bounded, cadence is completion-relative, policy revisions invalidate stale queued jobs, picked jobs own provider cancellation, and monotonic request/data plus RTK watermarks prevent multi-worker publication from losing demand. Portable source paths stay opaque; only locally observed paths may drive Git/filesystem canonicalization. One private Bun runner validates all six exact-revision query kinds, opens only the leased immutable read-only SQLite materialization, and writes bounded results for bootstrap support, Overview, Breakdown, and paged Sessions/campaign/neighbor reads. Bootstrap projection preserves explicit omission counts when metadata exceeds its byte/item budgets. Stable capture compares semantic store generation and config state before publication. The web adapter owns revision materialization. CLI consumers use the complete compatibility payload directly. File import/export happens through explicit usage-merge actions before reporting.
-
-## Test Strategy
-
-Use integration-style package tests with temporary homes/config directories and fake or in-memory storage where possible. Keep final payload equivalence tests here rather than in app adapters.
+Use temporary stores produced by usage-store testing/writer fixtures. Prove
+result bounds, revision mismatch/expiry behavior, stored/portable parity, and
+that reads create or modify no database, WAL, SHM, config, or lease.

@@ -1,6 +1,6 @@
 # ai-usage Context
 
-This context describes the local AI usage reporting domain. The CLI turns provider-free local history from installed AI coding tools into usage rows, analytics, and CSV. Quota collection is the explicit exception: report-data may ask the installed `codex app-server` for a fresh usage-limit observation before reading the durable local result, while app-server owns provider communication and authentication refresh.
+This context describes the local AI usage reporting domain. The CLI turns provider-free local history from installed AI coding tools into usage rows, analytics, and CSV. Quota collection is the explicit exception: the usage engine may ask the installed `codex app-server` for a fresh usage-limit observation before readers project the durable local result, while app-server owns provider communication and authentication refresh.
 
 ## Language
 
@@ -19,6 +19,30 @@ _Avoid_: availability, lifecycle, deletion
 **Source publication**:
 The separate stored-only job that reconciles durable contributions into an immutable served report revision. Requests advance monotonic demand even while publication is queued or running; only a successful attempt acknowledges the generations it captured. A source run may be successful without changing the semantic revision.
 _Avoid_: collection run, browser refresh
+
+**Usage engine**:
+The sole production owner of usage-domain writes, migrations, checkpoints,
+collection, enrichment, scheduling, publication, retention, and mutations. Its
+HTTP listener is an operational command/status/event seam, not a report data
+service.
+_Avoid_: web runtime, report API, background compatibility writer
+
+**Served revision**:
+One complete immutable report projection stored under a revision key in the
+durable SQLite database. Its metadata may be renewed when an unchanged capture
+remains current, but its projected content is not rewritten. Exact readers name
+the revision and never silently switch to current.
+_Avoid_: copied database, artifact directory, live unversioned query
+
+**Data plane**:
+The durable SQLite database queried directly through read-only/query-only
+connections by Web and CLI.
+_Avoid_: control HTTP, report endpoint
+
+**Control plane**:
+The authenticated numeric-loopback usage-engine surface carrying only commands,
+status, and bounded sanitized SSE events.
+_Avoid_: data API, report transport, remote service
 
 **Enrichment contribution**:
 A versioned, validated value owned by one enricher and keyed to a stable base usage-row identity. Report reads compose it with the producer-owned base row; neither writer replaces the other's durable data.

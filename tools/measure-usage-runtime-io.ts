@@ -1349,12 +1349,12 @@ const createFixtureCodexExecutable = async (fixtureBinDirectory: string, sourceD
 };
 
 const SEED_FIXTURE_SCRIPT = `
-  import { seedHarnessHome } from '@ai-usage/local-collectors/test-fixtures/harness-home';
-  import { writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
+  import { seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
+  import { writeMachineConfig } from '@ai-usage/local-machine/machine-config';
   import {
     createLocalHistoryStorage,
     LocalHistoryStorage,
-  } from '@ai-usage/local-collectors/local-history';
+  } from '@ai-usage/local-machine/local-history';
   import { Effect } from 'effect';
 
   const home = process.env.HOME;

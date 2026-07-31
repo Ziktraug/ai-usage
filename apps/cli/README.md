@@ -2,28 +2,41 @@
 
 ## Owns
 
-The terminal command surface, argument parsing, terminal/CSV/JSON/payload rendering adapters, bounded portable snapshot files, the loopback-only setup command, the quota command, and its scoped file-only wide-event sink.
+Arguments, terminal/CSV/JSON/payload rendering, bounded portable snapshot
+files, setup UI, quota/import/merge commands, cancellation, exit codes, and
+file-only CLI diagnostics.
 
-## Does Not Own
+## Does not own
 
-It does not own report-domain calculations, local collector implementations, web UI runtime, manual merge-bundle persistence, or usage-store schema.
+It does not collect in process, implement source adapters, mutate config/store
+directly, migrate/checkpoint SQLite, compose engine-runtime, or expose shared
+data to other apps.
 
-## Public Interface
+## Data and control boundaries
 
-The public interface is the `ai-usage` binary, `bun run cli`, command-line options, and CLI output formats.
+`--stored` and other compatible published reads open the existing database
+through `usage-store/reader` and require no engine. Fresh reports and every
+usage-domain mutation use a compatible daemon through
+`usage-engine-control`; if none exists, CLI launches one bounded foreground
+usage-engine `once` process, waits for its terminal result, reads the committed
+revision, and reaps it. A live protocol/target mismatch never falls back to a
+second writer.
 
-## Depends On
+Explicit portable output remains a CLI file write after a read. Snapshot inputs
+and operator files are bounded, explicit, regular/no-follow paths, and the
+engine revalidates mutating inputs. Engine diagnostics stay off structured
+stdout and preserve warning order and exit-code contracts.
 
-`apps/cli` may depend on `@ai-usage/effect-runtime`, `@ai-usage/report-data`, `@ai-usage/report-core`, and `@ai-usage/local-collectors` through public package exports.
+## Dependency rules
 
-## Must Not Import
+CLI may use report-core, `@ai-usage/report-data/portable-report`, usage-engine-control,
+`usage-store/reader`, and the engine executable entrypoint as a terminal child
+process. It must not import local-machine, local-collectors,
+usage-engine-runtime, or `usage-store/writer` directly or transitively.
 
-It must not import `apps/web`, private package `src` paths, relative workspace paths, or web-only file-transfer modules directly.
+## Test strategy
 
-## Data Boundary
-
-The CLI consumes report payloads, normalized rows, snapshots, and command results from package APIs, then renders terminal/file output. Snapshot inputs are explicit bounded regular files. The setup listener is numeric-loopback-only. The `quota` command invokes report-data's one-shot provider-quota workflow, which may use the installed `codex app-server`, and renders its durable result; the CLI owns neither Codex credentials nor provider transport. The CLI should not become a shared data source for other apps.
-
-## Test Strategy
-
-Cover parsing, formatting, and command behavior with CLI tests. Shared report behavior belongs in package tests rather than CLI renderer tests.
+Cover stored reads with engine down, daemon/foreground parity and concurrency,
+empty/incompatible store, stale rendezvous, protocol mismatch, Ctrl-C and
+forced child reap, quota/import/merge, large diagnostic drains, and byte-exact
+supported outputs using isolated homes/stores/state/logs/ports.

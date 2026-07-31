@@ -1,12 +1,12 @@
 import path from 'node:path';
-import { Effect } from 'effect';
-import { LocalHistoryError } from './errors';
+import { LocalHistoryError } from '@ai-usage/local-machine/errors';
 import type {
   LocalHistoryDatabase,
   LocalHistoryDirEntry,
   LocalHistorySqlParameter,
   LocalHistoryStorage,
-} from './local-history';
+} from '@ai-usage/local-machine/local-history';
+import { Effect } from 'effect';
 
 const LINE_SEPARATOR = /\r?\n/;
 

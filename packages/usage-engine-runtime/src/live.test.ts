@@ -12,8 +12,8 @@ import {
   WideEventResourceService,
   WideEventSink,
 } from '@ai-usage/effect-runtime';
-import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
-import { ensureMachineConfig, readAiUsageConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { ensureMachineConfig, readAiUsageConfig, writeMachineConfig } from '@ai-usage/local-machine/machine-config';
 import { createUsageMergeBundle, serializeUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import { projectSourceSelectorKey } from '@ai-usage/report-core/project-group';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';

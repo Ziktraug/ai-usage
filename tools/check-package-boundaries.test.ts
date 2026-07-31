@@ -8,13 +8,14 @@ const fixtures: string[] = [];
 const repositoryRoot = path.resolve(import.meta.dir, '..');
 const workspacePackageScope = '@ai-usage/';
 const cliRuntimePackage = `${workspacePackageScope}cli/runtime`;
+const localCollectorsClaudeHistory = `${['@ai-usage', 'local-collectors'].join('/')}/claude-history`;
+const localMachineRoot = ['@ai-usage', 'local-machine'].join('/');
 const reportDataPackage = `${workspacePackageScope}report-data`;
 const reportDataPortableReport = `${reportDataPackage}/portable-report`;
-const reportDataSourceAdapters = `${reportDataPackage}/source-adapters`;
-const reportDataOneShotSources = `${reportDataPackage}/one-shot-sources`;
 const usageStoreInternal = `${workspacePackageScope}usage-store/internal`;
 const retiredLanPackage = `${workspacePackageScope}lan-pairing`;
 const retiredSyncPackage = `${workspacePackageScope}sync`;
+const webBridgePackage = ['@ai-usage', 'web-bridge'].join('/');
 
 afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((fixture) => rm(fixture, { force: true, recursive: true })));
@@ -124,6 +125,66 @@ describe('package boundary guard', () => {
         packageName: '@ai-usage/web',
         specifier: cliRuntimePackage,
       }),
+    );
+  });
+
+  test('keeps web production code independent from local collectors', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'apps',
+      'web',
+      {
+        dependencies: { '@ai-usage/local-collectors': 'workspace:*' },
+        name: '@ai-usage/web',
+      },
+      `import '${localCollectorsClaudeHistory}';\n`,
+    );
+
+    expect(await collectViolations(root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          file: 'apps/web/package.json',
+          packageName: '@ai-usage/web',
+          specifier: '@ai-usage/local-collectors',
+        }),
+        expect.objectContaining({
+          file: 'apps/web/src/index.ts',
+          packageName: '@ai-usage/web',
+          specifier: localCollectorsClaudeHistory,
+        }),
+      ]),
+    );
+  });
+
+  test('keeps report-data independent from collectors and effect runtime', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'report-data',
+      {
+        dependencies: {
+          '@ai-usage/effect-runtime': 'workspace:*',
+          '@ai-usage/local-collectors': 'workspace:*',
+        },
+        name: reportDataPackage,
+      },
+      "import '@ai-usage/effect-runtime';\nimport '@ai-usage/local-collectors';\n",
+    );
+
+    const violations = await collectViolations(root);
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          packageName: reportDataPackage,
+          specifier: '@ai-usage/effect-runtime',
+        }),
+        expect.objectContaining({
+          packageName: reportDataPackage,
+          specifier: '@ai-usage/local-collectors',
+        }),
+      ]),
     );
   });
 
@@ -297,16 +358,133 @@ describe('package boundary guard', () => {
     );
   });
 
-  test('reports stale transition-ledger entries when plan 052 is present', async () => {
+  test('rejects usage-store writer imports from arbitrary domain packages', async () => {
     const root = await createFixture();
-    await mkdir(path.join(root, 'plans'), { recursive: true });
-    await writeFile(path.join(root, 'plans/052-split-usage-engine-runtime.md'), '# fixture\n');
+    await writePackage(
+      root,
+      'packages',
+      'orphan-writer',
+      { name: '@ai-usage/orphan-writer' },
+      "import '@ai-usage/usage-store/writer';\n",
+    );
 
     expect(await collectViolations(root)).toContainEqual(
       expect.objectContaining({
-        file: 'packages/usage-merge/src/index.ts',
-        packageName: '@ai-usage/usage-merge',
+        file: 'packages/orphan-writer/src/index.ts',
+        packageName: '@ai-usage/orphan-writer',
         specifier: '@ai-usage/usage-store/writer',
+      }),
+    );
+  });
+
+  test('allows only the two Web local-machine operations and test-only fixtures', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'apps',
+      'web',
+      { name: '@ai-usage/web' },
+      [
+        "import '@ai-usage/local-machine/session-detail';",
+        "import '@ai-usage/local-machine/skills-config';",
+        `import '${localMachineRoot}';`,
+        "import '@ai-usage/local-machine/testing/harness-home';",
+      ].join('\n'),
+    );
+    const e2eDirectory = path.join(root, 'apps/web/e2e');
+    await mkdir(e2eDirectory, { recursive: true });
+    await writeFile(path.join(e2eDirectory, 'fixture.ts'), "import '@ai-usage/local-machine/testing/harness-home';\n");
+
+    expect((await collectViolations(root)).map(({ specifier }) => specifier)).toEqual([
+      '@ai-usage/local-machine',
+      '@ai-usage/local-machine/testing/harness-home',
+    ]);
+  });
+
+  test('keeps the complete Web local-machine dependency closure collector-free', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'apps',
+      'web',
+      {
+        dependencies: { [webBridgePackage]: 'workspace:*' },
+        name: '@ai-usage/web',
+      },
+      `import '${webBridgePackage}';\n`,
+    );
+    await writePackage(
+      root,
+      'packages',
+      'web-bridge',
+      {
+        dependencies: { '@ai-usage/local-machine': 'workspace:*' },
+        name: webBridgePackage,
+      },
+      "import '@ai-usage/local-machine/session-detail';\n",
+    );
+    await writePackage(
+      root,
+      'packages',
+      'local-machine',
+      {
+        dependencies: { '@ai-usage/local-collectors': 'workspace:*' },
+        name: '@ai-usage/local-machine',
+      },
+      "import '@ai-usage/local-collectors/codex-history';\n",
+    );
+
+    expect(await collectViolations(root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          file: 'packages/local-machine/package.json',
+          message: expect.stringContaining(
+            '@ai-usage/web -> @ai-usage/web-bridge -> @ai-usage/local-machine -> @ai-usage/local-collectors',
+          ),
+          packageName: '@ai-usage/web',
+          specifier: '@ai-usage/local-collectors',
+        }),
+        expect.objectContaining({
+          file: 'packages/local-machine/package.json',
+          packageName: '@ai-usage/local-machine',
+          specifier: '@ai-usage/local-collectors',
+        }),
+        expect.objectContaining({
+          file: 'packages/local-machine/src/index.ts',
+          packageName: '@ai-usage/local-machine',
+          specifier: '@ai-usage/local-collectors/codex-history',
+        }),
+      ]),
+    );
+  });
+
+  test('follows undeclared production workspace imports in the Web closure', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'apps',
+      'web',
+      {
+        dependencies: { [webBridgePackage]: 'workspace:*' },
+        name: '@ai-usage/web',
+      },
+      `import '${webBridgePackage}';\n`,
+    );
+    await writePackage(
+      root,
+      'packages',
+      'web-bridge',
+      { name: webBridgePackage },
+      "import '@ai-usage/local-collectors/codex-history';\n",
+    );
+    await writePackage(root, 'packages', 'local-collectors', { name: '@ai-usage/local-collectors' });
+
+    expect(await collectViolations(root)).toContainEqual(
+      expect.objectContaining({
+        file: 'packages/web-bridge/src/index.ts',
+        message: expect.stringContaining('@ai-usage/web -> @ai-usage/web-bridge -> @ai-usage/local-collectors'),
+        packageName: '@ai-usage/web',
+        specifier: '@ai-usage/local-collectors',
       }),
     );
   });
@@ -319,7 +497,7 @@ describe('package boundary guard', () => {
       'cli',
       { name: '@ai-usage/cli' },
       [
-        "import '@ai-usage/local-collectors/claude-history';",
+        `import '${localCollectorsClaudeHistory}';`,
         "import '@ai-usage/usage-engine/main';",
         "import '@ai-usage/usage-store/reader';",
         `import '${usageStoreInternal}';`,
@@ -327,7 +505,7 @@ describe('package boundary guard', () => {
     );
 
     expect((await collectViolations(root)).map(({ specifier }) => specifier)).toEqual([
-      '@ai-usage/local-collectors/claude-history',
+      localCollectorsClaudeHistory,
       '@ai-usage/usage-engine/main',
       '@ai-usage/usage-store/internal',
     ]);
@@ -410,17 +588,6 @@ describe('package boundary guard', () => {
         specifier: './missing.js',
       }),
     );
-  });
-
-  test('forbids web and CLI from source adapters and one-shot writers', async () => {
-    const root = await createFixture();
-    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' }, `import '${reportDataSourceAdapters}';\n`);
-    await writePackage(root, 'apps', 'cli', { name: '@ai-usage/cli' }, `import '${reportDataOneShotSources}';\n`);
-
-    expect((await collectViolations(root)).map(({ specifier }) => specifier)).toEqual([
-      reportDataOneShotSources,
-      reportDataSourceAdapters,
-    ]);
   });
 
   test('accepts the current workspace graph', async () => {

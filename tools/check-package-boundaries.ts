@@ -3,6 +3,11 @@ import path from 'node:path';
 
 const workspacePackageParents = ['apps', 'packages'];
 const dependencyFields = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'] as const;
+const productionDependencyFields = new Set<DependencyField>([
+  'dependencies',
+  'peerDependencies',
+  'optionalDependencies',
+]);
 const ignoredDirectories = new Set([
   '.git',
   '.output',
@@ -49,9 +54,7 @@ const retiredPackages = [`${workspacePackageScope}lan-pairing`, `${workspacePack
 // on collection, storage, transport, or app execution.
 // packages/usage-store owns SQLite/materialized facts. It must not know about collection, report payloads,
 // file-transfer orchestration, or app adapters.
-// packages/report-data may read stored imported rows, but it must not depend on app adapters.
-// packages/usage-merge orchestrates manual merge bundle import/export. It must not import app packages or
-// final report payload orchestration.
+// packages/report-data may read stored imported rows, but it must not depend on collectors or app adapters.
 // packages/skills owns a local filesystem control plane. It must remain independent from reporting,
 // persistence, transport, and app packages.
 const boundaryPolicies: BoundaryPolicy[] = [
@@ -75,27 +78,15 @@ const boundaryPolicies: BoundaryPolicy[] = [
   },
   {
     packageName: '@ai-usage/usage-store',
-    forbiddenDependencies: [
-      '@ai-usage/local-collectors',
-      '@ai-usage/report-data',
-      '@ai-usage/usage-merge',
-      '@ai-usage/web',
-      '@ai-usage/cli',
-    ],
-    forbiddenImports: [
-      '@ai-usage/local-collectors',
-      '@ai-usage/report-data',
-      '@ai-usage/usage-merge',
-      '@ai-usage/web',
-      '@ai-usage/cli',
-    ],
-    reason: 'usage-store must not depend on collectors, file-transfer orchestration, app packages, or report-data.',
+    forbiddenDependencies: ['@ai-usage/local-collectors', '@ai-usage/report-data', '@ai-usage/web', '@ai-usage/cli'],
+    forbiddenImports: ['@ai-usage/local-collectors', '@ai-usage/report-data', '@ai-usage/web', '@ai-usage/cli'],
+    reason: 'usage-store must not depend on collectors, app packages, or report-data.',
   },
   {
     packageName: '@ai-usage/report-data',
-    forbiddenDependencies: ['@ai-usage/web', '@ai-usage/cli'],
-    forbiddenImports: ['@ai-usage/web', '@ai-usage/cli'],
-    reason: 'report-data must not import app packages.',
+    forbiddenDependencies: ['@ai-usage/effect-runtime', '@ai-usage/local-collectors', '@ai-usage/web', '@ai-usage/cli'],
+    forbiddenImports: ['@ai-usage/effect-runtime', '@ai-usage/local-collectors', '@ai-usage/web', '@ai-usage/cli'],
+    reason: 'report-data must stay collector-free and must not import runtime or app packages.',
   },
   {
     packageName: '@ai-usage/cli',
@@ -104,29 +95,32 @@ const boundaryPolicies: BoundaryPolicy[] = [
     reason: 'CLI collection must run through the usage engine, never local collectors.',
   },
   {
-    packageName: '@ai-usage/usage-merge',
+    packageName: '@ai-usage/web',
+    forbiddenDependencies: ['@ai-usage/cli', '@ai-usage/local-collectors', ...retiredPackages],
+    forbiddenImports: ['@ai-usage/cli', '@ai-usage/local-collectors', ...retiredPackages],
+    reason: 'web must not import CLI, collectors, or retired network adapter packages.',
+  },
+  {
+    packageName: '@ai-usage/local-machine',
     forbiddenDependencies: [
       '@ai-usage/local-collectors',
       '@ai-usage/report-data',
-      retiredPackages[1],
+      '@ai-usage/usage-engine-control',
+      '@ai-usage/usage-engine-runtime',
+      '@ai-usage/usage-store',
       '@ai-usage/web',
       '@ai-usage/cli',
     ],
     forbiddenImports: [
       '@ai-usage/local-collectors',
       '@ai-usage/report-data',
-      retiredPackages[1],
+      '@ai-usage/usage-engine-control',
+      '@ai-usage/usage-engine-runtime',
+      '@ai-usage/usage-store',
       '@ai-usage/web',
       '@ai-usage/cli',
     ],
-    reason:
-      'usage-merge file-transfer orchestration must not import collectors, network sync, final report payload orchestration, or app adapters.',
-  },
-  {
-    packageName: '@ai-usage/web',
-    forbiddenDependencies: ['@ai-usage/cli', ...retiredPackages],
-    forbiddenImports: ['@ai-usage/cli', ...retiredPackages],
-    reason: 'web must not import CLI or retired network adapter packages.',
+    reason: 'local-machine must stay independent from collectors, report storage, engine transport/runtime, and apps.',
   },
 ];
 
@@ -138,24 +132,20 @@ const engineControlPackage = '@ai-usage/usage-engine-control';
 const engineControlTesting = `${engineControlPackage}/testing`;
 const engineRuntimePackage = '@ai-usage/usage-engine-runtime';
 const engineAppPackage = '@ai-usage/usage-engine';
+const localMachinePackage = '@ai-usage/local-machine';
+const localMachineSessionDetail = `${localMachinePackage}/session-detail`;
+const localMachineSkillsConfig = `${localMachinePackage}/skills-config`;
+const localMachineTestingHarnessHome = `${localMachinePackage}/testing/harness-home`;
 const reportDataPackage = '@ai-usage/report-data';
 const reportDataPortableReport = `${reportDataPackage}/portable-report`;
-const reportDataSourceAdapters = '@ai-usage/report-data/source-adapters';
-const reportDataOneShotSources = '@ai-usage/report-data/one-shot-sources';
-
-// These exact imports are the pre-cutover writer/scheduler owners named by plan 052.
-// The ledger prevents any new exception and is deleted file-by-file as ownership moves to the engine.
-const legacyTargetGraphExceptions = new Set([
-  `@ai-usage/usage-merge|packages/usage-merge/src/index.ts|${usageStoreWriter}`,
-]);
 
 const engineRuntimeAllowedWorkspaceDependencies = new Set([
   '@ai-usage/effect-runtime',
   '@ai-usage/local-collectors',
+  '@ai-usage/local-machine',
   '@ai-usage/report-core',
   '@ai-usage/report-data',
   '@ai-usage/usage-engine-control',
-  '@ai-usage/usage-merge',
   usageStorePackage,
 ]);
 const testOnlySourcePattern =
@@ -169,9 +159,6 @@ const isPackageOrSubpath = (specifier: string, packageName: string): boolean =>
   specifier === packageName || specifier.startsWith(`${packageName}/`);
 
 const workspacePackageNameFor = (specifier: string): string => specifier.split('/').slice(0, 2).join('/');
-
-const isLegacyTargetGraphException = (packageName: string, relativeFile: string, specifier: string): boolean =>
-  legacyTargetGraphExceptions.has(`${packageName}|${relativeFile}|${specifier}`);
 
 const targetDependencyReason = (
   packageName: string,
@@ -208,9 +195,6 @@ const targetImportReason = (
   specifier: string,
   applicationPackages: ReadonlySet<string>,
 ): string | undefined => {
-  if (isLegacyTargetGraphException(packageName, relativeFile, specifier)) {
-    return;
-  }
   if (
     (isPackageOrSubpath(specifier, usageStoreTesting) || isPackageOrSubpath(specifier, engineControlTesting)) &&
     isTestOnlySource(relativeFile)
@@ -237,6 +221,18 @@ const targetImportReason = (
     return 'CLI may locate the foreground engine executable but must not import the engine application.';
   }
   if (
+    (packageName === '@ai-usage/web' || packageName === '@ai-usage/cli') &&
+    isPackageOrSubpath(specifier, localMachinePackage)
+  ) {
+    const isAllowedWebOperation =
+      packageName === '@ai-usage/web' &&
+      (specifier === localMachineSessionDetail || specifier === localMachineSkillsConfig);
+    const isAllowedTestFixture = specifier === localMachineTestingHarnessHome && isTestOnlySource(relativeFile);
+    if (!(isAllowedWebOperation || isAllowedTestFixture)) {
+      return 'Web may import only local-machine session-detail/skills-config; CLI has no local-machine data path.';
+    }
+  }
+  if (
     packageName === '@ai-usage/cli' &&
     isPackageOrSubpath(specifier, reportDataPackage) &&
     specifier !== reportDataPortableReport
@@ -245,12 +241,6 @@ const targetImportReason = (
   }
   if (isPackageOrSubpath(specifier, usageStoreTesting) || isPackageOrSubpath(specifier, engineControlTesting)) {
     return 'Testing adapters may be imported only by test or fixture source.';
-  }
-  if (
-    (packageName === '@ai-usage/web' || packageName === '@ai-usage/cli') &&
-    (isPackageOrSubpath(specifier, reportDataSourceAdapters) || isPackageOrSubpath(specifier, reportDataOneShotSources))
-  ) {
-    return 'Web and CLI must not import write-side source adapters or one-shot writers.';
   }
   if (
     packageName === engineControlPackage &&
@@ -451,7 +441,6 @@ const collectTargetImportViolations = async (
   root: string,
   packageInfo: PackageInfo,
   applicationPackages: ReadonlySet<string>,
-  observedLegacyExceptions: Set<string>,
 ): Promise<PackageBoundaryViolation[]> => {
   const violations: PackageBoundaryViolation[] = [];
   const files = await collectSourceFiles(packageInfo.directory);
@@ -462,10 +451,6 @@ const collectTargetImportViolations = async (
       const specifier = match[1] ?? match[2] ?? match[3];
       if (specifier === undefined) {
         continue;
-      }
-      const legacyKey = `${packageInfo.packageName}|${relativeFile}|${specifier}`;
-      if (legacyTargetGraphExceptions.has(legacyKey)) {
-        observedLegacyExceptions.add(legacyKey);
       }
       const reason = targetImportReason(packageInfo.packageName, relativeFile, specifier, applicationPackages);
       if (reason === undefined) {
@@ -587,6 +572,97 @@ const retiredPackagePolicyFor = (packageName: string): BoundaryPolicy => ({
   reason: 'retired workspace packages must not return in manifests or source imports.',
 });
 
+const collectProductionWorkspaceImportEdges = async (
+  root: string,
+  packages: ReadonlyMap<string, PackageInfo>,
+): Promise<ReadonlyMap<string, ReadonlyMap<string, string>>> => {
+  const edgesByPackage = new Map<string, ReadonlyMap<string, string>>();
+  for (const packageInfo of packages.values()) {
+    const edges = new Map<string, string>();
+    const files = await collectSourceFiles(packageInfo.directory);
+    for (const file of files) {
+      const relativeFile = path.relative(root, file).split(path.sep).join('/');
+      if (isTestOnlySource(relativeFile)) {
+        continue;
+      }
+      const text = await readFile(file, 'utf8');
+      for (const match of text.matchAll(workspaceImportPattern)) {
+        const specifier = match[1] ?? match[2] ?? match[3];
+        if (specifier === undefined) {
+          continue;
+        }
+        const dependencyName = workspacePackageNameFor(specifier);
+        if (!edges.has(dependencyName)) {
+          edges.set(dependencyName, relativeFile);
+        }
+      }
+    }
+    edgesByPackage.set(packageInfo.packageName, edges);
+  }
+  return edgesByPackage;
+};
+
+const collectApplicationProductionClosureViolations = async (
+  root: string,
+  packages: ReadonlyMap<string, PackageInfo>,
+): Promise<PackageBoundaryViolation[]> => {
+  const forbiddenPackages = new Set(['@ai-usage/local-collectors', engineRuntimePackage]);
+  const violations: PackageBoundaryViolation[] = [];
+  const importEdges = await collectProductionWorkspaceImportEdges(root, packages);
+  for (const applicationPackage of ['@ai-usage/web', '@ai-usage/cli']) {
+    if (!packages.has(applicationPackage)) {
+      continue;
+    }
+    const pending = [{ packageName: applicationPackage, path: [applicationPackage] }];
+    const visited = new Set<string>();
+    while (pending.length > 0) {
+      const current = pending.shift();
+      if (!(current && !visited.has(current.packageName))) {
+        continue;
+      }
+      visited.add(current.packageName);
+      const packageInfo = packages.get(current.packageName);
+      if (!packageInfo) {
+        continue;
+      }
+      const dependencyEdges = new Map<string, string>();
+      for (const [dependencyName, field] of packageInfo.dependencies) {
+        if (!productionDependencyFields.has(field)) {
+          continue;
+        }
+        dependencyEdges.set(
+          dependencyName,
+          path.relative(root, path.join(packageInfo.directory, 'package.json')).split(path.sep).join('/'),
+        );
+      }
+      for (const [dependencyName, file] of importEdges.get(current.packageName) ?? []) {
+        if (!dependencyEdges.has(dependencyName)) {
+          dependencyEdges.set(dependencyName, file);
+        }
+      }
+      for (const [dependencyName, file] of dependencyEdges) {
+        const dependencyPath = [...current.path, dependencyName];
+        if (forbiddenPackages.has(dependencyName)) {
+          if (current.packageName !== applicationPackage) {
+            violations.push({
+              file,
+              message: `${applicationPackage} production dependencies must stay collector- and engine-runtime-free. Reached through ${dependencyPath.join(' -> ')}.`,
+              packageName: applicationPackage,
+              specifier: dependencyName,
+            });
+          }
+          continue;
+        }
+        const isCliExecutableBoundary = applicationPackage === '@ai-usage/cli' && dependencyName === engineAppPackage;
+        if (packages.has(dependencyName) && !isCliExecutableBoundary) {
+          pending.push({ packageName: dependencyName, path: dependencyPath });
+        }
+      }
+    }
+  }
+  return violations;
+};
+
 export async function collectViolations(root: string): Promise<PackageBoundaryViolation[]> {
   const packages = await discoverWorkspacePackages(root);
   const violations: PackageBoundaryViolation[] = [];
@@ -595,9 +671,8 @@ export async function collectViolations(root: string): Promise<PackageBoundaryVi
       .filter((packageInfo) => path.relative(root, packageInfo.directory).split(path.sep)[0] === 'apps')
       .map(({ packageName }) => packageName),
   );
-  const observedLegacyExceptions = new Set<string>();
-
   violations.push(...(await collectPortableReportClosureViolations(root, packages)));
+  violations.push(...(await collectApplicationProductionClosureViolations(root, packages)));
 
   for (const policy of boundaryPolicies) {
     const packageInfo = packages.get(policy.packageName);
@@ -609,28 +684,7 @@ export async function collectViolations(root: string): Promise<PackageBoundaryVi
 
   for (const packageInfo of packages.values()) {
     violations.push(...collectTargetDependencyViolations(root, packageInfo, applicationPackages));
-    violations.push(
-      ...(await collectTargetImportViolations(root, packageInfo, applicationPackages, observedLegacyExceptions)),
-    );
-  }
-
-  const plan052Exists = await readFile(path.join(root, 'plans/052-split-usage-engine-runtime.md'), 'utf8').then(
-    () => true,
-    () => false,
-  );
-  if (plan052Exists) {
-    for (const ledgerEntry of legacyTargetGraphExceptions) {
-      if (observedLegacyExceptions.has(ledgerEntry)) {
-        continue;
-      }
-      const [packageName = '', relativeFile = '', specifier = ''] = ledgerEntry.split('|');
-      violations.push({
-        file: relativeFile,
-        message: 'The plan-052 transition ledger entry is stale and must be removed.',
-        packageName,
-        specifier,
-      });
-    }
+    violations.push(...(await collectTargetImportViolations(root, packageInfo, applicationPackages)));
   }
 
   for (const packageInfo of packages.values()) {

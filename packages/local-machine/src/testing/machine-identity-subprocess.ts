@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { ensureMachineConfig } from '@ai-usage/local-machine/machine-config';
 import { Effect } from 'effect';
-import { createLocalHistoryStorage, LocalHistoryStorage } from '../local-history';
-import { ensureMachineConfig } from '../machine-config';
 
 const [home, readyPath, barrierPath, resultPath] = process.argv.slice(2);
 if (!(home && readyPath && barrierPath && resultPath)) {

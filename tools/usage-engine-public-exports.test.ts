@@ -19,8 +19,7 @@ import {
 import { createInMemoryUsageEngineControlClient } from '@ai-usage/usage-engine-control/testing';
 import { defineUsageEngineRuntimeFactory } from '@ai-usage/usage-engine-runtime';
 import { queryReportRows } from '@ai-usage/usage-store/reader';
-import { createUsageStore } from '@ai-usage/usage-store/testing';
-import { importLocalRows } from '@ai-usage/usage-store/writer';
+import { createUsageStore, importLocalRows } from '@ai-usage/usage-store/testing';
 
 const repositoryRoot = path.resolve(import.meta.dir, '..');
 

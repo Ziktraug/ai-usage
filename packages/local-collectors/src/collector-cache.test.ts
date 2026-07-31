@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { MAX_USAGE_MODEL_SEGMENTS } from '@ai-usage/report-core/usage-row';
 import {
   cachedDbCollection,
@@ -12,7 +13,6 @@ import {
   storeDbRows,
   writeDbRowCache,
 } from './collector-cache';
-import type { LocalHistoryStorage } from './local-history';
 import type { CollectorRow } from './rtk-enrichment';
 
 const storageAt = (home: string) => ({ home }) as unknown as LocalHistoryStorage;

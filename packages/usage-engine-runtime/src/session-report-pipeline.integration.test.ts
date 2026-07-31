@@ -2,11 +2,11 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { readClaudeSessionAnalysis } from '@ai-usage/local-collectors/claude-history';
-import { readCodexSessionAnalysis } from '@ai-usage/local-collectors/codex-history';
-import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
-import { writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
-import { readOpenCodeSessionAnalysis } from '@ai-usage/local-collectors/opencode-history';
+import { readClaudeSessionAnalysis } from '@ai-usage/local-machine/claude-session-analysis';
+import { readCodexSessionAnalysis } from '@ai-usage/local-machine/codex-session-analysis';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { writeMachineConfig } from '@ai-usage/local-machine/machine-config';
+import { readOpenCodeSessionAnalysis } from '@ai-usage/local-machine/opencode-session-analysis';
 import {
   appendCodexRootUsage,
   HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL,
@@ -14,7 +14,7 @@ import {
   HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
   seedHarnessHome,
-} from '@ai-usage/local-collectors/test-fixtures/harness-home';
+} from '@ai-usage/local-machine/testing/harness-home';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import {
   createUsageMergeBundle,
@@ -36,8 +36,8 @@ import {
 import { parseUsageSnapshot, serializeUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow } from '@ai-usage/report-core/types';
 import {
+  assembleMergedUsageReport,
   assembleReport,
-  createMergedUsageReport,
   createStoredReportCapture,
   createStoredUsageSnapshot,
 } from '@ai-usage/report-data';
@@ -288,17 +288,20 @@ describe('session report pipeline', () => {
       await Effect.runPromise(source.run(sourceContext));
     }
 
-    const stored = await Effect.runPromise(queryReportRows({ dbPath: usageStorePath(home) }));
+    const dbPath = usageStorePath(home);
+    const stored = await Effect.runPromise(queryReportRows({ dbPath }));
     const capture = await Effect.runPromise(
       createStoredReportCapture({
+        config: {},
+        dbPath,
         generatedAt: GENERATED_AT,
         harness: null,
         includeCursor: true,
+        machine: FIXED_MACHINE,
         options: reportOptions,
-      }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      }),
     );
     const { payload } = capture;
-    const dbPath = usageStorePath(home);
     const localRequest = request();
     await publishPayload({
       dbPath,
@@ -627,11 +630,12 @@ describe('session report pipeline', () => {
 
     const snapshot = await Effect.runPromise(
       createStoredUsageSnapshot({
+        dbPath,
         generatedAt: GENERATED_AT,
         harness: null,
         includeCursor: true,
         machine: FIXED_MACHINE,
-      }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      }),
     );
     const snapshotText = serializeUsageSnapshot(snapshot);
     const parsedSnapshot = parseUsageSnapshot(snapshotText);
@@ -649,16 +653,13 @@ describe('session report pipeline', () => {
       parsedBundle.rows.find(({ source }) => source.sourceSessionId === fixture.ids.codexRoot)?.source.vcs,
     ).toEqual(materializedCodex.source?.vcs);
 
-    const mergedPortable = await Effect.runPromise(
-      createMergedUsageReport({
-        configCwd: home,
-        generatedAt: GENERATED_AT,
-        harness: null,
-        includeCursor: true,
-        options: reportOptions,
-        snapshots: [parsedSnapshot],
-      }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-    );
+    const mergedPortable = assembleMergedUsageReport({
+      generatedAt: GENERATED_AT,
+      harness: null,
+      includeCursor: true,
+      options: reportOptions,
+      snapshots: [parsedSnapshot],
+    });
     const portableRevision = 'fixture-portable-revision-025';
     const portableRequest = request({ revision: portableRevision });
     await publishPayload({
@@ -727,11 +728,14 @@ describe('session report pipeline', () => {
     await Effect.runPromise(codexSource.run(sourceContext));
     const firstCapture = await Effect.runPromise(
       createStoredReportCapture({
+        config: {},
+        dbPath,
         generatedAt: GENERATED_AT,
         harness: null,
         includeCursor: false,
+        machine: FIXED_MACHINE,
         options: { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
-      }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      }),
     );
     const firstPayload = firstCapture.payload;
     const firstRequest = request({ revision: firstRevision });
@@ -780,11 +784,14 @@ describe('session report pipeline', () => {
     await Effect.runPromise(codexSource.run(sourceContext));
     const secondCapture = await Effect.runPromise(
       createStoredReportCapture({
+        config: {},
+        dbPath,
         generatedAt: GENERATED_AT,
         harness: null,
         includeCursor: false,
+        machine: FIXED_MACHINE,
         options: { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
-      }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      }),
     );
     const secondPayload = secondCapture.payload;
     const secondRequest = request({ revision: secondRevision });
@@ -835,11 +842,14 @@ describe('session report pipeline', () => {
     const captureAnchor = async (revision: string, now: number) => {
       const capture = await Effect.runPromise(
         createStoredReportCapture({
+          config: {},
+          dbPath,
           generatedAt: GENERATED_AT,
           harness: 'claude',
           includeCursor: false,
+          machine: FIXED_MACHINE,
           options: reportOptions,
-        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
+        }),
       );
       const sessionRequest = request({ revision });
       const row = projectSessionPage(capture.payload.rows, sessionRequest).items.find(

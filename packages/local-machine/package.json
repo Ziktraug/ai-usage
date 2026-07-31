@@ -1,0 +1,41 @@
+{
+  "name": "@ai-usage/local-machine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./claude-session-analysis": "./src/claude-session-analysis.ts",
+    "./claude-session-facts": "./src/claude-session-facts.ts",
+    "./codex-session-analysis": "./src/codex-session-analysis.ts",
+    "./errors": "./src/errors.ts",
+    "./history-budgets": "./src/history-budgets.ts",
+    "./internal/codex-history": "./src/internal/codex-history.ts",
+    "./local-git": "./src/local-git.ts",
+    "./local-history": "./src/local-history.ts",
+    "./machine-config": "./src/machine-config.ts",
+    "./metric-validation": "./src/metric-validation.ts",
+    "./opencode-schema": "./src/opencode-schema.ts",
+    "./opencode-session-analysis": "./src/opencode-session-analysis.ts",
+    "./opencode-session-facts": "./src/opencode-session-facts.ts",
+    "./platform-paths": "./src/platform-paths.ts",
+    "./private-storage": "./src/private-storage.ts",
+    "./session-label": "./src/session-label.ts",
+    "./session-detail": "./src/session-detail.ts",
+    "./skills-config": "./src/skills-config.ts",
+    "./text": "./src/text.ts",
+    "./testing/harness-home": "./src/testing/harness-home.ts",
+    "./testing/memory-storage": "./src/testing/memory-storage.ts"
+  },
+  "dependencies": {
+    "@ai-usage/report-core": "workspace:*",
+    "@ai-usage/skills": "workspace:*",
+    "effect": "^3.21.4"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

@@ -1,13 +1,13 @@
-import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
-import { normalizeCodexRateLimitStatus } from '@ai-usage/report-core/provider-status';
-import { Effect } from 'effect';
-import type { LocalHistoryError } from './errors';
+import type { LocalHistoryError } from '@ai-usage/local-machine/errors';
 import {
   historyPath,
   LocalHistoryStorage,
   type LocalHistoryStorage as LocalHistoryStorageService,
   walkFiles,
-} from './local-history';
+} from '@ai-usage/local-machine/local-history';
+import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
+import { normalizeCodexRateLimitStatus } from '@ai-usage/report-core/provider-status';
+import { Effect } from 'effect';
 import type { ProviderQuotaBatch, ProviderQuotaCollectRequest } from './provider-quota';
 
 const DEFAULT_MAXIMUM_FILES = 20;

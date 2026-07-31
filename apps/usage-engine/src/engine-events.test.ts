@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { makeAiUsageWideEventResource, type WideEventSnapshot } from '@ai-usage/effect-runtime';
 import { makeEngineWideEventSinkLayer } from '@ai-usage/effect-runtime/node';
-import { createLocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
+import { createLocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { createLiveUsageEngineRuntime, createTerminalSourceControlPort } from '@ai-usage/usage-engine-runtime/live';
 import { type ScheduledSource, SourceRunError } from '@ai-usage/usage-engine-runtime/source-adapters';
 import { Duration, Effect } from 'effect';

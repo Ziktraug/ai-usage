@@ -3,10 +3,10 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { access, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { appendCodexRootUsage, seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
 import { Effect } from 'effect';
 import { readCodexUsageSessions } from '../codex-history';
-import { createLocalHistoryStorage, LocalHistoryStorage } from '../local-history';
-import { appendCodexRootUsage, seedHarnessHome } from './harness-home';
 
 const temporaryHomes: string[] = [];
 

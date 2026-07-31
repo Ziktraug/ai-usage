@@ -5,7 +5,7 @@ import path from 'node:path';
 import {
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
   seedHarnessHome,
-} from '@ai-usage/local-collectors/test-fixtures/harness-home';
+} from '@ai-usage/local-machine/testing/harness-home';
 import { SESSION_SCROLL_EXPECTED_COUNT } from './session-scroll-fixture';
 
 const DEFAULT_CODEX_SESSION_COUNT = 205;

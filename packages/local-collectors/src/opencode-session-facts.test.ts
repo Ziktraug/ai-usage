@@ -2,14 +2,18 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { readOpenCodeSessionAnalysis } from '@ai-usage/local-machine/opencode-session-analysis';
+import {
+  buildOpenCodeProjectionSummary,
+  decodeOpenCodeMessageRow,
+  openCodeParentKind,
+} from '@ai-usage/local-machine/opencode-session-facts';
+import { seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
 import { serializeUsageRow } from '@ai-usage/report-core/report-data';
 import { sessionProjectionFactsForSerializedRow } from '@ai-usage/report-core/session-detail';
 import { Effect } from 'effect';
 import { collectOpenCodeResult } from './collectors/opencode';
-import { createLocalHistoryStorage, LocalHistoryStorage } from './local-history';
-import { readOpenCodeSessionAnalysis } from './opencode-history';
-import { buildOpenCodeProjectionSummary, decodeOpenCodeMessageRow, openCodeParentKind } from './opencode-session-facts';
-import { seedHarnessHome } from './test-fixtures/harness-home';
 
 const temporaryHomes: string[] = [];
 

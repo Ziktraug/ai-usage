@@ -1,20 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseClaudeSessionFacts } from '@ai-usage/local-machine/claude-session-facts';
+import type { LocalHistoryError, LocalHistoryWarning } from '@ai-usage/local-machine/errors';
+import { readLocalGitRepository } from '@ai-usage/local-machine/local-git';
+import { LocalHistoryStorage, walkFiles } from '@ai-usage/local-machine/local-history';
+import { type HarnessPaths, resolvePaths } from '@ai-usage/local-machine/platform-paths';
+import { base, safeJSON, usablePrompt } from '@ai-usage/local-machine/text';
 import { actualCost, approximateApiCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
-import { parseClaudeSessionFacts } from '../claude-session-facts';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import { collectorCachePath, reviveCollectorRowsResult } from '../collector-cache';
-import type { LocalHistoryError, LocalHistoryWarning } from '../errors';
 import { COLLECTOR_CACHE_MAX_BYTES, SMALL_HISTORY_JSON_MAX_BYTES } from '../history-budgets';
-import { readLocalGitRepository } from '../local-git';
-import { LocalHistoryStorage, walkFiles } from '../local-history';
 import { metricValidationWarning, parseNonNegativeSafeInteger } from '../metric-validation';
 import { withPerfSpan } from '../perf';
-import { type HarnessPaths, resolvePaths } from '../platform-paths';
 import { readPrivateJson, writePrivateJson } from '../private-storage';
 import type { CollectorRow } from '../rtk-enrichment';
-import { base, safeJSON, usablePrompt } from '../text';
 
 interface ClaudeHistoryFallback {
   end: Date;
@@ -138,7 +138,7 @@ const isUsageBearingHistoryEntry = (text: string | null) => {
 const readClaudeHistoryFallbacks = (
   storage: LocalHistoryStorage,
   existingSessionIds: Set<string>,
-  paths: import('../platform-paths').HarnessPaths,
+  paths: import('@ai-usage/local-machine/platform-paths').HarnessPaths,
 ): Effect.Effect<ClaudeHistoryFallback[], LocalHistoryError> =>
   Effect.gen(function* () {
     const historyFile = paths.claude.historyFile;

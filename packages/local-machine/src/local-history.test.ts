@@ -3,9 +3,14 @@ import { expect, spyOn, test } from 'bun:test';
 import fs, { type BigIntStats, type PathLike, type StatOptions, type Stats } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  createLocalHistoryStorage,
+  readConfigFileText,
+  readRegularFileText,
+  walkFiles,
+} from '@ai-usage/local-machine/local-history';
+import { TestMemoryStorage } from '@ai-usage/local-machine/testing/memory-storage';
 import { Effect } from 'effect';
-import { createLocalHistoryStorage, readConfigFileText, readRegularFileText, walkFiles } from './local-history';
-import { TestMemoryStorage } from './test-memory-storage';
 
 const PREVIOUS_AGGREGATE_HISTORY_LIMIT_BYTES = 2 * 1024 * 1024 * 1024;
 const SIMULATED_LARGE_SESSION_BYTES = 600 * 1024 * 1024;

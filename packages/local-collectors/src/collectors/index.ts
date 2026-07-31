@@ -1,4 +1,10 @@
 import {
+  type LocalHistoryError,
+  type LocalHistoryWarning,
+  localHistoryWarningFromError,
+} from '@ai-usage/local-machine/errors';
+import type { LocalHistoryStorage as LocalHistoryStorageService } from '@ai-usage/local-machine/local-history';
+import {
   HARNESS_METADATA,
   type HarnessKey,
   type HarnessMetadata,
@@ -6,8 +12,6 @@ import {
 } from '@ai-usage/report-core/harness-metadata';
 import type { Row } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
-import { type LocalHistoryError, type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
-import type { LocalHistoryStorage as LocalHistoryStorageService } from '../local-history';
 import { withPerfSpan } from '../perf';
 import {
   type CollectorRow,

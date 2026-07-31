@@ -65,9 +65,52 @@ bun run cli -- quota
 
 If refresh fails and a durable observation exists, the command renders that observation successfully while the `cli.quota` diagnostic boundary is degraded. Without a durable observation, it still exits successfully with `No stored Codex usage-limit observation is available.` while diagnostics record the failed refresh. A source paused by user policy is distinct from provider unavailability: the command exits 1 with `Codex usage-limit collection is paused; re-enable codex.usage-limits first.`
 
-The served app runs a Bun-owned control plane even when no browser is open. Its seven independent collection sources are Claude, Codex, OpenCode, and Cursor sessions; Codex usage limits; RTK savings; and Cursor commit attribution. Each source has separate policy, detection, lifecycle, outcome, and cadence state on `/sources`. Sparse policy overrides live only in `~/.config/ai-usage/config.json`; repository config cannot enable background work.
+Normal CLI reports are fresh: they ask the usage engine to collect and publish,
+then read the committed revision. To read the latest compatible stored revision
+without starting an engine, use:
 
-Collectors persist normalized contributions before a separate stored-only publication job creates an immutable report revision. Publication requests use monotonic demand, and timed-out work aborts at the provider boundary before later writes. Disabling, missing input, empty output, or failure never deletes prior contributions. The browser strictly decodes sanitized replacement snapshots plus explicit publication events through one SSE connection. TanStack Query owns ordinary finite Skills and quota reads; the served-report session remains the sole exact-revision owner.
+```sh
+bun run cli -- --stored
+```
+
+The dedicated usage engine runs collection independently from browser
+visibility. Its seven collection sources are Claude, Codex, OpenCode, and
+Cursor sessions; Codex usage limits; RTK savings; and Cursor commit attribution.
+Each source has separate policy, detection, lifecycle, outcome, and cadence
+state on `/sources`. Sparse policy overrides live only in
+`~/.config/ai-usage/config.json`; repository config cannot enable background
+work.
+
+Collectors persist normalized contributions before a separate stored-only
+publication job creates an immutable revision-keyed SQLite projection.
+Publication requests use monotonic demand, and timed-out work aborts at the
+provider boundary before later writes. Disabling, missing input, empty output,
+or failure never deletes prior contributions. The browser strictly decodes
+sanitized replacement status plus publication events through one SSE
+connection. TanStack Query owns ordinary finite Skills and quota reads; the
+served-report session remains the sole browser exact-revision owner.
+
+### Runtime ownership and backups
+
+`apps/usage-engine` is the only production usage-SQLite writer. It owns
+migrations, checkpoints, collection, enrichment, scheduling, usage-domain
+mutations, publication, and retention. Web and CLI query the existing database
+directly with read-only/query-only connections. Authenticated HTTP on numeric
+loopback carries only commands, status, and bounded SSE events; it never
+carries report, Session, focused, or quota data.
+
+If the engine stops after a compatible revision is published, Web and
+`--stored` CLI reads continue while fresh/usage-domain mutating actions fail
+explicitly; Web-owned Skills remains independent. When no daemon exists, a
+fresh CLI command starts one bounded foreground engine and reaps it after
+publication. A live protocol mismatch fails closed instead of starting a
+competing writer.
+
+For a file-level SQLite backup, stop the usage engine cleanly before copying the
+database. Do not copy only the main database while its WAL writer may be active;
+ai-usage currently exposes no online-backup command. Config/machine files are
+separate backups; after a clean stop, do not copy writer locks, rendezvous,
+inbox, logs, WAL, or SHM as backup payload.
 
 ## Multi-machine usage
 
@@ -102,7 +145,7 @@ Duplicate sessions (same machine, same harness, same session ID) are deduplicate
 
 ### 3. Import or export stored usage in the web app
 
-The interactive report includes a file-only transfer workspace at `/sync`. Export this machine's stored usage as a JSON merge bundle, copy the file with a tool you trust, then preview the exact insert/update/delete effects. A first preview may initialize an empty current-schema private store without inserting usage rows or advancing semantic generation. Previewing an existing store may run migrations, but never imports the peer bundle. Confirmation requires the separately returned document digest and one bounded, versioned, opaque, stateless `confirmationToken` bound to the canonical bundle and relevant logical store state; the web app transports that token without decoding it. If either the selected document or bound store state changed, confirmation returns `preview-stale` and requires a fresh preview. Imports are explicit and bounded; the application does not open a LAN listener or synchronize in the background.
+The interactive report includes a file-only transfer workspace at `/sync`. Export this machine's stored usage as a JSON merge bundle, copy the file with a tool you trust, then preview the exact insert/update/delete effects. The web stages bounded uploads and sends only an opaque handoff ID; the usage engine revalidates and executes the transfer. A first preview may initialize an empty current-schema private store without inserting usage rows or advancing semantic generation. Previewing an existing store may run migrations, but never imports the peer bundle. Confirmation requires the separately returned document digest and one bounded, versioned, opaque, stateless `confirmationToken` bound to the canonical bundle and relevant logical store state; the web app transports that token without decoding it. If either the selected document or bound store state changed, confirmation returns `preview-stale` and requires a fresh preview. Imports are explicit and bounded; the application does not open a LAN listener or synchronize in the background.
 
 Usage snapshots and merge bundles serve different workflows: `snapshot` plus `merge` creates a one-off combined report without changing stored usage, while `/sync` imports a merge bundle into the local usage store for future reports. Both write portable schema version 3. Version-3 files can carry bounded, credential-free session source-control facts; their rows remain portable and cannot authorize local prompt reads or provider lookup. Readers migrate version-1 and version-2 files with source-control context absent.
 
@@ -141,7 +184,7 @@ Or use the live dashboard:
 bun run dev
 ```
 
-Then open the Projects tab. The UI shows detected project sources with machine labels and writes project groups to your local config.
+Then open the Projects tab. The UI shows detected project sources with machine labels and sends project-group changes to the usage engine, which updates your local config and publishes a successor revision.
 
 Legacy `projectAliases` are still supported as broad report-time groups, but new dashboard edits write `projectGroups`.
 Config stays local to your machine and is never read from the repo.
@@ -205,15 +248,18 @@ Merged CSV/JSON payloads include row provenance (`source.machineLabel`, `source.
 ## Project layout
 
 - `packages/report-core` (`@ai-usage/report-core`): pure row types, pricing, normalization, analytics, report payloads, and snapshots
-- `packages/local-collectors` (`@ai-usage/local-collectors`): Effect-based local history collectors for Claude, Codex, OpenCode, Cursor, RTK enrichment, machine identity, and user config
-- `packages/report-data` (`@ai-usage/report-data`): report orchestration seam over core plus local collectors
-- `packages/usage-store` (`@ai-usage/usage-store`): SQLite materialization, merge-bundle persistence, and stored report-row queries
-- `packages/usage-merge` (`@ai-usage/usage-merge`): explicit merge-bundle file import/export workflows
+- `packages/local-machine` (`@ai-usage/local-machine`): collector-independent hardened local reads, exact Session analysis, machine/config transactions, and test homes
+- `packages/local-collectors` (`@ai-usage/local-collectors`): collection-only adapters for Claude, Codex, OpenCode, Cursor, quota, RTK, and commit attribution
+- `packages/report-data` (`@ai-usage/report-data`): stored-only and pure report, portable, quota-history, and exact-revision query assembly
+- `packages/usage-store` (`@ai-usage/usage-store`): separate read-only/query-only and writer exports over durable SQLite facts and served projections
+- `packages/usage-engine-control` (`@ai-usage/usage-engine-control`): strict authenticated loopback commands, status, bounded events, rendezvous, and handoffs
+- `packages/usage-engine-runtime` (`@ai-usage/usage-engine-runtime`): the deep write-side scheduler, adapters, mutations, publication, recovery, and retention service
+- `apps/usage-engine`: the sole production writer composition root and control server
 - `docs/session-analysis-sources.md`: provenance, quality, privacy, and known limitations of per-session analysis for each harness
 - `packages/skills` (`@ai-usage/skills`): local skill inventory, validation, projection, and reconciliation workflows
 - `packages/design-system` (`@ai-usage/design-system`): Panda/Solid primitives, report style slots, and generated Panda consumer exports
-- `apps/cli`: terminal CLI, quota/setup commands, portable snapshots, and table/CSV/JSON/payload output adapters
-- `apps/web`: Bun/Nitro source-control host plus the server-rendered Solid/TanStack report, `/sources`, local Skills, and file-only `/sync` workspaces
+- `apps/cli`: read-only stored reports plus bounded engine-client/foreground fresh and mutating commands, portable snapshots, and output adapters
+- `apps/web`: read-only server-rendered Solid/TanStack report plus control proxies, `/sources`, local Skills, and file-only `/sync` workspaces
 
 Architecture docs:
 
@@ -264,8 +310,8 @@ bun run test:e2e
 bun run test:e2e-demo
 ```
 
-After a production build, exercise the loopback production listener and the real
-revision/query subprocess path:
+After a production build, exercise the supervised loopback lifecycle and the
+direct revision-keyed SQLite query path:
 
 ```sh
 bun run test:web-production
@@ -281,7 +327,27 @@ Run the report app in development:
 bun run dev
 ```
 
-The dev server intentionally reads this machine's configured local data and refreshes the dashboard through immutable, destination-focused report queries. Its bounded support bootstrap reports omitted-item counts when summary metadata does not fit; row-derived destination queries remain independent of those summary omissions. A failed live bootstrap stays in the route's error/retry state. Synthetic data is selected only by explicit demo or E2E modes.
+This supervises persistent usage-engine and Web tasks with attributable logs.
+Web HMR does not restart the engine or trigger collection/publication. Nitro
+development and production builds use separate `.output-dev` and
+`.output-build` trees, and concurrent production builds fail through a narrow
+lock without deleting active dev files.
+
+The dev runtime intentionally reads this machine's configured local data and
+refreshes the dashboard through immutable, destination-focused SQLite queries.
+Its bounded support bootstrap reports omitted-item counts when summary metadata
+does not fit; row-derived destination queries remain independent of those
+summary omissions. A failed live bootstrap stays in the route's error/retry
+state. Synthetic data is selected only by explicit demo or E2E modes.
+
+After `bun run build`, start the normal supervised production pair with:
+
+```sh
+bun run start
+```
+
+`bun run start:web-only` is an explicit diagnostic that reads an existing store
+and never starts an engine.
 
 ## Notes
 

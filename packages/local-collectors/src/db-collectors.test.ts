@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
+import { LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { TestMemoryStorage } from '@ai-usage/local-machine/testing/memory-storage';
 import { Effect } from 'effect';
 import { collectSelectedHarnessResults, collectSelectedHarnessRows } from './collectors';
 import { collectClaude, collectClaudeRetentionWarnings } from './collectors/claude';
 import { collectCursor } from './collectors/cursor';
 import { classifyOpenCodeTitle, collectOpenCode } from './collectors/opencode';
 import { CURSOR_COMMIT_ATTRIBUTION_SQL, collectCursorCommitAttribution } from './facets';
-import { LocalHistoryStorage } from './local-history';
-import { TestMemoryStorage } from './test-memory-storage';
 
 const runWithStorage = <A, E>(effect: Effect.Effect<A, E, LocalHistoryStorage>, storage: TestMemoryStorage) =>
   Effect.runSync(effect.pipe(Effect.provideService(LocalHistoryStorage, storage)));
