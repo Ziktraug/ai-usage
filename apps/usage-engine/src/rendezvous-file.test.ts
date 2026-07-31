@@ -6,6 +6,7 @@ import {
   createUsageEngineBearerToken,
   loadUsageEngineRendezvous,
   revealUsageEngineBearerToken,
+  usageEngineTargetIdFor,
 } from '@ai-usage/usage-engine-control/node';
 import { publishUsageEngineRendezvous, usageEngineRendezvousPath } from './rendezvous-file';
 
@@ -14,6 +15,7 @@ const INSTANCE_ID = '11111111-1111-4111-8111-111111111111';
 const INSTANCE_ID_B = '22222222-2222-4222-8222-222222222222';
 const TOKEN_A = createUsageEngineBearerToken('a'.repeat(43));
 const TOKEN_B = createUsageEngineBearerToken('b'.repeat(43));
+const TARGET_ID = usageEngineTargetIdFor({ configCwd: '/isolated/config', databasePath: '/isolated/store.sqlite' });
 
 afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((fixture) => rm(fixture, { force: true, recursive: true })));
@@ -32,12 +34,18 @@ describe('usage engine rendezvous writer', () => {
       instanceId: INSTANCE_ID,
       port: 41_052,
       stateDirectory,
+      targetId: TARGET_ID,
       token: TOKEN_A,
     });
     const filePath = usageEngineRendezvousPath(stateDirectory);
     const loaded = await loadUsageEngineRendezvous(filePath);
 
-    expect(loaded).toMatchObject({ instanceId: INSTANCE_ID, port: 41_052, protocolVersion: 1 });
+    expect(loaded).toMatchObject({
+      instanceId: INSTANCE_ID,
+      port: 41_052,
+      protocolVersion: 1,
+      targetId: TARGET_ID,
+    });
     expect(revealUsageEngineBearerToken(loaded.token)).toBe('a'.repeat(43));
     expect(String(loaded.token)).toBe('[REDACTED]');
     expect((await lstat(filePath)).mode % 0o1000).toBe(0o600);
@@ -53,6 +61,7 @@ describe('usage engine rendezvous writer', () => {
       instanceId: INSTANCE_ID,
       port: 41_052,
       stateDirectory,
+      targetId: TARGET_ID,
       token: TOKEN_A,
     });
     const filePath = usageEngineRendezvousPath(stateDirectory);
@@ -62,6 +71,7 @@ describe('usage engine rendezvous writer', () => {
       instanceId: INSTANCE_ID,
       port: 41_053,
       stateDirectory,
+      targetId: TARGET_ID,
       token: TOKEN_B,
     });
     const secondToken = (JSON.parse(await readFile(filePath, 'utf8')) as { token: string }).token;
@@ -85,6 +95,7 @@ describe('usage engine rendezvous writer', () => {
         instanceId: INSTANCE_ID,
         port: 41_052,
         stateDirectory: symlinkDirectory,
+        targetId: TARGET_ID,
         token: TOKEN_A,
       }),
     ).rejects.toThrow('already exists and was preserved');
@@ -99,9 +110,25 @@ describe('usage engine rendezvous writer', () => {
         instanceId: INSTANCE_ID,
         port: 41_052,
         stateDirectory: permissiveDirectory,
+        targetId: TARGET_ID,
         token: TOKEN_A,
       }),
     ).rejects.toThrow('already exists and was preserved');
+  });
+
+  test('rejects an invalid target identity before publishing runtime state', async () => {
+    const stateDirectory = await createFixture();
+
+    await expect(
+      publishUsageEngineRendezvous({
+        instanceId: INSTANCE_ID,
+        port: 41_052,
+        stateDirectory,
+        targetId: 'forged-target' as never,
+        token: TOKEN_A,
+      }),
+    ).rejects.toThrow('target identity');
+    await expect(Bun.file(usageEngineRendezvousPath(stateDirectory)).exists()).resolves.toBe(false);
   });
 
   test('never overwrites an existing valid rendezvous', async () => {
@@ -110,6 +137,7 @@ describe('usage engine rendezvous writer', () => {
       instanceId: INSTANCE_ID,
       port: 41_052,
       stateDirectory,
+      targetId: TARGET_ID,
       token: TOKEN_A,
     });
     const filePath = usageEngineRendezvousPath(stateDirectory);
@@ -120,6 +148,7 @@ describe('usage engine rendezvous writer', () => {
         instanceId: INSTANCE_ID,
         port: 41_053,
         stateDirectory,
+        targetId: TARGET_ID,
         token: TOKEN_B,
       }),
     ).rejects.toThrow('already exists and was preserved');
@@ -138,6 +167,7 @@ describe('usage engine rendezvous writer', () => {
       instanceId: INSTANCE_ID,
       port: 41_052,
       stateDirectory,
+      targetId: TARGET_ID,
       token: TOKEN_A,
     });
 
@@ -152,12 +182,14 @@ describe('usage engine rendezvous writer', () => {
         instanceId: INSTANCE_ID,
         port: 41_052,
         stateDirectory,
+        targetId: TARGET_ID,
         token: TOKEN_A,
       }),
       publishUsageEngineRendezvous({
         instanceId: INSTANCE_ID_B,
         port: 41_053,
         stateDirectory,
+        targetId: TARGET_ID,
         token: TOKEN_B,
       }),
     ]);
@@ -174,7 +206,7 @@ describe('usage engine rendezvous writer', () => {
       throw new Error('Concurrent rendezvous publication did not produce one winner.');
     }
     const loaded = await loadUsageEngineRendezvous(usageEngineRendezvousPath(stateDirectory));
-    expect(loaded).toMatchObject({ instanceId: winner.instanceId, port: winner.port });
+    expect(loaded).toMatchObject({ instanceId: winner.instanceId, port: winner.port, targetId: TARGET_ID });
     expect(revealUsageEngineBearerToken(loaded.token)).toBe(revealUsageEngineBearerToken(winner.token));
     await winner.remove();
   });

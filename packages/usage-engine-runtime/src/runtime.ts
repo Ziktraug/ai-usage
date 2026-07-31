@@ -1,13 +1,16 @@
 import { randomUUID } from 'node:crypto';
+import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import {
   type CollectionSourceId,
   collectionSourceDefinitions,
   parseSourceControlSnapshot,
+  type SourceControlEntryView,
   type SourceControlView,
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
 import {
   parseUsageEngineCommand,
+  parseUsageEngineCommandCancellationResult,
   parseUsageEngineCommandId,
   parseUsageEngineCommandResult,
   parseUsageEngineEvent,
@@ -15,16 +18,23 @@ import {
   parseUsageEnginePublicationRevision,
   parseUsageEngineStatus,
   USAGE_ENGINE_PROTOCOL_VERSION,
+  type UsageEngineCollectionOutput,
   type UsageEngineCommand,
+  type UsageEngineCommandCancellationDisposition,
+  type UsageEngineCommandCancellationResult,
   type UsageEngineCommandCompletion,
   type UsageEngineCommandId,
   type UsageEngineCommandName,
   type UsageEngineCommandResult,
+  type UsageEngineCursorImportOutput,
   type UsageEngineErrorCode,
   type UsageEngineEvent,
   type UsageEngineInstanceId,
+  type UsageEngineMachineOutput,
   type UsageEngineMergePreviewOutput,
+  type UsageEnginePublicationOutput,
   type UsageEngineStatus,
+  usageEngineReportSourceIdsFor,
 } from '@ai-usage/usage-engine-control';
 
 export interface UsageEngineRuntime {
@@ -36,6 +46,7 @@ export interface UsageEngineRuntime {
 }
 
 export interface UsageEngineRuntimeHost extends UsageEngineRuntime {
+  readonly cancelCommand: (commandId: string) => Promise<UsageEngineCommandCancellationResult>;
   readonly disposeRetainingWriterLease: () => Promise<void>;
   readonly executeCommand: (command: UsageEngineCommand, commandId: string) => Promise<UsageEngineCommandResult>;
   readonly waitForCommand: (commandId: string) => Promise<UsageEngineCommandCompletion>;
@@ -75,18 +86,38 @@ export class UsageEngineCommandError extends Error {
   }
 }
 
+export type UsageEngineSoftSourceErrorReason = 'disabled' | 'failed' | 'not-admitted' | 'not-detected' | 'timed-out';
+
+export class UsageEngineSoftSourceError extends Error {
+  override readonly name = 'UsageEngineSoftSourceError';
+  readonly reason: UsageEngineSoftSourceErrorReason;
+  readonly snapshot: SourceControlView;
+  readonly sourceId: CollectionSourceId;
+
+  constructor(input: {
+    readonly reason: UsageEngineSoftSourceErrorReason;
+    readonly snapshot: SourceControlView;
+    readonly sourceId: CollectionSourceId;
+  }) {
+    super(`Usage source ${input.sourceId} completed with ${input.reason}.`);
+    this.reason = input.reason;
+    this.snapshot = input.snapshot;
+    this.sourceId = input.sourceId;
+  }
+}
+
 export interface UsageEngineSourceControlPort {
   readonly changes: (signal: AbortSignal) => AsyncIterable<SourceControlView>;
   readonly detectAll: (signal?: AbortSignal) => Promise<void>;
   readonly dispose: () => Promise<void>;
   /** Resolves only after the requested publication is terminal. */
-  readonly publish: (signal?: AbortSignal) => Promise<void>;
+  readonly publish: (signal?: AbortSignal) => Promise<SourceControlView>;
   /** Redetects only this source, admits or joins one run, and awaits its dependent publication. */
-  readonly redetectAndRunSource: (sourceId: CollectionSourceId, signal?: AbortSignal) => Promise<void>;
+  readonly redetectAndRunSource: (sourceId: CollectionSourceId, signal?: AbortSignal) => Promise<SourceControlView>;
   /** Resolves after every source admitted by this command and its dependent publication are terminal. */
   readonly runAllEnabled: (signal?: AbortSignal) => Promise<void>;
   /** Resolves after this source and its dependent publication are terminal. */
-  readonly runSource: (sourceId: CollectionSourceId, signal?: AbortSignal) => Promise<void>;
+  readonly runSource: (sourceId: CollectionSourceId, signal?: AbortSignal) => Promise<SourceControlView>;
   readonly setSourceEnabled: (sourceId: CollectionSourceId, enabled: boolean, signal?: AbortSignal) => Promise<void>;
   readonly start: () => Promise<SourceControlView>;
   readonly stopAutonomousCollection: () => Promise<void>;
@@ -108,7 +139,7 @@ type FileInputCommand = ConfirmMergeCommand | ImportCursorCommand | PreviewMerge
 export interface UsageEngineMutationPort {
   readonly confirmMerge: (command: ConfirmMergeCommand, signal?: AbortSignal) => Promise<void>;
   readonly discardFileInput: (command: FileInputCommand) => Promise<void>;
-  readonly importCursor: (command: ImportCursorCommand, signal?: AbortSignal) => Promise<void>;
+  readonly importCursor: (command: ImportCursorCommand, signal?: AbortSignal) => Promise<UsageEngineCursorImportOutput>;
   readonly previewMerge: (command: PreviewMergeCommand, signal?: AbortSignal) => Promise<UsageEngineMergePreviewOutput>;
   readonly replaceProjectAliases: (command: ReplaceProjectAliasesCommand, signal?: AbortSignal) => Promise<void>;
   readonly replaceProjectGroups: (command: ReplaceProjectGroupsCommand, signal?: AbortSignal) => Promise<void>;
@@ -116,7 +147,7 @@ export interface UsageEngineMutationPort {
     command: ReplaceProjectGroupsByReferenceCommand,
     signal?: AbortSignal,
   ) => Promise<void>;
-  readonly setMachineLabel: (label: string, signal?: AbortSignal) => Promise<void>;
+  readonly setMachineLabel: (label: string, signal?: AbortSignal) => Promise<UsageMachine>;
 }
 
 export interface UsageEngineRuntimeDependencies {
@@ -134,7 +165,7 @@ export interface UsageEngineRuntimeDependencies {
   readonly quiesceStore: () => Promise<void>;
   readonly recover: () => Promise<void>;
   readonly sourceControl: Omit<UsageEngineSourceControlPort, 'runSource' | 'setSourceEnabled'> & {
-    readonly runSource: (sourceId: RunSourceCommand['sourceId'], signal?: AbortSignal) => Promise<void>;
+    readonly runSource: (sourceId: RunSourceCommand['sourceId'], signal?: AbortSignal) => Promise<SourceControlView>;
     readonly setSourceEnabled: (
       sourceId: SetSourceEnabledCommand['sourceId'],
       enabled: boolean,
@@ -180,8 +211,9 @@ const MAX_COMMAND_IDENTITIES = 256;
 
 const commandFingerprint = (command: UsageEngineCommand): string => JSON.stringify(command);
 
-const commandIsInterruptibleDuringShutdown = (command: UsageEngineCommand): boolean => {
+const commandIsSafelyInterruptible = (command: UsageEngineCommand): boolean => {
   switch (command.command) {
+    case 'collect-fresh-report':
     case 'collect-fresh-quota':
     case 'detect-all':
     case 'preview-merge':
@@ -318,6 +350,7 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
   const commandQueue: QueuedCommand[] = [];
   const policyCommandQueue: QueuedCommand[] = [];
   const commandIdentities = new Map<string, CommandIdentity>();
+  const preCancelledCommandIds = new Set<UsageEngineCommandId>();
   const subscribers = new Set<EventSubscriber>();
   const idleWaiters = new Set<() => void>();
   const pendingFileInputCleanups = new Set<Promise<void>>();
@@ -449,20 +482,64 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
   const runCommandWithoutObservation = async (
     command: UsageEngineCommand,
     signal: AbortSignal,
-  ): Promise<UsageEngineMergePreviewOutput | undefined> => {
+  ): Promise<
+    | UsageEngineCollectionOutput
+    | UsageEngineCursorImportOutput
+    | UsageEngineMachineOutput
+    | UsageEngineMergePreviewOutput
+    | UsageEnginePublicationOutput
+    | undefined
+  > => {
+    const runSourceSoftly = async (sourceId: CollectionSourceId): Promise<SourceControlView> => {
+      try {
+        return withCurrentPublication(await dependencies.sourceControl.runSource(sourceId, signal));
+      } catch (error) {
+        if (signal.aborted) {
+          throw error;
+        }
+        if (error instanceof UsageEngineSoftSourceError && error.sourceId === sourceId) {
+          return withCurrentPublication(error.snapshot);
+        }
+        throw error;
+      }
+    };
+    const collectSources = async (sourceIds: readonly CollectionSourceId[]): Promise<UsageEngineCollectionOutput> => {
+      const sources: SourceControlEntryView[] = [];
+      let finalSnapshot = sourceControl;
+      for (const sourceId of sourceIds) {
+        const snapshot = await runSourceSoftly(sourceId);
+        const source = snapshot.sources.find(({ id }) => id === sourceId);
+        if (!source) {
+          throw new Error(`Source-control snapshot omitted ${sourceId}.`);
+        }
+        sources.push(source);
+        finalSnapshot = snapshot;
+      }
+      const publication = currentPublicationFor(finalSnapshot);
+      if (!publication) {
+        throw new Error('A fresh collection command completed without a durable publication.');
+      }
+      return { kind: 'collection', publication, sources };
+    };
     switch (command.command) {
       case 'detect-all':
         await dependencies.sourceControl.detectAll(signal);
         return;
+      case 'collect-fresh-report':
+        return await collectSources(usageEngineReportSourceIdsFor(command));
       case 'run-all-enabled':
         await dependencies.sourceControl.runAllEnabled(signal);
         return;
       case 'run-source':
         await dependencies.sourceControl.runSource(command.sourceId, signal);
         return;
-      case 'publish':
-        await dependencies.sourceControl.publish(signal);
-        return;
+      case 'publish': {
+        const publication = currentPublicationFor(await dependencies.sourceControl.publish(signal));
+        if (!publication) {
+          throw new Error('A publication command completed without a durable revision.');
+        }
+        return { kind: 'publication', publication };
+      }
       case 'set-source-enabled':
         await dependencies.sourceControl.setSourceEnabled(command.sourceId, command.enabled, signal);
         return;
@@ -478,17 +555,24 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
         await dependencies.mutation.replaceProjectAliases(command, signal);
         await dependencies.sourceControl.publish(signal);
         return;
-      case 'set-machine-label':
-        await dependencies.mutation.setMachineLabel(command.label, signal);
+      case 'set-machine-label': {
+        const machine = await dependencies.mutation.setMachineLabel(command.label, signal);
         await dependencies.sourceControl.publish(signal);
-        return;
+        return { kind: 'machine', machine };
+      }
       case 'collect-fresh-quota':
-        await dependencies.sourceControl.runSource('codex.usage-limits', signal);
-        return;
-      case 'import-cursor':
-        await dependencies.mutation.importCursor(command, signal);
-        await dependencies.sourceControl.redetectAndRunSource('cursor.sessions', signal);
-        return;
+        return await collectSources(['codex.usage-limits']);
+      case 'import-cursor': {
+        const output = await dependencies.mutation.importCursor(command, signal);
+        try {
+          await dependencies.sourceControl.redetectAndRunSource('cursor.sessions', signal);
+        } catch (error) {
+          if (signal.aborted) {
+            throw error;
+          }
+        }
+        return output;
+      }
       case 'preview-merge':
         return await dependencies.mutation.previewMerge(command, signal);
       case 'confirm-merge': {
@@ -509,7 +593,14 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
   const runCommand = async (
     command: UsageEngineCommand,
     signal: AbortSignal,
-  ): Promise<UsageEngineMergePreviewOutput | undefined> =>
+  ): Promise<
+    | UsageEngineCollectionOutput
+    | UsageEngineCursorImportOutput
+    | UsageEngineMachineOutput
+    | UsageEngineMergePreviewOutput
+    | UsageEnginePublicationOutput
+    | undefined
+  > =>
     dependencies.observeCommand
       ? await dependencies.observeCommand(
           command.command,
@@ -519,7 +610,13 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
 
   const completionFor = (
     job: QueuedCommand,
-    result: UsageEngineMergePreviewOutput | undefined,
+    result:
+      | UsageEngineCollectionOutput
+      | UsageEngineCursorImportOutput
+      | UsageEngineMachineOutput
+      | UsageEngineMergePreviewOutput
+      | UsageEnginePublicationOutput
+      | undefined,
   ): UsageEngineCommandCompletion => {
     const completedAt = now().toISOString();
     if (job.command.command === 'preview-merge') {
@@ -534,8 +631,64 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
         state: 'succeeded',
       };
     }
+    if (job.command.command === 'import-cursor') {
+      if (result?.kind !== 'cursor-import') {
+        throw new Error('A successful Cursor import must return its bounded import output.');
+      }
+      return {
+        command: 'import-cursor',
+        commandId: job.commandId,
+        completedAt,
+        output: result,
+        state: 'succeeded',
+      };
+    }
+    if (job.command.command === 'collect-fresh-report' || job.command.command === 'collect-fresh-quota') {
+      if (result?.kind !== 'collection') {
+        throw new Error('A successful fresh collection must return its bounded collection output.');
+      }
+      return {
+        command: job.command.command,
+        commandId: job.commandId,
+        completedAt,
+        output: result,
+        state: 'succeeded',
+      };
+    }
+    if (job.command.command === 'set-machine-label') {
+      if (result?.kind !== 'machine') {
+        throw new Error('A successful machine label mutation must return its bounded machine output.');
+      }
+      return {
+        command: 'set-machine-label',
+        commandId: job.commandId,
+        completedAt,
+        output: result,
+        state: 'succeeded',
+      };
+    }
+    if (job.command.command === 'publish') {
+      if (result?.kind !== 'publication') {
+        throw new Error('A successful publication command must return its bounded publication output.');
+      }
+      return {
+        command: 'publish',
+        commandId: job.commandId,
+        completedAt,
+        output: result,
+        state: 'succeeded',
+      };
+    }
     return {
-      command: job.command.command as Exclude<UsageEngineCommandName, 'preview-merge'>,
+      command: job.command.command as Exclude<
+        UsageEngineCommandName,
+        | 'collect-fresh-quota'
+        | 'collect-fresh-report'
+        | 'import-cursor'
+        | 'preview-merge'
+        | 'publish'
+        | 'set-machine-label'
+      >,
       commandId: job.commandId,
       completedAt,
       output: { kind: 'none' },
@@ -572,7 +725,7 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
 
   const failedCompletionFor = (
     job: QueuedCommand,
-    code: 'aborted' | 'command-rejected' | 'engine-busy' | UsageEngineCommandErrorCode,
+    code: 'aborted' | 'command-failed' | 'command-rejected' | 'engine-busy' | UsageEngineCommandErrorCode,
     message = commandFailureMessage,
   ): UsageEngineCommandCompletion => ({
     command: job.command.command,
@@ -581,6 +734,71 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
     error: { code, message },
     state: 'failed',
   });
+
+  const cancellationResult = (
+    commandId: UsageEngineCommandId,
+    disposition: UsageEngineCommandCancellationDisposition,
+  ): UsageEngineCommandCancellationResult =>
+    parseUsageEngineCommandCancellationResult({
+      commandId,
+      disposition,
+      instanceId,
+      protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
+    });
+
+  const removeQueuedCommand = (queue: QueuedCommand[], commandId: UsageEngineCommandId): QueuedCommand | undefined => {
+    const index = queue.findIndex((job) => job.commandId === commandId);
+    if (index < 0) {
+      return;
+    }
+    return queue.splice(index, 1)[0];
+  };
+
+  const rememberPreCancelledCommand = (commandId: UsageEngineCommandId): void => {
+    if (preCancelledCommandIds.has(commandId)) {
+      return;
+    }
+    if (preCancelledCommandIds.size >= MAX_COMMAND_IDENTITIES) {
+      const oldest = preCancelledCommandIds.values().next().value;
+      if (oldest !== undefined) {
+        preCancelledCommandIds.delete(oldest);
+      }
+    }
+    preCancelledCommandIds.add(commandId);
+  };
+
+  const cancelCommand = (commandIdValue: string): Promise<UsageEngineCommandCancellationResult> => {
+    const commandId = parseUsageEngineCommandId(commandIdValue);
+    const identity = commandIdentities.get(commandId);
+    if (identity?.completion) {
+      return Promise.resolve(cancellationResult(commandId, 'already-completed'));
+    }
+    const queued = removeQueuedCommand(commandQueue, commandId) ?? removeQueuedCommand(policyCommandQueue, commandId);
+    if (queued) {
+      scheduleFileInputCleanup(queued.command);
+      publishCompletion(failedCompletionFor(queued, 'aborted', 'The usage engine command was cancelled.'));
+      resolveIdle();
+      return Promise.resolve(cancellationResult(commandId, 'cancelled'));
+    }
+    let active: ActiveCommand | undefined;
+    if (activeCommand?.job.commandId === commandId) {
+      active = activeCommand;
+    } else if (activePolicyCommand?.job.commandId === commandId) {
+      active = activePolicyCommand;
+    }
+    if (active) {
+      if (!commandIsSafelyInterruptible(active.job.command)) {
+        return Promise.resolve(cancellationResult(commandId, 'finishing'));
+      }
+      active.controller.abort();
+      return Promise.resolve(cancellationResult(commandId, 'cancelling'));
+    }
+    if (identity) {
+      return Promise.resolve(cancellationResult(commandId, 'finishing'));
+    }
+    rememberPreCancelledCommand(commandId);
+    return Promise.resolve(cancellationResult(commandId, 'cancelled'));
+  };
 
   const closeAutonomousSourceAdmission = (): void => {
     if (!(sourceStartAttempted && sourceAdmissionClosePromise === undefined)) {
@@ -630,7 +848,7 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
         const controller = new AbortController();
         const currentCommand = { controller, job };
         activeCommand = currentCommand;
-        if (shutdownBegun && commandIsInterruptibleDuringShutdown(job.command)) {
+        if (shutdownBegun && commandIsSafelyInterruptible(job.command)) {
           controller.abort();
         }
         try {
@@ -646,7 +864,7 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
               job,
               controller.signal.aborted || lifecycleAbort.signal.aborted
                 ? 'aborted'
-                : (typedCommandError?.code ?? 'command-rejected'),
+                : (typedCommandError?.code ?? 'command-failed'),
               typedCommandError?.message ?? commandFailureMessage,
             ),
           );
@@ -696,7 +914,7 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
               job,
               controller.signal.aborted || lifecycleAbort.signal.aborted
                 ? 'aborted'
-                : (typedCommandError?.code ?? 'command-rejected'),
+                : (typedCommandError?.code ?? 'command-failed'),
               typedCommandError?.message ?? commandFailureMessage,
             ),
           );
@@ -726,6 +944,8 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
     }
     const active = activeCommand.job.command;
     switch (active.command) {
+      case 'collect-fresh-report':
+        return usageEngineReportSourceIdsFor(active).includes(command.sourceId);
       case 'run-source':
         return active.sourceId === command.sourceId;
       case 'run-all-enabled':
@@ -746,6 +966,12 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
     try {
       const commandId = parseUsageEngineCommandId(commandIdValue);
       const command = parseUsageEngineCommand(commandValue);
+      if (preCancelledCommandIds.has(commandId)) {
+        scheduleFileInputCleanup(command);
+        return Promise.resolve(
+          failedResult(instanceId, commandId, 'aborted', 'The usage engine command was cancelled.'),
+        );
+      }
       const fingerprint = commandFingerprint(command);
       const existing = commandIdentities.get(commandId);
       if (existing) {
@@ -877,10 +1103,10 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
       scheduleFileInputCleanup(job.command);
       publishCompletion(failedCompletionFor(job, 'aborted'));
     }
-    if (activeCommand && commandIsInterruptibleDuringShutdown(activeCommand.job.command)) {
+    if (activeCommand && commandIsSafelyInterruptible(activeCommand.job.command)) {
       activeCommand.controller.abort();
     }
-    if (activePolicyCommand && commandIsInterruptibleDuringShutdown(activePolicyCommand.job.command)) {
+    if (activePolicyCommand && commandIsSafelyInterruptible(activePolicyCommand.job.command)) {
       activePolicyCommand.controller.abort();
     }
     closeAutonomousSourceAdmission();
@@ -1024,6 +1250,7 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
   const disposeRetainingWriterLease = (): Promise<void> => disposeRuntime(false);
 
   return {
+    cancelCommand,
     changes,
     dispose,
     disposeRetainingWriterLease,

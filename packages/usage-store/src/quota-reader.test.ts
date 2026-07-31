@@ -6,13 +6,14 @@ import path from 'node:path';
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import { Effect } from 'effect';
 import {
+  queryLatestLocalProviderQuotaObservations,
   queryLatestProviderQuotaObservations,
   queryProviderQuotaObservations,
   queryProviderQuotaSourceStates,
   type ServedRevisionQueryTrace,
   type UsageStoreError,
 } from './reader';
-import { importProviderQuotaBatch, recordProviderQuotaSourceAttempt } from './writer';
+import { importProviderQuotaBatch, recordProviderQuotaSourceAttempt, updateUsageMachineLabel } from './writer';
 
 const temporaryRoots: string[] = [];
 const OBSERVATION_TABLE_SCAN_PATTERN = /^SCAN (?:candidate|observations|provider_quota_observations)\b/u;
@@ -62,6 +63,33 @@ const createStore = async (): Promise<string> => {
 };
 
 describe('bounded provider quota readers', () => {
+  test('reads only the local machine quota heads from one store snapshot', async () => {
+    const dbPath = await createStore();
+    await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine: { id: 'machine-a', label: 'Machine A' } }));
+    await Effect.runPromise(
+      importProviderQuotaBatch({
+        checkpointUpdates: [],
+        dbPath,
+        items: [
+          {
+            observation: {
+              ...observation(4),
+              accountScope: 'peer-account',
+              machineId: 'machine-b',
+              machineLabel: 'Machine B',
+            },
+            sourceEventKey: 'peer-event',
+          },
+        ],
+      }),
+    );
+
+    const latest = await Effect.runPromise(queryLatestLocalProviderQuotaObservations({ dbPath }));
+
+    expect(latest.observations).toHaveLength(3);
+    expect(latest.observations.every(({ observation: item }) => item.machineId === 'machine-a')).toBe(true);
+  });
+
   test('bounds historical anchors and latest groups in SQL while preserving order', async () => {
     const dbPath = await createStore();
 

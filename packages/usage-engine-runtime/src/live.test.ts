@@ -29,6 +29,7 @@ import {
   initializeUsageStore,
   queryCurrentServedReportRevision,
   queryReportRows,
+  updateUsageMachineLabel,
 } from '@ai-usage/usage-store/testing';
 import { Deferred, Duration, Effect, Layer } from 'effect';
 import { readUsageEngineInput } from './input-file';
@@ -39,7 +40,7 @@ import {
   createTerminalSourceControlPort,
 } from './live';
 import type { EngineUsageMergeService } from './merge';
-import { UsageEngineFatalConsistencyError } from './runtime';
+import { UsageEngineFatalConsistencyError, UsageEngineSoftSourceError } from './runtime';
 import { type ScheduledSource, SourceRunError } from './source-adapters';
 import { createUsageEngineWriterGate } from './writer-gate';
 
@@ -60,6 +61,7 @@ describe('live usage engine publication', () => {
     const storage = createLocalHistoryStorage(home);
     await Effect.runPromise(initializeUsageStore({ dbPath }));
     await Effect.runPromise(importLocalRows({ dbPath, machine, rows: [] }));
+    await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine, updatedAt: now }));
     let publicationTime = now;
     const publisher = createDurableReportPublisher({
       configCwd: root,
@@ -95,6 +97,7 @@ describe('live usage engine publication', () => {
     const retentionFailures: unknown[] = [];
     await Effect.runPromise(initializeUsageStore({ dbPath }));
     await Effect.runPromise(importLocalRows({ dbPath, machine, rows: [] }));
+    await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine, updatedAt: now }));
     const publisher = createDurableReportPublisher({
       configCwd: root,
       dbPath,
@@ -150,6 +153,29 @@ describe('live usage engine publication', () => {
     await command;
 
     expect(publicationCalls).toBe(1);
+    await port.dispose();
+  });
+
+  test('surfaces an automatically undetected source as a soft collection outcome', async () => {
+    const source: ScheduledSource = {
+      cadence: Duration.hours(1),
+      detect: Effect.succeed({ availability: 'not-detected', reason: { code: 'input-missing' } }),
+      id: 'claude.sessions',
+      run: () => Effect.succeed({ changed: false, inputCount: 0, outputCount: 0, warnings: [] }),
+    };
+    const port = createTerminalSourceControlPort({
+      instanceId: '12121212-1212-4212-8212-121212121212',
+      policyStore: { load: Effect.succeed({}), setEnabled: () => Effect.void },
+      publication: { publish: Effect.succeed({ changed: false, revision: 'revision-1' }) },
+      sources: new Map<CollectionSourceId, ScheduledSource>([['claude.sessions', source]]),
+      wideEventSinkLayer: makeTestWideEventSinkLayer(noopWideEventSink),
+    });
+
+    await port.start();
+    const error = await port.runSource('claude.sessions').catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(UsageEngineSoftSourceError);
+    expect(error).toMatchObject({ reason: 'not-detected', sourceId: 'claude.sessions' });
     await port.dispose();
   });
 

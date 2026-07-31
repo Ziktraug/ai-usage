@@ -18,7 +18,7 @@ import {
 } from 'node:fs/promises';
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createUsageEngineBearerToken } from '@ai-usage/usage-engine-control/node';
+import { createUsageEngineBearerToken, usageEngineTargetIdFor } from '@ai-usage/usage-engine-control/node';
 import { acquireUsageEngineLock, inspectUsageEngineLock, usageEngineLockPath } from './engine-lock';
 import { publishUsageEngineRendezvous, usageEngineRendezvousPath } from './rendezvous-file';
 
@@ -39,6 +39,8 @@ const createFixture = async (): Promise<string> => {
 };
 
 const databasePathFor = (stateDirectory: string): string => path.join(stateDirectory, 'store', 'usage.sqlite');
+const targetIdFor = (stateDirectory: string) =>
+  usageEngineTargetIdFor({ configCwd: stateDirectory, databasePath: databasePathFor(stateDirectory) });
 
 const acquireLock = (stateDirectory: string, instanceId = INSTANCE_ID) =>
   acquireUsageEngineLock({
@@ -348,6 +350,7 @@ describe('usage engine writer lock', () => {
       instanceId: INSTANCE_ID,
       port: 41_052,
       stateDirectory,
+      targetId: targetIdFor(stateDirectory),
       token: TOKEN,
     });
     const lockPath = await writeLock(stateDirectory, await lockMetadata(stateDirectory, stalePid));
@@ -392,6 +395,7 @@ describe('usage engine writer lock', () => {
       instanceId: INSTANCE_ID,
       port: 41_052,
       stateDirectory: matchingDirectory,
+      targetId: targetIdFor(matchingDirectory),
       token: TOKEN,
     });
     await writeLock(matchingDirectory, await lockMetadata(matchingDirectory, 2_147_483_647));
@@ -410,6 +414,7 @@ describe('usage engine writer lock', () => {
       instanceId: OTHER_INSTANCE_ID,
       port: 41_053,
       stateDirectory: mismatchedDirectory,
+      targetId: targetIdFor(mismatchedDirectory),
       token: TOKEN,
     });
     const mismatchedLock = await writeLock(mismatchedDirectory, await lockMetadata(mismatchedDirectory, 2_147_483_647));
@@ -427,6 +432,7 @@ describe('usage engine writer lock', () => {
       instanceId: INSTANCE_ID,
       port: 41_052,
       stateDirectory,
+      targetId: targetIdFor(stateDirectory),
       token: TOKEN,
     });
     const interruptedTemporaryPath = path.join(
@@ -484,6 +490,7 @@ describe('usage engine writer lock', () => {
       instanceId: INSTANCE_ID,
       port: 41_052,
       stateDirectory,
+      targetId: targetIdFor(stateDirectory),
       token: TOKEN,
     });
 

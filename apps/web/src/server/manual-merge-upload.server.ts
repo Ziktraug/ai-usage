@@ -156,6 +156,7 @@ const engineFailureStatus = (code: UsageEngineErrorCode): number => {
     case 'timeout':
     case 'transport-failed':
       return 503;
+    case 'command-failed':
     case 'merge-store-failed':
       return 500;
     default: {
@@ -192,6 +193,8 @@ const engineFailureMessage = (code: UsageEngineErrorCode): string => {
     case 'timeout':
     case 'transport-failed':
       return 'The usage engine is unavailable for this merge.';
+    case 'command-failed':
+      return 'The usage engine could not complete this merge.';
     case 'merge-store-failed':
       return 'The usage store could not apply the merge file.';
     default: {

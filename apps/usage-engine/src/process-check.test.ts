@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { lstat, mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createUsageEngineBearerToken } from '@ai-usage/usage-engine-control/node';
+import { createUsageEngineBearerToken, usageEngineTargetIdFor } from '@ai-usage/usage-engine-control/node';
 import { initializeUsageStore, quiesceUsageStoreForShutdown } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import { acquireUsageEngineLock } from './engine-lock';
@@ -91,8 +91,10 @@ describe('running engine check identity', () => {
       instanceId: INSTANCE_ID,
       port: 41_052,
       stateDirectory: paths.stateDirectory,
+      targetId: usageEngineTargetIdFor(paths),
       token: createUsageEngineBearerToken(TOKEN_TEXT),
     });
+    const before = await Promise.all([fileSnapshot(lock.path), fileSnapshot(rendezvous.path)]);
 
     const report = await checkUsageEngine(paths);
 
@@ -102,6 +104,7 @@ describe('running engine check identity', () => {
       rendezvous: { instanceId: INSTANCE_ID, port: 41_052, state: 'valid' },
     });
     expect(JSON.stringify(report)).not.toContain(TOKEN_TEXT);
+    expect(await Promise.all([fileSnapshot(lock.path), fileSnapshot(rendezvous.path)])).toEqual(before);
     await rendezvous.remove();
     await lock.release();
   });
@@ -120,6 +123,7 @@ describe('running engine check identity', () => {
       instanceId: OTHER_INSTANCE_ID,
       port: 41_052,
       stateDirectory: paths.stateDirectory,
+      targetId: usageEngineTargetIdFor(paths),
       token: createUsageEngineBearerToken(TOKEN_TEXT),
     });
     const before = await Promise.all([fileSnapshot(lock.path), fileSnapshot(rendezvous.path)]);
@@ -127,6 +131,38 @@ describe('running engine check identity', () => {
     const report = await checkUsageEngine(paths);
 
     expect(report).toMatchObject({ ok: false, rendezvous: { state: 'mismatched' } });
+    expect(await Promise.all([fileSnapshot(lock.path), fileSnapshot(rendezvous.path)])).toEqual(before);
+    await rendezvous.remove();
+    await lock.release();
+  });
+
+  test('reports a same-instance rendezvous for another database or config target as mismatched', async () => {
+    const paths = await createPaths();
+    await mkdir(path.dirname(paths.databasePath), { mode: 0o700, recursive: true });
+    await Effect.runPromise(initializeUsageStore({ dbPath: paths.databasePath }));
+    await Effect.runPromise(quiesceUsageStoreForShutdown({ dbPath: paths.databasePath }));
+    const lock = await acquireUsageEngineLock({
+      databasePath: paths.databasePath,
+      instanceId: INSTANCE_ID,
+      stateDirectory: paths.stateDirectory,
+    });
+    const rendezvous = await publishUsageEngineRendezvous({
+      instanceId: INSTANCE_ID,
+      port: 41_052,
+      stateDirectory: paths.stateDirectory,
+      targetId: usageEngineTargetIdFor({
+        configCwd: paths.configCwd,
+        databasePath: `${paths.databasePath}.other`,
+      }),
+      token: createUsageEngineBearerToken(TOKEN_TEXT),
+    });
+    const before = await Promise.all([fileSnapshot(lock.path), fileSnapshot(rendezvous.path)]);
+
+    const report = await checkUsageEngine(paths);
+
+    expect(report).toMatchObject({ ok: false, rendezvous: { state: 'mismatched' } });
+    expect(JSON.stringify(report)).not.toContain(paths.databasePath);
+    expect(JSON.stringify(report)).not.toContain(paths.configCwd);
     expect(await Promise.all([fileSnapshot(lock.path), fileSnapshot(rendezvous.path)])).toEqual(before);
     await rendezvous.remove();
     await lock.release();

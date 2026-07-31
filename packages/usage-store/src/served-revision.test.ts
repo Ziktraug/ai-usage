@@ -11,6 +11,8 @@ import {
   queryCurrentServedLocalProjectSources,
   queryCurrentServedReportRevision,
   queryCurrentServedReportRevisionBootstrap,
+  queryServedReportRevisionLocalSnapshot,
+  queryServedReportRevisionPortableConfig,
   queryServedReportRevisionRows,
   queryServedReportRevisionSlices,
   queryServedReportRevisionSupport,
@@ -26,6 +28,7 @@ import {
   publishServedReportRevision,
   retainServedReportRevisions,
   type ServedReportPublicationPhase,
+  updateUsageMachineLabel,
 } from './writer';
 
 const roots: string[] = [];
@@ -59,6 +62,9 @@ const createStore = async (): Promise<string> => {
   const dbPath = path.join(root, 'usage-store.sqlite');
   await Effect.runPromise(
     importLocalRows({ dbPath, machine: { id: 'served-machine', label: 'Served Machine' }, rows: [] }),
+  );
+  await Effect.runPromise(
+    updateUsageMachineLabel({ dbPath, machine: { id: 'served-machine', label: 'Served Machine' } }),
   );
   return dbPath;
 };
@@ -104,7 +110,11 @@ const row = (
   turns: 1,
 });
 
-const support = (sessionCount: number, generatedAt = '2026-07-29T12:00:00.000Z'): FocusedReportSupport => ({
+const support = (
+  sessionCount: number,
+  generatedAt = '2026-07-29T12:00:00.000Z',
+  machineLabel = 'Served Machine',
+): FocusedReportSupport => ({
   analytics: {
     averageDurationMs: null,
     byHarness: [],
@@ -128,6 +138,13 @@ const support = (sessionCount: number, generatedAt = '2026-07-29T12:00:00.000Z')
   },
   filters: { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
   generatedAt,
+  machineFreshness: {
+    kind: 'available',
+    machines: [{ id: 'served-machine', label: machineLabel, lastSeenAt: generatedAt }],
+    observedAt: generatedAt,
+    omittedMachines: 0,
+    skippedRows: 0,
+  },
   omittedRows: 0,
 });
 
@@ -149,6 +166,8 @@ const publication = (
     assemble: () => ({
       configFingerprint: 'c'.repeat(64),
       generatedAt: '2026-07-29T12:00:00.000Z',
+      projectAliases: [],
+      projectGroupConfigs: [],
       rows: captureRows,
       sourceAuthorities,
       support: reportSupport,
@@ -195,6 +214,79 @@ test('projects only local observed project paths from the current durable revisi
       },
     ],
   });
+});
+
+test('reads an exact revision local snapshot without exposing portable rows or following current', async () => {
+  const dbPath = await createStore();
+  await Effect.runPromise(
+    updateUsageMachineLabel({
+      dbPath,
+      machine: { id: 'served-machine', label: 'Served Machine' },
+      updatedAt: new Date('2026-07-29T11:59:00.000Z'),
+    }),
+  );
+  const revisionARows = [row('local-a', 1), row('portable-a', 2)];
+  await Effect.runPromise(
+    publishServedReportRevision(
+      publication(dbPath, 'revision-local-a', revisionARows, {
+        capture: {
+          projectAliases: [{ match: ['raw-project'], name: 'Aliased Project' }],
+          projectGroupConfigs: [{ id: 'group-a', name: 'Grouped Project', sources: [{ project: 'raw-project' }] }],
+          sourceAuthorities: ['local-observed', 'portable-opaque'],
+        },
+      }),
+    ),
+  );
+  await Effect.runPromise(
+    updateUsageMachineLabel({
+      dbPath,
+      machine: { id: 'renamed-machine', label: 'Renamed Machine' },
+      updatedAt: new Date('2026-07-29T12:01:00.000Z'),
+    }),
+  );
+  await Effect.runPromise(
+    publishServedReportRevision(
+      publication(dbPath, 'revision-local-b', [], {
+        capture: { support: support(0, '2026-07-29T12:02:00.000Z', 'Renamed Machine') },
+        now: 1500,
+      }),
+    ),
+  );
+  const traces: Array<{ readonly params: readonly unknown[]; readonly sql: string }> = [];
+
+  const result = await Effect.runPromise(
+    queryServedReportRevisionLocalSnapshot({
+      dbPath,
+      now: 2000,
+      revision: 'revision-local-a',
+      trace: (query) => traces.push(query),
+    }),
+  );
+
+  expect(result.manifest.revision).toBe('revision-local-a');
+  expect(result.machine).toEqual({ id: 'served-machine', label: 'Served Machine' });
+  expect(result.rows.map(({ name }) => name)).toEqual(['local-a']);
+  expect(result.support).toEqual(support(2));
+  expect(traces.some(({ sql }) => sql.includes(`LIMIT ${MAX_PORTABLE_USAGE_ROWS + 1}`))).toBe(true);
+  expect(
+    await Effect.runPromise(
+      queryServedReportRevisionPortableConfig({ dbPath, now: 2000, revision: 'revision-local-a' }),
+    ),
+  ).toMatchObject({
+    projectAliases: [{ match: ['raw-project'], name: 'Aliased Project' }],
+    projectGroupConfigs: [{ id: 'group-a', name: 'Grouped Project' }],
+  });
+
+  const emptyRevision = await Effect.runPromise(
+    queryServedReportRevisionLocalSnapshot({ dbPath, now: 2000, revision: 'revision-local-b' }),
+  );
+  expect(emptyRevision.machine).toEqual({ id: 'renamed-machine', label: 'Renamed Machine' });
+  expect(emptyRevision.rows).toEqual([]);
+  expect(
+    await Effect.runPromise(
+      queryServedReportRevisionPortableConfig({ dbPath, now: 2000, revision: 'revision-local-b' }),
+    ),
+  ).toMatchObject({ projectAliases: [], projectGroupConfigs: [] });
 });
 
 test('rejects an oversized local project-source projection without accumulating every row', async () => {
@@ -614,6 +706,46 @@ describe('durable served report revisions', () => {
     );
   });
 
+  test('maps missing and malformed revision-local context to corrupt', async () => {
+    for (const corruption of ['missing', 'malformed'] as const) {
+      const dbPath = await createStore();
+      await Effect.runPromise(
+        publishServedReportRevision(publication(dbPath, `revision-context-${corruption}`, [row('a', 1)])),
+      );
+      const { Database } = await import('bun:sqlite');
+      const database = new Database(dbPath, { create: false, readwrite: true });
+      if (corruption === 'missing') {
+        database
+          .query('DELETE FROM served_report_local_context WHERE revision = ?')
+          .run(`revision-context-${corruption}`);
+      } else {
+        database
+          .query('UPDATE served_report_local_context SET context_json = ? WHERE revision = ?')
+          .run('{', `revision-context-${corruption}`);
+      }
+      database.close(true);
+
+      expect(
+        await failureReason(
+          queryServedReportRevisionLocalSnapshot({
+            dbPath,
+            now: 2000,
+            revision: `revision-context-${corruption}`,
+          }),
+        ),
+      ).toBe('corrupt');
+      expect(
+        await failureReason(
+          queryServedReportRevisionPortableConfig({
+            dbPath,
+            now: 2000,
+            revision: `revision-context-${corruption}`,
+          }),
+        ),
+      ).toBe('corrupt');
+    }
+  });
+
   test('rejects syntactically valid but structurally invalid support as corrupt', async () => {
     const dbPath = await createStore();
     await Effect.runPromise(publishServedReportRevision(publication(dbPath, 'revision-a', [row('a', 1)])));
@@ -673,12 +805,16 @@ describe('durable served report revisions', () => {
         ORDER BY complete, expires_at, published_at, revision
       `)
       .all(5000) as Array<{ detail?: unknown }>;
+    const retainedContexts = planDatabase
+      .query('SELECT revision FROM served_report_local_context ORDER BY revision')
+      .all() as Array<{ revision: string }>;
     planDatabase.close(true);
 
     expect(retained).toMatchObject({ deletedRevisions: 2, deletedRows: 2, expiredRevisions: 2 });
     expect(retentionPlan.some(({ detail }) => String(detail).includes('idx_served_report_revisions_retention'))).toBe(
       true,
     );
+    expect(retainedContexts.map(({ revision }) => revision)).toEqual(['revision-c', 'revision-d']);
     expect((await Effect.runPromise(queryCurrentServedReportRevision({ dbPath, now: 5000 }))).revision).toBe(
       'revision-d',
     );
@@ -734,7 +870,7 @@ describe('durable served report revisions', () => {
           usage_store_generation, machine_fleet_generation, projection_schema_version,
           generated_at, published_at, expires_at, complete, row_count, segment_count,
           filter_key_count, rows_bytes, support_bytes, projection_bytes
-        ) VALUES (?, ?, ?, ?, 0, 0, 14, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0)
+        ) VALUES (?, ?, ?, ?, 0, 0, 15, ?, ?, ?, 0, 0, 0, 0, 0, 0, 0)
       `)
       .run(
         'abandoned-staging',

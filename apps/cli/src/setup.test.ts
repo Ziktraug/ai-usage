@@ -3,23 +3,16 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import {
-  createLocalHistoryStorage,
-  LocalHistoryStorage,
-  readAiUsageConfig,
-  updateAiUsageConfig,
-} from '@ai-usage/local-collectors';
 import { createUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
-import type { ProjectSource } from '@ai-usage/report-data';
+import type { ProjectSource } from '@ai-usage/report-data/portable-report';
 import { Effect } from 'effect';
 import {
   collectSetupSources,
   createSetupServer,
-  MAX_SETUP_ALIAS_MATCHES,
-  MAX_SETUP_ALIASES,
+  MAX_SETUP_PROJECT_GROUPS,
+  MAX_SETUP_PROJECT_SOURCES,
   SETUP_SERVER_HOSTNAME,
-  saveSetupProjectAliases,
   setupHTML,
 } from './setup';
 
@@ -69,11 +62,7 @@ describe('setup HTML', () => {
         ],
       });
       await writeFile(snapshotPath, JSON.stringify(snapshot), 'utf8');
-      const storage = createLocalHistoryStorage(home);
-
-      const result = await Effect.runPromise(
-        collectSetupSources([snapshotPath], false).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
+      const result = await Effect.runPromise(collectSetupSources([snapshotPath]));
 
       expect(result.sources).toHaveLength(1);
       expect(result.sources[0]).toMatchObject({
@@ -89,14 +78,20 @@ describe('setup HTML', () => {
   test('renders snapshot and config values through DOM text sinks', () => {
     const html = setupHTML(
       [maliciousSource],
-      [{ name: '<img src=x onerror=alert(1)>', match: ['<script>alert(1)</script>'] }],
+      [
+        {
+          id: 'malicious-group',
+          name: '<img src=x onerror=alert(1)>',
+          sources: [{ project: '<script>alert(1)</script>' }],
+        },
+      ],
       [{ harness: '<svg onload=alert(1)>', message: '<iframe src=javascript:alert(1)>' }],
     );
 
     expect(html).not.toContain('.innerHTML');
     expect(html).not.toContain('<img src=x');
     expect(html).not.toContain('<script>alert(1)</script>');
-    expect(html).toContain('textContent = alias.name');
+    expect(html).toContain('textContent = group.name');
     expect(html).toContain('textContent = s.gitRemote');
     expect(html).toContain("setAttribute('aria-label', 'Select ' + s.project)");
   });
@@ -105,38 +100,10 @@ describe('setup HTML', () => {
     const html = setupHTML([], [], []);
 
     expect(html).toContain('aria-label="Select all project sources"');
-    expect(html).toContain('id="alias-name-error" role="alert"');
-    expect(html).toContain("deleteButton.setAttribute('aria-label', 'Remove alias ' + alias.name)");
+    expect(html).toContain('id="group-name-error" role="alert"');
+    expect(html).toContain("deleteButton.setAttribute('aria-label', 'Remove project group ' + group.name)");
     expect(html).toContain("suggestionButton.type = 'button'");
-    expect(html).not.toContain("alert('Enter an alias name')");
-  });
-
-  test('saves aliases without replacing unrelated concurrent config fields', async () => {
-    const home = await mkdtemp(path.join(tmpdir(), 'ai-usage-setup-aliases-'));
-    try {
-      const storage = createLocalHistoryStorage(home);
-      await Effect.runPromise(
-        updateAiUsageConfig(() => ({ cursor: { clusterGapMs: 1234 } })).pipe(
-          Effect.provideService(LocalHistoryStorage, storage),
-        ),
-      );
-
-      await Effect.runPromise(
-        saveSetupProjectAliases([{ match: ['/work/example'], name: 'example' }]).pipe(
-          Effect.provideService(LocalHistoryStorage, storage),
-        ),
-      );
-
-      const config = await Effect.runPromise(
-        readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-      expect(config).toEqual({
-        cursor: { clusterGapMs: 1234 },
-        projectAliases: [{ match: ['/work/example'], name: 'example' }],
-      });
-    } finally {
-      await rm(home, { force: true, recursive: true });
-    }
+    expect(html).not.toContain("alert('Enter a project group name')");
   });
 });
 
@@ -176,11 +143,11 @@ const sendSetupRequest = (
 describe('setup HTTP boundary', () => {
   test('binds an actual closable listener to IPv4 loopback', async () => {
     const server = createSetupServer({
-      aliases: [],
       port: 0,
+      projectGroups: [],
       sources: [],
       warnings: [],
-      writeAliases: () => Promise.resolve(),
+      writeProjectGroups: () => Promise.resolve(),
     });
     try {
       const response = await sendSetupRequest(server.port, { path: '/api/sources' });
@@ -195,11 +162,11 @@ describe('setup HTTP boundary', () => {
 
   test('rejects hostile Host values on pages and source responses', async () => {
     const server = createSetupServer({
-      aliases: [],
       port: 0,
+      projectGroups: [],
       sources: [],
       warnings: [],
-      writeAliases: () => Promise.resolve(),
+      writeProjectGroups: () => Promise.resolve(),
     });
     try {
       const page = await sendSetupRequest(server.port, { headers: { host: 'attacker.example' } });
@@ -215,14 +182,14 @@ describe('setup HTTP boundary', () => {
     }
   });
 
-  test('requires same-origin JSON for alias writes', async () => {
+  test('requires same-origin JSON for project group writes', async () => {
     let writes = 0;
     const server = createSetupServer({
-      aliases: [],
       port: 0,
+      projectGroups: [],
       sources: [],
       warnings: [],
-      writeAliases: () => {
+      writeProjectGroups: () => {
         writes += 1;
         return Promise.resolve();
       },
@@ -237,7 +204,7 @@ describe('setup HTTP boundary', () => {
           origin: 'http://attacker.example',
         },
         method: 'PUT',
-        path: '/api/aliases',
+        path: '/api/project-groups',
       });
       const crossSite = await sendSetupRequest(server.port, {
         bodyChunks: ['[]'],
@@ -248,19 +215,19 @@ describe('setup HTTP boundary', () => {
           'sec-fetch-site': 'cross-site',
         },
         method: 'PUT',
-        path: '/api/aliases',
+        path: '/api/project-groups',
       });
       const wrongContentType = await sendSetupRequest(server.port, {
         bodyChunks: ['[]'],
         headers: { 'content-type': 'text/plain', host: localHost, origin: `http://${localHost}` },
         method: 'PUT',
-        path: '/api/aliases',
+        path: '/api/project-groups',
       });
       const missingOrigin = await sendSetupRequest(server.port, {
         bodyChunks: ['[]'],
         headers: { 'content-type': 'application/json', host: localHost },
         method: 'PUT',
-        path: '/api/aliases',
+        path: '/api/project-groups',
       });
       const forwardedProtocol = await sendSetupRequest(server.port, {
         bodyChunks: ['[]'],
@@ -271,7 +238,7 @@ describe('setup HTTP boundary', () => {
           'x-forwarded-proto': 'https',
         },
         method: 'PUT',
-        path: '/api/aliases',
+        path: '/api/project-groups',
       });
 
       expect(hostileOrigin.status).toBe(403);
@@ -285,15 +252,15 @@ describe('setup HTTP boundary', () => {
     }
   });
 
-  test('bounds streamed alias bodies without writing config', async () => {
+  test('bounds streamed project group bodies without invoking the engine client', async () => {
     let writes = 0;
     const server = createSetupServer({
-      aliases: [],
-      maxAliasBodyBytes: 8,
+      maxProjectGroupBodyBytes: 8,
       port: 0,
+      projectGroups: [],
       sources: [],
       warnings: [],
-      writeAliases: () => {
+      writeProjectGroups: () => {
         writes += 1;
         return Promise.resolve();
       },
@@ -306,10 +273,10 @@ describe('setup HTTP boundary', () => {
     };
     try {
       const oversized = await sendSetupRequest(server.port, {
-        bodyChunks: ['[{"name":', '"x","match":[]}'],
+        bodyChunks: ['[{"id":"x",', '"name":"x","sources":[]}'],
         headers: requestHeaders,
         method: 'PUT',
-        path: '/api/aliases',
+        path: '/api/project-groups',
       });
 
       expect(oversized.status).toBe(413);
@@ -319,14 +286,14 @@ describe('setup HTTP boundary', () => {
     }
   });
 
-  test('enforces explicit alias and match array limits without writing config', async () => {
+  test('enforces explicit group and source-selector limits without invoking the engine client', async () => {
     let writes = 0;
     const server = createSetupServer({
-      aliases: [],
       port: 0,
+      projectGroups: [],
       sources: [],
       warnings: [],
-      writeAliases: () => {
+      writeProjectGroups: () => {
         writes += 1;
         return Promise.resolve();
       },
@@ -338,38 +305,54 @@ describe('setup HTTP boundary', () => {
       origin: `http://${localHost}`,
     };
     try {
-      const tooManyAliases = await sendSetupRequest(server.port, {
-        bodyChunks: [JSON.stringify(Array.from({ length: MAX_SETUP_ALIASES + 1 }, () => ({ match: [], name: 'x' })))],
-        headers: requestHeaders,
-        method: 'PUT',
-        path: '/api/aliases',
-      });
-      const tooManyMatches = await sendSetupRequest(server.port, {
+      const tooManyGroups = await sendSetupRequest(server.port, {
         bodyChunks: [
-          JSON.stringify([{ match: Array.from({ length: MAX_SETUP_ALIAS_MATCHES + 1 }, () => '/x'), name: 'x' }]),
+          JSON.stringify(
+            Array.from({ length: MAX_SETUP_PROJECT_GROUPS + 1 }, (_, index) => ({
+              id: `group-${index}`,
+              name: 'x',
+              sources: [{ project: `project-${index}` }],
+            })),
+          ),
         ],
         headers: requestHeaders,
         method: 'PUT',
-        path: '/api/aliases',
+        path: '/api/project-groups',
+      });
+      const tooManySources = await sendSetupRequest(server.port, {
+        bodyChunks: [
+          JSON.stringify([
+            {
+              id: 'group-a',
+              name: 'x',
+              sources: Array.from({ length: MAX_SETUP_PROJECT_SOURCES + 1 }, (_, index) => ({
+                project: `project-${index}`,
+              })),
+            },
+          ]),
+        ],
+        headers: requestHeaders,
+        method: 'PUT',
+        path: '/api/project-groups',
       });
 
-      expect(tooManyAliases.status).toBe(413);
-      expect(tooManyMatches.status).toBe(413);
+      expect(tooManyGroups.status).toBe(413);
+      expect(tooManySources.status).toBe(413);
       expect(writes).toBe(0);
     } finally {
       await server.stop(true);
     }
   });
 
-  test('validates the alias schema before writing', async () => {
-    let savedAliases: unknown;
+  test('validates the project group schema before invoking the engine client', async () => {
+    let savedProjectGroups: unknown;
     const server = createSetupServer({
-      aliases: [],
       port: 0,
+      projectGroups: [],
       sources: [],
       warnings: [],
-      writeAliases: (aliases) => {
-        savedAliases = aliases;
+      writeProjectGroups: (projectGroups) => {
+        savedProjectGroups = projectGroups;
         return Promise.resolve();
       },
     });
@@ -381,22 +364,24 @@ describe('setup HTTP boundary', () => {
     };
     try {
       const invalid = await sendSetupRequest(server.port, {
-        bodyChunks: ['[{"name":"example","match":[42]}]'],
+        bodyChunks: ['[{"id":"example","name":"example","sources":[{"project":42}]}]'],
         headers,
         method: 'PUT',
-        path: '/api/aliases',
+        path: '/api/project-groups',
       });
-      const validAliases = [{ match: ['/work/example'], name: 'example' }];
+      const validProjectGroups = [
+        { id: 'example', name: 'example', sources: [{ machineId: 'machine-a', sourcePath: '/work/example' }] },
+      ];
       const valid = await sendSetupRequest(server.port, {
-        bodyChunks: [JSON.stringify(validAliases)],
+        bodyChunks: [JSON.stringify(validProjectGroups)],
         headers,
         method: 'PUT',
-        path: '/api/aliases',
+        path: '/api/project-groups',
       });
 
       expect(invalid.status).toBe(422);
       expect(valid.status).toBe(200);
-      expect(savedAliases).toEqual(validAliases);
+      expect(savedProjectGroups).toEqual(validProjectGroups);
     } finally {
       await server.stop(true);
     }

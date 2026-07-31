@@ -1,6 +1,7 @@
 import {
   classifyUsageEngineRetry,
   parseUsageEngineCommand,
+  parseUsageEngineCommandCancellationResult,
   parseUsageEngineCommandId,
   parseUsageEngineCommandRequest,
   parseUsageEngineCommandResult,
@@ -9,6 +10,7 @@ import {
   parseUsageEngineStatus,
   USAGE_ENGINE_PROTOCOL_VERSION,
   type UsageEngineCommand,
+  type UsageEngineCommandCancellationResult,
   type UsageEngineCommandId,
   type UsageEngineCommandResult,
   UsageEngineContractError,
@@ -32,6 +34,10 @@ export interface UsageEngineExecuteOptions extends UsageEngineRequestOptions {
 }
 
 export interface UsageEngineControlClient {
+  readonly cancelCommand: (
+    commandId: UsageEngineCommandId | string,
+    options?: UsageEngineRequestOptions,
+  ) => Promise<UsageEngineCommandCancellationResult>;
   readonly changes: (options?: UsageEngineRequestOptions) => AsyncIterable<UsageEngineEvent>;
   readonly execute: (
     command: UsageEngineCommand,
@@ -315,7 +321,10 @@ const requestContext = async (
     if (signal.signal.aborted || isAbortError(error)) {
       throw controlError('aborted', operation, 'Usage engine rendezvous resolution was aborted.');
     }
-    if (error instanceof UsageEngineRendezvousError && error.reason === 'protocol-mismatch') {
+    if (
+      error instanceof UsageEngineRendezvousError &&
+      (error.reason === 'protocol-mismatch' || error.reason === 'target-mismatch')
+    ) {
       throw controlError('protocol-mismatch', operation, stableUsageEngineErrorMessages['protocol-mismatch']);
     }
     throw controlError('engine-unavailable', operation, stableUsageEngineErrorMessages['engine-unavailable']);
@@ -337,9 +346,9 @@ const mapTransportFailure = (error: unknown, context: RequestContext): never => 
 
 const requestJson = async (
   options: UsageEngineControlClientOptions,
-  path: '/v1/commands' | '/v1/status',
+  path: '/v1/commands' | `/v1/commands/${string}` | '/v1/status',
   operation: 'command' | 'status',
-  init: { readonly body?: string; readonly method: 'GET' | 'POST'; readonly signal?: AbortSignal },
+  init: { readonly body?: string; readonly method: 'DELETE' | 'GET' | 'POST'; readonly signal?: AbortSignal },
   maximumResponseBytes: number,
 ): Promise<{ readonly rendezvous: UsageEngineRendezvous; readonly value: unknown }> => {
   const context = await requestContext(options, operation, init.signal);
@@ -705,6 +714,30 @@ export const createUsageEngineControlClient = (options: UsageEngineControlClient
     return stabilizeUsageEngineCommandResult(result);
   };
 
+  const cancelCommand = async (
+    commandIdValue: UsageEngineCommandId | string,
+    requestOptions: UsageEngineRequestOptions = {},
+  ): Promise<UsageEngineCommandCancellationResult> => {
+    const commandId = parseUsageEngineCommandId(commandIdValue);
+    const response = await requestJson(
+      options,
+      `/v1/commands/${commandId}`,
+      'command',
+      { method: 'DELETE', ...(requestOptions.signal === undefined ? {} : { signal: requestOptions.signal }) },
+      usageEngineControlBounds.maxCommandResultBytes,
+    );
+    let result: UsageEngineCommandCancellationResult;
+    try {
+      result = parseUsageEngineCommandCancellationResult(response.value);
+    } catch (error) {
+      return mapContractResponseFailure(error, 'command', 'Usage engine cancellation response is invalid.');
+    }
+    if (result.instanceId !== response.rendezvous.instanceId || result.commandId !== commandId) {
+      throw controlError('invalid-response', 'command', 'Usage engine cancellation response identity is invalid.');
+    }
+    return result;
+  };
+
   const changes = async function* (requestOptions: UsageEngineRequestOptions = {}): AsyncGenerator<UsageEngineEvent> {
     let instanceId: string | undefined;
     let lastSequence = -1;
@@ -765,5 +798,5 @@ export const createUsageEngineControlClient = (options: UsageEngineControlClient
     }
   };
 
-  return { changes, execute, getStatus };
+  return { cancelCommand, changes, execute, getStatus };
 };

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   classifyUsageEngineRetry,
   parseUsageEngineCommand,
+  parseUsageEngineCommandCancellationResult,
   parseUsageEngineCommandResult,
   parseUsageEngineErrorResponse,
   parseUsageEngineEvent,
@@ -19,6 +20,7 @@ describe('usage engine control contracts', () => {
       { command: 'detect-all' },
       { command: 'run-all-enabled' },
       { command: 'run-source', sourceId: 'codex.sessions' },
+      { command: 'collect-fresh-report', harness: null, includeCursor: false },
       { command: 'publish' },
       { command: 'set-source-enabled', enabled: false, sourceId: 'rtk.savings' },
       { command: 'replace-project-aliases', projectAliases: [{ match: ['fixture/*'], name: 'Fixture' }] },
@@ -57,6 +59,9 @@ describe('usage engine control contracts', () => {
   test('rejects unknown fields, source IDs, data payloads, and over-budget UTF-8', () => {
     expect(() => parseUsageEngineCommand({ command: 'publish', unexpected: true })).toThrow('unknown');
     expect(() => parseUsageEngineCommand({ command: 'run-source', sourceId: 'other.sessions' })).toThrow('source');
+    expect(() =>
+      parseUsageEngineCommand({ command: 'collect-fresh-report', harness: 'other', includeCursor: true }),
+    ).toThrow('harness');
     expect(() => parseUsageEngineCommand({ command: 'publish', rows: [] })).toThrow('unknown');
     expect(() =>
       parseUsageEngineCommand({
@@ -182,6 +187,17 @@ describe('usage engine control contracts', () => {
     };
     expect(parseUsageEngineCommandResult(accepted) as unknown).toEqual(accepted);
     expect(() => parseUsageEngineCommandResult({ ...accepted, payload: { rows: [] } })).toThrow('unknown');
+    const cancellation = {
+      commandId: 'command-1',
+      disposition: 'cancelled',
+      instanceId: fixtureInstanceId,
+      protocolVersion: 1,
+    };
+    expect(parseUsageEngineCommandCancellationResult(cancellation) as unknown).toEqual(cancellation);
+    expect(() => parseUsageEngineCommandCancellationResult({ ...cancellation, disposition: 'deleted' })).toThrow(
+      'disposition',
+    );
+    expect(() => parseUsageEngineCommandCancellationResult({ ...cancellation, rows: [] })).toThrow('unknown');
 
     const event = {
       event: 'report-published',
@@ -280,6 +296,29 @@ describe('usage engine control contracts', () => {
       }),
     ).toThrow('preview');
 
+    const cursorImportEvent = {
+      ...completionEvent,
+      completion: {
+        command: 'import-cursor',
+        commandId: 'command-3',
+        completedAt: fixtureGeneratedAt,
+        output: { alreadyImported: false, artifactName: 'abc123-export.csv', kind: 'cursor-import' },
+        state: 'succeeded',
+      },
+      eventId: 'event-4',
+      sequence: 4,
+    };
+    expect(parseUsageEngineEvent(cursorImportEvent) as unknown).toEqual(cursorImportEvent);
+    expect(() =>
+      parseUsageEngineEvent({
+        ...cursorImportEvent,
+        completion: {
+          ...cursorImportEvent.completion,
+          output: { ...cursorImportEvent.completion.output, artifactName: '../private.csv' },
+        },
+      }),
+    ).toThrow('artifact');
+
     const error = {
       error: { code: 'engine-unavailable', message: 'The engine is not running.' },
       ok: false,
@@ -301,12 +340,16 @@ describe('usage engine control contracts', () => {
         command: 'publish',
         commandId: 'command-1',
         completedAt: fixtureGeneratedAt,
-        output: { kind: 'none' },
+        output: {
+          kind: 'publication',
+          publication: { publishedAt: fixtureGeneratedAt, revision: 'revision-1' },
+        },
         state: 'succeeded',
       },
       instanceId: fixtureInstanceId,
       kind: 'command-completed',
       protocolVersion: 1,
+      status: fixtureStatus(),
     };
     expect(parseUsageEngineForegroundOutcome(completed) as unknown).toEqual(completed);
 

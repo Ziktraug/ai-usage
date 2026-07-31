@@ -15,6 +15,7 @@ export interface Args extends ReportOptions {
   cursor: boolean;
   format: OutputFormat;
   harness: HarnessKey | null;
+  stored: boolean;
   wide: boolean;
 }
 
@@ -127,6 +128,7 @@ export const helpText =
   '  --sort date|tokens|cost\n' +
   '  --wide                 add Dur / Turns / Tools / ±Lines columns\n' +
   '  --no-cursor            skip Cursor (local data is partial)\n' +
+  '  --stored               read the last compatible published revision without refreshing\n' +
   '  --no-color / --color   disable / force ANSI colors (default: auto)\n' +
   '  --json | --csv\n' +
   '  --payload-json         full report payload JSON for compatible consumers\n' +
@@ -156,6 +158,7 @@ export const parseArgs = (argv: string[]): Effect.Effect<Args, CliArgumentError>
       format: 'table',
       cursor: true,
       color: null,
+      stored: false,
       wide: false,
       sort: 'date',
     };
@@ -180,6 +183,8 @@ export const parseArgs = (argv: string[]): Effect.Effect<Args, CliArgumentError>
         yield* setOutputFormat(args, 'payload');
       } else if (arg === '--no-cursor') {
         args.cursor = false;
+      } else if (arg === '--stored') {
+        args.stored = true;
       } else if (arg === '--no-color') {
         args.color = false;
       } else if (arg === '--color') {

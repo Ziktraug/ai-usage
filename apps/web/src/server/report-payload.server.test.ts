@@ -159,6 +159,7 @@ test('forwards only an opaque revision-keyed project group command to the engine
   }
   let received: unknown;
   const control: UsageEngineControlClient = {
+    cancelCommand: () => Promise.reject(new Error('Unexpected command cancellation')),
     changes: () => ({
       [Symbol.asyncIterator]: () => ({
         next: () => Promise.reject(new Error('Unexpected event subscription')),
@@ -208,6 +209,7 @@ test('rejects project group mutations from an untrusted Host before engine admis
   }
   let admissions = 0;
   const control: UsageEngineControlClient = {
+    cancelCommand: () => Promise.reject(new Error('Unexpected command cancellation')),
     changes: () => ({
       [Symbol.asyncIterator]: () => ({
         next: () => Promise.reject(new Error('Unexpected event subscription')),
@@ -248,6 +250,7 @@ test('propagates an aborted project group request before engine admission', asyn
   }
   let controlCalls = 0;
   const control: UsageEngineControlClient = {
+    cancelCommand: () => Promise.reject(new Error('Unexpected command cancellation')),
     changes: () => {
       controlCalls += 1;
       return {

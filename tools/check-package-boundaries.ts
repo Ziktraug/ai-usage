@@ -16,6 +16,8 @@ const ignoredDirectories = new Set([
 const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.ts', '.tsx']);
 const workspaceImportPattern =
   /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"](@ai-usage\/[^'"]+)['"]|\bimport\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)|\brequire\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)/g;
+const moduleImportPattern =
+  /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)|\brequire\(\s*['"]([^'"]+)['"]\s*\)/g;
 
 type DependencyField = (typeof dependencyFields)[number];
 
@@ -97,9 +99,9 @@ const boundaryPolicies: BoundaryPolicy[] = [
   },
   {
     packageName: '@ai-usage/cli',
-    forbiddenDependencies: [],
-    forbiddenImports: [],
-    reason: 'CLI durable usage reads must use the explicit read-only store facade.',
+    forbiddenDependencies: ['@ai-usage/local-collectors'],
+    forbiddenImports: ['@ai-usage/local-collectors'],
+    reason: 'CLI collection must run through the usage engine, never local collectors.',
   },
   {
     packageName: '@ai-usage/usage-merge',
@@ -136,19 +138,15 @@ const engineControlPackage = '@ai-usage/usage-engine-control';
 const engineControlTesting = `${engineControlPackage}/testing`;
 const engineRuntimePackage = '@ai-usage/usage-engine-runtime';
 const engineAppPackage = '@ai-usage/usage-engine';
+const reportDataPackage = '@ai-usage/report-data';
+const reportDataPortableReport = `${reportDataPackage}/portable-report`;
 const reportDataSourceAdapters = '@ai-usage/report-data/source-adapters';
 const reportDataOneShotSources = '@ai-usage/report-data/one-shot-sources';
 
 // These exact imports are the pre-cutover writer/scheduler owners named by plan 052.
-// The ledger prevents any new exception and is deleted file-by-file in Waves 3-5.
+// The ledger prevents any new exception and is deleted file-by-file as ownership moves to the engine.
 const legacyTargetGraphExceptions = new Set([
-  `@ai-usage/report-data|packages/report-data/src/index.ts|${usageStoreWriter}`,
-  `@ai-usage/report-data|packages/report-data/src/provider-quota-refresh.ts|${usageStoreWriter}`,
-  `@ai-usage/report-data|packages/report-data/src/provider-quota.ts|${usageStoreWriter}`,
-  `@ai-usage/report-data|packages/report-data/src/source-adapters.ts|${usageStoreWriter}`,
   `@ai-usage/usage-merge|packages/usage-merge/src/index.ts|${usageStoreWriter}`,
-  `@ai-usage/cli|apps/cli/src/main.ts|${reportDataOneShotSources}`,
-  `@ai-usage/cli|apps/cli/src/setup.ts|${reportDataOneShotSources}`,
 ]);
 
 const engineRuntimeAllowedWorkspaceDependencies = new Set([
@@ -222,11 +220,28 @@ const targetImportReason = (
   if (specifier === usageStorePackage) {
     return 'The mixed usage-store root is retired; import reader, writer, or testing explicitly.';
   }
+  if (
+    (packageName === '@ai-usage/web' || packageName === '@ai-usage/cli') &&
+    specifier.startsWith(`${usageStorePackage}/`) &&
+    specifier !== usageStoreReader
+  ) {
+    return 'Web and CLI may import only the usage-store reader facade.';
+  }
   if (isPackageOrSubpath(specifier, usageStoreWriter) && packageName !== engineRuntimePackage) {
     return 'Only usage-engine-runtime may import the usage-store writer facade.';
   }
   if (isPackageOrSubpath(specifier, engineRuntimePackage) && packageName !== engineAppPackage) {
     return 'Only apps/usage-engine may compose usage-engine-runtime.';
+  }
+  if (packageName === '@ai-usage/cli' && isPackageOrSubpath(specifier, engineAppPackage)) {
+    return 'CLI may locate the foreground engine executable but must not import the engine application.';
+  }
+  if (
+    packageName === '@ai-usage/cli' &&
+    isPackageOrSubpath(specifier, reportDataPackage) &&
+    specifier !== reportDataPortableReport
+  ) {
+    return 'CLI may import only the collector-free report-data portable-report facade.';
   }
   if (isPackageOrSubpath(specifier, usageStoreTesting) || isPackageOrSubpath(specifier, engineControlTesting)) {
     return 'Testing adapters may be imported only by test or fixture source.';
@@ -468,6 +483,103 @@ const collectTargetImportViolations = async (
   return violations;
 };
 
+const sourceModuleExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts'] as const;
+const emittedExtensionSources = new Map<string, readonly string[]>([
+  ['.js', ['.ts', '.tsx']],
+  ['.jsx', ['.tsx']],
+  ['.mjs', ['.mts']],
+  ['.cjs', ['.cts']],
+]);
+
+const resolveRelativeModule = async (packageDirectory: string, importer: string, specifier: string) => {
+  const base = path.resolve(path.dirname(importer), specifier);
+  const relativeBase = path.relative(packageDirectory, base);
+  if (relativeBase.startsWith('..') || path.isAbsolute(relativeBase)) {
+    return { status: 'outside-package' as const };
+  }
+  const extension = path.extname(base);
+  const substitutedExtensions = emittedExtensionSources.get(extension) ?? [];
+  const candidates = extension
+    ? [base, ...substitutedExtensions.map((sourceExtension) => `${base.slice(0, -extension.length)}${sourceExtension}`)]
+    : [
+        ...sourceModuleExtensions.map((sourceExtension) => `${base}${sourceExtension}`),
+        ...sourceModuleExtensions.map((sourceExtension) => path.join(base, `index${sourceExtension}`)),
+      ];
+  for (const candidate of candidates) {
+    const exists = await readFile(candidate, 'utf8').then(
+      () => true,
+      () => false,
+    );
+    if (exists) {
+      return { file: candidate, status: 'resolved' as const };
+    }
+  }
+  return { status: 'unresolved' as const };
+};
+
+const collectPortableReportClosureViolations = async (
+  root: string,
+  packages: Map<string, PackageInfo>,
+): Promise<PackageBoundaryViolation[]> => {
+  const packageInfo = packages.get(reportDataPackage);
+  if (!packageInfo) {
+    return [];
+  }
+  const entrypoint = path.join(packageInfo.directory, 'src', 'portable-report.ts');
+  const entrypointExists = await readFile(entrypoint, 'utf8').then(
+    () => true,
+    () => false,
+  );
+  if (!entrypointExists) {
+    return [];
+  }
+
+  const violations: PackageBoundaryViolation[] = [];
+  const pending = [entrypoint];
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const file = pending.pop();
+    if (!(file && !visited.has(file))) {
+      continue;
+    }
+    visited.add(file);
+    const text = await readFile(file, 'utf8');
+    for (const match of text.matchAll(moduleImportPattern)) {
+      const specifier = match[1] ?? match[2] ?? match[3];
+      if (!specifier) {
+        continue;
+      }
+      if (isWorkspaceSpecifier(specifier)) {
+        if (!isPackageOrSubpath(specifier, '@ai-usage/report-core')) {
+          violations.push({
+            file: path.relative(root, file).split(path.sep).join('/'),
+            line: lineNumberFor(text, match.index),
+            message: 'The portable-report import closure may depend only on report-core workspace modules.',
+            packageName: reportDataPackage,
+            specifier,
+          });
+        }
+        continue;
+      }
+      if (specifier.startsWith('.')) {
+        const resolved = await resolveRelativeModule(packageInfo.directory, file, specifier);
+        if (resolved.status === 'resolved') {
+          pending.push(resolved.file);
+        } else {
+          violations.push({
+            file: path.relative(root, file).split(path.sep).join('/'),
+            line: lineNumberFor(text, match.index),
+            message: 'The portable-report import closure must resolve relative modules inside report-data.',
+            packageName: reportDataPackage,
+            specifier,
+          });
+        }
+      }
+    }
+  }
+  return violations;
+};
+
 const retiredPackagePolicyFor = (packageName: string): BoundaryPolicy => ({
   packageName,
   forbiddenDependencies: [...retiredPackages],
@@ -484,6 +596,8 @@ export async function collectViolations(root: string): Promise<PackageBoundaryVi
       .map(({ packageName }) => packageName),
   );
   const observedLegacyExceptions = new Set<string>();
+
+  violations.push(...(await collectPortableReportClosureViolations(root, packages)));
 
   for (const policy of boundaryPolicies) {
     const packageInfo = packages.get(policy.packageName);

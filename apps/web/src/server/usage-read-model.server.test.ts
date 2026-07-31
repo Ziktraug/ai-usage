@@ -84,6 +84,8 @@ const publish = async (dbPath: string, revision: string, rows: readonly Serializ
       assemble: () => ({
         configFingerprint: 'c'.repeat(64),
         generatedAt: '2026-07-30T08:00:00.000Z',
+        projectAliases: [],
+        projectGroupConfigs: [],
         rows,
         sourceAuthorities: rows.map(() => 'local-observed' as const),
         support: support(rows.length),

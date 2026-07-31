@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { lstat, open, realpath } from 'node:fs/promises';
 import path from 'node:path';
@@ -18,23 +19,35 @@ export {
 } from './secret';
 
 declare const loopbackOriginBrand: unique symbol;
+declare const targetIdBrand: unique symbol;
 
 export type UsageEngineLoopbackOrigin = string & {
   readonly [loopbackOriginBrand]: 'UsageEngineLoopbackOrigin';
 };
 
+export type UsageEngineTargetId = string & {
+  readonly [targetIdBrand]: 'UsageEngineTargetId';
+};
+
+export interface UsageEngineTarget {
+  readonly configCwd: string;
+  readonly databasePath: string;
+}
+
 export interface UsageEngineRendezvous {
   readonly instanceId: UsageEngineInstanceId;
   readonly port: number;
   readonly protocolVersion: UsageEngineProtocolVersion;
+  readonly targetId: UsageEngineTargetId;
   readonly token: UsageEngineBearerToken;
 }
 
 const loopbackOriginPattern = /^http:\/\/127\.0\.0\.1:([1-9]\d{0,4})$/;
+const targetIdPattern = /^[a-f0-9]{64}$/;
 const RENDEZVOUS_PUBLICATION_DEADLINE_MS = 250;
 const RENDEZVOUS_PUBLICATION_POLL_MS = 10;
 
-export type UsageEngineRendezvousErrorReason = 'invalid-rendezvous' | 'protocol-mismatch';
+export type UsageEngineRendezvousErrorReason = 'invalid-rendezvous' | 'protocol-mismatch' | 'target-mismatch';
 
 export class UsageEngineRendezvousError extends Error {
   override readonly name = 'UsageEngineRendezvousError';
@@ -60,8 +73,34 @@ const sameFileIdentity = (
   right: { readonly dev: number | bigint; readonly ino: number | bigint },
 ): boolean => left.dev === right.dev && left.ino === right.ino;
 
+export const parseUsageEngineTargetId = (value: unknown): UsageEngineTargetId => {
+  if (!(typeof value === 'string' && targetIdPattern.test(value))) {
+    throw new Error('Usage engine rendezvous target identity is invalid.');
+  }
+  return value as UsageEngineTargetId;
+};
+
+export const usageEngineTargetIdFor = ({ configCwd, databasePath }: UsageEngineTarget): UsageEngineTargetId => {
+  if (!(path.isAbsolute(configCwd) && path.isAbsolute(databasePath))) {
+    throw new Error('Usage engine target paths must be absolute.');
+  }
+  return createHash('sha256')
+    .update(JSON.stringify([path.resolve(databasePath), path.resolve(configCwd)]))
+    .digest('hex') as UsageEngineTargetId;
+};
+
+export const assertUsageEngineRendezvousTarget = (
+  rendezvous: UsageEngineRendezvous,
+  expectedTargetIdValue: string,
+): void => {
+  const expectedTargetId = parseUsageEngineTargetId(expectedTargetIdValue);
+  if (rendezvous.targetId !== expectedTargetId) {
+    throw new UsageEngineRendezvousError('target-mismatch', 'Usage engine rendezvous target mismatch.');
+  }
+};
+
 export const parseUsageEngineRendezvous = (value: unknown): UsageEngineRendezvous => {
-  if (!(isRecord(value) && hasExactKeys(value, ['instanceId', 'port', 'protocolVersion', 'token']))) {
+  if (!(isRecord(value) && hasExactKeys(value, ['instanceId', 'port', 'protocolVersion', 'targetId', 'token']))) {
     throw new Error('Usage engine rendezvous contains unknown or missing fields.');
   }
   if (
@@ -79,6 +118,7 @@ export const parseUsageEngineRendezvous = (value: unknown): UsageEngineRendezvou
     instanceId: parseUsageEngineInstanceId(value.instanceId),
     port: value.port,
     protocolVersion,
+    targetId: parseUsageEngineTargetId(value.targetId),
     token: createUsageEngineBearerToken(value.token),
   });
 };

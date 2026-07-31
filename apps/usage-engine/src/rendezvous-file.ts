@@ -6,7 +6,12 @@ import {
   USAGE_ENGINE_PROTOCOL_VERSION,
   type UsageEngineInstanceId,
 } from '@ai-usage/usage-engine-control';
-import { revealUsageEngineBearerToken, type UsageEngineBearerToken } from '@ai-usage/usage-engine-control/node';
+import {
+  parseUsageEngineTargetId,
+  revealUsageEngineBearerToken,
+  type UsageEngineBearerToken,
+  type UsageEngineTargetId,
+} from '@ai-usage/usage-engine-control/node';
 
 const RENDEZVOUS_FILE_NAME = 'rendezvous.json';
 const PRIVATE_DIRECTORY_MODE = 0o700;
@@ -25,6 +30,7 @@ export interface PublishUsageEngineRendezvousOptions {
   readonly instanceId: string;
   readonly port: number;
   readonly stateDirectory: string;
+  readonly targetId: UsageEngineTargetId;
   readonly token: UsageEngineBearerToken;
 }
 
@@ -33,6 +39,7 @@ export interface PublishedUsageEngineRendezvous {
   readonly path: string;
   readonly port: number;
   readonly remove: () => Promise<void>;
+  readonly targetId: UsageEngineTargetId;
   readonly token: UsageEngineBearerToken;
 }
 
@@ -145,9 +152,11 @@ export const publishUsageEngineRendezvous = async ({
   instanceId: instanceIdValue,
   port,
   stateDirectory: stateDirectoryValue,
+  targetId: targetIdValue,
   token,
 }: PublishUsageEngineRendezvousOptions): Promise<PublishedUsageEngineRendezvous> => {
   const instanceId = parseUsageEngineInstanceId(instanceIdValue);
+  const targetId = parseUsageEngineTargetId(targetIdValue);
   if (!(Number.isSafeInteger(port) && port >= 1 && port <= 65_535)) {
     throw new Error('Usage engine rendezvous port is invalid.');
   }
@@ -163,7 +172,7 @@ export const publishUsageEngineRendezvous = async ({
   try {
     temporaryFile = await open(temporaryPath, 'wx+', PRIVATE_FILE_MODE);
     await temporaryFile.writeFile(
-      `${JSON.stringify({ instanceId, port, protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION, token: rawToken })}\n`,
+      `${JSON.stringify({ instanceId, port, protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION, targetId, token: rawToken })}\n`,
       'utf8',
     );
     await temporaryFile.sync();
@@ -214,6 +223,7 @@ export const publishUsageEngineRendezvous = async ({
           throw new Error(`Usage engine rendezvous changed before removal: ${filePath}`);
         }
       },
+      targetId,
       token,
     };
   } catch (error) {

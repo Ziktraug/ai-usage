@@ -1,5 +1,5 @@
 import { lstat } from 'node:fs/promises';
-import { loadUsageEngineRendezvous } from '@ai-usage/usage-engine-control/node';
+import { loadUsageEngineRendezvous, usageEngineTargetIdFor } from '@ai-usage/usage-engine-control/node';
 import { queryUsageStoreGenerations, UsageStoreError } from '@ai-usage/usage-store/reader';
 import { Effect } from 'effect';
 import { inspectUsageEngineLock } from './engine-lock';
@@ -25,8 +25,9 @@ const inspectRendezvous = async (
   }
   try {
     const rendezvous = await loadUsageEngineRendezvous(rendezvousPath);
+    const targetMatches = rendezvous.targetId === usageEngineTargetIdFor(paths);
     const lockInstanceId = 'instanceId' in lock ? lock.instanceId : undefined;
-    const state = lockInstanceId === rendezvous.instanceId ? 'valid' : 'mismatched';
+    const state = lockInstanceId === rendezvous.instanceId && targetMatches ? 'valid' : 'mismatched';
     return {
       instanceId: rendezvous.instanceId,
       port: rendezvous.port,

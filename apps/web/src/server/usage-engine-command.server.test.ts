@@ -186,6 +186,7 @@ test('opens the real HTTP client event stream before admitting an immediate comp
           instanceId: INSTANCE_ID,
           port: 41_321,
           protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
+          targetId: 'a'.repeat(64),
           token: 'fixture-token-with-at-least-thirty-two-bytes',
         }),
       ),

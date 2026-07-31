@@ -8,6 +8,7 @@ import type {
 export const stableUsageEngineErrorMessages: Readonly<Record<UsageEngineErrorCode, string>> = {
   aborted: 'Usage engine request was aborted.',
   'authentication-failed': 'Usage engine authentication failed.',
+  'command-failed': 'Usage engine command failed.',
   'command-rejected': 'Usage engine command was rejected.',
   'engine-busy': 'Usage engine is busy.',
   'engine-unavailable': 'Usage engine is unavailable.',

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { normalizeCursorCommitAttributionItems } from '@ai-usage/local-collectors';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
 import { writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import type { CursorCommitAttributionRow } from '@ai-usage/report-core/datasets';
@@ -12,14 +13,14 @@ import type { SourcedRow } from '@ai-usage/report-core/types';
 import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import {
   importLocalRows,
+  importNormalizedDatasetItems,
   importPeerMergeBundle,
   initializeUsageStore,
   usageStorePath,
 } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import {
-  collectProjectedLocalReportRowsWithWarnings,
-  createKnownLocalProjectSources,
+  assembleMergedUsageReport,
   createLocalReportPayload,
   createLocalUsageSnapshot,
   createMergedUsageReport,
@@ -27,16 +28,10 @@ import {
   createStoredReportPayload,
   listProjectSources,
   parseGitConfigRemote,
-  persistCursorCommitAttribution,
   readStoredCursorCommitAttribution,
   readStoredReportSourceFingerprint,
   toStoredReportPublicationCapture,
 } from './index';
-import {
-  createMergedUsageReportWithFreshLocal,
-  listProjectSourcesWithFreshLocalWarnings,
-  runOneShotLocalSources,
-} from './one-shot-sources';
 
 const defaultOptions = {
   since: null,
@@ -47,6 +42,16 @@ const defaultOptions = {
 };
 
 const testMachine: UsageMachine = { id: 'machine-1', label: 'Test Machine' };
+
+const persistCursorCommitAttribution = (input: {
+  dbPath: string;
+  machineId: string;
+  rows: readonly CursorCommitAttributionRow[];
+}) =>
+  importNormalizedDatasetItems({
+    dbPath: input.dbPath,
+    items: normalizeCursorCommitAttributionItems(input.machineId, input.rows),
+  });
 
 const writeClaudeSession = (home: string, projectPath = '/work/raw') => {
   const claudeDir = path.join(home, '.claude/projects/-work-raw');
@@ -88,12 +93,6 @@ const writeCodexQuotaSession = (home: string) => {
       },
     })}\n`,
   );
-};
-
-const writeInvalidOpenCodeDb = (home: string) => {
-  const dbPath = path.join(home, '.local/share/opencode/opencode.db');
-  mkdirSync(path.dirname(dbPath), { recursive: true });
-  writeFileSync(dbPath, 'not a sqlite database');
 };
 
 const writeAiUsageConfig = (home: string, config: unknown) => {
@@ -305,81 +304,6 @@ describe('shared reporting', () => {
     }
   });
 
-  test('keeps project-source reads stored-only until an explicit one-shot collection runs', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-known-local-projects-'));
-    const localProjectPath = mkdtempSync(path.join(tmpdir(), 'ai-usage-known-local-project-'));
-    try {
-      const storage = createLocalHistoryStorage(home);
-      writeClaudeSession(home, localProjectPath);
-      await Effect.runPromise(
-        writeMachineConfig(testMachine).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-      await Effect.runPromise(
-        importPeerMergeBundle({
-          dbPath: usageStorePath(home),
-          localMachineId: testMachine.id,
-          bundle: createUsageMergeBundle({
-            machine: { id: 'peer-machine', label: 'Peer Machine' },
-            rows: [makeSourcedRow({ project: 'peer-project', sourcePath: '/peer/project', sessionId: 'peer-session' })],
-          }),
-        }),
-      );
-
-      const beforeCollection = await Effect.runPromise(
-        createKnownLocalProjectSources({ harness: 'claude', includeCursor: false }).pipe(
-          Effect.provideService(LocalHistoryStorage, storage),
-        ),
-      );
-
-      expect(beforeCollection.sources).toEqual([]);
-      expect(beforeCollection.projectGroups).toEqual([]);
-
-      await Effect.runPromise(
-        runOneShotLocalSources({ harness: 'claude', includeCursor: false }).pipe(
-          Effect.provideService(LocalHistoryStorage, storage),
-        ),
-      );
-      const afterCollection = await Effect.runPromise(
-        createKnownLocalProjectSources({ harness: 'claude', includeCursor: false }).pipe(
-          Effect.provideService(LocalHistoryStorage, storage),
-        ),
-      );
-
-      expect(afterCollection.sources).toEqual([
-        expect.objectContaining({
-          machineId: testMachine.id,
-          machine: testMachine.label,
-          project: path.basename(localProjectPath),
-          sessions: 1,
-          sourcePath: localProjectPath,
-        }),
-      ]);
-      expect(afterCollection.projectGroups).toHaveLength(1);
-      expect(afterCollection.projectGroups[0]?.sources).toEqual([
-        expect.objectContaining({
-          machineId: testMachine.id,
-          sourcePath: localProjectPath,
-        }),
-      ]);
-      const freshProjectSources = await Effect.runPromise(
-        listProjectSourcesWithFreshLocalWarnings({
-          harness: 'claude',
-          includeCursor: false,
-          includeGitRemote: true,
-          includeLocal: true,
-          readGitFile: () => '[remote "origin"]\nurl = git@github.com:example/local.git',
-          snapshots: [],
-        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-      expect(freshProjectSources.sources[0]?.gitRemote).toBe('example/local');
-      expect(JSON.stringify(afterCollection)).not.toContain('peer-machine');
-      expect(JSON.stringify(afterCollection)).not.toContain('/peer/project');
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(localProjectPath, { recursive: true, force: true });
-    }
-  });
-
   test('creates the compatibility payload through the shared local history boundary', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-'));
     try {
@@ -542,57 +466,6 @@ describe('shared reporting', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
       rmSync(configCwd, { recursive: true, force: true });
-    }
-  });
-
-  test('includes stored peer rows when creating the local report payload', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-peer-store-'));
-    const originalFetch = globalThis.fetch;
-    try {
-      globalThis.fetch = (() => {
-        throw new Error('Report rendering must not perform network work');
-      }) as unknown as typeof fetch;
-      const storage = createLocalHistoryStorage(home);
-      writeClaudeSession(home, '/work/local');
-      await Effect.runPromise(
-        writeMachineConfig(testMachine).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-      await Effect.runPromise(
-        importPeerMergeBundle({
-          dbPath: usageStorePath(home),
-          localMachineId: testMachine.id,
-          bundle: createUsageMergeBundle({
-            machine: { id: 'peer-machine', label: 'Peer Machine' },
-            rows: [
-              makeSourcedRow({ project: 'peer-project', sourcePath: '/work/peer', sessionId: 'peer-parent' }),
-              makeSourcedRow({
-                project: 'peer-project',
-                sourcePath: '/work/peer',
-                sessionId: 'peer-child',
-                parentSessionId: 'peer-parent',
-              }),
-            ],
-          }),
-        }),
-      );
-
-      const payload = await Effect.runPromise(
-        createLocalReportPayload({
-          harness: null,
-          includeCursor: false,
-          keepSource: true,
-          generatedAt: new Date('2026-01-01T00:00:00.000Z'),
-          options: defaultOptions,
-        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-
-      expect(payload.rows).toHaveLength(3);
-      expect(payload.rows.map((row) => row.project).sort()).toContain('peer-project — Peer Machine');
-      expect(payload.rows.find((row) => row.rawProject === 'peer-project')?.source?.machineLabel).toBe('Peer Machine');
-      expect(payload.rows.find((row) => row.name === 'peer-child')?.source?.rootSourceSessionId).toBe('peer-parent');
-    } finally {
-      globalThis.fetch = originalFetch;
-      rmSync(home, { recursive: true, force: true });
     }
   });
 
@@ -866,88 +739,6 @@ describe('shared reporting', () => {
     }
   });
 
-  test('projects configured project groups through the CLI projected-row API', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-projected-rows-'));
-    const configCwd = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-projected-config-'));
-    try {
-      const storage = createLocalHistoryStorage(home);
-      writeAiUsageConfig(home, {
-        projectGroups: [
-          {
-            id: 'exalibur',
-            name: 'exalibur',
-            sources: [
-              { machineId: 'peer-a', sourcePath: '/work/exalibur' },
-              { machineId: 'peer-a', sourcePath: '/work/exalibur2' },
-              { machineId: 'peer-b', sourcePath: '/Users/nathan/exalibur' },
-              { machineId: 'peer-b', sourcePath: '/missing/exalibur3' },
-            ],
-          },
-        ],
-      });
-      writeFileSync(
-        path.join(configCwd, 'ai-usage.config.ts'),
-        `export default { cursor: { usageExportDir: './cursor-exports' } }`,
-      );
-      await Effect.runPromise(
-        importPeerMergeBundle({
-          dbPath: usageStorePath(home),
-          localMachineId: testMachine.id,
-          bundle: createUsageMergeBundle({
-            machine: { id: 'peer-a', label: 'Machine A' },
-            rows: [
-              makeSourcedRow({ project: 'exalibur', sourcePath: '/work/exalibur', sessionId: 'a-exalibur' }),
-              makeSourcedRow({ project: 'exalibur2', sourcePath: '/work/exalibur2', sessionId: 'a-exalibur2' }),
-            ],
-          }),
-        }),
-      );
-      await Effect.runPromise(
-        importPeerMergeBundle({
-          dbPath: usageStorePath(home),
-          localMachineId: testMachine.id,
-          bundle: createUsageMergeBundle({
-            machine: { id: 'peer-b', label: 'Machine B' },
-            rows: [
-              makeSourcedRow({
-                project: 'exalibur',
-                sourcePath: '/Users/nathan/exalibur',
-                sessionId: 'b-exalibur',
-              }),
-            ],
-          }),
-        }),
-      );
-
-      const result = await Effect.runPromise(
-        collectProjectedLocalReportRowsWithWarnings({
-          harness: null,
-          includeCursor: false,
-          configCwd,
-        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-
-      expect(result.rows).toHaveLength(3);
-      expect(result.rows.every((row) => row.project === 'exalibur')).toBe(true);
-      expect(
-        result.rows.some(
-          (row) =>
-            row.rawProject !== undefined && row.projectGroupId !== undefined && row.projectSourceId !== undefined,
-        ),
-      ).toBe(true);
-      expect(
-        result.warnings.find((warning) => 'reason' in warning && warning.reason === 'partial-group'),
-      ).toMatchObject({
-        groupId: 'exalibur',
-        operation: 'projectGrouping',
-        selectors: [{ machineId: 'peer-b', sourcePath: '/missing/exalibur3' }],
-      });
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-      rmSync(configCwd, { recursive: true, force: true });
-    }
-  });
-
   test('creates local usage snapshots with machine provenance', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-snapshot-'));
     try {
@@ -968,90 +759,6 @@ describe('shared reporting', () => {
       expect(snapshot.rows).toHaveLength(1);
       expect(snapshot.rows[0]?.source.machineId).toBe('machine-1');
       expect(snapshot.rows[0]?.source.machineLabel).toBe('Test Machine');
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  test('carries local collection warnings through snapshots, merge reports, and project sources', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-reporting-warning-'));
-    try {
-      writeInvalidOpenCodeDb(home);
-
-      const storage = createLocalHistoryStorage(home);
-      const snapshot = await Effect.runPromise(
-        createLocalUsageSnapshot({
-          harness: 'opencode',
-          includeCursor: false,
-          machine: testMachine,
-          generatedAt: new Date('2026-01-02T00:00:00.000Z'),
-        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-
-      const merged = await Effect.runPromise(
-        createMergedUsageReportWithFreshLocal({
-          snapshots: [],
-          includeLocal: true,
-          harness: 'opencode',
-          includeCursor: false,
-          machine: testMachine,
-          options: defaultOptions,
-          generatedAt: new Date('2026-01-03T00:00:00.000Z'),
-        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-      const projectSources = await Effect.runPromise(
-        listProjectSourcesWithFreshLocalWarnings({
-          snapshots: [],
-          includeLocal: true,
-          harness: 'opencode',
-          includeCursor: false,
-          machine: testMachine,
-        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-
-      expect(snapshot.rows).toHaveLength(0);
-      expect(snapshot.warnings?.[0]?.harness).toBe('opencode');
-      expect(snapshot.warnings?.[0]?.message).toContain('Failed to read OpenCode live database');
-      expect(merged.payload.warnings?.[0]?.harness).toBe('opencode');
-      expect(merged.payload.warnings?.[0]?.message).toContain('incomplete or rejected local record');
-      expect(projectSources.sources).toHaveLength(0);
-      expect(projectSources.warnings[0]?.harness).toBe('opencode');
-    } finally {
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  test('fresh local merge and project discovery honor disabled source policy', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'plan052-reporting-policy-home-'));
-    try {
-      writeClaudeSession(home);
-      writeAiUsageConfig(home, { sourcePolicies: { 'claude.sessions': { enabled: false } } });
-      const storage = createLocalHistoryStorage(home);
-      await Effect.runPromise(initializeUsageStore({ dbPath: usageStorePath(home) }));
-      const merged = await Effect.runPromise(
-        createMergedUsageReportWithFreshLocal({
-          harness: 'claude',
-          includeCursor: false,
-          includeLocal: true,
-          machine: testMachine,
-          options: defaultOptions,
-          snapshots: [],
-        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-      const projects = await Effect.runPromise(
-        listProjectSourcesWithFreshLocalWarnings({
-          harness: 'claude',
-          includeCursor: false,
-          includeLocal: true,
-          machine: testMachine,
-          snapshots: [],
-        }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-      );
-
-      expect(merged.rows).toHaveLength(0);
-      expect(merged.warnings.some((warning) => warning.operation === 'claude.sessions')).toBe(true);
-      expect(projects.sources).toHaveLength(0);
-      expect(projects.warnings.some((warning) => warning.operation === 'claude.sessions')).toBe(true);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -1124,6 +831,24 @@ describe('shared reporting', () => {
       rmSync(home, { recursive: true, force: true });
       rmSync(configCwd, { recursive: true, force: true });
     }
+  });
+
+  test('assembles a snapshot merge from injected durable project groups without local services', () => {
+    const snapshot = createUsageSnapshot({
+      machine: testMachine,
+      rows: [makeSourcedRow({ project: 'raw', sourcePath: '/work/raw', sessionId: 'session-1' })],
+    });
+
+    const merged = assembleMergedUsageReport({
+      harness: null,
+      includeCursor: false,
+      options: defaultOptions,
+      projectGroupConfigs: [{ id: 'group-a', name: 'Grouped', sources: [{ sourcePath: '/work/raw' }] }],
+      snapshots: [snapshot],
+    });
+
+    expect(merged.rows[0]?.project).toBe('Grouped');
+    expect(merged.payload.projectGroupConfigs?.[0]?.id).toBe('group-a');
   });
 
   test('treats snapshot source paths as opaque even when they name a local repository', async () => {

@@ -1,8 +1,18 @@
 import { createUsageEngineControlClient, type UsageEngineControlClient } from '@ai-usage/usage-engine-control/client';
-import { loadUsageEngineRendezvous } from '@ai-usage/usage-engine-control/node';
-import { resolveUsageWebRuntimePaths } from './usage-runtime-paths.server';
+import {
+  assertUsageEngineRendezvousTarget,
+  loadUsageEngineRendezvous,
+  usageEngineTargetIdFor,
+} from '@ai-usage/usage-engine-control/node';
+import { resolveUsageWebRuntimePaths, type UsageWebRuntimePaths } from './usage-runtime-paths.server';
+
+export const loadUsageEngineRendezvousForWeb = async (paths: UsageWebRuntimePaths) => {
+  const rendezvous = await loadUsageEngineRendezvous(paths.rendezvousPath);
+  assertUsageEngineRendezvousTarget(rendezvous, usageEngineTargetIdFor(paths));
+  return rendezvous;
+};
 
 export const createLiveUsageEngineControlClient = (): UsageEngineControlClient =>
   createUsageEngineControlClient({
-    resolveRendezvous: async () => await loadUsageEngineRendezvous(resolveUsageWebRuntimePaths().rendezvousPath),
+    resolveRendezvous: async () => await loadUsageEngineRendezvousForWeb(resolveUsageWebRuntimePaths()),
   });

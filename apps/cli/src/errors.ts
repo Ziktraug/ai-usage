@@ -1,15 +1,15 @@
-import { formatLocalHistoryError, type LocalHistoryError } from '@ai-usage/local-collectors/errors';
 import { Data } from 'effect';
+import type { CliUsageEngineError } from './usage-engine';
 
 export class CliArgumentError extends Data.TaggedError('CliArgumentError')<{
   readonly message: string;
 }> {}
 
-export type AppError = LocalHistoryError | CliArgumentError;
+export type AppError = CliArgumentError | CliUsageEngineError;
 
 export const formatAppError = (error: AppError) => {
-  if (error._tag === 'CliArgumentError') {
+  if (error instanceof CliArgumentError) {
     return error.message;
   }
-  return formatLocalHistoryError(error);
+  return error.message;
 };

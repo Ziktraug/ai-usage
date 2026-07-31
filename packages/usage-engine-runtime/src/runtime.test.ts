@@ -15,6 +15,7 @@ import {
   UsageEngineFatalConsistencyError,
   type UsageEngineMutationPort,
   type UsageEngineRuntimeDependencies,
+  UsageEngineSoftSourceError,
   type UsageEngineSourceControlPort,
 } from './runtime';
 
@@ -105,7 +106,7 @@ const createTestSourceControl = (initial = publishedSourceControl()): TestSource
     },
     publish: () => {
       calls.push('publish');
-      return Promise.resolve();
+      return Promise.resolve(snapshot);
     },
     publishSnapshot: (next) => {
       snapshot = next;
@@ -115,7 +116,7 @@ const createTestSourceControl = (initial = publishedSourceControl()): TestSource
     },
     redetectAndRunSource: (sourceId) => {
       calls.push(`redetect-and-run:${sourceId}`);
-      return Promise.resolve();
+      return Promise.resolve(snapshot);
     },
     runAllEnabled: () => {
       calls.push('run-all-enabled');
@@ -123,7 +124,7 @@ const createTestSourceControl = (initial = publishedSourceControl()): TestSource
     },
     runSource: (sourceId) => {
       calls.push(`run-source:${sourceId}`);
-      return Promise.resolve();
+      return Promise.resolve(snapshot);
     },
     setSourceEnabled: (sourceId, enabled) => {
       calls.push(`set-source:${sourceId}:${enabled}`);
@@ -169,7 +170,11 @@ const createMutationPort = (calls: string[]): UsageEngineMutationPort => ({
   },
   importCursor: () => {
     calls.push('import-cursor');
-    return Promise.resolve();
+    return Promise.resolve({
+      alreadyImported: false,
+      artifactName: 'fixture-cursor.csv',
+      kind: 'cursor-import',
+    });
   },
   previewMerge: () => {
     calls.push('preview-merge');
@@ -187,9 +192,9 @@ const createMutationPort = (calls: string[]): UsageEngineMutationPort => ({
     calls.push('replace-project-groups-by-reference');
     return Promise.resolve();
   },
-  setMachineLabel: () => {
+  setMachineLabel: (label) => {
     calls.push('set-machine-label');
-    return Promise.resolve();
+    return Promise.resolve({ id: 'machine-a', label });
   },
 });
 
@@ -295,6 +300,297 @@ describe('usage engine runtime', () => {
     await runtime.dispose();
   });
 
+  test('cancels a queued command once, cleans its handoff, and coalesces retries to the aborted completion', async () => {
+    let releaseActive: (() => void) | undefined;
+    let signalActiveStarted: (() => void) | undefined;
+    const activeStarted = new Promise<void>((resolve) => {
+      signalActiveStarted = resolve;
+    });
+    const activeBlocked = new Promise<void>((resolve) => {
+      releaseActive = resolve;
+    });
+    const trace: string[] = [];
+    const baseSourceControl = createTestSourceControl();
+    const sourceControl: TestSourceControl = {
+      ...baseSourceControl,
+      detectAll: async () => {
+        signalActiveStarted?.();
+        await activeBlocked;
+      },
+    };
+    const runtime = createUsageEngineRuntime(createDependencies({ sourceControl, trace }));
+    await runtime.start();
+    await runtime.executeCommand({ command: 'detect-all' }, 'active-command');
+    await activeStarted;
+    const queuedCommand = {
+      command: 'preview-merge' as const,
+      input: { handoffId: 'queued-cancellation-upload' as never, kind: 'inbox-handoff' as const },
+    };
+    await runtime.executeCommand(queuedCommand, 'queued-command');
+
+    expect(await runtime.cancelCommand('queued-command')).toMatchObject({ disposition: 'cancelled' });
+    const completion = await runtime.waitForCommand('queued-command');
+    expect(completion).toMatchObject({ error: { code: 'aborted' }, state: 'failed' });
+    expect(await runtime.executeCommand(queuedCommand, 'queued-command')).toMatchObject({ admission: 'coalesced' });
+    expect(await runtime.cancelCommand('queued-command')).toMatchObject({ disposition: 'already-completed' });
+    releaseActive?.();
+    await runtime.waitForCommand('active-command');
+    await runtime.dispose();
+
+    expect(trace.filter((entry) => entry === 'discard-preview-merge')).toHaveLength(1);
+    expect(trace).not.toContain('preview-merge');
+  });
+
+  test('removes a queued policy command without interrupting the active policy mutation', async () => {
+    let releaseCollection: (() => void) | undefined;
+    let releasePolicy: (() => void) | undefined;
+    let signalCollectionStarted: (() => void) | undefined;
+    let signalPolicyStarted: (() => void) | undefined;
+    const collectionStarted = new Promise<void>((resolve) => {
+      signalCollectionStarted = resolve;
+    });
+    const collectionBlocked = new Promise<void>((resolve) => {
+      releaseCollection = resolve;
+    });
+    const policyStarted = new Promise<void>((resolve) => {
+      signalPolicyStarted = resolve;
+    });
+    const policyBlocked = new Promise<void>((resolve) => {
+      releasePolicy = resolve;
+    });
+    let policyCalls = 0;
+    const baseSourceControl = createTestSourceControl();
+    const sourceControl: TestSourceControl = {
+      ...baseSourceControl,
+      runSource: async () => {
+        signalCollectionStarted?.();
+        await collectionBlocked;
+        return publishedSourceControl();
+      },
+      setSourceEnabled: async () => {
+        policyCalls += 1;
+        if (policyCalls === 1) {
+          signalPolicyStarted?.();
+          await policyBlocked;
+        }
+      },
+    };
+    const runtime = createUsageEngineRuntime(createDependencies({ sourceControl }));
+    await runtime.start();
+    await runtime.executeCommand({ command: 'run-source', sourceId: 'codex.sessions' }, 'active-collection');
+    await collectionStarted;
+    const policyCommand = {
+      command: 'set-source-enabled' as const,
+      enabled: false,
+      sourceId: 'codex.sessions' as const,
+    };
+    await runtime.executeCommand(policyCommand, 'active-policy');
+    await policyStarted;
+    await runtime.executeCommand(policyCommand, 'queued-policy');
+
+    expect(await runtime.cancelCommand('queued-policy')).toMatchObject({ disposition: 'cancelled' });
+    expect(await runtime.waitForCommand('queued-policy')).toMatchObject({
+      error: { code: 'aborted' },
+      state: 'failed',
+    });
+    expect(policyCalls).toBe(1);
+    releasePolicy?.();
+    expect(await runtime.waitForCommand('active-policy')).toMatchObject({ state: 'succeeded' });
+    releaseCollection?.();
+    await runtime.waitForCommand('active-collection');
+    await runtime.dispose();
+  });
+
+  test('aborts an active interruptible command and admits the next command', async () => {
+    let signalRunStarted: (() => void) | undefined;
+    const runStarted = new Promise<void>((resolve) => {
+      signalRunStarted = resolve;
+    });
+    let observedAbort = false;
+    const baseSourceControl = createTestSourceControl();
+    const sourceControl: TestSourceControl = {
+      ...baseSourceControl,
+      runSource: async (_sourceId, signal) => {
+        signalRunStarted?.();
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => {
+              observedAbort = true;
+              reject(new Error('cancelled source run'));
+            },
+            { once: true },
+          );
+        });
+        return publishedSourceControl();
+      },
+    };
+    const runtime = createUsageEngineRuntime(createDependencies({ sourceControl }));
+    await runtime.start();
+    await runtime.executeCommand({ command: 'run-source', sourceId: 'codex.sessions' }, 'active-run');
+    await runStarted;
+
+    expect(await runtime.cancelCommand('active-run')).toMatchObject({ disposition: 'cancelling' });
+    expect(await runtime.waitForCommand('active-run')).toMatchObject({ error: { code: 'aborted' }, state: 'failed' });
+    await runtime.executeCommand({ command: 'publish' }, 'next-command');
+    expect(await runtime.waitForCommand('next-command')).toMatchObject({ state: 'succeeded' });
+    expect(observedAbort).toBe(true);
+    await runtime.dispose();
+  });
+
+  test('lets an active durable mutation finish coherently when cancellation arrives', async () => {
+    let releaseMutation: (() => void) | undefined;
+    let signalMutationStarted: (() => void) | undefined;
+    const mutationStarted = new Promise<void>((resolve) => {
+      signalMutationStarted = resolve;
+    });
+    const mutationBlocked = new Promise<void>((resolve) => {
+      releaseMutation = resolve;
+    });
+    let mutationSignal: AbortSignal | undefined;
+    const dependencies = createDependencies();
+    const runtime = createUsageEngineRuntime({
+      ...dependencies,
+      mutation: {
+        ...dependencies.mutation,
+        setMachineLabel: async (label, signal) => {
+          mutationSignal = signal;
+          signalMutationStarted?.();
+          await mutationBlocked;
+          return { id: 'machine-a', label };
+        },
+      },
+    });
+    await runtime.start();
+    await runtime.executeCommand({ command: 'set-machine-label', label: 'Workstation' }, 'durable-mutation');
+    await mutationStarted;
+
+    expect(await runtime.cancelCommand('durable-mutation')).toMatchObject({ disposition: 'finishing' });
+    expect(mutationSignal?.aborted).toBe(false);
+    releaseMutation?.();
+    expect(await runtime.waitForCommand('durable-mutation')).toMatchObject({ state: 'succeeded' });
+    await runtime.dispose();
+  });
+
+  test('remembers cancellation that wins the admission race and cleans late file input', async () => {
+    const trace: string[] = [];
+    const runtime = createUsageEngineRuntime(createDependencies({ trace }));
+    await runtime.start();
+
+    expect(await runtime.cancelCommand('pre-cancelled-command')).toMatchObject({ disposition: 'cancelled' });
+    const command = {
+      command: 'import-cursor' as const,
+      input: { handoffId: 'pre-cancelled-upload' as never, kind: 'inbox-handoff' as const },
+    };
+    expect(await runtime.executeCommand(command, 'pre-cancelled-command')).toMatchObject({
+      error: { code: 'aborted' },
+      ok: false,
+    });
+    expect(await runtime.executeCommand(command, 'pre-cancelled-command')).toMatchObject({
+      error: { code: 'aborted' },
+      ok: false,
+    });
+    await runtime.dispose();
+
+    expect(trace.filter((entry) => entry === 'discard-import-cursor')).toHaveLength(2);
+  });
+
+  test('collects the exact report source batch and preserves soft source failures', async () => {
+    const baseSourceControl = createTestSourceControl();
+    const failedSourceControl: SourceControlView = {
+      ...publishedSourceControl(),
+      sources: publishedSourceControl().sources.map((source) =>
+        source.id === 'codex.sessions'
+          ? {
+              ...source,
+              availability: 'detected',
+              lastOutcome: 'failed',
+              reason: { code: 'run-failed', message: 'synthetic soft source failure' },
+            }
+          : source,
+      ),
+    };
+    const sourceControl: TestSourceControl = {
+      ...baseSourceControl,
+      runSource: (sourceId) => {
+        baseSourceControl.calls.push(`run-source:${sourceId}`);
+        return sourceId === 'codex.sessions'
+          ? Promise.reject(
+              new UsageEngineSoftSourceError({
+                reason: 'failed',
+                snapshot: failedSourceControl,
+                sourceId,
+              }),
+            )
+          : Promise.resolve(publishedSourceControl());
+      },
+    };
+    const runtime = createUsageEngineRuntime(createDependencies({ sourceControl }));
+    await runtime.start();
+    await runtime.executeCommand(
+      { command: 'collect-fresh-report', harness: null, includeCursor: false },
+      'fresh-report',
+    );
+
+    expect(await runtime.waitForCommand('fresh-report')).toMatchObject({
+      command: 'collect-fresh-report',
+      output: {
+        kind: 'collection',
+        sources: expect.arrayContaining([expect.objectContaining({ id: 'codex.sessions', lastOutcome: 'failed' })]),
+      },
+      state: 'succeeded',
+    });
+    expect(sourceControl.calls.filter((entry) => entry.startsWith('run-source:'))).toEqual([
+      'run-source:claude.sessions',
+      'run-source:codex.sessions',
+      'run-source:opencode.sessions',
+      'run-source:rtk.savings',
+    ]);
+    await runtime.dispose();
+  });
+
+  test('fails a fresh command when a source publication path throws an unclassified error', async () => {
+    const baseSourceControl = createTestSourceControl();
+    const sourceControl: TestSourceControl = {
+      ...baseSourceControl,
+      runSource: (sourceId) => {
+        baseSourceControl.calls.push(`run-source:${sourceId}`);
+        return Promise.reject(new Error('synthetic publication failure'));
+      },
+    };
+    const runtime = createUsageEngineRuntime(createDependencies({ sourceControl }));
+    await runtime.start();
+    await runtime.executeCommand(
+      { command: 'collect-fresh-report', harness: 'codex', includeCursor: false },
+      'fresh-publication-failure',
+    );
+
+    expect(await runtime.waitForCommand('fresh-publication-failure')).toMatchObject({
+      command: 'collect-fresh-report',
+      error: { code: 'command-failed' },
+      state: 'failed',
+    });
+    await runtime.dispose();
+  });
+
+  test('honors an explicitly disabled Cursor report selection', async () => {
+    const sourceControl = createTestSourceControl();
+    const runtime = createUsageEngineRuntime(createDependencies({ sourceControl }));
+    await runtime.start();
+    await runtime.executeCommand(
+      { command: 'collect-fresh-report', harness: 'cursor', includeCursor: false },
+      'fresh-report-without-cursor',
+    );
+
+    expect(await runtime.waitForCommand('fresh-report-without-cursor')).toMatchObject({
+      command: 'collect-fresh-report',
+      output: { kind: 'collection', sources: [] },
+      state: 'succeeded',
+    });
+    expect(sourceControl.calls.filter((entry) => entry.startsWith('run-source:'))).toEqual([]);
+    await runtime.dispose();
+  });
+
   test('applies source policy while a manual source command is still running', async () => {
     let releaseRun: (() => void) | undefined;
     let signalRunStarted: (() => void) | undefined;
@@ -311,6 +607,7 @@ describe('usage engine runtime', () => {
         baseSourceControl.calls.push(`run-source:${sourceId}`);
         signalRunStarted?.();
         await runBlocked;
+        return publishedSourceControl();
       },
     };
     const runtime = createUsageEngineRuntime(createDependencies({ sourceControl }));
@@ -446,6 +743,7 @@ describe('usage engine runtime', () => {
             signal?.addEventListener('abort', onAbort, { once: true });
           }),
         ]);
+        return publishedSourceControl();
       },
     };
     const runtime = createUsageEngineRuntime(createDependencies({ sourceControl }));

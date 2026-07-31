@@ -25,6 +25,8 @@ import {
   usageContentHash,
 } from '@ai-usage/report-core/merge-bundle';
 import { MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
+import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
+import { type ProjectGroupConfig, parseProjectGroupConfigs } from '@ai-usage/report-core/project-group';
 import {
   type ProviderQuotaObservation,
   parseProviderQuotaObservation,
@@ -70,7 +72,7 @@ import {
 export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
 
-export const USAGE_STORE_SCHEMA_VERSION = 2;
+export const USAGE_STORE_SCHEMA_VERSION = 3;
 const USAGE_STORE_READER_BUSY_TIMEOUT_MS = 1000;
 const MAX_PROVIDER_QUOTA_OBSERVATIONS = 10_000;
 const MAX_PROVIDER_QUOTA_SOURCE_STATES = 1000;
@@ -357,6 +359,11 @@ export interface QueryLatestProviderQuotaObservationsInput {
   trace?: (query: ServedRevisionQueryTrace) => void;
 }
 
+export type QueryLatestLocalProviderQuotaObservationsInput = Omit<
+  QueryLatestProviderQuotaObservationsInput,
+  'machineId'
+>;
+
 export interface ServedReportRevisionManifest {
   readonly captureFingerprint: string;
   readonly expiresAt: number;
@@ -374,6 +381,8 @@ export interface ServedReportRevisionManifest {
 export interface PublishServedReportRevisionCapture {
   readonly configFingerprint: string;
   readonly generatedAt: string;
+  readonly projectAliases: readonly ProjectAliasEntry[];
+  readonly projectGroupConfigs: readonly ProjectGroupConfig[];
   readonly rows: readonly SerializedRow[];
   readonly sourceAuthorities: readonly SessionDetailSourceAuthority[];
   readonly support: FocusedReportSupport;
@@ -435,6 +444,23 @@ export interface ServedReportRevisionBootstrap {
   readonly support: FocusedSupportResult;
 }
 
+export interface QueryServedReportRevisionLocalSnapshotInput extends QueryServedReportRevisionInput {
+  readonly revision: string;
+}
+
+export interface ServedReportRevisionLocalSnapshot {
+  readonly machine: UsageMachine;
+  readonly manifest: ServedReportRevisionManifest;
+  readonly rows: readonly SerializedRow[];
+  readonly support: FocusedReportSupport;
+}
+
+export interface ServedReportRevisionPortableConfig {
+  readonly manifest: ServedReportRevisionManifest;
+  readonly projectAliases: readonly ProjectAliasEntry[];
+  readonly projectGroupConfigs: readonly ProjectGroupConfig[];
+}
+
 export interface ServedLocalProjectSource {
   readonly label: string;
   readonly machineId: string;
@@ -453,6 +479,7 @@ interface ServedReportRevisionReadContext {
   readonly database: ServedRevisionReadDatabase;
   readonly manifest: ServedReportRevisionManifest;
   readonly revision: string;
+  readonly storeDatabase: SqliteDatabase;
 }
 
 export interface RetainServedReportRevisionsInput {
@@ -3136,11 +3163,26 @@ interface ServedReportRevisionRecord {
 }
 
 interface ServedReportProjectionCountsRecord {
+  context_bytes: number | null;
+  context_count: number;
   filter_key_count: number;
   row_count: number;
   segment_count: number;
   support_bytes: number | null;
   support_count: number;
+}
+
+interface ServedReportLocalContextRecord {
+  context_bytes: number;
+  context_json: string;
+  machine_id: string;
+  machine_label: string;
+}
+
+interface ServedReportLocalContext {
+  readonly machine: UsageMachine;
+  readonly projectAliases: readonly ProjectAliasEntry[];
+  readonly projectGroupConfigs: readonly ProjectGroupConfig[];
 }
 
 const DEFAULT_SERVED_REPORT_REVISION_TTL_MS = 5 * 60 * 1000;
@@ -3152,6 +3194,80 @@ const DEFAULT_MAXIMUM_SERVED_REPORT_BYTES =
 const DEFAULT_ABANDONED_SERVED_REPORT_REVISION_MS = 5 * 60 * 1000;
 const MAX_SERVED_LOCAL_PROJECT_SOURCES_BYTES = 512 * 1024;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+
+const isServedUsageMachine = (value: unknown): value is UsageMachine => {
+  if (!(typeof value === 'object' && value !== null && !Array.isArray(value))) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    Object.keys(record).sort().join(',') === 'id,label' &&
+    typeof record.id === 'string' &&
+    record.id.length > 0 &&
+    typeof record.label === 'string'
+  );
+};
+
+const parseServedProjectAliases = (value: unknown): readonly ProjectAliasEntry[] => {
+  if (!Array.isArray(value)) {
+    throw new Error('Served report local context contains invalid project aliases');
+  }
+  return value.map((entry) => {
+    if (!(typeof entry === 'object' && entry !== null && !Array.isArray(entry))) {
+      throw new Error('Served report local context contains an invalid project alias');
+    }
+    const record = entry as Record<string, unknown>;
+    if (
+      Object.keys(record).sort().join(',') !== 'match,name' ||
+      typeof record.name !== 'string' ||
+      record.name.length === 0 ||
+      !Array.isArray(record.match) ||
+      record.match.some((pattern) => typeof pattern !== 'string' || pattern.length === 0)
+    ) {
+      throw new Error('Served report local context contains an invalid project alias');
+    }
+    return { match: [...record.match] as string[], name: record.name };
+  });
+};
+
+const parseServedReportLocalContext = (value: unknown): ServedReportLocalContext => {
+  if (!(typeof value === 'object' && value !== null && !Array.isArray(value))) {
+    throw new Error('Served report local context is invalid');
+  }
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).sort().join(',') !== 'machine,projectAliases,projectGroupConfigs') {
+    throw new Error('Served report local context contains unknown or missing fields');
+  }
+  if (!isServedUsageMachine(record.machine)) {
+    throw new Error('Served report local context contains an invalid machine');
+  }
+  return {
+    machine: { ...record.machine },
+    projectAliases: parseServedProjectAliases(record.projectAliases),
+    projectGroupConfigs: parseProjectGroupConfigs(record.projectGroupConfigs).map((group) => ({
+      ...group,
+      sources: group.sources.map((source) => ({ ...source })),
+    })),
+  };
+};
+
+const readServedReportLocalContext = (database: SqliteDatabase, revision: string): ServedReportLocalContext => {
+  const record = database
+    .query(`
+      SELECT context_bytes, context_json, machine_id, machine_label
+      FROM served_report_local_context
+      WHERE revision = ?
+    `)
+    .get(revision) as ServedReportLocalContextRecord | null;
+  if (!record || Buffer.byteLength(record.context_json) !== record.context_bytes) {
+    throw new Error('Served report local context is incomplete or has invalid byte accounting');
+  }
+  const context = parseServedReportLocalContext(JSON.parse(record.context_json) as unknown);
+  if (context.machine.id !== record.machine_id || context.machine.label !== record.machine_label) {
+    throw new Error('Served report local context machine identity is inconsistent');
+  }
+  return context;
+};
 
 let servedReportPublicationFaultInjector: ((phase: ServedReportPublicationPhase) => void) | undefined;
 let servedReportReadFaultInjector: ((phase: ServedReportReadPhase) => void) | undefined;
@@ -3269,9 +3385,13 @@ const validateServedRevisionCounts = (database: SqliteDatabase, record: ServedRe
         (SELECT COUNT(*) FROM served_session_model_segments WHERE revision = ?) AS segment_count,
         (SELECT COUNT(*) FROM served_session_model_filter_keys WHERE revision = ?) AS filter_key_count,
         (SELECT COUNT(*) FROM served_report_support WHERE revision = ?) AS support_count,
-        (SELECT support_bytes FROM served_report_support WHERE revision = ?) AS support_bytes
+        (SELECT support_bytes FROM served_report_support WHERE revision = ?) AS support_bytes,
+        (SELECT COUNT(*) FROM served_report_local_context WHERE revision = ?) AS context_count,
+        (SELECT context_bytes FROM served_report_local_context WHERE revision = ?) AS context_bytes
     `)
     .get(
+      record.revision,
+      record.revision,
       record.revision,
       record.revision,
       record.revision,
@@ -3285,7 +3405,9 @@ const validateServedRevisionCounts = (database: SqliteDatabase, record: ServedRe
     counts.filter_key_count !== record.filter_key_count ||
     counts.support_count !== 1 ||
     counts.support_bytes !== record.support_bytes ||
-    record.rows_bytes + record.support_bytes > MAX_REPORT_RUNNER_ARTIFACT_BYTES ||
+    counts.context_count !== 1 ||
+    counts.context_bytes === null ||
+    record.rows_bytes + record.support_bytes + counts.context_bytes > MAX_REPORT_RUNNER_ARTIFACT_BYTES ||
     record.projection_bytes > MAX_SESSION_QUERY_DATABASE_BYTES
   ) {
     throw new Error(`Served report revision ${record.revision} failed count or byte validation`);
@@ -3321,6 +3443,7 @@ const validateServedRevisionPayload = (database: SqliteDatabase, record: ServedR
     throw new Error('Served report revision support is incomplete');
   }
   const support = parseFocusedReportSupport(JSON.parse(supportRecord.support_json) as unknown);
+  const localContext = readServedReportLocalContext(database, record.revision);
   const rowRecords = database
     .query(`
       SELECT source_authority, source_row_json
@@ -3351,7 +3474,8 @@ const validateServedRevisionPayload = (database: SqliteDatabase, record: ServedR
     Buffer.byteLength(JSON.stringify(rows)) !== record.rows_bytes ||
     Buffer.byteLength(supportRecord.support_json) !== record.support_bytes ||
     reportCaptureFingerprintForPayload(payload) !== record.capture_fingerprint ||
-    reportCaptureFingerprintForPayload(payload, sourceAuthorities) !== record.private_capture_fingerprint
+    reportCaptureFingerprintForPayload({ ...payload, localContext }, sourceAuthorities) !==
+      record.private_capture_fingerprint
   ) {
     throw new Error('Served report revision payload does not match its manifest');
   }
@@ -3403,6 +3527,7 @@ const readServedReportRevision = <Result>(
             database: createServedRevisionQueryDatabase(database, record.revision, input.trace),
             manifest,
             revision: record.revision,
+            storeDatabase: database,
           });
           if (result instanceof Promise) {
             throw new Error('Served report revision reads must complete synchronously inside one SQLite snapshot');
@@ -3610,6 +3735,60 @@ export const queryServedReportRevisionSlices = (
     return { manifest, rows, support };
   });
 
+export const queryServedReportRevisionPortableConfig = (
+  input: QueryServedReportRevisionInput,
+): Effect.Effect<ServedReportRevisionPortableConfig, UsageStoreError> =>
+  readServedReportRevision(input, ({ manifest, revision, storeDatabase }) => {
+    const context = readServedReportLocalContext(storeDatabase, revision);
+    return {
+      manifest,
+      projectAliases: context.projectAliases,
+      projectGroupConfigs: context.projectGroupConfigs,
+    };
+  });
+
+export const queryServedReportRevisionLocalSnapshot = (
+  input: QueryServedReportRevisionLocalSnapshotInput,
+): Effect.Effect<ServedReportRevisionLocalSnapshot, UsageStoreError> =>
+  readServedReportRevision(input, ({ database, manifest, revision, storeDatabase }) => {
+    const support = readServedReportSupport(database, manifest);
+    const { machine } = readServedReportLocalContext(storeDatabase, revision);
+    const records = database
+      .query(`
+        SELECT source_row_json
+        FROM session_rows
+        WHERE source_authority = 'local-observed' AND machine_id = ?
+        ORDER BY ordinal
+        LIMIT ${MAX_PORTABLE_USAGE_ROWS + 1}
+      `)
+      .all(machine.id) as Array<{ source_row_json?: unknown }>;
+    if (records.length > MAX_PORTABLE_USAGE_ROWS) {
+      throw usageStoreError(
+        'queryServedReportRevisionLocalSnapshot',
+        input.dbPath,
+        `Served local snapshot exceeds ${MAX_PORTABLE_USAGE_ROWS} rows`,
+        'invalid-input',
+      );
+    }
+    const rows: SerializedRow[] = [];
+    for (const record of records) {
+      if (typeof record.source_row_json !== 'string') {
+        throw new Error('Served local snapshot contains an invalid serialized row');
+      }
+      const value: unknown = JSON.parse(record.source_row_json);
+      if (!isSerializedUsageRow(value)) {
+        throw new Error('Served local snapshot contains an invalid serialized row');
+      }
+      rows.push(value);
+    }
+    return {
+      machine,
+      manifest,
+      rows,
+      support,
+    };
+  });
+
 interface PreparedPublicationOptions {
   readonly expiresAt: number;
   readonly now: number;
@@ -3647,11 +3826,15 @@ const preparePublicationOptions = (input: PublishServedReportRevisionInput): Pre
 const validatePublicationInput = (
   capture: PublishServedReportRevisionCapture,
   options: PreparedPublicationOptions,
+  machine: UsageMachine,
 ): {
   captureFingerprint: string;
   configFingerprint: string;
   expiresAt: number;
   generatedAt: string;
+  localContext: ServedReportLocalContext;
+  localContextBytes: number;
+  localContextJson: string;
   now: number;
   privateCaptureFingerprint: string;
   renewalWindowMs: number;
@@ -3673,14 +3856,24 @@ const validatePublicationInput = (
     throw new Error('Served report publication input is invalid or exceeds its row budget');
   }
   const reportSupport = parseFocusedReportSupport(capture.support);
+  const localContext = parseServedReportLocalContext({
+    machine,
+    projectAliases: capture.projectAliases,
+    projectGroupConfigs: capture.projectGroupConfigs,
+  });
   const serializedRows = JSON.stringify(capture.rows);
   const supportJson = JSON.stringify(reportSupport);
+  const localContextJson = JSON.stringify(localContext);
   const rowsBytes = Buffer.byteLength(serializedRows);
   const supportBytes = Buffer.byteLength(supportJson);
+  const localContextBytes = Buffer.byteLength(localContextJson);
   const payload = { ...reportSupport, rows: capture.rows };
   const captureFingerprint = reportCaptureFingerprintForPayload(payload);
-  const privateCaptureFingerprint = reportCaptureFingerprintForPayload(payload, capture.sourceAuthorities);
-  if (rowsBytes + supportBytes > MAX_REPORT_RUNNER_ARTIFACT_BYTES) {
+  const privateCaptureFingerprint = reportCaptureFingerprintForPayload(
+    { ...payload, localContext },
+    capture.sourceAuthorities,
+  );
+  if (rowsBytes + supportBytes + localContextBytes > MAX_REPORT_RUNNER_ARTIFACT_BYTES) {
     throw new Error(`Served report publication exceeds ${MAX_REPORT_RUNNER_ARTIFACT_BYTES} bytes`);
   }
   return {
@@ -3688,6 +3881,9 @@ const validatePublicationInput = (
     configFingerprint: capture.configFingerprint,
     expiresAt: options.expiresAt,
     generatedAt: capture.generatedAt,
+    localContext,
+    localContextBytes,
+    localContextJson,
     now: options.now,
     privateCaptureFingerprint,
     renewalWindowMs: options.renewalWindowMs,
@@ -3760,7 +3956,8 @@ export const publishServedReportRevision = (
               const generations = readUsageStoreGenerations(database);
               visitPublicationPhase('after-generation-read');
               const capture = await input.assemble({ generations });
-              const prepared = validatePublicationInput(capture, options);
+              const machine = readUsageLocalMachineWithDatabase(database, input.dbPath);
+              const prepared = validatePublicationInput(capture, options, machine);
               const current = readCurrentServedRevisionRecord(database);
               let renewableManifest: ServedReportRevisionManifest | undefined;
               if (current?.private_capture_fingerprint === prepared.privateCaptureFingerprint) {
@@ -3829,6 +4026,19 @@ export const publishServedReportRevision = (
               INSERT INTO served_report_support (revision, support_json, support_bytes) VALUES (?, ?, ?)
             `)
                 .run(input.revision, prepared.supportJson, prepared.supportBytes);
+              database
+                .query(`
+              INSERT INTO served_report_local_context (
+                revision, machine_id, machine_label, context_json, context_bytes
+              ) VALUES (?, ?, ?, ?, ?)
+            `)
+                .run(
+                  input.revision,
+                  prepared.localContext.machine.id,
+                  prepared.localContext.machine.label,
+                  prepared.localContextJson,
+                  prepared.localContextBytes,
+                );
               visitPublicationPhase('after-support');
               const projection = insertServedReportProjection(database, {
                 revision: input.revision,
@@ -3841,7 +4051,12 @@ export const publishServedReportRevision = (
               SET segment_count = ?, filter_key_count = ?, projection_bytes = ?
               WHERE revision = ? AND complete = 0
             `)
-                .run(projection.segmentCount, projection.filterKeyCount, projection.projectionBytes, input.revision);
+                .run(
+                  projection.segmentCount,
+                  projection.filterKeyCount,
+                  projection.projectionBytes + prepared.localContextBytes,
+                  input.revision,
+                );
               visitPublicationPhase('after-projection');
               const staged = readExactServedRevisionRecord(database, input.revision);
               if (staged !== null) {
@@ -4822,25 +5037,24 @@ export const queryProviderQuotaSourceStates = (
     }),
   );
 
-export const queryLatestProviderQuotaObservations = (
+const queryLatestProviderQuotaObservationsWithDatabase = (
+  db: SqliteDatabase,
   input: QueryLatestProviderQuotaObservationsInput,
-): Effect.Effect<QueryProviderQuotaObservationsResult, UsageStoreError> =>
-  withUsageStoreReader(input.dbPath, (db) =>
-    Effect.try({
-      try: () => {
-        const maximum = input.maximumObservations ?? MAX_PROVIDER_QUOTA_OBSERVATIONS;
-        if (!(Number.isSafeInteger(maximum) && maximum > 0 && maximum <= MAX_PROVIDER_QUOTA_OBSERVATIONS)) {
-          throw usageStoreError(
-            'queryLatestProviderQuotaObservations',
-            input.dbPath,
-            `maximumObservations must be from 1 through ${MAX_PROVIDER_QUOTA_OBSERVATIONS}`,
-            'invalid-input',
-          );
-        }
-        const filters = quotaQueryFilters(input, 'heads.');
-        const filterSql = filters.clauses.length ? `WHERE ${filters.clauses.join(' AND ')}` : '';
-        const headIndex = quotaLatestHeadIndex(input);
-        const latestSql = `
+  operation: string,
+): QueryProviderQuotaObservationsResult => {
+  const maximum = input.maximumObservations ?? MAX_PROVIDER_QUOTA_OBSERVATIONS;
+  if (!(Number.isSafeInteger(maximum) && maximum > 0 && maximum <= MAX_PROVIDER_QUOTA_OBSERVATIONS)) {
+    throw usageStoreError(
+      operation,
+      input.dbPath,
+      `maximumObservations must be from 1 through ${MAX_PROVIDER_QUOTA_OBSERVATIONS}`,
+      'invalid-input',
+    );
+  }
+  const filters = quotaQueryFilters(input, 'heads.');
+  const filterSql = filters.clauses.length ? `WHERE ${filters.clauses.join(' AND ')}` : '';
+  const headIndex = quotaLatestHeadIndex(input);
+  const latestSql = `
           WITH selected AS MATERIALIZED (
             SELECT
               heads.provider_key,
@@ -4869,49 +5083,81 @@ export const queryLatestProviderQuotaObservations = (
             selected.first_observed_at DESC,
             selected.observation_id DESC
         `;
-        const latestParams = [...filters.params, maximum + 1];
-        input.trace?.({ params: latestParams, sql: latestSql });
-        const candidates = db.query(latestSql).all(...latestParams) as Array<
-          ProviderQuotaObservationRecord & {
-            selected_account_scope_key: string;
-            selected_confidence_rank: number;
-            selected_first_observed_at: string;
-            selected_machine_id: string;
-            selected_observation_id: number;
-            selected_provider_key: string;
-          }
-        >;
-        for (const candidate of candidates) {
-          if (
-            candidate.id !== candidate.selected_observation_id ||
-            candidate.provider_key !== candidate.selected_provider_key ||
-            candidate.machine_id !== candidate.selected_machine_id ||
-            (candidate.account_scope ?? '') !== candidate.selected_account_scope_key ||
-            quotaConfidenceRank(candidate.source_confidence) !== candidate.selected_confidence_rank ||
-            candidate.first_observed_at !== candidate.selected_first_observed_at
-          ) {
-            throw new Error('Provider quota latest-head projection is corrupt');
-          }
-        }
-        const truncated = candidates.length > maximum;
-        const rows = candidates.slice(0, maximum);
-        if (rows.length === 0) {
-          return { observations: [], skipped: 0, truncated };
-        }
-        const byObservation = readQuotaWindows(db, rows);
-        const observations: StoredProviderQuotaObservation[] = [];
-        let skipped = 0;
-        for (const row of rows) {
-          const parsed = quotaObservationFromRecords(row, byObservation.get(row.id) ?? []);
-          if (parsed) {
-            observations.push(parsed);
-          } else {
-            skipped++;
-          }
-        }
-        return { observations, skipped, truncated };
-      },
+  const latestParams = [...filters.params, maximum + 1];
+  input.trace?.({ params: latestParams, sql: latestSql });
+  const candidates = db.query(latestSql).all(...latestParams) as Array<
+    ProviderQuotaObservationRecord & {
+      selected_account_scope_key: string;
+      selected_confidence_rank: number;
+      selected_first_observed_at: string;
+      selected_machine_id: string;
+      selected_observation_id: number;
+      selected_provider_key: string;
+    }
+  >;
+  for (const candidate of candidates) {
+    if (
+      candidate.id !== candidate.selected_observation_id ||
+      candidate.provider_key !== candidate.selected_provider_key ||
+      candidate.machine_id !== candidate.selected_machine_id ||
+      (candidate.account_scope ?? '') !== candidate.selected_account_scope_key ||
+      quotaConfidenceRank(candidate.source_confidence) !== candidate.selected_confidence_rank ||
+      candidate.first_observed_at !== candidate.selected_first_observed_at
+    ) {
+      throw new Error('Provider quota latest-head projection is corrupt');
+    }
+  }
+  const truncated = candidates.length > maximum;
+  const rows = candidates.slice(0, maximum);
+  if (rows.length === 0) {
+    return { observations: [], skipped: 0, truncated };
+  }
+  const byObservation = readQuotaWindows(db, rows);
+  const observations: StoredProviderQuotaObservation[] = [];
+  let skipped = 0;
+  for (const row of rows) {
+    const parsed = quotaObservationFromRecords(row, byObservation.get(row.id) ?? []);
+    if (parsed) {
+      observations.push(parsed);
+    } else {
+      skipped++;
+    }
+  }
+  return { observations, skipped, truncated };
+};
+
+export const queryLatestProviderQuotaObservations = (
+  input: QueryLatestProviderQuotaObservationsInput,
+): Effect.Effect<QueryProviderQuotaObservationsResult, UsageStoreError> =>
+  withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: () => queryLatestProviderQuotaObservationsWithDatabase(db, input, 'queryLatestProviderQuotaObservations'),
       catch: (cause) => usageStoreReadError('queryLatestProviderQuotaObservations', input.dbPath, cause),
+    }),
+  );
+
+export const queryLatestLocalProviderQuotaObservations = (
+  input: QueryLatestLocalProviderQuotaObservationsInput,
+): Effect.Effect<QueryProviderQuotaObservationsResult, UsageStoreError> =>
+  withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        db.exec('BEGIN');
+        try {
+          const machine = readUsageLocalMachineWithDatabase(db, input.dbPath);
+          const result = queryLatestProviderQuotaObservationsWithDatabase(
+            db,
+            { ...input, machineId: machine.id },
+            'queryLatestLocalProviderQuotaObservations',
+          );
+          db.exec('COMMIT');
+          return result;
+        } catch (cause) {
+          db.exec('ROLLBACK');
+          throw cause;
+        }
+      },
+      catch: (cause) => usageStoreReadError('queryLatestLocalProviderQuotaObservations', input.dbPath, cause),
     }),
   );
 

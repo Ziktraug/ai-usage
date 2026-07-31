@@ -21,7 +21,7 @@ import {
   usageRowModelContributions,
 } from '@ai-usage/report-core/usage-row';
 
-export const SERVED_REPORT_PROJECTION_SCHEMA_VERSION = 14;
+export const SERVED_REPORT_PROJECTION_SCHEMA_VERSION = 15;
 export const SERVED_REPORT_REVISION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/;
 
 export interface ServedRevisionReadStatement {
@@ -91,6 +91,14 @@ export const servedReportSchemaSql = `
     revision TEXT PRIMARY KEY REFERENCES served_report_revisions(revision) ON DELETE CASCADE,
     support_json TEXT NOT NULL,
     support_bytes INTEGER NOT NULL CHECK (support_bytes >= 0)
+  );
+
+  CREATE TABLE IF NOT EXISTS served_report_local_context (
+    revision TEXT PRIMARY KEY REFERENCES served_report_revisions(revision) ON DELETE CASCADE,
+    machine_id TEXT NOT NULL,
+    machine_label TEXT NOT NULL,
+    context_json TEXT NOT NULL,
+    context_bytes INTEGER NOT NULL CHECK (context_bytes >= 0)
   );
 
   CREATE TABLE IF NOT EXISTS served_report_rows (
@@ -650,6 +658,7 @@ const REQUIRED_SERVED_TABLES = [
   'provider_quota_observations',
   'provider_quota_streams',
   'served_report_current',
+  'served_report_local_context',
   'served_report_revisions',
   'served_report_rows',
   'served_report_support',
@@ -672,6 +681,7 @@ const REQUIRED_SERVED_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   ],
   provider_quota_streams: ['provider_key', 'machine_id', 'account_scope_key', 'account_scope', 'source_key'],
   served_report_current: ['singleton', 'revision', 'required_complete'],
+  served_report_local_context: ['revision', 'machine_id', 'machine_label', 'context_json', 'context_bytes'],
   served_report_revisions: [
     'revision',
     'capture_fingerprint',

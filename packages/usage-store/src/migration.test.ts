@@ -61,6 +61,7 @@ describe('usage-store forward migration', () => {
     expect(migratedVersion.user_version).toBe(USAGE_STORE_SCHEMA_VERSION);
     expect(servedTables.map(({ name }) => name)).toEqual([
       'served_report_current',
+      'served_report_local_context',
       'served_report_revisions',
       'served_report_rows',
       'served_report_support',

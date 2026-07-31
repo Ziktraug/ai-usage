@@ -30,7 +30,7 @@ import {
   type SessionQuerySqliteDatabase,
   type SessionQuerySqliteTrace,
 } from './session-query-sqlite';
-import { publishServedReportRevision } from './writer';
+import { publishServedReportRevision, updateUsageMachineLabel } from './writer';
 
 const temporaryDirectories = new Set<string>();
 
@@ -185,10 +185,19 @@ const openRowsDatabase = async (
   temporaryDirectories.add(storeDirectory);
   const dbPath = path.join(storeDirectory, 'usage.sqlite');
   await Effect.runPromise(
+    updateUsageMachineLabel({
+      dbPath,
+      machine: { id: 'machine-a', label: 'Machine A' },
+      updatedAt: new Date('2026-07-13T00:00:00.000Z'),
+    }),
+  );
+  await Effect.runPromise(
     publishServedReportRevision({
       assemble: () => ({
         configFingerprint: 'c'.repeat(64),
         generatedAt: '2026-07-13T00:00:00.000Z',
+        projectAliases: [],
+        projectGroupConfigs: [],
         rows: fixtureRows,
         sourceAuthorities,
         support: support(fixtureRows.length),

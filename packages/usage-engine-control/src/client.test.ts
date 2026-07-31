@@ -1,13 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { createUsageEngineControlClient, UsageEngineControlError, type UsageEngineFetch } from './client';
 import { usageEngineControlBounds } from './contracts';
-import { parseUsageEngineRendezvous } from './rendezvous';
+import { assertUsageEngineRendezvousTarget, parseUsageEngineRendezvous } from './rendezvous';
 import { fixtureGeneratedAt, fixtureInstanceId, fixtureStatus } from './test-fixtures';
 
 const rendezvous = parseUsageEngineRendezvous({
   instanceId: fixtureInstanceId,
   port: 41_321,
   protocolVersion: 1,
+  targetId: 'a'.repeat(64),
   token: 'fixture-token-with-at-least-thirty-two-bytes',
 });
 
@@ -186,6 +187,33 @@ describe('usage engine HTTP client', () => {
     await expect(oversizedClient.getStatus()).rejects.toMatchObject({ code: 'response-too-large' });
   });
 
+  test('cancels an exact command identity with an authenticated bodyless DELETE', async () => {
+    let observedRequest: Request | undefined;
+    const client = createUsageEngineControlClient({
+      fetch: (input, init) => {
+        observedRequest = new Request(input, init);
+        return Promise.resolve(
+          Response.json({
+            commandId: 'command-to-cancel',
+            disposition: 'cancelled',
+            instanceId: fixtureInstanceId,
+            protocolVersion: 1,
+          }),
+        );
+      },
+      resolveRendezvous: () => Promise.resolve(rendezvous),
+    });
+
+    await expect(client.cancelCommand('command-to-cancel')).resolves.toMatchObject({
+      commandId: 'command-to-cancel',
+      disposition: 'cancelled',
+    });
+    expect(observedRequest?.url).toBe('http://127.0.0.1:41321/v1/commands/command-to-cancel');
+    expect(observedRequest?.method).toBe('DELETE');
+    expect(await observedRequest?.text()).toBe('');
+    expect(observedRequest?.headers.get('authorization')).toBe('Bearer fixture-token-with-at-least-thirty-two-bytes');
+  });
+
   test('uses stable bounded errors instead of exposing credentials or filesystem paths', async () => {
     const client = createUsageEngineControlClient({
       fetch: () =>
@@ -270,6 +298,7 @@ describe('usage engine HTTP client', () => {
             instanceId: fixtureInstanceId,
             port: 41_321,
             protocolVersion: 2,
+            targetId: 'a'.repeat(64),
             token: 'fixture-token-with-at-least-thirty-two-bytes',
           }),
         ),
@@ -278,6 +307,24 @@ describe('usage engine HTTP client', () => {
 
     const changes = client.changes()[Symbol.asyncIterator]();
     await expect(changes.next()).rejects.toMatchObject({ code: 'protocol-mismatch', retry: 'never' });
+    expect(fetches).toBe(0);
+  });
+
+  test('maps a rendezvous target mismatch to a non-retryable protocol mismatch without fetching', async () => {
+    let fetches = 0;
+    const client = createUsageEngineControlClient({
+      fetch: () => {
+        fetches += 1;
+        return Promise.resolve(Response.json(fixtureStatus()));
+      },
+      resolveRendezvous: () =>
+        Promise.resolve().then(() => {
+          assertUsageEngineRendezvousTarget(rendezvous, 'b'.repeat(64));
+          return rendezvous;
+        }),
+    });
+
+    await expect(client.getStatus()).rejects.toMatchObject({ code: 'protocol-mismatch', retry: 'never' });
     expect(fetches).toBe(0);
   });
 
@@ -537,6 +584,7 @@ describe('usage engine HTTP client', () => {
             instanceId: activeInstanceId,
             port: 41_321,
             protocolVersion: 1,
+            targetId: 'a'.repeat(64),
             token: 'fixture-token-with-at-least-thirty-two-bytes',
           }),
         ),

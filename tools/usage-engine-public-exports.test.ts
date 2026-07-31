@@ -3,11 +3,19 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   parseUsageEngineCommand,
+  parseUsageEngineCommandCancellationResult,
   parseUsageEngineCommandCompletion,
   USAGE_ENGINE_PROTOCOL_VERSION,
 } from '@ai-usage/usage-engine-control';
 import { createUsageEngineControlClient } from '@ai-usage/usage-engine-control/client';
-import { parseUsageEngineRendezvous } from '@ai-usage/usage-engine-control/node';
+import { executeUsageEngineCommandToCompletion } from '@ai-usage/usage-engine-control/completion';
+import { stageUsageEngineHandoff } from '@ai-usage/usage-engine-control/handoff';
+import {
+  assertUsageEngineRendezvousTarget,
+  parseUsageEngineRendezvous,
+  parseUsageEngineTargetId,
+  usageEngineTargetIdFor,
+} from '@ai-usage/usage-engine-control/node';
 import { createInMemoryUsageEngineControlClient } from '@ai-usage/usage-engine-control/testing';
 import { defineUsageEngineRuntimeFactory } from '@ai-usage/usage-engine-runtime';
 import { queryReportRows } from '@ai-usage/usage-store/reader';
@@ -31,28 +39,43 @@ describe('usage engine public package exports', () => {
     expect(controlPackage.exports).toEqual({
       '.': './src/contracts.ts',
       './client': './src/client.ts',
+      './completion': './src/completion.ts',
+      './handoff': './src/handoff.ts',
       './node': './src/rendezvous.ts',
       './testing': './src/testing.ts',
     });
-    expect(runtimePackage.exports).toEqual({ '.': './src/runtime.ts' });
+    expect(runtimePackage.exports).toEqual({
+      '.': './src/runtime.ts',
+      './live': './src/live.ts',
+      './recovery': './src/recovery.ts',
+      './source-adapters': './src/source-adapters.ts',
+      './source-control': './src/source-control.ts',
+    });
     expect(storePackage.exports).toEqual({
       './reader': './src/reader.ts',
       './testing': './src/testing.ts',
       './writer': './src/writer.ts',
     });
-    expect(appPackage.exports).toBeUndefined();
+    expect(appPackage.exports).toEqual({ './main': './src/main.ts' });
   });
 
   test('resolves every declared TypeScript seam through its package specifier', () => {
     expect(Number(USAGE_ENGINE_PROTOCOL_VERSION)).toBe(1);
     expect(parseUsageEngineCommand).toBeFunction();
+    expect(parseUsageEngineCommandCancellationResult).toBeFunction();
     expect(parseUsageEngineCommandCompletion).toBeFunction();
     expect(createUsageEngineControlClient).toBeFunction();
+    expect(executeUsageEngineCommandToCompletion).toBeFunction();
+    expect(stageUsageEngineHandoff).toBeFunction();
     expect(parseUsageEngineRendezvous).toBeFunction();
+    expect(parseUsageEngineTargetId).toBeFunction();
+    expect(usageEngineTargetIdFor).toBeFunction();
+    expect(assertUsageEngineRendezvousTarget).toBeFunction();
     expect(createInMemoryUsageEngineControlClient).toBeFunction();
     expect(defineUsageEngineRuntimeFactory).toBeFunction();
     expect(queryReportRows).toBeFunction();
     expect(createUsageStore).toBeFunction();
     expect(importLocalRows).toBeFunction();
+    expect(import.meta.resolve('@ai-usage/usage-engine/main')).toContain('/apps/usage-engine/src/main.ts');
   });
 });

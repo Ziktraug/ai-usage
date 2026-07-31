@@ -3,7 +3,11 @@ import {
   USAGE_ENGINE_PROTOCOL_VERSION,
   type UsageEngineForegroundOutcome,
 } from '@ai-usage/usage-engine-control';
-import type { UsageEngineBearerToken } from '@ai-usage/usage-engine-control/node';
+import {
+  type UsageEngineBearerToken,
+  type UsageEngineTargetId,
+  usageEngineTargetIdFor,
+} from '@ai-usage/usage-engine-control/node';
 import type { UsageEngineRuntimeHost } from '@ai-usage/usage-engine-runtime';
 import type { UsageEngineControlServer } from './control-server';
 import type { UsageEngineProcessMode } from './process-arguments';
@@ -56,6 +60,7 @@ export interface UsageEngineProcessDependencies {
     readonly instanceId: string;
     readonly port: number;
     readonly stateDirectory: string;
+    readonly targetId: UsageEngineTargetId;
     readonly token: UsageEngineBearerToken;
   }) => Promise<PublishedUsageEngineRendezvous>;
   readonly startControlServer: (input: {
@@ -234,6 +239,7 @@ export const createUsageEngineProcess = (dependencies: UsageEngineProcessDepende
           instanceId,
           port: server.port,
           stateDirectory: options.paths.stateDirectory,
+          targetId: usageEngineTargetIdFor(options.paths),
           token,
         }),
       );
@@ -315,11 +321,13 @@ export const createUsageEngineProcess = (dependencies: UsageEngineProcessDepende
           runtime.waitForCommand(options.mode.request.commandId),
           options.termination,
         );
+        const status = await waitUnlessTerminated(runtime.status(), options.termination);
         writeForegroundOutcome(dependencies, {
           completion,
           instanceId: result.instanceId,
           kind: 'command-completed',
           protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
+          status,
         });
         exitCode = completion.state === 'succeeded' ? 0 : 1;
       } else {

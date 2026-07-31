@@ -35,11 +35,20 @@ import {
 } from '@ai-usage/report-core/session-query';
 import { parseUsageSnapshot, serializeUsageSnapshot } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow } from '@ai-usage/report-core/types';
-import { publishServedReportRevision, queryReportRows, usageStorePath } from '@ai-usage/usage-store/testing';
+import {
+  assembleReport,
+  createMergedUsageReport,
+  createStoredReportCapture,
+  createStoredUsageSnapshot,
+} from '@ai-usage/report-data';
+import { queryServedRevisionData } from '@ai-usage/report-data/served-revision-query';
+import {
+  publishServedReportRevision,
+  queryReportRows,
+  updateUsageMachineLabel,
+  usageStorePath,
+} from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
-import { createMergedUsageReport, createStoredReportCapture, createStoredUsageSnapshot } from './index';
-import { assembleReport } from './report-assembly';
-import { queryServedRevisionData } from './served-revision-query';
 import { createScheduledSourceRegistry, type SourceRunContext } from './source-adapters';
 
 const FIXED_MACHINE = { id: 'machine-fixture-025', label: 'Fixture machine' } as const;
@@ -115,10 +124,15 @@ const publishPayload = async (input: {
 }): Promise<void> => {
   const { rows, tableRows: _tableRows, ...support } = input.payload;
   await Effect.runPromise(
+    updateUsageMachineLabel({ dbPath: input.dbPath, machine: FIXED_MACHINE, updatedAt: new Date(input.now) }),
+  );
+  await Effect.runPromise(
     publishServedReportRevision({
       assemble: () => ({
         configFingerprint: 'c'.repeat(64),
         generatedAt: input.payload.generatedAt,
+        projectAliases: [],
+        projectGroupConfigs: [],
         rows,
         sourceAuthorities: input.sourceAuthorities,
         support: support as FocusedReportSupport,

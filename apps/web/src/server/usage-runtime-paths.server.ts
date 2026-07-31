@@ -3,6 +3,7 @@ import path from 'node:path';
 import { usageStorePath } from '@ai-usage/usage-store/reader';
 
 export interface UsageWebRuntimePaths {
+  readonly configCwd: string;
   readonly databasePath: string;
   readonly inboxDirectory: string;
   readonly rendezvousPath: string;
@@ -10,6 +11,7 @@ export interface UsageWebRuntimePaths {
 }
 
 export interface ResolveUsageWebRuntimePathsOptions {
+  readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly systemHome?: string;
 }
@@ -26,6 +28,7 @@ const optionalAbsolutePath = (value: string | undefined, fallback: string, label
 
 export const resolveUsageWebRuntimePaths = (options: ResolveUsageWebRuntimePathsOptions = {}): UsageWebRuntimePaths => {
   const env = options.env ?? process.env;
+  const cwd = absolutePath(options.cwd ?? process.cwd(), 'Usage web working directory');
   const homeDirectory = optionalAbsolutePath(
     env.AI_USAGE_HOME ?? env.HOME,
     options.systemHome ?? os.homedir(),
@@ -37,6 +40,7 @@ export const resolveUsageWebRuntimePaths = (options: ResolveUsageWebRuntimePaths
     'Usage engine state directory',
   );
   return {
+    configCwd: optionalAbsolutePath(env.AI_USAGE_ROOT_DIR, cwd, 'Usage web config root'),
     databasePath: optionalAbsolutePath(
       env.AI_USAGE_DATABASE_PATH,
       usageStorePath(homeDirectory),

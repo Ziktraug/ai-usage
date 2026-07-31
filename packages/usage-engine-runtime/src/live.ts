@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { basename } from 'node:path';
 import { scheduler as hostScheduler } from 'node:timers/promises';
 import { runBoundaryEffect, WideEventResourceService, WideEventSink } from '@ai-usage/effect-runtime';
 import {
@@ -63,6 +64,7 @@ import {
   UsageEngineFatalConsistencyError,
   type UsageEngineMutationPort,
   type UsageEngineRuntimeHost,
+  UsageEngineSoftSourceError,
   type UsageEngineSourceControlPort,
   type UsageEngineWriterLease,
 } from './runtime';
@@ -71,6 +73,7 @@ import {
   createSourceControl,
   type ReportPublicationPort,
   SourceControl,
+  SourceControlCommandError,
   type SourceControlService,
   type SourcePolicyStore,
 } from './source-control';
@@ -147,12 +150,24 @@ export const createTerminalSourceControlPort = (
   const withControl = <Value, Error>(
     operation: (service: SourceControlService) => Effect.Effect<Value, Error>,
   ): Effect.Effect<Value, Error, SourceControl> => SourceControl.pipe(Effect.flatMap(operation));
-  const run = <Value, Error>(
+  const run = async <Value, Error>(
     operation: (service: SourceControlService) => Effect.Effect<Value, Error>,
     signal?: AbortSignal,
   ): Promise<Value> => {
     throwIfAborted(signal);
-    return managedRuntime.runPromise(withControl(operation), signal ? { signal } : undefined);
+    const outcome = await managedRuntime.runPromise(
+      withControl(operation).pipe(
+        Effect.match({
+          onFailure: (error) => ({ error, ok: false as const }),
+          onSuccess: (value) => ({ ok: true as const, value }),
+        }),
+      ),
+      signal ? { signal } : undefined,
+    );
+    if (!outcome.ok) {
+      throw outcome.error;
+    }
+    return outcome.value;
   };
 
   const closeSubscriber = (subscriber: SourceSnapshotSubscriber): void => {
@@ -306,7 +321,7 @@ export const createTerminalSourceControlPort = (
     sourceId: CollectionSourceId,
     previousCompletionGeneration: number,
     signal?: AbortSignal,
-  ): Promise<void> => {
+  ): Promise<SourceControlView> => {
     const terminal = await waitForSnapshot(
       (snapshot) => {
         const source = sourceEntry(snapshot, sourceId);
@@ -315,35 +330,49 @@ export const createTerminalSourceControlPort = (
           (sourceCompletionGenerations.get(sourceId) ?? 0) > previousCompletionGeneration
         );
       },
-      (snapshot) => {
-        const source = sourceEntry(snapshot, sourceId);
-        return (sourceCompletionGenerations.get(sourceId) ?? 0) > previousCompletionGeneration &&
-          TERMINAL_SOURCE_OUTCOMES.has(source.lastOutcome)
-          ? new Error('The usage engine source run failed.')
-          : undefined;
-      },
+      () => undefined,
       signal,
     );
     const source = sourceEntry(terminal, sourceId);
     if (TERMINAL_SOURCE_OUTCOMES.has(source.lastOutcome)) {
-      throw new Error('The usage engine source run failed.');
+      throw new UsageEngineSoftSourceError({
+        reason: source.lastOutcome === 'timed-out' ? 'timed-out' : 'failed',
+        snapshot: terminal,
+        sourceId,
+      });
     }
-    await waitForPublicationSettled(signal);
+    return await waitForPublicationSettled(signal);
   };
 
-  const runSource = async (sourceId: CollectionSourceId, signal?: AbortSignal): Promise<void> => {
+  const runSource = async (sourceId: CollectionSourceId, signal?: AbortSignal): Promise<SourceControlView> => {
     if (options.initialDetection === 'deferred') {
-      await redetectAndRunSource(sourceId, signal);
-      return;
+      return await redetectAndRunSource(sourceId, signal);
     }
     await currentSnapshot(signal);
     const previousCompletionGeneration = sourceCompletionGenerations.get(sourceId) ?? 0;
-    await run((service) => service.runNow(sourceId), signal);
+    try {
+      await run((service) => service.runNow(sourceId), signal);
+    } catch (error) {
+      if (
+        error instanceof SourceControlCommandError &&
+        (error.reason === 'disabled' || error.reason === 'not-detected')
+      ) {
+        throw new UsageEngineSoftSourceError({
+          reason: error.reason,
+          snapshot: await currentSnapshot(signal),
+          sourceId,
+        });
+      }
+      throw error;
+    }
     await currentSnapshot(signal);
-    await waitForSourceTerminal(sourceId, previousCompletionGeneration, signal);
+    return await waitForSourceTerminal(sourceId, previousCompletionGeneration, signal);
   };
 
-  const redetectAndRunSource = async (sourceId: CollectionSourceId, signal?: AbortSignal): Promise<void> => {
+  const redetectAndRunSource = async (
+    sourceId: CollectionSourceId,
+    signal?: AbortSignal,
+  ): Promise<SourceControlView> => {
     await currentSnapshot(signal);
     const previousCompletionGeneration = sourceCompletionGenerations.get(sourceId) ?? 0;
     const admitted = await run((service) => service.detectSource(sourceId), signal);
@@ -352,9 +381,9 @@ export const createTerminalSourceControlPort = (
     const alreadyCompleted = (sourceCompletionGenerations.get(sourceId) ?? 0) > previousCompletionGeneration;
     const joined = source.lifecycle === 'queued' || source.lifecycle === 'running' || source.lifecycle === 'pausing';
     if (!(admitted || alreadyCompleted || joined)) {
-      throw new Error('The usage engine source redetection did not admit a run.');
+      throw new UsageEngineSoftSourceError({ reason: 'not-admitted', snapshot: after, sourceId });
     }
-    await waitForSourceTerminal(sourceId, previousCompletionGeneration, signal);
+    return await waitForSourceTerminal(sourceId, previousCompletionGeneration, signal);
   };
 
   const runAllEnabled = async (signal?: AbortSignal): Promise<void> => {
@@ -407,12 +436,12 @@ export const createTerminalSourceControlPort = (
     );
   };
 
-  const publish = async (signal?: AbortSignal): Promise<void> => {
+  const publish = async (signal?: AbortSignal): Promise<SourceControlView> => {
     const before = await currentSnapshot(signal);
     const target = before.publication.requestedGeneration + 1;
     await run((service) => service.requestPublication, signal);
     await currentSnapshot(signal);
-    await waitForSnapshot(
+    return await waitForSnapshot(
       (snapshot) => snapshot.publication.acknowledgedRequestGeneration >= target,
       (snapshot) =>
         snapshot.publication.acknowledgedRequestGeneration < target && snapshot.publication.lastOutcome === 'failed'
@@ -780,7 +809,7 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
             await discardUsageEngineHandoff(command.input, options.inboxDirectory);
             throwIfAborted(signal);
           }
-          await stageCursorUsageExport(command.input, {
+          const staged = await stageCursorUsageExport(command.input, {
             configCwd: options.configCwd,
             inboxDirectory: options.inboxDirectory,
             operatorCwd: options.operatorCwd,
@@ -788,6 +817,11 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
             ...(signal === undefined ? {} : { signal }),
           });
           throwIfAborted(signal);
+          return {
+            alreadyImported: staged.alreadyImported,
+            artifactName: basename(staged.path),
+            kind: 'cursor-import' as const,
+          };
         },
         signal,
       ),
@@ -873,6 +907,7 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
           throw cause;
         }
         options.machine.label = label;
+        return nextMachine;
       }, signal),
   };
 };

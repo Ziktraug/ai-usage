@@ -1,3 +1,4 @@
+import { type HarnessKey, isHarnessKey } from '@ai-usage/report-core/harness-metadata';
 import { MAX_PORTABLE_USAGE_BYTES, MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import {
@@ -7,10 +8,13 @@ import {
 } from '@ai-usage/report-core/project-group';
 import {
   type CollectionSourceId,
+  collectionSourceIds,
   isCollectionSourceId,
   parseReportPublishedEvent,
+  parseSourceControlEntryView,
   parseSourceControlSnapshot,
   type ReportPublishedEvent,
+  type SourceControlEntryView,
   type SourceControlView,
   sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
@@ -36,15 +40,18 @@ const kibibyte = 1024;
 const maxOpaqueIdBytes = 160;
 const maxConfirmationBytes = 128;
 const maxDigestBytes = 128;
+const maxCommandCompletionEventBytes = sourceControlBounds.maxSnapshotBytes;
+const maxStatusBytes = sourceControlBounds.maxSnapshotBytes + 32 * kibibyte;
+const maxForegroundEnvelopeBytes = 4 * kibibyte;
 
 export const usageEngineControlBounds = {
   maxCommandBytes: 64 * kibibyte,
-  maxCommandCompletionEventBytes: 12 * kibibyte,
+  maxCommandCompletionEventBytes,
   maxCommandResultBytes: 8 * kibibyte,
   maxErrorResponseBytes: 4 * kibibyte,
   maxEventBytes: sourceControlBounds.maxEventBytes,
   maxFilePathBytes: 4 * kibibyte,
-  maxForegroundOutcomeBytes: 16 * kibibyte,
+  maxForegroundOutcomeBytes: maxStatusBytes + maxCommandCompletionEventBytes + maxForegroundEnvelopeBytes,
   maxMessageBytes: sourceControlBounds.maxMessageLength,
   maxOpaqueIdBytes,
   maxProjectAliases: 500,
@@ -53,7 +60,7 @@ export const usageEngineControlBounds = {
   maxRendezvousBytes: 4 * kibibyte,
   maxSnapshotEventBytes: sourceControlBounds.maxSnapshotBytes + 2 * kibibyte,
   maxStatusEventBytes: sourceControlBounds.maxSnapshotBytes + 34 * kibibyte,
-  maxStatusBytes: sourceControlBounds.maxSnapshotBytes + 32 * kibibyte,
+  maxStatusBytes,
   maxTokenBytes: 256,
   minTokenBytes: 32,
 } as const;
@@ -215,6 +222,7 @@ export type UsageEngineFileInput =
 
 export type UsageEngineCommand =
   | { readonly command: 'detect-all' }
+  | { readonly command: 'collect-fresh-report'; readonly harness: HarnessKey | null; readonly includeCursor: boolean }
   | { readonly command: 'run-all-enabled' }
   | { readonly command: 'run-source'; readonly sourceId: CollectionSourceId }
   | { readonly command: 'publish' }
@@ -246,6 +254,33 @@ export type UsageEngineCommand =
       readonly documentDigest: string;
       readonly input: UsageEngineFileInput;
     };
+
+export interface UsageEngineFreshReportSelection {
+  readonly harness: HarnessKey | null;
+  readonly includeCursor: boolean;
+}
+
+export const usageEngineReportSourceIdsFor = (
+  selection: UsageEngineFreshReportSelection,
+): readonly CollectionSourceId[] => {
+  const cursorIsSelected = selection.includeCursor && (selection.harness === null || selection.harness === 'cursor');
+  let sessionSourceIds: CollectionSourceId[];
+  if (selection.harness === null) {
+    sessionSourceIds = ['claude.sessions', 'codex.sessions', 'opencode.sessions'];
+  } else if (selection.harness === 'cursor' && !cursorIsSelected) {
+    sessionSourceIds = [];
+  } else {
+    sessionSourceIds = [`${selection.harness}.sessions`];
+  }
+  if (cursorIsSelected && selection.harness === null) {
+    sessionSourceIds.push('cursor.sessions');
+  }
+  return [
+    ...sessionSourceIds,
+    ...(sessionSourceIds.length === 0 ? [] : (['rtk.savings'] as const)),
+    ...(cursorIsSelected ? (['cursor.commit-attribution'] as const) : []),
+  ];
+};
 
 type UsageEngineFileCommand = Extract<UsageEngineCommand, { readonly input: UsageEngineFileInput }>;
 type UsageEngineProjectGroupCommand = Extract<UsageEngineCommand, { readonly command: 'replace-project-groups' }>;
@@ -425,6 +460,25 @@ export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
         return fail('Usage engine command contains unknown fields.');
       }
       return { command: command.command };
+    case 'collect-fresh-report': {
+      if (!hasExactKeys(command, ['command', 'harness', 'includeCursor'])) {
+        return fail('Usage engine collect-fresh-report command contains unknown fields.');
+      }
+      const harness = command.harness;
+      if (
+        !(
+          (harness === null || (typeof harness === 'string' && isHarnessKey(harness))) &&
+          typeof command.includeCursor === 'boolean'
+        )
+      ) {
+        return fail('Usage engine collect-fresh-report command has an invalid harness or Cursor selection.');
+      }
+      return {
+        command: 'collect-fresh-report',
+        harness,
+        includeCursor: command.includeCursor,
+      };
+    }
     case 'run-source':
       if (!hasExactKeys(command, ['command', 'sourceId'])) {
         return fail('Usage engine run-source command contains unknown fields.');
@@ -559,6 +613,7 @@ export const parseUsageEngineCommandRequest = (value: unknown): UsageEngineComma
 export type UsageEngineErrorCode =
   | 'aborted'
   | 'authentication-failed'
+  | 'command-failed'
   | 'command-rejected'
   | 'engine-busy'
   | 'engine-unavailable'
@@ -577,6 +632,7 @@ export type UsageEngineErrorCode =
 const usageEngineErrorCodes = new Set<UsageEngineErrorCode>([
   'aborted',
   'authentication-failed',
+  'command-failed',
   'command-rejected',
   'engine-busy',
   'engine-unavailable',
@@ -659,6 +715,38 @@ export const parseUsageEngineCommandResult = (value: unknown): UsageEngineComman
   };
 };
 
+export type UsageEngineCommandCancellationDisposition = 'already-completed' | 'cancelled' | 'cancelling' | 'finishing';
+
+export interface UsageEngineCommandCancellationResult {
+  readonly commandId: UsageEngineCommandId;
+  readonly disposition: UsageEngineCommandCancellationDisposition;
+  readonly instanceId: UsageEngineInstanceId;
+  readonly protocolVersion: UsageEngineProtocolVersion;
+}
+
+const usageEngineCommandCancellationDispositions = new Set<UsageEngineCommandCancellationDisposition>([
+  'already-completed',
+  'cancelled',
+  'cancelling',
+  'finishing',
+]);
+
+export const parseUsageEngineCommandCancellationResult = (value: unknown): UsageEngineCommandCancellationResult => {
+  assertSerializedBound(value, usageEngineControlBounds.maxCommandResultBytes, 'Usage engine cancellation result');
+  if (!(isRecord(value) && hasExactKeys(value, ['commandId', 'disposition', 'instanceId', 'protocolVersion']))) {
+    return fail('Usage engine cancellation result contains unknown or missing fields.');
+  }
+  if (!usageEngineCommandCancellationDispositions.has(value.disposition as UsageEngineCommandCancellationDisposition)) {
+    return fail('Usage engine cancellation disposition is invalid.');
+  }
+  return {
+    commandId: parseUsageEngineCommandId(value.commandId),
+    disposition: value.disposition as UsageEngineCommandCancellationDisposition,
+    instanceId: parseUsageEngineInstanceId(value.instanceId),
+    protocolVersion: parseUsageEngineProtocolVersion(value.protocolVersion),
+  };
+};
+
 export type UsageEngineCommandName = UsageEngineCommand['command'];
 
 export interface UsageEngineMergeImportResult {
@@ -681,6 +769,28 @@ export interface UsageEngineMergePreviewOutput {
   readonly warningCount: number;
 }
 
+export interface UsageEngineCursorImportOutput {
+  readonly alreadyImported: boolean;
+  readonly artifactName: string;
+  readonly kind: 'cursor-import';
+}
+
+export interface UsageEngineCollectionOutput {
+  readonly kind: 'collection';
+  readonly publication: UsageEngineCurrentPublication;
+  readonly sources: readonly SourceControlEntryView[];
+}
+
+export interface UsageEngineMachineOutput {
+  readonly kind: 'machine';
+  readonly machine: { readonly id: string; readonly label: string };
+}
+
+export interface UsageEnginePublicationOutput {
+  readonly kind: 'publication';
+  readonly publication: UsageEngineCurrentPublication;
+}
+
 interface UsageEngineCommandCompletionBase {
   readonly commandId: UsageEngineCommandId;
   readonly completedAt: string;
@@ -693,7 +803,35 @@ export type UsageEngineCommandCompletion =
       readonly state: 'succeeded';
     })
   | (UsageEngineCommandCompletionBase & {
-      readonly command: Exclude<UsageEngineCommandName, 'preview-merge'>;
+      readonly command: 'import-cursor';
+      readonly output: UsageEngineCursorImportOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
+      readonly command: 'collect-fresh-quota' | 'collect-fresh-report';
+      readonly output: UsageEngineCollectionOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
+      readonly command: 'set-machine-label';
+      readonly output: UsageEngineMachineOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
+      readonly command: 'publish';
+      readonly output: UsageEnginePublicationOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
+      readonly command: Exclude<
+        UsageEngineCommandName,
+        | 'collect-fresh-quota'
+        | 'collect-fresh-report'
+        | 'import-cursor'
+        | 'preview-merge'
+        | 'publish'
+        | 'set-machine-label'
+      >;
       readonly output: { readonly kind: 'none' };
       readonly state: 'succeeded';
     })
@@ -704,6 +842,7 @@ export type UsageEngineCommandCompletion =
     });
 
 const usageEngineCommandNames = new Set<UsageEngineCommandName>([
+  'collect-fresh-report',
   'collect-fresh-quota',
   'confirm-merge',
   'detect-all',
@@ -792,6 +931,89 @@ export const parseUsageEngineMergePreviewOutput = (value: unknown): UsageEngineM
   };
 };
 
+export const parseUsageEngineCursorImportOutput = (value: unknown): UsageEngineCursorImportOutput => {
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, ['alreadyImported', 'artifactName', 'kind']) &&
+      value.kind === 'cursor-import' &&
+      typeof value.alreadyImported === 'boolean'
+    )
+  ) {
+    return fail('Usage engine Cursor import output is invalid.');
+  }
+  const artifactName = parseBoundedString(
+    value.artifactName,
+    usageEngineControlBounds.maxFilePathBytes,
+    'Usage engine Cursor artifact name',
+  );
+  if (artifactName === '.' || artifactName === '..' || artifactName.includes('/') || artifactName.includes('\\')) {
+    return fail('Usage engine Cursor artifact name is invalid.');
+  }
+  return { alreadyImported: value.alreadyImported, artifactName, kind: 'cursor-import' };
+};
+
+const parseRequiredPublication = (value: unknown): UsageEngineCurrentPublication => {
+  if (!(isRecord(value) && hasExactKeys(value, ['publishedAt', 'revision']))) {
+    return fail('Usage engine publication contains unknown or missing fields.');
+  }
+  return {
+    publishedAt: parseIsoTimestamp(value.publishedAt, 'Usage engine publication timestamp'),
+    revision: parseUsageEnginePublicationRevision(value.revision),
+  };
+};
+
+export const parseUsageEngineCollectionOutput = (value: unknown): UsageEngineCollectionOutput => {
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, ['kind', 'publication', 'sources']) &&
+      value.kind === 'collection' &&
+      Array.isArray(value.sources)
+    ) ||
+    value.sources.length > collectionSourceIds.length
+  ) {
+    return fail('Usage engine collection output is invalid.');
+  }
+  const sources = value.sources.map(parseSourceControlEntryView);
+  if (new Set(sources.map(({ id }) => id)).size !== sources.length) {
+    return fail('Usage engine collection output contains duplicate sources.');
+  }
+  return { kind: 'collection', publication: parseRequiredPublication(value.publication), sources };
+};
+
+export const parseUsageEngineMachineOutput = (value: unknown): UsageEngineMachineOutput => {
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, ['kind', 'machine']) &&
+      value.kind === 'machine' &&
+      isRecord(value.machine) &&
+      hasExactKeys(value.machine, ['id', 'label'])
+    )
+  ) {
+    return fail('Usage engine machine output is invalid.');
+  }
+  return {
+    kind: 'machine',
+    machine: {
+      id: parseBoundedString(value.machine.id, maxOpaqueIdBytes, 'Usage engine machine ID'),
+      label: parseBoundedString(
+        value.machine.label,
+        usageEngineControlBounds.maxMessageBytes,
+        'Usage engine machine label',
+      ),
+    },
+  };
+};
+
+export const parseUsageEnginePublicationOutput = (value: unknown): UsageEnginePublicationOutput => {
+  if (!(isRecord(value) && hasExactKeys(value, ['kind', 'publication']) && value.kind === 'publication')) {
+    return fail('Usage engine publication output is invalid.');
+  }
+  return { kind: 'publication', publication: parseRequiredPublication(value.publication) };
+};
+
 export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCommandCompletion => {
   assertSerializedBound(
     value,
@@ -821,6 +1043,18 @@ export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCo
   if (command === 'preview-merge') {
     return { ...base, command, output: parseUsageEngineMergePreviewOutput(value.output), state: 'succeeded' };
   }
+  if (command === 'import-cursor') {
+    return { ...base, command, output: parseUsageEngineCursorImportOutput(value.output), state: 'succeeded' };
+  }
+  if (command === 'collect-fresh-report' || command === 'collect-fresh-quota') {
+    return { ...base, command, output: parseUsageEngineCollectionOutput(value.output), state: 'succeeded' };
+  }
+  if (command === 'set-machine-label') {
+    return { ...base, command, output: parseUsageEngineMachineOutput(value.output), state: 'succeeded' };
+  }
+  if (command === 'publish') {
+    return { ...base, command, output: parseUsageEnginePublicationOutput(value.output), state: 'succeeded' };
+  }
   if (!(isRecord(value.output) && hasExactKeys(value.output, ['kind']) && value.output.kind === 'none')) {
     return fail('Only a preview command may carry merge preview output.');
   }
@@ -833,6 +1067,7 @@ export type UsageEngineForegroundOutcome =
       readonly instanceId: UsageEngineInstanceId;
       readonly kind: 'command-completed';
       readonly protocolVersion: UsageEngineProtocolVersion;
+      readonly status: UsageEngineStatus;
     }
   | {
       readonly kind: 'admission-rejected';
@@ -845,14 +1080,20 @@ export const parseUsageEngineForegroundOutcome = (value: unknown): UsageEngineFo
     return fail('Usage engine foreground outcome is invalid.');
   }
   if (value.kind === 'command-completed') {
-    if (!hasExactKeys(value, ['completion', 'instanceId', 'kind', 'protocolVersion'])) {
+    if (!hasExactKeys(value, ['completion', 'instanceId', 'kind', 'protocolVersion', 'status'])) {
       return fail('Usage engine completed foreground outcome contains unknown or missing fields.');
+    }
+    const instanceId = parseUsageEngineInstanceId(value.instanceId);
+    const status = parseUsageEngineStatus(value.status);
+    if (status.instanceId !== instanceId) {
+      return fail('Usage engine foreground outcome has inconsistent instance identities.');
     }
     return {
       completion: parseUsageEngineCommandCompletion(value.completion),
-      instanceId: parseUsageEngineInstanceId(value.instanceId),
+      instanceId,
       kind: 'command-completed',
       protocolVersion: parseUsageEngineProtocolVersion(value.protocolVersion),
+      status,
     };
   }
   if (value.kind === 'admission-rejected') {
@@ -922,13 +1163,7 @@ const parseCurrentPublication = (value: unknown): UsageEngineCurrentPublication 
   if (value === null) {
     return null;
   }
-  if (!(isRecord(value) && hasExactKeys(value, ['publishedAt', 'revision']))) {
-    return fail('Usage engine current publication contains unknown or missing fields.');
-  }
-  return {
-    publishedAt: parseIsoTimestamp(value.publishedAt, 'Usage engine publication timestamp'),
-    revision: parseUsageEnginePublicationRevision(value.revision),
-  };
+  return parseRequiredPublication(value);
 };
 
 export const parseUsageEngineStatus = (value: unknown): UsageEngineStatus => {
@@ -1138,6 +1373,7 @@ export const classifyUsageEngineRetry = (
   if (
     code === 'aborted' ||
     code === 'authentication-failed' ||
+    code === 'command-failed' ||
     code === 'command-rejected' ||
     code === 'invalid-response' ||
     code === 'merge-invalid-input' ||

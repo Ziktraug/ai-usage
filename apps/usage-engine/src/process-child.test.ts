@@ -11,6 +11,7 @@ import {
   loadUsageEngineRendezvous,
   revealUsageEngineBearerToken,
   type UsageEngineRendezvous,
+  usageEngineTargetIdFor,
 } from '@ai-usage/usage-engine-control/node';
 
 const repositoryRoot = path.resolve(import.meta.dir, '../../..');
@@ -152,6 +153,9 @@ describe('usage engine real process lifecycle', () => {
     const rendezvous = await waitForRendezvous(primary, fixture.rendezvousPath);
     const token = revealUsageEngineBearerToken(rendezvous.token);
 
+    expect(rendezvous.targetId).toBe(
+      usageEngineTargetIdFor({ configCwd: fixture.root, databasePath: fixture.databasePath }),
+    );
     expect((await statusRequest(rendezvous)).status).toBe(401);
     const statusResponse = await statusRequest(rendezvous, token);
     expect(statusResponse.status).toBe(200);

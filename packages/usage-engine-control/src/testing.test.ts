@@ -38,6 +38,24 @@ describe('in-memory usage engine control client', () => {
     adapter.dispose();
   });
 
+  test('parses cancellation callbacks, aborts, and disposed state like the HTTP client', async () => {
+    const adapter = createInMemoryUsageEngineControlClient({ status: fixtureStatus() });
+    await expect(adapter.client.cancelCommand('command-1')).resolves.toMatchObject({
+      commandId: 'command-1',
+      disposition: 'cancelled',
+    });
+    expect(adapter.cancellations).toEqual(['command-1']);
+
+    const abort = new AbortController();
+    abort.abort();
+    await expect(adapter.client.cancelCommand('command-2', { signal: abort.signal })).rejects.toMatchObject({
+      code: 'aborted',
+    });
+    expect(adapter.cancellations).toEqual(['command-1']);
+    adapter.dispose();
+    await expect(adapter.client.cancelCommand('command-3')).rejects.toMatchObject({ code: 'engine-unavailable' });
+  });
+
   test('rejects a pending change read on abort and removes the subscriber', async () => {
     const adapter = createInMemoryUsageEngineControlClient({ status: fixtureStatus() });
     const abort = new AbortController();

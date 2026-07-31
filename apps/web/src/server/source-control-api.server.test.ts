@@ -178,6 +178,7 @@ describe('source-control usage engine proxy', () => {
   test('enforces local trust and strict bounded command JSON before resolving control', async () => {
     let controlCalls = 0;
     const control: UsageEngineControlClient = {
+      cancelCommand: () => Promise.reject(new Error('Unexpected command cancellation')),
       changes: () => ({
         [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true, value: undefined }) }),
       }),
@@ -263,6 +264,7 @@ describe('source-control usage engine proxy', () => {
   test('propagates the request AbortSignal through source command preflight, admission, and refresh', async () => {
     const observedSignals: Array<AbortSignal | undefined> = [];
     const control: UsageEngineControlClient = {
+      cancelCommand: () => Promise.reject(new Error('Unexpected command cancellation')),
       changes: () => ({
         [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true, value: undefined }) }),
       }),
@@ -316,6 +318,7 @@ describe('source-control usage engine proxy', () => {
       pull: () => new Promise<void>(() => undefined),
     });
     const control: UsageEngineControlClient = {
+      cancelCommand: () => Promise.reject(new Error('Unexpected command cancellation')),
       changes: () => ({
         [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true, value: undefined }) }),
       }),
@@ -389,6 +392,7 @@ describe('source-control usage engine proxy', () => {
 
   test('emits an explicit disconnected state when initial engine status is unavailable', async () => {
     const control: UsageEngineControlClient = {
+      cancelCommand: () => Promise.reject(new Error('Unexpected command cancellation')),
       changes: () => ({
         [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true, value: undefined }) }),
       }),

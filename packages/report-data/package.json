@@ -5,11 +5,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./one-shot-sources": "./src/one-shot-sources.ts",
-    "./provider-quota": "./src/provider-quota.ts",
+    "./portable-report": "./src/portable-report.ts",
     "./provider-quota-history": "./src/provider-quota-history.ts",
-    "./served-revision-query": "./src/served-revision-query.ts",
-    "./source-adapters": "./src/source-adapters.ts"
+    "./served-revision-query": "./src/served-revision-query.ts"
   },
   "dependencies": {
     "@ai-usage/report-core": "workspace:*",

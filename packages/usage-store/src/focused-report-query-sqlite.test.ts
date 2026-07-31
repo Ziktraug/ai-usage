@@ -22,7 +22,7 @@ import { Effect } from 'effect';
 import { executeFocusedReportQuery } from './focused-report-query-sqlite';
 import { createServedRevisionQueryDatabase } from './served-revision';
 import { assertSessionQueryDatabase, type SessionQuerySqliteDatabase } from './session-query-sqlite';
-import { publishServedReportRevision } from './writer';
+import { publishServedReportRevision, updateUsageMachineLabel } from './writer';
 
 const UNBOUNDED_PRESENTATION_SCAN_PATTERN = /SELECT\s+row_json\s+FROM\s+session_rows\s+ORDER BY/u;
 const temporaryDirectories = new Set<string>();
@@ -146,10 +146,19 @@ const publishFixture = async (
 ): Promise<string> => {
   const dbPath = path.join(revisionDirectory, 'usage.sqlite');
   await Effect.runPromise(
+    updateUsageMachineLabel({
+      dbPath,
+      machine: { id: 'machine-a', label: 'Machine A' },
+      updatedAt: new Date(fixtureSupport.generatedAt),
+    }),
+  );
+  await Effect.runPromise(
     publishServedReportRevision({
       assemble: () => ({
         configFingerprint: 'c'.repeat(64),
         generatedAt: fixtureSupport.generatedAt,
+        projectAliases: [],
+        projectGroupConfigs: [],
         rows: fixtureRows,
         sourceAuthorities: fixtureRows.map(() => 'local-observed' as const),
         support: fixtureSupport,

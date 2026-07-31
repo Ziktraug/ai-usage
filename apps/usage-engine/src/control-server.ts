@@ -1,5 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import {
+  parseUsageEngineCommandCancellationResult,
+  parseUsageEngineCommandId,
   parseUsageEngineCommandRequest,
   parseUsageEngineCommandResult,
   parseUsageEngineEvent,
@@ -18,6 +20,7 @@ const EVENT_STREAM_MEDIA_TYPE = 'text/event-stream';
 const PROTOCOL_HEADER = 'x-ai-usage-protocol-version';
 const SSE_HEARTBEAT_MS = 5000;
 const REPLAY_EVENT_ID_PATTERN = /^(?:engine|snapshot):(\d+)$/;
+const COMMAND_CANCELLATION_PATH_PATTERN = /^\/v1\/commands\/([^/]+)$/;
 const encoder = new TextEncoder();
 
 export const usageEngineControlServerBounds = {
@@ -460,6 +463,31 @@ export const createUsageEngineControlHandler = ({
           return response;
         }
         throw error;
+      }
+    }
+    const cancellationMatch = COMMAND_CANCELLATION_PATH_PATTERN.exec(pathname);
+    if (cancellationMatch) {
+      if (request.method !== 'DELETE') {
+        return new Response(null, { status: 405 });
+      }
+      if (request.body !== null) {
+        return errorResponse('command-rejected', 'Usage engine cancellation must not include a body.', 400);
+      }
+      try {
+        const commandId = parseUsageEngineCommandId(cancellationMatch[1]);
+        const result = parseUsageEngineCommandCancellationResult(
+          await deadline.run(async () => await runtime.cancelCommand(commandId)),
+        );
+        if (result.commandId !== commandId) {
+          return errorResponse('invalid-response', 'Usage engine cancellation identity is invalid.', 500);
+        }
+        return jsonResponse(result);
+      } catch (error) {
+        const boundaryResponse = requestBoundaryResponse(error);
+        if (boundaryResponse) {
+          return boundaryResponse;
+        }
+        return errorResponse('command-rejected', 'Usage engine cancellation is invalid.', 400);
       }
     }
     if (pathname === '/v1/commands') {

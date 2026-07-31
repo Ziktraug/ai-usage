@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
+  parseUsageEngineCommandCancellationResult,
   parseUsageEngineCommandResult,
   parseUsageEngineErrorResponse,
   parseUsageEngineEvent,
@@ -43,6 +44,7 @@ const fixtureStatus = (): UsageEngineStatus =>
   });
 
 interface RuntimeFixture {
+  readonly cancellations: string[];
   readonly commands: Array<{ command: UsageEngineCommand; commandId: string }>;
   readonly flush: () => Promise<void>;
   readonly publish: (event: UsageEngineEvent) => void;
@@ -50,6 +52,7 @@ interface RuntimeFixture {
 }
 
 const createRuntime = (): RuntimeFixture => {
+  const cancellations: string[] = [];
   const commands: RuntimeFixture['commands'] = [];
   const listeners = new Set<(event: UsageEngineEvent) => void>();
   const flushWaiters = new Set<() => void>();
@@ -57,6 +60,17 @@ const createRuntime = (): RuntimeFixture => {
   let publicationCount = 0;
   let disposed = false;
   const runtime: UsageEngineRuntimeHost = {
+    cancelCommand: (commandId) => {
+      cancellations.push(commandId);
+      return Promise.resolve(
+        parseUsageEngineCommandCancellationResult({
+          commandId,
+          disposition: 'cancelled',
+          instanceId: INSTANCE_ID,
+          protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
+        }),
+      );
+    },
     changes: () => ({
       [Symbol.asyncIterator]: () => {
         const queue: UsageEngineEvent[] = [];
@@ -124,6 +138,7 @@ const createRuntime = (): RuntimeFixture => {
     waitForIdle: () => Promise.resolve(),
   };
   return {
+    cancellations,
     commands,
     flush: () => {
       if (processedPublicationCount >= publicationCount) {
@@ -157,7 +172,10 @@ const completionEvent = (sequence: number, commandId = `command-${sequence}`): U
       command: 'publish',
       commandId,
       completedAt: NOW,
-      output: { kind: 'none' },
+      output: {
+        kind: 'publication',
+        publication: { publishedAt: NOW, revision: `revision-${sequence}` },
+      },
       state: 'succeeded',
     },
     event: 'command-completed',
@@ -204,6 +222,73 @@ describe('usage engine control server', () => {
     expect(fixture.commands).toEqual([
       { command: { command: 'run-source', sourceId: 'codex.sessions' }, commandId: 'caller-command' },
     ]);
+  });
+
+  test('authenticates bodyless command cancellation and preserves the exact command ID', async () => {
+    const fixture = createRuntime();
+    const handler = createUsageEngineControlHandler({
+      runtime: fixture.runtime,
+      token: createUsageEngineBearerToken(TOKEN),
+    });
+    servers.push(handler);
+
+    const response = await handler.handle(
+      new Request('http://127.0.0.1:41052/v1/commands/caller-command', {
+        headers: headers(),
+        method: 'DELETE',
+      }),
+      '127.0.0.1',
+    );
+
+    expect(response.status).toBe(200);
+    expect(parseUsageEngineCommandCancellationResult(await response.json())).toMatchObject({
+      commandId: 'caller-command',
+      disposition: 'cancelled',
+    });
+    expect(fixture.cancellations).toEqual(['caller-command']);
+
+    const withBody = await handler.handle(
+      new Request('http://127.0.0.1:41052/v1/commands/caller-command', {
+        body: '{}',
+        headers: headers(),
+        method: 'DELETE',
+      }),
+      '127.0.0.1',
+    );
+    expect(withBody.status).toBe(400);
+    const invalidId = await handler.handle(
+      new Request('http://127.0.0.1:41052/v1/commands/%2Fprivate', {
+        headers: headers(),
+        method: 'DELETE',
+      }),
+      '127.0.0.1',
+    );
+    expect(invalidId.status).toBe(400);
+    expect(fixture.cancellations).toEqual(['caller-command']);
+  });
+
+  test('bounds a non-cooperative cancellation runtime call', async () => {
+    const fixture = createRuntime();
+    const handler = createUsageEngineControlHandler({
+      requestTimeoutMs: 10,
+      runtime: {
+        ...fixture.runtime,
+        cancelCommand: () => new Promise(() => undefined),
+      },
+      token: createUsageEngineBearerToken(TOKEN),
+    });
+    servers.push(handler);
+
+    const response = await handler.handle(
+      new Request('http://127.0.0.1:41052/v1/commands/non-cooperative', {
+        headers: headers(),
+        method: 'DELETE',
+      }),
+      '127.0.0.1',
+    );
+
+    expect(response.status).toBe(408);
+    expect(parseUsageEngineErrorResponse(await response.json())).toMatchObject({ error: { code: 'timeout' } });
   });
 
   test('rejects missing auth, protocol mismatch, non-loopback peers, and non-numeric hosts', async () => {
@@ -349,7 +434,10 @@ describe('usage engine control server', () => {
           command: 'publish',
           commandId: 'command-1',
           completedAt: NOW,
-          output: { kind: 'none' },
+          output: {
+            kind: 'publication',
+            publication: { publishedAt: NOW, revision: 'revision-1' },
+          },
           state: 'succeeded',
         },
         event: 'command-completed',

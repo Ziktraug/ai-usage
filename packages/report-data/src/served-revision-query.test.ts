@@ -12,7 +12,7 @@ import {
   sessionRowIdentity,
 } from '@ai-usage/report-core/session-query';
 import type { ServedRevisionQueryTrace } from '@ai-usage/usage-store/reader';
-import { importLocalRows, publishServedReportRevision } from '@ai-usage/usage-store/testing';
+import { importLocalRows, publishServedReportRevision, updateUsageMachineLabel } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import {
   queryServedRevisionData,
@@ -124,6 +124,8 @@ const publish = async (dbPath: string, revision: string, revisionRows: readonly 
       assemble: () => ({
         configFingerprint: 'c'.repeat(64),
         generatedAt: reportSupport.generatedAt,
+        projectAliases: [],
+        projectGroupConfigs: [],
         rows: revisionRows,
         sourceAuthorities,
         support: reportSupport,
@@ -141,6 +143,7 @@ const fixture = async (): Promise<{ dbPath: string; revisionARows: readonly Seri
   temporaryRoots.push(root);
   const dbPath = path.join(root, 'usage-store.sqlite');
   await Effect.runPromise(importLocalRows({ dbPath, machine: { id: 'machine-a', label: 'Machine A' }, rows: [] }));
+  await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine: { id: 'machine-a', label: 'Machine A' } }));
   const revisionARows = rows('A');
   await publish(dbPath, 'revision-a', revisionARows, 1000);
   await publish(dbPath, 'revision-b', rows('B'), 2000);
@@ -302,6 +305,7 @@ describe('durable served revision query dispatcher', () => {
     temporaryRoots.push(root);
     const dbPath = path.join(root, 'usage-store.sqlite');
     await Effect.runPromise(importLocalRows({ dbPath, machine: { id: 'machine-a', label: 'Machine A' }, rows: [] }));
+    await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine: { id: 'machine-a', label: 'Machine A' } }));
     const scaleRows = Array.from({ length: 5000 }, (_, index) =>
       row('S', `scale-${String(index).padStart(4, '0')}`, (index % 9) + 1),
     );

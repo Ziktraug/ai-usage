@@ -58,7 +58,7 @@ test('writes one private engine event per source run without operational secrets
   });
 
   await port.start();
-  await expect(port.setSourceEnabled('claude.sessions', true)).rejects.toThrow('source run failed');
+  await expect(port.setSourceEnabled('claude.sessions', true)).rejects.toThrow('completed with failed');
   await port.dispose();
 
   const eventFiles = (await readdir(logDirectory)).filter((name) => name.endsWith('.ndjson'));

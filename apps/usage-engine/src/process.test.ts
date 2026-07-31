@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  parseUsageEngineCommandCancellationResult,
+  parseUsageEngineCommandCompletion,
   parseUsageEngineCommandRequest,
   parseUsageEngineForegroundOutcome,
   parseUsageEngineStatus,
@@ -40,15 +42,27 @@ const deferred = <Value>() => {
   return { promise, resolve: (value: Value) => resolve?.(value) };
 };
 
-const completion: UsageEngineCommandCompletion = {
+const completion: UsageEngineCommandCompletion = parseUsageEngineCommandCompletion({
   command: 'publish',
-  commandId: 'command-1' as UsageEngineCommandCompletion['commandId'],
+  commandId: 'command-1',
   completedAt: NOW,
-  output: { kind: 'none' },
+  output: {
+    kind: 'publication',
+    publication: { publishedAt: NOW, revision: 'revision-a' },
+  },
   state: 'succeeded',
-};
+});
 
 const createRuntime = (trace: string[], overrides: Partial<UsageEngineRuntimeHost> = {}): UsageEngineRuntimeHost => ({
+  cancelCommand: (commandId) =>
+    Promise.resolve(
+      parseUsageEngineCommandCancellationResult({
+        commandId,
+        disposition: 'cancelled',
+        instanceId: INSTANCE_ID,
+        protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
+      }),
+    ),
   changes: () => ({
     [Symbol.asyncIterator]: (): AsyncIterator<UsageEngineEvent> => ({
       next: () => Promise.resolve({ done: true, value: undefined }),
@@ -115,7 +129,7 @@ const createDependencies = (
   createInstanceId: () => INSTANCE_ID,
   createRuntime: () => createRuntime(trace),
   createToken: () => TOKEN,
-  publishRendezvous: ({ port, token }) => {
+  publishRendezvous: ({ port, targetId, token }) => {
     trace.push(`rendezvous:${port}:${token === TOKEN}`);
     return Promise.resolve({
       instanceId: INSTANCE_ID as never,
@@ -125,6 +139,7 @@ const createDependencies = (
         trace.push('rendezvous-remove');
         return Promise.resolve();
       },
+      targetId,
       token,
     });
   },

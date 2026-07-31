@@ -6,12 +6,15 @@ import {
 } from './client';
 import {
   parseUsageEngineCommand,
+  parseUsageEngineCommandCancellationResult,
   parseUsageEngineCommandId,
   parseUsageEngineCommandResult,
   parseUsageEngineEvent,
   parseUsageEngineStatus,
   USAGE_ENGINE_PROTOCOL_VERSION,
   type UsageEngineCommand,
+  type UsageEngineCommandCancellationResult,
+  type UsageEngineCommandId,
   type UsageEngineCommandResult,
   UsageEngineContractError,
   type UsageEngineEvent,
@@ -33,12 +36,14 @@ interface EventSubscriber {
 }
 
 export interface InMemoryUsageEngineControlOptions {
+  readonly cancelCommand?: (commandId: UsageEngineCommandId) => UsageEngineCommandCancellationResult;
   readonly execute?: (command: UsageEngineCommand, commandId: string) => UsageEngineCommandResult;
   readonly maxQueuedEvents?: number;
   readonly status: unknown;
 }
 
 export interface InMemoryUsageEngineControlAdapter {
+  readonly cancellations: readonly string[];
   readonly client: UsageEngineControlClient;
   readonly commands: readonly UsageEngineCommand[];
   readonly dispose: () => void;
@@ -48,12 +53,12 @@ export interface InMemoryUsageEngineControlAdapter {
 
 const cloneJson = (value: unknown): unknown => JSON.parse(JSON.stringify(value)) as unknown;
 
-const abortedError = (operation: 'events' | 'status' = 'status'): UsageEngineControlError =>
+const abortedError = (operation: 'command' | 'events' | 'status' = 'status'): UsageEngineControlError =>
   new UsageEngineControlError('aborted', operation, 'Usage engine in-memory request was aborted.');
 
-const assertNotAborted = (signal: AbortSignal | undefined): void => {
+const assertNotAborted = (signal: AbortSignal | undefined, operation?: 'command' | 'events' | 'status'): void => {
   if (signal?.aborted) {
-    throw abortedError();
+    throw abortedError(operation);
   }
 };
 
@@ -102,6 +107,7 @@ export const createInMemoryUsageEngineControlClient = (
   let status = parseUsageEngineStatus(cloneJson(options.status));
   let disposed = false;
   const commands: UsageEngineCommand[] = [];
+  const cancellations: string[] = [];
   const subscribers = new Set<EventSubscriber>();
 
   const getStatus = (requestOptions: UsageEngineRequestOptions = {}): Promise<UsageEngineStatus> =>
@@ -118,7 +124,7 @@ export const createInMemoryUsageEngineControlClient = (
     executeOptions: UsageEngineExecuteOptions = {},
   ): Promise<UsageEngineCommandResult> =>
     Promise.resolve().then(() => {
-      assertNotAborted(executeOptions.signal);
+      assertNotAborted(executeOptions.signal, 'command');
       if (disposed) {
         throw new UsageEngineControlError('engine-unavailable', 'command', 'In-memory usage engine is disposed.');
       }
@@ -165,6 +171,54 @@ export const createInMemoryUsageEngineControlClient = (
           'invalid-response',
           'command',
           'In-memory usage engine command response identity is invalid.',
+        );
+      }
+      return parsedResult;
+    });
+
+  const cancelCommand: UsageEngineControlClient['cancelCommand'] = (
+    commandIdValue,
+    requestOptions = {},
+  ): Promise<UsageEngineCommandCancellationResult> =>
+    Promise.resolve().then(() => {
+      assertNotAborted(requestOptions.signal, 'command');
+      if (disposed) {
+        throw new UsageEngineControlError('engine-unavailable', 'command', 'In-memory usage engine is disposed.');
+      }
+      const commandId = parseUsageEngineCommandId(commandIdValue);
+      cancellations.push(commandId);
+      let result: UsageEngineCommandCancellationResult;
+      try {
+        result =
+          options.cancelCommand?.(commandId) ??
+          parseUsageEngineCommandCancellationResult({
+            commandId,
+            disposition: 'cancelled',
+            instanceId: status.instanceId,
+            protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
+          });
+      } catch {
+        throw new UsageEngineControlError(
+          'transport-failed',
+          'command',
+          stableUsageEngineErrorMessages['transport-failed'],
+        );
+      }
+      let parsedResult: UsageEngineCommandCancellationResult;
+      try {
+        parsedResult = parseUsageEngineCommandCancellationResult(cloneJson(result));
+      } catch {
+        throw new UsageEngineControlError(
+          'invalid-response',
+          'command',
+          stableUsageEngineErrorMessages['invalid-response'],
+        );
+      }
+      if (parsedResult.commandId !== commandId || parsedResult.instanceId !== status.instanceId) {
+        throw new UsageEngineControlError(
+          'invalid-response',
+          'command',
+          'In-memory usage engine cancellation response identity is invalid.',
         );
       }
       return parsedResult;
@@ -262,7 +316,8 @@ export const createInMemoryUsageEngineControlClient = (
   };
 
   return {
-    client: { changes, execute, getStatus },
+    cancellations,
+    client: { cancelCommand, changes, execute, getStatus },
     commands,
     dispose,
     publish,

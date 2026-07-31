@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./main": "./src/main.ts"
+  },
   "dependencies": {
     "@ai-usage/effect-runtime": "workspace:*",
     "@ai-usage/usage-engine-control": "workspace:*",
