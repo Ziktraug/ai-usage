@@ -15,8 +15,9 @@ engine runtime. Skills remains the deliberate field-scoped exception.
 ## Data and control boundaries
 
 Report support, Overview, Breakdown, Sessions, campaign children, neighbors,
-detail anchors, and quota history query durable revision-keyed projections via
-`usage-store/reader`. Commands/status/bounded SSE use
+and detail anchors query durable revision-keyed projections via
+`usage-store/reader`. Quota history separately queries bounded durable provider
+observations without naming a served revision. Commands/status/bounded SSE use
 `usage-engine-control`. There is no report data endpoint, copied revision
 database, query lease, or per-query Bun subprocess.
 

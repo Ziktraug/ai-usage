@@ -27,7 +27,6 @@ const createPaths = async (): Promise<UsageEngineProcessPaths> => {
     databasePath: path.join(root, 'store', 'usage-store.sqlite'),
     homeDirectory: path.join(root, 'home'),
     inboxDirectory: path.join(root, 'state', 'inbox'),
-    logDirectory: path.join(root, 'logs'),
     operatorCwd: path.join(root, 'operator'),
     stateDirectory: path.join(root, 'state'),
     temporaryRoot: path.join(root, 'temporary'),

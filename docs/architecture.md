@@ -103,11 +103,12 @@ distinguish missing, old/new schema, unavailable/expired revision, busy, and
 corrupt data.
 
 Served report support, Overview, Breakdown, Sessions, campaign children,
-neighbors, detail anchors, and quota history are bounded direct queries against
-revision-keyed durable projections. SSR reads the current manifest and bounded
-support bootstrap in one transaction; destination queries after hydration name
-that same revision. The browser owns destination fingerprinting, supersession,
-atomic commit, and one expiry retry.
+neighbors, and detail anchors are bounded direct queries against revision-keyed
+durable projections. Quota history is a separate bounded direct read of durable
+provider-quota observations and does not name a served revision. SSR reads the
+current manifest and bounded support bootstrap in one transaction; destination
+queries after hydration name that same revision. The browser owns destination
+fingerprinting, supersession, atomic commit, and one expiry retry.
 
 Engine availability and stored-data availability are independent. If the
 engine stops after a compatible revision is committed, Web and `--stored` CLI
@@ -166,9 +167,10 @@ policies, process-resource configuration, and semantic terminal projectors.
 Historical schema-v1 files remain valid append-only records and are not
 rewritten to add schema-v2 resource fields.
 
-Engine source/publication boundaries use surface `engine`; web direct-read
-boundaries use `web`; CLI wide-event observability remains file-only. Event
-state is scoped per real execution even when bounded workers are long-lived.
+Source, enrichment, publication, migration, retention, and engine-command
+boundaries use surface `engine`; Web keeps HTTP/SSR/direct-read boundaries on
+`web`; CLI keeps command/render events file-only. Event state is scoped per real
+execution even when bounded workers are long-lived.
 
 ### `@ai-usage/report-core`
 

@@ -6,7 +6,6 @@ export interface CliUsagePaths {
   readonly configCwd: string;
   readonly databasePath: string;
   readonly homeDirectory: string;
-  readonly logDirectory: string;
   readonly operatorCwd: string;
   readonly stateDirectory: string;
   readonly temporaryRoot: string;
@@ -41,11 +40,6 @@ export const resolveCliUsagePaths = (options: ResolveCliUsagePathsOptions = {}):
     configCwd: optionalAbsolutePath(env.AI_USAGE_ROOT_DIR, operatorCwd, 'CLI config root'),
     databasePath: optionalAbsolutePath(env.AI_USAGE_DATABASE_PATH, usageStorePath(homeDirectory), 'CLI database path'),
     homeDirectory,
-    logDirectory: optionalAbsolutePath(
-      env.AI_USAGE_LOG_DIR,
-      path.join(homeDirectory, '.local', 'state', 'ai-usage', 'logs'),
-      'CLI log directory',
-    ),
     operatorCwd,
     stateDirectory,
     temporaryRoot: optionalAbsolutePath(

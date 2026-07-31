@@ -1,5 +1,10 @@
 # Plan 052: Split the usage engine from the web and CLI runtimes
 
+> **Status: DONE.** Implemented and verified on 2026-07-31. Every command in
+> this plan passed, the five-minute isolated I/O trace met all eight acceptance
+> fields, and the retired-symbol/sole-writer searches found no forbidden
+> production path.
+
 > **Executor instructions**: This is an intentional big-bang architecture
 > replacement, not a compatibility migration. Read the whole plan before
 > changing code. Complete and verify each wave before moving to the next one,
@@ -534,28 +539,28 @@ SQLite writer composition root and no legacy web/CLI write path.
 
 ## Done criteria
 
-- [ ] `apps/usage-engine` is the only production composition root that can open
+- [x] `apps/usage-engine` is the only production composition root that can open
       usage SQLite read-write or run migrations/checkpoints.
-- [ ] Web and CLI import only usage-store reader and never collectors, writer,
+- [x] Web and CLI import only usage-store reader and never collectors, writer,
       or engine-runtime.
-- [ ] Report/session/focused/quota reads use read-only SQLite; control has no
+- [x] Report/session/focused/quota reads use read-only SQLite; control has no
       data-query endpoint.
-- [ ] Revision publication/current pointer commit atomically and exact reads are
+- [x] Revision publication/current pointer commit atomically and exact reads are
       isolated from later publication.
-- [ ] File revision registries, copied Session databases, temp leases, and
+- [x] File revision registries, copied Session databases, temp leases, and
       per-query artifact subprocesses are deleted.
-- [ ] Web HMR cannot collect, publish, migrate, or checkpoint.
-- [ ] Dev/build outputs are isolated and build cannot delete active dev files.
-- [ ] CLI fresh/mutating behavior has no legacy one-shot writer fallback.
-- [ ] Web reads a compatible last publication with engine down and disables
+- [x] Web HMR cannot collect, publish, migrate, or checkpoint.
+- [x] Dev/build outputs are isolated and build cannot delete active dev files.
+- [x] CLI fresh/mutating behavior has no legacy one-shot writer fallback.
+- [x] Web reads a compatible last publication with engine down and disables
       mutations clearly.
-- [ ] Demo loads neither production engine/control nor durable reader.
-- [ ] Existing source, revision, privacy, transfer, and event guarantees remain
+- [x] Demo loads neither production engine/control nor durable reader.
+- [x] Existing source, revision, privacy, transfer, and event guarantees remain
       covered.
-- [ ] Warm-idle write loop, orphan lease growth, deleted dev descriptors, and
+- [x] Warm-idle write loop, orphan lease growth, deleted dev descriptors, and
       per-query Bun process are absent in measured evidence.
-- [ ] Check, lint, types, tests, build, E2E/smoke, and diff hygiene all pass.
-- [ ] Docs/ADRs describe final code and the index row is `DONE`.
+- [x] Check, lint, types, tests, build, E2E/smoke, and diff hygiene all pass.
+- [x] Docs/ADRs describe final code and the index row is `DONE`.
 
 ## STOP conditions
 

@@ -43,11 +43,6 @@ export const resolveUsageEngineProcessPaths = (
     ),
     homeDirectory,
     inboxDirectory: path.join(stateDirectory, 'inbox'),
-    logDirectory: optionalAbsolutePath(
-      env.AI_USAGE_LOG_DIR,
-      path.join(homeDirectory, '.local', 'state', 'ai-usage', 'logs'),
-      'Usage engine log directory',
-    ),
     operatorCwd: cwd,
     stateDirectory,
     temporaryRoot: optionalAbsolutePath(

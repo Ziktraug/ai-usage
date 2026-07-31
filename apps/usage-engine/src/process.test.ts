@@ -28,7 +28,6 @@ const paths: UsageEngineProcessPaths = {
   databasePath: '/synthetic/store.sqlite',
   homeDirectory: '/synthetic/home',
   inboxDirectory: '/synthetic/inbox',
-  logDirectory: '/synthetic/logs',
   operatorCwd: '/synthetic/operator',
   stateDirectory: '/synthetic/state',
   temporaryRoot: '/synthetic/tmp',

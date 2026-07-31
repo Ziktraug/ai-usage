@@ -107,7 +107,7 @@ const resolveProductionRuntimePaths = (
     ),
     homeDirectory,
     logDirectory: absolutePath(
-      environment.AI_USAGE_LOG_DIR ?? path.join(homeDirectory, '.local', 'state', 'ai-usage', 'logs'),
+      environment.AI_USAGE_LOG_DIR ?? path.join(rootDirectory, 'logs'),
       'Production log directory',
     ),
     rendezvousPath: path.join(stateDirectory, 'rendezvous.json'),

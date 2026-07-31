@@ -399,7 +399,7 @@ describe('production environment', () => {
     });
     expect(environment.AI_USAGE_ENGINE_INSTANCE_ID).toMatch(uuidV4Pattern);
     expect(environment.AI_USAGE_TEMP_ROOT).toBe('/var/tmp/ai-usage-fixture');
-    expect(environment.AI_USAGE_LOG_DIR).toBe(path.join(homeDirectory, '.local/state/ai-usage/logs'));
+    expect(environment.AI_USAGE_LOG_DIR).toBe(path.join(rootDirectory, 'logs'));
   });
 
   test('uses absolute system defaults without accepting relative runtime paths', () => {

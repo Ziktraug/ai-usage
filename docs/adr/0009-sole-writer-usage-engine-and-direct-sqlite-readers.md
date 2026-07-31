@@ -72,8 +72,10 @@ and visible.
   file transfer, confirmation tokens, and provider-resolution restrictions do
   not change.
 - Schema-v2 wide-event isolation, sanitization, presentation, delivery, and
-  source-to-publication generation correlation do not change; source and
-  publication events now have surface `engine`.
+  source-to-publication generation correlation do not change. Source,
+  enrichment, publication, migration, retention, and engine-command events use
+  surface `engine`; Web keeps HTTP/SSR/direct-read events and CLI keeps
+  command/render events.
 
 ## Consequences
 

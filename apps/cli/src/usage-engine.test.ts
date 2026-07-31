@@ -113,7 +113,6 @@ const createForegroundFixture = async (): Promise<{
       configCwd: root,
       databasePath: path.join(root, 'store', 'usage.sqlite'),
       homeDirectory,
-      logDirectory: path.join(root, 'logs'),
       operatorCwd: root,
       stateDirectory,
       temporaryRoot,

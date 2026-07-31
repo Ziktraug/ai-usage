@@ -20,7 +20,6 @@ export interface UsageEngineProcessPaths {
   readonly databasePath: string;
   readonly homeDirectory: string;
   readonly inboxDirectory: string;
-  readonly logDirectory: string;
   readonly operatorCwd: string;
   readonly stateDirectory: string;
   readonly temporaryRoot: string;

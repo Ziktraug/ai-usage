@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { makeAiUsageWideEventResource } from '@ai-usage/effect-runtime';
-import { makeEngineWideEventSinkLayer } from '@ai-usage/effect-runtime/node';
+import { makeEngineWideEventSinkLayer, resolveWideEventLogDirectory } from '@ai-usage/effect-runtime/node';
 import { parseUsageEngineInstanceId, type UsageEngineInstanceId } from '@ai-usage/usage-engine-control';
 import { createUsageEngineBearerToken } from '@ai-usage/usage-engine-control/node';
 import { createLiveUsageEngineRuntime } from '@ai-usage/usage-engine-runtime/live';
@@ -20,7 +20,10 @@ const engineInstanceIdFrom = (env: NodeJS.ProcessEnv): UsageEngineInstanceId =>
     ? parseUsageEngineInstanceId(randomUUID())
     : parseUsageEngineInstanceId(env.AI_USAGE_ENGINE_INSTANCE_ID);
 
-const createProductionDependencies = (env: NodeJS.ProcessEnv): UsageEngineProcessDependencies => ({
+const createProductionDependencies = (
+  env: NodeJS.ProcessEnv,
+  logDirectory: string | null,
+): UsageEngineProcessDependencies => ({
   check: checkUsageEngine,
   createInstanceId: () => engineInstanceIdFrom(env),
   createRuntime: ({ collectionMode, instanceId, paths }) =>
@@ -55,7 +58,7 @@ const createProductionDependencies = (env: NodeJS.ProcessEnv): UsageEngineProces
         consoleWrite: (line) => {
           process.stderr.write(`${line}\n`);
         },
-        directory: paths.logDirectory,
+        directory: logDirectory,
         resource: {
           ...makeAiUsageWideEventResource({
             instanceId,
@@ -80,11 +83,12 @@ export const runUsageEngineMain = async (
 ): Promise<number> => {
   const mode = parseUsageEngineProcessArguments(args);
   const paths = resolveUsageEngineProcessPaths({ env });
+  const logDirectory = await resolveWideEventLogDirectory(env);
   const termination = createUsageEngineTermination(process, (signal) => {
     process.exit(interruptedExitCode(signal));
   });
   try {
-    return await createUsageEngineProcess(createProductionDependencies(env)).run({
+    return await createUsageEngineProcess(createProductionDependencies(env, logDirectory)).run({
       forcedTermination: termination.forced,
       mode,
       paths,

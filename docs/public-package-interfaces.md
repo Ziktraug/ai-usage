@@ -107,8 +107,9 @@ not belong here.
   validation and direct revision-keyed execution through the read-only store.
 
 There are no collection, scheduler, source-adapter, one-shot writer, artifact,
-lease, or subprocess exports. `report-data` may import only
-`@ai-usage/usage-store/reader`, never `./writer` or `./testing`.
+lease, or subprocess exports. Production `report-data` code may import only
+`@ai-usage/usage-store/reader` from usage-store; tests may use `./testing`, and
+`./writer` is always forbidden.
 
 ## `@ai-usage/usage-store`
 
@@ -183,11 +184,11 @@ This is the sole deep write-side service. It may import collectors,
 
 - `apps/usage-engine` is the only production app that imports
   `usage-engine-runtime` or composes `usage-store/writer` transitively.
-- `apps/web` may import report-core/report-data, usage-engine-control,
-  `usage-store/reader`, `local-machine/session-detail`, and
-  `local-machine/skills-config`. It must not reach collectors or engine-runtime
-  directly or transitively.
-- `apps/cli` may import report-core,
+- `apps/web` may import design-system, effect-runtime, report-core/report-data,
+  skills, usage-engine-control, `usage-store/reader`,
+  `local-machine/session-detail`, and `local-machine/skills-config`. It must not
+  reach collectors or engine-runtime directly or transitively.
+- `apps/cli` may import effect-runtime, report-core,
   `@ai-usage/report-data/portable-report`, usage-engine-control,
   `usage-store/reader`, and `@ai-usage/usage-engine/main` for a bounded
   foreground process. The executable is a terminal process boundary, not an

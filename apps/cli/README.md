@@ -29,7 +29,8 @@ stdout and preserve warning order and exit-code contracts.
 
 ## Dependency rules
 
-CLI may use report-core, `@ai-usage/report-data/portable-report`, usage-engine-control,
+CLI may use effect-runtime, report-core,
+`@ai-usage/report-data/portable-report`, usage-engine-control,
 `usage-store/reader`, and the engine executable entrypoint as a terminal child
 process. It must not import local-machine, local-collectors,
 usage-engine-runtime, or `usage-store/writer` directly or transitively.

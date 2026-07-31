@@ -15,7 +15,6 @@ describe('usage engine process paths', () => {
       databasePath: '/isolated/home/.config/ai-usage/usage-store.sqlite',
       homeDirectory: '/isolated/home',
       inboxDirectory: '/isolated/home/.config/ai-usage/engine/inbox',
-      logDirectory: '/isolated/home/.local/state/ai-usage/logs',
       operatorCwd: '/workspace',
       stateDirectory: '/isolated/home/.config/ai-usage/engine',
       temporaryRoot: '/isolated/tmp',
@@ -41,7 +40,6 @@ describe('usage engine process paths', () => {
       configCwd: path.join(root, 'repo'),
       databasePath: path.join(root, 'store.sqlite'),
       inboxDirectory: path.join(root, 'state', 'inbox'),
-      logDirectory: path.join(root, 'logs'),
       stateDirectory: path.join(root, 'state'),
       temporaryRoot: path.join(root, 'tmp'),
     });

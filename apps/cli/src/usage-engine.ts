@@ -281,7 +281,6 @@ export const createLiveCliUsageEngine = (options: CreateLiveCliUsageEngineOption
         AI_USAGE_DATABASE_PATH: options.paths.databasePath,
         AI_USAGE_ENGINE_STATE_DIR: options.paths.stateDirectory,
         AI_USAGE_HOME: options.paths.homeDirectory,
-        AI_USAGE_LOG_DIR: options.paths.logDirectory,
         AI_USAGE_ROOT_DIR: options.paths.configCwd,
         AI_USAGE_TEMP_ROOT: options.paths.temporaryRoot,
         HOME: options.paths.homeDirectory,

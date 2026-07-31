@@ -30,10 +30,11 @@ local-collectors, usage-engine-runtime, apps, or `usage-store/writer`.
 
 Root stored capture/payload/fingerprint workflows require explicit `dbPath`,
 config, and machine inputs. Quota-history and served-revision query seams need
-their bounded request plus `dbPath`. Queries open the durable database
-read-only/query-only and name an immutable served revision. Portable inputs
-retain `portable-opaque` authority; only stored locally observed authority may
-later permit local detail resolution.
+their bounded request plus `dbPath`. Both open the durable database
+read-only/query-only; only served-report queries name an immutable revision,
+while quota history reads bounded durable observations independently. Portable
+inputs retain `portable-opaque` authority; only stored locally observed
+authority may later permit local detail resolution.
 
 ## Test strategy
 

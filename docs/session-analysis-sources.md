@@ -105,13 +105,12 @@ quality status. A successful source status with no source warnings only proves
 that its adapter completed; it does not prove that an older long-lived process
 loaded the newest collector implementation.
 
-In development, the source-control runtime persists across scheduled runs.
-The workspace packages used by that runtime must stay inside Nitro's server
-module graph, and a full reload must dispose or replace the installed runtime
-before the plugin is evaluated again. Parser cache versions are part of the
-same contract: any change to attribution or serialized session semantics must
-bump the cache version so records produced by an older parser cannot be reused
-under the new rules.
+In development, source control lives in the persistent usage-engine task.
+Web/Nitro HMR neither disposes nor recreates it; engine/runtime package changes
+belong to the engine task. Parser cache versions are part of the same contract:
+any change to attribution or serialized session semantics must bump the cache
+version so records produced by an older parser cannot be reused under the new
+rules.
 
 Portable usage snapshots and merge bundles write schema version 3. Version 3
 can preserve bounded, credential-free `UsageRowSource.vcs` display facts while
@@ -387,7 +386,7 @@ may be displayed immediately. Any missing GitHub PR lookup requires an
 explicit user action; the server then re-resolves repository and branch from
 the trusted exact-revision anchor and invokes bounded `gh` without a shell.
 Results and sanitized failures stay in memory and are absent from the store,
-initial HTML, SQLite artifacts, snapshots, merge bundles, JSON, and CSV.
+initial HTML, snapshots, merge bundles, JSON, and CSV.
 
 ## Maintenance checklist
 

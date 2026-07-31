@@ -22,8 +22,9 @@ request unless the user explicitly asks.
 Plan 052 records the 2026-07-29 decision at `f4f9650` to replace that web-owned
 runtime with a sole-writer Bun usage engine. Web and CLI read revision-keyed
 projections directly from SQLite; a minimal authenticated loopback API carries
-commands and status only. It is an intentional big-bang cutover and also owns
-the measured revision-lease and concurrent dev/build I/O regressions.
+commands, status, and bounded events only. It is an intentional big-bang
+cutover and also owns the measured revision-lease and concurrent dev/build I/O
+regressions.
 
 ## Execution order & status
 
@@ -77,7 +78,7 @@ the measured revision-lease and concurrent dev/build I/O regressions.
 | 049 | Make Undeclared Origin a Gap, Not a Category | P1 | M | 048 | DONE |
 | 050 | Make the E2E Gate Deterministic | P0 | S | - | DONE |
 | 051 | Allow Local Campaign Label Overrides | P3 | M | 045 | TODO |
-| 052 | Split the Usage Engine From the Web and CLI Runtimes | P0 | XL | 022-024, 043-044 | TODO |
+| 052 | Split the Usage Engine From the Web and CLI Runtimes | P0 | XL | 022-024, 043-044 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
