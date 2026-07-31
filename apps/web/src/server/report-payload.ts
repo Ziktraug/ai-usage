@@ -27,7 +27,7 @@ const runLiveServerFunction = async <Result>(operation: () => Promise<Result> | 
 export const getCampaignLabelOverrides = createServerFn({ method: 'GET' }).handler(
   async () =>
     await runLiveServerFunction(async () => {
-      const { getCampaignLabelOverridesForServer } = await import('./report-payload.server');
+      const { getCampaignLabelOverridesForServer } = await import('./campaign-labels.server');
       return await getCampaignLabelOverridesForServer();
     }),
 );
@@ -37,7 +37,7 @@ export const setCampaignLabelOverride = createServerFn({ method: 'POST' })
   .handler(
     async ({ data }) =>
       await runLiveServerFunction(async () => {
-        const { setCampaignLabelOverrideForServer } = await import('./report-payload.server');
+        const { setCampaignLabelOverrideForServer } = await import('./campaign-labels.server');
         return await setCampaignLabelOverrideForServer(data);
       }),
   );

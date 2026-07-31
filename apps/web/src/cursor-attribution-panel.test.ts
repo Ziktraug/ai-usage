@@ -83,7 +83,7 @@ describe('Cursor AI percentage summary', () => {
     expect(summary).toEqual({ measuredCommits: 1, percentage: 40, totalCommits: 4 });
   });
 
-  test('excludes duplicate commits whose line totals disagree', () => {
+  test('treats duplicate line-total disagreement as unmeasured instead of choosing an authority', () => {
     const summary = summarizeCursorAiPercentage([
       cursorRow('inconsistent-weight', 40, 100),
       { ...cursorRow('inconsistent-weight', 40, 200), branchName: 'release' },

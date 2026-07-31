@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { applyCampaignLabelOverrideMutation } from '@ai-usage/report-core/campaign-label';
 import type { CampaignLabelApi, CampaignLabelApiResponse } from './campaign-label-controller';
 import { createCampaignLabelController } from './campaign-label-controller';
 import { createCampaignLabelE2EApi } from './campaign-label-e2e-fixture';
@@ -9,27 +10,9 @@ describe('campaign label controller', () => {
     const api: CampaignLabelApi = {
       load: () => Promise.resolve(stored),
       mutate: (input) => {
-        const existingIndex = stored.campaignLabelOverrides.findIndex(
-          ({ campaignKey }) => campaignKey === input.campaignKey,
-        );
-        if (input.label === null) {
-          stored = {
-            campaignLabelOverrides: stored.campaignLabelOverrides.filter(
-              ({ campaignKey }) => campaignKey !== input.campaignKey,
-            ),
-          };
-        } else if (existingIndex >= 0) {
-          const next = [...stored.campaignLabelOverrides];
-          next[existingIndex] = { campaignKey: input.campaignKey, label: input.label };
-          stored = { campaignLabelOverrides: next };
-        } else {
-          stored = {
-            campaignLabelOverrides: [
-              ...stored.campaignLabelOverrides,
-              { campaignKey: input.campaignKey, label: input.label },
-            ],
-          };
-        }
+        stored = {
+          campaignLabelOverrides: applyCampaignLabelOverrideMutation(stored.campaignLabelOverrides, input),
+        };
         return Promise.resolve(stored);
       },
     };

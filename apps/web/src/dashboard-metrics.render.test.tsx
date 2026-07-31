@@ -3,6 +3,7 @@ import { type Component, createComponent } from 'solid-js';
 import { renderToString } from 'solid-js/web';
 import { createServer } from 'vite';
 import solidPlugin from 'vite-plugin-solid';
+import type { DashboardMetricKind } from './dashboard-metric-model';
 
 interface MetricTileProps {
   delta?: { hint: string; pct: number } | null;
@@ -15,7 +16,7 @@ interface MetricComparisonNoticeProps {
   state: MetricComparisonState;
 }
 interface ValueBasesPanelProps {
-  metrics: MetricTileProps[];
+  metrics: (MetricTileProps & { kind: DashboardMetricKind })[];
 }
 
 const viteServer = await createServer({
@@ -88,9 +89,9 @@ describe('MetricTile', () => {
     const html = renderToString(() =>
       createComponent(ValueBasesPanel, {
         metrics: [
-          { hint: 'Standard API prices', label: 'API value · measured', value: '$12.00' },
-          { hint: 'Out-of-pocket spend', label: 'Actual cost', value: '$3.00' },
-          { hint: 'Covered by subscription quota', label: 'Sub value', value: '$9.00' },
+          { hint: 'Standard API prices', kind: 'api-value', label: 'API value · measured', value: '$12.00' },
+          { hint: 'Out-of-pocket spend', kind: 'actual-cost', label: 'Actual cost', value: '$3.00' },
+          { hint: 'Covered by subscription quota', kind: 'subscription-value', label: 'Sub value', value: '$9.00' },
         ],
       }),
     );

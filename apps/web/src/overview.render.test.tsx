@@ -1,5 +1,7 @@
 import { afterAll, expect, test } from 'bun:test';
+import type { FocusedOverviewRecords, FocusedOverviewSessionItem } from '@ai-usage/report-core/focused-report-query';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
+import { enrichSessionPresentationRow } from '@ai-usage/report-core/session-query';
 import { type Component, createComponent } from 'solid-js';
 import { renderToString } from 'solid-js/web';
 import { createServer } from 'vite';
@@ -16,6 +18,16 @@ interface SessionShapeProps {
   rows: DashboardRow[];
 }
 
+interface RecordsProps {
+  campaigns: CampaignView[];
+  focused: FocusedOverviewRecords | null | undefined;
+  labelFor: (campaignKey: string, derivedLabel: string) => string;
+  onSelectDay: (day: Date) => void;
+  onSelectSession: () => void;
+  rows: DashboardRow[];
+  timelineRows: DashboardRow[];
+}
+
 const viteServer = await createServer({
   appType: 'custom',
   configFile: false,
@@ -25,9 +37,19 @@ const viteServer = await createServer({
   server: { hmr: false, middlewareMode: true, ws: false },
 });
 const loaded: unknown = await viteServer.ssrLoadModule('/src/overview.tsx');
-if (!(loaded && typeof loaded === 'object' && 'SessionShape' in loaded && typeof loaded.SessionShape === 'function')) {
-  throw new Error('Vite did not load SessionShape');
+if (
+  !(
+    loaded &&
+    typeof loaded === 'object' &&
+    'Records' in loaded &&
+    typeof loaded.Records === 'function' &&
+    'SessionShape' in loaded &&
+    typeof loaded.SessionShape === 'function'
+  )
+) {
+  throw new Error('Vite did not load the Overview render surfaces');
 }
+const Records = loaded.Records as Component<RecordsProps>;
 const SessionShape = loaded.SessionShape as Component<SessionShapeProps>;
 afterAll(async () => viteServer.close());
 
@@ -85,4 +107,47 @@ test('renders fixed Session Shape points, harness color key, and campaign langua
   expect(html).toContain('data-session-shape-summary');
   expect(html).toContain('session/campaign groups');
   expect(html).not.toContain('density mark');
+});
+
+test('applies campaign label overrides to focused top and longest record cards', () => {
+  const campaignRow = row({});
+  const focusedCampaign: FocusedOverviewSessionItem = {
+    costApprox: 10,
+    costKnown: true,
+    durationMs: 60_000,
+    harness: 'Codex',
+    kind: 'campaign',
+    label: 'Derived campaign',
+    row: enrichSessionPresentationRow({
+      ...campaignRow,
+      source: {
+        ...campaignRow.source,
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        rootSourceSessionId: 'root-a',
+        sourceSessionId: 'root-a',
+      },
+    }),
+    sessionCount: 2,
+  };
+  const html = renderToString(() =>
+    createComponent(Records, {
+      campaigns: [],
+      focused: {
+        busiest: null,
+        longest: focusedCampaign,
+        streak: 0,
+        streakEnd: null,
+        topCost: focusedCampaign,
+      },
+      labelFor: () => 'Release train',
+      onSelectDay: () => undefined,
+      onSelectSession: () => undefined,
+      rows: [],
+      timelineRows: [],
+    }),
+  );
+
+  expect(html.match(/Release train/g)).toHaveLength(2);
+  expect(html).not.toContain('Derived campaign');
 });

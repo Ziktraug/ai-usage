@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { chmod, open, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { harnessProviderAnalyticsKey } from '@ai-usage/report-core/analytics';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import { providerStatusKeyForUsage, providerStatusScopeKey } from '@ai-usage/report-core/provider-status';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
@@ -27,8 +28,8 @@ import {
 
 export const SESSION_QUERY_DATABASE_NAME = 'sessions.sqlite';
 
-const SESSION_QUERY_SCHEMA_VERSION = 15;
-const SESSION_ROW_INSERT_VALUE_COUNT = 82;
+const SESSION_QUERY_SCHEMA_VERSION = 16;
+const SESSION_ROW_INSERT_VALUE_COUNT = 83;
 const createFileFlags =
   // biome-ignore lint/suspicious/noBitwiseOperators: Node file-open flags are a documented bitmask API.
   fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW;
@@ -108,6 +109,7 @@ const createSchema = (database: SqliteDatabase): void => {
       provider_scope_key TEXT NOT NULL,
       provider TEXT NOT NULL,
       provider_display TEXT NOT NULL,
+      harness_provider_key TEXT NOT NULL,
       model_key TEXT NOT NULL,
       project_key TEXT NOT NULL,
       project_label TEXT NOT NULL,
@@ -209,7 +211,7 @@ const insertSql = `
   INSERT INTO session_rows (
     ordinal, row_id, row_json, source_row_json, source_authority, active_date, active_time, local_time_weekday, local_time_hour, search_text, harness,
     machine_id, machine_label,
-    provider_scope_key, provider, provider_display, model_key, project_key, project_label, origin, origin_provenance,
+    provider_scope_key, provider, provider_display, harness_provider_key, model_key, project_key, project_label, origin, origin_provenance,
     campaign_key, campaign_label, campaign_root, campaign_total_count,
     ${sessionSortFields.map((field) => `sort_${field === 'cache' ? 'cache' : field.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`).join(', ')},
     ${sessionTextSortFields.map((field) => `sort_${field}_rank`).join(', ')},
@@ -321,6 +323,7 @@ const insertRow = (
     providerStatusScopeKey(providerKey, machineId || undefined),
     row.provider,
     row.providerDisplay,
+    harnessProviderAnalyticsKey(row.harness, row.providerDisplay),
     row.modelKey,
     row.projectKey,
     row.projectLabel,

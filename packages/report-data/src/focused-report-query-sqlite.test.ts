@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmod, mkdtemp, open, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { harnessProviderAnalyticsKey } from '@ai-usage/report-core/analytics';
 import {
   type FocusedOverviewRequest,
   type FocusedReportSupport,
@@ -612,6 +613,64 @@ describe('focused report SQLite queries', () => {
           sessions: 1,
           tools: 0,
           turns: 0,
+        },
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  test('preserves every exact harness-provider pair and its totals across pure and SQLite projections', async () => {
+    const jointRows = [
+      { ...row('a-one', 1, 1), harness: 'Harness "A"', provider: 'Provider\nOne' },
+      { ...row('a-two', 2, 2), harness: 'Harness "A"', provider: 'Provider Two' },
+      { ...row('b-one', 3, 3), harness: 'Harness B', provider: 'Provider\nOne' },
+    ];
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-joint-distribution-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    await materializeSessionQueryDatabase(revisionDirectory, jointRows, support);
+    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), { readonly: true });
+    assertSessionQueryDatabase(database);
+    const request = {
+      query: {
+        filters: { fields: {}, harness: [], machine: [], query: '' },
+        range: { from: null, to: null },
+        revision: 'revision-joint-distribution',
+      },
+    };
+    try {
+      const sqliteResult = executeFocusedReportQuery(database, 'breakdown', request);
+      const pureResult = projectFocusedBreakdown(jointRows, support, request);
+      expect(sqliteResult).toEqual(pureResult);
+      if (!('groups' in sqliteResult)) {
+        throw new Error('The joint-distribution query must return Breakdown groups');
+      }
+      expect(
+        sqliteResult.groups.harnessProviders.map(({ costSum, fresh, key, sessions }) => ({
+          costSum,
+          fresh,
+          key,
+          sessions,
+        })),
+      ).toEqual([
+        {
+          costSum: 3,
+          fresh: 9,
+          key: harnessProviderAnalyticsKey('Harness B', 'Provider\nOne'),
+          sessions: 1,
+        },
+        {
+          costSum: 2,
+          fresh: 6,
+          key: harnessProviderAnalyticsKey('Harness "A"', 'Provider Two'),
+          sessions: 1,
+        },
+        {
+          costSum: 1,
+          fresh: 3,
+          key: harnessProviderAnalyticsKey('Harness "A"', 'Provider\nOne'),
+          sessions: 1,
         },
       ]);
     } finally {

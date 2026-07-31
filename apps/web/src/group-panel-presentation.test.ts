@@ -116,6 +116,17 @@ describe('Breakdown sorting', () => {
 
     expect(sortBreakdownGroups([first, second], 'sessions')).toEqual([first, second]);
   });
+
+  test('uses the displayed label rather than the internal key as the final tie-breaker', () => {
+    const unattributed = analyticsGroup('<synthetic>', 1, 1, 1);
+    const alpha = analyticsGroup('Alpha', 1, 1, 1);
+
+    expect(
+      groupKeys(
+        filterAndSortBreakdownGroups([unattributed, alpha], '', 'value', (group) => breakdownModelLabel(group.key)),
+      ),
+    ).toEqual(['Alpha', '<synthetic>']);
+  });
 });
 
 describe('Breakdown search', () => {

@@ -32,7 +32,6 @@ import {
 import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
 import {
   activeTimeMatchesLocalTimeCell,
-  isSessionOrigin,
   type LocalTimeCell,
   type SessionOrigin,
   sessionQueryFingerprint,
@@ -51,16 +50,13 @@ import {
   Suspense,
   untrack,
 } from 'solid-js';
-import {
-  type CampaignLabelApi,
-  createCampaignLabelController,
-  createLiveCampaignLabelApi,
-} from './campaign-label-controller';
+import type { CampaignLabelApi } from './campaign-label-controller';
 import {
   indexCampaignLabelOverrides,
   presentCampaignTimelineSeries,
   presentServedCampaignDisplayRow,
 } from './campaign-label-overrides';
+import { createCampaignLabelRuntime } from './campaign-label-runtime';
 import {
   logClientPerf,
   logNavigationPerf,
@@ -70,15 +66,10 @@ import {
 } from './client-perf';
 import { SourceControlSummary } from './components/source-control-summary';
 import { CursorAttributionPanel } from './cursor-attribution-panel';
+import { applyTimelineDimensionFilter } from './dashboard-filter-navigation';
 import { FilterPill, fieldFilterLabels } from './dashboard-filters';
-import {
-  dashboardMetricGrid,
-  MetricComparisonNotice,
-  MetricTile,
-  metricComparisonStateFor,
-  splitDashboardMetrics,
-  ValueBasesPanel,
-} from './dashboard-metrics';
+import { metricComparisonStateFor, splitDashboardMetrics } from './dashboard-metric-model';
+import { dashboardMetricGrid, MetricComparisonNotice, MetricTile, ValueBasesPanel } from './dashboard-metrics';
 import {
   buildCampaignTableRows,
   buildCampaignViews,
@@ -98,6 +89,7 @@ import {
 } from './dashboard-model';
 import { DashboardPendingSurface } from './dashboard-pending-surface';
 import { DashboardProviderStatus } from './dashboard-provider-status';
+import { buildDashboardReportDestinationScope } from './dashboard-report-destination';
 import { createDashboardReportLifecycle, type DashboardReportDestinationScope } from './dashboard-report-lifecycle';
 import {
   type BreakdownSort,
@@ -144,6 +136,7 @@ import { ProjectGroupEditor } from './project-group-editor';
 import { ProjectSummary } from './project-summary';
 import type { ProviderQuotaSource } from './provider-quota-client';
 import { cursorCommitAttributionFacet, demoReportPayload } from './report-data';
+import { ReportSharingActions } from './report-sharing-actions';
 import { ReportWarnings } from './report-warnings';
 import type { RuntimeMode } from './runtime-mode';
 import { sessionAnalysisTargetForSession } from './session-analysis-target';
@@ -255,25 +248,6 @@ const dashboardStatus = css({
   order: 2,
 });
 
-const reportSharingActions = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '8px',
-  alignItems: 'center',
-  minW: 0,
-  ml: { base: '0', md: 'auto' },
-  _print: { display: 'none' },
-});
-
-const reportSharingNotice = css({
-  color: 'muted',
-  fontSize: '12px',
-});
-
-const reportSharingErrorNotice = css({
-  color: 'status.danger',
-});
-
 const projectGroupDisclosure = css({
   mt: '14px',
   '& > summary': {
@@ -302,71 +276,6 @@ const payloadForFocusedBootstrap = (bootstrap: FocusedSupportResult): WebReportP
 const supportForFocusedBootstrap = (bootstrap: FocusedSupportResult): WebReportPayloadWithoutRows => {
   const { rows: _rows, ...support } = payloadForFocusedBootstrap(bootstrap);
   return support;
-};
-const campaignLabelApiForRuntime = (
-  runtimeMode: RuntimeMode,
-  injectedApi: CampaignLabelApi | undefined,
-): CampaignLabelApi | undefined => {
-  if (runtimeMode === 'live') {
-    return injectedApi ?? createLiveCampaignLabelApi();
-  }
-  if (runtimeMode === 'e2e') {
-    return injectedApi;
-  }
-  return;
-};
-
-interface ReportSharingNotice {
-  message: string;
-  tone: 'error' | 'success';
-}
-
-interface ReportSharingActionsProps {
-  createExport: () => Promise<{ csv: string; filename: string }>;
-}
-
-const ReportSharingActions = (props: ReportSharingActionsProps) => {
-  const [notice, setNotice] = createSignal<ReportSharingNotice>();
-  const copyCurrentLink = async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(window.location.href);
-      setNotice({ message: 'Link copied', tone: 'success' });
-    } catch {
-      setNotice({ message: 'Could not copy link', tone: 'error' });
-    }
-  };
-  const exportCurrentBreakdown = async (): Promise<void> => {
-    try {
-      const exportFile = await props.createExport();
-      const { downloadReportCsv } = await import('./report-export');
-      downloadReportCsv(exportFile.filename, exportFile.csv);
-      setNotice({ message: 'CSV download started', tone: 'success' });
-    } catch {
-      setNotice({ message: 'Could not export CSV', tone: 'error' });
-    }
-  };
-
-  return (
-    <div class={reportSharingActions}>
-      <button class={ghostButton} onClick={copyCurrentLink} type="button">
-        Copy link
-      </button>
-      <button class={ghostButton} onClick={exportCurrentBreakdown} type="button">
-        Export CSV
-      </button>
-      <Show when={notice()}>
-        {(currentNotice) => (
-          <span
-            aria-live="polite"
-            class={cx(reportSharingNotice, currentNotice().tone === 'error' ? reportSharingErrorNotice : undefined)}
-            role={currentNotice().tone === 'error' ? 'alert' : 'status'}
-          >
-            {currentNotice().message}
-          </span>
-        )}
-      </Show>
-    </div>
-  );
 };
 
 export const Dashboard = (props: {
@@ -412,16 +321,8 @@ export const Dashboard = (props: {
     return truncation ? Object.values(truncation).reduce((total, omitted) => total + omitted, 0) : 0;
   });
   const isDemo = runtimeMode === 'demo';
-  const campaignLabelApi = campaignLabelApiForRuntime(runtimeMode, props.campaignLabelApi);
-  const campaignLabels = createCampaignLabelController(campaignLabelApi);
+  const campaignLabels = createCampaignLabelRuntime(runtimeMode, props.campaignLabelApi);
   const campaignLabelIndex = createMemo(() => indexCampaignLabelOverrides(campaignLabels.overrides()));
-  onMount(async () => {
-    if (isDemo) {
-      campaignLabels.skipLoad();
-      return;
-    }
-    await campaignLabels.load();
-  });
   const hasReportData = Boolean(props.initialPayload || servedBootstrap || runtimeMode !== 'live');
   const servedSessionQueries = Boolean(focusedStore);
   const [servedSessionState, setServedSessionState] = createSignal<SessionQueryState>();
@@ -486,6 +387,15 @@ export const Dashboard = (props: {
     ),
   );
   let searchInputEl: HTMLInputElement | undefined;
+  let projectGroupDisclosureEl: HTMLDetailsElement | undefined;
+  let projectGroupSummaryEl: HTMLElement | undefined;
+  const openProjectGroupManagement = (): void => {
+    if (!(projectGroupDisclosureEl && projectGroupSummaryEl)) {
+      return;
+    }
+    projectGroupDisclosureEl.open = true;
+    projectGroupSummaryEl.focus();
+  };
   const cursorCommitRows = createMemo(() =>
     focusedStore
       ? (focusedStore.breakdown()?.context.cursorCommitAttribution ?? [])
@@ -712,15 +622,7 @@ export const Dashboard = (props: {
     if (!(focusedStore && servedReportSession)) {
       return;
     }
-    const { revision: _revision, ...queryScope } = focusedQueryScope();
-    const destination = primaryDashboardTabFor(search().tab);
-    if (destination === 'overview') {
-      return { kind: 'overview', query: queryScope };
-    }
-    if (destination === 'breakdown') {
-      return { kind: 'breakdown', query: queryScope };
-    }
-    return { kind: 'sessions', query: queryScope, sessions: activeSessionQueryScope() };
+    return buildDashboardReportDestinationScope(search().tab, focusedQueryScope(), activeSessionQueryScope());
   });
   const reportLifecycle = createDashboardReportLifecycle({
     currentOverviewRequestFingerprint: () => focusedStore?.overview()?.requestFingerprint,
@@ -736,6 +638,28 @@ export const Dashboard = (props: {
     ...(servedReportSession ? { servedReportSession } : {}),
     ...(sessionQueryCoordinator ? { sessionCoordinator: sessionQueryCoordinator } : {}),
   });
+  const focusedFilterFingerprint = createMemo(() =>
+    focusedStore ? JSON.stringify(focusedQueryScope().filters) : undefined,
+  );
+  const [committedOverviewFilterFingerprint, setCommittedOverviewFilterFingerprint] = createSignal<string>();
+  let committedOverview = focusedStore?.overview();
+  createEffect(() => {
+    const overview = focusedStore?.overview();
+    if (!overview || overview === committedOverview) {
+      return;
+    }
+    committedOverview = overview;
+    setCommittedOverviewFilterFingerprint(untrack(focusedFilterFingerprint));
+  });
+  const focusedTimelineFiltersAreStale = (): boolean => {
+    const committedFingerprint = committedOverviewFilterFingerprint();
+    const requestedFingerprint = focusedFilterFingerprint();
+    return (
+      reportLifecycle.destinationPending() &&
+      committedFingerprint !== undefined &&
+      requestedFingerprint !== committedFingerprint
+    );
+  };
   restartServedDestination = reportLifecycle.refresh;
   createEffect(() => {
     if (!sessionSelection.selectedRow()) {
@@ -905,20 +829,10 @@ export const Dashboard = (props: {
   };
   const setHarness = (next: string[]) => updateSearch((current) => ({ ...current, harness: next }));
   const toggleHarness = (name: string) =>
-    setHarness(harness().includes(name) ? harness().filter((value) => value !== name) : [...harness(), name]);
+    updateSearch((current) => applyTimelineDimensionFilter(current, 'harness', name));
   const removeHarness = (name: string) => setHarness(harness().filter((value) => value !== name));
   const setOrigin = (next: SessionOrigin[]) => updateSearch((current) => ({ ...current, origin: next }));
-  const toggleOrigin = (value: SessionOrigin) => {
-    const current = origin();
-    setOrigin(
-      current.length === 0 || !current.includes(value)
-        ? [value]
-        : current.filter((originValue) => originValue !== value),
-    );
-  };
   const setMachine = (next: string[]) => updateSearch((current) => ({ ...current, machine: next }));
-  const toggleMachine = (name: string) =>
-    setMachine(machine().includes(name) ? machine().filter((value) => value !== name) : [...machine(), name]);
   const removeMachine = (name: string) => setMachine(machine().filter((value) => value !== name));
   const focusDay = (day: Date) => {
     const value = toDateInputValue(day);
@@ -938,31 +852,8 @@ export const Dashboard = (props: {
     updateSearch((current) => ({ ...current, filters: applyTableUpdate(updater, current.filters) }));
   const setFieldFilter = (key: FieldFilterKey, value: string) =>
     setFieldFilters((current) => toggleExactFieldFilter(current, key, value));
-  const setTimelineDimensionFilter = (dimension: TimelineDimension, value: string) => {
-    // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
-    switch (dimension) {
-      case 'campaign': {
-        const campaignKey = value.startsWith('campaign:') ? value.slice('campaign:'.length) : value;
-        setFieldFilter('campaign', campaignKey);
-        return;
-      }
-      case 'origin':
-        if (isSessionOrigin(value)) {
-          toggleOrigin(value);
-        }
-        return;
-      case 'harness':
-        toggleHarness(value);
-        return;
-      case 'machine':
-        toggleMachine(value);
-        return;
-      case 'model':
-      case 'project':
-      case 'provider':
-        setFieldFilter(dimension, value);
-    }
-  };
+  const setTimelineDimensionFilter = (dimension: TimelineDimension, value: string) =>
+    updateSearch((current) => applyTimelineDimensionFilter(current, dimension, value));
   const clearFieldFilter = (key: FieldFilterKey) =>
     setFieldFilters((current) => {
       const next = { ...current };
@@ -1116,22 +1007,24 @@ export const Dashboard = (props: {
           }
           when={hasReportData}
         >
-          <TimeRangeControl
-            {...(reportLifecycle.available ? { onFocusedTimelineRequest: reportLifecycle.requestTimeline } : {})}
-            activeFieldFilters={fieldFilters()}
-            activeHarness={harness()}
-            activeMachine={machine()}
-            campaignRows={reportRows()}
-            dateRange={dateRange}
-            focusedTimeline={focusedStore ? (focusedStore.overview()?.timeline ?? null) : undefined}
-            focusedTimelineError={reportLifecycle.focusedTimelineError()}
-            focusedTimelineLoading={reportLifecycle.focusedTimelineLoading()}
-            onDateRangeCommit={commitTableDateRange}
-            onDimensionFilter={setTimelineDimensionFilter}
-            presentCampaignSeries={(series) => presentCampaignTimelineSeries(series, campaignLabelIndex())}
-            presentMachineLabel={presentMachineLabel}
-            rows={timelineRows()}
-          />
+          <div hidden={focusedTimelineFiltersAreStale()}>
+            <TimeRangeControl
+              {...(reportLifecycle.available ? { onFocusedTimelineRequest: reportLifecycle.requestTimeline } : {})}
+              activeFieldFilters={fieldFilters()}
+              activeHarness={harness()}
+              activeMachine={machine()}
+              campaignRows={reportRows()}
+              dateRange={dateRange}
+              focusedTimeline={focusedStore ? (focusedStore.overview()?.timeline ?? null) : undefined}
+              focusedTimelineError={reportLifecycle.focusedTimelineError()}
+              focusedTimelineLoading={reportLifecycle.focusedTimelineLoading()}
+              onDateRangeCommit={commitTableDateRange}
+              onDimensionFilter={setTimelineDimensionFilter}
+              presentCampaignSeries={(series) => presentCampaignTimelineSeries(series, campaignLabelIndex())}
+              presentMachineLabel={presentMachineLabel}
+              rows={timelineRows()}
+            />
+          </div>
 
           <div class={filterSummary}>
             <Show when={!reportLifecycle.destinationPending()}>
@@ -1338,10 +1231,22 @@ export const Dashboard = (props: {
                                   />
                                 }
                                 groups={projectGroupRows()}
+                                onManageProjectGroups={openProjectGroupManagement}
                                 onProjectFilter={(value) => setFieldFilter('project', value)}
                               />
-                              <details class={projectGroupDisclosure}>
-                                <summary>Manage project groups</summary>
+                              <details
+                                class={projectGroupDisclosure}
+                                ref={(element) => {
+                                  projectGroupDisclosureEl = element;
+                                }}
+                              >
+                                <summary
+                                  ref={(element) => {
+                                    projectGroupSummaryEl = element;
+                                  }}
+                                >
+                                  Manage project groups
+                                </summary>
                                 <ProjectGroupEditor
                                   disabled={!reportLifecycle.available}
                                   onSave={saveProjectGroupConfigs}

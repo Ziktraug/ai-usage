@@ -43,17 +43,9 @@ const projectQualityAction = css({
   },
 });
 
-const openProjectGroupManagement = (button: HTMLButtonElement): void => {
-  const disclosure = button.closest<HTMLElement>('[data-projects-panel]')?.querySelector<HTMLDetailsElement>('details');
-  if (!disclosure) {
-    return;
-  }
-  disclosure.open = true;
-  disclosure.querySelector<HTMLElement>('summary')?.focus();
-};
-
 interface ProjectIdentityProps {
   filterTitle?: string;
+  onManageProjectGroups: () => void;
   onProjectFilter: (value: string) => void;
   project: ProjectGroup;
 }
@@ -75,7 +67,7 @@ const ProjectIdentity = (props: ProjectIdentityProps) => {
           <button
             class={cx(statusPill, statusPillInfo, projectQualityAction)}
             data-project-quality-label={label()}
-            onClick={(event) => openProjectGroupManagement(event.currentTarget)}
+            onClick={props.onManageProjectGroups}
             title="Open Manage project groups"
             type="button"
           >
@@ -102,6 +94,7 @@ const formatProjectLineMeasurement = (project: ProjectGroup): string => {
 interface ProjectSummaryProps {
   actions?: JSX.Element;
   groups: ProjectGroup[];
+  onManageProjectGroups: () => void;
   onProjectFilter: (value: string) => void;
 }
 
@@ -145,7 +138,11 @@ export const ProjectSummary = (props: ProjectSummaryProps) => (
                     class={strongCell}
                     title={project.label === '(unknown)' ? 'Sessions without a detected project directory' : undefined}
                   >
-                    <ProjectIdentity onProjectFilter={props.onProjectFilter} project={project} />
+                    <ProjectIdentity
+                      onManageProjectGroups={props.onManageProjectGroups}
+                      onProjectFilter={props.onProjectFilter}
+                      project={project}
+                    />
                   </td>
                   <td class={numCell}>{fmtNum(project.sessions)}</td>
                   <td class={numCell} title={fmtNum(project.fresh)}>
@@ -179,6 +176,7 @@ export const ProjectSummary = (props: ProjectSummaryProps) => (
                       ? 'Filter sessions without a detected project directory'
                       : `Filter sessions by ${project.label}`
                   }
+                  onManageProjectGroups={props.onManageProjectGroups}
                   onProjectFilter={props.onProjectFilter}
                   project={project}
                 />

@@ -24,10 +24,12 @@ aggregation also coerces nullable line counts to zero and loses coverage.
 ## Locked contracts
 
 For the Cursor headline, group by `commitHash`. A commit is measurable when its
-non-null duplicate `v2AiPercentage` values agree and `linesAdded + linesDeleted`
-is positive. Use that line total as weight and compute
+non-null duplicate `v2AiPercentage` values agree, its duplicate
+`linesAdded + linesDeleted` totals agree, and that shared line total is positive.
+Use the shared line total as weight and compute
 `sum(percentage × weight) / sum(weight)`. Conflicting, null-only, and zero-weight
-commits are excluded from the calculation but included in coverage. Render
+commits, including commits with conflicting duplicate line totals, are excluded
+from the calculation but included in coverage. Render
 `measured distinct commits / all distinct commits`; zero coverage renders `—`.
 
 Do not infer component-counter absence from zero: those dataset fields are
@@ -63,7 +65,8 @@ component fields, campaign metrics, cost provenance, and hiding rows.
 ### Step 1: Characterize Cursor aggregation
 
 Extract a pure helper and test identical duplicates, conflicting duplicates,
-null percentages, zero weights, partial coverage, and zero coverage.
+conflicting duplicate line totals, null percentages, zero weights, partial
+coverage, and zero coverage.
 
 **Verify**: `bun test apps/web/src/cursor-attribution-panel.test.ts` → all pass.
 
@@ -101,7 +104,8 @@ measured `+0/-0`.
 ## Done criteria
 
 - [ ] Cursor uses distinct-commit, line-weighted v2 percentages.
-- [ ] Conflicts lower coverage instead of being silently chosen.
+- [ ] Percentage or duplicate line-total conflicts lower coverage instead of
+      being silently chosen.
 - [ ] Project missing, partial, and measured zero are distinct.
 - [ ] Focused/SQLite/client aggregation parity is tested.
 
@@ -109,7 +113,8 @@ measured `+0/-0`.
 
 - Correctness requires guessing whether a numeric Cursor zero is absent.
 - Project coverage requires a portable schema change.
-- Duplicate Cursor rows require an authority rule beyond the locked contract.
+- A future duplicate Cursor shape requires an authority rule beyond exact
+  percentage and line-total agreement.
 
 ## Maintenance notes
 

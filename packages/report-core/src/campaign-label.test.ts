@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  applyCampaignLabelOverrideMutation,
   MAX_CAMPAIGN_KEY_BYTES,
   MAX_CAMPAIGN_LABEL_LENGTH,
   MAX_CAMPAIGN_LABEL_OVERRIDES,
@@ -8,6 +9,27 @@ import {
 } from './campaign-label';
 
 describe('campaign label overrides', () => {
+  test('applies ordered rename, replacement, and reset mutations through one canonical operation', () => {
+    const renamed = applyCampaignLabelOverrideMutation([], {
+      campaignKey: 'campaign:a',
+      label: '  Release train  ',
+    });
+    expect(renamed).toEqual([{ campaignKey: 'campaign:a', label: 'Release train' }]);
+
+    const replaced = applyCampaignLabelOverrideMutation(
+      [...renamed, { campaignKey: 'campaign:b', label: 'Migration' }],
+      { campaignKey: 'campaign:a', label: 'Launch' },
+    );
+    expect(replaced).toEqual([
+      { campaignKey: 'campaign:a', label: 'Launch' },
+      { campaignKey: 'campaign:b', label: 'Migration' },
+    ]);
+
+    expect(applyCampaignLabelOverrideMutation(replaced, { campaignKey: 'campaign:a', label: null })).toEqual([
+      { campaignKey: 'campaign:b', label: 'Migration' },
+    ]);
+  });
+
   test('trims mutation labels while preserving opaque campaign keys', () => {
     expect(parseCampaignLabelOverrideMutation({ campaignKey: ' campaign:key ', label: '  Release train  ' })).toEqual({
       campaignKey: ' campaign:key ',

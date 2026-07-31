@@ -9,40 +9,15 @@ import {
   popoverContent,
 } from '@ai-usage/design-system/report';
 import { For, Show } from 'solid-js';
-import type { DateRangeMode } from './date-range';
+import {
+  type Metric,
+  type MetricComparisonState,
+  metricComparisonMessage,
+  valueBasisLabelFor,
+} from './dashboard-metric-model';
 import { fmtPct } from './shared';
 
-export interface MetricDelta {
-  hint: string;
-  pct: number;
-}
-
-export interface Metric {
-  delta?: MetricDelta | null;
-  hint?: string;
-  label: string;
-  value: string;
-}
-
-export type MetricComparisonState = 'available' | 'full-range' | 'no-prior-data';
-
-const metricComparisonMessages: Record<Exclude<MetricComparisonState, 'available'>, string> = {
-  'full-range': 'No previous period exists before the full recorded range.',
-  'no-prior-data': 'No sessions exist in the previous period.',
-};
-
-export const metricComparisonStateFor = (
-  rangeMode: DateRangeMode,
-  previousSummary: object | null | undefined,
-): MetricComparisonState => {
-  if (previousSummary) {
-    return 'available';
-  }
-  return rangeMode === 'all' ? 'full-range' : 'no-prior-data';
-};
-
-export const metricComparisonMessage = (state: MetricComparisonState): string | null =>
-  state === 'available' ? null : metricComparisonMessages[state];
+type MetricPresentation = Omit<Metric, 'kind'>;
 
 const metricLabelRow = css({
   display: 'flex',
@@ -140,55 +115,6 @@ const valueBasesDefinition = css({
   m: 0,
 });
 
-type ValueBasisKey = 'actual' | 'api' | 'subscription';
-
-const VALUE_BASIS_ORDER = ['api', 'actual', 'subscription'] as const satisfies readonly ValueBasisKey[];
-const VALUE_BASIS_LABELS = {
-  actual: 'Actual recorded cost',
-  api: 'Estimated API-equivalent value',
-  subscription: 'Subscription value',
-} as const satisfies Record<ValueBasisKey, string>;
-
-const valueBasisKeyFor = (metric: Metric): ValueBasisKey | null => {
-  if (metric.label.startsWith('API value')) {
-    return 'api';
-  }
-  if (metric.label === 'Actual cost') {
-    return 'actual';
-  }
-  if (metric.label === 'Sub value') {
-    return 'subscription';
-  }
-  return null;
-};
-
-export const splitDashboardMetrics = (
-  metrics: readonly Metric[],
-): { remainingMetrics: Metric[]; valueBases: Metric[] } => {
-  const valueBasesByKey = new Map<ValueBasisKey, Metric>();
-  const remainingMetrics: Metric[] = [];
-  for (const metric of metrics) {
-    const key = valueBasisKeyFor(metric);
-    if (key) {
-      valueBasesByKey.set(key, metric);
-    } else {
-      remainingMetrics.push(metric);
-    }
-  }
-  return {
-    remainingMetrics,
-    valueBases: VALUE_BASIS_ORDER.flatMap((key) => {
-      const metric = valueBasesByKey.get(key);
-      return metric ? [metric] : [];
-    }),
-  };
-};
-
-const valueBasisLabelFor = (metric: Metric): string => {
-  const key = valueBasisKeyFor(metric);
-  return key ? VALUE_BASIS_LABELS[key] : metric.label;
-};
-
 // Past ~4× the percentage stops being readable ("▲ 4632%"); switch to the
 // multiplication factor instead.
 export const fmtDeltaPct = (pct: number) => {
@@ -214,7 +140,7 @@ export const MetricComparisonNotice = (props: { state: MetricComparisonState }) 
   );
 };
 
-const MetricHintButton = (props: { metric: Metric }) => (
+const MetricHintButton = (props: { metric: MetricPresentation }) => (
   <Show when={props.metric.hint}>
     {(hint) => (
       <Popover
@@ -270,7 +196,7 @@ export const ValueBasesPanel = (props: { metrics: readonly Metric[] }) => (
 
 // Period deltas read as context, not judgement: cost going up is not "bad",
 // so the arrow stays in the accent and the number in muted ink.
-export const MetricTile = (props: Metric) => (
+export const MetricTile = (props: MetricPresentation) => (
   <div class={metricTile} data-metric-tile>
     <div class={metricLabelRow}>
       <div class={metricLabel}>{props.label}</div>

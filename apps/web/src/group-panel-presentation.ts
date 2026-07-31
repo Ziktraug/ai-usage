@@ -19,6 +19,9 @@ interface BreakdownBarInput extends BreakdownPriceInput {
   maxKnownCost: number;
 }
 
+type BreakdownGroupLabel = (group: AnalyticsGroup) => string;
+
+const defaultBreakdownGroupLabel: BreakdownGroupLabel = (group) => group.key;
 type BreakdownGroupComparator = (left: AnalyticsGroup, right: AnalyticsGroup) => number;
 
 const breakdownSortComparators: Record<BreakdownSort, BreakdownGroupComparator> = {
@@ -27,12 +30,14 @@ const breakdownSortComparators: Record<BreakdownSort, BreakdownGroupComparator> 
   value: (left, right) => right.costSum - left.costSum || right.fresh - left.fresh,
 };
 
-export const sortBreakdownGroups = (groups: readonly AnalyticsGroup[], sort: BreakdownSort): AnalyticsGroup[] =>
-  [...groups].sort((left, right) => breakdownSortComparators[sort](left, right) || left.key.localeCompare(right.key));
-
-type BreakdownGroupLabel = (group: AnalyticsGroup) => string;
-
-const defaultBreakdownGroupLabel: BreakdownGroupLabel = (group) => group.key;
+export const sortBreakdownGroups = (
+  groups: readonly AnalyticsGroup[],
+  sort: BreakdownSort,
+  labelFor: BreakdownGroupLabel = defaultBreakdownGroupLabel,
+): AnalyticsGroup[] =>
+  [...groups].sort(
+    (left, right) => breakdownSortComparators[sort](left, right) || labelFor(left).localeCompare(labelFor(right)),
+  );
 const normalizeBreakdownSearchText = (value: string): string => value.normalize('NFKC').trim().toLocaleLowerCase();
 
 export const filterAndSortBreakdownGroups = (
@@ -46,7 +51,7 @@ export const filterAndSortBreakdownGroups = (
     normalizedQuery.length === 0
       ? groups
       : groups.filter((group) => normalizeBreakdownSearchText(labelFor(group)).includes(normalizedQuery));
-  return sortBreakdownGroups(matchingGroups, sort);
+  return sortBreakdownGroups(matchingGroups, sort, labelFor);
 };
 const MAX_PERCENT = 100;
 

@@ -165,6 +165,7 @@ test('locks definitive output while a focused filter response is pending', async
     await expect(page.getByText(NO_SESSIONS_PATTERN)).toHaveCount(0);
     await expect(page.getByText('$0.00', { exact: true })).toHaveCount(0);
     await expect(page.locator('[data-metric-grid]')).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Date range' })).toHaveCount(0);
   } finally {
     violations = await finishPendingClaimAudit(page);
     await controlFocusedResponse(page, 'release');
@@ -172,6 +173,7 @@ test('locks definitive output while a focused filter response is pending', async
 
   expect(violations).toEqual([]);
   await expect(pendingSurface).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Date range' })).toBeVisible();
   await expect(page.getByText('0 / 6 sessions', { exact: true })).toBeVisible();
 });
 

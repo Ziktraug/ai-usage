@@ -92,6 +92,31 @@ export const parseCampaignLabelOverrides = (value: unknown): CampaignLabelOverri
   return overrides;
 };
 
+export const applyCampaignLabelOverrideMutation = (
+  currentValue: unknown,
+  mutationValue: unknown,
+): CampaignLabelOverride[] => {
+  const currentOverrides = parseCampaignLabelOverrides(currentValue);
+  const mutation = parseCampaignLabelOverrideMutation(mutationValue);
+  const existingIndex = currentOverrides.findIndex(({ campaignKey }) => campaignKey === mutation.campaignKey);
+
+  if (mutation.label === null) {
+    return parseCampaignLabelOverrides(
+      currentOverrides.filter(({ campaignKey }) => campaignKey !== mutation.campaignKey),
+    );
+  }
+  if (existingIndex < 0) {
+    return parseCampaignLabelOverrides([
+      ...currentOverrides,
+      { campaignKey: mutation.campaignKey, label: mutation.label },
+    ]);
+  }
+
+  const nextOverrides = [...currentOverrides];
+  nextOverrides[existingIndex] = { campaignKey: mutation.campaignKey, label: mutation.label };
+  return parseCampaignLabelOverrides(nextOverrides);
+};
+
 export const isCampaignLabelOverrides = (value: unknown): value is CampaignLabelOverride[] => {
   try {
     parseCampaignLabelOverrides(value);

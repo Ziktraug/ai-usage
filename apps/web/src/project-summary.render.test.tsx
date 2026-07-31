@@ -7,6 +7,7 @@ import type { ProjectGroup } from './dashboard-analytics';
 
 interface ProjectSummaryProps {
   groups: ProjectGroup[];
+  onManageProjectGroups: () => void;
   onProjectFilter: (value: string) => void;
 }
 
@@ -69,6 +70,7 @@ describe('ProjectSummary line measurements', () => {
           projectGroup('unmeasured', 0, 0, 0, 1),
           projectGroup('measured-zero', 0, 0, 1, 1),
         ],
+        onManageProjectGroups: () => undefined,
         onProjectFilter: () => undefined,
       }),
     );
@@ -84,6 +86,7 @@ describe('ProjectSummary line measurements', () => {
     const html = renderToString(() =>
       createComponent(ProjectSummary, {
         groups: projectLabels.map((label) => projectGroup(label, 0, 0, 1, 1)),
+        onManageProjectGroups: () => undefined,
         onProjectFilter: () => undefined,
       }),
     );

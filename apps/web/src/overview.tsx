@@ -773,9 +773,10 @@ const Punchcard = (props: {
 // ---------------------------------------------------------------------------
 // Records — small bragging rights, sober clothes.
 
-const Records = (props: {
+export const Records = (props: {
   campaigns: CampaignView[];
   focused: FocusedOverviewRecords | null | undefined;
+  labelFor: (campaignKey: string, derivedLabel: string) => string;
   rows: DashboardRow[];
   timelineRows: DashboardRow[];
   onSelectSession: OverviewProps['onSelectSession'];
@@ -789,10 +790,14 @@ const Records = (props: {
     if (!focused) {
       return null;
     }
+    const presentItem = (item: FocusedOverviewSessionItem | null): FocusedOverviewSessionItem | null =>
+      item ? presentFocusedOverviewSessionItem(item, props.labelFor) : null;
     return {
       ...focused,
       busiest: focused.busiest ? { ...focused.busiest, date: new Date(focused.busiest.date) } : null,
+      longest: presentItem(focused.longest),
       streakEnd: focused.streakEnd ? new Date(focused.streakEnd) : null,
+      topCost: presentItem(focused.topCost),
     };
   });
 
@@ -928,6 +933,7 @@ export const Overview = (props: OverviewProps) => {
         <Records
           campaigns={props.campaigns}
           focused={props.focused?.view.records}
+          labelFor={props.labelFor}
           onSelectDay={props.onSelectDay}
           onSelectSession={props.onSelectSession}
           rows={props.rows}

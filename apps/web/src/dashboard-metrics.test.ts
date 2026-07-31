@@ -1,11 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  fmtDeltaPct,
-  metricComparisonMessage,
-  metricComparisonStateFor,
-  metricDeltaFaceLabel,
-  splitDashboardMetrics,
-} from './dashboard-metrics';
+import { metricComparisonMessage, metricComparisonStateFor, splitDashboardMetrics } from './dashboard-metric-model';
+import { fmtDeltaPct, metricDeltaFaceLabel } from './dashboard-metrics';
 
 describe('dashboard metric delta presentation', () => {
   test('keeps the compact value and its comparison basis together', () => {
@@ -19,11 +14,21 @@ describe('dashboard metric delta presentation', () => {
 });
 
 describe('dashboard metric sections', () => {
-  test('groups value bases in semantic order without changing their definitions', () => {
-    const sessions = { label: 'Sessions', value: '3' };
-    const subscription = { hint: 'Covered by quota', label: 'Sub value', value: '$9.00' };
-    const api = { hint: 'Standard API prices', label: 'API value · measured', value: '$12.00' };
-    const actual = { hint: 'Out-of-pocket spend', label: 'Actual cost', value: '$3.00' };
+  test('groups value bases by semantic kind rather than mutable display copy', () => {
+    const sessions = { kind: 'sessions', label: 'Sessions', value: '3' } as const;
+    const subscription = {
+      hint: 'Covered by quota',
+      kind: 'subscription-value',
+      label: 'Sub value',
+      value: '$9.00',
+    } as const;
+    const api = {
+      hint: 'Standard API prices',
+      kind: 'api-value',
+      label: 'Completely revised copy',
+      value: '$12.00',
+    } as const;
+    const actual = { hint: 'Out-of-pocket spend', kind: 'actual-cost', label: 'Actual cost', value: '$3.00' } as const;
 
     expect(splitDashboardMetrics([sessions, subscription, api, actual])).toEqual({
       remainingMetrics: [sessions],

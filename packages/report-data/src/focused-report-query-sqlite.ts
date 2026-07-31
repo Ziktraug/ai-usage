@@ -903,6 +903,7 @@ const readAnalyticsGroups = (
         harness,
         provider,
         provider_display,
+        harness_provider_key,
         model_key,
         cost_known,
         cost_approx,
@@ -962,7 +963,7 @@ const readAnalyticsGroups = (
       UNION ALL
       SELECT
         'harness-provider' AS kind,
-        json_array(harness, provider_display) AS key,
+        harness_provider_key AS key,
         ordinal,
         harness,
         provider_display AS provider,

@@ -16,7 +16,7 @@ import {
   buildProjectGroups,
   type ProjectGroup,
 } from './dashboard-analytics';
-import type { Metric, MetricDelta } from './dashboard-metrics';
+import type { Metric, MetricDelta } from './dashboard-metric-model';
 import type { FieldFilterKey, FieldFilters } from './dashboard-search';
 import { DAY_MS, type DateBounds, endOfDay, rowMatchesDateBounds } from './date-range';
 import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from './session-table-schema';
@@ -460,12 +460,14 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
   const apiValueProvenance = aggregateApiPriceProvenance(summary.priceMeasurement);
   const metrics: Metric[] = [
     {
+      kind: 'sessions',
       label: 'Sessions',
       value: fmtNum(summary.sessionCount),
       hint: 'Sessions in the current filter',
       delta: deltaVs(summary.sessionCount, prev?.sessionCount, fmtNum),
     },
     {
+      kind: 'api-value',
       label: apiValueProvenance ? `API value · ${apiValueProvenance.label}` : 'API value',
       value: apiValue.label,
       hint: [
@@ -477,6 +479,7 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
       delta: deltaVs(summary.totalCost, prev?.totalCost, fmtMoney),
     },
     {
+      kind: 'actual-cost',
       label: 'Actual cost',
       value: fmtMoney(summary.actualCost),
       hint: `Out-of-pocket spend reported by harnesses; subscription usage counts as $0${
@@ -487,6 +490,7 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
   ];
 
   metrics.push({
+    kind: 'subscription-value',
     label: 'Sub value',
     value: fmtMoney(summary.costQuota),
     hint: 'Cursor export value covered by the subscription quota',
@@ -494,8 +498,14 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
   });
 
   metrics.push(
-    { label: 'Mean / sess', value: fmtMoney(summary.meanCost), hint: 'Mean API value per priced session' },
     {
+      kind: 'mean-cost',
+      label: 'Mean / sess',
+      value: fmtMoney(summary.meanCost),
+      hint: 'Mean API value per priced session',
+    },
+    {
+      kind: 'fresh-tokens',
       label: 'Fresh tokens',
       value: fmtCompact(summary.fresh),
       hint: `Tokens processed without cache: ${fmtNum(summary.fresh)}`,
@@ -505,6 +515,7 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
 
   if (summary.rtkSaved) {
     metrics.push({
+      kind: 'rtk-savings',
       label: 'RTK savings',
       value: fmtPct(summary.rtkInput ? (summary.rtkSaved / summary.rtkInput) * 100 : 0),
       hint: [
@@ -517,12 +528,14 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
 
   metrics.push(
     {
+      kind: 'turns',
       label: 'Turns',
       value: fmtNum(summary.turns),
       hint: 'Assistant turns across the filtered sessions',
       delta: deltaVs(summary.turns, prev?.turns, fmtNum),
     },
     {
+      kind: 'tool-calls',
       label: 'Tool calls',
       value: fmtNum(summary.tools),
       hint: 'Tool invocations across the filtered sessions',

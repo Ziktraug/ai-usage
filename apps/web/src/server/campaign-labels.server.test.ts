@@ -10,7 +10,7 @@ import {
 import { aiUsageConfigPath, readAiUsageConfig, updateAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
 import { MAX_CAMPAIGN_KEY_BYTES, MAX_CAMPAIGN_LABEL_LENGTH } from '@ai-usage/report-core/campaign-label';
 import { Effect } from 'effect';
-import { getCampaignLabelOverridesForServer, setCampaignLabelOverrideForServer } from './report-payload.server';
+import { getCampaignLabelOverridesForServer, setCampaignLabelOverrideForServer } from './campaign-labels.server';
 
 const createTemporaryStorage = async (): Promise<{ home: string; storage: LocalHistoryStorageService }> => {
   const home = await mkdtemp(path.join(tmpdir(), 'ai-usage-campaign-label-server-'));
