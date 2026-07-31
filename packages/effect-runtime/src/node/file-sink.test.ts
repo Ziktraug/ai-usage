@@ -215,8 +215,12 @@ describe('node wide-event sinks', () => {
     const directory = makeTempDir();
     let appendCount = 0;
     let releaseAppend!: () => void;
+    let signalAppendTimeout!: () => void;
     const blocked = new Promise<void>((resolve) => {
       releaseAppend = resolve;
+    });
+    const appendTimedOut = new Promise<void>((resolve) => {
+      signalAppendTimeout = resolve;
     });
     const sink = createFileWideEventSink({
       directory,
@@ -225,10 +229,15 @@ describe('node wide-event sinks', () => {
         appendCount++;
         await blocked;
       },
+      warn: ({ kind }) => {
+        if (kind === 'append-timeout') {
+          signalAppendTimeout();
+        }
+      },
     });
 
     await Effect.runPromise(sink.submit(sampleEvent('non-cooperative')));
-    await Bun.sleep(30);
+    await appendTimedOut;
     await Effect.runPromise(sink.submit(sampleEvent('after-deadline')));
 
     expect((await Effect.runPromise(sink.diagnostics())).dropped).toBe(1);
