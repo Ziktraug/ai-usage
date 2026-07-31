@@ -58,6 +58,19 @@ const PROCESS_DIRECTORY_PATTERN = /^\d+$/;
 const PROCESS_POLL_INTERVAL_MS = 50;
 const QUERY_PROCESS_POLL_INTERVAL_MS = 10;
 const READINESS_DEADLINE_MS = 60_000;
+const SESSION_QUERY_NAVIGATION_DEADLINE_MS = 60_000;
+const SESSION_QUERY_HYDRATION_DEADLINE_MS = 60_000;
+const SESSION_QUERY_PROOF_DEADLINE_MS = 15_000;
+export const usageRuntimeSessionQueryBudgets = {
+  hydrationMs: SESSION_QUERY_HYDRATION_DEADLINE_MS,
+  navigationMs: SESSION_QUERY_NAVIGATION_DEADLINE_MS,
+  proofMs: SESSION_QUERY_PROOF_DEADLINE_MS,
+  supervisorMs:
+    SESSION_QUERY_NAVIGATION_DEADLINE_MS +
+    SESSION_QUERY_HYDRATION_DEADLINE_MS +
+    SESSION_QUERY_PROOF_DEADLINE_MS +
+    2 * CHILD_STOP_DEADLINE_MS,
+} as const;
 const REVISION_PATTERN = /^[a-f0-9]{40}$/;
 const RUNTIME_ROOT_PREFIX = '/tmp/plan052-usage-runtime-io-';
 const SOURCE_SNAPSHOT_FRAME_LIMIT_BYTES = 128 * 1024;
@@ -1749,8 +1762,10 @@ const SESSION_QUERY_SCRIPT = `
     ...(executablePath ? { executablePath } : {}),
   });
   try {
+    process.stderr.write('sessions-query stage=browser-launched\\n');
     process.stderr.write('sessions-query stage=navigate\\n');
     const page = await browser.newPage({ viewport: { height: 900, width: 1024 } });
+    process.stderr.write('sessions-query stage=page-created\\n');
     const serverFunctionStatuses = [];
     const clientErrors = [];
     const responseReads = [];
@@ -1774,13 +1789,14 @@ const SESSION_QUERY_SCRIPT = `
       }
     });
     await page.goto(baseUrl + '/?tab=sessions', {
-      timeout: 60_000,
+      timeout: ${SESSION_QUERY_NAVIGATION_DEADLINE_MS},
       waitUntil: 'domcontentloaded',
     });
+    process.stderr.write('sessions-query stage=dom-content-loaded\\n');
     const report = page.locator('main[data-hydrated="true"]');
-    await report.waitFor({ state: 'visible', timeout: 60_000 });
+    await report.waitFor({ state: 'visible', timeout: ${SESSION_QUERY_HYDRATION_DEADLINE_MS} });
     process.stderr.write('sessions-query stage=hydrated\\n');
-    const proofDeadline = Date.now() + 15_000;
+    const proofDeadline = Date.now() + ${SESSION_QUERY_PROOF_DEADLINE_MS};
     while (!exactSessionResponse && Date.now() < proofDeadline) {
       await Promise.all(responseReads);
       await Bun.sleep(25);
@@ -1816,7 +1832,11 @@ const runSessionQuery = async (
   assignProcess(queryProcess);
   let operationError: unknown;
   try {
-    const exitCode = await within('Sessions browser query', READINESS_DEADLINE_MS, queryProcess.child.exited);
+    const exitCode = await within(
+      'Sessions browser query',
+      usageRuntimeSessionQueryBudgets.supervisorMs,
+      queryProcess.child.exited,
+    );
     if (exitCode !== 0) {
       throw new Error(processFailureMessage('Sessions browser query', queryProcess, exitCode));
     }
@@ -2488,7 +2508,7 @@ export const measureUsageRuntimeIo = async (
     scenarios.push(
       await measureScenario({
         blockDevice: options.blockDevice,
-        deadlineMs: READINESS_DEADLINE_MS + 5 * CHILD_STOP_DEADLINE_MS,
+        deadlineMs: usageRuntimeSessionQueryBudgets.supervisorMs + 5 * CHILD_STOP_DEADLINE_MS,
         devOutputDirectory,
         name: 'sessions-query',
         operation: async () => {

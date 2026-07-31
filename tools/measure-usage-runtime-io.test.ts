@@ -11,6 +11,7 @@ import {
   parseRuntimeMeasurementOptions,
   parseRuntimeProcessStat,
   type ScenarioMeasurement,
+  usageRuntimeSessionQueryBudgets,
   validateContainedSourceSymlinks,
   warmIdleWriteLoopIsAbsent,
 } from './measure-usage-runtime-io';
@@ -124,6 +125,15 @@ describe('usage runtime I/O measurement helpers', () => {
     );
 
     expect(acceptance.perQueryBunProcessesAbsent).toBe(false);
+  });
+
+  test('lets Playwright report each bounded Sessions stage before the supervisor deadline', () => {
+    const actionBudget =
+      usageRuntimeSessionQueryBudgets.navigationMs +
+      usageRuntimeSessionQueryBudgets.hydrationMs +
+      usageRuntimeSessionQueryBudgets.proofMs;
+
+    expect(usageRuntimeSessionQueryBudgets.supervisorMs).toBeGreaterThan(actionBudget);
   });
 
   test('parses Linux identity and cumulative process counters', () => {
