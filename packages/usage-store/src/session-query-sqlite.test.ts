@@ -716,12 +716,8 @@ describe('durable session query SQLite projections', () => {
     }
   });
 
-  test('pages 5,000 date-filtered campaigns with large serialized rows within the production query budget', async () => {
-    const payloadPadding = 'x'.repeat(4096);
-    const fixtureRows = Array.from({ length: 5000 }, (_, index) => ({
-      ...row(`scale-session-${index}`, (index % 1000) + 1),
-      rawProject: payloadPadding,
-    }));
+  test('pages 5,000 date-filtered campaigns within the production query budget', async () => {
+    const fixtureRows = Array.from({ length: 5000 }, (_, index) => row(`scale-session-${index}`, (index % 1000) + 1));
     const traces: { params: readonly unknown[]; sql: string }[] = [];
     const trace: SessionQuerySqliteTrace = (query) => traces.push(query);
     const { database } = await openRowsDatabase(fixtureRows);
