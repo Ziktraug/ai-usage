@@ -21,6 +21,7 @@ export default defineConfig({
   },
   webServer: {
     command: 'AI_USAGE_PRODUCTION_E2E_PORT=4177 AI_USAGE_SESSION_SCALE_E2E=1 bun e2e/production-server.ts',
+    gracefulShutdown: { signal: 'SIGTERM', timeout: 15_000 },
     reuseExistingServer: false,
     timeout: 180_000,
     url: 'http://127.0.0.1:4177',

@@ -17,10 +17,10 @@ export interface WebReadObservabilityRuntime {
   readonly runEffect: <Value, Failure>(effect: Effect.Effect<Value, Failure, WebReadServices>) => Promise<Value>;
 }
 
-const webReadRuntimeKey: unique symbol = Symbol('ai-usage.web-read-observability');
+const webReadRuntimeProperty = '__aiUsageWebReadObservabilityRuntime' as const;
 
 type WebReadNitroApp = ReturnType<typeof useNitroApp> & {
-  [webReadRuntimeKey]?: WebReadObservabilityRuntime;
+  [webReadRuntimeProperty]?: WebReadObservabilityRuntime;
 };
 
 const makeWebReadSinkLayer = (): Layer.Layer<WebReadServices> => {
@@ -64,18 +64,18 @@ export const installWebReadObservabilityRuntime = (
   runtime: WebReadObservabilityRuntime,
 ): WebReadObservabilityRuntime => {
   const nitroApp = nitroAppValue as WebReadNitroApp;
-  const existing = nitroApp[webReadRuntimeKey];
+  const existing = nitroApp[webReadRuntimeProperty];
   if (existing) {
     return existing;
   }
   if (!nitroApp.hooks) {
     throw new Error('Nitro hooks are unavailable for web read observability.');
   }
-  nitroApp[webReadRuntimeKey] = runtime;
+  nitroApp[webReadRuntimeProperty] = runtime;
   nitroApp.hooks.hook('close', async () => {
     await runtime.dispose();
-    if (nitroApp[webReadRuntimeKey] === runtime) {
-      delete nitroApp[webReadRuntimeKey];
+    if (nitroApp[webReadRuntimeProperty] === runtime) {
+      delete nitroApp[webReadRuntimeProperty];
     }
   });
   return runtime;
@@ -85,7 +85,7 @@ export const initializeWebReadObservabilityRuntime = async (
   nitroAppValue: ReturnType<typeof useNitroApp>,
 ): Promise<WebReadObservabilityRuntime> => {
   const nitroApp = nitroAppValue as WebReadNitroApp;
-  const existing = nitroApp[webReadRuntimeKey];
+  const existing = nitroApp[webReadRuntimeProperty];
   if (existing) {
     return existing;
   }
@@ -100,7 +100,7 @@ export const initializeWebReadObservabilityRuntime = async (
 export const runWebReadEffect = <Value, Failure>(
   effect: Effect.Effect<Value, Failure, WebReadServices>,
 ): Promise<Value> => {
-  const runtime = (useNitroApp() as WebReadNitroApp)[webReadRuntimeKey];
+  const runtime = (useNitroApp() as WebReadNitroApp)[webReadRuntimeProperty];
   if (!runtime) {
     return Promise.reject(new Error('Web read observability has not started.'));
   }

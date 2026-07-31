@@ -30,7 +30,7 @@
   },
   "scripts": {
     "dev": "bun --bun vite --host 127.0.0.1",
-    "dev:prepare": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent",
+    "dev:prepare": "CI=1 bun --bun panda codegen --silent && CI=1 bun --bun panda cssgen --silent",
     "dev:standalone": "bun --filter @ai-usage/design-system build && bun run dev:prepare && bun run dev",
     "build": "bun --no-env-file vite-production-build.ts",
     "check": "bun --filter @ai-usage/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && bun run typecheck",
@@ -40,7 +40,7 @@
     "test:e2e-production": "bun --bun playwright test --config playwright.production.config.ts e2e/production-report.spec.ts && bun --bun playwright test --config playwright.session-scroll.config.ts e2e/session-scroll.scale.ts",
     "benchmark:session-scroll": "bun --bun playwright test --config playwright.session-scroll.config.ts e2e/session-scroll-benchmark.scale.ts",
     "preview": "vite preview --host 127.0.0.1",
-    "start": "bun start.mjs",
+    "start:web-only": "bun --no-env-file start.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.e2e.json --noEmit",
     "lint": "biome check .",
     "format": "biome format --write ."

@@ -2,14 +2,37 @@ import { describe, expect, test } from 'bun:test';
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  collectionPathMutationsAreAttributable,
   copyWorktreeSource,
   createUsageRuntimeMeasurementEnvironment,
+  evaluateUsageRuntimeMeasurementAcceptance,
   isSourceControlSettled,
   measureLegacySessionQueryLeases,
   parseRuntimeMeasurementOptions,
   parseRuntimeProcessStat,
+  type ScenarioMeasurement,
   validateContainedSourceSymlinks,
+  warmIdleWriteLoopIsAbsent,
 } from './measure-usage-runtime-io';
+
+const emptyLeaseMeasurement = { bytes: 0, count: 0 } as const;
+
+const scenarioMeasurement = (name: string, processes: ScenarioMeasurement['processes'] = []): ScenarioMeasurement => ({
+  blockDeviceWriteBytes: 0,
+  cpuTicksDelta: 0,
+  deletedDevOutputDescriptors: 0,
+  durationMs: 1,
+  leaseAfter: emptyLeaseMeasurement,
+  leaseBefore: emptyLeaseMeasurement,
+  leasePeak: emptyLeaseMeasurement,
+  name,
+  peakResidentBytes: 0,
+  peakThreads: 0,
+  pathMutations: [],
+  processes,
+  totalWriteBytes: 0,
+  writeTrace: [],
+});
 
 describe('usage runtime I/O measurement helpers', () => {
   test('constructs an allowlisted child environment rooted in the owned fixture', () => {
@@ -24,8 +47,12 @@ describe('usage runtime I/O measurement helpers', () => {
     });
 
     expect(environment).toEqual({
+      AI_USAGE_DATABASE_PATH: '/runtime/store/usage.sqlite',
+      AI_USAGE_ENGINE_STATE_DIR: '/runtime/engine-state',
+      AI_USAGE_HOME: '/runtime/home',
       AI_USAGE_LOG_DIR: '/runtime/logs',
       AI_USAGE_ROOT_DIR: '/repo',
+      AI_USAGE_TEMP_ROOT: '/runtime/tmp',
       BROWSER: 'none',
       CI: '1',
       HOME: '/runtime/home',
@@ -34,6 +61,9 @@ describe('usage runtime I/O measurement helpers', () => {
       PATH: '/fixture/bin',
       PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: '/fixture/chromium',
       TMPDIR: '/runtime/tmp',
+      TURBO_CACHE_DIR: '/runtime/cache/turbo',
+      TURBO_DAEMON: 'false',
+      TURBO_TELEMETRY_DISABLED: '1',
       TZ: 'Europe/Paris',
       VITE_AI_USAGE_DEMO: '0',
       VITE_AI_USAGE_E2E: '0',
@@ -42,6 +72,58 @@ describe('usage runtime I/O measurement helpers', () => {
       XDG_DATA_HOME: '/runtime/data',
     });
     expect(environment).not.toHaveProperty('SECRET_VALUE');
+  });
+
+  test('distinguishes sparse attributable activity from a repeated warm-idle write loop', () => {
+    expect(
+      warmIdleWriteLoopIsAbsent([
+        { elapsedMs: 10_000, totalWriteBytes: 0 },
+        { elapsedMs: 20_000, totalWriteBytes: 4096 },
+        { elapsedMs: 30_000, totalWriteBytes: 4096 },
+        { elapsedMs: 40_000, totalWriteBytes: 8192 },
+      ]),
+    ).toBe(true);
+    expect(
+      warmIdleWriteLoopIsAbsent([
+        { elapsedMs: 10_000, totalWriteBytes: 4096 },
+        { elapsedMs: 20_000, totalWriteBytes: 8192 },
+      ]),
+    ).toBe(false);
+  });
+
+  test('accepts only durable engine-owned collection path mutations', () => {
+    expect(
+      collectionPathMutationsAreAttributable(['logs/wide-events-2026-07-31.ndjson', 'store/usage.sqlite-wal']),
+    ).toBe(true);
+    expect(
+      collectionPathMutationsAreAttributable(['source/apps/web/.output-dev/server.js', 'store/usage.sqlite-wal']),
+    ).toBe(false);
+    expect(collectionPathMutationsAreAttributable(['logs/wide-events-2026-07-31.ndjson'])).toBe(false);
+  });
+
+  test('rejects a Bun process born below the measured Web development group during a Sessions query', () => {
+    const processMeasurement = {
+      bornDuringScenario: true,
+      command: 'bun',
+      cpuTicksDelta: 1,
+      parentPid: 101,
+      peakResidentBytes: 1,
+      peakThreads: 1,
+      pid: 102,
+      role: 'dev',
+      startTimeTicks: 1000,
+      writeBytesDelta: 0,
+    };
+    const acceptance = evaluateUsageRuntimeMeasurementAcceptance(
+      [scenarioMeasurement('sessions-query', [processMeasurement])],
+      {
+        engineRestartPreservedWebProcess: true,
+        hmrPreservedEngineInstance: true,
+        hmrPreservedPublication: true,
+      },
+    );
+
+    expect(acceptance.perQueryBunProcessesAbsent).toBe(false);
   });
 
   test('parses Linux identity and cumulative process counters', () => {

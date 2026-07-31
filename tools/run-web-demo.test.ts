@@ -24,5 +24,9 @@ describe('web demo launcher', () => {
       XDG_DATA_HOME: path.join(temporaryHome, '.local', 'share'),
     });
     expect(environment.VITE_OPERATOR_SECRET).toBeUndefined();
+    expect(environment.AI_USAGE_DATABASE_PATH).toBeUndefined();
+    expect(environment.AI_USAGE_ENGINE_INSTANCE_ID).toBeUndefined();
+    expect(environment.AI_USAGE_ENGINE_STATE_DIR).toBeUndefined();
+    expect(environment.AI_USAGE_TEMP_ROOT).toBeUndefined();
   });
 });

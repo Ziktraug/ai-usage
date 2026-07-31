@@ -16,6 +16,20 @@ import {
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { parseSourceControlSnapshot, type SourceControlView } from '@ai-usage/report-core/source-control';
+import { USAGE_ENGINE_PROTOCOL_VERSION, type UsageEngineStatus } from '@ai-usage/usage-engine-control';
+import { createUsageEngineControlClient, type UsageEngineControlClient } from '@ai-usage/usage-engine-control/client';
+import { executeUsageEngineCommandToCompletion } from '@ai-usage/usage-engine-control/completion';
+import {
+  assertUsageEngineRendezvousTarget,
+  loadUsageEngineRendezvous,
+  usageEngineTargetIdFor,
+} from '@ai-usage/usage-engine-control/node';
+import {
+  queryCurrentServedReportRevision,
+  queryUsageStoreGenerations,
+  USAGE_STORE_SCHEMA_VERSION,
+} from '@ai-usage/usage-store/reader';
+import { Effect } from 'effect';
 import {
   captureBoundedStream,
   createWebBuildIsolationEnvironment,
@@ -48,7 +62,11 @@ const REVISION_PATTERN = /^[a-f0-9]{40}$/;
 const RUNTIME_ROOT_PREFIX = '/tmp/plan052-usage-runtime-io-';
 const SOURCE_SNAPSHOT_FRAME_LIMIT_BYTES = 128 * 1024;
 const STREAM_CONNECT_ATTEMPT_MS = 2000;
+const WARM_IDLE_TRACE_INTERVAL_MS = 10_000;
 const WARM_IDLE_DEFAULT_MS = 10_000;
+const PATH_METADATA_ENTRY_LIMIT = 100_000;
+const attributableCollectionPathPrefixes = ['engine-state', 'home/.config/ai-usage', 'logs', 'store'] as const;
+const runtimeMetadataExcludedPrefixes = ['source/.git', 'source/node_modules'] as const;
 
 interface CapturedOwnedProcess {
   child: Bun.Subprocess;
@@ -85,6 +103,7 @@ interface ProcessCounter {
 }
 
 interface ProcessDelta {
+  bornDuringScenario: boolean;
   command: string;
   cpuTicksDelta: number;
   parentPid: number;
@@ -109,13 +128,20 @@ interface ScenarioOptions {
   devOutputDirectory: string | undefined;
   name: string;
   operation: (signal: AbortSignal) => Promise<void>;
+  pathObservationRoot?: string;
   pollIntervalMs?: number;
   roots: () => readonly MeasuredProcessRoot[];
   temporaryDirectory: string;
+  traceIntervalMs?: number;
   zeroBaseline?: boolean;
 }
 
-interface ScenarioMeasurement {
+export interface WriteTracePoint {
+  elapsedMs: number;
+  totalWriteBytes: number;
+}
+
+export interface ScenarioMeasurement {
   blockDeviceWriteBytes: number;
   cpuTicksDelta: number;
   deletedDevOutputDescriptors: number;
@@ -124,10 +150,12 @@ interface ScenarioMeasurement {
   leaseBefore: LegacyLeaseMeasurement;
   leasePeak: LegacyLeaseMeasurement;
   name: string;
+  pathMutations: string[];
   peakResidentBytes: number;
   peakThreads: number;
   processes: ProcessDelta[];
   totalWriteBytes: number;
+  writeTrace: WriteTracePoint[];
 }
 
 interface SourceSnapshotStream {
@@ -153,6 +181,7 @@ interface RuntimeMeasurementOptions {
 }
 
 interface UsageRuntimeMeasurementResult {
+  acceptance: UsageRuntimeMeasurementAcceptance;
   blockDevice: string;
   clockTicksPerSecond: number;
   concurrentBuilds: Array<{
@@ -160,11 +189,14 @@ interface UsageRuntimeMeasurementResult {
     io: ScenarioMeasurement;
   }>;
   concurrentMode: WebDevBuildIsolationResult['mode'];
+  engineRestartPreservedWebProcess: boolean;
   fixture: {
     claudeSessions: number;
     codexSessions: number;
   };
   hmrMessagesDuringHmr: number;
+  hmrPreservedEngineInstance: boolean;
+  hmrPreservedPublication: boolean;
   processPollIntervalMs: number;
   queryProcessPollIntervalMs: number;
   scenarios: ScenarioMeasurement[];
@@ -173,6 +205,17 @@ interface UsageRuntimeMeasurementResult {
     kind: SourceSelection['kind'];
     revision?: string;
   };
+}
+
+export interface UsageRuntimeMeasurementAcceptance {
+  readonly collectionPathsAttributable: boolean;
+  readonly collectionWritesAttributable: boolean;
+  readonly deletedDevOutputDescriptorsAbsent: boolean;
+  readonly engineRestartIsolationPreserved: boolean;
+  readonly hmrStoreWritesAbsent: boolean;
+  readonly legacySessionLeasesAbsent: boolean;
+  readonly perQueryBunProcessesAbsent: boolean;
+  readonly warmIdleWriteLoopAbsent: boolean;
 }
 
 interface SettledSnapshotShape {
@@ -192,8 +235,8 @@ export const createUsageRuntimeMeasurementEnvironment = ({
   inheritedEnvironment,
   repositoryDirectory,
   runtimeRoot,
-}: MeasurementEnvironmentOptions): Record<string, string> =>
-  createWebBuildIsolationEnvironment({
+}: MeasurementEnvironmentOptions): Record<string, string> => ({
+  ...createWebBuildIsolationEnvironment({
     inheritedEnvironment: {
       PATH: inheritedEnvironment.PATH,
       PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: inheritedEnvironment.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
@@ -201,7 +244,15 @@ export const createUsageRuntimeMeasurementEnvironment = ({
     repositoryDirectory,
     runtimeRoot,
     useE2eAdapters: false,
-  });
+  }),
+  AI_USAGE_DATABASE_PATH: path.join(runtimeRoot, 'store', 'usage.sqlite'),
+  AI_USAGE_ENGINE_STATE_DIR: path.join(runtimeRoot, 'engine-state'),
+  AI_USAGE_HOME: path.join(runtimeRoot, 'home'),
+  AI_USAGE_TEMP_ROOT: path.join(runtimeRoot, 'tmp'),
+  TURBO_CACHE_DIR: path.join(runtimeRoot, 'cache', 'turbo'),
+  TURBO_DAEMON: 'false',
+  TURBO_TELEMETRY_DISABLED: '1',
+});
 
 export const parseRuntimeProcessStat = (text: string): LinuxProcessStat | undefined => parseLinuxProcessStat(text);
 
@@ -215,6 +266,105 @@ export const isSourceControlSettled = (snapshot: SettledSnapshotShape): boolean 
   !snapshot.publication.queued &&
   !snapshot.publication.pendingDemand &&
   snapshot.publication.requestedGeneration === snapshot.publication.acknowledgedRequestGeneration;
+
+export const warmIdleWriteLoopIsAbsent = (trace: readonly WriteTracePoint[]): boolean => {
+  let previousTotal = 0;
+  let previousIntervalGrew = false;
+  for (const point of trace) {
+    const intervalGrew = point.totalWriteBytes > previousTotal;
+    if (intervalGrew && previousIntervalGrew) {
+      return false;
+    }
+    previousIntervalGrew = intervalGrew;
+    previousTotal = point.totalWriteBytes;
+  }
+  return true;
+};
+
+export const collectionPathMutationsAreAttributable = (relativePaths: readonly string[]): boolean =>
+  relativePaths.some((relativePath) => relativePath.startsWith('store/')) &&
+  relativePaths.every(
+    (relativePath) =>
+      !path.isAbsolute(relativePath) &&
+      relativePath !== '..' &&
+      !relativePath.startsWith(`..${path.sep}`) &&
+      attributableCollectionPathPrefixes.some(
+        (prefix) => relativePath === prefix || relativePath.startsWith(`${prefix}/`),
+      ),
+  );
+
+export const evaluateUsageRuntimeMeasurementAcceptance = (
+  scenarios: readonly ScenarioMeasurement[],
+  invariants: {
+    readonly engineRestartPreservedWebProcess: boolean;
+    readonly hmrPreservedEngineInstance: boolean;
+    readonly hmrPreservedPublication: boolean;
+  },
+): UsageRuntimeMeasurementAcceptance => {
+  const scenario = (name: string): ScenarioMeasurement | undefined =>
+    scenarios.find((candidate) => candidate.name === name);
+  const hmr = scenario('hmr');
+  const collection = scenario('collection-publication');
+  const sessionsQuery = scenario('sessions-query');
+  const warmIdle = scenario('warm-idle');
+  const hmrEngineWrites =
+    hmr?.processes
+      .filter(({ role }) => role === 'engine')
+      .reduce((total, processMeasurement) => total + processMeasurement.writeBytesDelta, 0) ?? Number.NaN;
+  const querySpawnedServerBun =
+    sessionsQuery?.processes.some(
+      ({ bornDuringScenario, command, role }) =>
+        bornDuringScenario && role === 'dev' && command.toLowerCase().includes('bun'),
+    ) ?? true;
+  const retiredQueryProcess =
+    sessionsQuery?.processes.some(({ role }) => role === 'revision-query' || role === 'session-materializer') ?? true;
+  return {
+    collectionPathsAttributable:
+      collection !== undefined && collectionPathMutationsAreAttributable(collection.pathMutations),
+    collectionWritesAttributable:
+      collection?.processes.some(({ role, writeBytesDelta }) => role === 'engine' && writeBytesDelta > 0) === true &&
+      collection?.processes.every(({ role, writeBytesDelta }) => role === 'engine' || writeBytesDelta === 0) === true,
+    deletedDevOutputDescriptorsAbsent: scenarios.every(
+      ({ deletedDevOutputDescriptors }) => deletedDevOutputDescriptors === 0,
+    ),
+    engineRestartIsolationPreserved: invariants.engineRestartPreservedWebProcess,
+    hmrStoreWritesAbsent:
+      hmr !== undefined &&
+      hmrEngineWrites === 0 &&
+      invariants.hmrPreservedEngineInstance &&
+      invariants.hmrPreservedPublication,
+    legacySessionLeasesAbsent: scenarios.every(
+      ({ leaseAfter, leaseBefore, leasePeak }) =>
+        leaseBefore.count === 0 &&
+        leaseBefore.bytes === 0 &&
+        leasePeak.count === 0 &&
+        leasePeak.bytes === 0 &&
+        leaseAfter.count === 0 &&
+        leaseAfter.bytes === 0,
+    ),
+    perQueryBunProcessesAbsent: sessionsQuery !== undefined && !(querySpawnedServerBun || retiredQueryProcess),
+    warmIdleWriteLoopAbsent:
+      warmIdle !== undefined &&
+      warmIdle.totalWriteBytes === 0 &&
+      warmIdle.writeTrace.every(({ totalWriteBytes }) => totalWriteBytes === 0) &&
+      warmIdleWriteLoopIsAbsent(warmIdle.writeTrace),
+  };
+};
+
+const assertUsageRuntimeMeasurementAccepted = (
+  acceptance: UsageRuntimeMeasurementAcceptance,
+  scenarios: readonly ScenarioMeasurement[],
+): void => {
+  const failures = Object.entries(acceptance).flatMap(([criterion, passed]) => (passed ? [] : [criterion]));
+  if (failures.length > 0) {
+    const collectionPathDiagnostic = acceptance.collectionPathsAttributable
+      ? ''
+      : ` Collection path mutations: ${JSON.stringify(
+          scenarios.find(({ name }) => name === 'collection-publication')?.pathMutations ?? [],
+        )}.`;
+    throw new Error(`Usage runtime I/O acceptance failed: ${failures.join(', ')}.${collectionPathDiagnostic}`);
+  }
+};
 
 const isPrivateOwnedDirectory = async (directoryPath: string): Promise<boolean> => {
   const directoryStat = await lstat(directoryPath);
@@ -264,6 +414,63 @@ export const measureLegacySessionQueryLeases = async (temporaryDirectory: string
   }
   return { bytes, count };
 };
+
+const runtimeMetadataIdentity = async (
+  entryPath: string,
+): Promise<{ readonly directory: boolean; readonly id: string }> => {
+  const entryStat = await lstat(entryPath, { bigint: true });
+  let kind = 'special';
+  if (entryStat.isDirectory()) {
+    kind = 'directory';
+  } else if (entryStat.isFile()) {
+    kind = 'file';
+  } else if (entryStat.isSymbolicLink()) {
+    kind = 'symlink';
+  }
+  const stableIdentity = [kind, entryStat.dev, entryStat.ino, entryStat.mode, entryStat.uid, entryStat.gid];
+  return {
+    directory: entryStat.isDirectory(),
+    // Child entries carry their own full identity. Ignoring directory size and
+    // timestamps prevents a create-then-remove temporary file from masquerading
+    // as durable state while still detecting new, removed, or replaced paths.
+    id: [
+      ...stableIdentity,
+      ...(entryStat.isDirectory() ? [] : [entryStat.size, entryStat.mtimeNs, entryStat.ctimeNs]),
+    ].join(':'),
+  };
+};
+
+const snapshotRuntimePathMetadata = async (rootDirectory: string): Promise<Map<string, string>> => {
+  const entries = new Map<string, string>();
+  const visit = async (relativePath: string): Promise<void> => {
+    if (entries.size >= PATH_METADATA_ENTRY_LIMIT) {
+      throw new Error(`Runtime path metadata exceeded its ${PATH_METADATA_ENTRY_LIMIT}-entry limit.`);
+    }
+    const entryPath = relativePath === '.' ? rootDirectory : path.join(rootDirectory, relativePath);
+    const identity = await runtimeMetadataIdentity(entryPath);
+    const normalizedPath = relativePath.split(path.sep).join('/');
+    entries.set(normalizedPath, identity.id);
+    if (
+      !identity.directory ||
+      runtimeMetadataExcludedPrefixes.some(
+        (prefix) => normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`),
+      )
+    ) {
+      return;
+    }
+    const childNames = (await readdir(entryPath)).sort();
+    for (const childName of childNames) {
+      await visit(relativePath === '.' ? childName : path.join(relativePath, childName));
+    }
+  };
+  await visit('.');
+  return entries;
+};
+
+const changedRuntimePaths = (before: ReadonlyMap<string, string>, after: ReadonlyMap<string, string>): string[] =>
+  [...new Set([...before.keys(), ...after.keys()])]
+    .filter((relativePath) => before.get(relativePath) !== after.get(relativePath))
+    .sort();
 
 const readText = async (filePath: string): Promise<string | undefined> => {
   try {
@@ -444,15 +651,28 @@ const mergeProcessMaximums = (
   }
 };
 
+const cumulativeWriteDelta = (
+  maximums: ReadonlyMap<string, ProcessCounter>,
+  baseline: ReadonlyMap<string, ProcessCounter>,
+): number => {
+  let total = 0;
+  for (const [identity, processCounter] of maximums) {
+    total += Math.max(0, processCounter.writeBytes - (baseline.get(identity)?.writeBytes ?? 0));
+  }
+  return total;
+};
+
 const measureScenario = async ({
   blockDevice,
   deadlineMs,
   devOutputDirectory,
   name,
   operation,
+  pathObservationRoot,
   pollIntervalMs = PROCESS_POLL_INTERVAL_MS,
   roots,
   temporaryDirectory,
+  traceIntervalMs,
   zeroBaseline = false,
 }: ScenarioOptions): Promise<ScenarioMeasurement> => {
   const sectorsBefore = await readBlockDeviceSectors(blockDevice);
@@ -463,12 +683,15 @@ const measureScenario = async ({
   const baselineSample = zeroBaseline
     ? { aggregateResidentBytes: 0, aggregateThreads: 0, deletedDevOutputDescriptors: 0, processes: new Map() }
     : await sampleProcessTrees(roots(), devOutputDirectory);
+  const pathMetadataBefore = pathObservationRoot ? await snapshotRuntimePathMetadata(pathObservationRoot) : undefined;
   const maximums = new Map(baselineSample.processes);
   let leasePeak = leaseBefore;
   let peakResidentBytes = baselineSample.aggregateResidentBytes;
   let peakThreads = baselineSample.aggregateThreads;
   let peakDeletedDescriptors = baselineSample.deletedDevOutputDescriptors;
   const startedAt = performance.now();
+  const writeTrace: WriteTracePoint[] = [];
+  let nextTraceAt = traceIntervalMs;
   let completed = false;
   const abortController = new AbortController();
   const rawOperationPromise = operation(abortController.signal);
@@ -491,6 +714,11 @@ const measureScenario = async ({
     peakResidentBytes = Math.max(peakResidentBytes, sample.aggregateResidentBytes);
     peakThreads = Math.max(peakThreads, sample.aggregateThreads);
     peakDeletedDescriptors = Math.max(peakDeletedDescriptors, sample.deletedDevOutputDescriptors);
+    const elapsedMs = performance.now() - startedAt;
+    if (nextTraceAt !== undefined && elapsedMs >= nextTraceAt) {
+      writeTrace.push({ elapsedMs, totalWriteBytes: cumulativeWriteDelta(maximums, baselineSample.processes) });
+      nextTraceAt += traceIntervalMs ?? 0;
+    }
     await Promise.race([operationPromise, Bun.sleep(pollIntervalMs)]).catch(() => undefined);
   }
   try {
@@ -520,6 +748,13 @@ const measureScenario = async ({
   peakResidentBytes = Math.max(peakResidentBytes, finalSample.aggregateResidentBytes);
   peakThreads = Math.max(peakThreads, finalSample.aggregateThreads);
   peakDeletedDescriptors = Math.max(peakDeletedDescriptors, finalSample.deletedDevOutputDescriptors);
+  if (traceIntervalMs !== undefined) {
+    const elapsedMs = performance.now() - startedAt;
+    const finalWriteBytes = cumulativeWriteDelta(maximums, baselineSample.processes);
+    if (writeTrace.at(-1)?.totalWriteBytes !== finalWriteBytes || writeTrace.length === 0) {
+      writeTrace.push({ elapsedMs, totalWriteBytes: finalWriteBytes });
+    }
+  }
   const leaseAfter = await measureLegacySessionQueryLeases(temporaryDirectory);
   leasePeak = largerLeaseMeasurement(leasePeak, leaseAfter);
   const sectorsAfter = await readBlockDeviceSectors(blockDevice);
@@ -529,10 +764,15 @@ const measureScenario = async ({
   if (sectorsAfter < sectorsBefore) {
     throw new Error(`Block device ${blockDevice} write sectors regressed during ${name}.`);
   }
+  const pathMutations =
+    pathMetadataBefore && pathObservationRoot
+      ? changedRuntimePaths(pathMetadataBefore, await snapshotRuntimePathMetadata(pathObservationRoot))
+      : [];
   const processes = [...maximums.entries()]
     .map(([identity, maximum]): ProcessDelta => {
       const baseline = baselineSample.processes.get(identity);
       return {
+        bornDuringScenario: baseline === undefined,
         command: maximum.command,
         cpuTicksDelta: Math.max(0, maximum.cpuTicks - (baseline?.cpuTicks ?? 0)),
         parentPid: maximum.parentPid,
@@ -554,10 +794,12 @@ const measureScenario = async ({
     leaseBefore,
     leasePeak,
     name,
+    pathMutations,
     peakResidentBytes,
     peakThreads,
     processes,
     totalWriteBytes: processes.reduce((total, processMeasurement) => total + processMeasurement.writeBytesDelta, 0),
+    writeTrace,
   };
 };
 
@@ -787,6 +1029,107 @@ const reserveFreePort = (): Promise<number> =>
     });
   });
 
+const createRuntimeControlClient = (environment: Readonly<Record<string, string>>): UsageEngineControlClient => {
+  const databasePath = environment.AI_USAGE_DATABASE_PATH;
+  const stateDirectory = environment.AI_USAGE_ENGINE_STATE_DIR;
+  const configCwd = environment.AI_USAGE_ROOT_DIR;
+  if (!(databasePath && stateDirectory && configCwd)) {
+    throw new Error('Runtime control requires explicit database, state, and config paths.');
+  }
+  const rendezvousPath = path.join(stateDirectory, 'rendezvous.json');
+  const targetId = usageEngineTargetIdFor({ configCwd, databasePath });
+  return createUsageEngineControlClient({
+    eventIdleTimeoutMs: 30_000,
+    requestTimeoutMs: 30_000,
+    resolveRendezvous: async () => {
+      const rendezvous = await loadUsageEngineRendezvous(rendezvousPath);
+      assertUsageEngineRendezvousTarget(rendezvous, targetId);
+      return rendezvous;
+    },
+  });
+};
+
+const waitForEngineStatus = async (
+  control: UsageEngineControlClient,
+  engineProcess: CapturedOwnedProcess,
+  label: string,
+  predicate: (status: UsageEngineStatus) => boolean,
+  signal?: AbortSignal,
+): Promise<UsageEngineStatus> => {
+  const deadline = Date.now() + READINESS_DEADLINE_MS;
+  while (Date.now() < deadline) {
+    signal?.throwIfAborted();
+    if (engineProcess.child.exitCode !== null) {
+      throw new Error(processFailureMessage(label, engineProcess, engineProcess.child.exitCode));
+    }
+    try {
+      const status = await control.getStatus(signal ? { signal } : {});
+      if (predicate(status)) {
+        return status;
+      }
+    } catch {
+      signal?.throwIfAborted();
+    }
+    await (signal ? sleepWithSignal(50, signal) : Bun.sleep(50));
+  }
+  throw new Error(
+    `${label} did not reach its expected engine status before the deadline.\nEngine stdout:\n${engineProcess.stdout.text()}\nEngine stderr:\n${engineProcess.stderr.text()}`,
+  );
+};
+
+const readyAndSettled = (status: UsageEngineStatus): boolean =>
+  status.readiness === 'ready' &&
+  status.storeSchemaVersion === USAGE_STORE_SCHEMA_VERSION &&
+  status.currentPublication !== null &&
+  status.currentPublication.revision === status.sourceControl.publication.revision &&
+  isSourceControlSettled(status.sourceControl);
+
+interface StoreBoundarySnapshot {
+  readonly files: Readonly<Record<string, string | null>>;
+  readonly generations: Awaited<ReturnType<typeof readUsageStoreGenerations>>;
+  readonly revision: string;
+}
+
+const readUsageStoreGenerations = async (databasePath: string) =>
+  await Effect.runPromise(queryUsageStoreGenerations({ dbPath: databasePath }));
+
+const fileIdentity = async (filePath: string): Promise<string | null> => {
+  try {
+    const fileStat = await stat(filePath, { bigint: true });
+    return [fileStat.dev, fileStat.ino, fileStat.size, fileStat.mtimeNs, fileStat.ctimeNs].join(':');
+  } catch {
+    return null;
+  }
+};
+
+const readStoreFiles = async (databasePath: string): Promise<Readonly<Record<string, string | null>>> => {
+  const [database, wal, shm] = await Promise.all([
+    fileIdentity(databasePath),
+    fileIdentity(`${databasePath}-wal`),
+    fileIdentity(`${databasePath}-shm`),
+  ]);
+  return { database, shm, wal };
+};
+
+const readStoreBoundarySnapshot = async (
+  databasePath: string,
+  filesBeforeQueries = false,
+): Promise<StoreBoundarySnapshot> => {
+  const filesBefore = filesBeforeQueries ? await readStoreFiles(databasePath) : undefined;
+  const [manifest, generations] = await Promise.all([
+    Effect.runPromise(queryCurrentServedReportRevision({ dbPath: databasePath })),
+    readUsageStoreGenerations(databasePath),
+  ]);
+  return {
+    files: filesBefore ?? (await readStoreFiles(databasePath)),
+    generations,
+    revision: manifest.revision,
+  };
+};
+
+const sameStoreBoundary = (left: StoreBoundarySnapshot, right: StoreBoundarySnapshot): boolean =>
+  JSON.stringify(left) === JSON.stringify(right);
+
 const isSafeRelativeRepositoryPath = (relativePath: string): boolean =>
   relativePath !== '' &&
   !path.isAbsolute(relativePath) &&
@@ -922,6 +1265,36 @@ const copyDependencies = async (
   );
 };
 
+const initializePrivateSourceRepository = async (
+  sourceDirectory: string,
+  environment: Record<string, string>,
+): Promise<void> => {
+  await runRequiredCommand(
+    'private source repository initialization',
+    ['git', 'init', '--quiet'],
+    sourceDirectory,
+    environment,
+  );
+  await runRequiredCommand('private source repository index', ['git', 'add', '--all'], sourceDirectory, environment);
+  await runRequiredCommand(
+    'private source repository commit',
+    [
+      'git',
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      'user.email=plan052@invalid.example',
+      '-c',
+      'user.name=Plan 052 Measurement',
+      'commit',
+      '--quiet',
+      '--message=Plan 052 private source snapshot',
+    ],
+    sourceDirectory,
+    environment,
+  );
+};
+
 const prepareSourceSnapshot = async (
   repositoryDirectory: string,
   sourceDirectory: string,
@@ -937,6 +1310,7 @@ const prepareSourceSnapshot = async (
   } else {
     fingerprint = await copyWorktreeSource(repositoryDirectory, sourceDirectory, environment);
   }
+  await initializePrivateSourceRepository(sourceDirectory, environment);
   await copyDependencies(repositoryDirectory, sourceDirectory, environment);
   await validateContainedSourceSymlinks(sourceDirectory);
   return {
@@ -991,6 +1365,101 @@ const SEED_FIXTURE_SCRIPT = `
     ),
   );
 `;
+
+const addCollectionDeltaFixture = async (homeDirectory: string): Promise<void> => {
+  const sessionsDirectory = path.join(homeDirectory, '.codex', 'sessions', '2026', '07');
+  const sessionId = 'plan052-measured-collection-delta';
+  await mkdir(sessionsDirectory, { mode: 0o700, recursive: true });
+  await writeFile(
+    path.join(sessionsDirectory, `${sessionId}.jsonl`),
+    `${JSON.stringify({
+      payload: { cwd: '/work/fixture-pagination', id: sessionId },
+      timestamp: '2026-07-31T10:00:00.000Z',
+      type: 'session_meta',
+    })}\n${JSON.stringify({
+      payload: {
+        info: {
+          total_token_usage: {
+            cached_input_tokens: 2,
+            input_tokens: 11,
+            output_tokens: 3,
+            total_tokens: 14,
+          },
+        },
+        type: 'token_count',
+      },
+      timestamp: '2026-07-31T10:00:01.000Z',
+      type: 'event_msg',
+    })}\n`,
+    { mode: 0o600 },
+  );
+};
+
+interface DisabledAutonomousSources {
+  readonly enabledSourceIds: UsageEngineStatus['sourceControl']['sources'][number]['id'][];
+  readonly status: UsageEngineStatus;
+}
+
+const disableAutonomousSources = async (
+  control: UsageEngineControlClient,
+  engineProcess: CapturedOwnedProcess,
+  signal?: AbortSignal,
+): Promise<DisabledAutonomousSources> => {
+  const initial = await waitForEngineStatus(control, engineProcess, 'source-policy boundary', readyAndSettled, signal);
+  const enabledSourceIds = initial.sourceControl.sources.flatMap((source) =>
+    source.policy === 'enabled' ? [source.id] : [],
+  );
+  for (const source of initial.sourceControl.sources) {
+    if (source.policy !== 'enabled') {
+      continue;
+    }
+    await executeUsageEngineCommandToCompletion(
+      control,
+      { command: 'set-source-enabled', enabled: false, sourceId: source.id },
+      {
+        expectedStoreSchemaVersion: USAGE_STORE_SCHEMA_VERSION,
+        ...(signal ? { signal } : {}),
+        timeoutMs: READINESS_DEADLINE_MS,
+      },
+    );
+  }
+  return {
+    enabledSourceIds,
+    status: await waitForEngineStatus(
+      control,
+      engineProcess,
+      'disabled-source quiescence',
+      (status) => readyAndSettled(status) && status.sourceControl.sources.every(({ policy }) => policy === 'disabled'),
+      signal,
+    ),
+  };
+};
+
+const restoreAutonomousSources = async (
+  control: UsageEngineControlClient,
+  engineProcess: CapturedOwnedProcess,
+  sourceIds: readonly UsageEngineStatus['sourceControl']['sources'][number]['id'][],
+): Promise<UsageEngineStatus> => {
+  for (const sourceId of sourceIds) {
+    await executeUsageEngineCommandToCompletion(
+      control,
+      { command: 'set-source-enabled', enabled: true, sourceId },
+      {
+        expectedStoreSchemaVersion: USAGE_STORE_SCHEMA_VERSION,
+        timeoutMs: READINESS_DEADLINE_MS,
+      },
+    );
+  }
+  const enabledSourceIds = new Set(sourceIds);
+  return await waitForEngineStatus(
+    control,
+    engineProcess,
+    'restored-source quiescence',
+    (status) =>
+      readyAndSettled(status) &&
+      status.sourceControl.sources.every(({ id, policy }) => !enabledSourceIds.has(id) || policy === 'enabled'),
+  );
+};
 
 const parseSnapshotFrame = (frame: string): SourceControlView | undefined => {
   const lines = frame.split('\n');
@@ -1136,20 +1605,35 @@ const publicationIsSettled = (snapshot: SourceControlView): boolean =>
   !(snapshot.publication.running || snapshot.publication.queued || snapshot.publication.pendingDemand) &&
   snapshot.publication.requestedGeneration === snapshot.publication.acknowledgedRequestGeneration;
 
-const noSourceHasStarted = (snapshot: SourceControlView): boolean =>
-  snapshot.sources.every(({ lastOutcome, lastStartedAt }) => lastStartedAt === undefined && lastOutcome === 'not-run');
-
 const sourceStartFingerprint = (snapshot: SourceControlView): string =>
   JSON.stringify(snapshot.sources.map(({ id, lastStartedAt }) => [id, lastStartedAt ?? null]));
 
-const requestApplication = async (baseUrl: string, signal?: AbortSignal): Promise<void> => {
+const requestApplication = async (baseUrl: string, signal?: AbortSignal, pathname = '/'): Promise<void> => {
   const timeoutSignal = AbortSignal.timeout(5000);
-  const response = await fetch(`${baseUrl}/`, {
+  const response = await fetch(`${baseUrl}${pathname}`, {
     signal: signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal,
   });
   const body = await response.text();
   if (!(response.status === 200 && body.includes('Usage report'))) {
-    throw new Error(`Development application returned HTTP ${response.status} without the report shell.`);
+    throw new Error(`Development application ${pathname} returned HTTP ${response.status} without the report shell.`);
+  }
+};
+
+const warmDisconnectedCommandRoute = async (baseUrl: string): Promise<void> => {
+  const response = await fetch(`${baseUrl}/api/source-control/command`, {
+    body: '{"command":"detect-all"}',
+    headers: {
+      'content-type': 'application/json',
+      host: new URL(baseUrl).host,
+      origin: baseUrl,
+      'sec-fetch-site': 'same-origin',
+    },
+    method: 'POST',
+    signal: AbortSignal.timeout(5000),
+  });
+  const body = await response.text();
+  if (!(response.status === 503 && body.includes('engine-unavailable'))) {
+    throw new Error(`Disconnected command warmup returned unexpected HTTP ${response.status}.`);
   }
 };
 
@@ -1171,6 +1655,23 @@ const warmDevelopmentCompiler = async (
     AI_USAGE_CODEX_FIXTURE_LOG: path.join(warmupRoot, 'logs', 'codex-requests.json'),
     PATH: [fixtureBinDirectory, inheritedEnvironment.PATH ?? ''].filter(Boolean).join(path.delimiter),
   };
+  await runRequiredCommand(
+    'compiler warmup store preparation',
+    [
+      process.execPath,
+      '--no-env-file',
+      path.join(sourceDirectory, 'apps', 'usage-engine', 'src', 'main.ts'),
+      'once',
+      JSON.stringify({
+        command: { command: 'publish' },
+        commandId: 'compiler-warmup-publication',
+        protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
+      }),
+    ],
+    sourceDirectory,
+    environment,
+    READINESS_DEADLINE_MS,
+  );
   const port = await reserveFreePort();
   const baseUrl = `http://${LOOPBACK_HOST}:${port}`;
   const warmupProcess = spawnCapturedProcess(
@@ -1190,8 +1691,9 @@ const warmDevelopmentCompiler = async (
   );
   let operationError: unknown;
   try {
-    const deadline = Date.now() + BUILD_DEADLINE_MS;
+    const deadline = Date.now() + READINESS_DEADLINE_MS;
     let ready = false;
+    let lastProbeFailure: unknown;
     while (!ready && Date.now() < deadline) {
       if (warmupProcess.child.exitCode !== null) {
         throw new Error(
@@ -1200,16 +1702,21 @@ const warmDevelopmentCompiler = async (
       }
       try {
         await requestApplication(baseUrl);
+        await requestApplication(baseUrl, undefined, '/?tab=sessions');
+        await warmDisconnectedCommandRoute(baseUrl);
         ready = true;
-      } catch {
+      } catch (error) {
+        lastProbeFailure = error;
         await Bun.sleep(100);
       }
     }
     if (!ready) {
-      throw new Error('Compiler warmup did not become ready before its deadline.');
+      throw new Error(
+        `Compiler warmup did not become ready before its deadline. Last probe: ${
+          lastProbeFailure instanceof Error ? lastProbeFailure.message : String(lastProbeFailure)
+        }.\nWarmup stdout:\n${warmupProcess.stdout.text()}\nWarmup stderr:\n${warmupProcess.stderr.text()}`,
+      );
     }
-    const sourceStream = await waitForSourceSnapshotConnection(baseUrl, warmupProcess);
-    await sourceStream.close();
   } catch (error) {
     operationError = error;
   }
@@ -1227,58 +1734,71 @@ const warmDevelopmentCompiler = async (
   }
 };
 
-const waitForInitialCollection = async (
-  stream: SourceSnapshotStream,
-  triggerWallClockMs: number,
-  before: SourceControlView,
-  signal?: AbortSignal,
-): Promise<void> => {
-  await waitForSnapshot(
-    stream,
-    'initial collection and publication',
-    (snapshot) => {
-      const sourcesSettled = isSourceControlSettled(snapshot);
-      const sourceActuallyFinished = snapshot.sources.some(
-        ({ lastFinishedAt }) => lastFinishedAt !== undefined && Date.parse(lastFinishedAt) >= triggerWallClockMs,
-      );
-      const publicationAdvanced =
-        snapshot.publication.revision !== before.publication.revision ||
-        snapshot.publication.publishedGeneration > before.publication.publishedGeneration ||
-        snapshot.publication.lastPublishedAt !== before.publication.lastPublishedAt;
-      return Boolean(snapshot.publication.revision) && sourcesSettled && sourceActuallyFinished && publicationAdvanced;
-    },
-    READINESS_DEADLINE_MS,
-    signal,
-  );
-};
-
 const SESSION_QUERY_SCRIPT = `
   import { chromium } from '@playwright/test';
 
   const baseUrl = process.env.PLAN052_BASE_URL;
-  if (!baseUrl) {
-    throw new Error('PLAN052_BASE_URL is required.');
+  const expectedRevision = process.env.PLAN052_EXPECTED_REVISION;
+  if (!(baseUrl && expectedRevision)) {
+    throw new Error('PLAN052_BASE_URL and PLAN052_EXPECTED_REVISION are required.');
   }
   const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+  process.stderr.write('sessions-query stage=launch\\n');
   const browser = await chromium.launch({
     headless: true,
     ...(executablePath ? { executablePath } : {}),
   });
   try {
+    process.stderr.write('sessions-query stage=navigate\\n');
     const page = await browser.newPage({ viewport: { height: 900, width: 1024 } });
+    const serverFunctionStatuses = [];
+    const clientErrors = [];
+    const responseReads = [];
+    let exactSessionResponse = false;
+    page.on('console', (message) => {
+      if (message.type() === 'error') {
+        clientErrors.push('console:' + message.text().slice(0, 500));
+      }
+    });
+    page.on('pageerror', (error) => clientErrors.push('page:' + error.message.slice(0, 500)));
+    page.on('response', (response) => {
+      if (response.url().includes('/_serverFn/')) {
+        serverFunctionStatuses.push(new URL(response.url()).pathname + ':' + String(response.status()));
+        responseReads.push(
+          response.text().then((body) => {
+            if (body.includes(expectedRevision) && /session-query-v1:[0-9a-f]{16}/.test(body)) {
+              exactSessionResponse = true;
+            }
+          }),
+        );
+      }
+    });
     await page.goto(baseUrl + '/?tab=sessions', {
       timeout: 60_000,
       waitUntil: 'domcontentloaded',
     });
     const report = page.locator('main[data-hydrated="true"]');
     await report.waitFor({ state: 'visible', timeout: 60_000 });
-    await page.locator('table').first().waitFor({ state: 'visible', timeout: 60_000 });
-    const fingerprint = await report.getAttribute('data-request-fingerprint');
-    const revision = await report.getAttribute('data-report-revision');
-    if (!fingerprint || !/^session-query-v1:[0-9a-f]{16}$/.test(fingerprint) || !revision) {
-      throw new Error('Sessions query did not expose exact revision identity.');
+    process.stderr.write('sessions-query stage=hydrated\\n');
+    const proofDeadline = Date.now() + 15_000;
+    while (!exactSessionResponse && Date.now() < proofDeadline) {
+      await Promise.all(responseReads);
+      await Bun.sleep(25);
     }
+    if (!exactSessionResponse) {
+      const unavailableCount = await page.getByText('Report data is unavailable.', { exact: true }).count();
+      throw new Error(
+        'Sessions revision did not resolve; serverFnStatuses=' +
+          JSON.stringify(serverFunctionStatuses) +
+          '; unavailableCount=' +
+          String(unavailableCount) +
+          '; clientErrors=' +
+          JSON.stringify(clientErrors),
+      );
+    }
+    process.stderr.write('sessions-query stage=revision\\n');
   } finally {
+    process.stderr.write('sessions-query stage=close\\n');
     await browser.close();
   }
 `;
@@ -1301,7 +1821,13 @@ const runSessionQuery = async (
       throw new Error(processFailureMessage('Sessions browser query', queryProcess, exitCode));
     }
   } catch (error) {
-    operationError = error;
+    operationError = new AggregateError(
+      [
+        error,
+        new Error(`Sessions stdout:\n${queryProcess.stdout.text()}\nSessions stderr:\n${queryProcess.stderr.text()}`),
+      ],
+      'Sessions browser query operation failed.',
+    );
   }
   let cleanupError: unknown;
   try {
@@ -1483,7 +2009,7 @@ const readClockTicksPerSecond = async (
 
 const createRuntimeDirectories = async (runtimeRoot: string): Promise<void> => {
   await Promise.all(
-    ['cache', 'config', 'data', 'fixture-bin', 'home', 'logs', 'tmp'].map((directory) =>
+    ['cache', 'config', 'data', 'engine-state', 'fixture-bin', 'home', 'logs', 'store', 'tmp'].map((directory) =>
       mkdir(path.join(runtimeRoot, directory), { mode: 0o700, recursive: true }),
     ),
   );
@@ -1673,10 +2199,19 @@ export const measureUsageRuntimeIo = async (
     const clockTicksPerSecond = await readClockTicksPerSecond(sourceDirectory, environment);
     const port = await reserveFreePort();
     const baseUrl = `http://${LOOPBACK_HOST}:${port}`;
-    let devProcess: CapturedOwnedProcess | undefined;
+    const databasePath = environment.AI_USAGE_DATABASE_PATH;
+    if (!databasePath) {
+      throw new Error('The measured runtime requires an explicit database path.');
+    }
+    const control = createRuntimeControlClient(environment);
+    let engineProcess: CapturedOwnedProcess | undefined;
+    let webProcess: CapturedOwnedProcess | undefined;
     let queryProcess: CapturedOwnedProcess | undefined;
     let buildProcess: CapturedOwnedProcess | undefined;
+    let engineRestartPreservedWebProcess = false;
     let hmrMessagesDuringHmr = 0;
+    let hmrPreservedEngineInstance = false;
+    let hmrPreservedPublication = false;
     const scenarios: ScenarioMeasurement[] = [];
 
     scenarios.push(
@@ -1686,7 +2221,14 @@ export const measureUsageRuntimeIo = async (
         devOutputDirectory: undefined,
         name: 'cold-start',
         operation: async (signal) => {
-          devProcess = spawnCapturedProcess(
+          engineProcess = spawnCapturedProcess(
+            [process.execPath, '--no-env-file', 'run', 'dev:engine'],
+            sourceDirectory,
+            environment,
+          );
+          ownedProcesses.add(engineProcess);
+          await waitForEngineStatus(control, engineProcess, 'cold-start engine', readyAndSettled, signal);
+          webProcess = spawnCapturedProcess(
             [
               process.execPath,
               '--no-env-file',
@@ -1701,46 +2243,129 @@ export const measureUsageRuntimeIo = async (
             webDirectory,
             environment,
           );
-          ownedProcesses.add(devProcess);
-          snapshotStream = await waitForSourceSnapshotConnection(baseUrl, devProcess, signal);
+          ownedProcesses.add(webProcess);
+          snapshotStream = await waitForSourceSnapshotConnection(baseUrl, webProcess, signal);
+          await requestApplication(baseUrl, signal);
           try {
-            await waitForSnapshot(
+            const sourceSnapshot = await waitForSnapshot(
               snapshotStream,
               'cold-start publication',
-              (snapshot) => publicationIsSettled(snapshot) && noSourceHasStarted(snapshot),
+              (snapshot) => publicationIsSettled(snapshot) && isSourceControlSettled(snapshot),
               READINESS_DEADLINE_MS,
               signal,
             );
+            const engineStatus = await waitForEngineStatus(
+              control,
+              engineProcess,
+              'cold-start convergence',
+              readyAndSettled,
+              signal,
+            );
+            if (engineStatus.currentPublication?.revision !== sourceSnapshot.publication.revision) {
+              throw new Error('Web and engine did not converge on the same cold-start revision.');
+            }
           } catch (error) {
             throw new AggregateError(
               [
                 error,
                 new Error(
-                  `Development stdout:\n${devProcess.stdout.text()}\nDevelopment stderr:\n${devProcess.stderr.text()}`,
+                  `Engine stdout:\n${engineProcess.stdout.text()}\nEngine stderr:\n${engineProcess.stderr.text()}\nWeb stdout:\n${webProcess.stdout.text()}\nWeb stderr:\n${webProcess.stderr.text()}`,
                 ),
               ],
               'Cold-start readiness failed.',
             );
           }
         },
-        roots: () => (devProcess ? [{ pid: devProcess.child.pid, role: 'dev' }] : []),
+        roots: () => [
+          ...(engineProcess ? [{ pid: engineProcess.child.pid, role: 'engine' }] : []),
+          ...(webProcess ? [{ pid: webProcess.child.pid, role: 'dev' }] : []),
+        ],
         temporaryDirectory,
         zeroBaseline: true,
       }),
     );
-    if (!(devProcess && snapshotStream)) {
-      throw new Error('Development runtime completed cold start without owned process state.');
+    if (!(engineProcess && webProcess && snapshotStream)) {
+      throw new Error('Split development runtime completed cold start without both owned process groups.');
     }
-    const runningDevProcess = devProcess;
+    const runningEngineProcess = engineProcess;
+    const runningWebProcess = webProcess;
     const runningSnapshotStream = snapshotStream;
     const devOutputDirectory = await existingDirectory(
       path.join(webDirectory, '.output-dev'),
       path.join(webDirectory, '.output'),
     );
-    const beforeColdIdle = await waitForSnapshot(
-      runningSnapshotStream,
+    const engineTarget = path.join(sourceDirectory, 'apps', 'usage-engine', 'src', 'main.ts');
+    const engineTargetStat = await stat(engineTarget);
+    const engineTargetContents = new Uint8Array(await Bun.file(engineTarget).arrayBuffer());
+    const engineRuntimeTarget = path.join(sourceDirectory, 'packages', 'usage-engine-runtime', 'src', 'live.ts');
+    const engineRuntimeTargetStat = await stat(engineRuntimeTarget);
+    const engineRuntimeTargetContents = new Uint8Array(await Bun.file(engineRuntimeTarget).arrayBuffer());
+    const beforeEngineRestart = await waitForEngineStatus(
+      control,
+      runningEngineProcess,
+      'engine-restart boundary',
+      readyAndSettled,
+    );
+    scenarios.push(
+      await measureScenario({
+        blockDevice: options.blockDevice,
+        deadlineMs: 2 * READINESS_DEADLINE_MS,
+        devOutputDirectory,
+        name: 'engine-restart',
+        operation: async (signal) => {
+          await writeFile(engineTarget, Buffer.concat([engineTargetContents, Buffer.from('\n')]));
+          const restarted = await waitForEngineStatus(
+            control,
+            runningEngineProcess,
+            'engine app-source restart',
+            (status) => status.instanceId !== beforeEngineRestart.instanceId && readyAndSettled(status),
+            signal,
+          );
+          await waitForSnapshot(
+            runningSnapshotStream,
+            'web control reconnect after engine restart',
+            (snapshot) => snapshot.instanceId === restarted.instanceId && isSourceControlSettled(snapshot),
+            READINESS_DEADLINE_MS,
+            signal,
+          );
+          await writeFile(engineRuntimeTarget, Buffer.concat([engineRuntimeTargetContents, Buffer.from('\n')]));
+          const dependencyRestarted = await waitForEngineStatus(
+            control,
+            runningEngineProcess,
+            'engine runtime-dependency restart',
+            (status) => status.instanceId !== restarted.instanceId && readyAndSettled(status),
+            signal,
+          );
+          await waitForSnapshot(
+            runningSnapshotStream,
+            'web control reconnect after engine dependency restart',
+            (snapshot) => snapshot.instanceId === dependencyRestarted.instanceId && isSourceControlSettled(snapshot),
+            READINESS_DEADLINE_MS,
+            signal,
+          );
+          await sleepWithSignal(500, signal);
+          const stableStatus = await control.getStatus({ signal });
+          if (stableStatus.instanceId !== dependencyRestarted.instanceId) {
+            throw new Error('One engine dependency edit caused more than one engine rotation.');
+          }
+          await requestApplication(baseUrl, signal);
+          engineRestartPreservedWebProcess = runningWebProcess.child.exitCode === null;
+          if (!engineRestartPreservedWebProcess) {
+            throw new Error('An engine source change restarted or stopped the Web process.');
+          }
+        },
+        roots: () => [
+          { pid: runningEngineProcess.child.pid, role: 'engine' },
+          { pid: runningWebProcess.child.pid, role: 'dev' },
+        ],
+        temporaryDirectory,
+      }),
+    );
+    const beforeColdIdle = await waitForEngineStatus(
+      control,
+      runningEngineProcess,
       'cold idle boundary',
-      (snapshot) => publicationIsSettled(snapshot) && noSourceHasStarted(snapshot),
+      readyAndSettled,
     );
     scenarios.push(
       await measureScenario({
@@ -1750,20 +2375,34 @@ export const measureUsageRuntimeIo = async (
         name: 'cold-idle',
         operation: async (signal) => {
           await sleepWithSignal(options.coldIdleMs, signal);
-          const afterColdIdle = runningSnapshotStream.latest();
-          if (!(afterColdIdle && publicationIsSettled(afterColdIdle) && noSourceHasStarted(afterColdIdle))) {
-            throw new Error('Cold idle was contaminated by collection or publication work.');
-          }
-          ensureSourceDidNotRun(beforeColdIdle, afterColdIdle, 'Cold idle');
+          const afterColdIdle = await waitForEngineStatus(
+            control,
+            runningEngineProcess,
+            'cold idle completion',
+            readyAndSettled,
+            signal,
+          );
+          ensureSourceDidNotRun(beforeColdIdle.sourceControl, afterColdIdle.sourceControl, 'Cold idle');
+          ensurePublicationDidNotAdvance(beforeColdIdle.sourceControl, afterColdIdle.sourceControl, 'Cold idle');
         },
-        roots: () => [{ pid: runningDevProcess.child.pid, role: 'dev' }],
+        roots: () => [
+          { pid: runningEngineProcess.child.pid, role: 'engine' },
+          { pid: runningWebProcess.child.pid, role: 'dev' },
+        ],
         temporaryDirectory,
       }),
     );
-    const beforeCollection = runningSnapshotStream.latest();
-    if (!beforeCollection) {
-      throw new Error('The source snapshot stream lost its collection boundary.');
+    const fixtureHome = environment.AI_USAGE_HOME ?? environment.HOME;
+    if (!fixtureHome) {
+      throw new Error('The collection delta fixture requires an isolated home.');
     }
+    await addCollectionDeltaFixture(fixtureHome);
+    const beforeCollection = await waitForEngineStatus(
+      control,
+      runningEngineProcess,
+      'collection boundary',
+      readyAndSettled,
+    );
     scenarios.push(
       await measureScenario({
         blockDevice: options.blockDevice,
@@ -1771,18 +2410,44 @@ export const measureUsageRuntimeIo = async (
         devOutputDirectory,
         name: 'collection-publication',
         operation: async (signal) => {
-          const triggerWallClockMs = Date.now();
-          await requestApplication(baseUrl, signal);
-          await waitForInitialCollection(runningSnapshotStream, triggerWallClockMs, beforeCollection, signal);
+          const completion = await executeUsageEngineCommandToCompletion(
+            control,
+            { command: 'collect-fresh-report', harness: 'codex', includeCursor: false },
+            {
+              expectedStoreSchemaVersion: USAGE_STORE_SCHEMA_VERSION,
+              signal,
+              timeoutMs: READINESS_DEADLINE_MS,
+            },
+          );
+          if (!(completion.state === 'succeeded' && completion.output.kind === 'collection')) {
+            throw new Error('Measured collection completed without a collection publication.');
+          }
+          const expectedRevision = completion.output.publication.revision;
+          if (expectedRevision === beforeCollection.currentPublication?.revision) {
+            throw new Error('Measured collection did not publish the synthetic fixture delta.');
+          }
+          const afterCollection = await waitForEngineStatus(
+            control,
+            runningEngineProcess,
+            'collection publication',
+            (status) => readyAndSettled(status) && status.currentPublication?.revision === expectedRevision,
+            signal,
+          );
+          const storeBoundary = await readStoreBoundarySnapshot(databasePath);
+          if (storeBoundary.revision !== afterCollection.currentPublication?.revision) {
+            throw new Error('SQLite and engine status disagree on the measured collection revision.');
+          }
         },
-        roots: () => [{ pid: runningDevProcess.child.pid, role: 'dev' }],
+        pathObservationRoot: runtimeRoot,
+        roots: () => [
+          { pid: runningEngineProcess.child.pid, role: 'engine' },
+          { pid: runningWebProcess.child.pid, role: 'dev' },
+        ],
         temporaryDirectory,
       }),
     );
-    const beforeWarmIdle = runningSnapshotStream.latest();
-    if (!beforeWarmIdle) {
-      throw new Error('The source snapshot stream lost its warm-idle boundary.');
-    }
+    const disabledSources = await disableAutonomousSources(control, runningEngineProcess);
+    const beforeWarmIdle = disabledSources.status;
     scenarios.push(
       await measureScenario({
         blockDevice: options.blockDevice,
@@ -1791,46 +2456,84 @@ export const measureUsageRuntimeIo = async (
         name: 'warm-idle',
         operation: async (signal) => {
           await sleepWithSignal(options.warmIdleMs, signal);
-          const afterWarmIdle = runningSnapshotStream.latest();
-          if (!(afterWarmIdle && isSourceControlSettled(afterWarmIdle))) {
-            throw new Error('Warm idle did not remain settled.');
-          }
-          ensureSourceDidNotRun(beforeWarmIdle, afterWarmIdle, 'Warm idle');
-          ensurePublicationDidNotAdvance(beforeWarmIdle, afterWarmIdle, 'Warm idle');
+          const afterWarmIdle = await waitForEngineStatus(
+            control,
+            runningEngineProcess,
+            'warm idle completion',
+            (status) =>
+              readyAndSettled(status) && status.sourceControl.sources.every(({ policy }) => policy === 'disabled'),
+            signal,
+          );
+          ensureSourceDidNotRun(beforeWarmIdle.sourceControl, afterWarmIdle.sourceControl, 'Warm idle');
+          ensurePublicationDidNotAdvance(beforeWarmIdle.sourceControl, afterWarmIdle.sourceControl, 'Warm idle');
         },
-        roots: () => [{ pid: runningDevProcess.child.pid, role: 'dev' }],
+        roots: () => [
+          { pid: runningEngineProcess.child.pid, role: 'engine' },
+          { pid: runningWebProcess.child.pid, role: 'dev' },
+        ],
         temporaryDirectory,
+        traceIntervalMs: WARM_IDLE_TRACE_INTERVAL_MS,
       }),
     );
+    const sessionsStatus = await waitForEngineStatus(
+      control,
+      runningEngineProcess,
+      'Sessions query boundary',
+      readyAndSettled,
+    );
+    const sessionsRevision = sessionsStatus.currentPublication?.revision;
+    if (!sessionsRevision) {
+      throw new Error('Sessions query requires a current publication revision.');
+    }
     scenarios.push(
       await measureScenario({
         blockDevice: options.blockDevice,
-        deadlineMs: READINESS_DEADLINE_MS,
+        deadlineMs: READINESS_DEADLINE_MS + 5 * CHILD_STOP_DEADLINE_MS,
         devOutputDirectory,
         name: 'sessions-query',
         operation: async () => {
-          await runSessionQuery(sourceDirectory, { ...environment, PLAN052_BASE_URL: baseUrl }, (ownedProcess) => {
-            queryProcess = ownedProcess;
-            ownedProcesses.add(ownedProcess);
-          });
+          try {
+            await runSessionQuery(
+              sourceDirectory,
+              {
+                ...environment,
+                PLAN052_BASE_URL: baseUrl,
+                PLAN052_EXPECTED_REVISION: sessionsRevision,
+              },
+              (ownedProcess) => {
+                queryProcess = ownedProcess;
+                ownedProcesses.add(ownedProcess);
+              },
+            );
+          } catch (error) {
+            throw new AggregateError(
+              [
+                error,
+                new Error(
+                  `Engine stderr:\n${runningEngineProcess.stderr.text()}\nWeb stdout:\n${runningWebProcess.stdout.text()}\nWeb stderr:\n${runningWebProcess.stderr.text()}`,
+                ),
+              ],
+              'Sessions query diagnostics',
+            );
+          }
         },
         pollIntervalMs: QUERY_PROCESS_POLL_INTERVAL_MS,
         roots: () => [
-          { pid: runningDevProcess.child.pid, role: 'dev' },
+          { pid: runningEngineProcess.child.pid, role: 'engine' },
+          { pid: runningWebProcess.child.pid, role: 'dev' },
           ...(queryProcess ? [{ pid: queryProcess.child.pid, role: 'browser-action' }] : []),
         ],
         temporaryDirectory,
       }),
     );
-    const beforeHmr = runningSnapshotStream.latest();
-    if (!beforeHmr) {
-      throw new Error('The source snapshot stream lost its HMR boundary.');
-    }
+    await restoreAutonomousSources(control, runningEngineProcess, disabledSources.enabledSourceIds);
+    const beforeHmr = await waitForEngineStatus(control, runningEngineProcess, 'HMR boundary', readyAndSettled);
+    const beforeHmrStore = await readStoreBoundarySnapshot(databasePath);
     const hmrTarget = path.join(webDirectory, 'src', 'dashboard-model.ts');
     const hmrTargetStat = await stat(hmrTarget);
     const hmrTargetContents = new Uint8Array(await Bun.file(hmrTarget).arrayBuffer());
-    const hmrStdoutPosition = runningDevProcess.stdout.position();
-    const hmrStderrPosition = runningDevProcess.stderr.position();
+    const hmrStdoutPosition = runningWebProcess.stdout.position();
+    const hmrStderrPosition = runningWebProcess.stderr.position();
     try {
       scenarios.push(
         await measureScenario({
@@ -1842,7 +2545,7 @@ export const measureUsageRuntimeIo = async (
             const startedAt = performance.now();
             await writeFile(hmrTarget, Buffer.concat([hmrTargetContents, Buffer.from('\n')]));
             while (performance.now() - startedAt < options.hmrMs) {
-              const hmrLogs = `${runningDevProcess.stdout.textSince(hmrStdoutPosition)}\n${runningDevProcess.stderr.textSince(
+              const hmrLogs = `${runningWebProcess.stdout.textSince(hmrStdoutPosition)}\n${runningWebProcess.stderr.textSince(
                 hmrStderrPosition,
               )}`;
               hmrMessagesDuringHmr = hmrLogs.match(HMR_MESSAGE_PATTERN)?.length ?? 0;
@@ -1858,24 +2561,58 @@ export const measureUsageRuntimeIo = async (
             if (remainingDurationMs > 0) {
               await sleepWithSignal(remainingDurationMs, signal);
             }
-            const afterHmr = runningSnapshotStream.latest();
-            if (!afterHmr) {
-              throw new Error('The source snapshot stream closed during HMR.');
+            const afterHmr = await waitForEngineStatus(
+              control,
+              runningEngineProcess,
+              'HMR completion',
+              readyAndSettled,
+              signal,
+            );
+            const afterHmrStore = await readStoreBoundarySnapshot(databasePath, true);
+            ensureSourceDidNotRun(beforeHmr.sourceControl, afterHmr.sourceControl, 'HMR');
+            ensurePublicationDidNotAdvance(beforeHmr.sourceControl, afterHmr.sourceControl, 'HMR');
+            hmrPreservedEngineInstance = beforeHmr.instanceId === afterHmr.instanceId;
+            const sourceGenerationPreserved = beforeHmr.sourceControl.generation === afterHmr.sourceControl.generation;
+            const currentPublicationPreserved =
+              JSON.stringify(beforeHmr.currentPublication) === JSON.stringify(afterHmr.currentPublication);
+            const storeGenerationsPreserved =
+              JSON.stringify(beforeHmrStore.generations) === JSON.stringify(afterHmrStore.generations);
+            const storeFilesPreserved = JSON.stringify(beforeHmrStore.files) === JSON.stringify(afterHmrStore.files);
+            const databaseFilePreserved = beforeHmrStore.files.database === afterHmrStore.files.database;
+            const walFilePreserved = beforeHmrStore.files.wal === afterHmrStore.files.wal;
+            const shmFilePreserved = beforeHmrStore.files.shm === afterHmrStore.files.shm;
+            hmrPreservedPublication =
+              sourceGenerationPreserved &&
+              currentPublicationPreserved &&
+              storeGenerationsPreserved &&
+              storeFilesPreserved &&
+              sameStoreBoundary(beforeHmrStore, afterHmrStore);
+            if (!(hmrPreservedEngineInstance && hmrPreservedPublication)) {
+              throw new Error(
+                `Web HMR invariant failed: engineInstance=${hmrPreservedEngineInstance} sourceGeneration=${sourceGenerationPreserved} publication=${currentPublicationPreserved} storeGenerations=${storeGenerationsPreserved} storeFiles=${storeFilesPreserved} database=${databaseFilePreserved} wal=${walFilePreserved} shm=${shmFilePreserved}.`,
+              );
             }
-            ensureSourceDidNotRun(beforeHmr, afterHmr, 'HMR');
-            ensurePublicationDidNotAdvance(beforeHmr, afterHmr, 'HMR');
           },
-          roots: () => [{ pid: runningDevProcess.child.pid, role: 'dev' }],
+          roots: () => [
+            { pid: runningEngineProcess.child.pid, role: 'engine' },
+            { pid: runningWebProcess.child.pid, role: 'dev' },
+          ],
           temporaryDirectory,
         }),
       );
     } finally {
       await runningSnapshotStream.close();
       snapshotStream = undefined;
-      await stopCapturedProcess(runningDevProcess);
+      await Promise.all([stopCapturedProcess(runningWebProcess), stopCapturedProcess(runningEngineProcess)]);
       await writeFile(hmrTarget, hmrTargetContents);
       await chmod(hmrTarget, hmrTargetStat.mode % 0o1000);
       await utimes(hmrTarget, hmrTargetStat.atime, hmrTargetStat.mtime);
+      await writeFile(engineTarget, engineTargetContents);
+      await chmod(engineTarget, engineTargetStat.mode % 0o1000);
+      await utimes(engineTarget, engineTargetStat.atime, engineTargetStat.mtime);
+      await writeFile(engineRuntimeTarget, engineRuntimeTargetContents);
+      await chmod(engineRuntimeTarget, engineRuntimeTargetStat.mode % 0o1000);
+      await utimes(engineRuntimeTarget, engineRuntimeTargetStat.atime, engineRuntimeTargetStat.mtime);
     }
     scenarios.push(
       await measureScenario({
@@ -1908,13 +2645,32 @@ export const measureUsageRuntimeIo = async (
         ),
       );
     }
+    const acceptanceBase = evaluateUsageRuntimeMeasurementAcceptance(
+      [...scenarios, ...concurrentBuilds.map(({ io }) => io)],
+      {
+        engineRestartPreservedWebProcess,
+        hmrPreservedEngineInstance,
+        hmrPreservedPublication,
+      },
+    );
+    const acceptance: UsageRuntimeMeasurementAcceptance = {
+      ...acceptanceBase,
+      deletedDevOutputDescriptorsAbsent:
+        acceptanceBase.deletedDevOutputDescriptorsAbsent &&
+        concurrentBuilds.every(({ correctness }) => correctness.peakDeletedDevOutputDescriptors === 0),
+    };
+    assertUsageRuntimeMeasurementAccepted(acceptance, scenarios);
     result = {
+      acceptance,
       blockDevice: options.blockDevice,
       clockTicksPerSecond,
       concurrentMode,
       concurrentBuilds,
+      engineRestartPreservedWebProcess,
       fixture: { claudeSessions: 2, codexSessions: options.codexSessions },
       hmrMessagesDuringHmr,
+      hmrPreservedEngineInstance,
+      hmrPreservedPublication,
       processPollIntervalMs: PROCESS_POLL_INTERVAL_MS,
       queryProcessPollIntervalMs: QUERY_PROCESS_POLL_INTERVAL_MS,
       scenarios,

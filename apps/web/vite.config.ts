@@ -144,6 +144,7 @@ export default defineConfig((configEnvironment) => {
         output: {
           dir: nitroOutputDirectory,
         },
+        plugins: ['./server/plugins/web-read-observability.ts'],
         preset: 'bun',
       }),
       solidDepScanPlugin(),

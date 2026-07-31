@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { makeAiUsageWideEventResource } from '@ai-usage/effect-runtime';
 import { makeEngineWideEventSinkLayer } from '@ai-usage/effect-runtime/node';
+import { parseUsageEngineInstanceId, type UsageEngineInstanceId } from '@ai-usage/usage-engine-control';
 import { createUsageEngineBearerToken } from '@ai-usage/usage-engine-control/node';
 import { createLiveUsageEngineRuntime } from '@ai-usage/usage-engine-runtime/live';
 import { startUsageEngineControlServer } from './control-server';
@@ -14,9 +15,14 @@ import { publishUsageEngineRendezvous } from './rendezvous-file';
 
 export const defineUsageEngineComposition = <Factory>(factory: Factory): Factory => factory;
 
+const engineInstanceIdFrom = (env: NodeJS.ProcessEnv): UsageEngineInstanceId =>
+  env.AI_USAGE_ENGINE_INSTANCE_ID === undefined
+    ? parseUsageEngineInstanceId(randomUUID())
+    : parseUsageEngineInstanceId(env.AI_USAGE_ENGINE_INSTANCE_ID);
+
 const createProductionDependencies = (env: NodeJS.ProcessEnv): UsageEngineProcessDependencies => ({
   check: checkUsageEngine,
-  createInstanceId: randomUUID,
+  createInstanceId: () => engineInstanceIdFrom(env),
   createRuntime: ({ collectionMode, instanceId, paths }) =>
     createLiveUsageEngineRuntime({
       acquireWriterLease: async () =>

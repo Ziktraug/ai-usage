@@ -33,13 +33,15 @@ test('cleans up the owned listener and drains its pipes after an assertion failu
         env: { PATH: process.env.PATH ?? '', PORT: String(port) },
         port,
       },
-      async (child) => {
+      async (child, logs) => {
         childPid = child.pid;
         const deadline = Date.now() + 2000;
         while (Date.now() < deadline) {
           try {
             const response = await fetch(`http://127.0.0.1:${port}`);
             if ((await response.text()) === 'fixture-ready') {
+              expect(logs.stdout).toContain('listening');
+              expect(logs.stderr).toContain('fixture diagnostic');
               throw new Error('deliberate HTTP assertion failure');
             }
           } catch (error) {

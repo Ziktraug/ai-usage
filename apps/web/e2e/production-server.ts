@@ -21,15 +21,23 @@ if (!(LISTENER_PORT_PATTERN.test(listenerPort) && Number(listenerPort) <= 65_535
   throw new Error(`${LISTENER_PORT_ENVIRONMENT_KEY} must be a valid TCP port`);
 }
 
-const temporaryHome = await mkdtemp(path.join(tmpdir(), 'ai-usage-production-browser-'));
+const temporaryHome = await mkdtemp(path.join(tmpdir(), 'plan052-production-browser-'));
 const fixtureBinDirectory = path.join(temporaryHome, 'fixture-bin');
+const engineStateDirectory = path.join(temporaryHome, 'engine-state');
+const logDirectory = path.join(temporaryHome, 'logs');
+const temporaryDirectory = path.join(temporaryHome, 'tmp');
+const databasePath = path.join(temporaryHome, 'store', 'usage.sqlite');
 
 const cleanupHome = (): void => {
   rmSync(temporaryHome, { force: true, recursive: true });
 };
 
 try {
-  await mkdir(fixtureBinDirectory, { recursive: true });
+  await Promise.all(
+    [fixtureBinDirectory, engineStateDirectory, logDirectory, temporaryDirectory, path.dirname(databasePath)].map(
+      async (directory) => await mkdir(directory, { mode: 0o700, recursive: true }),
+    ),
+  );
   const fakeGhPath = path.join(fixtureBinDirectory, 'gh');
   await writeFile(
     fakeGhPath,
@@ -40,18 +48,29 @@ try {
     codexSessionCount: scaleFixture ? SESSION_SCROLL_EXPECTED_COUNT : DEFAULT_CODEX_SESSION_COUNT,
     harnesses: scaleFixture ? ['codex'] : ['claude', 'codex'],
   });
-  const child = Bun.spawn(['bun', 'run', '--cwd', 'apps/web', 'start'], {
+  const child = Bun.spawn(['bun', '--no-env-file', 'run', 'start'], {
     cwd: rootDirectory,
     env: {
-      ...process.env,
+      AI_USAGE_DATABASE_PATH: databasePath,
+      AI_USAGE_ENGINE_PORT: '0',
+      AI_USAGE_ENGINE_STATE_DIR: engineStateDirectory,
+      AI_USAGE_HOME: temporaryHome,
+      AI_USAGE_LOG_DIR: logDirectory,
       AI_USAGE_ROOT_DIR: rootDirectory,
+      AI_USAGE_TEMP_ROOT: temporaryDirectory,
       HOME: temporaryHome,
       HOST: '127.0.0.1',
       NITRO_HOST: '127.0.0.1',
       NITRO_PORT: listenerPort,
+      NO_COLOR: '1',
       PATH: `${fixtureBinDirectory}${path.delimiter}${process.env.PATH ?? ''}`,
       PORT: listenerPort,
+      TMPDIR: temporaryDirectory,
       TZ: 'Europe/Paris',
+      XDG_CACHE_HOME: path.join(temporaryHome, '.cache'),
+      XDG_CONFIG_HOME: path.join(temporaryHome, '.config'),
+      XDG_DATA_HOME: path.join(temporaryHome, '.local', 'share'),
+      ...(process.env.CI === undefined ? {} : { CI: process.env.CI }),
     },
     stderr: 'inherit',
     stdout: 'inherit',
@@ -69,7 +88,7 @@ try {
         if (child.exitCode === null) {
           child.kill('SIGKILL');
         }
-      }, 3000);
+      }, 12_000);
       forceKill.unref();
     }
   };

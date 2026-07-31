@@ -17,6 +17,7 @@ export default defineConfig({
   },
   webServer: {
     command: 'bun e2e/production-server.ts',
+    gracefulShutdown: { signal: 'SIGTERM', timeout: 15_000 },
     reuseExistingServer: false,
     timeout: 120_000,
     url: 'http://127.0.0.1:4175',
