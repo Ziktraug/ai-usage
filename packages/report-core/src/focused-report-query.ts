@@ -1,10 +1,13 @@
 import {
   type AnalyticsGroup,
   type AnalyticsRowInput,
+  accumulateLineMeasurement,
   compareAnalyticsKeys,
+  createLineMeasurementAccumulator,
   groupAnalytics,
   groupModelAnalytics,
   harnessProviderAnalyticsKey,
+  type LineMeasurementAccumulator,
 } from './analytics';
 import { type CursorCommitAttributionRow, isCursorCommitAttributionRow } from './datasets';
 import { parseProjectGroupConfigs } from './project-group';
@@ -74,7 +77,24 @@ export interface FocusedReportQueryScope {
   revision: string;
 }
 
-export type FocusedTimelineDimension = 'campaign' | 'harness' | 'machine' | 'model' | 'origin' | 'project' | 'provider';
+export const focusedTimelineDimensionDefinitions = [
+  { label: 'Campaign', value: 'campaign' },
+  { label: 'Harness', value: 'harness' },
+  { label: 'Machine', value: 'machine' },
+  { label: 'Model', value: 'model' },
+  { label: 'Origin', value: 'origin' },
+  { label: 'Provider', value: 'provider' },
+  { label: 'Project', value: 'project' },
+] as const;
+export type FocusedTimelineDimension = (typeof focusedTimelineDimensionDefinitions)[number]['value'];
+export const focusedTimelineDimensions: readonly FocusedTimelineDimension[] = focusedTimelineDimensionDefinitions.map(
+  ({ value }) => value,
+);
+const focusedTimelineDimensionSet = new Set<string>(focusedTimelineDimensions);
+export const isFocusedTimelineDimension = (value: unknown): value is FocusedTimelineDimension =>
+  typeof value === 'string' && focusedTimelineDimensionSet.has(value);
+export const focusedTimelineDimensionLabel = (dimension: FocusedTimelineDimension): string =>
+  focusedTimelineDimensionDefinitions.find(({ value }) => value === dimension)?.label ?? dimension;
 export type FocusedTimelineGranularity = 'day' | 'month' | 'week';
 
 export interface FocusedDateDomain {
@@ -283,15 +303,12 @@ export interface FocusedOverviewView {
   topSessions: FocusedOverviewSessionItem[];
 }
 
-export interface FocusedProjectGroup {
+export interface FocusedProjectGroup extends LineMeasurementAccumulator {
   cache: number;
   cost: number;
   fresh: number;
   key: string;
   label: string;
-  lineMeasurement: { measuredSessions: number; totalSessions: number };
-  linesAdded: number;
-  linesDeleted: number;
   priced: number;
   sessions: number;
   tools: number;
@@ -358,15 +375,6 @@ export type FocusedReportQueryResult = FocusedBreakdownResult | FocusedOverviewR
 const MAX_REVISION_LENGTH = 512;
 const MAX_TIMELINE_SERIES = 12;
 const OTHER_TIMELINE_SERIES_KEY = '__ai_usage_other__';
-const timelineDimensions = new Set<FocusedTimelineDimension>([
-  'campaign',
-  'harness',
-  'machine',
-  'model',
-  'origin',
-  'project',
-  'provider',
-]);
 const timelineGranularities = new Set<FocusedTimelineGranularity>(['day', 'month', 'week']);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -417,7 +425,7 @@ export const parseFocusedOverviewRequest = (value: unknown): FocusedOverviewRequ
   assertExactKeys(timeline, ['dimension', 'granularity'], 'timeline');
   if (
     !(
-      timelineDimensions.has(timeline.dimension as FocusedTimelineDimension) &&
+      isFocusedTimelineDimension(timeline.dimension) &&
       timelineGranularities.has(timeline.granularity as FocusedTimelineGranularity)
     )
   ) {
@@ -427,7 +435,7 @@ export const parseFocusedOverviewRequest = (value: unknown): FocusedOverviewRequ
     includeAdvanced: record.includeAdvanced,
     query: parseFocusedReportQueryScope(record.query),
     timeline: {
-      dimension: timeline.dimension as FocusedTimelineDimension,
+      dimension: timeline.dimension,
       granularity: timeline.granularity as FocusedTimelineGranularity,
     },
   };
@@ -564,12 +572,12 @@ const nextBucketStart = (date: Date, granularity: FocusedTimelineGranularity): D
 const dateKey = (date: Date): string =>
   `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
-interface FocusedTimelineIdentity {
+export interface FocusedTimelineIdentity {
   key: string;
   label: string;
 }
 
-const timelineIdentity = (
+export const focusedTimelineIdentityForRow = (
   row: SessionPresentationRow,
   dimension: FocusedTimelineDimension,
   campaignIdentity: FocusedTimelineIdentity | undefined,
@@ -632,7 +640,7 @@ const timelineAggregatesForRow = (
       },
     ];
   }
-  const identity = timelineIdentity(row, dimension, campaignIdentity);
+  const identity = focusedTimelineIdentityForRow(row, dimension, campaignIdentity);
   if (identity === undefined) {
     return [];
   }
@@ -885,14 +893,12 @@ const projectGroups = (rows: readonly SessionPresentationRow[]): FocusedProjectG
   const groups = new Map<string, FocusedProjectGroup>();
   for (const row of rows) {
     const group = groups.get(row.projectKey) ?? {
+      ...createLineMeasurementAccumulator(),
       cache: 0,
       cost: 0,
       fresh: 0,
       key: row.projectKey,
       label: row.projectLabel,
-      lineMeasurement: { measuredSessions: 0, totalSessions: 0 },
-      linesAdded: 0,
-      linesDeleted: 0,
       priced: 0,
       sessions: 0,
       tools: 0,
@@ -903,12 +909,7 @@ const projectGroups = (rows: readonly SessionPresentationRow[]): FocusedProjectG
     group.cache += row.tokCr;
     group.turns += row.turns;
     group.tools += row.tools;
-    group.lineMeasurement.totalSessions++;
-    if (row.linesAdded !== null && row.linesDeleted !== null) {
-      group.lineMeasurement.measuredSessions++;
-      group.linesAdded += row.linesAdded;
-      group.linesDeleted += row.linesDeleted;
-    }
+    accumulateLineMeasurement(group, row.linesAdded, row.linesDeleted);
     if (row.costKnown) {
       group.cost += row.costApprox;
       group.priced++;

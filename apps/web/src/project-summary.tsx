@@ -24,7 +24,7 @@ import {
 import { For, type JSX, Show } from 'solid-js';
 import type { ProjectGroup } from './dashboard-analytics';
 import { projectDataQualityLabel } from './project-presentation';
-import { fmtCompact, fmtMoney, fmtNum, UNKNOWN_PRICE_HINT } from './shared';
+import { apiValuePresentation, fmtCompact, fmtNum } from './shared';
 
 const projectIdentity = css({
   display: 'flex',
@@ -91,6 +91,12 @@ const formatProjectLineMeasurement = (project: ProjectGroup): string => {
   return measuredLines;
 };
 
+const projectApiValuePresentation = (project: ProjectGroup) =>
+  apiValuePresentation({
+    costApprox: project.cost,
+    costKnown: project.priced === project.sessions,
+  });
+
 interface ProjectSummaryProps {
   actions?: JSX.Element;
   groups: ProjectGroup[];
@@ -152,9 +158,9 @@ export const ProjectSummary = (props: ProjectSummaryProps) => (
                     {fmtCompact(project.cache)}
                   </td>
                   <td class={numCell}>
-                    <Show fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>} when={project.priced}>
-                      {fmtMoney(project.cost)}
-                    </Show>
+                    <span title={projectApiValuePresentation(project).title}>
+                      {projectApiValuePresentation(project).label}
+                    </span>
                   </td>
                   <td class={numCell}>{formatProjectLineMeasurement(project)}</td>
                   <td class={numCell}>{fmtNum(project.turns)}</td>
@@ -182,9 +188,9 @@ export const ProjectSummary = (props: ProjectSummaryProps) => (
                 />
                 <div class={projectSummaryHeadline}>
                   <span class={projectSummaryCost}>
-                    <Show fallback={<span title={UNKNOWN_PRICE_HINT}>—</span>} when={project.priced}>
-                      {fmtMoney(project.cost)}
-                    </Show>
+                    <span title={projectApiValuePresentation(project).title}>
+                      {projectApiValuePresentation(project).label}
+                    </span>
                   </span>
                   <span class={projectSummarySessions}>{fmtNum(project.sessions)} sessions</span>
                 </div>

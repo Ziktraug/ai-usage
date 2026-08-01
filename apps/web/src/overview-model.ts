@@ -1,5 +1,8 @@
 import { compareAnalyticsKeys } from '@ai-usage/report-core/analytics';
-import type { FocusedTimelineDimension } from '@ai-usage/report-core/focused-report-query';
+import {
+  type FocusedTimelineDimension,
+  focusedTimelineIdentityForRow,
+} from '@ai-usage/report-core/focused-report-query';
 import {
   type ApiPriceMeasurement,
   apiPriceMeasurement,
@@ -9,7 +12,6 @@ import {
   buildSessionCampaignTimelineIdentities,
   localTimeCellForTimestamp,
   type SessionCampaignTimelineIdentity,
-  sessionOriginLabel,
 } from '@ai-usage/report-core/session-query';
 import type { OriginProvenanceKind } from '@ai-usage/report-core/types';
 import {
@@ -273,33 +275,6 @@ export const buildModelMigrationData = (
   };
 };
 
-const timelineIdentityForRow = (
-  row: DashboardRow,
-  dimension: TimelineDimension,
-  campaignIdentity: SessionCampaignTimelineIdentity | undefined,
-): SessionCampaignTimelineIdentity | undefined => {
-  // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
-  switch (dimension) {
-    case 'campaign':
-      return campaignIdentity ?? { key: `session:${row.rowId}`, label: row.sessionLabel };
-    case 'harness':
-      return { key: row.harness, label: row.harness };
-    case 'machine': {
-      const key = row.source?.machineId ?? '';
-      const label = row.source?.machineLabel ?? '';
-      return { key, label: label || 'Unknown machine' };
-    }
-    case 'model':
-      return { key: row.modelKey, label: row.modelKey };
-    case 'origin':
-      return row.origin === undefined ? undefined : { key: row.origin, label: sessionOriginLabel(row.origin) };
-    case 'project':
-      return { key: row.projectKey, label: row.projectLabel };
-    case 'provider':
-      return { key: row.providerDisplay, label: row.providerDisplay };
-  }
-};
-
 const timelineContributionsForRow = (
   row: DashboardRow,
   dimension: TimelineDimension,
@@ -307,7 +282,7 @@ const timelineContributionsForRow = (
 ) => {
   if (dimension !== 'model') {
     const priceMeasurement = usageRowApiPriceMeasurement(row);
-    const identity = timelineIdentityForRow(row, dimension, campaignIdentity);
+    const identity = focusedTimelineIdentityForRow(row, dimension, campaignIdentity);
     if (identity === undefined) {
       return [];
     }

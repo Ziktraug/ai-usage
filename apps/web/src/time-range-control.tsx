@@ -64,10 +64,13 @@ import {
   timeSliderTrack,
   timeSliderUnclassifiedBands,
 } from '@ai-usage/design-system/report';
-import type {
-  FocusedTimelineData,
-  FocusedTimelineDimension,
-  FocusedTimelineGranularity,
+import {
+  type FocusedTimelineData,
+  type FocusedTimelineDimension,
+  type FocusedTimelineGranularity,
+  focusedTimelineDimensionDefinitions,
+  focusedTimelineDimensionLabel,
+  isFocusedTimelineDimension,
 } from '@ai-usage/report-core/focused-report-query';
 import {
   type ApiPriceMeasurement,
@@ -135,25 +138,7 @@ export const reportRangeSummary = (
   toLabel: fmtDateOnly(to),
 });
 
-const DIMENSION_ITEMS = [
-  { label: 'Campaign', value: 'campaign' },
-  { label: 'Harness', value: 'harness' },
-  { label: 'Machine', value: 'machine' },
-  { label: 'Model', value: 'model' },
-  { label: 'Origin', value: 'origin' },
-  { label: 'Provider', value: 'provider' },
-  { label: 'Project', value: 'project' },
-] as const;
-
-const DIMENSION_LABELS = {
-  campaign: 'Campaign',
-  harness: 'Harness',
-  machine: 'Machine',
-  model: 'Model',
-  origin: 'Origin',
-  project: 'Project',
-  provider: 'Provider',
-} as const satisfies Record<TimelineDimension, string>;
+const DIMENSION_ITEMS = focusedTimelineDimensionDefinitions;
 
 const GRANULARITY_ITEMS = [
   { label: 'Day', value: 'day' },
@@ -172,26 +157,14 @@ export const chartOptionsSummary = (
   granularity: MigrationGranularity,
   value: TimelineValue,
 ) => {
-  const dimensionLabel = DIMENSION_LABELS[dimension];
+  const dimensionLabel = focusedTimelineDimensionLabel(dimension);
   const granularityLabel = GRANULARITY_ITEMS.find((item) => item.value === granularity)?.label ?? 'Day';
   const valueLabel = VALUE_ITEMS.find((item) => item.value === value)?.label ?? 'Estimated API-equivalent value';
   return `${dimensionLabel} · ${granularityLabel} · ${valueLabel}`;
 };
 
-const toTimelineDimension = (value: string): TimelineDimension => {
-  if (
-    value === 'campaign' ||
-    value === 'harness' ||
-    value === 'machine' ||
-    value === 'model' ||
-    value === 'origin' ||
-    value === 'project' ||
-    value === 'provider'
-  ) {
-    return value;
-  }
-  return 'harness';
-};
+const toTimelineDimension = (value: string): TimelineDimension =>
+  isFocusedTimelineDimension(value) ? value : 'harness';
 
 const toGranularity = (value: string): MigrationGranularity => (value === 'week' || value === 'month' ? value : 'day');
 

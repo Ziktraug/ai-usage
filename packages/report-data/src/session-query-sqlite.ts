@@ -44,7 +44,7 @@ export interface SessionQuerySqliteDatabase {
 
 export type SessionQuerySqliteTrace = (query: { params: readonly unknown[]; sql: string }) => void;
 
-const SESSION_QUERY_SCHEMA_VERSION = 16;
+const SESSION_QUERY_SCHEMA_VERSION = 17;
 const CURSOR_PATTERN = /^sq1\.([0-9a-f]{16})\.([0-9a-z]+)$/;
 const CAMPAIGN_EXACT_COST_SORT_FIELDS = new Set<SessionSortField>(['actual', 'cost', 'quota']);
 const EMPTY_API_PRICE_MEASUREMENT = {

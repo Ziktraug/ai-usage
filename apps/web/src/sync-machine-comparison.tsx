@@ -20,7 +20,7 @@ import {
   table,
   tableWrap,
 } from '@ai-usage/design-system/report';
-import { For, Show } from 'solid-js';
+import { For, type JSX, Show } from 'solid-js';
 import type { SyncFleetComparisonRow } from './sync-machine-comparison-model';
 
 const machineComparisonSection = css({ minW: 0 });
@@ -29,6 +29,53 @@ const freshnessStyles: Record<SyncFleetComparisonRow['freshness'], string> = {
   fresh: statusPillOk,
   stale: statusPillWarn,
   unavailable: statusPillInfo,
+};
+
+interface MachineComparisonField {
+  align: 'default' | 'numeric' | 'right';
+  freshness: boolean;
+  label: string;
+  render: (row: SyncFleetComparisonRow) => JSX.Element;
+}
+
+const machineComparisonFields: readonly MachineComparisonField[] = [
+  {
+    align: 'numeric',
+    freshness: false,
+    label: 'Sessions',
+    render: (row) => row.sessionCount.toLocaleString(),
+  },
+  {
+    align: 'numeric',
+    freshness: false,
+    label: 'Fleet share',
+    render: (row) => row.sessionShareLabel,
+  },
+  {
+    align: 'default',
+    freshness: false,
+    label: 'Newest session',
+    render: (row) => row.newestSessionLabel,
+  },
+  {
+    align: 'default',
+    freshness: true,
+    label: 'Freshness',
+    render: (row) => <span class={cx(statusPill, freshnessStyles[row.freshness])}>{row.freshnessLabel}</span>,
+  },
+  {
+    align: 'right',
+    freshness: false,
+    label: 'Current',
+    render: (row) => (row.current ? 'Yes' : 'No'),
+  },
+];
+
+const comparisonFieldClass = (field: MachineComparisonField): string | undefined => {
+  if (field.align === 'numeric') {
+    return numCell;
+  }
+  return field.align === 'right' ? right : undefined;
 };
 
 export const MachineFleetComparison = (props: { rows: readonly SyncFleetComparisonRow[] }) => (
@@ -45,17 +92,13 @@ export const MachineFleetComparison = (props: { rows: readonly SyncFleetComparis
         <thead>
           <tr>
             <th scope="col">Machine</th>
-            <th class={numCell} scope="col">
-              Sessions
-            </th>
-            <th class={numCell} scope="col">
-              Fleet share
-            </th>
-            <th scope="col">Newest session</th>
-            <th scope="col">Freshness</th>
-            <th class={right} scope="col">
-              Current
-            </th>
+            <For each={machineComparisonFields}>
+              {(field) => (
+                <th class={comparisonFieldClass(field)} scope="col">
+                  {field.label}
+                </th>
+              )}
+            </For>
           </tr>
         </thead>
         <tbody>
@@ -65,13 +108,16 @@ export const MachineFleetComparison = (props: { rows: readonly SyncFleetComparis
                 <td>
                   <div class={row.current ? strongCell : undefined}>{row.label}</div>
                 </td>
-                <td class={numCell}>{row.sessionCount.toLocaleString()}</td>
-                <td class={numCell}>{row.sessionShareLabel}</td>
-                <td>{row.newestSessionLabel}</td>
-                <td data-machine-freshness={row.freshness}>
-                  <span class={cx(statusPill, freshnessStyles[row.freshness])}>{row.freshnessLabel}</span>
-                </td>
-                <td class={right}>{row.current ? 'Yes' : 'No'}</td>
+                <For each={machineComparisonFields}>
+                  {(field) => (
+                    <td
+                      class={comparisonFieldClass(field)}
+                      data-machine-freshness={field.freshness ? row.freshness : undefined}
+                    >
+                      {field.render(row)}
+                    </td>
+                  )}
+                </For>
               </tr>
             )}
           </For>
@@ -91,28 +137,14 @@ export const MachineFleetComparison = (props: { rows: readonly SyncFleetComparis
               </Show>
             </header>
             <dl class={projectSummaryMetrics}>
-              <div class={projectSummaryMetric}>
-                <dt>Sessions</dt>
-                <dd>{row.sessionCount.toLocaleString()}</dd>
-              </div>
-              <div class={projectSummaryMetric}>
-                <dt>Fleet share</dt>
-                <dd>{row.sessionShareLabel}</dd>
-              </div>
-              <div class={projectSummaryMetric}>
-                <dt>Newest session</dt>
-                <dd>{row.newestSessionLabel}</dd>
-              </div>
-              <div class={projectSummaryMetric}>
-                <dt>Freshness</dt>
-                <dd data-machine-freshness={row.freshness}>
-                  <span class={cx(statusPill, freshnessStyles[row.freshness])}>{row.freshnessLabel}</span>
-                </dd>
-              </div>
-              <div class={projectSummaryMetric}>
-                <dt>Current</dt>
-                <dd>{row.current ? 'Yes' : 'No'}</dd>
-              </div>
+              <For each={machineComparisonFields}>
+                {(field) => (
+                  <div class={projectSummaryMetric}>
+                    <dt>{field.label}</dt>
+                    <dd data-machine-freshness={field.freshness ? row.freshness : undefined}>{field.render(row)}</dd>
+                  </div>
+                )}
+              </For>
             </dl>
           </li>
         )}

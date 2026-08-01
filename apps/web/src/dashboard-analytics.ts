@@ -1,21 +1,21 @@
 import {
   type AnalyticsRowInput,
+  accumulateLineMeasurement,
+  createLineMeasurementAccumulator,
   groupAnalytics,
   groupModelAnalytics,
   harnessProviderAnalyticsKey,
+  type LineMeasurementAccumulator,
 } from '@ai-usage/report-core/analytics';
 import { usageRowApiPriceMeasurement } from '@ai-usage/report-core/usage-row';
 import type { DashboardRow } from './shared';
 
-export interface ProjectGroup {
+export interface ProjectGroup extends LineMeasurementAccumulator {
   cache: number;
   cost: number;
   fresh: number;
   key: string;
   label: string;
-  lineMeasurement: { measuredSessions: number; totalSessions: number };
-  linesAdded: number;
-  linesDeleted: number;
   priced: number;
   sessions: number;
   tools: number;
@@ -40,6 +40,7 @@ const dashboardRowToAnalyticsInput = (row: DashboardRow): AnalyticsRowInput => (
 });
 
 const createProjectGroup = (key: string, label: string): ProjectGroup => ({
+  ...createLineMeasurementAccumulator(),
   key,
   label,
   sessions: 0,
@@ -49,9 +50,6 @@ const createProjectGroup = (key: string, label: string): ProjectGroup => ({
   priced: 0,
   turns: 0,
   tools: 0,
-  lineMeasurement: { measuredSessions: 0, totalSessions: 0 },
-  linesAdded: 0,
-  linesDeleted: 0,
 });
 
 const addProjectRow = (groups: Map<string, ProjectGroup>, row: DashboardRow) => {
@@ -66,12 +64,7 @@ const addProjectRow = (groups: Map<string, ProjectGroup>, row: DashboardRow) => 
   group.cache += row.tokCr;
   group.turns += row.turns;
   group.tools += row.tools;
-  group.lineMeasurement.totalSessions++;
-  if (row.linesAdded !== null && row.linesDeleted !== null) {
-    group.lineMeasurement.measuredSessions++;
-    group.linesAdded += row.linesAdded;
-    group.linesDeleted += row.linesDeleted;
-  }
+  accumulateLineMeasurement(group, row.linesAdded, row.linesDeleted);
   if (row.costKnown) {
     group.cost += row.costApprox;
     group.priced++;

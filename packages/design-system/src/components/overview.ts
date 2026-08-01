@@ -300,9 +300,12 @@ export const scatterWrap = css({
   overflow: 'hidden',
 });
 
+export const PUNCHCARD_INTERACTIVE_TARGET_SIZE_PX = 24;
+const PUNCHCARD_INTERACTIVE_TARGET_SIZE = `${PUNCHCARD_INTERACTIVE_TARGET_SIZE_PX}px`;
+
 export const punchGrid = css({
   display: 'grid',
-  gridTemplateColumns: '34px repeat(24, 10px)',
+  gridTemplateColumns: `34px repeat(24, ${PUNCHCARD_INTERACTIVE_TARGET_SIZE})`,
   gap: '2px',
   alignItems: 'center',
   overflowX: 'auto',
@@ -319,8 +322,8 @@ export const punchDayLabel = css({
 export const punchCell = css({
   position: 'relative',
   display: 'grid',
-  w: '10px',
-  h: '10px',
+  w: PUNCHCARD_INTERACTIVE_TARGET_SIZE,
+  h: PUNCHCARD_INTERACTIVE_TARGET_SIZE,
   borderRadius: '2px',
   bg: 'track',
   placeItems: 'center',

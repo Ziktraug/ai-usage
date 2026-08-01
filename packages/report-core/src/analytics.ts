@@ -59,6 +59,40 @@ export interface AnalyticsRowInput {
   usageUnavailable?: boolean;
 }
 
+export interface LineMeasurement {
+  measuredSessions: number;
+  totalSessions: number;
+}
+
+export interface LineMeasurementAccumulator {
+  lineMeasurement: LineMeasurement;
+  linesAdded: number;
+  linesDeleted: number;
+}
+
+export const hasMeasuredLineDelta = (linesAdded: number | null, linesDeleted: number | null): boolean =>
+  linesAdded !== null && linesDeleted !== null;
+
+export const createLineMeasurementAccumulator = (): LineMeasurementAccumulator => ({
+  lineMeasurement: { measuredSessions: 0, totalSessions: 0 },
+  linesAdded: 0,
+  linesDeleted: 0,
+});
+
+export const accumulateLineMeasurement = (
+  accumulator: LineMeasurementAccumulator,
+  linesAdded: number | null,
+  linesDeleted: number | null,
+): void => {
+  accumulator.lineMeasurement.totalSessions++;
+  if (!hasMeasuredLineDelta(linesAdded, linesDeleted)) {
+    return;
+  }
+  accumulator.lineMeasurement.measuredSessions++;
+  accumulator.linesAdded += linesAdded ?? 0;
+  accumulator.linesDeleted += linesDeleted ?? 0;
+};
+
 export interface AnalyticsSummary {
   averageDurationMs: number | null;
   byHarness: AnalyticsGroup[];

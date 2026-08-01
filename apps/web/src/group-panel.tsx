@@ -64,6 +64,20 @@ const BREAKDOWN_SORT_ITEMS = [
   { label: 'Tokens', value: 'tokens' },
   { label: 'Sessions', value: 'sessions' },
 ] as const;
+
+const BreakdownSortControl = (props: { onSortChange: (value: BreakdownSort) => void; sort: BreakdownSort }) => (
+  <SegmentedControl
+    ariaLabel="Sort breakdown"
+    defaultValue="value"
+    items={BREAKDOWN_SORT_ITEMS}
+    onValueChange={(value) => {
+      if (isBreakdownSort(value)) {
+        props.onSortChange(value);
+      }
+    }}
+    value={props.sort}
+  />
+);
 const partiallyMeasuredBarTrack = css({
   border: '1px dashed token(colors.accent)',
   bg: 'surfaceMuted',
@@ -323,19 +337,7 @@ export const GroupPanelView = (props: GroupPanelViewProps) => {
       countLabel={props.countLabel}
       onSearchQueryChange={props.onSearchQueryChange}
       searchQuery={props.searchQuery}
-      sortControl={
-        <SegmentedControl
-          ariaLabel="Sort breakdown"
-          defaultValue="value"
-          items={BREAKDOWN_SORT_ITEMS}
-          onValueChange={(value) => {
-            if (isBreakdownSort(value)) {
-              props.onSortChange(value);
-            }
-          }}
-          value={props.sort}
-        />
-      }
+      sortControl={<BreakdownSortControl onSortChange={props.onSortChange} sort={props.sort} />}
       title={props.title}
     >
       <For each={visibleGroups()}>
@@ -382,7 +384,9 @@ interface HarnessProviderPanelProps {
   harnessProviderGroups: AnalyticsGroup[];
   onHarnessFilter: (value: string) => void;
   onProviderFilter: (value: string) => void;
+  onSortChange: (value: BreakdownSort) => void;
   renderActions?: (rows: readonly VisibleBreakdownGroup[]) => JSX.Element;
+  sort: BreakdownSort;
 }
 
 export interface VisibleBreakdownGroup {
@@ -433,7 +437,7 @@ export const HarnessProviderPanelView = (props: HarnessProviderPanelViewProps) =
     return childrenByHarness().get(harness) ?? [];
   };
   const visibleGroups = createMemo(() =>
-    filterAndSortBreakdownGroups(props.groups, props.searchQuery, 'value', (group) =>
+    filterAndSortBreakdownGroups(props.groups, props.searchQuery, props.sort, (group) =>
       [group.key, ...(childrenByHarness().get(group.key) ?? []).map(({ provider }) => provider)].join(' '),
     ),
   );
@@ -468,6 +472,7 @@ export const HarnessProviderPanelView = (props: HarnessProviderPanelViewProps) =
       countLabel={`harnesses · ${pairCountLabel(visiblePairCount())}`}
       onSearchQueryChange={props.onSearchQueryChange}
       searchQuery={props.searchQuery}
+      sortControl={<BreakdownSortControl onSortChange={props.onSortChange} sort={props.sort} />}
       title="Harnesses & providers"
     >
       <For each={visibleGroups()}>
@@ -534,9 +539,11 @@ export const HarnessProviderPanel = (props: HarnessProviderPanelProps) => {
       onHarnessFilter={props.onHarnessFilter}
       onProviderFilter={props.onProviderFilter}
       onSearchQueryChange={setSearchQuery}
+      onSortChange={props.onSortChange}
       {...(props.renderActions ? { renderActions: props.renderActions } : {})}
       onToggleHarness={toggleHarness}
       searchQuery={searchQuery()}
+      sort={props.sort}
     />
   );
 };

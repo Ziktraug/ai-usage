@@ -11,9 +11,11 @@ export const HarnessBreakdownPanel = (props: DashboardBreakdownProps) => (
       harnessProviderGroups={props.data.harnessProviders}
       onHarnessFilter={props.onHarnessFilter}
       onProviderFilter={(value) => props.onFieldFilter('provider', value)}
+      onSortChange={props.navigation.onSortChange}
       renderActions={(groups: readonly VisibleBreakdownGroup[]) => (
         <ReportSharingActions createExport={() => createAnalyticsExport('harnesses', props.data.generatedAt, groups)} />
       )}
+      sort={props.navigation.sort}
     />
   </section>
 );

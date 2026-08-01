@@ -40,6 +40,7 @@ const projectGroup = (
   linesDeleted: number,
   measuredSessions: number,
   totalSessions: number,
+  priced = totalSessions,
 ): ProjectGroup => ({
   cache: 0,
   cost: 1,
@@ -49,7 +50,7 @@ const projectGroup = (
   lineMeasurement: { measuredSessions, totalSessions },
   linesAdded,
   linesDeleted,
-  priced: totalSessions,
+  priced,
   sessions: totalSessions,
   tools: 0,
   turns: 0,
@@ -80,6 +81,21 @@ describe('ProjectSummary line measurements', () => {
     expect(countOccurrences(visibleHtml, '+5/-1 · 1/2 measured')).toBe(2);
     expect(countOccurrences(visibleHtml, '>—</')).toBe(2);
     expect(countOccurrences(visibleHtml, '+0/-0')).toBe(2);
+  });
+
+  test('keeps partially priced project values visibly lower-bounded on desktop and mobile', () => {
+    const html = withoutSsrMarkers(
+      renderToString(() =>
+        createComponent(ProjectSummary, {
+          groups: [projectGroup('partial-price', 0, 0, 1, 2, 1), projectGroup('complete-price', 0, 0, 1, 2)],
+          onManageProjectGroups: () => undefined,
+          onProjectFilter: () => undefined,
+        }),
+      ),
+    );
+
+    expect(countOccurrences(html, '>≥ $1.00<')).toBe(2);
+    expect(countOccurrences(html, '>$1.00<')).toBe(2);
   });
   test('labels only locked data-quality shapes and retains every desktop and mobile row', () => {
     const projectLabels = ['usage.csv', 'agent-a1', '(unknown)', 'regular-project', 'report.csv.json'];

@@ -10,37 +10,34 @@ const toggleField = (search: DashboardSearch, key: FieldFilterKey, value: string
   filters: toggleExactFieldFilter(search.filters, key, value),
 });
 
+type TimelineDimensionFilterHandler = (search: DashboardSearch, value: string) => DashboardSearch;
+
+const timelineDimensionFilterHandlers: Record<TimelineDimension, TimelineDimensionFilterHandler> = {
+  campaign: (search, value) => {
+    const campaignPrefix = 'campaign:';
+    return toggleField(
+      search,
+      'campaign',
+      value.startsWith(campaignPrefix) ? value.slice(campaignPrefix.length) : value,
+    );
+  },
+  harness: (search, value) => ({ ...search, harness: toggleValue(search.harness, value) }),
+  machine: (search, value) => ({ ...search, machine: toggleValue(search.machine, value) }),
+  model: (search, value) => toggleField(search, 'model', value),
+  origin: (search, value) => {
+    if (!isSessionOrigin(value)) {
+      return search;
+    }
+    const origin: SessionOrigin[] =
+      search.origin.length === 0 || !search.origin.includes(value) ? [value] : toggleValue(search.origin, value);
+    return { ...search, origin };
+  },
+  project: (search, value) => toggleField(search, 'project', value),
+  provider: (search, value) => toggleField(search, 'provider', value),
+};
+
 export const applyTimelineDimensionFilter = (
   search: DashboardSearch,
   dimension: TimelineDimension,
   value: string,
-): DashboardSearch => {
-  switch (dimension) {
-    case 'campaign': {
-      const campaignPrefix = 'campaign:';
-      return toggleField(
-        search,
-        'campaign',
-        value.startsWith(campaignPrefix) ? value.slice(campaignPrefix.length) : value,
-      );
-    }
-    case 'origin': {
-      if (!isSessionOrigin(value)) {
-        return search;
-      }
-      const origin: SessionOrigin[] =
-        search.origin.length === 0 || !search.origin.includes(value) ? [value] : toggleValue(search.origin, value);
-      return { ...search, origin };
-    }
-    case 'harness':
-      return { ...search, harness: toggleValue(search.harness, value) };
-    case 'machine':
-      return { ...search, machine: toggleValue(search.machine, value) };
-    case 'model':
-    case 'project':
-    case 'provider':
-      return toggleField(search, dimension, value);
-    default:
-      return search;
-  }
-};
+): DashboardSearch => timelineDimensionFilterHandlers[dimension](search, value);

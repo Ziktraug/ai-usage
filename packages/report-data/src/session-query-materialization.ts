@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { chmod, open, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { harnessProviderAnalyticsKey } from '@ai-usage/report-core/analytics';
+import { harnessProviderAnalyticsKey, hasMeasuredLineDelta } from '@ai-usage/report-core/analytics';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import { providerStatusKeyForUsage, providerStatusScopeKey } from '@ai-usage/report-core/provider-status';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
@@ -28,8 +28,8 @@ import {
 
 export const SESSION_QUERY_DATABASE_NAME = 'sessions.sqlite';
 
-const SESSION_QUERY_SCHEMA_VERSION = 16;
-const SESSION_ROW_INSERT_VALUE_COUNT = 83;
+const SESSION_QUERY_SCHEMA_VERSION = 17;
+const SESSION_ROW_INSERT_VALUE_COUNT = 84;
 const createFileFlags =
   // biome-ignore lint/suspicious/noBitwiseOperators: Node file-open flags are a documented bitmask API.
   fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW;
@@ -163,6 +163,7 @@ const createSchema = (database: SqliteDatabase): void => {
       line_delta REAL,
       lines_added REAL,
       lines_deleted REAL,
+      lines_measured INTEGER NOT NULL CHECK (lines_measured IN (0, 1)),
       rtk_command_count REAL NOT NULL,
       rtk_input_tokens REAL NOT NULL,
       rtk_output_tokens REAL NOT NULL,
@@ -217,7 +218,7 @@ const insertSql = `
     ${sessionTextSortFields.map((field) => `sort_${field}_rank`).join(', ')},
     row_identity_rank, session_item_identity_rank, campaign_item_identity_rank,
     cost_actual, cost_approx, cost_known, cost_quota, duration_ms, fresh_tokens, unpriced_fresh_tokens, line_delta,
-    lines_added, lines_deleted, rtk_command_count, rtk_input_tokens, rtk_output_tokens,
+    lines_added, lines_deleted, lines_measured, rtk_command_count, rtk_input_tokens, rtk_output_tokens,
     rtk_saved_tokens, tok_cr, tok_cw, tok_in, tok_out, token_total, calls, turns, tools,
     usage_unavailable
   ) VALUES (${Array.from({ length: SESSION_ROW_INSERT_VALUE_COUNT }, () => '?').join(', ')})
@@ -350,6 +351,7 @@ const insertRow = (
     row.lineDelta,
     row.linesAdded,
     row.linesDeleted,
+    hasMeasuredLineDelta(row.linesAdded, row.linesDeleted) ? 1 : 0,
     row.rtkCommandCount ?? 0,
     row.rtkInputTokens ?? 0,
     row.rtkOutputTokens ?? 0,

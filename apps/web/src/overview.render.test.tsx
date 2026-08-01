@@ -151,3 +151,36 @@ test('applies campaign label overrides to focused top and longest record cards',
   expect(html.match(/Release train/g)).toHaveLength(2);
   expect(html).not.toContain('Derived campaign');
 });
+
+test('keeps a partially priced top-session record visibly lower-bounded', () => {
+  const focusedSession: FocusedOverviewSessionItem = {
+    costApprox: 10,
+    costKnown: false,
+    durationMs: 60_000,
+    harness: 'Codex',
+    kind: 'session',
+    label: 'Partially priced session',
+    row: enrichSessionPresentationRow(row({ costApprox: 10, costKnown: false })),
+    sessionCount: 1,
+  };
+  const html = renderToString(() =>
+    createComponent(Records, {
+      campaigns: [],
+      focused: {
+        busiest: null,
+        longest: null,
+        streak: 0,
+        streakEnd: null,
+        topCost: focusedSession,
+      },
+      labelFor: (_campaignKey, derivedLabel) => derivedLabel,
+      onSelectDay: () => undefined,
+      onSelectSession: () => undefined,
+      rows: [],
+      timelineRows: [],
+    }),
+  );
+
+  expect(html).toContain('>≥ $10.00<');
+  expect(html).not.toContain('>$10.00<');
+});

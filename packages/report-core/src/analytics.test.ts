@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { calculateAnalytics, groupAnalytics, harnessProviderAnalyticsKey, rowToAnalyticsInput } from './analytics';
+import {
+  accumulateLineMeasurement,
+  calculateAnalytics,
+  createLineMeasurementAccumulator,
+  groupAnalytics,
+  harnessProviderAnalyticsKey,
+  hasMeasuredLineDelta,
+  rowToAnalyticsInput,
+} from './analytics';
 import { createUsageReportPayload, parseUsageReportPayload } from './report-data';
 import type { Row } from './types';
 
@@ -28,6 +36,22 @@ const row = (overrides: Partial<Row>): Row => ({
 });
 
 describe('analytics calculation', () => {
+  test('owns complete line-measurement accumulation for every projection', () => {
+    const measurement = createLineMeasurementAccumulator();
+
+    accumulateLineMeasurement(measurement, 4, 2);
+    accumulateLineMeasurement(measurement, null, 3);
+    accumulateLineMeasurement(measurement, 0, 0);
+
+    expect(hasMeasuredLineDelta(1, null)).toBe(false);
+    expect(hasMeasuredLineDelta(1, 0)).toBe(true);
+    expect(measurement).toEqual({
+      lineMeasurement: { measuredSessions: 2, totalSessions: 3 },
+      linesAdded: 4,
+      linesDeleted: 2,
+    });
+  });
+
   test('encodes harness-provider tuples without separator collisions', () => {
     expect(harnessProviderAnalyticsKey('Codex', 'Codex API')).toBe('["Codex","Codex API"]');
     expect(harnessProviderAnalyticsKey('a:b', 'c')).not.toBe(harnessProviderAnalyticsKey('a', 'b:c'));

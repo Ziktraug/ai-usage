@@ -18,6 +18,7 @@ import {
   type FocusedRevisionRequest,
   type FocusedSupportResult,
   type FocusedTimelineAggregate,
+  type FocusedTimelineDimension,
   focusedBreakdownFingerprint,
   focusedOverviewFingerprint,
   parseFocusedBreakdownRequest,
@@ -266,38 +267,26 @@ interface TimelineDimensionProjection {
   label: string;
 }
 
-const timelineDimensionProjection = (
-  dimension: FocusedOverviewRequest['timeline']['dimension'],
-): TimelineDimensionProjection => {
-  // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
-  switch (dimension) {
-    case 'campaign':
-      return {
-        cause: 'NULL',
-        key: "CASE WHEN session_rows.campaign_key IS NULL THEN 'session:' || session_rows.row_id ELSE 'campaign:' || session_rows.campaign_key END",
-        label: 'session_rows.campaign_label',
-      };
-    case 'harness':
-      return { cause: 'NULL', key: 'session_rows.harness', label: 'session_rows.harness' };
-    case 'machine':
-      return {
-        cause: 'NULL',
-        key: 'session_rows.machine_id',
-        label: "CASE WHEN session_rows.machine_label = '' THEN 'Unknown machine' ELSE session_rows.machine_label END",
-      };
-    case 'model':
-      return { cause: 'NULL', key: 'session_rows.model_key', label: 'session_rows.model_key' };
-    case 'origin':
-      return {
-        cause: 'session_rows.origin_provenance',
-        key: 'session_rows.origin',
-        label: 'session_rows.origin',
-      };
-    case 'project':
-      return { cause: 'NULL', key: 'session_rows.project_key', label: 'session_rows.project_label' };
-    case 'provider':
-      return { cause: 'NULL', key: 'session_rows.provider_display', label: 'session_rows.provider_display' };
-  }
+const timelineDimensionProjections: Record<FocusedTimelineDimension, TimelineDimensionProjection> = {
+  campaign: {
+    cause: 'NULL',
+    key: "CASE WHEN session_rows.campaign_key IS NULL THEN 'session:' || session_rows.row_id ELSE 'campaign:' || session_rows.campaign_key END",
+    label: 'session_rows.campaign_label',
+  },
+  harness: { cause: 'NULL', key: 'session_rows.harness', label: 'session_rows.harness' },
+  machine: {
+    cause: 'NULL',
+    key: 'session_rows.machine_id',
+    label: "CASE WHEN session_rows.machine_label = '' THEN 'Unknown machine' ELSE session_rows.machine_label END",
+  },
+  model: { cause: 'NULL', key: 'session_rows.model_key', label: 'session_rows.model_key' },
+  origin: {
+    cause: 'session_rows.origin_provenance',
+    key: 'session_rows.origin',
+    label: 'session_rows.origin',
+  },
+  project: { cause: 'NULL', key: 'session_rows.project_key', label: 'session_rows.project_label' },
+  provider: { cause: 'NULL', key: 'session_rows.provider_display', label: 'session_rows.provider_display' },
 };
 
 const timelineLabelFromRecord = (
@@ -305,21 +294,13 @@ const timelineLabelFromRecord = (
   key: string,
   label: string,
 ): string => {
-  // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
-  switch (dimension) {
-    case 'campaign':
-    case 'harness':
-    case 'machine':
-    case 'model':
-    case 'project':
-    case 'provider':
-      return label;
-    case 'origin':
-      if (!isSessionOrigin(key)) {
-        throw new Error('Report revision contains an invalid session origin');
-      }
-      return sessionOriginLabel(key);
+  if (dimension !== 'origin') {
+    return label;
   }
+  if (!isSessionOrigin(key)) {
+    throw new Error('Report revision contains an invalid session origin');
+  }
+  return sessionOriginLabel(key);
 };
 
 const timeForLocalDay = (dayKey: string): number => {
@@ -458,7 +439,7 @@ const readTimeline = (
   if (dimension === 'model') {
     return readModelTimeline(database, filter, trace);
   }
-  const projection = timelineDimensionProjection(dimension);
+  const projection = timelineDimensionProjections[dimension];
   const records = executeAll<TimelineRecord>(
     database,
     `WITH segment_coverage AS (
@@ -1091,9 +1072,9 @@ const readProjectGroups = (
       SUM(tok_cr) AS cache,
       SUM(turns) AS turns,
       SUM(tools) AS tools,
-      SUM(CASE WHEN lines_added IS NOT NULL AND lines_deleted IS NOT NULL THEN lines_added ELSE 0 END) AS lines_added,
-      SUM(CASE WHEN lines_added IS NOT NULL AND lines_deleted IS NOT NULL THEN lines_deleted ELSE 0 END) AS lines_deleted,
-      SUM(CASE WHEN lines_added IS NOT NULL AND lines_deleted IS NOT NULL THEN 1 ELSE 0 END) AS measured_sessions,
+      SUM(CASE WHEN lines_measured = 1 THEN lines_added ELSE 0 END) AS lines_added,
+      SUM(CASE WHEN lines_measured = 1 THEN lines_deleted ELSE 0 END) AS lines_deleted,
+      SUM(lines_measured) AS measured_sessions,
       SUM(CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END) AS cost,
       SUM(cost_known) AS priced
     FROM session_rows

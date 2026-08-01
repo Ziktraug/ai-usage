@@ -38,8 +38,10 @@ interface HarnessProviderPanelProps {
 interface HarnessProviderPanelViewProps extends HarnessProviderPanelProps {
   expandedHarnesses: readonly string[];
   onSearchQueryChange: (value: string) => void;
+  onSortChange: (value: BreakdownSort) => void;
   onToggleHarness: (value: string) => void;
   searchQuery: string;
+  sort: BreakdownSort;
 }
 
 type ExactGroupFilterHandler = (filter: (value: string) => void, value: string) => () => void;
@@ -245,7 +247,7 @@ test('uses locale-formatted canonical session and ambiguity language without rep
   expect(html).not.toContain('aria-label="Partially measured:');
 });
 
-test('renders value-sorted harness totals with expandable session-sorted provider children', () => {
+test('applies shared harness sorting with expandable session-sorted provider children', () => {
   let exportedLabels: string[] = [];
   const html = renderToString(() =>
     createComponent(HarnessProviderPanelView, {
@@ -259,12 +261,14 @@ test('renders value-sorted harness totals with expandable session-sorted provide
       onHarnessFilter: () => undefined,
       onProviderFilter: () => undefined,
       onSearchQueryChange: () => undefined,
+      onSortChange: () => undefined,
       onToggleHarness: () => undefined,
       renderActions: (rows) => {
         exportedLabels = rows.map(({ label }) => label);
         return null;
       },
       searchQuery: '',
+      sort: 'sessions',
     }),
   );
   const harnessBIndex = html.indexOf('data-harness-total="Harness B"');
@@ -277,11 +281,12 @@ test('renders value-sorted harness totals with expandable session-sorted provide
   expect(html).toContain('aria-expanded="true"');
   expect(html).toContain('aria-expanded="false"');
   expect(harnessBIndex).toBeGreaterThan(-1);
-  expect(harnessBIndex).toBeLessThan(harnessAIndex);
+  expect(harnessAIndex).toBeLessThan(harnessBIndex);
+  expect(html).toContain('aria-label="Sort breakdown"');
   expect(alphaIndex).toBeGreaterThan(-1);
   expect(alphaIndex).toBeLessThan(zetaIndex);
   expect(html).not.toContain('data-provider-child="Hidden Provider"');
-  expect(exportedLabels).toEqual(['Harness B', 'Harness A', 'Alpha Provider', 'Zeta Provider']);
+  expect(exportedLabels).toEqual(['Harness A', 'Alpha Provider', 'Zeta Provider', 'Harness B']);
 });
 
 test('auto-exposes only provider children that match hierarchy search', () => {
@@ -298,12 +303,14 @@ test('auto-exposes only provider children that match hierarchy search', () => {
       onHarnessFilter: () => undefined,
       onProviderFilter: () => undefined,
       onSearchQueryChange: () => undefined,
+      onSortChange: () => undefined,
       onToggleHarness: () => undefined,
       renderActions: (rows) => {
         exportedLabels = rows.map(({ label }) => label);
         return null;
       },
       searchQuery: ' alpha provider ',
+      sort: 'tokens',
     }),
   );
 

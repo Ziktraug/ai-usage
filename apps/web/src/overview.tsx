@@ -813,7 +813,9 @@ export const Records = (props: {
                 type="button"
               >
                 <span class={recordLabel}>Top session</span>
-                <span class={recordValue}>{fmtMoney(item().costApprox)}</span>
+                <span class={recordValue} title={apiValuePresentation(item()).title}>
+                  {apiValuePresentation(item()).label}
+                </span>
                 <span class={recordSub}>{item().label}</span>
               </button>
             )}

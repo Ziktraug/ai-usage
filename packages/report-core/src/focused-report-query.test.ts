@@ -5,6 +5,8 @@ import {
   type FocusedReportSupport,
   focusedAdvancedAnalysisFingerprint,
   focusedOverviewFingerprint,
+  focusedTimelineDimensionDefinitions,
+  focusedTimelineDimensions,
   parseFocusedOverviewRequest,
   parseFocusedReportQueryResult,
   projectFocusedBreakdown,
@@ -127,15 +129,17 @@ describe('focused report query contracts', () => {
     expect(focusedOverviewFingerprint({ ...overviewRequest, includeAdvanced: false })).not.toBe(
       focusedOverviewFingerprint(overviewRequest),
     );
-    const dimensions: FocusedOverviewRequest['timeline']['dimension'][] = ['campaign', 'machine', 'origin'];
-    const dimensionFingerprints = dimensions.map((dimension) =>
+    const dimensionFingerprints = focusedTimelineDimensions.map((dimension) =>
       focusedOverviewFingerprint({
         ...overviewRequest,
         timeline: { ...overviewRequest.timeline, dimension },
       }),
     );
-    expect(new Set(dimensionFingerprints).size).toBe(3);
-    for (const dimension of ['campaign', 'machine', 'origin'] as const) {
+    expect(new Set(dimensionFingerprints).size).toBe(focusedTimelineDimensions.length);
+    expect(new Set(focusedTimelineDimensionDefinitions.map(({ label }) => label)).size).toBe(
+      focusedTimelineDimensions.length,
+    );
+    for (const dimension of focusedTimelineDimensions) {
       expect(
         parseFocusedOverviewRequest({
           ...overviewRequest,
